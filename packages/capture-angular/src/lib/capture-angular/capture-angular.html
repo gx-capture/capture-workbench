@@ -1,0 +1,224 @@
+<section
+  class="capture-workbench"
+  [class.compact]="resolvedConfig().density === 'compact'"
+  [style]="hostStyles()"
+>
+  @if (resolvedConfig().showRuntimeSetup) {
+  <section class="runtime-card" aria-labelledby="capture-runtime-title">
+    <div class="runtime-heading">
+      <div>
+        <p class="eyebrow">Runtime</p>
+        <h2 id="capture-runtime-title">
+          {{ config().labels?.runtimeTitle ?? 'Capture runtime setup' }}
+        </h2>
+      </div>
+      <span class="status-badge" [attr.data-status]="runtime().status">
+        {{ runtime().status }}
+      </span>
+    </div>
+
+    @if (runtime().status === 'checking') {
+    <p class="muted" aria-live="polite">Checking runtime capabilities…</p>
+    } @else if (runtime().status === 'ready') {
+    <p class="runtime-ready" aria-live="polite">
+      {{ config().labels?.runtimeReady ?? 'Runtime is ready' }} @if
+      (runtime().ready; as ready) {
+      <span>· v{{ ready.runtimeVersion }}</span>
+      }
+    </p>
+    } @else if (runtime().status === 'incompatible') {
+    <p class="error" role="alert">{{ runtime().error }}</p>
+    <button type="button" class="secondary" (click)="refreshRuntime()">
+      {{ config().labels?.retryRuntime ?? 'Check again' }}
+    </button>
+    } @else if (runtime().status === 'error') {
+    <p class="error" role="alert">{{ runtime().error }}</p>
+    <button type="button" class="secondary" (click)="refreshRuntime()">
+      {{ config().labels?.retryRuntime ?? 'Check again' }}
+    </button>
+    } @if (requiredRequirements().length > 0) {
+    <ul class="requirements" aria-label="Runtime requirements">
+      @for (requirement of requiredRequirements(); track
+      requirement.requirementId) {
+      <li>
+        <div>
+          <strong>{{ requirement.displayName }}</strong>
+          @if (requirement.detail) {
+          <span>{{ requirement.detail }}</span>
+          } @if ( requirement.status === 'manual_action_required' ||
+          requirement.status === 'unavailable' ) {
+          <span class="requirement-guidance" role="status">
+            {{ requirement.status === 'manual_action_required' ? 'Manual action
+            is required. Follow the runtime guidance, then check again.' : 'This
+            capability is unavailable on the current system.' }}
+          </span>
+          }
+        </div>
+        <span
+          class="requirement-status"
+          [attr.data-status]="requirement.status"
+        >
+          {{ requirement.status }}
+        </span>
+      </li>
+      }
+    </ul>
+    } @if (installation(); as activeInstallation) {
+    <div class="installation" aria-live="polite">
+      <div>
+        <span>Installing {{ activeInstallation.requirementId }}</span>
+        <strong
+          >{{ installationProgress(activeInstallation.progress) }}%</strong
+        >
+      </div>
+      <progress
+        max="100"
+        [value]="installationProgress(activeInstallation.progress)"
+      >
+        {{ installationProgress(activeInstallation.progress) }}%
+      </progress>
+      @if ( activeInstallation.status === 'queued' || activeInstallation.status
+      === 'running' ) {
+      <button type="button" class="secondary" (click)="cancelInstallation()">
+        {{ config().labels?.cancel ?? 'Cancel' }}
+      </button>
+      } @if (activeInstallation.error) {
+      <p class="error" role="alert">{{ activeInstallation.error.message }}</p>
+      } @else if (activeInstallation.status === 'manual_action_required') {
+      <p class="requirement-guidance" role="status">
+        Automatic installation is unavailable. Complete the manual action, then
+        check again.
+      </p>
+      }
+    </div>
+    } @else if ( installableRequirements().length > 0 && runtime().status !==
+    'incompatible' ) {
+    <button
+      type="button"
+      class="primary"
+      (click)="installMissingRequirements()"
+    >
+      {{ config().labels?.installRuntime ?? 'Install missing runtime' }}
+    </button>
+    <p class="consent-note">
+      Installation starts only after this explicit action.
+    </p>
+    }
+  </section>
+  }
+
+  <header class="workbench-heading">
+    <div>
+      <p class="eyebrow">
+        {{ config().labels?.eyebrow ?? 'PDF · Image · Audio' }}
+      </p>
+      <h2>{{ config().labels?.title ?? 'Capture workbench' }}</h2>
+      <p class="muted">
+        {{ resolvedConfig().structuringMode === 'host' ? 'Raw extraction uses
+        Capture Runtime; structuring uses the host provider.' : 'Extraction and
+        isolated structuring use Capture Runtime.' }}
+      </p>
+    </div>
+    <label class="file-picker">
+      {{ config().labels?.chooseFiles ?? 'Choose files' }}
+      <input
+        type="file"
+        [accept]="accept()"
+        [multiple]="resolvedConfig().multiple"
+        [disabled]="captureDisabled()"
+        (change)="chooseFiles($event)"
+      />
+    </label>
+  </header>
+
+  @if (tasks().length === 0) {
+  <div class="empty-state">
+    {{ config().labels?.emptyState ?? 'Add a PDF, image, or audio recording.' }}
+  </div>
+  } @else {
+  <ol class="task-list" aria-label="Capture tasks">
+    @for (task of tasks(); track task.id) {
+    <li [attr.data-task-status]="task.status">
+      <div class="task-heading">
+        <div>
+          <strong>{{ task.fileName }}</strong>
+          <span>{{ task.sourceKind }} · {{ task.stage ?? task.status }}</span>
+        </div>
+        <span class="status-badge" [attr.data-status]="task.status">
+          {{ task.status }}
+        </span>
+      </div>
+
+      @if (task.status === 'queued' || task.status === 'processing') {
+      <progress max="100" [value]="task.progress">
+        {{ task.progress }}%
+      </progress>
+      <div class="task-actions">
+        <button type="button" class="secondary" (click)="cancel(task.id)">
+          {{ config().labels?.cancel ?? 'Cancel' }}
+        </button>
+      </div>
+      } @if (task.status === 'reconciliation_required') {
+      <p class="reconciliation-warning" role="status">
+        The runtime terminal state is unknown. Check its status or request
+        cancellation; capture will not be retried automatically.
+      </p>
+      <div class="task-actions reconciliation-actions">
+        <button type="button" class="secondary" (click)="reconcile(task.id)">
+          {{ config().labels?.reconcile ?? 'Check status' }}
+        </button>
+        <button type="button" class="secondary" (click)="cancel(task.id)">
+          {{ config().labels?.cancelAndReconcile ?? 'Cancel and check' }}
+        </button>
+      </div>
+      } @if (task.error) {
+      <p
+        [class.error]="task.status !== 'reconciliation_required'"
+        [class.reconciliation-warning]="task.status === 'reconciliation_required'"
+        role="alert"
+      >
+        <strong>{{ task.error.code }}</strong> — {{ task.error.message }}
+      </p>
+      } @if (task.result) {
+      <pre class="result-preview">{{ renderedResult(task) }}</pre>
+      <div class="task-actions">
+        <button
+          type="button"
+          class="secondary"
+          (click)="exportResult(task, 'json')"
+        >
+          {{ config().labels?.exportJson ?? 'Export JSON' }}
+        </button>
+        <button
+          type="button"
+          class="secondary"
+          (click)="exportResult(task, 'text')"
+        >
+          {{ config().labels?.exportText ?? 'Export text' }}
+        </button>
+      </div>
+      } @if (task.raw) {
+      <details class="raw-diagnostics">
+        <summary>Raw extraction diagnostics</summary>
+        <p>
+          This data is diagnostic only. It was not emitted as a completed
+          capture document.
+        </p>
+        <pre>{{ task.raw.sourceText }}</pre>
+        <button type="button" class="secondary" (click)="exportRaw(task)">
+          {{ config().labels?.exportRaw ?? 'Export raw diagnostics' }}
+        </button>
+      </details>
+      } @if ( task.status === 'completed' || task.status === 'failed' ||
+      task.status === 'canceled' ) {
+      <div class="task-actions remove-action">
+        <button type="button" class="ghost" (click)="remove(task.id)">
+          {{ config().labels?.remove ?? 'Clear data' }}
+        </button>
+      </div>
+      }
+    </li>
+    }
+  </ol>
+  }
+</section>

@@ -1,0 +1,7 @@
+src-tauri/target/
+src-tauri/icons/icon.ico
+src-tauri/binaries/*.exe
+src-tauri/resources/capture-runtime-manifest.json
+src-tauri/resources/capture-document-v1.schema.json
+src-tauri/resources/.runtime-stage.json
+scripts/fixtures/deterministic-runtime/target/

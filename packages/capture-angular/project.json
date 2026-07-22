@@ -1,0 +1,62 @@
+{
+  "name": "capture-angular",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "packages/capture-angular/src",
+  "prefix": "lib",
+  "projectType": "library",
+  "release": {
+    "version": {
+      "manifestRootsToUpdate": ["dist/{projectRoot}"],
+      "currentVersionResolver": "git-tag",
+      "fallbackCurrentVersionResolver": "disk"
+    }
+  },
+  "tags": ["scope:capture", "type:ui"],
+  "targets": {
+    "build": {
+      "executor": "@nx/angular:package",
+      "outputs": ["{workspaceRoot}/dist/{projectRoot}"],
+      "options": {
+        "project": "packages/capture-angular/ng-package.json",
+        "tsConfig": "packages/capture-angular/tsconfig.lib.json"
+      },
+      "configurations": {
+        "production": {
+          "tsConfig": "packages/capture-angular/tsconfig.lib.prod.json"
+        },
+        "development": {}
+      },
+      "defaultConfiguration": "production"
+    },
+    "pack": {
+      "executor": "nx:run-commands",
+      "dependsOn": ["build"],
+      "outputs": ["{workspaceRoot}/dist/packs"],
+      "options": {
+        "cwd": "dist/packages/capture-angular",
+        "command": "pnpm pack --pack-destination ../../packs"
+      }
+    },
+    "clean-consumer-smoke": {
+      "executor": "nx:run-commands",
+      "dependsOn": ["pack"],
+      "options": {
+        "command": "node tools/clean-angular-consumer-smoke.mjs"
+      }
+    },
+    "nx-release-publish": {
+      "options": {
+        "packageRoot": "dist/{projectRoot}"
+      }
+    },
+    "test": {
+      "executor": "@nx/angular:unit-test",
+      "options": {
+        "watch": false
+      }
+    },
+    "lint": {
+      "executor": "@nx/eslint:lint"
+    }
+  }
+}

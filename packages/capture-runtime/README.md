@@ -1,0 +1,125 @@
+# capture-runtime
+
+Independent Python 3.12 FastAPI sidecar for Capture Workbench. It accepts one PDF, image,
+or audio file per asynchronous capture job and emits provenance-bearing `RawCaptureV1` and
+strictly validated `CaptureDocumentV1` JSON.
+
+## Development
+
+```powershell
+uv sync --python 3.12
+uv run pytest
+uv run ruff check src tests
+uv run mypy src
+```
+
+Production packaging installs the optional engines explicitly:
+
+```powershell
+uv sync --python 3.12 --extra windowsml --extra whisper
+pnpm nx run capture-runtime:build-production-executable
+```
+
+From the workspace root, use `pnpm nx run capture-runtime:test` and the other declared Nx
+targets.
+
+## Runtime configuration
+
+The Tauri harness provides these environment variables. Secrets stay in the process
+environment and Authorization header; they are never accepted in URLs.
+
+- `CAPTURE_HOST=127.0.0.1`
+- `CAPTURE_PORT`
+- `CAPTURE_API_TOKEN` (at least 32 characters)
+- `CAPTURE_ALLOWED_HOSTS=127.0.0.1:<CAPTURE_PORT>` (exact authority allowlist; a bare host,
+  alternate port, or userinfo is rejected)
+- `CAPTURE_ALLOWED_ORIGINS` (comma-separated exact browser Origin allowlist)
+- `CAPTURE_ENABLE_API_DOCS=false`
+- `CAPTURE_APP_DATA_DIR`, `CAPTURE_RETENTION_HOURS`, `CAPTURE_MAX_UPLOAD_BYTES`
+- `CAPTURE_MAX_CANDIDATE_BYTES` (defaults to 8 MiB)
+- `CAPTURE_STRUCTURING_PROVIDER=ollama|fake|host` (`host` disables runtime
+  structuring and advertises only the host commit protocol)
+- `CAPTURE_EXTRACTION_PROVIDER=runtime|fake` (`runtime` is the production default)
+- `CAPTURE_WINDOWSML_MODEL_DIR`, `CAPTURE_WINDOWSML_DEVICE_ID`,
+  `CAPTURE_WINDOWSML_BUNDLE_URL`, `CAPTURE_WINDOWSML_BUNDLE_SHA256`,
+  `CAPTURE_WINDOWSML_BUNDLE_BYTES`
+- `CAPTURE_WHISPER_MODELS_DIR`, `CAPTURE_WHISPER_PRIMARY_MODEL`,
+  `CAPTURE_WHISPER_FALLBACK_MODEL`, `CAPTURE_WHISPER_PREFER_GPU`
+- `CAPTURE_MAX_PDF_PAGES`, `CAPTURE_MAX_IMAGE_PIXELS`, `CAPTURE_OCR_RENDER_SCALE`,
+  `CAPTURE_MAX_AUDIO_DURATION_MS`
+- `CAPTURE_OLLAMA_HOST`, `CAPTURE_OLLAMA_APP_DATA`, `CAPTURE_OLLAMA_PID_FILE`
+- `OLLAMA_HOST`, `OLLAMA_MODELS`
+- `CAPTURE_OLLAMA_MODEL=qwen3.5:4b`
+- `CAPTURE_OLLAMA_PROFILE_ID=capture-workbench-qwen3.5-4b-structure-v1`
+
+Run with `capture-runtime serve`. Production binds only `127.0.0.1` and disables API docs
+unless explicitly enabled for development.
+
+The deterministic extractor is deliberately opt-in. The standalone production extractor is
+implemented in this package and has no imports from Cert Prep or another host: embedded PDF
+pages use pypdf, scanned pages render through pypdfium2 and use WindowsML OCR, PNG/JPEG/WebP
+are EXIF-corrected and normalized to RGB PNG before OCR, and supported audio uses local-only
+faster-whisper models. DML has one explicit CPU retry; Whisper has a CUDA-resource CPU fallback.
+Missing dependencies or model assets produce `requirement_unavailable`, never fake content.
+
+Capture creation requires multipart fields `file`, `sourceKind=pdf|image|audio`, and optional
+`structuringMode` / `targetLanguage`, plus a UUID `X-Idempotency-Key`. The runtime sniffs the
+content and returns `422 source_kind_mismatch` when the declared kind disagrees. Uploads are
+copied in bounded chunks to an app-data staging file and atomically moved into the new job;
+terminal jobs delete the source bytes. Metadata and raw/result JSON expire after 24 hours by
+default and are pruned on startup and during requests.
+
+`GET /v1/runtime/requirements` uses stable requirement IDs. Ollama and the dedicated capture
+profile are actively probed; a marker file alone never reports readiness. WindowsML installation
+accepts only an explicitly configured URL/exact-compressed-bytes/SHA-256 descriptor. Production
+uses canonical public HTTPS (the `file://` seam is test/development only), disables redirects,
+and extracts exactly the six allowlisted ZIP entries with traversal/ADS/symlink/expansion guards.
+The `windowsml-ocr` requirement exposes that verified `artifactUrl`, `artifactFileName`, `bytes`,
+and `sha256` descriptor; other requirements do not synthesize an artifact descriptor.
+Whisper installation runs the two allowlisted Hugging Face model
+downloads in a cancellable owned subprocess after `consent: true`; extraction never downloads.
+Ollama installation also requires consent, uses `winget` only, and returns
+`manual_action_required` when `winget` is absent.
+
+`build-release-artifacts` does not inspect or depend on ambient OCR/Whisper/Ollama model stores.
+`production-preflight` runs only after the runtime, schema, and non-public NSIS verification
+installer exist. It binds their exact bytes/SHA-256 plus the WindowsML descriptor and protected
+fixture registry to separately generated clean-install evidence. The exact evidence file must
+also pass GitHub artifact-attestation verification. Unsigned local evidence always remains
+non-releaseable; see `.agents/SPECS/release-evidence-v1.md` for the external gate and required
+protected environment values.
+
+Build a canonical WindowsML asset ZIP from an explicit source directory without making that
+directory a runtime or repository dependency:
+
+```powershell
+$env:CAPTURE_WINDOWSML_BUNDLE_SOURCE_DIR = 'C:\path\to\verified-models'
+$env:CAPTURE_WINDOWSML_BUNDLE_URL = 'https://public.example/releases/capture-windowsml-ocr-windows-x64.zip'
+pnpm nx run capture-runtime:build-windowsml-bundle
+```
+
+The builder includes only the six allowlisted OCR files, uses fixed ZIP metadata and stored
+entries for byte reproducibility, verifies the archive file list/CRC, and emits a descriptor
+containing its exact bytes and lowercase SHA-256. Model files and generated bundles remain ignored
+build output.
+
+## Host structuring
+
+Run the process with `CAPTURE_STRUCTURING_PROVIDER=host` when it is embedded by
+a product that already owns an Ollama or another structured-output provider.
+In this mode `/v1/health/ready` advertises only `structuringModes: ["host"]`
+and `POST /v1/captures` rejects `structuringMode=runtime`; the sidecar therefore
+cannot start its isolated Ollama through an accidental client request.
+
+Create a capture with multipart field `structuringMode=host`. Poll until its stage is
+`awaiting_structuring`, retrieve `/raw`, and submit a full candidate to `/structure`. Invalid
+candidates return `422 invalid_structure` and terminate at `failed/structuring` while retaining
+diagnostic raw. If the host provider fails before commit, post `{code, message}` to
+`/structuring-failure`. Commit, failure, and cancel use one atomic terminal-state transition, so
+concurrent requests cannot overwrite the winning result.
+
+Provider implementations must honor their context and output budgets. Large
+documents are handled as strictly validated ordered block batches and then
+assembled with immutable raw provenance; malformed or provenance-changing
+batch output fails rather than being truncated or repaired. The assembled full
+document still passes the canonical runtime validator before completion.

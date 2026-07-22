@@ -1,0 +1,36 @@
+<main>
+  <section class="intro">
+    <p class="kicker">Capture Workbench</p>
+    <h1>Packaged workflow validation host</h1>
+    <p>
+      This Tauri-oriented reference app proves clean installation and package integration. It is
+      not the public desktop product.
+    </p>
+    <p class="client-mode" [attr.data-client-mode]="clientMode">
+      Client path: {{ clientMode }}
+    </p>
+    <div class="mode-switch" aria-label="Structuring provider">
+      <button
+        type="button"
+        [class.active]="structuringMode() === 'runtime'"
+        (click)="selectMode('runtime')"
+      >
+        Isolated runtime provider
+      </button>
+      <button
+        type="button"
+        [class.active]="structuringMode() === 'host'"
+        (click)="selectMode('host')"
+      >
+        Host provider interface
+      </button>
+    </div>
+    <p class="event" aria-live="polite">{{ lastEvent() }}</p>
+  </section>
+
+  <capture-workbench
+    [config]="config()"
+    (completed)="recordCompletion($event)"
+    (failed)="recordFailure($event)"
+  />
+</main>

@@ -1,0 +1,131 @@
+{
+  "name": "capture-runtime",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "root": "packages/capture-runtime",
+  "sourceRoot": "packages/capture-runtime/src",
+  "projectType": "application",
+  "tags": ["scope:capture", "type:backend"],
+  "targets": {
+    "serve": {
+      "continuous": true,
+      "executor": "nx:run-commands",
+      "options": {
+        "cwd": "packages/capture-runtime",
+        "command": "uv run --python 3.12 capture-runtime serve"
+      }
+    },
+    "lint": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "inputs": ["default"],
+      "options": {
+        "cwd": "packages/capture-runtime",
+        "command": "uv run --python 3.12 ruff check src scripts tests && uv run --python 3.12 ruff format --check src scripts tests"
+      }
+    },
+    "typecheck": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "inputs": ["default"],
+      "options": {
+        "cwd": "packages/capture-runtime",
+        "command": "uv run --python 3.12 mypy src"
+      }
+    },
+    "test": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "inputs": ["default"],
+      "outputs": ["{workspaceRoot}/coverage/packages/capture-runtime"],
+      "options": {
+        "cwd": "packages/capture-runtime",
+        "command": "uv run --python 3.12 pytest"
+      }
+    },
+    "build": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "inputs": ["production", "^production"],
+      "outputs": ["{projectRoot}/dist"],
+      "options": {
+        "cwd": "packages/capture-runtime",
+        "command": "uv build"
+      }
+    },
+    "generate-schema": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "inputs": ["production"],
+      "outputs": ["{projectRoot}/dist/schema"],
+      "options": {
+        "cwd": "packages/capture-runtime",
+        "command": "uv run --python 3.12 python scripts/generate_schema.py --output dist/schema/capture-document-v1.schema.json"
+      }
+    },
+    "sync-angular-schema": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "outputs": ["{workspaceRoot}/packages/capture-angular/src/lib/generated"],
+      "options": {
+        "cwd": "packages/capture-runtime",
+        "command": "uv run --python 3.12 python scripts/generate_schema.py --output ../capture-angular/src/lib/generated/capture-document-v1.schema.json --typescript-output ../capture-angular/src/lib/generated/capture-document-v1-schema.generated.ts"
+      }
+    },
+    "build-executable": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "inputs": ["production"],
+      "outputs": ["{projectRoot}/dist/executable"],
+      "options": {
+        "cwd": "packages/capture-runtime",
+        "command": "uv run --python 3.12 python scripts/build_executable.py"
+      }
+    },
+    "build-production-executable": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "inputs": ["production"],
+      "outputs": ["{projectRoot}/dist/executable"],
+      "options": {
+        "cwd": "packages/capture-runtime",
+        "command": "uv run --python 3.12 --extra windowsml --extra whisper python scripts/build_executable.py --require-engines"
+      }
+    },
+    "build-windowsml-bundle": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "outputs": ["{projectRoot}/dist/windowsml"],
+      "options": {
+        "cwd": "packages/capture-runtime",
+        "command": "uv run --python 3.12 python scripts/build_windowsml_bundle.py"
+      }
+    },
+    "production-preflight": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "options": {
+        "cwd": "packages/capture-runtime",
+        "command": "uv run --python 3.12 python scripts/production_preflight.py"
+      }
+    },
+    "build-release-artifacts": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "dependsOn": ["build-production-executable", "generate-schema"],
+      "inputs": ["production"],
+      "outputs": ["{projectRoot}/dist/release"],
+      "options": {
+        "cwd": "packages/capture-runtime",
+        "command": "uv run --python 3.12 python scripts/build_release_artifacts.py"
+      }
+    },
+    "python-version-check": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "options": {
+        "cwd": "packages/capture-runtime",
+        "command": "uv run --python 3.12 python -c \"import sys; assert sys.version_info[:2] == (3, 12)\""
+      }
+    }
+  }
+}

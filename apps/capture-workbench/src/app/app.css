@@ -1,0 +1,81 @@
+:host {
+  display: block;
+  min-height: 100vh;
+}
+
+main {
+  width: min(72rem, calc(100% - 2rem));
+  margin: 0 auto;
+  padding: 3rem 0 5rem;
+}
+
+.intro {
+  display: grid;
+  gap: 0.75rem;
+  max-width: 52rem;
+  margin-bottom: 1.5rem;
+}
+
+.intro p,
+.intro h1 {
+  margin: 0;
+}
+
+.kicker {
+  color: #4f46e5;
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+h1 {
+  color: #111827;
+  font-size: clamp(2rem, 5vw, 3.5rem);
+  line-height: 1.05;
+  letter-spacing: -0.04em;
+}
+
+.intro > p:not(.kicker, .event) {
+  max-width: 46rem;
+  color: #475569;
+  font-size: 1.05rem;
+}
+
+.mode-switch {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+button {
+  padding: 0.65rem 0.9rem;
+  color: #334155;
+  background: #fff;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.55rem;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+}
+
+button.active {
+  color: #fff;
+  background: #312e81;
+  border-color: #312e81;
+}
+
+.event {
+  color: #0f766e;
+  font-weight: 650;
+}
+
+.client-mode {
+  width: fit-content;
+  padding: 0.25rem 0.5rem;
+  color: #475569;
+  background: #e2e8f0;
+  border-radius: 999px;
+  font: 0.75rem/1.4 ui-monospace, SFMono-Regular, Consolas, monospace;
+}

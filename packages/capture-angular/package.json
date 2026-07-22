@@ -1,0 +1,20 @@
+{
+  "name": "@wodenwang820118/capture-angular",
+  "version": "0.1.0",
+  "description": "Angular capture workbench for the Capture Runtime sidecar.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/WodenWang820118/capture-workbench.git",
+    "directory": "packages/capture-angular"
+  },
+  "homepage": "https://github.com/WodenWang820118/capture-workbench#readme",
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "public"
+  },
+  "peerDependencies": {
+    "@angular/core": "^21.2.0"
+  },
+  "sideEffects": false
+}

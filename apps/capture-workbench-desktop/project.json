@@ -1,0 +1,121 @@
+{
+  "name": "capture-workbench-desktop",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "application",
+  "sourceRoot": "apps/capture-workbench-desktop/src-tauri/src",
+  "tags": ["scope:capture", "type:desktop", "platform:windows"],
+  "implicitDependencies": ["capture-workbench"],
+  "targets": {
+    "dev": {
+      "continuous": true,
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm exec tauri dev --target x86_64-pc-windows-msvc --config apps/capture-workbench-desktop/src-tauri/tauri.conf.json"
+      }
+    },
+    "build": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "outputs": [
+        "{projectRoot}/src-tauri/target/x86_64-pc-windows-msvc/release/capture-workbench-desktop.exe"
+      ],
+      "options": {
+        "command": "pnpm exec tauri build --target x86_64-pc-windows-msvc --no-bundle --ci --config apps/capture-workbench-desktop/src-tauri/tauri.conf.json"
+      }
+    },
+    "build-nsis-release": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "outputs": [
+        "{projectRoot}/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis"
+      ],
+      "options": {
+        "commands": [
+          "node apps/capture-workbench-desktop/scripts/assert-staged-runtime.mjs --release",
+          "pnpm exec tauri build --target x86_64-pc-windows-msvc --bundles nsis --ci --config apps/capture-workbench-desktop/src-tauri/tauri.conf.json"
+        ],
+        "parallel": false
+      }
+    },
+    "build-nsis-deterministic": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "dependsOn": ["stage-deterministic-runtime"],
+      "outputs": [
+        "{projectRoot}/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis"
+      ],
+      "options": {
+        "commands": [
+          "node apps/capture-workbench-desktop/scripts/assert-staged-runtime.mjs --deterministic",
+          "pnpm exec tauri build --target x86_64-pc-windows-msvc --bundles nsis --ci --config apps/capture-workbench-desktop/src-tauri/tauri.conf.json"
+        ],
+        "parallel": false
+      }
+    },
+    "cargo-fmt": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo fmt --manifest-path apps/capture-workbench-desktop/src-tauri/Cargo.toml"
+      }
+    },
+    "cargo-fmt-check": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo fmt --manifest-path apps/capture-workbench-desktop/src-tauri/Cargo.toml -- --check"
+      }
+    },
+    "cargo-check": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo check --manifest-path apps/capture-workbench-desktop/src-tauri/Cargo.toml"
+      }
+    },
+    "cargo-test": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo test --manifest-path apps/capture-workbench-desktop/src-tauri/Cargo.toml"
+      }
+    },
+    "stage-deterministic-runtime": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "outputs": [
+        "{projectRoot}/src-tauri/binaries/capture-runtime-x86_64-pc-windows-msvc.exe",
+        "{projectRoot}/src-tauri/resources/capture-runtime-manifest.json",
+        "{projectRoot}/src-tauri/resources/capture-document-v1.schema.json"
+      ],
+      "options": {
+        "command": "node apps/capture-workbench-desktop/scripts/stage-deterministic-runtime.mjs"
+      }
+    },
+    "package-qa-test": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "node --test apps/capture-workbench-desktop/scripts/*.test.mjs tools/*.test.mjs"
+      }
+    },
+    "package-qa": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "dependsOn": ["build-nsis-deterministic"],
+      "outputs": ["{workspaceRoot}/tmp/capture-workbench-desktop/package-qa"],
+      "options": {
+        "command": "node apps/capture-workbench-desktop/scripts/package-qa.mjs"
+      }
+    },
+    "smoke-deterministic": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "dependsOn": ["stage-deterministic-runtime"],
+      "outputs": ["{workspaceRoot}/tmp/capture-workbench-desktop/smoke"],
+      "options": {
+        "command": "node apps/capture-workbench-desktop/scripts/deterministic-smoke.mjs"
+      }
+    }
+  }
+}

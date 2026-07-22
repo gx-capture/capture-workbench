@@ -1,0 +1,56 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
+const root = resolve(import.meta.dirname, '..');
+const requestedTag = process.argv[2] ?? process.env.GITHUB_REF_NAME;
+
+if (!requestedTag) {
+  throw new Error('Pass a release tag such as v0.1.0.');
+}
+
+const releaseVersion = requestedTag.startsWith('v')
+  ? requestedTag.slice(1)
+  : requestedTag;
+if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(releaseVersion)) {
+  throw new Error(`Unsupported release tag: ${requestedTag}`);
+}
+
+const read = (relativePath) =>
+  readFileSync(resolve(root, relativePath), 'utf8');
+const jsonVersion = (relativePath) => JSON.parse(read(relativePath)).version;
+const tomlVersion = (relativePath) =>
+  read(relativePath).match(/^version\s*=\s*"([^"]+)"/m)?.[1];
+const pythonVersion = read(
+  'packages/capture-runtime/src/capture_runtime/constants.py',
+).match(/^RUNTIME_VERSION:\s*Final\s*=\s*"([^"]+)"/m)?.[1];
+
+const versions = new Map([
+  ['Angular package', jsonVersion('packages/capture-angular/package.json')],
+  [
+    'Python runtime package',
+    tomlVersion('packages/capture-runtime/pyproject.toml'),
+  ],
+  ['Python runtime constant', pythonVersion],
+  [
+    'Tauri crate',
+    tomlVersion('apps/capture-workbench-desktop/src-tauri/Cargo.toml'),
+  ],
+  [
+    'Tauri application',
+    jsonVersion('apps/capture-workbench-desktop/src-tauri/tauri.conf.json'),
+  ],
+]);
+
+const mismatches = [...versions].filter(
+  ([, version]) => version !== releaseVersion,
+);
+if (mismatches.length) {
+  const detail = mismatches
+    .map(([artifact, version]) => `${artifact}: ${version ?? '<missing>'}`)
+    .join('\n- ');
+  throw new Error(`Release ${requestedTag} is not synchronized:\n- ${detail}`);
+}
+
+process.stdout.write(
+  `Release versions are synchronized at ${releaseVersion}.\n`,
+);

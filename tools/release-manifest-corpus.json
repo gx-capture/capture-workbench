@@ -1,0 +1,176 @@
+{
+  "cases": [
+    {
+      "name": "valid-canonical-v1",
+      "valid": true,
+      "manifest": {
+        "manifestVersion": "1",
+        "runtimeVersion": "0.1.0",
+        "apiVersion": "1.0",
+        "captureDocumentSchemaVersion": "1",
+        "platform": "windows",
+        "arch": "x86_64",
+        "fileName": "capture-runtime-x86_64-pc-windows-msvc.exe",
+        "bytes": 42,
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "schemaFileName": "capture-document-v1.schema.json",
+        "schemaSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+        "runtimeRequirements": {
+          "windowsml-ocr": {
+            "artifactUrl": "https://github.com/WodenWang820118/capture-workbench/releases/download/windowsml-v1/capture-windowsml-ocr-windows-x64.zip",
+            "artifactFileName": "capture-windowsml-ocr-windows-x64.zip",
+            "bytes": 123456,
+            "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+          }
+        }
+      }
+    },
+    {
+      "name": "valid-runtime-bytes-minimum",
+      "valid": true,
+      "patch": { "bytes": 1 }
+    },
+    {
+      "name": "valid-runtime-bytes-maximum",
+      "valid": true,
+      "patch": { "bytes": 536870912 }
+    },
+    {
+      "name": "reject-zero-runtime-bytes",
+      "valid": false,
+      "patch": { "bytes": 0 }
+    },
+    {
+      "name": "reject-oversized-runtime-bytes",
+      "valid": false,
+      "patch": { "bytes": 536870913 }
+    },
+    {
+      "name": "reject-unsafe-large-runtime-bytes",
+      "valid": false,
+      "patch": { "bytes": 9007199254740992 }
+    },
+    {
+      "name": "reject-string-runtime-bytes",
+      "valid": false,
+      "patch": { "bytes": "42" }
+    },
+    {
+      "name": "reject-unknown-top-level-field",
+      "valid": false,
+      "patch": { "unexpected": true }
+    },
+    {
+      "name": "reject-missing-schema-digest",
+      "valid": false,
+      "remove": "schemaSha256"
+    },
+    {
+      "name": "reject-legacy-runtime-file-name",
+      "valid": false,
+      "patch": { "fileName": "capture-runtime.exe" }
+    },
+    {
+      "name": "reject-uppercase-runtime-digest",
+      "valid": false,
+      "patch": {
+        "sha256": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+      }
+    },
+    {
+      "name": "reject-extra-requirement",
+      "valid": false,
+      "requirementPatch": { "unexpected": {} }
+    },
+    {
+      "name": "reject-extra-descriptor-field",
+      "valid": false,
+      "descriptorPatch": { "token": "secret" }
+    },
+    {
+      "name": "reject-descriptor-file-name-drift",
+      "valid": false,
+      "descriptorPatch": { "artifactFileName": "different.zip" }
+    },
+    {
+      "name": "reject-missing-descriptor-bytes",
+      "valid": false,
+      "descriptorRemove": "bytes"
+    },
+    {
+      "name": "reject-query-url",
+      "valid": false,
+      "descriptorPatch": {
+        "artifactUrl": "https://downloads.example.org/capture-windowsml.zip?token=secret"
+      }
+    },
+    {
+      "name": "reject-credential-url",
+      "valid": false,
+      "descriptorPatch": {
+        "artifactUrl": "https://token@downloads.example.org/capture-windowsml.zip"
+      }
+    },
+    {
+      "name": "reject-fragment-url",
+      "valid": false,
+      "descriptorPatch": {
+        "artifactUrl": "https://downloads.example.org/capture-windowsml.zip#fragment"
+      }
+    },
+    {
+      "name": "reject-default-port-url",
+      "valid": false,
+      "descriptorPatch": {
+        "artifactUrl": "https://downloads.example.org:443/capture-windowsml.zip"
+      }
+    },
+    {
+      "name": "reject-private-ip-literal",
+      "valid": false,
+      "descriptorPatch": {
+        "artifactUrl": "https://192.168.1.4/capture-windowsml.zip"
+      }
+    },
+    {
+      "name": "reject-ipv6-literal",
+      "valid": false,
+      "descriptorPatch": {
+        "artifactUrl": "https://[2001:4860:4860::8888]/capture-windowsml.zip"
+      }
+    },
+    {
+      "name": "reject-localhost",
+      "valid": false,
+      "descriptorPatch": {
+        "artifactUrl": "https://localhost/capture-windowsml.zip"
+      }
+    },
+    {
+      "name": "reject-uppercase-host",
+      "valid": false,
+      "descriptorPatch": {
+        "artifactUrl": "https://Downloads.example.org/capture-windowsml.zip"
+      }
+    },
+    {
+      "name": "reject-percent-escape",
+      "valid": false,
+      "descriptorPatch": {
+        "artifactUrl": "https://downloads.example.org/capture%2dwindowsml.zip"
+      }
+    },
+    {
+      "name": "reject-dot-segment",
+      "valid": false,
+      "descriptorPatch": {
+        "artifactUrl": "https://downloads.example.org/releases/../capture-windowsml.zip"
+      }
+    },
+    {
+      "name": "reject-oversized-descriptor",
+      "valid": false,
+      "descriptorPatch": { "bytes": 536870913 }
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "manifestVersion": "1",
+  "runtimeVersion": "0.1.0",
+  "apiVersion": "1.0",
+  "captureDocumentSchemaVersion": "1",
+  "platform": "windows",
+  "arch": "x86_64",
+  "fileName": "capture-runtime-x86_64-pc-windows-msvc.exe",
+  "bytes": 1,
+  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "schemaFileName": "capture-document-v1.schema.json",
+  "schemaSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "runtimeRequirements": {
+    "windowsml-ocr": {
+      "artifactUrl": "https://github.com/WodenWang820118/capture-workbench/releases/download/windowsml-v1/capture-windowsml-ocr-windows-x64.zip",
+      "artifactFileName": "capture-windowsml-ocr-windows-x64.zip",
+      "bytes": 1,
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  }
+}

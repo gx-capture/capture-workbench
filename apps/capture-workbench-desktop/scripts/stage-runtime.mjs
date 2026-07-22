@@ -1,0 +1,361 @@
+import { createHash } from 'node:crypto';
+import { createReadStream } from 'node:fs';
+import {
+  copyFile,
+  mkdir,
+  readFile,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+export const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+export const stagedExecutable = join(
+  appRoot,
+  'src-tauri',
+  'binaries',
+  'capture-runtime-x86_64-pc-windows-msvc.exe',
+);
+export const stagedManifest = join(
+  appRoot,
+  'src-tauri',
+  'resources',
+  'capture-runtime-manifest.json',
+);
+export const stagedSchema = join(
+  appRoot,
+  'src-tauri',
+  'resources',
+  'capture-document-v1.schema.json',
+);
+export const stageProvenance = join(
+  appRoot,
+  'src-tauri',
+  'resources',
+  '.runtime-stage.json',
+);
+
+const expected = Object.freeze({
+  manifestVersion: '1',
+  runtimeVersion: '0.1.0',
+  apiVersion: '1.0',
+  captureDocumentSchemaVersion: '1',
+  platform: 'windows',
+  arch: 'x86_64',
+  fileName: 'capture-runtime-x86_64-pc-windows-msvc.exe',
+  schemaFileName: 'capture-document-v1.schema.json',
+});
+
+const manifestFields = Object.freeze([
+  'apiVersion',
+  'arch',
+  'bytes',
+  'captureDocumentSchemaVersion',
+  'fileName',
+  'manifestVersion',
+  'platform',
+  'runtimeRequirements',
+  'runtimeVersion',
+  'schemaFileName',
+  'schemaSha256',
+  'sha256',
+]);
+export const MAX_RUNTIME_ARTIFACT_BYTES = 536_870_912;
+const maxWindowsmlBundleBytes = 536_870_912;
+
+export async function validateRuntime(manifestPath, artifactPath, schemaPath) {
+  const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+  validateManifestShape(manifest);
+  const artifact = await stat(artifactPath);
+  if (!artifact.isFile()) {
+    throw new Error('Capture runtime artifact must be a regular file.');
+  }
+  if (artifact.size !== manifest.bytes) {
+    throw new Error(
+      `Capture runtime byte count mismatch: expected ${manifest.bytes}, found ${artifact.size}.`,
+    );
+  }
+  const digest = await sha256File(artifactPath);
+  if (digest !== manifest.sha256.toLowerCase()) {
+    throw new Error('Capture runtime SHA-256 mismatch.');
+  }
+  const schema = await stat(schemaPath);
+  if (!schema.isFile()) {
+    throw new Error('Capture document schema must be a regular file.');
+  }
+  const schemaText = await readFile(schemaPath, 'utf8');
+  const schemaDocument = JSON.parse(schemaText);
+  if (
+    !schemaDocument ||
+    typeof schemaDocument !== 'object' ||
+    Array.isArray(schemaDocument)
+  ) {
+    throw new Error('Capture document schema must be a JSON object.');
+  }
+  const schemaDigest = await sha256File(schemaPath);
+  if (schemaDigest !== manifest.schemaSha256.toLowerCase()) {
+    throw new Error('Capture document schema SHA-256 mismatch.');
+  }
+  return { manifest, digest, schemaDigest };
+}
+
+export function validateManifestShape(manifest) {
+  if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) {
+    throw new Error('Capture runtime manifest must be a JSON object.');
+  }
+  if (
+    JSON.stringify(Object.keys(manifest).sort()) !==
+    JSON.stringify(manifestFields)
+  ) {
+    throw new Error(
+      'Capture runtime manifest contains missing or unsupported fields.',
+    );
+  }
+  for (const [name, value] of Object.entries(expected)) {
+    if (manifest[name] !== value) {
+      throw new Error(`Capture runtime ${name} must equal ${value}.`);
+    }
+  }
+  if (
+    !Number.isSafeInteger(manifest.bytes) ||
+    manifest.bytes < 1 ||
+    manifest.bytes > MAX_RUNTIME_ARTIFACT_BYTES
+  ) {
+    throw new Error(
+      'Capture runtime bytes must be an integer from 1 through 536870912.',
+    );
+  }
+  if (
+    typeof manifest.sha256 !== 'string' ||
+    !/^[a-f0-9]{64}$/u.test(manifest.sha256)
+  ) {
+    throw new Error(
+      'Capture runtime sha256 must contain 64 hexadecimal characters.',
+    );
+  }
+  if (
+    typeof manifest.schemaSha256 !== 'string' ||
+    !/^[a-f0-9]{64}$/u.test(manifest.schemaSha256)
+  ) {
+    throw new Error(
+      'Capture document schemaSha256 must contain 64 hexadecimal characters.',
+    );
+  }
+  if (
+    !manifest.runtimeRequirements ||
+    typeof manifest.runtimeRequirements !== 'object' ||
+    Array.isArray(manifest.runtimeRequirements) ||
+    JSON.stringify(Object.keys(manifest.runtimeRequirements)) !==
+      JSON.stringify(['windowsml-ocr'])
+  ) {
+    throw new Error(
+      'Capture runtime manifest requires only runtimeRequirements.windowsml-ocr.',
+    );
+  }
+  const windowsml = manifest.runtimeRequirements['windowsml-ocr'];
+  validateWindowsmlRequirement(windowsml);
+}
+
+function validateWindowsmlRequirement(descriptor) {
+  if (
+    !descriptor ||
+    typeof descriptor !== 'object' ||
+    Array.isArray(descriptor)
+  ) {
+    throw new Error('WindowsML runtime requirement must be a JSON object.');
+  }
+  const fields = Object.keys(descriptor).sort();
+  if (
+    fields.length !== 4 ||
+    fields[0] !== 'artifactFileName' ||
+    fields[1] !== 'artifactUrl' ||
+    fields[2] !== 'bytes' ||
+    fields[3] !== 'sha256'
+  ) {
+    throw new Error(
+      'WindowsML runtime requirement contains unsupported descriptor fields.',
+    );
+  }
+  if (
+    typeof descriptor.artifactUrl !== 'string' ||
+    descriptor.artifactUrl.includes('%') ||
+    descriptor.artifactUrl.includes('\\') ||
+    [...descriptor.artifactUrl].some(
+      (character) => character.codePointAt(0) < 0x20,
+    )
+  ) {
+    throw new Error('WindowsML artifact URL is invalid.');
+  }
+  const match = descriptor.artifactUrl.match(
+    /^https:\/\/((?=.{1,253}\/)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*\.[a-z]{2,63})(\/(?:[A-Za-z0-9._~-]+\/)*([A-Za-z0-9._-]+\.zip))$/u,
+  );
+  if (!match) {
+    throw new Error('WindowsML artifact URL is invalid.');
+  }
+  if (match[2].split('/').some((segment) => ['.', '..'].includes(segment))) {
+    throw new Error('WindowsML artifact URL is invalid.');
+  }
+  const hostname = match[1];
+  if (
+    hostname === 'localhost' ||
+    ['.invalid', '.example', '.test', '.localhost'].some((suffix) =>
+      hostname.endsWith(suffix),
+    )
+  ) {
+    throw new Error(
+      'WindowsML artifact URL must be public HTTPS without credentials, query, or fragment.',
+    );
+  }
+  const urlFileName = match[3];
+  if (
+    typeof descriptor.artifactFileName !== 'string' ||
+    descriptor.artifactFileName !== urlFileName ||
+    descriptor.artifactFileName.length === 0 ||
+    /[\\/:]/u.test(descriptor.artifactFileName) ||
+    !/^[A-Za-z0-9._-]+\.zip$/iu.test(descriptor.artifactFileName)
+  ) {
+    throw new Error(
+      'WindowsML artifactFileName must be the plain .zip name from artifactUrl.',
+    );
+  }
+  if (
+    !Number.isSafeInteger(descriptor.bytes) ||
+    descriptor.bytes < 1 ||
+    descriptor.bytes > maxWindowsmlBundleBytes
+  ) {
+    throw new Error(
+      'WindowsML artifact bytes must be an integer from 1 through 536870912.',
+    );
+  }
+  if (
+    typeof descriptor.sha256 !== 'string' ||
+    !/^[a-f0-9]{64}$/u.test(descriptor.sha256)
+  ) {
+    throw new Error(
+      'WindowsML artifact sha256 must contain 64 lowercase hexadecimal characters.',
+    );
+  }
+}
+
+export async function stageRuntime({
+  artifactPath,
+  manifestPath,
+  schemaPath,
+  source,
+}) {
+  if (!['release', 'deterministic'].includes(source)) {
+    throw new Error('Runtime stage source must be release or deterministic.');
+  }
+  const resolvedArtifact = resolveInput(artifactPath);
+  const resolvedManifest = resolveInput(manifestPath);
+  const resolvedSchema = resolveInput(schemaPath);
+  const { manifest } = await validateRuntime(
+    resolvedManifest,
+    resolvedArtifact,
+    resolvedSchema,
+  );
+
+  await mkdir(dirname(stagedExecutable), { recursive: true });
+  await mkdir(dirname(stagedManifest), { recursive: true });
+  await atomicCopy(resolvedArtifact, stagedExecutable);
+  await atomicCopy(resolvedSchema, stagedSchema);
+  await atomicWrite(stagedManifest, `${JSON.stringify(manifest, null, 2)}\n`);
+  await atomicWrite(
+    stageProvenance,
+    `${JSON.stringify(
+      {
+        source,
+        runtimeVersion: manifest.runtimeVersion,
+        schemaSha256: manifest.schemaSha256,
+        windowsmlBundleSha256:
+          manifest.runtimeRequirements?.['windowsml-ocr']?.sha256 ?? null,
+        windowsmlBundleBytes:
+          manifest.runtimeRequirements?.['windowsml-ocr']?.bytes ?? null,
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  await validateRuntime(stagedManifest, stagedExecutable, stagedSchema);
+  return {
+    manifest,
+    source,
+    stagedExecutable,
+    stagedManifest,
+    stagedSchema,
+  };
+}
+
+async function atomicCopy(source, destination) {
+  const temporary = `${destination}.tmp`;
+  await rm(temporary, { force: true });
+  await copyFile(source, temporary);
+  await rm(destination, { force: true });
+  await rename(temporary, destination);
+}
+
+async function atomicWrite(destination, content) {
+  const temporary = `${destination}.tmp`;
+  await rm(temporary, { force: true });
+  await writeFile(temporary, content, { encoding: 'utf8', flag: 'wx' });
+  await rm(destination, { force: true });
+  await rename(temporary, destination);
+}
+
+export async function sha256File(path) {
+  const hash = createHash('sha256');
+  for await (const chunk of createReadStream(path)) {
+    hash.update(chunk);
+  }
+  return hash.digest('hex');
+}
+
+function resolveInput(path) {
+  if (typeof path !== 'string' || path.trim().length === 0) {
+    throw new Error('A runtime staging path is required.');
+  }
+  return isAbsolute(path) ? path : resolve(process.cwd(), path);
+}
+
+function parseArguments(args) {
+  const values = new Map();
+  for (let index = 0; index < args.length; index += 1) {
+    const name = args[index];
+    if (!['--artifact', '--manifest', '--schema', '--source'].includes(name)) {
+      throw new Error(`Unknown runtime staging argument: ${name}`);
+    }
+    const value = args[index + 1];
+    if (!value || value.startsWith('--')) {
+      throw new Error(`Missing value for ${name}.`);
+    }
+    values.set(name, value);
+    index += 1;
+  }
+  return {
+    artifactPath: values.get('--artifact'),
+    manifestPath: values.get('--manifest'),
+    schemaPath: values.get('--schema'),
+    source: values.get('--source') ?? 'release',
+  };
+}
+
+if (
+  process.argv[1] &&
+  pathToFileURL(resolve(process.argv[1])).href === import.meta.url
+) {
+  stageRuntime(parseArguments(process.argv.slice(2)))
+    .then(({ manifest, source }) => {
+      process.stdout.write(
+        `Staged ${source} Capture runtime ${manifest.runtimeVersion}; digest verified.\n`,
+      );
+    })
+    .catch((error) => {
+      process.stderr.write(
+        `${error instanceof Error ? error.message : String(error)}\n`,
+      );
+      process.exitCode = 1;
+    });
+}

@@ -1,0 +1,1114 @@
+"""Isolated Ollama lifecycle, strict provider, and winget-only installation abstraction."""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import threading
+import zipfile
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from pathlib import Path
+from typing import BinaryIO, Protocol
+from urllib.parse import unquote, urlsplit
+from uuid import uuid4
+
+import httpx
+
+from capture_runtime.clock import Clock
+from capture_runtime.config import (
+    ExtractionRuntimeConfig,
+    OllamaRuntimeConfig,
+    sanitized_child_environment,
+)
+from capture_runtime.constants import (
+    OLLAMA_MODEL_REQUIREMENT_ID,
+    OLLAMA_RUNTIME_REQUIREMENT_ID,
+    WHISPER_REQUIREMENT_ID,
+    WINDOWSML_REQUIREMENT_ID,
+)
+from capture_runtime.contracts import (
+    CaptureBlockV1,
+    CaptureEngineV1,
+    RawCaptureSegmentV1,
+    RawCaptureV1,
+    RuntimeArtifactDescriptorV1,
+    RuntimeRequirementStatus,
+    RuntimeRequirementV1,
+)
+from capture_runtime.engine_adapters import (
+    WINDOWSML_REQUIRED_MODEL_FILES,
+    OcrAdapter,
+    WhisperAdapter,
+)
+from capture_runtime.release import (
+    MAX_WINDOWSML_BUNDLE_BYTES,
+    _canonical_public_https_artifact,
+    windowsml_requirement_descriptor,
+)
+from capture_runtime.structuring import (
+    CAPTURE_BLOCK_BATCH_SCHEMA,
+    DEFAULT_STRUCTURING_NUM_CTX,
+    DEFAULT_STRUCTURING_NUM_PREDICT,
+    assemble_structuring_document,
+    build_structuring_batch_prompt,
+    plan_structuring_batches,
+    structuring_batch_generation_options,
+    validate_structuring_batch,
+)
+
+
+class OllamaOwnershipError(RuntimeError):
+    pass
+
+
+class RuntimeUnavailableError(RuntimeError):
+    pass
+
+
+class ManualActionRequiredError(RuntimeError):
+    pass
+
+
+@dataclass(slots=True)
+class OwnedProcess:
+    process: subprocess.Popen[bytes]
+    output: BinaryIO
+
+    @property
+    def pid(self) -> int:
+        return self.process.pid
+
+    def poll(self) -> int | None:
+        return self.process.poll()
+
+
+class ProcessController(Protocol):
+    def is_pid_running(self, pid: int) -> bool: ...
+
+    def spawn(
+        self,
+        executable: str,
+        arguments: list[str],
+        *,
+        environment: Mapping[str, str],
+        cwd: Path,
+        output_path: Path,
+    ) -> OwnedProcess: ...
+
+    def stop_tree(self, process: OwnedProcess) -> None: ...
+
+
+class SubprocessController:
+    def is_pid_running(self, pid: int) -> bool:
+        if pid <= 0:
+            return False
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            return False
+        return True
+
+    def spawn(
+        self,
+        executable: str,
+        arguments: list[str],
+        *,
+        environment: Mapping[str, str],
+        cwd: Path,
+        output_path: Path,
+    ) -> OwnedProcess:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output = output_path.open("ab")
+        creation_flags = 0
+        if os.name == "nt":
+            creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
+        try:
+            process = subprocess.Popen(
+                [executable, *arguments],
+                cwd=cwd,
+                env=dict(environment),
+                stdin=subprocess.DEVNULL,
+                stdout=output,
+                stderr=subprocess.STDOUT,
+                shell=False,
+                creationflags=creation_flags,
+            )
+        except Exception:
+            output.close()
+            raise
+        return OwnedProcess(process=process, output=output)
+
+    def stop_tree(self, process: OwnedProcess) -> None:
+        try:
+            if process.poll() is not None:
+                return
+            if os.name == "nt":
+                subprocess.run(
+                    ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    shell=False,
+                    check=False,
+                    timeout=15,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                )
+            else:
+                process.process.terminate()
+                try:
+                    process.process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    process.process.kill()
+                    process.process.wait(timeout=5)
+        finally:
+            process.output.close()
+
+
+def _atomic_json(path: Path, payload: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        while chunk := source.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+_MAX_WINDOWSML_UNCOMPRESSED_BYTES = 2 * 1024 * 1024 * 1024
+_MAX_WINDOWSML_ENTRY_BYTES = 1536 * 1024 * 1024
+_MAX_WINDOWSML_COMPRESSION_RATIO = 200
+
+
+def _extract_safe_zip(
+    archive: Path,
+    destination: Path,
+    cancel_event: asyncio.Event,
+) -> None:
+    destination.mkdir(parents=True, exist_ok=False)
+    root = destination.resolve()
+    total_uncompressed = 0
+    with zipfile.ZipFile(archive) as bundle:
+        members = bundle.infolist()
+        names = [member.filename for member in members]
+        if len(names) != len(set(names)):
+            raise RuntimeError("WindowsML bundle contains duplicate entries")
+        if len(names) != len(WINDOWSML_REQUIRED_MODEL_FILES) or set(names) != set(
+            WINDOWSML_REQUIRED_MODEL_FILES
+        ):
+            raise RuntimeError("WindowsML bundle must contain exactly the six allowlisted files")
+        for member in members:
+            if cancel_event.is_set():
+                raise asyncio.CancelledError
+            if (
+                member.is_dir()
+                or "\\" in member.filename
+                or ":" in member.filename
+                or member.flag_bits & 0x1
+            ):
+                raise RuntimeError("WindowsML bundle contains an unsafe entry")
+            member_path = Path(member.filename)
+            mode = (member.external_attr >> 16) & 0o170000
+            if mode == 0o120000:
+                raise RuntimeError("WindowsML bundle must not contain symbolic links")
+            total_uncompressed += member.file_size
+            if (
+                member.file_size > _MAX_WINDOWSML_ENTRY_BYTES
+                or total_uncompressed > _MAX_WINDOWSML_UNCOMPRESSED_BYTES
+                or (
+                    member.file_size > 0
+                    and (
+                        member.compress_size == 0
+                        or member.file_size
+                        > member.compress_size * _MAX_WINDOWSML_COMPRESSION_RATIO
+                    )
+                )
+            ):
+                raise RuntimeError("WindowsML bundle exceeds the extraction size limit")
+            target = (destination / member_path).resolve()
+            if target != root and root not in target.parents:
+                raise RuntimeError("WindowsML bundle escaped the extraction directory")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with bundle.open(member) as source, target.open("xb") as output:
+                while chunk := source.read(1024 * 1024):
+                    if cancel_event.is_set():
+                        raise asyncio.CancelledError
+                    output.write(chunk)
+
+
+class IsolatedOllamaLifecycle:
+    """Own exactly one Capture-specific Ollama server process and no foreign PID."""
+
+    def __init__(
+        self,
+        config: OllamaRuntimeConfig,
+        *,
+        process_controller: ProcessController | None = None,
+        executable_resolver: Callable[[], str | None] | None = None,
+        clock: Clock,
+    ) -> None:
+        self.config = config
+        self._controller = process_controller or SubprocessController()
+        self._resolve_executable = executable_resolver or (lambda: shutil.which("ollama"))
+        self._clock = clock
+        self._owned: OwnedProcess | None = None
+        self._lock = threading.RLock()
+
+    def executable(self) -> str | None:
+        return self._resolve_executable()
+
+    def start(self) -> int:
+        with self._lock:
+            if self._owned is not None and self._owned.poll() is None:
+                return self._owned.pid
+            self._reject_unowned_live_pid()
+            executable = self.executable()
+            if executable is None:
+                raise RuntimeUnavailableError("Ollama executable is not installed")
+            self.config.app_data_dir.mkdir(parents=True, exist_ok=True)
+            self.config.models_dir.mkdir(parents=True, exist_ok=True)
+            owned = self._controller.spawn(
+                executable,
+                ["serve"],
+                environment=self.config.process_environment(),
+                cwd=self.config.app_data_dir,
+                output_path=self.config.app_data_dir / "ollama.log",
+            )
+            self._owned = owned
+            _atomic_json(
+                self.config.pid_file,
+                {
+                    "pid": owned.pid,
+                    "profileId": self.config.profile_id,
+                    "startedAt": self._clock.now().isoformat(),
+                },
+            )
+            return owned.pid
+
+    def stop(self) -> None:
+        with self._lock:
+            owned = self._owned
+            if owned is None:
+                return
+            self._owned = None
+            self._controller.stop_tree(owned)
+            self._remove_pid_file_if_owned(owned.pid)
+
+    def _reject_unowned_live_pid(self) -> None:
+        if not self.config.pid_file.exists():
+            return
+        try:
+            payload = json.loads(self.config.pid_file.read_text(encoding="utf-8"))
+            pid = int(payload["pid"])
+        except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+            self.config.pid_file.unlink(missing_ok=True)
+            return
+        if self._controller.is_pid_running(pid):
+            raise OllamaOwnershipError(
+                "Capture Ollama PID file points to a live process not owned by this runtime"
+            )
+        self.config.pid_file.unlink(missing_ok=True)
+
+    def _remove_pid_file_if_owned(self, pid: int) -> None:
+        try:
+            payload = json.loads(self.config.pid_file.read_text(encoding="utf-8"))
+            if int(payload.get("pid", -1)) == pid:
+                self.config.pid_file.unlink(missing_ok=True)
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            return
+
+
+@dataclass(frozen=True, slots=True)
+class CommandResult:
+    return_code: int
+    output: str
+
+
+class CommandRunner(Protocol):
+    async def run(
+        self,
+        arguments: list[str],
+        *,
+        environment: Mapping[str, str] | None,
+        cwd: Path | None,
+        cancel_event: asyncio.Event,
+        timeout_seconds: float,
+    ) -> CommandResult: ...
+
+
+class AsyncSubprocessCommandRunner:
+    async def run(
+        self,
+        arguments: list[str],
+        *,
+        environment: Mapping[str, str] | None,
+        cwd: Path | None,
+        cancel_event: asyncio.Event,
+        timeout_seconds: float,
+    ) -> CommandResult:
+        creation_flags = 0
+        if os.name == "nt":
+            creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
+        process = await asyncio.create_subprocess_exec(
+            *arguments,
+            cwd=cwd,
+            env=None if environment is None else dict(environment),
+            stdin=subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            creationflags=creation_flags,
+        )
+        communicate = asyncio.create_task(process.communicate())
+        cancellation = asyncio.create_task(cancel_event.wait())
+        try:
+            done, _ = await asyncio.wait(
+                {communicate, cancellation},
+                timeout=timeout_seconds,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if cancellation in done and cancel_event.is_set():
+                await self._stop_process(process)
+                communicate.cancel()
+                raise asyncio.CancelledError
+            if communicate not in done:
+                await self._stop_process(process)
+                communicate.cancel()
+                raise TimeoutError(f"command timed out after {timeout_seconds:g}s")
+            output, _ = communicate.result()
+            return CommandResult(
+                return_code=process.returncode or 0,
+                output=output.decode("utf-8", errors="replace")[-4000:],
+            )
+        finally:
+            cancellation.cancel()
+
+    @staticmethod
+    async def _stop_process(process: asyncio.subprocess.Process) -> None:
+        if process.returncode is not None:
+            return
+        if os.name == "nt":
+            await asyncio.to_thread(
+                subprocess.run,
+                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                shell=False,
+                check=False,
+                timeout=15,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+        else:
+            process.terminate()
+        try:
+            await asyncio.wait_for(process.wait(), timeout=10)
+        except TimeoutError:
+            process.kill()
+            await process.wait()
+
+
+class RuntimeInstaller(Protocol):
+    def requirements(self) -> list[RuntimeRequirementV1]: ...
+
+    async def install(
+        self,
+        requirement_id: str,
+        *,
+        cancel_event: asyncio.Event,
+        report_progress: Callable[[float], None],
+    ) -> None: ...
+
+
+class SystemRuntimeInstaller:
+    """Probe/install product requirements without script-download fallbacks."""
+
+    def __init__(
+        self,
+        lifecycle: IsolatedOllamaLifecycle,
+        *,
+        command_runner: CommandRunner | None = None,
+        winget_resolver: Callable[[], str | None] | None = None,
+        extraction_config: ExtractionRuntimeConfig,
+        ocr_adapter: OcrAdapter,
+        whisper_adapter: WhisperAdapter,
+        clock: Clock,
+        http_client_factory: Callable[[], httpx.AsyncClient] | None = None,
+    ) -> None:
+        self._lifecycle = lifecycle
+        self._runner = command_runner or AsyncSubprocessCommandRunner()
+        self._resolve_winget = winget_resolver or (lambda: shutil.which("winget"))
+        self._clock = clock
+        self._markers = lifecycle.config.app_data_dir / "requirements"
+        self._extraction_config = extraction_config
+        self._ocr_adapter = ocr_adapter
+        self._whisper_adapter = whisper_adapter
+        self._http_client_factory = http_client_factory or (
+            lambda: httpx.AsyncClient(timeout=120, follow_redirects=False)
+        )
+
+    def requirements(self) -> list[RuntimeRequirementV1]:
+        ollama_available = self._lifecycle.executable() is not None
+        winget_available = self._resolve_winget() is not None
+        model_ready = self._active_model_profile_ready()
+        ocr_probe = self._ocr_adapter.probe()
+        whisper_probe = self._whisper_adapter.probe()
+        return [
+            RuntimeRequirementV1(
+                requirement_id=WINDOWSML_REQUIREMENT_ID,
+                kind="OCR",
+                display_name="WindowsML OCR",
+                status=(
+                    RuntimeRequirementStatus.READY
+                    if ocr_probe.ready
+                    else RuntimeRequirementStatus.UNAVAILABLE
+                    if not ocr_probe.code_ready
+                    else RuntimeRequirementStatus.INSTALLABLE
+                    if self._extraction_config.windowsml_bundle_url is not None
+                    else RuntimeRequirementStatus.MANUAL_ACTION_REQUIRED
+                ),
+                required_for=["pdf", "image"],
+                install_strategy="bundled",
+                detail=ocr_probe.detail,
+                artifact=self._windowsml_artifact_descriptor(),
+            ),
+            RuntimeRequirementV1(
+                requirement_id=WHISPER_REQUIREMENT_ID,
+                kind="transcription",
+                display_name="Whisper transcription",
+                status=(
+                    RuntimeRequirementStatus.READY
+                    if whisper_probe.ready
+                    else RuntimeRequirementStatus.UNAVAILABLE
+                    if not whisper_probe.code_ready
+                    else RuntimeRequirementStatus.INSTALLABLE
+                ),
+                required_for=["audio"],
+                install_strategy="bundled",
+                detail=whisper_probe.detail,
+            ),
+            RuntimeRequirementV1(
+                requirement_id=OLLAMA_RUNTIME_REQUIREMENT_ID,
+                kind="runtime",
+                display_name="Ollama application",
+                status=(
+                    RuntimeRequirementStatus.READY
+                    if ollama_available
+                    else RuntimeRequirementStatus.INSTALLABLE
+                    if winget_available
+                    else RuntimeRequirementStatus.MANUAL_ACTION_REQUIRED
+                ),
+                required_for=["runtime-structuring"],
+                install_strategy="winget",
+                detail=None if ollama_available else "Ollama must be installed with winget.",
+            ),
+            RuntimeRequirementV1(
+                requirement_id=OLLAMA_MODEL_REQUIREMENT_ID,
+                kind="model",
+                display_name="Capture structuring model",
+                status=(
+                    RuntimeRequirementStatus.READY
+                    if model_ready
+                    else RuntimeRequirementStatus.INSTALLABLE
+                    if ollama_available
+                    else RuntimeRequirementStatus.MISSING
+                ),
+                required_for=["runtime-structuring"],
+                install_strategy="ollama",
+                detail=None if model_ready else f"Requires {self._lifecycle.config.base_model}.",
+            ),
+        ]
+
+    def _windowsml_artifact_descriptor(self) -> RuntimeArtifactDescriptorV1 | None:
+        url = self._extraction_config.windowsml_bundle_url
+        byte_count = self._extraction_config.windowsml_bundle_bytes
+        digest = self._extraction_config.windowsml_bundle_sha256
+        if url is None or byte_count is None or digest is None or not url.startswith("https://"):
+            return None
+        descriptor = windowsml_requirement_descriptor(url, byte_count, digest)
+        return RuntimeArtifactDescriptorV1.model_validate(descriptor)
+
+    async def install(
+        self,
+        requirement_id: str,
+        *,
+        cancel_event: asyncio.Event,
+        report_progress: Callable[[float], None],
+    ) -> None:
+        if requirement_id == WINDOWSML_REQUIREMENT_ID:
+            await self._install_windowsml(cancel_event, report_progress)
+            return
+        if requirement_id == WHISPER_REQUIREMENT_ID:
+            await self._install_whisper(cancel_event, report_progress)
+            return
+        if requirement_id == OLLAMA_RUNTIME_REQUIREMENT_ID:
+            await self._install_ollama(cancel_event, report_progress)
+            return
+        if requirement_id == OLLAMA_MODEL_REQUIREMENT_ID:
+            await self._install_model(cancel_event, report_progress)
+            return
+        raise ValueError(f"unknown requirementId: {requirement_id}")
+
+    async def _install_windowsml(
+        self,
+        cancel_event: asyncio.Event,
+        report_progress: Callable[[float], None],
+    ) -> None:
+        url = self._extraction_config.windowsml_bundle_url
+        expected_sha256 = self._extraction_config.windowsml_bundle_sha256
+        expected_bytes = self._extraction_config.windowsml_bundle_bytes
+        if url is None or expected_sha256 is None or expected_bytes is None:
+            raise ManualActionRequiredError(
+                "A checksum-pinned WindowsML model bundle is not configured"
+            )
+        target = self._extraction_config.windowsml_model_dir
+        target.parent.mkdir(parents=True, exist_ok=True)
+        archive = target.parent / f".{target.name}.{uuid4().hex}.zip"
+        staging = target.parent / f".{target.name}.{uuid4().hex}.staging"
+        backup = target.parent / f".{target.name}.{uuid4().hex}.backup"
+        installed = False
+        report_progress(0.05)
+        try:
+            await self._download_bundle(
+                url,
+                expected_bytes,
+                archive,
+                cancel_event,
+                report_progress,
+            )
+            actual_sha256 = _sha256_file(archive)
+            if actual_sha256 != expected_sha256:
+                raise RuntimeError("WindowsML model bundle SHA-256 verification failed")
+            report_progress(0.75)
+            _extract_safe_zip(archive, staging, cancel_event)
+            missing = [
+                relative
+                for relative in (
+                    "det/inference.onnx",
+                    "det/inference.yml",
+                    "rec/inference.onnx",
+                    "rec/inference.yml",
+                    "rec/ppocr_keys_v1.txt",
+                    "pipeline.json",
+                )
+                if not (staging / relative).is_file()
+            ]
+            if missing:
+                raise RuntimeError("WindowsML model bundle is incomplete: " + ", ".join(missing))
+            if cancel_event.is_set():
+                raise asyncio.CancelledError
+            if target.exists():
+                os.replace(target, backup)
+            try:
+                os.replace(staging, target)
+            except Exception:
+                if backup.exists() and not target.exists():
+                    os.replace(backup, target)
+                raise
+            probe = self._ocr_adapter.probe()
+            if not probe.ready:
+                raise RuntimeError(f"WindowsML OCR post-install probe failed: {probe.detail}")
+            installed = True
+            shutil.rmtree(backup, ignore_errors=True)
+            report_progress(1)
+        finally:
+            archive.unlink(missing_ok=True)
+            shutil.rmtree(staging, ignore_errors=True)
+            if backup.exists() and not installed:
+                shutil.rmtree(target, ignore_errors=True)
+                os.replace(backup, target)
+            shutil.rmtree(backup, ignore_errors=True)
+
+    async def _download_bundle(
+        self,
+        url: str,
+        expected_bytes: int,
+        destination: Path,
+        cancel_event: asyncio.Event,
+        report_progress: Callable[[float], None],
+    ) -> None:
+        try:
+            await self._download_bundle_to_path(
+                url,
+                expected_bytes,
+                destination,
+                cancel_event,
+                report_progress,
+            )
+        except BaseException:
+            destination.unlink(missing_ok=True)
+            raise
+
+    async def _download_bundle_to_path(
+        self,
+        url: str,
+        expected_bytes: int,
+        destination: Path,
+        cancel_event: asyncio.Event,
+        report_progress: Callable[[float], None],
+    ) -> None:
+        if not 1 <= expected_bytes <= MAX_WINDOWSML_BUNDLE_BYTES:
+            raise RuntimeError("WindowsML bundle byte count is outside the supported range")
+        parsed = urlsplit(url)
+        if parsed.scheme == "file":
+            source = Path(unquote(parsed.path.lstrip("/")))
+            if os.name == "nt" and len(parsed.path) >= 3 and parsed.path[2] == ":":
+                source = Path(unquote(parsed.path.lstrip("/")))
+            if not source.is_file():
+                raise RuntimeError("Configured WindowsML bundle file is unavailable")
+            total = source.stat().st_size
+            if total != expected_bytes:
+                raise RuntimeError("WindowsML model bundle byte count verification failed")
+            copied = 0
+            with source.open("rb") as reader, destination.open("xb") as writer:
+                while chunk := reader.read(1024 * 1024):
+                    if cancel_event.is_set():
+                        raise asyncio.CancelledError
+                    writer.write(chunk)
+                    copied += len(chunk)
+                    report_progress(0.05 + 0.6 * (copied / expected_bytes))
+            return
+        if parsed.scheme != "https":
+            raise RuntimeError("WindowsML bundle URL must use HTTPS or file://")
+        try:
+            _canonical_public_https_artifact(url)
+        except ValueError as error:
+            raise RuntimeError(str(error)) from error
+        async with self._http_client_factory() as client:
+            async with client.stream("GET", url) as response:
+                response.raise_for_status()
+                declared_length = response.headers.get("content-length")
+                if declared_length is not None:
+                    try:
+                        content_length = int(declared_length)
+                    except ValueError as error:
+                        raise RuntimeError("WindowsML bundle Content-Length is invalid") from error
+                    if content_length != expected_bytes:
+                        raise RuntimeError(
+                            "WindowsML model bundle Content-Length verification failed"
+                        )
+                copied = 0
+                with destination.open("xb") as writer:
+                    async for chunk in response.aiter_bytes(1024 * 1024):
+                        if cancel_event.is_set():
+                            raise asyncio.CancelledError
+                        if copied + len(chunk) > expected_bytes:
+                            raise RuntimeError("WindowsML model bundle exceeded its declared bytes")
+                        writer.write(chunk)
+                        copied += len(chunk)
+                        report_progress(0.05 + 0.6 * (copied / expected_bytes))
+                if copied != expected_bytes:
+                    raise RuntimeError("WindowsML model bundle byte count verification failed")
+
+    async def _install_whisper(
+        self,
+        cancel_event: asyncio.Event,
+        report_progress: Callable[[float], None],
+    ) -> None:
+        if not self._whisper_adapter.probe().code_ready:
+            raise ManualActionRequiredError(
+                "The packaged runtime does not include faster-whisper download support"
+            )
+        models = tuple(
+            dict.fromkeys(
+                (
+                    self._extraction_config.whisper_primary_model,
+                    self._extraction_config.whisper_fallback_model,
+                )
+            )
+        )
+        for index, model in enumerate(models):
+            if cancel_event.is_set():
+                raise asyncio.CancelledError
+            output = self._extraction_config.whisper_models_dir / model
+            if getattr(sys, "frozen", False):
+                arguments = [
+                    sys.executable,
+                    "_download-whisper",
+                    "--model",
+                    model,
+                    "--output",
+                    str(output),
+                ]
+            else:
+                arguments = [
+                    sys.executable,
+                    "-m",
+                    "capture_runtime.whisper_download",
+                    "--model",
+                    model,
+                    "--output",
+                    str(output),
+                ]
+            report_progress(0.05 + (index / len(models)) * 0.85)
+            result = await self._runner.run(
+                arguments,
+                environment=self._whisper_download_environment(),
+                cwd=self._extraction_config.whisper_models_dir.parent,
+                cancel_event=cancel_event,
+                timeout_seconds=7200,
+            )
+            if result.return_code != 0:
+                raise RuntimeError(
+                    f"Whisper model download failed ({result.return_code}): {result.output}"
+                )
+        probe = self._whisper_adapter.probe()
+        if not probe.ready:
+            raise RuntimeError(f"Whisper post-install probe failed: {probe.detail}")
+        report_progress(1)
+
+    def _whisper_download_environment(self) -> dict[str, str]:
+        environment = sanitized_child_environment()
+        cache_root = self._extraction_config.whisper_models_dir.parent / ".huggingface"
+        environment.update(
+            {
+                "HF_HOME": str(cache_root),
+                "HF_HUB_CACHE": str(cache_root / "hub"),
+                "HF_HUB_DISABLE_TELEMETRY": "1",
+            }
+        )
+        return environment
+
+    async def _install_ollama(
+        self,
+        cancel_event: asyncio.Event,
+        report_progress: Callable[[float], None],
+    ) -> None:
+        winget = self._resolve_winget()
+        if winget is None:
+            raise ManualActionRequiredError("winget is unavailable; install Ollama manually")
+        report_progress(0.1)
+        result = await self._runner.run(
+            [
+                winget,
+                "install",
+                "--id",
+                "Ollama.Ollama",
+                "--exact",
+                "--silent",
+                "--accept-package-agreements",
+                "--accept-source-agreements",
+            ],
+            environment=sanitized_child_environment(),
+            cwd=None,
+            cancel_event=cancel_event,
+            timeout_seconds=900,
+        )
+        if result.return_code != 0:
+            raise RuntimeError(f"winget Ollama installation failed ({result.return_code})")
+        report_progress(1)
+
+    async def _install_model(
+        self,
+        cancel_event: asyncio.Event,
+        report_progress: Callable[[float], None],
+    ) -> None:
+        executable = self._lifecycle.executable()
+        if executable is None:
+            raise ManualActionRequiredError("Install the Ollama application first")
+        self._lifecycle.start()
+        environment = self._lifecycle.config.process_environment()
+        report_progress(0.1)
+        pull = await self._runner.run(
+            [executable, "pull", self._lifecycle.config.base_model],
+            environment=environment,
+            cwd=self._lifecycle.config.app_data_dir,
+            cancel_event=cancel_event,
+            timeout_seconds=3600,
+        )
+        if pull.return_code != 0:
+            raise RuntimeError(f"Ollama model pull failed ({pull.return_code})")
+        report_progress(0.75)
+        modelfile = self._lifecycle.config.app_data_dir / "Capture.Modelfile"
+        modelfile_text = (
+            f"FROM {self._lifecycle.config.base_model}\n"
+            "PARAMETER temperature 0\n"
+            "SYSTEM Return only JSON matching the supplied schema. "
+            "Preserve source provenance exactly.\n"
+        )
+        modelfile.write_text(modelfile_text, encoding="utf-8")
+        create = await self._runner.run(
+            [
+                executable,
+                "create",
+                self._lifecycle.config.profile_id,
+                "-f",
+                str(modelfile),
+            ],
+            environment=environment,
+            cwd=self._lifecycle.config.app_data_dir,
+            cancel_event=cancel_event,
+            timeout_seconds=600,
+        )
+        if create.return_code != 0:
+            raise RuntimeError(f"Ollama capture profile creation failed ({create.return_code})")
+        _atomic_json(
+            self._marker(OLLAMA_MODEL_REQUIREMENT_ID),
+            {
+                "profileId": self._lifecycle.config.profile_id,
+                "baseModel": self._lifecycle.config.base_model,
+                "modelfileSha256": hashlib.sha256(modelfile_text.encode()).hexdigest(),
+                "installedAt": self._clock.now().isoformat(),
+            },
+        )
+        report_progress(1)
+
+    def _active_model_profile_ready(self) -> bool:
+        if self._lifecycle.executable() is None:
+            return False
+        try:
+            response = httpx.get(
+                f"{self._lifecycle.config.host_url}/api/tags",
+                timeout=0.5,
+                follow_redirects=False,
+            )
+            response.raise_for_status()
+            models = response.json().get("models", [])
+        except (httpx.HTTPError, TypeError, ValueError):
+            return False
+        expected_names = {
+            self._lifecycle.config.profile_id,
+            f"{self._lifecycle.config.profile_id}:latest",
+        }
+        return any(
+            str(model.get("name") or model.get("model") or "") in expected_names
+            and bool(re.fullmatch(r"(?:sha256:)?[0-9a-f]{64}", str(model.get("digest") or "")))
+            for model in models
+            if isinstance(model, dict)
+        )
+
+    def _marker(self, requirement_id: str) -> Path:
+        return self._markers / f"{requirement_id}.ready.json"
+
+
+class FakeRuntimeInstaller:
+    def __init__(
+        self,
+        *,
+        initially_ready: set[str] | None = None,
+        delay_seconds: float = 0,
+        manual_requirements: set[str] | None = None,
+    ) -> None:
+        self.ready = set(initially_ready or ())
+        self.delay_seconds = delay_seconds
+        self.manual_requirements = set(manual_requirements or ())
+
+    def requirements(self) -> list[RuntimeRequirementV1]:
+        descriptions = {
+            WINDOWSML_REQUIREMENT_ID: ("OCR", "WindowsML OCR", ["pdf", "image"]),
+            WHISPER_REQUIREMENT_ID: ("transcription", "Whisper transcription", ["audio"]),
+            OLLAMA_RUNTIME_REQUIREMENT_ID: (
+                "runtime",
+                "Ollama application",
+                ["runtime-structuring"],
+            ),
+            OLLAMA_MODEL_REQUIREMENT_ID: (
+                "model",
+                "Capture structuring model",
+                ["runtime-structuring"],
+            ),
+        }
+        return [
+            RuntimeRequirementV1(
+                requirement_id=requirement_id,
+                kind=kind,
+                display_name=name,
+                status=(
+                    RuntimeRequirementStatus.READY
+                    if requirement_id in self.ready
+                    else RuntimeRequirementStatus.MANUAL_ACTION_REQUIRED
+                    if requirement_id in self.manual_requirements
+                    else RuntimeRequirementStatus.INSTALLABLE
+                ),
+                required_for=required_for,
+                install_strategy="fake",
+            )
+            for requirement_id, (kind, name, required_for) in descriptions.items()
+        ]
+
+    async def install(
+        self,
+        requirement_id: str,
+        *,
+        cancel_event: asyncio.Event,
+        report_progress: Callable[[float], None],
+    ) -> None:
+        if requirement_id in self.manual_requirements:
+            raise ManualActionRequiredError(f"{requirement_id} requires manual action")
+        report_progress(0.1)
+        if self.delay_seconds:
+            try:
+                await asyncio.wait_for(cancel_event.wait(), timeout=self.delay_seconds)
+            except TimeoutError:
+                pass
+        if cancel_event.is_set():
+            raise asyncio.CancelledError
+        self.ready.add(requirement_id)
+        report_progress(1)
+
+
+class OllamaCaptureStructuringProvider:
+    """Structure bounded batches through the isolated Ollama profile."""
+
+    def __init__(
+        self,
+        lifecycle: IsolatedOllamaLifecycle,
+        *,
+        request_timeout_seconds: float = 180,
+        num_ctx: int = DEFAULT_STRUCTURING_NUM_CTX,
+        num_predict: int = DEFAULT_STRUCTURING_NUM_PREDICT,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        self._lifecycle = lifecycle
+        self._timeout = request_timeout_seconds
+        self._num_ctx = num_ctx
+        self._num_predict = num_predict
+        self._transport = transport
+        self._engine_identity: CaptureEngineV1 | None = None
+
+    @property
+    def engine_identity(self) -> CaptureEngineV1 | None:
+        return self._engine_identity
+
+    async def structure(
+        self,
+        raw: RawCaptureV1,
+        *,
+        target_language: str | None,
+        cancel_event: asyncio.Event,
+    ) -> object:
+        self._lifecycle.start()
+        engine_identity = await self._wait_until_ready(cancel_event)
+        self._engine_identity = engine_identity
+        plans = plan_structuring_batches(
+            raw.segments,
+            target_language=target_language,
+            num_ctx=self._num_ctx,
+            num_predict=self._num_predict,
+        )
+        blocks: list[CaptureBlockV1] = []
+        async with httpx.AsyncClient(
+            base_url=self._lifecycle.config.host_url,
+            timeout=self._timeout,
+            follow_redirects=False,
+            transport=self._transport,
+        ) as client:
+            for plan in plans:
+                if cancel_event.is_set():
+                    raise asyncio.CancelledError
+                num_ctx, num_predict = structuring_batch_generation_options(
+                    plan,
+                    max_num_ctx=self._num_ctx,
+                    max_num_predict=self._num_predict,
+                )
+                candidate = await self._generate_batch(
+                    client,
+                    plan.segments,
+                    target_language=target_language,
+                    cancel_event=cancel_event,
+                    num_ctx=num_ctx,
+                    num_predict=num_predict,
+                )
+                blocks.extend(validate_structuring_batch(candidate, plan.segments))
+        return assemble_structuring_document(
+            raw,
+            blocks,
+            engine_identity=engine_identity,
+            completed_at=raw.created_at,
+        )
+
+    async def _generate_batch(
+        self,
+        client: httpx.AsyncClient,
+        segments: tuple[RawCaptureSegmentV1, ...],
+        *,
+        target_language: str | None,
+        cancel_event: asyncio.Event,
+        num_ctx: int,
+        num_predict: int,
+    ) -> str:
+        prompt = build_structuring_batch_prompt(segments, target_language=target_language)
+        request = asyncio.create_task(
+            client.post(
+                "/api/generate",
+                json={
+                    "model": self._lifecycle.config.profile_id,
+                    "stream": False,
+                    "format": CAPTURE_BLOCK_BATCH_SCHEMA,
+                    "prompt": json.dumps(prompt, ensure_ascii=False, separators=(",", ":")),
+                    "options": {"num_ctx": num_ctx, "num_predict": num_predict},
+                },
+            )
+        )
+        cancellation = asyncio.create_task(cancel_event.wait())
+        try:
+            done, _ = await asyncio.wait(
+                {request, cancellation}, return_when=asyncio.FIRST_COMPLETED
+            )
+            if cancellation in done and cancel_event.is_set():
+                request.cancel()
+                await asyncio.gather(request, return_exceptions=True)
+                raise asyncio.CancelledError
+            response = await request
+            response.raise_for_status()
+            payload = response.json()
+            candidate = payload.get("response")
+            if not isinstance(candidate, str):
+                raise RuntimeError("Ollama response did not contain a JSON candidate string")
+            return candidate
+        finally:
+            cancellation.cancel()
+            await asyncio.gather(cancellation, return_exceptions=True)
+            if not request.done():
+                request.cancel()
+                await asyncio.gather(request, return_exceptions=True)
+
+    async def _wait_until_ready(self, cancel_event: asyncio.Event) -> CaptureEngineV1:
+        deadline = asyncio.get_running_loop().time() + 30
+        async with httpx.AsyncClient(
+            base_url=self._lifecycle.config.host_url,
+            timeout=2,
+            follow_redirects=False,
+            transport=self._transport,
+        ) as client:
+            while asyncio.get_running_loop().time() < deadline:
+                if cancel_event.is_set():
+                    raise asyncio.CancelledError
+                try:
+                    response = await client.get("/api/tags")
+                    if response.status_code == 200:
+                        models = response.json().get("models", [])
+                        for model in models:
+                            name = str(model.get("name") or model.get("model") or "")
+                            if name not in {
+                                self._lifecycle.config.profile_id,
+                                f"{self._lifecycle.config.profile_id}:latest",
+                            }:
+                                continue
+                            digest = str(model.get("digest") or "")
+                            if re.fullmatch(r"[0-9a-f]{64}", digest):
+                                digest = f"sha256:{digest}"
+                            if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+                                raise RuntimeUnavailableError(
+                                    "isolated Ollama returned an invalid model digest"
+                                )
+                            return CaptureEngineV1(
+                                engine="ollama",
+                                model=self._lifecycle.config.profile_id,
+                                digest=digest,
+                                device="local",
+                            )
+                except httpx.HTTPError:
+                    pass
+                await asyncio.sleep(0.2)
+        raise RuntimeUnavailableError("isolated Ollama profile did not become ready")

@@ -1,0 +1,356 @@
+{
+  "$defs": {
+    "CaptureBlockV1": {
+      "additionalProperties": false,
+      "properties": {
+        "blockId": {
+          "minLength": 1,
+          "title": "Blockid",
+          "type": "string"
+        },
+        "locator": {
+          "discriminator": {
+            "mapping": {
+              "page": "#/$defs/PageLocatorV1",
+              "time": "#/$defs/TimeLocatorV1"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/PageLocatorV1"
+            },
+            {
+              "$ref": "#/$defs/TimeLocatorV1"
+            }
+          ],
+          "title": "Locator"
+        },
+        "order": {
+          "minimum": 0,
+          "title": "Order",
+          "type": "integer"
+        },
+        "sourceSegmentId": {
+          "minLength": 1,
+          "title": "Sourcesegmentid",
+          "type": "string"
+        },
+        "sourceText": {
+          "maxLength": 2000000,
+          "minLength": 1,
+          "title": "Sourcetext",
+          "type": "string"
+        },
+        "targetText": {
+          "maxLength": 2000000,
+          "minLength": 1,
+          "title": "Targettext",
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "heading",
+            "paragraph",
+            "list-item",
+            "table",
+            "quote",
+            "transcript"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "blockId",
+        "order",
+        "type",
+        "sourceSegmentId",
+        "locator",
+        "sourceText",
+        "targetText"
+      ],
+      "title": "CaptureBlockV1",
+      "type": "object"
+    },
+    "CaptureEngineV1": {
+      "additionalProperties": false,
+      "properties": {
+        "device": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Device"
+        },
+        "digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Digest",
+          "type": "string"
+        },
+        "engine": {
+          "minLength": 1,
+          "title": "Engine",
+          "type": "string"
+        },
+        "model": {
+          "minLength": 1,
+          "title": "Model",
+          "type": "string"
+        }
+      },
+      "required": [
+        "engine",
+        "model",
+        "digest"
+      ],
+      "title": "CaptureEngineV1",
+      "type": "object"
+    },
+    "CaptureSourceV1": {
+      "additionalProperties": false,
+      "properties": {
+        "bytes": {
+          "minimum": 1,
+          "title": "Bytes",
+          "type": "integer"
+        },
+        "fileName": {
+          "maxLength": 255,
+          "minLength": 1,
+          "title": "Filename",
+          "type": "string"
+        },
+        "mediaType": {
+          "minLength": 1,
+          "title": "Mediatype",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sha256",
+        "fileName",
+        "mediaType",
+        "bytes"
+      ],
+      "title": "CaptureSourceV1",
+      "type": "object"
+    },
+    "PageLocatorV1": {
+      "additionalProperties": false,
+      "properties": {
+        "boundingBox": {
+          "anyOf": [
+            {
+              "maxItems": 4,
+              "minItems": 4,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Boundingbox"
+        },
+        "kind": {
+          "const": "page",
+          "default": "page",
+          "title": "Kind",
+          "type": "string"
+        },
+        "page": {
+          "minimum": 1,
+          "title": "Page",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "page"
+      ],
+      "title": "PageLocatorV1",
+      "type": "object"
+    },
+    "RawCaptureSegmentV1": {
+      "additionalProperties": false,
+      "properties": {
+        "locator": {
+          "discriminator": {
+            "mapping": {
+              "page": "#/$defs/PageLocatorV1",
+              "time": "#/$defs/TimeLocatorV1"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/PageLocatorV1"
+            },
+            {
+              "$ref": "#/$defs/TimeLocatorV1"
+            }
+          ],
+          "title": "Locator"
+        },
+        "order": {
+          "minimum": 0,
+          "title": "Order",
+          "type": "integer"
+        },
+        "segmentId": {
+          "minLength": 1,
+          "title": "Segmentid",
+          "type": "string"
+        },
+        "text": {
+          "maxLength": 2000000,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "segmentId",
+        "order",
+        "locator",
+        "text"
+      ],
+      "title": "RawCaptureSegmentV1",
+      "type": "object"
+    },
+    "TimeLocatorV1": {
+      "additionalProperties": false,
+      "properties": {
+        "endMs": {
+          "exclusiveMinimum": 0,
+          "title": "Endms",
+          "type": "integer"
+        },
+        "kind": {
+          "const": "time",
+          "default": "time",
+          "title": "Kind",
+          "type": "string"
+        },
+        "startMs": {
+          "minimum": 0,
+          "title": "Startms",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "startMs",
+        "endMs"
+      ],
+      "title": "TimeLocatorV1",
+      "type": "object"
+    }
+  },
+  "$id": "https://github.com/WodenWang820118/capture-workbench/schema/capture-document-v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "blocks": {
+      "items": {
+        "$ref": "#/$defs/CaptureBlockV1"
+      },
+      "maxItems": 10000,
+      "minItems": 1,
+      "title": "Blocks",
+      "type": "array"
+    },
+    "completedAt": {
+      "format": "date-time",
+      "title": "Completedat",
+      "type": "string"
+    },
+    "createdAt": {
+      "format": "date-time",
+      "title": "Createdat",
+      "type": "string"
+    },
+    "extractionEngine": {
+      "$ref": "#/$defs/CaptureEngineV1"
+    },
+    "rawSegments": {
+      "items": {
+        "$ref": "#/$defs/RawCaptureSegmentV1"
+      },
+      "maxItems": 10000,
+      "minItems": 1,
+      "title": "Rawsegments",
+      "type": "array"
+    },
+    "schemaVersion": {
+      "const": "1",
+      "default": "1",
+      "title": "Schemaversion",
+      "type": "string"
+    },
+    "source": {
+      "$ref": "#/$defs/CaptureSourceV1"
+    },
+    "sourceText": {
+      "maxLength": 8000000,
+      "minLength": 1,
+      "title": "Sourcetext",
+      "type": "string"
+    },
+    "structuringEngine": {
+      "$ref": "#/$defs/CaptureEngineV1"
+    },
+    "targetText": {
+      "maxLength": 8000000,
+      "minLength": 1,
+      "title": "Targettext",
+      "type": "string"
+    },
+    "warnings": {
+      "items": {
+        "maxLength": 500,
+        "type": "string"
+      },
+      "maxItems": 1000,
+      "title": "Warnings",
+      "type": "array"
+    }
+  },
+  "required": [
+    "source",
+    "rawSegments",
+    "blocks",
+    "sourceText",
+    "targetText",
+    "extractionEngine",
+    "structuringEngine",
+    "createdAt",
+    "completedAt"
+  ],
+  "title": "CaptureDocumentV1",
+  "type": "object"
+}
