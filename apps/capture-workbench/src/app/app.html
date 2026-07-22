@@ -30,7 +30,7 @@
     <p class="event" aria-live="polite">{{ lastEvent() }}</p>
   </section>
 
-  <capture-workbench
+  <gx-capture-workbench
     [config]="config()"
     (completed)="recordCompletion($event)"
     (failed)="recordFailure($event)"

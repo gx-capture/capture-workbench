@@ -20,7 +20,7 @@ describe('App', () => {
     expect(compiled.querySelector('h1')?.textContent).toContain(
       'Packaged workflow validation host',
     );
-    expect(compiled.querySelector('capture-workbench')).not.toBeNull();
+    expect(compiled.querySelector('gx-capture-workbench')).not.toBeNull();
     expect(compiled.querySelector('.client-mode')?.getAttribute('data-client-mode')).toBe(
       'browser-unconfigured',
     );

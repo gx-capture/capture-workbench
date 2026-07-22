@@ -97,7 +97,7 @@ const HOST_RECONCILIATION_FAILURE_CODE = 'host_reconciliation_unavailable';
 const MAX_INSTALLATIONS_PER_USER_ACTION = 16;
 
 @Component({
-  selector: 'capture-workbench',
+  selector: 'gx-capture-workbench',
   imports: [],
   templateUrl: './capture-angular.html',
   styleUrl: './capture-angular.css',

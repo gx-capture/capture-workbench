@@ -116,7 +116,7 @@ adapter has already enforced the same runtime major, API major, schema, service
 identity, and capability checks.
 
 ```html
-<capture-workbench
+<gx-capture-workbench
   [config]="{
     structuringMode: 'host',
     outputMode: 'json',
@@ -134,7 +134,9 @@ and return the `File` that should be hashed and captured.
 
 ## Web Component
 
-Register the framework-neutral element once during application startup:
+Register the framework-neutral element once during application startup. Angular
+Elements owns the element lifecycle; the public configuration API is
+property-first:
 
 ```ts
 import {
@@ -152,18 +154,19 @@ capture.config = {
   hostStructuringOwner: 'client',
   outputMode: 'json',
 };
+capture.client = hostCaptureClient;
 capture.addEventListener(CAPTURE_WORKBENCH_CUSTOM_EVENTS.completed, (event) => {
   const completed = event as CustomEvent;
   saveDocument(completed.detail.document);
 });
 ```
 
-The `config` HTML attribute is a JSON object, for example
-`config='{"outputMode":"text","multiple":false}'`. The `config` property
-uses the same object shape but does not reflect back to HTML. `client`,
-`structuringProvider`, and `preprocessor` are object-only properties; they are
-never serialized to attributes. Invalid `config` JSON preserves the previous
-valid configuration and emits `capture-config-error`.
+The full `config` object, `client`, `structuringProvider`, and `preprocessor`
+are JavaScript properties. The supported simple HTML attributes are
+`output-mode`, `multiple`, `target-language`, `show-runtime-setup`, `width`,
+`height`, and `density`; values supplied through `config` take precedence.
+Object dependencies are never accepted from attributes or serialized into
+HTML.
 
 All events bubble and are composed. Their stable names and detail values are:
 
@@ -171,14 +174,27 @@ All events bubble and are composed. Their stable names and detail values are:
 - `capture-failed` — `CaptureFailedEvent`
 - `capture-canceled` — `CaptureTaskView`
 - `capture-task-changed` — `CaptureTaskView`
-- `capture-config-error` — `{ attribute: 'config', message: string }`
 
 The framework-neutral fixture is
 [`fixtures/web-component/index.html`](./fixtures/web-component/index.html).
-Its CDN import uses an ESM CDN URL after `@gx/capture-angular` is made public
-through an npm-compatible registry. GitHub Packages itself is not a browser
-CDN; before that publication exists, install the package with pnpm and replace
-the import with the local package entry point.
+Install `@gx/capture-angular` from the configured NPM-compatible registry and
+import it from your bundler. The package does not publish a standalone browser
+bundle or CDN entry.
+
+React and Vue consumers can assign the object properties through a DOM ref and
+listen with `addEventListener`:
+
+```ts
+const capture = ref.current as CaptureWorkbenchElement;
+capture.config = { outputMode: 'text', showRuntimeSetup: false };
+capture.client = hostCaptureClient;
+capture.addEventListener(CAPTURE_WORKBENCH_CUSTOM_EVENTS.completed, onCompleted);
+```
+
+For normal browser hosts, `hostCaptureClient` should call the host backend.
+Only a trusted Tauri WebView may use a direct loopback `HttpCaptureClient`; a
+sidecar bearer token must never enter a normal browser bundle, URL, storage, or
+log.
 
 For a direct loopback runtime client, keep the same strict CSP used by the
 Tauri reference host: permit only `http://127.0.0.1:*` in `connect-src`, and
