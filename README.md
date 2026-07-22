@@ -20,8 +20,23 @@ isolated Ollama process and model store to prove the complete flow.
 ```powershell
 pnpm install
 pnpm nx show projects
+pnpm dev
 pnpm verify
 ```
+
+`pnpm dev` stages deterministic runtime assets first, so it works from a fresh
+checkout. Use `pnpm dev:staged-runtime` only after explicitly staging the real
+runtime executable, manifest, and schema that the Tauri harness should launch.
+
+Run the opt-in installed Windows harness separately because it performs a
+scoped NSIS install and uninstall:
+
+```powershell
+pnpm nx run capture-workbench-desktop:smoke-installed-deterministic --skipNxCache
+```
+
+That target uses deterministic engines and produces diagnostic evidence only;
+it is not a real-engine or release-readiness gate.
 
 The v1 product lane is Windows 11 x64. OCR uses WindowsML, transcription uses
 Whisper, and every completed result must satisfy the `CaptureDocumentV1`

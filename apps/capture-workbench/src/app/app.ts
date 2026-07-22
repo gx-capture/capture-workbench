@@ -15,7 +15,14 @@ import { validationCaptureClient } from './validation-client';
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class App {
-  protected readonly structuringMode = signal<CaptureStructuringMode>('runtime');
+  private readonly requestedStructuringMode = signal<CaptureStructuringMode>('runtime');
+  protected readonly hostStructuringAvailable =
+    validationCaptureClient.hostStructuringAvailable;
+  protected readonly structuringMode = computed<CaptureStructuringMode>(() =>
+    this.hostStructuringAvailable && this.requestedStructuringMode() === 'host'
+      ? 'host'
+      : 'runtime',
+  );
   protected readonly config = computed(() => ({
     structuringMode: this.structuringMode(),
     outputMode: 'json' as const,
@@ -30,7 +37,8 @@ export class App {
   protected readonly clientMode = validationCaptureClient.mode;
 
   protected selectMode(mode: CaptureStructuringMode): void {
-    this.structuringMode.set(mode);
+    if (mode === 'host' && !this.hostStructuringAvailable) return;
+    this.requestedStructuringMode.set(mode);
   }
 
   protected recordCompletion(event: CaptureCompletedEvent): void {

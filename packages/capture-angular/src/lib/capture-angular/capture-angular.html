@@ -40,7 +40,7 @@
     <ul class="requirements" aria-label="Runtime requirements">
       @for (requirement of requiredRequirements(); track
       requirement.requirementId) {
-      <li>
+      <li [attr.data-requirement-id]="requirement.requirementId">
         <div>
           <strong>{{ requirement.displayName }}</strong>
           @if (requirement.detail) {

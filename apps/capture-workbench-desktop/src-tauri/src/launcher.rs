@@ -1,9 +1,10 @@
 use std::{
+    collections::HashSet,
     fmt::Write as _,
     fs,
     net::TcpListener,
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
+    process::{Command, Stdio},
     sync::atomic::{AtomicBool, Ordering},
     thread,
     time::{Duration, Instant},
@@ -19,12 +20,16 @@ use crate::{
     },
     health::{probe_ready_once, ProbeResult},
     manifest::{verify_runtime, RuntimeManifest, WindowsMlArtifactDescriptor},
-    process::terminate_owned_process_tree,
+    process::{terminate_owned_process_tree, OwnedRuntimeProcess},
     resources::RuntimeAssets,
 };
 
 const READY_TIMEOUT: Duration = Duration::from_secs(45);
 const READY_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const MAX_LAUNCH_ATTEMPTS: usize = 3;
+const TOTAL_LAUNCH_TIMEOUT: Duration = Duration::from_secs(60);
+const RETRY_POLL_INTERVAL: Duration = Duration::from_millis(25);
+const RETRY_DELAY: Duration = Duration::from_millis(100);
 const CHILD_ENVIRONMENT_ALLOWLIST: &[&str] = &[
     "APPDATA",
     "COMSPEC",
@@ -53,8 +58,13 @@ fn child_environment_name_is_allowed(name: &str) -> bool {
 }
 
 pub(crate) struct LaunchedRuntime {
-    pub child: Child,
+    pub child: OwnedRuntimeProcess,
     pub config: BackendConfig,
+}
+
+enum LaunchAttemptError {
+    Fatal(String),
+    Retryable(String),
 }
 
 struct LaunchPolicy {
@@ -65,17 +75,6 @@ struct LaunchPolicy {
 }
 
 impl LaunchPolicy {
-    fn new(data_dir: PathBuf) -> Result<Self, String> {
-        let runtime_port = reserve_loopback_port()?;
-        let ollama_port = distinct_loopback_port(runtime_port)?;
-        Ok(Self {
-            runtime_port,
-            ollama_port,
-            token: generate_bearer_token()?,
-            data_dir,
-        })
-    }
-
     #[cfg(test)]
     fn deterministic(data_dir: PathBuf, runtime_port: u16, ollama_port: u16) -> Self {
         Self {
@@ -160,45 +159,163 @@ impl LaunchPolicy {
     }
 }
 
+struct LaunchPolicyFactory {
+    data_dir: PathBuf,
+    used_ports: HashSet<u16>,
+    used_tokens: HashSet<String>,
+}
+
+impl LaunchPolicyFactory {
+    fn new(data_dir: PathBuf) -> Self {
+        Self {
+            data_dir,
+            used_ports: HashSet::new(),
+            used_tokens: HashSet::new(),
+        }
+    }
+
+    fn next(&mut self) -> Result<LaunchPolicy, String> {
+        let runtime_port = reserve_distinct_loopback_port(&self.used_ports)?;
+        let mut excluded_ports = self.used_ports.clone();
+        excluded_ports.insert(runtime_port);
+        let ollama_port = reserve_distinct_loopback_port(&excluded_ports)?;
+        let token = self.next_token()?;
+
+        self.used_ports.insert(runtime_port);
+        self.used_ports.insert(ollama_port);
+        self.used_tokens.insert(token.clone());
+        Ok(LaunchPolicy {
+            runtime_port,
+            ollama_port,
+            token,
+            data_dir: self.data_dir.clone(),
+        })
+    }
+
+    fn next_token(&self) -> Result<String, String> {
+        for _ in 0..16 {
+            let token = generate_bearer_token()?;
+            if !self.used_tokens.contains(&token) {
+                return Ok(token);
+            }
+        }
+        Err("A fresh runtime bearer token could not be generated.".into())
+    }
+}
+
 pub(crate) fn launch_runtime(
     assets: &RuntimeAssets,
     data_dir: PathBuf,
     stopping: &AtomicBool,
 ) -> Result<LaunchedRuntime, String> {
+    // Integrity and contract verification are intentionally outside the retry
+    // loop. A port race cannot change these assets, and hashing a large runtime
+    // repeatedly would only extend startup without improving safety.
     let verified = verify_runtime(&assets.manifest_path, &assets.executable_path)?;
-    let policy = LaunchPolicy::new(data_dir)?;
-    prepare_isolated_directories(&policy)?;
-
-    let windowsml = &verified.manifest.runtime_requirements.windowsml_ocr;
-    let mut command = runtime_command(&verified.executable_path, &policy, windowsml);
-    let mut child = command
-        .spawn()
-        .map_err(|error| format!("Capture runtime could not be started: {error}"))?;
-
-    let handshake = match wait_until_ready(
-        &mut child,
-        &policy,
-        &verified.manifest,
+    let mut policy_factory = LaunchPolicyFactory::new(data_dir);
+    run_bounded_launch_attempts(
         stopping,
-        READY_TIMEOUT,
-    ) {
-        Ok(handshake) => handshake,
-        Err(error) => {
-            terminate_owned_process_tree(child);
-            return Err(error);
-        }
-    };
+        MAX_LAUNCH_ATTEMPTS,
+        TOTAL_LAUNCH_TIMEOUT,
+        |_, remaining| {
+            // A new policy is generated for every attempt. Neither a port nor a
+            // bearer token is reused after failed readiness.
+            let policy = policy_factory.next().map_err(LaunchAttemptError::Fatal)?;
+            prepare_isolated_directories(&policy).map_err(LaunchAttemptError::Fatal)?;
 
-    Ok(LaunchedRuntime {
-        child,
-        config: BackendConfig {
-            base_url: policy.base_url(),
-            token: policy.token,
-            runtime_version: handshake.runtime_version,
-            api_version: handshake.api_version,
-            capture_document_schema_version: handshake.capture_document_schema_version,
+            let windowsml = &verified.manifest.runtime_requirements.windowsml_ocr;
+            let mut command = runtime_command(&verified.executable_path, &policy, windowsml);
+            let mut child =
+                OwnedRuntimeProcess::spawn(&mut command).map_err(LaunchAttemptError::Fatal)?;
+
+            let attempt_timeout = READY_TIMEOUT.min(remaining);
+            let handshake = match wait_until_ready(
+                &mut child,
+                &policy,
+                &verified.manifest,
+                stopping,
+                attempt_timeout,
+            ) {
+                Ok(handshake) => handshake,
+                Err(error) => {
+                    terminate_owned_process_tree(child).map_err(LaunchAttemptError::Fatal)?;
+                    return Err(LaunchAttemptError::Retryable(error));
+                }
+            };
+
+            Ok(LaunchedRuntime {
+                child,
+                config: BackendConfig {
+                    base_url: policy.base_url(),
+                    token: policy.token,
+                    runtime_version: handshake.runtime_version,
+                    api_version: handshake.api_version,
+                    capture_document_schema_version: handshake.capture_document_schema_version,
+                },
+            })
         },
-    })
+    )
+}
+
+fn run_bounded_launch_attempts<T>(
+    stopping: &AtomicBool,
+    max_attempts: usize,
+    total_timeout: Duration,
+    mut attempt: impl FnMut(usize, Duration) -> Result<T, LaunchAttemptError>,
+) -> Result<T, String> {
+    if max_attempts == 0 || total_timeout.is_zero() {
+        return Err("Capture runtime launch policy did not allow an attempt.".into());
+    }
+
+    let started = Instant::now();
+    let mut completed_attempts = 0;
+    let mut last_failure = None;
+
+    for attempt_number in 1..=max_attempts {
+        if stopping.load(Ordering::Acquire) {
+            return Err("Capture runtime launch was cancelled during shutdown.".into());
+        }
+        let remaining = total_timeout.saturating_sub(started.elapsed());
+        if remaining.is_zero() {
+            break;
+        }
+
+        completed_attempts = attempt_number;
+        match attempt(attempt_number, remaining) {
+            Ok(value) => return Ok(value),
+            Err(LaunchAttemptError::Fatal(error)) => return Err(error),
+            Err(LaunchAttemptError::Retryable(error)) => last_failure = Some(error),
+        }
+
+        if stopping.load(Ordering::Acquire) {
+            return Err("Capture runtime launch was cancelled during shutdown.".into());
+        }
+        if attempt_number < max_attempts {
+            let remaining = total_timeout.saturating_sub(started.elapsed());
+            if remaining.is_zero() {
+                break;
+            }
+            wait_before_retry(stopping, RETRY_DELAY.min(remaining))?;
+        }
+    }
+
+    let last_failure = last_failure.unwrap_or_else(|| {
+        "Capture runtime did not become ready before the total launch timeout.".into()
+    });
+    Err(format!(
+        "Capture runtime did not become ready after {completed_attempts} isolated launch attempt(s). Last failure: {last_failure}"
+    ))
+}
+
+fn wait_before_retry(stopping: &AtomicBool, delay: Duration) -> Result<(), String> {
+    let started = Instant::now();
+    while started.elapsed() < delay {
+        if stopping.load(Ordering::Acquire) {
+            return Err("Capture runtime launch was cancelled during shutdown.".into());
+        }
+        thread::sleep(RETRY_POLL_INTERVAL.min(delay.saturating_sub(started.elapsed())));
+    }
+    Ok(())
 }
 
 fn prepare_isolated_directories(policy: &LaunchPolicy) -> Result<(), String> {
@@ -247,18 +364,11 @@ fn runtime_command(
     );
     command.env("CAPTURE_WINDOWSML_BUNDLE_SHA256", &windowsml.sha256);
 
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        command.creation_flags(CREATE_NO_WINDOW);
-    }
-
     command
 }
 
 fn wait_until_ready(
-    child: &mut Child,
+    child: &mut OwnedRuntimeProcess,
     policy: &LaunchPolicy,
     manifest: &RuntimeManifest,
     stopping: &AtomicBool,
@@ -293,14 +403,14 @@ fn reserve_loopback_port() -> Result<u16, String> {
         .map_err(|error| format!("The reserved loopback port could not be read: {error}"))
 }
 
-fn distinct_loopback_port(excluded: u16) -> Result<u16, String> {
-    for _ in 0..16 {
+fn reserve_distinct_loopback_port(excluded: &HashSet<u16>) -> Result<u16, String> {
+    for _ in 0..32 {
         let candidate = reserve_loopback_port()?;
-        if candidate != excluded {
+        if !excluded.contains(&candidate) {
             return Ok(candidate);
         }
     }
-    Err("An independent Ollama loopback port could not be reserved.".into())
+    Err("A fresh independent loopback port could not be reserved.".into())
 }
 
 fn generate_bearer_token() -> Result<String, String> {
@@ -341,10 +451,84 @@ mod tests {
     #[test]
     fn loopback_ports_are_dynamic_and_independent() {
         let runtime_port = reserve_loopback_port().expect("runtime port");
-        let ollama_port = distinct_loopback_port(runtime_port).expect("ollama port");
+        let ollama_port =
+            reserve_distinct_loopback_port(&HashSet::from([runtime_port])).expect("ollama port");
         assert_ne!(runtime_port, ollama_port);
         assert!(TcpListener::bind((LOOPBACK_HOST, runtime_port)).is_ok());
         assert!(TcpListener::bind((LOOPBACK_HOST, ollama_port)).is_ok());
+    }
+
+    #[test]
+    fn launch_policy_factory_never_reuses_attempt_ports_or_tokens() {
+        let mut factory = LaunchPolicyFactory::new(PathBuf::from("workbench-data"));
+        let policies: Vec<_> = (0..MAX_LAUNCH_ATTEMPTS)
+            .map(|_| factory.next().expect("policy"))
+            .collect();
+
+        let ports: HashSet<_> = policies
+            .iter()
+            .flat_map(|policy| [policy.runtime_port, policy.ollama_port])
+            .collect();
+        let tokens: HashSet<_> = policies
+            .iter()
+            .map(|policy| policy.token.as_str())
+            .collect();
+        assert_eq!(ports.len(), MAX_LAUNCH_ATTEMPTS * 2);
+        assert_eq!(tokens.len(), MAX_LAUNCH_ATTEMPTS);
+    }
+
+    #[test]
+    fn retry_loop_is_bounded_and_reports_only_the_last_failure() {
+        let stopping = AtomicBool::new(false);
+        let mut attempts = Vec::new();
+        let result = run_bounded_launch_attempts(
+            &stopping,
+            3,
+            Duration::from_secs(2),
+            |attempt_number, remaining| {
+                attempts.push((attempt_number, remaining));
+                Err::<(), _>(LaunchAttemptError::Retryable(format!(
+                    "failure-{attempt_number}"
+                )))
+            },
+        )
+        .expect_err("bounded failure");
+
+        assert_eq!(
+            attempts
+                .iter()
+                .map(|(attempt, _)| *attempt)
+                .collect::<Vec<_>>(),
+            [1, 2, 3]
+        );
+        assert!(attempts.iter().all(|(_, remaining)| !remaining.is_zero()));
+        assert!(result.contains("after 3 isolated launch attempt(s)"));
+        assert!(result.contains("failure-3"));
+        assert!(!result.contains("failure-1"));
+        assert!(!result.contains("failure-2"));
+    }
+
+    #[test]
+    fn shutdown_cancellation_prevents_another_attempt() {
+        let stopping = AtomicBool::new(false);
+        let mut attempts = 0;
+        let result = run_bounded_launch_attempts(
+            &stopping,
+            MAX_LAUNCH_ATTEMPTS,
+            Duration::from_secs(2),
+            |_, _| {
+                attempts += 1;
+                stopping.store(true, Ordering::Release);
+                Err::<(), _>(LaunchAttemptError::Retryable("port collision".into()))
+            },
+        )
+        .expect_err("cancelled");
+
+        assert_eq!(attempts, 1);
+        assert_eq!(
+            result,
+            "Capture runtime launch was cancelled during shutdown."
+        );
     }
 
     #[test]

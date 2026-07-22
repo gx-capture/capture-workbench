@@ -278,7 +278,7 @@ class RuntimeSettings:
             pid_file=Path(
                 env.get("CAPTURE_OLLAMA_PID_FILE") or ollama_app_data / "ollama.pid.json"
             ),
-            models_dir=Path(env.get("OLLAMA_MODELS") or ollama_app_data / "models"),
+            models_dir=Path(env.get("CAPTURE_OLLAMA_MODELS_DIR") or ollama_app_data / "models"),
             base_model=env.get("CAPTURE_OLLAMA_MODEL", CAPTURE_OLLAMA_BASE_MODEL),
             profile_id=profile_id,
         )

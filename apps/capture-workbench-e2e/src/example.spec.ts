@@ -7,8 +7,19 @@ test('shows the deterministic runtime capability and requirements', async ({ pag
     'data-client-mode',
     'deterministic-e2e',
   );
+  await expect(page.getByRole('button', { name: 'Host provider interface' })).toBeVisible();
   await expect(page.getByText('Runtime is ready')).toBeVisible();
   await expect(page.getByLabel('Runtime requirements').getByRole('listitem')).toHaveCount(4);
+});
+
+test('does not offer host structuring in an unconfigured browser', async ({ page }) => {
+  await page.goto('/');
+
+  await expect(page.locator('.client-mode')).toHaveAttribute(
+    'data-client-mode',
+    'browser-unconfigured',
+  );
+  await expect(page.getByRole('button', { name: 'Host provider interface' })).toHaveCount(0);
 });
 
 test('completes a PDF through isolated runtime structuring', async ({ page }) => {
@@ -42,7 +53,7 @@ test('commits a host-provider candidate before emitting completion', async ({ pa
   await expect(page.getByText('Completed authorized-voice.wav')).toBeVisible();
 });
 
-test('selects backend_config and HttpCaptureClient in packaged Tauri', async ({ page }) => {
+test('selects the HTTP client and ignores fixture queries in packaged Tauri', async ({ page }) => {
   const pageErrors: string[] = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
   await page.addInitScript(() => {
@@ -61,6 +72,16 @@ test('selects backend_config and HttpCaptureClient in packaged Tauri', async ({ 
     target.__TAURI_INTERNALS__ = {
       invoke: (command: string): Promise<unknown> => {
         target.__captureInvokedCommands.push(command);
+        if (command === 'desktop_runtime_status') {
+          return Promise.resolve({
+            status: 'ready',
+            detail: 'Capture runtime is ready.',
+            baseUrl: 'http://127.0.0.1:43119',
+            runtimeVersion: '0.1.0',
+            apiVersion: '1.0',
+            captureDocumentSchemaVersion: '1',
+          });
+        }
         if (command !== 'backend_config') return Promise.reject(new Error('Unexpected command'));
         return Promise.resolve({
           baseUrl: 'http://127.0.0.1:43119',
@@ -112,6 +133,7 @@ test('selects backend_config and HttpCaptureClient in packaged Tauri', async ({ 
 
   expect(pageErrors).toEqual([]);
   await expect(page.locator('.client-mode')).toHaveAttribute('data-client-mode', 'tauri-http');
+  await expect(page.getByRole('button', { name: 'Host provider interface' })).toHaveCount(0);
   await expect(page.getByText('Runtime is ready')).toBeVisible();
   const evidence = await page.evaluate(() => {
     const target = globalThis as unknown as {
@@ -126,12 +148,27 @@ test('selects backend_config and HttpCaptureClient in packaged Tauri', async ({ 
       calls: target.__captureHttpCalls,
     };
   });
-  expect(evidence.commands).toEqual(['backend_config']);
+  expect(evidence.commands).toEqual(['desktop_runtime_status', 'backend_config']);
   expect(evidence.calls).toHaveLength(2);
   expect(evidence.calls.every((call) => call.url.startsWith('http://127.0.0.1:43119/v1/'))).toBe(
     true,
   );
   expect(evidence.calls.every((call) => call.hadBearer)).toBe(true);
+
+  await page.goto('/?captureClient=deterministic-e2e');
+  expect(pageErrors).toEqual([]);
+  await expect(page.locator('.client-mode')).toHaveAttribute('data-client-mode', 'tauri-http');
+  await expect(page.getByRole('button', { name: 'Host provider interface' })).toHaveCount(0);
+  await expect(page.getByText('Runtime is ready')).toBeVisible();
+  const adversarialCommands = await page.evaluate(
+    () =>
+      (
+        globalThis as unknown as {
+          readonly __captureInvokedCommands: readonly string[];
+        }
+      ).__captureInvokedCommands,
+  );
+  expect(adversarialCommands).toEqual(['desktop_runtime_status', 'backend_config']);
 });
 
 function openDeterministic(page: Page): Promise<unknown> {

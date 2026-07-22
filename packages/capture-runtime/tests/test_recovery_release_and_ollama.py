@@ -260,6 +260,29 @@ def test_capture_child_environment_strips_provider_overrides_and_secrets(
         assert forbidden not in environment
 
 
+def test_runtime_settings_never_inherit_an_ambient_ollama_model_store(
+    tmp_path: Path,
+) -> None:
+    app_data = tmp_path / "capture-app-data"
+    settings = RuntimeSettings.from_env(
+        {
+            "CAPTURE_APP_DATA_DIR": str(app_data),
+            "OLLAMA_MODELS": str(tmp_path / "host-models"),
+        }
+    )
+
+    assert settings.ollama.models_dir == app_data / "ollama" / "models"
+
+    dedicated = RuntimeSettings.from_env(
+        {
+            "CAPTURE_APP_DATA_DIR": str(app_data),
+            "OLLAMA_MODELS": str(tmp_path / "host-models"),
+            "CAPTURE_OLLAMA_MODELS_DIR": str(tmp_path / "capture-models"),
+        }
+    )
+    assert dedicated.ollama.models_dir == tmp_path / "capture-models"
+
+
 def test_windowsml_descriptor_environment_is_atomic_and_bounded() -> None:
     base = {
         "CAPTURE_WINDOWSML_BUNDLE_URL": "https://downloads.example.org/windowsml.zip",

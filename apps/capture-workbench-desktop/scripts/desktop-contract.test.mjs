@@ -15,6 +15,9 @@ test('Nx separates root verification build from release and deterministic NSIS l
   assert.deepEqual(project.targets['build-nsis-deterministic'].dependsOn, [
     'stage-deterministic-runtime',
   ]);
+  assert.deepEqual(project.targets['dev-deterministic'].dependsOn, [
+    'stage-deterministic-runtime',
+  ]);
   assert.match(
     project.targets['build-nsis-release'].options.commands[0],
     /assert-staged-runtime\.mjs --release/u,
@@ -40,6 +43,10 @@ test('production CSP is strict while allowing only dynamic loopback API ports', 
   assert.doesNotMatch(csp, /unsafe-eval|https:\/\/|wss:\/\//u);
   assert.doesNotMatch(csp, /(?:^|[ ;])\*(?:[ ;]|$)/u);
   assert.deepEqual(config.bundle.targets, ['nsis']);
+  assert.match(
+    config.build.beforeBuildCommand,
+    /capture-workbench:production-bundle-check/u,
+  );
 });
 
 test('QA evidence rejects authorization material', () => {
@@ -171,6 +178,8 @@ test('release workflow is SHA-pinned, least-privilege, attested, and runtime-fir
   assert.equal((workflow.match(/packages: write/gu) ?? []).length, 1);
   assert.match(workflow, /gh attestation verify/u);
   assert.match(workflow, /capture-runtime:production-preflight/u);
+  assert.match(ciWorkflow, /capture-workbench:test/u);
+  assert.match(ciWorkflow, /capture-workbench:production-bundle-check/u);
 
   const project = JSON.parse(runtimeProject);
   assert.doesNotMatch(

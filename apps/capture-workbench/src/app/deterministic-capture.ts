@@ -68,6 +68,10 @@ export class DeterministicCaptureClient implements CaptureClient {
     return Promise.resolve(installation);
   }
 
+  listInstallations(): Promise<readonly RuntimeInstallationV1[]> {
+    return Promise.resolve([...this.installations.values()]);
+  }
+
   getInstallation(id: string): Promise<RuntimeInstallationV1> {
     return Promise.resolve(this.requireInstallation(id));
   }

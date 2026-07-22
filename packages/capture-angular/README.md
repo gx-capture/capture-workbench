@@ -8,6 +8,21 @@ Install the pinned GitHub Packages version with a token that has only
 `read:packages` access. Consumer Actions jobs should declare `contents: read`
 and `packages: read`; they do not need write permissions.
 
+Configure the scope without committing the token (the repository root includes
+the same `.npmrc.example`):
+
+```ini
+@wodenwang820118:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=${GITHUB_PACKAGES_TOKEN}
+```
+
+Then install an exact synchronized version:
+
+```powershell
+$env:GITHUB_PACKAGES_TOKEN = '<read:packages token>'
+pnpm add @wodenwang820118/capture-angular@0.1.0 --save-exact
+```
+
 Successful output is always the runtime-validated `CaptureDocumentV1`. A
 structuring failure may expose `RawCaptureV1` with `diagnosticOnly: true`, but
 the component never emits `completed` for that path.

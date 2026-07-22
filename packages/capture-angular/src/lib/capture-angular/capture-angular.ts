@@ -71,6 +71,7 @@ interface RuntimeViewState {
 
 interface InternalCaptureTask {
   readonly file: File;
+  readonly clientRequestId: string;
   readonly controller: AbortController;
 }
 
@@ -93,6 +94,7 @@ const DEFAULT_CONFIG: ResolvedCaptureWorkbenchConfig = {
 
 const HOST_PROVIDER_FAILURE_CODE = 'host_provider_failed';
 const HOST_RECONCILIATION_FAILURE_CODE = 'host_reconciliation_unavailable';
+const MAX_INSTALLATIONS_PER_USER_ACTION = 16;
 
 @Component({
   selector: 'capture-workbench',
@@ -248,37 +250,64 @@ export class CaptureWorkbenchComponent implements OnInit, OnDestroy {
   async installMissingRequirements(): Promise<void> {
     const client = this.activeClient();
     if (!client || this.installation()) return;
-    const requirements = this.installableRequirements();
-    if (requirements.length === 0) return;
+    if (this.installableRequirements().length === 0) return;
 
     this.installationController = new AbortController();
+    const signal = this.installationController.signal;
+    const completedRequirementIds = new Set<string>();
+    const requestIds = new Map<string, string>();
+    let installationsStarted = 0;
     try {
-      for (const requirement of requirements) {
-        let installation = await client.startInstallation(
-          {
-            clientRequestId: crypto.randomUUID(),
-            requirementId: requirement.requirementId,
-            consent: true,
-          },
-          this.installationController.signal,
+      while (installationsStarted < MAX_INSTALLATIONS_PER_USER_ACTION) {
+        const requirement = this.installableRequirements().find(
+          (candidate) => !completedRequirementIds.has(candidate.requirementId),
+        );
+        if (!requirement) break;
+
+        const request = {
+          clientRequestId:
+            requestIds.get(requirement.requirementId) ?? crypto.randomUUID(),
+          requirementId: requirement.requirementId,
+          consent: true,
+        } as const;
+        requestIds.set(requirement.requirementId, request.clientRequestId);
+        installationsStarted += 1;
+
+        let installation = await retryUncertainResponse(
+          () => client.startInstallation(request, signal),
+          signal,
         );
         this.installation.set(installation);
         while (
           installation.status === 'queued' ||
           installation.status === 'running'
         ) {
-          await abortableDelay(
-            this.resolvedConfig().pollIntervalMs,
-            this.installationController.signal,
-          );
+          await abortableDelay(this.resolvedConfig().pollIntervalMs, signal);
           installation = await client.getInstallation(
             installation.installationId,
-            this.installationController.signal,
+            signal,
           );
           this.installation.set(installation);
         }
         if (installation.status !== 'completed') break;
+        completedRequirementIds.add(requirement.requirementId);
         this.installation.set(null);
+        // Installing one requirement can unlock another (for example, the
+        // capture model after Ollama becomes available). Keep the original
+        // explicit consent scope, but only attempt each completed ID once.
+        await this.refreshRuntime();
+      }
+
+      if (
+        installationsStarted === MAX_INSTALLATIONS_PER_USER_ACTION &&
+        this.installableRequirements().some(
+          (requirement) =>
+            !completedRequirementIds.has(requirement.requirementId),
+        )
+      ) {
+        throw new Error(
+          'Runtime installation stopped after reaching the safety limit.',
+        );
       }
     } catch (error: unknown) {
       if (!isAbortError(error)) {
@@ -336,7 +365,11 @@ export class CaptureWorkbenchComponent implements OnInit, OnDestroy {
         stage: 'queued',
         progress: 0,
       };
-      this.internalTasks.set(id, { file, controller });
+      this.internalTasks.set(id, {
+        file,
+        clientRequestId: crypto.randomUUID(),
+        controller,
+      });
       this.taskState.update((tasks) => [...tasks, task]);
       this.taskChanged.emit(task);
     }
@@ -523,14 +556,18 @@ export class CaptureWorkbenchComponent implements OnInit, OnDestroy {
       );
       throwIfAborted(signal);
 
-      let job = await client.createCapture({
-        clientRequestId: crypto.randomUUID(),
+      const createRequest = {
+        clientRequestId: internal.clientRequestId,
         file,
         sourceKind: task.sourceKind,
         structuringMode: config.structuringMode,
         targetLanguage: config.targetLanguage,
         signal,
-      });
+      } as const;
+      let job = await retryUncertainResponse(
+        () => client.createCapture(createRequest),
+        signal,
+      );
       this.captureIds.set(taskId, job.captureId);
       this.updateTask(taskId, {
         captureId: job.captureId,
@@ -552,8 +589,9 @@ export class CaptureWorkbenchComponent implements OnInit, OnDestroy {
           });
           let candidate: CaptureStructuringCandidateV1 | undefined;
           try {
+            const providerRaw = deepFreeze(structuredClone(raw));
             candidate = await provider.structure({
-              raw,
+              raw: providerRaw,
               documentContract: CAPTURE_DOCUMENT_V1_CONTRACT,
               targetLanguage: config.targetLanguage,
               signal,
@@ -1132,6 +1170,44 @@ function isAbortError(error: unknown): boolean {
 function throwIfAborted(signal: AbortSignal): void {
   if (signal.aborted)
     throw new DOMException('The operation was aborted.', 'AbortError');
+}
+
+async function retryUncertainResponse<T>(
+  operation: () => Promise<T>,
+  signal: AbortSignal,
+): Promise<T> {
+  try {
+    return await operation();
+  } catch (error: unknown) {
+    throwIfAborted(signal);
+    if (!isUncertainResponseFailure(error)) throw error;
+    return operation();
+  }
+}
+
+function isUncertainResponseFailure(error: unknown): boolean {
+  if (isAbortError(error)) return false;
+  const candidate = error as {
+    readonly status?: unknown;
+    readonly code?: unknown;
+  };
+  if (candidate?.code === 'invalid_response') return true;
+  if (typeof candidate?.status === 'number') {
+    return candidate.status === 0 || candidate.status >= 500;
+  }
+  // Fetch surfaces network failures as TypeError. A plain Error from a custom
+  // host client may be a definite domain failure and must not be replayed.
+  return error instanceof TypeError;
+}
+
+function deepFreeze<T>(value: T): T {
+  if (value === null || typeof value !== 'object' || Object.isFrozen(value)) {
+    return value;
+  }
+  for (const key of Reflect.ownKeys(value)) {
+    deepFreeze((value as Record<PropertyKey, unknown>)[key]);
+  }
+  return Object.freeze(value);
 }
 
 function abortableDelay(

@@ -11,8 +11,9 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 import zipfile
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO, Protocol
@@ -268,6 +269,12 @@ class IsolatedOllamaLifecycle:
     def executable(self) -> str | None:
         return self._resolve_executable()
 
+    def owns_running_process(self) -> bool:
+        """Return whether this lifecycle still owns a live Ollama process."""
+
+        with self._lock:
+            return self._owned is not None and self._owned.poll() is None
+
     def start(self) -> int:
         with self._lock:
             if self._owned is not None and self._owned.poll() is None:
@@ -419,7 +426,10 @@ class AsyncSubprocessCommandRunner:
 
 
 class RuntimeInstaller(Protocol):
-    def requirements(self) -> list[RuntimeRequirementV1]: ...
+    def requirements(
+        self,
+        enabled_requirement_ids: Collection[str] | None = None,
+    ) -> list[RuntimeRequirementV1]: ...
 
     async def install(
         self,
@@ -444,7 +454,14 @@ class SystemRuntimeInstaller:
         whisper_adapter: WhisperAdapter,
         clock: Clock,
         http_client_factory: Callable[[], httpx.AsyncClient] | None = None,
+        enabled_requirement_ids: Collection[str] | None = None,
+        model_readiness_timeout_seconds: float = 10,
+        model_readiness_poll_interval_seconds: float = 0.2,
     ) -> None:
+        if model_readiness_timeout_seconds < 0:
+            raise ValueError("model_readiness_timeout_seconds must be non-negative")
+        if model_readiness_poll_interval_seconds < 0:
+            raise ValueError("model_readiness_poll_interval_seconds must be non-negative")
         self._lifecycle = lifecycle
         self._runner = command_runner or AsyncSubprocessCommandRunner()
         self._resolve_winget = winget_resolver or (lambda: shutil.which("winget"))
@@ -456,78 +473,121 @@ class SystemRuntimeInstaller:
         self._http_client_factory = http_client_factory or (
             lambda: httpx.AsyncClient(timeout=120, follow_redirects=False)
         )
+        self._enabled_requirement_ids = (
+            None if enabled_requirement_ids is None else frozenset(enabled_requirement_ids)
+        )
+        self._model_readiness_timeout_seconds = model_readiness_timeout_seconds
+        self._model_readiness_poll_interval_seconds = model_readiness_poll_interval_seconds
 
-    def requirements(self) -> list[RuntimeRequirementV1]:
-        ollama_available = self._lifecycle.executable() is not None
-        winget_available = self._resolve_winget() is not None
-        model_ready = self._active_model_profile_ready()
-        ocr_probe = self._ocr_adapter.probe()
-        whisper_probe = self._whisper_adapter.probe()
-        return [
-            RuntimeRequirementV1(
-                requirement_id=WINDOWSML_REQUIREMENT_ID,
-                kind="OCR",
-                display_name="WindowsML OCR",
-                status=(
-                    RuntimeRequirementStatus.READY
-                    if ocr_probe.ready
-                    else RuntimeRequirementStatus.UNAVAILABLE
-                    if not ocr_probe.code_ready
-                    else RuntimeRequirementStatus.INSTALLABLE
-                    if self._extraction_config.windowsml_bundle_url is not None
-                    else RuntimeRequirementStatus.MANUAL_ACTION_REQUIRED
-                ),
-                required_for=["pdf", "image"],
-                install_strategy="bundled",
-                detail=ocr_probe.detail,
-                artifact=self._windowsml_artifact_descriptor(),
-            ),
-            RuntimeRequirementV1(
-                requirement_id=WHISPER_REQUIREMENT_ID,
-                kind="transcription",
-                display_name="Whisper transcription",
-                status=(
-                    RuntimeRequirementStatus.READY
-                    if whisper_probe.ready
-                    else RuntimeRequirementStatus.UNAVAILABLE
-                    if not whisper_probe.code_ready
-                    else RuntimeRequirementStatus.INSTALLABLE
-                ),
-                required_for=["audio"],
-                install_strategy="bundled",
-                detail=whisper_probe.detail,
-            ),
-            RuntimeRequirementV1(
-                requirement_id=OLLAMA_RUNTIME_REQUIREMENT_ID,
-                kind="runtime",
-                display_name="Ollama application",
-                status=(
-                    RuntimeRequirementStatus.READY
-                    if ollama_available
-                    else RuntimeRequirementStatus.INSTALLABLE
-                    if winget_available
-                    else RuntimeRequirementStatus.MANUAL_ACTION_REQUIRED
-                ),
-                required_for=["runtime-structuring"],
-                install_strategy="winget",
-                detail=None if ollama_available else "Ollama must be installed with winget.",
-            ),
-            RuntimeRequirementV1(
-                requirement_id=OLLAMA_MODEL_REQUIREMENT_ID,
-                kind="model",
-                display_name="Capture structuring model",
-                status=(
-                    RuntimeRequirementStatus.READY
+    def requirements(
+        self,
+        enabled_requirement_ids: Collection[str] | None = None,
+    ) -> list[RuntimeRequirementV1]:
+        effective_requirement_ids = (
+            self._enabled_requirement_ids
+            if enabled_requirement_ids is None
+            else frozenset(enabled_requirement_ids)
+            if self._enabled_requirement_ids is None
+            else self._enabled_requirement_ids.intersection(enabled_requirement_ids)
+        )
+
+        def is_enabled(requirement_id: str) -> bool:
+            return effective_requirement_ids is None or requirement_id in effective_requirement_ids
+
+        windowsml_enabled = is_enabled(WINDOWSML_REQUIREMENT_ID)
+        whisper_enabled = is_enabled(WHISPER_REQUIREMENT_ID)
+        ollama_runtime_enabled = is_enabled(OLLAMA_RUNTIME_REQUIREMENT_ID)
+        ollama_model_enabled = is_enabled(OLLAMA_MODEL_REQUIREMENT_ID)
+
+        ollama_available = (
+            self._lifecycle.executable() is not None
+            if ollama_runtime_enabled or ollama_model_enabled
+            else False
+        )
+        winget_available = self._resolve_winget() is not None if ollama_runtime_enabled else False
+        model_ready = self._active_model_profile_ready() if ollama_model_enabled else False
+
+        requirements: list[RuntimeRequirementV1] = []
+        if windowsml_enabled:
+            ocr_probe = self._ocr_adapter.probe()
+            requirements.append(
+                RuntimeRequirementV1(
+                    requirement_id=WINDOWSML_REQUIREMENT_ID,
+                    kind="OCR",
+                    display_name="WindowsML OCR",
+                    status=(
+                        RuntimeRequirementStatus.READY
+                        if ocr_probe.ready
+                        else RuntimeRequirementStatus.UNAVAILABLE
+                        if not ocr_probe.code_ready
+                        else RuntimeRequirementStatus.INSTALLABLE
+                        if self._extraction_config.windowsml_bundle_url is not None
+                        else RuntimeRequirementStatus.MANUAL_ACTION_REQUIRED
+                    ),
+                    required_for=["pdf", "image"],
+                    install_strategy="bundled",
+                    detail=ocr_probe.detail,
+                    artifact=self._windowsml_artifact_descriptor(),
+                )
+            )
+        if whisper_enabled:
+            whisper_probe = self._whisper_adapter.probe()
+            requirements.append(
+                RuntimeRequirementV1(
+                    requirement_id=WHISPER_REQUIREMENT_ID,
+                    kind="transcription",
+                    display_name="Whisper transcription",
+                    status=(
+                        RuntimeRequirementStatus.READY
+                        if whisper_probe.ready
+                        else RuntimeRequirementStatus.UNAVAILABLE
+                        if not whisper_probe.code_ready
+                        else RuntimeRequirementStatus.INSTALLABLE
+                    ),
+                    required_for=["audio"],
+                    install_strategy="bundled",
+                    detail=whisper_probe.detail,
+                )
+            )
+        if ollama_runtime_enabled:
+            requirements.append(
+                RuntimeRequirementV1(
+                    requirement_id=OLLAMA_RUNTIME_REQUIREMENT_ID,
+                    kind="runtime",
+                    display_name="Ollama application",
+                    status=(
+                        RuntimeRequirementStatus.READY
+                        if ollama_available
+                        else RuntimeRequirementStatus.INSTALLABLE
+                        if winget_available
+                        else RuntimeRequirementStatus.MANUAL_ACTION_REQUIRED
+                    ),
+                    required_for=["runtime-structuring"],
+                    install_strategy="winget",
+                    detail=None if ollama_available else "Ollama must be installed with winget.",
+                )
+            )
+        if ollama_model_enabled:
+            requirements.append(
+                RuntimeRequirementV1(
+                    requirement_id=OLLAMA_MODEL_REQUIREMENT_ID,
+                    kind="model",
+                    display_name="Capture structuring model",
+                    status=(
+                        RuntimeRequirementStatus.READY
+                        if model_ready
+                        else RuntimeRequirementStatus.INSTALLABLE
+                        if ollama_available
+                        else RuntimeRequirementStatus.MISSING
+                    ),
+                    required_for=["runtime-structuring"],
+                    install_strategy="ollama",
+                    detail=None
                     if model_ready
-                    else RuntimeRequirementStatus.INSTALLABLE
-                    if ollama_available
-                    else RuntimeRequirementStatus.MISSING
-                ),
-                required_for=["runtime-structuring"],
-                install_strategy="ollama",
-                detail=None if model_ready else f"Requires {self._lifecycle.config.base_model}.",
-            ),
-        ]
+                    else f"Requires {self._lifecycle.config.base_model}.",
+                )
+            )
+        return requirements
 
     def _windowsml_artifact_descriptor(self) -> RuntimeArtifactDescriptorV1 | None:
         url = self._extraction_config.windowsml_bundle_url
@@ -864,28 +924,69 @@ class SystemRuntimeInstaller:
         report_progress(1)
 
     def _active_model_profile_ready(self) -> bool:
-        if self._lifecycle.executable() is None:
+        if not self._recorded_model_profile_matches() or self._lifecycle.executable() is None:
             return False
         try:
-            response = httpx.get(
-                f"{self._lifecycle.config.host_url}/api/tags",
-                timeout=0.5,
-                follow_redirects=False,
-            )
-            response.raise_for_status()
-            models = response.json().get("models", [])
-        except (httpx.HTTPError, TypeError, ValueError):
+            self._lifecycle.start()
+        except (
+            OllamaOwnershipError,
+            RuntimeUnavailableError,
+            OSError,
+            subprocess.SubprocessError,
+        ):
             return False
+
         expected_names = {
             self._lifecycle.config.profile_id,
             f"{self._lifecycle.config.profile_id}:latest",
         }
-        return any(
-            str(model.get("name") or model.get("model") or "") in expected_names
-            and bool(re.fullmatch(r"(?:sha256:)?[0-9a-f]{64}", str(model.get("digest") or "")))
-            for model in models
-            if isinstance(model, dict)
-        )
+        deadline = time.monotonic() + self._model_readiness_timeout_seconds
+        while True:
+            if not self._lifecycle.owns_running_process():
+                return False
+            remaining = max(0.0, deadline - time.monotonic())
+            try:
+                response = httpx.get(
+                    f"{self._lifecycle.config.host_url}/api/tags",
+                    timeout=max(0.05, min(0.5, remaining)),
+                    follow_redirects=False,
+                )
+                response.raise_for_status()
+            except httpx.HTTPError:
+                if remaining <= 0:
+                    return False
+                time.sleep(min(self._model_readiness_poll_interval_seconds, remaining))
+                continue
+            if not self._lifecycle.owns_running_process():
+                return False
+            try:
+                models = response.json().get("models", [])
+            except (AttributeError, TypeError, ValueError):
+                return False
+            if not isinstance(models, list):
+                return False
+            return any(
+                str(model.get("name") or model.get("model") or "") in expected_names
+                and bool(re.fullmatch(r"(?:sha256:)?[0-9a-f]{64}", str(model.get("digest") or "")))
+                for model in models
+                if isinstance(model, dict)
+            )
+
+    def _recorded_model_profile_matches(self) -> bool:
+        try:
+            payload = json.loads(
+                self._marker(OLLAMA_MODEL_REQUIREMENT_ID).read_text(encoding="utf-8")
+            )
+            modelfile_digest = str(payload["modelfileSha256"])
+            modelfile = self._lifecycle.config.app_data_dir / "Capture.Modelfile"
+            return (
+                payload["profileId"] == self._lifecycle.config.profile_id
+                and payload["baseModel"] == self._lifecycle.config.base_model
+                and bool(re.fullmatch(r"[0-9a-f]{64}", modelfile_digest))
+                and _sha256_file(modelfile) == modelfile_digest
+            )
+        except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError):
+            return False
 
     def _marker(self, requirement_id: str) -> Path:
         return self._markers / f"{requirement_id}.ready.json"
@@ -903,7 +1004,10 @@ class FakeRuntimeInstaller:
         self.delay_seconds = delay_seconds
         self.manual_requirements = set(manual_requirements or ())
 
-    def requirements(self) -> list[RuntimeRequirementV1]:
+    def requirements(
+        self,
+        enabled_requirement_ids: Collection[str] | None = None,
+    ) -> list[RuntimeRequirementV1]:
         descriptions = {
             WINDOWSML_REQUIREMENT_ID: ("OCR", "WindowsML OCR", ["pdf", "image"]),
             WHISPER_REQUIREMENT_ID: ("transcription", "Whisper transcription", ["audio"]),
@@ -918,6 +1022,9 @@ class FakeRuntimeInstaller:
                 ["runtime-structuring"],
             ),
         }
+        enabled = (
+            set(descriptions) if enabled_requirement_ids is None else set(enabled_requirement_ids)
+        )
         return [
             RuntimeRequirementV1(
                 requirement_id=requirement_id,
@@ -934,6 +1041,7 @@ class FakeRuntimeInstaller:
                 install_strategy="fake",
             )
             for requirement_id, (kind, name, required_for) in descriptions.items()
+            if requirement_id in enabled
         ]
 
     async def install(
@@ -964,12 +1072,14 @@ class OllamaCaptureStructuringProvider:
         self,
         lifecycle: IsolatedOllamaLifecycle,
         *,
+        clock: Clock,
         request_timeout_seconds: float = 180,
         num_ctx: int = DEFAULT_STRUCTURING_NUM_CTX,
         num_predict: int = DEFAULT_STRUCTURING_NUM_PREDICT,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self._lifecycle = lifecycle
+        self._clock = clock
         self._timeout = request_timeout_seconds
         self._num_ctx = num_ctx
         self._num_predict = num_predict
@@ -1024,7 +1134,7 @@ class OllamaCaptureStructuringProvider:
             raw,
             blocks,
             engine_identity=engine_identity,
-            completed_at=raw.created_at,
+            completed_at=self._clock.now(),
         )
 
     async def _generate_batch(
@@ -1037,6 +1147,7 @@ class OllamaCaptureStructuringProvider:
         num_ctx: int,
         num_predict: int,
     ) -> str:
+        self._require_owned_process()
         prompt = build_structuring_batch_prompt(segments, target_language=target_language)
         request = asyncio.create_task(
             client.post(
@@ -1060,6 +1171,7 @@ class OllamaCaptureStructuringProvider:
                 await asyncio.gather(request, return_exceptions=True)
                 raise asyncio.CancelledError
             response = await request
+            self._require_owned_process()
             response.raise_for_status()
             payload = response.json()
             candidate = payload.get("response")
@@ -1084,8 +1196,10 @@ class OllamaCaptureStructuringProvider:
             while asyncio.get_running_loop().time() < deadline:
                 if cancel_event.is_set():
                     raise asyncio.CancelledError
+                self._require_owned_process()
                 try:
                     response = await client.get("/api/tags")
+                    self._require_owned_process()
                     if response.status_code == 200:
                         models = response.json().get("models", [])
                         for model in models:
@@ -1112,3 +1226,9 @@ class OllamaCaptureStructuringProvider:
                     pass
                 await asyncio.sleep(0.2)
         raise RuntimeUnavailableError("isolated Ollama profile did not become ready")
+
+    def _require_owned_process(self) -> None:
+        if not self._lifecycle.owns_running_process():
+            raise RuntimeUnavailableError(
+                "isolated Ollama process stopped before provider response validation"
+            )

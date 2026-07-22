@@ -1,6 +1,5 @@
 use std::{
     path::PathBuf,
-    process::Child,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
@@ -11,7 +10,7 @@ use std::{
 use crate::{
     config::{BackendConfig, DesktopRuntimeStatus},
     launcher::{launch_runtime, LaunchedRuntime},
-    process::terminate_owned_process_tree,
+    process::{terminate_owned_process_tree, OwnedRuntimeProcess},
     resources::RuntimeAssets,
 };
 
@@ -19,7 +18,7 @@ struct DesktopStateInner {
     data_dir: PathBuf,
     config: Mutex<Option<BackendConfig>>,
     status: Mutex<DesktopRuntimeStatus>,
-    child: Mutex<Option<Child>>,
+    child: Mutex<Option<OwnedRuntimeProcess>>,
     stopping: AtomicBool,
 }
 
@@ -64,27 +63,27 @@ impl DesktopState {
 
     fn accept_launched(&self, launched: LaunchedRuntime) {
         if self.inner.stopping.load(Ordering::Acquire) {
-            terminate_owned_process_tree(launched.child);
+            let _ = terminate_owned_process_tree(launched.child);
             return;
         }
 
         let config = launched.config;
         let child = launched.child;
         let Ok(mut child_slot) = self.inner.child.lock() else {
-            terminate_owned_process_tree(child);
+            let _ = terminate_owned_process_tree(child);
             self.fail("Capture runtime process state is unavailable.");
             return;
         };
         let Ok(mut config_slot) = self.inner.config.lock() else {
             drop(child_slot);
-            terminate_owned_process_tree(child);
+            let _ = terminate_owned_process_tree(child);
             self.fail("Capture runtime connection state is unavailable.");
             return;
         };
         if self.inner.stopping.load(Ordering::Acquire) {
             drop(config_slot);
             drop(child_slot);
-            terminate_owned_process_tree(child);
+            let _ = terminate_owned_process_tree(child);
             return;
         }
 
@@ -131,7 +130,7 @@ impl DesktopState {
         }
         if let Ok(mut child) = self.inner.child.lock() {
             if let Some(child) = child.take() {
-                terminate_owned_process_tree(child);
+                let _ = terminate_owned_process_tree(child);
             }
         }
         if let Ok(mut status) = self.inner.status.lock() {
@@ -145,7 +144,7 @@ impl Drop for DesktopStateInner {
         self.stopping.store(true, Ordering::Release);
         if let Ok(child) = self.child.get_mut() {
             if let Some(child) = child.take() {
-                terminate_owned_process_tree(child);
+                let _ = terminate_owned_process_tree(child);
             }
         }
     }

@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from io import BytesIO
 
+import pytest
 from conftest import TOKEN, idempotency_headers, poll_capture, poll_installation
 from fastapi.testclient import TestClient
 from pypdf import PdfWriter
@@ -15,7 +16,11 @@ from capture_runtime.app import create_app
 from capture_runtime.clock import SystemClock
 from capture_runtime.config import RuntimeSettings
 from capture_runtime.extractors import DeterministicCaptureExtractor
-from capture_runtime.ollama import FakeRuntimeInstaller
+from capture_runtime.ollama import (
+    FakeRuntimeInstaller,
+    IsolatedOllamaLifecycle,
+    SystemRuntimeInstaller,
+)
 from capture_runtime.structuring import FakeCaptureStructuringProvider
 
 
@@ -608,12 +613,60 @@ def test_successful_fake_install_updates_requirements(
         assert model["status"] == "ready"
 
 
-def test_host_only_process_advertises_and_accepts_only_host_structuring(
+def test_fake_installer_requirement_listing_preserves_default_behavior() -> None:
+    installer = FakeRuntimeInstaller(initially_ready={"capture-ollama-model"})
+
+    assert {item.requirement_id for item in installer.requirements()} == {
+        "windowsml-ocr",
+        "whisper-primary",
+        "ollama-runtime",
+        "capture-ollama-model",
+    }
+
+
+def test_host_requirements_scope_an_injected_installer_before_probing(
     settings_factory: Callable[..., RuntimeSettings],
 ) -> None:
+    class ScopeRecordingInstaller(FakeRuntimeInstaller):
+        seen_requirement_ids: frozenset[str] | None = None
+
+        def requirements(self, enabled_requirement_ids=None):
+            self.seen_requirement_ids = frozenset(enabled_requirement_ids or ())
+            if self.seen_requirement_ids.intersection({"ollama-runtime", "capture-ollama-model"}):
+                raise AssertionError("host-only discovery received an Ollama requirement")
+            return super().requirements(enabled_requirement_ids)
+
+    settings = settings_factory(CAPTURE_STRUCTURING_PROVIDER="host")
+    installer = ScopeRecordingInstaller()
+    with TestClient(
+        create_app(settings, installer=installer),
+        base_url=f"http://127.0.0.1:{settings.port}",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+    ) as test_client:
+        requirements = test_client.get("/v1/runtime/requirements")
+
+    assert requirements.status_code == 200
+    assert {item["requirementId"] for item in requirements.json()["items"]} == {
+        "windowsml-ocr",
+        "whisper-primary",
+    }
+    assert installer.seen_requirement_ids == frozenset({"windowsml-ocr", "whisper-primary"})
+
+
+def test_host_only_process_advertises_and_accepts_only_host_structuring(
+    settings_factory: Callable[..., RuntimeSettings],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def reject_ollama_probe(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("host-only requirement discovery must not probe Ollama")
+
+    monkeypatch.setattr(IsolatedOllamaLifecycle, "executable", reject_ollama_probe)
+    monkeypatch.setattr(SystemRuntimeInstaller, "_active_model_profile_ready", reject_ollama_probe)
+    monkeypatch.setattr("capture_runtime.ollama.shutil.which", reject_ollama_probe)
+
     settings = settings_factory(CAPTURE_STRUCTURING_PROVIDER="host")
     with TestClient(
-        create_app(settings, installer=FakeRuntimeInstaller()),
+        create_app(settings),
         base_url=f"http://127.0.0.1:{settings.port}",
         headers={"Authorization": f"Bearer {TOKEN}"},
     ) as test_client:
@@ -626,13 +679,14 @@ def test_host_only_process_advertises_and_accepts_only_host_structuring(
             "windowsml-ocr",
             "whisper-primary",
         }
-        ollama_install = test_client.post(
-            "/v1/runtime/installations",
-            headers=idempotency_headers(),
-            json={"requirementId": "ollama-runtime", "consent": True},
-        )
-        assert ollama_install.status_code == 422
-        assert ollama_install.json()["error"]["code"] == "requirement_disabled"
+        for requirement_id in ("ollama-runtime", "capture-ollama-model"):
+            ollama_install = test_client.post(
+                "/v1/runtime/installations",
+                headers=idempotency_headers(),
+                json={"requirementId": requirement_id, "consent": True},
+            )
+            assert ollama_install.status_code == 422
+            assert ollama_install.json()["error"]["code"] == "requirement_disabled"
 
         runtime_capture = test_client.post(
             "/v1/captures",

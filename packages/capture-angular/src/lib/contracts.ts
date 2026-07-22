@@ -244,6 +244,9 @@ export interface CaptureClient {
     request: StartRuntimeInstallationRequest,
     signal?: AbortSignal,
   ): Promise<RuntimeInstallationV1>;
+  listInstallations(
+    signal?: AbortSignal,
+  ): Promise<readonly RuntimeInstallationV1[]>;
   getInstallation(
     id: string,
     signal?: AbortSignal,

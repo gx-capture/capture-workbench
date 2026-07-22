@@ -253,6 +253,19 @@ try {
 
   await runPnpm(['install', '--ignore-workspace', '--no-frozen-lockfile']);
   await runPnpm(['add', archiveSpec, '--save-exact', '--ignore-workspace']);
+  if (
+    !existsSync(
+      join(
+        fixtureRoot,
+        'node_modules',
+        '@wodenwang820118',
+        'capture-angular',
+        'LICENSE',
+      ),
+    )
+  ) {
+    throw new Error('Packed Capture Angular package is missing its MIT LICENSE.');
+  }
   await runPnpm(['build']);
   await runPnpm(['test']);
   process.stdout.write(`Clean Angular consumer passed with ${archiveName}.\n`);

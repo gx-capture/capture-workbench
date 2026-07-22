@@ -17,13 +17,15 @@
       >
         Isolated runtime provider
       </button>
-      <button
-        type="button"
-        [class.active]="structuringMode() === 'host'"
-        (click)="selectMode('host')"
-      >
-        Host provider interface
-      </button>
+      @if (hostStructuringAvailable) {
+        <button
+          type="button"
+          [class.active]="structuringMode() === 'host'"
+          (click)="selectMode('host')"
+        >
+          Host provider interface
+        </button>
+      }
     </div>
     <p class="event" aria-live="polite">{{ lastEvent() }}</p>
   </section>

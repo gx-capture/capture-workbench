@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "pnpm nx run capture-workbench:serve",
     "devUrl": "http://localhost:4200",
-    "beforeBuildCommand": "pnpm nx run capture-workbench:build",
+    "beforeBuildCommand": "pnpm nx run capture-workbench:production-bundle-check",
     "frontendDist": "../../../dist/apps/capture-workbench/browser"
   },
   "app": {

@@ -8,25 +8,40 @@ from pathlib import Path
 import httpx
 import pytest
 
+from capture_runtime.clock import Clock
 from capture_runtime.config import OllamaRuntimeConfig
 from capture_runtime.contracts import CaptureDocumentV1, RawCaptureV1
-from capture_runtime.ollama import OllamaCaptureStructuringProvider
+from capture_runtime.ollama import (
+    OllamaCaptureStructuringProvider,
+    RuntimeUnavailableError,
+)
 from capture_runtime.structuring import (
     StructuringValidationError,
     validate_structuring_candidate,
 )
 
 NOW = datetime(2026, 7, 20, 8, 0, tzinfo=UTC)
+COMPLETED_AT = datetime(2026, 7, 20, 8, 5, tzinfo=UTC)
+
+
+class FixedClock(Clock):
+    def now(self) -> datetime:
+        return COMPLETED_AT
 
 
 class FakeLifecycle:
     def __init__(self, config: OllamaRuntimeConfig) -> None:
         self.config = config
         self.starts = 0
+        self.running = False
 
     def start(self) -> int:
         self.starts += 1
+        self.running = True
         return 4242
+
+    def owns_running_process(self) -> bool:
+        return self.running
 
 
 def _config(tmp_path: Path) -> OllamaRuntimeConfig:
@@ -118,6 +133,7 @@ def test_isolated_ollama_structures_token_bounded_batches(tmp_path: Path) -> Non
 
     provider = OllamaCaptureStructuringProvider(
         lifecycle,  # type: ignore[arg-type]
+        clock=FixedClock(),
         transport=httpx.MockTransport(handler),
     )
     raw = _raw(count=5, text_chars=1_200)
@@ -129,6 +145,8 @@ def test_isolated_ollama_structures_token_bounded_batches(tmp_path: Path) -> Non
     assert isinstance(document, CaptureDocumentV1)
     assert validate_structuring_candidate(document, raw) == document
     assert lifecycle.starts == 1
+    assert document.created_at == NOW
+    assert document.completed_at == COMPLETED_AT
     assert len(generate_calls) >= 2
     supplied_ids: list[str] = []
     for call in generate_calls:
@@ -171,6 +189,7 @@ def test_isolated_ollama_rejects_mutated_batch_provenance(
 
     provider = OllamaCaptureStructuringProvider(
         FakeLifecycle(config),  # type: ignore[arg-type]
+        clock=FixedClock(),
         transport=httpx.MockTransport(handler),
     )
 
@@ -193,6 +212,7 @@ def test_isolated_ollama_fails_before_generation_for_oversized_segment(
 
     provider = OllamaCaptureStructuringProvider(
         FakeLifecycle(config),  # type: ignore[arg-type]
+        clock=FixedClock(),
         transport=httpx.MockTransport(handler),
     )
 
@@ -206,6 +226,50 @@ def test_isolated_ollama_fails_before_generation_for_oversized_segment(
         )
 
     assert generate_calls == 0
+
+
+def test_isolated_ollama_rejects_a_foreign_ready_response_after_owned_exit(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    lifecycle = FakeLifecycle(config)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/tags"
+        lifecycle.running = False
+        return _tags(config)
+
+    provider = OllamaCaptureStructuringProvider(
+        lifecycle,  # type: ignore[arg-type]
+        clock=FixedClock(),
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(RuntimeUnavailableError, match="process stopped"):
+        asyncio.run(provider.structure(_raw(), target_language=None, cancel_event=asyncio.Event()))
+
+
+def test_isolated_ollama_rejects_a_foreign_generation_after_owned_exit(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    lifecycle = FakeLifecycle(config)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/tags":
+            return _tags(config)
+        payload = json.loads(request.content)
+        lifecycle.running = False
+        return httpx.Response(200, json={"response": _valid_candidate(payload)})
+
+    provider = OllamaCaptureStructuringProvider(
+        lifecycle,  # type: ignore[arg-type]
+        clock=FixedClock(),
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(RuntimeUnavailableError, match="process stopped"):
+        asyncio.run(provider.structure(_raw(), target_language=None, cancel_event=asyncio.Event()))
 
 
 def test_isolated_ollama_cancels_in_flight_batch_request(tmp_path: Path) -> None:
@@ -227,6 +291,7 @@ def test_isolated_ollama_cancels_in_flight_batch_request(tmp_path: Path) -> None
 
         provider = OllamaCaptureStructuringProvider(
             FakeLifecycle(config),  # type: ignore[arg-type]
+            clock=FixedClock(),
             transport=httpx.MockTransport(handler),
         )
         cancellation = asyncio.Event()

@@ -40,7 +40,13 @@
         "development": {
           "optimization": false,
           "extractLicenses": false,
-          "sourceMap": true
+          "sourceMap": true,
+          "fileReplacements": [
+            {
+              "replace": "apps/capture-workbench/src/app/validation-fixture-provider.ts",
+              "with": "apps/capture-workbench/src/app/validation-fixture-provider.development.ts"
+            }
+          ]
         }
       },
       "defaultConfiguration": "production"
@@ -60,6 +66,19 @@
     },
     "lint": {
       "executor": "@nx/eslint:lint"
+    },
+    "test": {
+      "executor": "@nx/angular:unit-test",
+      "options": {
+        "watch": false
+      }
+    },
+    "production-bundle-check": {
+      "executor": "nx:run-commands",
+      "dependsOn": ["build"],
+      "options": {
+        "command": "node tools/verify-capture-workbench-production-bundle.mjs"
+      }
     },
     "serve-static": {
       "continuous": true,

@@ -70,6 +70,30 @@ describe('HttpCaptureClient', () => {
     expect(form.get('targetLanguage')).toBe('zh-TW');
   });
 
+  it('lists runtime installations from the canonical collection endpoint', async () => {
+    const installation = {
+      installationId: 'install-1',
+      requirementId: 'ollama-runtime' as const,
+      status: 'completed' as const,
+      progress: 1,
+      createdAt: '2026-07-20T00:00:00Z',
+      updatedAt: '2026-07-20T00:00:01Z',
+      completedAt: '2026-07-20T00:00:01Z',
+    };
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(jsonResponse({ items: [installation] }));
+    const client = configureClient(fetchMock);
+
+    await expect(client.listInstallations()).resolves.toEqual([installation]);
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      'http://127.0.0.1:43119/v1/runtime/installations',
+    );
+    expect(fetchMock.mock.calls[0]?.[1]?.method).toBe('GET');
+  });
+
   it('rejects a non-loopback destination before resolving the bearer token', async () => {
     const bearerToken = vi.fn(() => 'must-stay-memory-only');
     const fetchMock = vi.fn<typeof fetch>();

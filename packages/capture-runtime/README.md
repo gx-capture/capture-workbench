@@ -39,6 +39,8 @@ environment and Authorization header; they are never accepted in URLs.
 - `CAPTURE_MAX_CANDIDATE_BYTES` (defaults to 8 MiB)
 - `CAPTURE_STRUCTURING_PROVIDER=ollama|fake|host` (`host` disables runtime
   structuring and advertises only the host commit protocol)
+- `CAPTURE_OLLAMA_MODELS_DIR=<capture-owned path>` (optional; ambient
+  `OLLAMA_MODELS` is intentionally ignored so a host model store is never reused)
 - `CAPTURE_EXTRACTION_PROVIDER=runtime|fake` (`runtime` is the production default)
 - `CAPTURE_WINDOWSML_MODEL_DIR`, `CAPTURE_WINDOWSML_DEVICE_ID`,
   `CAPTURE_WINDOWSML_BUNDLE_URL`, `CAPTURE_WINDOWSML_BUNDLE_SHA256`,
@@ -70,7 +72,10 @@ terminal jobs delete the source bytes. Metadata and raw/result JSON expire after
 default and are pruned on startup and during requests.
 
 `GET /v1/runtime/requirements` uses stable requirement IDs. Ollama and the dedicated capture
-profile are actively probed; a marker file alone never reports readiness. WindowsML installation
+profile are actively probed; a marker file alone never reports readiness. After a runtime
+restart, a matching installation record causes requirement discovery to lazily start only the
+owned isolated Ollama lifecycle and wait boundedly for the recorded profile to appear. The
+synchronous installer contract runs off the API event loop. WindowsML installation
 accepts only an explicitly configured URL/exact-compressed-bytes/SHA-256 descriptor. Production
 uses canonical public HTTPS (the `file://` seam is test/development only), disables redirects,
 and extracts exactly the six allowlisted ZIP entries with traversal/ADS/symlink/expansion guards.
@@ -80,6 +85,11 @@ Whisper installation runs the two allowlisted Hugging Face model
 downloads in a cancellable owned subprocess after `consent: true`; extraction never downloads.
 Ollama installation also requires consent, uses `winget` only, and returns
 `manual_action_required` when `winget` is absent.
+
+When `CAPTURE_STRUCTURING_PROVIDER=host`, requirement discovery is scoped to
+WindowsML and Whisper before probing begins. The process neither probes Ollama
+nor advertises its application/model requirements, and both Ollama installation
+IDs are rejected as disabled.
 
 `build-release-artifacts` does not inspect or depend on ambient OCR/Whisper/Ollama model stores.
 `production-preflight` runs only after the runtime, schema, and non-public NSIS verification

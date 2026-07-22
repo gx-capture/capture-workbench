@@ -104,6 +104,7 @@ function fakeClient(overrides: Partial<CaptureClient> = {}): CaptureClient {
     getReady: vi.fn(async () => READY),
     getRequirements: vi.fn(async () => []),
     startInstallation: vi.fn(),
+    listInstallations: vi.fn(async () => []),
     getInstallation: vi.fn(),
     cancelInstallation: vi.fn(),
     createCapture: vi.fn(async () => job('completed', 'completed')),
@@ -186,6 +187,84 @@ describe('CaptureWorkbenchComponent', () => {
     expect(
       fixture.nativeElement.querySelector('.result-preview').textContent,
     ).toContain('page one');
+  });
+
+  it('retries an uncertain capture creation with the same request and file', async () => {
+    const source = new File(['test'], 'scan.pdf', {
+      type: 'application/pdf',
+    });
+    const createCapture = vi
+      .fn<CaptureClient['createCapture']>()
+      .mockRejectedValueOnce(new TypeError('connection reset'))
+      .mockResolvedValueOnce(job('completed', 'completed'));
+    const client = fakeClient({ createCapture });
+    fixture.componentRef.setInput('client', client);
+    fixture.componentRef.setInput('config', {
+      showRuntimeSetup: false,
+      pollIntervalMs: 0,
+    });
+    fixture.detectChanges();
+
+    selectFiles(fixture, [source]);
+    await fixture.whenStable();
+
+    expect(createCapture).toHaveBeenCalledTimes(2);
+    const firstRequest = createCapture.mock.calls[0]?.[0];
+    const retryRequest = createCapture.mock.calls[1]?.[0];
+    expect(firstRequest).toBe(retryRequest);
+    expect(firstRequest?.clientRequestId).toMatch(/^[0-9a-f-]{36}$/u);
+    expect(retryRequest?.clientRequestId).toBe(firstRequest?.clientRequestId);
+    expect(firstRequest?.file).toBe(source);
+    expect(retryRequest?.file).toBe(source);
+    expect(client.getCapture).not.toHaveBeenCalled();
+    expect(client.getResult).toHaveBeenCalledOnce();
+  });
+
+  it('does not retry capture creation after an abort response', async () => {
+    const createCapture = vi
+      .fn<CaptureClient['createCapture']>()
+      .mockRejectedValueOnce(
+        new DOMException('The operation was aborted.', 'AbortError'),
+      );
+    const client = fakeClient({ createCapture });
+    fixture.componentRef.setInput('client', client);
+    fixture.componentRef.setInput('config', {
+      showRuntimeSetup: false,
+      pollIntervalMs: 0,
+    });
+    fixture.detectChanges();
+
+    selectFiles(fixture, [
+      new File(['test'], 'scan.pdf', { type: 'application/pdf' }),
+    ]);
+    await fixture.whenStable();
+
+    expect(createCapture).toHaveBeenCalledOnce();
+    expect(client.getCapture).not.toHaveBeenCalled();
+    expect(client.getResult).not.toHaveBeenCalled();
+    expect(fixture.componentInstance.tasks()[0]?.status).toBe('canceled');
+  });
+
+  it('does not retry a plain domain error from a custom capture client', async () => {
+    const createCapture = vi
+      .fn<CaptureClient['createCapture']>()
+      .mockRejectedValueOnce(new Error('host validation rejected the request'));
+    const client = fakeClient({ createCapture });
+    fixture.componentRef.setInput('client', client);
+    fixture.componentRef.setInput('config', {
+      showRuntimeSetup: false,
+      pollIntervalMs: 0,
+    });
+    fixture.detectChanges();
+
+    selectFiles(fixture, [
+      new File(['test'], 'scan.pdf', { type: 'application/pdf' }),
+    ]);
+    await fixture.whenStable();
+
+    expect(createCapture).toHaveBeenCalledOnce();
+    expect(client.getCapture).not.toHaveBeenCalled();
+    expect(fixture.componentInstance.tasks()[0]?.status).toBe('failed');
   });
 
   it('reports host structuring failure with raw diagnostics and never completes', async () => {
@@ -339,6 +418,58 @@ describe('CaptureWorkbenchComponent', () => {
         error: expect.objectContaining({ code: 'host_provider_failed' }),
       }),
     );
+  });
+
+  it('isolates saved raw evidence from component-owned provider mutation', async () => {
+    const raw = structuredClone(RAW);
+    const client = fakeClient({
+      createCapture: vi.fn(async () =>
+        job('running', 'awaiting_structuring', 'host'),
+      ),
+      getRaw: vi.fn(async () => raw),
+    });
+    const structure = vi.fn<CaptureStructuringProvider['structure']>(
+      async (request) => {
+        expect(request.raw).not.toBe(raw);
+        expect(Object.isFrozen(request.raw)).toBe(true);
+        expect(Object.isFrozen(request.raw.source)).toBe(true);
+        expect(Object.isFrozen(request.raw.segments)).toBe(true);
+        expect(Object.isFrozen(request.raw.segments[0]?.locator)).toBe(true);
+
+        expect(() => {
+          (request.raw.source as { fileName: string }).fileName = 'mutated.pdf';
+        }).toThrow(TypeError);
+        expect(() => {
+          (
+            request.raw.segments[0]?.locator as {
+              page: number;
+            }
+          ).page = 99;
+        }).toThrow(TypeError);
+        return DOCUMENT;
+      },
+    );
+    const completed = vi.fn();
+    fixture.componentRef.setInput('client', client);
+    fixture.componentRef.setInput('structuringProvider', { structure });
+    fixture.componentRef.setInput('config', {
+      structuringMode: 'host',
+      showRuntimeSetup: false,
+      pollIntervalMs: 0,
+    });
+    fixture.componentInstance.completed.subscribe(completed);
+    fixture.detectChanges();
+
+    selectFiles(fixture, [
+      new File(['test'], 'scan.pdf', { type: 'application/pdf' }),
+    ]);
+    await fixture.whenStable();
+
+    expect(structure).toHaveBeenCalledOnce();
+    expect(raw.source.fileName).toBe('scan.pdf');
+    expect(raw.segments[0]?.locator).toEqual({ kind: 'page', page: 1 });
+    expect(fixture.componentInstance.tasks()[0]?.raw).toBe(raw);
+    expect(completed).toHaveBeenCalledOnce();
   });
 
   it('treats a lost commit response as completed after reconciliation', async () => {
@@ -842,6 +973,14 @@ describe('CaptureWorkbenchComponent', () => {
     fixture.detectChanges();
 
     expect(client.startInstallation).not.toHaveBeenCalled();
+    expect(
+      Array.from(
+        fixture.nativeElement.querySelectorAll(
+          '[data-requirement-id]',
+        ) as NodeListOf<HTMLElement>,
+        (element) => element.dataset['requirementId'],
+      ),
+    ).toEqual(['ollama-runtime', 'capture-ollama-model', 'whisper-primary']);
     const installButton = fixture.nativeElement.querySelector(
       '.runtime-card .primary',
     ) as HTMLButtonElement | null;
@@ -863,6 +1002,112 @@ describe('CaptureWorkbenchComponent', () => {
     expect(fixture.nativeElement.textContent).toContain(
       'unavailable on the current system',
     );
+  });
+
+  it('retries an uncertain installation once and installs a newly unlocked model', async () => {
+    const ollamaRuntime: RuntimeRequirementV1 = {
+      requirementId: 'ollama-runtime',
+      kind: 'runtime',
+      displayName: 'Ollama',
+      status: 'installable',
+      requiredFor: ['runtime'],
+      installStrategy: 'winget',
+    };
+    const captureModel: RuntimeRequirementV1 = {
+      requirementId: 'capture-ollama-model',
+      kind: 'model',
+      displayName: 'Capture model',
+      status: 'manual_action_required',
+      requiredFor: ['runtime'],
+      installStrategy: 'manual',
+    };
+    const ollamaInstallable: readonly RuntimeRequirementV1[] = [
+      ollamaRuntime,
+      captureModel,
+    ];
+    const modelInstallable: readonly RuntimeRequirementV1[] = [
+      // A stale runtime probe must not cause the already-completed ID to be
+      // repeated; the newly unlocked model should still be selected.
+      ollamaRuntime,
+      { ...captureModel, status: 'installable' },
+    ];
+    const allReady: readonly RuntimeRequirementV1[] = [
+      { ...ollamaRuntime, status: 'ready' },
+      { ...captureModel, status: 'ready' },
+    ];
+    const getRequirements = vi
+      .fn<CaptureClient['getRequirements']>()
+      .mockResolvedValueOnce(ollamaInstallable)
+      .mockResolvedValueOnce(modelInstallable)
+      .mockResolvedValue(allReady);
+    const startInstallation = vi
+      .fn<CaptureClient['startInstallation']>()
+      .mockRejectedValueOnce(new TypeError('response was lost'))
+      .mockImplementation(async (request) => ({
+        installationId: `install-${request.requirementId}`,
+        requirementId: request.requirementId,
+        status: 'completed',
+        progress: 1,
+        createdAt: RAW.createdAt,
+        updatedAt: RAW.createdAt,
+        completedAt: RAW.createdAt,
+      }));
+    const client = fakeClient({ getRequirements, startInstallation });
+    fixture.componentRef.setInput('client', client);
+    fixture.componentRef.setInput('config', {
+      pollIntervalMs: 0,
+      hostManagedHandshake: true,
+    });
+    fixture.detectChanges();
+    await fixture.componentInstance.refreshRuntime();
+
+    await fixture.componentInstance.installMissingRequirements();
+
+    expect(startInstallation).toHaveBeenCalledTimes(3);
+    const firstRequest = startInstallation.mock.calls[0]?.[0];
+    const retryRequest = startInstallation.mock.calls[1]?.[0];
+    const modelRequest = startInstallation.mock.calls[2]?.[0];
+    expect(firstRequest).toBe(retryRequest);
+    expect(retryRequest?.clientRequestId).toBe(firstRequest?.clientRequestId);
+    expect(firstRequest?.requirementId).toBe('ollama-runtime');
+    expect(modelRequest?.requirementId).toBe('capture-ollama-model');
+    expect(modelRequest?.clientRequestId).not.toBe(
+      firstRequest?.clientRequestId,
+    );
+    expect(getRequirements).toHaveBeenCalledTimes(4);
+    expect(fixture.componentInstance.installation()).toBeNull();
+  });
+
+  it('does not retry an installation after an abort response', async () => {
+    const requirement: RuntimeRequirementV1 = {
+      requirementId: 'ollama-runtime',
+      kind: 'runtime',
+      displayName: 'Ollama',
+      status: 'installable',
+      requiredFor: ['runtime'],
+      installStrategy: 'winget',
+    };
+    const startInstallation = vi
+      .fn<CaptureClient['startInstallation']>()
+      .mockRejectedValueOnce(
+        new DOMException('The operation was aborted.', 'AbortError'),
+      );
+    const client = fakeClient({
+      getRequirements: vi.fn(async () => [requirement]),
+      startInstallation,
+    });
+    fixture.componentRef.setInput('client', client);
+    fixture.componentRef.setInput('config', {
+      pollIntervalMs: 0,
+      hostManagedHandshake: true,
+    });
+    fixture.detectChanges();
+    await fixture.componentInstance.refreshRuntime();
+
+    await fixture.componentInstance.installMissingRequirements();
+
+    expect(startInstallation).toHaveBeenCalledOnce();
+    expect(client.getInstallation).not.toHaveBeenCalled();
   });
 
   it('still performs a handshake when runtime setup UI is hidden', async () => {

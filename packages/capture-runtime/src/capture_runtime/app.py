@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import secrets
@@ -38,6 +39,8 @@ from capture_runtime.config import RuntimeSettings
 from capture_runtime.constants import (
     OLLAMA_MODEL_REQUIREMENT_ID,
     OLLAMA_RUNTIME_REQUIREMENT_ID,
+    WHISPER_REQUIREMENT_ID,
+    WINDOWSML_REQUIREMENT_ID,
 )
 from capture_runtime.contracts import (
     CaptureDocumentV1,
@@ -222,7 +225,7 @@ def create_app(
         if runtime_settings.structuring_provider == "fake":
             active_structurer = FakeCaptureStructuringProvider(runtime_clock)
         elif runtime_settings.structuring_provider == "ollama":
-            active_structurer = OllamaCaptureStructuringProvider(lifecycle)
+            active_structurer = OllamaCaptureStructuringProvider(lifecycle, clock=runtime_clock)
         else:
             active_structurer = HostOnlyCaptureStructuringProvider()
     supported_structuring_modes = (
@@ -235,12 +238,18 @@ def create_app(
         if runtime_settings.structuring_provider == "host"
         else set()
     )
+    enabled_requirement_ids = (
+        {WINDOWSML_REQUIREMENT_ID, WHISPER_REQUIREMENT_ID}
+        if runtime_settings.structuring_provider == "host"
+        else None
+    )
     active_installer = installer or SystemRuntimeInstaller(
         lifecycle,
         extraction_config=runtime_settings.extraction,
         ocr_adapter=standalone_extractor.ocr_adapter,
         whisper_adapter=standalone_extractor.whisper_adapter,
         clock=runtime_clock,
+        enabled_requirement_ids=enabled_requirement_ids,
     )
 
     capture_repository = CaptureRepository(
@@ -427,12 +436,12 @@ def create_app(
 
     @router.get("/runtime/requirements", response_model=RuntimeRequirementsV1)
     async def requirements() -> RuntimeRequirementsV1:
+        items = await asyncio.to_thread(
+            active_installer.requirements,
+            enabled_requirement_ids,
+        )
         return RuntimeRequirementsV1(
-            items=[
-                item
-                for item in active_installer.requirements()
-                if item.requirement_id not in disabled_requirement_ids
-            ]
+            items=[item for item in items if item.requirement_id not in disabled_requirement_ids]
         )
 
     @router.post(

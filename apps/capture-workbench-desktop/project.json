@@ -13,6 +13,17 @@
         "command": "pnpm exec tauri dev --target x86_64-pc-windows-msvc --config apps/capture-workbench-desktop/src-tauri/tauri.conf.json"
       }
     },
+    "dev-deterministic": {
+      "continuous": true,
+      "executor": "nx:run-commands",
+      "dependsOn": ["stage-deterministic-runtime"],
+      "metadata": {
+        "description": "Fresh-checkout development host with deterministic staged runtime assets."
+      },
+      "options": {
+        "command": "pnpm exec tauri dev --target x86_64-pc-windows-msvc --config apps/capture-workbench-desktop/src-tauri/tauri.conf.json"
+      }
+    },
     "build": {
       "cache": true,
       "executor": "nx:run-commands",
@@ -115,6 +126,20 @@
       "outputs": ["{workspaceRoot}/tmp/capture-workbench-desktop/smoke"],
       "options": {
         "command": "node apps/capture-workbench-desktop/scripts/deterministic-smoke.mjs"
+      }
+    },
+    "smoke-installed-deterministic": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "metadata": {
+        "description": "Explicit Windows-only installed smoke; performs a scoped silent install/uninstall and is intentionally excluded from ordinary verify and CI."
+      },
+      "dependsOn": ["build-nsis-deterministic"],
+      "outputs": [
+        "{workspaceRoot}/tmp/capture-workbench-desktop/installed-smoke/installed-smoke.json"
+      ],
+      "options": {
+        "command": "node apps/capture-workbench-desktop/scripts/installed-deterministic-smoke.mjs"
       }
     }
   }

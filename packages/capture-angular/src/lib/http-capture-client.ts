@@ -98,6 +98,15 @@ export class HttpCaptureClient implements CaptureClient {
     });
   }
 
+  async listInstallations(
+    signal?: AbortSignal,
+  ): Promise<readonly RuntimeInstallationV1[]> {
+    const response = await this.request<{
+      readonly items: readonly RuntimeInstallationV1[];
+    }>('/v1/runtime/installations', { signal });
+    return response.items;
+  }
+
   getInstallation(id: string, signal?: AbortSignal): Promise<RuntimeInstallationV1> {
     return this.request(`/v1/runtime/installations/${encodeURIComponent(id)}`, { signal });
   }

@@ -54,7 +54,9 @@ jobs:
         shell: pwsh
         run: |
           pnpm nx run capture-workbench:lint
+          pnpm nx run capture-workbench:test
           pnpm nx run capture-workbench:build
+          pnpm nx run capture-workbench:production-bundle-check
 
       - name: Verify capture runtime
         shell: pwsh
