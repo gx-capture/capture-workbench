@@ -77,7 +77,7 @@
       "executor": "nx:run-commands",
       "dependsOn": ["build"],
       "options": {
-        "command": "node tools/verify-capture-workbench-production-bundle.mjs"
+        "command": "node tools/verify-capture-workbench-production-bundle.ts"
       }
     },
     "serve-static": {

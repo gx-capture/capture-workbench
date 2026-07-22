@@ -6,9 +6,9 @@ import http from 'node:http';
 import net from 'node:net';
 import { join, resolve } from 'node:path';
 
-import { assertStagedRuntime } from './assert-staged-runtime.mjs';
-import { appRoot, stagedExecutable } from './stage-runtime.mjs';
-import { assertRedactedEvidence } from './package-qa.mjs';
+import { assertStagedRuntime } from './assert-staged-runtime.ts';
+import { appRoot, stagedExecutable } from './stage-runtime.ts';
+import { assertRedactedEvidence } from './package-qa.ts';
 
 const workspaceRoot = resolve(appRoot, '..', '..');
 const outputDirectory = join(

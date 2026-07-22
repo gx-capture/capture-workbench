@@ -4,7 +4,7 @@ import {
   type CaptureCompletedEvent,
   type CaptureFailedEvent,
   type CaptureStructuringMode,
-} from '@wodenwang820118/capture-angular';
+} from '@gx/capture-angular';
 import { validationCaptureClient } from './validation-client';
 
 @Component({

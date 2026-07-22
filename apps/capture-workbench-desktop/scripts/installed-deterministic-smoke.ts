@@ -28,9 +28,9 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 import { chromium } from '@playwright/test';
 
-import { assertStagedRuntime } from './assert-staged-runtime.mjs';
-import { assertRedactedEvidence } from './package-qa.mjs';
-import { appRoot, sha256File } from './stage-runtime.mjs';
+import { assertStagedRuntime } from './assert-staged-runtime.ts';
+import { assertRedactedEvidence } from './package-qa.ts';
+import { appRoot, sha256File } from './stage-runtime.ts';
 
 const workspaceRoot = resolve(appRoot, '..', '..');
 const smokeRoot = join(

@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Capture Workbench custom element fixture</title>
+  </head>
+  <body>
+    <capture-workbench
+      config='{"hostManagedHandshake":true,"showRuntimeSetup":false,"outputMode":"text"}'
+    ></capture-workbench>
+
+    <!-- Replace this URL with a local package entry before the first public CDN release. -->
+    <script type="module">
+      import {
+        CAPTURE_WORKBENCH_CUSTOM_EVENTS,
+        defineCaptureWorkbenchElement,
+      } from 'https://esm.sh/@gx/capture-angular@0.1.0';
+
+      await defineCaptureWorkbenchElement();
+      const capture = document.querySelector('capture-workbench');
+      capture.addEventListener(CAPTURE_WORKBENCH_CUSTOM_EVENTS.completed, ({ detail }) => {
+        console.log('Runtime-validated CaptureDocumentV1:', detail.document);
+      });
+      capture.addEventListener(CAPTURE_WORKBENCH_CUSTOM_EVENTS.failed, ({ detail }) => {
+        console.error('Capture failed:', detail.error);
+      });
+    </script>
+  </body>
+</html>

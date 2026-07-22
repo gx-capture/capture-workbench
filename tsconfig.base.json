@@ -14,7 +14,7 @@
     "skipLibCheck": true,
     "skipDefaultLibCheck": true,
     "paths": {
-      "@wodenwang820118/capture-angular": [
+      "@gx/capture-angular": [
         "./packages/capture-angular/src/index.ts"
       ]
     }

@@ -2,8 +2,8 @@ import { mkdir, readdir, stat, writeFile } from 'node:fs/promises';
 import { join, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { assertStagedRuntime } from './assert-staged-runtime.mjs';
-import { appRoot, sha256File } from './stage-runtime.mjs';
+import { assertStagedRuntime } from './assert-staged-runtime.ts';
+import { appRoot, sha256File } from './stage-runtime.ts';
 
 const workspaceRoot = resolve(appRoot, '..', '..');
 const nsisDirectory = join(

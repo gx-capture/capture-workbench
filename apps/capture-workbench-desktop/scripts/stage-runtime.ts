@@ -1,3 +1,4 @@
+// Node 24 executes this type-strippable TypeScript script directly.
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import {

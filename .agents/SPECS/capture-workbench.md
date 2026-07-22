@@ -18,4 +18,3 @@ letting each product reuse its existing AI provider for mandatory structuring.
 
 - Domain-specific certification or legal inference.
 - A public Tauri desktop release in v1.
-- A Web Component implementation in v1.

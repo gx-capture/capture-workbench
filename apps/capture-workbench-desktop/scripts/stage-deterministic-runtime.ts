@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-import { sha256File, stageRuntime } from './stage-runtime.mjs';
+import { sha256File, stageRuntime } from './stage-runtime.ts';
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const fixtureRoot = join(scriptDirectory, 'fixtures', 'deterministic-runtime');

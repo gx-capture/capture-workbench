@@ -9,7 +9,7 @@
       "executor": "nx:run-commands",
       "parallelism": true,
       "options": {
-        "command": "pnpm exec playwright test --config apps/capture-workbench-e2e/playwright.config.ts"
+        "command": "corepack pnpm exec playwright test --config apps/capture-workbench-e2e/playwright.config.ts"
       }
     }
   }

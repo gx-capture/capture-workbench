@@ -3,8 +3,8 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { assertRedactedEvidence } from './package-qa.mjs';
-import { appRoot } from './stage-runtime.mjs';
+import { assertRedactedEvidence } from './package-qa.ts';
+import { appRoot } from './stage-runtime.ts';
 
 test('Nx separates root verification build from release and deterministic NSIS lanes', async () => {
   const project = JSON.parse(
@@ -20,7 +20,7 @@ test('Nx separates root verification build from release and deterministic NSIS l
   ]);
   assert.match(
     project.targets['build-nsis-release'].options.commands[0],
-    /assert-staged-runtime\.mjs --release/u,
+    /assert-staged-runtime\.ts --release/u,
   );
   assert.ok(
     project.targets['stage-deterministic-runtime'].outputs.some((output) =>
@@ -100,7 +100,7 @@ test('deterministic runtime checks exact Host authority and canonical v1 names',
   const [httpSource, contractSource, smokeSource] = await Promise.all([
     readFile(join(fixtureRoot, 'http.rs'), 'utf8'),
     readFile(join(fixtureRoot, 'contract.rs'), 'utf8'),
-    readFile(join(appRoot, 'scripts', 'deterministic-smoke.mjs'), 'utf8'),
+    readFile(join(appRoot, 'scripts', 'deterministic-smoke.ts'), 'utf8'),
   ]);
   assert.match(httpSource, /rsplit_once\(':'\)/u);
   assert.doesNotMatch(httpSource, /fn normalized_host/u);
@@ -136,7 +136,7 @@ test('release workflow is SHA-pinned, least-privilege, attested, and runtime-fir
       'utf8',
     ),
     readFile(join(workspaceRoot, '.github', 'workflows', 'ci.yml'), 'utf8'),
-    readFile(join(workspaceRoot, 'tools', 'publish-release.mjs'), 'utf8'),
+    readFile(join(workspaceRoot, 'tools', 'publish-release.ts'), 'utf8'),
     readFile(
       join(workspaceRoot, 'packages', 'capture-runtime', 'project.json'),
       'utf8',

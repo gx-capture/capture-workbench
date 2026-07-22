@@ -10,7 +10,7 @@
       "continuous": true,
       "executor": "nx:run-commands",
       "options": {
-        "command": "pnpm exec tauri dev --target x86_64-pc-windows-msvc --config apps/capture-workbench-desktop/src-tauri/tauri.conf.json"
+        "command": "corepack pnpm exec tauri dev --target x86_64-pc-windows-msvc --config apps/capture-workbench-desktop/src-tauri/tauri.conf.json"
       }
     },
     "dev-deterministic": {
@@ -21,7 +21,7 @@
         "description": "Fresh-checkout development host with deterministic staged runtime assets."
       },
       "options": {
-        "command": "pnpm exec tauri dev --target x86_64-pc-windows-msvc --config apps/capture-workbench-desktop/src-tauri/tauri.conf.json"
+        "command": "corepack pnpm exec tauri dev --target x86_64-pc-windows-msvc --config apps/capture-workbench-desktop/src-tauri/tauri.conf.json"
       }
     },
     "build": {
@@ -31,7 +31,7 @@
         "{projectRoot}/src-tauri/target/x86_64-pc-windows-msvc/release/capture-workbench-desktop.exe"
       ],
       "options": {
-        "command": "pnpm exec tauri build --target x86_64-pc-windows-msvc --no-bundle --ci --config apps/capture-workbench-desktop/src-tauri/tauri.conf.json"
+        "command": "corepack pnpm exec tauri build --target x86_64-pc-windows-msvc --no-bundle --ci --config apps/capture-workbench-desktop/src-tauri/tauri.conf.json"
       }
     },
     "build-nsis-release": {
@@ -42,8 +42,8 @@
       ],
       "options": {
         "commands": [
-          "node apps/capture-workbench-desktop/scripts/assert-staged-runtime.mjs --release",
-          "pnpm exec tauri build --target x86_64-pc-windows-msvc --bundles nsis --ci --config apps/capture-workbench-desktop/src-tauri/tauri.conf.json"
+          "node apps/capture-workbench-desktop/scripts/assert-staged-runtime.ts --release",
+          "corepack pnpm exec tauri build --target x86_64-pc-windows-msvc --bundles nsis --ci --config apps/capture-workbench-desktop/src-tauri/tauri.conf.json"
         ],
         "parallel": false
       }
@@ -57,8 +57,8 @@
       ],
       "options": {
         "commands": [
-          "node apps/capture-workbench-desktop/scripts/assert-staged-runtime.mjs --deterministic",
-          "pnpm exec tauri build --target x86_64-pc-windows-msvc --bundles nsis --ci --config apps/capture-workbench-desktop/src-tauri/tauri.conf.json"
+          "node apps/capture-workbench-desktop/scripts/assert-staged-runtime.ts --deterministic",
+          "corepack pnpm exec tauri build --target x86_64-pc-windows-msvc --bundles nsis --ci --config apps/capture-workbench-desktop/src-tauri/tauri.conf.json"
         ],
         "parallel": false
       }
@@ -100,14 +100,14 @@
         "{projectRoot}/src-tauri/resources/capture-document-v1.schema.json"
       ],
       "options": {
-        "command": "node apps/capture-workbench-desktop/scripts/stage-deterministic-runtime.mjs"
+        "command": "node apps/capture-workbench-desktop/scripts/stage-deterministic-runtime.ts"
       }
     },
     "package-qa-test": {
       "cache": true,
       "executor": "nx:run-commands",
       "options": {
-        "command": "node --test apps/capture-workbench-desktop/scripts/*.test.mjs tools/*.test.mjs"
+        "command": "node --test apps/capture-workbench-desktop/scripts/*.test.ts tools/*.test.ts"
       }
     },
     "package-qa": {
@@ -116,7 +116,7 @@
       "dependsOn": ["build-nsis-deterministic"],
       "outputs": ["{workspaceRoot}/tmp/capture-workbench-desktop/package-qa"],
       "options": {
-        "command": "node apps/capture-workbench-desktop/scripts/package-qa.mjs"
+        "command": "node apps/capture-workbench-desktop/scripts/package-qa.ts"
       }
     },
     "smoke-deterministic": {
@@ -125,7 +125,7 @@
       "dependsOn": ["stage-deterministic-runtime"],
       "outputs": ["{workspaceRoot}/tmp/capture-workbench-desktop/smoke"],
       "options": {
-        "command": "node apps/capture-workbench-desktop/scripts/deterministic-smoke.mjs"
+        "command": "node apps/capture-workbench-desktop/scripts/deterministic-smoke.ts"
       }
     },
     "smoke-installed-deterministic": {
@@ -139,7 +139,7 @@
         "{workspaceRoot}/tmp/capture-workbench-desktop/installed-smoke/installed-smoke.json"
       ],
       "options": {
-        "command": "node apps/capture-workbench-desktop/scripts/installed-deterministic-smoke.mjs"
+        "command": "node apps/capture-workbench-desktop/scripts/installed-deterministic-smoke.ts"
       }
     }
   }

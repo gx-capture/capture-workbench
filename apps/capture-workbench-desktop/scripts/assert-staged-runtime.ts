@@ -8,7 +8,7 @@ import {
   stagedManifest,
   stagedSchema,
   validateRuntime,
-} from './stage-runtime.mjs';
+} from './stage-runtime.ts';
 
 export async function assertStagedRuntime(expectedSource) {
   if (!['release', 'deterministic'].includes(expectedSource)) {

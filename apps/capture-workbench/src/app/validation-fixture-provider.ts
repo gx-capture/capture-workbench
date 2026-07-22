@@ -1,7 +1,7 @@
 import type {
   CaptureClient,
   CaptureStructuringProvider,
-} from '@wodenwang820118/capture-angular';
+} from '@gx/capture-angular';
 
 export interface ValidationCaptureFixture {
   readonly mode: 'deterministic-e2e';

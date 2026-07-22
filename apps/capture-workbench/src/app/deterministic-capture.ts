@@ -12,7 +12,7 @@ import type {
   RuntimeReadyV1,
   RuntimeRequirementV1,
   StartRuntimeInstallationRequest,
-} from '@wodenwang820118/capture-angular';
+} from '@gx/capture-angular';
 
 interface FakeCaptureRecord {
   job: CaptureJobV1;

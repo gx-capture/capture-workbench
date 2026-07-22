@@ -1,4 +1,4 @@
-# @wodenwang820118/capture-angular
+# @gx/capture-angular
 
 Publishable Angular UI and transport contracts for Capture Runtime. The package
 owns runtime setup, file preprocessing, queued capture jobs, progress,
@@ -12,7 +12,7 @@ Configure the scope without committing the token (the repository root includes
 the same `.npmrc.example`):
 
 ```ini
-@wodenwang820118:registry=https://npm.pkg.github.com
+@gx:registry=https://npm.pkg.github.com
 //npm.pkg.github.com/:_authToken=${GITHUB_PACKAGES_TOKEN}
 ```
 
@@ -20,7 +20,7 @@ Then install an exact synchronized version:
 
 ```powershell
 $env:GITHUB_PACKAGES_TOKEN = '<read:packages token>'
-pnpm add @wodenwang820118/capture-angular@0.1.0 --save-exact
+corepack pnpm add @gx/capture-angular@0.1.0 --save-exact
 ```
 
 Successful output is always the runtime-validated `CaptureDocumentV1`. A
@@ -39,7 +39,7 @@ their own backend and inject it with `provideCaptureClient()`. This keeps the
 sidecar URL and high-entropy bearer token backend-only.
 
 ```ts
-import { provideCaptureClient } from '@wodenwang820118/capture-angular';
+import { provideCaptureClient } from '@gx/capture-angular';
 
 bootstrapApplication(App, {
   providers: [provideCaptureClient(certPrepCaptureClient)],
@@ -59,7 +59,7 @@ token to its trusted WebView process:
 
 ```ts
 import { invoke } from '@tauri-apps/api/core';
-import { provideHttpCaptureClient } from '@wodenwang820118/capture-angular';
+import { provideHttpCaptureClient } from '@gx/capture-angular';
 
 const backendConfig = invoke<{
   baseUrl: string;
@@ -87,7 +87,7 @@ model. A host that already owns an Ollama or another LLM provider can select
 `host` mode and inject the narrow `CaptureStructuringProvider` interface:
 
 ```ts
-import { provideCaptureStructuringProvider, type CaptureStructuringProvider } from '@wodenwang820118/capture-angular';
+import { provideCaptureStructuringProvider, type CaptureStructuringProvider } from '@gx/capture-angular';
 
 const provider: CaptureStructuringProvider = {
   async structure({ raw, documentContract, signal, reportProgress }) {
@@ -134,6 +134,57 @@ and return the `File` that should be hashed and captured.
 
 ## Web Component
 
-TODO for a later release: custom-element wrapper, properties/attributes,
-framework-neutral `CustomEvent` payloads, a non-Angular fixture, and public
-documentation. No custom element is shipped in v1.
+Register the framework-neutral element once during application startup:
+
+```ts
+import {
+  CAPTURE_WORKBENCH_CUSTOM_EVENTS,
+  defineCaptureWorkbenchElement,
+  type CaptureWorkbenchElement,
+} from '@gx/capture-angular';
+
+await defineCaptureWorkbenchElement();
+const capture = document.querySelector(
+  'capture-workbench',
+) as CaptureWorkbenchElement;
+capture.config = {
+  structuringMode: 'host',
+  hostStructuringOwner: 'client',
+  outputMode: 'json',
+};
+capture.addEventListener(CAPTURE_WORKBENCH_CUSTOM_EVENTS.completed, (event) => {
+  const completed = event as CustomEvent;
+  saveDocument(completed.detail.document);
+});
+```
+
+The `config` HTML attribute is a JSON object, for example
+`config='{"outputMode":"text","multiple":false}'`. The `config` property
+uses the same object shape but does not reflect back to HTML. `client`,
+`structuringProvider`, and `preprocessor` are object-only properties; they are
+never serialized to attributes. Invalid `config` JSON preserves the previous
+valid configuration and emits `capture-config-error`.
+
+All events bubble and are composed. Their stable names and detail values are:
+
+- `capture-completed` — `CaptureCompletedEvent`
+- `capture-failed` — `CaptureFailedEvent`
+- `capture-canceled` — `CaptureTaskView`
+- `capture-task-changed` — `CaptureTaskView`
+- `capture-config-error` — `{ attribute: 'config', message: string }`
+
+The framework-neutral fixture is
+[`fixtures/web-component/index.html`](./fixtures/web-component/index.html).
+Its CDN import uses an ESM CDN URL after `@gx/capture-angular` is made public
+through an npm-compatible registry. GitHub Packages itself is not a browser
+CDN; before that publication exists, install the package with pnpm and replace
+the import with the local package entry point.
+
+For a direct loopback runtime client, keep the same strict CSP used by the
+Tauri reference host: permit only `http://127.0.0.1:*` in `connect-src`, and
+do not grant arbitrary HTTPS, `unsafe-eval`, or wildcard origins. The element
+uses the existing CSS variables `--capture-accent`, `--capture-background`,
+`--capture-foreground`, `--capture-muted`, `--capture-border`, and
+`--capture-danger`. It preserves the package's runtime API-major and
+`CaptureDocumentV1` schema handshake; element and runtime versions must remain
+compatible.

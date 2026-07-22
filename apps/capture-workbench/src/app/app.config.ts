@@ -2,7 +2,7 @@ import { ApplicationConfig, provideBrowserGlobalErrorListeners } from '@angular/
 import {
   provideCaptureClient,
   provideCaptureStructuringProvider,
-} from '@wodenwang820118/capture-angular';
+} from '@gx/capture-angular';
 import { validationCaptureClient } from './validation-client';
 
 const structuringProviders = validationCaptureClient.structuringProvider

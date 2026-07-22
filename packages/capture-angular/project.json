@@ -34,14 +34,14 @@
       "outputs": ["{workspaceRoot}/dist/packs"],
       "options": {
         "cwd": "dist/packages/capture-angular",
-        "command": "pnpm pack --pack-destination ../../packs"
+        "command": "corepack pnpm pack --pack-destination ../../packs"
       }
     },
     "clean-consumer-smoke": {
       "executor": "nx:run-commands",
       "dependsOn": ["pack"],
       "options": {
-        "command": "node tools/clean-angular-consumer-smoke.mjs"
+        "command": "node tools/clean-angular-consumer-smoke.ts"
       }
     },
     "nx-release-publish": {

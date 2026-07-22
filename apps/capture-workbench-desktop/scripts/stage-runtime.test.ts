@@ -9,7 +9,7 @@ import {
   sha256File,
   validateManifestShape,
   validateRuntime,
-} from './stage-runtime.mjs';
+} from './stage-runtime.ts';
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 

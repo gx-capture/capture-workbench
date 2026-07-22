@@ -9,7 +9,7 @@ import {
   packagePublicationDecision,
   publishRelease,
   sha512Integrity,
-} from './publish-release.mjs';
+} from './publish-release.ts';
 
 const runtimeAssetNames = [
   'capture-runtime-x86_64-pc-windows-msvc.exe',
@@ -25,7 +25,7 @@ function success(stdout = '') {
 function npmInspection(version, integrity) {
   return JSON.stringify([
     {
-      name: '@wodenwang820118/capture-angular',
+      name: '@gx/capture-angular',
       version,
       integrity,
     },

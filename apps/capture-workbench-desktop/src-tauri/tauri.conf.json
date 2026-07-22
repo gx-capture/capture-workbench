@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "identifier": "io.github.wodenwang820118.capture-workbench.verification",
   "build": {
-    "beforeDevCommand": "pnpm nx run capture-workbench:serve",
+    "beforeDevCommand": "corepack pnpm nx run capture-workbench:serve",
     "devUrl": "http://localhost:4200",
-    "beforeBuildCommand": "pnpm nx run capture-workbench:production-bundle-check",
+    "beforeBuildCommand": "corepack pnpm nx run capture-workbench:production-bundle-check",
     "frontendDist": "../../../dist/apps/capture-workbench/browser"
   },
   "app": {

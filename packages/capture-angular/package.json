@@ -1,5 +1,5 @@
 {
-  "name": "@wodenwang820118/capture-angular",
+  "name": "@gx/capture-angular",
   "version": "0.1.0",
   "description": "Angular capture workbench for the Capture Runtime sidecar.",
   "license": "MIT",
@@ -14,7 +14,8 @@
     "access": "public"
   },
   "peerDependencies": {
-    "@angular/core": "^21.2.0"
+    "@angular/core": "^21.2.0",
+    "@angular/platform-browser": "^21.2.0"
   },
   "sideEffects": false
 }

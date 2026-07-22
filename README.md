@@ -5,7 +5,7 @@ an authenticated local runtime, and a Tauri reference harness.
 
 ## Artifacts
 
-- `@wodenwang820118/capture-angular` — Angular component, client, and contracts.
+- `@gx/capture-angular` — Angular component, client, and contracts.
 - `capture-runtime-windows-x64` — versioned local sidecar distributed through a
   GitHub Release manifest.
 - Capture Workbench Desktop — a verification host; it is not a public desktop
@@ -17,22 +17,27 @@ isolated Ollama process and model store to prove the complete flow.
 
 ## Development
 
+Requires Node.js 24 or newer and pnpm 11 or newer. Corepack selects the
+repository-pinned pnpm 11.15.1 release, including when another pnpm version is
+installed globally.
+
 ```powershell
-pnpm install
-pnpm nx show projects
-pnpm dev
-pnpm verify
+corepack install
+corepack pnpm install
+corepack pnpm nx show projects
+corepack pnpm dev
+corepack pnpm verify
 ```
 
-`pnpm dev` stages deterministic runtime assets first, so it works from a fresh
-checkout. Use `pnpm dev:staged-runtime` only after explicitly staging the real
+`corepack pnpm dev` stages deterministic runtime assets first, so it works from a fresh
+checkout. Use `corepack pnpm dev:staged-runtime` only after explicitly staging the real
 runtime executable, manifest, and schema that the Tauri harness should launch.
 
 Run the opt-in installed Windows harness separately because it performs a
 scoped NSIS install and uninstall:
 
 ```powershell
-pnpm nx run capture-workbench-desktop:smoke-installed-deterministic --skipNxCache
+corepack pnpm nx run capture-workbench-desktop:smoke-installed-deterministic --skipNxCache
 ```
 
 That target uses deterministic engines and produces diagnostic evidence only;

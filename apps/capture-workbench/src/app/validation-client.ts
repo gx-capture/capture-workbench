@@ -13,7 +13,7 @@ import {
   type RuntimeReadyV1,
   type RuntimeRequirementV1,
   type StartRuntimeInstallationRequest,
-} from '@wodenwang820118/capture-angular';
+} from '@gx/capture-angular';
 import { selectValidationCaptureFixture } from './validation-fixture-provider';
 
 export type ValidationCaptureClientMode =

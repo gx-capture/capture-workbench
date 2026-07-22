@@ -1,22 +1,24 @@
 {
   "name": "@capture-workbench/source",
   "version": "0.0.0",
+  "type": "module",
   "license": "MIT",
-  "packageManager": "pnpm@10.33.2",
+  "packageManager": "pnpm@11.15.1",
   "engines": {
-    "node": ">=22.12.0"
+    "node": ">=24.0.0",
+    "pnpm": ">=11.0.0"
   },
   "scripts": {
-    "dev": "pnpm nx run capture-workbench-desktop:dev-deterministic",
-    "dev:staged-runtime": "pnpm nx run capture-workbench-desktop:dev",
-    "build": "pnpm nx run-many -t build",
-    "test": "pnpm nx run-many -t test",
-    "lint": "pnpm nx run-many -t lint",
-    "verify": "pnpm run verify:workspace && pnpm run verify:package && pnpm run verify:smoke",
-    "verify:workspace": "pnpm nx run-many -t lint,typecheck,test,build,production-bundle-check,cargo-fmt-check,cargo-check,cargo-test,package-qa-test --parallel=false",
-    "verify:package": "pnpm nx run capture-angular:clean-consumer-smoke",
-    "verify:smoke": "pnpm nx run capture-workbench-desktop:smoke-deterministic && pnpm nx run capture-workbench-e2e:e2e",
-    "verify:release-version": "node tools/verify-release-version.mjs"
+    "dev": "corepack pnpm nx run capture-workbench-desktop:dev-deterministic",
+    "dev:staged-runtime": "corepack pnpm nx run capture-workbench-desktop:dev",
+    "build": "corepack pnpm nx run-many -t build",
+    "test": "corepack pnpm nx run-many -t test",
+    "lint": "corepack pnpm nx run-many -t lint",
+    "verify": "corepack pnpm run verify:workspace && corepack pnpm run verify:package && corepack pnpm run verify:smoke",
+    "verify:workspace": "corepack pnpm nx run-many -t lint,typecheck,test,build,production-bundle-check,cargo-fmt-check,cargo-check,cargo-test,package-qa-test --parallel=false",
+    "verify:package": "corepack pnpm nx run capture-angular:clean-consumer-smoke",
+    "verify:smoke": "corepack pnpm nx run capture-workbench-desktop:smoke-deterministic && corepack pnpm nx run capture-workbench-e2e:e2e",
+    "verify:release-version": "node tools/verify-release-version.ts"
   },
   "private": true,
   "dependencies": {
@@ -52,7 +54,7 @@
     "@swc/core": "~1.15.5",
     "@swc/helpers": "~0.5.18",
     "@tauri-apps/cli": "2.11.2",
-    "@types/node": "20.19.9",
+    "@types/node": "^24.0.0",
     "@typescript-eslint/utils": "^8.40.0",
     "angular-eslint": "^21.2.0",
     "autoprefixer": "^10.4.0",

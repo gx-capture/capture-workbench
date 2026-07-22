@@ -14,31 +14,19 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const sourcePackage = JSON.parse(
   readFileSync(join(repoRoot, 'packages/capture-angular/package.json'), 'utf8'),
 );
-const archiveName = `wodenwang820118-capture-angular-${sourcePackage.version}.tgz`;
+const archiveName = `gx-capture-angular-${sourcePackage.version}.tgz`;
 const archivePath = join(repoRoot, 'dist', 'packs', archiveName);
 // Keep the isolated virtual store path short enough for Windows package paths.
 const fixtureBase = resolve(repoRoot, '..', '.cw-clean');
 mkdirSync(fixtureBase, { recursive: true });
 const fixtureRoot = mkdtempSync(join(fixtureBase, 'c-'));
-const pnpmCli = resolvePnpmCli();
-
-function resolvePnpmCli() {
-  const candidates = [
-    process.env.npm_execpath,
-    process.env.APPDATA
-      ? join(
-          process.env.APPDATA,
-          'npm',
-          'node_modules',
-          'pnpm',
-          'bin',
-          'pnpm.cjs',
-        )
-      : undefined,
-  ];
-  return candidates.find((candidate) => candidate && existsSync(candidate));
-}
-
+const corepackCli = join(
+  dirname(process.execPath),
+  'node_modules',
+  'corepack',
+  'dist',
+  'corepack.js',
+);
 function write(relativePath, contents) {
   const target = join(fixtureRoot, relativePath);
   mkdirSync(dirname(target), { recursive: true });
@@ -69,14 +57,10 @@ function run(command, args) {
 }
 
 async function runPnpm(args) {
-  if (pnpmCli) {
-    await run(process.execPath, [pnpmCli, ...args]);
-    return;
+  if (!existsSync(corepackCli)) {
+    throw new Error('Node 24 Corepack is required to run the pnpm 11 fixture.');
   }
-  if (process.platform === 'win32') {
-    throw new Error('Unable to resolve the pnpm CLI entry point on Windows.');
-  }
-  await run('pnpm', args);
+  await run(process.execPath, [corepackCli, 'pnpm', ...args]);
 }
 
 try {
@@ -88,7 +72,8 @@ try {
         name: 'capture-angular-clean-consumer',
         version: '0.0.0',
         private: true,
-        packageManager: 'pnpm@10.33.2',
+        packageManager: 'pnpm@11.15.1',
+        engines: { node: '>=24.0.0', pnpm: '>=11.0.0' },
         scripts: { build: 'ng build', test: 'ng test --watch=false' },
         dependencies: {
           '@angular/common': '21.2.18',
@@ -113,6 +98,19 @@ try {
       null,
       2,
     )}\n`,
+  );
+  write(
+    'pnpm-workspace.yaml',
+    `engineStrict: true
+allowBuilds:
+  '@parcel/watcher': true
+  '@swc/core': true
+  esbuild: true
+  less: false
+  lmdb: true
+  msgpackr-extract: true
+  nx: true
+`,
   );
   write(
     'angular.json',
@@ -244,21 +242,21 @@ try {
   );
   write(
     'src/app/app.ts',
-    `import { ChangeDetectionStrategy, Component } from '@angular/core';\nimport { CaptureWorkbenchComponent } from '@wodenwang820118/capture-angular';\n\n@Component({\n  selector: 'app-root',\n  imports: [CaptureWorkbenchComponent],\n  template: \`<capture-workbench [config]="{ showRuntimeSetup: false, outputMode: 'text' }" />\`,\n  changeDetection: ChangeDetectionStrategy.OnPush,\n})\nexport class App {}\n`,
+    `import { ChangeDetectionStrategy, Component } from '@angular/core';\nimport { CaptureWorkbenchComponent } from '@gx/capture-angular';\n\n@Component({\n  selector: 'app-root',\n  imports: [CaptureWorkbenchComponent],\n  template: \`<capture-workbench [config]="{ showRuntimeSetup: false, outputMode: 'text' }" />\`,\n  changeDetection: ChangeDetectionStrategy.OnPush,\n})\nexport class App {}\n`,
   );
   write(
     'src/app/app.spec.ts',
-    `import { TestBed } from '@angular/core/testing';\nimport { CAPTURE_DOCUMENT_V1_JSON_SCHEMA, CAPTURE_DOCUMENT_V1_SCHEMA_SHA256 } from '@wodenwang820118/capture-angular';\nimport { App } from './app';\n\ndescribe('packed capture consumer', () => {\n  it('renders the installed component and exposes the canonical schema', async () => {\n    await TestBed.configureTestingModule({ imports: [App] }).compileComponents();\n    const fixture = TestBed.createComponent(App);\n    fixture.detectChanges();\n    expect(fixture.nativeElement.querySelector('capture-workbench')).toBeTruthy();\n    expect(CAPTURE_DOCUMENT_V1_JSON_SCHEMA.$id).toBe('https://github.com/WodenWang820118/capture-workbench/schema/capture-document-v1.schema.json');\n    expect(CAPTURE_DOCUMENT_V1_SCHEMA_SHA256).toBe('da8565b0a4611042f62f96202d0f167ba0923d88e12b9be22832f3ee320920c3');\n  });\n});\n`,
+    `import { TestBed } from '@angular/core/testing';\nimport { CAPTURE_DOCUMENT_V1_JSON_SCHEMA, CAPTURE_DOCUMENT_V1_SCHEMA_SHA256, defineCaptureWorkbenchElement } from '@gx/capture-angular';\nimport { App } from './app';\n\ndescribe('packed capture consumer', () => {\n  it('renders the installed component and exposes the public contracts', async () => {\n    await TestBed.configureTestingModule({ imports: [App] }).compileComponents();\n    const fixture = TestBed.createComponent(App);\n    fixture.detectChanges();\n    expect(fixture.nativeElement.querySelector('capture-workbench')).toBeTruthy();\n    expect(typeof defineCaptureWorkbenchElement).toBe('function');\n    expect(CAPTURE_DOCUMENT_V1_JSON_SCHEMA.$id).toBe('https://github.com/WodenWang820118/capture-workbench/schema/capture-document-v1.schema.json');\n    expect(CAPTURE_DOCUMENT_V1_SCHEMA_SHA256).toBe('da8565b0a4611042f62f96202d0f167ba0923d88e12b9be22832f3ee320920c3');\n  });\n});\n`,
   );
 
-  await runPnpm(['install', '--ignore-workspace', '--no-frozen-lockfile']);
-  await runPnpm(['add', archiveSpec, '--save-exact', '--ignore-workspace']);
+  await runPnpm(['install', '--no-frozen-lockfile']);
+  await runPnpm(['add', archiveSpec, '--save-exact']);
   if (
     !existsSync(
       join(
         fixtureRoot,
         'node_modules',
-        '@wodenwang820118',
+        '@gx',
         'capture-angular',
         'LICENSE',
       ),

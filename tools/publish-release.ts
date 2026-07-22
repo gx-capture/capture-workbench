@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-const packageName = '@wodenwang820118/capture-angular';
+const packageName = '@gx/capture-angular';
 const registry = 'https://npm.pkg.github.com';
 const runtimeAssetNames = Object.freeze([
   'capture-runtime-x86_64-pc-windows-msvc.exe',

@@ -33,6 +33,8 @@ jobs:
 
       - name: Install pnpm
         uses: pnpm/action-setup@b0f76dfb45f55f8421693e4803ac7bb65143bd34 # v6
+        with:
+          version: 11.15.1
 
       - name: Install Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
@@ -40,7 +42,7 @@ jobs:
           node-version: 24
           cache: pnpm
           registry-url: https://npm.pkg.github.com
-          scope: '@wodenwang820118'
+          scope: '@gx'
 
       - name: Install uv and Python 3.12
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
@@ -74,7 +76,7 @@ jobs:
       - name: Build the non-public Tauri verification installer
         shell: pwsh
         run: |
-          node apps/capture-workbench-desktop/scripts/stage-runtime.mjs `
+          node apps/capture-workbench-desktop/scripts/stage-runtime.ts `
             --artifact packages/capture-runtime/dist/release/capture-runtime-x86_64-pc-windows-msvc.exe `
             --manifest packages/capture-runtime/dist/release/capture-runtime-manifest.json `
             --schema packages/capture-runtime/dist/release/capture-document-v1.schema.json `
@@ -136,6 +138,8 @@ jobs:
 
       - name: Install pnpm
         uses: pnpm/action-setup@b0f76dfb45f55f8421693e4803ac7bb65143bd34 # v6
+        with:
+          version: 11.15.1
 
       - name: Install Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
@@ -249,7 +253,7 @@ jobs:
         with:
           node-version: 24
           registry-url: https://npm.pkg.github.com
-          scope: '@wodenwang820118'
+          scope: '@gx'
 
       - name: Download verified publication payload
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -267,7 +271,7 @@ jobs:
           if ($packages.Count -ne 1) {
             throw "Expected exactly one verified package tarball, found $($packages.Count)."
           }
-          node tools/publish-release.mjs `
+          node tools/publish-release.ts `
             --tag "${{ github.ref_name }}" `
             --runtime-dir publication/runtime `
             --package $packages[0].FullName

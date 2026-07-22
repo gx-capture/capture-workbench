@@ -17,10 +17,10 @@ Production packaging installs the optional engines explicitly:
 
 ```powershell
 uv sync --python 3.12 --extra windowsml --extra whisper
-pnpm nx run capture-runtime:build-production-executable
+corepack pnpm nx run capture-runtime:build-production-executable
 ```
 
-From the workspace root, use `pnpm nx run capture-runtime:test` and the other declared Nx
+From the workspace root, use `corepack pnpm nx run capture-runtime:test` and the other declared Nx
 targets.
 
 ## Runtime configuration
@@ -105,7 +105,7 @@ directory a runtime or repository dependency:
 ```powershell
 $env:CAPTURE_WINDOWSML_BUNDLE_SOURCE_DIR = 'C:\path\to\verified-models'
 $env:CAPTURE_WINDOWSML_BUNDLE_URL = 'https://public.example/releases/capture-windowsml-ocr-windows-x64.zip'
-pnpm nx run capture-runtime:build-windowsml-bundle
+corepack pnpm nx run capture-runtime:build-windowsml-bundle
 ```
 
 The builder includes only the six allowlisted OCR files, uses fixed ZIP metadata and stored

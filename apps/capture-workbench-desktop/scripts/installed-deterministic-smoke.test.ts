@@ -17,8 +17,8 @@ import {
   installerArguments,
   releaseExclusiveSmokeLock,
   uninstallerArguments,
-} from './installed-deterministic-smoke.mjs';
-import { appRoot } from './stage-runtime.mjs';
+} from './installed-deterministic-smoke.ts';
+import { appRoot } from './stage-runtime.ts';
 
 test('installed smoke paths and NSIS arguments stay inside the exact tmp subtree', () => {
   const root = resolve(
@@ -267,7 +267,7 @@ test('Nx target depends on the deterministic NSIS build and writes only non-rele
   assert.deepEqual(target.outputs, [
     '{workspaceRoot}/tmp/capture-workbench-desktop/installed-smoke/installed-smoke.json',
   ]);
-  assert.match(target.options.command, /installed-deterministic-smoke\.mjs/u);
+  assert.match(target.options.command, /installed-deterministic-smoke\.ts/u);
 });
 
 function captureFixture(locatorKind) {

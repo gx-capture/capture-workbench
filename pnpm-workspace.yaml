@@ -3,3 +3,16 @@ packages:
   - packages/*
 
 autoInstallPeers: true
+engineStrict: true
+
+# pnpm 11 requires an explicit decision for dependency lifecycle scripts.
+# These are the reviewed packages needed for Angular/Nx builds and file watching;
+# less is unused by this workspace and remains denied.
+allowBuilds:
+  '@parcel/watcher': true
+  '@swc/core': true
+  esbuild: true
+  less: false
+  lmdb: true
+  msgpackr-extract: true
+  nx: true

@@ -4,18 +4,18 @@ This Tauri 2 app is the Windows 11 x64 packaging and clean-install verification 
 
 The harness starts one verified `capture-runtime` sidecar on a random loopback port with a memory-only 256-bit bearer token. Its default development provider is an isolated Ollama lane with dedicated app data, model storage, port, profile, and PID file.
 
-From a fresh checkout, run `pnpm dev`. The root script uses the
+From a fresh checkout, run `corepack pnpm dev`. The root script uses the
 `dev-deterministic` target, which stages test-only runtime assets before Tauri
 starts. To exercise explicitly staged real runtime assets instead, stage them
-first and run `pnpm dev:staged-runtime`; that path never stages a fake for you.
+first and run `corepack pnpm dev:staged-runtime`; that path never stages a fake for you.
 
 ## Native checks
 
 ```powershell
-pnpm nx run capture-workbench-desktop:cargo-fmt-check
-pnpm nx run capture-workbench-desktop:cargo-check
-pnpm nx run capture-workbench-desktop:cargo-test
-pnpm nx run capture-workbench-desktop:package-qa-test
+corepack pnpm nx run capture-workbench-desktop:cargo-fmt-check
+corepack pnpm nx run capture-workbench-desktop:cargo-check
+corepack pnpm nx run capture-workbench-desktop:cargo-test
+corepack pnpm nx run capture-workbench-desktop:package-qa-test
 ```
 
 ## Runtime staging
@@ -23,12 +23,12 @@ pnpm nx run capture-workbench-desktop:package-qa-test
 Release automation must stage a Windows x64 runtime and its release manifest before `build`:
 
 ```powershell
-node apps/capture-workbench-desktop/scripts/stage-runtime.mjs `
+node apps/capture-workbench-desktop/scripts/stage-runtime.ts `
   --artifact <capture-runtime.exe> `
   --manifest <capture-runtime-manifest.json> `
   --schema <capture-document-v1.schema.json> `
   --source release
-pnpm nx run capture-workbench-desktop:build-nsis-release
+corepack pnpm nx run capture-workbench-desktop:build-nsis-release
 ```
 
 The ordinary `build` target compiles the Tauri app with `--no-bundle` so workspace-wide verification does not silently package a fake runtime. `stage-deterministic-runtime` and `build-nsis-deterministic` are test-only; their outputs cannot be used as clean-install or release evidence.
@@ -39,7 +39,7 @@ The installed harness check is intentionally opt-in because it performs a
 silent, current-user NSIS install and uninstall:
 
 ```powershell
-pnpm nx run capture-workbench-desktop:smoke-installed-deterministic --skipNxCache
+corepack pnpm nx run capture-workbench-desktop:smoke-installed-deterministic --skipNxCache
 ```
 
 It refuses to run over an existing Capture Workbench Verification install,
