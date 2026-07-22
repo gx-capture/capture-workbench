@@ -14,10 +14,13 @@
     "skipLibCheck": true,
     "skipDefaultLibCheck": true,
     "paths": {
-      "@gx/capture-angular": [
-        "./packages/capture-angular/src/index.ts"
-      ]
-    }
+      "@gx/capture-angular": ["./packages/capture-angular/src/index.ts"]
+    },
+    "strict": false,
+    "noUncheckedSideEffectImports": false,
+    "types": ["*"],
+    "esModuleInterop": false,
+    "ignoreDeprecations": "6.0"
   },
   "exclude": ["node_modules", "tmp"]
 }

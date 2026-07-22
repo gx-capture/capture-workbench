@@ -14,8 +14,8 @@
     "access": "public"
   },
   "peerDependencies": {
-    "@angular/core": "^21.2.0",
-    "@angular/platform-browser": "^21.2.0"
+    "@angular/core": "^22.0.0",
+    "@angular/platform-browser": "^22.0.0"
   },
   "sideEffects": false
 }

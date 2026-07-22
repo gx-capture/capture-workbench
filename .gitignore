@@ -61,3 +61,5 @@ apps/capture-workbench-desktop/src-tauri/gen/
 # Local verification data and release output
 .capture-workbench/
 artifacts/
+
+.nx/migrate-runs
