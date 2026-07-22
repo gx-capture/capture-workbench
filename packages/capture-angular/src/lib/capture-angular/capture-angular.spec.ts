@@ -158,6 +158,54 @@ describe('CaptureWorkbenchComponent', () => {
     expect(input.accept).not.toContain('.pdf');
   });
 
+  it('reloads the runtime handshake through the resource signal', async () => {
+    const client = fakeClient();
+    fixture.componentRef.setInput('client', client);
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    expect(fixture.componentInstance.runtime().status).toBe('ready');
+    expect(client.getReady).toHaveBeenCalledOnce();
+    expect(client.getRequirements).toHaveBeenCalledOnce();
+
+    fixture.componentInstance.refreshRuntime();
+    await fixture.whenStable();
+
+    expect(fixture.componentInstance.runtime().status).toBe('ready');
+    expect(client.getReady).toHaveBeenCalledTimes(2);
+    expect(client.getRequirements).toHaveBeenCalledTimes(2);
+  });
+
+  it('maps resource compatibility failures to the incompatible runtime state', async () => {
+    const client = fakeClient({
+      getReady: vi.fn(async () => ({ ...READY, runtimeVersion: '1.0.0' })),
+    });
+    fixture.componentRef.setInput('client', client);
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    expect(fixture.componentInstance.runtime()).toMatchObject({
+      status: 'incompatible',
+      error: expect.stringContaining('incompatible'),
+    });
+  });
+
+  it('maps resource handshake failures to the runtime error state', async () => {
+    const client = fakeClient({
+      getRequirements: vi.fn(async () => {
+        throw new Error('runtime probe failed');
+      }),
+    });
+    fixture.componentRef.setInput('client', client);
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    expect(fixture.componentInstance.runtime()).toMatchObject({
+      status: 'error',
+      error: 'runtime probe failed',
+    });
+  });
+
   it('emits a runtime-validated canonical result', async () => {
     const client = fakeClient();
     const completed = vi.fn();
@@ -187,6 +235,92 @@ describe('CaptureWorkbenchComponent', () => {
     expect(
       fixture.nativeElement.querySelector('.result-preview').textContent,
     ).toContain('page one');
+  });
+
+  it('polls queued jobs through rxResource until completion without overlap', async () => {
+    const createCapture = vi
+      .fn<CaptureClient['createCapture']>()
+      .mockResolvedValue(job('queued', 'queued'));
+    const getCapture = vi
+      .fn<CaptureClient['getCapture']>()
+      .mockResolvedValueOnce(job('running', 'extracting'))
+      .mockResolvedValueOnce(job('completed', 'completed'));
+    const client = fakeClient({ createCapture, getCapture });
+    fixture.componentRef.setInput('client', client);
+    fixture.componentRef.setInput('config', {
+      showRuntimeSetup: false,
+      pollIntervalMs: 0,
+    });
+    fixture.detectChanges();
+
+    selectFiles(fixture, [new File(['test'], 'queued.pdf')]);
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(getCapture).toHaveBeenCalledTimes(2);
+    expect(getCapture.mock.invocationCallOrder[0]).toBeLessThan(
+      getCapture.mock.invocationCallOrder[1] ?? Number.POSITIVE_INFINITY,
+    );
+    expect(fixture.componentInstance.tasks()[0]?.status).toBe('completed');
+    expect(client.getResult).toHaveBeenCalledOnce();
+  });
+
+  it('stops host polling at awaiting_structuring and does not poll after commit', async () => {
+    const createCapture = vi
+      .fn<CaptureClient['createCapture']>()
+      .mockResolvedValue(job('running', 'extracting', 'host'));
+    const getCapture = vi
+      .fn<CaptureClient['getCapture']>()
+      .mockResolvedValue(job('running', 'awaiting_structuring', 'host'));
+    const structure = vi.fn(async () => DOCUMENT);
+    const client = fakeClient({ createCapture, getCapture });
+    fixture.componentRef.setInput('client', client);
+    fixture.componentRef.setInput('structuringProvider', { structure });
+    fixture.componentRef.setInput('config', {
+      showRuntimeSetup: false,
+      structuringMode: 'host',
+      pollIntervalMs: 0,
+    });
+    fixture.detectChanges();
+
+    selectFiles(fixture, [new File(['test'], 'host.pdf')]);
+    await fixture.whenStable();
+
+    expect(getCapture).toHaveBeenCalledOnce();
+    expect(structure).toHaveBeenCalledOnce();
+    expect(client.commitStructuredResult).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(client.getResult).toHaveBeenCalledOnce());
+  });
+
+  it('cancels an in-flight rxResource poll without applying a late result', async () => {
+    let releasePoll!: (job: CaptureJobV1) => void;
+    const pendingPoll = new Promise<CaptureJobV1>((resolve) => {
+      releasePoll = resolve;
+    });
+    const createCapture = vi
+      .fn<CaptureClient['createCapture']>()
+      .mockResolvedValue(job('queued', 'queued'));
+    const getCapture = vi.fn<CaptureClient['getCapture']>(() => pendingPoll);
+    const client = fakeClient({ createCapture, getCapture });
+    fixture.componentRef.setInput('client', client);
+    fixture.componentRef.setInput('config', {
+      showRuntimeSetup: false,
+      pollIntervalMs: 0,
+    });
+    fixture.detectChanges();
+
+    selectFiles(fixture, [new File(['test'], 'cancel.pdf')]);
+    await vi.waitFor(() => expect(getCapture).toHaveBeenCalledOnce());
+    const taskId = fixture.componentInstance.tasks()[0]?.id;
+    if (!taskId) throw new Error('Expected a capture task.');
+
+    await fixture.componentInstance.cancel(taskId);
+    releasePoll(job('completed', 'completed'));
+    await fixture.whenStable();
+
+    expect(fixture.componentInstance.tasks()[0]?.status).toBe('canceled');
+    expect(client.getResult).not.toHaveBeenCalled();
+    expect(getCapture.mock.calls[0]?.[1]?.aborted).toBe(true);
   });
 
   it('retries an uncertain capture creation with the same request and file', async () => {
@@ -969,7 +1103,7 @@ describe('CaptureWorkbenchComponent', () => {
     });
     fixture.componentRef.setInput('client', client);
     fixture.detectChanges();
-    await fixture.componentInstance.refreshRuntime();
+    await fixture.whenStable();
     fixture.detectChanges();
 
     expect(client.startInstallation).not.toHaveBeenCalled();
@@ -1056,10 +1190,9 @@ describe('CaptureWorkbenchComponent', () => {
     fixture.componentRef.setInput('client', client);
     fixture.componentRef.setInput('config', {
       pollIntervalMs: 0,
-      hostManagedHandshake: true,
     });
     fixture.detectChanges();
-    await fixture.componentInstance.refreshRuntime();
+    await fixture.whenStable();
 
     await fixture.componentInstance.installMissingRequirements();
 
@@ -1099,10 +1232,9 @@ describe('CaptureWorkbenchComponent', () => {
     fixture.componentRef.setInput('client', client);
     fixture.componentRef.setInput('config', {
       pollIntervalMs: 0,
-      hostManagedHandshake: true,
     });
     fixture.detectChanges();
-    await fixture.componentInstance.refreshRuntime();
+    await fixture.whenStable();
 
     await fixture.componentInstance.installMissingRequirements();
 

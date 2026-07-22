@@ -115,6 +115,10 @@ capability/version handshake. Set `hostManagedHandshake: true` only when a host
 adapter has already enforced the same runtime major, API major, schema, service
 identity, and capability checks.
 
+The runtime handshake is signal-first. Calling `refreshRuntime()` requests a
+new capability check and returns immediately; read `runtime()` or wait for the
+host framework's normal stabilization boundary instead of awaiting the method.
+
 ```html
 <gx-capture-workbench
   [config]="{

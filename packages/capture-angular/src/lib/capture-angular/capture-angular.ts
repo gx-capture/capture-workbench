@@ -1,12 +1,15 @@
 import {
   ChangeDetectionStrategy,
   Component,
+  EffectRef,
+  Injector,
   OnDestroy,
-  OnInit,
   computed,
+  effect,
   inject,
   input,
   output,
+  resource,
   signal,
 } from '@angular/core';
 import {
@@ -38,6 +41,10 @@ import {
   validateStructuringCandidate,
 } from '../capture-helpers';
 import { CAPTURE_DOCUMENT_V1_CONTRACT } from '../capture-document-schema';
+import {
+  createCaptureJobPollResource,
+  type CaptureJobPollResource,
+} from './capture-job-poll-resource';
 
 interface ResolvedCaptureWorkbenchConfig {
   readonly enabledSources: readonly ('pdf' | 'image' | 'audio')[];
@@ -67,6 +74,17 @@ interface RuntimeViewState {
   readonly ready?: RuntimeReadyV1;
   readonly requirements: readonly RuntimeRequirementV1[];
   readonly error?: string;
+}
+
+interface RuntimeHandshake {
+  readonly ready: RuntimeReadyV1;
+  readonly requirements: readonly RuntimeRequirementV1[];
+}
+
+interface RuntimeRequest {
+  readonly client: CaptureClient | null;
+  readonly compatibleRuntimeMajor: number;
+  readonly structuringMode: 'runtime' | 'host';
 }
 
 interface InternalCaptureTask {
@@ -103,7 +121,8 @@ const MAX_INSTALLATIONS_PER_USER_ACTION = 16;
   styleUrl: './capture-angular.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
-export class CaptureWorkbenchComponent implements OnInit, OnDestroy {
+export class CaptureWorkbenchComponent implements OnDestroy {
+  private readonly injector = inject(Injector);
   private readonly injectedClient = inject(CAPTURE_CLIENT, { optional: true });
   private readonly injectedStructuringProvider = inject(
     CAPTURE_STRUCTURING_PROVIDER,
@@ -133,11 +152,8 @@ export class CaptureWorkbenchComponent implements OnInit, OnDestroy {
 
   private readonly taskState = signal<readonly CaptureTaskView[]>([]);
   readonly tasks = this.taskState.asReadonly();
-  readonly runtime = signal<RuntimeViewState>({
-    status: 'idle',
-    requirements: [],
-  });
   readonly installation = signal<RuntimeInstallationV1 | null>(null);
+  private readonly installationError = signal<string | undefined>(undefined);
 
   protected readonly resolvedConfig = computed<ResolvedCaptureWorkbenchConfig>(
     () => ({
@@ -153,6 +169,102 @@ export class CaptureWorkbenchComponent implements OnInit, OnDestroy {
       ),
     }),
   );
+  private readonly runtimeRequest = computed<RuntimeRequest | undefined>(
+    () => {
+      const config = this.config();
+      const hostManagedHandshake =
+        config.hostManagedHandshake ?? DEFAULT_CONFIG.hostManagedHandshake;
+      if (hostManagedHandshake) return undefined;
+      return {
+        client: this.activeClient(),
+        compatibleRuntimeMajor:
+          config.compatibleRuntimeMajor ?? DEFAULT_CONFIG.compatibleRuntimeMajor,
+        structuringMode:
+          config.structuringMode ?? DEFAULT_CONFIG.structuringMode,
+      };
+    },
+    {
+      equal: (left, right) =>
+        left === right ||
+        (!!left &&
+          !!right &&
+          left.client === right.client &&
+          left.compatibleRuntimeMajor === right.compatibleRuntimeMajor &&
+          left.structuringMode === right.structuringMode),
+    },
+  );
+  private readonly runtimeResource = resource<
+    RuntimeHandshake,
+    RuntimeRequest | undefined
+  >({
+    params: () => this.runtimeRequest(),
+    loader: async ({ params, abortSignal }) => {
+      if (!params.client) {
+        throw new Error('Capture client is not configured.');
+      }
+      const [ready, requirements] = await Promise.all([
+        params.client.getReady(abortSignal),
+        params.client.getRequirements(abortSignal),
+      ]);
+      assertCaptureRuntimeCompatible(
+        ready,
+        params.compatibleRuntimeMajor,
+        params.structuringMode,
+      );
+      return { ready, requirements };
+    },
+  });
+  readonly runtime = computed<RuntimeViewState>(() => {
+    const status = this.runtimeResource.status();
+    const handshake = this.runtimeResource.hasValue()
+      ? this.runtimeResource.value()
+      : undefined;
+    const installationError = this.installationError();
+
+    if (status === 'idle') {
+      return { status: 'idle', requirements: [] };
+    }
+    if (status === 'loading' || status === 'reloading') {
+      return handshake
+        ? {
+            status: 'checking',
+            ready: handshake.ready,
+            requirements: handshake.requirements,
+          }
+        : { status: 'checking', requirements: [] };
+    }
+    if (status === 'error') {
+      const error = this.runtimeResource.error();
+      const incompatible =
+        error instanceof Error && error.name === 'CaptureCompatibilityError';
+      return {
+        status: incompatible ? 'incompatible' : 'error',
+        requirements: [],
+        error: errorMessage(error, 'Unable to check the capture runtime.'),
+      };
+    }
+    if (!handshake) {
+      return { status: 'idle', requirements: [] };
+    }
+
+    const needsSetup = handshake.requirements.some(
+      (requirement) =>
+        this.requirementIsNeeded(requirement) && requirement.status !== 'ready',
+    );
+    if (installationError) {
+      return {
+        status: 'error',
+        ready: handshake.ready,
+        requirements: handshake.requirements,
+        error: installationError,
+      };
+    }
+    return {
+      status: handshake.ready.ready && !needsSetup ? 'ready' : 'needs-setup',
+      ready: handshake.ready,
+      requirements: handshake.requirements,
+    };
+  });
   protected readonly accept = computed(() =>
     captureAccept(this.resolvedConfig().enabledSources),
   );
@@ -189,62 +301,15 @@ export class CaptureWorkbenchComponent implements OnInit, OnDestroy {
     return runtimeProgressPercent(progress);
   }
 
-  ngOnInit(): void {
-    if (!this.resolvedConfig().hostManagedHandshake) void this.refreshRuntime();
-  }
-
   ngOnDestroy(): void {
     this.lifecycleController.abort();
     this.installationController?.abort();
     for (const task of this.internalTasks.values()) task.controller.abort();
   }
 
-  async refreshRuntime(): Promise<void> {
-    const client = this.activeClient();
-    if (!client) {
-      this.runtime.set({
-        status: 'error',
-        requirements: [],
-        error: 'Capture client is not configured.',
-      });
-      return;
-    }
-
-    this.runtime.update((state) => ({
-      ...state,
-      status: 'checking',
-      error: undefined,
-    }));
-    try {
-      const [ready, requirements] = await Promise.all([
-        client.getReady(this.lifecycleController.signal),
-        client.getRequirements(this.lifecycleController.signal),
-      ]);
-      assertCaptureRuntimeCompatible(
-        ready,
-        this.resolvedConfig().compatibleRuntimeMajor,
-        this.resolvedConfig().structuringMode,
-      );
-      const needsSetup = requirements.some(
-        (requirement) =>
-          this.requirementIsNeeded(requirement) &&
-          requirement.status !== 'ready',
-      );
-      this.runtime.set({
-        status: ready.ready && !needsSetup ? 'ready' : 'needs-setup',
-        ready,
-        requirements,
-      });
-    } catch (error: unknown) {
-      if (isAbortError(error)) return;
-      const incompatible =
-        error instanceof Error && error.name === 'CaptureCompatibilityError';
-      this.runtime.set({
-        status: incompatible ? 'incompatible' : 'error',
-        requirements: [],
-        error: errorMessage(error, 'Unable to check the capture runtime.'),
-      });
-    }
+  refreshRuntime(): void {
+    this.installationError.set(undefined);
+    this.runtimeResource.reload();
   }
 
   async installMissingRequirements(): Promise<void> {
@@ -295,7 +360,7 @@ export class CaptureWorkbenchComponent implements OnInit, OnDestroy {
         // Installing one requirement can unlock another (for example, the
         // capture model after Ollama becomes available). Keep the original
         // explicit consent scope, but only attempt each completed ID once.
-        await this.refreshRuntime();
+        await this.reloadRuntimeAndWait();
       }
 
       if (
@@ -311,17 +376,15 @@ export class CaptureWorkbenchComponent implements OnInit, OnDestroy {
       }
     } catch (error: unknown) {
       if (!isAbortError(error)) {
-        this.runtime.update((state) => ({
-          ...state,
-          status: 'error',
-          error: errorMessage(error, 'Runtime installation failed.'),
-        }));
+        this.installationError.set(
+          errorMessage(error, 'Runtime installation failed.'),
+        );
       }
     } finally {
       this.installationController = undefined;
       if (this.installation()?.status === 'completed')
         this.installation.set(null);
-      await this.refreshRuntime();
+      await this.reloadRuntimeAndWait();
     }
   }
 
@@ -335,12 +398,21 @@ export class CaptureWorkbenchComponent implements OnInit, OnDestroy {
         await client.cancelInstallation(installation.installationId),
       );
     } catch (error: unknown) {
-      this.runtime.update((state) => ({
-        ...state,
-        status: 'error',
-        error: errorMessage(error, 'Unable to cancel runtime installation.'),
-      }));
+      this.installationError.set(
+        errorMessage(error, 'Unable to cancel runtime installation.'),
+      );
     }
+  }
+
+  private async reloadRuntimeAndWait(): Promise<void> {
+    this.installationError.set(undefined);
+    const reloadStarted = this.runtimeResource.reload();
+    if (!reloadStarted && !this.runtimeResource.isLoading()) return;
+    await waitForResourceSettlement(
+      this.runtimeResource,
+      this.injector,
+      this.lifecycleController.signal,
+    );
   }
 
   enqueueFiles(files: readonly File[]): void {
@@ -731,20 +803,33 @@ export class CaptureWorkbenchComponent implements OnInit, OnDestroy {
     stopForHost: boolean,
     taskId: string,
   ): Promise<CaptureJobV1> {
-    let job = initial;
-    while (
-      job.status === 'queued' ||
-      (job.status === 'running' &&
-        !(stopForHost && job.stage === 'awaiting_structuring'))
+    if (
+      initial.status !== 'queued' &&
+      !(initial.status === 'running' &&
+        !(stopForHost && initial.stage === 'awaiting_structuring'))
     ) {
-      await abortableDelay(this.resolvedConfig().pollIntervalMs, signal);
-      job = await client.getCapture(job.captureId, signal);
-      this.updateTask(taskId, {
-        stage: job.stage,
-        progress: runtimeProgressPercent(job.progress),
-      });
+      return initial;
     }
-    return job;
+
+    const pollResource: CaptureJobPollResource =
+      createCaptureJobPollResource({
+        client,
+        captureId: initial.captureId,
+        pollIntervalMs: this.resolvedConfig().pollIntervalMs,
+        signal,
+        stopForHost,
+        injector: this.injector,
+        onJob: (job) =>
+          this.updateTask(taskId, {
+            stage: job.stage,
+            progress: runtimeProgressPercent(job.progress),
+          }),
+      });
+    try {
+      return await pollResource.done;
+    } finally {
+      pollResource.destroy();
+    }
   }
 
   private async commitHostResultAndReconcile(
@@ -1170,6 +1255,44 @@ function isAbortError(error: unknown): boolean {
 function throwIfAborted(signal: AbortSignal): void {
   if (signal.aborted)
     throw new DOMException('The operation was aborted.', 'AbortError');
+}
+
+interface SettledResource {
+  readonly isLoading: () => boolean;
+}
+
+function waitForResourceSettlement(
+  resource: SettledResource,
+  injector: Injector,
+  lifecycleSignal: AbortSignal,
+): Promise<void> {
+  if (lifecycleSignal.aborted) return Promise.resolve();
+
+  return new Promise<void>((resolve) => {
+    let settled = false;
+    let sawLoading = resource.isLoading();
+    const effectRefHolder: { current?: EffectRef } = {};
+    const finish = (): void => {
+      if (settled) return;
+      settled = true;
+      lifecycleSignal.removeEventListener('abort', finish);
+      effectRefHolder.current?.destroy();
+      resolve();
+    };
+
+    lifecycleSignal.addEventListener('abort', finish, { once: true });
+    const effectRef = effect(
+      () => {
+        if (resource.isLoading()) {
+          sawLoading = true;
+          return;
+        }
+        if (sawLoading) finish();
+      },
+      { injector },
+    );
+    effectRefHolder.current = effectRef;
+  });
 }
 
 async function retryUncertainResponse<T>(
