@@ -97,18 +97,18 @@ test('deterministic runtime checks exact Host authority and canonical v1 names',
     'deterministic-runtime',
     'src',
   );
-  const [httpSource, contractSource, smokeSource] = await Promise.all([
+  const [httpSource, contractSource, deterministicSource] = await Promise.all([
     readFile(join(fixtureRoot, 'http.rs'), 'utf8'),
     readFile(join(fixtureRoot, 'contract.rs'), 'utf8'),
-    readFile(join(appRoot, 'scripts', 'deterministic-smoke.ts'), 'utf8'),
+    readFile(join(appRoot, 'scripts', 'deterministic-http.ts'), 'utf8'),
   ]);
   assert.match(httpSource, /rsplit_once\(':'\)/u);
   assert.doesNotMatch(httpSource, /fn normalized_host/u);
   assert.match(contractSource, /"captureId"/u);
   assert.match(contractSource, /const SCHEMA_VERSION: &str = "1"/u);
-  assert.match(smokeSource, /multipart\/form-data; boundary=/u);
-  assert.match(smokeSource, /'structuringMode'/u);
-  assert.match(smokeSource, /wrongAuthorityPortRejected/u);
+  assert.match(deterministicSource, /multipart\/form-data; boundary=/u);
+  assert.match(deterministicSource, /'structuringMode'/u);
+  assert.match(deterministicSource, /wrongAuthorityPortRejected/u);
 });
 
 test('release workflow is SHA-pinned, least-privilege, attested, and runtime-first', async () => {
