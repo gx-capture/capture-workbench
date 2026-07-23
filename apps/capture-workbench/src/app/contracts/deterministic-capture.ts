@@ -2,7 +2,7 @@ import type {
   CaptureDocumentV1,
   CaptureJobV1,
   RawCaptureV1,
-} from '@gx/capture-angular';
+} from '@gx/capture-workbench';
 
 export interface FakeCaptureRecord {
   job: CaptureJobV1;

@@ -10,7 +10,7 @@ import {
   type CaptureCompletedEvent,
   type CaptureFailedEvent,
   type CaptureStructuringMode,
-} from '@gx/capture-angular';
+} from '@gx/capture-workbench';
 import { ValidationCaptureClientService } from './services/validation-client.service';
 
 @Component({

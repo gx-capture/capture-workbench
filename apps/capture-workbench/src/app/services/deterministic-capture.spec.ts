@@ -5,7 +5,7 @@ import {
   type CaptureSourceKind,
   type CaptureStructuringMode,
   type RawCaptureV1,
-} from '@gx/capture-angular';
+} from '@gx/capture-workbench';
 import { DeterministicCaptureClientService } from './deterministic-capture.service';
 import { DeterministicDocumentService } from './deterministic-document.service';
 import { DeterministicStructuringProviderService } from './deterministic-structuring.service';

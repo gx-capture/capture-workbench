@@ -1,6 +1,6 @@
-# @gx/capture-angular
+# @gx/capture-workbench
 
-Publishable Angular UI and transport contracts for Capture Runtime. The package
+Publishable Capture Workbench UI and transport contracts for Capture Runtime. The package
 owns runtime setup, file preprocessing, queued capture jobs, progress,
 cancellation, raw diagnostics, and JSON/text export.
 
@@ -20,7 +20,7 @@ Then install an exact synchronized version:
 
 ```powershell
 $env:GITHUB_PACKAGES_TOKEN = '<read:packages token>'
-corepack pnpm add @gx/capture-angular@0.2.0 --save-exact
+corepack pnpm add @gx/capture-workbench@0.2.0 --save-exact
 ```
 
 ## v0.2.0 breaking async contract
@@ -49,7 +49,7 @@ their own backend and inject it with `provideCaptureClient()`. This keeps the
 sidecar URL and high-entropy bearer token backend-only.
 
 ```ts
-import { provideCaptureClient } from '@gx/capture-angular';
+import { provideCaptureClient } from '@gx/capture-workbench';
 
 bootstrapApplication(App, {
   providers: [provideCaptureClient(certPrepCaptureClient)],
@@ -69,7 +69,7 @@ token to its trusted WebView process:
 
 ```ts
 import { invoke } from '@tauri-apps/api/core';
-import { provideHttpCaptureClient } from '@gx/capture-angular';
+import { provideHttpCaptureClient } from '@gx/capture-workbench';
 import { from, map } from 'rxjs';
 
 const backendConfig$ = from(invoke<{
@@ -98,7 +98,7 @@ model. A host that already owns an Ollama or another LLM provider can select
 `host` mode and inject the narrow `CaptureStructuringProvider` interface:
 
 ```ts
-import { provideCaptureStructuringProvider, type CaptureStructuringProvider } from '@gx/capture-angular';
+import { provideCaptureStructuringProvider, type CaptureStructuringProvider } from '@gx/capture-workbench';
 import { defer } from 'rxjs';
 
 const provider: CaptureStructuringProvider = {
@@ -159,7 +159,7 @@ import {
   CAPTURE_WORKBENCH_CUSTOM_EVENTS,
   defineCaptureWorkbenchElement,
   type CaptureWorkbenchElement,
-} from '@gx/capture-angular';
+} from '@gx/capture-workbench';
 
 defineCaptureWorkbenchElement().subscribe({
   error: (error) => console.error('Capture element registration failed.', error),
@@ -195,7 +195,7 @@ All events bubble and are composed. Their stable names and detail values are:
 
 The framework-neutral fixture is
 [`fixtures/web-component/index.html`](./fixtures/web-component/index.html).
-Install `@gx/capture-angular` from the configured NPM-compatible registry and
+Install `@gx/capture-workbench` from the configured NPM-compatible registry and
 import it from your bundler. The package does not publish a standalone browser
 bundle or CDN entry.
 

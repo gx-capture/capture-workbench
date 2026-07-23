@@ -40,7 +40,7 @@ or user-visible capture behavior.
 - Do not use `firstValueFrom`, `lastValueFrom`, `toPromise`, `new Promise`, or
   first-party `async`/`await` as an interop shortcut.
 - Keep the existing custom fetch adapter instead of introducing `HttpClient`.
-- Version the published Angular package as `0.2.0` for the breaking contract.
+- Version the published Capture Workbench package as `0.2.0` for the breaking contract.
 
 ## Failure and lifecycle rules
 
@@ -66,7 +66,7 @@ or user-visible capture behavior.
   fixture exceptions. The runtime handshake uses `rxResource` with `forkJoin`
   and `take(1)` on both one-shot streams so browser fetch/Response completion
   cannot leave the resource in `loading`.
-- `@gx/capture-angular` consumers and README examples use the new contract.
+- `@gx/capture-workbench` consumers and README examples use the new contract.
 
 ## Test plan
 

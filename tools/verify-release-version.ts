@@ -25,7 +25,7 @@ const pythonVersion = read(
 ).match(/^RUNTIME_VERSION:\s*Final\s*=\s*"([^"]+)"/m)?.[1];
 
 const versions = new Map([
-  ['Angular package', jsonVersion('packages/capture-angular/package.json')],
+  ['Capture Workbench package', jsonVersion('packages/capture-angular/package.json')],
   [
     'Python runtime package',
     tomlVersion('packages/capture-runtime/pyproject.toml'),

@@ -1,7 +1,7 @@
 {
-  "name": "@gx/capture-angular",
+  "name": "@gx/capture-workbench",
   "version": "0.2.0",
-  "description": "Angular capture workbench for the Capture Runtime sidecar.",
+  "description": "Capture Workbench UI for the Capture Runtime sidecar.",
   "license": "MIT",
   "repository": {
     "type": "git",

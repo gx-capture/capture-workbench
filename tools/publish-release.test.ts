@@ -25,7 +25,7 @@ function success(stdout = '') {
 function npmInspection(version, integrity) {
   return JSON.stringify([
     {
-      name: '@gx/capture-angular',
+      name: '@gx/capture-workbench',
       version,
       integrity,
     },
@@ -78,7 +78,7 @@ test('package integrity uses exact tarball bytes', async () => {
 test('registry integrity conflict stops before every GitHub release mutation', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'capture-publish-conflict-'));
   try {
-    const packagePath = join(directory, 'capture-angular-0.1.0.tgz');
+    const packagePath = join(directory, 'capture-workbench-0.1.0.tgz');
     await writeFile(packagePath, 'local package bytes', 'utf8');
     const localIntegrity = await observe(sha512Integrity(packagePath));
     const calls = [];
@@ -129,7 +129,7 @@ test('exact existing package and public runtime remain mutation-free on retries'
   );
   try {
     const runtimeDirectory = join(directory, 'runtime');
-    const packagePath = join(directory, 'capture-angular-0.1.0.tgz');
+    const packagePath = join(directory, 'capture-workbench-0.1.0.tgz');
     await mkdir(runtimeDirectory);
     await writeFile(packagePath, 'exact package bytes', 'utf8');
     await Promise.all(

@@ -2,7 +2,7 @@ import { ApplicationConfig, provideBrowserGlobalErrorListeners } from '@angular/
 import {
   CAPTURE_CLIENT,
   CAPTURE_STRUCTURING_PROVIDER,
-} from '@gx/capture-angular';
+} from '@gx/capture-workbench';
 import { ValidationCaptureClientService } from './services/validation-client.service';
 
 export const appConfig: ApplicationConfig = {

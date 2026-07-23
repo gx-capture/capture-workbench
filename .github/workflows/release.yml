@@ -58,7 +58,7 @@ jobs:
         shell: pwsh
         run: pnpm verify:release-version -- "${{ github.ref_name }}"
 
-      - name: Verify Angular package
+      - name: Verify Capture Workbench package
         shell: pwsh
         run: |
           pnpm nx run capture-angular:lint
@@ -92,7 +92,7 @@ jobs:
             apps/capture-workbench-desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis `
             -Filter '*.exe' -File)
           if ($packages.Count -ne 1) {
-            throw "Expected exactly one Angular tarball, found $($packages.Count)."
+            throw "Expected exactly one Capture Workbench tarball, found $($packages.Count)."
           }
           if ($installers.Count -ne 1) {
             throw "Expected exactly one NSIS installer, found $($installers.Count)."
@@ -261,7 +261,7 @@ jobs:
           name: capture-publication-${{ github.ref_name }}
           path: publication
 
-      - name: Publish runtime first, then the exact Angular package idempotently
+      - name: Publish runtime first, then the exact Capture Workbench package idempotently
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}

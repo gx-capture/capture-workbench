@@ -21,7 +21,7 @@ import type {
   RuntimeReadyV1,
   RuntimeRequirementV1,
   StartRuntimeInstallationRequest,
-} from '@gx/capture-angular';
+} from '@gx/capture-workbench';
 import {
   DETERMINISTIC_COMPLETED_AT,
   DETERMINISTIC_CREATED_AT,

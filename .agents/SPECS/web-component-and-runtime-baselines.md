@@ -26,7 +26,7 @@ lifecycle and input synchronization; the package remains an NPM ESM library.
   `capture-task-changed`.
 - Direct Angular template consumers use `gx-capture-workbench`; the public
   `capture-workbench` tag is reserved for the custom element.
-- The publishable package name becomes `@gx/capture-angular`. The actual
+- The publishable package name becomes `@gx/capture-workbench`. The actual
   GitHub repository owner, release URLs, and copyright holder stay unchanged.
 - `tools/*.mjs` and desktop harness `scripts/*.mjs` become `.ts`; Node 24
   executes these type-strippable TypeScript files directly. ESLint's flat
@@ -60,7 +60,7 @@ lifecycle and input synchronization; the package remains an NPM ESM library.
   Angular component without changing `CaptureDocumentV1` contracts.
 - All root `tools/*.mjs` and desktop harness `scripts/*.mjs` files and their
   references are replaced by `.ts`.
-- Every published package/import reference uses `@gx/capture-angular`.
+- Every published package/import reference uses `@gx/capture-workbench`.
 - Local and CI configuration enforce Node 24 and pnpm 11 or newer.
 
 ## Verification

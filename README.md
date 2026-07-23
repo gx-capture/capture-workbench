@@ -5,7 +5,7 @@ an authenticated local runtime, and a Tauri reference harness.
 
 ## Artifacts
 
-- `@gx/capture-angular` — Angular component, client, and contracts.
+- `@gx/capture-workbench` — Capture Workbench UI, client, and contracts.
 - `capture-runtime-windows-x64` — versioned local sidecar distributed through a
   GitHub Release manifest.
 - Capture Workbench Desktop — a verification host; it is not a public desktop

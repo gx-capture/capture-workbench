@@ -42,7 +42,7 @@ jobs:
         shell: pwsh
         run: pnpm install --frozen-lockfile
 
-      - name: Verify Angular package
+      - name: Verify Capture Workbench package
         shell: pwsh
         run: |
           pnpm nx run capture-angular:lint

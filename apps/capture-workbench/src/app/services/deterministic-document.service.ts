@@ -11,7 +11,7 @@ import type {
   CreateCaptureRequest,
   RawCaptureV1,
   RuntimeRequirementV1,
-} from '@gx/capture-angular';
+} from '@gx/capture-workbench';
 import {
   DETERMINISTIC_CAPTURE_WARNING,
   DETERMINISTIC_COMPLETED_AT,

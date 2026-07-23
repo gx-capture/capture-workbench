@@ -20,7 +20,7 @@ import {
   toArray,
 } from 'rxjs';
 
-const packageName = '@gx/capture-angular';
+const packageName = '@gx/capture-workbench';
 const registry = 'https://npm.pkg.github.com';
 const runtimeAssetNames = Object.freeze([
   'capture-runtime-x86_64-pc-windows-msvc.exe',
@@ -290,7 +290,7 @@ export function preflightPackagePublication(
   return defer(() => from(lstatPath(packagePath))).pipe(
     concatMap((metadata) => {
       if (!metadata.isFile() || !packagePath.endsWith('.tgz')) {
-        return throwError(() => new Error('Angular publication input must be one .tgz file.'));
+        return throwError(() => new Error('Capture Workbench publication input must be one .tgz file.'));
       }
       return sha512Integrity(packagePath);
     }),
@@ -308,7 +308,7 @@ export function preflightPackagePublication(
         inspection[0].integrity !== localIntegrity
       ) {
         return throwError(
-          () => new Error('Angular tarball identity/version/integrity does not match the release tag.'),
+          () => new Error('Capture Workbench tarball identity/version/integrity does not match the release tag.'),
         );
       }
       return defer(() => of(existingPackageIntegrity(version, runCommand))).pipe(
