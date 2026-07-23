@@ -29,6 +29,17 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { chromium } from '@playwright/test';
 
 import { assertStagedRuntime } from './assert-staged-runtime.ts';
+import {
+  CAPTURE_BLOCK_TYPES,
+  CHILD_ENVIRONMENT_ALLOWLIST,
+  EXPECTED_REQUIREMENT_IDS,
+  INSTALLED_EXECUTABLE_NAME,
+  INSTALLED_FIXTURES,
+  PRODUCT_REGISTRY_KEY,
+  REGISTRY_VIEWS,
+  UNINSTALLER_NAME,
+  UNINSTALL_REGISTRY_KEY,
+} from './constants/installed.ts';
 import { assertRedactedEvidence } from './package-qa.ts';
 import { appRoot, sha256File } from './stage-runtime.ts';
 
@@ -56,87 +67,15 @@ const nsisDirectory = join(
   'bundle',
   'nsis',
 );
-const installedExecutableName = 'capture-workbench-desktop.exe';
-const uninstallerName = 'uninstall.exe';
-const productRegistryKey =
-  'HKCU\\Software\\github\\Capture Workbench Verification';
-const uninstallRegistryKey =
-  'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Capture Workbench Verification';
-const registryViews = ['64', '32'];
-const expectedRequirementIds = [
-  'windowsml-ocr',
-  'whisper-primary',
-  'ollama-runtime',
-  'capture-ollama-model',
-];
-const captureBlockTypes = new Set([
-  'heading',
-  'paragraph',
-  'list-item',
-  'table',
-  'quote',
-  'transcript',
-]);
-const childEnvironmentAllowlist = [
-  'COMSPEC',
-  'NUMBER_OF_PROCESSORS',
-  'OS',
-  'PATH',
-  'PATHEXT',
-  'PROCESSOR_ARCHITECTURE',
-  'PROCESSOR_IDENTIFIER',
-  'PROCESSOR_LEVEL',
-  'PROCESSOR_REVISION',
-  'PROGRAMDATA',
-  'SYSTEMDRIVE',
-  'SYSTEMROOT',
-  'USERPROFILE',
-  'WINDIR',
-];
-
-const fixtures = [
-  {
-    sourceKind: 'pdf',
-    fileName: 'installed-fixture.pdf',
-    mimeType: 'application/pdf',
-    buffer: Buffer.from(
-      '%PDF-1.7\nCAPTURE_TEXT:Installed PDF page one\fInstalled PDF page two',
-      'utf8',
-    ),
-    locatorKind: 'page',
-    expectedSegments: 2,
-    expectedTexts: ['Installed PDF page one', 'Installed PDF page two'],
-  },
-  {
-    sourceKind: 'image',
-    fileName: 'installed-fixture.png',
-    mimeType: 'image/png',
-    buffer: Buffer.concat([
-      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-      Buffer.from('CAPTURE_TEXT:Installed image words', 'utf8'),
-    ]),
-    locatorKind: 'page',
-    expectedSegments: 1,
-    expectedTexts: ['Installed image words'],
-  },
-  {
-    sourceKind: 'audio',
-    fileName: 'installed-fixture.wav',
-    mimeType: 'audio/wav',
-    buffer: Buffer.concat([
-      Buffer.from('RIFF', 'ascii'),
-      Buffer.alloc(4),
-      Buffer.from('WAVE', 'ascii'),
-      Buffer.from(
-        'CAPTURE_TEXT:Installed audio one|Installed audio two',
-        'utf8',
-      ),
-    ]),
-    locatorKind: 'time',
-    expectedSegments: 2,
-    expectedTexts: ['Installed audio one', 'Installed audio two'],
-  },
-];
+const installedExecutableName = INSTALLED_EXECUTABLE_NAME;
+const uninstallerName = UNINSTALLER_NAME;
+const productRegistryKey = PRODUCT_REGISTRY_KEY;
+const uninstallRegistryKey = UNINSTALL_REGISTRY_KEY;
+const registryViews = REGISTRY_VIEWS;
+const expectedRequirementIds = EXPECTED_REQUIREMENT_IDS;
+const captureBlockTypes = CAPTURE_BLOCK_TYPES;
+const childEnvironmentAllowlist = CHILD_ENVIRONMENT_ALLOWLIST;
+const fixtures = INSTALLED_FIXTURES;
 
 export function assertStrictDescendant(root, candidate, label = 'Path') {
   const resolvedRoot = resolve(root);

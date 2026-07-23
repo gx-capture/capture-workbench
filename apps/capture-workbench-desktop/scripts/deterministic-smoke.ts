@@ -7,6 +7,11 @@ import net from 'node:net';
 import { join, resolve } from 'node:path';
 
 import { assertStagedRuntime } from './assert-staged-runtime.ts';
+import {
+  DETERMINISTIC_FIXTURES,
+  DETERMINISTIC_MAX_UPLOAD_BYTES,
+  DETERMINISTIC_SCHEMA_VERSION,
+} from './constants/deterministic.ts';
 import { appRoot, stagedExecutable } from './stage-runtime.ts';
 import { assertRedactedEvidence } from './package-qa.ts';
 
@@ -18,43 +23,9 @@ const outputDirectory = join(
   'smoke',
 );
 const runtimeData = join(outputDirectory, 'runtime-data');
-const maxUploadBytes = 50 * 1024 * 1024;
-const schemaVersion = '1';
-
-const fixtures = [
-  {
-    fileName: 'licensed-fixture.pdf',
-    content: Buffer.from(
-      '%PDF-1.7\nCAPTURE_TEXT:First page\fSecond page',
-      'utf8',
-    ),
-    mediaType: 'application/pdf',
-    locatorKind: 'page',
-    expectedSegments: 2,
-  },
-  {
-    fileName: 'licensed-fixture.png',
-    content: Buffer.concat([
-      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-      Buffer.from('CAPTURE_TEXT:Image words', 'utf8'),
-    ]),
-    mediaType: 'image/png',
-    locatorKind: 'page',
-    expectedSegments: 1,
-  },
-  {
-    fileName: 'licensed-fixture.wav',
-    content: Buffer.concat([
-      Buffer.from('RIFF', 'ascii'),
-      Buffer.alloc(4),
-      Buffer.from('WAVE', 'ascii'),
-      Buffer.from('CAPTURE_TEXT:Hello|World', 'utf8'),
-    ]),
-    mediaType: 'audio/wav',
-    locatorKind: 'time',
-    expectedSegments: 2,
-  },
-];
+const maxUploadBytes = DETERMINISTIC_MAX_UPLOAD_BYTES;
+const schemaVersion = DETERMINISTIC_SCHEMA_VERSION;
+const fixtures = DETERMINISTIC_FIXTURES;
 
 export async function runDeterministicSmoke() {
   await assertStagedRuntime('deterministic');
