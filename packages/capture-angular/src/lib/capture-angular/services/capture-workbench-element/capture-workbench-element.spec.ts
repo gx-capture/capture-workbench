@@ -4,7 +4,7 @@ import {
   defineCaptureWorkbenchElement,
   type CaptureWorkbenchElement,
 } from './capture-workbench-element';
-import { CaptureWorkbenchElementFacadeComponent } from './capture-workbench-element-facade';
+import { CaptureWorkbenchElementFacadeComponent } from '../../components/capture-workbench-element-facade/capture-workbench-element-facade';
 import { TestBed } from '@angular/core/testing';
 
 describe('Capture Workbench custom element', () => {

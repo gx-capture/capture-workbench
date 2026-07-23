@@ -19,17 +19,17 @@ import {
   type CaptureTaskView,
   type CaptureWorkbenchConfig,
   type RuntimeRequirementV1,
-} from '../contracts';
+} from '../../../contracts';
 import type {
   ResolvedCaptureWorkbenchConfig,
   RuntimeHandshake,
   RuntimeViewState,
-} from '../contracts/workbench';
+} from '../../../contracts/workbench';
 import type { RuntimeRequest } from './internal-contracts';
-import { DEFAULT_CAPTURE_WORKBENCH_CONFIG } from '../constants/workbench';
-import { CaptureHelpersService } from '../capture-helpers';
-import { CaptureRuntimeInstallationService } from './capture-runtime-installation.service';
-import { CaptureWorkflowService } from './capture-workflow.service';
+import { DEFAULT_CAPTURE_WORKBENCH_CONFIG } from '../../../constants/workbench';
+import { CaptureHelpersService } from '../../../capture-helpers';
+import { CaptureRuntimeInstallationService } from '../capture-runtime-installation/capture-runtime-installation.service';
+import { CaptureWorkflowService } from '../capture-workflow/capture-workflow.service';
 import { CaptureWorkbenchStoreHelpers } from './capture-workbench-store-helpers';
 
 @Injectable()

@@ -6,8 +6,8 @@ import type {
   CaptureStructuringProvider,
   CaptureTaskView,
   RawCaptureV1,
-} from '../contracts';
-import type { ResolvedCaptureWorkbenchConfig } from '../contracts/workbench';
+} from '../../../contracts';
+import type { ResolvedCaptureWorkbenchConfig } from '../../../contracts/workbench';
 import type { Observable } from 'rxjs';
 
 export interface RuntimeRequest {

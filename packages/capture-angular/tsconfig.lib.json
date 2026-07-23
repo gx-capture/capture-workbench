@@ -12,7 +12,7 @@
   "exclude": [
     "src/**/*.spec.ts",
     "src/**/*.test.ts",
-    "src/lib/capture-angular/capture-angular-test-support.ts"
+    "src/lib/capture-angular/components/capture-angular/capture-angular-test-support.ts"
   ],
   "angularCompilerOptions": {
     "extendedDiagnostics": {

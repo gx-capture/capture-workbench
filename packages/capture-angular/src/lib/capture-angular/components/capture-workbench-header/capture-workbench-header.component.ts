@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
-import { CaptureWorkbenchStore } from './capture-workbench-store';
+import { CaptureWorkbenchStore } from '../../services/capture-workbench-store/capture-workbench-store';
 
 @Component({
   selector: 'gx-capture-workbench-header',

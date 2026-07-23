@@ -10,14 +10,14 @@ import {
   type CaptureCompletedEvent,
   type CaptureFailedEvent,
   type CaptureTaskView,
-} from '../contracts';
-import { CaptureTaskListComponent } from './capture-task-list.component';
-import { CaptureRuntimeSetupComponent } from './capture-runtime-setup.component';
-import { CaptureWorkbenchHeaderComponent } from './capture-workbench-header.component';
-import { CaptureRuntimeInstallationService } from './capture-runtime-installation.service';
-import { CaptureWorkflowService } from './capture-workflow.service';
-import { CaptureReconciliationService } from './capture-reconciliation.service';
-import { CaptureWorkbenchStore } from './capture-workbench-store';
+} from '../../../contracts';
+import { CaptureTaskListComponent } from '../capture-task-list/capture-task-list.component';
+import { CaptureRuntimeSetupComponent } from '../capture-runtime-setup/capture-runtime-setup.component';
+import { CaptureWorkbenchHeaderComponent } from '../capture-workbench-header/capture-workbench-header.component';
+import { CaptureRuntimeInstallationService } from '../../services/capture-runtime-installation/capture-runtime-installation.service';
+import { CaptureWorkflowService } from '../../services/capture-workflow/capture-workflow.service';
+import { CaptureReconciliationService } from '../../services/capture-reconciliation/capture-reconciliation.service';
+import { CaptureWorkbenchStore } from '../../services/capture-workbench-store/capture-workbench-store';
 
 @Component({
   selector: 'gx-capture-workbench',

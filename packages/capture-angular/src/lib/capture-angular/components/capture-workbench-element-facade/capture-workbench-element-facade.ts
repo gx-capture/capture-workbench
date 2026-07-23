@@ -21,12 +21,12 @@ import {
   type CaptureDensity,
   type CaptureOutputMode,
   CAPTURE_WORKBENCH_INPUTS,
-} from '../contracts';
+} from '../../../contracts';
 import {
   CAPTURE_WORKBENCH_CUSTOM_EVENTS,
   CaptureWorkbenchEventFactory,
-} from './capture-workbench-events';
-import { CaptureWorkbenchComponent } from './capture-angular';
+} from '../../services/capture-workbench-events/capture-workbench-events';
+import { CaptureWorkbenchComponent } from '../capture-angular/capture-angular';
 
 /**
  * Angular-facing facade for the framework-neutral `capture-workbench` element.

@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
-import { CaptureTaskItemComponent } from './capture-task-item.component';
-import { CaptureWorkbenchStore } from './capture-workbench-store';
+import { CaptureTaskItemComponent } from '../capture-task-item/capture-task-item.component';
+import { CaptureWorkbenchStore } from '../../services/capture-workbench-store/capture-workbench-store';
 
 @Component({
   selector: 'gx-capture-task-list',

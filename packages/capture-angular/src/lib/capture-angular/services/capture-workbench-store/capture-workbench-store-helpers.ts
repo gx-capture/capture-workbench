@@ -4,8 +4,8 @@ import type {
   CaptureFailureV1,
   CaptureJobV1,
   CaptureTaskView,
-} from '../contracts';
-import { HOST_RECONCILIATION_FAILURE_CODE } from '../constants';
+} from '../../../contracts';
+import { HOST_RECONCILIATION_FAILURE_CODE } from '../../../constants';
 import type { SettledResource } from './internal-contracts';
 
 export function isTerminalTask(task: CaptureTaskView): boolean {

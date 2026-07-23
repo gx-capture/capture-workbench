@@ -20,16 +20,16 @@ import {
   type CaptureStructuringCandidateV1,
   type CaptureTaskView,
   type RawCaptureV1,
-} from '../contracts';
-import type { CaptureReconciliationContext } from './internal-contracts';
+} from '../../../contracts';
+import type { CaptureReconciliationContext } from '../capture-workbench-store/internal-contracts';
 import {
   HOST_PROVIDER_FAILURE_CODE,
   HOST_RECONCILIATION_FAILURE_CODE,
-} from '../constants';
+} from '../../../constants';
 import {
   HostReconciliationUnavailableError,
   CaptureWorkbenchStoreHelpers,
-} from './capture-workbench-store-helpers';
+} from '../capture-workbench-store/capture-workbench-store-helpers';
 
 @Injectable()
 export class CaptureReconciliationService {

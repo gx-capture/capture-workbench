@@ -17,9 +17,9 @@ import {
   type CaptureClient,
   type RuntimeInstallationV1,
   type RuntimeRequirementV1,
-} from '../contracts';
-import { MAX_INSTALLATIONS_PER_USER_ACTION } from '../constants';
-import { CaptureWorkbenchStoreHelpers } from './capture-workbench-store-helpers';
+} from '../../../contracts';
+import { MAX_INSTALLATIONS_PER_USER_ACTION } from '../../../constants';
+import { CaptureWorkbenchStoreHelpers } from '../capture-workbench-store/capture-workbench-store-helpers';
 
 @Injectable()
 export class CaptureRuntimeInstallationService {

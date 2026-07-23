@@ -23,17 +23,17 @@ import {
   type CaptureStructuringProvider,
   type CaptureTaskView,
   type RawCaptureV1,
-} from '../contracts';
-import type { ResolvedCaptureWorkbenchConfig } from '../contracts/workbench';
+} from '../../../contracts';
+import type { ResolvedCaptureWorkbenchConfig } from '../../../contracts/workbench';
 import type {
   CaptureWorkflowContext,
   InternalCaptureTask,
-} from './internal-contracts';
-import { CaptureHelpersService } from '../capture-helpers';
-import { CAPTURE_DOCUMENT_V1_CONTRACT } from '../capture-document-schema';
-import { CaptureJobPollResourceService } from './capture-job-poll-resource';
-import { CaptureWorkbenchStoreHelpers } from './capture-workbench-store-helpers';
-import { CaptureReconciliationService } from './capture-reconciliation.service';
+} from '../capture-workbench-store/internal-contracts';
+import { CaptureHelpersService } from '../../../capture-helpers';
+import { CAPTURE_DOCUMENT_V1_CONTRACT } from '../../../capture-document-schema';
+import { CaptureJobPollResourceService } from '../capture-job-poll-resource/capture-job-poll-resource';
+import { CaptureWorkbenchStoreHelpers } from '../capture-workbench-store/capture-workbench-store-helpers';
+import { CaptureReconciliationService } from '../capture-reconciliation/capture-reconciliation.service';
 
 @Injectable()
 export class CaptureWorkflowService {

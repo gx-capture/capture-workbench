@@ -1,6 +1,6 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { provideCaptureWorkbenchInputs } from '../contracts';
-import type { CaptureStructuringProvider } from '../contracts';
+import { provideCaptureWorkbenchInputs } from '../../../contracts';
+import type { CaptureStructuringProvider } from '../../../contracts';
 import { of, throwError } from 'rxjs';
 import { CaptureWorkbenchComponent } from './capture-angular';
 import {

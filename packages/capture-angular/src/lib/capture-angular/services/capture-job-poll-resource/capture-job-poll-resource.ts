@@ -14,7 +14,7 @@ import {
   switchMap,
   tap,
 } from 'rxjs';
-import type { CaptureClient, CaptureJobV1 } from '../contracts';
+import type { CaptureClient, CaptureJobV1 } from '../../../contracts';
 
 export interface CaptureJobPollResourceOptions {
   readonly client: CaptureClient;

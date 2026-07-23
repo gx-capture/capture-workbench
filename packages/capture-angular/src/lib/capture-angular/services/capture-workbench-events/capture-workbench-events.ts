@@ -3,7 +3,7 @@ import type {
   CaptureCompletedEvent,
   CaptureFailedEvent,
   CaptureTaskView,
-} from '../contracts';
+} from '../../../contracts';
 
 export const CAPTURE_WORKBENCH_CUSTOM_EVENTS = Object.freeze({
   completed: 'capture-completed',

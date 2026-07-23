@@ -26,13 +26,13 @@ import {
   type CapturePreprocessor,
   type CaptureStructuringProvider,
   type CaptureWorkbenchConfig,
-} from '../contracts';
+} from '../../../contracts';
 import {
   CAPTURE_WORKBENCH_CUSTOM_EVENTS,
   createCaptureWorkbenchCustomEvent,
   type CaptureWorkbenchCustomEventName,
-} from './capture-workbench-events';
-import { CaptureWorkbenchElementFacadeComponent } from './capture-workbench-element-facade';
+} from '../capture-workbench-events/capture-workbench-events';
+import { CaptureWorkbenchElementFacadeComponent } from '../../components/capture-workbench-element-facade/capture-workbench-element-facade';
 
 export const CAPTURE_WORKBENCH_ELEMENT_TAG = 'capture-workbench';
 
