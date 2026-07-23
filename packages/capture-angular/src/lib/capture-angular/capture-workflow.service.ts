@@ -1,10 +1,4 @@
-import {
-  Injector,
-  Injectable,
-  OnDestroy,
-  inject,
-  signal,
-} from '@angular/core';
+import { DestroyRef, Injectable, inject, signal } from '@angular/core';
 import {
   EMPTY,
   Observable,
@@ -30,34 +24,20 @@ import {
   type CaptureTaskView,
   type RawCaptureV1,
 } from '../contracts';
+import type { ResolvedCaptureWorkbenchConfig } from '../contracts/workbench';
 import type {
   CaptureWorkflowContext,
   InternalCaptureTask,
-  ResolvedCaptureWorkbenchConfig,
-} from '../contracts/workbench';
-import {
-  classifyCaptureFile,
-  validateStructuringCandidate,
-} from '../capture-helpers';
+} from './internal-contracts';
+import { CaptureHelpersService } from '../capture-helpers';
 import { CAPTURE_DOCUMENT_V1_CONTRACT } from '../capture-document-schema';
-import { createCaptureJobPollResource } from './capture-job-poll-resource';
-import {
-  clampProgress,
-  deepFreeze,
-  failureFrom,
-  hostReconciliationFailure,
-  isAbortError,
-  isTerminalTask,
-  normalizeHostFailureMessage,
-  retryUncertainResponse,
-  runtimeProgressPercent,
-  throwIfAborted,
-} from './capture-workbench-store-helpers';
+import { CaptureJobPollResourceService } from './capture-job-poll-resource';
+import { CaptureWorkbenchStoreHelpers } from './capture-workbench-store-helpers';
 import { CaptureReconciliationService } from './capture-reconciliation.service';
 
 @Injectable()
-export class CaptureWorkflowService implements OnDestroy {
-  private readonly injector = inject(Injector);
+export class CaptureWorkflowService {
+  private readonly destroyRef = inject(DestroyRef);
   private readonly lifecycleController = new AbortController();
   private readonly internalTasks = new Map<string, InternalCaptureTask>();
   private readonly captureIds = new Map<string, string>();
@@ -65,7 +45,21 @@ export class CaptureWorkflowService implements OnDestroy {
   private runningTasks = 0;
   private context?: CaptureWorkflowContext;
   private readonly reconciliation = inject(CaptureReconciliationService);
+  private readonly pollResourceService = inject(CaptureJobPollResourceService);
+  private readonly captureHelpers = inject(CaptureHelpersService);
+  private readonly helpers = inject(CaptureWorkbenchStoreHelpers);
   private readonly taskState = signal<readonly CaptureTaskView[]>([]);
+
+  constructor() {
+    this.destroyRef.onDestroy(() => {
+      this.lifecycleController.abort();
+      for (const task of this.internalTasks.values()) task.controller.abort();
+      for (const subscription of this.taskSubscriptions.values())
+        subscription.unsubscribe();
+      this.taskSubscriptions.clear();
+      this.events.complete();
+    });
+  }
 
   readonly tasks = this.taskState.asReadonly();
   readonly events = new Subject<
@@ -79,8 +73,7 @@ export class CaptureWorkflowService implements OnDestroy {
     this.context = context;
     this.reconciliation.configure({
       client: () => this.activeClient(),
-      getTask: (taskId) =>
-        this.taskState().find((task) => task.id === taskId),
+      getTask: (taskId) => this.taskState().find((task) => task.id === taskId),
       updateTask: (taskId, patch) => this.updateTask(taskId, patch),
       requireReconciliation: (taskId, error, raw) =>
         this.requireReconciliation(taskId, error, raw),
@@ -91,16 +84,6 @@ export class CaptureWorkflowService implements OnDestroy {
       tryGetRaw: (client, captureId, signal) =>
         this.tryGetRaw(client, captureId, signal),
     });
-  }
-
-  ngOnDestroy(): void {
-    this.lifecycleController.abort();
-    for (const task of this.internalTasks.values()) task.controller.abort();
-    for (const subscription of this.taskSubscriptions.values())
-      subscription.unsubscribe();
-    this.taskSubscriptions.clear();
-    this.reconciliation.ngOnDestroy();
-    this.events.complete();
   }
 
   private resolvedConfig(): ResolvedCaptureWorkbenchConfig {
@@ -116,7 +99,7 @@ export class CaptureWorkflowService implements OnDestroy {
     for (const file of this.resolvedConfig().multiple
       ? files
       : files.slice(0, 1)) {
-      const sourceKind = classifyCaptureFile(file);
+      const sourceKind = this.captureHelpers.classifyCaptureFile(file);
       if (
         !sourceKind ||
         !this.resolvedConfig().enabledSources.includes(sourceKind)
@@ -147,7 +130,7 @@ export class CaptureWorkflowService implements OnDestroy {
 
   cancel(taskId: string): void {
     const current = this.taskState().find((task) => task.id === taskId);
-    if (!current || isTerminalTask(current)) return;
+    if (!current || this.helpers.isTerminalTask(current)) return;
     if (current.status === 'reconciliation_required') {
       this.reconciliation.cancel(taskId).subscribe({ error: () => undefined });
       return;
@@ -177,14 +160,18 @@ export class CaptureWorkflowService implements OnDestroy {
 
   remove(taskId: string): void {
     const task = this.taskState().find((candidate) => candidate.id === taskId);
-    if (!task || !isTerminalTask(task)) return;
+    if (!task || !this.helpers.isTerminalTask(task)) return;
     const client = this.activeClient();
     if (task.captureId && client) {
       defer(() => client.deleteCapture(task.captureId as string))
         .pipe(
           catchError((error: unknown) => {
             this.updateTask(taskId, {
-              error: failureFrom(error, 'runtime', 'Unable to clear capture data.'),
+              error: this.helpers.failureFrom(
+                error,
+                'runtime',
+                'Unable to clear capture data.',
+              ),
             });
             return EMPTY;
           }),
@@ -218,12 +205,14 @@ export class CaptureWorkflowService implements OnDestroy {
       const subscription = this.processTask(next.id)
         .pipe(
           catchError((error: unknown) => {
-            const task = this.taskState().find((candidate) => candidate.id === next.id);
+            const task = this.taskState().find(
+              (candidate) => candidate.id === next.id,
+            );
             if (task) {
               this.failTask(
                 next.id,
                 task.fileName,
-                failureFrom(error, 'runtime', 'Capture failed.'),
+                this.helpers.failureFrom(error, 'runtime', 'Capture failed.'),
               );
             }
             return EMPTY;
@@ -272,8 +261,12 @@ export class CaptureWorkflowService implements OnDestroy {
     }
 
     const signal = internal.controller.signal;
-    const process$ = this.preprocess(internal.file, task.sourceKind, signal).pipe(
-      tap(() => throwIfAborted(signal)),
+    const process$ = this.preprocess(
+      internal.file,
+      task.sourceKind,
+      signal,
+    ).pipe(
+      tap(() => this.helpers.throwIfAborted(signal)),
       concatMap((file) => {
         this.updateTask(taskId, { stage: 'uploading', progress: 5 });
         const request = {
@@ -284,14 +277,17 @@ export class CaptureWorkflowService implements OnDestroy {
           targetLanguage: config.targetLanguage,
           signal,
         } as const;
-        return retryUncertainResponse(() => client.createCapture(request), signal);
+        return this.helpers.retryUncertainResponse(
+          () => client.createCapture(request),
+          signal,
+        );
       }),
       tap((job) => {
         this.captureIds.set(taskId, job.captureId);
         this.updateTask(taskId, {
           captureId: job.captureId,
           stage: job.stage,
-          progress: runtimeProgressPercent(job.progress),
+          progress: this.helpers.runtimeProgressPercent(job.progress),
         });
       }),
       concatMap((job) =>
@@ -329,7 +325,9 @@ export class CaptureWorkflowService implements OnDestroy {
   ): Observable<CaptureJobV1> {
     return this.waitForJob(client, initial, signal, true, taskId).pipe(
       concatMap((job) => {
-        if (!(job.stage === 'awaiting_structuring' && job.status === 'running')) {
+        if (
+          !(job.stage === 'awaiting_structuring' && job.status === 'running')
+        ) {
           return of(job);
         }
         return client.getRaw(job.captureId, signal).pipe(
@@ -337,24 +335,31 @@ export class CaptureWorkflowService implements OnDestroy {
             this.updateTask(taskId, {
               raw,
               stage: 'structuring',
-              progress: Math.max(70, runtimeProgressPercent(job.progress)),
+              progress: Math.max(
+                70,
+                this.helpers.runtimeProgressPercent(job.progress),
+              ),
             }),
           ),
           concatMap((raw) =>
             defer(() =>
               provider.structure({
-                raw: deepFreeze(structuredClone(raw)),
+                raw: this.helpers.deepFreeze(structuredClone(raw)),
                 documentContract: CAPTURE_DOCUMENT_V1_CONTRACT,
                 targetLanguage: config.targetLanguage,
                 signal,
                 reportProgress: (progress) =>
                   this.updateTask(taskId, {
-                    progress: 70 + clampProgress(progress) * 0.2,
+                    progress: 70 + this.helpers.clampProgress(progress) * 0.2,
                   }),
               }),
             ).pipe(
               map((candidate) => {
-                const validationIssues = validateStructuringCandidate(candidate, raw);
+                const validationIssues =
+                  this.captureHelpers.validateStructuringCandidate(
+                    candidate,
+                    raw,
+                  );
                 if (validationIssues.length > 0) {
                   throw new Error(
                     `Invalid structured capture: ${validationIssues.join('; ')}`,
@@ -363,8 +368,9 @@ export class CaptureWorkflowService implements OnDestroy {
                 return { job, raw, candidate } as const;
               }),
               catchError((error: unknown) => {
-                if (isAbortError(error)) return throwError(() => error);
-                const failure = failureFrom(
+                if (this.helpers.isAbortError(error))
+                  return throwError(() => error);
+                const failure = this.helpers.failureFrom(
                   error,
                   'structuring',
                   'Host structuring failed.',
@@ -373,7 +379,7 @@ export class CaptureWorkflowService implements OnDestroy {
                   .reportHostFailureAndReconcile(
                     client,
                     job.captureId,
-                    normalizeHostFailureMessage(failure.message),
+                    this.helpers.normalizeHostFailureMessage(failure.message),
                     signal,
                   )
                   .pipe(
@@ -383,11 +389,13 @@ export class CaptureWorkflowService implements OnDestroy {
                       candidate: undefined,
                     })),
                     catchError((reconciliationError: unknown) => {
-                      if (isAbortError(reconciliationError))
+                      if (this.helpers.isAbortError(reconciliationError))
                         return throwError(() => reconciliationError);
                       this.requireReconciliation(
                         taskId,
-                        hostReconciliationFailure(reconciliationError),
+                        this.helpers.hostReconciliationFailure(
+                          reconciliationError,
+                        ),
                         raw,
                       );
                       return EMPTY;
@@ -413,12 +421,14 @@ export class CaptureWorkflowService implements OnDestroy {
               )
               .pipe(
                 catchError((reconciliationError: unknown) => {
-                  if (isAbortError(reconciliationError))
+                  if (this.helpers.isAbortError(reconciliationError))
                     return throwError(() => reconciliationError);
                   this.requireReconciliation(
                     taskId,
-                    hostReconciliationFailure(reconciliationError),
-                    this.taskState().find((candidateTask) => candidateTask.id === taskId)?.raw,
+                    this.helpers.hostReconciliationFailure(reconciliationError),
+                    this.taskState().find(
+                      (candidateTask) => candidateTask.id === taskId,
+                    )?.raw,
                   );
                   return EMPTY;
                 }),
@@ -465,13 +475,16 @@ export class CaptureWorkflowService implements OnDestroy {
     }
     if (job.status !== 'completed') {
       return throwError(
-        () => new Error(`Capture ended in unexpected state: ${job.status}/${job.stage}`),
+        () =>
+          new Error(
+            `Capture ended in unexpected state: ${job.status}/${job.stage}`,
+          ),
       );
     }
 
     return client.getResult(job.captureId, signal).pipe(
       tap((result) => {
-        throwIfAborted(signal);
+        this.helpers.throwIfAborted(signal);
         const completedTask = this.updateTask(taskId, {
           status: 'completed',
           stage: 'completed',
@@ -491,11 +504,11 @@ export class CaptureWorkflowService implements OnDestroy {
     signal: AbortSignal,
     taskId: string,
   ): Observable<void> {
-    if (isAbortError(error) || signal.aborted) {
+    if (this.helpers.isAbortError(error) || signal.aborted) {
       return defer(() => {
         if (
-          this.taskState().find((candidate) => candidate.id === taskId)?.status !==
-          'canceled'
+          this.taskState().find((candidate) => candidate.id === taskId)
+            ?.status !== 'canceled'
         ) {
           const canceledTask = this.updateTask(taskId, {
             status: 'canceled',
@@ -512,7 +525,7 @@ export class CaptureWorkflowService implements OnDestroy {
         this.failTask(
           taskId,
           task.fileName,
-          failureFrom(error, 'runtime', 'Capture failed.'),
+          this.helpers.failureFrom(error, 'runtime', 'Capture failed.'),
           raw,
         ),
       ),
@@ -529,24 +542,25 @@ export class CaptureWorkflowService implements OnDestroy {
   ): Observable<CaptureJobV1> {
     if (
       initial.status !== 'queued' &&
-      !(initial.status === 'running' &&
-        !(stopForHost && initial.stage === 'awaiting_structuring'))
+      !(
+        initial.status === 'running' &&
+        !(stopForHost && initial.stage === 'awaiting_structuring')
+      )
     ) {
       return of(initial);
     }
 
     return defer(() => {
-      const pollResource = createCaptureJobPollResource({
+      const pollResource = this.pollResourceService.create({
         client,
         captureId: initial.captureId,
         pollIntervalMs: this.resolvedConfig().pollIntervalMs,
         signal,
         stopForHost,
-        injector: this.injector,
         onJob: (job) =>
           this.updateTask(taskId, {
             stage: job.stage,
-            progress: runtimeProgressPercent(job.progress),
+            progress: this.helpers.runtimeProgressPercent(job.progress),
           }),
       });
       return pollResource.terminal$.pipe(

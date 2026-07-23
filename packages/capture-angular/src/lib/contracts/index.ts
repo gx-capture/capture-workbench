@@ -1,8 +1,5 @@
-import { InjectionToken, type Provider } from '@angular/core';
 import type { Observable } from 'rxjs';
-
-export const CAPTURE_API_VERSION = '1.0' as const;
-export const CAPTURE_DOCUMENT_SCHEMA_VERSION = '1' as const;
+import { CAPTURE_DOCUMENT_SCHEMA_VERSION } from './versions';
 
 export type CaptureSourceKind = 'pdf' | 'image' | 'audio';
 export type CaptureStructuringMode = 'runtime' | 'host';
@@ -389,31 +386,6 @@ export interface CaptureFailedEvent {
   readonly raw?: RawCaptureV1;
 }
 
-export const CAPTURE_CLIENT = new InjectionToken<CaptureClient>(
-  'CAPTURE_CLIENT',
-);
-export const CAPTURE_STRUCTURING_PROVIDER =
-  new InjectionToken<CaptureStructuringProvider>(
-    'CAPTURE_STRUCTURING_PROVIDER',
-  );
-export const CAPTURE_PREPROCESSOR = new InjectionToken<CapturePreprocessor>(
-  'CAPTURE_PREPROCESSOR',
-);
-
-export function provideCaptureClient(client: CaptureClient): Provider {
-  return { provide: CAPTURE_CLIENT, useValue: client };
-}
-
-export function provideCaptureStructuringProvider(
-  provider: CaptureStructuringProvider,
-): Provider {
-  return { provide: CAPTURE_STRUCTURING_PROVIDER, useValue: provider };
-}
-
-export function provideCapturePreprocessor(
-  preprocessor: CapturePreprocessor,
-): Provider {
-  return { provide: CAPTURE_PREPROCESSOR, useValue: preprocessor };
-}
-
+export * from './versions';
+export * from './injection';
 export * from './workbench';

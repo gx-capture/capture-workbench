@@ -1,4 +1,4 @@
-import { Injectable, OnDestroy, signal } from '@angular/core';
+import { DestroyRef, Injectable, inject, signal } from '@angular/core';
 import {
   EMPTY,
   Observable,
@@ -19,23 +19,22 @@ import {
   type RuntimeRequirementV1,
 } from '../contracts';
 import { MAX_INSTALLATIONS_PER_USER_ACTION } from '../constants';
-import {
-  errorMessage,
-  isAbortError,
-  retryUncertainResponse,
-  throwIfAborted,
-} from './capture-workbench-store-helpers';
+import { CaptureWorkbenchStoreHelpers } from './capture-workbench-store-helpers';
 
 @Injectable()
-export class CaptureRuntimeInstallationService implements OnDestroy {
+export class CaptureRuntimeInstallationService {
+  private readonly destroyRef = inject(DestroyRef);
+  private readonly helpers = inject(CaptureWorkbenchStoreHelpers);
   readonly installation = signal<RuntimeInstallationV1 | null>(null);
   readonly error = signal<string | undefined>(undefined);
   private controller?: AbortController;
   private installSubscription?: Subscription;
 
-  ngOnDestroy(): void {
-    this.controller?.abort();
-    this.installSubscription?.unsubscribe();
+  constructor() {
+    this.destroyRef.onDestroy(() => {
+      this.controller?.abort();
+      this.installSubscription?.unsubscribe();
+    });
   }
 
   clearError(): void {
@@ -51,7 +50,9 @@ export class CaptureRuntimeInstallationService implements OnDestroy {
     const { client } = options;
     if (!client || this.installation()) return;
     const installable = () =>
-      options.requirements().filter((requirement) => requirement.status === 'installable');
+      options
+        .requirements()
+        .filter((requirement) => requirement.status === 'installable');
     if (installable().length === 0) return;
 
     this.installSubscription?.unsubscribe();
@@ -63,7 +64,7 @@ export class CaptureRuntimeInstallationService implements OnDestroy {
 
     const installNext = (): Observable<void> =>
       defer(() => {
-        throwIfAborted(signal);
+        this.helpers.throwIfAborted(signal);
         const requirement = installable().find(
           (candidate) => !completedRequirementIds.has(candidate.requirementId),
         );
@@ -71,18 +72,25 @@ export class CaptureRuntimeInstallationService implements OnDestroy {
           if (
             installationsStarted === MAX_INSTALLATIONS_PER_USER_ACTION &&
             installable().some(
-              (candidate) => !completedRequirementIds.has(candidate.requirementId),
+              (candidate) =>
+                !completedRequirementIds.has(candidate.requirementId),
             )
           ) {
             return throwError(
-              () => new Error('Runtime installation stopped after reaching the safety limit.'),
+              () =>
+                new Error(
+                  'Runtime installation stopped after reaching the safety limit.',
+                ),
             );
           }
           return of(undefined);
         }
         if (installationsStarted >= MAX_INSTALLATIONS_PER_USER_ACTION) {
           return throwError(
-            () => new Error('Runtime installation stopped after reaching the safety limit.'),
+            () =>
+              new Error(
+                'Runtime installation stopped after reaching the safety limit.',
+              ),
           );
         }
 
@@ -95,41 +103,46 @@ export class CaptureRuntimeInstallationService implements OnDestroy {
         requestIds.set(requirement.requirementId, request.clientRequestId);
         installationsStarted += 1;
 
-        return retryUncertainResponse(
-          () => client.startInstallation(request, signal),
-          signal,
-        ).pipe(
-          tap((installation) => this.installation.set(installation)),
-          concatMap((installation) =>
-            pollInstallation(
-              client,
-              installation,
-              options.pollIntervalMs,
-              signal,
-              (current) => this.installation.set(current),
+        return this.helpers
+          .retryUncertainResponse(
+            () => client.startInstallation(request, signal),
+            signal,
+          )
+          .pipe(
+            tap((installation) => this.installation.set(installation)),
+            concatMap((installation) =>
+              pollInstallation(
+                client,
+                installation,
+                options.pollIntervalMs,
+                signal,
+                (current) => this.installation.set(current),
+              ),
             ),
-          ),
-          concatMap((installation) => {
-            if (installation.status !== 'completed') return EMPTY;
-            completedRequirementIds.add(requirement.requirementId);
-            this.installation.set(null);
-            return options.reload();
-          }),
-          concatMap(() => installNext()),
-        );
+            concatMap((installation) => {
+              if (installation.status !== 'completed') return EMPTY;
+              completedRequirementIds.add(requirement.requirementId);
+              this.installation.set(null);
+              return options.reload();
+            }),
+            concatMap(() => installNext()),
+          );
       });
 
     this.installSubscription = installNext()
       .pipe(
         catchError((error: unknown) => {
-          if (!isAbortError(error)) {
-            this.error.set(errorMessage(error, 'Runtime installation failed.'));
+          if (!this.helpers.isAbortError(error)) {
+            this.error.set(
+              this.helpers.errorMessage(error, 'Runtime installation failed.'),
+            );
           }
           return of(undefined);
         }),
         finalize(() => {
           this.controller = undefined;
-          if (this.installation()?.status === 'completed') this.installation.set(null);
+          if (this.installation()?.status === 'completed')
+            this.installation.set(null);
         }),
       )
       .subscribe();
@@ -142,7 +155,12 @@ export class CaptureRuntimeInstallationService implements OnDestroy {
     client.cancelInstallation(installation.installationId).subscribe({
       next: (canceled) => this.installation.set(canceled),
       error: (error: unknown) =>
-        this.error.set(errorMessage(error, 'Unable to cancel runtime installation.')),
+        this.error.set(
+          this.helpers.errorMessage(
+            error,
+            'Unable to cancel runtime installation.',
+          ),
+        ),
     });
   }
 }
@@ -175,16 +193,22 @@ function pollInstallation(
   );
 }
 
-function abortableDelay(milliseconds: number, signal: AbortSignal): Observable<void> {
+function abortableDelay(
+  milliseconds: number,
+  signal: AbortSignal,
+): Observable<void> {
   return new Observable<void>((subscriber) => {
     if (signal.aborted) {
       subscriber.error(createAbortError());
       return;
     }
-    const timeout = setTimeout(() => {
-      subscriber.next();
-      subscriber.complete();
-    }, Math.max(0, milliseconds));
+    const timeout = setTimeout(
+      () => {
+        subscriber.next();
+        subscriber.complete();
+      },
+      Math.max(0, milliseconds),
+    );
     const abort = (): void => {
       clearTimeout(timeout);
       subscriber.error(createAbortError());

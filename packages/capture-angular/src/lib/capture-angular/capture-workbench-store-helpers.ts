@@ -1,8 +1,12 @@
-import { EffectRef, Injector, effect } from '@angular/core';
+import { EffectRef, Injectable, Injector, effect, inject } from '@angular/core';
 import { catchError, defer, Observable, throwError } from 'rxjs';
-import type { CaptureFailureV1, CaptureJobV1, CaptureTaskView } from '../contracts';
+import type {
+  CaptureFailureV1,
+  CaptureJobV1,
+  CaptureTaskView,
+} from '../contracts';
 import { HOST_RECONCILIATION_FAILURE_CODE } from '../constants';
-import type { SettledResource } from '../contracts/workbench';
+import type { SettledResource } from './internal-contracts';
 
 export function isTerminalTask(task: CaptureTaskView): boolean {
   return (
@@ -179,4 +183,84 @@ export function deepFreeze<T>(value: T): T {
 
 export function withoutExtension(fileName: string): string {
   return fileName.replace(/\.[^.]+$/, '');
+}
+
+/** Injectable owner for workflow and store support operations. */
+@Injectable({ providedIn: 'root' })
+export class CaptureWorkbenchStoreHelpers {
+  private readonly injector = inject(Injector);
+
+  isTerminalTask(task: CaptureTaskView): boolean {
+    return isTerminalTask(task);
+  }
+
+  isTerminalCaptureJob(job: CaptureJobV1): boolean {
+    return isTerminalCaptureJob(job);
+  }
+
+  isAwaitingHostStructuring(job: CaptureJobV1): boolean {
+    return isAwaitingHostStructuring(job);
+  }
+
+  normalizeHostFailureMessage(message: string): string {
+    return normalizeHostFailureMessage(message);
+  }
+
+  hostReconciliationFailure(error: unknown): CaptureFailureV1 {
+    return hostReconciliationFailure(error);
+  }
+
+  clampProgress(progress: number): number {
+    return clampProgress(progress);
+  }
+
+  runtimeProgressPercent(progress: number): number {
+    return runtimeProgressPercent(progress);
+  }
+
+  errorMessage(error: unknown, fallback: string): string {
+    return errorMessage(error, fallback);
+  }
+
+  failureFrom(
+    error: unknown,
+    stage: CaptureFailureV1['stage'],
+    fallback: string,
+  ): CaptureFailureV1 {
+    return failureFrom(error, stage, fallback);
+  }
+
+  isAbortError(error: unknown): boolean {
+    return isAbortError(error);
+  }
+
+  throwIfAborted(signal: AbortSignal): void {
+    return throwIfAborted(signal);
+  }
+
+  waitForResourceSettlement(
+    resource: SettledResource,
+    lifecycleSignal: AbortSignal,
+  ): Observable<void> {
+    return waitForResourceSettlement(resource, this.injector, lifecycleSignal);
+  }
+
+  retryUncertainResponse<T>(
+    operation: () => Observable<T>,
+    signal: AbortSignal,
+  ): Observable<T> {
+    return retryUncertainResponse(operation, signal);
+  }
+
+  isUncertainResponseFailure(error: unknown): boolean {
+    return isUncertainResponseFailure(error);
+  }
+
+  deepFreeze<T>(value: T): T {
+    return deepFreeze(value);
+  }
+
+  withoutExtension(fileName: string): string {
+    return withoutExtension(fileName);
+  }
 }

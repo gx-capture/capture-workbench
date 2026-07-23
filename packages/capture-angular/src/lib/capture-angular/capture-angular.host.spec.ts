@@ -1,17 +1,27 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import type {
-  CaptureStructuringProvider,
-} from '../contracts';
+import { provideCaptureWorkbenchInputs } from '../contracts';
+import type { CaptureStructuringProvider } from '../contracts';
 import { of, throwError } from 'rxjs';
 import { CaptureWorkbenchComponent } from './capture-angular';
-import { DOCUMENT, RAW, fakeClient, job, selectFiles } from './capture-angular-test-support';
+import {
+  CaptureWorkbenchTestInputSource,
+  DOCUMENT,
+  RAW,
+  createCaptureWorkbenchTestInputSource,
+  fakeClient,
+  job,
+  selectFiles,
+} from './capture-angular-test-support';
 
 describe('CaptureWorkbenchComponent', () => {
   let fixture: ComponentFixture<CaptureWorkbenchComponent>;
+  let inputSource: CaptureWorkbenchTestInputSource;
 
   beforeEach(async () => {
+    inputSource = createCaptureWorkbenchTestInputSource();
     await TestBed.configureTestingModule({
       imports: [CaptureWorkbenchComponent],
+      providers: [provideCaptureWorkbenchInputs(inputSource)],
     }).compileComponents();
     fixture = TestBed.createComponent(CaptureWorkbenchComponent);
   });
@@ -22,16 +32,18 @@ describe('CaptureWorkbenchComponent', () => {
         of(job('running', 'awaiting_structuring', 'host')),
       ),
     });
-    const structure = vi.fn<CaptureStructuringProvider['structure']>(
-      () =>
-        throwError(() => ({ code: 'NOT VALID!', message: 'provider returned invalid JSON' })),
+    const structure = vi.fn<CaptureStructuringProvider['structure']>(() =>
+      throwError(() => ({
+        code: 'NOT VALID!',
+        message: 'provider returned invalid JSON',
+      })),
     );
     const provider: CaptureStructuringProvider = { structure };
     const completed = vi.fn();
     const failed = vi.fn();
-    fixture.componentRef.setInput('client', client);
-    fixture.componentRef.setInput('structuringProvider', provider);
-    fixture.componentRef.setInput('config', {
+    inputSource.client.set(client);
+    inputSource.structuringProvider.set(provider);
+    inputSource.config.set({
       structuringMode: 'host',
       showRuntimeSetup: false,
       pollIntervalMs: 0,
@@ -102,9 +114,9 @@ describe('CaptureWorkbenchComponent', () => {
       },
     );
     const completed = vi.fn();
-    fixture.componentRef.setInput('client', client);
-    fixture.componentRef.setInput('structuringProvider', { structure });
-    fixture.componentRef.setInput('config', {
+    inputSource.client.set(client);
+    inputSource.structuringProvider.set({ structure });
+    inputSource.config.set({
       structuringMode: 'host',
       showRuntimeSetup: false,
       pollIntervalMs: 0,
@@ -132,8 +144,8 @@ describe('CaptureWorkbenchComponent', () => {
       getCapture: vi.fn(() => of(job('completed', 'completed', 'host'))),
     });
     const completed = vi.fn();
-    fixture.componentRef.setInput('client', client);
-    fixture.componentRef.setInput('config', {
+    inputSource.client.set(client);
+    inputSource.config.set({
       structuringMode: 'host',
       hostStructuringOwner: 'client',
       showRuntimeSetup: false,

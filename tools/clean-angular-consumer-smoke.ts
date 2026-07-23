@@ -9,14 +9,7 @@ import {
 } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import {
-  Observable,
-  concatMap,
-  defer,
-  map,
-  of,
-  finalize,
-} from 'rxjs';
+import { Observable, concatMap, defer, map, of, finalize } from 'rxjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const sourcePackage = JSON.parse(
@@ -73,7 +66,9 @@ function run(command, args, cwd = fixtureRoot) {
 function runPnpm(args, relativeCwd = '') {
   return defer(() => {
     if (!existsSync(corepackCli)) {
-      throw new Error('Node 24 Corepack is required to run the pnpm 11 fixture.');
+      throw new Error(
+        'Node 24 Corepack is required to run the pnpm 11 fixture.',
+      );
     }
     return run(
       process.execPath,
@@ -105,7 +100,7 @@ try {
     'package.json',
     `${JSON.stringify(
       {
-         name: 'capture-workbench-clean-consumer',
+        name: 'capture-workbench-clean-consumer',
         version: '0.0.0',
         private: true,
         packageManager: 'pnpm@11.15.1',
@@ -288,7 +283,7 @@ allowBuilds:
   );
   write(
     'src/app/app.ts',
-    `import { ChangeDetectionStrategy, Component } from '@angular/core';\nimport { CaptureWorkbenchComponent } from '@gx/capture-workbench';\n\n@Component({\n  selector: 'app-root',\n  imports: [CaptureWorkbenchComponent],\n  template: \`<gx-capture-workbench [config]="{ showRuntimeSetup: false, outputMode: 'text' }" />\`,\n  changeDetection: ChangeDetectionStrategy.OnPush,\n})\nexport class App {}\n`,
+    `import { ChangeDetectionStrategy, Component } from '@angular/core';\nimport { CaptureWorkbenchComponent, provideCaptureWorkbenchInputs } from '@gx/capture-workbench';\n\n@Component({\n  selector: 'app-root',\n  imports: [CaptureWorkbenchComponent],\n  providers: [provideCaptureWorkbenchInputs({ config: () => ({ showRuntimeSetup: false, outputMode: 'text' }) })],\n  template: \`<gx-capture-workbench />\`,\n  changeDetection: ChangeDetectionStrategy.OnPush,\n})\nexport class App {}\n`,
   );
   write(
     'src/app/app.spec.ts',
@@ -353,7 +348,9 @@ allowBuilds:
               ),
             )
           ) {
-            throw new Error('Packed Capture Workbench package is missing its MIT LICENSE.');
+            throw new Error(
+              'Packed Capture Workbench package is missing its MIT LICENSE.',
+            );
           }
           return of(undefined);
         }),
@@ -372,12 +369,16 @@ allowBuilds:
           `Clean Angular, Vanilla, React, and Vue consumers passed with ${archiveName}.\n`,
         ),
       error: (error) => {
-        process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+        process.stderr.write(
+          `${error instanceof Error ? error.message : String(error)}\n`,
+        );
         process.exitCode = 1;
       },
     });
 } catch (error) {
   cleanup();
-  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+  process.stderr.write(
+    `${error instanceof Error ? error.message : String(error)}\n`,
+  );
   process.exitCode = 1;
 }

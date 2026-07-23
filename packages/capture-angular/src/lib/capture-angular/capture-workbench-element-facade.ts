@@ -1,10 +1,13 @@
 import {
   Component,
   ElementRef,
+  Injectable,
   booleanAttribute,
   computed,
+  effect,
   inject,
   input,
+  signal,
 } from '@angular/core';
 import {
   type CaptureClient,
@@ -13,13 +16,15 @@ import {
   type CapturePreprocessor,
   type CaptureStructuringProvider,
   type CaptureTaskView,
+  type CaptureWorkbenchInputSource,
   type CaptureWorkbenchConfig,
   type CaptureDensity,
   type CaptureOutputMode,
+  CAPTURE_WORKBENCH_INPUTS,
 } from '../contracts';
 import {
   CAPTURE_WORKBENCH_CUSTOM_EVENTS,
-  createCaptureWorkbenchCustomEvent,
+  CaptureWorkbenchEventFactory,
 } from './capture-workbench-events';
 import { CaptureWorkbenchComponent } from './capture-angular';
 
@@ -28,15 +33,30 @@ import { CaptureWorkbenchComponent } from './capture-angular';
  * Angular Elements owns this component's lifecycle and input property bridge;
  * capture behavior remains in CaptureWorkbenchComponent.
  */
+@Injectable()
+class CaptureWorkbenchElementInputBridge
+  implements CaptureWorkbenchInputSource
+{
+  readonly config = signal<CaptureWorkbenchConfig>({});
+  readonly client = signal<CaptureClient | null>(null);
+  readonly structuringProvider = signal<CaptureStructuringProvider | null>(
+    null,
+  );
+  readonly preprocessor = signal<CapturePreprocessor | null>(null);
+}
+
 @Component({
   selector: 'gx-capture-workbench-element-facade',
   imports: [CaptureWorkbenchComponent],
+  providers: [
+    CaptureWorkbenchElementInputBridge,
+    {
+      provide: CAPTURE_WORKBENCH_INPUTS,
+      useExisting: CaptureWorkbenchElementInputBridge,
+    },
+  ],
   template: `
     <gx-capture-workbench
-      [config]="resolvedConfig()"
-      [client]="client()"
-      [structuringProvider]="structuringProvider()"
-      [preprocessor]="preprocessor()"
       (completed)="onCompleted($event)"
       (failed)="onFailed($event)"
       (canceled)="onCanceled($event)"
@@ -46,16 +66,24 @@ import { CaptureWorkbenchComponent } from './capture-angular';
 })
 export class CaptureWorkbenchElementFacadeComponent {
   private readonly hostElement = inject(ElementRef<HTMLElement>);
+  private readonly inputBridge = inject(CaptureWorkbenchElementInputBridge);
+  private readonly eventFactory = inject(CaptureWorkbenchEventFactory);
 
-  readonly config = input<CaptureWorkbenchConfig>({}, {
-    transform: configInput,
-  });
+  readonly config = input<CaptureWorkbenchConfig>(
+    {},
+    {
+      transform: configInput,
+    },
+  );
   readonly client = input<CaptureClient | null>(null, {
     transform: objectOrNull,
   });
-  readonly structuringProvider = input<CaptureStructuringProvider | null>(null, {
-    transform: objectOrNull,
-  });
+  readonly structuringProvider = input<CaptureStructuringProvider | null>(
+    null,
+    {
+      transform: objectOrNull,
+    },
+  );
   readonly preprocessor = input<CapturePreprocessor | null>(null, {
     transform: objectOrNull,
   });
@@ -99,6 +127,13 @@ export class CaptureWorkbenchElementFacadeComponent {
     ...this.config(),
   }));
 
+  private readonly inputBridgeEffect = effect(() => {
+    this.inputBridge.config.set(this.resolvedConfig());
+    this.inputBridge.client.set(this.client());
+    this.inputBridge.structuringProvider.set(this.structuringProvider());
+    this.inputBridge.preprocessor.set(this.preprocessor());
+  });
+
   protected onCompleted(event: CaptureCompletedEvent): void {
     this.dispatch(CAPTURE_WORKBENCH_CUSTOM_EVENTS.completed, event);
   }
@@ -115,12 +150,14 @@ export class CaptureWorkbenchElementFacadeComponent {
     this.dispatch(CAPTURE_WORKBENCH_CUSTOM_EVENTS.taskChanged, event);
   }
 
-  private dispatch<T extends CaptureCompletedEvent | CaptureFailedEvent | CaptureTaskView>(
+  private dispatch<
+    T extends CaptureCompletedEvent | CaptureFailedEvent | CaptureTaskView,
+  >(
     type: (typeof CAPTURE_WORKBENCH_CUSTOM_EVENTS)[keyof typeof CAPTURE_WORKBENCH_CUSTOM_EVENTS],
     detail: T,
   ): void {
     this.hostElement.nativeElement.dispatchEvent(
-      createCaptureWorkbenchCustomEvent(type, detail),
+      this.eventFactory.create(type, detail),
     );
   }
 }

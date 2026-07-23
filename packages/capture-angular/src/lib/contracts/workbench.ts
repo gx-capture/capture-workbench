@@ -2,18 +2,13 @@ import type {
   CaptureClient,
   CaptureCompletedEvent,
   CaptureFailedEvent,
-  CaptureFailureV1,
-  CaptureJobV1,
   CapturePreprocessor,
-  CaptureStructuringCandidateV1,
   CaptureStructuringProvider,
   CaptureTaskView,
   CaptureWorkbenchConfig,
-  RawCaptureV1,
   RuntimeReadyV1,
   RuntimeRequirementV1,
 } from './index';
-import type { Observable } from 'rxjs';
 
 export interface ResolvedCaptureWorkbenchConfig {
   readonly enabledSources: readonly ('pdf' | 'image' | 'audio')[];
@@ -33,7 +28,13 @@ export interface ResolvedCaptureWorkbenchConfig {
 }
 
 export interface RuntimeViewState {
-  readonly status: 'idle' | 'checking' | 'ready' | 'needs-setup' | 'incompatible' | 'error';
+  readonly status:
+    | 'idle'
+    | 'checking'
+    | 'ready'
+    | 'needs-setup'
+    | 'incompatible'
+    | 'error';
   readonly ready?: RuntimeReadyV1;
   readonly requirements: readonly RuntimeRequirementV1[];
   readonly error?: string;
@@ -44,58 +45,15 @@ export interface RuntimeHandshake {
   readonly requirements: readonly RuntimeRequirementV1[];
 }
 
-export interface RuntimeRequest {
-  readonly client: CaptureClient | null;
-  readonly compatibleRuntimeMajor: number;
-  readonly structuringMode: 'runtime' | 'host';
-}
-
-export interface InternalCaptureTask {
-  readonly file: File;
-  readonly clientRequestId: string;
-  readonly controller: AbortController;
-}
-
-export interface CaptureWorkbenchStoreOptions {
-  readonly config?: CaptureWorkbenchConfig;
-  readonly client?: CaptureClient | null;
-  readonly structuringProvider?: CaptureStructuringProvider | null;
-  readonly preprocessor?: CapturePreprocessor | null;
-}
-
-export interface CaptureWorkflowContext {
-  readonly config: () => ResolvedCaptureWorkbenchConfig;
-  readonly client: () => CaptureClient | null;
-  readonly structuringProvider: () => CaptureStructuringProvider | null;
-  readonly preprocessor: () => CapturePreprocessor | null;
-}
-
-export interface CaptureReconciliationContext {
-  readonly client: () => CaptureClient | null;
-  readonly getTask: (taskId: string) => CaptureTaskView | undefined;
-  readonly updateTask: (
-    taskId: string,
-    patch: Partial<CaptureTaskView>,
-  ) => CaptureTaskView | undefined;
-  readonly requireReconciliation: (
-    taskId: string,
-    error: CaptureFailureV1,
-    raw?: RawCaptureV1,
-  ) => void;
-  readonly failTask: (
-    taskId: string,
-    fileName: string,
-    error: CaptureFailureV1,
-    raw?: RawCaptureV1,
-    stage?: CaptureTaskView['stage'],
-  ) => void;
-  readonly emitCompleted: (event: CaptureCompletedEvent) => void;
-  readonly emitCanceled: (task: CaptureTaskView) => void;
-  readonly tryGetRaw: (
-    client: CaptureClient,
-    captureId: string,
-    signal?: AbortSignal,
-  ) => Observable<RawCaptureV1 | undefined>;
+export interface CaptureWorkbenchInputSource {
+  /** Reads the current component configuration. Signal-backed readers are supported. */
+  readonly config?: () => CaptureWorkbenchConfig;
+  /** Reads the current client, falling back to `CAPTURE_CLIENT` when omitted/null. */
+  readonly client?: () => CaptureClient | null;
+  /** Reads the current provider, falling back to `CAPTURE_STRUCTURING_PROVIDER`. */
+  readonly structuringProvider?: () => CaptureStructuringProvider | null;
+  /** Reads the current preprocessor, falling back to `CAPTURE_PREPROCESSOR`. */
+  readonly preprocessor?: () => CapturePreprocessor | null;
 }
 
 export type CaptureWorkbenchStoreEvent =
@@ -103,17 +61,3 @@ export type CaptureWorkbenchStoreEvent =
   | { readonly type: 'failed'; readonly event: CaptureFailedEvent }
   | { readonly type: 'canceled'; readonly task: CaptureTaskView }
   | { readonly type: 'task-changed'; readonly task: CaptureTaskView };
-
-export interface SettledResource {
-  readonly isLoading: () => boolean;
-}
-
-export interface CaptureTaskPatch {
-  readonly taskId: string;
-  readonly patch: Partial<CaptureTaskView>;
-}
-
-export type CaptureWorkflowFailure = CaptureFailureV1;
-export type CaptureWorkflowJob = CaptureJobV1;
-export type CaptureWorkflowRaw = RawCaptureV1;
-export type CaptureWorkflowCandidate = CaptureStructuringCandidateV1;

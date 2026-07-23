@@ -1,18 +1,26 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import type {
-  CaptureClient,
-  CaptureJobV1,
-} from '../contracts';
+import type { CaptureClient, CaptureJobV1 } from '../contracts';
+import { provideCaptureWorkbenchInputs } from '../contracts';
 import { Subject, map, of, throwError } from 'rxjs';
 import { CaptureWorkbenchComponent } from './capture-angular';
-import { DOCUMENT, fakeClient, job, selectFiles } from './capture-angular-test-support';
+import {
+  CaptureWorkbenchTestInputSource,
+  DOCUMENT,
+  createCaptureWorkbenchTestInputSource,
+  fakeClient,
+  job,
+  selectFiles,
+} from './capture-angular-test-support';
 
 describe('CaptureWorkbenchComponent', () => {
   let fixture: ComponentFixture<CaptureWorkbenchComponent>;
+  let inputSource: CaptureWorkbenchTestInputSource;
 
   beforeEach(async () => {
+    inputSource = createCaptureWorkbenchTestInputSource();
     await TestBed.configureTestingModule({
       imports: [CaptureWorkbenchComponent],
+      providers: [provideCaptureWorkbenchInputs(inputSource)],
     }).compileComponents();
     fixture = TestBed.createComponent(CaptureWorkbenchComponent);
   });
@@ -20,8 +28,8 @@ describe('CaptureWorkbenchComponent', () => {
   it('emits a runtime-validated canonical result', async () => {
     const client = fakeClient();
     const completed = vi.fn();
-    fixture.componentRef.setInput('client', client);
-    fixture.componentRef.setInput('config', {
+    inputSource.client.set(client);
+    inputSource.config.set({
       showRuntimeSetup: false,
       pollIntervalMs: 0,
     });
@@ -57,8 +65,8 @@ describe('CaptureWorkbenchComponent', () => {
       .mockReturnValueOnce(of(job('running', 'extracting')))
       .mockReturnValueOnce(of(job('completed', 'completed')));
     const client = fakeClient({ createCapture, getCapture });
-    fixture.componentRef.setInput('client', client);
-    fixture.componentRef.setInput('config', {
+    inputSource.client.set(client);
+    inputSource.config.set({
       showRuntimeSetup: false,
       pollIntervalMs: 0,
     });
@@ -85,9 +93,9 @@ describe('CaptureWorkbenchComponent', () => {
       .mockReturnValue(of(job('running', 'awaiting_structuring', 'host')));
     const structure = vi.fn(() => of(DOCUMENT));
     const client = fakeClient({ createCapture, getCapture });
-    fixture.componentRef.setInput('client', client);
-    fixture.componentRef.setInput('structuringProvider', { structure });
-    fixture.componentRef.setInput('config', {
+    inputSource.client.set(client);
+    inputSource.structuringProvider.set({ structure });
+    inputSource.config.set({
       showRuntimeSetup: false,
       structuringMode: 'host',
       pollIntervalMs: 0,
@@ -108,10 +116,12 @@ describe('CaptureWorkbenchComponent', () => {
     const createCapture = vi
       .fn<CaptureClient['createCapture']>()
       .mockReturnValue(of(job('queued', 'queued')));
-    const getCapture = vi.fn<CaptureClient['getCapture']>(() => pendingPoll.asObservable());
+    const getCapture = vi.fn<CaptureClient['getCapture']>(() =>
+      pendingPoll.asObservable(),
+    );
     const client = fakeClient({ createCapture, getCapture });
-    fixture.componentRef.setInput('client', client);
-    fixture.componentRef.setInput('config', {
+    inputSource.client.set(client);
+    inputSource.config.set({
       showRuntimeSetup: false,
       pollIntervalMs: 0,
     });
@@ -122,7 +132,7 @@ describe('CaptureWorkbenchComponent', () => {
     const taskId = fixture.componentInstance.tasks()[0]?.id;
     if (!taskId) throw new Error('Expected a capture task.');
 
-    fixture.componentInstance.cancel(taskId);
+    fixture.componentInstance.store.cancel(taskId);
     pendingPoll.next(job('completed', 'completed'));
     pendingPoll.complete();
     await fixture.whenStable();
@@ -141,8 +151,8 @@ describe('CaptureWorkbenchComponent', () => {
       .mockReturnValueOnce(throwError(() => new TypeError('connection reset')))
       .mockReturnValueOnce(of(job('completed', 'completed')));
     const client = fakeClient({ createCapture });
-    fixture.componentRef.setInput('client', client);
-    fixture.componentRef.setInput('config', {
+    inputSource.client.set(client);
+    inputSource.config.set({
       showRuntimeSetup: false,
       pollIntervalMs: 0,
     });
@@ -167,11 +177,13 @@ describe('CaptureWorkbenchComponent', () => {
     const createCapture = vi
       .fn<CaptureClient['createCapture']>()
       .mockReturnValueOnce(
-        throwError(() => new DOMException('The operation was aborted.', 'AbortError')),
+        throwError(
+          () => new DOMException('The operation was aborted.', 'AbortError'),
+        ),
       );
     const client = fakeClient({ createCapture });
-    fixture.componentRef.setInput('client', client);
-    fixture.componentRef.setInput('config', {
+    inputSource.client.set(client);
+    inputSource.config.set({
       showRuntimeSetup: false,
       pollIntervalMs: 0,
     });
@@ -195,8 +207,8 @@ describe('CaptureWorkbenchComponent', () => {
         throwError(() => new Error('host validation rejected the request')),
       );
     const client = fakeClient({ createCapture });
-    fixture.componentRef.setInput('client', client);
-    fixture.componentRef.setInput('config', {
+    inputSource.client.set(client);
+    inputSource.config.set({
       showRuntimeSetup: false,
       pollIntervalMs: 0,
     });
@@ -219,11 +231,11 @@ describe('CaptureWorkbenchComponent', () => {
       preprocessing.complete();
     };
     const client = fakeClient();
-    fixture.componentRef.setInput('client', client);
-    fixture.componentRef.setInput('preprocessor', {
+    inputSource.client.set(client);
+    inputSource.preprocessor.set({
       preprocess: vi.fn(({ file }) => preprocessing.pipe(map(() => file))),
     });
-    fixture.componentRef.setInput('config', {
+    inputSource.config.set({
       concurrency: 1,
       showRuntimeSetup: false,
       pollIntervalMs: 0,
@@ -237,7 +249,7 @@ describe('CaptureWorkbenchComponent', () => {
     const second = fixture.componentInstance.tasks()[1];
     expect(second?.status).toBe('queued');
     if (!second) throw new Error('Expected the second task to be queued.');
-    fixture.componentInstance.cancel(second.id);
+    fixture.componentInstance.store.cancel(second.id);
     expect(fixture.componentInstance.tasks()[1]?.status).toBe('canceled');
 
     release();

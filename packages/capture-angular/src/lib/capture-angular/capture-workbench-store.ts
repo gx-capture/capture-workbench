@@ -1,8 +1,8 @@
 import {
-  Injector,
+  DestroyRef,
   Injectable,
-  OnDestroy,
   computed,
+  effect,
   inject,
   signal,
 } from '@angular/core';
@@ -12,6 +12,7 @@ import {
   CAPTURE_CLIENT,
   CAPTURE_PREPROCESSOR,
   CAPTURE_STRUCTURING_PROVIDER,
+  CAPTURE_WORKBENCH_INPUTS,
   type CaptureClient,
   type CapturePreprocessor,
   type CaptureStructuringProvider,
@@ -20,31 +21,20 @@ import {
   type RuntimeRequirementV1,
 } from '../contracts';
 import type {
-  CaptureWorkbenchStoreOptions,
   ResolvedCaptureWorkbenchConfig,
   RuntimeHandshake,
-  RuntimeRequest,
   RuntimeViewState,
 } from '../contracts/workbench';
+import type { RuntimeRequest } from './internal-contracts';
 import { DEFAULT_CAPTURE_WORKBENCH_CONFIG } from '../constants/workbench';
-import {
-  assertCaptureRuntimeCompatible,
-  captureAccept,
-  serializeCaptureDocument,
-  serializeRawCapture,
-} from '../capture-helpers';
+import { CaptureHelpersService } from '../capture-helpers';
 import { CaptureRuntimeInstallationService } from './capture-runtime-installation.service';
 import { CaptureWorkflowService } from './capture-workflow.service';
-import {
-  errorMessage,
-  runtimeProgressPercent,
-  waitForResourceSettlement,
-  withoutExtension,
-} from './capture-workbench-store-helpers';
+import { CaptureWorkbenchStoreHelpers } from './capture-workbench-store-helpers';
 
 @Injectable()
-export class CaptureWorkbenchStore implements OnDestroy {
-  private readonly injector = inject(Injector);
+export class CaptureWorkbenchStore {
+  private readonly destroyRef = inject(DestroyRef);
   private readonly injectedClient = inject(CAPTURE_CLIENT, { optional: true });
   private readonly injectedStructuringProvider = inject(
     CAPTURE_STRUCTURING_PROVIDER,
@@ -55,15 +45,36 @@ export class CaptureWorkbenchStore implements OnDestroy {
   private readonly injectedPreprocessor = inject(CAPTURE_PREPROCESSOR, {
     optional: true,
   });
+  private readonly inputSource = inject(CAPTURE_WORKBENCH_INPUTS, {
+    optional: true,
+  });
   private readonly lifecycleController = new AbortController();
-  private readonly installationService = inject(CaptureRuntimeInstallationService);
+  private readonly installationService = inject(
+    CaptureRuntimeInstallationService,
+  );
   private readonly workflow = inject(CaptureWorkflowService);
+  private readonly captureHelpers = inject(CaptureHelpersService);
+  private readonly helpers = inject(CaptureWorkbenchStoreHelpers);
 
   private readonly configState = signal<CaptureWorkbenchConfig>({});
   private readonly clientState = signal<CaptureClient | null>(null);
   private readonly structuringProviderState =
     signal<CaptureStructuringProvider | null>(null);
   private readonly preprocessorState = signal<CapturePreprocessor | null>(null);
+
+  private readonly configurationEffect = effect(() => {
+    const source = this.inputSource;
+    this.configState.set(source?.config?.() ?? {});
+    this.clientState.set(source?.client?.() ?? null);
+    this.structuringProviderState.set(source?.structuringProvider?.() ?? null);
+    this.preprocessorState.set(source?.preprocessor?.() ?? null);
+    this.workflow.configure({
+      config: () => this.resolvedConfig(),
+      client: () => this.activeClient(),
+      structuringProvider: () => this.activeStructuringProvider(),
+      preprocessor: () => this.preprocessor() ?? this.injectedPreprocessor,
+    });
+  });
 
   readonly config = this.configState.asReadonly();
   readonly client = this.clientState.asReadonly();
@@ -73,32 +84,37 @@ export class CaptureWorkbenchStore implements OnDestroy {
   readonly tasks = this.workflow.tasks;
   readonly installation = this.installationService.installation;
 
-  readonly resolvedConfig = computed<ResolvedCaptureWorkbenchConfig>(
-    () => ({
-      ...DEFAULT_CAPTURE_WORKBENCH_CONFIG,
-      ...this.config(),
-      concurrency: Math.max(
-        1,
-        Math.floor(this.config().concurrency ?? DEFAULT_CAPTURE_WORKBENCH_CONFIG.concurrency),
+  readonly resolvedConfig = computed<ResolvedCaptureWorkbenchConfig>(() => ({
+    ...DEFAULT_CAPTURE_WORKBENCH_CONFIG,
+    ...this.config(),
+    concurrency: Math.max(
+      1,
+      Math.floor(
+        this.config().concurrency ??
+          DEFAULT_CAPTURE_WORKBENCH_CONFIG.concurrency,
       ),
-      pollIntervalMs: Math.max(
-        0,
-        this.config().pollIntervalMs ?? DEFAULT_CAPTURE_WORKBENCH_CONFIG.pollIntervalMs,
-      ),
-    }),
-  );
+    ),
+    pollIntervalMs: Math.max(
+      0,
+      this.config().pollIntervalMs ??
+        DEFAULT_CAPTURE_WORKBENCH_CONFIG.pollIntervalMs,
+    ),
+  }));
   private readonly runtimeRequest = computed<RuntimeRequest | undefined>(
     () => {
       const config = this.config();
       const hostManagedHandshake =
-        config.hostManagedHandshake ?? DEFAULT_CAPTURE_WORKBENCH_CONFIG.hostManagedHandshake;
+        config.hostManagedHandshake ??
+        DEFAULT_CAPTURE_WORKBENCH_CONFIG.hostManagedHandshake;
       if (hostManagedHandshake) return undefined;
       return {
         client: this.activeClient(),
         compatibleRuntimeMajor:
-          config.compatibleRuntimeMajor ?? DEFAULT_CAPTURE_WORKBENCH_CONFIG.compatibleRuntimeMajor,
+          config.compatibleRuntimeMajor ??
+          DEFAULT_CAPTURE_WORKBENCH_CONFIG.compatibleRuntimeMajor,
         structuringMode:
-          config.structuringMode ?? DEFAULT_CAPTURE_WORKBENCH_CONFIG.structuringMode,
+          config.structuringMode ??
+          DEFAULT_CAPTURE_WORKBENCH_CONFIG.structuringMode,
       };
     },
     {
@@ -125,7 +141,7 @@ export class CaptureWorkbenchStore implements OnDestroy {
         requirements: params.client.getRequirements(abortSignal).pipe(take(1)),
       }).pipe(
         map(({ ready, requirements }) => {
-          assertCaptureRuntimeCompatible(
+          this.captureHelpers.assertCaptureRuntimeCompatible(
             ready,
             params.compatibleRuntimeMajor,
             params.structuringMode,
@@ -161,7 +177,10 @@ export class CaptureWorkbenchStore implements OnDestroy {
       return {
         status: incompatible ? 'incompatible' : 'error',
         requirements: [],
-        error: errorMessage(error, 'Unable to check the capture runtime.'),
+        error: this.helpers.errorMessage(
+          error,
+          'Unable to check the capture runtime.',
+        ),
       };
     }
     if (!handshake) {
@@ -187,7 +206,7 @@ export class CaptureWorkbenchStore implements OnDestroy {
     };
   });
   readonly accept = computed(() =>
-    captureAccept(this.resolvedConfig().enabledSources),
+    this.captureHelpers.captureAccept(this.resolvedConfig().enabledSources),
   );
   readonly hostStyles = computed(() => {
     const theme = this.config().theme;
@@ -219,26 +238,11 @@ export class CaptureWorkbenchStore implements OnDestroy {
   );
 
   installationProgress(progress: number): number {
-    return runtimeProgressPercent(progress);
+    return this.helpers.runtimeProgressPercent(progress);
   }
 
-  ngOnDestroy(): void {
-    this.lifecycleController.abort();
-    this.workflow.ngOnDestroy();
-  }
-
-  configure(options: CaptureWorkbenchStoreOptions): void {
-    this.configState.set(options.config ?? {});
-    this.clientState.set(options.client ?? null);
-    this.structuringProviderState.set(options.structuringProvider ?? null);
-    this.preprocessorState.set(options.preprocessor ?? null);
-    this.workflow.configure({
-      config: () => this.resolvedConfig(),
-      client: () => this.activeClient(),
-      structuringProvider: () => this.activeStructuringProvider(),
-      preprocessor: () =>
-        this.preprocessor() ?? this.injectedPreprocessor,
-    });
+  constructor() {
+    this.destroyRef.onDestroy(() => this.lifecycleController.abort());
   }
 
   refreshRuntime(): void {
@@ -279,13 +283,11 @@ export class CaptureWorkbenchStore implements OnDestroy {
     this.installationService.clearError();
     this.runtimeResource.reload();
     if (!this.runtimeResource.isLoading()) return of(undefined);
-    return waitForResourceSettlement(
+    return this.helpers.waitForResourceSettlement(
       this.runtimeResource,
-      this.injector,
       this.lifecycleController.signal,
     );
   }
-
 
   chooseFiles(event: Event): void {
     const input = event.target as HTMLInputElement;
@@ -295,15 +297,18 @@ export class CaptureWorkbenchStore implements OnDestroy {
 
   renderedResult(task: CaptureTaskView): string {
     return task.result
-      ? serializeCaptureDocument(task.result, this.resolvedConfig().outputMode)
+      ? this.captureHelpers.serializeCaptureDocument(
+          task.result,
+          this.resolvedConfig().outputMode,
+        )
       : '';
   }
 
   exportResult(task: CaptureTaskView, mode: 'json' | 'text'): void {
     if (!task.result) return;
     this.download(
-      serializeCaptureDocument(task.result, mode),
-      `${withoutExtension(task.fileName)}.capture.${mode === 'json' ? 'json' : 'txt'}`,
+      this.captureHelpers.serializeCaptureDocument(task.result, mode),
+      `${this.helpers.withoutExtension(task.fileName)}.capture.${mode === 'json' ? 'json' : 'txt'}`,
       mode === 'json' ? 'application/json' : 'text/plain;charset=utf-8',
     );
   }
@@ -311,13 +316,11 @@ export class CaptureWorkbenchStore implements OnDestroy {
   exportRaw(task: CaptureTaskView): void {
     if (!task.raw) return;
     this.download(
-      serializeRawCapture(task.raw),
-      `${withoutExtension(task.fileName)}.raw-capture.json`,
+      this.captureHelpers.serializeRawCapture(task.raw),
+      `${this.helpers.withoutExtension(task.fileName)}.raw-capture.json`,
       'application/json',
     );
   }
-
-
 
   private requirementIsNeeded(requirement: RuntimeRequirementV1): boolean {
     const enabled = this.resolvedConfig().enabledSources;
@@ -336,7 +339,6 @@ export class CaptureWorkbenchStore implements OnDestroy {
   private activeStructuringProvider(): CaptureStructuringProvider | null {
     return this.structuringProvider() ?? this.injectedStructuringProvider;
   }
-
 
   private download(content: string, fileName: string, type: string): void {
     const blob = new Blob([content], { type });

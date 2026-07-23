@@ -1,3 +1,4 @@
+import { Injectable, Injector, inject } from '@angular/core';
 import { rxResource } from '@angular/core/rxjs-interop';
 import {
   EMPTY,
@@ -13,7 +14,6 @@ import {
   switchMap,
   tap,
 } from 'rxjs';
-import type { Injector } from '@angular/core';
 import type { CaptureClient, CaptureJobV1 } from '../contracts';
 
 export interface CaptureJobPollResourceOptions {
@@ -22,7 +22,6 @@ export interface CaptureJobPollResourceOptions {
   readonly pollIntervalMs: number;
   readonly signal: AbortSignal;
   readonly stopForHost: boolean;
-  readonly injector: Injector;
   readonly onJob: (job: CaptureJobV1) => void;
 }
 
@@ -36,67 +35,72 @@ export interface CaptureJobPollResource {
  * component's imperative workflow so their idempotency and reconciliation
  * semantics stay explicit.
  */
-export function createCaptureJobPollResource(
-  options: CaptureJobPollResourceOptions,
-): CaptureJobPollResource {
-  if (options.signal.aborted) {
-    return {
-      terminal$: throwError(() => createAbortError()),
-      destroy: () => undefined,
-    };
-  }
+@Injectable({ providedIn: 'root' })
+export class CaptureJobPollResourceService {
+  private readonly injector = inject(Injector);
 
-  const terminalSubject = new ReplaySubject<CaptureJobV1>(1);
-  let settled = false;
-  let destroyResource: () => void = () => undefined;
-
-  const jobResource = rxResource({
-    injector: options.injector,
-    params: () => options,
-    stream: ({ params, abortSignal }) =>
-      pollCaptureJobs(params, abortSignal).pipe(
-        tap((job) => {
-          if (options.signal.aborted || settled) return;
-          options.onJob(job);
-          if (!shouldContinuePolling(job, options.stopForHost)) {
-            settled = true;
-            terminalSubject.next(job);
-            terminalSubject.complete();
-          }
-        }),
-        catchError((error: unknown) => {
-          if (!settled) {
-            settled = true;
-            terminalSubject.error(error);
-          }
-          return throwError(() => error);
-        }),
-        finalize(() => {
-          if (!settled) {
-            settled = true;
-            terminalSubject.error(
-              new Error('Capture polling ended before reaching a terminal state.'),
-            );
-          }
-        }),
-      ),
-  });
-
-  const destroy = (): void => {
-    options.signal.removeEventListener('abort', destroy);
-    if (!settled) {
-      settled = true;
-      terminalSubject.error(createAbortError());
+  create(options: CaptureJobPollResourceOptions): CaptureJobPollResource {
+    if (options.signal.aborted) {
+      return {
+        terminal$: throwError(() => createAbortError()),
+        destroy: () => undefined,
+      };
     }
-    destroyResource();
-  };
 
-  destroyResource = () => jobResource.destroy();
-  options.signal.addEventListener('abort', destroy, { once: true });
+    const terminalSubject = new ReplaySubject<CaptureJobV1>(1);
+    let settled = false;
+    let destroyResource: () => void = () => undefined;
 
-  if (options.signal.aborted) destroy();
+    const jobResource = rxResource({
+      injector: this.injector,
+      params: () => options,
+      stream: ({ params, abortSignal }) =>
+        pollCaptureJobs(params, abortSignal).pipe(
+          tap((job) => {
+            if (options.signal.aborted || settled) return;
+            options.onJob(job);
+            if (!shouldContinuePolling(job, options.stopForHost)) {
+              settled = true;
+              terminalSubject.next(job);
+              terminalSubject.complete();
+            }
+          }),
+          catchError((error: unknown) => {
+            if (!settled) {
+              settled = true;
+              terminalSubject.error(error);
+            }
+            return throwError(() => error);
+          }),
+          finalize(() => {
+            if (!settled) {
+              settled = true;
+              terminalSubject.error(
+                new Error(
+                  'Capture polling ended before reaching a terminal state.',
+                ),
+              );
+            }
+          }),
+        ),
+    });
 
-  return { terminal$: terminalSubject.asObservable(), destroy };
+    const destroy = (): void => {
+      options.signal.removeEventListener('abort', destroy);
+      if (!settled) {
+        settled = true;
+        terminalSubject.error(createAbortError());
+      }
+      destroyResource();
+    };
+
+    destroyResource = () => jobResource.destroy();
+    options.signal.addEventListener('abort', destroy, { once: true });
+
+    if (options.signal.aborted) destroy();
+
+    return { terminal$: terminalSubject.asObservable(), destroy };
+  }
 }
 
 function pollCaptureJobs(

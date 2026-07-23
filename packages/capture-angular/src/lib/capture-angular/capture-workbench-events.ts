@@ -1,3 +1,4 @@
+import { Injectable } from '@angular/core';
 import type {
   CaptureCompletedEvent,
   CaptureFailedEvent,
@@ -19,8 +20,20 @@ export type CaptureWorkbenchCustomEventDetail =
   | CaptureFailedEvent
   | CaptureTaskView;
 
+@Injectable({ providedIn: 'root' })
+export class CaptureWorkbenchEventFactory {
+  create<T extends CaptureWorkbenchCustomEventDetail>(
+    type: CaptureWorkbenchCustomEventName,
+    detail: T,
+  ): CustomEvent<T> {
+    return new CustomEvent(type, { detail, bubbles: true, composed: true });
+  }
+}
+
+const publicEventFactory = new CaptureWorkbenchEventFactory();
+
 export function createCaptureWorkbenchCustomEvent<
   T extends CaptureWorkbenchCustomEventDetail,
 >(type: CaptureWorkbenchCustomEventName, detail: T): CustomEvent<T> {
-  return new CustomEvent(type, { detail, bubbles: true, composed: true });
+  return publicEventFactory.create(type, detail);
 }

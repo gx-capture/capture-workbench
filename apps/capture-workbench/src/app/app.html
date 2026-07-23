@@ -3,8 +3,8 @@
     <p class="kicker">Capture Workbench</p>
     <h1>Packaged workflow validation host</h1>
     <p>
-      This Tauri-oriented reference app proves clean installation and package integration. It is
-      not the public desktop product.
+      This Tauri-oriented reference app proves clean installation and package
+      integration. It is not the public desktop product.
     </p>
     <p class="client-mode" [attr.data-client-mode]="clientMode">
       Client path: {{ clientMode }}
@@ -18,20 +18,19 @@
         Isolated runtime provider
       </button>
       @if (hostStructuringAvailable) {
-        <button
-          type="button"
-          [class.active]="structuringMode() === 'host'"
-          (click)="selectMode('host')"
-        >
-          Host provider interface
-        </button>
+      <button
+        type="button"
+        [class.active]="structuringMode() === 'host'"
+        (click)="selectMode('host')"
+      >
+        Host provider interface
+      </button>
       }
     </div>
     <p class="event" aria-live="polite">{{ lastEvent() }}</p>
   </section>
 
   <gx-capture-workbench
-    [config]="config()"
     (completed)="recordCompletion($event)"
     (failed)="recordFailure($event)"
   />

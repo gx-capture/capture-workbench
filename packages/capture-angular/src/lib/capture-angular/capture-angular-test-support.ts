@@ -1,9 +1,14 @@
+import { signal, type WritableSignal } from '@angular/core';
 import type {
   CaptureClient,
   CaptureDocumentV1,
   CaptureJobV1,
   RawCaptureV1,
   RuntimeReadyV1,
+  CapturePreprocessor,
+  CaptureStructuringProvider,
+  CaptureWorkbenchConfig,
+  CaptureWorkbenchInputSource,
 } from '../contracts';
 import { of } from 'rxjs';
 
@@ -77,6 +82,23 @@ export const DOCUMENT: CaptureDocumentV1 = {
   completedAt: '2026-07-20T00:00:01Z',
 };
 
+export interface CaptureWorkbenchTestInputSource
+  extends CaptureWorkbenchInputSource {
+  readonly config: WritableSignal<CaptureWorkbenchConfig>;
+  readonly client: WritableSignal<CaptureClient | null>;
+  readonly structuringProvider: WritableSignal<CaptureStructuringProvider | null>;
+  readonly preprocessor: WritableSignal<CapturePreprocessor | null>;
+}
+
+export function createCaptureWorkbenchTestInputSource(): CaptureWorkbenchTestInputSource {
+  return {
+    config: signal<CaptureWorkbenchConfig>({}),
+    client: signal<CaptureClient | null>(null),
+    structuringProvider: signal<CaptureStructuringProvider | null>(null),
+    preprocessor: signal<CapturePreprocessor | null>(null),
+  };
+}
+
 export function job(
   status: CaptureJobV1['status'],
   stage: CaptureJobV1['stage'],
@@ -94,7 +116,9 @@ export function job(
   };
 }
 
-export function fakeClient(overrides: Partial<CaptureClient> = {}): CaptureClient {
+export function fakeClient(
+  overrides: Partial<CaptureClient> = {},
+): CaptureClient {
   return {
     getReady: vi.fn(() => of(READY)),
     getRequirements: vi.fn(() => of([])),
@@ -110,9 +134,7 @@ export function fakeClient(overrides: Partial<CaptureClient> = {}): CaptureClien
     commitStructuredResult: vi.fn(() =>
       of(job('completed', 'completed', 'host')),
     ),
-    reportStructuringFailure: vi.fn(() =>
-      of(job('failed', 'failed', 'host')),
-    ),
+    reportStructuringFailure: vi.fn(() => of(job('failed', 'failed', 'host'))),
     deleteCapture: vi.fn(() => of(undefined)),
     ...overrides,
   };

@@ -62,8 +62,12 @@
       }
     },
     "lint": {
-      "executor": "@nx/eslint:lint",
-      "dependsOn": ["async-boundary-check"]
+      "executor": "nx:run-commands",
+      "dependsOn": ["async-boundary-check"],
+      "options": {
+        "cwd": "packages/capture-angular",
+        "command": "pnpm exec eslint src"
+      }
     },
     "async-boundary-check": {
       "executor": "nx:run-commands",

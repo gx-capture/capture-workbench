@@ -1,21 +1,30 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { provideCaptureWorkbenchInputs } from '../contracts';
 import { of, throwError } from 'rxjs';
 import { CaptureWorkbenchComponent } from './capture-angular';
-import { READY, fakeClient } from './capture-angular-test-support';
+import {
+  CaptureWorkbenchTestInputSource,
+  READY,
+  createCaptureWorkbenchTestInputSource,
+  fakeClient,
+} from './capture-angular-test-support';
 
 describe('CaptureWorkbenchComponent', () => {
   let fixture: ComponentFixture<CaptureWorkbenchComponent>;
+  let inputSource: CaptureWorkbenchTestInputSource;
 
   beforeEach(async () => {
+    inputSource = createCaptureWorkbenchTestInputSource();
     await TestBed.configureTestingModule({
       imports: [CaptureWorkbenchComponent],
+      providers: [provideCaptureWorkbenchInputs(inputSource)],
     }).compileComponents();
     fixture = TestBed.createComponent(CaptureWorkbenchComponent);
   });
 
   it('applies source, size, and theme configuration', async () => {
-    fixture.componentRef.setInput('client', fakeClient());
-    fixture.componentRef.setInput('config', {
+    inputSource.client.set(fakeClient());
+    inputSource.config.set({
       width: '32rem',
       height: '24rem',
       theme: { accent: '#7c3aed' },
@@ -40,7 +49,7 @@ describe('CaptureWorkbenchComponent', () => {
 
   it('reloads the runtime handshake through the resource signal', async () => {
     const client = fakeClient();
-    fixture.componentRef.setInput('client', client);
+    inputSource.client.set(client);
     fixture.detectChanges();
     await fixture.whenStable();
 
@@ -48,7 +57,7 @@ describe('CaptureWorkbenchComponent', () => {
     expect(client.getReady).toHaveBeenCalledOnce();
     expect(client.getRequirements).toHaveBeenCalledOnce();
 
-    fixture.componentInstance.refreshRuntime();
+    fixture.componentInstance.store.refreshRuntime();
     await fixture.whenStable();
 
     expect(fixture.componentInstance.runtime().status).toBe('ready');
@@ -60,7 +69,7 @@ describe('CaptureWorkbenchComponent', () => {
     const client = fakeClient({
       getReady: vi.fn(() => of({ ...READY, runtimeVersion: '1.0.0' })),
     });
-    fixture.componentRef.setInput('client', client);
+    inputSource.client.set(client);
     fixture.detectChanges();
     await fixture.whenStable();
 
@@ -76,7 +85,7 @@ describe('CaptureWorkbenchComponent', () => {
         throwError(() => new Error('runtime probe failed')),
       ),
     });
-    fixture.componentRef.setInput('client', client);
+    inputSource.client.set(client);
     fixture.detectChanges();
     await fixture.whenStable();
 
@@ -88,8 +97,8 @@ describe('CaptureWorkbenchComponent', () => {
 
   it('still performs a handshake when runtime setup UI is hidden', async () => {
     const client = fakeClient();
-    fixture.componentRef.setInput('client', client);
-    fixture.componentRef.setInput('config', { showRuntimeSetup: false });
+    inputSource.client.set(client);
+    inputSource.config.set({ showRuntimeSetup: false });
     fixture.detectChanges();
     await fixture.whenStable();
 
@@ -100,8 +109,8 @@ describe('CaptureWorkbenchComponent', () => {
 
   it('skips its handshake only with explicit hostManagedHandshake', async () => {
     const client = fakeClient();
-    fixture.componentRef.setInput('client', client);
-    fixture.componentRef.setInput('config', {
+    inputSource.client.set(client);
+    inputSource.config.set({
       showRuntimeSetup: false,
       hostManagedHandshake: true,
     });

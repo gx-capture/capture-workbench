@@ -1,4 +1,4 @@
-import { Injectable, OnDestroy } from '@angular/core';
+import { DestroyRef, Injectable, inject } from '@angular/core';
 import {
   EMPTY,
   Observable,
@@ -21,32 +21,33 @@ import {
   type CaptureTaskView,
   type RawCaptureV1,
 } from '../contracts';
-import type { CaptureReconciliationContext } from '../contracts/workbench';
+import type { CaptureReconciliationContext } from './internal-contracts';
 import {
   HOST_PROVIDER_FAILURE_CODE,
   HOST_RECONCILIATION_FAILURE_CODE,
 } from '../constants';
 import {
   HostReconciliationUnavailableError,
-  hostReconciliationFailure,
-  isAbortError,
-  isAwaitingHostStructuring,
-  isTerminalCaptureJob,
+  CaptureWorkbenchStoreHelpers,
 } from './capture-workbench-store-helpers';
 
 @Injectable()
-export class CaptureReconciliationService implements OnDestroy {
+export class CaptureReconciliationService {
+  private readonly destroyRef = inject(DestroyRef);
   private readonly lifecycleController = new AbortController();
   private readonly reconciliationTasks = new Set<string>();
+  private readonly helpers = inject(CaptureWorkbenchStoreHelpers);
   private context?: CaptureReconciliationContext;
+
+  constructor() {
+    this.destroyRef.onDestroy(() => {
+      this.lifecycleController.abort();
+      this.reconciliationTasks.clear();
+    });
+  }
 
   configure(context: CaptureReconciliationContext): void {
     this.context = context;
-  }
-
-  ngOnDestroy(): void {
-    this.lifecycleController.abort();
-    this.reconciliationTasks.clear();
   }
 
   private getTask(taskId: string): CaptureTaskView | undefined {
@@ -124,16 +125,16 @@ export class CaptureReconciliationService implements OnDestroy {
         .getCapture(task.captureId, this.lifecycleController.signal)
         .pipe(
           catchError((error: unknown) => {
-            if (isAbortError(error)) return EMPTY;
+            if (this.helpers.isAbortError(error)) return EMPTY;
             this.requireReconciliation(
               taskId,
-              hostReconciliationFailure(error),
+              this.helpers.hostReconciliationFailure(error),
               task.raw,
             );
             return EMPTY;
           }),
           switchMap((job) => {
-            if (isTerminalCaptureJob(job)) {
+            if (this.helpers.isTerminalCaptureJob(job)) {
               return this.settleConfirmedJob(task, client, job);
             }
             this.requireReconciliation(
@@ -165,13 +166,14 @@ export class CaptureReconciliationService implements OnDestroy {
     } as const;
 
     return this.commitAttempt(client, captureId, request, signal).pipe(
-      switchMap((first): Observable<CommitOutcome> =>
-        first.job && !isAwaitingHostStructuring(first.job)
-          ? of(first)
-          : this.commitAttempt(client, captureId, request, signal),
+      switchMap(
+        (first): Observable<CommitOutcome> =>
+          first.job && !this.helpers.isAwaitingHostStructuring(first.job)
+            ? of(first)
+            : this.commitAttempt(client, captureId, request, signal),
       ),
       switchMap((second) =>
-        second.job && !isAwaitingHostStructuring(second.job)
+        second.job && !this.helpers.isAwaitingHostStructuring(second.job)
           ? of(second.job)
           : this.reportHostFailureAndReconcile(
               client,
@@ -197,29 +199,37 @@ export class CaptureReconciliationService implements OnDestroy {
       )
       .pipe(
         catchError((error: unknown) => {
-          if (isAbortError(error)) return throwError(() => error);
+          if (this.helpers.isAbortError(error)) return throwError(() => error);
           return this.tryGetCaptureForReconciliation(client, captureId, signal);
         }),
         switchMap((reported) => {
-          if (reported && isTerminalCaptureJob(reported)) return of(reported);
+          if (reported && this.helpers.isTerminalCaptureJob(reported))
+            return of(reported);
           return client.cancelCapture(captureId, signal).pipe(
             catchError((error: unknown) => {
-              if (isAbortError(error)) return throwError(() => error);
+              if (this.helpers.isAbortError(error))
+                return throwError(() => error);
               return of(undefined);
             }),
             switchMap((cancelled) =>
-              this.tryGetCaptureForReconciliation(client, captureId, signal).pipe(
+              this.tryGetCaptureForReconciliation(
+                client,
+                captureId,
+                signal,
+              ).pipe(
                 map((confirmed) =>
-                  confirmed && isTerminalCaptureJob(confirmed)
+                  confirmed && this.helpers.isTerminalCaptureJob(confirmed)
                     ? confirmed
-                    : cancelled && isTerminalCaptureJob(cancelled)
+                    : cancelled && this.helpers.isTerminalCaptureJob(cancelled)
                       ? cancelled
                       : undefined,
                 ),
                 mergeMap((terminal) =>
                   terminal
                     ? of(terminal)
-                    : throwError(() => new HostReconciliationUnavailableError()),
+                    : throwError(
+                        () => new HostReconciliationUnavailableError(),
+                      ),
                 ),
               ),
             ),
@@ -231,16 +241,21 @@ export class CaptureReconciliationService implements OnDestroy {
   private commitAttempt(
     client: CaptureClient,
     captureId: string,
-    request: { readonly clientRequestId: string; readonly candidate: CaptureStructuringCandidateV1 },
+    request: {
+      readonly clientRequestId: string;
+      readonly candidate: CaptureStructuringCandidateV1;
+    },
     signal: AbortSignal,
   ): Observable<{ readonly job?: CaptureJobV1 }> {
     return client.commitStructuredResult(captureId, request, signal).pipe(
       map((job) => ({ job })),
       catchError((error: unknown) => {
-        if (isAbortError(error)) return throwError(() => error);
-        return this.tryGetCaptureForReconciliation(client, captureId, signal).pipe(
-          map((job) => ({ job })),
-        );
+        if (this.helpers.isAbortError(error)) return throwError(() => error);
+        return this.tryGetCaptureForReconciliation(
+          client,
+          captureId,
+          signal,
+        ).pipe(map((job) => ({ job })));
       }),
     );
   }
@@ -252,7 +267,7 @@ export class CaptureReconciliationService implements OnDestroy {
   ): Observable<CaptureJobV1 | undefined> {
     return client.getCapture(captureId, signal).pipe(
       catchError((error: unknown) => {
-        if (isAbortError(error)) return throwError(() => error);
+        if (this.helpers.isAbortError(error)) return throwError(() => error);
         return of(undefined);
       }),
     );
@@ -269,19 +284,19 @@ export class CaptureReconciliationService implements OnDestroy {
     const signal = this.lifecycleController.signal;
     return client.cancelCapture(task.captureId, signal).pipe(
       catchError((error: unknown) => {
-        if (isAbortError(error)) return EMPTY;
+        if (this.helpers.isAbortError(error)) return EMPTY;
         return of(undefined);
       }),
       switchMap((cancelled) =>
         client.getCapture(task.captureId as string, signal).pipe(
           catchError((error: unknown) => {
-            if (isAbortError(error)) return EMPTY;
+            if (this.helpers.isAbortError(error)) return EMPTY;
             return of(undefined);
           }),
           map((confirmed) =>
-            confirmed && isTerminalCaptureJob(confirmed)
+            confirmed && this.helpers.isTerminalCaptureJob(confirmed)
               ? confirmed
-              : cancelled && isTerminalCaptureJob(cancelled)
+              : cancelled && this.helpers.isTerminalCaptureJob(cancelled)
                 ? cancelled
                 : undefined,
           ),
@@ -322,9 +337,8 @@ export class CaptureReconciliationService implements OnDestroy {
       return of(undefined);
     }
     if (job.status === 'failed') {
-      return (task.raw
-        ? of(task.raw)
-        : this.tryGetRaw(client, job.captureId)
+      return (
+        task.raw ? of(task.raw) : this.tryGetRaw(client, job.captureId)
       ).pipe(
         map((raw) => {
           this.failTask(
@@ -358,10 +372,10 @@ export class CaptureReconciliationService implements OnDestroy {
             this.emitCompleted({ taskId: task.id, document: result });
         }),
         catchError((error: unknown) => {
-          if (isAbortError(error)) return EMPTY;
+          if (this.helpers.isAbortError(error)) return EMPTY;
           this.requireReconciliation(
             task.id,
-            hostReconciliationFailure(error),
+            this.helpers.hostReconciliationFailure(error),
             task.raw,
           );
           return EMPTY;

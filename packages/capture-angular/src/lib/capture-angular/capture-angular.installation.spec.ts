@@ -1,4 +1,5 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { provideCaptureWorkbenchInputs } from '../contracts';
 import type {
   CaptureClient,
   RuntimeRequirementV1,
@@ -6,14 +7,23 @@ import type {
 } from '../contracts';
 import { of, throwError } from 'rxjs';
 import { CaptureWorkbenchComponent } from './capture-angular';
-import { RAW, READY, fakeClient } from './capture-angular-test-support';
+import {
+  CaptureWorkbenchTestInputSource,
+  RAW,
+  READY,
+  createCaptureWorkbenchTestInputSource,
+  fakeClient,
+} from './capture-angular-test-support';
 
 describe('CaptureWorkbenchComponent', () => {
   let fixture: ComponentFixture<CaptureWorkbenchComponent>;
+  let inputSource: CaptureWorkbenchTestInputSource;
 
   beforeEach(async () => {
+    inputSource = createCaptureWorkbenchTestInputSource();
     await TestBed.configureTestingModule({
       imports: [CaptureWorkbenchComponent],
+      providers: [provideCaptureWorkbenchInputs(inputSource)],
     }).compileComponents();
     fixture = TestBed.createComponent(CaptureWorkbenchComponent);
   });
@@ -22,34 +32,35 @@ describe('CaptureWorkbenchComponent', () => {
     const client = fakeClient({
       getReady: vi.fn(() => of({ ...READY, ready: false })),
       getRequirements: vi.fn(
-        (): ReturnType<CaptureClient['getRequirements']> => of([
-          {
-            requirementId: 'ollama-runtime',
-            kind: 'runtime',
-            displayName: 'Ollama',
-            status: 'installable',
-            requiredFor: ['runtime'],
-            installStrategy: 'winget',
-          },
-          {
-            requirementId: 'capture-ollama-model',
-            kind: 'model',
-            displayName: 'Capture model',
-            status: 'manual_action_required',
-            requiredFor: ['runtime'],
-            installStrategy: 'manual',
-            detail: 'Open Ollama and pull the capture model.',
-          },
-          {
-            requirementId: 'whisper-primary',
-            kind: 'stt',
-            displayName: 'Whisper',
-            status: 'unavailable',
-            requiredFor: ['audio'],
-            installStrategy: 'none',
-            detail: 'Whisper is unavailable.',
-          },
-        ]),
+        (): ReturnType<CaptureClient['getRequirements']> =>
+          of([
+            {
+              requirementId: 'ollama-runtime',
+              kind: 'runtime',
+              displayName: 'Ollama',
+              status: 'installable',
+              requiredFor: ['runtime'],
+              installStrategy: 'winget',
+            },
+            {
+              requirementId: 'capture-ollama-model',
+              kind: 'model',
+              displayName: 'Capture model',
+              status: 'manual_action_required',
+              requiredFor: ['runtime'],
+              installStrategy: 'manual',
+              detail: 'Open Ollama and pull the capture model.',
+            },
+            {
+              requirementId: 'whisper-primary',
+              kind: 'stt',
+              displayName: 'Whisper',
+              status: 'unavailable',
+              requiredFor: ['audio'],
+              installStrategy: 'none',
+              detail: 'Whisper is unavailable.',
+            },
+          ]),
       ),
       startInstallation: vi.fn(
         (
@@ -66,7 +77,7 @@ describe('CaptureWorkbenchComponent', () => {
           }),
       ),
     });
-    fixture.componentRef.setInput('client', client);
+    inputSource.client.set(client);
     fixture.detectChanges();
     await fixture.whenStable();
     fixture.detectChanges();
@@ -142,24 +153,26 @@ describe('CaptureWorkbenchComponent', () => {
     const startInstallation = vi
       .fn<CaptureClient['startInstallation']>()
       .mockReturnValueOnce(throwError(() => new TypeError('response was lost')))
-      .mockImplementation((request) => of({
-        installationId: `install-${request.requirementId}`,
-        requirementId: request.requirementId,
-        status: 'completed',
-        progress: 1,
-        createdAt: RAW.createdAt,
-        updatedAt: RAW.createdAt,
-        completedAt: RAW.createdAt,
-      }));
+      .mockImplementation((request) =>
+        of({
+          installationId: `install-${request.requirementId}`,
+          requirementId: request.requirementId,
+          status: 'completed',
+          progress: 1,
+          createdAt: RAW.createdAt,
+          updatedAt: RAW.createdAt,
+          completedAt: RAW.createdAt,
+        }),
+      );
     const client = fakeClient({ getRequirements, startInstallation });
-    fixture.componentRef.setInput('client', client);
-    fixture.componentRef.setInput('config', {
+    inputSource.client.set(client);
+    inputSource.config.set({
       pollIntervalMs: 0,
     });
     fixture.detectChanges();
     await fixture.whenStable();
 
-    fixture.componentInstance.installMissingRequirements();
+    fixture.componentInstance.store.installMissingRequirements();
     await fixture.whenStable();
 
     expect(startInstallation).toHaveBeenCalledTimes(3);
@@ -189,20 +202,22 @@ describe('CaptureWorkbenchComponent', () => {
     const startInstallation = vi
       .fn<CaptureClient['startInstallation']>()
       .mockReturnValueOnce(
-        throwError(() => new DOMException('The operation was aborted.', 'AbortError')),
+        throwError(
+          () => new DOMException('The operation was aborted.', 'AbortError'),
+        ),
       );
     const client = fakeClient({
       getRequirements: vi.fn(() => of([requirement])),
       startInstallation,
     });
-    fixture.componentRef.setInput('client', client);
-    fixture.componentRef.setInput('config', {
+    inputSource.client.set(client);
+    inputSource.config.set({
       pollIntervalMs: 0,
     });
     fixture.detectChanges();
     await fixture.whenStable();
 
-    fixture.componentInstance.installMissingRequirements();
+    fixture.componentInstance.store.installMissingRequirements();
     await fixture.whenStable();
 
     expect(startInstallation).toHaveBeenCalledOnce();

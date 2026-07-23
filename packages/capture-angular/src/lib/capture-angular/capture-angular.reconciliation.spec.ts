@@ -1,4 +1,5 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { provideCaptureWorkbenchInputs } from '../contracts';
 import type {
   CaptureClient,
   CaptureJobV1,
@@ -6,14 +7,25 @@ import type {
 } from '../contracts';
 import { of, throwError } from 'rxjs';
 import { CaptureWorkbenchComponent } from './capture-angular';
-import { DOCUMENT, RAW, fakeClient, job, selectFiles } from './capture-angular-test-support';
+import {
+  CaptureWorkbenchTestInputSource,
+  DOCUMENT,
+  RAW,
+  createCaptureWorkbenchTestInputSource,
+  fakeClient,
+  job,
+  selectFiles,
+} from './capture-angular-test-support';
 
 describe('CaptureWorkbenchComponent', () => {
   let fixture: ComponentFixture<CaptureWorkbenchComponent>;
+  let inputSource: CaptureWorkbenchTestInputSource;
 
   beforeEach(async () => {
+    inputSource = createCaptureWorkbenchTestInputSource();
     await TestBed.configureTestingModule({
       imports: [CaptureWorkbenchComponent],
+      providers: [provideCaptureWorkbenchInputs(inputSource)],
     }).compileComponents();
     fixture = TestBed.createComponent(CaptureWorkbenchComponent);
   });
@@ -33,9 +45,9 @@ describe('CaptureWorkbenchComponent', () => {
     };
     const completed = vi.fn();
     const failed = vi.fn();
-    fixture.componentRef.setInput('client', client);
-    fixture.componentRef.setInput('structuringProvider', provider);
-    fixture.componentRef.setInput('config', {
+    inputSource.client.set(client);
+    inputSource.structuringProvider.set(provider);
+    inputSource.config.set({
       structuringMode: 'host',
       showRuntimeSetup: false,
       pollIntervalMs: 0,
@@ -84,9 +96,9 @@ describe('CaptureWorkbenchComponent', () => {
     };
     const completed = vi.fn();
     const failed = vi.fn();
-    fixture.componentRef.setInput('client', client);
-    fixture.componentRef.setInput('structuringProvider', provider);
-    fixture.componentRef.setInput('config', {
+    inputSource.client.set(client);
+    inputSource.structuringProvider.set(provider);
+    inputSource.config.set({
       structuringMode: 'host',
       showRuntimeSetup: false,
       pollIntervalMs: 0,
@@ -124,9 +136,9 @@ describe('CaptureWorkbenchComponent', () => {
       structure: vi.fn(() => of(DOCUMENT)),
     };
     const completed = vi.fn();
-    fixture.componentRef.setInput('client', client);
-    fixture.componentRef.setInput('structuringProvider', provider);
-    fixture.componentRef.setInput('config', {
+    inputSource.client.set(client);
+    inputSource.structuringProvider.set(provider);
+    inputSource.config.set({
       structuringMode: 'host',
       showRuntimeSetup: false,
       pollIntervalMs: 0,
@@ -161,9 +173,9 @@ describe('CaptureWorkbenchComponent', () => {
     const provider: CaptureStructuringProvider = {
       structure: vi.fn(() => of(DOCUMENT)),
     };
-    fixture.componentRef.setInput('client', client);
-    fixture.componentRef.setInput('structuringProvider', provider);
-    fixture.componentRef.setInput('config', {
+    inputSource.client.set(client);
+    inputSource.structuringProvider.set(provider);
+    inputSource.config.set({
       structuringMode: 'host',
       showRuntimeSetup: false,
       pollIntervalMs: 0,
@@ -202,9 +214,9 @@ describe('CaptureWorkbenchComponent', () => {
     };
     const canceled = vi.fn();
     const failed = vi.fn();
-    fixture.componentRef.setInput('client', client);
-    fixture.componentRef.setInput('structuringProvider', provider);
-    fixture.componentRef.setInput('config', {
+    inputSource.client.set(client);
+    inputSource.structuringProvider.set(provider);
+    inputSource.config.set({
       structuringMode: 'host',
       showRuntimeSetup: false,
       pollIntervalMs: 0,
@@ -228,8 +240,12 @@ describe('CaptureWorkbenchComponent', () => {
   });
 
   it('surfaces an unknown reconciliation state without claiming completion', async () => {
-    const getCapture = vi.fn(() => throwError(() => new Error('runtime unreachable')));
-    const cancelCapture = vi.fn(() => throwError(() => new Error('runtime unreachable')));
+    const getCapture = vi.fn(() =>
+      throwError(() => new Error('runtime unreachable')),
+    );
+    const cancelCapture = vi.fn(() =>
+      throwError(() => new Error('runtime unreachable')),
+    );
     const reportStructuringFailure = vi.fn(() =>
       throwError(() => new Error('runtime unreachable')),
     );
@@ -241,16 +257,16 @@ describe('CaptureWorkbenchComponent', () => {
       getCapture,
       cancelCapture,
     });
-    const structure = vi.fn<CaptureStructuringProvider['structure']>(
-      () => throwError(() => new Error('provider failed')),
+    const structure = vi.fn<CaptureStructuringProvider['structure']>(() =>
+      throwError(() => new Error('provider failed')),
     );
     const provider: CaptureStructuringProvider = { structure };
     const completed = vi.fn();
     const failed = vi.fn();
     const canceled = vi.fn();
-    fixture.componentRef.setInput('client', client);
-    fixture.componentRef.setInput('structuringProvider', provider);
-    fixture.componentRef.setInput('config', {
+    inputSource.client.set(client);
+    inputSource.structuringProvider.set(provider);
+    inputSource.config.set({
       structuringMode: 'host',
       showRuntimeSetup: false,
       pollIntervalMs: 0,
@@ -282,7 +298,7 @@ describe('CaptureWorkbenchComponent', () => {
       }),
     );
     if (!task) throw new Error('Expected a reconciliation task.');
-    fixture.componentInstance.remove(task.id);
+    fixture.componentInstance.store.remove(task.id);
     await fixture.whenStable();
     expect(client.deleteCapture).not.toHaveBeenCalled();
     expect(fixture.componentInstance.tasks()).toHaveLength(1);
@@ -319,9 +335,9 @@ describe('CaptureWorkbenchComponent', () => {
     );
     const completed = vi.fn();
     const failed = vi.fn();
-    fixture.componentRef.setInput('client', client);
-    fixture.componentRef.setInput('structuringProvider', { structure });
-    fixture.componentRef.setInput('config', {
+    inputSource.client.set(client);
+    inputSource.structuringProvider.set({ structure });
+    inputSource.config.set({
       structuringMode: 'host',
       showRuntimeSetup: false,
       pollIntervalMs: 0,
@@ -338,7 +354,7 @@ describe('CaptureWorkbenchComponent', () => {
     if (!task) throw new Error('Expected a reconciliation task.');
     expect(task.status).toBe('reconciliation_required');
 
-    fixture.componentInstance.reconcile(task.id);
+    fixture.componentInstance.store.reconcile(task.id);
     await fixture.whenStable();
 
     expect(fixture.componentInstance.tasks()[0]?.status).toBe('completed');
@@ -383,9 +399,9 @@ describe('CaptureWorkbenchComponent', () => {
     );
     const completed = vi.fn();
     const failed = vi.fn();
-    fixture.componentRef.setInput('client', client);
-    fixture.componentRef.setInput('structuringProvider', { structure });
-    fixture.componentRef.setInput('config', {
+    inputSource.client.set(client);
+    inputSource.structuringProvider.set({ structure });
+    inputSource.config.set({
       structuringMode: 'host',
       showRuntimeSetup: false,
       pollIntervalMs: 0,
@@ -401,7 +417,7 @@ describe('CaptureWorkbenchComponent', () => {
     const task = fixture.componentInstance.tasks()[0];
     if (!task) throw new Error('Expected a reconciliation task.');
 
-    fixture.componentInstance.reconcile(task.id);
+    fixture.componentInstance.store.reconcile(task.id);
     await fixture.whenStable();
 
     expect(fixture.componentInstance.tasks()[0]).toEqual(
@@ -445,9 +461,9 @@ describe('CaptureWorkbenchComponent', () => {
     const completed = vi.fn();
     const failed = vi.fn();
     const canceled = vi.fn();
-    fixture.componentRef.setInput('client', client);
-    fixture.componentRef.setInput('structuringProvider', { structure });
-    fixture.componentRef.setInput('config', {
+    inputSource.client.set(client);
+    inputSource.structuringProvider.set({ structure });
+    inputSource.config.set({
       structuringMode: 'host',
       showRuntimeSetup: false,
       pollIntervalMs: 0,
@@ -464,7 +480,7 @@ describe('CaptureWorkbenchComponent', () => {
     const task = fixture.componentInstance.tasks()[0];
     if (!task) throw new Error('Expected a reconciliation task.');
 
-    fixture.componentInstance.cancel(task.id);
+    fixture.componentInstance.store.cancel(task.id);
     await fixture.whenStable();
 
     expect(fixture.componentInstance.tasks()[0]?.status).toBe('canceled');

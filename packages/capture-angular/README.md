@@ -20,16 +20,16 @@ Then install an exact synchronized version:
 
 ```powershell
 $env:GITHUB_PACKAGES_TOKEN = '<read:packages token>'
-corepack pnpm add @gx/capture-workbench@0.2.0 --save-exact
+corepack pnpm add @gx/capture-workbench@0.3.0 --save-exact
 ```
 
-## v0.2.0 breaking async contract
+## v0.3.0 breaking Angular integration contract
 
 All public asynchronous client, provider, preprocessor, and reconciliation
 context methods return cold `Observable<T>` values. Compose them with RxJS and
 subscribe at the application boundary; no Promise compatibility adapter is
 provided. Angular runtime state is exposed through signals backed by
-`rxResource`, while UI commands such as `refreshRuntime()` remain `void` and
+`rxResource`, while store commands such as `refreshRuntime()` remain `void` and
 publish their result through signals/events. `defineCaptureWorkbenchElement()`
 also returns an `Observable<void>` and should be subscribed during startup.
 
@@ -72,10 +72,12 @@ import { invoke } from '@tauri-apps/api/core';
 import { provideHttpCaptureClient } from '@gx/capture-workbench';
 import { from, map } from 'rxjs';
 
-const backendConfig$ = from(invoke<{
-  baseUrl: string;
-  token: string;
-}>('backend_config'));
+const backendConfig$ = from(
+  invoke<{
+    baseUrl: string;
+    token: string;
+  }>('backend_config'),
+);
 
 bootstrapApplication(App, {
   providers: [
@@ -103,12 +105,14 @@ import { defer } from 'rxjs';
 
 const provider: CaptureStructuringProvider = {
   structure({ raw, documentContract, signal, reportProgress }) {
-    return defer(() => hostBackend.structureCapture(raw, {
-      schemaVersion: documentContract.schemaVersion,
-      jsonSchema: documentContract.jsonSchema,
-      signal,
-      reportProgress,
-    }));
+    return defer(() =>
+      hostBackend.structureCapture(raw, {
+        schemaVersion: documentContract.schemaVersion,
+        jsonSchema: documentContract.jsonSchema,
+        signal,
+        reportProgress,
+      }),
+    );
   },
 };
 
@@ -127,24 +131,30 @@ capability/version handshake. Set `hostManagedHandshake: true` only when a host
 adapter has already enforced the same runtime major, API major, schema, service
 identity, and capability checks.
 
-The runtime handshake is signal-first. Calling `refreshRuntime()` requests a
-new capability check and returns immediately; read `runtime()` or wait for the
-host framework's normal stabilization boundary instead of awaiting the method.
+The runtime handshake is signal-first. Calling `store.refreshRuntime()` requests
+a new capability check and returns immediately; read `store.runtime()` or wait
+for the host framework's normal stabilization boundary instead of awaiting the
+method.
 
-```html
-<gx-capture-workbench
-  [config]="{
+```ts
+import { provideCaptureWorkbenchInputs, type CaptureWorkbenchInputSource } from '@gx/capture-workbench';
+
+const captureInputs: CaptureWorkbenchInputSource = {
+  config: () => ({
     structuringMode: 'host',
     outputMode: 'json',
     width: '48rem',
     height: '75vh',
-    theme: { accent: '#7c3aed' }
-  }"
-  (completed)="saveDocument($event.document)"
-/>
+    theme: { accent: '#7c3aed' },
+  }),
+};
+
+bootstrapApplication(App, {
+  providers: [provideCaptureWorkbenchInputs(captureInputs)],
+});
 ```
 
-Use `provideCapturePreprocessor()` or the component `preprocessor` input for a
+Use `provideCapturePreprocessor()` for a
 crop/normalization seam before upload. The seam must preserve abort semantics
 and return the `File` that should be hashed and captured.
 
@@ -155,18 +165,12 @@ Elements owns the element lifecycle; the public configuration API is
 property-first:
 
 ```ts
-import {
-  CAPTURE_WORKBENCH_CUSTOM_EVENTS,
-  defineCaptureWorkbenchElement,
-  type CaptureWorkbenchElement,
-} from '@gx/capture-workbench';
+import { CAPTURE_WORKBENCH_CUSTOM_EVENTS, defineCaptureWorkbenchElement, type CaptureWorkbenchElement } from '@gx/capture-workbench';
 
 defineCaptureWorkbenchElement().subscribe({
   error: (error) => console.error('Capture element registration failed.', error),
 });
-const capture = document.querySelector(
-  'capture-workbench',
-) as CaptureWorkbenchElement;
+const capture = document.querySelector('capture-workbench') as CaptureWorkbenchElement;
 capture.config = {
   structuringMode: 'host',
   hostStructuringOwner: 'client',
