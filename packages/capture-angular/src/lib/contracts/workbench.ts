@@ -62,6 +62,13 @@ export interface CaptureWorkbenchStoreOptions {
   readonly preprocessor?: CapturePreprocessor | null;
 }
 
+export interface CaptureWorkflowContext {
+  readonly config: () => ResolvedCaptureWorkbenchConfig;
+  readonly client: () => CaptureClient | null;
+  readonly structuringProvider: () => CaptureStructuringProvider | null;
+  readonly preprocessor: () => CapturePreprocessor | null;
+}
+
 export type CaptureWorkbenchStoreEvent =
   | { readonly type: 'completed'; readonly event: CaptureCompletedEvent }
   | { readonly type: 'failed'; readonly event: CaptureFailedEvent }
