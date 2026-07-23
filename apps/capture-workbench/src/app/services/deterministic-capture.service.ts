@@ -1,3 +1,4 @@
+import { Injectable, inject } from '@angular/core';
 import {
   Observable,
   defer,
@@ -5,7 +6,6 @@ import {
   from,
   map,
   of,
-  switchMap,
   throwError,
 } from 'rxjs';
 import type {
@@ -13,7 +13,6 @@ import type {
   CaptureDocumentV1,
   CaptureJobV1,
   CaptureSourceV1,
-  CaptureStructuringProvider,
   CommitStructuredResultRequest,
   CreateCaptureRequest,
   RawCaptureV1,
@@ -23,17 +22,16 @@ import type {
   RuntimeRequirementV1,
   StartRuntimeInstallationRequest,
 } from '@gx/capture-angular';
+import {
+  DETERMINISTIC_COMPLETED_AT,
+  DETERMINISTIC_CREATED_AT,
+} from '../constants';
+import type { FakeCaptureRecord } from '../contracts';
+import { DeterministicDocumentService } from './deterministic-document.service';
 
-interface FakeCaptureRecord {
-  job: CaptureJobV1;
-  raw: RawCaptureV1;
-  result?: CaptureDocumentV1;
-}
-
-const CREATED_AT = '2026-07-20T00:00:00.000Z';
-const COMPLETED_AT = '2026-07-20T00:00:01.000Z';
-
-export class DeterministicCaptureClient implements CaptureClient {
+@Injectable({ providedIn: 'root' })
+export class DeterministicCaptureClientService implements CaptureClient {
+  private readonly documents = inject(DeterministicDocumentService);
   private readonly captures = new Map<string, FakeCaptureRecord>();
   private readonly installations = new Map<string, RuntimeInstallationV1>();
 
@@ -57,10 +55,19 @@ export class DeterministicCaptureClient implements CaptureClient {
 
   getRequirements(): Observable<readonly RuntimeRequirementV1[]> {
     return of([
-      readyRequirement('windowsml-ocr', 'WindowsML OCR', ['pdf', 'image']),
-      readyRequirement('whisper-primary', 'Whisper STT', ['audio']),
-      readyRequirement('ollama-runtime', 'Isolated Ollama', ['runtime']),
-      readyRequirement('capture-ollama-model', 'Capture structure model', ['runtime']),
+      this.documents.readyRequirement('windowsml-ocr', 'WindowsML OCR', [
+        'pdf',
+        'image',
+      ]),
+      this.documents.readyRequirement('whisper-primary', 'Whisper STT', ['audio']),
+      this.documents.readyRequirement('ollama-runtime', 'Isolated Ollama', [
+        'runtime',
+      ]),
+      this.documents.readyRequirement(
+        'capture-ollama-model',
+        'Capture structure model',
+        ['runtime'],
+      ),
     ]);
   }
 
@@ -73,9 +80,9 @@ export class DeterministicCaptureClient implements CaptureClient {
         requirementId: request.requirementId,
         status: 'completed',
         progress: 1,
-        createdAt: CREATED_AT,
-        updatedAt: COMPLETED_AT,
-        completedAt: COMPLETED_AT,
+        createdAt: DETERMINISTIC_CREATED_AT,
+        updatedAt: DETERMINISTIC_COMPLETED_AT,
+        completedAt: DETERMINISTIC_COMPLETED_AT,
       };
       this.installations.set(installation.installationId, installation);
       return of(installation);
@@ -96,7 +103,7 @@ export class DeterministicCaptureClient implements CaptureClient {
       const canceled = {
         ...current,
         status: 'cancelled' as const,
-        updatedAt: COMPLETED_AT,
+        updatedAt: DETERMINISTIC_COMPLETED_AT,
       };
       this.installations.set(id, canceled);
       return of(canceled);
@@ -106,15 +113,17 @@ export class DeterministicCaptureClient implements CaptureClient {
   createCapture(request: CreateCaptureRequest): Observable<CaptureJobV1> {
     return forkJoin({
       sourceText: from(request.file.text()),
-      sha256: sha256(request.file),
+      sha256: this.documents.sha256(request.file),
     }).pipe(
       map(({ sourceText: sourceTextValue, sha256: digest }) => {
         const captureId = crypto.randomUUID();
-        const sourceText = sourceTextValue.trim() || `Captured ${request.file.name}`;
+        const sourceText =
+          sourceTextValue.trim() || `Captured ${request.file.name}`;
         const source: CaptureSourceV1 = {
           sha256: digest,
           fileName: request.file.name,
-          mediaType: request.file.type || fallbackMediaType(request.sourceKind),
+          mediaType:
+            request.file.type || this.documents.fallbackMediaType(request.sourceKind),
           bytes: request.file.size,
         };
         const locator =
@@ -128,14 +137,19 @@ export class DeterministicCaptureClient implements CaptureClient {
           segments: [{ segmentId: 'segment-1', order: 0, locator, text: sourceText }],
           sourceText,
           extractionEngine: {
-            engine: request.sourceKind === 'audio' ? 'whisper-fake' : 'windowsml-fake',
-            model: request.sourceKind === 'audio' ? 'whisper-primary' : 'windowsml-ocr',
+            engine:
+              request.sourceKind === 'audio' ? 'whisper-fake' : 'windowsml-fake',
+            model:
+              request.sourceKind === 'audio' ? 'whisper-primary' : 'windowsml-ocr',
             digest: `sha256:${'b'.repeat(64)}`,
           },
-          warnings: ['Reference app uses deterministic capture fakes.'],
-          createdAt: CREATED_AT,
+          warnings: [this.documents.warning()],
+          createdAt: DETERMINISTIC_CREATED_AT,
         };
-        const runtimeResult = createCandidate(raw, 'isolated-ollama-fake');
+        const runtimeResult = this.documents.createCandidate(
+          raw,
+          'isolated-ollama-fake',
+        );
         const completed = request.structuringMode === 'runtime';
         const job: CaptureJobV1 = {
           captureId,
@@ -144,9 +158,11 @@ export class DeterministicCaptureClient implements CaptureClient {
           structuringMode: request.structuringMode,
           progress: completed ? 1 : 0.7,
           source,
-          createdAt: CREATED_AT,
-          updatedAt: completed ? COMPLETED_AT : CREATED_AT,
-          completedAt: completed ? COMPLETED_AT : undefined,
+          createdAt: DETERMINISTIC_CREATED_AT,
+          updatedAt: completed
+            ? DETERMINISTIC_COMPLETED_AT
+            : DETERMINISTIC_CREATED_AT,
+          completedAt: completed ? DETERMINISTIC_COMPLETED_AT : undefined,
         };
         this.captures.set(captureId, {
           job,
@@ -169,8 +185,8 @@ export class DeterministicCaptureClient implements CaptureClient {
         ...record.job,
         status: 'cancelled',
         stage: 'cancelled',
-        updatedAt: COMPLETED_AT,
-        completedAt: COMPLETED_AT,
+        updatedAt: DETERMINISTIC_COMPLETED_AT,
+        completedAt: DETERMINISTIC_COMPLETED_AT,
       };
       return of(record.job);
     });
@@ -183,7 +199,9 @@ export class DeterministicCaptureClient implements CaptureClient {
   getResult(id: string): Observable<CaptureDocumentV1> {
     return defer(() => {
       const result = this.requireCapture(id).result;
-      return result ? of(result) : throwError(() => new Error('result_unavailable'));
+      return result
+        ? of(result)
+        : throwError(() => new Error('result_unavailable'));
     });
   }
 
@@ -199,8 +217,8 @@ export class DeterministicCaptureClient implements CaptureClient {
         status: 'completed',
         stage: 'completed',
         progress: 1,
-        updatedAt: COMPLETED_AT,
-        completedAt: COMPLETED_AT,
+        updatedAt: DETERMINISTIC_COMPLETED_AT,
+        completedAt: DETERMINISTIC_COMPLETED_AT,
       };
       return of(record.job);
     });
@@ -217,8 +235,8 @@ export class DeterministicCaptureClient implements CaptureClient {
         status: 'failed',
         stage: 'failed',
         error: { ...request, stage: 'structuring' },
-        updatedAt: COMPLETED_AT,
-        completedAt: COMPLETED_AT,
+        updatedAt: DETERMINISTIC_COMPLETED_AT,
+        completedAt: DETERMINISTIC_COMPLETED_AT,
       };
       return of(record.job);
     });
@@ -242,77 +260,4 @@ export class DeterministicCaptureClient implements CaptureClient {
     if (!installation) throw new Error(`Unknown fake installation: ${id}`);
     return installation;
   }
-}
-
-export const deterministicStructuringProvider: CaptureStructuringProvider = {
-  structure({ raw, documentContract, signal, reportProgress }): Observable<CaptureDocumentV1> {
-    return defer(() => {
-      if (signal.aborted) return throwError(() => new DOMException('Aborted', 'AbortError'));
-      if (documentContract.schemaVersion !== raw.schemaVersion) {
-        return throwError(() => new Error('Capture document contract version mismatch.'));
-      }
-      reportProgress(50);
-      reportProgress(100);
-      return of(createCandidate(raw, 'host-provider-fake'));
-    });
-  },
-};
-
-function createCandidate(raw: RawCaptureV1, model: string): CaptureDocumentV1 {
-  return {
-    schemaVersion: '1',
-    source: raw.source,
-    rawSegments: raw.segments,
-    blocks: raw.segments.map((segment) => ({
-      blockId: `block-${segment.order + 1}`,
-      order: segment.order,
-      sourceSegmentId: segment.segmentId,
-      type: raw.source.mediaType.startsWith('audio/') ? 'transcript' : 'paragraph',
-      locator: segment.locator,
-      sourceText: segment.text,
-      targetText: segment.text,
-    })),
-    sourceText: raw.sourceText,
-    targetText: raw.sourceText,
-    extractionEngine: raw.extractionEngine,
-    structuringEngine: {
-      engine: 'deterministic-ollama',
-      model,
-      digest: `sha256:${(model === 'host-provider-fake' ? 'd' : 'c').repeat(64)}`,
-    },
-    warnings: raw.warnings,
-    createdAt: raw.createdAt,
-    completedAt: COMPLETED_AT,
-  };
-}
-
-function readyRequirement(
-  requirementId: RuntimeRequirementV1['requirementId'],
-  displayName: string,
-  requiredFor: readonly string[],
-): RuntimeRequirementV1 {
-  return {
-    requirementId,
-    kind: requirementId,
-    displayName,
-    status: 'ready',
-    requiredFor,
-    installStrategy: 'deterministic-fake',
-    detail: 'Available in the validation fixture',
-  };
-}
-
-function sha256(file: File): Observable<string> {
-  return from(file.arrayBuffer()).pipe(
-    switchMap((contents) => from(crypto.subtle.digest('SHA-256', contents))),
-    map((digest) =>
-      Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join(''),
-    ),
-  );
-}
-
-function fallbackMediaType(kind: CreateCaptureRequest['sourceKind']): string {
-  if (kind === 'pdf') return 'application/pdf';
-  if (kind === 'image') return 'image/png';
-  return 'audio/wav';
 }

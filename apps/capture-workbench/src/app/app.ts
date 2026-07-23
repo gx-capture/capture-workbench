@@ -1,11 +1,17 @@
-import { ChangeDetectionStrategy, Component, computed, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  computed,
+  inject,
+  signal,
+} from '@angular/core';
 import {
   CaptureWorkbenchComponent,
   type CaptureCompletedEvent,
   type CaptureFailedEvent,
   type CaptureStructuringMode,
 } from '@gx/capture-angular';
-import { validationCaptureClient } from './validation-client';
+import { ValidationCaptureClientService } from './services/validation-client.service';
 
 @Component({
   imports: [CaptureWorkbenchComponent],
@@ -15,9 +21,10 @@ import { validationCaptureClient } from './validation-client';
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class App {
+  private readonly validationClient = inject(ValidationCaptureClientService);
   private readonly requestedStructuringMode = signal<CaptureStructuringMode>('runtime');
   protected readonly hostStructuringAvailable =
-    validationCaptureClient.hostStructuringAvailable;
+    this.validationClient.hostStructuringAvailable;
   protected readonly structuringMode = computed<CaptureStructuringMode>(() =>
     this.hostStructuringAvailable && this.requestedStructuringMode() === 'host'
       ? 'host'
@@ -34,7 +41,7 @@ export class App {
     theme: { accent: this.structuringMode() === 'runtime' ? '#4f46e5' : '#0f766e' },
   }));
   protected readonly lastEvent = signal('No capture submitted yet.');
-  protected readonly clientMode = validationCaptureClient.mode;
+  protected readonly clientMode = this.validationClient.mode;
 
   protected selectMode(mode: CaptureStructuringMode): void {
     if (mode === 'host' && !this.hostStructuringAvailable) return;

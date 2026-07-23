@@ -1,8 +1,10 @@
+import { TestBed } from '@angular/core/testing';
 import { Subject, of } from 'rxjs';
-import {
-  selectValidationCaptureClient,
-  type ValidationClientEnvironment,
-} from './validation-client';
+import type { ValidationClientEnvironment } from './contracts';
+import { ValidationCaptureClientService } from './services/validation-client.service';
+import { ValidationEnvironmentService } from './services/validation-environment.service';
+import { ValidationCaptureFixtureService } from './services/validation-fixture.service';
+import { ValidationRuntimeReadinessService } from './services/validation-runtime-readiness.service';
 
 const backendConfig = {
   baseUrl: 'http://127.0.0.1:43119',
@@ -22,9 +24,10 @@ const readyStatus = {
   detail: 'Capture runtime is ready.',
 };
 
-describe('selectValidationCaptureClient', () => {
+describe('ValidationCaptureClientService', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    TestBed.resetTestingModule();
   });
 
   it('polls from starting to ready before loading the memory-only backend config', async () => {
@@ -36,7 +39,7 @@ describe('selectValidationCaptureClient', () => {
     const loadBackendConfig = vi.fn(() => of(backendConfig));
     const wait = vi.fn(() => of(undefined));
     const fetchMock = installReadyFetch();
-    const selection = selectValidationCaptureClient(
+    const selection = configureValidationCaptureClient(
       tauriEnvironment({ loadDesktopRuntimeStatus, loadBackendConfig, wait }),
     );
 
@@ -57,7 +60,7 @@ describe('selectValidationCaptureClient', () => {
 
   it('surfaces a failed runtime detail without requesting backend config', async () => {
     const loadBackendConfig = vi.fn(() => of(backendConfig));
-    const selection = selectValidationCaptureClient(
+    const selection = configureValidationCaptureClient(
       tauriEnvironment({
         loadDesktopRuntimeStatus: vi.fn(() =>
           of({ status: 'failed', detail: 'Runtime manifest SHA-256 mismatch.' }),
@@ -79,7 +82,7 @@ describe('selectValidationCaptureClient', () => {
 
   it('surfaces a stopped runtime detail without requesting backend config', async () => {
     const loadBackendConfig = vi.fn(() => of(backendConfig));
-    const selection = selectValidationCaptureClient(
+    const selection = configureValidationCaptureClient(
       tauriEnvironment({
         loadDesktopRuntimeStatus: vi.fn(() =>
           of({
@@ -106,7 +109,7 @@ describe('selectValidationCaptureClient', () => {
     const loadDesktopRuntimeStatus = vi.fn(() => of(startingStatus));
     const loadBackendConfig = vi.fn(() => of(backendConfig));
     const wait = vi.fn(() => of(undefined));
-    const selection = selectValidationCaptureClient(
+    const selection = configureValidationCaptureClient(
       tauriEnvironment({
         loadDesktopRuntimeStatus,
         loadBackendConfig,
@@ -134,7 +137,7 @@ describe('selectValidationCaptureClient', () => {
     const loadBackendConfig = vi.fn(() => of(backendConfig));
     let now = 0;
     let fireDeadline: (() => void) | undefined;
-    const selection = selectValidationCaptureClient(
+    const selection = configureValidationCaptureClient(
       tauriEnvironment({
         loadDesktopRuntimeStatus: vi.fn(() => pendingStatus.asObservable()),
         loadBackendConfig,
@@ -172,7 +175,7 @@ describe('selectValidationCaptureClient', () => {
     let now = 0;
     const pendingStatus = new Subject<typeof readyStatus>();
     const loadBackendConfig = vi.fn(() => of(backendConfig));
-    const selection = selectValidationCaptureClient(
+    const selection = configureValidationCaptureClient(
       tauriEnvironment({
         loadDesktopRuntimeStatus: vi.fn(() => pendingStatus.asObservable()),
         loadBackendConfig,
@@ -204,7 +207,7 @@ describe('selectValidationCaptureClient', () => {
     const loadBackendConfig = vi.fn(() => of(backendConfig));
     const wait = vi.fn(() => delay.asObservable());
     const fetchMock = installReadyFetch();
-    const selection = selectValidationCaptureClient(
+    const selection = configureValidationCaptureClient(
       tauriEnvironment({ loadDesktopRuntimeStatus, loadBackendConfig, wait }),
     );
 
@@ -220,6 +223,20 @@ describe('selectValidationCaptureClient', () => {
     expect(loadBackendConfig).toHaveBeenCalledTimes(1);
   });
 });
+
+function configureValidationCaptureClient(environment: ValidationClientEnvironment): {
+  readonly client: ValidationCaptureClientService;
+} {
+  TestBed.configureTestingModule({
+    providers: [
+      { provide: ValidationEnvironmentService, useValue: environment },
+      ValidationCaptureFixtureService,
+      ValidationRuntimeReadinessService,
+      ValidationCaptureClientService,
+    ],
+  });
+  return { client: TestBed.inject(ValidationCaptureClientService) };
+}
 
 function tauriEnvironment(options: {
   readonly loadDesktopRuntimeStatus: ValidationClientEnvironment['loadDesktopRuntimeStatus'];

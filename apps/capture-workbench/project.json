@@ -43,8 +43,8 @@
           "sourceMap": true,
           "fileReplacements": [
             {
-              "replace": "apps/capture-workbench/src/app/validation-fixture-provider.ts",
-              "with": "apps/capture-workbench/src/app/validation-fixture-provider.development.ts"
+              "replace": "apps/capture-workbench/src/app/services/validation-fixture.service.ts",
+              "with": "apps/capture-workbench/src/app/services/validation-fixture.service.development.ts"
             }
           ]
         }
