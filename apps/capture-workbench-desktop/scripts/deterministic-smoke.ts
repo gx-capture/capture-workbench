@@ -1,5 +1,15 @@
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import {
+  Observable,
+  catchError,
+  concatMap,
+  defer,
+  from,
+  map,
+  throwError,
+  toArray,
+} from 'rxjs';
 
 import { assertStagedRuntime } from './assert-staged-runtime.ts';
 import {
@@ -33,42 +43,37 @@ const maxUploadBytes = DETERMINISTIC_MAX_UPLOAD_BYTES;
 const schemaVersion = DETERMINISTIC_SCHEMA_VERSION;
 const fixtures = DETERMINISTIC_FIXTURES;
 
-export async function runDeterministicSmoke() {
-  await assertStagedRuntime('deterministic');
-  await rm(outputDirectory, { recursive: true, force: true });
-  await mkdir(join(runtimeData, 'ollama', 'models'), { recursive: true });
-  const launched = await launchReadyRuntime();
-  const { child, ready, runtimePort, ollamaPort, token, host, origin } = launched;
-
-  try {
-    validateReady(ready);
-    const policyEvidence = await verifyRequestPolicy({
-      runtimePort,
-      host,
-      origin,
-      token,
-    });
-    const requirementEvidence = await verifyRequirements({
-      runtimePort,
-      host,
-      origin,
-      token,
-    });
-    const captures = [];
-    for (const fixture of fixtures) {
-      captures.push(
-        await verifyRuntimeCapture(
-          { runtimePort, host, origin, token },
-          fixture,
+export function runDeterministicSmoke(): Observable<{ report: unknown; reportPath: string }> {
+  return assertStagedRuntime('deterministic').pipe(
+    concatMap(() => defer(() => from(rm(outputDirectory, { recursive: true, force: true })))),
+    concatMap(() => defer(() => from(mkdir(join(runtimeData, 'ollama', 'models'), { recursive: true })))),
+    concatMap(() => launchReadyRuntime()),
+    concatMap(({ child, ready, runtimePort, ollamaPort, token, host, origin }) => {
+      const context = { runtimePort, host, origin, token };
+      validateReady(ready);
+      return verifyRequestPolicy(context).pipe(
+        concatMap((policyEvidence) =>
+          verifyRequirements(context).pipe(
+            concatMap((requirementEvidence) =>
+              from(fixtures).pipe(
+                concatMap((fixture) => verifyRuntimeCapture(context, fixture)),
+                toArray(),
+                concatMap((captures) =>
+                  verifyHostStructuring(context, fixtures[1]).pipe(
+                    map((hostStructuring) => ({
+                      policyEvidence,
+                      requirementEvidence,
+                      captures,
+                      hostStructuring,
+                    })),
+                  ),
+                ),
+              ),
+            ),
+          ),
         ),
-      );
-    }
-    const hostStructuring = await verifyHostStructuring(
-      { runtimePort, host, origin, token },
-      fixtures[1],
-    );
-
-    const report = {
+        map(({ policyEvidence, requirementEvidence, captures, hostStructuring }) => {
+          const report = {
       evidenceKind: 'deterministic-sidecar-smoke',
       releaseGateSatisfied: false,
       canonicalWire: {
@@ -81,29 +86,40 @@ export async function runDeterministicSmoke() {
       runtimePortIsDynamic: runtimePort > 0,
       ollamaPortIsIndependent: ollamaPort !== runtimePort,
       maxUploadBytes,
-      authentication: policyEvidence,
-      requirements: requirementEvidence,
-      captures,
-      hostStructuring,
+            authentication: policyEvidence,
+            requirements: requirementEvidence,
+            captures,
+            hostStructuring,
       disclaimer:
         'Deterministic fixture only; packaged UI automation and real OCR/STT/Ollama clean-install evidence are separate release gates.',
-    };
-    assertRedactedEvidence(report);
-    const reportPath = join(outputDirectory, 'smoke.json');
-    await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
-    return { report, reportPath };
-  } finally {
-    await terminateOwnedTree(child);
-  }
+          };
+          assertRedactedEvidence(report);
+          return { report, reportPath: join(outputDirectory, 'smoke.json'), child };
+        }),
+        concatMap(({ report, reportPath, child }) =>
+          defer(() => from(writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8'))).pipe(
+            concatMap(() => terminateOwnedTree(child)),
+            map(() => ({ report, reportPath })),
+          ),
+        ),
+        catchError((error: unknown) =>
+          terminateOwnedTree(child).pipe(
+            concatMap(() => throwError(() => error)),
+          ),
+        ),
+      );
+    }),
+  );
 }
 
-runDeterministicSmoke()
-  .then(({ reportPath }) => {
+runDeterministicSmoke().subscribe({
+  next: ({ reportPath }) => {
     process.stdout.write(`Deterministic sidecar smoke report: ${reportPath}\n`);
-  })
-  .catch((error) => {
+  },
+  error: (error: unknown) => {
     process.stderr.write(
       `${error instanceof Error ? error.stack : String(error)}\n`,
     );
     process.exitCode = 1;
-  });
+  },
+});

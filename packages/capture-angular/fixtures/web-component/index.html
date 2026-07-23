@@ -15,18 +15,22 @@
         defineCaptureWorkbenchElement,
       } from '@gx/capture-angular';
 
-      await defineCaptureWorkbenchElement();
-      const capture = document.querySelector('capture-workbench');
-      capture.config = {
-        hostManagedHandshake: true,
-        showRuntimeSetup: false,
-        outputMode: 'text',
-      };
-      capture.addEventListener(CAPTURE_WORKBENCH_CUSTOM_EVENTS.completed, ({ detail }) => {
-        console.log('Runtime-validated CaptureDocumentV1:', detail.document);
-      });
-      capture.addEventListener(CAPTURE_WORKBENCH_CUSTOM_EVENTS.failed, ({ detail }) => {
-        console.error('Capture failed:', detail.error);
+      defineCaptureWorkbenchElement().subscribe({
+        next: () => {
+          const capture = document.querySelector('capture-workbench');
+          capture.config = {
+            hostManagedHandshake: true,
+            showRuntimeSetup: false,
+            outputMode: 'text',
+          };
+          capture.addEventListener(CAPTURE_WORKBENCH_CUSTOM_EVENTS.completed, ({ detail }) => {
+            console.log('Runtime-validated CaptureDocumentV1:', detail.document);
+          });
+          capture.addEventListener(CAPTURE_WORKBENCH_CUSTOM_EVENTS.failed, ({ detail }) => {
+            console.error('Capture failed:', detail.error);
+          });
+        },
+        error: (error) => console.error('Element registration failed:', error),
       });
     </script>
   </body>

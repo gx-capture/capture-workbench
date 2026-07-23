@@ -9,6 +9,14 @@ import {
 } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  Observable,
+  concatMap,
+  defer,
+  map,
+  of,
+  finalize,
+} from 'rxjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const sourcePackage = JSON.parse(
@@ -34,33 +42,61 @@ function write(relativePath, contents) {
 }
 
 function run(command, args, cwd = fixtureRoot) {
-  return new Promise((resolveRun, rejectRun) => {
+  return new Observable((subscriber) => {
     const child = spawn(command, args, {
       cwd,
       env: { ...process.env, CI: 'true' },
       shell: false,
       stdio: 'inherit',
     });
-    child.once('error', rejectRun);
+    const onError = (error) => subscriber.error(error);
+    child.once('error', onError);
     child.once('exit', (code, signal) => {
       if (code === 0) {
-        resolveRun();
+        subscriber.next(undefined);
+        subscriber.complete();
         return;
       }
-      rejectRun(
+      subscriber.error(
         new Error(
           `${command} ${args.join(' ')} failed with ${signal ? `signal ${signal}` : `exit code ${code}`}`,
         ),
       );
     });
+    return () => {
+      child.off('error', onError);
+      if (child.exitCode === null && child.signalCode === null) child.kill();
+    };
   });
 }
 
-async function runPnpm(args, relativeCwd = '') {
-  if (!existsSync(corepackCli)) {
-    throw new Error('Node 24 Corepack is required to run the pnpm 11 fixture.');
+function runPnpm(args, relativeCwd = '') {
+  return defer(() => {
+    if (!existsSync(corepackCli)) {
+      throw new Error('Node 24 Corepack is required to run the pnpm 11 fixture.');
+    }
+    return run(
+      process.execPath,
+      [corepackCli, 'pnpm', ...args],
+      join(fixtureRoot, relativeCwd),
+    );
+  });
+}
+
+function cleanup() {
+  const resolvedFixture = resolve(fixtureRoot);
+  const relativeFixture = relative(resolve(fixtureBase), resolvedFixture);
+  if (
+    !relativeFixture ||
+    relativeFixture === '..' ||
+    relativeFixture.startsWith(`..${sep}`) ||
+    isAbsolute(relativeFixture)
+  ) {
+    throw new Error(
+      `Refusing to remove unexpected fixture path: ${resolvedFixture}`,
+    );
   }
-  await run(process.execPath, [corepackCli, 'pnpm', ...args], join(fixtureRoot, relativeCwd));
+  rmSync(resolvedFixture, { recursive: true, force: true });
 }
 
 try {
@@ -265,7 +301,7 @@ allowBuilds:
   );
   write(
     'vanilla/src/main.ts',
-    `import { defineCaptureWorkbenchElement, type CaptureWorkbenchElement } from '@gx/capture-angular';\n\nawait defineCaptureWorkbenchElement();\nconst capture = document.querySelector('capture-workbench') as CaptureWorkbenchElement;\ncapture.config = { outputMode: 'text', showRuntimeSetup: false };\ncapture.client = null;\ncapture.addEventListener('capture-completed', (event) => console.log(event));\n`,
+    `import { defineCaptureWorkbenchElement, type CaptureWorkbenchElement } from '@gx/capture-angular';\n\ndefineCaptureWorkbenchElement().subscribe({\n  next: () => {\n    const capture = document.querySelector('capture-workbench') as CaptureWorkbenchElement;\n    capture.config = { outputMode: 'text', showRuntimeSetup: false };\n    capture.client = null;\n    capture.addEventListener('capture-completed', (event) => console.log(event));\n  },\n  error: (error) => console.error(error),\n});\n`,
   );
   write(
     'vanilla/vite.config.ts',
@@ -278,7 +314,7 @@ allowBuilds:
   );
   write(
     'react/src/main.tsx',
-    `import { createRoot } from 'react-dom/client';\nimport { useEffect, useRef } from 'react';\nimport { defineCaptureWorkbenchElement, type CaptureWorkbenchElement } from '@gx/capture-angular';\n\nfunction App() {\n  const ref = useRef<HTMLElement>(null);\n  useEffect(() => {\n    const capture = ref.current as CaptureWorkbenchElement | null;\n    if (!capture) return;\n    capture.config = { outputMode: 'text', showRuntimeSetup: false };\n    capture.client = null;\n    const onCompleted = (event: Event) => console.log(event);\n    capture.addEventListener('capture-completed', onCompleted);\n    return () => capture.removeEventListener('capture-completed', onCompleted);\n  }, []);\n  return <capture-workbench ref={ref} />;\n}\n\nawait defineCaptureWorkbenchElement();\ncreateRoot(document.getElementById('root')!).render(<App />);\n`,
+    `import { createRoot } from 'react-dom/client';\nimport { useEffect, useRef } from 'react';\nimport { defineCaptureWorkbenchElement, type CaptureWorkbenchElement } from '@gx/capture-angular';\n\nfunction App() {\n  const ref = useRef<HTMLElement>(null);\n  useEffect(() => {\n    const capture = ref.current as CaptureWorkbenchElement | null;\n    if (!capture) return;\n    capture.config = { outputMode: 'text', showRuntimeSetup: false };\n    capture.client = null;\n    const onCompleted = (event: Event) => console.log(event);\n    capture.addEventListener('capture-completed', onCompleted);\n    return () => capture.removeEventListener('capture-completed', onCompleted);\n  }, []);\n  return <capture-workbench ref={ref} />;\n}\n\ndefineCaptureWorkbenchElement().subscribe({\n  next: () => createRoot(document.getElementById('root')!).render(<App />),\n  error: (error) => console.error(error),\n});\n`,
   );
   write(
     'react/vite.config.ts',
@@ -295,45 +331,53 @@ allowBuilds:
   );
   write(
     'vue/src/main.ts',
-    `import { createApp } from 'vue';\nimport { defineCaptureWorkbenchElement } from '@gx/capture-angular';\nimport App from './App.vue';\n\nawait defineCaptureWorkbenchElement();\ncreateApp(App).mount('#app');\n`,
+    `import { createApp } from 'vue';\nimport { defineCaptureWorkbenchElement } from '@gx/capture-angular';\nimport App from './App.vue';\n\ndefineCaptureWorkbenchElement().subscribe({\n  next: () => createApp(App).mount('#app'),\n  error: (error) => console.error(error),\n});\n`,
   );
   write(
     'vue/vite.config.ts',
     `import { defineConfig } from 'vite';\nimport vue from '@vitejs/plugin-vue';\nexport default defineConfig({ plugins: [vue({ template: { compilerOptions: { isCustomElement: (tag) => tag === 'capture-workbench' } } })], build: { outDir: 'dist', emptyOutDir: true } });\n`,
   );
 
-  await runPnpm(['install', '--no-frozen-lockfile']);
-  if (
-    !existsSync(
-      join(
-        fixtureRoot,
-        'node_modules',
-        '@gx',
-        'capture-angular',
-        'LICENSE',
+  runPnpm(['install', '--no-frozen-lockfile'])
+    .pipe(
+      concatMap(() =>
+        defer(() => {
+          if (
+            !existsSync(
+              join(
+                fixtureRoot,
+                'node_modules',
+                '@gx',
+                'capture-angular',
+                'LICENSE',
+              ),
+            )
+          ) {
+            throw new Error('Packed Capture Angular package is missing its MIT LICENSE.');
+          }
+          return of(undefined);
+        }),
       ),
+      concatMap(() => runPnpm(['build'])),
+      concatMap(() => runPnpm(['test'])),
+      concatMap(() => runPnpm(['exec', 'vite', 'build'], 'vanilla')),
+      concatMap(() => runPnpm(['exec', 'vite', 'build'], 'react')),
+      concatMap(() => runPnpm(['exec', 'vite', 'build'], 'vue')),
+      map(() => undefined),
+      finalize(cleanup),
     )
-  ) {
-    throw new Error('Packed Capture Angular package is missing its MIT LICENSE.');
-  }
-  await runPnpm(['build']);
-  await runPnpm(['test']);
-  await runPnpm(['exec', 'vite', 'build'], 'vanilla');
-  await runPnpm(['exec', 'vite', 'build'], 'react');
-  await runPnpm(['exec', 'vite', 'build'], 'vue');
-  process.stdout.write(`Clean Angular, Vanilla, React, and Vue consumers passed with ${archiveName}.\n`);
-} finally {
-  const resolvedFixture = resolve(fixtureRoot);
-  const relativeFixture = relative(resolve(fixtureBase), resolvedFixture);
-  if (
-    !relativeFixture ||
-    relativeFixture === '..' ||
-    relativeFixture.startsWith(`..${sep}`) ||
-    isAbsolute(relativeFixture)
-  ) {
-    throw new Error(
-      `Refusing to remove unexpected fixture path: ${resolvedFixture}`,
-    );
-  }
-  rmSync(resolvedFixture, { recursive: true, force: true });
+    .subscribe({
+      next: () =>
+        process.stdout.write(
+          `Clean Angular, Vanilla, React, and Vue consumers passed with ${archiveName}.\n`,
+        ),
+      error: (error) => {
+        process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+        process.exitCode = 1;
+      },
+    });
+} catch (error) {
+  cleanup();
+  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+  process.exitCode = 1;
 }

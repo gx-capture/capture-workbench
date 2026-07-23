@@ -11,6 +11,16 @@ import {
   type WithProperties,
 } from '@angular/elements';
 import {
+  Observable,
+  catchError,
+  defer,
+  from,
+  map,
+  of,
+  shareReplay,
+  throwError,
+} from 'rxjs';
+import {
   type CaptureClient,
   type CapturePreprocessor,
   type CaptureStructuringProvider,
@@ -50,7 +60,7 @@ export type CaptureWorkbenchElement = NgElement &
     preprocessor: CapturePreprocessor | null;
   }>;
 
-const registrations = new Map<string, Promise<void>>();
+const registrations = new Map<string, Observable<void>>();
 
 /**
  * Registers the framework-neutral capture element with Angular Elements.
@@ -59,17 +69,18 @@ const registrations = new Map<string, Promise<void>>();
  */
 export function defineCaptureWorkbenchElement(
   options: CaptureWorkbenchElementOptions = {},
-): Promise<void> {
+): Observable<void> {
   const tagName = options.tagName ?? CAPTURE_WORKBENCH_ELEMENT_TAG;
   if (!tagName.includes('-')) {
-    return Promise.reject(
+    return throwError(
+      () =>
       new Error('A custom element tag name must contain a hyphen.'),
     );
   }
 
   const existing = registrations.get(tagName);
   if (existing) return existing;
-  if (customElements.get(tagName)) return Promise.resolve();
+  if (customElements.get(tagName)) return of(undefined);
 
   const applicationConfig: ApplicationConfig = {
     providers: [
@@ -77,8 +88,9 @@ export function defineCaptureWorkbenchElement(
       ...(options.providers ?? []),
     ],
   };
-  const registration = createApplication(applicationConfig)
-    .then((applicationRef) => {
+  const registration = defer(() => from(createApplication(applicationConfig)))
+    .pipe(
+      map((applicationRef) => {
       const elementConstructor = createCustomElement(
         CaptureWorkbenchElementFacadeComponent,
         { injector: applicationRef.injector },
@@ -93,11 +105,14 @@ export function defineCaptureWorkbenchElement(
         value: CAPTURE_WORKBENCH_DECLARATIVE_ATTRIBUTES,
       });
       customElements.define(tagName, elementConstructor);
-    })
-    .catch((error: unknown) => {
+      return undefined;
+      }),
+      catchError((error: unknown) => {
       registrations.delete(tagName);
-      throw error;
-    });
+        return throwError(() => error);
+      }),
+      shareReplay({ bufferSize: 1, refCount: false }),
+    );
   registrations.set(tagName, registration);
   return registration;
 }

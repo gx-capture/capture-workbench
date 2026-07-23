@@ -96,7 +96,8 @@ describe('Capture Workbench custom element', () => {
 
   it('ignores unsupported object attributes instead of treating strings as dependencies', async () => {
     const tagName = `capture-workbench-attribute-${Date.now()}`;
-    await defineCaptureWorkbenchElement({ tagName });
+    defineCaptureWorkbenchElement({ tagName }).subscribe();
+    await vi.waitFor(() => expect(customElements.get(tagName)).toBeDefined());
     const constructor = customElements.get(tagName) as
       | { readonly observedAttributes?: readonly string[] }
       | undefined;
@@ -129,7 +130,8 @@ describe('Capture Workbench custom element', () => {
 
   it('mounts and reconnects through Angular Elements lifecycle', async () => {
     const tagName = `capture-workbench-reconnect-${Date.now()}`;
-    await defineCaptureWorkbenchElement({ tagName });
+    defineCaptureWorkbenchElement({ tagName }).subscribe();
+    await vi.waitFor(() => expect(customElements.get(tagName)).toBeDefined());
     const element = document.createElement(tagName) as CaptureWorkbenchElement;
     element.config = { hostManagedHandshake: true, showRuntimeSetup: false };
 
@@ -142,8 +144,12 @@ describe('Capture Workbench custom element', () => {
   });
 
   it('requires a valid custom-element tag name', async () => {
-    await expect(
-      defineCaptureWorkbenchElement({ tagName: 'captureworkbench' }),
-    ).rejects.toThrow(/must contain a hyphen/u);
+    let error: unknown;
+    defineCaptureWorkbenchElement({ tagName: 'captureworkbench' }).subscribe({
+      error: (value) => (error = value),
+    });
+    expect(error).toEqual(expect.objectContaining({
+      message: expect.stringMatching(/must contain a hyphen/u),
+    }));
   });
 });

@@ -2,8 +2,8 @@ import { rxResource } from '@angular/core/rxjs-interop';
 import {
   EMPTY,
   defer,
-  from,
   of,
+  ReplaySubject,
   throwError,
   timer,
   type Observable,
@@ -27,7 +27,7 @@ export interface CaptureJobPollResourceOptions {
 }
 
 export interface CaptureJobPollResource {
-  readonly done: Promise<CaptureJobV1>;
+  readonly terminal$: Observable<CaptureJobV1>;
   readonly destroy: () => void;
 }
 
@@ -41,20 +41,14 @@ export function createCaptureJobPollResource(
 ): CaptureJobPollResource {
   if (options.signal.aborted) {
     return {
-      done: Promise.reject(createAbortError()),
+      terminal$: throwError(() => createAbortError()),
       destroy: () => undefined,
     };
   }
 
-  let resolveDone!: (job: CaptureJobV1) => void;
-  let rejectDone!: (error: unknown) => void;
+  const terminalSubject = new ReplaySubject<CaptureJobV1>(1);
   let settled = false;
   let destroyResource: () => void = () => undefined;
-
-  const done = new Promise<CaptureJobV1>((resolve, reject) => {
-    resolveDone = resolve;
-    rejectDone = reject;
-  });
 
   const jobResource = rxResource({
     injector: options.injector,
@@ -66,20 +60,21 @@ export function createCaptureJobPollResource(
           options.onJob(job);
           if (!shouldContinuePolling(job, options.stopForHost)) {
             settled = true;
-            resolveDone(job);
+            terminalSubject.next(job);
+            terminalSubject.complete();
           }
         }),
         catchError((error: unknown) => {
           if (!settled) {
             settled = true;
-            rejectDone(error);
+            terminalSubject.error(error);
           }
           return throwError(() => error);
         }),
         finalize(() => {
           if (!settled) {
             settled = true;
-            rejectDone(
+            terminalSubject.error(
               new Error('Capture polling ended before reaching a terminal state.'),
             );
           }
@@ -91,7 +86,7 @@ export function createCaptureJobPollResource(
     options.signal.removeEventListener('abort', destroy);
     if (!settled) {
       settled = true;
-      rejectDone(createAbortError());
+      terminalSubject.error(createAbortError());
     }
     destroyResource();
   };
@@ -101,7 +96,7 @@ export function createCaptureJobPollResource(
 
   if (options.signal.aborted) destroy();
 
-  return { done, destroy };
+  return { terminal$: terminalSubject.asObservable(), destroy };
 }
 
 function pollCaptureJobs(
@@ -113,9 +108,7 @@ function pollCaptureJobs(
   const read = () =>
     delay$.pipe(
       switchMap(() =>
-        defer(() =>
-          from(options.client.getCapture(options.captureId, abortSignal)),
-        ),
+        defer(() => options.client.getCapture(options.captureId, abortSignal)),
       ),
     );
 

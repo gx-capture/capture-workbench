@@ -5,7 +5,20 @@ import {
   inject,
   signal,
 } from '@angular/core';
-import { Subject } from 'rxjs';
+import {
+  EMPTY,
+  Observable,
+  Subject,
+  Subscription,
+  catchError,
+  concatMap,
+  defer,
+  finalize,
+  map,
+  of,
+  tap,
+  throwError,
+} from 'rxjs';
 import {
   type CaptureClient,
   type CaptureCompletedEvent,
@@ -13,7 +26,6 @@ import {
   type CaptureFailureV1,
   type CaptureJobV1,
   type CapturePreprocessor,
-  type CaptureStructuringCandidateV1,
   type CaptureStructuringProvider,
   type CaptureTaskView,
   type RawCaptureV1,
@@ -28,10 +40,7 @@ import {
   validateStructuringCandidate,
 } from '../capture-helpers';
 import { CAPTURE_DOCUMENT_V1_CONTRACT } from '../capture-document-schema';
-import {
-  createCaptureJobPollResource,
-  type CaptureJobPollResource,
-} from './capture-job-poll-resource';
+import { createCaptureJobPollResource } from './capture-job-poll-resource';
 import {
   clampProgress,
   deepFreeze,
@@ -52,6 +61,7 @@ export class CaptureWorkflowService implements OnDestroy {
   private readonly lifecycleController = new AbortController();
   private readonly internalTasks = new Map<string, InternalCaptureTask>();
   private readonly captureIds = new Map<string, string>();
+  private readonly taskSubscriptions = new Map<string, Subscription>();
   private runningTasks = 0;
   private context?: CaptureWorkflowContext;
   private readonly reconciliation = inject(CaptureReconciliationService);
@@ -86,6 +96,9 @@ export class CaptureWorkflowService implements OnDestroy {
   ngOnDestroy(): void {
     this.lifecycleController.abort();
     for (const task of this.internalTasks.values()) task.controller.abort();
+    for (const subscription of this.taskSubscriptions.values())
+      subscription.unsubscribe();
+    this.taskSubscriptions.clear();
     this.reconciliation.ngOnDestroy();
     this.events.complete();
   }
@@ -132,11 +145,11 @@ export class CaptureWorkflowService implements OnDestroy {
     this.drainQueue();
   }
 
-  async cancel(taskId: string): Promise<void> {
+  cancel(taskId: string): void {
     const current = this.taskState().find((task) => task.id === taskId);
     if (!current || isTerminalTask(current)) return;
     if (current.status === 'reconciliation_required') {
-      await this.reconciliation.cancel(taskId);
+      this.reconciliation.cancel(taskId).subscribe({ error: () => undefined });
       return;
     }
     const internal = this.internalTasks.get(taskId);
@@ -144,8 +157,9 @@ export class CaptureWorkflowService implements OnDestroy {
     internal.controller.abort();
     const captureId = this.captureIds.get(taskId);
     const client = this.activeClient();
-    if (captureId && client)
-      void client.cancelCapture(captureId).catch(() => undefined);
+    if (captureId && client) {
+      client.cancelCapture(captureId).subscribe({ error: () => undefined });
+    }
     const canceledTask = this.updateTask(taskId, {
       status: 'canceled',
       stage: 'cancelled',
@@ -157,25 +171,33 @@ export class CaptureWorkflowService implements OnDestroy {
     }
   }
 
-  reconcile(taskId: string): Promise<void> {
-    return this.reconciliation.reconcile(taskId);
+  reconcile(taskId: string): void {
+    this.reconciliation.reconcile(taskId).subscribe({ error: () => undefined });
   }
 
-
-  async remove(taskId: string): Promise<void> {
+  remove(taskId: string): void {
     const task = this.taskState().find((candidate) => candidate.id === taskId);
     if (!task || !isTerminalTask(task)) return;
     const client = this.activeClient();
     if (task.captureId && client) {
-      try {
-        await client.deleteCapture(task.captureId);
-      } catch (error: unknown) {
-        this.updateTask(taskId, {
-          error: failureFrom(error, 'runtime', 'Unable to clear capture data.'),
+      defer(() => client.deleteCapture(task.captureId as string))
+        .pipe(
+          catchError((error: unknown) => {
+            this.updateTask(taskId, {
+              error: failureFrom(error, 'runtime', 'Unable to clear capture data.'),
+            });
+            return EMPTY;
+          }),
+        )
+        .subscribe({
+          complete: () => this.removeTask(taskId),
         });
-        return;
-      }
+      return;
     }
+    this.removeTask(taskId);
+  }
+
+  private removeTask(taskId: string): void {
     this.taskState.update((tasks) =>
       tasks.filter((candidate) => candidate.id !== taskId),
     );
@@ -193,25 +215,44 @@ export class CaptureWorkflowService implements OnDestroy {
         stage: 'uploading',
         progress: 1,
       });
-      void this.processTask(next.id).finally(() => {
-        this.runningTasks -= 1;
-        this.internalTasks.delete(next.id);
-        this.drainQueue();
-      });
+      const subscription = this.processTask(next.id)
+        .pipe(
+          catchError((error: unknown) => {
+            const task = this.taskState().find((candidate) => candidate.id === next.id);
+            if (task) {
+              this.failTask(
+                next.id,
+                task.fileName,
+                failureFrom(error, 'runtime', 'Capture failed.'),
+              );
+            }
+            return EMPTY;
+          }),
+          finalize(() => {
+            this.runningTasks -= 1;
+            this.internalTasks.delete(next.id);
+            this.taskSubscriptions.delete(next.id);
+            this.drainQueue();
+          }),
+        )
+        .subscribe();
+      this.taskSubscriptions.set(next.id, subscription);
     }
   }
 
-  private async processTask(taskId: string): Promise<void> {
+  private processTask(taskId: string): Observable<void> {
     const internal = this.internalTasks.get(taskId);
     const task = this.taskState().find((candidate) => candidate.id === taskId);
     const client = this.activeClient();
     if (!internal || !task || !client) {
-      this.failTask(taskId, task?.fileName ?? 'Unknown file', {
-        code: 'client_not_configured',
-        message: 'Capture client is not configured.',
-        stage: 'runtime',
+      return defer(() => {
+        this.failTask(taskId, task?.fileName ?? 'Unknown file', {
+          code: 'client_not_configured',
+          message: 'Capture client is not configured.',
+          stage: 'runtime',
+        });
+        return of(undefined);
       });
-      return;
     }
 
     const config = this.resolvedConfig();
@@ -220,171 +261,241 @@ export class CaptureWorkflowService implements OnDestroy {
       config.structuringMode === 'host' &&
       config.hostStructuringOwner === 'component';
     if (componentOwnsHostStructuring && !provider) {
-      this.failTask(taskId, task.fileName, {
-        code: 'structuring_provider_not_configured',
-        message: 'Host structuring provider is not configured.',
-        stage: 'structuring',
+      return defer(() => {
+        this.failTask(taskId, task.fileName, {
+          code: 'structuring_provider_not_configured',
+          message: 'Host structuring provider is not configured.',
+          stage: 'structuring',
+        });
+        return of(undefined);
       });
-      return;
     }
 
     const signal = internal.controller.signal;
-    try {
-      this.updateTask(taskId, { stage: 'preprocessing', progress: 3 });
-      const file = await this.preprocess(
-        internal.file,
-        task.sourceKind,
-        signal,
-      );
-      throwIfAborted(signal);
-
-      const createRequest = {
-        clientRequestId: internal.clientRequestId,
-        file,
-        sourceKind: task.sourceKind,
-        structuringMode: config.structuringMode,
-        targetLanguage: config.targetLanguage,
-        signal,
-      } as const;
-      let job = await retryUncertainResponse(
-        () => client.createCapture(createRequest),
-        signal,
-      );
-      this.captureIds.set(taskId, job.captureId);
-      this.updateTask(taskId, {
-        captureId: job.captureId,
-        stage: job.stage,
-        progress: runtimeProgressPercent(job.progress),
-      });
-
-      if (componentOwnsHostStructuring) {
-        if (!provider) {
-          throw new Error('Host structuring provider is not configured.');
-        }
-        job = await this.waitForJob(client, job, signal, true, taskId);
-        if (job.stage === 'awaiting_structuring' && job.status === 'running') {
-          const raw = await client.getRaw(job.captureId, signal);
-          this.updateTask(taskId, {
-            raw,
-            stage: 'structuring',
-            progress: Math.max(70, runtimeProgressPercent(job.progress)),
-          });
-          let candidate: CaptureStructuringCandidateV1 | undefined;
-          try {
-            const providerRaw = deepFreeze(structuredClone(raw));
-            candidate = await provider.structure({
-              raw: providerRaw,
-              documentContract: CAPTURE_DOCUMENT_V1_CONTRACT,
-              targetLanguage: config.targetLanguage,
+    const process$ = this.preprocess(internal.file, task.sourceKind, signal).pipe(
+      tap(() => throwIfAborted(signal)),
+      concatMap((file) => {
+        this.updateTask(taskId, { stage: 'uploading', progress: 5 });
+        const request = {
+          clientRequestId: internal.clientRequestId,
+          file,
+          sourceKind: task.sourceKind,
+          structuringMode: config.structuringMode,
+          targetLanguage: config.targetLanguage,
+          signal,
+        } as const;
+        return retryUncertainResponse(() => client.createCapture(request), signal);
+      }),
+      tap((job) => {
+        this.captureIds.set(taskId, job.captureId);
+        this.updateTask(taskId, {
+          captureId: job.captureId,
+          stage: job.stage,
+          progress: runtimeProgressPercent(job.progress),
+        });
+      }),
+      concatMap((job) =>
+        componentOwnsHostStructuring
+          ? this.processHostStructuring(
+              client,
+              provider as CaptureStructuringProvider,
+              job,
+              task,
+              config,
               signal,
-              reportProgress: (progress) =>
-                this.updateTask(taskId, {
-                  progress: 70 + clampProgress(progress) * 0.2,
-                }),
-            });
-            const validationIssues = validateStructuringCandidate(
-              candidate,
-              raw,
-            );
-            if (validationIssues.length > 0) {
-              throw new Error(
-                `Invalid structured capture: ${validationIssues.join('; ')}`,
-              );
-            }
-          } catch (error: unknown) {
-            if (isAbortError(error)) throw error;
-            const failure = failureFrom(
-              error,
-              'structuring',
-              'Host structuring failed.',
-            );
-            try {
-              job = await this.reconciliation.reportHostFailureAndReconcile(
-                client,
-                job.captureId,
-                normalizeHostFailureMessage(failure.message),
-                signal,
-              );
-            } catch (reconciliationError: unknown) {
-              if (isAbortError(reconciliationError)) throw reconciliationError;
-              this.requireReconciliation(
-                taskId,
-                hostReconciliationFailure(reconciliationError),
-                raw,
-              );
-              return;
-            }
-          }
+              taskId,
+            )
+          : of(job),
+      ),
+      concatMap((job) => this.waitForJob(client, job, signal, false, taskId)),
+      concatMap((job) => this.settleJob(client, task, job, signal, taskId)),
+    );
 
-          if (
-            candidate &&
-            job.status === 'running' &&
-            job.stage === 'awaiting_structuring'
-          ) {
-            try {
-              job = await this.reconciliation.commitHostResultAndReconcile(
+    return process$.pipe(
+      catchError((error: unknown) =>
+        this.handleProcessError(error, client, task, signal, taskId),
+      ),
+    );
+  }
+
+  private processHostStructuring(
+    client: CaptureClient,
+    provider: CaptureStructuringProvider,
+    initial: CaptureJobV1,
+    task: CaptureTaskView,
+    config: ResolvedCaptureWorkbenchConfig,
+    signal: AbortSignal,
+    taskId: string,
+  ): Observable<CaptureJobV1> {
+    return this.waitForJob(client, initial, signal, true, taskId).pipe(
+      concatMap((job) => {
+        if (!(job.stage === 'awaiting_structuring' && job.status === 'running')) {
+          return of(job);
+        }
+        return client.getRaw(job.captureId, signal).pipe(
+          tap((raw) =>
+            this.updateTask(taskId, {
+              raw,
+              stage: 'structuring',
+              progress: Math.max(70, runtimeProgressPercent(job.progress)),
+            }),
+          ),
+          concatMap((raw) =>
+            defer(() =>
+              provider.structure({
+                raw: deepFreeze(structuredClone(raw)),
+                documentContract: CAPTURE_DOCUMENT_V1_CONTRACT,
+                targetLanguage: config.targetLanguage,
+                signal,
+                reportProgress: (progress) =>
+                  this.updateTask(taskId, {
+                    progress: 70 + clampProgress(progress) * 0.2,
+                  }),
+              }),
+            ).pipe(
+              map((candidate) => {
+                const validationIssues = validateStructuringCandidate(candidate, raw);
+                if (validationIssues.length > 0) {
+                  throw new Error(
+                    `Invalid structured capture: ${validationIssues.join('; ')}`,
+                  );
+                }
+                return { job, raw, candidate } as const;
+              }),
+              catchError((error: unknown) => {
+                if (isAbortError(error)) return throwError(() => error);
+                const failure = failureFrom(
+                  error,
+                  'structuring',
+                  'Host structuring failed.',
+                );
+                return this.reconciliation
+                  .reportHostFailureAndReconcile(
+                    client,
+                    job.captureId,
+                    normalizeHostFailureMessage(failure.message),
+                    signal,
+                  )
+                  .pipe(
+                    map((reconciledJob) => ({
+                      job: reconciledJob,
+                      raw,
+                      candidate: undefined,
+                    })),
+                    catchError((reconciliationError: unknown) => {
+                      if (isAbortError(reconciliationError))
+                        return throwError(() => reconciliationError);
+                      this.requireReconciliation(
+                        taskId,
+                        hostReconciliationFailure(reconciliationError),
+                        raw,
+                      );
+                      return EMPTY;
+                    }),
+                  );
+              }),
+            ),
+          ),
+          concatMap(({ job: reconciledJob, candidate }) => {
+            if (
+              !candidate ||
+              reconciledJob.status !== 'running' ||
+              reconciledJob.stage !== 'awaiting_structuring'
+            ) {
+              return of(reconciledJob);
+            }
+            return this.reconciliation
+              .commitHostResultAndReconcile(
                 client,
-                job.captureId,
+                reconciledJob.captureId,
                 candidate,
                 signal,
+              )
+              .pipe(
+                catchError((reconciliationError: unknown) => {
+                  if (isAbortError(reconciliationError))
+                    return throwError(() => reconciliationError);
+                  this.requireReconciliation(
+                    taskId,
+                    hostReconciliationFailure(reconciliationError),
+                    this.taskState().find((candidateTask) => candidateTask.id === taskId)?.raw,
+                  );
+                  return EMPTY;
+                }),
               );
-            } catch (reconciliationError: unknown) {
-              if (isAbortError(reconciliationError)) throw reconciliationError;
-              this.requireReconciliation(
-                taskId,
-                hostReconciliationFailure(reconciliationError),
-                raw,
-              );
-              return;
-            }
-          }
-        }
-      }
+          }),
+        );
+      }),
+    );
+  }
 
-      job = await this.waitForJob(client, job, signal, false, taskId);
-      if (job.status === 'cancelled') {
+  private settleJob(
+    client: CaptureClient,
+    task: CaptureTaskView,
+    job: CaptureJobV1,
+    signal: AbortSignal,
+    taskId: string,
+  ): Observable<void> {
+    if (job.status === 'cancelled') {
+      return defer(() => {
         const canceledTask = this.updateTask(taskId, {
           status: 'canceled',
           stage: 'cancelled',
         });
         if (canceledTask) this.emitCanceled(canceledTask);
-        return;
-      }
-      if (job.status === 'failed') {
-        const raw = await this.tryGetRaw(client, job.captureId, signal);
-        this.failTask(
-          taskId,
-          task.fileName,
-          job.error ?? {
-            code: 'capture_failed',
-            message: 'Capture failed.',
-            stage: job.stage,
-          },
-          raw,
-        );
-        return;
-      }
-      if (job.status !== 'completed') {
-        throw new Error(
-          `Capture ended in unexpected state: ${job.status}/${job.stage}`,
-        );
-      }
-
-      const result = await client.getResult(job.captureId, signal);
-      throwIfAborted(signal);
-      const completedTask = this.updateTask(taskId, {
-        status: 'completed',
-        stage: 'completed',
-        progress: 100,
-        result,
+        return of(undefined);
       });
-      if (completedTask)
-        this.emitCompleted({ taskId, document: result });
-    } catch (error: unknown) {
-      if (isAbortError(error) || signal.aborted) {
+    }
+    if (job.status === 'failed') {
+      return this.tryGetRaw(client, job.captureId, signal).pipe(
+        tap((raw) =>
+          this.failTask(
+            taskId,
+            task.fileName,
+            job.error ?? {
+              code: 'capture_failed',
+              message: 'Capture failed.',
+              stage: job.stage,
+            },
+            raw,
+          ),
+        ),
+        map(() => undefined),
+      );
+    }
+    if (job.status !== 'completed') {
+      return throwError(
+        () => new Error(`Capture ended in unexpected state: ${job.status}/${job.stage}`),
+      );
+    }
+
+    return client.getResult(job.captureId, signal).pipe(
+      tap((result) => {
+        throwIfAborted(signal);
+        const completedTask = this.updateTask(taskId, {
+          status: 'completed',
+          stage: 'completed',
+          progress: 100,
+          result,
+        });
+        if (completedTask) this.emitCompleted({ taskId, document: result });
+      }),
+      map(() => undefined),
+    );
+  }
+
+  private handleProcessError(
+    error: unknown,
+    client: CaptureClient,
+    task: CaptureTaskView,
+    signal: AbortSignal,
+    taskId: string,
+  ): Observable<void> {
+    if (isAbortError(error) || signal.aborted) {
+      return defer(() => {
         if (
-          this.taskState().find((candidate) => candidate.id === taskId)
-            ?.status !== 'canceled'
+          this.taskState().find((candidate) => candidate.id === taskId)?.status !==
+          'canceled'
         ) {
           const canceledTask = this.updateTask(taskId, {
             status: 'canceled',
@@ -392,38 +503,40 @@ export class CaptureWorkflowService implements OnDestroy {
           });
           if (canceledTask) this.emitCanceled(canceledTask);
         }
-        return;
-      }
-      const captureId = this.captureIds.get(taskId);
-      const raw = captureId
-        ? await this.tryGetRaw(client, captureId)
-        : undefined;
-      this.failTask(
-        taskId,
-        task.fileName,
-        failureFrom(error, 'runtime', 'Capture failed.'),
-        raw,
-      );
+        return of(undefined);
+      });
     }
+    const captureId = this.captureIds.get(taskId);
+    return (captureId ? this.tryGetRaw(client, captureId) : of(undefined)).pipe(
+      tap((raw) =>
+        this.failTask(
+          taskId,
+          task.fileName,
+          failureFrom(error, 'runtime', 'Capture failed.'),
+          raw,
+        ),
+      ),
+      map(() => undefined),
+    );
   }
 
-  private async waitForJob(
+  private waitForJob(
     client: CaptureClient,
     initial: CaptureJobV1,
     signal: AbortSignal,
     stopForHost: boolean,
     taskId: string,
-  ): Promise<CaptureJobV1> {
+  ): Observable<CaptureJobV1> {
     if (
       initial.status !== 'queued' &&
       !(initial.status === 'running' &&
         !(stopForHost && initial.stage === 'awaiting_structuring'))
     ) {
-      return initial;
+      return of(initial);
     }
 
-    const pollResource: CaptureJobPollResource =
-      createCaptureJobPollResource({
+    return defer(() => {
+      const pollResource = createCaptureJobPollResource({
         client,
         captureId: initial.captureId,
         pollIntervalMs: this.resolvedConfig().pollIntervalMs,
@@ -436,35 +549,33 @@ export class CaptureWorkflowService implements OnDestroy {
             progress: runtimeProgressPercent(job.progress),
           }),
       });
-    try {
-      return await pollResource.done;
-    } finally {
-      pollResource.destroy();
-    }
+      return pollResource.terminal$.pipe(
+        finalize(() => pollResource.destroy()),
+      );
+    });
   }
 
-
-  private async preprocess(
+  private preprocess(
     file: File,
     sourceKind: CaptureTaskView['sourceKind'],
     signal: AbortSignal,
-  ): Promise<File> {
+  ): Observable<File> {
     const preprocessor = this.preprocessor();
-    return preprocessor
-      ? preprocessor.preprocess({ file, sourceKind, signal })
-      : file;
+    return defer(() =>
+      preprocessor
+        ? preprocessor.preprocess({ file, sourceKind, signal })
+        : of(file),
+    );
   }
 
-  private async tryGetRaw(
+  private tryGetRaw(
     client: CaptureClient,
     captureId: string,
     signal?: AbortSignal,
-  ): Promise<RawCaptureV1 | undefined> {
-    try {
-      return await client.getRaw(captureId, signal);
-    } catch {
-      return undefined;
-    }
+  ): Observable<RawCaptureV1 | undefined> {
+    return defer(() => client.getRaw(captureId, signal)).pipe(
+      catchError(() => of(undefined)),
+    );
   }
 
   private activeClient(): CaptureClient | null {

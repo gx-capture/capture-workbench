@@ -55,8 +55,21 @@
         "watch": false
       }
     },
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm exec tsc --noEmit -p packages/capture-angular/tsconfig.lib.json"
+      }
+    },
     "lint": {
-      "executor": "@nx/eslint:lint"
+      "executor": "@nx/eslint:lint",
+      "dependsOn": ["async-boundary-check"]
+    },
+    "async-boundary-check": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "node tools/check-async-boundary.ts"
+      }
     }
   }
 }

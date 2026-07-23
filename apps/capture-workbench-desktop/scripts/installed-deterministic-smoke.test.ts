@@ -20,6 +20,19 @@ import {
 } from './installed-deterministic-smoke.ts';
 import { appRoot } from './stage-runtime.ts';
 
+function observe(observable) {
+  return new Promise((resolve, reject) => {
+    let value;
+    observable.subscribe({
+      next: (nextValue) => {
+        value = nextValue;
+      },
+      error: reject,
+      complete: () => resolve(value),
+    });
+  });
+}
+
 test('installed smoke paths and NSIS arguments stay inside the exact tmp subtree', () => {
   const root = resolve(
     appRoot,
@@ -151,14 +164,14 @@ test('exclusive smoke lock rejects concurrent product mutation and is reusable a
   const root = await mkdtemp(join(tmpdir(), 'capture-installed-smoke-lock-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const lockPath = join(root, 'installed-smoke.lock');
-  const first = await acquireExclusiveSmokeLock(root, lockPath);
+  const first = await observe(acquireExclusiveSmokeLock(root, lockPath));
   await assert.rejects(
-    acquireExclusiveSmokeLock(root, lockPath),
+    observe(acquireExclusiveSmokeLock(root, lockPath)),
     /active or left a stale lock/u,
   );
-  await releaseExclusiveSmokeLock(first);
-  const second = await acquireExclusiveSmokeLock(root, lockPath);
-  await releaseExclusiveSmokeLock(second);
+  await observe(releaseExclusiveSmokeLock(first));
+  const second = await observe(acquireExclusiveSmokeLock(root, lockPath));
+  await observe(releaseExclusiveSmokeLock(second));
 });
 
 test('installed document assertion enforces source, digest, ordering, and locator provenance', () => {

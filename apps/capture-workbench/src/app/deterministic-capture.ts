@@ -1,3 +1,13 @@
+import {
+  Observable,
+  defer,
+  forkJoin,
+  from,
+  map,
+  of,
+  switchMap,
+  throwError,
+} from 'rxjs';
 import type {
   CaptureClient,
   CaptureDocumentV1,
@@ -27,8 +37,8 @@ export class DeterministicCaptureClient implements CaptureClient {
   private readonly captures = new Map<string, FakeCaptureRecord>();
   private readonly installations = new Map<string, RuntimeInstallationV1>();
 
-  getReady(): Promise<RuntimeReadyV1> {
-    return Promise.resolve({
+  getReady(): Observable<RuntimeReadyV1> {
+    return of({
       ready: true,
       service: 'capture-runtime',
       runtimeVersion: '0.1.0',
@@ -45,8 +55,8 @@ export class DeterministicCaptureClient implements CaptureClient {
     });
   }
 
-  getRequirements(): Promise<readonly RuntimeRequirementV1[]> {
-    return Promise.resolve([
+  getRequirements(): Observable<readonly RuntimeRequirementV1[]> {
+    return of([
       readyRequirement('windowsml-ocr', 'WindowsML OCR', ['pdf', 'image']),
       readyRequirement('whisper-primary', 'Whisper STT', ['audio']),
       readyRequirement('ollama-runtime', 'Isolated Ollama', ['runtime']),
@@ -54,142 +64,171 @@ export class DeterministicCaptureClient implements CaptureClient {
     ]);
   }
 
-  startInstallation(request: StartRuntimeInstallationRequest): Promise<RuntimeInstallationV1> {
-    const installation: RuntimeInstallationV1 = {
-      installationId: crypto.randomUUID(),
-      requirementId: request.requirementId,
-      status: 'completed',
-      progress: 1,
-      createdAt: CREATED_AT,
-      updatedAt: COMPLETED_AT,
-      completedAt: COMPLETED_AT,
-    };
-    this.installations.set(installation.installationId, installation);
-    return Promise.resolve(installation);
+  startInstallation(
+    request: StartRuntimeInstallationRequest,
+  ): Observable<RuntimeInstallationV1> {
+    return defer(() => {
+      const installation: RuntimeInstallationV1 = {
+        installationId: crypto.randomUUID(),
+        requirementId: request.requirementId,
+        status: 'completed',
+        progress: 1,
+        createdAt: CREATED_AT,
+        updatedAt: COMPLETED_AT,
+        completedAt: COMPLETED_AT,
+      };
+      this.installations.set(installation.installationId, installation);
+      return of(installation);
+    });
   }
 
-  listInstallations(): Promise<readonly RuntimeInstallationV1[]> {
-    return Promise.resolve([...this.installations.values()]);
+  listInstallations(): Observable<readonly RuntimeInstallationV1[]> {
+    return defer(() => of([...this.installations.values()]));
   }
 
-  getInstallation(id: string): Promise<RuntimeInstallationV1> {
-    return Promise.resolve(this.requireInstallation(id));
+  getInstallation(id: string): Observable<RuntimeInstallationV1> {
+    return defer(() => of(this.requireInstallation(id)));
   }
 
-  cancelInstallation(id: string): Promise<RuntimeInstallationV1> {
-    const current = this.requireInstallation(id);
-    const canceled = { ...current, status: 'cancelled' as const, updatedAt: COMPLETED_AT };
-    this.installations.set(id, canceled);
-    return Promise.resolve(canceled);
+  cancelInstallation(id: string): Observable<RuntimeInstallationV1> {
+    return defer(() => {
+      const current = this.requireInstallation(id);
+      const canceled = {
+        ...current,
+        status: 'cancelled' as const,
+        updatedAt: COMPLETED_AT,
+      };
+      this.installations.set(id, canceled);
+      return of(canceled);
+    });
   }
 
-  async createCapture(request: CreateCaptureRequest): Promise<CaptureJobV1> {
-    const captureId = crypto.randomUUID();
-    const sourceText = (await request.file.text()).trim() || `Captured ${request.file.name}`;
-    const source: CaptureSourceV1 = {
-      sha256: await sha256(request.file),
-      fileName: request.file.name,
-      mediaType: request.file.type || fallbackMediaType(request.sourceKind),
-      bytes: request.file.size,
-    };
-    const locator =
-      request.sourceKind === 'audio'
-        ? ({ kind: 'time', startMs: 0, endMs: 1500 } as const)
-        : ({ kind: 'page', page: 1 } as const);
-    const raw: RawCaptureV1 = {
-      schemaVersion: '1',
-      diagnosticOnly: true,
-      source,
-      segments: [{ segmentId: 'segment-1', order: 0, locator, text: sourceText }],
-      sourceText,
-      extractionEngine: {
-        engine: request.sourceKind === 'audio' ? 'whisper-fake' : 'windowsml-fake',
-        model: request.sourceKind === 'audio' ? 'whisper-primary' : 'windowsml-ocr',
-        digest: `sha256:${'b'.repeat(64)}`,
-      },
-      warnings: ['Reference app uses deterministic capture fakes.'],
-      createdAt: CREATED_AT,
-    };
-    const runtimeResult = createCandidate(raw, 'isolated-ollama-fake');
-    const completed = request.structuringMode === 'runtime';
-    const job: CaptureJobV1 = {
-      captureId,
-      status: completed ? 'completed' : 'running',
-      stage: completed ? 'completed' : 'awaiting_structuring',
-      structuringMode: request.structuringMode,
-      progress: completed ? 1 : 0.7,
-      source,
-      createdAt: CREATED_AT,
-      updatedAt: completed ? COMPLETED_AT : CREATED_AT,
-      completedAt: completed ? COMPLETED_AT : undefined,
-    };
-    this.captures.set(captureId, { job, raw, result: completed ? runtimeResult : undefined });
-    return job;
+  createCapture(request: CreateCaptureRequest): Observable<CaptureJobV1> {
+    return forkJoin({
+      sourceText: from(request.file.text()),
+      sha256: sha256(request.file),
+    }).pipe(
+      map(({ sourceText: sourceTextValue, sha256: digest }) => {
+        const captureId = crypto.randomUUID();
+        const sourceText = sourceTextValue.trim() || `Captured ${request.file.name}`;
+        const source: CaptureSourceV1 = {
+          sha256: digest,
+          fileName: request.file.name,
+          mediaType: request.file.type || fallbackMediaType(request.sourceKind),
+          bytes: request.file.size,
+        };
+        const locator =
+          request.sourceKind === 'audio'
+            ? ({ kind: 'time', startMs: 0, endMs: 1500 } as const)
+            : ({ kind: 'page', page: 1 } as const);
+        const raw: RawCaptureV1 = {
+          schemaVersion: '1',
+          diagnosticOnly: true,
+          source,
+          segments: [{ segmentId: 'segment-1', order: 0, locator, text: sourceText }],
+          sourceText,
+          extractionEngine: {
+            engine: request.sourceKind === 'audio' ? 'whisper-fake' : 'windowsml-fake',
+            model: request.sourceKind === 'audio' ? 'whisper-primary' : 'windowsml-ocr',
+            digest: `sha256:${'b'.repeat(64)}`,
+          },
+          warnings: ['Reference app uses deterministic capture fakes.'],
+          createdAt: CREATED_AT,
+        };
+        const runtimeResult = createCandidate(raw, 'isolated-ollama-fake');
+        const completed = request.structuringMode === 'runtime';
+        const job: CaptureJobV1 = {
+          captureId,
+          status: completed ? 'completed' : 'running',
+          stage: completed ? 'completed' : 'awaiting_structuring',
+          structuringMode: request.structuringMode,
+          progress: completed ? 1 : 0.7,
+          source,
+          createdAt: CREATED_AT,
+          updatedAt: completed ? COMPLETED_AT : CREATED_AT,
+          completedAt: completed ? COMPLETED_AT : undefined,
+        };
+        this.captures.set(captureId, {
+          job,
+          raw,
+          result: completed ? runtimeResult : undefined,
+        });
+        return job;
+      }),
+    );
   }
 
-  getCapture(id: string): Promise<CaptureJobV1> {
-    return Promise.resolve(this.requireCapture(id).job);
+  getCapture(id: string): Observable<CaptureJobV1> {
+    return defer(() => of(this.requireCapture(id).job));
   }
 
-  cancelCapture(id: string): Promise<CaptureJobV1> {
-    const record = this.requireCapture(id);
-    record.job = {
-      ...record.job,
-      status: 'cancelled',
-      stage: 'cancelled',
-      updatedAt: COMPLETED_AT,
-      completedAt: COMPLETED_AT,
-    };
-    return Promise.resolve(record.job);
+  cancelCapture(id: string): Observable<CaptureJobV1> {
+    return defer(() => {
+      const record = this.requireCapture(id);
+      record.job = {
+        ...record.job,
+        status: 'cancelled',
+        stage: 'cancelled',
+        updatedAt: COMPLETED_AT,
+        completedAt: COMPLETED_AT,
+      };
+      return of(record.job);
+    });
   }
 
-  getRaw(id: string): Promise<RawCaptureV1> {
-    return Promise.resolve(this.requireCapture(id).raw);
+  getRaw(id: string): Observable<RawCaptureV1> {
+    return defer(() => of(this.requireCapture(id).raw));
   }
 
-  getResult(id: string): Promise<CaptureDocumentV1> {
-    const result = this.requireCapture(id).result;
-    return result
-      ? Promise.resolve(result)
-      : Promise.reject(new Error('result_unavailable'));
+  getResult(id: string): Observable<CaptureDocumentV1> {
+    return defer(() => {
+      const result = this.requireCapture(id).result;
+      return result ? of(result) : throwError(() => new Error('result_unavailable'));
+    });
   }
 
   commitStructuredResult(
     id: string,
     request: CommitStructuredResultRequest,
-  ): Promise<CaptureJobV1> {
-    const record = this.requireCapture(id);
-    record.result = request.candidate;
-    record.job = {
-      ...record.job,
-      status: 'completed',
-      stage: 'completed',
-      progress: 1,
-      updatedAt: COMPLETED_AT,
-      completedAt: COMPLETED_AT,
-    };
-    return Promise.resolve(record.job);
+  ): Observable<CaptureJobV1> {
+    return defer(() => {
+      const record = this.requireCapture(id);
+      record.result = request.candidate;
+      record.job = {
+        ...record.job,
+        status: 'completed',
+        stage: 'completed',
+        progress: 1,
+        updatedAt: COMPLETED_AT,
+        completedAt: COMPLETED_AT,
+      };
+      return of(record.job);
+    });
   }
 
   reportStructuringFailure(
     id: string,
     request: ReportStructuringFailureRequest,
-  ): Promise<CaptureJobV1> {
-    const record = this.requireCapture(id);
-    record.job = {
-      ...record.job,
-      status: 'failed',
-      stage: 'failed',
-      error: { ...request, stage: 'structuring' },
-      updatedAt: COMPLETED_AT,
-      completedAt: COMPLETED_AT,
-    };
-    return Promise.resolve(record.job);
+  ): Observable<CaptureJobV1> {
+    return defer(() => {
+      const record = this.requireCapture(id);
+      record.job = {
+        ...record.job,
+        status: 'failed',
+        stage: 'failed',
+        error: { ...request, stage: 'structuring' },
+        updatedAt: COMPLETED_AT,
+        completedAt: COMPLETED_AT,
+      };
+      return of(record.job);
+    });
   }
 
-  deleteCapture(id: string): Promise<void> {
-    this.captures.delete(id);
-    return Promise.resolve();
+  deleteCapture(id: string): Observable<void> {
+    return defer(() => {
+      this.captures.delete(id);
+      return of(undefined);
+    });
   }
 
   private requireCapture(id: string): FakeCaptureRecord {
@@ -206,14 +245,16 @@ export class DeterministicCaptureClient implements CaptureClient {
 }
 
 export const deterministicStructuringProvider: CaptureStructuringProvider = {
-  structure({ raw, documentContract, signal, reportProgress }): Promise<CaptureDocumentV1> {
-    if (signal.aborted) return Promise.reject(new DOMException('Aborted', 'AbortError'));
-    if (documentContract.schemaVersion !== raw.schemaVersion) {
-      return Promise.reject(new Error('Capture document contract version mismatch.'));
-    }
-    reportProgress(50);
-    reportProgress(100);
-    return Promise.resolve(createCandidate(raw, 'host-provider-fake'));
+  structure({ raw, documentContract, signal, reportProgress }): Observable<CaptureDocumentV1> {
+    return defer(() => {
+      if (signal.aborted) return throwError(() => new DOMException('Aborted', 'AbortError'));
+      if (documentContract.schemaVersion !== raw.schemaVersion) {
+        return throwError(() => new Error('Capture document contract version mismatch.'));
+      }
+      reportProgress(50);
+      reportProgress(100);
+      return of(createCandidate(raw, 'host-provider-fake'));
+    });
   },
 };
 
@@ -261,9 +302,13 @@ function readyRequirement(
   };
 }
 
-async function sha256(file: File): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer());
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+function sha256(file: File): Observable<string> {
+  return from(file.arrayBuffer()).pipe(
+    switchMap((contents) => from(crypto.subtle.digest('SHA-256', contents))),
+    map((digest) =>
+      Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join(''),
+    ),
+  );
 }
 
 function fallbackMediaType(kind: CreateCaptureRequest['sourceKind']): string {

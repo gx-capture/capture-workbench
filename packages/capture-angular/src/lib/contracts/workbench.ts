@@ -13,6 +13,7 @@ import type {
   RuntimeReadyV1,
   RuntimeRequirementV1,
 } from './index';
+import type { Observable } from 'rxjs';
 
 export interface ResolvedCaptureWorkbenchConfig {
   readonly enabledSources: readonly ('pdf' | 'image' | 'audio')[];
@@ -94,7 +95,7 @@ export interface CaptureReconciliationContext {
     client: CaptureClient,
     captureId: string,
     signal?: AbortSignal,
-  ) => Promise<RawCaptureV1 | undefined>;
+  ) => Observable<RawCaptureV1 | undefined>;
 }
 
 export type CaptureWorkbenchStoreEvent =

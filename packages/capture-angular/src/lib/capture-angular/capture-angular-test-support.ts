@@ -5,6 +5,7 @@ import type {
   RawCaptureV1,
   RuntimeReadyV1,
 } from '../contracts';
+import { of } from 'rxjs';
 
 export const READY: RuntimeReadyV1 = {
   ready: true,
@@ -95,24 +96,24 @@ export function job(
 
 export function fakeClient(overrides: Partial<CaptureClient> = {}): CaptureClient {
   return {
-    getReady: vi.fn(async () => READY),
-    getRequirements: vi.fn(async () => []),
+    getReady: vi.fn(() => of(READY)),
+    getRequirements: vi.fn(() => of([])),
     startInstallation: vi.fn(),
-    listInstallations: vi.fn(async () => []),
+    listInstallations: vi.fn(() => of([])),
     getInstallation: vi.fn(),
     cancelInstallation: vi.fn(),
-    createCapture: vi.fn(async () => job('completed', 'completed')),
-    getCapture: vi.fn(async () => job('completed', 'completed')),
-    cancelCapture: vi.fn(async () => job('cancelled', 'cancelled')),
-    getRaw: vi.fn(async () => RAW),
-    getResult: vi.fn(async () => DOCUMENT),
-    commitStructuredResult: vi.fn(async () =>
-      job('completed', 'completed', 'host'),
+    createCapture: vi.fn(() => of(job('completed', 'completed'))),
+    getCapture: vi.fn(() => of(job('completed', 'completed'))),
+    cancelCapture: vi.fn(() => of(job('cancelled', 'cancelled'))),
+    getRaw: vi.fn(() => of(RAW)),
+    getResult: vi.fn(() => of(DOCUMENT)),
+    commitStructuredResult: vi.fn(() =>
+      of(job('completed', 'completed', 'host')),
     ),
-    reportStructuringFailure: vi.fn(async () =>
-      job('failed', 'failed', 'host'),
+    reportStructuringFailure: vi.fn(() =>
+      of(job('failed', 'failed', 'host')),
     ),
-    deleteCapture: vi.fn(async () => undefined),
+    deleteCapture: vi.fn(() => of(undefined)),
     ...overrides,
   };
 }

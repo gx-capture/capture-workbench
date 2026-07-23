@@ -4,9 +4,10 @@ import {
   OnDestroy,
   computed,
   inject,
-  resource,
   signal,
 } from '@angular/core';
+import { rxResource } from '@angular/core/rxjs-interop';
+import { Observable, forkJoin, map, of, take, throwError } from 'rxjs';
 import {
   CAPTURE_CLIENT,
   CAPTURE_PREPROCESSOR,
@@ -110,25 +111,28 @@ export class CaptureWorkbenchStore implements OnDestroy {
           left.structuringMode === right.structuringMode),
     },
   );
-  private readonly runtimeResource = resource<
+  private readonly runtimeResource = rxResource<
     RuntimeHandshake,
     RuntimeRequest | undefined
   >({
     params: () => this.runtimeRequest(),
-    loader: async ({ params, abortSignal }) => {
-      if (!params.client) {
-        throw new Error('Capture client is not configured.');
+    stream: ({ params, abortSignal }) => {
+      if (!params?.client) {
+        return throwError(() => new Error('Capture client is not configured.'));
       }
-      const [ready, requirements] = await Promise.all([
-        params.client.getReady(abortSignal),
-        params.client.getRequirements(abortSignal),
-      ]);
-      assertCaptureRuntimeCompatible(
-        ready,
-        params.compatibleRuntimeMajor,
-        params.structuringMode,
+      return forkJoin({
+        ready: params.client.getReady(abortSignal).pipe(take(1)),
+        requirements: params.client.getRequirements(abortSignal).pipe(take(1)),
+      }).pipe(
+        map(({ ready, requirements }) => {
+          assertCaptureRuntimeCompatible(
+            ready,
+            params.compatibleRuntimeMajor,
+            params.structuringMode,
+          );
+          return { ready, requirements };
+        }),
       );
-      return { ready, requirements };
     },
   });
   readonly runtime = computed<RuntimeViewState>(() => {
@@ -242,8 +246,8 @@ export class CaptureWorkbenchStore implements OnDestroy {
     this.runtimeResource.reload();
   }
 
-  installMissingRequirements(): Promise<void> {
-    return this.installationService.install({
+  installMissingRequirements(): void {
+    this.installationService.install({
       client: this.activeClient(),
       requirements: () => this.installableRequirements(),
       pollIntervalMs: () => this.resolvedConfig().pollIntervalMs,
@@ -251,31 +255,31 @@ export class CaptureWorkbenchStore implements OnDestroy {
     });
   }
 
-  cancelInstallation(): Promise<void> {
-    return this.installationService.cancel(this.activeClient());
+  cancelInstallation(): void {
+    this.installationService.cancel(this.activeClient());
   }
 
   enqueueFiles(files: readonly File[]): void {
     this.workflow.enqueueFiles(files);
   }
 
-  cancel(taskId: string): Promise<void> {
-    return this.workflow.cancel(taskId);
+  cancel(taskId: string): void {
+    this.workflow.cancel(taskId);
   }
 
-  reconcile(taskId: string): Promise<void> {
-    return this.workflow.reconcile(taskId);
+  reconcile(taskId: string): void {
+    this.workflow.reconcile(taskId);
   }
 
-  remove(taskId: string): Promise<void> {
-    return this.workflow.remove(taskId);
+  remove(taskId: string): void {
+    this.workflow.remove(taskId);
   }
 
-  private async reloadRuntimeAndWait(): Promise<void> {
+  private reloadRuntimeAndWait(): Observable<void> {
     this.installationService.clearError();
-    const reloadStarted = this.runtimeResource.reload();
-    if (!reloadStarted && !this.runtimeResource.isLoading()) return;
-    await waitForResourceSettlement(
+    this.runtimeResource.reload();
+    if (!this.runtimeResource.isLoading()) return of(undefined);
+    return waitForResourceSettlement(
       this.runtimeResource,
       this.injector,
       this.lifecycleController.signal,

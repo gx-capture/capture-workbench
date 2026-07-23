@@ -14,6 +14,18 @@ import {
   type RuntimeRequirementV1,
   type StartRuntimeInstallationRequest,
 } from '@gx/capture-angular';
+import {
+  Observable,
+  catchError,
+  concatMap,
+  defer,
+  map,
+  of,
+  shareReplay,
+  switchMap,
+  throwError,
+  timer,
+} from 'rxjs';
 import { selectValidationCaptureFixture } from './validation-fixture-provider';
 
 export type ValidationCaptureClientMode =
@@ -38,7 +50,7 @@ interface RuntimeReadinessPolling {
   readonly timeoutMs: number;
   readonly pollIntervalMs: number;
   readonly now: () => number;
-  readonly wait: (milliseconds: number) => Promise<void>;
+  readonly wait: (milliseconds: number) => Observable<void>;
   readonly scheduleTimeout: (
     callback: () => void,
     milliseconds: number,
@@ -48,8 +60,8 @@ interface RuntimeReadinessPolling {
 export interface ValidationClientEnvironment {
   readonly tauri: boolean;
   readonly search: string;
-  readonly loadDesktopRuntimeStatus: () => Promise<DesktopRuntimeStatus>;
-  readonly loadBackendConfig: () => Promise<BackendConfig>;
+  readonly loadDesktopRuntimeStatus: () => Observable<DesktopRuntimeStatus>;
+  readonly loadBackendConfig: () => Observable<BackendConfig>;
   readonly runtimeReadinessPolling?: RuntimeReadinessPolling;
 }
 
@@ -68,14 +80,17 @@ export function selectValidationCaptureClient(
     return {
       mode: 'tauri-http',
       hostStructuringAvailable: false,
-      client: new DeferredCaptureClient(async () => {
-        await waitForDesktopRuntimeReady(environment);
-        const backend = await environment.loadBackendConfig();
-        return new HttpCaptureClient({
-          baseUrl: backend.baseUrl,
-          bearerToken: backend.token,
-        });
-      }),
+      client: new DeferredCaptureClient(() =>
+        waitForDesktopRuntimeReady(environment).pipe(
+          switchMap(() => environment.loadBackendConfig()),
+          map((backend) =>
+            new HttpCaptureClient({
+              baseUrl: backend.baseUrl,
+              bearerToken: backend.token,
+            }),
+          ),
+        ),
+      ),
     };
   }
 
@@ -93,74 +108,74 @@ export function selectValidationCaptureClient(
     mode: 'browser-unconfigured',
     hostStructuringAvailable: false,
     client: new DeferredCaptureClient(() =>
-      Promise.reject(
-        new Error('Capture client is unavailable outside packaged Tauri.'),
-      ),
+      throwError(() => new Error('Capture client is unavailable outside packaged Tauri.')),
     ),
   };
 }
 
 class DeferredCaptureClient implements CaptureClient {
-  private delegatePromise?: Promise<CaptureClient>;
+  private delegateObservable?: Observable<CaptureClient>;
 
-  constructor(private readonly load: () => Promise<CaptureClient>) {}
+  constructor(private readonly load: () => Observable<CaptureClient>) {}
 
-  getReady(signal?: AbortSignal): Promise<RuntimeReadyV1> {
-    return this.delegate().then((client) => client.getReady(signal));
+  getReady(signal?: AbortSignal): Observable<RuntimeReadyV1> {
+    return this.delegate().pipe(switchMap((client) => client.getReady(signal)));
   }
 
-  getRequirements(signal?: AbortSignal): Promise<readonly RuntimeRequirementV1[]> {
-    return this.delegate().then((client) => client.getRequirements(signal));
+  getRequirements(signal?: AbortSignal): Observable<readonly RuntimeRequirementV1[]> {
+    return this.delegate().pipe(switchMap((client) => client.getRequirements(signal)));
   }
 
   startInstallation(
     request: StartRuntimeInstallationRequest,
     signal?: AbortSignal,
-  ): Promise<RuntimeInstallationV1> {
-    return this.delegate().then((client) => client.startInstallation(request, signal));
+  ): Observable<RuntimeInstallationV1> {
+    return this.delegate().pipe(
+      switchMap((client) => client.startInstallation(request, signal)),
+    );
   }
 
-  listInstallations(
-    signal?: AbortSignal,
-  ): Promise<readonly RuntimeInstallationV1[]> {
-    return this.delegate().then((client) => client.listInstallations(signal));
+  listInstallations(signal?: AbortSignal): Observable<readonly RuntimeInstallationV1[]> {
+    return this.delegate().pipe(switchMap((client) => client.listInstallations(signal)));
   }
 
-  getInstallation(id: string, signal?: AbortSignal): Promise<RuntimeInstallationV1> {
-    return this.delegate().then((client) => client.getInstallation(id, signal));
+  getInstallation(id: string, signal?: AbortSignal): Observable<RuntimeInstallationV1> {
+    return this.delegate().pipe(switchMap((client) => client.getInstallation(id, signal)));
   }
 
-  cancelInstallation(id: string, signal?: AbortSignal): Promise<RuntimeInstallationV1> {
-    return this.delegate().then((client) => client.cancelInstallation(id, signal));
+  cancelInstallation(id: string, signal?: AbortSignal): Observable<RuntimeInstallationV1> {
+    return this.delegate().pipe(
+      switchMap((client) => client.cancelInstallation(id, signal)),
+    );
   }
 
-  createCapture(request: CreateCaptureRequest): Promise<CaptureJobV1> {
-    return this.delegate().then((client) => client.createCapture(request));
+  createCapture(request: CreateCaptureRequest): Observable<CaptureJobV1> {
+    return this.delegate().pipe(switchMap((client) => client.createCapture(request)));
   }
 
-  getCapture(id: string, signal?: AbortSignal): Promise<CaptureJobV1> {
-    return this.delegate().then((client) => client.getCapture(id, signal));
+  getCapture(id: string, signal?: AbortSignal): Observable<CaptureJobV1> {
+    return this.delegate().pipe(switchMap((client) => client.getCapture(id, signal)));
   }
 
-  cancelCapture(id: string, signal?: AbortSignal): Promise<CaptureJobV1> {
-    return this.delegate().then((client) => client.cancelCapture(id, signal));
+  cancelCapture(id: string, signal?: AbortSignal): Observable<CaptureJobV1> {
+    return this.delegate().pipe(switchMap((client) => client.cancelCapture(id, signal)));
   }
 
-  getRaw(id: string, signal?: AbortSignal): Promise<RawCaptureV1> {
-    return this.delegate().then((client) => client.getRaw(id, signal));
+  getRaw(id: string, signal?: AbortSignal): Observable<RawCaptureV1> {
+    return this.delegate().pipe(switchMap((client) => client.getRaw(id, signal)));
   }
 
-  getResult(id: string, signal?: AbortSignal): Promise<CaptureDocumentV1> {
-    return this.delegate().then((client) => client.getResult(id, signal));
+  getResult(id: string, signal?: AbortSignal): Observable<CaptureDocumentV1> {
+    return this.delegate().pipe(switchMap((client) => client.getResult(id, signal)));
   }
 
   commitStructuredResult(
     id: string,
     request: CommitStructuredResultRequest,
     signal?: AbortSignal,
-  ): Promise<CaptureJobV1> {
-    return this.delegate().then((client) =>
-      client.commitStructuredResult(id, request, signal),
+  ): Observable<CaptureJobV1> {
+    return this.delegate().pipe(
+      switchMap((client) => client.commitStructuredResult(id, request, signal)),
     );
   }
 
@@ -168,25 +183,27 @@ class DeferredCaptureClient implements CaptureClient {
     id: string,
     request: ReportStructuringFailureRequest,
     signal?: AbortSignal,
-  ): Promise<CaptureJobV1> {
-    return this.delegate().then((client) =>
-      client.reportStructuringFailure(id, request, signal),
+  ): Observable<CaptureJobV1> {
+    return this.delegate().pipe(
+      switchMap((client) => client.reportStructuringFailure(id, request, signal)),
     );
   }
 
-  deleteCapture(id: string, signal?: AbortSignal): Promise<void> {
-    return this.delegate().then((client) => client.deleteCapture(id, signal));
+  deleteCapture(id: string, signal?: AbortSignal): Observable<void> {
+    return this.delegate().pipe(switchMap((client) => client.deleteCapture(id, signal)));
   }
 
-  private delegate(): Promise<CaptureClient> {
-    if (!this.delegatePromise) {
-      const pending = this.load();
-      this.delegatePromise = pending.catch((error: unknown) => {
-        this.delegatePromise = undefined;
-        throw error;
-      });
+  private delegate(): Observable<CaptureClient> {
+    if (!this.delegateObservable) {
+      this.delegateObservable = defer(() => this.load()).pipe(
+        catchError((error: unknown) => {
+          this.delegateObservable = undefined;
+          return throwError(() => error);
+        }),
+        shareReplay({ bufferSize: 1, refCount: false }),
+      );
     }
-    return this.delegatePromise;
+    return this.delegateObservable;
   }
 }
 
@@ -194,10 +211,7 @@ const DEFAULT_RUNTIME_READINESS_POLLING: RuntimeReadinessPolling = {
   timeoutMs: 60_000,
   pollIntervalMs: 100,
   now: () => globalThis.performance?.now() ?? Date.now(),
-  wait: (milliseconds) =>
-    new Promise((resolve) => {
-      globalThis.setTimeout(resolve, milliseconds);
-    }),
+  wait: (milliseconds) => timer(milliseconds).pipe(map(() => undefined)),
   scheduleTimeout: (callback, milliseconds) => {
     const handle = globalThis.setTimeout(callback, milliseconds);
     return () => globalThis.clearTimeout(handle);
@@ -206,93 +220,112 @@ const DEFAULT_RUNTIME_READINESS_POLLING: RuntimeReadinessPolling = {
 
 class RuntimeReadinessDeadlineExceeded extends Error {}
 
-async function waitForDesktopRuntimeReady(
+function waitForDesktopRuntimeReady(
   environment: ValidationClientEnvironment,
-): Promise<void> {
+): Observable<void> {
   const polling = environment.runtimeReadinessPolling ?? DEFAULT_RUNTIME_READINESS_POLLING;
   const pollIntervalMs = finiteIntegerAtLeast(polling.pollIntervalMs, 1);
   const timeoutMs = finiteIntegerAtLeast(polling.timeoutMs, 0);
   const maximumPolls = Math.floor(timeoutMs / pollIntervalMs) + 1;
   const deadline = polling.now() + timeoutMs;
-  let lastStatus: DesktopRuntimeStatus | undefined;
 
-  for (let poll = 0; poll < maximumPolls; poll += 1) {
-    if (polling.now() >= deadline) break;
-    try {
-      lastStatus = await settleBeforeDeadline(
-        environment.loadDesktopRuntimeStatus(),
-        deadline,
-        polling,
-      );
-    } catch (error) {
-      if (error instanceof RuntimeReadinessDeadlineExceeded) break;
-      throw error;
-    }
-    if (polling.now() >= deadline) break;
-    if (lastStatus.status === 'ready') {
-      return;
-    }
-    if (lastStatus.status === 'failed' || lastStatus.status === 'stopped') {
-      throw new Error(`Capture runtime ${lastStatus.status}: ${lastStatus.detail}`);
-    }
-    if (lastStatus.status !== 'starting') {
-      throw new Error(
-        `Capture runtime returned unsupported status "${lastStatus.status}": ${lastStatus.detail}`,
+  const poll = (index: number, lastStatus?: DesktopRuntimeStatus): Observable<void> => {
+    if (index >= maximumPolls || polling.now() >= deadline) {
+      return throwError(
+        () =>
+          new Error(
+            `Capture runtime did not become ready within ${timeoutMs} ms. Last status: ${lastStatus?.detail ?? 'unavailable'}`,
+          ),
       );
     }
-    if (poll + 1 < maximumPolls) {
-      const remainingMs = deadline - polling.now();
-      if (remainingMs <= 0) break;
-      try {
-        await settleBeforeDeadline(
+    return settleBeforeDeadline(
+      defer(() => environment.loadDesktopRuntimeStatus()),
+      deadline,
+      polling,
+    ).pipe(
+      concatMap((status) => {
+        if (polling.now() >= deadline) {
+          return throwError(
+            () =>
+              new Error(
+                `Capture runtime did not become ready within ${timeoutMs} ms. Last status: ${status.detail}`,
+              ),
+          );
+        }
+        if (status.status === 'ready') return of(undefined);
+        if (status.status === 'failed' || status.status === 'stopped') {
+          return throwError(
+            () => new Error(`Capture runtime ${status.status}: ${status.detail}`),
+          );
+        }
+        if (status.status !== 'starting') {
+          return throwError(
+            () =>
+              new Error(
+                `Capture runtime returned unsupported status "${status.status}": ${status.detail}`,
+              ),
+          );
+        }
+        if (index + 1 >= maximumPolls) return poll(index + 1, status);
+        const remainingMs = deadline - polling.now();
+        if (remainingMs <= 0) return poll(index + 1, status);
+        return settleBeforeDeadline(
           polling.wait(Math.min(pollIntervalMs, remainingMs)),
           deadline,
           polling,
-        );
-      } catch (error) {
-        if (error instanceof RuntimeReadinessDeadlineExceeded) break;
-        throw error;
-      }
-    }
-  }
+        ).pipe(concatMap(() => poll(index + 1, status)));
+      }),
+      catchError((error: unknown) => {
+        if (error instanceof RuntimeReadinessDeadlineExceeded) {
+          return throwError(
+            () =>
+              new Error(
+                `Capture runtime did not become ready within ${timeoutMs} ms. Last status: unavailable`,
+              ),
+          );
+        }
+        return throwError(() => error);
+      }),
+    );
+  };
 
-  throw new Error(
-    `Capture runtime did not become ready within ${timeoutMs} ms. Last status: ${lastStatus?.detail ?? 'unavailable'}`,
-  );
+  return defer(() => poll(0));
 }
 
 function settleBeforeDeadline<T>(
-  operation: Promise<T>,
+  operation: Observable<T>,
   deadline: number,
   polling: RuntimeReadinessPolling,
-): Promise<T> {
+): Observable<T> {
   const remainingMs = deadline - polling.now();
   if (remainingMs <= 0) {
-    // Consume a late rejection from an operation that was already started.
-    void operation.catch(() => undefined);
-    return Promise.reject(new RuntimeReadinessDeadlineExceeded());
+    return throwError(() => new RuntimeReadinessDeadlineExceeded());
   }
-
-  return new Promise<T>((resolve, reject) => {
+  return new Observable<T>((subscriber) => {
     let settled = false;
-    let cancelTimeout: () => void = () => undefined;
-    const finish = (settle: () => void): void => {
+    let cancelTimeout = (): void => undefined;
+    const finish = (action: () => void): void => {
       if (settled) return;
       settled = true;
       cancelTimeout();
-      settle();
+      action();
     };
-
     cancelTimeout = polling.scheduleTimeout(
-      () => finish(() => reject(new RuntimeReadinessDeadlineExceeded())),
+      () =>
+        finish(() =>
+          subscriber.error(new RuntimeReadinessDeadlineExceeded()),
+        ),
       Math.ceil(remainingMs),
     );
-    if (settled) cancelTimeout();
-
-    operation.then(
-      (value) => finish(() => resolve(value)),
-      (error: unknown) => finish(() => reject(error)),
-    );
+    const subscription = operation.subscribe({
+      next: (value) => finish(() => subscriber.next(value)),
+      error: (error: unknown) => finish(() => subscriber.error(error)),
+      complete: () => finish(() => subscriber.complete()),
+    });
+    return () => {
+      cancelTimeout();
+      subscription.unsubscribe();
+    };
   });
 }
 
@@ -306,8 +339,8 @@ function defaultEnvironment(): ValidationClientEnvironment {
     tauri: isTauri(),
     search: globalThis.location?.search ?? '',
     loadDesktopRuntimeStatus: () =>
-      invoke<DesktopRuntimeStatus>('desktop_runtime_status'),
-    loadBackendConfig: () => invoke<BackendConfig>('backend_config'),
+      defer(() => invoke<DesktopRuntimeStatus>('desktop_runtime_status')),
+    loadBackendConfig: () => defer(() => invoke<BackendConfig>('backend_config')),
   };
 }
 

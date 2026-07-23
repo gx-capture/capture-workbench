@@ -1,17 +1,11 @@
 import { isAbsolute, relative, resolve } from 'node:path';
 
 import {
-  CAPTURE_BLOCK_TYPES,
   CHILD_ENVIRONMENT_ALLOWLIST,
-  EXPECTED_REQUIREMENT_IDS,
-  INSTALLED_FIXTURES,
 } from '../constants/installed.ts';
 import { assertRedactedEvidence } from '../package-qa.ts';
 
-const expectedRequirementIds = EXPECTED_REQUIREMENT_IDS;
-const captureBlockTypes = CAPTURE_BLOCK_TYPES;
 const childEnvironmentAllowlist = CHILD_ENVIRONMENT_ALLOWLIST;
-const fixtures = INSTALLED_FIXTURES;
 
 export function assertStrictDescendant(root, candidate, label = 'Path') {
   const resolvedRoot = resolve(root);

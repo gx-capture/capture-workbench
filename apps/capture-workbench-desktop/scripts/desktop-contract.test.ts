@@ -196,6 +196,6 @@ test('release workflow is SHA-pinned, least-privilege, attested, and runtime-fir
   );
   assert.match(
     publisher,
-    /const packagePlan = await preflightPackagePublication[\s\S]*await ensureRuntimeReleasePublic[\s\S]*await applyPackagePublication/u,
+    /preflightPackagePublication[\s\S]*ensureRuntimeReleasePublic[\s\S]*applyPackagePublication/u,
   );
 });

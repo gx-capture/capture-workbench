@@ -1,7 +1,24 @@
 import { spawn } from 'node:child_process';
 import { lstat } from 'node:fs';
-import { readdir, realpath, rm } from 'node:fs/promises';
+import { mkdir, readdir, realpath, rm } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
+
+import {
+  Observable,
+  catchError,
+  concatMap,
+  defer,
+  forkJoin,
+  from,
+  map,
+  of,
+  race,
+  switchMap,
+  take,
+  tap,
+  throwError,
+  timer,
+} from 'rxjs';
 
 import { sha256File } from './stage-runtime.ts';
 import { assertStrictDescendant } from './contracts/installed.ts';
@@ -9,142 +26,184 @@ import { assertStrictDescendant } from './contracts/installed.ts';
 export function createInstalledSmokeLifecycle({
   workspaceRoot,
   smokeRoot,
-  runRoot,
   nsisDirectory,
-  childEnvironmentAllowlist,
   terminateTrackedProcessTree,
 }) {
-async function prepareSmokeDirectories() {
-  await mkdir(smokeRoot, { recursive: true });
-  const [workspaceRealPath, smokeRealPath] = await Promise.all([
-    realpath(workspaceRoot),
-    realpath(smokeRoot),
-  ]);
-  assertStrictDescendant(
-    workspaceRealPath,
-    smokeRealPath,
-    'Installed smoke output directory',
-  );
-}
+  function prepareSmokeDirectories() {
+    return defer(() => from(mkdir(smokeRoot, { recursive: true }))).pipe(
+      concatMap(() =>
+        forkJoin({
+          workspaceRealPath: defer(() => from(realpath(workspaceRoot))),
+          smokeRealPath: defer(() => from(realpath(smokeRoot))),
+        }),
+      ),
+      tap(({ workspaceRealPath, smokeRealPath }) =>
+        assertStrictDescendant(
+          workspaceRealPath,
+          smokeRealPath,
+          'Installed smoke output directory',
+        ),
+      ),
+      map(() => undefined),
+    );
+  }
 
-async function safeRemoveTree(root, target) {
-  const safeTarget = assertStrictDescendant(
-    root,
-    target,
-    'Recursive removal target',
-  );
-  let metadata;
-  try {
-    metadata = await lstat(safeTarget);
-  } catch (error) {
-    if (error?.code === 'ENOENT') return;
-    throw error;
-  }
-  if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
-    throw new Error(
-      'Recursive removal target must be an owned real directory.',
+  function safeRemoveTree(root, target) {
+    const safeTarget = assertStrictDescendant(
+      root,
+      target,
+      'Recursive removal target',
+    );
+    return defer(() => from(lstat(safeTarget))).pipe(
+      catchError((error) =>
+        error?.code === 'ENOENT' ? of(undefined) : throwError(() => error),
+      ),
+      concatMap((metadata) => {
+        if (!metadata) return of(undefined);
+        if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
+          return throwError(
+            () => new Error('Recursive removal target must be an owned real directory.'),
+          );
+        }
+        return defer(() =>
+          from(
+            rm(safeTarget, {
+              recursive: true,
+              force: true,
+              maxRetries: 5,
+              retryDelay: 250,
+            }),
+          ),
+        ).pipe(map(() => undefined));
+      }),
     );
   }
-  await rm(safeTarget, {
-    recursive: true,
-    force: true,
-    maxRetries: 5,
-    retryDelay: 250,
-  });
-}
 
-async function findDeterministicInstaller() {
-  const [workspaceRealPath, directoryRealPath] = await Promise.all([
-    realpath(workspaceRoot),
-    realpath(nsisDirectory),
-  ]);
-  assertStrictDescendant(
-    workspaceRealPath,
-    directoryRealPath,
-    'NSIS artifact directory',
-  );
-  const entries = await readdir(directoryRealPath, { withFileTypes: true });
-  const installers = entries.filter(
-    (entry) => entry.isFile() && /_x64-setup\.exe$/iu.test(entry.name),
-  );
-  if (installers.length !== 1) {
-    throw new Error(
-      `Expected exactly one deterministic x64 NSIS installer, found ${installers.length}.`,
+  function findDeterministicInstaller() {
+    return forkJoin({
+      workspaceRealPath: defer(() => from(realpath(workspaceRoot))),
+      directoryRealPath: defer(() => from(realpath(nsisDirectory))),
+    }).pipe(
+      tap(({ workspaceRealPath, directoryRealPath }) =>
+        assertStrictDescendant(
+          workspaceRealPath,
+          directoryRealPath,
+          'NSIS artifact directory',
+        ),
+      ),
+      switchMap(({ directoryRealPath }) =>
+        defer(() => from(readdir(directoryRealPath, { withFileTypes: true }))).pipe(
+          map((entries) =>
+            entries.filter(
+              (entry) => entry.isFile() && /_x64-setup\.exe$/iu.test(entry.name),
+            ),
+          ),
+          concatMap((installers) => {
+            if (installers.length !== 1) {
+              return throwError(
+                () =>
+                  new Error(
+                    `Expected exactly one deterministic x64 NSIS installer, found ${installers.length}.`,
+                  ),
+              );
+            }
+            const path = join(directoryRealPath, installers[0].name);
+            return forkJoin({
+              metadata: defer(() => from(lstat(path))),
+              actualPath: defer(() => from(realpath(path))),
+            }).pipe(
+              concatMap(({ metadata, actualPath }) => {
+                if (!metadata.isFile() || metadata.isSymbolicLink()) {
+                  return throwError(
+                    () => new Error('Deterministic NSIS installer must be a regular file.'),
+                  );
+                }
+                if (dirname(actualPath).toLowerCase() !== directoryRealPath.toLowerCase()) {
+                  return throwError(
+                    () => new Error('Deterministic NSIS installer escaped its artifact directory.'),
+                  );
+                }
+                return sha256File(actualPath).pipe(
+                  map((sha256) => ({
+                    path: actualPath,
+                    fileName: basename(actualPath),
+                    bytes: metadata.size,
+                    sha256,
+                  })),
+                );
+              }),
+            );
+          }),
+        ),
+      ),
     );
   }
-  const path = join(directoryRealPath, installers[0].name);
-  const metadata = await lstat(path);
-  if (!metadata.isFile() || metadata.isSymbolicLink()) {
-    throw new Error('Deterministic NSIS installer must be a regular file.');
-  }
-  const actualPath = await realpath(path);
-  if (dirname(actualPath).toLowerCase() !== directoryRealPath.toLowerCase()) {
-    throw new Error(
-      'Deterministic NSIS installer escaped its artifact directory.',
-    );
-  }
-  return {
-    path: actualPath,
-    fileName: basename(actualPath),
-    bytes: metadata.size,
-    sha256: await sha256File(actualPath),
-  };
-}
 
-async function assertOwnedRegularFile(root, candidate, label) {
-  const safeCandidate = assertStrictDescendant(root, candidate, label);
-  const metadata = await lstat(safeCandidate);
-  if (!metadata.isFile() || metadata.isSymbolicLink()) {
-    throw new Error(`${label} must be a regular file.`);
+  function assertOwnedRegularFile(root, candidate, label) {
+    const safeCandidate = assertStrictDescendant(root, candidate, label);
+    return forkJoin({
+      metadata: defer(() => from(lstat(safeCandidate))),
+      actual: defer(() => from(realpath(safeCandidate))),
+    }).pipe(
+      concatMap(({ metadata, actual }) => {
+        if (!metadata.isFile() || metadata.isSymbolicLink()) {
+          return throwError(() => new Error(`${label} must be a regular file.`));
+        }
+        assertStrictDescendant(root, actual, label);
+        return of(actual);
+      }),
+    );
   }
-  const actual = await realpath(safeCandidate);
-  assertStrictDescendant(root, actual, label);
-  return actual;
-}
 
-async function runCheckedExecutable(
-  path,
-  arguments_,
-  label,
-  environment,
-  timeout,
-) {
-  const child = spawn(path, arguments_, {
-    env: environment,
-    stdio: 'ignore',
-    windowsHide: true,
-  });
-  const completion = new Promise((resolveCompletion) => {
-    child.once('error', (error) => resolveCompletion({ kind: 'error', error }));
-    child.once('exit', (code, signal) =>
-      resolveCompletion({ kind: 'exit', code, signal }),
-    );
-  });
-  let timeoutHandle;
-  const timedOut = new Promise((resolveTimeout) => {
-    timeoutHandle = globalThis.setTimeout(
-      () => resolveTimeout({ kind: 'timeout' }),
-      timeout,
-    );
-    timeoutHandle.unref?.();
-  });
-  const outcome = await Promise.race([completion, timedOut]);
-  globalThis.clearTimeout(timeoutHandle);
+  function childOutcome(child) {
+    return new Observable((subscriber) => {
+      const onError = (error) => subscriber.next({ kind: 'error', error });
+      const onExit = (code, signal) => subscriber.next({ kind: 'exit', code, signal });
+      child.once('error', onError);
+      child.once('exit', onExit);
+      return () => {
+        child.off('error', onError);
+        child.off('exit', onExit);
+      };
+    }).pipe(take(1));
+  }
 
-  if (outcome.kind === 'timeout') {
-    await terminateTrackedProcessTree(child, label);
-    await completion;
-    throw new Error(`${label} timed out after ${timeout} ms.`);
+  function runCheckedExecutable(path, arguments_, label, environment, timeout) {
+    return defer(() => {
+      const child = spawn(path, arguments_, {
+        env: environment,
+        stdio: 'ignore',
+        windowsHide: true,
+      });
+      return race(
+        childOutcome(child),
+        timer(timeout).pipe(map(() => ({ kind: 'timeout' }))),
+      ).pipe(
+        concatMap((outcome) => {
+          if (outcome.kind === 'timeout') {
+            return terminateTrackedProcessTree(child, label).pipe(
+              concatMap(() =>
+                throwError(() => new Error(`${label} timed out after ${timeout} ms.`)),
+              ),
+            );
+          }
+          if (outcome.kind === 'error') {
+            return throwError(() => new Error(`${label} could not run: ${outcome.error.message}`));
+          }
+          if (outcome.code !== 0) {
+            return throwError(
+              () =>
+                new Error(
+                  `${label} exited with status ${String(outcome.code)}${outcome.signal ? ` (${outcome.signal})` : ''}.`,
+                ),
+            );
+          }
+          return of(undefined);
+        }),
+      );
+    });
   }
-  if (outcome.kind === 'error') {
-    throw new Error(`${label} could not run: ${outcome.error.message}`);
-  }
-  if (outcome.code !== 0) {
-    throw new Error(
-      `${label} exited with status ${String(outcome.code)}${outcome.signal ? ` (${outcome.signal})` : ''}.`,
-    );
-  }
-}
+
   return {
     prepareSmokeDirectories,
     safeRemoveTree,

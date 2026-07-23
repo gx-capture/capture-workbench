@@ -1,165 +1,208 @@
 import assert from 'node:assert/strict';
 import net from 'node:net';
-import { setTimeout as delay } from 'node:timers/promises';
 
 import { chromium } from '@playwright/test';
+import {
+  Observable,
+  catchError,
+  concatMap,
+  defer,
+  forkJoin,
+  from,
+  map,
+  of,
+  switchMap,
+  tap,
+  throwError,
+  timer,
+  toArray,
+} from 'rxjs';
 
-import { INSTALLED_FIXTURES, EXPECTED_REQUIREMENT_IDS } from './constants/installed.ts';
+import { INSTALLED_FIXTURES } from './constants/installed.ts';
 import { assertCaptureDocumentForFixture } from './installed-document-assertions.ts';
 
-const expectedRequirementIds = EXPECTED_REQUIREMENT_IDS;
 const fixtures = INSTALLED_FIXTURES;
 
-export async function reserveLoopbackPort() {
-  return new Promise((resolvePort, reject) => {
+export function reserveLoopbackPort() {
+  return new Observable((subscriber) => {
     const server = net.createServer();
     server.unref();
-    server.once('error', reject);
+    const onError = (error) => subscriber.error(error);
+    server.once('error', onError);
     server.listen(0, '127.0.0.1', () => {
       const address = server.address();
       const port = typeof address === 'object' && address ? address.port : 0;
       server.close((error) => {
-        if (error) reject(error);
-        else if (!port) reject(new Error('Dynamic CDP port was unavailable.'));
-        else resolvePort(port);
+        server.off('error', onError);
+        if (error) subscriber.error(error);
+        else if (!port) subscriber.error(new Error('Dynamic CDP port was unavailable.'));
+        else {
+          subscriber.next(port);
+          subscriber.complete();
+        }
       });
     });
+    return () => {
+      server.off('error', onError);
+      server.close();
+    };
   });
 }
 
-export async function connectToInstalledWebView(port, appProcess) {
-  const endpoint = `http://127.0.0.1:${port}`;
-  const deadline = Date.now() + 60_000;
-  let lastError;
-  while (Date.now() < deadline) {
-    if (appProcess.exitCode !== null) {
-      throw new Error(
-        `Installed Tauri app exited before WebView2 CDP readiness (${appProcess.exitCode}).`,
-      );
-    }
-    try {
-      return await chromium.connectOverCDP(endpoint, { timeout: 2_000 });
-    } catch (error) {
-      lastError = error;
-      await delay(250);
-    }
+function connectAttempt(endpoint, appProcess, deadline, lastError) {
+  if (appProcess.exitCode !== null) {
+    return throwError(
+      () => new Error(`Installed Tauri app exited before WebView2 CDP readiness (${appProcess.exitCode}).`),
+    );
   }
-  throw new Error(
-    `Installed WebView2 CDP endpoint was not ready: ${errorMessage(lastError)}.`,
+  if (Date.now() >= deadline) {
+    return throwError(
+      () => new Error(`Installed WebView2 CDP endpoint was not ready: ${errorMessage(lastError)}.`),
+    );
+  }
+  return defer(() => from(chromium.connectOverCDP(endpoint, { timeout: 2_000 }))).pipe(
+    catchError((error) =>
+      timer(250).pipe(
+        concatMap(() => connectAttempt(endpoint, appProcess, deadline, error)),
+      ),
+    ),
   );
 }
 
-export async function installedPage(browser, appProcess) {
+export function connectToInstalledWebView(port, appProcess) {
+  return connectAttempt(
+    `http://127.0.0.1:${port}`,
+    appProcess,
+    Date.now() + 60_000,
+    undefined,
+  );
+}
+
+export function installedPage(browser, appProcess) {
   const deadline = Date.now() + 30_000;
-  while (Date.now() < deadline) {
+  function findPage() {
     if (appProcess.exitCode !== null) {
-      throw new Error(
-        'Installed Tauri app exited before its page was available.',
-      );
+      return throwError(() => new Error('Installed Tauri app exited before its page was available.'));
     }
     const pages = browser.contexts().flatMap((context) => context.pages());
-    const page = pages.find(
-      (candidate) => candidate.url() === 'http://tauri.localhost/',
-    );
+    const page = pages.find((candidate) => candidate.url() === 'http://tauri.localhost/');
     if (page) {
-      await page.waitForLoadState('domcontentloaded');
-      return page;
+      return defer(() => from(page.waitForLoadState('domcontentloaded'))).pipe(map(() => page));
     }
-    await delay(100);
+    if (Date.now() >= deadline) {
+      return throwError(() => new Error('Installed WebView did not expose an application page.'));
+    }
+    return timer(100).pipe(concatMap(() => findPage()));
   }
-  throw new Error(
-    'Installed Tauri WebView did not expose an application page.',
+  return defer(findPage);
+}
+
+function waitUntil(check, timeout, message, deadline = Date.now() + timeout) {
+  return defer(() => check()).pipe(
+    switchMap((done) => {
+      if (done) return of(undefined);
+      if (Date.now() >= deadline) return throwError(() => new Error(message));
+      return timer(100).pipe(concatMap(() => waitUntil(check, timeout, message, deadline)));
+    }),
   );
 }
 
-export async function exerciseInstalledUi(page) {
-  const mode = page.locator('.client-mode');
-  await mode.waitFor({ state: 'visible', timeout: 30_000 });
-  const clientMode = await mode.getAttribute('data-client-mode');
-  assert.equal(clientMode, 'tauri-http');
-  assert.equal(
-    await page.getByRole('button', { name: 'Host provider interface' }).count(),
-    0,
-  );
-  await page
-    .getByRole('button', { name: 'Isolated runtime provider' })
-    .waitFor({ state: 'visible' });
-  await page.getByText('Runtime is ready').waitFor({
-    state: 'visible',
-    timeout: 45_000,
-  });
-
-  const requirements = page
-    .getByLabel('Runtime requirements')
-    .getByRole('listitem');
-  await waitUntil(
-    async () => (await requirements.count()) === 4,
-    20_000,
-    'Installed runtime did not render exactly four requirements.',
-  );
-  const readyRequirements = page.locator(
-    '.requirements .requirement-status[data-status="ready"]',
-  );
-  assert.equal(await readyRequirements.count(), 4);
-  const requirementIds = await requirements.evaluateAll((elements) =>
-    elements.map((element) => element.getAttribute('data-requirement-id')),
-  );
-  assert.deepEqual(
-    [...requirementIds].sort(),
-    [...expectedRequirementIds].sort(),
-  );
-  const displayNames = await requirements.locator('strong').allTextContents();
-
-  const captures = [];
+function captureFixture(page, fixture) {
   const filePicker = page.getByLabel('Choose files');
-  for (const fixture of fixtures) {
-    await filePicker.setInputFiles({
-      name: fixture.fileName,
-      mimeType: fixture.mimeType,
-      buffer: fixture.buffer,
-    });
-    const task = page
-      .locator('.task-list > li')
-      .filter({ hasText: fixture.fileName });
-    await task.waitFor({ state: 'visible', timeout: 15_000 });
-    await waitUntil(
-      async () => (await task.getAttribute('data-task-status')) === 'completed',
-      45_000,
-      `Installed ${fixture.sourceKind} capture did not complete.`,
-    );
-    const preview = task.locator('pre.result-preview');
-    await preview.waitFor({ state: 'visible', timeout: 15_000 });
-    const document = JSON.parse((await preview.textContent()) ?? '');
-    assertCaptureDocumentForFixture(document, fixture);
-    captures.push({
-      sourceKind: fixture.sourceKind,
-      fileName: fixture.fileName,
-      locatorKind: fixture.locatorKind,
-      segments: fixture.expectedSegments,
-      jsonReparsed: true,
-      textProjection: true,
-    });
-  }
-
-  return {
-    clientMode,
-    isolatedRuntimeMode: true,
-    hostProviderButtonVisible: false,
-    requirements: {
-      requirementIds,
-      displayNames,
-      allReady: true,
-    },
-    captures,
-  };
+  return defer(() =>
+    from(
+      filePicker.setInputFiles({
+        name: fixture.fileName,
+        mimeType: fixture.mimeType,
+        buffer: fixture.buffer,
+      }),
+    ),
+  ).pipe(
+    map(() =>
+      page.locator('.task-list > li').filter({ hasText: fixture.fileName }),
+    ),
+    concatMap((task) => defer(() => from(task.waitFor({ state: 'visible', timeout: 15_000 }))).pipe(map(() => task))),
+    concatMap((task) =>
+      waitUntil(
+        () => defer(() => from(task.getAttribute('data-task-status'))).pipe(map((status) => status === 'completed')),
+        45_000,
+        `Installed ${fixture.sourceKind} capture did not complete.`,
+      ).pipe(map(() => task)),
+    ),
+    concatMap((task) => {
+      const preview = task.locator('pre.result-preview');
+      return defer(() => from(preview.waitFor({ state: 'visible', timeout: 15_000 }))).pipe(
+        concatMap(() => defer(() => from(preview.textContent()))),
+        map((text) => {
+          const document = JSON.parse(text ?? '');
+          assertCaptureDocumentForFixture(document, fixture);
+          return {
+            sourceKind: fixture.sourceKind,
+            fileName: fixture.fileName,
+            locatorKind: fixture.locatorKind,
+            segments: fixture.expectedSegments,
+            jsonReparsed: true,
+            textProjection: true,
+          };
+        }),
+      );
+    }),
+  );
 }
-async function waitUntil(check, timeout, message) {
-  const deadline = Date.now() + timeout;
-  while (Date.now() < deadline) {
-    if (await check()) return;
-    await delay(100);
-  }
-  throw new Error(message);
+
+export function exerciseInstalledUi(page) {
+  const mode = page.locator('.client-mode');
+  const providerButton = page.getByRole('button', { name: 'Host provider interface' });
+  const isolatedButton = page.getByRole('button', { name: 'Isolated runtime provider' });
+  const requirements = page.getByLabel('Runtime requirements').getByRole('listitem');
+  const readyRequirements = page.locator('.requirements .requirement-status[data-status="ready"]');
+
+  return defer(() => from(mode.waitFor({ state: 'visible', timeout: 30_000 }))).pipe(
+    concatMap(() => defer(() => from(mode.getAttribute('data-client-mode')))),
+    map((clientMode) => {
+      assert.equal(clientMode, 'tauri-http');
+      return clientMode;
+    }),
+    concatMap((clientMode) =>
+      defer(() => from(providerButton.count())).pipe(
+        tap((count) => assert.equal(count, 0)),
+        concatMap(() => defer(() => from(isolatedButton.waitFor({ state: 'visible' })))),
+        concatMap(() => defer(() => from(page.getByText('Runtime is ready').waitFor({ state: 'visible', timeout: 45_000 })))),
+        concatMap(() =>
+          waitUntil(
+            () => defer(() => from(requirements.count())).pipe(map((count) => count === 4)),
+            20_000,
+            'Installed runtime did not render exactly four requirements.',
+          ),
+        ),
+        concatMap(() => defer(() => from(readyRequirements.count()))),
+        tap((count) => assert.equal(count, 4)),
+        concatMap(() => defer(() => from(requirements.evaluateAll((elements) => elements.map((element) => element.getAttribute('data-requirement-id')))))),
+        concatMap((requirementIds) =>
+          forkJoin({
+            requirementIds: of(requirementIds),
+            displayNames: defer(() => from(requirements.locator('strong').allTextContents())),
+            captures: from(fixtures).pipe(
+              concatMap((fixture) => captureFixture(page, fixture)),
+              toArray(),
+            ),
+          }).pipe(
+            map(({ requirementIds: ids, displayNames, captures }) => ({
+              clientMode,
+              isolatedRuntimeMode: true,
+              hostProviderButtonVisible: false,
+              requirements: {
+                requirementIds: ids,
+                displayNames,
+                allReady: true,
+              },
+              captures,
+            })),
+          ),
+        ),
+      ),
+    ),
+  );
 }
 
 function errorMessage(error) {

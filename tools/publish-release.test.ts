@@ -32,6 +32,19 @@ function npmInspection(version, integrity) {
   ]);
 }
 
+function observe(observable) {
+  return new Promise((resolve, reject) => {
+    let value;
+    observable.subscribe({
+      next: (nextValue) => {
+        value = nextValue;
+      },
+      error: reject,
+      complete: () => resolve(value),
+    });
+  });
+}
+
 test('package publication is idempotent only for exact integrity', () => {
   assert.equal(
     packagePublicationDecision(undefined, 'sha512-local'),
@@ -52,9 +65,9 @@ test('package integrity uses exact tarball bytes', async () => {
   try {
     const path = join(directory, 'package.tgz');
     await writeFile(path, 'first', 'utf8');
-    const first = await sha512Integrity(path);
+    const first = await observe(sha512Integrity(path));
     await writeFile(path, 'second', 'utf8');
-    const second = await sha512Integrity(path);
+    const second = await observe(sha512Integrity(path));
     assert.match(first, /^sha512-[A-Za-z0-9+/]+={0,2}$/u);
     assert.notEqual(first, second);
   } finally {
@@ -67,7 +80,7 @@ test('registry integrity conflict stops before every GitHub release mutation', a
   try {
     const packagePath = join(directory, 'capture-angular-0.1.0.tgz');
     await writeFile(packagePath, 'local package bytes', 'utf8');
-    const localIntegrity = await sha512Integrity(packagePath);
+    const localIntegrity = await observe(sha512Integrity(packagePath));
     const calls = [];
     const runCommand = (command, args) => {
       calls.push([command, ...args]);
@@ -81,7 +94,7 @@ test('registry integrity conflict stops before every GitHub release mutation', a
     };
 
     await assert.rejects(
-      publishRelease(
+      observe(publishRelease(
         {
           tag: 'v0.1.0',
           version: '0.1.0',
@@ -89,7 +102,7 @@ test('registry integrity conflict stops before every GitHub release mutation', a
           packagePath,
         },
         { runCommand },
-      ),
+      )),
       /integrity differs/u,
     );
     assert.equal(
@@ -124,7 +137,7 @@ test('exact existing package and public runtime remain mutation-free on retries'
         writeFile(join(runtimeDirectory, name), `asset:${name}`, 'utf8'),
       ),
     );
-    const localIntegrity = await sha512Integrity(packagePath);
+    const localIntegrity = await observe(sha512Integrity(packagePath));
     const calls = [];
     const runCommand = (command, args) => {
       calls.push([command, ...args]);
@@ -155,8 +168,8 @@ test('exact existing package and public runtime remain mutation-free on retries'
       packagePath,
     };
 
-    await publishRelease(input, { runCommand });
-    await publishRelease(input, { runCommand });
+    await observe(publishRelease(input, { runCommand }));
+    await observe(publishRelease(input, { runCommand }));
 
     assert.equal(
       calls.filter(

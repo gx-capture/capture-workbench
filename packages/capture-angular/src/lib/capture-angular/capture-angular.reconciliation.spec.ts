@@ -4,6 +4,7 @@ import type {
   CaptureJobV1,
   CaptureStructuringProvider,
 } from '../contracts';
+import { of, throwError } from 'rxjs';
 import { CaptureWorkbenchComponent } from './capture-angular';
 import { DOCUMENT, RAW, fakeClient, job, selectFiles } from './capture-angular-test-support';
 
@@ -19,18 +20,16 @@ describe('CaptureWorkbenchComponent', () => {
 
   it('reconciles a rejected failure report to an already completed job', async () => {
     const client = fakeClient({
-      createCapture: vi.fn(async () =>
-        job('running', 'awaiting_structuring', 'host'),
+      createCapture: vi.fn(() =>
+        of(job('running', 'awaiting_structuring', 'host')),
       ),
-      reportStructuringFailure: vi.fn(async () => {
-        throw new Error('report rejected');
-      }),
-      getCapture: vi.fn(async () => job('completed', 'completed', 'host')),
+      reportStructuringFailure: vi.fn(() =>
+        throwError(() => new Error('report rejected')),
+      ),
+      getCapture: vi.fn(() => of(job('completed', 'completed', 'host'))),
     });
     const provider: CaptureStructuringProvider = {
-      structure: vi.fn(async () => {
-        throw new Error('provider failed');
-      }),
+      structure: vi.fn(() => throwError(() => new Error('provider failed'))),
     };
     const completed = vi.fn();
     const failed = vi.fn();
@@ -72,18 +71,16 @@ describe('CaptureWorkbenchComponent', () => {
       },
     };
     const client = fakeClient({
-      createCapture: vi.fn(async () =>
-        job('running', 'awaiting_structuring', 'host'),
+      createCapture: vi.fn(() =>
+        of(job('running', 'awaiting_structuring', 'host')),
       ),
-      reportStructuringFailure: vi.fn(async () => {
-        throw new Error('response was lost');
-      }),
-      getCapture: vi.fn(async () => failedJob),
+      reportStructuringFailure: vi.fn(() =>
+        throwError(() => new Error('response was lost')),
+      ),
+      getCapture: vi.fn(() => of(failedJob)),
     });
     const provider: CaptureStructuringProvider = {
-      structure: vi.fn(async () => {
-        throw new Error('provider failed');
-      }),
+      structure: vi.fn(() => throwError(() => new Error('provider failed'))),
     };
     const completed = vi.fn();
     const failed = vi.fn();
@@ -115,16 +112,16 @@ describe('CaptureWorkbenchComponent', () => {
 
   it('treats a lost commit response as completed after reconciliation', async () => {
     const client = fakeClient({
-      createCapture: vi.fn(async () =>
-        job('running', 'awaiting_structuring', 'host'),
+      createCapture: vi.fn(() =>
+        of(job('running', 'awaiting_structuring', 'host')),
       ),
-      commitStructuredResult: vi.fn(async () => {
-        throw new Error('commit response was lost');
-      }),
-      getCapture: vi.fn(async () => job('completed', 'completed', 'host')),
+      commitStructuredResult: vi.fn(() =>
+        throwError(() => new Error('commit response was lost')),
+      ),
+      getCapture: vi.fn(() => of(job('completed', 'completed', 'host'))),
     });
     const provider: CaptureStructuringProvider = {
-      structure: vi.fn(async () => DOCUMENT),
+      structure: vi.fn(() => of(DOCUMENT)),
     };
     const completed = vi.fn();
     fixture.componentRef.setInput('client', client);
@@ -150,19 +147,19 @@ describe('CaptureWorkbenchComponent', () => {
   it('retries an unresolved commit with the same idempotency key', async () => {
     const commitStructuredResult = vi
       .fn<CaptureClient['commitStructuredResult']>()
-      .mockRejectedValueOnce(new Error('connection reset'))
-      .mockResolvedValueOnce(job('completed', 'completed', 'host'));
+      .mockReturnValueOnce(throwError(() => new Error('connection reset')))
+      .mockReturnValueOnce(of(job('completed', 'completed', 'host')));
     const client = fakeClient({
-      createCapture: vi.fn(async () =>
-        job('running', 'awaiting_structuring', 'host'),
+      createCapture: vi.fn(() =>
+        of(job('running', 'awaiting_structuring', 'host')),
       ),
-      getCapture: vi.fn(async () =>
-        job('running', 'awaiting_structuring', 'host'),
+      getCapture: vi.fn(() =>
+        of(job('running', 'awaiting_structuring', 'host')),
       ),
       commitStructuredResult,
     });
     const provider: CaptureStructuringProvider = {
-      structure: vi.fn(async () => DOCUMENT),
+      structure: vi.fn(() => of(DOCUMENT)),
     };
     fixture.componentRef.setInput('client', client);
     fixture.componentRef.setInput('structuringProvider', provider);
@@ -188,22 +185,20 @@ describe('CaptureWorkbenchComponent', () => {
   it('cancels and confirms an awaiting job when failure reporting cannot complete', async () => {
     const getCapture = vi
       .fn<CaptureClient['getCapture']>()
-      .mockResolvedValueOnce(job('running', 'awaiting_structuring', 'host'))
-      .mockResolvedValueOnce(job('cancelled', 'cancelled', 'host'));
+      .mockReturnValueOnce(of(job('running', 'awaiting_structuring', 'host')))
+      .mockReturnValueOnce(of(job('cancelled', 'cancelled', 'host')));
     const client = fakeClient({
-      createCapture: vi.fn(async () =>
-        job('running', 'awaiting_structuring', 'host'),
+      createCapture: vi.fn(() =>
+        of(job('running', 'awaiting_structuring', 'host')),
       ),
-      reportStructuringFailure: vi.fn(async () => {
-        throw new Error('report unavailable');
-      }),
+      reportStructuringFailure: vi.fn(() =>
+        throwError(() => new Error('report unavailable')),
+      ),
       getCapture,
-      cancelCapture: vi.fn(async () => job('cancelled', 'cancelled', 'host')),
+      cancelCapture: vi.fn(() => of(job('cancelled', 'cancelled', 'host'))),
     });
     const provider: CaptureStructuringProvider = {
-      structure: vi.fn(async () => {
-        throw new Error('provider failed');
-      }),
+      structure: vi.fn(() => throwError(() => new Error('provider failed'))),
     };
     const canceled = vi.fn();
     const failed = vi.fn();
@@ -233,27 +228,21 @@ describe('CaptureWorkbenchComponent', () => {
   });
 
   it('surfaces an unknown reconciliation state without claiming completion', async () => {
-    const getCapture = vi.fn(async () => {
-      throw new Error('runtime unreachable');
-    });
-    const cancelCapture = vi.fn(async () => {
-      throw new Error('runtime unreachable');
-    });
-    const reportStructuringFailure = vi.fn(async () => {
-      throw new Error('runtime unreachable');
-    });
+    const getCapture = vi.fn(() => throwError(() => new Error('runtime unreachable')));
+    const cancelCapture = vi.fn(() => throwError(() => new Error('runtime unreachable')));
+    const reportStructuringFailure = vi.fn(() =>
+      throwError(() => new Error('runtime unreachable')),
+    );
     const client = fakeClient({
-      createCapture: vi.fn(async () =>
-        job('running', 'awaiting_structuring', 'host'),
+      createCapture: vi.fn(() =>
+        of(job('running', 'awaiting_structuring', 'host')),
       ),
       reportStructuringFailure,
       getCapture,
       cancelCapture,
     });
     const structure = vi.fn<CaptureStructuringProvider['structure']>(
-      async () => {
-        throw new Error('provider failed');
-      },
+      () => throwError(() => new Error('provider failed')),
     );
     const provider: CaptureStructuringProvider = { structure };
     const completed = vi.fn();
@@ -293,7 +282,8 @@ describe('CaptureWorkbenchComponent', () => {
       }),
     );
     if (!task) throw new Error('Expected a reconciliation task.');
-    await fixture.componentInstance.remove(task.id);
+    fixture.componentInstance.remove(task.id);
+    await fixture.whenStable();
     expect(client.deleteCapture).not.toHaveBeenCalled();
     expect(fixture.componentInstance.tasks()).toHaveLength(1);
     expect(structure).toHaveBeenCalledOnce();
@@ -308,26 +298,24 @@ describe('CaptureWorkbenchComponent', () => {
   it('reconciles an unknown job to completed without repeating provider work', async () => {
     const getCapture = vi
       .fn<CaptureClient['getCapture']>()
-      .mockRejectedValueOnce(new Error('runtime unreachable'))
-      .mockRejectedValueOnce(new Error('runtime unreachable'))
-      .mockResolvedValueOnce(job('completed', 'completed', 'host'));
+      .mockReturnValueOnce(throwError(() => new Error('runtime unreachable')))
+      .mockReturnValueOnce(throwError(() => new Error('runtime unreachable')))
+      .mockReturnValueOnce(of(job('completed', 'completed', 'host')));
     const cancelCapture = vi
       .fn<CaptureClient['cancelCapture']>()
-      .mockRejectedValueOnce(new Error('runtime unreachable'));
+      .mockReturnValueOnce(throwError(() => new Error('runtime unreachable')));
     const client = fakeClient({
-      createCapture: vi.fn(async () =>
-        job('running', 'awaiting_structuring', 'host'),
+      createCapture: vi.fn(() =>
+        of(job('running', 'awaiting_structuring', 'host')),
       ),
-      reportStructuringFailure: vi.fn(async () => {
-        throw new Error('runtime unreachable');
-      }),
+      reportStructuringFailure: vi.fn(() =>
+        throwError(() => new Error('runtime unreachable')),
+      ),
       getCapture,
       cancelCapture,
     });
-    const structure = vi.fn<CaptureStructuringProvider['structure']>(
-      async () => {
-        throw new Error('provider failed');
-      },
+    const structure = vi.fn<CaptureStructuringProvider['structure']>(() =>
+      throwError(() => new Error('provider failed')),
     );
     const completed = vi.fn();
     const failed = vi.fn();
@@ -350,7 +338,8 @@ describe('CaptureWorkbenchComponent', () => {
     if (!task) throw new Error('Expected a reconciliation task.');
     expect(task.status).toBe('reconciliation_required');
 
-    await fixture.componentInstance.reconcile(task.id);
+    fixture.componentInstance.reconcile(task.id);
+    await fixture.whenStable();
 
     expect(fixture.componentInstance.tasks()[0]?.status).toBe('completed');
     expect(completed).toHaveBeenCalledOnce();
@@ -374,25 +363,23 @@ describe('CaptureWorkbenchComponent', () => {
     };
     const getCapture = vi
       .fn<CaptureClient['getCapture']>()
-      .mockRejectedValueOnce(new Error('runtime unreachable'))
-      .mockRejectedValueOnce(new Error('runtime unreachable'))
-      .mockResolvedValueOnce(failedJob);
+      .mockReturnValueOnce(throwError(() => new Error('runtime unreachable')))
+      .mockReturnValueOnce(throwError(() => new Error('runtime unreachable')))
+      .mockReturnValueOnce(of(failedJob));
     const client = fakeClient({
-      createCapture: vi.fn(async () =>
-        job('running', 'awaiting_structuring', 'host'),
+      createCapture: vi.fn(() =>
+        of(job('running', 'awaiting_structuring', 'host')),
       ),
-      reportStructuringFailure: vi.fn(async () => {
-        throw new Error('runtime unreachable');
-      }),
+      reportStructuringFailure: vi.fn(() =>
+        throwError(() => new Error('runtime unreachable')),
+      ),
       getCapture,
-      cancelCapture: vi.fn(async () => {
-        throw new Error('runtime unreachable');
-      }),
+      cancelCapture: vi.fn(() =>
+        throwError(() => new Error('runtime unreachable')),
+      ),
     });
-    const structure = vi.fn<CaptureStructuringProvider['structure']>(
-      async () => {
-        throw new Error('provider failed');
-      },
+    const structure = vi.fn<CaptureStructuringProvider['structure']>(() =>
+      throwError(() => new Error('provider failed')),
     );
     const completed = vi.fn();
     const failed = vi.fn();
@@ -414,7 +401,8 @@ describe('CaptureWorkbenchComponent', () => {
     const task = fixture.componentInstance.tasks()[0];
     if (!task) throw new Error('Expected a reconciliation task.');
 
-    await fixture.componentInstance.reconcile(task.id);
+    fixture.componentInstance.reconcile(task.id);
+    await fixture.whenStable();
 
     expect(fixture.componentInstance.tasks()[0]).toEqual(
       expect.objectContaining({ status: 'failed', stage: 'failed' }),
@@ -434,27 +422,25 @@ describe('CaptureWorkbenchComponent', () => {
   it('cancels an unknown job and emits canceled only after confirmation', async () => {
     const getCapture = vi
       .fn<CaptureClient['getCapture']>()
-      .mockRejectedValueOnce(new Error('runtime unreachable'))
-      .mockRejectedValueOnce(new Error('runtime unreachable'))
-      .mockResolvedValueOnce(job('cancelled', 'cancelled', 'host'));
+      .mockReturnValueOnce(throwError(() => new Error('runtime unreachable')))
+      .mockReturnValueOnce(throwError(() => new Error('runtime unreachable')))
+      .mockReturnValueOnce(of(job('cancelled', 'cancelled', 'host')));
     const cancelCapture = vi
       .fn<CaptureClient['cancelCapture']>()
-      .mockRejectedValueOnce(new Error('runtime unreachable'))
-      .mockResolvedValueOnce(job('cancelled', 'cancelled', 'host'));
+      .mockReturnValueOnce(throwError(() => new Error('runtime unreachable')))
+      .mockReturnValueOnce(of(job('cancelled', 'cancelled', 'host')));
     const client = fakeClient({
-      createCapture: vi.fn(async () =>
-        job('running', 'awaiting_structuring', 'host'),
+      createCapture: vi.fn(() =>
+        of(job('running', 'awaiting_structuring', 'host')),
       ),
-      reportStructuringFailure: vi.fn(async () => {
-        throw new Error('runtime unreachable');
-      }),
+      reportStructuringFailure: vi.fn(() =>
+        throwError(() => new Error('runtime unreachable')),
+      ),
       getCapture,
       cancelCapture,
     });
-    const structure = vi.fn<CaptureStructuringProvider['structure']>(
-      async () => {
-        throw new Error('provider failed');
-      },
+    const structure = vi.fn<CaptureStructuringProvider['structure']>(() =>
+      throwError(() => new Error('provider failed')),
     );
     const completed = vi.fn();
     const failed = vi.fn();
@@ -478,7 +464,8 @@ describe('CaptureWorkbenchComponent', () => {
     const task = fixture.componentInstance.tasks()[0];
     if (!task) throw new Error('Expected a reconciliation task.');
 
-    await fixture.componentInstance.cancel(task.id);
+    fixture.componentInstance.cancel(task.id);
+    await fixture.whenStable();
 
     expect(fixture.componentInstance.tasks()[0]?.status).toBe('canceled');
     expect(cancelCapture).toHaveBeenCalledTimes(2);

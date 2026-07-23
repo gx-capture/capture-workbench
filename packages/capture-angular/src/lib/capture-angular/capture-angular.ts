@@ -101,18 +101,18 @@ export class CaptureWorkbenchComponent {
   }
 
   /** @deprecated Call the instance-scoped store command instead. */
-  cancel(taskId: string): Promise<void> {
-    return this.store.cancel(taskId);
+  cancel(taskId: string): void {
+    this.store.cancel(taskId);
   }
 
   /** @deprecated Call the instance-scoped store command instead. */
-  reconcile(taskId: string): Promise<void> {
-    return this.store.reconcile(taskId);
+  reconcile(taskId: string): void {
+    this.store.reconcile(taskId);
   }
 
   /** @deprecated Call the instance-scoped store command instead. */
-  remove(taskId: string): Promise<void> {
-    return this.store.remove(taskId);
+  remove(taskId: string): void {
+    this.store.remove(taskId);
   }
 
   /** @deprecated Call the instance-scoped store command instead. */
@@ -121,12 +121,12 @@ export class CaptureWorkbenchComponent {
   }
 
   /** @deprecated Call the instance-scoped store command instead. */
-  installMissingRequirements(): Promise<void> {
-    return this.store.installMissingRequirements();
+  installMissingRequirements(): void {
+    this.store.installMissingRequirements();
   }
 
   /** @deprecated Call the instance-scoped store command instead. */
-  cancelInstallation(): Promise<void> {
-    return this.store.cancelInstallation();
+  cancelInstallation(): void {
+    this.store.cancelInstallation();
   }
 }

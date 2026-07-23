@@ -2,9 +2,9 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import type {
   CaptureClient,
   RuntimeRequirementV1,
-  RuntimeInstallationV1,
   StartRuntimeInstallationRequest,
 } from '../contracts';
+import { of, throwError } from 'rxjs';
 import { CaptureWorkbenchComponent } from './capture-angular';
 import { RAW, READY, fakeClient } from './capture-angular-test-support';
 
@@ -20,9 +20,9 @@ describe('CaptureWorkbenchComponent', () => {
 
   it('starts runtime installation only after explicit user action', async () => {
     const client = fakeClient({
-      getReady: vi.fn(async () => ({ ...READY, ready: false })),
+      getReady: vi.fn(() => of({ ...READY, ready: false })),
       getRequirements: vi.fn(
-        async (): Promise<readonly RuntimeRequirementV1[]> => [
+        (): ReturnType<CaptureClient['getRequirements']> => of([
           {
             requirementId: 'ollama-runtime',
             kind: 'runtime',
@@ -49,20 +49,21 @@ describe('CaptureWorkbenchComponent', () => {
             installStrategy: 'none',
             detail: 'Whisper is unavailable.',
           },
-        ],
+        ]),
       ),
       startInstallation: vi.fn(
-        async (
+        (
           request: StartRuntimeInstallationRequest,
-        ): Promise<RuntimeInstallationV1> => ({
-          installationId: 'install-1',
-          requirementId: request.requirementId,
-          status: 'completed',
-          progress: 1,
-          createdAt: RAW.createdAt,
-          updatedAt: RAW.createdAt,
-          completedAt: RAW.createdAt,
-        }),
+        ): ReturnType<CaptureClient['startInstallation']> =>
+          of({
+            installationId: 'install-1',
+            requirementId: request.requirementId,
+            status: 'completed',
+            progress: 1,
+            createdAt: RAW.createdAt,
+            updatedAt: RAW.createdAt,
+            completedAt: RAW.createdAt,
+          }),
       ),
     });
     fixture.componentRef.setInput('client', client);
@@ -135,13 +136,13 @@ describe('CaptureWorkbenchComponent', () => {
     ];
     const getRequirements = vi
       .fn<CaptureClient['getRequirements']>()
-      .mockResolvedValueOnce(ollamaInstallable)
-      .mockResolvedValueOnce(modelInstallable)
-      .mockResolvedValue(allReady);
+      .mockReturnValueOnce(of(ollamaInstallable))
+      .mockReturnValueOnce(of(modelInstallable))
+      .mockReturnValue(of(allReady));
     const startInstallation = vi
       .fn<CaptureClient['startInstallation']>()
-      .mockRejectedValueOnce(new TypeError('response was lost'))
-      .mockImplementation(async (request) => ({
+      .mockReturnValueOnce(throwError(() => new TypeError('response was lost')))
+      .mockImplementation((request) => of({
         installationId: `install-${request.requirementId}`,
         requirementId: request.requirementId,
         status: 'completed',
@@ -158,7 +159,8 @@ describe('CaptureWorkbenchComponent', () => {
     fixture.detectChanges();
     await fixture.whenStable();
 
-    await fixture.componentInstance.installMissingRequirements();
+    fixture.componentInstance.installMissingRequirements();
+    await fixture.whenStable();
 
     expect(startInstallation).toHaveBeenCalledTimes(3);
     const firstRequest = startInstallation.mock.calls[0]?.[0];
@@ -171,7 +173,7 @@ describe('CaptureWorkbenchComponent', () => {
     expect(modelRequest?.clientRequestId).not.toBe(
       firstRequest?.clientRequestId,
     );
-    expect(getRequirements).toHaveBeenCalledTimes(4);
+    expect(getRequirements).toHaveBeenCalledTimes(3);
     expect(fixture.componentInstance.installation()).toBeNull();
   });
 
@@ -186,11 +188,11 @@ describe('CaptureWorkbenchComponent', () => {
     };
     const startInstallation = vi
       .fn<CaptureClient['startInstallation']>()
-      .mockRejectedValueOnce(
-        new DOMException('The operation was aborted.', 'AbortError'),
+      .mockReturnValueOnce(
+        throwError(() => new DOMException('The operation was aborted.', 'AbortError')),
       );
     const client = fakeClient({
-      getRequirements: vi.fn(async () => [requirement]),
+      getRequirements: vi.fn(() => of([requirement])),
       startInstallation,
     });
     fixture.componentRef.setInput('client', client);
@@ -200,7 +202,8 @@ describe('CaptureWorkbenchComponent', () => {
     fixture.detectChanges();
     await fixture.whenStable();
 
-    await fixture.componentInstance.installMissingRequirements();
+    fixture.componentInstance.installMissingRequirements();
+    await fixture.whenStable();
 
     expect(startInstallation).toHaveBeenCalledOnce();
     expect(client.getInstallation).not.toHaveBeenCalled();

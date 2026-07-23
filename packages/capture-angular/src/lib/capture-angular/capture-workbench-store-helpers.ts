@@ -1,4 +1,5 @@
 import { EffectRef, Injector, effect } from '@angular/core';
+import { catchError, defer, Observable, throwError } from 'rxjs';
 import type { CaptureFailureV1, CaptureJobV1, CaptureTaskView } from '../contracts';
 import { HOST_RECONCILIATION_FAILURE_CODE } from '../constants';
 import type { SettledResource } from '../contracts/workbench';
@@ -98,10 +99,13 @@ export function waitForResourceSettlement(
   resource: SettledResource,
   injector: Injector,
   lifecycleSignal: AbortSignal,
-): Promise<void> {
-  if (lifecycleSignal.aborted) return Promise.resolve();
-
-  return new Promise<void>((resolve) => {
+): Observable<void> {
+  return new Observable<void>((subscriber) => {
+    if (lifecycleSignal.aborted) {
+      subscriber.next();
+      subscriber.complete();
+      return;
+    }
     let settled = false;
     let sawLoading = resource.isLoading();
     const effectRefHolder: { current?: EffectRef } = {};
@@ -110,7 +114,8 @@ export function waitForResourceSettlement(
       settled = true;
       lifecycleSignal.removeEventListener('abort', finish);
       effectRefHolder.current?.destroy();
-      resolve();
+      subscriber.next();
+      subscriber.complete();
     };
 
     lifecycleSignal.addEventListener('abort', finish, { once: true });
@@ -125,20 +130,26 @@ export function waitForResourceSettlement(
       { injector },
     );
     effectRefHolder.current = effectRef;
+
+    return () => {
+      lifecycleSignal.removeEventListener('abort', finish);
+      effectRefHolder.current?.destroy();
+    };
   });
 }
 
-export async function retryUncertainResponse<T>(
-  operation: () => Promise<T>,
+export function retryUncertainResponse<T>(
+  operation: () => Observable<T>,
   signal: AbortSignal,
-): Promise<T> {
-  try {
-    return await operation();
-  } catch (error: unknown) {
-    throwIfAborted(signal);
-    if (!isUncertainResponseFailure(error)) throw error;
-    return operation();
-  }
+): Observable<T> {
+  return defer(operation).pipe(
+    catchError((error: unknown) => {
+      throwIfAborted(signal);
+      return isUncertainResponseFailure(error)
+        ? defer(operation)
+        : throwError(() => error);
+    }),
+  );
 }
 
 export function isUncertainResponseFailure(error: unknown): boolean {

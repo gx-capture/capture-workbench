@@ -1,6 +1,20 @@
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import http from 'node:http';
+import {
+  Observable,
+  catchError,
+  concatMap,
+  defaultIfEmpty,
+  filter,
+  map,
+  of,
+  take,
+  takeWhile,
+  tap,
+  throwError,
+  timer,
+} from 'rxjs';
 
 import {
   DETERMINISTIC_FIXTURES,
@@ -12,115 +26,109 @@ const maxUploadBytes = DETERMINISTIC_MAX_UPLOAD_BYTES;
 const schemaVersion = DETERMINISTIC_SCHEMA_VERSION;
 const fixtures = DETERMINISTIC_FIXTURES;
 
-export async function verifyRequestPolicy(context) {
-  const unauthorized = await requestJson({
-    ...context,
-    token: undefined,
-  });
-  assertApiError(unauthorized, 401, 'unauthorized');
-  assert.equal(unauthorized.headers['www-authenticate'], 'Bearer');
-
-  const rejectedOrigin = await requestJson({
-    ...context,
-    origin: 'https://untrusted.invalid',
-  });
-  assertApiError(rejectedOrigin, 403, 'origin_not_allowed');
-  assert.equal(rejectedOrigin.headers['access-control-allow-origin'], undefined);
-
-  const rejectedHostName = await requestJson({
-    ...context,
-    host: `localhost:${context.runtimePort}`,
-  });
-  assertApiError(rejectedHostName, 400, 'invalid_host');
-
-  const rejectedHostPort = await requestJson({
-    ...context,
-    host: `127.0.0.1:${differentPort(context.runtimePort)}`,
-  });
-  assertApiError(rejectedHostPort, 400, 'invalid_host');
-
-  const preflight = await requestJson({
-    ...context,
-    token: undefined,
-    method: 'OPTIONS',
-    headers: {
-      'access-control-request-method': 'POST',
-      'access-control-request-headers':
-        'authorization,content-type,x-idempotency-key',
-    },
-  });
-  assert.equal(preflight.status, 200);
-  assert.equal(preflight.headers['access-control-allow-origin'], context.origin);
-  assert.match(preflight.headers['access-control-allow-methods'], /DELETE/u);
-  assert.match(
-    preflight.headers['access-control-allow-headers'],
-    /X-Idempotency-Key/u,
+export function verifyRequestPolicy(context) {
+  return requestJson({ ...context, token: undefined }).pipe(
+    tap((unauthorized) => {
+      assertApiError(unauthorized, 401, 'unauthorized');
+      assert.equal(unauthorized.headers['www-authenticate'], 'Bearer');
+    }),
+    concatMap((unauthorized) =>
+      requestJson({ ...context, origin: 'https://untrusted.invalid' }).pipe(
+        tap((rejectedOrigin) => {
+          assertApiError(rejectedOrigin, 403, 'origin_not_allowed');
+          assert.equal(rejectedOrigin.headers['access-control-allow-origin'], undefined);
+        }),
+        concatMap((rejectedOrigin) =>
+          requestJson({ ...context, host: `localhost:${context.runtimePort}` }).pipe(
+            tap((rejectedHostName) => assertApiError(rejectedHostName, 400, 'invalid_host')),
+            concatMap((rejectedHostName) =>
+              requestJson({
+                ...context,
+                host: `127.0.0.1:${differentPort(context.runtimePort)}`,
+              }).pipe(
+                tap((rejectedHostPort) => assertApiError(rejectedHostPort, 400, 'invalid_host')),
+                concatMap((rejectedHostPort) =>
+                  requestJson({
+                    ...context,
+                    token: undefined,
+                    method: 'OPTIONS',
+                    headers: {
+                      'access-control-request-method': 'POST',
+                      'access-control-request-headers':
+                        'authorization,content-type,x-idempotency-key',
+                    },
+                  }).pipe(
+                    map((preflight) => {
+                      assert.equal(preflight.status, 200);
+                      assert.equal(preflight.headers['access-control-allow-origin'], context.origin);
+                      assert.match(preflight.headers['access-control-allow-methods'], /DELETE/u);
+                      assert.match(preflight.headers['access-control-allow-headers'], /X-Idempotency-Key/u);
+                      return {
+                        unauthorized: unauthorized.status,
+                        originRejected: rejectedOrigin.status,
+                        hostNameRejected: rejectedHostName.status,
+                        wrongAuthorityPortRejected: rejectedHostPort.status,
+                        preflight: preflight.status,
+                      };
+                    }),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
   );
-
-  return {
-    unauthorized: unauthorized.status,
-    originRejected: rejectedOrigin.status,
-    hostNameRejected: rejectedHostName.status,
-    wrongAuthorityPortRejected: rejectedHostPort.status,
-    preflight: preflight.status,
-  };
 }
 
-export async function verifyRequirements(context) {
-  const requirements = await requestJson({
-    ...context,
-    path: '/v1/runtime/requirements',
-  });
-  assert.equal(requirements.status, 200);
-  const requirementIds = requirements.body.items.map(
-    (item) => item.requirementId,
+export function verifyRequirements(context) {
+  return requestJson({ ...context, path: '/v1/runtime/requirements' }).pipe(
+    concatMap((requirements) => {
+      assert.equal(requirements.status, 200);
+      const requirementIds = requirements.body.items.map((item) => item.requirementId);
+      assert.deepEqual(requirementIds, [
+        'windowsml-ocr',
+        'whisper-primary',
+        'ollama-runtime',
+        'capture-ollama-model',
+      ]);
+      const installationKey = randomUUID();
+      const installationPayload = JSON.stringify({ requirementId: 'whisper-primary', consent: true });
+      return requestJson({
+        ...context,
+        method: 'POST',
+        path: '/v1/runtime/installations',
+        headers: { 'content-type': 'application/json', 'x-idempotency-key': installationKey },
+        body: installationPayload,
+      }).pipe(
+        concatMap((installation) => {
+          assert.equal(installation.status, 202);
+          assert.equal(installation.body.requirementId, 'whisper-primary');
+          assert.equal(typeof installation.body.installationId, 'string');
+          assertJobTimestamps(installation.body);
+          return requestJson({
+            ...context,
+            method: 'POST',
+            path: '/v1/runtime/installations',
+            headers: { 'content-type': 'application/json', 'x-idempotency-key': installationKey },
+            body: installationPayload,
+          }).pipe(
+            map((repeated) => {
+              assert.equal(repeated.body.installationId, installation.body.installationId);
+              return { requirementIds, installationIdempotency: true };
+            }),
+          );
+        }),
+      );
+    }),
   );
-  assert.deepEqual(requirementIds, [
-    'windowsml-ocr',
-    'whisper-primary',
-    'ollama-runtime',
-    'capture-ollama-model',
-  ]);
-
-  const installationKey = randomUUID();
-  const installationPayload = JSON.stringify({
-    requirementId: 'whisper-primary',
-    consent: true,
-  });
-  const installation = await requestJson({
-    ...context,
-    method: 'POST',
-    path: '/v1/runtime/installations',
-    headers: {
-      'content-type': 'application/json',
-      'x-idempotency-key': installationKey,
-    },
-    body: installationPayload,
-  });
-  assert.equal(installation.status, 202);
-  assert.equal(installation.body.requirementId, 'whisper-primary');
-  assert.equal(typeof installation.body.installationId, 'string');
-  assertJobTimestamps(installation.body);
-
-  const repeated = await requestJson({
-    ...context,
-    method: 'POST',
-    path: '/v1/runtime/installations',
-    headers: {
-      'content-type': 'application/json',
-      'x-idempotency-key': installationKey,
-    },
-    body: installationPayload,
-  });
-  assert.equal(repeated.body.installationId, installation.body.installationId);
-
-  return { requirementIds, installationIdempotency: true };
 }
 
-export async function verifyRuntimeCapture(context, fixture) {
+export function verifyRuntimeCapture(context, fixture) {
   const idempotencyKey = randomUUID();
   const request = captureRequest(fixture, 'runtime', 'zh-TW');
-  const created = await requestJson({
+  return requestJson({
     ...context,
     method: 'POST',
     path: '/v1/captures',
@@ -129,160 +137,129 @@ export async function verifyRuntimeCapture(context, fixture) {
       'x-idempotency-key': idempotencyKey,
     },
     body: request.body,
-  });
-  validateJob(created, 202, {
-    status: 'completed',
-    stage: 'completed',
-    mode: 'runtime',
-  });
-  const captureId = created.body.captureId;
-
-  const repeated = await requestJson({
-    ...context,
-    method: 'POST',
-    path: '/v1/captures',
-    headers: {
-      'content-type': request.contentType,
-      'x-idempotency-key': idempotencyKey,
-    },
-    body: request.body,
-  });
-  assert.equal(repeated.status, 202);
-  assert.equal(repeated.body.captureId, captureId);
-
-  const changed = captureRequest(
-    { ...fixture, content: Buffer.concat([fixture.content, Buffer.from('changed')]) },
-    'runtime',
-    'zh-TW',
-  );
-  const conflict = await requestJson({
-    ...context,
-    method: 'POST',
-    path: '/v1/captures',
-    headers: {
-      'content-type': changed.contentType,
-      'x-idempotency-key': idempotencyKey,
-    },
-    body: changed.body,
-  });
-  assertApiError(conflict, 409, 'idempotency_conflict');
-
-  const status = await requestJson({
-    ...context,
-    path: `/v1/captures/${captureId}`,
-  });
-  validateJob(status, 200, {
-    status: 'completed',
-    stage: 'completed',
-    mode: 'runtime',
-  });
-
-  const raw = await requestJson({
-    ...context,
-    path: `/v1/captures/${captureId}/raw`,
-  });
-  validateRaw(fixture, raw);
-  const result = await requestJson({
-    ...context,
-    path: `/v1/captures/${captureId}/result`,
-  });
-  validateResult(fixture, raw.body, result, 'zh-TW');
-
-  return {
-    fileName: fixture.fileName,
-    captureId,
-    locatorKind: result.body.blocks[0].locator.kind,
-    segments: result.body.rawSegments.length,
-    jsonReparsed: JSON.parse(JSON.stringify(result.body)).schemaVersion === '1',
-    textProjection: result.body.targetText ===
-      result.body.blocks.map((block) => block.targetText).join('\n'),
-    idempotency: true,
-  };
-}
-
-export async function verifyHostStructuring(context, fixture) {
-  const awaiting = await createHostCapture(context, fixture);
-  const captureId = awaiting.body.captureId;
-  const unavailable = await requestJson({
-    ...context,
-    path: `/v1/captures/${captureId}/result`,
-  });
-  assertApiError(unavailable, 409, 'result_unavailable');
-  const raw = await requestJson({
-    ...context,
-    path: `/v1/captures/${captureId}/raw`,
-  });
-  validateRaw(fixture, raw);
-
-  const candidate = hostCandidate(raw.body);
-  const structured = await requestJson({
-    ...context,
-    method: 'POST',
-    path: `/v1/captures/${captureId}/structure`,
-    headers: {
-      'content-type': 'application/json',
-      'x-idempotency-key': randomUUID(),
-    },
-    body: JSON.stringify(candidate),
-  });
-  validateJob(structured, 200, {
-    status: 'completed',
-    stage: 'completed',
-    mode: 'host',
-  });
-  const result = await requestJson({
-    ...context,
-    path: `/v1/captures/${captureId}/result`,
-  });
-  assert.equal(result.status, 200);
-  assert.deepEqual(result.body, candidate);
-
-  const failedCapture = await createHostCapture(context, fixtures[0]);
-  const failedId = failedCapture.body.captureId;
-  const failed = await requestJson({
-    ...context,
-    method: 'POST',
-    path: `/v1/captures/${failedId}/structuring-failure`,
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      code: 'invalid_provider_json',
-      message: 'Provider returned invalid JSON.',
+  }).pipe(
+    concatMap((created) => {
+      validateJob(created, 202, { status: 'completed', stage: 'completed', mode: 'runtime' });
+      const captureId = created.body.captureId;
+      return requestJson({
+        ...context,
+        method: 'POST',
+        path: '/v1/captures',
+        headers: { 'content-type': request.contentType, 'x-idempotency-key': idempotencyKey },
+        body: request.body,
+      }).pipe(
+        tap((repeated) => {
+          assert.equal(repeated.status, 202);
+          assert.equal(repeated.body.captureId, captureId);
+        }),
+        concatMap(() => {
+          const changed = captureRequest(
+            { ...fixture, content: Buffer.concat([fixture.content, Buffer.from('changed')]) },
+            'runtime',
+            'zh-TW',
+          );
+          return requestJson({
+            ...context,
+            method: 'POST',
+            path: '/v1/captures',
+            headers: { 'content-type': changed.contentType, 'x-idempotency-key': idempotencyKey },
+            body: changed.body,
+          }).pipe(
+            tap((conflict) => assertApiError(conflict, 409, 'idempotency_conflict')),
+            concatMap(() => requestJson({ ...context, path: `/v1/captures/${captureId}` })),
+            tap((status) => validateJob(status, 200, { status: 'completed', stage: 'completed', mode: 'runtime' })),
+            concatMap(() => requestJson({ ...context, path: `/v1/captures/${captureId}/raw` })),
+            tap((raw) => validateRaw(fixture, raw)),
+            concatMap((raw) =>
+              requestJson({ ...context, path: `/v1/captures/${captureId}/result` }).pipe(
+                map((result) => {
+                  validateResult(fixture, raw.body, result, 'zh-TW');
+                  return {
+                    fileName: fixture.fileName,
+                    captureId,
+                    locatorKind: result.body.blocks[0].locator.kind,
+                    segments: result.body.rawSegments.length,
+                    jsonReparsed: JSON.parse(JSON.stringify(result.body)).schemaVersion === '1',
+                    textProjection: result.body.targetText === result.body.blocks.map((block) => block.targetText).join('\n'),
+                    idempotency: true,
+                  };
+                }),
+              ),
+            ),
+          );
+        }),
+      );
     }),
-  });
-  validateJob(failed, 200, {
-    status: 'failed',
-    stage: 'failed',
-    mode: 'host',
-  });
-  assert.deepEqual(failed.body.error, {
-    code: 'invalid_provider_json',
-    message: 'Provider returned invalid JSON.',
-    stage: 'structuring',
-    retryable: false,
-  });
-  const failedResult = await requestJson({
-    ...context,
-    path: `/v1/captures/${failedId}/result`,
-  });
-  assertApiError(failedResult, 409, 'result_unavailable');
-  const diagnostic = await requestJson({
-    ...context,
-    path: `/v1/captures/${failedId}/raw`,
-  });
-  assert.equal(diagnostic.status, 200);
-  assert.equal(diagnostic.body.diagnosticOnly, true);
-
-  return {
-    completedCaptureId: captureId,
-    failedCaptureId: failedId,
-    unavailableResultEnvelope: true,
-    diagnosticRawAfterFailure: true,
-  };
+  );
 }
 
-async function createHostCapture(context, fixture) {
+export function verifyHostStructuring(context, fixture) {
+  return createHostCapture(context, fixture).pipe(
+    concatMap((awaiting) => {
+      const captureId = awaiting.body.captureId;
+      return requestJson({ ...context, path: `/v1/captures/${captureId}/result` }).pipe(
+        tap((unavailable) => assertApiError(unavailable, 409, 'result_unavailable')),
+        concatMap(() => requestJson({ ...context, path: `/v1/captures/${captureId}/raw` })),
+        tap((raw) => validateRaw(fixture, raw)),
+        concatMap((raw) => {
+          const candidate = hostCandidate(raw.body);
+          return requestJson({
+            ...context,
+            method: 'POST',
+            path: `/v1/captures/${captureId}/structure`,
+            headers: { 'content-type': 'application/json', 'x-idempotency-key': randomUUID() },
+            body: JSON.stringify(candidate),
+          }).pipe(
+            tap((structured) => validateJob(structured, 200, { status: 'completed', stage: 'completed', mode: 'host' })),
+            concatMap(() => requestJson({ ...context, path: `/v1/captures/${captureId}/result` })),
+            tap((result) => {
+              assert.equal(result.status, 200);
+              assert.deepEqual(result.body, candidate);
+            }),
+            concatMap(() => createHostCapture(context, fixtures[0])),
+            concatMap((failedCapture) => {
+              const failedId = failedCapture.body.captureId;
+              return requestJson({
+                ...context,
+                method: 'POST',
+                path: `/v1/captures/${failedId}/structuring-failure`,
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ code: 'invalid_provider_json', message: 'Provider returned invalid JSON.' }),
+              }).pipe(
+                tap((failed) => {
+                  validateJob(failed, 200, { status: 'failed', stage: 'failed', mode: 'host' });
+                  assert.deepEqual(failed.body.error, {
+                    code: 'invalid_provider_json',
+                    message: 'Provider returned invalid JSON.',
+                    stage: 'structuring',
+                    retryable: false,
+                  });
+                }),
+                concatMap(() => requestJson({ ...context, path: `/v1/captures/${failedId}/result` })),
+                tap((failedResult) => assertApiError(failedResult, 409, 'result_unavailable')),
+                concatMap(() => requestJson({ ...context, path: `/v1/captures/${failedId}/raw` })),
+                map((diagnostic) => {
+                  assert.equal(diagnostic.status, 200);
+                  assert.equal(diagnostic.body.diagnosticOnly, true);
+                  return {
+                    completedCaptureId: captureId,
+                    failedCaptureId: failedId,
+                    unavailableResultEnvelope: true,
+                    diagnosticRawAfterFailure: true,
+                  };
+                }),
+              );
+            }),
+          );
+        }),
+      );
+    }),
+  );
+}
+
+function createHostCapture(context, fixture) {
   const request = captureRequest(fixture, 'host');
-  const response = await requestJson({
+  return requestJson({
     ...context,
     method: 'POST',
     path: '/v1/captures',
@@ -291,13 +268,15 @@ async function createHostCapture(context, fixture) {
       'x-idempotency-key': randomUUID(),
     },
     body: request.body,
-  });
-  validateJob(response, 202, {
-    status: 'running',
-    stage: 'awaiting_structuring',
-    mode: 'host',
-  });
-  return response;
+  }).pipe(
+    tap((response) =>
+      validateJob(response, 202, {
+        status: 'running',
+        stage: 'awaiting_structuring',
+        mode: 'host',
+      }),
+    ),
+  );
 }
 
 export function validateReady(response) {
@@ -487,21 +466,28 @@ function assertJobTimestamps(job) {
   }
 }
 
-export async function waitForReady(context) {
+export function waitForReady(context) {
   const deadline = Date.now() + 10_000;
-  while (Date.now() < deadline) {
-    if (context.child.exitCode !== null) {
-      throw new Error('Deterministic runtime exited before readiness.');
-    }
-    const response = await requestJson(context).catch(() => undefined);
-    if (response?.status === 200 && response.body?.ready === true) {
-      return response;
-    }
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
-  }
-  throw new Error('Deterministic runtime readiness timed out.');
+  return timer(0, 50).pipe(
+    takeWhile(() => Date.now() < deadline),
+    concatMap(() => {
+      if (context.child.exitCode !== null) {
+        return throwError(() => new Error('Deterministic runtime exited before readiness.'));
+      }
+      return requestJson(context).pipe(catchError(() => of(undefined)));
+    }),
+    filter((response) => response?.status === 200 && response.body?.ready === true),
+    take(1),
+    defaultIfEmpty(undefined),
+    concatMap((response) =>
+      response
+        ? of(response)
+        : throwError(() => new Error('Deterministic runtime readiness timed out.')),
+    ),
+  );
 }
 
+// Native HTTP JSON is the deliberate Node boundary; domain callers validate each response.
 function requestJson({
   runtimePort,
   host,
@@ -511,9 +497,9 @@ function requestJson({
   path = '/v1/health/ready',
   headers = {},
   body = Buffer.alloc(0),
-}) {
+}): Observable<{ status: number; headers: http.IncomingHttpHeaders; body: any }> { // eslint-disable-line @typescript-eslint/no-explicit-any
   const payload = Buffer.isBuffer(body) ? body : Buffer.from(body, 'utf8');
-  return new Promise((resolvePromise, reject) => {
+  return new Observable((subscriber) => {
     const request = http.request(
       {
         hostname: '127.0.0.1',
@@ -535,19 +521,21 @@ function requestJson({
         response.on('end', () => {
           try {
             const text = Buffer.concat(chunks).toString('utf8');
-            resolvePromise({
+            subscriber.next({
               status: response.statusCode,
               headers: response.headers,
               body: text ? JSON.parse(text) : {},
             });
+            subscriber.complete();
           } catch (error) {
-            reject(error);
+            subscriber.error(error);
           }
         });
       },
     );
-    request.on('error', reject);
+    request.on('error', (error) => subscriber.error(error));
     request.end(payload);
+    return () => request.destroy();
   });
 }
 

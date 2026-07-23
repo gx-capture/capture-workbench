@@ -20,8 +20,18 @@ Then install an exact synchronized version:
 
 ```powershell
 $env:GITHUB_PACKAGES_TOKEN = '<read:packages token>'
-corepack pnpm add @gx/capture-angular@0.1.0 --save-exact
+corepack pnpm add @gx/capture-angular@0.2.0 --save-exact
 ```
+
+## v0.2.0 breaking async contract
+
+All public asynchronous client, provider, preprocessor, and reconciliation
+context methods return cold `Observable<T>` values. Compose them with RxJS and
+subscribe at the application boundary; no Promise compatibility adapter is
+provided. Angular runtime state is exposed through signals backed by
+`rxResource`, while UI commands such as `refreshRuntime()` remain `void` and
+publish their result through signals/events. `defineCaptureWorkbenchElement()`
+also returns an `Observable<void>` and should be subscribed during startup.
 
 Successful output is always the runtime-validated `CaptureDocumentV1`. A
 structuring failure may expose `RawCaptureV1` with `diagnosticOnly: true`, but
@@ -60,17 +70,18 @@ token to its trusted WebView process:
 ```ts
 import { invoke } from '@tauri-apps/api/core';
 import { provideHttpCaptureClient } from '@gx/capture-angular';
+import { from, map } from 'rxjs';
 
-const backendConfig = invoke<{
+const backendConfig$ = from(invoke<{
   baseUrl: string;
   token: string;
-}>('backend_config');
+}>('backend_config'));
 
 bootstrapApplication(App, {
   providers: [
     provideHttpCaptureClient({
-      baseUrl: async () => (await backendConfig).baseUrl,
-      bearerToken: async () => (await backendConfig).token,
+      baseUrl: () => backendConfig$.pipe(map(({ baseUrl }) => baseUrl)),
+      bearerToken: () => backendConfig$.pipe(map(({ token }) => token)),
     }),
   ],
 });
@@ -88,15 +99,16 @@ model. A host that already owns an Ollama or another LLM provider can select
 
 ```ts
 import { provideCaptureStructuringProvider, type CaptureStructuringProvider } from '@gx/capture-angular';
+import { defer } from 'rxjs';
 
 const provider: CaptureStructuringProvider = {
-  async structure({ raw, documentContract, signal, reportProgress }) {
-    return hostBackend.structureCapture(raw, {
+  structure({ raw, documentContract, signal, reportProgress }) {
+    return defer(() => hostBackend.structureCapture(raw, {
       schemaVersion: documentContract.schemaVersion,
       jsonSchema: documentContract.jsonSchema,
       signal,
       reportProgress,
-    });
+    }));
   },
 };
 
@@ -149,7 +161,9 @@ import {
   type CaptureWorkbenchElement,
 } from '@gx/capture-angular';
 
-await defineCaptureWorkbenchElement();
+defineCaptureWorkbenchElement().subscribe({
+  error: (error) => console.error('Capture element registration failed.', error),
+});
 const capture = document.querySelector(
   'capture-workbench',
 ) as CaptureWorkbenchElement;

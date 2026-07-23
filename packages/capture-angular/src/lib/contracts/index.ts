@@ -1,4 +1,5 @@
 import { InjectionToken, type Provider } from '@angular/core';
+import type { Observable } from 'rxjs';
 
 export const CAPTURE_API_VERSION = '1.0' as const;
 export const CAPTURE_DOCUMENT_SCHEMA_VERSION = '1' as const;
@@ -235,41 +236,41 @@ export interface ReportStructuringFailureRequest {
 }
 
 export interface CaptureClient {
-  getReady(signal?: AbortSignal): Promise<RuntimeReadyV1>;
+  getReady(signal?: AbortSignal): Observable<RuntimeReadyV1>;
   getRequirements(
     signal?: AbortSignal,
-  ): Promise<readonly RuntimeRequirementV1[]>;
+  ): Observable<readonly RuntimeRequirementV1[]>;
   startInstallation(
     request: StartRuntimeInstallationRequest,
     signal?: AbortSignal,
-  ): Promise<RuntimeInstallationV1>;
+  ): Observable<RuntimeInstallationV1>;
   listInstallations(
     signal?: AbortSignal,
-  ): Promise<readonly RuntimeInstallationV1[]>;
+  ): Observable<readonly RuntimeInstallationV1[]>;
   getInstallation(
     id: string,
     signal?: AbortSignal,
-  ): Promise<RuntimeInstallationV1>;
+  ): Observable<RuntimeInstallationV1>;
   cancelInstallation(
     id: string,
     signal?: AbortSignal,
-  ): Promise<RuntimeInstallationV1>;
-  createCapture(request: CreateCaptureRequest): Promise<CaptureJobV1>;
-  getCapture(id: string, signal?: AbortSignal): Promise<CaptureJobV1>;
-  cancelCapture(id: string, signal?: AbortSignal): Promise<CaptureJobV1>;
-  getRaw(id: string, signal?: AbortSignal): Promise<RawCaptureV1>;
-  getResult(id: string, signal?: AbortSignal): Promise<CaptureDocumentV1>;
+  ): Observable<RuntimeInstallationV1>;
+  createCapture(request: CreateCaptureRequest): Observable<CaptureJobV1>;
+  getCapture(id: string, signal?: AbortSignal): Observable<CaptureJobV1>;
+  cancelCapture(id: string, signal?: AbortSignal): Observable<CaptureJobV1>;
+  getRaw(id: string, signal?: AbortSignal): Observable<RawCaptureV1>;
+  getResult(id: string, signal?: AbortSignal): Observable<CaptureDocumentV1>;
   commitStructuredResult(
     id: string,
     request: CommitStructuredResultRequest,
     signal?: AbortSignal,
-  ): Promise<CaptureJobV1>;
+  ): Observable<CaptureJobV1>;
   reportStructuringFailure(
     id: string,
     request: ReportStructuringFailureRequest,
     signal?: AbortSignal,
-  ): Promise<CaptureJobV1>;
-  deleteCapture(id: string, signal?: AbortSignal): Promise<void>;
+  ): Observable<CaptureJobV1>;
+  deleteCapture(id: string, signal?: AbortSignal): Observable<void>;
 }
 
 export interface CaptureStructuringRequest {
@@ -295,7 +296,7 @@ export interface CaptureDocumentContractV1 {
 export interface CaptureStructuringProvider {
   structure(
     request: CaptureStructuringRequest,
-  ): Promise<CaptureStructuringCandidateV1>;
+  ): Observable<CaptureStructuringCandidateV1>;
 }
 
 export interface CapturePreprocessRequest {
@@ -305,7 +306,7 @@ export interface CapturePreprocessRequest {
 }
 
 export interface CapturePreprocessor {
-  preprocess(request: CapturePreprocessRequest): Promise<File>;
+  preprocess(request: CapturePreprocessRequest): Observable<File>;
 }
 
 export interface CaptureWorkbenchLabels {

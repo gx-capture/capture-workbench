@@ -1,4 +1,5 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { of, throwError } from 'rxjs';
 import { CaptureWorkbenchComponent } from './capture-angular';
 import { READY, fakeClient } from './capture-angular-test-support';
 
@@ -57,7 +58,7 @@ describe('CaptureWorkbenchComponent', () => {
 
   it('maps resource compatibility failures to the incompatible runtime state', async () => {
     const client = fakeClient({
-      getReady: vi.fn(async () => ({ ...READY, runtimeVersion: '1.0.0' })),
+      getReady: vi.fn(() => of({ ...READY, runtimeVersion: '1.0.0' })),
     });
     fixture.componentRef.setInput('client', client);
     fixture.detectChanges();
@@ -71,9 +72,9 @@ describe('CaptureWorkbenchComponent', () => {
 
   it('maps resource handshake failures to the runtime error state', async () => {
     const client = fakeClient({
-      getRequirements: vi.fn(async () => {
-        throw new Error('runtime probe failed');
-      }),
+      getRequirements: vi.fn(() =>
+        throwError(() => new Error('runtime probe failed')),
+      ),
     });
     fixture.componentRef.setInput('client', client);
     fixture.detectChanges();

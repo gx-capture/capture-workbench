@@ -2,6 +2,7 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import type {
   CaptureStructuringProvider,
 } from '../contracts';
+import { of, throwError } from 'rxjs';
 import { CaptureWorkbenchComponent } from './capture-angular';
 import { DOCUMENT, RAW, fakeClient, job, selectFiles } from './capture-angular-test-support';
 
@@ -17,14 +18,13 @@ describe('CaptureWorkbenchComponent', () => {
 
   it('reports host structuring failure with raw diagnostics and never completes', async () => {
     const client = fakeClient({
-      createCapture: vi.fn(async () =>
-        job('running', 'awaiting_structuring', 'host'),
+      createCapture: vi.fn(() =>
+        of(job('running', 'awaiting_structuring', 'host')),
       ),
     });
     const structure = vi.fn<CaptureStructuringProvider['structure']>(
-      async () => {
-        throw { code: 'NOT VALID!', message: 'provider returned invalid JSON' };
-      },
+      () =>
+        throwError(() => ({ code: 'NOT VALID!', message: 'provider returned invalid JSON' })),
     );
     const provider: CaptureStructuringProvider = { structure };
     const completed = vi.fn();
@@ -75,13 +75,13 @@ describe('CaptureWorkbenchComponent', () => {
   it('isolates saved raw evidence from component-owned provider mutation', async () => {
     const raw = structuredClone(RAW);
     const client = fakeClient({
-      createCapture: vi.fn(async () =>
-        job('running', 'awaiting_structuring', 'host'),
+      createCapture: vi.fn(() =>
+        of(job('running', 'awaiting_structuring', 'host')),
       ),
-      getRaw: vi.fn(async () => raw),
+      getRaw: vi.fn(() => of(raw)),
     });
     const structure = vi.fn<CaptureStructuringProvider['structure']>(
-      async (request) => {
+      (request) => {
         expect(request.raw).not.toBe(raw);
         expect(Object.isFrozen(request.raw)).toBe(true);
         expect(Object.isFrozen(request.raw.source)).toBe(true);
@@ -98,7 +98,7 @@ describe('CaptureWorkbenchComponent', () => {
             }
           ).page = 99;
         }).toThrow(TypeError);
-        return DOCUMENT;
+        return of(DOCUMENT);
       },
     );
     const completed = vi.fn();
@@ -126,10 +126,10 @@ describe('CaptureWorkbenchComponent', () => {
 
   it('lets a trusted host client own structuring without a browser provider', async () => {
     const client = fakeClient({
-      createCapture: vi.fn(async () =>
-        job('running', 'awaiting_structuring', 'host'),
+      createCapture: vi.fn(() =>
+        of(job('running', 'awaiting_structuring', 'host')),
       ),
-      getCapture: vi.fn(async () => job('completed', 'completed', 'host')),
+      getCapture: vi.fn(() => of(job('completed', 'completed', 'host'))),
     });
     const completed = vi.fn();
     fixture.componentRef.setInput('client', client);

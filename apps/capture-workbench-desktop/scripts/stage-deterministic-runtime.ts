@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { concatMap, defer, from, map, Observable, finalize } from 'rxjs';
 
 import { sha256File, stageRuntime } from './stage-runtime.ts';
 
@@ -12,7 +13,7 @@ const fixtureRoot = join(scriptDirectory, 'fixtures', 'deterministic-runtime');
 const fixtureManifest = join(fixtureRoot, 'Cargo.toml');
 const target = 'x86_64-pc-windows-msvc';
 
-export async function stageDeterministicRuntime() {
+export function stageDeterministicRuntime(): Observable<unknown> {
   const build = spawnSync(
     'cargo',
     [
@@ -38,75 +39,86 @@ export async function stageDeterministicRuntime() {
     'release',
     'capture-runtime.exe',
   );
-  const metadata = await stat(executable);
-  const temporary = await mkdtemp(join(tmpdir(), 'capture-workbench-runtime-'));
-  try {
-    const manifestPath = join(
-      temporary,
-      `manifest-${randomBytes(4).toString('hex')}.json`,
-    );
-    const schemaPath = join(temporary, 'capture-document-v1.schema.json');
-    await writeFile(
-      schemaPath,
-      `${JSON.stringify(
-        {
-          $schema: 'https://json-schema.org/draft/2020-12/schema',
-          $id: 'https://github.com/WodenWang820118/capture-workbench/schema/capture-document-v1.schema.json',
-          title: 'CaptureDocumentV1 deterministic QA fixture',
-          type: 'object',
-        },
-        null,
-        2,
-      )}\n`,
-      'utf8',
-    );
-    const manifest = {
-      manifestVersion: '1',
-      runtimeVersion: '0.1.0',
-      apiVersion: '1.0',
-      captureDocumentSchemaVersion: '1',
-      platform: 'windows',
-      arch: 'x86_64',
-      fileName: 'capture-runtime-x86_64-pc-windows-msvc.exe',
-      bytes: metadata.size,
-      sha256: await sha256File(executable),
-      schemaFileName: 'capture-document-v1.schema.json',
-      schemaSha256: await sha256File(schemaPath),
-      runtimeRequirements: {
-        'windowsml-ocr': {
-          artifactUrl:
-            'https://downloads.example.org/capture-windowsml-ocr-windows-x64.zip',
-          artifactFileName: 'capture-windowsml-ocr-windows-x64.zip',
-          bytes: 1,
-          sha256: '0'.repeat(64),
-        },
-      },
-    };
-    await writeFile(
-      manifestPath,
-      `${JSON.stringify(manifest, null, 2)}\n`,
-      'utf8',
-    );
-    return await stageRuntime({
-      artifactPath: executable,
-      manifestPath,
-      schemaPath,
-      source: 'deterministic',
-    });
-  } finally {
-    await rm(temporary, { recursive: true, force: true });
-  }
+  return defer(() => from(stat(executable))).pipe(
+    concatMap((metadata) =>
+      defer(() => from(mkdtemp(join(tmpdir(), 'capture-workbench-runtime-')))).pipe(
+        concatMap((temporary) => {
+          const manifestPath = join(
+            temporary,
+            `manifest-${randomBytes(4).toString('hex')}.json`,
+          );
+          const schemaPath = join(temporary, 'capture-document-v1.schema.json');
+          const schema = `${JSON.stringify(
+            {
+              $schema: 'https://json-schema.org/draft/2020-12/schema',
+              $id: 'https://github.com/WodenWang820118/capture-workbench/schema/capture-document-v1.schema.json',
+              title: 'CaptureDocumentV1 deterministic QA fixture',
+              type: 'object',
+            },
+            null,
+            2,
+          )}\n`;
+          return defer(() => from(writeFile(schemaPath, schema, 'utf8'))).pipe(
+            concatMap(() => sha256File(executable)),
+            concatMap((digest) => sha256File(schemaPath).pipe(
+              map((schemaSha256) => ({ digest, schemaSha256 })),
+            )),
+            concatMap(({ digest, schemaSha256 }) => {
+              const manifest = {
+                manifestVersion: '1',
+                runtimeVersion: '0.1.0',
+                apiVersion: '1.0',
+                captureDocumentSchemaVersion: '1',
+                platform: 'windows',
+                arch: 'x86_64',
+                fileName: 'capture-runtime-x86_64-pc-windows-msvc.exe',
+                bytes: metadata.size,
+                sha256: digest,
+                schemaFileName: 'capture-document-v1.schema.json',
+                schemaSha256,
+                runtimeRequirements: {
+                  'windowsml-ocr': {
+                    artifactUrl:
+                      'https://downloads.example.org/capture-windowsml-ocr-windows-x64.zip',
+                    artifactFileName: 'capture-windowsml-ocr-windows-x64.zip',
+                    bytes: 1,
+                    sha256: '0'.repeat(64),
+                  },
+                },
+              };
+              return defer(() =>
+                from(writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')),
+              ).pipe(
+                concatMap(() =>
+                  stageRuntime({
+                    artifactPath: executable,
+                    manifestPath,
+                    schemaPath,
+                    source: 'deterministic',
+                  }),
+                ),
+              );
+            }),
+            finalize(() => {
+              from(rm(temporary, { recursive: true, force: true })).subscribe();
+            }),
+          );
+        }),
+      ),
+    ),
+  );
 }
 
-stageDeterministicRuntime()
-  .then(({ manifest }) => {
+stageDeterministicRuntime().subscribe({
+  next: ({ manifest }) => {
     process.stdout.write(
       `Staged deterministic runtime ${manifest.runtimeVersion} for QA only.\n`,
     );
-  })
-  .catch((error) => {
+  },
+  error: (error: unknown) => {
     process.stderr.write(
       `${error instanceof Error ? error.message : String(error)}\n`,
     );
     process.exitCode = 1;
-  });
+  },
+});

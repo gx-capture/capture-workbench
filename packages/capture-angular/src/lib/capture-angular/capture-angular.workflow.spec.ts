@@ -3,6 +3,7 @@ import type {
   CaptureClient,
   CaptureJobV1,
 } from '../contracts';
+import { Subject, map, of, throwError } from 'rxjs';
 import { CaptureWorkbenchComponent } from './capture-angular';
 import { DOCUMENT, fakeClient, job, selectFiles } from './capture-angular-test-support';
 
@@ -50,11 +51,11 @@ describe('CaptureWorkbenchComponent', () => {
   it('polls queued jobs through rxResource until completion without overlap', async () => {
     const createCapture = vi
       .fn<CaptureClient['createCapture']>()
-      .mockResolvedValue(job('queued', 'queued'));
+      .mockReturnValue(of(job('queued', 'queued')));
     const getCapture = vi
       .fn<CaptureClient['getCapture']>()
-      .mockResolvedValueOnce(job('running', 'extracting'))
-      .mockResolvedValueOnce(job('completed', 'completed'));
+      .mockReturnValueOnce(of(job('running', 'extracting')))
+      .mockReturnValueOnce(of(job('completed', 'completed')));
     const client = fakeClient({ createCapture, getCapture });
     fixture.componentRef.setInput('client', client);
     fixture.componentRef.setInput('config', {
@@ -78,11 +79,11 @@ describe('CaptureWorkbenchComponent', () => {
   it('stops host polling at awaiting_structuring and does not poll after commit', async () => {
     const createCapture = vi
       .fn<CaptureClient['createCapture']>()
-      .mockResolvedValue(job('running', 'extracting', 'host'));
+      .mockReturnValue(of(job('running', 'extracting', 'host')));
     const getCapture = vi
       .fn<CaptureClient['getCapture']>()
-      .mockResolvedValue(job('running', 'awaiting_structuring', 'host'));
-    const structure = vi.fn(async () => DOCUMENT);
+      .mockReturnValue(of(job('running', 'awaiting_structuring', 'host')));
+    const structure = vi.fn(() => of(DOCUMENT));
     const client = fakeClient({ createCapture, getCapture });
     fixture.componentRef.setInput('client', client);
     fixture.componentRef.setInput('structuringProvider', { structure });
@@ -103,14 +104,11 @@ describe('CaptureWorkbenchComponent', () => {
   });
 
   it('cancels an in-flight rxResource poll without applying a late result', async () => {
-    let releasePoll!: (job: CaptureJobV1) => void;
-    const pendingPoll = new Promise<CaptureJobV1>((resolve) => {
-      releasePoll = resolve;
-    });
+    const pendingPoll = new Subject<CaptureJobV1>();
     const createCapture = vi
       .fn<CaptureClient['createCapture']>()
-      .mockResolvedValue(job('queued', 'queued'));
-    const getCapture = vi.fn<CaptureClient['getCapture']>(() => pendingPoll);
+      .mockReturnValue(of(job('queued', 'queued')));
+    const getCapture = vi.fn<CaptureClient['getCapture']>(() => pendingPoll.asObservable());
     const client = fakeClient({ createCapture, getCapture });
     fixture.componentRef.setInput('client', client);
     fixture.componentRef.setInput('config', {
@@ -124,8 +122,9 @@ describe('CaptureWorkbenchComponent', () => {
     const taskId = fixture.componentInstance.tasks()[0]?.id;
     if (!taskId) throw new Error('Expected a capture task.');
 
-    await fixture.componentInstance.cancel(taskId);
-    releasePoll(job('completed', 'completed'));
+    fixture.componentInstance.cancel(taskId);
+    pendingPoll.next(job('completed', 'completed'));
+    pendingPoll.complete();
     await fixture.whenStable();
 
     expect(fixture.componentInstance.tasks()[0]?.status).toBe('canceled');
@@ -139,8 +138,8 @@ describe('CaptureWorkbenchComponent', () => {
     });
     const createCapture = vi
       .fn<CaptureClient['createCapture']>()
-      .mockRejectedValueOnce(new TypeError('connection reset'))
-      .mockResolvedValueOnce(job('completed', 'completed'));
+      .mockReturnValueOnce(throwError(() => new TypeError('connection reset')))
+      .mockReturnValueOnce(of(job('completed', 'completed')));
     const client = fakeClient({ createCapture });
     fixture.componentRef.setInput('client', client);
     fixture.componentRef.setInput('config', {
@@ -167,8 +166,8 @@ describe('CaptureWorkbenchComponent', () => {
   it('does not retry capture creation after an abort response', async () => {
     const createCapture = vi
       .fn<CaptureClient['createCapture']>()
-      .mockRejectedValueOnce(
-        new DOMException('The operation was aborted.', 'AbortError'),
+      .mockReturnValueOnce(
+        throwError(() => new DOMException('The operation was aborted.', 'AbortError')),
       );
     const client = fakeClient({ createCapture });
     fixture.componentRef.setInput('client', client);
@@ -192,7 +191,9 @@ describe('CaptureWorkbenchComponent', () => {
   it('does not retry a plain domain error from a custom capture client', async () => {
     const createCapture = vi
       .fn<CaptureClient['createCapture']>()
-      .mockRejectedValueOnce(new Error('host validation rejected the request'));
+      .mockReturnValueOnce(
+        throwError(() => new Error('host validation rejected the request')),
+      );
     const client = fakeClient({ createCapture });
     fixture.componentRef.setInput('client', client);
     fixture.componentRef.setInput('config', {
@@ -212,17 +213,15 @@ describe('CaptureWorkbenchComponent', () => {
   });
 
   it('keeps later files queued and supports canceling them', async () => {
-    let release!: () => void;
-    const preprocessing = new Promise<void>((resolve) => {
-      release = resolve;
-    });
+    const preprocessing = new Subject<void>();
+    const release = (): void => {
+      preprocessing.next();
+      preprocessing.complete();
+    };
     const client = fakeClient();
     fixture.componentRef.setInput('client', client);
     fixture.componentRef.setInput('preprocessor', {
-      preprocess: vi.fn(async ({ file }) => {
-        await preprocessing;
-        return file;
-      }),
+      preprocess: vi.fn(({ file }) => preprocessing.pipe(map(() => file))),
     });
     fixture.componentRef.setInput('config', {
       concurrency: 1,

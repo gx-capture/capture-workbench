@@ -73,6 +73,12 @@
         "watch": false
       }
     },
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm exec tsc --noEmit -p apps/capture-workbench/tsconfig.app.json"
+      }
+    },
     "production-bundle-check": {
       "executor": "nx:run-commands",
       "dependsOn": ["build"],

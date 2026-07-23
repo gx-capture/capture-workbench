@@ -1,5 +1,18 @@
 import { Injectable, OnDestroy } from '@angular/core';
 import {
+  EMPTY,
+  Observable,
+  catchError,
+  defer,
+  finalize,
+  map,
+  mergeMap,
+  of,
+  switchMap,
+  throwError,
+  type OperatorFunction,
+} from 'rxjs';
+import {
   type CaptureClient,
   type CaptureCompletedEvent,
   type CaptureFailureV1,
@@ -81,223 +94,224 @@ export class CaptureReconciliationService implements OnDestroy {
     client: CaptureClient,
     captureId: string,
     signal?: AbortSignal,
-  ): Promise<RawCaptureV1 | undefined> {
-    return this.context?.tryGetRaw(client, captureId, signal) ?? Promise.resolve(undefined);
+  ): Observable<RawCaptureV1 | undefined> {
+    return this.context?.tryGetRaw(client, captureId, signal) ?? of(undefined);
   }
 
-  async cancel(taskId: string): Promise<void> {
-    const task = this.getTask(taskId);
-    if (task) await this.cancelReconciliationRequiredTask(task);
+  cancel(taskId: string): Observable<void> {
+    return defer((): Observable<void> => {
+      const task = this.getTask(taskId);
+      return task ? this.cancelReconciliationRequiredTask(task) : EMPTY;
+    });
   }
 
-  async reconcile(taskId: string): Promise<void> {
-    const task = this.getTask(taskId);
-    const client = this.activeClient();
-    if (
-      !task ||
-      task.status !== 'reconciliation_required' ||
-      !task.captureId ||
-      !client ||
-      this.reconciliationTasks.has(taskId)
-    ) {
-      return;
-    }
-
-    this.reconciliationTasks.add(taskId);
-    try {
-      let job: CaptureJobV1;
-      try {
-        job = await client.getCapture(
-          task.captureId,
-          this.lifecycleController.signal,
-        );
-      } catch (error: unknown) {
-        if (isAbortError(error)) return;
-        this.requireReconciliation(
-          taskId,
-          hostReconciliationFailure(error),
-          task.raw,
-        );
-        return;
+  reconcile(taskId: string): Observable<void> {
+    return defer(() => {
+      const task = this.getTask(taskId);
+      const client = this.activeClient();
+      if (
+        !task ||
+        task.status !== 'reconciliation_required' ||
+        !task.captureId ||
+        !client ||
+        this.reconciliationTasks.has(taskId)
+      ) {
+        return EMPTY;
       }
-      if (isTerminalCaptureJob(job)) {
-        await this.settleConfirmedJob(task, client, job);
-        return;
-      }
-      this.requireReconciliation(
-        taskId,
-        {
-          code: HOST_RECONCILIATION_FAILURE_CODE,
-          message: `Capture runtime is still ${job.status}/${job.stage}; check again or cancel it.`,
-          stage: job.stage,
-          retryable: true,
-        },
-        task.raw,
-      );
-    } finally {
-      this.reconciliationTasks.delete(taskId);
-    }
+
+      this.reconciliationTasks.add(taskId);
+      return client
+        .getCapture(task.captureId, this.lifecycleController.signal)
+        .pipe(
+          catchError((error: unknown) => {
+            if (isAbortError(error)) return EMPTY;
+            this.requireReconciliation(
+              taskId,
+              hostReconciliationFailure(error),
+              task.raw,
+            );
+            return EMPTY;
+          }),
+          switchMap((job) => {
+            if (isTerminalCaptureJob(job)) {
+              return this.settleConfirmedJob(task, client, job);
+            }
+            this.requireReconciliation(
+              taskId,
+              {
+                code: HOST_RECONCILIATION_FAILURE_CODE,
+                message: `Capture runtime is still ${job.status}/${job.stage}; check again or cancel it.`,
+                stage: job.stage,
+                retryable: true,
+              },
+              task.raw,
+            );
+            return EMPTY;
+          }),
+          releaseReconciliationTask(this.reconciliationTasks, taskId),
+        );
+    });
   }
 
-  async commitHostResultAndReconcile(
+  commitHostResultAndReconcile(
     client: CaptureClient,
     captureId: string,
     candidate: CaptureStructuringCandidateV1,
     signal: AbortSignal,
-  ): Promise<CaptureJobV1> {
+  ): Observable<CaptureJobV1> {
     const request = {
       clientRequestId: crypto.randomUUID(),
       candidate,
     } as const;
-    try {
-      return await client.commitStructuredResult(captureId, request, signal);
-    } catch (error: unknown) {
-      if (isAbortError(error)) throw error;
-    }
 
-    const afterFirstError = await this.tryGetCaptureForReconciliation(
-      client,
-      captureId,
-      signal,
-    );
-    if (afterFirstError && !isAwaitingHostStructuring(afterFirstError))
-      return afterFirstError;
-
-    try {
-      return await client.commitStructuredResult(captureId, request, signal);
-    } catch (error: unknown) {
-      if (isAbortError(error)) throw error;
-    }
-
-    const afterRetryError = await this.tryGetCaptureForReconciliation(
-      client,
-      captureId,
-      signal,
-    );
-    if (afterRetryError && !isAwaitingHostStructuring(afterRetryError))
-      return afterRetryError;
-
-    return this.reportHostFailureAndReconcile(
-      client,
-      captureId,
-      'Host structured result could not be committed.',
-      signal,
+    return this.commitAttempt(client, captureId, request, signal).pipe(
+      switchMap((first): Observable<CommitOutcome> =>
+        first.job && !isAwaitingHostStructuring(first.job)
+          ? of(first)
+          : this.commitAttempt(client, captureId, request, signal),
+      ),
+      switchMap((second) =>
+        second.job && !isAwaitingHostStructuring(second.job)
+          ? of(second.job)
+          : this.reportHostFailureAndReconcile(
+              client,
+              captureId,
+              'Host structured result could not be committed.',
+              signal,
+            ),
+      ),
     );
   }
 
-  async reportHostFailureAndReconcile(
+  reportHostFailureAndReconcile(
     client: CaptureClient,
     captureId: string,
     message: string,
     signal: AbortSignal,
-  ): Promise<CaptureJobV1> {
-    try {
-      const reported = await client.reportStructuringFailure(
+  ): Observable<CaptureJobV1> {
+    return client
+      .reportStructuringFailure(
         captureId,
         { code: HOST_PROVIDER_FAILURE_CODE, message },
         signal,
+      )
+      .pipe(
+        catchError((error: unknown) => {
+          if (isAbortError(error)) return throwError(() => error);
+          return this.tryGetCaptureForReconciliation(client, captureId, signal);
+        }),
+        switchMap((reported) => {
+          if (reported && isTerminalCaptureJob(reported)) return of(reported);
+          return client.cancelCapture(captureId, signal).pipe(
+            catchError((error: unknown) => {
+              if (isAbortError(error)) return throwError(() => error);
+              return of(undefined);
+            }),
+            switchMap((cancelled) =>
+              this.tryGetCaptureForReconciliation(client, captureId, signal).pipe(
+                map((confirmed) =>
+                  confirmed && isTerminalCaptureJob(confirmed)
+                    ? confirmed
+                    : cancelled && isTerminalCaptureJob(cancelled)
+                      ? cancelled
+                      : undefined,
+                ),
+                mergeMap((terminal) =>
+                  terminal
+                    ? of(terminal)
+                    : throwError(() => new HostReconciliationUnavailableError()),
+                ),
+              ),
+            ),
+          );
+        }),
       );
-      if (isTerminalCaptureJob(reported)) return reported;
-    } catch (error: unknown) {
-      if (isAbortError(error)) throw error;
-      const current = await this.tryGetCaptureForReconciliation(
-        client,
-        captureId,
-        signal,
-      );
-      if (current && isTerminalCaptureJob(current)) return current;
-    }
-
-    let cancelled: CaptureJobV1 | undefined;
-    try {
-      cancelled = await client.cancelCapture(captureId, signal);
-    } catch (error: unknown) {
-      if (isAbortError(error)) throw error;
-    }
-
-    const confirmed = await this.tryGetCaptureForReconciliation(
-      client,
-      captureId,
-      signal,
-    );
-    if (confirmed && isTerminalCaptureJob(confirmed)) return confirmed;
-    if (cancelled && isTerminalCaptureJob(cancelled)) return cancelled;
-    throw new HostReconciliationUnavailableError();
   }
 
-  private async tryGetCaptureForReconciliation(
+  private commitAttempt(
+    client: CaptureClient,
+    captureId: string,
+    request: { readonly clientRequestId: string; readonly candidate: CaptureStructuringCandidateV1 },
+    signal: AbortSignal,
+  ): Observable<{ readonly job?: CaptureJobV1 }> {
+    return client.commitStructuredResult(captureId, request, signal).pipe(
+      map((job) => ({ job })),
+      catchError((error: unknown) => {
+        if (isAbortError(error)) return throwError(() => error);
+        return this.tryGetCaptureForReconciliation(client, captureId, signal).pipe(
+          map((job) => ({ job })),
+        );
+      }),
+    );
+  }
+
+  private tryGetCaptureForReconciliation(
     client: CaptureClient,
     captureId: string,
     signal: AbortSignal,
-  ): Promise<CaptureJobV1 | undefined> {
-    try {
-      return await client.getCapture(captureId, signal);
-    } catch (error: unknown) {
-      if (isAbortError(error)) throw error;
-      return undefined;
-    }
+  ): Observable<CaptureJobV1 | undefined> {
+    return client.getCapture(captureId, signal).pipe(
+      catchError((error: unknown) => {
+        if (isAbortError(error)) return throwError(() => error);
+        return of(undefined);
+      }),
+    );
   }
 
-  private async cancelReconciliationRequiredTask(
+  private cancelReconciliationRequiredTask(
     task: CaptureTaskView,
-  ): Promise<void> {
+  ): Observable<void> {
     const client = this.activeClient();
     if (!client || !task.captureId || this.reconciliationTasks.has(task.id))
-      return;
+      return EMPTY;
 
     this.reconciliationTasks.add(task.id);
-    try {
-      let cancelled: CaptureJobV1 | undefined;
-      try {
-        cancelled = await client.cancelCapture(
-          task.captureId,
-          this.lifecycleController.signal,
+    const signal = this.lifecycleController.signal;
+    return client.cancelCapture(task.captureId, signal).pipe(
+      catchError((error: unknown) => {
+        if (isAbortError(error)) return EMPTY;
+        return of(undefined);
+      }),
+      switchMap((cancelled) =>
+        client.getCapture(task.captureId as string, signal).pipe(
+          catchError((error: unknown) => {
+            if (isAbortError(error)) return EMPTY;
+            return of(undefined);
+          }),
+          map((confirmed) =>
+            confirmed && isTerminalCaptureJob(confirmed)
+              ? confirmed
+              : cancelled && isTerminalCaptureJob(cancelled)
+                ? cancelled
+                : undefined,
+          ),
+        ),
+      ),
+      switchMap((terminal) => {
+        if (terminal) return this.settleConfirmedJob(task, client, terminal);
+        this.requireReconciliation(
+          task.id,
+          {
+            code: HOST_RECONCILIATION_FAILURE_CODE,
+            message:
+              'Cancellation was requested, but the runtime terminal state is still unknown.',
+            stage: task.stage ?? 'structuring',
+            retryable: true,
+          },
+          task.raw,
         );
-      } catch (error: unknown) {
-        if (isAbortError(error)) return;
-      }
-
-      let confirmed: CaptureJobV1 | undefined;
-      try {
-        confirmed = await client.getCapture(
-          task.captureId,
-          this.lifecycleController.signal,
-        );
-      } catch (error: unknown) {
-        if (isAbortError(error)) return;
-      }
-
-      const terminal =
-        confirmed && isTerminalCaptureJob(confirmed)
-          ? confirmed
-          : cancelled && isTerminalCaptureJob(cancelled)
-            ? cancelled
-            : undefined;
-      if (terminal) {
-        await this.settleConfirmedJob(task, client, terminal);
-        return;
-      }
-      this.requireReconciliation(
-        task.id,
-        {
-          code: HOST_RECONCILIATION_FAILURE_CODE,
-          message:
-            'Cancellation was requested, but the runtime terminal state is still unknown.',
-          stage: task.stage ?? 'structuring',
-          retryable: true,
-        },
-        task.raw,
-      );
-    } finally {
-      this.reconciliationTasks.delete(task.id);
-    }
+        return EMPTY;
+      }),
+      releaseReconciliationTask(this.reconciliationTasks, task.id),
+      map(() => undefined),
+    );
   }
 
-  private async settleConfirmedJob(
+  private settleConfirmedJob(
     task: CaptureTaskView,
     client: CaptureClient,
     job: CaptureJobV1,
-  ): Promise<void> {
+  ): Observable<void> {
     if (job.status === 'cancelled') {
       const canceledTask = this.updateTask(task.id, {
         status: 'canceled',
@@ -305,46 +319,64 @@ export class CaptureReconciliationService implements OnDestroy {
         error: undefined,
       });
       if (canceledTask) this.emitCanceled(canceledTask);
-      return;
+      return of(undefined);
     }
     if (job.status === 'failed') {
-      const raw = task.raw ?? (await this.tryGetRaw(client, job.captureId));
-      this.failTask(
-        task.id,
-        task.fileName,
-        job.error ?? {
-          code: 'capture_failed',
-          message: 'Capture failed.',
-          stage: job.stage,
-        },
-        raw,
-        job.stage,
+      return (task.raw
+        ? of(task.raw)
+        : this.tryGetRaw(client, job.captureId)
+      ).pipe(
+        map((raw) => {
+          this.failTask(
+            task.id,
+            task.fileName,
+            job.error ?? {
+              code: 'capture_failed',
+              message: 'Capture failed.',
+              stage: job.stage,
+            },
+            raw,
+            job.stage,
+          );
+        }),
       );
-      return;
     }
-    if (job.status !== 'completed') return;
+    if (job.status !== 'completed') return EMPTY;
 
-    try {
-      const result = await client.getResult(
-        job.captureId,
-        this.lifecycleController.signal,
+    return client
+      .getResult(job.captureId, this.lifecycleController.signal)
+      .pipe(
+        map((result) => {
+          const completedTask = this.updateTask(task.id, {
+            status: 'completed',
+            stage: 'completed',
+            progress: 100,
+            error: undefined,
+            result,
+          });
+          if (completedTask)
+            this.emitCompleted({ taskId: task.id, document: result });
+        }),
+        catchError((error: unknown) => {
+          if (isAbortError(error)) return EMPTY;
+          this.requireReconciliation(
+            task.id,
+            hostReconciliationFailure(error),
+            task.raw,
+          );
+          return EMPTY;
+        }),
       );
-      const completedTask = this.updateTask(task.id, {
-        status: 'completed',
-        stage: 'completed',
-        progress: 100,
-        error: undefined,
-        result,
-      });
-      if (completedTask)
-        this.emitCompleted({ taskId: task.id, document: result });
-    } catch (error: unknown) {
-      if (isAbortError(error)) return;
-      this.requireReconciliation(
-        task.id,
-        hostReconciliationFailure(error),
-        task.raw,
-      );
-    }
   }
+}
+
+function releaseReconciliationTask<T>(
+  tasks: Set<string>,
+  taskId: string,
+): OperatorFunction<T, T> {
+  return finalize(() => tasks.delete(taskId));
+}
+
+interface CommitOutcome {
+  readonly job?: CaptureJobV1;
 }

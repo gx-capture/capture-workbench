@@ -1,48 +1,90 @@
 import { Injectable, OnDestroy, signal } from '@angular/core';
 import {
+  EMPTY,
+  Observable,
+  Subscription,
+  catchError,
+  concatMap,
+  defer,
+  expand,
+  finalize,
+  of,
+  takeWhile,
+  tap,
+  throwError,
+} from 'rxjs';
+import {
   type CaptureClient,
   type RuntimeInstallationV1,
   type RuntimeRequirementV1,
 } from '../contracts';
 import { MAX_INSTALLATIONS_PER_USER_ACTION } from '../constants';
+import {
+  errorMessage,
+  isAbortError,
+  retryUncertainResponse,
+  throwIfAborted,
+} from './capture-workbench-store-helpers';
 
 @Injectable()
 export class CaptureRuntimeInstallationService implements OnDestroy {
   readonly installation = signal<RuntimeInstallationV1 | null>(null);
   readonly error = signal<string | undefined>(undefined);
   private controller?: AbortController;
+  private installSubscription?: Subscription;
 
   ngOnDestroy(): void {
     this.controller?.abort();
+    this.installSubscription?.unsubscribe();
   }
 
   clearError(): void {
     this.error.set(undefined);
   }
 
-  async install(options: {
+  install(options: {
     readonly client: CaptureClient | null;
     readonly requirements: () => readonly RuntimeRequirementV1[];
     readonly pollIntervalMs: () => number;
-    readonly reload: () => Promise<void>;
-  }): Promise<void> {
+    readonly reload: () => Observable<void>;
+  }): void {
     const { client } = options;
     if (!client || this.installation()) return;
     const installable = () =>
       options.requirements().filter((requirement) => requirement.status === 'installable');
     if (installable().length === 0) return;
 
+    this.installSubscription?.unsubscribe();
     this.controller = new AbortController();
     const signal = this.controller.signal;
     const completedRequirementIds = new Set<string>();
     const requestIds = new Map<string, string>();
     let installationsStarted = 0;
-    try {
-      while (installationsStarted < MAX_INSTALLATIONS_PER_USER_ACTION) {
+
+    const installNext = (): Observable<void> =>
+      defer(() => {
+        throwIfAborted(signal);
         const requirement = installable().find(
           (candidate) => !completedRequirementIds.has(candidate.requirementId),
         );
-        if (!requirement) break;
+        if (!requirement) {
+          if (
+            installationsStarted === MAX_INSTALLATIONS_PER_USER_ACTION &&
+            installable().some(
+              (candidate) => !completedRequirementIds.has(candidate.requirementId),
+            )
+          ) {
+            return throwError(
+              () => new Error('Runtime installation stopped after reaching the safety limit.'),
+            );
+          }
+          return of(undefined);
+        }
+        if (installationsStarted >= MAX_INSTALLATIONS_PER_USER_ACTION) {
+          return throwError(
+            () => new Error('Runtime installation stopped after reaching the safety limit.'),
+          );
+        }
 
         const request = {
           clientRequestId:
@@ -53,99 +95,108 @@ export class CaptureRuntimeInstallationService implements OnDestroy {
         requestIds.set(requirement.requirementId, request.clientRequestId);
         installationsStarted += 1;
 
-        let installation = await retryUncertainResponse(
+        return retryUncertainResponse(
           () => client.startInstallation(request, signal),
           signal,
+        ).pipe(
+          tap((installation) => this.installation.set(installation)),
+          concatMap((installation) =>
+            pollInstallation(
+              client,
+              installation,
+              options.pollIntervalMs,
+              signal,
+              (current) => this.installation.set(current),
+            ),
+          ),
+          concatMap((installation) => {
+            if (installation.status !== 'completed') return EMPTY;
+            completedRequirementIds.add(requirement.requirementId);
+            this.installation.set(null);
+            return options.reload();
+          }),
+          concatMap(() => installNext()),
         );
-        this.installation.set(installation);
-        while (installation.status === 'queued' || installation.status === 'running') {
-          await abortableDelay(options.pollIntervalMs(), signal);
-          installation = await client.getInstallation(installation.installationId, signal);
-          this.installation.set(installation);
-        }
-        if (installation.status !== 'completed') break;
-        completedRequirementIds.add(requirement.requirementId);
-        this.installation.set(null);
-        await options.reload();
-      }
+      });
 
-      if (
-        installationsStarted === MAX_INSTALLATIONS_PER_USER_ACTION &&
-        installable().some(
-          (requirement) => !completedRequirementIds.has(requirement.requirementId),
-        )
-      ) {
-        throw new Error('Runtime installation stopped after reaching the safety limit.');
-      }
-    } catch (error: unknown) {
-      if (!isAbortError(error)) {
-        this.error.set(errorMessage(error, 'Runtime installation failed.'));
-      }
-    } finally {
-      this.controller = undefined;
-      if (this.installation()?.status === 'completed') this.installation.set(null);
-      await options.reload();
-    }
+    this.installSubscription = installNext()
+      .pipe(
+        catchError((error: unknown) => {
+          if (!isAbortError(error)) {
+            this.error.set(errorMessage(error, 'Runtime installation failed.'));
+          }
+          return of(undefined);
+        }),
+        finalize(() => {
+          this.controller = undefined;
+          if (this.installation()?.status === 'completed') this.installation.set(null);
+        }),
+      )
+      .subscribe();
   }
 
-  async cancel(client: CaptureClient | null): Promise<void> {
+  cancel(client: CaptureClient | null): void {
     const installation = this.installation();
     if (!installation || !client) return;
     this.controller?.abort();
-    try {
-      this.installation.set(await client.cancelInstallation(installation.installationId));
-    } catch (error: unknown) {
-      this.error.set(errorMessage(error, 'Unable to cancel runtime installation.'));
-    }
+    client.cancelInstallation(installation.installationId).subscribe({
+      next: (canceled) => this.installation.set(canceled),
+      error: (error: unknown) =>
+        this.error.set(errorMessage(error, 'Unable to cancel runtime installation.')),
+    });
   }
 }
 
-function retryUncertainResponse<T>(operation: () => Promise<T>, signal: AbortSignal): Promise<T> {
-  return operation().catch((error: unknown) => {
-    throwIfAborted(signal);
-    if (!isUncertainResponseFailure(error)) throw error;
-    return operation();
-  });
-}
-
-function isUncertainResponseFailure(error: unknown): boolean {
-  if (isAbortError(error)) return false;
-  const candidate = error as { readonly status?: unknown; readonly code?: unknown };
-  if (candidate?.code === 'invalid_response') return true;
-  if (typeof candidate?.status === 'number') return candidate.status === 0 || candidate.status >= 500;
-  return error instanceof TypeError;
-}
-
-function abortableDelay(milliseconds: number, signal: AbortSignal): Promise<void> {
-  if (signal.aborted) return Promise.reject(createAbortError());
-  if (milliseconds === 0) return Promise.resolve();
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(resolve, milliseconds);
-    signal.addEventListener(
-      'abort',
-      () => {
-        clearTimeout(timeout);
-        reject(createAbortError());
-      },
-      { once: true },
+function pollInstallation(
+  client: CaptureClient,
+  initial: RuntimeInstallationV1,
+  pollIntervalMs: () => number,
+  signal: AbortSignal,
+  onInstallation: (installation: RuntimeInstallationV1) => void,
+): Observable<RuntimeInstallationV1> {
+  const read = (installationId: string): Observable<RuntimeInstallationV1> =>
+    abortableDelay(pollIntervalMs(), signal).pipe(
+      concatMap(() => client.getInstallation(installationId, signal)),
     );
+
+  return of(initial).pipe(
+    tap(onInstallation),
+    expand((installation) =>
+      installation.status === 'queued' || installation.status === 'running'
+        ? read(installation.installationId)
+        : EMPTY,
+    ),
+    takeWhile(
+      (installation) =>
+        installation.status === 'queued' || installation.status === 'running',
+      true,
+    ),
+    tap(onInstallation),
+  );
+}
+
+function abortableDelay(milliseconds: number, signal: AbortSignal): Observable<void> {
+  return new Observable<void>((subscriber) => {
+    if (signal.aborted) {
+      subscriber.error(createAbortError());
+      return;
+    }
+    const timeout = setTimeout(() => {
+      subscriber.next();
+      subscriber.complete();
+    }, Math.max(0, milliseconds));
+    const abort = (): void => {
+      clearTimeout(timeout);
+      subscriber.error(createAbortError());
+    };
+    signal.addEventListener('abort', abort, { once: true });
+    return () => {
+      clearTimeout(timeout);
+      signal.removeEventListener('abort', abort);
+    };
   });
 }
 
 function createAbortError(): DOMException {
   return new DOMException('The operation was aborted.', 'AbortError');
-}
-
-function throwIfAborted(signal: AbortSignal): void {
-  if (signal.aborted) throw createAbortError();
-}
-
-function isAbortError(error: unknown): boolean {
-  return error instanceof DOMException
-    ? error.name === 'AbortError'
-    : error instanceof Error && error.name === 'AbortError';
-}
-
-function errorMessage(error: unknown, fallback: string): string {
-  return error instanceof Error && error.message ? error.message : fallback;
 }

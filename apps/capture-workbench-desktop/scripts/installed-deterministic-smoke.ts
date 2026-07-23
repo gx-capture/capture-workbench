@@ -1,18 +1,23 @@
-import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import {
-  mkdir,
-  open,
-  readFile,
-  rename,
-  rm,
-  stat,
-  writeFile,
-} from 'node:fs/promises';
+import { mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { setTimeout as delay } from 'node:timers/promises';
+
+import {
+  catchError,
+  concatMap,
+  defer,
+  from,
+  map,
+  of,
+  race,
+  switchMap,
+  tap,
+  throwError,
+  timer,
+  toArray,
+} from 'rxjs';
 
 import { assertStagedRuntime } from './assert-staged-runtime.ts';
 import {
@@ -59,12 +64,7 @@ export {
 export { assertCaptureDocumentForFixture };
 
 const workspaceRoot = resolve(appRoot, '..', '..');
-const smokeRoot = join(
-  workspaceRoot,
-  'tmp',
-  'capture-workbench-desktop',
-  'installed-smoke',
-);
+const smokeRoot = join(workspaceRoot, 'tmp', 'capture-workbench-desktop', 'installed-smoke');
 const runRoot = join(smokeRoot, 'run');
 const installDirectory = join(runRoot, 'install');
 const webViewDataDirectory = join(runRoot, 'webview2');
@@ -89,375 +89,6 @@ const uninstallRegistryKey = UNINSTALL_REGISTRY_KEY;
 const registryViews = REGISTRY_VIEWS;
 const childEnvironmentAllowlist = CHILD_ENVIRONMENT_ALLOWLIST;
 
-const {
-  waitForInstalledDirectoryRemoval,
-  assertNoPreExistingInstallation,
-  assertInstalledRegistryPointsToOwnedDirectory,
-  removeOwnedRegistryResidue,
-  windowsSystemExecutable,
-} = createInstalledRegistry({
-  smokeRoot,
-  workspaceRoot,
-  registryViews,
-  productRegistryKey,
-  uninstallRegistryKey,
-  baseChildEnvironment,
-  pathExists,
-});
-const {
-  terminateTrackedProcessTree,
-  stopAndProveOwnedProcessRoots,
-  processesRunningUnder,
-  waitForLoopbackPortRelease,
-} = createInstalledProcessCleanup({
-  smokeRoot,
-  workspaceRoot,
-  baseChildEnvironment,
-  windowsSystemExecutable,
-});
-const {
-  prepareSmokeDirectories,
-  safeRemoveTree,
-  findDeterministicInstaller,
-  assertOwnedRegularFile,
-  runCheckedExecutable,
-} = createInstalledSmokeLifecycle({
-  workspaceRoot,
-  smokeRoot,
-  runRoot,
-  nsisDirectory,
-  childEnvironmentAllowlist,
-  terminateTrackedProcessTree,
-});
-
-
-export async function runInstalledDeterministicSmoke() {
-  if (process.platform !== 'win32') {
-    throw new Error(
-      'Installed deterministic Tauri smoke requires Windows x64.',
-    );
-  }
-
-  await assertStagedRuntime('deterministic');
-  await prepareSmokeDirectories();
-  const smokeLock = await acquireExclusiveSmokeLock(smokeRoot, smokeLockPath);
-  try {
-    await rm(evidencePath, { force: true });
-    const installer = await findDeterministicInstaller();
-    await assertNoPreExistingInstallation();
-
-    let appProcess;
-    let browser;
-    let installationAttempted = false;
-    let exerciseResult;
-    let exerciseError;
-    const cleanupErrors = [];
-    const cleanup = {
-      ownedProcessCount: 0,
-      ownedProcessesStopped: false,
-      cdpPortReleased: false,
-      uninstallerCompleted: false,
-      installDirectoryRemoved: false,
-      registryResidueRemoved: false,
-      isolatedRunDataRemoved: false,
-    };
-    let cdpPort;
-
-    try {
-      await stopAndProveOwnedProcessRoots([
-        installDirectory,
-        temporaryDirectory,
-      ]);
-      await safeRemoveTree(smokeRoot, runRoot);
-      await Promise.all(
-        [
-          installDirectory,
-          webViewDataDirectory,
-          appDataDirectory,
-          localAppDataDirectory,
-          temporaryDirectory,
-        ].map((path) => mkdir(path, { recursive: true })),
-      );
-
-      installationAttempted = true;
-      await runCheckedExecutable(
-        installer.path,
-        installerArguments(smokeRoot, installDirectory),
-        'Deterministic NSIS installer',
-        baseChildEnvironment(process.env, temporaryDirectory),
-        180_000,
-      );
-      const installedExecutable = await assertOwnedRegularFile(
-        installDirectory,
-        join(installDirectory, installedExecutableName),
-        'Installed Tauri executable',
-      );
-      await assertInstalledRegistryPointsToOwnedDirectory(installDirectory);
-
-      cdpPort = await reserveLoopbackPort();
-      const appEnvironment = buildInstalledAppEnvironment(
-        process.env,
-        {
-          root: runRoot,
-          appData: appDataDirectory,
-          localAppData: localAppDataDirectory,
-          temporary: temporaryDirectory,
-          webViewData: webViewDataDirectory,
-        },
-        cdpPort,
-      );
-      appProcess = spawn(installedExecutable, [], {
-        cwd: installDirectory,
-        env: appEnvironment,
-        stdio: 'ignore',
-        windowsHide: true,
-      });
-      appProcess.on('error', () => undefined);
-
-      browser = await connectToInstalledWebView(cdpPort, appProcess);
-      const page = await installedPage(browser, appProcess);
-      exerciseResult = await exerciseInstalledUi(page);
-      cleanup.ownedProcessCount = (
-        await processesRunningUnder(installDirectory)
-      ).length;
-      if (cleanup.ownedProcessCount < 2) {
-        throw new Error(
-          'Installed smoke did not observe both the owned Tauri app and runtime process.',
-        );
-      }
-    } catch (error) {
-      exerciseError = error;
-    } finally {
-      try {
-        if (appProcess) {
-          await terminateTrackedProcessTree(
-            appProcess,
-            'Owned Tauri application',
-          );
-        }
-        await stopAndProveOwnedProcessRoots([
-          installDirectory,
-          temporaryDirectory,
-        ]);
-        cleanup.ownedProcessesStopped = true;
-      } catch (error) {
-        cleanupErrors.push(error);
-      }
-      if (browser) {
-        try {
-          await Promise.race([
-            browser.close(),
-            delay(5_000).then(() => {
-              throw new Error('Playwright CDP disconnect timed out.');
-            }),
-          ]);
-        } catch {
-          // The owned process tree normally closes the CDP connection first.
-        }
-      }
-      if (cdpPort !== undefined) {
-        try {
-          await waitForLoopbackPortRelease(cdpPort);
-          cleanup.cdpPortReleased = true;
-        } catch (error) {
-          cleanupErrors.push(error);
-        }
-      } else {
-        cleanup.cdpPortReleased = true;
-      }
-
-      if (installationAttempted && cleanup.ownedProcessesStopped) {
-        try {
-          const uninstallerPath = join(installDirectory, uninstallerName);
-          if (await pathExists(uninstallerPath)) {
-            const uninstaller = await assertOwnedRegularFile(
-              installDirectory,
-              uninstallerPath,
-              'Installed uninstaller',
-            );
-            await assertInstalledRegistryPointsToOwnedDirectory(
-              installDirectory,
-            );
-            await runCheckedExecutable(
-              uninstaller,
-              uninstallerArguments(smokeRoot, installDirectory),
-              'Installed NSIS uninstaller',
-              baseChildEnvironment(process.env, temporaryDirectory),
-              180_000,
-            );
-            await waitForInstalledDirectoryRemoval(installDirectory);
-            cleanup.uninstallerCompleted = true;
-            cleanup.installDirectoryRemoved = true;
-          } else if (
-            await pathExists(join(installDirectory, installedExecutableName))
-          ) {
-            cleanupErrors.push(
-              new Error(
-                'Installed uninstaller is missing from the owned install directory.',
-              ),
-            );
-          } else {
-            cleanup.uninstallerCompleted = true;
-            cleanup.installDirectoryRemoved = true;
-          }
-        } catch (error) {
-          cleanupErrors.push(error);
-        }
-        try {
-          await stopAndProveOwnedProcessRoots([
-            installDirectory,
-            temporaryDirectory,
-          ]);
-        } catch (error) {
-          cleanup.ownedProcessesStopped = false;
-          cleanupErrors.push(error);
-        }
-        if (cleanup.ownedProcessesStopped) {
-          try {
-            await removeOwnedRegistryResidue(installDirectory);
-            cleanup.registryResidueRemoved = true;
-          } catch (error) {
-            cleanupErrors.push(error);
-          }
-        }
-      } else if (!installationAttempted) {
-        cleanup.uninstallerCompleted = true;
-        cleanup.installDirectoryRemoved = true;
-        cleanup.registryResidueRemoved = true;
-      } else {
-        try {
-          assertInstallationCleanupAllowed(cleanup.ownedProcessesStopped);
-        } catch (error) {
-          cleanupErrors.push(error);
-        }
-      }
-
-      if (cleanup.ownedProcessesStopped) {
-        try {
-          await safeRemoveTree(smokeRoot, runRoot);
-          cleanup.isolatedRunDataRemoved = !(await pathExists(runRoot));
-        } catch (error) {
-          cleanupErrors.push(error);
-        }
-      }
-    }
-
-    if (exerciseError || cleanupErrors.length > 0) {
-      throw new AggregateError(
-        [exerciseError, ...cleanupErrors].filter(Boolean),
-        'Installed deterministic Tauri smoke failed or could not clean up safely.',
-      );
-    }
-
-    const report = {
-      evidenceKind: 'deterministic-installed-tauri-smoke',
-      releaseGateSatisfied: false,
-      realEnginesExercised: false,
-      platform: 'windows',
-      arch: 'x86_64',
-      bundle: 'nsis',
-      installer: {
-        fileName: installer.fileName,
-        bytes: installer.bytes,
-        sha256: installer.sha256,
-      },
-      installedApplication: {
-        fileName: installedExecutableName,
-        clientMode: exerciseResult.clientMode,
-        isolatedRuntimeMode: exerciseResult.isolatedRuntimeMode,
-        hostProviderButtonVisible: exerciseResult.hostProviderButtonVisible,
-      },
-      requirements: exerciseResult.requirements,
-      captures: exerciseResult.captures,
-      cleanup,
-      disclaimer:
-        'Deterministic packaged verification only; it does not exercise or satisfy real WindowsML, Whisper, Ollama, licensed-fixture, clean-install release, or publication gates.',
-    };
-    assertInstalledSmokeEvidence(report);
-    await writeEvidence(report);
-    return { report, reportPath: evidencePath };
-  } finally {
-    await releaseExclusiveSmokeLock(smokeLock);
-  }
-}
-
-export async function acquireExclusiveSmokeLock(root, candidate) {
-  const safePath = assertStrictDescendant(
-    root,
-    candidate,
-    'Installed smoke lock',
-  );
-  const token = randomUUID();
-  let handle;
-  try {
-    handle = await open(safePath, 'wx', 0o600);
-  } catch (error) {
-    if (error?.code === 'EEXIST') {
-      throw new Error(
-        'Another installed smoke is active or left a stale lock; refusing concurrent product mutation.',
-      );
-    }
-    throw error;
-  }
-
-  try {
-    await handle.writeFile(
-      `${JSON.stringify({ pid: process.pid, token })}\n`,
-      'utf8',
-    );
-    await handle.sync();
-  } catch (error) {
-    await handle.close().catch(() => undefined);
-    await rm(safePath, { force: true }).catch(() => undefined);
-    throw error;
-  }
-  return { handle, path: safePath, token };
-}
-
-export async function releaseExclusiveSmokeLock(lock) {
-  let verificationError;
-  try {
-    assertSmokeLockOwnership(await readFile(lock.path, 'utf8'), lock.token);
-  } catch (error) {
-    verificationError = error;
-  }
-  let closeError;
-  try {
-    await lock.handle.close();
-  } catch (error) {
-    closeError = error;
-  }
-  if (verificationError || closeError) {
-    throw new AggregateError(
-      [verificationError, closeError].filter(Boolean),
-      'Installed smoke lock could not be released safely.',
-    );
-  }
-  assertSmokeLockOwnership(await readFile(lock.path, 'utf8'), lock.token);
-  await rm(lock.path);
-}
-
-function assertSmokeLockOwnership(serialized, expectedToken) {
-  let lock;
-  try {
-    lock = JSON.parse(serialized);
-  } catch {
-    throw new Error(
-      'Installed smoke lock metadata is malformed; refusing removal.',
-    );
-  }
-  if (
-    lock?.pid !== process.pid ||
-    typeof lock.token !== 'string' ||
-    lock.token !== expectedToken
-  ) {
-    throw new Error(
-      'Installed smoke lock ownership changed; refusing removal.',
-    );
-  }
-}
-
-
 function baseChildEnvironment(source, isolatedTemp, ownedRoot = runRoot) {
   const environment = {};
   for (const allowedName of childEnvironmentAllowlist) {
@@ -469,43 +100,355 @@ function baseChildEnvironment(source, isolatedTemp, ownedRoot = runRoot) {
     );
     if (sourceEntry) environment[allowedName] = sourceEntry[1];
   }
-  const safeTemp = assertStrictDescendant(
-    ownedRoot,
-    isolatedTemp,
-    'Temporary directory',
-  );
+  const safeTemp = assertStrictDescendant(ownedRoot, isolatedTemp, 'Temporary directory');
   environment.TEMP = safeTemp;
   environment.TMP = safeTemp;
   return environment;
 }
 
+function pathExists(path) {
+  return defer(() => from(stat(path))).pipe(
+    map(() => true),
+    catchError((error) => (error?.code === 'ENOENT' ? of(false) : throwError(() => error))),
+  );
+}
 
+function writeEvidence(report) {
+  const safePath = assertStrictDescendant(smokeRoot, evidencePath, 'Evidence path');
+  const temporary = `${safePath}.tmp`;
+  return defer(() => from(rm(temporary, { force: true }))).pipe(
+    concatMap(() => from(writeFile(temporary, `${JSON.stringify(report, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' }))),
+    concatMap(() => from(rm(safePath, { force: true }))),
+    concatMap(() => from(rename(temporary, safePath))),
+    map(() => undefined),
+  );
+}
 
+function acquireLock(root, candidate) {
+  const safePath = assertStrictDescendant(root, candidate, 'Installed smoke lock');
+  const token = randomUUID();
+  return defer(() => from(open(safePath, 'wx', 0o600))).pipe(
+    catchError((error) =>
+      error?.code === 'EEXIST'
+        ? throwError(() => new Error('Another installed smoke is active or left a stale lock; refusing concurrent product mutation.'))
+        : throwError(() => error),
+    ),
+    concatMap((handle) =>
+      defer(() => from(handle.writeFile(`${JSON.stringify({ pid: process.pid, token })}\n`, 'utf8'))).pipe(
+        concatMap(() => from(handle.sync())),
+        map(() => ({ handle, path: safePath, token })),
+        catchError((error) =>
+          defer(() => from(handle.close())).pipe(
+            catchError(() => of(undefined)),
+            concatMap(() => from(rm(safePath, { force: true }))),
+            concatMap(() => throwError(() => error)),
+          ),
+        ),
+      ),
+    ),
+  );
+}
 
-async function pathExists(path) {
+function assertSmokeLockOwnership(serialized, expectedToken) {
+  let lock;
   try {
-    await stat(path);
-    return true;
-  } catch (error) {
-    if (error?.code === 'ENOENT') return false;
-    throw error;
+    lock = JSON.parse(serialized);
+  } catch {
+    throw new Error('Installed smoke lock metadata is malformed; refusing removal.');
+  }
+  if (lock?.pid !== process.pid || typeof lock.token !== 'string' || lock.token !== expectedToken) {
+    throw new Error('Installed smoke lock ownership changed; refusing removal.');
   }
 }
 
-async function writeEvidence(report) {
-  const safePath = assertStrictDescendant(
-    smokeRoot,
-    evidencePath,
-    'Evidence path',
+function releaseLock(lock) {
+  return defer(() => from(readFile(lock.path, 'utf8'))).pipe(
+    map((serialized) => {
+      assertSmokeLockOwnership(serialized, lock.token);
+      return undefined;
+    }),
+    concatMap(() => from(lock.handle.close())),
+    concatMap(() => defer(() => from(readFile(lock.path, 'utf8')))),
+    tap((serialized) => assertSmokeLockOwnership(serialized, lock.token)),
+    concatMap(() => from(rm(lock.path))),
+    map(() => undefined),
   );
-  const temporary = `${safePath}.tmp`;
-  await rm(temporary, { force: true });
-  await writeFile(temporary, `${JSON.stringify(report, null, 2)}\n`, {
-    encoding: 'utf8',
-    flag: 'wx',
+}
+
+export function runInstalledDeterministicSmoke() {
+  if (process.platform !== 'win32') {
+    return throwError(() => new Error('Installed deterministic Tauri smoke requires Windows x64.'));
+  }
+
+  const processCleanup = createInstalledProcessCleanup({
+    smokeRoot,
+    workspaceRoot,
+    baseChildEnvironment,
+    windowsSystemExecutable: (...segments) => {
+      const registry = createInstalledRegistry({
+        smokeRoot,
+        workspaceRoot,
+        registryViews,
+        productRegistryKey,
+        uninstallRegistryKey,
+        baseChildEnvironment,
+        pathExists,
+      });
+      return registry.windowsSystemExecutable(...segments);
+    },
   });
-  await rm(safePath, { force: true });
-  await rename(temporary, safePath);
+  const registry = createInstalledRegistry({
+    smokeRoot,
+    workspaceRoot,
+    registryViews,
+    productRegistryKey,
+    uninstallRegistryKey,
+    baseChildEnvironment,
+    pathExists,
+  });
+  const lifecycle = createInstalledSmokeLifecycle({
+    workspaceRoot,
+    smokeRoot,
+    runRoot,
+    nsisDirectory,
+    childEnvironmentAllowlist,
+    terminateTrackedProcessTree: processCleanup.terminateTrackedProcessTree,
+  });
+
+  return assertStagedRuntime('deterministic').pipe(
+    concatMap(() => lifecycle.prepareSmokeDirectories()),
+    concatMap(() => acquireLock(smokeRoot, smokeLockPath)),
+    switchMap((smokeLock) => {
+      const state = {
+        appProcess: undefined,
+        browser: undefined,
+        cdpPort: undefined,
+        installer: undefined,
+        installationAttempted: false,
+        exerciseResult: undefined,
+        exerciseError: undefined,
+        cleanupErrors: [],
+        cleanup: {
+          ownedProcessCount: 0,
+          ownedProcessesStopped: false,
+          cdpPortReleased: false,
+          uninstallerCompleted: false,
+          installDirectoryRemoved: false,
+          registryResidueRemoved: false,
+          isolatedRunDataRemoved: false,
+        },
+      };
+
+      const attempt = (operation, onSuccess = () => undefined) =>
+        operation.pipe(
+          tap(onSuccess),
+          catchError((error) => {
+            state.cleanupErrors.push(error);
+            return of(undefined);
+          }),
+        );
+
+      const installAndExercise = defer(() => from(rm(evidencePath, { force: true }))).pipe(
+        concatMap(() => lifecycle.findDeterministicInstaller()),
+        tap((installer) => (state.installer = installer)),
+        concatMap(() => registry.assertNoPreExistingInstallation()),
+        concatMap(() => processCleanup.stopAndProveOwnedProcessRoots([installDirectory, temporaryDirectory])),
+        concatMap(() => lifecycle.safeRemoveTree(smokeRoot, runRoot)),
+        concatMap(() => from([installDirectory, webViewDataDirectory, appDataDirectory, localAppDataDirectory, temporaryDirectory]).pipe(
+          concatMap((path) => defer(() => from(mkdir(path, { recursive: true })))),
+          toArray(),
+        )),
+        tap(() => (state.installationAttempted = true)),
+        concatMap(() => lifecycle.runCheckedExecutable(
+          state.installer.path,
+          installerArguments(smokeRoot, installDirectory),
+          'Deterministic NSIS installer',
+          baseChildEnvironment(process.env, temporaryDirectory),
+          180_000,
+        )),
+        concatMap(() => lifecycle.assertOwnedRegularFile(
+          installDirectory,
+          join(installDirectory, installedExecutableName),
+          'Installed Tauri executable',
+        )),
+        concatMap(() => registry.assertInstalledRegistryPointsToOwnedDirectory(installDirectory)),
+        concatMap(() => reserveLoopbackPort()),
+        tap((port) => {
+          state.cdpPort = port;
+          const appEnvironment = buildInstalledAppEnvironment(
+            process.env,
+            {
+              root: runRoot,
+              appData: appDataDirectory,
+              localAppData: localAppDataDirectory,
+              temporary: temporaryDirectory,
+              webViewData: webViewDataDirectory,
+            },
+            port,
+          );
+          state.appProcess = spawn(join(installDirectory, installedExecutableName), [], {
+            cwd: installDirectory,
+            env: appEnvironment,
+            stdio: 'ignore',
+            windowsHide: true,
+          });
+          state.appProcess.on('error', () => undefined);
+        }),
+        concatMap(() => connectToInstalledWebView(state.cdpPort, state.appProcess)),
+        tap((browser) => (state.browser = browser)),
+        concatMap(() => installedPage(state.browser, state.appProcess)),
+        concatMap((page) => exerciseInstalledUi(page)),
+        tap((exerciseResult) => (state.exerciseResult = exerciseResult)),
+        concatMap(() => processCleanup.processesRunningUnder(installDirectory)),
+        tap((processes) => {
+          state.cleanup.ownedProcessCount = processes.length;
+          if (state.cleanup.ownedProcessCount < 2) {
+            throw new Error('Installed smoke did not observe both the owned Tauri app and runtime process.');
+          }
+        }),
+        map(() => undefined),
+        catchError((error) => {
+          state.exerciseError = error;
+          return of(undefined);
+        }),
+      );
+
+      const cleanupRun = installAndExercise.pipe(
+        concatMap(() => attempt(
+          state.appProcess
+            ? processCleanup.terminateTrackedProcessTree(state.appProcess, 'Owned Tauri application')
+            : of(undefined),
+        )),
+        concatMap(() => attempt(
+          processCleanup.stopAndProveOwnedProcessRoots([installDirectory, temporaryDirectory]),
+          () => (state.cleanup.ownedProcessesStopped = true),
+        )),
+        concatMap(() => {
+          if (!state.browser) return of(undefined);
+          return race(
+            defer(() => from(state.browser.close())),
+            timer(5_000).pipe(concatMap(() => throwError(() => new Error('Playwright CDP disconnect timed out.')))),
+          ).pipe(catchError(() => of(undefined)));
+        }),
+        concatMap(() => {
+          if (state.cdpPort === undefined) {
+            state.cleanup.cdpPortReleased = true;
+            return of(undefined);
+          }
+          return attempt(
+            processCleanup.waitForLoopbackPortRelease(state.cdpPort),
+            () => (state.cleanup.cdpPortReleased = true),
+          );
+        }),
+        concatMap(() => {
+          if (!state.installationAttempted) {
+            state.cleanup.uninstallerCompleted = true;
+            state.cleanup.installDirectoryRemoved = true;
+            state.cleanup.registryResidueRemoved = true;
+            return of(undefined);
+          }
+          if (!state.cleanup.ownedProcessesStopped) {
+            return attempt(defer(() => {
+              assertInstallationCleanupAllowed(state.cleanup.ownedProcessesStopped);
+              return of(undefined);
+            }));
+          }
+          const uninstallerPath = join(installDirectory, uninstallerName);
+          return attempt(
+            pathExists(uninstallerPath).pipe(
+              switchMap((exists) => {
+                if (!exists) {
+                  return pathExists(join(installDirectory, installedExecutableName)).pipe(
+                    concatMap((executableExists) => executableExists
+                      ? throwError(() => new Error('Installed uninstaller is missing from the owned install directory.'))
+                      : of(undefined)),
+                  );
+                }
+                return lifecycle.assertOwnedRegularFile(installDirectory, uninstallerPath, 'Installed uninstaller').pipe(
+                  concatMap((uninstaller) => registry.assertInstalledRegistryPointsToOwnedDirectory(installDirectory).pipe(
+                    concatMap(() => lifecycle.runCheckedExecutable(
+                      uninstaller,
+                      uninstallerArguments(smokeRoot, installDirectory),
+                      'Installed NSIS uninstaller',
+                      baseChildEnvironment(process.env, temporaryDirectory),
+                      180_000,
+                    )),
+                  )),
+                  concatMap(() => registry.waitForInstalledDirectoryRemoval(installDirectory)),
+                );
+              }),
+              tap(() => {
+                state.cleanup.uninstallerCompleted = true;
+                state.cleanup.installDirectoryRemoved = true;
+              }),
+            ),
+          ).pipe(
+            concatMap(() => attempt(
+              processCleanup.stopAndProveOwnedProcessRoots([installDirectory, temporaryDirectory]),
+              () => (state.cleanup.ownedProcessesStopped = true),
+            )),
+            concatMap(() => state.cleanup.ownedProcessesStopped
+              ? attempt(registry.removeOwnedRegistryResidue(installDirectory), () => (state.cleanup.registryResidueRemoved = true))
+              : of(undefined)),
+          );
+        }),
+        concatMap(() => state.cleanup.ownedProcessesStopped
+          ? attempt(
+              lifecycle.safeRemoveTree(smokeRoot, runRoot).pipe(
+                concatMap(() => pathExists(runRoot)),
+                tap((exists) => (state.cleanup.isolatedRunDataRemoved = !exists)),
+              ),
+            )
+          : of(undefined)),
+        concatMap(() => {
+          if (state.exerciseError || state.cleanupErrors.length > 0) {
+            return throwError(
+              () => new AggregateError(
+                [state.exerciseError, ...state.cleanupErrors].filter(Boolean),
+                'Installed deterministic Tauri smoke failed or could not clean up safely.',
+              ),
+            );
+          }
+          const report = {
+            evidenceKind: 'deterministic-installed-tauri-smoke',
+            releaseGateSatisfied: false,
+            realEnginesExercised: false,
+            platform: 'windows',
+            arch: 'x86_64',
+            bundle: 'nsis',
+            installer: state.installer,
+            installedApplication: {
+              fileName: installedExecutableName,
+              clientMode: state.exerciseResult.clientMode,
+              isolatedRuntimeMode: state.exerciseResult.isolatedRuntimeMode,
+              hostProviderButtonVisible: state.exerciseResult.hostProviderButtonVisible,
+            },
+            requirements: state.exerciseResult.requirements,
+            captures: state.exerciseResult.captures,
+            cleanup: state.cleanup,
+            disclaimer: 'Deterministic packaged verification only; it does not exercise or satisfy real WindowsML, Whisper, Ollama, licensed-fixture, clean-install release, or publication gates.',
+          };
+          assertInstalledSmokeEvidence(report);
+          return writeEvidence(report).pipe(map(() => ({ report, reportPath: evidencePath })));
+        }),
+      );
+
+      return cleanupRun.pipe(
+        catchError((error) =>
+          releaseLock(smokeLock).pipe(concatMap(() => throwError(() => error))),
+        ),
+        concatMap((result) => releaseLock(smokeLock).pipe(map(() => result))),
+      );
+    }),
+  );
+}
+
+export function acquireExclusiveSmokeLock(root, candidate) {
+  return acquireLock(root, candidate);
+}
+
+export function releaseExclusiveSmokeLock(lock) {
+  return releaseLock(lock);
 }
 
 function errorMessage(error) {
@@ -516,19 +459,14 @@ if (
   process.argv[1] &&
   pathToFileURL(resolve(process.argv[1])).href === import.meta.url
 ) {
-  runInstalledDeterministicSmoke()
-    .then(({ reportPath }) => {
-      process.stdout.write(
-        `Installed deterministic smoke evidence: ${reportPath}\n`,
-      );
-    })
-    .catch((error) => {
+  runInstalledDeterministicSmoke().subscribe({
+    next: ({ reportPath }) => process.stdout.write(`Installed deterministic smoke evidence: ${reportPath}\n`),
+    error: (error) => {
       process.stderr.write(`${errorMessage(error)}\n`);
       if (error instanceof AggregateError) {
-        for (const cause of error.errors) {
-          process.stderr.write(`- ${errorMessage(cause)}\n`);
-        }
+        for (const cause of error.errors) process.stderr.write(`- ${errorMessage(cause)}\n`);
       }
       process.exitCode = 1;
-    });
+    },
+  });
 }
