@@ -12,6 +12,7 @@ import {
 } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { MAX_RUNTIME_ARTIFACT_BYTES } from './constants/runtime.ts';
 
 export const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const stagedExecutable = join(
@@ -64,7 +65,6 @@ const manifestFields = Object.freeze([
   'schemaSha256',
   'sha256',
 ]);
-export const MAX_RUNTIME_ARTIFACT_BYTES = 536_870_912;
 const maxWindowsmlBundleBytes = 536_870_912;
 
 export async function validateRuntime(manifestPath, artifactPath, schemaPath) {

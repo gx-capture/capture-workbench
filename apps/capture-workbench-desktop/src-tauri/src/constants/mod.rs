@@ -1,14 +1,26 @@
-pub(crate) const RUNTIME_MANIFEST_FILE: &str = "capture-runtime-manifest.json";
-pub(crate) const RUNTIME_BINARY_FILE: &str = "capture-runtime.exe";
-pub(crate) const RUNTIME_BINARY_TARGET_FILE: &str = "capture-runtime-x86_64-pc-windows-msvc.exe";
+mod health;
+mod launch;
+mod manifest;
+mod paths;
+mod runtime;
+mod versions;
 
-pub(crate) const EXPECTED_MANIFEST_VERSION: &str = "1";
-pub(crate) const EXPECTED_RUNTIME_VERSION: &str = env!("CARGO_PKG_VERSION");
-pub(crate) const EXPECTED_API_VERSION: &str = "1.0";
-pub(crate) const EXPECTED_CAPTURE_DOCUMENT_SCHEMA_VERSION: &str = "1";
-
-pub(crate) const LOOPBACK_HOST: &str = "127.0.0.1";
-pub(crate) const WORKBENCH_OLLAMA_MODEL: &str = "qwen3.5:4b";
-pub(crate) const WORKBENCH_OLLAMA_PROFILE: &str = "capture-workbench-qwen3.5-4b-structure-v1";
-pub(crate) const DEFAULT_RETENTION_HOURS: u64 = 24;
-pub(crate) const DEFAULT_MAX_UPLOAD_BYTES: u64 = 50 * 1024 * 1024;
+pub(crate) use health::{HEALTH_PATH, MAX_HEALTH_RESPONSE_BYTES};
+pub(crate) use launch::{
+    CHILD_ENVIRONMENT_ALLOWLIST, MAX_LAUNCH_ATTEMPTS, READY_POLL_INTERVAL, READY_TIMEOUT,
+    RETRY_DELAY, RETRY_POLL_INTERVAL, TOTAL_LAUNCH_TIMEOUT,
+};
+pub(crate) use manifest::{
+    MAX_RUNTIME_ARTIFACT_BYTES, MAX_WINDOWSML_BUNDLE_BYTES, SCHEMA_FILE_NAME,
+};
+pub(crate) use paths::{
+    LOOPBACK_HOST, RUNTIME_BINARY_FILE, RUNTIME_BINARY_TARGET_FILE, RUNTIME_MANIFEST_FILE,
+};
+pub(crate) use runtime::{
+    DEFAULT_MAX_UPLOAD_BYTES, DEFAULT_RETENTION_HOURS, WORKBENCH_OLLAMA_MODEL,
+    WORKBENCH_OLLAMA_PROFILE,
+};
+pub(crate) use versions::{
+    EXPECTED_API_VERSION, EXPECTED_CAPTURE_DOCUMENT_SCHEMA_VERSION, EXPECTED_MANIFEST_VERSION,
+    EXPECTED_RUNTIME_VERSION,
+};

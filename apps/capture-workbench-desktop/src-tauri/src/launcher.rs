@@ -1,8 +1,5 @@
 use std::{
-    collections::HashSet,
-    fmt::Write as _,
     fs,
-    net::TcpListener,
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::atomic::{AtomicBool, Ordering},
@@ -10,52 +7,26 @@ use std::{
     time::{Duration, Instant},
 };
 
-use rand::{rngs::OsRng, RngCore};
-
 use crate::{
     config::BackendConfig,
     constants::{
-        DEFAULT_MAX_UPLOAD_BYTES, DEFAULT_RETENTION_HOURS, LOOPBACK_HOST, WORKBENCH_OLLAMA_MODEL,
-        WORKBENCH_OLLAMA_PROFILE,
+        LOOPBACK_HOST, MAX_LAUNCH_ATTEMPTS, READY_POLL_INTERVAL, READY_TIMEOUT, RETRY_DELAY,
+        RETRY_POLL_INTERVAL, TOTAL_LAUNCH_TIMEOUT,
     },
-    health::{probe_ready_once, ProbeResult},
-    manifest::{verify_runtime, RuntimeManifest, WindowsMlArtifactDescriptor},
+    contracts::{ProbeResult, ReadyHandshake, RuntimeManifest, WindowsMlArtifactDescriptor},
+    health::probe_ready_once,
+    launch_policy::{child_environment_name_is_allowed, LaunchPolicy, LaunchPolicyFactory},
+    manifest::verify_runtime,
     process::{terminate_owned_process_tree, OwnedRuntimeProcess},
     resources::RuntimeAssets,
 };
 
-const READY_TIMEOUT: Duration = Duration::from_secs(45);
-const READY_POLL_INTERVAL: Duration = Duration::from_millis(100);
-const MAX_LAUNCH_ATTEMPTS: usize = 3;
-const TOTAL_LAUNCH_TIMEOUT: Duration = Duration::from_secs(60);
-const RETRY_POLL_INTERVAL: Duration = Duration::from_millis(25);
-const RETRY_DELAY: Duration = Duration::from_millis(100);
-const CHILD_ENVIRONMENT_ALLOWLIST: &[&str] = &[
-    "APPDATA",
-    "COMSPEC",
-    "LOCALAPPDATA",
-    "NUMBER_OF_PROCESSORS",
-    "OS",
-    "PATH",
-    "PATHEXT",
-    "PROCESSOR_ARCHITECTURE",
-    "PROCESSOR_IDENTIFIER",
-    "PROCESSOR_LEVEL",
-    "PROCESSOR_REVISION",
-    "PROGRAMDATA",
-    "SYSTEMDRIVE",
-    "SYSTEMROOT",
-    "TEMP",
-    "TMP",
-    "USERPROFILE",
-    "WINDIR",
-];
-
-fn child_environment_name_is_allowed(name: &str) -> bool {
-    CHILD_ENVIRONMENT_ALLOWLIST
-        .iter()
-        .any(|allowed| allowed.eq_ignore_ascii_case(name))
-}
+#[cfg(test)]
+use crate::constants::{WORKBENCH_OLLAMA_MODEL, WORKBENCH_OLLAMA_PROFILE};
+#[cfg(test)]
+use crate::launch_policy::{
+    generate_bearer_token, reserve_distinct_loopback_port, reserve_loopback_port,
+};
 
 pub(crate) struct LaunchedRuntime {
     pub child: OwnedRuntimeProcess,
@@ -65,142 +36,6 @@ pub(crate) struct LaunchedRuntime {
 enum LaunchAttemptError {
     Fatal(String),
     Retryable(String),
-}
-
-struct LaunchPolicy {
-    runtime_port: u16,
-    ollama_port: u16,
-    token: String,
-    data_dir: PathBuf,
-}
-
-impl LaunchPolicy {
-    #[cfg(test)]
-    fn deterministic(data_dir: PathBuf, runtime_port: u16, ollama_port: u16) -> Self {
-        Self {
-            runtime_port,
-            ollama_port,
-            token: "test-token".into(),
-            data_dir,
-        }
-    }
-
-    fn runtime_data_dir(&self) -> PathBuf {
-        self.data_dir.join("runtime")
-    }
-
-    fn ollama_data_dir(&self) -> PathBuf {
-        self.data_dir.join("ollama")
-    }
-
-    fn ollama_models_dir(&self) -> PathBuf {
-        self.ollama_data_dir().join("models")
-    }
-
-    fn ollama_pid_file(&self) -> PathBuf {
-        self.ollama_data_dir().join("ollama.pid")
-    }
-
-    fn base_url(&self) -> String {
-        format!("http://{LOOPBACK_HOST}:{}", self.runtime_port)
-    }
-
-    fn environment(&self) -> Vec<(&'static str, String)> {
-        let mut origins = vec!["http://tauri.localhost", "tauri://localhost"];
-        if cfg!(debug_assertions) {
-            origins.push("http://localhost:4200");
-        }
-        vec![
-            ("CAPTURE_HOST", LOOPBACK_HOST.into()),
-            ("CAPTURE_PORT", self.runtime_port.to_string()),
-            ("CAPTURE_API_TOKEN", self.token.clone()),
-            (
-                "CAPTURE_ALLOWED_HOSTS",
-                format!("{LOOPBACK_HOST}:{}", self.runtime_port),
-            ),
-            ("CAPTURE_ALLOWED_ORIGINS", origins.join(",")),
-            ("CAPTURE_ENABLE_API_DOCS", "false".into()),
-            (
-                "CAPTURE_APP_DATA_DIR",
-                self.runtime_data_dir().to_string_lossy().into_owned(),
-            ),
-            ("CAPTURE_STRUCTURING_PROVIDER", "ollama".into()),
-            (
-                "CAPTURE_RETENTION_HOURS",
-                DEFAULT_RETENTION_HOURS.to_string(),
-            ),
-            (
-                "CAPTURE_MAX_UPLOAD_BYTES",
-                DEFAULT_MAX_UPLOAD_BYTES.to_string(),
-            ),
-            (
-                "CAPTURE_OLLAMA_HOST",
-                format!("http://{LOOPBACK_HOST}:{}", self.ollama_port),
-            ),
-            (
-                "CAPTURE_OLLAMA_APP_DATA",
-                self.ollama_data_dir().to_string_lossy().into_owned(),
-            ),
-            (
-                "CAPTURE_OLLAMA_PID_FILE",
-                self.ollama_pid_file().to_string_lossy().into_owned(),
-            ),
-            ("CAPTURE_OLLAMA_MODEL", WORKBENCH_OLLAMA_MODEL.into()),
-            ("CAPTURE_OLLAMA_PROFILE_ID", WORKBENCH_OLLAMA_PROFILE.into()),
-            (
-                "OLLAMA_HOST",
-                format!("{LOOPBACK_HOST}:{}", self.ollama_port),
-            ),
-            (
-                "OLLAMA_MODELS",
-                self.ollama_models_dir().to_string_lossy().into_owned(),
-            ),
-        ]
-    }
-}
-
-struct LaunchPolicyFactory {
-    data_dir: PathBuf,
-    used_ports: HashSet<u16>,
-    used_tokens: HashSet<String>,
-}
-
-impl LaunchPolicyFactory {
-    fn new(data_dir: PathBuf) -> Self {
-        Self {
-            data_dir,
-            used_ports: HashSet::new(),
-            used_tokens: HashSet::new(),
-        }
-    }
-
-    fn next(&mut self) -> Result<LaunchPolicy, String> {
-        let runtime_port = reserve_distinct_loopback_port(&self.used_ports)?;
-        let mut excluded_ports = self.used_ports.clone();
-        excluded_ports.insert(runtime_port);
-        let ollama_port = reserve_distinct_loopback_port(&excluded_ports)?;
-        let token = self.next_token()?;
-
-        self.used_ports.insert(runtime_port);
-        self.used_ports.insert(ollama_port);
-        self.used_tokens.insert(token.clone());
-        Ok(LaunchPolicy {
-            runtime_port,
-            ollama_port,
-            token,
-            data_dir: self.data_dir.clone(),
-        })
-    }
-
-    fn next_token(&self) -> Result<String, String> {
-        for _ in 0..16 {
-            let token = generate_bearer_token()?;
-            if !self.used_tokens.contains(&token) {
-                return Ok(token);
-            }
-        }
-        Err("A fresh runtime bearer token could not be generated.".into())
-    }
 }
 
 pub(crate) fn launch_runtime(
@@ -373,7 +208,7 @@ fn wait_until_ready(
     manifest: &RuntimeManifest,
     stopping: &AtomicBool,
     timeout: Duration,
-) -> Result<crate::health::ReadyHandshake, String> {
+) -> Result<ReadyHandshake, String> {
     let started = Instant::now();
     while started.elapsed() < timeout {
         if stopping.load(Ordering::Acquire) {
@@ -395,41 +230,11 @@ fn wait_until_ready(
     Err("Capture runtime did not become ready before the timeout.".into())
 }
 
-fn reserve_loopback_port() -> Result<u16, String> {
-    TcpListener::bind((LOOPBACK_HOST, 0))
-        .map_err(|error| format!("A loopback runtime port could not be reserved: {error}"))?
-        .local_addr()
-        .map(|address| address.port())
-        .map_err(|error| format!("The reserved loopback port could not be read: {error}"))
-}
-
-fn reserve_distinct_loopback_port(excluded: &HashSet<u16>) -> Result<u16, String> {
-    for _ in 0..32 {
-        let candidate = reserve_loopback_port()?;
-        if !excluded.contains(&candidate) {
-            return Ok(candidate);
-        }
-    }
-    Err("A fresh independent loopback port could not be reserved.".into())
-}
-
-fn generate_bearer_token() -> Result<String, String> {
-    let mut bytes = [0_u8; 32];
-    OsRng
-        .try_fill_bytes(&mut bytes)
-        .map_err(|_| "A secure runtime bearer token could not be generated.".to_string())?;
-    let mut token = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        write!(&mut token, "{byte:02x}")
-            .map_err(|_| "A secure runtime bearer token could not be encoded.".to_string())?;
-    }
-    Ok(token)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::ffi::OsStr;
+    use std::{collections::HashSet, net::TcpListener};
 
     fn env_value(command: &Command, name: &str) -> Option<String> {
         command
