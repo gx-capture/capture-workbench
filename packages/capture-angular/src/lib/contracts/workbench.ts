@@ -69,6 +69,34 @@ export interface CaptureWorkflowContext {
   readonly preprocessor: () => CapturePreprocessor | null;
 }
 
+export interface CaptureReconciliationContext {
+  readonly client: () => CaptureClient | null;
+  readonly getTask: (taskId: string) => CaptureTaskView | undefined;
+  readonly updateTask: (
+    taskId: string,
+    patch: Partial<CaptureTaskView>,
+  ) => CaptureTaskView | undefined;
+  readonly requireReconciliation: (
+    taskId: string,
+    error: CaptureFailureV1,
+    raw?: RawCaptureV1,
+  ) => void;
+  readonly failTask: (
+    taskId: string,
+    fileName: string,
+    error: CaptureFailureV1,
+    raw?: RawCaptureV1,
+    stage?: CaptureTaskView['stage'],
+  ) => void;
+  readonly emitCompleted: (event: CaptureCompletedEvent) => void;
+  readonly emitCanceled: (task: CaptureTaskView) => void;
+  readonly tryGetRaw: (
+    client: CaptureClient,
+    captureId: string,
+    signal?: AbortSignal,
+  ) => Promise<RawCaptureV1 | undefined>;
+}
+
 export type CaptureWorkbenchStoreEvent =
   | { readonly type: 'completed'; readonly event: CaptureCompletedEvent }
   | { readonly type: 'failed'; readonly event: CaptureFailedEvent }

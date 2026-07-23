@@ -23,6 +23,7 @@ import { CaptureRuntimeSetupComponent } from './capture-runtime-setup.component'
 import { CaptureWorkbenchHeaderComponent } from './capture-workbench-header.component';
 import { CaptureRuntimeInstallationService } from './capture-runtime-installation.service';
 import { CaptureWorkflowService } from './capture-workflow.service';
+import { CaptureReconciliationService } from './capture-reconciliation.service';
 import {
   CaptureWorkbenchStore,
 } from './capture-workbench-store';
@@ -38,6 +39,7 @@ import {
     CaptureWorkbenchStore,
     CaptureRuntimeInstallationService,
     CaptureWorkflowService,
+    CaptureReconciliationService,
   ],
   templateUrl: './capture-angular.html',
   styleUrl: './capture-angular.css',
