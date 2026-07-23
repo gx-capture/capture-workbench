@@ -77,7 +77,7 @@ test('selects the HTTP client and ignores fixture queries in packaged Tauri', as
             status: 'ready',
             detail: 'Capture runtime is ready.',
             baseUrl: 'http://127.0.0.1:43119',
-            runtimeVersion: '0.1.0',
+            runtimeVersion: '0.3.0',
             apiVersion: '1.0',
             captureDocumentSchemaVersion: '1',
           });
@@ -86,7 +86,7 @@ test('selects the HTTP client and ignores fixture queries in packaged Tauri', as
         return Promise.resolve({
           baseUrl: 'http://127.0.0.1:43119',
           token: 'memory-only-e2e-token',
-          runtimeVersion: '0.1.0',
+          runtimeVersion: '0.3.0',
           apiVersion: '1.0',
           captureDocumentSchemaVersion: '1',
         });
@@ -103,7 +103,7 @@ test('selects the HTTP client and ignores fixture queries in packaged Tauri', as
             JSON.stringify({
               ready: true,
               service: 'capture-runtime',
-              runtimeVersion: '0.1.0',
+              runtimeVersion: '0.3.0',
               apiVersion: '1.0',
               captureDocumentSchemaVersion: '1',
               capabilities: {

@@ -20,6 +20,7 @@ from capture_runtime.extractors import (
     StandaloneRuntimeCaptureExtractor,
 )
 from capture_runtime.ollama import (
+    ExternalOllamaCaptureStructuringProvider,
     IsolatedOllamaLifecycle,
     OllamaCaptureStructuringProvider,
     ProcessController,
@@ -89,6 +90,13 @@ def build_runtime_dependencies(
             active_structurer = FakeCaptureStructuringProvider(runtime_clock)
         elif settings.structuring_provider == "ollama":
             active_structurer = OllamaCaptureStructuringProvider(lifecycle, clock=runtime_clock)
+        elif settings.structuring_provider == "external-ollama":
+            if settings.external_ollama is None:
+                raise ValueError("external Ollama configuration is required")
+            active_structurer = ExternalOllamaCaptureStructuringProvider(
+                settings.external_ollama,
+                clock=runtime_clock,
+            )
         else:
             active_structurer = HostOnlyCaptureStructuringProvider()
 
@@ -99,12 +107,12 @@ def build_runtime_dependencies(
     )
     disabled_requirement_ids = (
         {OLLAMA_RUNTIME_REQUIREMENT_ID, OLLAMA_MODEL_REQUIREMENT_ID}
-        if settings.structuring_provider == "host"
+        if settings.structuring_provider in {"host", "external-ollama"}
         else set()
     )
     enabled_requirement_ids = (
         {WINDOWSML_REQUIREMENT_ID, WHISPER_REQUIREMENT_ID}
-        if settings.structuring_provider == "host"
+        if settings.structuring_provider in {"host", "external-ollama"}
         else None
     )
     active_installer = installer or SystemRuntimeInstaller(

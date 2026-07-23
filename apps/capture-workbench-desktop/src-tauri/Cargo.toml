@@ -1,6 +1,6 @@
 [package]
 name = "capture-workbench-desktop"
-version = "0.1.0"
+version = "0.3.0"
 description = "Tauri verification harness for Capture Workbench"
 authors = ["Capture Workbench contributors"]
 edition = "2021"

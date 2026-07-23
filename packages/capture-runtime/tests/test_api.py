@@ -52,7 +52,7 @@ def test_health_auth_host_origin_and_version_handshake(client: TestClient) -> No
         "ready": True,
         "service": "capture-runtime",
         "apiVersion": "1.0",
-        "runtimeVersion": "0.1.0",
+        "runtimeVersion": "0.3.0",
         "captureDocumentSchemaVersion": "1",
         "capabilities": {
             "captureKinds": ["pdf", "image", "audio"],
@@ -710,3 +710,36 @@ def test_host_only_process_advertises_and_accepts_only_host_structuring(
             lambda value: value["stage"] == "awaiting_structuring",
         )
         assert awaiting["status"] == "running"
+
+
+def test_external_ollama_mode_disables_local_ollama_installation(
+    settings_factory: Callable[..., RuntimeSettings],
+) -> None:
+    settings = settings_factory(
+        CAPTURE_STRUCTURING_PROVIDER="external-ollama",
+        CAPTURE_OLLAMA_ENDPOINT="https://ollama.internal",
+        CAPTURE_OLLAMA_MODEL="qwen3.5:4b",
+    )
+    with TestClient(
+        create_app(settings, installer=FakeRuntimeInstaller()),
+        base_url=f"http://127.0.0.1:{settings.port}",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+    ) as test_client:
+        ready = test_client.get("/v1/health/ready")
+        assert ready.status_code == 200
+        assert ready.json()["capabilities"]["structuringModes"] == ["runtime", "host"]
+
+        requirements = test_client.get("/v1/runtime/requirements")
+        assert requirements.status_code == 200
+        assert {item["requirementId"] for item in requirements.json()["items"]} == {
+            "windowsml-ocr",
+            "whisper-primary",
+        }
+
+        installation = test_client.post(
+            "/v1/runtime/installations",
+            headers=idempotency_headers(),
+            json={"requirementId": "capture-ollama-model", "consent": True},
+        )
+        assert installation.status_code == 422
+        assert installation.json()["error"]["code"] == "requirement_disabled"

@@ -9,7 +9,7 @@ import { ValidationRuntimeReadinessService } from './services/validation-runtime
 const backendConfig = {
   baseUrl: 'http://127.0.0.1:43119',
   token: 'memory-only-test-token',
-  runtimeVersion: '0.1.0',
+  runtimeVersion: '0.3.0',
   apiVersion: '1.0',
   captureDocumentSchemaVersion: '1',
 };
@@ -282,7 +282,7 @@ function installReadyFetch(): ReturnType<typeof vi.fn<typeof fetch>> {
       JSON.stringify({
         ready: true,
         service: 'capture-runtime',
-        runtimeVersion: '0.1.0',
+        runtimeVersion: '0.3.0',
         apiVersion: '1.0',
         captureDocumentSchemaVersion: '1',
         capabilities: {

@@ -23,6 +23,69 @@ corepack pnpm nx run capture-runtime:build-production-executable
 From the workspace root, use `corepack pnpm nx run capture-runtime:test` and the other declared Nx
 targets.
 
+## Standalone Windows quick start
+
+The public runtime artifact is the Windows x64 executable, checksum, manifest,
+and `CaptureDocumentV1` schema published on the matching GitHub Release. The
+executable binds only to loopback and every `/v1` request requires a Bearer
+token.
+
+For a host that already runs Ollama, configure the explicit external provider:
+
+```powershell
+$env:CAPTURE_API_TOKEN = 'replace-with-at-least-32-random-characters'
+$env:CAPTURE_STRUCTURING_PROVIDER = 'external-ollama'
+$env:CAPTURE_OLLAMA_ENDPOINT = 'http://127.0.0.1:11434'
+$env:CAPTURE_OLLAMA_MODEL = 'qwen3.5:4b'
+
+.\capture-runtime-x86_64-pc-windows-msvc.exe serve --port 8766
+```
+
+Keep the API token and optional `CAPTURE_OLLAMA_API_KEY` in the process
+environment. Never put either secret in an endpoint URL, browser storage, or
+capture request. `external-ollama` does not start, install, or reuse a
+runtime-owned Ollama model store; it checks the configured model at
+`/api/tags` and calls `/api/generate` with bounded structured-output requests.
+
+Check readiness from a backend or trusted local process:
+
+```powershell
+$headers = @{ Authorization = "Bearer $env:CAPTURE_API_TOKEN" }
+Invoke-RestMethod `
+  -Uri 'http://127.0.0.1:8766/v1/health/ready' `
+  -Headers $headers
+```
+
+Submit one source file and poll its asynchronous job:
+
+```powershell
+$job = curl.exe `
+  -sS `
+  -H "Authorization: Bearer $env:CAPTURE_API_TOKEN" `
+  -H "X-Idempotency-Key: $([guid]::NewGuid())" `
+  -F 'file=@sample.pdf' `
+  -F 'sourceKind=pdf' `
+  -F 'structuringMode=runtime' `
+  http://127.0.0.1:8766/v1/captures | ConvertFrom-Json
+
+do {
+  Start-Sleep -Milliseconds 500
+  $status = Invoke-RestMethod `
+    -Uri "http://127.0.0.1:8766/v1/captures/$($job.captureId)" `
+    -Headers $headers
+} while ($status.status -in @('queued', 'running'))
+
+$result = Invoke-RestMethod `
+  -Uri "http://127.0.0.1:8766/v1/captures/$($job.captureId)/result" `
+  -Headers $headers
+```
+
+The runtime still owns PDF/image extraction, WindowsML OCR, Whisper, upload
+limits, retention, provenance, and final schema validation. External Ollama
+only changes who owns structured generation. A host that owns all structuring
+instead should use `CAPTURE_STRUCTURING_PROVIDER=host` and the `/raw` plus
+`/structure` protocol described below.
+
 ## Runtime configuration
 
 The Tauri harness provides these environment variables. Secrets stay in the process
@@ -37,8 +100,10 @@ environment and Authorization header; they are never accepted in URLs.
 - `CAPTURE_ENABLE_API_DOCS=false`
 - `CAPTURE_APP_DATA_DIR`, `CAPTURE_RETENTION_HOURS`, `CAPTURE_MAX_UPLOAD_BYTES`
 - `CAPTURE_MAX_CANDIDATE_BYTES` (defaults to 8 MiB)
-- `CAPTURE_STRUCTURING_PROVIDER=ollama|fake|host` (`host` disables runtime
-  structuring and advertises only the host commit protocol)
+- `CAPTURE_STRUCTURING_PROVIDER=ollama|external-ollama|fake|host`
+  (`external-ollama` requires `CAPTURE_OLLAMA_ENDPOINT` and optionally uses
+  `CAPTURE_OLLAMA_API_KEY`; `host` disables runtime structuring and advertises
+  only the host commit protocol)
 - `CAPTURE_OLLAMA_MODELS_DIR=<capture-owned path>` (optional; ambient
   `OLLAMA_MODELS` is intentionally ignored so a host model store is never reused)
 - `CAPTURE_EXTRACTION_PROVIDER=runtime|fake` (`runtime` is the production default)
@@ -50,6 +115,7 @@ environment and Authorization header; they are never accepted in URLs.
 - `CAPTURE_MAX_PDF_PAGES`, `CAPTURE_MAX_IMAGE_PIXELS`, `CAPTURE_OCR_RENDER_SCALE`,
   `CAPTURE_MAX_AUDIO_DURATION_MS`
 - `CAPTURE_OLLAMA_HOST`, `CAPTURE_OLLAMA_APP_DATA`, `CAPTURE_OLLAMA_PID_FILE`
+- `CAPTURE_OLLAMA_ENDPOINT`, `CAPTURE_OLLAMA_API_KEY` (external-ollama only)
 - `OLLAMA_HOST`, `OLLAMA_MODELS`
 - `CAPTURE_OLLAMA_MODEL=qwen3.5:4b`
 - `CAPTURE_OLLAMA_PROFILE_ID=capture-workbench-qwen3.5-4b-structure-v1`

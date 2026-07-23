@@ -18,6 +18,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from capture_runtime.clock import Clock
 from capture_runtime.config import RuntimeSettings
+from capture_runtime.constants import RUNTIME_VERSION
 from capture_runtime.dependencies import RuntimeDependencies, build_runtime_dependencies
 from capture_runtime.extractors import CaptureExtractor
 from capture_runtime.ollama import ProcessController, RuntimeInstaller
@@ -137,7 +138,7 @@ def create_app(
     openapi_url = "/openapi.json" if runtime_settings.enable_api_docs else None
     app = FastAPI(
         title="Capture Runtime",
-        version="0.1.0",
+        version=RUNTIME_VERSION,
         debug=False,
         docs_url=docs_url,
         redoc_url=None,

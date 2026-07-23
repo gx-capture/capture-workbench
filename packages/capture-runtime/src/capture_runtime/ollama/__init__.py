@@ -18,7 +18,10 @@ from capture_runtime.ollama.lifecycle import (
     RuntimeUnavailableError,
     SubprocessController,
 )
-from capture_runtime.ollama.provider import OllamaCaptureStructuringProvider
+from capture_runtime.ollama.provider import (
+    ExternalOllamaCaptureStructuringProvider,
+    OllamaCaptureStructuringProvider,
+)
 
 # Preserve the old module-level test seam while the implementation migrates.
 shutil = _shutil
@@ -26,6 +29,7 @@ shutil = _shutil
 __all__ = [
     "FakeRuntimeInstaller",
     "CommandResult",
+    "ExternalOllamaCaptureStructuringProvider",
     "IsolatedOllamaLifecycle",
     "ManualActionRequiredError",
     "OllamaCaptureStructuringProvider",

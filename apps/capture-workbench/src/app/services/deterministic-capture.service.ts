@@ -39,7 +39,7 @@ export class DeterministicCaptureClientService implements CaptureClient {
     return of({
       ready: true,
       service: 'capture-runtime',
-      runtimeVersion: '0.1.0',
+      runtimeVersion: '0.3.0',
       apiVersion: '1.0',
       captureDocumentSchemaVersion: '1',
       capabilities: {
