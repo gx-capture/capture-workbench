@@ -5,8 +5,8 @@ import {
   CHILD_ENVIRONMENT_ALLOWLIST,
   EXPECTED_REQUIREMENT_IDS,
   INSTALLED_FIXTURES,
-} from './constants/installed.ts';
-import { assertRedactedEvidence } from './package-qa.ts';
+} from '../constants/installed.ts';
+import { assertRedactedEvidence } from '../package-qa.ts';
 
 const expectedRequirementIds = EXPECTED_REQUIREMENT_IDS;
 const captureBlockTypes = CAPTURE_BLOCK_TYPES;

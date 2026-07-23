@@ -6,7 +6,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import {
   assertRegistryOwnership,
   assertStrictDescendant,
-} from './installed-smoke-contracts.ts';
+} from './contracts/installed.ts';
 
 export function createInstalledRegistry({
   smokeRoot,

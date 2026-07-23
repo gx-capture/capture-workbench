@@ -5,7 +5,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import {
   assertStrictDescendant,
   assertTaskkillResult,
-} from './installed-smoke-contracts.ts';
+} from './contracts/installed.ts';
 
 export function createInstalledProcessCleanup({
   smokeRoot,

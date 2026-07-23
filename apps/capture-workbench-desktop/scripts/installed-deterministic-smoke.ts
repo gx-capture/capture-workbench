@@ -41,7 +41,7 @@ import {
   buildInstalledAppEnvironment,
   installerArguments,
   uninstallerArguments,
-} from './installed-smoke-contracts.ts';
+} from './contracts/installed.ts';
 import { assertCaptureDocumentForFixture } from './installed-document-assertions.ts';
 import {
   connectToInstalledWebView,
