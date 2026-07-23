@@ -1,0 +1,19 @@
+import { CAPTURE_RUNTIME_MAJOR } from './runtime';
+import type { ResolvedCaptureWorkbenchConfig } from '../contracts/workbench';
+
+export const DEFAULT_CAPTURE_WORKBENCH_CONFIG: ResolvedCaptureWorkbenchConfig = {
+  enabledSources: ['pdf', 'image', 'audio'],
+  structuringMode: 'runtime',
+  outputMode: 'json',
+  multiple: true,
+  targetLanguage: undefined,
+  concurrency: 1,
+  pollIntervalMs: 750,
+  showRuntimeSetup: true,
+  hostStructuringOwner: 'component',
+  hostManagedHandshake: false,
+  width: '100%',
+  height: 'auto',
+  density: 'comfortable',
+  compatibleRuntimeMajor: CAPTURE_RUNTIME_MAJOR,
+};

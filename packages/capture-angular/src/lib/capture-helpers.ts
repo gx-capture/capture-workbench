@@ -1,7 +1,6 @@
 import {
   CAPTURE_API_VERSION,
   CAPTURE_DOCUMENT_SCHEMA_VERSION,
-  CAPTURE_RUNTIME_MAJOR,
   type CaptureDocumentV1,
   type CaptureLocatorV1,
   type CaptureOutputMode,
@@ -11,6 +10,7 @@ import {
   type RawCaptureV1,
   type RuntimeReadyV1,
 } from './contracts';
+import { CAPTURE_RUNTIME_MAJOR } from './constants';
 
 const EXTENSION_KINDS: Readonly<Record<string, CaptureSourceKind>> = {
   pdf: 'pdf',
