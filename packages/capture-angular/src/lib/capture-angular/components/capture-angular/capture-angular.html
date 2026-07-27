@@ -1,0 +1,12 @@
+<section
+  class="capture-workbench"
+  [class.compact]="store.resolvedConfig().density === 'compact'"
+  [style]="store.hostStyles()"
+>
+  @if (store.resolvedConfig().showRuntimeSetup) {
+    <gx-capture-runtime-setup />
+  }
+
+  <gx-capture-workbench-header />
+  <gx-capture-task-list />
+</section>

@@ -1,7 +1,8 @@
 import { TestBed } from '@angular/core/testing';
-import { CAPTURE_STRUCTURING_PROVIDER } from '@gx/capture-angular';
+import { CAPTURE_STRUCTURING_PROVIDER } from '@gx/capture-workbench';
 import { App } from './app';
 import { appConfig } from './app.config';
+import { CaptureWorkbenchUiState } from './services/capture-workbench-ui-state.service';
 
 describe('App', () => {
   beforeEach(async () => {
@@ -20,7 +21,7 @@ describe('App', () => {
     expect(compiled.querySelector('h1')?.textContent).toContain(
       'Packaged workflow validation host',
     );
-    expect(compiled.querySelector('capture-workbench')).not.toBeNull();
+    expect(compiled.querySelector('gx-capture-workbench')).not.toBeNull();
     expect(compiled.querySelector('.client-mode')?.getAttribute('data-client-mode')).toBe(
       'browser-unconfigured',
     );
@@ -33,14 +34,10 @@ describe('App', () => {
   });
 
   it('cannot switch an unconfigured browser to host structuring', () => {
-    const fixture = TestBed.createComponent(App);
-    const app = fixture.componentInstance as unknown as {
-      readonly config: () => { readonly structuringMode: string };
-      selectMode(mode: 'runtime' | 'host'): void;
-    };
+    const uiState = TestBed.inject(CaptureWorkbenchUiState);
 
-    app.selectMode('host');
+    uiState.selectMode('host');
 
-    expect(app.config().structuringMode).toBe('runtime');
+    expect(uiState.config().structuringMode).toBe('runtime');
   });
 });

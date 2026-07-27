@@ -74,19 +74,19 @@ test('native cleanup is PID-scoped and never executable-name scoped', async () =
 
 test('desktop launcher advertises the bounded 50 MiB upload policy', async () => {
   const constants = await readFile(
-    join(appRoot, 'src-tauri', 'src', 'constants.rs'),
+    join(appRoot, 'src-tauri', 'src', 'constants', 'runtime.rs'),
     'utf8',
   );
-  const launcher = await readFile(
-    join(appRoot, 'src-tauri', 'src', 'launcher.rs'),
+  const launchPolicy = await readFile(
+    join(appRoot, 'src-tauri', 'src', 'launch_policy.rs'),
     'utf8',
   );
   assert.match(
     constants,
     /DEFAULT_MAX_UPLOAD_BYTES:\s*u64\s*=\s*50\s*\*\s*1024\s*\*\s*1024/u,
   );
-  assert.match(launcher, /"CAPTURE_MAX_UPLOAD_BYTES"/u);
-  assert.match(launcher, /DEFAULT_MAX_UPLOAD_BYTES\.to_string\(\)/u);
+  assert.match(launchPolicy, /"CAPTURE_MAX_UPLOAD_BYTES"/u);
+  assert.match(launchPolicy, /DEFAULT_MAX_UPLOAD_BYTES\.to_string\(\)/u);
 });
 
 test('deterministic runtime checks exact Host authority and canonical v1 names', async () => {
@@ -97,18 +97,18 @@ test('deterministic runtime checks exact Host authority and canonical v1 names',
     'deterministic-runtime',
     'src',
   );
-  const [httpSource, contractSource, smokeSource] = await Promise.all([
+  const [httpSource, contractSource, deterministicSource] = await Promise.all([
     readFile(join(fixtureRoot, 'http.rs'), 'utf8'),
     readFile(join(fixtureRoot, 'contract.rs'), 'utf8'),
-    readFile(join(appRoot, 'scripts', 'deterministic-smoke.ts'), 'utf8'),
+    readFile(join(appRoot, 'scripts', 'deterministic-http.ts'), 'utf8'),
   ]);
   assert.match(httpSource, /rsplit_once\(':'\)/u);
   assert.doesNotMatch(httpSource, /fn normalized_host/u);
   assert.match(contractSource, /"captureId"/u);
   assert.match(contractSource, /const SCHEMA_VERSION: &str = "1"/u);
-  assert.match(smokeSource, /multipart\/form-data; boundary=/u);
-  assert.match(smokeSource, /'structuringMode'/u);
-  assert.match(smokeSource, /wrongAuthorityPortRejected/u);
+  assert.match(deterministicSource, /multipart\/form-data; boundary=/u);
+  assert.match(deterministicSource, /'structuringMode'/u);
+  assert.match(deterministicSource, /wrongAuthorityPortRejected/u);
 });
 
 test('release workflow is SHA-pinned, least-privilege, attested, and runtime-first', async () => {
@@ -196,6 +196,6 @@ test('release workflow is SHA-pinned, least-privilege, attested, and runtime-fir
   );
   assert.match(
     publisher,
-    /const packagePlan = await preflightPackagePublication[\s\S]*await ensureRuntimeReleasePublic[\s\S]*await applyPackagePublication/u,
+    /preflightPackagePublication[\s\S]*ensureRuntimeReleasePublic[\s\S]*applyPackagePublication/u,
   );
 });

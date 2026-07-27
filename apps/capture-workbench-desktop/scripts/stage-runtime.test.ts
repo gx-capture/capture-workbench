@@ -4,7 +4,6 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-
 import {
   sha256File,
   validateManifestShape,
@@ -27,7 +26,7 @@ function materializeCorpusCase(item, base) {
 function manifestFor(bytes, sha256, schemaSha256) {
   return {
     manifestVersion: '1',
-    runtimeVersion: '0.1.0',
+  runtimeVersion: '0.3.0',
     apiVersion: '1.0',
     captureDocumentSchemaVersion: '1',
     platform: 'windows',
@@ -48,6 +47,19 @@ function manifestFor(bytes, sha256, schemaSha256) {
   };
 }
 
+function observe(observable) {
+  return new Promise((resolve, reject) => {
+    let value;
+    observable.subscribe({
+      next: (nextValue) => {
+        value = nextValue;
+      },
+      error: reject,
+      complete: () => resolve(value),
+    });
+  });
+}
+
 test('staging validation binds manifest bytes and SHA-256 to one artifact', async () => {
   const directory = await mkdtemp(
     join(tmpdir(), 'capture-runtime-stage-test-'),
@@ -58,28 +70,30 @@ test('staging validation binds manifest bytes and SHA-256 to one artifact', asyn
     const schemaPath = join(directory, 'capture-document-v1.schema.json');
     await writeFile(artifact, 'deterministic runtime', 'utf8');
     await writeFile(schemaPath, '{"type":"object"}\n', 'utf8');
-    const digest = await sha256File(artifact);
-    const schemaDigest = await sha256File(schemaPath);
+    const digest = await observe(sha256File(artifact));
+    const schemaDigest = await observe(sha256File(schemaPath));
     await writeFile(
       manifestPath,
       JSON.stringify(manifestFor(21, digest, schemaDigest)),
       'utf8',
     );
 
-    const verified = await validateRuntime(manifestPath, artifact, schemaPath);
+    const verified = await observe(
+      validateRuntime(manifestPath, artifact, schemaPath),
+    );
     assert.equal(verified.digest, digest);
     assert.equal(verified.schemaDigest, schemaDigest);
 
     await writeFile(artifact, 'tampered runtime', 'utf8');
     await assert.rejects(
-      validateRuntime(manifestPath, artifact, schemaPath),
+      observe(validateRuntime(manifestPath, artifact, schemaPath)),
       /byte count mismatch|SHA-256 mismatch/u,
     );
 
     await writeFile(artifact, 'deterministic runtime', 'utf8');
     await writeFile(schemaPath, '{"type":"string"}\n', 'utf8');
     await assert.rejects(
-      validateRuntime(manifestPath, artifact, schemaPath),
+      observe(validateRuntime(manifestPath, artifact, schemaPath)),
       /schema SHA-256 mismatch/u,
     );
   } finally {

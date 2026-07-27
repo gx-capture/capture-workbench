@@ -26,6 +26,7 @@
     "@angular/common": "22.0.7",
     "@angular/compiler": "22.0.7",
     "@angular/core": "22.0.7",
+    "@angular/elements": "22.0.7",
     "@angular/forms": "22.0.7",
     "@angular/platform-browser": "22.0.7",
     "@angular/router": "22.0.7",
@@ -55,7 +56,11 @@
     "@swc/helpers": "~0.5.18",
     "@tauri-apps/cli": "2.11.2",
     "@types/node": "^24.0.0",
+    "@types/react": "19.2.8",
+    "@types/react-dom": "19.2.3",
     "@typescript-eslint/utils": "^8.40.0",
+    "@vitejs/plugin-react": "5.1.1",
+    "@vitejs/plugin-vue": "6.0.8",
     "angular-eslint": "22.1.0",
     "autoprefixer": "^10.4.0",
     "eslint": "^9.8.0",
@@ -67,11 +72,15 @@
     "nx": "23.1.0",
     "postcss": "^8.4.5",
     "prettier": "~3.6.2",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
     "tslib": "^2.3.0",
     "typescript": "6.0.3",
     "typescript-eslint": "^8.40.0",
     "verdaccio": "^6.3.2",
-    "vitest": "^4.0.8"
+    "vite": "7.3.6",
+    "vitest": "^4.0.8",
+    "vue": "3.5.40"
   },
   "nx": {
     "includedScripts": []

@@ -2,22 +2,31 @@
 
 ## Purpose
 
-Ship `capture-workbench` as a framework-neutral custom element without changing
-`CaptureDocumentV1`, while aligning the published package scope and the
-workspace runtime baselines with the product requirements.
+Ship `capture-workbench` as a framework-neutral, property-first custom element
+without changing `CaptureDocumentV1`. Angular Elements owns custom-element
+lifecycle and input synchronization; the package remains an NPM ESM library.
 
 ## Interfaces
 
 - `defineCaptureWorkbenchElement()` registers the `capture-workbench` custom
-  element and resolves after its Angular application context is available.
-- The `config` attribute is a JSON object. The `config` property accepts a
-  `CaptureWorkbenchConfig` object and does not reflect it back to an attribute.
-- `client`, `structuringProvider`, and `preprocessor` are object-only
-  properties; no credential-bearing value is serialized to an attribute.
+  element through `@angular/elements` and resolves after its Angular application
+  context is available.
+- `config`, `client`, `structuringProvider`, and `preprocessor` are object-only
+  properties. `config` accepts the full `CaptureWorkbenchConfig`; no JSON
+  configuration attribute is supported.
+- The supported primitive attributes are `output-mode`, `multiple`,
+  `target-language`, `show-runtime-setup`, `width`, `height`, and `density`.
+  Explicit values in `config` take precedence over these attributes; invalid
+  enum attributes are ignored.
+- `client`, `structuringProvider`, and `preprocessor` never accept attribute
+  strings as usable dependencies and no credential-bearing value is serialized
+  to an attribute.
 - DOM events are stable, bubbling, composed `CustomEvent`s:
-  `capture-completed`, `capture-failed`, `capture-canceled`,
-  `capture-task-changed`, and `capture-config-error`.
-- The publishable package name becomes `@gx/capture-angular`. The actual
+  `capture-completed`, `capture-failed`, `capture-canceled`, and
+  `capture-task-changed`.
+- Direct Angular template consumers use `gx-capture-workbench`; the public
+  `capture-workbench` tag is reserved for the custom element.
+- The publishable package name becomes `@gx/capture-workbench`. The actual
   GitHub repository owner, release URLs, and copyright holder stay unchanged.
 - `tools/*.mjs` and desktop harness `scripts/*.mjs` become `.ts`; Node 24
   executes these type-strippable TypeScript files directly. ESLint's flat
@@ -31,28 +40,27 @@ workspace runtime baselines with the product requirements.
 - Moving or renaming the existing GitHub repository.
 - Serializing a `CaptureClient`, provider, preprocessor, or bearer token into
   HTML attributes.
+- Retaining the retired JSON configuration attribute or `capture-config-error`.
+- Publishing a standalone browser/CDN bundle or framework-specific adapters.
 - Converting ESLint flat-configuration files, which are loaded by the existing
   ESLint toolchain rather than executed as workspace scripts.
 
 ## Edge Cases
 
-- An invalid `config` attribute leaves the previous valid configuration in
-  place and emits `capture-config-error`; it does not throw from the custom
-  element lifecycle callback.
 - An element can be disconnected and reconnected; its component view and
-  output subscriptions are always cleaned up before remounting.
+  Angular Elements lifecycle is always cleaned up before remounting.
 - Repeated registration of the same tag is idempotent. A supplied tag name
   must be a valid custom-element name.
 
 ## Acceptance Criteria
 
-- A non-Angular HTML fixture can register, configure, and consume
-  `capture-workbench` with stable event names.
-- The wrapper forwards object properties to the Angular component without
-  changing its Angular input/output API or `CaptureDocumentV1` contracts.
+- Vanilla, React, and Vue fixtures can register, configure, and consume
+  `capture-workbench` through standard DOM properties and stable event names.
+- The facade forwards object properties and common primitive attributes to the
+  Angular component without changing `CaptureDocumentV1` contracts.
 - All root `tools/*.mjs` and desktop harness `scripts/*.mjs` files and their
   references are replaced by `.ts`.
-- Every published package/import reference uses `@gx/capture-angular`.
+- Every published package/import reference uses `@gx/capture-workbench`.
 - Local and CI configuration enforce Node 24 and pnpm 11 or newer.
 
 ## Verification

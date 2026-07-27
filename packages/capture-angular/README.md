@@ -1,6 +1,6 @@
-# @gx/capture-angular
+# @gx/capture-workbench
 
-Publishable Angular UI and transport contracts for Capture Runtime. The package
+Publishable Capture Workbench UI and transport contracts for Capture Runtime. The package
 owns runtime setup, file preprocessing, queued capture jobs, progress,
 cancellation, raw diagnostics, and JSON/text export.
 
@@ -20,8 +20,18 @@ Then install an exact synchronized version:
 
 ```powershell
 $env:GITHUB_PACKAGES_TOKEN = '<read:packages token>'
-corepack pnpm add @gx/capture-angular@0.1.0 --save-exact
+corepack pnpm add @gx/capture-workbench@0.3.0 --save-exact
 ```
+
+## v0.3.0 breaking Angular integration contract
+
+All public asynchronous client, provider, preprocessor, and reconciliation
+context methods return cold `Observable<T>` values. Compose them with RxJS and
+subscribe at the application boundary; no Promise compatibility adapter is
+provided. Angular runtime state is exposed through signals backed by
+`rxResource`, while store commands such as `refreshRuntime()` remain `void` and
+publish their result through signals/events. `defineCaptureWorkbenchElement()`
+also returns an `Observable<void>` and should be subscribed during startup.
 
 Successful output is always the runtime-validated `CaptureDocumentV1`. A
 structuring failure may expose `RawCaptureV1` with `diagnosticOnly: true`, but
@@ -39,7 +49,7 @@ their own backend and inject it with `provideCaptureClient()`. This keeps the
 sidecar URL and high-entropy bearer token backend-only.
 
 ```ts
-import { provideCaptureClient } from '@gx/capture-angular';
+import { provideCaptureClient } from '@gx/capture-workbench';
 
 bootstrapApplication(App, {
   providers: [provideCaptureClient(certPrepCaptureClient)],
@@ -59,18 +69,21 @@ token to its trusted WebView process:
 
 ```ts
 import { invoke } from '@tauri-apps/api/core';
-import { provideHttpCaptureClient } from '@gx/capture-angular';
+import { provideHttpCaptureClient } from '@gx/capture-workbench';
+import { from, map } from 'rxjs';
 
-const backendConfig = invoke<{
-  baseUrl: string;
-  token: string;
-}>('backend_config');
+const backendConfig$ = from(
+  invoke<{
+    baseUrl: string;
+    token: string;
+  }>('backend_config'),
+);
 
 bootstrapApplication(App, {
   providers: [
     provideHttpCaptureClient({
-      baseUrl: async () => (await backendConfig).baseUrl,
-      bearerToken: async () => (await backendConfig).token,
+      baseUrl: () => backendConfig$.pipe(map(({ baseUrl }) => baseUrl)),
+      bearerToken: () => backendConfig$.pipe(map(({ token }) => token)),
     }),
   ],
 });
@@ -87,16 +100,19 @@ model. A host that already owns an Ollama or another LLM provider can select
 `host` mode and inject the narrow `CaptureStructuringProvider` interface:
 
 ```ts
-import { provideCaptureStructuringProvider, type CaptureStructuringProvider } from '@gx/capture-angular';
+import { provideCaptureStructuringProvider, type CaptureStructuringProvider } from '@gx/capture-workbench';
+import { defer } from 'rxjs';
 
 const provider: CaptureStructuringProvider = {
-  async structure({ raw, documentContract, signal, reportProgress }) {
-    return hostBackend.structureCapture(raw, {
-      schemaVersion: documentContract.schemaVersion,
-      jsonSchema: documentContract.jsonSchema,
-      signal,
-      reportProgress,
-    });
+  structure({ raw, documentContract, signal, reportProgress }) {
+    return defer(() =>
+      hostBackend.structureCapture(raw, {
+        schemaVersion: documentContract.schemaVersion,
+        jsonSchema: documentContract.jsonSchema,
+        signal,
+        reportProgress,
+      }),
+    );
   },
 };
 
@@ -115,55 +131,64 @@ capability/version handshake. Set `hostManagedHandshake: true` only when a host
 adapter has already enforced the same runtime major, API major, schema, service
 identity, and capability checks.
 
-```html
-<capture-workbench
-  [config]="{
+The runtime handshake is signal-first. Calling `store.refreshRuntime()` requests
+a new capability check and returns immediately; read `store.runtime()` or wait
+for the host framework's normal stabilization boundary instead of awaiting the
+method.
+
+```ts
+import { provideCaptureWorkbenchInputs, type CaptureWorkbenchInputSource } from '@gx/capture-workbench';
+
+const captureInputs: CaptureWorkbenchInputSource = {
+  config: () => ({
     structuringMode: 'host',
     outputMode: 'json',
     width: '48rem',
     height: '75vh',
-    theme: { accent: '#7c3aed' }
-  }"
-  (completed)="saveDocument($event.document)"
-/>
+    theme: { accent: '#7c3aed' },
+  }),
+};
+
+bootstrapApplication(App, {
+  providers: [provideCaptureWorkbenchInputs(captureInputs)],
+});
 ```
 
-Use `provideCapturePreprocessor()` or the component `preprocessor` input for a
+Use `provideCapturePreprocessor()` for a
 crop/normalization seam before upload. The seam must preserve abort semantics
 and return the `File` that should be hashed and captured.
 
 ## Web Component
 
-Register the framework-neutral element once during application startup:
+Register the framework-neutral element once during application startup. Angular
+Elements owns the element lifecycle; the public configuration API is
+property-first:
 
 ```ts
-import {
-  CAPTURE_WORKBENCH_CUSTOM_EVENTS,
-  defineCaptureWorkbenchElement,
-  type CaptureWorkbenchElement,
-} from '@gx/capture-angular';
+import { CAPTURE_WORKBENCH_CUSTOM_EVENTS, defineCaptureWorkbenchElement, type CaptureWorkbenchElement } from '@gx/capture-workbench';
 
-await defineCaptureWorkbenchElement();
-const capture = document.querySelector(
-  'capture-workbench',
-) as CaptureWorkbenchElement;
+defineCaptureWorkbenchElement().subscribe({
+  error: (error) => console.error('Capture element registration failed.', error),
+});
+const capture = document.querySelector('capture-workbench') as CaptureWorkbenchElement;
 capture.config = {
   structuringMode: 'host',
   hostStructuringOwner: 'client',
   outputMode: 'json',
 };
+capture.client = hostCaptureClient;
 capture.addEventListener(CAPTURE_WORKBENCH_CUSTOM_EVENTS.completed, (event) => {
   const completed = event as CustomEvent;
   saveDocument(completed.detail.document);
 });
 ```
 
-The `config` HTML attribute is a JSON object, for example
-`config='{"outputMode":"text","multiple":false}'`. The `config` property
-uses the same object shape but does not reflect back to HTML. `client`,
-`structuringProvider`, and `preprocessor` are object-only properties; they are
-never serialized to attributes. Invalid `config` JSON preserves the previous
-valid configuration and emits `capture-config-error`.
+The full `config` object, `client`, `structuringProvider`, and `preprocessor`
+are JavaScript properties. The supported simple HTML attributes are
+`output-mode`, `multiple`, `target-language`, `show-runtime-setup`, `width`,
+`height`, and `density`; values supplied through `config` take precedence.
+Object dependencies are never accepted from attributes or serialized into
+HTML.
 
 All events bubble and are composed. Their stable names and detail values are:
 
@@ -171,14 +196,27 @@ All events bubble and are composed. Their stable names and detail values are:
 - `capture-failed` — `CaptureFailedEvent`
 - `capture-canceled` — `CaptureTaskView`
 - `capture-task-changed` — `CaptureTaskView`
-- `capture-config-error` — `{ attribute: 'config', message: string }`
 
 The framework-neutral fixture is
 [`fixtures/web-component/index.html`](./fixtures/web-component/index.html).
-Its CDN import uses an ESM CDN URL after `@gx/capture-angular` is made public
-through an npm-compatible registry. GitHub Packages itself is not a browser
-CDN; before that publication exists, install the package with pnpm and replace
-the import with the local package entry point.
+Install `@gx/capture-workbench` from the configured NPM-compatible registry and
+import it from your bundler. The package does not publish a standalone browser
+bundle or CDN entry.
+
+React and Vue consumers can assign the object properties through a DOM ref and
+listen with `addEventListener`:
+
+```ts
+const capture = ref.current as CaptureWorkbenchElement;
+capture.config = { outputMode: 'text', showRuntimeSetup: false };
+capture.client = hostCaptureClient;
+capture.addEventListener(CAPTURE_WORKBENCH_CUSTOM_EVENTS.completed, onCompleted);
+```
+
+For normal browser hosts, `hostCaptureClient` should call the host backend.
+Only a trusted Tauri WebView may use a direct loopback `HttpCaptureClient`; a
+sidecar bearer token must never enter a normal browser bundle, URL, storage, or
+log.
 
 For a direct loopback runtime client, keep the same strict CSP used by the
 Tauri reference host: permit only `http://127.0.0.1:*` in `connect-src`, and

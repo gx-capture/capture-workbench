@@ -7,13 +7,23 @@
   harness `scripts/*.mjs` files, and every reference to their old extensions;
   the old `@wodenwang820118` npm scope references. ESLint flat configurations
   remain `.mjs` because the installed ESLint loader owns them.
-- New owner needed: yes. A small custom-element adapter owns browser attribute
-  parsing, property forwarding, lifecycle cleanup, and DOM event dispatch;
-  the existing component continues to own capture behavior.
+- New owner needed: yes. An Angular Elements facade owns browser-facing
+  properties, primitive attribute normalization, and DOM event dispatch; the
+  existing component continues to own capture behavior.
 - Token posture: compact quality. The wrapper is deliberately thin and does
   not create a parallel capture contract.
 - Verification floor: component unit tests, clean-consumer packaging smoke,
   package QA tests, and the workspace verification command.
+
+The hand-written custom-element constructor is retired in favour of
+`@angular/elements`. The facade is deliberately separate from the Angular
+component so the browser tag `capture-workbench` does not collide with the
+direct Angular selector `gx-capture-workbench`. It preserves bubbling,
+composed capture events explicitly, while Angular Elements owns mounting,
+unmounting, and input synchronization. Complex configuration and object
+dependencies are property-first; only a small common primitive attribute set is
+documented. The JSON configuration attribute and `capture-config-error` are
+intentional 0.x breaking-change removals.
 
 The npm scope changes to `@gx` only. GitHub URLs retain their real owner
 `WodenWang820118`; changing them would point releases and schema identifiers at

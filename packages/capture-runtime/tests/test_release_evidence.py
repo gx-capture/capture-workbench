@@ -89,7 +89,7 @@ def _observed_evidence(tmp_path: Path, *, attested: bool):
         "capture-runtime-x86_64-pc-windows-msvc.exe": b"runtime executable",
         "capture-document-v1.schema.json": b'{"type":"object"}\n',
         "capture-windowsml-ocr-windows-x64.zip": b"windowsml bundle",
-        "capture-workbench_0.1.0_x64-setup.exe": b"nsis installer",
+        "capture-workbench_0.3.0_x64-setup.exe": b"nsis installer",
     }.items():
         path = tmp_path / name
         path.write_bytes(content)
@@ -123,7 +123,7 @@ def _observed_evidence(tmp_path: Path, *, attested: bool):
         runtime_executable=artifacts["capture-runtime-x86_64-pc-windows-msvc.exe"],
         capture_document_schema=artifacts["capture-document-v1.schema.json"],
         windowsml_bundle=artifacts["capture-windowsml-ocr-windows-x64.zip"],
-        tauri_installer=artifacts["capture-workbench_0.1.0_x64-setup.exe"],
+        tauri_installer=artifacts["capture-workbench_0.3.0_x64-setup.exe"],
         fixtures=observations,
         runner_image="windows-2025/20260720.1",
         generated_at=datetime(2026, 7, 22, 1, 2, 3, tzinfo=UTC),

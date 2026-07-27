@@ -12,6 +12,15 @@ import {
 } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { MAX_RUNTIME_ARTIFACT_BYTES } from './constants/runtime.ts';
+import {
+  Observable,
+  concatMap,
+  defer,
+  from,
+  map,
+  throwError,
+} from 'rxjs';
 
 export const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const stagedExecutable = join(
@@ -41,7 +50,7 @@ export const stageProvenance = join(
 
 const expected = Object.freeze({
   manifestVersion: '1',
-  runtimeVersion: '0.1.0',
+  runtimeVersion: '0.3.0',
   apiVersion: '1.0',
   captureDocumentSchemaVersion: '1',
   platform: 'windows',
@@ -64,43 +73,72 @@ const manifestFields = Object.freeze([
   'schemaSha256',
   'sha256',
 ]);
-export const MAX_RUNTIME_ARTIFACT_BYTES = 536_870_912;
 const maxWindowsmlBundleBytes = 536_870_912;
 
-export async function validateRuntime(manifestPath, artifactPath, schemaPath) {
-  const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
-  validateManifestShape(manifest);
-  const artifact = await stat(artifactPath);
-  if (!artifact.isFile()) {
-    throw new Error('Capture runtime artifact must be a regular file.');
-  }
-  if (artifact.size !== manifest.bytes) {
-    throw new Error(
-      `Capture runtime byte count mismatch: expected ${manifest.bytes}, found ${artifact.size}.`,
-    );
-  }
-  const digest = await sha256File(artifactPath);
-  if (digest !== manifest.sha256.toLowerCase()) {
-    throw new Error('Capture runtime SHA-256 mismatch.');
-  }
-  const schema = await stat(schemaPath);
-  if (!schema.isFile()) {
-    throw new Error('Capture document schema must be a regular file.');
-  }
-  const schemaText = await readFile(schemaPath, 'utf8');
-  const schemaDocument = JSON.parse(schemaText);
-  if (
-    !schemaDocument ||
-    typeof schemaDocument !== 'object' ||
-    Array.isArray(schemaDocument)
-  ) {
-    throw new Error('Capture document schema must be a JSON object.');
-  }
-  const schemaDigest = await sha256File(schemaPath);
-  if (schemaDigest !== manifest.schemaSha256.toLowerCase()) {
-    throw new Error('Capture document schema SHA-256 mismatch.');
-  }
-  return { manifest, digest, schemaDigest };
+export function validateRuntime(manifestPath, artifactPath, schemaPath) {
+  return defer(() => from(readFile(manifestPath, 'utf8'))).pipe(
+    map((manifestText) => {
+      const manifest = JSON.parse(manifestText);
+      validateManifestShape(manifest);
+      return manifest;
+    }),
+    concatMap((manifest) =>
+      defer(() => from(stat(artifactPath))).pipe(
+        concatMap((artifact) => {
+          if (!artifact.isFile()) {
+            return throwError(() => new Error('Capture runtime artifact must be a regular file.'));
+          }
+          if (artifact.size !== manifest.bytes) {
+            return throwError(
+              () =>
+                new Error(
+                  `Capture runtime byte count mismatch: expected ${manifest.bytes}, found ${artifact.size}.`,
+                ),
+            );
+          }
+          return sha256File(artifactPath).pipe(
+            concatMap((digest) => {
+              if (digest !== manifest.sha256.toLowerCase()) {
+                return throwError(() => new Error('Capture runtime SHA-256 mismatch.'));
+              }
+              return defer(() => from(stat(schemaPath))).pipe(
+                concatMap((schema) => {
+                  if (!schema.isFile()) {
+                    return throwError(
+                      () => new Error('Capture document schema must be a regular file.'),
+                    );
+                  }
+                  return defer(() => from(readFile(schemaPath, 'utf8'))).pipe(
+                    map((schemaText) => {
+                      const schemaDocument = JSON.parse(schemaText);
+                      if (
+                        !schemaDocument ||
+                        typeof schemaDocument !== 'object' ||
+                        Array.isArray(schemaDocument)
+                      ) {
+                        throw new Error('Capture document schema must be a JSON object.');
+                      }
+                      return schemaDocument;
+                    }),
+                    concatMap(() =>
+                      sha256File(schemaPath).pipe(
+                        map((schemaDigest) => {
+                          if (schemaDigest !== manifest.schemaSha256.toLowerCase()) {
+                            throw new Error('Capture document schema SHA-256 mismatch.');
+                          }
+                          return { manifest, digest, schemaDigest };
+                        }),
+                      ),
+                    ),
+                  );
+                }),
+              );
+            }),
+          );
+        }),
+      ),
+    ),
+  );
 }
 
 export function validateManifestShape(manifest) {
@@ -241,7 +279,7 @@ function validateWindowsmlRequirement(descriptor) {
   }
 }
 
-export async function stageRuntime({
+export function stageRuntime({
   artifactPath,
   manifestPath,
   schemaPath,
@@ -253,65 +291,78 @@ export async function stageRuntime({
   const resolvedArtifact = resolveInput(artifactPath);
   const resolvedManifest = resolveInput(manifestPath);
   const resolvedSchema = resolveInput(schemaPath);
-  const { manifest } = await validateRuntime(
-    resolvedManifest,
-    resolvedArtifact,
-    resolvedSchema,
+  return defer(() =>
+    validateRuntime(resolvedManifest, resolvedArtifact, resolvedSchema),
+  ).pipe(
+    concatMap(({ manifest }) =>
+      defer(() => from(mkdir(dirname(stagedExecutable), { recursive: true }))).pipe(
+        concatMap(() => defer(() => from(mkdir(dirname(stagedManifest), { recursive: true })))),
+        concatMap(() => atomicCopy(resolvedArtifact, stagedExecutable)),
+        concatMap(() => atomicCopy(resolvedSchema, stagedSchema)),
+        concatMap(() => atomicWrite(stagedManifest, `${JSON.stringify(manifest, null, 2)}\n`)),
+        concatMap(() =>
+          atomicWrite(
+            stageProvenance,
+            `${JSON.stringify(
+              {
+                source,
+                runtimeVersion: manifest.runtimeVersion,
+                schemaSha256: manifest.schemaSha256,
+                windowsmlBundleSha256:
+                  manifest.runtimeRequirements?.['windowsml-ocr']?.sha256 ?? null,
+                windowsmlBundleBytes:
+                  manifest.runtimeRequirements?.['windowsml-ocr']?.bytes ?? null,
+              },
+              null,
+              2,
+            )}\n`,
+          ),
+        ),
+        concatMap(() => validateRuntime(stagedManifest, stagedExecutable, stagedSchema)),
+        map(() => ({
+          manifest,
+          source,
+          stagedExecutable,
+          stagedManifest,
+          stagedSchema,
+        })),
+      ),
+    ),
   );
+}
 
-  await mkdir(dirname(stagedExecutable), { recursive: true });
-  await mkdir(dirname(stagedManifest), { recursive: true });
-  await atomicCopy(resolvedArtifact, stagedExecutable);
-  await atomicCopy(resolvedSchema, stagedSchema);
-  await atomicWrite(stagedManifest, `${JSON.stringify(manifest, null, 2)}\n`);
-  await atomicWrite(
-    stageProvenance,
-    `${JSON.stringify(
-      {
-        source,
-        runtimeVersion: manifest.runtimeVersion,
-        schemaSha256: manifest.schemaSha256,
-        windowsmlBundleSha256:
-          manifest.runtimeRequirements?.['windowsml-ocr']?.sha256 ?? null,
-        windowsmlBundleBytes:
-          manifest.runtimeRequirements?.['windowsml-ocr']?.bytes ?? null,
-      },
-      null,
-      2,
-    )}\n`,
+function atomicCopy(source, destination) {
+  const temporary = `${destination}.tmp`;
+  return defer(() => from(rm(temporary, { force: true }))).pipe(
+    concatMap(() => defer(() => from(copyFile(source, temporary)))),
+    concatMap(() => defer(() => from(rm(destination, { force: true })))),
+    concatMap(() => defer(() => from(rename(temporary, destination)))),
+    map(() => undefined),
   );
-  await validateRuntime(stagedManifest, stagedExecutable, stagedSchema);
-  return {
-    manifest,
-    source,
-    stagedExecutable,
-    stagedManifest,
-    stagedSchema,
-  };
 }
 
-async function atomicCopy(source, destination) {
+function atomicWrite(destination, content) {
   const temporary = `${destination}.tmp`;
-  await rm(temporary, { force: true });
-  await copyFile(source, temporary);
-  await rm(destination, { force: true });
-  await rename(temporary, destination);
+  return defer(() => from(rm(temporary, { force: true }))).pipe(
+    concatMap(() => defer(() => from(writeFile(temporary, content, { encoding: 'utf8', flag: 'wx' })))),
+    concatMap(() => defer(() => from(rm(destination, { force: true })))),
+    concatMap(() => defer(() => from(rename(temporary, destination)))),
+    map(() => undefined),
+  );
 }
 
-async function atomicWrite(destination, content) {
-  const temporary = `${destination}.tmp`;
-  await rm(temporary, { force: true });
-  await writeFile(temporary, content, { encoding: 'utf8', flag: 'wx' });
-  await rm(destination, { force: true });
-  await rename(temporary, destination);
-}
-
-export async function sha256File(path) {
+export function sha256File(path): Observable<string> {
   const hash = createHash('sha256');
-  for await (const chunk of createReadStream(path)) {
-    hash.update(chunk);
-  }
-  return hash.digest('hex');
+  return new Observable<string>((subscriber) => {
+    const stream = createReadStream(path);
+    stream.on('data', (chunk) => hash.update(chunk));
+    stream.on('error', (error) => subscriber.error(error));
+    stream.on('end', () => {
+      subscriber.next(hash.digest('hex'));
+      subscriber.complete();
+    });
+    return () => stream.destroy();
+  });
 }
 
 function resolveInput(path) {
@@ -347,16 +398,17 @@ if (
   process.argv[1] &&
   pathToFileURL(resolve(process.argv[1])).href === import.meta.url
 ) {
-  stageRuntime(parseArguments(process.argv.slice(2)))
-    .then(({ manifest, source }) => {
+  stageRuntime(parseArguments(process.argv.slice(2))).subscribe({
+    next: ({ manifest, source }) => {
       process.stdout.write(
         `Staged ${source} Capture runtime ${manifest.runtimeVersion}; digest verified.\n`,
       );
-    })
-    .catch((error) => {
+    },
+    error: (error: unknown) => {
       process.stderr.write(
         `${error instanceof Error ? error.message : String(error)}\n`,
       );
       process.exitCode = 1;
-    });
+    },
+  });
 }

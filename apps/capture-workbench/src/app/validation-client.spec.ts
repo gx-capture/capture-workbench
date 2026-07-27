@@ -1,12 +1,18 @@
-import {
-  selectValidationCaptureClient,
-  type ValidationClientEnvironment,
-} from './validation-client';
+import { TestBed } from '@angular/core/testing';
+import { Subject, of } from 'rxjs';
+import type {
+  ValidationCaptureFixture,
+  ValidationClientEnvironment,
+} from './contracts';
+import { ValidationCaptureClientService } from './services/validation-client.service';
+import { ValidationEnvironmentService } from './services/validation-environment.service';
+import { ValidationCaptureFixtureService } from './services/validation-fixture.service';
+import { ValidationRuntimeReadinessService } from './services/validation-runtime-readiness.service';
 
 const backendConfig = {
   baseUrl: 'http://127.0.0.1:43119',
   token: 'memory-only-test-token',
-  runtimeVersion: '0.1.0',
+  runtimeVersion: '0.3.0',
   apiVersion: '1.0',
   captureDocumentSchemaVersion: '1',
 };
@@ -21,28 +27,34 @@ const readyStatus = {
   detail: 'Capture runtime is ready.',
 };
 
-describe('selectValidationCaptureClient', () => {
+describe('ValidationCaptureClientService', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    TestBed.resetTestingModule();
   });
 
   it('polls from starting to ready before loading the memory-only backend config', async () => {
     const statuses = [startingStatus, readyStatus];
     let statusIndex = 0;
-    const loadDesktopRuntimeStatus = vi.fn(
-      async () => statuses[Math.min(statusIndex++, statuses.length - 1)] ?? readyStatus,
+    const loadDesktopRuntimeStatus = vi.fn(() =>
+      of(statuses[Math.min(statusIndex++, statuses.length - 1)] ?? readyStatus),
     );
-    const loadBackendConfig = vi.fn(async () => backendConfig);
-    const wait = vi.fn(async () => undefined);
+    const loadBackendConfig = vi.fn(() => of(backendConfig));
+    const wait = vi.fn(() => of(undefined));
     const fetchMock = installReadyFetch();
-    const selection = selectValidationCaptureClient(
+    const selection = configureValidationCaptureClient(
       tauriEnvironment({ loadDesktopRuntimeStatus, loadBackendConfig, wait }),
     );
 
-    await expect(selection.client.getReady()).resolves.toMatchObject({
-      service: 'capture-runtime',
+    let result: unknown;
+    let error: unknown;
+    selection.client.getReady().subscribe({
+      next: (value) => (result = value),
+      error: (value) => (error = value),
     });
+    await vi.waitFor(() => expect(result).toMatchObject({ service: 'capture-runtime' }));
 
+    expect(error).toBeUndefined();
     expect(loadDesktopRuntimeStatus).toHaveBeenCalledTimes(2);
     expect(wait).toHaveBeenCalledTimes(1);
     expect(loadBackendConfig).toHaveBeenCalledTimes(1);
@@ -50,46 +62,57 @@ describe('selectValidationCaptureClient', () => {
   });
 
   it('surfaces a failed runtime detail without requesting backend config', async () => {
-    const loadBackendConfig = vi.fn(async () => backendConfig);
-    const selection = selectValidationCaptureClient(
+    const loadBackendConfig = vi.fn(() => of(backendConfig));
+    const selection = configureValidationCaptureClient(
       tauriEnvironment({
-        loadDesktopRuntimeStatus: vi.fn(async () => ({
-          status: 'failed',
-          detail: 'Runtime manifest SHA-256 mismatch.',
-        })),
+        loadDesktopRuntimeStatus: vi.fn(() =>
+          of({ status: 'failed', detail: 'Runtime manifest SHA-256 mismatch.' }),
+        ),
         loadBackendConfig,
       }),
     );
 
-    await expect(selection.client.getReady()).rejects.toThrow(
-      'Capture runtime failed: Runtime manifest SHA-256 mismatch.',
+    let error: unknown;
+    selection.client.getReady().subscribe({ error: (value) => (error = value) });
+    await vi.waitFor(() => expect(error).toBeInstanceOf(Error));
+    expect(error).toEqual(
+      expect.objectContaining({
+        message: 'Capture runtime failed: Runtime manifest SHA-256 mismatch.',
+      }),
     );
     expect(loadBackendConfig).not.toHaveBeenCalled();
   });
 
   it('surfaces a stopped runtime detail without requesting backend config', async () => {
-    const loadBackendConfig = vi.fn(async () => backendConfig);
-    const selection = selectValidationCaptureClient(
+    const loadBackendConfig = vi.fn(() => of(backendConfig));
+    const selection = configureValidationCaptureClient(
       tauriEnvironment({
-        loadDesktopRuntimeStatus: vi.fn(async () => ({
-          status: 'stopped',
-          detail: 'Capture runtime was stopped by the desktop harness.',
-        })),
+        loadDesktopRuntimeStatus: vi.fn(() =>
+          of({
+            status: 'stopped',
+            detail: 'Capture runtime was stopped by the desktop harness.',
+          }),
+        ),
         loadBackendConfig,
       }),
     );
 
-    await expect(selection.client.getReady()).rejects.toThrow(
-      'Capture runtime stopped: Capture runtime was stopped by the desktop harness.',
+    let error: unknown;
+    selection.client.getReady().subscribe({ error: (value) => (error = value) });
+    await vi.waitFor(() => expect(error).toBeInstanceOf(Error));
+    expect(error).toEqual(
+      expect.objectContaining({
+        message: 'Capture runtime stopped: Capture runtime was stopped by the desktop harness.',
+      }),
     );
     expect(loadBackendConfig).not.toHaveBeenCalled();
   });
 
   it('fails clearly after the bounded starting-status poll expires', async () => {
-    const loadDesktopRuntimeStatus = vi.fn(async () => startingStatus);
-    const loadBackendConfig = vi.fn(async () => backendConfig);
-    const wait = vi.fn(async () => undefined);
-    const selection = selectValidationCaptureClient(
+    const loadDesktopRuntimeStatus = vi.fn(() => of(startingStatus));
+    const loadBackendConfig = vi.fn(() => of(backendConfig));
+    const wait = vi.fn(() => of(undefined));
+    const selection = configureValidationCaptureClient(
       tauriEnvironment({
         loadDesktopRuntimeStatus,
         loadBackendConfig,
@@ -99,8 +122,13 @@ describe('selectValidationCaptureClient', () => {
       }),
     );
 
-    await expect(selection.client.getReady()).rejects.toThrow(
-      'Capture runtime did not become ready within 2 ms. Last status: Capture runtime is starting.',
+    let error: unknown;
+    selection.client.getReady().subscribe({ error: (value) => (error = value) });
+    await vi.waitFor(() => expect(error).toBeInstanceOf(Error));
+    expect(error).toEqual(
+      expect.objectContaining({
+        message: 'Capture runtime did not become ready within 2 ms. Last status: Capture runtime is starting.',
+      }),
     );
     expect(loadDesktopRuntimeStatus).toHaveBeenCalledTimes(3);
     expect(wait).toHaveBeenCalledTimes(2);
@@ -108,13 +136,13 @@ describe('selectValidationCaptureClient', () => {
   });
 
   it('bounds a never-settling desktop runtime status invocation', async () => {
-    const pendingStatus = deferred<typeof readyStatus>();
-    const loadBackendConfig = vi.fn(async () => backendConfig);
+    const pendingStatus = new Subject<typeof readyStatus>();
+    const loadBackendConfig = vi.fn(() => of(backendConfig));
     let now = 0;
     let fireDeadline: (() => void) | undefined;
-    const selection = selectValidationCaptureClient(
+    const selection = configureValidationCaptureClient(
       tauriEnvironment({
-        loadDesktopRuntimeStatus: vi.fn(() => pendingStatus.promise),
+        loadDesktopRuntimeStatus: vi.fn(() => pendingStatus.asObservable()),
         loadBackendConfig,
         timeoutMs: 5,
         now: () => now,
@@ -132,27 +160,27 @@ describe('selectValidationCaptureClient', () => {
       }),
     );
 
-    const readiness = selection.client.getReady();
-    const rejection = expect(readiness).rejects.toThrow(
-      'Capture runtime did not become ready within 5 ms. Last status: unavailable',
-    );
+    let error: unknown;
+    selection.client.getReady().subscribe({ error: (value) => (error = value) });
     expect(fireDeadline).toBeTypeOf('function');
     fireDeadline?.();
-    await rejection;
+    await vi.waitFor(() => expect(error).toBeInstanceOf(Error));
+    expect(error).toEqual(
+      expect.objectContaining({
+        message: 'Capture runtime did not become ready within 5 ms. Last status: unavailable',
+      }),
+    );
     expect(loadBackendConfig).not.toHaveBeenCalled();
-
-    // The timed-out invocation can still reject later without becoming unhandled.
-    pendingStatus.reject(new Error('late status failure'));
-    await Promise.resolve();
+    pendingStatus.error(new Error('late status failure'));
   });
 
   it('rejects a ready status that arrives after the monotonic deadline', async () => {
     let now = 0;
-    const pendingStatus = deferred<typeof readyStatus>();
-    const loadBackendConfig = vi.fn(async () => backendConfig);
-    const selection = selectValidationCaptureClient(
+    const pendingStatus = new Subject<typeof readyStatus>();
+    const loadBackendConfig = vi.fn(() => of(backendConfig));
+    const selection = configureValidationCaptureClient(
       tauriEnvironment({
-        loadDesktopRuntimeStatus: vi.fn(() => pendingStatus.promise),
+        loadDesktopRuntimeStatus: vi.fn(() => pendingStatus.asObservable()),
         loadBackendConfig,
         timeoutMs: 5,
         now: () => now,
@@ -160,46 +188,88 @@ describe('selectValidationCaptureClient', () => {
       }),
     );
 
-    const readiness = selection.client.getReady();
-    const rejection = expect(readiness).rejects.toThrow(
-      'Capture runtime did not become ready within 5 ms. Last status: Capture runtime is ready.',
-    );
+    let error: unknown;
+    selection.client.getReady().subscribe({ error: (value) => (error = value) });
     now = 6;
-    pendingStatus.resolve(readyStatus);
-    await rejection;
+    pendingStatus.next(readyStatus);
+    await vi.waitFor(() => expect(error).toBeInstanceOf(Error));
+    expect(error).toEqual(
+      expect.objectContaining({
+        message: 'Capture runtime did not become ready within 5 ms. Last status: Capture runtime is ready.',
+      }),
+    );
     expect(loadBackendConfig).not.toHaveBeenCalled();
   });
 
   it('does not request backend config while a starting-status delay is pending', async () => {
-    const delay = deferred<void>();
+    const delay = new Subject<void>();
     let statusIndex = 0;
-    const loadDesktopRuntimeStatus = vi.fn(async () => {
-      const status = statusIndex === 0 ? startingStatus : readyStatus;
-      statusIndex += 1;
-      return status;
-    });
-    const loadBackendConfig = vi.fn(async () => backendConfig);
-    const wait = vi.fn(() => delay.promise);
+    const loadDesktopRuntimeStatus = vi.fn(() =>
+      of(statusIndex++ === 0 ? startingStatus : readyStatus),
+    );
+    const loadBackendConfig = vi.fn(() => of(backendConfig));
+    const wait = vi.fn(() => delay.asObservable());
     const fetchMock = installReadyFetch();
-    const selection = selectValidationCaptureClient(
+    const selection = configureValidationCaptureClient(
       tauriEnvironment({ loadDesktopRuntimeStatus, loadBackendConfig, wait }),
     );
 
-    const ready = selection.client.getReady();
+    let result: unknown;
+    selection.client.getReady().subscribe({ next: (value) => (result = value) });
     await vi.waitFor(() => expect(wait).toHaveBeenCalledTimes(1));
     expect(loadBackendConfig).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
 
-    delay.resolve(undefined);
-    await expect(ready).resolves.toMatchObject({ service: 'capture-runtime' });
+    delay.next();
+    delay.complete();
+    await vi.waitFor(() => expect(result).toMatchObject({ service: 'capture-runtime' }));
     expect(loadBackendConfig).toHaveBeenCalledTimes(1);
   });
+
+  it('does not expose browser fixture structuring in Tauri mode', () => {
+    const fixture = {
+      mode: 'deterministic-e2e',
+      client: {} as ValidationCaptureFixture['client'],
+      structuringProvider:
+        {} as ValidationCaptureFixture['structuringProvider'],
+    } satisfies ValidationCaptureFixture;
+    const selection = configureValidationCaptureClient(
+      tauriEnvironment({
+        loadDesktopRuntimeStatus: vi.fn(() => of(readyStatus)),
+        loadBackendConfig: vi.fn(() => of(backendConfig)),
+      }),
+      fixture,
+    );
+
+    expect(selection.client.mode).toBe('tauri-http');
+    expect(selection.client.hostStructuringAvailable).toBe(false);
+    expect(selection.client.structuringProvider).toBeUndefined();
+  });
 });
+
+function configureValidationCaptureClient(
+  environment: ValidationClientEnvironment,
+  fixture?: ValidationCaptureFixture,
+): {
+  readonly client: ValidationCaptureClientService;
+} {
+  TestBed.configureTestingModule({
+    providers: [
+      { provide: ValidationEnvironmentService, useValue: environment },
+      fixture === undefined
+        ? ValidationCaptureFixtureService
+        : { provide: ValidationCaptureFixtureService, useValue: { select: () => fixture } },
+      ValidationRuntimeReadinessService,
+      ValidationCaptureClientService,
+    ],
+  });
+  return { client: TestBed.inject(ValidationCaptureClientService) };
+}
 
 function tauriEnvironment(options: {
   readonly loadDesktopRuntimeStatus: ValidationClientEnvironment['loadDesktopRuntimeStatus'];
   readonly loadBackendConfig: ValidationClientEnvironment['loadBackendConfig'];
-  readonly wait?: (milliseconds: number) => Promise<void>;
+  readonly wait?: (milliseconds: number) => import('rxjs').Observable<void>;
   readonly timeoutMs?: number;
   readonly pollIntervalMs?: number;
   readonly now?: () => number;
@@ -220,8 +290,9 @@ function tauriEnvironment(options: {
       now: options.now ?? (() => elapsedMs),
       wait:
         options.wait ??
-        (async (milliseconds) => {
+        ((milliseconds) => {
           elapsedMs += milliseconds;
+          return of(undefined);
         }),
       scheduleTimeout:
         options.scheduleTimeout ??
@@ -239,7 +310,7 @@ function installReadyFetch(): ReturnType<typeof vi.fn<typeof fetch>> {
       JSON.stringify({
         ready: true,
         service: 'capture-runtime',
-        runtimeVersion: '0.1.0',
+        runtimeVersion: '0.3.0',
         apiVersion: '1.0',
         captureDocumentSchemaVersion: '1',
         capabilities: {
@@ -255,18 +326,4 @@ function installReadyFetch(): ReturnType<typeof vi.fn<typeof fetch>> {
   );
   vi.stubGlobal('fetch', fetchMock);
   return fetchMock;
-}
-
-function deferred<T>(): {
-  readonly promise: Promise<T>;
-  readonly resolve: (value: T | PromiseLike<T>) => void;
-  readonly reject: (reason?: unknown) => void;
-} {
-  let resolve!: (value: T | PromiseLike<T>) => void;
-  let reject!: (reason?: unknown) => void;
-  const promise = new Promise<T>((settle, fail) => {
-    resolve = settle;
-    reject = fail;
-  });
-  return { promise, resolve, reject };
 }

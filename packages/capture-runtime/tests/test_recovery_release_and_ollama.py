@@ -283,6 +283,53 @@ def test_runtime_settings_never_inherit_an_ambient_ollama_model_store(
     assert dedicated.ollama.models_dir == tmp_path / "capture-models"
 
 
+def test_external_ollama_settings_require_a_safe_endpoint_and_keep_key_in_memory() -> None:
+    settings = RuntimeSettings.from_env(
+        {
+            "CAPTURE_STRUCTURING_PROVIDER": "external-ollama",
+            "CAPTURE_OLLAMA_ENDPOINT": "https://ollama.internal/",
+            "CAPTURE_OLLAMA_MODEL": "qwen3.5:4b",
+            "CAPTURE_OLLAMA_API_KEY": "secret-key",
+        }
+    )
+
+    assert settings.external_ollama is not None
+    assert settings.external_ollama.endpoint_url == "https://ollama.internal"
+    assert settings.external_ollama.model == "qwen3.5:4b"
+    assert settings.external_ollama.api_key == "secret-key"
+
+    with pytest.raises(ValueError, match="required when using external-ollama"):
+        RuntimeSettings.from_env({"CAPTURE_STRUCTURING_PROVIDER": "external-ollama"})
+    with pytest.raises(ValueError, match="without credentials"):
+        RuntimeSettings.from_env(
+            {
+                "CAPTURE_STRUCTURING_PROVIDER": "external-ollama",
+                "CAPTURE_OLLAMA_ENDPOINT": "https://user:secret@ollama.internal",
+            }
+        )
+    with pytest.raises(ValueError, match="without credentials"):
+        RuntimeSettings.from_env(
+            {
+                "CAPTURE_STRUCTURING_PROVIDER": "external-ollama",
+                "CAPTURE_OLLAMA_ENDPOINT": "https://ollama.internal/api",
+            }
+        )
+
+
+def test_external_ollama_ignores_owned_ollama_host_override() -> None:
+    settings = RuntimeSettings.from_env(
+        {
+            "CAPTURE_STRUCTURING_PROVIDER": "external-ollama",
+            "CAPTURE_OLLAMA_ENDPOINT": "https://ollama.example.test",
+            "CAPTURE_OLLAMA_HOST": "http://192.168.1.10:11434",
+        }
+    )
+
+    assert settings.external_ollama is not None
+    assert settings.external_ollama.endpoint_url == "https://ollama.example.test"
+    assert settings.ollama.host_url == "http://127.0.0.1:11439"
+
+
 def test_windowsml_descriptor_environment_is_atomic_and_bounded() -> None:
     base = {
         "CAPTURE_WINDOWSML_BUNDLE_URL": "https://downloads.example.org/windowsml.zip",

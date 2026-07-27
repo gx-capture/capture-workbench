@@ -1,7 +1,7 @@
+import { Injectable } from '@angular/core';
 import {
   CAPTURE_API_VERSION,
   CAPTURE_DOCUMENT_SCHEMA_VERSION,
-  CAPTURE_RUNTIME_MAJOR,
   type CaptureDocumentV1,
   type CaptureLocatorV1,
   type CaptureOutputMode,
@@ -11,6 +11,7 @@ import {
   type RawCaptureV1,
   type RuntimeReadyV1,
 } from './contracts';
+import { CAPTURE_RUNTIME_MAJOR } from './constants';
 
 const EXTENSION_KINDS: Readonly<Record<string, CaptureSourceKind>> = {
   pdf: 'pdf',
@@ -34,36 +35,133 @@ export class CaptureCompatibilityError extends Error {
   }
 }
 
-export function classifyCaptureFile(file: Pick<File, 'name'>): CaptureSourceKind | null {
-  const extension = file.name.split('.').pop()?.toLowerCase() ?? '';
-  return EXTENSION_KINDS[extension] ?? null;
+/** Injectable owner for capture file, compatibility, and serialization logic. */
+@Injectable({ providedIn: 'root' })
+export class CaptureHelpersService {
+  classifyCaptureFile(file: Pick<File, 'name'>): CaptureSourceKind | null {
+    const extension = file.name.split('.').pop()?.toLowerCase() ?? '';
+    return EXTENSION_KINDS[extension] ?? null;
+  }
+
+  captureAccept(enabled: readonly CaptureSourceKind[]): string {
+    const values: string[] = [];
+    if (enabled.includes('pdf')) values.push('.pdf', 'application/pdf');
+    if (enabled.includes('image')) {
+      values.push(
+        '.png',
+        '.jpg',
+        '.jpeg',
+        '.webp',
+        'image/png',
+        'image/jpeg',
+        'image/webp',
+      );
+    }
+    if (enabled.includes('audio')) {
+      values.push(
+        '.mp3',
+        '.wav',
+        '.m4a',
+        'audio/mpeg',
+        'audio/wav',
+        'audio/mp4',
+      );
+    }
+    return values.join(',');
+  }
+
+  captureDocumentText(document: CaptureDocumentV1): string {
+    return document.targetText.trim() || document.sourceText;
+  }
+
+  serializeCaptureDocument(
+    document: CaptureDocumentV1,
+    mode: CaptureOutputMode,
+  ): string {
+    return mode === 'json'
+      ? JSON.stringify(document, null, 2)
+      : this.captureDocumentText(document);
+  }
+
+  serializeRawCapture(raw: RawCaptureV1): string {
+    return JSON.stringify(raw, null, 2);
+  }
+
+  assertCaptureRuntimeCompatible(
+    ready: RuntimeReadyV1,
+    compatibleRuntimeMajor = CAPTURE_RUNTIME_MAJOR,
+    requiredStructuringMode?: CaptureStructuringMode,
+  ): void {
+    if (ready.service !== 'capture-runtime') {
+      throw new CaptureCompatibilityError(
+        'The connected service is not Capture Runtime.',
+      );
+    }
+    const apiMajor = parseMajor(ready.apiVersion);
+    const expectedApiMajor = parseMajor(CAPTURE_API_VERSION);
+    if (apiMajor !== expectedApiMajor) {
+      throw new CaptureCompatibilityError(
+        `Capture API ${ready.apiVersion} is incompatible with client API ${CAPTURE_API_VERSION}.`,
+      );
+    }
+
+    const runtimeMajor = parseMajor(ready.runtimeVersion);
+    if (runtimeMajor !== compatibleRuntimeMajor) {
+      throw new CaptureCompatibilityError(
+        `Capture runtime ${ready.runtimeVersion} is incompatible with client runtime major ${compatibleRuntimeMajor}.`,
+      );
+    }
+
+    if (
+      ready.captureDocumentSchemaVersion !== CAPTURE_DOCUMENT_SCHEMA_VERSION
+    ) {
+      throw new CaptureCompatibilityError(
+        `Capture runtime does not support schema ${CAPTURE_DOCUMENT_SCHEMA_VERSION}.`,
+      );
+    }
+    if (
+      requiredStructuringMode &&
+      !ready.capabilities.structuringModes.includes(requiredStructuringMode)
+    ) {
+      throw new CaptureCompatibilityError(
+        `Capture runtime does not support ${requiredStructuringMode} structuring mode.`,
+      );
+    }
+  }
+
+  validateStructuringCandidate(
+    candidate: CaptureStructuringCandidateV1,
+    raw: RawCaptureV1,
+  ): readonly string[] {
+    return validateStructuringCandidateImpl(candidate, raw);
+  }
+}
+
+const publicCaptureHelpers = new CaptureHelpersService();
+
+export function classifyCaptureFile(
+  file: Pick<File, 'name'>,
+): CaptureSourceKind | null {
+  return publicCaptureHelpers.classifyCaptureFile(file);
 }
 
 export function captureAccept(enabled: readonly CaptureSourceKind[]): string {
-  const values: string[] = [];
-  if (enabled.includes('pdf')) values.push('.pdf', 'application/pdf');
-  if (enabled.includes('image')) {
-    values.push('.png', '.jpg', '.jpeg', '.webp', 'image/png', 'image/jpeg', 'image/webp');
-  }
-  if (enabled.includes('audio')) {
-    values.push('.mp3', '.wav', '.m4a', 'audio/mpeg', 'audio/wav', 'audio/mp4');
-  }
-  return values.join(',');
+  return publicCaptureHelpers.captureAccept(enabled);
 }
 
 export function captureDocumentText(document: CaptureDocumentV1): string {
-  return document.targetText.trim() || document.sourceText;
+  return publicCaptureHelpers.captureDocumentText(document);
 }
 
 export function serializeCaptureDocument(
   document: CaptureDocumentV1,
   mode: CaptureOutputMode,
 ): string {
-  return mode === 'json' ? JSON.stringify(document, null, 2) : captureDocumentText(document);
+  return publicCaptureHelpers.serializeCaptureDocument(document, mode);
 }
 
 export function serializeRawCapture(raw: RawCaptureV1): string {
-  return JSON.stringify(raw, null, 2);
+  return publicCaptureHelpers.serializeRawCapture(raw);
 }
 
 export function assertCaptureRuntimeCompatible(
@@ -71,40 +169,21 @@ export function assertCaptureRuntimeCompatible(
   compatibleRuntimeMajor = CAPTURE_RUNTIME_MAJOR,
   requiredStructuringMode?: CaptureStructuringMode,
 ): void {
-  if (ready.service !== 'capture-runtime') {
-    throw new CaptureCompatibilityError('The connected service is not Capture Runtime.');
-  }
-  const apiMajor = parseMajor(ready.apiVersion);
-  const expectedApiMajor = parseMajor(CAPTURE_API_VERSION);
-  if (apiMajor !== expectedApiMajor) {
-    throw new CaptureCompatibilityError(
-      `Capture API ${ready.apiVersion} is incompatible with client API ${CAPTURE_API_VERSION}.`,
-    );
-  }
-
-  const runtimeMajor = parseMajor(ready.runtimeVersion);
-  if (runtimeMajor !== compatibleRuntimeMajor) {
-    throw new CaptureCompatibilityError(
-      `Capture runtime ${ready.runtimeVersion} is incompatible with client runtime major ${compatibleRuntimeMajor}.`,
-    );
-  }
-
-  if (ready.captureDocumentSchemaVersion !== CAPTURE_DOCUMENT_SCHEMA_VERSION) {
-    throw new CaptureCompatibilityError(
-      `Capture runtime does not support schema ${CAPTURE_DOCUMENT_SCHEMA_VERSION}.`,
-    );
-  }
-  if (
-    requiredStructuringMode &&
-    !ready.capabilities.structuringModes.includes(requiredStructuringMode)
-  ) {
-    throw new CaptureCompatibilityError(
-      `Capture runtime does not support ${requiredStructuringMode} structuring mode.`,
-    );
-  }
+  publicCaptureHelpers.assertCaptureRuntimeCompatible(
+    ready,
+    compatibleRuntimeMajor,
+    requiredStructuringMode,
+  );
 }
 
 export function validateStructuringCandidate(
+  candidate: CaptureStructuringCandidateV1,
+  raw: RawCaptureV1,
+): readonly string[] {
+  return publicCaptureHelpers.validateStructuringCandidate(candidate, raw);
+}
+
+function validateStructuringCandidateImpl(
   candidate: CaptureStructuringCandidateV1,
   raw: RawCaptureV1,
 ): readonly string[] {
@@ -133,7 +212,9 @@ export function validateStructuringCandidate(
         segment.text !== rawSegment.text ||
         !locatorsEqual(segment.locator, rawSegment.locator)
       ) {
-        issues.push(`rawSegments[${index}] must exactly preserve raw capture evidence`);
+        issues.push(
+          `rawSegments[${index}] must exactly preserve raw capture evidence`,
+        );
       }
     }
   }
@@ -167,37 +248,55 @@ export function validateStructuringCandidate(
 
   const rawSegmentIds = new Set<string>();
   for (const [index, segment] of raw.segments.entries()) {
-    if (segment.order !== index) issues.push(`raw.segments[${index}].order must equal ${index}`);
+    if (segment.order !== index)
+      issues.push(`raw.segments[${index}].order must equal ${index}`);
     if (rawSegmentIds.has(segment.segmentId)) {
       issues.push(`raw.segments[${index}].segmentId must be unique`);
     }
     rawSegmentIds.add(segment.segmentId);
   }
-  if (raw.sourceText !== raw.segments.map((segment) => segment.text).join('\n')) {
+  if (
+    raw.sourceText !== raw.segments.map((segment) => segment.text).join('\n')
+  ) {
     issues.push('raw.sourceText must be the exact raw segment projection');
   }
 
   let previous: CaptureLocatorV1 | undefined;
   const blockIds = new Set<string>();
   for (const [index, block] of candidate.blocks.entries()) {
-    if (block.order !== index) issues.push(`blocks[${index}].order must equal ${index}`);
-    if (blockIds.has(block.blockId)) issues.push(`blocks[${index}].blockId must be unique`);
+    if (block.order !== index)
+      issues.push(`blocks[${index}].order must equal ${index}`);
+    if (blockIds.has(block.blockId))
+      issues.push(`blocks[${index}].blockId must be unique`);
     blockIds.add(block.blockId);
-    if (!block.sourceText.trim()) issues.push(`blocks[${index}].sourceText must not be empty`);
-    if (!block.targetText.trim()) issues.push(`blocks[${index}].targetText must not be empty`);
+    if (!block.sourceText.trim())
+      issues.push(`blocks[${index}].sourceText must not be empty`);
+    if (!block.targetText.trim())
+      issues.push(`blocks[${index}].targetText must not be empty`);
     const expectedSegment = raw.segments[index];
-    if (!expectedSegment || block.sourceSegmentId !== expectedSegment.segmentId) {
-      issues.push(`blocks[${index}].sourceSegmentId must follow raw segment order`);
+    if (
+      !expectedSegment ||
+      block.sourceSegmentId !== expectedSegment.segmentId
+    ) {
+      issues.push(
+        `blocks[${index}].sourceSegmentId must follow raw segment order`,
+      );
     } else {
       if (!locatorsEqual(block.locator, expectedSegment.locator)) {
-        issues.push(`blocks[${index}].locator must equal its raw segment locator`);
+        issues.push(
+          `blocks[${index}].locator must equal its raw segment locator`,
+        );
       }
       if (block.sourceText !== expectedSegment.text) {
-        issues.push(`blocks[${index}].sourceText must equal its raw segment text`);
+        issues.push(
+          `blocks[${index}].sourceText must equal its raw segment text`,
+        );
       }
     }
     if (!isValidLocator(block.locator, raw)) {
-      issues.push(`blocks[${index}].locator does not reference raw capture evidence`);
+      issues.push(
+        `blocks[${index}].locator does not reference raw capture evidence`,
+      );
     }
     if (previous && compareLocators(previous, block.locator) > 0) {
       issues.push(`blocks[${index}].locator is out of source order`);
@@ -207,7 +306,9 @@ export function validateStructuringCandidate(
   if (candidate.blocks.length !== raw.segments.length) {
     issues.push('blocks must cover every raw segment exactly once');
   }
-  const expectedTargetText = candidate.blocks.map((block) => block.targetText).join('\n');
+  const expectedTargetText = candidate.blocks
+    .map((block) => block.targetText)
+    .join('\n');
   if (candidate.targetText !== expectedTargetText) {
     issues.push('targetText must be the exact block target projection');
   }
@@ -226,9 +327,12 @@ function isValidLocator(locator: CaptureLocatorV1, raw: RawCaptureV1): boolean {
       Number.isInteger(locator.page) &&
       locator.page > 0 &&
       (locator.boundingBox == null ||
-        (locator.boundingBox.length === 4 && locator.boundingBox.every(Number.isFinite))) &&
+        (locator.boundingBox.length === 4 &&
+          locator.boundingBox.every(Number.isFinite))) &&
       raw.segments.some(
-        (segment) => segment.locator.kind === 'page' && segment.locator.page === locator.page,
+        (segment) =>
+          segment.locator.kind === 'page' &&
+          segment.locator.page === locator.page,
       )
     );
   }
@@ -246,14 +350,20 @@ function isValidLocator(locator: CaptureLocatorV1, raw: RawCaptureV1): boolean {
   );
 }
 
-function compareLocators(left: CaptureLocatorV1, right: CaptureLocatorV1): number {
+function compareLocators(
+  left: CaptureLocatorV1,
+  right: CaptureLocatorV1,
+): number {
   if (left.kind !== right.kind) return left.kind === 'page' ? -1 : 1;
   return left.kind === 'page'
     ? left.page - (right as typeof left).page
     : left.startMs - (right as typeof left).startMs;
 }
 
-function locatorsEqual(left: CaptureLocatorV1, right: CaptureLocatorV1): boolean {
+function locatorsEqual(
+  left: CaptureLocatorV1,
+  right: CaptureLocatorV1,
+): boolean {
   if (left.kind !== right.kind) return false;
   if (left.kind === 'time') {
     const rightTime = right as typeof left;
@@ -264,7 +374,9 @@ function locatorsEqual(left: CaptureLocatorV1, right: CaptureLocatorV1): boolean
   if (left.boundingBox == null || rightPage.boundingBox == null) {
     return left.boundingBox == null && rightPage.boundingBox == null;
   }
-  return left.boundingBox.every((value, index) => value === rightPage.boundingBox?.[index]);
+  return left.boundingBox.every(
+    (value, index) => value === rightPage.boundingBox?.[index],
+  );
 }
 
 function sameSource(

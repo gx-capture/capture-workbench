@@ -2,10 +2,16 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const root = resolve(import.meta.dirname, '..');
-const requestedTag = process.argv[2] ?? process.env.GITHUB_REF_NAME;
+const rawArguments = process.argv.slice(2);
+const positionalArguments =
+  rawArguments[0] === '--' ? rawArguments.slice(1) : rawArguments;
+if (positionalArguments.length > 1) {
+  throw new Error('Pass one release tag such as v0.3.0.');
+}
+const requestedTag = positionalArguments[0] ?? process.env.GITHUB_REF_NAME;
 
 if (!requestedTag) {
-  throw new Error('Pass a release tag such as v0.1.0.');
+  throw new Error('Pass a release tag such as v0.3.0.');
 }
 
 const releaseVersion = requestedTag.startsWith('v')
@@ -21,11 +27,11 @@ const jsonVersion = (relativePath) => JSON.parse(read(relativePath)).version;
 const tomlVersion = (relativePath) =>
   read(relativePath).match(/^version\s*=\s*"([^"]+)"/m)?.[1];
 const pythonVersion = read(
-  'packages/capture-runtime/src/capture_runtime/constants.py',
+  'packages/capture-runtime/src/capture_runtime/constants/versions.py',
 ).match(/^RUNTIME_VERSION:\s*Final\s*=\s*"([^"]+)"/m)?.[1];
 
 const versions = new Map([
-  ['Angular package', jsonVersion('packages/capture-angular/package.json')],
+  ['Capture Workbench package', jsonVersion('packages/capture-angular/package.json')],
   [
     'Python runtime package',
     tomlVersion('packages/capture-runtime/pyproject.toml'),

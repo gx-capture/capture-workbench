@@ -1,18 +1,13 @@
 # Web Component follow-up
 
-- [x] Migrate all executable and test `.mjs` scripts to Node 24-native `.ts`
-      while keeping ESLint flat configuration on its supported `.mjs` loader.
-      Verify: `pnpm nx run capture-workbench-desktop:package-qa-test`
-
-- [x] Add a custom-element wrapper without changing `CaptureDocumentV1`.
+- [x] Replace the manual element adapter with an Angular Elements facade and
+      rename the direct Angular selector to `gx-capture-workbench`.
       Verify: `pnpm nx run capture-angular:test`
-- [x] Define `config` attribute/property serialization and stable DOM
-      `CustomEvent` names; keep clients and providers property-only.
+- [x] Add property-first configuration, common primitive attributes, and stable
+      bubbling/composed capture events without JSON configuration parsing.
       Verify: `pnpm nx run capture-angular:test`
-- [x] Add a framework-neutral consumer fixture and CDN loading example.
+- [x] Prove packed Vanilla, React, and Vue consumers compile against the public
+      NPM package API.
       Verify: `pnpm nx run capture-angular:clean-consumer-smoke`
-- [x] Document CSP, authentication, styling tokens, and version compatibility.
+- [x] Document framework-neutral NPM use and browser token boundaries.
       Verify: `pnpm nx run capture-angular:clean-consumer-smoke`
-
-- [ ] After `@gx/capture-angular` is publicly published, load the CDN fixture
-      from its final URL in a browser and record the result.

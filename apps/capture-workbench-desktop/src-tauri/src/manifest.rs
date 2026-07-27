@@ -1,60 +1,15 @@
-use std::{
-    fs,
-    io::Read,
-    net::IpAddr,
-    path::{Path, PathBuf},
-};
+use std::{fs, io::Read, net::IpAddr, path::Path};
 
-use serde::{Deserialize, Serialize};
+#[cfg(test)]
+pub(crate) use crate::contracts::manifest::RuntimeRequirements;
+use crate::contracts::{RuntimeManifest, VerifiedRuntime, WindowsMlArtifactDescriptor};
 use sha2::{Digest, Sha256};
 
 use crate::constants::{
     EXPECTED_API_VERSION, EXPECTED_CAPTURE_DOCUMENT_SCHEMA_VERSION, EXPECTED_MANIFEST_VERSION,
-    EXPECTED_RUNTIME_VERSION, RUNTIME_BINARY_TARGET_FILE,
+    EXPECTED_RUNTIME_VERSION, MAX_RUNTIME_ARTIFACT_BYTES, MAX_WINDOWSML_BUNDLE_BYTES,
+    RUNTIME_BINARY_TARGET_FILE, SCHEMA_FILE_NAME,
 };
-
-const SCHEMA_FILE_NAME: &str = "capture-document-v1.schema.json";
-const MAX_RUNTIME_ARTIFACT_BYTES: u64 = 536_870_912;
-const MAX_WINDOWSML_BUNDLE_BYTES: u64 = 536_870_912;
-
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct WindowsMlArtifactDescriptor {
-    pub artifact_url: String,
-    pub artifact_file_name: String,
-    pub bytes: u64,
-    pub sha256: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct RuntimeRequirements {
-    #[serde(rename = "windowsml-ocr")]
-    pub windowsml_ocr: WindowsMlArtifactDescriptor,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct RuntimeManifest {
-    pub manifest_version: String,
-    pub runtime_version: String,
-    pub api_version: String,
-    pub capture_document_schema_version: String,
-    pub platform: String,
-    pub arch: String,
-    pub file_name: String,
-    pub bytes: u64,
-    pub sha256: String,
-    pub schema_file_name: String,
-    pub schema_sha256: String,
-    pub runtime_requirements: RuntimeRequirements,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct VerifiedRuntime {
-    pub manifest: RuntimeManifest,
-    pub executable_path: PathBuf,
-}
 
 pub(crate) fn load_runtime_manifest(path: &Path) -> Result<RuntimeManifest, String> {
     let content = fs::read_to_string(path)

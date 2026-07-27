@@ -34,7 +34,7 @@ export default [
         'error',
         {
           type: 'element',
-          prefix: 'capture',
+          prefix: 'gx',
           style: 'kebab-case',
         },
       ],

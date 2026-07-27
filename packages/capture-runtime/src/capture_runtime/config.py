@@ -98,6 +98,15 @@ class OllamaRuntimeConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class ExternalOllamaConfig:
+    """Configuration for an Ollama endpoint owned by the host environment."""
+
+    endpoint_url: str
+    model: str
+    api_key: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class ExtractionRuntimeConfig:
     windowsml_model_dir: Path
     whisper_models_dir: Path
@@ -113,6 +122,47 @@ class ExtractionRuntimeConfig:
     windowsml_bundle_url: str | None
     windowsml_bundle_sha256: str | None
     windowsml_bundle_bytes: int | None
+
+
+def _external_ollama_endpoint(value: str) -> str:
+    try:
+        parsed = urlsplit(value)
+    except ValueError as error:
+        raise ValueError("CAPTURE_OLLAMA_ENDPOINT must be an absolute HTTP(S) URL") from error
+    if (
+        parsed.scheme not in {"http", "https"}
+        or parsed.hostname is None
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError(
+            "CAPTURE_OLLAMA_ENDPOINT must be an HTTP(S) URL without credentials, path, "
+            "query, or fragment"
+        )
+    try:
+        _ = parsed.port
+    except ValueError as error:
+        raise ValueError("CAPTURE_OLLAMA_ENDPOINT must use a valid port") from error
+    return value.rstrip("/")
+
+
+def _external_ollama_model(value: str) -> str:
+    model = value.strip()
+    if not model or len(model) > 255 or any(character in model for character in "\r\n"):
+        raise ValueError("CAPTURE_OLLAMA_MODEL must contain 1 to 255 characters")
+    return model
+
+
+def _external_ollama_api_key(value: str | None) -> str | None:
+    if value is None or not value.strip():
+        return None
+    api_key = value.strip()
+    if len(api_key) > 4096 or any(character in api_key for character in "\r\n"):
+        raise ValueError("CAPTURE_OLLAMA_API_KEY must contain at most 4096 characters")
+    return api_key
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,22 +181,13 @@ class RuntimeSettings:
     structuring_provider: str
     extraction: ExtractionRuntimeConfig
     ollama: OllamaRuntimeConfig
+    external_ollama: ExternalOllamaConfig | None
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> RuntimeSettings:
         env = dict(os.environ if environ is None else environ)
         app_data_dir = Path(env.get("CAPTURE_APP_DATA_DIR") or _default_app_data(env))
         ollama_app_data = Path(env.get("CAPTURE_OLLAMA_APP_DATA") or app_data_dir / "ollama")
-        ollama_host = env.get("CAPTURE_OLLAMA_HOST") or "http://127.0.0.1:11439"
-        parsed_ollama_host = urlsplit(ollama_host)
-        if (
-            parsed_ollama_host.scheme != "http"
-            or parsed_ollama_host.hostname != "127.0.0.1"
-            or parsed_ollama_host.port is None
-            or parsed_ollama_host.path not in {"", "/"}
-        ):
-            raise ValueError("CAPTURE_OLLAMA_HOST must be http://127.0.0.1:<port>")
-
         host = env.get("CAPTURE_HOST", "127.0.0.1")
         if host != "127.0.0.1":
             raise ValueError("Capture Runtime may only bind 127.0.0.1")
@@ -174,8 +215,10 @@ class RuntimeSettings:
                 )
         allowed_origins = _csv(env.get("CAPTURE_ALLOWED_ORIGINS"), ())
         provider = env.get("CAPTURE_STRUCTURING_PROVIDER", "ollama").strip().lower()
-        if provider not in {"ollama", "fake", "host"}:
-            raise ValueError("CAPTURE_STRUCTURING_PROVIDER must be ollama, fake, or host")
+        if provider not in {"ollama", "external-ollama", "fake", "host"}:
+            raise ValueError(
+                "CAPTURE_STRUCTURING_PROVIDER must be ollama, external-ollama, fake, or host"
+            )
         extraction_provider = env.get("CAPTURE_EXTRACTION_PROVIDER", "runtime").strip().lower()
         if extraction_provider not in {"runtime", "fake"}:
             raise ValueError("CAPTURE_EXTRACTION_PROVIDER must be runtime or fake")
@@ -272,6 +315,33 @@ class RuntimeSettings:
         } - supported_whisper_models:
             raise ValueError("Capture Whisper models must be large-v3-turbo or small in runtime v1")
 
+        external_ollama = None
+        if provider == "external-ollama":
+            endpoint = env.get("CAPTURE_OLLAMA_ENDPOINT", "").strip()
+            if not endpoint:
+                raise ValueError("CAPTURE_OLLAMA_ENDPOINT is required when using external-ollama")
+            external_ollama = ExternalOllamaConfig(
+                endpoint_url=_external_ollama_endpoint(endpoint),
+                model=_external_ollama_model(
+                    env.get("CAPTURE_OLLAMA_MODEL", CAPTURE_OLLAMA_BASE_MODEL)
+                ),
+                api_key=_external_ollama_api_key(env.get("CAPTURE_OLLAMA_API_KEY")),
+            )
+
+        ollama_host = (
+            "http://127.0.0.1:11439"
+            if provider == "external-ollama"
+            else env.get("CAPTURE_OLLAMA_HOST") or "http://127.0.0.1:11439"
+        )
+        parsed_ollama_host = urlsplit(ollama_host)
+        if (
+            parsed_ollama_host.scheme != "http"
+            or parsed_ollama_host.hostname != "127.0.0.1"
+            or parsed_ollama_host.port is None
+            or parsed_ollama_host.path not in {"", "/"}
+        ):
+            raise ValueError("CAPTURE_OLLAMA_HOST must be http://127.0.0.1:<port>")
+
         ollama = OllamaRuntimeConfig(
             host_url=ollama_host.rstrip("/"),
             app_data_dir=ollama_app_data,
@@ -299,4 +369,5 @@ class RuntimeSettings:
             structuring_provider=provider,
             extraction=extraction,
             ollama=ollama,
+            external_ollama=external_ollama,
         )

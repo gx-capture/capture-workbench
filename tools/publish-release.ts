@@ -5,8 +5,22 @@ import { lstat, mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import {
+  Observable,
+  catchError,
+  concatMap,
+  defer,
+  forkJoin,
+  from,
+  map,
+  of,
+  switchMap,
+  tap,
+  throwError,
+  toArray,
+} from 'rxjs';
 
-const packageName = '@gx/capture-angular';
+const packageName = '@gx/capture-workbench';
 const registry = 'https://npm.pkg.github.com';
 const runtimeAssetNames = Object.freeze([
   'capture-runtime-x86_64-pc-windows-msvc.exe',
@@ -30,10 +44,31 @@ function run(command, args, { allowFailure = false } = {}) {
   return result;
 }
 
-export async function sha512Integrity(path) {
-  const hash = createHash('sha512');
-  for await (const chunk of createReadStream(path)) hash.update(chunk);
-  return `sha512-${hash.digest('base64')}`;
+function hashFile(path, algorithm, encoding = 'hex') {
+  return new Observable((subscriber) => {
+    const hash = createHash(algorithm);
+    const stream = createReadStream(path);
+    const onData = (chunk) => hash.update(chunk);
+    const onError = (error) => subscriber.error(error);
+    const onEnd = () => {
+      if (subscriber.closed) return;
+      subscriber.next(hash.digest(encoding));
+      subscriber.complete();
+    };
+    stream.on('data', onData);
+    stream.once('error', onError);
+    stream.once('end', onEnd);
+    return () => {
+      stream.off('data', onData);
+      stream.destroy();
+    };
+  });
+}
+
+export function sha512Integrity(path) {
+  return hashFile(path, 'sha512', 'base64').pipe(
+    map((digest) => `sha512-${digest}`),
+  );
 }
 
 export function packagePublicationDecision(existingIntegrity, localIntegrity) {
@@ -69,51 +104,53 @@ function parseArguments(args) {
   };
 }
 
-async function exactRuntimeAssets(runtimeDirectory) {
-  const paths = runtimeAssetNames.map((name) => join(runtimeDirectory, name));
-  for (const [index, path] of paths.entries()) {
-    const metadata = await stat(path);
-    if (!metadata.isFile())
-      throw new Error(`Runtime release asset is not a file: ${path}`);
-    if (basename(path) !== runtimeAssetNames[index]) {
-      throw new Error('Runtime release asset name is not canonical.');
-    }
-  }
-  return paths;
+function exactRuntimeAssets(runtimeDirectory) {
+  return from(runtimeAssetNames).pipe(
+    map((name) => join(runtimeDirectory, name)),
+    concatMap((path, index) =>
+      defer(() => from(stat(path))).pipe(
+        map((metadata) => {
+          if (!metadata.isFile())
+            throw new Error(`Runtime release asset is not a file: ${path}`);
+          if (basename(path) !== runtimeAssetNames[index]) {
+            throw new Error('Runtime release asset name is not canonical.');
+          }
+          return path;
+        }),
+      ),
+    ),
+    toArray(),
+  );
 }
 
-async function sha256(path) {
-  const hash = createHash('sha256');
-  for await (const chunk of createReadStream(path)) hash.update(chunk);
-  return hash.digest('hex');
+function sha256(path) {
+  return hashFile(path, 'sha256');
 }
 
-async function assertSameFile(left, right) {
-  const [leftStat, rightStat] = await Promise.all([stat(left), stat(right)]);
-  if (
-    leftStat.size !== rightStat.size ||
-    (await sha256(left)) !== (await sha256(right))
-  ) {
-    throw new Error(
-      `Published runtime asset differs from local bytes: ${basename(left)}`,
-    );
-  }
+function assertSameFile(left, right) {
+  return forkJoin({ left: defer(() => from(stat(left))), right: defer(() => from(stat(right))) }).pipe(
+    concatMap(({ left: leftStat, right: rightStat }) =>
+      forkJoin({ left: sha256(left), right: sha256(right) }).pipe(
+        map(({ left: leftDigest, right: rightDigest }) => {
+          if (leftStat.size !== rightStat.size || leftDigest !== rightDigest) {
+            throw new Error(
+              `Published runtime asset differs from local bytes: ${basename(left)}`,
+            );
+          }
+        }),
+      ),
+    ),
+  );
 }
 
 function releaseState(tag, runCommand) {
   const result = runCommand(
     'gh',
     ['release', 'view', tag, '--json', 'isDraft'],
-    {
-      allowFailure: true,
-    },
+    { allowFailure: true },
   );
   if (result.status !== 0) {
-    if (
-      /release not found|HTTP 404|not found/iu.test(
-        result.stderr || result.stdout || '',
-      )
-    ) {
+    if (/release not found|HTTP 404|not found/iu.test(result.stderr || result.stdout || '')) {
       return 'missing';
     }
     throw new Error(
@@ -123,46 +160,99 @@ function releaseState(tag, runCommand) {
   return JSON.parse(result.stdout).isDraft ? 'draft' : 'public';
 }
 
-async function ensureRuntimeReleasePublic(tag, runtimeDirectory, runCommand) {
-  const assets = await exactRuntimeAssets(runtimeDirectory);
-  let state = releaseState(tag, runCommand);
-  if (state === 'missing') {
-    runCommand('gh', [
-      'release',
-      'create',
-      tag,
-      '--verify-tag',
-      '--draft',
-      '--generate-notes',
-    ]);
-    state = 'draft';
-  }
-  if (state === 'draft') {
-    for (const asset of assets)
-      runCommand('gh', ['release', 'upload', tag, asset, '--clobber']);
-    runCommand('gh', ['release', 'edit', tag, '--verify-tag', '--draft=false']);
-  } else {
-    const temporary = await mkdtemp(join(tmpdir(), 'capture-release-verify-'));
-    try {
-      for (const asset of assets) {
-        runCommand('gh', [
-          'release',
-          'download',
-          tag,
-          '--pattern',
-          basename(asset),
-          '--dir',
-          temporary,
-          '--clobber',
-        ]);
-        await assertSameFile(asset, join(temporary, basename(asset)));
-      }
-    } finally {
-      await rm(temporary, { recursive: true, force: true });
-    }
-  }
-  if (releaseState(tag, runCommand) !== 'public')
-    throw new Error('Runtime release did not become public.');
+function ensureRuntimeReleasePublic(tag, runtimeDirectory, runCommand) {
+  return exactRuntimeAssets(runtimeDirectory).pipe(
+    switchMap((assets) =>
+      defer(() => of(releaseState(tag, runCommand))).pipe(
+        concatMap((state) => {
+          if (state === 'missing') {
+            runCommand('gh', [
+              'release',
+              'create',
+              tag,
+              '--verify-tag',
+              '--draft',
+              '--generate-notes',
+            ]);
+            return of('draft');
+          }
+          return of(state);
+        }),
+        concatMap((state) => {
+          if (state === 'draft') {
+            return from(assets).pipe(
+              tap((asset) =>
+                runCommand('gh', [
+                  'release',
+                  'upload',
+                  tag,
+                  asset,
+                  '--clobber',
+                ]),
+              ),
+              toArray(),
+              tap(() =>
+                runCommand('gh', [
+                  'release',
+                  'edit',
+                  tag,
+                  '--verify-tag',
+                  '--draft=false',
+                ]),
+              ),
+              map(() => undefined),
+            );
+          }
+          const temporaryPrefix = join(tmpdir(), 'capture-release-verify-');
+          return defer(() => from(mkdtemp(temporaryPrefix))).pipe(
+            switchMap((temporary) =>
+              from(assets).pipe(
+                concatMap((asset) =>
+                  defer(() => {
+                    runCommand('gh', [
+                      'release',
+                      'download',
+                      tag,
+                      '--pattern',
+                      basename(asset),
+                      '--dir',
+                      temporary,
+                      '--clobber',
+                    ]);
+                    return of(undefined);
+                  }).pipe(
+                    concatMap(() => assertSameFile(asset, join(temporary, basename(asset)))),
+                  ),
+                ),
+                toArray(),
+                map(() => undefined),
+                catchError((error) =>
+                  defer(() => from(rm(temporary, { recursive: true, force: true }))).pipe(
+                    concatMap(() => throwError(() => error)),
+                  ),
+                ),
+                concatMap(() =>
+                  defer(() => from(rm(temporary, { recursive: true, force: true }))).pipe(
+                    map(() => undefined),
+                  ),
+                ),
+              ),
+            ),
+          );
+        }),
+      ).pipe(
+        concatMap(() =>
+          defer(() => of(releaseState(tag, runCommand))).pipe(
+            concatMap((state) =>
+              state === 'public'
+                ? of(undefined)
+                : throwError(() => new Error('Runtime release did not become public.')),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
 }
 
 function existingPackageIntegrity(version, runCommand) {
@@ -192,86 +282,108 @@ function existingPackageIntegrity(version, runCommand) {
   return parsed;
 }
 
-export async function preflightPackagePublication(
+export function preflightPackagePublication(
   version,
   packagePath,
   { runCommand = run, lstatPath = lstat } = {},
 ) {
-  const metadata = await lstatPath(packagePath);
-  if (!metadata.isFile() || !packagePath.endsWith('.tgz')) {
-    throw new Error('Angular publication input must be one .tgz file.');
-  }
-  const localIntegrity = await sha512Integrity(packagePath);
-  const inspection = runCommand('npm', [
-    'pack',
-    '--dry-run',
-    '--json',
-    packagePath,
-  ]);
-  const inspected = JSON.parse(inspection.stdout);
-  if (
-    !Array.isArray(inspected) ||
-    inspected.length !== 1 ||
-    inspected[0].name !== packageName ||
-    inspected[0].version !== version ||
-    inspected[0].integrity !== localIntegrity
-  ) {
-    throw new Error(
-      'Angular tarball identity/version/integrity does not match the release tag.',
-    );
-  }
-  const existingIntegrity = existingPackageIntegrity(version, runCommand);
-  return Object.freeze({
-    version,
-    packagePath,
-    localIntegrity,
-    decision: packagePublicationDecision(existingIntegrity, localIntegrity),
-  });
-}
-
-async function applyPackagePublication(plan, runCommand) {
-  const currentDecision = packagePublicationDecision(
-    existingPackageIntegrity(plan.version, runCommand),
-    plan.localIntegrity,
+  return defer(() => from(lstatPath(packagePath))).pipe(
+    concatMap((metadata) => {
+      if (!metadata.isFile() || !packagePath.endsWith('.tgz')) {
+        return throwError(() => new Error('Capture Workbench publication input must be one .tgz file.'));
+      }
+      return sha512Integrity(packagePath);
+    }),
+    concatMap((localIntegrity) =>
+      defer(() => of(runCommand('npm', ['pack', '--dry-run', '--json', packagePath]))).pipe(
+        map((inspection) => ({ localIntegrity, inspection: JSON.parse(inspection.stdout) })),
+      ),
+    ),
+    concatMap(({ localIntegrity, inspection }) => {
+      if (
+        !Array.isArray(inspection) ||
+        inspection.length !== 1 ||
+        inspection[0].name !== packageName ||
+        inspection[0].version !== version ||
+        inspection[0].integrity !== localIntegrity
+      ) {
+        return throwError(
+          () => new Error('Capture Workbench tarball identity/version/integrity does not match the release tag.'),
+        );
+      }
+      return defer(() => of(existingPackageIntegrity(version, runCommand))).pipe(
+        map((existingIntegrity) =>
+          Object.freeze({
+            version,
+            packagePath,
+            localIntegrity,
+            decision: packagePublicationDecision(existingIntegrity, localIntegrity),
+          }),
+        ),
+      );
+    }),
   );
-  if (currentDecision === 'publish') {
-    runCommand('npm', [
-      'publish',
-      plan.packagePath,
-      '--registry',
-      registry,
-      '--access',
-      'public',
-    ]);
-  }
-  const publishedIntegrity = existingPackageIntegrity(plan.version, runCommand);
-  if (publishedIntegrity === undefined) {
-    throw new Error(
-      'Package registry did not expose the version after publish.',
-    );
-  }
-  packagePublicationDecision(publishedIntegrity, plan.localIntegrity);
 }
 
-export async function publishRelease(
+function applyPackagePublication(plan, runCommand) {
+  return defer(() =>
+    of(
+      packagePublicationDecision(
+        existingPackageIntegrity(plan.version, runCommand),
+        plan.localIntegrity,
+      ),
+    ),
+  ).pipe(
+    tap((decision) => {
+      if (decision === 'publish') {
+        runCommand('npm', [
+          'publish',
+          plan.packagePath,
+          '--registry',
+          registry,
+          '--access',
+          'public',
+        ]);
+      }
+    }),
+    concatMap(() => defer(() => of(existingPackageIntegrity(plan.version, runCommand)))),
+    concatMap((publishedIntegrity) => {
+      if (publishedIntegrity === undefined) {
+        return throwError(() => new Error('Package registry did not expose the version after publish.'));
+      }
+      return defer(() => of(packagePublicationDecision(publishedIntegrity, plan.localIntegrity)));
+    }),
+    map(() => undefined),
+  );
+}
+
+export function publishRelease(
   { tag, version, runtimeDirectory, packagePath },
   { runCommand = run } = {},
 ) {
-  const packagePlan = await preflightPackagePublication(version, packagePath, {
-    runCommand,
-  });
-  await ensureRuntimeReleasePublic(tag, runtimeDirectory, runCommand);
-  await applyPackagePublication(packagePlan, runCommand);
+  return preflightPackagePublication(version, packagePath, { runCommand }).pipe(
+    concatMap((packagePlan) =>
+      ensureRuntimeReleasePublic(tag, runtimeDirectory, runCommand).pipe(
+        concatMap(() => applyPackagePublication(packagePlan, runCommand)),
+      ),
+    ),
+  );
+}
+
+function errorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
 }
 
 if (
   process.argv[1] &&
   pathToFileURL(resolve(process.argv[1])).href === import.meta.url
 ) {
-  publishRelease(parseArguments(process.argv.slice(2))).catch((error) => {
-    process.stderr.write(
-      `${error instanceof Error ? error.message : String(error)}\n`,
-    );
-    process.exitCode = 1;
-  });
+  defer(() => of(parseArguments(process.argv.slice(2))))
+    .pipe(switchMap((input) => publishRelease(input)))
+    .subscribe({
+      error: (error) => {
+        process.stderr.write(`${errorMessage(error)}\n`);
+        process.exitCode = 1;
+      },
+    });
 }

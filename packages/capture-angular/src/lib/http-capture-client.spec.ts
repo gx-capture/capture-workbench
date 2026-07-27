@@ -13,7 +13,7 @@ describe('HttpCaptureClient', () => {
         jsonResponse({
           ready: true,
           service: 'capture-runtime',
-          runtimeVersion: '0.1.0',
+          runtimeVersion: '0.3.0',
           apiVersion: '1.0',
           captureDocumentSchemaVersion: '1',
           capabilities: {
@@ -28,10 +28,20 @@ describe('HttpCaptureClient', () => {
       .mockResolvedValueOnce(jsonResponse({ items: [] }));
     const client = configureClient(fetchMock);
 
-    await expect(client.getReady()).resolves.toMatchObject({
-      captureDocumentSchemaVersion: '1',
+    let ready: unknown;
+    let requirements: unknown;
+    let error: unknown;
+    client.getReady().subscribe({
+      next: (value) => (ready = value),
+      error: (value) => (error = value),
+      complete: () => client.getRequirements().subscribe({
+        next: (value) => (requirements = value),
+        error: (value) => (error = value),
+      }),
     });
-    await expect(client.getRequirements()).resolves.toEqual([]);
+    await vi.waitFor(() => expect(ready).toMatchObject({ captureDocumentSchemaVersion: '1' }));
+    expect(error).toBeUndefined();
+    expect(requirements).toEqual([]);
   });
 
   it('keeps the token in the authorization header and sends capture idempotency', async () => {
@@ -48,14 +58,14 @@ describe('HttpCaptureClient', () => {
     );
     const client = configureClient(fetchMock);
 
-    await client.createCapture({
+    client.createCapture({
       clientRequestId: '6b19b58e-0a7e-4ff7-9d07-19a727070609',
       file: new File(['voice'], 'voice.wav', { type: 'audio/wav' }),
       sourceKind: 'audio',
       structuringMode: 'host',
       targetLanguage: 'zh-TW',
-    });
-
+    }).subscribe();
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
     const call = fetchMock.mock.calls[0];
     if (!call) throw new Error('Expected capture request.');
     const [url, request] = call;
@@ -85,8 +95,15 @@ describe('HttpCaptureClient', () => {
       .mockResolvedValue(jsonResponse({ items: [installation] }));
     const client = configureClient(fetchMock);
 
-    await expect(client.listInstallations()).resolves.toEqual([installation]);
-
+    let installations: unknown;
+    let error: unknown;
+    client.listInstallations().subscribe({
+      next: (value) => (installations = value),
+      error: (value) => (error = value),
+    });
+    await vi.waitFor(() => expect(installations).toEqual([installation]));
+    expect(error).toBeUndefined();
+    expect(installations).toEqual([installation]);
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
       'http://127.0.0.1:43119/v1/runtime/installations',
@@ -103,9 +120,10 @@ describe('HttpCaptureClient', () => {
       fetch: fetchMock,
     });
 
-    await expect(client.getReady()).rejects.toEqual(
-      expect.objectContaining({ code: 'unsafe_base_url' }),
-    );
+    let error: unknown;
+    client.getReady().subscribe({ error: (value) => (error = value) });
+    await vi.waitFor(() => expect(error).toEqual(expect.objectContaining({ code: 'unsafe_base_url' })));
+    expect(error).toEqual(expect.objectContaining({ code: 'unsafe_base_url' }));
     expect(bearerToken).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -115,7 +133,7 @@ describe('HttpCaptureClient', () => {
       jsonResponse({
         ready: true,
         service: 'untrusted-service',
-        runtimeVersion: '0.1.0',
+        runtimeVersion: '0.3.0',
         apiVersion: '1.0',
         captureDocumentSchemaVersion: '1',
         capabilities: {
@@ -129,7 +147,10 @@ describe('HttpCaptureClient', () => {
     );
     const client = configureClient(fetchMock);
 
-    await expect(client.getReady()).rejects.toEqual(
+    let error: unknown;
+    client.getReady().subscribe({ error: (value) => (error = value) });
+    await vi.waitFor(() => expect(error).toEqual(expect.objectContaining({ code: 'runtime_service_mismatch' })));
+    expect(error).toEqual(
       expect.objectContaining({ code: 'runtime_service_mismatch' }),
     );
   });
@@ -143,7 +164,10 @@ describe('HttpCaptureClient', () => {
     );
     const client = configureClient(fetchMock);
 
-    await expect(client.getResult('capture-1')).rejects.toEqual(
+    let error: unknown;
+    client.getResult('capture-1').subscribe({ error: (value) => (error = value) });
+    await vi.waitFor(() => expect(error).toEqual(expect.objectContaining({ status: 409 })));
+    expect(error).toEqual(
       expect.objectContaining({
         status: 409,
         code: 'result_unavailable',

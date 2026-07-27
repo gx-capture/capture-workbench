@@ -6,23 +6,10 @@ use std::{
 
 use serde_json::Value;
 
-use crate::{constants::LOOPBACK_HOST, manifest::RuntimeManifest};
-
-const HEALTH_PATH: &str = "/v1/health/ready";
-const MAX_HEALTH_RESPONSE_BYTES: u64 = 64 * 1024;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ReadyHandshake {
-    pub runtime_version: String,
-    pub api_version: String,
-    pub capture_document_schema_version: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum ProbeResult {
-    Ready(ReadyHandshake),
-    NotReady,
-}
+use crate::{
+    constants::{HEALTH_PATH, LOOPBACK_HOST, MAX_HEALTH_RESPONSE_BYTES},
+    contracts::{ProbeResult, ReadyHandshake, RuntimeManifest},
+};
 
 pub(crate) fn probe_ready_once(
     port: u16,
@@ -157,7 +144,7 @@ mod tests {
         EXPECTED_API_VERSION, EXPECTED_CAPTURE_DOCUMENT_SCHEMA_VERSION, EXPECTED_MANIFEST_VERSION,
         EXPECTED_RUNTIME_VERSION, RUNTIME_BINARY_TARGET_FILE,
     };
-    use crate::manifest::{RuntimeRequirements, WindowsMlArtifactDescriptor};
+    use crate::contracts::manifest::{RuntimeRequirements, WindowsMlArtifactDescriptor};
     use std::{net::TcpListener, sync::mpsc, thread};
 
     fn manifest() -> RuntimeManifest {
@@ -220,7 +207,7 @@ mod tests {
 
     #[test]
     fn incompatible_schema_fails_without_echoing_response_body() {
-        let body = br#"{"ready":true,"runtimeVersion":"0.1.0","apiVersion":"1.0","captureDocumentSchemaVersion":"99","capabilities":{}}"#;
+        let body = br#"{"ready":true,"runtimeVersion":"0.3.0","apiVersion":"1.0","captureDocumentSchemaVersion":"99","capabilities":{}}"#;
         let response = format!(
             "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{}",
             body.len(),
