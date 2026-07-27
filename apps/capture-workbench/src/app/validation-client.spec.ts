@@ -1,6 +1,9 @@
 import { TestBed } from '@angular/core/testing';
 import { Subject, of } from 'rxjs';
-import type { ValidationClientEnvironment } from './contracts';
+import type {
+  ValidationCaptureFixture,
+  ValidationClientEnvironment,
+} from './contracts';
 import { ValidationCaptureClientService } from './services/validation-client.service';
 import { ValidationEnvironmentService } from './services/validation-environment.service';
 import { ValidationCaptureFixtureService } from './services/validation-fixture.service';
@@ -222,15 +225,40 @@ describe('ValidationCaptureClientService', () => {
     await vi.waitFor(() => expect(result).toMatchObject({ service: 'capture-runtime' }));
     expect(loadBackendConfig).toHaveBeenCalledTimes(1);
   });
+
+  it('does not expose browser fixture structuring in Tauri mode', () => {
+    const fixture = {
+      mode: 'deterministic-e2e',
+      client: {} as ValidationCaptureFixture['client'],
+      structuringProvider:
+        {} as ValidationCaptureFixture['structuringProvider'],
+    } satisfies ValidationCaptureFixture;
+    const selection = configureValidationCaptureClient(
+      tauriEnvironment({
+        loadDesktopRuntimeStatus: vi.fn(() => of(readyStatus)),
+        loadBackendConfig: vi.fn(() => of(backendConfig)),
+      }),
+      fixture,
+    );
+
+    expect(selection.client.mode).toBe('tauri-http');
+    expect(selection.client.hostStructuringAvailable).toBe(false);
+    expect(selection.client.structuringProvider).toBeUndefined();
+  });
 });
 
-function configureValidationCaptureClient(environment: ValidationClientEnvironment): {
+function configureValidationCaptureClient(
+  environment: ValidationClientEnvironment,
+  fixture?: ValidationCaptureFixture,
+): {
   readonly client: ValidationCaptureClientService;
 } {
   TestBed.configureTestingModule({
     providers: [
       { provide: ValidationEnvironmentService, useValue: environment },
-      ValidationCaptureFixtureService,
+      fixture === undefined
+        ? ValidationCaptureFixtureService
+        : { provide: ValidationCaptureFixtureService, useValue: { select: () => fixture } },
       ValidationRuntimeReadinessService,
       ValidationCaptureClientService,
     ],

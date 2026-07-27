@@ -6,6 +6,7 @@ import type {
 } from '../../../contracts';
 
 export const CAPTURE_WORKBENCH_CUSTOM_EVENTS = Object.freeze({
+  reviewRequired: 'capture-review-required',
   completed: 'capture-completed',
   failed: 'capture-failed',
   canceled: 'capture-canceled',

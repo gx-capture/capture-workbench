@@ -19,6 +19,7 @@ export interface RuntimeRequest {
 export interface InternalCaptureTask {
   readonly file: File;
   readonly clientRequestId: string;
+  readonly confirmRequestId: string;
   readonly controller: AbortController;
 }
 

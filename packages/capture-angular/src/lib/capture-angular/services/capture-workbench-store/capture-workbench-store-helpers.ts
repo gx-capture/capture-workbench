@@ -1,8 +1,10 @@
 import { EffectRef, Injectable, Injector, effect, inject } from '@angular/core';
 import { catchError, defer, Observable, throwError } from 'rxjs';
 import type {
+  CaptureReviewV1,
   CaptureFailureV1,
   CaptureJobV1,
+  RawCaptureV1,
   CaptureTaskView,
 } from '../../../contracts';
 import { HOST_RECONCILIATION_FAILURE_CODE } from '../../../constants';
@@ -30,6 +32,34 @@ export function isAwaitingHostStructuring(job: CaptureJobV1): boolean {
     job.stage === 'awaiting_structuring' &&
     job.structuringMode === 'host'
   );
+}
+
+export function validateCaptureReview(
+  raw: RawCaptureV1,
+  review: CaptureReviewV1,
+): string[] {
+  if (review.reviewVersion !== 1) return ['reviewVersion must be 1'];
+  const segmentsById = new Map(
+    raw.segments.map((segment) => [segment.segmentId, segment]),
+  );
+  const seen = new Set<string>();
+  const issues: string[] = [];
+  for (const edit of review.edits) {
+    if (seen.has(edit.segmentId)) {
+      issues.push(`duplicate segmentId ${edit.segmentId}`);
+      continue;
+    }
+    seen.add(edit.segmentId);
+    const segment = segmentsById.get(edit.segmentId);
+    if (!segment) {
+      issues.push(`unknown segmentId ${edit.segmentId}`);
+      continue;
+    }
+    if (edit.reviewedText.trim().length === 0) {
+      issues.push(`reviewedText for ${edit.segmentId} must not be empty`);
+    }
+  }
+  return issues;
 }
 
 export function normalizeHostFailureMessage(message: string): string {
@@ -200,6 +230,10 @@ export class CaptureWorkbenchStoreHelpers {
 
   isAwaitingHostStructuring(job: CaptureJobV1): boolean {
     return isAwaitingHostStructuring(job);
+  }
+
+  validateCaptureReview(raw: RawCaptureV1, review: CaptureReviewV1): string[] {
+    return validateCaptureReview(raw, review);
   }
 
   normalizeHostFailureMessage(message: string): string {

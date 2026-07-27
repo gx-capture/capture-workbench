@@ -57,6 +57,7 @@ class CaptureWorkbenchElementInputBridge
   ],
   template: `
     <gx-capture-workbench
+      (reviewRequired)="onReviewRequired($event)"
       (completed)="onCompleted($event)"
       (failed)="onFailed($event)"
       (canceled)="onCanceled($event)"
@@ -136,6 +137,10 @@ export class CaptureWorkbenchElementFacadeComponent {
 
   protected onCompleted(event: CaptureCompletedEvent): void {
     this.dispatch(CAPTURE_WORKBENCH_CUSTOM_EVENTS.completed, event);
+  }
+
+  protected onReviewRequired(event: CaptureTaskView): void {
+    this.dispatch(CAPTURE_WORKBENCH_CUSTOM_EVENTS.reviewRequired, event);
   }
 
   protected onFailed(event: CaptureFailedEvent): void {

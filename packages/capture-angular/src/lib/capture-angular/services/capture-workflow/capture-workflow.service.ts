@@ -10,6 +10,7 @@ import {
   finalize,
   map,
   of,
+  take,
   tap,
   throwError,
 } from 'rxjs';
@@ -20,6 +21,7 @@ import {
   type CaptureFailureV1,
   type CaptureJobV1,
   type CapturePreprocessor,
+  type CaptureReviewV1,
   type CaptureStructuringProvider,
   type CaptureTaskView,
   type RawCaptureV1,
@@ -42,6 +44,7 @@ export class CaptureWorkflowService {
   private readonly internalTasks = new Map<string, InternalCaptureTask>();
   private readonly captureIds = new Map<string, string>();
   private readonly taskSubscriptions = new Map<string, Subscription>();
+  private readonly reviewSubjects = new Map<string, Subject<CaptureReviewV1>>();
   private runningTasks = 0;
   private context?: CaptureWorkflowContext;
   private readonly reconciliation = inject(CaptureReconciliationService);
@@ -56,6 +59,8 @@ export class CaptureWorkflowService {
       for (const task of this.internalTasks.values()) task.controller.abort();
       for (const subscription of this.taskSubscriptions.values())
         subscription.unsubscribe();
+      for (const subject of this.reviewSubjects.values()) subject.complete();
+      this.reviewSubjects.clear();
       this.taskSubscriptions.clear();
       this.events.complete();
     });
@@ -63,6 +68,7 @@ export class CaptureWorkflowService {
 
   readonly tasks = this.taskState.asReadonly();
   readonly events = new Subject<
+    | { readonly type: 'review-required'; readonly task: CaptureTaskView }
     | { readonly type: 'completed'; readonly event: CaptureCompletedEvent }
     | { readonly type: 'failed'; readonly event: CaptureFailedEvent }
     | { readonly type: 'canceled'; readonly task: CaptureTaskView }
@@ -120,6 +126,7 @@ export class CaptureWorkflowService {
       this.internalTasks.set(id, {
         file,
         clientRequestId: crypto.randomUUID(),
+        confirmRequestId: crypto.randomUUID(),
         controller,
       });
       this.taskState.update((tasks) => [...tasks, task]);
@@ -138,6 +145,7 @@ export class CaptureWorkflowService {
     const internal = this.internalTasks.get(taskId);
     if (!internal) return;
     internal.controller.abort();
+    this.reviewSubjects.get(taskId)?.complete();
     const captureId = this.captureIds.get(taskId);
     const client = this.activeClient();
     if (captureId && client) {
@@ -152,6 +160,51 @@ export class CaptureWorkflowService {
       this.internalTasks.delete(taskId);
       this.drainQueue();
     }
+  }
+
+  updateReview(taskId: string, segmentId: string, reviewedText: string): void {
+    const task = this.taskState().find((candidate) => candidate.id === taskId);
+    if (task?.status !== 'awaiting_confirmation' || !task.raw) return;
+    const original = task.raw.segments.find(
+      (segment) => segment.segmentId === segmentId,
+    );
+    if (!original) return;
+    const current = task.review ?? { reviewVersion: 1 as const, edits: [] };
+    const edits = current.edits.filter((edit) => edit.segmentId !== segmentId);
+    if (reviewedText !== original.text) {
+      edits.push({ segmentId, reviewedText });
+    }
+    this.updateTask(taskId, {
+      review: { reviewVersion: 1, edits },
+      error: undefined,
+    });
+  }
+
+  confirm(taskId: string): void {
+    const task = this.taskState().find((candidate) => candidate.id === taskId);
+    if (task?.status !== 'awaiting_confirmation' || !task.raw) return;
+    const review = task.review ?? { reviewVersion: 1 as const, edits: [] };
+    const issues = this.helpers.validateCaptureReview(task.raw, review);
+    if (issues.length > 0) {
+      this.updateTask(taskId, {
+        error: {
+          code: 'invalid_review',
+          message: issues.join('; '),
+          stage: 'structuring',
+        },
+      });
+      return;
+    }
+    const subject = this.reviewSubjects.get(taskId);
+    if (!subject) return;
+    const accepted = this.updateTask(taskId, {
+      status: 'processing',
+      stage: 'structuring',
+      progress: Math.max(72, task.progress),
+      error: undefined,
+    });
+    if (accepted) subject.next(review);
+    subject.complete();
   }
 
   reconcile(taskId: string): void {
@@ -249,11 +302,36 @@ export class CaptureWorkflowService {
     const componentOwnsHostStructuring =
       config.structuringMode === 'host' &&
       config.hostStructuringOwner === 'component';
+    if (config.reviewBeforeCommit && config.structuringMode !== 'host') {
+      return defer(() => {
+        this.failTask(taskId, task.fileName, {
+          code: 'review_requires_host_structuring',
+          message: 'OCR review requires host structuring mode.',
+          stage: 'structuring',
+        });
+        return of(undefined);
+      });
+    }
     if (componentOwnsHostStructuring && !provider) {
       return defer(() => {
         this.failTask(taskId, task.fileName, {
           code: 'structuring_provider_not_configured',
           message: 'Host structuring provider is not configured.',
+          stage: 'structuring',
+        });
+        return of(undefined);
+      });
+    }
+    if (
+      config.reviewBeforeCommit &&
+      !componentOwnsHostStructuring &&
+      !client.confirmCapture
+    ) {
+      return defer(() => {
+        this.failTask(taskId, task.fileName, {
+          code: 'review_confirmation_not_supported',
+          message:
+            'The capture client does not support OCR review confirmation.',
           stage: 'structuring',
         });
         return of(undefined);
@@ -301,7 +379,9 @@ export class CaptureWorkflowService {
               signal,
               taskId,
             )
-          : of(job),
+          : config.reviewBeforeCommit
+            ? this.processClientReview(client, job, signal, taskId)
+            : of(job),
       ),
       concatMap((job) => this.waitForJob(client, job, signal, false, taskId)),
       concatMap((job) => this.settleJob(client, task, job, signal, taskId)),
@@ -331,77 +411,75 @@ export class CaptureWorkflowService {
           return of(job);
         }
         return client.getRaw(job.captureId, signal).pipe(
-          tap((raw) =>
-            this.updateTask(taskId, {
-              raw,
-              stage: 'structuring',
-              progress: Math.max(
-                70,
-                this.helpers.runtimeProgressPercent(job.progress),
-              ),
-            }),
-          ),
           concatMap((raw) =>
-            defer(() =>
-              provider.structure({
-                raw: this.helpers.deepFreeze(structuredClone(raw)),
-                documentContract: CAPTURE_DOCUMENT_V1_CONTRACT,
-                targetLanguage: config.targetLanguage,
-                signal,
-                reportProgress: (progress) =>
-                  this.updateTask(taskId, {
-                    progress: 70 + this.helpers.clampProgress(progress) * 0.2,
-                  }),
-              }),
-            ).pipe(
-              map((candidate) => {
-                const validationIssues =
-                  this.captureHelpers.validateStructuringCandidate(
-                    candidate,
-                    raw,
-                  );
-                if (validationIssues.length > 0) {
-                  throw new Error(
-                    `Invalid structured capture: ${validationIssues.join('; ')}`,
-                  );
-                }
-                return { job, raw, candidate } as const;
-              }),
-              catchError((error: unknown) => {
-                if (this.helpers.isAbortError(error))
-                  return throwError(() => error);
-                const failure = this.helpers.failureFrom(
-                  error,
-                  'structuring',
-                  'Host structuring failed.',
-                );
-                return this.reconciliation
-                  .reportHostFailureAndReconcile(
-                    client,
-                    job.captureId,
-                    this.helpers.normalizeHostFailureMessage(failure.message),
+            this.awaitReview(taskId, raw, config, job.progress).pipe(
+              concatMap((review) =>
+                defer(() =>
+                  provider.structure({
+                    raw: this.helpers.deepFreeze(structuredClone(raw)),
+                    review,
+                    documentContract: CAPTURE_DOCUMENT_V1_CONTRACT,
+                    targetLanguage: config.targetLanguage,
                     signal,
-                  )
-                  .pipe(
-                    map((reconciledJob) => ({
-                      job: reconciledJob,
-                      raw,
-                      candidate: undefined,
-                    })),
-                    catchError((reconciliationError: unknown) => {
-                      if (this.helpers.isAbortError(reconciliationError))
-                        return throwError(() => reconciliationError);
-                      this.requireReconciliation(
-                        taskId,
-                        this.helpers.hostReconciliationFailure(
-                          reconciliationError,
-                        ),
+                    reportProgress: (progress) =>
+                      this.updateTask(taskId, {
+                        progress:
+                          70 + this.helpers.clampProgress(progress) * 0.2,
+                      }),
+                  }),
+                ).pipe(
+                  map((candidate) => {
+                    const validationIssues =
+                      this.captureHelpers.validateStructuringCandidate(
+                        candidate,
                         raw,
                       );
-                      return EMPTY;
-                    }),
-                  );
-              }),
+                    if (validationIssues.length > 0) {
+                      throw new Error(
+                        `Invalid structured capture: ${validationIssues.join('; ')}`,
+                      );
+                    }
+                    return { job, raw, candidate } as const;
+                  }),
+                  catchError((error: unknown) => {
+                    if (this.helpers.isAbortError(error))
+                      return throwError(() => error);
+                    const failure = this.helpers.failureFrom(
+                      error,
+                      'structuring',
+                      'Host structuring failed.',
+                    );
+                    return this.reconciliation
+                      .reportHostFailureAndReconcile(
+                        client,
+                        job.captureId,
+                        this.helpers.normalizeHostFailureMessage(
+                          failure.message,
+                        ),
+                        signal,
+                      )
+                      .pipe(
+                        map((reconciledJob) => ({
+                          job: reconciledJob,
+                          raw,
+                          candidate: undefined,
+                        })),
+                        catchError((reconciliationError: unknown) => {
+                          if (this.helpers.isAbortError(reconciliationError))
+                            return throwError(() => reconciliationError);
+                          this.requireReconciliation(
+                            taskId,
+                            this.helpers.hostReconciliationFailure(
+                              reconciliationError,
+                            ),
+                            raw,
+                          );
+                          return EMPTY;
+                        }),
+                      );
+                  }),
+                ),
+              ),
             ),
           ),
           concatMap(({ job: reconciledJob, candidate }) => {
@@ -435,6 +513,83 @@ export class CaptureWorkflowService {
               );
           }),
         );
+      }),
+    );
+  }
+
+  private processClientReview(
+    client: CaptureClient,
+    initial: CaptureJobV1,
+    signal: AbortSignal,
+    taskId: string,
+  ): Observable<CaptureJobV1> {
+    return this.waitForJob(client, initial, signal, true, taskId).pipe(
+      concatMap((job) => {
+        if (
+          !(job.stage === 'awaiting_structuring' && job.status === 'running')
+        ) {
+          return of(job);
+        }
+        return client.getRaw(job.captureId, signal).pipe(
+          concatMap((raw) =>
+            this.awaitReview(taskId, raw, this.resolvedConfig(), job.progress),
+          ),
+          concatMap((review) => {
+            const internal = this.internalTasks.get(taskId);
+            const confirmCapture = client.confirmCapture;
+            if (!internal || !confirmCapture) {
+              return throwError(
+                () => new Error('Capture client confirmation is unavailable.'),
+              );
+            }
+            return confirmCapture.call(
+              client,
+              job.captureId,
+              { clientRequestId: internal.confirmRequestId, review },
+              signal,
+            );
+          }),
+        );
+      }),
+    );
+  }
+
+  private awaitReview(
+    taskId: string,
+    raw: RawCaptureV1,
+    config: ResolvedCaptureWorkbenchConfig,
+    runtimeProgress: number,
+  ): Observable<CaptureReviewV1> {
+    const emptyReview: CaptureReviewV1 = { reviewVersion: 1, edits: [] };
+    if (!config.reviewBeforeCommit) {
+      this.updateTask(taskId, {
+        raw,
+        stage: 'structuring',
+        progress: Math.max(
+          70,
+          this.helpers.runtimeProgressPercent(runtimeProgress),
+        ),
+      });
+      return of(emptyReview);
+    }
+    const subject = new Subject<CaptureReviewV1>();
+    this.reviewSubjects.set(taskId, subject);
+    const task = this.updateTask(taskId, {
+      status: 'awaiting_confirmation',
+      stage: 'awaiting_structuring',
+      progress: Math.max(
+        70,
+        this.helpers.runtimeProgressPercent(runtimeProgress),
+      ),
+      raw,
+      review: emptyReview,
+      error: undefined,
+    });
+    if (task) this.events.next({ type: 'review-required', task });
+    return subject.pipe(
+      take(1),
+      finalize(() => {
+        this.reviewSubjects.delete(taskId);
       }),
     );
   }
@@ -491,7 +646,13 @@ export class CaptureWorkflowService {
           progress: 100,
           result,
         });
-        if (completedTask) this.emitCompleted({ taskId, document: result });
+        if (completedTask) {
+          this.emitCompleted({
+            taskId,
+            document: result,
+            review: completedTask.review,
+          });
+        }
       }),
       map(() => undefined),
     );

@@ -39,6 +39,7 @@ import { CaptureWorkbenchStore } from '../../services/capture-workbench-store/ca
 })
 export class CaptureWorkbenchComponent {
   readonly completed = output<CaptureCompletedEvent>();
+  readonly reviewRequired = output<CaptureTaskView>();
   readonly failed = output<CaptureFailedEvent>();
   readonly canceled = output<CaptureTaskView>();
   readonly taskChanged = output<CaptureTaskView>();
@@ -52,6 +53,9 @@ export class CaptureWorkbenchComponent {
     .pipe(takeUntilDestroyed())
     .subscribe((event) => {
       switch (event.type) {
+        case 'review-required':
+          this.reviewRequired.emit(event.task);
+          break;
         case 'completed':
           this.completed.emit(event.event);
           break;

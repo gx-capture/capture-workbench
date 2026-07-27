@@ -43,9 +43,10 @@ export class ValidationCaptureClientService implements CaptureClient {
   readonly mode: ValidationCaptureClientMode = this.environment.tauri
     ? 'tauri-http'
     : this.fixture?.mode ?? 'browser-unconfigured';
-  readonly hostStructuringAvailable = this.fixture !== undefined;
+  readonly hostStructuringAvailable =
+    !this.environment.tauri && this.fixture !== undefined;
   readonly structuringProvider: CaptureStructuringProvider | undefined =
-    this.fixture?.structuringProvider;
+    this.environment.tauri ? undefined : this.fixture?.structuringProvider;
 
   getReady(signal?: AbortSignal): Observable<RuntimeReadyV1> {
     return this.delegate().pipe(switchMap((client) => client.getReady(signal)));

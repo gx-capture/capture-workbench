@@ -18,6 +18,20 @@ describe('Capture Workbench custom element', () => {
     expect(event.bubbles).toBe(true);
     expect(event.composed).toBe(true);
     expect(event.detail.taskId).toBe('task-1');
+
+    const reviewEvent = createCaptureWorkbenchCustomEvent(
+      CAPTURE_WORKBENCH_CUSTOM_EVENTS.reviewRequired,
+      {
+        id: 'task-1',
+        fileName: 'scan.pdf',
+        sourceKind: 'pdf',
+        status: 'awaiting_confirmation',
+        progress: 70,
+      },
+    );
+    expect(reviewEvent.type).toBe('capture-review-required');
+    expect(reviewEvent.bubbles).toBe(true);
+    expect(reviewEvent.composed).toBe(true);
   });
 
   it('merges common primitive attributes below the config property', async () => {

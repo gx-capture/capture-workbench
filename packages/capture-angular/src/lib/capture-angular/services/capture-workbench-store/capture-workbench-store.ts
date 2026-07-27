@@ -271,6 +271,35 @@ export class CaptureWorkbenchStore {
     this.workflow.cancel(taskId);
   }
 
+  updateReview(taskId: string, segmentId: string, reviewedText: string): void {
+    this.workflow.updateReview(taskId, segmentId, reviewedText);
+  }
+
+  confirm(taskId: string): void {
+    this.workflow.confirm(taskId);
+  }
+
+  reviewedText(task: CaptureTaskView, segmentId: string): string {
+    const original =
+      task.raw?.segments.find((segment) => segment.segmentId === segmentId)
+        ?.text ?? '';
+    return (
+      task.review?.edits.find((edit) => edit.segmentId === segmentId)
+        ?.reviewedText ?? original
+    );
+  }
+
+  isReviewed(task: CaptureTaskView, segmentId: string): boolean {
+    return task.review?.edits.some((edit) => edit.segmentId === segmentId) ?? false;
+  }
+
+  restoreOriginal(task: CaptureTaskView, segmentId: string): void {
+    const original = task.raw?.segments.find(
+      (segment) => segment.segmentId === segmentId,
+    );
+    if (original) this.updateReview(task.id, segmentId, original.text);
+  }
+
   reconcile(taskId: string): void {
     this.workflow.reconcile(taskId);
   }

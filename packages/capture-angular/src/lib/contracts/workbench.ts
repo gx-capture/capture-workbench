@@ -21,6 +21,8 @@ export interface ResolvedCaptureWorkbenchConfig {
   readonly showRuntimeSetup: boolean;
   readonly hostStructuringOwner: 'component' | 'client';
   readonly hostManagedHandshake: boolean;
+  readonly reviewBeforeCommit: boolean;
+  readonly reviewEditable: boolean;
   readonly width: string;
   readonly height: string;
   readonly density: 'compact' | 'comfortable';
@@ -57,6 +59,7 @@ export interface CaptureWorkbenchInputSource {
 }
 
 export type CaptureWorkbenchStoreEvent =
+  | { readonly type: 'review-required'; readonly task: CaptureTaskView }
   | { readonly type: 'completed'; readonly event: CaptureCompletedEvent }
   | { readonly type: 'failed'; readonly event: CaptureFailedEvent }
   | { readonly type: 'canceled'; readonly task: CaptureTaskView }

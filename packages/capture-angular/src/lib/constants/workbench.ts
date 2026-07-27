@@ -12,6 +12,8 @@ export const DEFAULT_CAPTURE_WORKBENCH_CONFIG: ResolvedCaptureWorkbenchConfig = 
   showRuntimeSetup: true,
   hostStructuringOwner: 'component',
   hostManagedHandshake: false,
+  reviewBeforeCommit: false,
+  reviewEditable: false,
   width: '100%',
   height: 'auto',
   density: 'comfortable',

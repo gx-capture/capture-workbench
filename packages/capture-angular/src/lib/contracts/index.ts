@@ -31,6 +31,7 @@ export type CaptureJobStage =
 export type CaptureTaskStatus =
   | 'queued'
   | 'processing'
+  | 'awaiting_confirmation'
   | 'reconciliation_required'
   | 'completed'
   | 'failed'
@@ -232,6 +233,21 @@ export interface ReportStructuringFailureRequest {
   readonly message: string;
 }
 
+export interface CaptureReviewEditV1 {
+  readonly segmentId: string;
+  readonly reviewedText: string;
+}
+
+export interface CaptureReviewV1 {
+  readonly reviewVersion: 1;
+  readonly edits: readonly CaptureReviewEditV1[];
+}
+
+export interface ConfirmCaptureRequest {
+  readonly clientRequestId: string;
+  readonly review: CaptureReviewV1;
+}
+
 export interface CaptureClient {
   getReady(signal?: AbortSignal): Observable<RuntimeReadyV1>;
   getRequirements(
@@ -257,6 +273,12 @@ export interface CaptureClient {
   cancelCapture(id: string, signal?: AbortSignal): Observable<CaptureJobV1>;
   getRaw(id: string, signal?: AbortSignal): Observable<RawCaptureV1>;
   getResult(id: string, signal?: AbortSignal): Observable<CaptureDocumentV1>;
+  /** Host clients use this after an explicit review confirmation. */
+  confirmCapture?(
+    id: string,
+    request: ConfirmCaptureRequest,
+    signal?: AbortSignal,
+  ): Observable<CaptureJobV1>;
   commitStructuredResult(
     id: string,
     request: CommitStructuredResultRequest,
@@ -272,6 +294,7 @@ export interface CaptureClient {
 
 export interface CaptureStructuringRequest {
   readonly raw: RawCaptureV1;
+  readonly review?: CaptureReviewV1;
   readonly documentContract: CaptureDocumentContractV1;
   readonly targetLanguage?: string;
   readonly signal: AbortSignal;
@@ -322,6 +345,13 @@ export interface CaptureWorkbenchLabels {
   readonly exportJson?: string;
   readonly exportText?: string;
   readonly exportRaw?: string;
+  readonly reviewTitle?: string;
+  readonly reviewDescription?: string;
+  readonly originalText?: string;
+  readonly reviewedText?: string;
+  readonly restoreOriginal?: string;
+  readonly confirmReview?: string;
+  readonly discardReview?: string;
 }
 
 export interface CaptureWorkbenchTheme {
@@ -352,6 +382,10 @@ export interface CaptureWorkbenchConfig {
    * Hiding setup UI alone never disables the package handshake.
    */
   readonly hostManagedHandshake?: boolean;
+  /** Pause host-owned structuring until the user explicitly confirms OCR. */
+  readonly reviewBeforeCommit?: boolean;
+  /** Allow editing review text; review remains read-only when false. */
+  readonly reviewEditable?: boolean;
   readonly width?: string;
   readonly height?: string;
   readonly density?: CaptureDensity;
@@ -370,12 +404,14 @@ export interface CaptureTaskView {
   readonly progress: number;
   readonly result?: CaptureDocumentV1;
   readonly raw?: RawCaptureV1;
+  readonly review?: CaptureReviewV1;
   readonly error?: CaptureFailureV1;
 }
 
 export interface CaptureCompletedEvent {
   readonly taskId: string;
   readonly document: CaptureDocumentV1;
+  readonly review?: CaptureReviewV1;
 }
 
 export interface CaptureFailedEvent {
