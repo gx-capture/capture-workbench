@@ -187,7 +187,7 @@ importers:
         specifier: ^22.0.0
         version: 22.0.7(@angular/compiler@22.0.7)(rxjs@7.8.2)
       '@angular/elements':
-        specifier: ^22.0.0
+        specifier: 22.0.7
         version: 22.0.7(@angular/core@22.0.7(@angular/compiler@22.0.7)(rxjs@7.8.2))(rxjs@7.8.2)
       '@angular/platform-browser':
         specifier: ^22.0.0

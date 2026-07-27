@@ -100,14 +100,6 @@
         "command": "uv run --python 3.12 python scripts/build_windowsml_bundle.py"
       }
     },
-    "production-preflight": {
-      "cache": false,
-      "executor": "nx:run-commands",
-      "options": {
-        "cwd": "packages/capture-runtime",
-        "command": "uv run --python 3.12 python scripts/production_preflight.py"
-      }
-    },
     "build-release-artifacts": {
       "cache": false,
       "executor": "nx:run-commands",
@@ -117,6 +109,13 @@
       "options": {
         "cwd": "packages/capture-runtime",
         "command": "uv run --python 3.12 python scripts/build_release_artifacts.py"
+      }
+    },
+    "local-release-consumer-smoke": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "node tools/local-release-consumer-smoke.ts"
       }
     },
     "python-version-check": {

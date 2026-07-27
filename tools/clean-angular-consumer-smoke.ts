@@ -110,7 +110,6 @@ try {
           '@angular/common': '22.0.7',
           '@angular/compiler': '22.0.7',
           '@angular/core': '22.0.7',
-          '@angular/elements': '22.0.7',
           '@angular/forms': '22.0.7',
           '@angular/platform-browser': '22.0.7',
           '@angular/router': '22.0.7',

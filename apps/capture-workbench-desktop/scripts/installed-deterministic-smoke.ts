@@ -426,7 +426,7 @@ export function runInstalledDeterministicSmoke() {
             requirements: state.exerciseResult.requirements,
             captures: state.exerciseResult.captures,
             cleanup: state.cleanup,
-            disclaimer: 'Deterministic packaged verification only; it does not exercise or satisfy real WindowsML, Whisper, Ollama, licensed-fixture, clean-install release, or publication gates.',
+            disclaimer: 'Deterministic packaged verification only; it does not certify real WindowsML, Whisper, Ollama, or licensed-fixture behavior.',
           };
           assertInstalledSmokeEvidence(report);
           return writeEvidence(report).pipe(map(() => ({ report, reportPath: evidencePath })));

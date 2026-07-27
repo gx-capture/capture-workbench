@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 from contextlib import suppress
 from pathlib import Path
 
@@ -37,6 +38,8 @@ from capture_runtime.structuring import (
     StructuringValidationError,
     validate_structuring_candidate,
 )
+
+logger = logging.getLogger(__name__)
 
 TERMINAL_CAPTURE_STATUSES = {
     CaptureJobStatus.COMPLETED,
@@ -322,6 +325,7 @@ class CaptureService:
         except TransitionRejectedError:
             return
         except Exception:
+            logger.exception("Capture job failed during runtime processing: %s", capture_id)
             self._fail_capture(
                 capture_id,
                 code="structuring_failed" if raw_written else "extraction_failed",

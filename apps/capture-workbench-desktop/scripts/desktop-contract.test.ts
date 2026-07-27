@@ -111,47 +111,31 @@ test('deterministic runtime checks exact Host authority and canonical v1 names',
   assert.match(deterministicSource, /wrongAuthorityPortRejected/u);
 });
 
-test('release workflow is SHA-pinned, least-privilege, attested, and runtime-first', async () => {
+test('release workflow is SHA-pinned, least-privilege, and runtime-first', async () => {
   const workspaceRoot = join(appRoot, '..', '..');
-  const [
-    workflow,
-    releaseBuilder,
-    ciWorkflow,
-    publisher,
-    runtimeProject,
-    preflight,
-  ] = await Promise.all([
-    readFile(
-      join(workspaceRoot, '.github', 'workflows', 'release.yml'),
-      'utf8',
-    ),
-    readFile(
-      join(
-        workspaceRoot,
-        'packages',
-        'capture-runtime',
-        'scripts',
-        'build_release_artifacts.py',
+  const [workflow, releaseBuilder, ciWorkflow, publisher, runtimeProject] =
+    await Promise.all([
+      readFile(
+        join(workspaceRoot, '.github', 'workflows', 'release.yml'),
+        'utf8',
       ),
-      'utf8',
-    ),
-    readFile(join(workspaceRoot, '.github', 'workflows', 'ci.yml'), 'utf8'),
-    readFile(join(workspaceRoot, 'tools', 'publish-release.ts'), 'utf8'),
-    readFile(
-      join(workspaceRoot, 'packages', 'capture-runtime', 'project.json'),
-      'utf8',
-    ),
-    readFile(
-      join(
-        workspaceRoot,
-        'packages',
-        'capture-runtime',
-        'scripts',
-        'production_preflight.py',
+      readFile(
+        join(
+          workspaceRoot,
+          'packages',
+          'capture-runtime',
+          'scripts',
+          'build_release_artifacts.py',
+        ),
+        'utf8',
       ),
-      'utf8',
-    ),
-  ]);
+      readFile(join(workspaceRoot, '.github', 'workflows', 'ci.yml'), 'utf8'),
+      readFile(join(workspaceRoot, 'tools', 'publish-release.ts'), 'utf8'),
+      readFile(
+        join(workspaceRoot, 'packages', 'capture-runtime', 'project.json'),
+        'utf8',
+      ),
+    ]);
   const actionReferences = [workflow, ciWorkflow].flatMap((source) =>
     [...source.matchAll(/uses:\s*[^@\s]+@([^\s#]+)/gu)].map(
       (match) => match[1],
@@ -162,33 +146,25 @@ test('release workflow is SHA-pinned, least-privilege, attested, and runtime-fir
     actionReferences.every((reference) => /^[0-9a-f]{40}$/u.test(reference)),
   );
   assert.match(workflow, /permissions:\s*\r?\n\s+contents: read/u);
-  assert.match(
+  assert.doesNotMatch(
     workflow,
-    /verify-clean-install-evidence:[\s\S]*needs: build-candidate/u,
+    /clean-install|attestation|production-preflight/u,
   );
-  assert.match(
-    workflow,
-    /publish:[\s\S]*needs: verify-clean-install-evidence/u,
-  );
+  assert.match(workflow, /publish:[\s\S]*needs: build-candidate/u);
   assert.match(
     workflow,
     /publish:[\s\S]*contents: write[\s\S]*packages: write/u,
   );
   assert.equal((workflow.match(/contents: write/gu) ?? []).length, 1);
   assert.equal((workflow.match(/packages: write/gu) ?? []).length, 1);
-  assert.match(workflow, /gh attestation verify/u);
-  assert.match(workflow, /capture-runtime:production-preflight/u);
   assert.match(ciWorkflow, /capture-workbench:test/u);
   assert.match(ciWorkflow, /capture-workbench:production-bundle-check/u);
 
   const project = JSON.parse(runtimeProject);
+  assert.equal(project.targets['production-preflight'], undefined);
   assert.doesNotMatch(
     JSON.stringify(project.targets['build-release-artifacts'].dependsOn),
     /production-preflight/u,
-  );
-  assert.doesNotMatch(
-    preflight,
-    /assets_ready|whisper_models_dir|windowsml_model_dir/u,
   );
   assert.doesNotMatch(
     releaseBuilder,

@@ -161,7 +161,7 @@ and return the `File` that should be hashed and captured.
 ## Web Component
 
 Register the framework-neutral element once during application startup. Angular
-Elements owns the element lifecycle; the public configuration API is
+Angular Elements owns the element lifecycle; the public configuration API is
 property-first:
 
 ```ts
