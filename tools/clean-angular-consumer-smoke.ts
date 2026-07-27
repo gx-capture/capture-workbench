@@ -15,7 +15,7 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const sourcePackage = JSON.parse(
   readFileSync(join(repoRoot, 'packages/capture-angular/package.json'), 'utf8'),
 );
-const archiveName = `gx-capture-workbench-${sourcePackage.version}.tgz`;
+const archiveName = `${sourcePackage.name.replace(/^@/u, '').replace('/', '-')}-${sourcePackage.version}.tgz`;
 const archivePath = join(repoRoot, 'dist', 'packs', archiveName);
 // Keep the isolated virtual store path short enough for Windows package paths.
 const fixtureBase = resolve(repoRoot, '..', '.cw-clean');
