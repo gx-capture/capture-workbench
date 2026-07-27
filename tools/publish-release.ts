@@ -30,9 +30,11 @@ const runtimeAssetNames = Object.freeze([
 ]);
 
 function run(command, args, { allowFailure = false } = {}) {
-  const result = spawnSync(command, args, {
+  const executable =
+    process.platform === 'win32' && command === 'npm' ? 'npm.cmd' : command;
+  const result = spawnSync(executable, args, {
     encoding: 'utf8',
-    shell: false,
+    shell: process.platform === 'win32' && executable.endsWith('.cmd'),
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   if (result.error) throw result.error;
@@ -387,3 +389,4 @@ if (
       },
     });
 }
+
