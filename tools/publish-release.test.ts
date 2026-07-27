@@ -25,7 +25,7 @@ function success(stdout = '') {
 function npmInspection(version, integrity) {
   return JSON.stringify([
     {
-      name: '@gx/capture-workbench',
+      name: '@gx-capture/capture-workbench',
       version,
       integrity,
     },

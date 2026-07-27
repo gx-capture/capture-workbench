@@ -6,7 +6,7 @@ import {
   CAPTURE_CLIENT,
   CAPTURE_STRUCTURING_PROVIDER,
   CAPTURE_WORKBENCH_INPUTS,
-} from '@gx/capture-workbench';
+} from '@gx-capture/capture-workbench';
 import { ValidationCaptureClientService } from './services/validation-client.service';
 import { CaptureWorkbenchUiState } from './services/capture-workbench-ui-state.service';
 

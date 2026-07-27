@@ -1,4 +1,4 @@
-# @gx/capture-workbench
+# @gx-capture/capture-workbench
 
 Publishable Capture Workbench UI and transport contracts for Capture Runtime. The package
 owns runtime setup, file preprocessing, queued capture jobs, progress,
@@ -12,7 +12,7 @@ Configure the scope without committing the token (the repository root includes
 the same `.npmrc.example`):
 
 ```ini
-@gx:registry=https://npm.pkg.github.com
+@gx-capture:registry=https://npm.pkg.github.com
 //npm.pkg.github.com/:_authToken=${GITHUB_PACKAGES_TOKEN}
 ```
 
@@ -20,7 +20,7 @@ Then install an exact synchronized version:
 
 ```powershell
 $env:GITHUB_PACKAGES_TOKEN = '<read:packages token>'
-corepack pnpm add @gx/capture-workbench@0.3.0 --save-exact
+corepack pnpm add @gx-capture/capture-workbench@0.3.0 --save-exact
 ```
 
 ## v0.3.0 breaking Angular integration contract
@@ -49,7 +49,7 @@ their own backend and inject it with `provideCaptureClient()`. This keeps the
 sidecar URL and high-entropy bearer token backend-only.
 
 ```ts
-import { provideCaptureClient } from '@gx/capture-workbench';
+import { provideCaptureClient } from '@gx-capture/capture-workbench';
 
 bootstrapApplication(App, {
   providers: [provideCaptureClient(certPrepCaptureClient)],
@@ -69,7 +69,7 @@ token to its trusted WebView process:
 
 ```ts
 import { invoke } from '@tauri-apps/api/core';
-import { provideHttpCaptureClient } from '@gx/capture-workbench';
+import { provideHttpCaptureClient } from '@gx-capture/capture-workbench';
 import { from, map } from 'rxjs';
 
 const backendConfig$ = from(
@@ -100,7 +100,7 @@ model. A host that already owns an Ollama or another LLM provider can select
 `host` mode and inject the narrow `CaptureStructuringProvider` interface:
 
 ```ts
-import { provideCaptureStructuringProvider, type CaptureStructuringProvider } from '@gx/capture-workbench';
+import { provideCaptureStructuringProvider, type CaptureStructuringProvider } from '@gx-capture/capture-workbench';
 import { defer } from 'rxjs';
 
 const provider: CaptureStructuringProvider = {
@@ -137,7 +137,7 @@ for the host framework's normal stabilization boundary instead of awaiting the
 method.
 
 ```ts
-import { provideCaptureWorkbenchInputs, type CaptureWorkbenchInputSource } from '@gx/capture-workbench';
+import { provideCaptureWorkbenchInputs, type CaptureWorkbenchInputSource } from '@gx-capture/capture-workbench';
 
 const captureInputs: CaptureWorkbenchInputSource = {
   config: () => ({
@@ -165,7 +165,7 @@ Angular Elements owns the element lifecycle; the public configuration API is
 property-first:
 
 ```ts
-import { CAPTURE_WORKBENCH_CUSTOM_EVENTS, defineCaptureWorkbenchElement, type CaptureWorkbenchElement } from '@gx/capture-workbench';
+import { CAPTURE_WORKBENCH_CUSTOM_EVENTS, defineCaptureWorkbenchElement, type CaptureWorkbenchElement } from '@gx-capture/capture-workbench';
 
 defineCaptureWorkbenchElement().subscribe({
   error: (error) => console.error('Capture element registration failed.', error),
@@ -199,7 +199,7 @@ All events bubble and are composed. Their stable names and detail values are:
 
 The framework-neutral fixture is
 [`fixtures/web-component/index.html`](./fixtures/web-component/index.html).
-Install `@gx/capture-workbench` from the configured NPM-compatible registry and
+Install `@gx-capture/capture-workbench` from the configured NPM-compatible registry and
 import it from your bundler. The package does not publish a standalone browser
 bundle or CDN entry.
 

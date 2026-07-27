@@ -6,7 +6,7 @@
 
 - [x] Add the cert-prep isolated consumer trial script.
       Verify: the script creates a temporary consumer, runs `pnpm install`, and
-      builds a Vite Web Component consumer from `@gx/capture-workbench`.
+      builds a Vite Web Component consumer from `@gx-capture/capture-workbench`.
 
 - [x] Document the registry-first workflow and offline caveat.
       Verify: the commands use registry resolution rather than `file:.tgz`.

@@ -3,7 +3,7 @@
 ## Accepted breaking contract
 
 The current request explicitly authorizes replacing the published
-`@gx/capture-workbench` Promise contracts. No Promise compatibility adapter or
+`@gx-capture/capture-workbench` Promise contracts. No Promise compatibility adapter or
 dual overload is retained. The package version moves from `0.1.0` to `0.2.0`.
 
 ## Resource selection

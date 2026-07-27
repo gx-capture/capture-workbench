@@ -1,7 +1,7 @@
 import type {
   CaptureClient,
   CaptureStructuringProvider,
-} from '@gx/capture-workbench';
+} from '@gx-capture/capture-workbench';
 import type { Observable } from 'rxjs';
 
 export type ValidationCaptureClientMode =

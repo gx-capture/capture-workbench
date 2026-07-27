@@ -20,7 +20,7 @@ import {
   toArray,
 } from 'rxjs';
 
-const packageName = '@gx/capture-workbench';
+const packageName = '@gx-capture/capture-workbench';
 const registry = 'https://npm.pkg.github.com';
 const runtimeAssetNames = Object.freeze([
   'capture-runtime-x86_64-pc-windows-msvc.exe',

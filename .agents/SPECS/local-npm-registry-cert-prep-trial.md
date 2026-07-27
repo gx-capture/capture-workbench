@@ -3,7 +3,7 @@
 ## Purpose
 
 Provide a reproducible Windows-local workflow that publishes the packed
-`@gx/capture-workbench` package to a localhost Verdaccio registry and lets a
+`@gx-capture/capture-workbench` package to a localhost Verdaccio registry and lets a
 `cert-prep` consumer install it through normal `pnpm install` resolution.
 
 ## Non-goals
@@ -18,8 +18,8 @@ Provide a reproducible Windows-local workflow that publishes the packed
 ## Interfaces
 
 - Registry: `http://127.0.0.1:4873`.
-- Scope mapping: `@gx` resolves from the local registry.
-- Public package: the current version of `@gx/capture-workbench` (currently
+- Scope mapping: `@gx-capture` resolves from the local registry.
+- Public package: the current version of `@gx-capture/capture-workbench` (currently
   `0.3.0`).
 - Local publisher: packs the Angular library and publishes the tarball to
   Verdaccio with the `local` dist-tag.
@@ -39,7 +39,7 @@ Provide a reproducible Windows-local workflow that publishes the packed
 ## Acceptance criteria
 
 - Verdaccio starts on loopback with a checked-in local-only configuration.
-- The current package tarball can be published as `@gx/capture-workbench`.
+- The current package tarball can be published as `@gx-capture/capture-workbench`.
 - The cert-prep trial script runs `pnpm install` against the local registry.
 - The installed package is imported, custom-element registration is called, and
   a Vite production build succeeds.

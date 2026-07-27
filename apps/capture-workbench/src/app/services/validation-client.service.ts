@@ -13,7 +13,7 @@ import {
   type RuntimeReadyV1,
   type RuntimeRequirementV1,
   type StartRuntimeInstallationRequest,
-} from '@gx/capture-workbench';
+} from '@gx-capture/capture-workbench';
 import {
   Observable,
   catchError,

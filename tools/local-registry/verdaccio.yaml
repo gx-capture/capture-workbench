@@ -6,7 +6,7 @@ uplinks:
     url: https://registry.npmjs.org/
 
 packages:
-  '@gx/*':
+  '@gx-capture/*':
     access: $all
     publish: $all
   '**':

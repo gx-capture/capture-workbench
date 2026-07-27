@@ -1,5 +1,5 @@
 import { TestBed } from '@angular/core/testing';
-import { CAPTURE_STRUCTURING_PROVIDER } from '@gx/capture-workbench';
+import { CAPTURE_STRUCTURING_PROVIDER } from '@gx-capture/capture-workbench';
 import { App } from './app';
 import { appConfig } from './app.config';
 import { CaptureWorkbenchUiState } from './services/capture-workbench-ui-state.service';

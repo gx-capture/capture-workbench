@@ -113,7 +113,7 @@ try {
           '@angular/forms': '22.0.7',
           '@angular/platform-browser': '22.0.7',
           '@angular/router': '22.0.7',
-          '@gx/capture-workbench': archiveSpec,
+          '@gx-capture/capture-workbench': archiveSpec,
           rxjs: '7.8.2',
           tslib: '2.8.1',
         },
@@ -282,11 +282,11 @@ allowBuilds:
   );
   write(
     'src/app/app.ts',
-    `import { ChangeDetectionStrategy, Component } from '@angular/core';\nimport { CaptureWorkbenchComponent, provideCaptureWorkbenchInputs } from '@gx/capture-workbench';\n\n@Component({\n  selector: 'app-root',\n  imports: [CaptureWorkbenchComponent],\n  providers: [provideCaptureWorkbenchInputs({ config: () => ({ showRuntimeSetup: false, outputMode: 'text' }) })],\n  template: \`<gx-capture-workbench />\`,\n  changeDetection: ChangeDetectionStrategy.OnPush,\n})\nexport class App {}\n`,
+    `import { ChangeDetectionStrategy, Component } from '@angular/core';\nimport { CaptureWorkbenchComponent, provideCaptureWorkbenchInputs } from '@gx-capture/capture-workbench';\n\n@Component({\n  selector: 'app-root',\n  imports: [CaptureWorkbenchComponent],\n  providers: [provideCaptureWorkbenchInputs({ config: () => ({ showRuntimeSetup: false, outputMode: 'text' }) })],\n  template: \`<gx-capture-workbench />\`,\n  changeDetection: ChangeDetectionStrategy.OnPush,\n})\nexport class App {}\n`,
   );
   write(
     'src/app/app.spec.ts',
-    `import { TestBed } from '@angular/core/testing';\nimport { CAPTURE_DOCUMENT_V1_JSON_SCHEMA, CAPTURE_DOCUMENT_V1_SCHEMA_SHA256, defineCaptureWorkbenchElement } from '@gx/capture-workbench';\nimport { App } from './app';\n\ndescribe('packed capture consumer', () => {\n  it('renders the installed Angular component and exposes the public contracts', async () => {\n    await TestBed.configureTestingModule({ imports: [App] }).compileComponents();\n    const fixture = TestBed.createComponent(App);\n    fixture.detectChanges();\n    expect(fixture.nativeElement.querySelector('gx-capture-workbench')).toBeTruthy();\n    expect(typeof defineCaptureWorkbenchElement).toBe('function');\n    expect(CAPTURE_DOCUMENT_V1_JSON_SCHEMA.$id).toBe('https://github.com/WodenWang820118/capture-workbench/schema/capture-document-v1.schema.json');\n    expect(CAPTURE_DOCUMENT_V1_SCHEMA_SHA256).toBe('da8565b0a4611042f62f96202d0f167ba0923d88e12b9be22832f3ee320920c3');\n  });\n});\n`,
+    `import { TestBed } from '@angular/core/testing';\nimport { CAPTURE_DOCUMENT_V1_JSON_SCHEMA, CAPTURE_DOCUMENT_V1_SCHEMA_SHA256, defineCaptureWorkbenchElement } from '@gx-capture/capture-workbench';\nimport { App } from './app';\n\ndescribe('packed capture consumer', () => {\n  it('renders the installed Angular component and exposes the public contracts', async () => {\n    await TestBed.configureTestingModule({ imports: [App] }).compileComponents();\n    const fixture = TestBed.createComponent(App);\n    fixture.detectChanges();\n    expect(fixture.nativeElement.querySelector('gx-capture-workbench')).toBeTruthy();\n    expect(typeof defineCaptureWorkbenchElement).toBe('function');\n    expect(CAPTURE_DOCUMENT_V1_JSON_SCHEMA.$id).toBe('https://github.com/WodenWang820118/capture-workbench/schema/capture-document-v1.schema.json');\n    expect(CAPTURE_DOCUMENT_V1_SCHEMA_SHA256).toBe('da8565b0a4611042f62f96202d0f167ba0923d88e12b9be22832f3ee320920c3');\n  });\n});\n`,
   );
 
   write(
@@ -295,7 +295,7 @@ allowBuilds:
   );
   write(
     'vanilla/src/main.ts',
-    `import { defineCaptureWorkbenchElement, type CaptureWorkbenchElement } from '@gx/capture-workbench';\n\ndefineCaptureWorkbenchElement().subscribe({\n  next: () => {\n    const capture = document.querySelector('capture-workbench') as CaptureWorkbenchElement;\n    capture.config = { outputMode: 'text', showRuntimeSetup: false };\n    capture.client = null;\n    capture.addEventListener('capture-completed', (event) => console.log(event));\n  },\n  error: (error) => console.error(error),\n});\n`,
+    `import { defineCaptureWorkbenchElement, type CaptureWorkbenchElement } from '@gx-capture/capture-workbench';\n\ndefineCaptureWorkbenchElement().subscribe({\n  next: () => {\n    const capture = document.querySelector('capture-workbench') as CaptureWorkbenchElement;\n    capture.config = { outputMode: 'text', showRuntimeSetup: false };\n    capture.client = null;\n    capture.addEventListener('capture-completed', (event) => console.log(event));\n  },\n  error: (error) => console.error(error),\n});\n`,
   );
   write(
     'vanilla/vite.config.ts',
@@ -308,7 +308,7 @@ allowBuilds:
   );
   write(
     'react/src/main.tsx',
-    `import { createRoot } from 'react-dom/client';\nimport { useEffect, useRef } from 'react';\nimport { defineCaptureWorkbenchElement, type CaptureWorkbenchElement } from '@gx/capture-workbench';\n\nfunction App() {\n  const ref = useRef<HTMLElement>(null);\n  useEffect(() => {\n    const capture = ref.current as CaptureWorkbenchElement | null;\n    if (!capture) return;\n    capture.config = { outputMode: 'text', showRuntimeSetup: false };\n    capture.client = null;\n    const onCompleted = (event: Event) => console.log(event);\n    capture.addEventListener('capture-completed', onCompleted);\n    return () => capture.removeEventListener('capture-completed', onCompleted);\n  }, []);\n  return <capture-workbench ref={ref} />;\n}\n\ndefineCaptureWorkbenchElement().subscribe({\n  next: () => createRoot(document.getElementById('root')!).render(<App />),\n  error: (error) => console.error(error),\n});\n`,
+    `import { createRoot } from 'react-dom/client';\nimport { useEffect, useRef } from 'react';\nimport { defineCaptureWorkbenchElement, type CaptureWorkbenchElement } from '@gx-capture/capture-workbench';\n\nfunction App() {\n  const ref = useRef<HTMLElement>(null);\n  useEffect(() => {\n    const capture = ref.current as CaptureWorkbenchElement | null;\n    if (!capture) return;\n    capture.config = { outputMode: 'text', showRuntimeSetup: false };\n    capture.client = null;\n    const onCompleted = (event: Event) => console.log(event);\n    capture.addEventListener('capture-completed', onCompleted);\n    return () => capture.removeEventListener('capture-completed', onCompleted);\n  }, []);\n  return <capture-workbench ref={ref} />;\n}\n\ndefineCaptureWorkbenchElement().subscribe({\n  next: () => createRoot(document.getElementById('root')!).render(<App />),\n  error: (error) => console.error(error),\n});\n`,
   );
   write(
     'react/vite.config.ts',
@@ -321,11 +321,11 @@ allowBuilds:
   );
   write(
     'vue/src/App.vue',
-    `<script setup lang="ts">\nimport { onBeforeUnmount, onMounted, ref } from 'vue';\nimport { type CaptureWorkbenchElement } from '@gx/capture-workbench';\n\nconst capture = ref<HTMLElement | null>(null);\nconst onCompleted = (event: Event) => console.log(event);\nonMounted(() => {\n  const element = capture.value as CaptureWorkbenchElement | null;\n  if (!element) return;\n  element.config = { outputMode: 'text', showRuntimeSetup: false };\n  element.client = null;\n  element.addEventListener('capture-completed', onCompleted);\n});\nonBeforeUnmount(() => capture.value?.removeEventListener('capture-completed', onCompleted));\n</script>\n\n<template><capture-workbench ref="capture" /></template>\n`,
+    `<script setup lang="ts">\nimport { onBeforeUnmount, onMounted, ref } from 'vue';\nimport { type CaptureWorkbenchElement } from '@gx-capture/capture-workbench';\n\nconst capture = ref<HTMLElement | null>(null);\nconst onCompleted = (event: Event) => console.log(event);\nonMounted(() => {\n  const element = capture.value as CaptureWorkbenchElement | null;\n  if (!element) return;\n  element.config = { outputMode: 'text', showRuntimeSetup: false };\n  element.client = null;\n  element.addEventListener('capture-completed', onCompleted);\n});\nonBeforeUnmount(() => capture.value?.removeEventListener('capture-completed', onCompleted));\n</script>\n\n<template><capture-workbench ref="capture" /></template>\n`,
   );
   write(
     'vue/src/main.ts',
-    `import { createApp } from 'vue';\nimport { defineCaptureWorkbenchElement } from '@gx/capture-workbench';\nimport App from './App.vue';\n\ndefineCaptureWorkbenchElement().subscribe({\n  next: () => createApp(App).mount('#app'),\n  error: (error) => console.error(error),\n});\n`,
+    `import { createApp } from 'vue';\nimport { defineCaptureWorkbenchElement } from '@gx-capture/capture-workbench';\nimport App from './App.vue';\n\ndefineCaptureWorkbenchElement().subscribe({\n  next: () => createApp(App).mount('#app'),\n  error: (error) => console.error(error),\n});\n`,
   );
   write(
     'vue/vite.config.ts',
@@ -341,7 +341,7 @@ allowBuilds:
               join(
                 fixtureRoot,
                 'node_modules',
-                '@gx',
+                '@gx-capture',
                 'capture-workbench',
                 'LICENSE',
               ),

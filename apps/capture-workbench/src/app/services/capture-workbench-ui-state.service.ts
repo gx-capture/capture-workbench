@@ -2,7 +2,7 @@ import { Injectable, computed, inject, signal } from '@angular/core';
 import type {
   CaptureStructuringMode,
   CaptureWorkbenchConfig,
-} from '@gx/capture-workbench';
+} from '@gx-capture/capture-workbench';
 import { ValidationCaptureClientService } from './validation-client.service';
 
 @Injectable({ providedIn: 'root' })
