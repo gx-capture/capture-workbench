@@ -78,7 +78,7 @@ export function collectPackageQa(): Observable<{ report: unknown; reportPath: st
     },
         artifacts,
         disclaimer:
-          'Deterministic fixture evidence only; real WindowsML, Whisper, Ollama, and clean-install release gates remain required.',
+          'Deterministic fixture evidence only; real WindowsML, Whisper, and Ollama behavior is outside this QA check.',
       };
       assertRedactedEvidence(report);
       return defer(() => from(mkdir(reportDirectory, { recursive: true }))).pipe(

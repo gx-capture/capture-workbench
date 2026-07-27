@@ -1,6 +1,6 @@
 # Capture Workbench Desktop Harness
 
-This Tauri 2 app is the Windows 11 x64 packaging and clean-install verification host for Capture Workbench. It is intentionally not the public desktop product.
+This Tauri 2 app is the Windows 11 x64 packaging and deterministic verification host for Capture Workbench. It is intentionally not the public desktop product.
 
 The harness starts one verified `capture-runtime` sidecar on a random loopback port with a memory-only 256-bit bearer token. Its default development provider is an isolated Ollama lane with dedicated app data, model storage, port, profile, and PID file.
 
@@ -31,7 +31,7 @@ node apps/capture-workbench-desktop/scripts/stage-runtime.ts `
 corepack pnpm nx run capture-workbench-desktop:build-nsis-release
 ```
 
-The ordinary `build` target compiles the Tauri app with `--no-bundle` so workspace-wide verification does not silently package a fake runtime. `stage-deterministic-runtime` and `build-nsis-deterministic` are test-only; their outputs cannot be used as clean-install or release evidence.
+The ordinary `build` target compiles the Tauri app with `--no-bundle` so workspace-wide verification does not silently package a fake runtime. `stage-deterministic-runtime` and `build-nsis-deterministic` are test-only and are not publication artifacts.
 
 ## Installed deterministic smoke
 
@@ -50,9 +50,8 @@ must prove that owned processes, the CDP port, install directory, registry
 entries, and isolated data are gone before the target succeeds.
 
 The resulting `tmp/capture-workbench-desktop/installed-smoke/installed-smoke.json`
-is explicitly marked deterministic and non-releaseable. It does not replace
-the protected Windows 11 clean-install lane with real WindowsML, Whisper,
-Ollama, and licensed fixtures.
+is explicitly marked deterministic and diagnostic only. It does not certify
+real WindowsML, Whisper, Ollama, or licensed-fixture behavior.
 
 ## Loopback ownership boundary
 

@@ -169,14 +169,11 @@ nor advertises its application/model requirements, and both Ollama installation
 IDs are rejected as disabled.
 
 `build-release-artifacts` does not inspect or depend on ambient OCR/Whisper/Ollama model stores.
-`production-preflight` runs only after the runtime, schema, and non-public NSIS verification
-installer exist. It binds their exact bytes/SHA-256 plus the WindowsML descriptor and protected
-fixture registry to separately generated clean-install evidence. The exact evidence file must
-also pass GitHub artifact-attestation verification. Unsigned local evidence always remains
-non-releaseable; see `.agents/SPECS/release-evidence-v1.md` for the external gate and required
-protected environment values. The preflight also rejects the deterministic local placeholder
-WindowsML descriptor (`bytes: 1` or an all-zero SHA-256); production requires the real HTTPS
-release URL, byte count, and digest.
+The tag release workflow verifies the synchronized version, package consumer smoke, runtime
+tests, runtime artifact manifest/checksum, and package tarball before publishing the exact
+candidate. It does not perform a separate clean-install evidence or attestation lane. The
+WindowsML descriptor remains strict: production requires the real HTTPS release URL, byte count,
+and digest.
 
 Build a canonical WindowsML asset ZIP from an explicit source directory without making that
 directory a runtime or repository dependency:

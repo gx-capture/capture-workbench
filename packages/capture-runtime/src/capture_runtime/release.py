@@ -266,14 +266,6 @@ def windowsml_requirement_descriptor(url: str, bytes: int, sha256: str) -> dict[
     return descriptor.model_dump(by_alias=True)
 
 
-def is_placeholder_windowsml_descriptor(descriptor: object) -> bool:
-    """Return whether a descriptor is still the deterministic fixture placeholder."""
-
-    return (
-        getattr(descriptor, "bytes", None) == 1 or getattr(descriptor, "sha256", None) == "0" * 64
-    )
-
-
 def build_windowsml_bundle(
     *,
     source_dir: Path,

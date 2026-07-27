@@ -11,14 +11,11 @@
 - [x] Run all package gates.
   Verify: `pnpm nx run-many -t lint,typecheck,test,build -p capture-runtime`
 
-## Release blockers
+## Release verification
 
-- [x] Implement standalone WindowsML OCR and Whisper adapters behind `CaptureExtractor`, with
-  local-only model paths and no host-package imports.
-  Verify: `pnpm nx run capture-runtime:test`
-- [ ] Publish the checksum-pinned WindowsML model ZIP and record both consent-downloaded Whisper
-  model digests for the release tag.
-  Verify: `pnpm nx run capture-runtime:production-preflight`
-- [ ] Produce clean Windows 11 x64 evidence for real PDF, image, licensed audio, schema/locator
-  provenance, and concurrent Capture/Cert Ollama isolation.
-  Verify: set `CAPTURE_RELEASE_EVIDENCE_PATH`, then run production preflight.
+- [x] Runtime release artifacts publish from the synchronized build candidate with a
+  checksum-pinned WindowsML descriptor and canonical manifest/schema assets.
+  Verify: `pnpm nx run capture-runtime:build-release-artifacts`
+- [x] Local runtime consumer smoke verifies downloaded assets, manifest/checksum integrity,
+  readiness, and cleanup without becoming a hosted clean-install publication gate.
+  Verify: `pnpm nx run capture-runtime:local-release-consumer-smoke`

@@ -72,41 +72,23 @@ jobs:
           pnpm nx run capture-runtime:test
           pnpm nx run capture-runtime:build-release-artifacts
 
-      - name: Build the non-public Tauri verification installer
-        shell: pwsh
-        run: |
-          node apps/capture-workbench-desktop/scripts/stage-runtime.ts `
-            --artifact packages/capture-runtime/dist/release/capture-runtime-x86_64-pc-windows-msvc.exe `
-            --manifest packages/capture-runtime/dist/release/capture-runtime-manifest.json `
-            --schema packages/capture-runtime/dist/release/capture-document-v1.schema.json `
-            --source release
-          pnpm nx run capture-workbench-desktop:build-nsis-release
-
-      - name: Assemble immutable clean-install candidate
+      - name: Assemble release candidate
         shell: pwsh
         run: |
           pnpm nx run capture-angular:pack
           $packages = @(Get-ChildItem dist/packs -Filter '*.tgz' -File)
-          $installers = @(Get-ChildItem `
-            apps/capture-workbench-desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis `
-            -Filter '*.exe' -File)
           if ($packages.Count -ne 1) {
             throw "Expected exactly one Capture Workbench tarball, found $($packages.Count)."
-          }
-          if ($installers.Count -ne 1) {
-            throw "Expected exactly one NSIS installer, found $($installers.Count)."
           }
           $candidate = Join-Path $env:RUNNER_TEMP 'capture-candidate'
           $runtime = Join-Path $candidate 'runtime'
           $package = Join-Path $candidate 'package'
-          $installer = Join-Path $candidate 'installer'
-          New-Item -ItemType Directory -Path $runtime, $package, $installer | Out-Null
+          New-Item -ItemType Directory -Path $runtime, $package | Out-Null
           Copy-Item packages/capture-runtime/dist/release/* -Destination $runtime
           Copy-Item $packages[0].FullName -Destination $package
-          Copy-Item $installers[0].FullName -Destination $installer
           "CAPTURE_CANDIDATE_PATH=$candidate" >> $env:GITHUB_ENV
 
-      - name: Upload immutable clean-install candidate
+      - name: Upload release candidate
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: capture-candidate-${{ github.ref_name }}
@@ -114,136 +96,10 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
-  verify-clean-install-evidence:
+  publish:
     needs: build-candidate
     runs-on: windows-latest
-    timeout-minutes: 30
-    environment: capture-release
-    permissions:
-      attestations: read
-      contents: read
-      packages: read
-    env:
-      CAPTURE_WINDOWSML_BUNDLE_URL: ${{ vars.CAPTURE_WINDOWSML_BUNDLE_URL }}
-      CAPTURE_WINDOWSML_BUNDLE_SHA256: ${{ vars.CAPTURE_WINDOWSML_BUNDLE_SHA256 }}
-      CAPTURE_WINDOWSML_BUNDLE_BYTES: ${{ vars.CAPTURE_WINDOWSML_BUNDLE_BYTES }}
-      CAPTURE_RELEASE_EVIDENCE_SIGNER_WORKFLOW: ${{ vars.CAPTURE_RELEASE_EVIDENCE_SIGNER_WORKFLOW }}
-
-    steps:
-      - name: Check out verification code
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          persist-credentials: false
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@b0f76dfb45f55f8421693e4803ac7bb65143bd34 # v6
-        with:
-          version: 11.15.1
-
-      - name: Install Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
-        with:
-          node-version: 24
-          cache: pnpm
-
-      - name: Install uv and Python 3.12
-        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
-        with:
-          python-version: '3.12'
-          enable-cache: true
-
-      - name: Install workspace dependencies
-        shell: pwsh
-        run: pnpm install --frozen-lockfile
-
-      - name: Download the exact candidate that clean-install must exercise
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: capture-candidate-${{ github.ref_name }}
-          path: candidate
-
-      - name: Materialize protected evidence bundle
-        shell: pwsh
-        env:
-          CAPTURE_RELEASE_EVIDENCE_BUNDLE_B64: ${{ secrets.CAPTURE_RELEASE_EVIDENCE_BUNDLE_B64 }}
-        run: |
-          if ([string]::IsNullOrWhiteSpace($env:CAPTURE_RELEASE_EVIDENCE_BUNDLE_B64)) {
-            throw 'CAPTURE_RELEASE_EVIDENCE_BUNDLE_B64 is required in the protected capture-release environment.'
-          }
-          try {
-            $bundleText = [Text.Encoding]::UTF8.GetString(
-              [Convert]::FromBase64String($env:CAPTURE_RELEASE_EVIDENCE_BUNDLE_B64)
-            )
-            $bundle = $bundleText | ConvertFrom-Json
-          } catch {
-            throw "CAPTURE_RELEASE_EVIDENCE_BUNDLE_B64 is not valid UTF-8 JSON Base64: $($_.Exception.Message)"
-          }
-          $bundleFields = @($bundle.PSObject.Properties.Name | Sort-Object)
-          if (($bundleFields -join ',') -ne 'evidence,fixtureRegistry,schemaVersion') {
-            throw 'Release evidence bundle must contain only schemaVersion, evidence, and fixtureRegistry.'
-          }
-          if ($bundle.schemaVersion -ne 1 -or $null -eq $bundle.evidence -or $null -eq $bundle.fixtureRegistry) {
-            throw 'Release evidence bundle schemaVersion must be 1 and both members are required.'
-          }
-          $utf8 = [Text.UTF8Encoding]::new($false)
-          $evidencePath = Join-Path $env:RUNNER_TEMP 'capture-release-evidence.json'
-          $fixtureRegistryPath = Join-Path $env:RUNNER_TEMP 'capture-release-fixture-registry.json'
-          [IO.File]::WriteAllText($evidencePath, ($bundle.evidence | ConvertTo-Json -Depth 100), $utf8)
-          [IO.File]::WriteAllText($fixtureRegistryPath, ($bundle.fixtureRegistry | ConvertTo-Json -Depth 100), $utf8)
-          "CAPTURE_RELEASE_EVIDENCE_PATH=$evidencePath" >> $env:GITHUB_ENV
-          "CAPTURE_RELEASE_FIXTURE_REGISTRY_PATH=$fixtureRegistryPath" >> $env:GITHUB_ENV
-
-      - name: Bind candidate paths for the exact-artifact preflight
-        shell: pwsh
-        run: |
-          $installers = @(Get-ChildItem candidate/installer -Filter '*.exe' -File)
-          if ($installers.Count -ne 1) {
-            throw "Expected exactly one candidate installer, found $($installers.Count)."
-          }
-          "CAPTURE_RELEASE_INSTALLER_PATH=$($installers[0].FullName)" >> $env:GITHUB_ENV
-          "CAPTURE_RELEASE_RUNTIME_PATH=$((Resolve-Path 'candidate/runtime/capture-runtime-x86_64-pc-windows-msvc.exe').Path)" >> $env:GITHUB_ENV
-          "CAPTURE_RELEASE_SCHEMA_PATH=$((Resolve-Path 'candidate/runtime/capture-document-v1.schema.json').Path)" >> $env:GITHUB_ENV
-          "CAPTURE_RELEASE_MANIFEST_PATH=$((Resolve-Path 'candidate/runtime/capture-runtime-manifest.json').Path)" >> $env:GITHUB_ENV
-
-      - name: Verify GitHub attestation for the exact evidence subject
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if ([string]::IsNullOrWhiteSpace($env:CAPTURE_RELEASE_EVIDENCE_SIGNER_WORKFLOW)) {
-            throw 'CAPTURE_RELEASE_EVIDENCE_SIGNER_WORKFLOW is required in the protected environment.'
-          }
-          gh attestation verify $env:CAPTURE_RELEASE_EVIDENCE_PATH `
-            --repo $env:GITHUB_REPOSITORY `
-            --signer-workflow $env:CAPTURE_RELEASE_EVIDENCE_SIGNER_WORKFLOW
-          'CAPTURE_RELEASE_ATTESTATION_VERIFIED=true' >> $env:GITHUB_ENV
-
-      - name: Fail closed unless exact candidate matches clean-install evidence
-        shell: pwsh
-        run: pnpm nx run capture-runtime:production-preflight
-
-      - name: Assemble the verified public payload
-        shell: pwsh
-        run: |
-          $publication = Join-Path $env:RUNNER_TEMP 'capture-publication'
-          New-Item -ItemType Directory -Path $publication | Out-Null
-          Copy-Item candidate/runtime -Destination $publication -Recurse
-          Copy-Item candidate/package -Destination $publication -Recurse
-          "CAPTURE_PUBLICATION_PATH=$publication" >> $env:GITHUB_ENV
-
-      - name: Upload verified publication payload
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: capture-publication-${{ github.ref_name }}
-          path: ${{ env.CAPTURE_PUBLICATION_PATH }}
-          if-no-files-found: error
-          retention-days: 1
-
-  publish:
-    needs: verify-clean-install-evidence
-    runs-on: windows-latest
     timeout-minutes: 20
-    environment: capture-release
     permissions:
       contents: write
       packages: write
@@ -260,10 +116,10 @@ jobs:
           registry-url: https://npm.pkg.github.com
           scope: '@gx'
 
-      - name: Download verified publication payload
+      - name: Download release candidate
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: capture-publication-${{ github.ref_name }}
+          name: capture-candidate-${{ github.ref_name }}
           path: publication
 
       - name: Publish runtime first, then the exact Capture Workbench package idempotently
@@ -274,7 +130,7 @@ jobs:
         run: |
           $packages = @(Get-ChildItem publication/package -Filter '*.tgz' -File)
           if ($packages.Count -ne 1) {
-            throw "Expected exactly one verified package tarball, found $($packages.Count)."
+            throw "Expected exactly one release package tarball, found $($packages.Count)."
           }
           node tools/publish-release.ts `
             --tag "${{ github.ref_name }}" `

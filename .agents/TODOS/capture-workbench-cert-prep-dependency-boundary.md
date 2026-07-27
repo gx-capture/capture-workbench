@@ -19,10 +19,6 @@
   `pnpm nx run capture-runtime:local-release-consumer-smoke`,
   `node --test tools/local-release-consumer-smoke.test.ts`, and
   `pnpm nx run capture-workbench-desktop:build-nsis-release`
-- [ ] Complete protected clean-install evidence and GitHub attestation.
-  Verify: `pnpm nx run capture-runtime:production-preflight` in the protected
-  `capture-release` environment with exact candidate artifacts.
-
 ## PR C - cert-prep
 
 - [x] Remove cert-prep root and generated trial-fixture direct dependency on
@@ -35,6 +31,3 @@
       artifact gate.
   Verify: `pnpm nx run cert-prep-desktop:capture-runtime-consumer-smoke
       --skip-nx-cache`
-- [ ] Re-run the cross-project smoke against the exact protected candidate
-      after PR B clean-install evidence and GitHub attestation are complete.
-  Verify: protected `capture-release` candidate consumer evidence

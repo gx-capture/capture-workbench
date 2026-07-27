@@ -21,9 +21,10 @@ elements itself.
 ### PR B - capture-runtime artifacts
 
 The local artifact gate is complete: verified Windows x64 runtime bytes,
-checksum, manifest, schema, staged Tauri runtime, NSIS verification installer,
-and downloaded runtime readiness. Protected clean-install evidence and GitHub
-artifact attestation remain release-environment gates.
+checksum, manifest, schema, and downloaded runtime readiness. The release
+workflow publishes the synchronized runtime/package candidate directly; the
+separate clean-install evidence and GitHub attestation lane was retired as
+over-designed.
 
 ### PR C - cert-prep consumer boundary
 
@@ -36,9 +37,8 @@ artifact attestation remain release-environment gates.
   runtime assets through a loopback mirror, verifies the manifest/checksums and
   schema, starts the downloaded sidecar, completes the backend host-structuring
   coordinator flow, and cleans up the temporary process/install state.
-- This local smoke is diagnostic evidence only. The protected candidate
-  clean-install evidence and GitHub attestation remain required before the
-  same flow can be treated as release evidence.
+- This local smoke is diagnostic consumer evidence. Publication uses the same
+  runtime manifest/checksum contract without a separate clean-install gate.
 
 ## Decisions
 

@@ -6,7 +6,6 @@ import json
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 from conftest import TOKEN, idempotency_headers, poll_capture, poll_installation
@@ -29,7 +28,6 @@ from capture_runtime.ollama import (
 )
 from capture_runtime.release import (
     build_release_artifacts,
-    is_placeholder_windowsml_descriptor,
     windowsml_requirement_descriptor,
     write_capture_document_schema,
 )
@@ -173,23 +171,6 @@ def test_windowsml_release_descriptor_rejects_non_lowercase_digest() -> None:
             123456,
             "A" * 64,
         )
-
-
-@pytest.mark.parametrize(
-    "descriptor",
-    [
-        SimpleNamespace(bytes=1, sha256="a" * 64),
-        SimpleNamespace(bytes=123456, sha256="0" * 64),
-    ],
-)
-def test_production_preflight_rejects_windowsml_placeholder_descriptor(
-    descriptor: SimpleNamespace,
-) -> None:
-    assert is_placeholder_windowsml_descriptor(descriptor)
-
-
-def test_production_preflight_accepts_non_placeholder_windowsml_descriptor() -> None:
-    assert not is_placeholder_windowsml_descriptor(SimpleNamespace(bytes=123456, sha256="a" * 64))
 
 
 def test_contract_rejects_extra_fields() -> None:

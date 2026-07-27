@@ -203,7 +203,7 @@ function ensureRuntimeReleasePublic(tag, runtimeDirectory, runCommand) {
               map(() => undefined),
             );
           }
-          const temporaryPrefix = join(tmpdir(), 'capture-release-verify-');
+          const temporaryPrefix = join(tmpdir(), 'capture-runtime-download-');
           return defer(() => from(mkdtemp(temporaryPrefix))).pipe(
             switchMap((temporary) =>
               from(assets).pipe(

@@ -91,7 +91,7 @@ export function runDeterministicSmoke(): Observable<{ report: unknown; reportPat
             captures,
             hostStructuring,
       disclaimer:
-        'Deterministic fixture only; packaged UI automation and real OCR/STT/Ollama clean-install evidence are separate release gates.',
+        'Deterministic fixture only; packaged UI automation is diagnostic and does not certify real OCR/STT/Ollama behavior.',
           };
           assertRedactedEvidence(report);
           return { report, reportPath: join(outputDirectory, 'smoke.json'), child };

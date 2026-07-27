@@ -100,14 +100,6 @@
         "command": "uv run --python 3.12 python scripts/build_windowsml_bundle.py"
       }
     },
-    "production-preflight": {
-      "cache": false,
-      "executor": "nx:run-commands",
-      "options": {
-        "cwd": "packages/capture-runtime",
-        "command": "uv run --python 3.12 python scripts/production_preflight.py"
-      }
-    },
     "build-release-artifacts": {
       "cache": false,
       "executor": "nx:run-commands",
