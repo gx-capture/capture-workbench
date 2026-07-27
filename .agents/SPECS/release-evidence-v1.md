@@ -30,14 +30,39 @@ for GitHub artifact attestation and then verified for the exact evidence file wi
 requires the workflow-only external-verification signal; editing JSON to claim verification cannot
 pass that gate.
 
-The protected `capture-release` environment must supply non-empty, valid values for:
+The release workflow uses one protected `capture-release` environment for both
+verification and publication. It must supply non-empty, valid values for:
 
 - `CAPTURE_WINDOWSML_BUNDLE_URL`, `CAPTURE_WINDOWSML_BUNDLE_BYTES`, and
-  `CAPTURE_WINDOWSML_BUNDLE_SHA256`;
-- `CAPTURE_RELEASE_EVIDENCE_B64` for the exact candidate artifacts;
-- `CAPTURE_RELEASE_FIXTURE_REGISTRY_B64` for the approved fixtures.
+  `CAPTURE_WINDOWSML_BUNDLE_SHA256` as repository or environment variables;
+- `CAPTURE_RELEASE_EVIDENCE_BUNDLE_B64`, a Base64-encoded UTF-8 JSON object
+  containing the exact candidate evidence and approved fixture registry:
+
+```json
+{
+  "schemaVersion": 1,
+  "evidence": {},
+  "fixtureRegistry": {}
+}
+```
+
 - `CAPTURE_RELEASE_EVIDENCE_SIGNER_WORKFLOW` for the exact trusted workflow identity enforced by
   `gh attestation verify --signer-workflow`.
+
+The bundle is transported as one secret for configuration simplicity, but its
+two nested objects remain separately validated and separately materialized for
+the existing preflight.
+
+Create and store the bundle without printing decoded evidence:
+
+```powershell
+node tools/release-evidence-bundle.ts `
+  --evidence path/to/capture-release-evidence.json `
+  --fixture-registry path/to/capture-release-fixture-registry.json |
+  gh secret set CAPTURE_RELEASE_EVIDENCE_BUNDLE_B64 `
+    --repo WodenWang820118/capture-workbench `
+    --env capture-release
+```
 
 Until real protected values and the matching GitHub attestation exist, the release workflow is
 intentionally blocked. The read-only build job first uploads one immutable candidate containing

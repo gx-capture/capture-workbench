@@ -16,7 +16,6 @@ jobs:
   build-candidate:
     runs-on: windows-latest
     timeout-minutes: 90
-    environment: capture-release-build
     permissions:
       contents: read
       packages: read
@@ -163,30 +162,36 @@ jobs:
           name: capture-candidate-${{ github.ref_name }}
           path: candidate
 
-      - name: Materialize protected evidence and fixture registry
+      - name: Materialize protected evidence bundle
         shell: pwsh
         env:
-          CAPTURE_RELEASE_EVIDENCE_B64: ${{ secrets.CAPTURE_RELEASE_EVIDENCE_B64 }}
-          CAPTURE_RELEASE_FIXTURE_REGISTRY_B64: ${{ secrets.CAPTURE_RELEASE_FIXTURE_REGISTRY_B64 }}
+          CAPTURE_RELEASE_EVIDENCE_BUNDLE_B64: ${{ secrets.CAPTURE_RELEASE_EVIDENCE_BUNDLE_B64 }}
         run: |
-          $inputs = @(
-            @('CAPTURE_RELEASE_EVIDENCE_B64', 'capture-release-evidence.json', 'CAPTURE_RELEASE_EVIDENCE_PATH'),
-            @('CAPTURE_RELEASE_FIXTURE_REGISTRY_B64', 'capture-release-fixture-registry.json', 'CAPTURE_RELEASE_FIXTURE_REGISTRY_PATH')
-          )
-          foreach ($input in $inputs) {
-            $encoded = [Environment]::GetEnvironmentVariable($input[0])
-            if ([string]::IsNullOrWhiteSpace($encoded)) {
-              throw "$($input[0]) is required in the protected capture-release environment."
-            }
-            try {
-              $bytes = [Convert]::FromBase64String($encoded)
-            } catch {
-              throw "$($input[0]) is not valid Base64."
-            }
-            $path = Join-Path $env:RUNNER_TEMP $input[1]
-            [IO.File]::WriteAllBytes($path, $bytes)
-            "$($input[2])=$path" >> $env:GITHUB_ENV
+          if ([string]::IsNullOrWhiteSpace($env:CAPTURE_RELEASE_EVIDENCE_BUNDLE_B64)) {
+            throw 'CAPTURE_RELEASE_EVIDENCE_BUNDLE_B64 is required in the protected capture-release environment.'
           }
+          try {
+            $bundleText = [Text.Encoding]::UTF8.GetString(
+              [Convert]::FromBase64String($env:CAPTURE_RELEASE_EVIDENCE_BUNDLE_B64)
+            )
+            $bundle = $bundleText | ConvertFrom-Json
+          } catch {
+            throw "CAPTURE_RELEASE_EVIDENCE_BUNDLE_B64 is not valid UTF-8 JSON Base64: $($_.Exception.Message)"
+          }
+          $bundleFields = @($bundle.PSObject.Properties.Name | Sort-Object)
+          if (($bundleFields -join ',') -ne 'evidence,fixtureRegistry,schemaVersion') {
+            throw 'Release evidence bundle must contain only schemaVersion, evidence, and fixtureRegistry.'
+          }
+          if ($bundle.schemaVersion -ne 1 -or $null -eq $bundle.evidence -or $null -eq $bundle.fixtureRegistry) {
+            throw 'Release evidence bundle schemaVersion must be 1 and both members are required.'
+          }
+          $utf8 = [Text.UTF8Encoding]::new($false)
+          $evidencePath = Join-Path $env:RUNNER_TEMP 'capture-release-evidence.json'
+          $fixtureRegistryPath = Join-Path $env:RUNNER_TEMP 'capture-release-fixture-registry.json'
+          [IO.File]::WriteAllText($evidencePath, ($bundle.evidence | ConvertTo-Json -Depth 100), $utf8)
+          [IO.File]::WriteAllText($fixtureRegistryPath, ($bundle.fixtureRegistry | ConvertTo-Json -Depth 100), $utf8)
+          "CAPTURE_RELEASE_EVIDENCE_PATH=$evidencePath" >> $env:GITHUB_ENV
+          "CAPTURE_RELEASE_FIXTURE_REGISTRY_PATH=$fixtureRegistryPath" >> $env:GITHUB_ENV
 
       - name: Bind candidate paths for the exact-artifact preflight
         shell: pwsh
@@ -238,7 +243,7 @@ jobs:
     needs: verify-clean-install-evidence
     runs-on: windows-latest
     timeout-minutes: 20
-    environment: capture-release-publish
+    environment: capture-release
     permissions:
       contents: write
       packages: write

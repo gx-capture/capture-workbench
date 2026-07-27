@@ -19,6 +19,7 @@
     "verify:package": "corepack pnpm nx run capture-angular:clean-consumer-smoke",
     "verify:smoke": "corepack pnpm nx run capture-workbench-desktop:smoke-deterministic && corepack pnpm nx run capture-workbench-e2e:e2e",
     "verify:release-version": "node tools/verify-release-version.ts",
+    "release:evidence-bundle": "node tools/release-evidence-bundle.ts",
     "local-registry:start": "corepack pnpm exec verdaccio --config tools/local-registry/verdaccio.yaml",
     "local-registry:publish": "node tools/local-registry/publish-local-registry.ts"
   },
