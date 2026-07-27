@@ -23,6 +23,17 @@ corepack pnpm nx run capture-runtime:build-production-executable
 From the workspace root, use `corepack pnpm nx run capture-runtime:test` and the other declared Nx
 targets.
 
+To verify installation from a local release mirror instead of the workspace,
+first stage `dist/release` and run:
+
+```powershell
+corepack pnpm nx run capture-runtime:local-release-consumer-smoke
+```
+
+This downloads the executable, checksum, manifest, and schema into an isolated
+temporary consumer, validates their hashes, and checks authenticated sidecar
+readiness. It does not publish remotely.
+
 ## Standalone Windows quick start
 
 The public runtime artifact is the Windows x64 executable, checksum, manifest,
@@ -163,7 +174,9 @@ installer exist. It binds their exact bytes/SHA-256 plus the WindowsML descripto
 fixture registry to separately generated clean-install evidence. The exact evidence file must
 also pass GitHub artifact-attestation verification. Unsigned local evidence always remains
 non-releaseable; see `.agents/SPECS/release-evidence-v1.md` for the external gate and required
-protected environment values.
+protected environment values. The preflight also rejects the deterministic local placeholder
+WindowsML descriptor (`bytes: 1` or an all-zero SHA-256); production requires the real HTTPS
+release URL, byte count, and digest.
 
 Build a canonical WindowsML asset ZIP from an explicit source directory without making that
 directory a runtime or repository dependency:

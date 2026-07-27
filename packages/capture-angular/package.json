@@ -13,8 +13,10 @@
     "registry": "https://npm.pkg.github.com",
     "access": "public"
   },
+  "dependencies": {
+    "@angular/elements": "22.0.7"
+  },
   "peerDependencies": {
-    "@angular/elements": "^22.0.0",
     "@angular/core": "^22.0.0",
     "@angular/platform-browser": "^22.0.0",
     "rxjs": "^7.8.0"

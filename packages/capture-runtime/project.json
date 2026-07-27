@@ -119,6 +119,13 @@
         "command": "uv run --python 3.12 python scripts/build_release_artifacts.py"
       }
     },
+    "local-release-consumer-smoke": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "node tools/local-release-consumer-smoke.ts"
+      }
+    },
     "python-version-check": {
       "cache": false,
       "executor": "nx:run-commands",

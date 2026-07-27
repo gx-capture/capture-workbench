@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.metadata
 import importlib.util
 import platform
 import subprocess
@@ -54,6 +55,26 @@ def main() -> None:
     for module in optional_modules:
         if module not in missing:
             command.extend(("--collect-all", module))
+    # PaddleX decides whether its OCR pipeline is usable from distribution
+    # metadata at runtime. PyInstaller does not include that metadata when it
+    # collects a package, so the frozen executable would incorrectly report
+    # that paddlex[ocr-core] is unavailable even though its modules are there.
+    metadata_packages = (
+        "paddlex",
+        "paddleocr",
+        "imagesize",
+        "opencv-contrib-python",
+        "pyclipper",
+        "pypdfium2",
+        "python-bidi",
+        "shapely",
+    )
+    for package in metadata_packages:
+        try:
+            importlib.metadata.version(package)
+        except importlib.metadata.PackageNotFoundError:
+            continue
+        command.extend(("--copy-metadata", package))
     command.append(str(root / "src" / "capture_runtime" / "__main__.py"))
     subprocess.run(
         command,

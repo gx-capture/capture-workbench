@@ -41,6 +41,12 @@ function exceptionReason(relativePath) {
   if (relativePath === 'tools/clean-angular-consumer-smoke.ts') {
     return 'generated consumer framework fixture boundary';
   }
+  if (relativePath === 'tools/local-registry/publish-local-registry.ts') {
+    return 'local registry CLI process boundary';
+  }
+  if (relativePath === 'tools/local-release-consumer-smoke.ts') {
+    return 'local release consumer process boundary';
+  }
   return undefined;
 }
 

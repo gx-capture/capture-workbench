@@ -8,7 +8,11 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from capture_runtime.release import RuntimeReleaseManifestV1, windowsml_requirement_descriptor
+from capture_runtime.release import (
+    RuntimeReleaseManifestV1,
+    is_placeholder_windowsml_descriptor,
+    windowsml_requirement_descriptor,
+)
 from capture_runtime.release_evidence import (
     ArtifactBindingV1,
     FixtureRegistryV1,
@@ -71,6 +75,11 @@ def main() -> None:
                 sha256=manifest.schema_sha256,
             )
             windowsml = manifest.runtime_requirements.windowsml_ocr
+            if is_placeholder_windowsml_descriptor(windowsml):
+                failures.append(
+                    "windowsml_descriptor: placeholder bytes/digest cannot pass "
+                    "production preflight"
+                )
             expected_artifacts = ReleaseArtifactsV1(
                 runtimeExecutable=runtime_binding,
                 captureDocumentSchema=schema_binding,
