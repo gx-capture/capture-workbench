@@ -134,7 +134,7 @@
           <h3>結構化結果</h3>
           <pre>{{ item.result.targetText }}</pre>
           <dl class="provenance">
-            <div><dt>OCR</dt><dd>{{ item.result.extractionEngine.engine }} · {{ item.result.extractionEngine.model }}</dd></div>
+            <div><dt>OCR</dt><dd>{{ item.result.extractionEngine.engine }} · {{ item.result.extractionEngine.model }} · {{ item.result.extractionEngine.device }}</dd></div>
             <div><dt>結構化</dt><dd>{{ item.result.structuringEngine.engine }} · {{ item.result.structuringEngine.model }} · {{ item.result.structuringEngine.digest }}</dd></div>
           </dl>
           <small>模型資訊來自已保存的 provenance，可辨識真實 Ollama 結果。</small>

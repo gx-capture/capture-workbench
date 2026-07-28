@@ -10,6 +10,7 @@ test('real desktop OCR evidence requires real engines, Ollama provenance, cleanu
     realEnginesExercised: true,
     sourceKind: 'pdf',
     rawOcrVisible: true,
+    ocrDevice: 'windowsml-dml',
     structuringEngine: 'ollama',
     model: 'capture-workbench-qwen3.5-4b-structure-v1',
     modelDigest: `sha256:${'a'.repeat(64)}`,
@@ -28,6 +29,10 @@ test('real desktop OCR evidence requires real engines, Ollama provenance, cleanu
   assert.throws(
     () => assertRealDesktopSmokeEvidence({ ...valid, documentDeletedAfterVerification: false }),
     /Expected values to be strictly equal/u,
+  );
+  assert.throws(
+    () => assertRealDesktopSmokeEvidence({ ...valid, ocrDevice: 'unknown' }),
+    /falsy value|false/u,
   );
   assert.throws(
     () => assertRealDesktopSmokeEvidence({ ...valid, note: 'C:\\outside\\source.pdf' }),

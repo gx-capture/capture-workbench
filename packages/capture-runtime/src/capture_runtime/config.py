@@ -11,6 +11,8 @@ from urllib.parse import urlsplit
 
 from capture_runtime.constants import CAPTURE_OLLAMA_BASE_MODEL, CAPTURE_OLLAMA_PROFILE_ID
 
+WINDOWSML_DEFAULT_DEVICE_ID = 0
+
 _CHILD_PROCESS_ENVIRONMENT_ALLOWLIST = frozenset(
     {
         "APPDATA",
@@ -231,7 +233,9 @@ class RuntimeSettings:
         max_candidate_bytes = int(env.get("CAPTURE_MAX_CANDIDATE_BYTES", str(8 * 1024 * 1024)))
         if max_candidate_bytes <= 0:
             raise ValueError("CAPTURE_MAX_CANDIDATE_BYTES must be positive")
-        windowsml_device_id = int(env.get("CAPTURE_WINDOWSML_DEVICE_ID", "0"))
+        windowsml_device_id = int(
+            env.get("CAPTURE_WINDOWSML_DEVICE_ID", str(WINDOWSML_DEFAULT_DEVICE_ID))
+        )
         if windowsml_device_id < 0:
             raise ValueError("CAPTURE_WINDOWSML_DEVICE_ID must be non-negative")
         max_pdf_pages = int(env.get("CAPTURE_MAX_PDF_PAGES", "200"))
