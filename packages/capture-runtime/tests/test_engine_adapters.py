@@ -3,15 +3,16 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import zipfile
-from dataclasses import replace
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
 import pytest
 from PIL import Image
 
 import capture_runtime.extractors as extractor_module
+import capture_runtime.ollama.system_installer as system_installer_module
 from capture_runtime.clock import SystemClock
 from capture_runtime.config import ExtractionRuntimeConfig, OllamaRuntimeConfig
 from capture_runtime.contracts import CaptureSourceV1
@@ -65,9 +66,6 @@ def _config(tmp_path: Path) -> ExtractionRuntimeConfig:
         whisper_primary_model="large-v3-turbo",
         whisper_fallback_model="small",
         whisper_prefer_gpu=True,
-        windowsml_bundle_url=None,
-        windowsml_bundle_sha256=None,
-        windowsml_bundle_bytes=None,
     )
 
 
@@ -289,7 +287,9 @@ def _lifecycle(tmp_path: Path) -> IsolatedOllamaLifecycle:
     )
 
 
-def test_checksum_pinned_windowsml_bundle_installs_and_reprobes(tmp_path: Path) -> None:
+def test_runtime_owned_windowsml_bundle_installs_and_reprobes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     source = tmp_path / "models"
     _write_windowsml_models(source)
     archive = tmp_path / "windowsml.zip"
@@ -297,13 +297,19 @@ def test_checksum_pinned_windowsml_bundle_installs_and_reprobes(tmp_path: Path) 
         for path in source.rglob("*"):
             if path.is_file():
                 bundle.write(path, path.relative_to(source).as_posix())
-    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
-    config = replace(
-        _config(tmp_path),
-        windowsml_bundle_url=archive.as_uri(),
-        windowsml_bundle_sha256=digest,
-        windowsml_bundle_bytes=archive.stat().st_size,
+    archive_bytes = archive.read_bytes()
+    monkeypatch.setattr(
+        system_installer_module,
+        "WINDOWSML_BUNDLE_URL",
+        "https://downloads.example.test/windowsml.zip",
     )
+    monkeypatch.setattr(system_installer_module, "WINDOWSML_BUNDLE_BYTES", len(archive_bytes))
+    monkeypatch.setattr(
+        system_installer_module,
+        "WINDOWSML_BUNDLE_SHA256",
+        hashlib.sha256(archive_bytes).hexdigest(),
+    )
+    config = _config(tmp_path)
 
     class AssetProbeOcr(FakeOcrAdapter):
         def probe(self) -> EngineProbe:
@@ -330,6 +336,17 @@ def test_checksum_pinned_windowsml_bundle_installs_and_reprobes(tmp_path: Path) 
         ocr_adapter=AssetProbeOcr(),
         whisper_adapter=FakeWhisperAdapter(),
         clock=SystemClock(),
+        http_client_factory=lambda: httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    200,
+                    headers={"content-length": str(len(archive_bytes))},
+                    content=archive_bytes,
+                    request=request,
+                )
+            ),
+            follow_redirects=True,
+        ),
     )
     before = next(
         item for item in installer.requirements() if item.requirement_id == "windowsml-ocr"

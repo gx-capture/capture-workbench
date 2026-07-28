@@ -19,6 +19,7 @@ from capture_runtime.config import ExtractionRuntimeConfig, OllamaRuntimeConfig,
 from capture_runtime.contracts import RuntimeRequirementStatus
 from capture_runtime.engine_adapters import EngineProbe
 from capture_runtime.ollama import (
+    CommandResult,
     FakeRuntimeInstaller,
     IsolatedOllamaLifecycle,
     OwnedProcess,
@@ -123,9 +124,6 @@ def _installer(
         whisper_primary_model="large-v3-turbo",
         whisper_fallback_model="small",
         whisper_prefer_gpu=False,
-        windowsml_bundle_url=None,
-        windowsml_bundle_sha256=None,
-        windowsml_bundle_bytes=None,
     )
     installer = SystemRuntimeInstaller(
         lifecycle,
@@ -260,6 +258,31 @@ def test_missing_install_record_does_not_start_ollama(
 
     assert _model_status(installer) is RuntimeRequirementStatus.INSTALLABLE
     assert controller.spawned == []
+
+
+def test_profile_marker_hashes_the_exact_windows_modelfile_bytes(tmp_path: Path) -> None:
+    class SuccessfulRunner:
+        async def run(self, *_args: object, **_kwargs: object) -> CommandResult:
+            return CommandResult(0, "ok")
+
+    controller = FakeProcessController()
+    installer, lifecycle = _installer(tmp_path, controller)
+    installer._runner = SuccessfulRunner()  # noqa: SLF001
+
+    asyncio.run(
+        installer._install_model(  # noqa: SLF001
+            asyncio.Event(),
+            lambda _progress: None,
+        )
+    )
+
+    modelfile = lifecycle.config.app_data_dir / "Capture.Modelfile"
+    marker = json.loads(
+        (
+            lifecycle.config.app_data_dir / "requirements" / "capture-ollama-model.ready.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert marker["modelfileSha256"] == hashlib.sha256(modelfile.read_bytes()).hexdigest()
 
 
 def test_ownership_failure_never_probes_or_touches_foreign_process(

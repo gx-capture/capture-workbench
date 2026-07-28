@@ -1,14 +1,12 @@
-use std::{fs, io::Read, net::IpAddr, path::Path};
+use std::{fs, io::Read, path::Path};
 
-#[cfg(test)]
-pub(crate) use crate::contracts::manifest::RuntimeRequirements;
-use crate::contracts::{RuntimeManifest, VerifiedRuntime, WindowsMlArtifactDescriptor};
+use crate::contracts::{RuntimeManifest, VerifiedRuntime};
 use sha2::{Digest, Sha256};
 
 use crate::constants::{
     EXPECTED_API_VERSION, EXPECTED_CAPTURE_DOCUMENT_SCHEMA_VERSION, EXPECTED_MANIFEST_VERSION,
-    EXPECTED_RUNTIME_VERSION, MAX_RUNTIME_ARTIFACT_BYTES, MAX_WINDOWSML_BUNDLE_BYTES,
-    RUNTIME_BINARY_TARGET_FILE, SCHEMA_FILE_NAME,
+    EXPECTED_RUNTIME_VERSION, MAX_RUNTIME_ARTIFACT_BYTES, RUNTIME_BINARY_TARGET_FILE,
+    SCHEMA_FILE_NAME,
 };
 
 pub(crate) fn load_runtime_manifest(path: &Path) -> Result<RuntimeManifest, String> {
@@ -72,78 +70,6 @@ pub(crate) fn validate_manifest_contract(manifest: &RuntimeManifest) -> Result<(
                 .into(),
         );
     }
-    validate_windowsml_descriptor(&manifest.runtime_requirements.windowsml_ocr)?;
-    Ok(())
-}
-
-fn validate_windowsml_descriptor(descriptor: &WindowsMlArtifactDescriptor) -> Result<(), String> {
-    if descriptor.artifact_url.contains(['%', '\\'])
-        || descriptor
-            .artifact_url
-            .chars()
-            .any(|character| character.is_control())
-    {
-        return Err(
-            "WindowsML artifactUrl must not contain escapes, backslashes, or controls.".into(),
-        );
-    }
-    let Some(remainder) = descriptor.artifact_url.strip_prefix("https://") else {
-        return Err("WindowsML artifactUrl must use public HTTPS.".into());
-    };
-    let Some((authority, path)) = remainder.split_once('/') else {
-        return Err("WindowsML artifactUrl must end in an artifact path.".into());
-    };
-    if authority != authority.to_ascii_lowercase() {
-        return Err("WindowsML artifactUrl hostname must be canonical lowercase DNS.".into());
-    }
-    if authority.is_empty()
-        || authority.contains('@')
-        || authority.contains(':')
-        || descriptor.artifact_url.contains(['?', '#'])
-        || authority.parse::<IpAddr>().is_ok()
-        || authority == "localhost"
-        || [".invalid", ".example", ".test", ".localhost"]
-            .iter()
-            .any(|suffix| authority.ends_with(suffix))
-    {
-        return Err(
-            "WindowsML artifactUrl must be public HTTPS without credentials, query, or fragment."
-                .into(),
-        );
-    }
-    if !canonical_dns_name(authority)
-        || path.is_empty()
-        || path
-            .split('/')
-            .any(|segment| segment.is_empty() || !plain_url_segment(segment))
-    {
-        return Err(
-            "WindowsML artifactUrl must use canonical public DNS and plain path segments.".into(),
-        );
-    }
-    if !safe_file_name(&descriptor.artifact_file_name)
-        || !descriptor
-            .artifact_file_name
-            .to_ascii_lowercase()
-            .ends_with(".zip")
-        || !descriptor
-            .artifact_file_name
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
-        || path.rsplit('/').next() != Some(descriptor.artifact_file_name.as_str())
-    {
-        return Err(
-            "WindowsML artifactFileName must be the plain .zip name from artifactUrl.".into(),
-        );
-    }
-    if descriptor.bytes == 0 || descriptor.bytes > MAX_WINDOWSML_BUNDLE_BYTES {
-        return Err("WindowsML artifact bytes must be from 1 through 536870912.".into());
-    }
-    if !lowercase_sha256(&descriptor.sha256) {
-        return Err(
-            "WindowsML artifact sha256 must contain 64 lowercase hexadecimal characters.".into(),
-        );
-    }
     Ok(())
 }
 
@@ -154,36 +80,6 @@ fn lowercase_sha256(value: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
-fn canonical_dns_name(value: &str) -> bool {
-    value.len() <= 253
-        && value.contains('.')
-        && value.split('.').all(|label| {
-            !label.is_empty()
-                && label.len() <= 63
-                && label
-                    .as_bytes()
-                    .first()
-                    .is_some_and(u8::is_ascii_alphanumeric)
-                && label
-                    .as_bytes()
-                    .last()
-                    .is_some_and(u8::is_ascii_alphanumeric)
-                && label
-                    .bytes()
-                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
-        })
-        && value.rsplit_once('.').is_some_and(|(_, suffix)| {
-            suffix.len() >= 2 && suffix.bytes().all(|byte| byte.is_ascii_lowercase())
-        })
-}
-
-fn plain_url_segment(value: &str) -> bool {
-    !matches!(value, "." | "..")
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'~' | b'-'))
-}
-
 fn expect_field(name: &str, actual: &str, expected: &str) -> Result<(), String> {
     if actual == expected {
         Ok(())
@@ -192,16 +88,6 @@ fn expect_field(name: &str, actual: &str, expected: &str) -> Result<(), String> 
             "Capture runtime {name} is incompatible: expected {expected}, found {actual}."
         ))
     }
-}
-
-fn safe_file_name(value: &str) -> bool {
-    !value.is_empty()
-        && value != "."
-        && value != ".."
-        && !value.contains(['/', '\\', ':'])
-        && Path::new(value)
-            .file_name()
-            .is_some_and(|name| name == value)
 }
 
 fn verify_artifact(path: &Path, manifest: &RuntimeManifest) -> Result<(), String> {
@@ -245,7 +131,6 @@ fn sha256_file(path: &Path) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::Value;
     use std::io::Write;
 
     fn valid_manifest(bytes: u64, sha256: &str) -> RuntimeManifest {
@@ -261,75 +146,6 @@ mod tests {
             sha256: sha256.into(),
             schema_file_name: SCHEMA_FILE_NAME.into(),
             schema_sha256: "1".repeat(64),
-            runtime_requirements: RuntimeRequirements {
-                windowsml_ocr: WindowsMlArtifactDescriptor {
-                    artifact_url: "https://downloads.example.org/capture-windowsml.zip".into(),
-                    artifact_file_name: "capture-windowsml.zip".into(),
-                    bytes: 123_456,
-                    sha256: "a".repeat(64),
-                },
-            },
-        }
-    }
-
-    fn materialize_corpus_case(case: &Value, base: &Value) -> Value {
-        let mut manifest = case
-            .get("manifest")
-            .cloned()
-            .unwrap_or_else(|| base.clone());
-        if let Some(patch) = case.get("patch").and_then(Value::as_object) {
-            manifest
-                .as_object_mut()
-                .expect("manifest")
-                .extend(patch.clone());
-        }
-        if let Some(remove) = case.get("remove").and_then(Value::as_str) {
-            manifest.as_object_mut().expect("manifest").remove(remove);
-        }
-        let requirements = manifest
-            .get_mut("runtimeRequirements")
-            .and_then(Value::as_object_mut)
-            .expect("requirements");
-        if let Some(patch) = case.get("requirementPatch").and_then(Value::as_object) {
-            requirements.extend(patch.clone());
-        }
-        let descriptor = requirements
-            .get_mut("windowsml-ocr")
-            .and_then(Value::as_object_mut)
-            .expect("descriptor");
-        if let Some(patch) = case.get("descriptorPatch").and_then(Value::as_object) {
-            descriptor.extend(patch.clone());
-        }
-        if let Some(remove) = case.get("descriptorRemove").and_then(Value::as_str) {
-            descriptor.remove(remove);
-        }
-        manifest
-    }
-
-    #[test]
-    fn shared_release_manifest_corpus_matches_rust_contract() {
-        let corpus: Value = serde_json::from_str(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../../tools/release-manifest-corpus.json"
-        )))
-        .expect("corpus");
-        let cases = corpus["cases"].as_array().expect("cases");
-        let base = cases
-            .iter()
-            .find(|case| case["valid"] == Value::Bool(true))
-            .and_then(|case| case.get("manifest"))
-            .expect("base");
-        for case in cases {
-            let value = materialize_corpus_case(case, base);
-            let result = serde_json::from_value::<RuntimeManifest>(value)
-                .map_err(|error| error.to_string())
-                .and_then(|manifest| validate_manifest_contract(&manifest));
-            assert_eq!(
-                result.is_ok(),
-                case["valid"].as_bool().expect("valid"),
-                "{}",
-                case["name"].as_str().expect("name")
-            );
         }
     }
 
@@ -394,32 +210,5 @@ mod tests {
         assert!(validate_manifest_contract(&manifest)
             .expect_err("path")
             .contains("fileName"));
-    }
-
-    #[test]
-    fn windowsml_descriptor_rejects_secrets_and_non_lowercase_digests() {
-        let mut manifest = valid_manifest(
-            1,
-            "0000000000000000000000000000000000000000000000000000000000000000",
-        );
-        manifest.runtime_requirements = RuntimeRequirements {
-            windowsml_ocr: WindowsMlArtifactDescriptor {
-                artifact_url: "https://downloads.example.org/capture-windowsml.zip?token=secret"
-                    .into(),
-                artifact_file_name: "capture-windowsml.zip".into(),
-                bytes: 123_456,
-                sha256: "a".repeat(64),
-            },
-        };
-        assert!(validate_manifest_contract(&manifest)
-            .expect_err("query")
-            .contains("without credentials"));
-
-        let descriptor = &mut manifest.runtime_requirements.windowsml_ocr;
-        descriptor.artifact_url = "https://downloads.example.org/capture-windowsml.zip".into();
-        descriptor.sha256 = "A".repeat(64);
-        assert!(validate_manifest_contract(&manifest)
-            .expect_err("uppercase")
-            .contains("lowercase"));
     }
 }

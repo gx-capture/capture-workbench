@@ -1,2 +1,1 @@
-export * from './deterministic-capture';
-export * from './validation';
+export * from './desktop-library';

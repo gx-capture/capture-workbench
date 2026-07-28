@@ -144,7 +144,6 @@ mod tests {
         EXPECTED_API_VERSION, EXPECTED_CAPTURE_DOCUMENT_SCHEMA_VERSION, EXPECTED_MANIFEST_VERSION,
         EXPECTED_RUNTIME_VERSION, RUNTIME_BINARY_TARGET_FILE,
     };
-    use crate::contracts::manifest::{RuntimeRequirements, WindowsMlArtifactDescriptor};
     use std::{net::TcpListener, sync::mpsc, thread};
 
     fn manifest() -> RuntimeManifest {
@@ -160,14 +159,6 @@ mod tests {
             sha256: "0".repeat(64),
             schema_file_name: "capture-document-v1.schema.json".into(),
             schema_sha256: "1".repeat(64),
-            runtime_requirements: RuntimeRequirements {
-                windowsml_ocr: WindowsMlArtifactDescriptor {
-                    artifact_url: "https://downloads.example.org/capture-windowsml.zip".into(),
-                    artifact_file_name: "capture-windowsml.zip".into(),
-                    bytes: 123_456,
-                    sha256: "a".repeat(64),
-                },
-            },
         }
     }
 

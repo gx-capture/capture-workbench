@@ -41,7 +41,6 @@ export type RuntimeReleaseManifest = {
   readonly sha256: string;
   readonly schemaFileName: string;
   readonly schemaSha256: string;
-  readonly runtimeRequirements: Record<string, unknown>;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -87,9 +86,6 @@ export function validateRuntimeManifest(
   }
   assertSha256(manifest.sha256, 'Runtime executable digest');
   assertSha256(manifest.schemaSha256, 'Runtime schema digest');
-  if (!isRecord(manifest.runtimeRequirements)) {
-    throw new Error('Runtime release requirements must be an object.');
-  }
   return manifest as RuntimeReleaseManifest;
 }
 

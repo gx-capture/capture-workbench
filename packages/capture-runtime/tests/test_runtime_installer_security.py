@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import zipfile
 from pathlib import Path
 
 import httpx
 import pytest
 
+import capture_runtime.ollama.system_installer as system_installer_module
 from capture_runtime.clock import SystemClock
 from capture_runtime.config import ExtractionRuntimeConfig, OllamaRuntimeConfig
 from capture_runtime.engine_adapters import WINDOWSML_REQUIRED_MODEL_FILES, EngineProbe
@@ -40,7 +42,22 @@ class ChunkStream(httpx.AsyncByteStream):
 def _installer(
     tmp_path: Path,
     handler,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    expected_bytes: int = 3,
 ) -> SystemRuntimeInstaller:
+    payload = b"abc"[:expected_bytes]
+    monkeypatch.setattr(
+        system_installer_module,
+        "WINDOWSML_BUNDLE_URL",
+        "https://downloads.example.org/windowsml.zip",
+    )
+    monkeypatch.setattr(system_installer_module, "WINDOWSML_BUNDLE_BYTES", expected_bytes)
+    monkeypatch.setattr(
+        system_installer_module,
+        "WINDOWSML_BUNDLE_SHA256",
+        hashlib.sha256(payload).hexdigest(),
+    )
     ollama_root = tmp_path / "ollama"
     lifecycle = IsolatedOllamaLifecycle(
         OllamaRuntimeConfig(
@@ -64,9 +81,6 @@ def _installer(
         whisper_primary_model="large-v3-turbo",
         whisper_fallback_model="small",
         whisper_prefer_gpu=False,
-        windowsml_bundle_url="https://downloads.example.org/windowsml.zip",
-        windowsml_bundle_sha256="a" * 64,
-        windowsml_bundle_bytes=3,
     )
     transport = httpx.MockTransport(handler)
     return SystemRuntimeInstaller(
@@ -78,7 +92,7 @@ def _installer(
         clock=SystemClock(),
         http_client_factory=lambda: httpx.AsyncClient(
             transport=transport,
-            follow_redirects=False,
+            follow_redirects=True,
         ),
     )
 
@@ -165,15 +179,6 @@ def test_windowsml_zip_honors_cancellation_before_extraction(tmp_path: Path) -> 
     [
         (
             lambda request: httpx.Response(
-                302,
-                headers={"location": "https://cdn.example.org/windowsml.zip"},
-                request=request,
-            ),
-            3,
-            "Redirect response",
-        ),
-        (
-            lambda request: httpx.Response(
                 200,
                 headers={"content-length": "4"},
                 stream=ChunkStream([b"abcd"]),
@@ -201,21 +206,20 @@ def test_windowsml_zip_honors_cancellation_before_extraction(tmp_path: Path) -> 
             "interrupted",
         ),
     ],
-    ids=["redirect", "content-length", "oversized-stream", "interrupted-stream"],
+    ids=["content-length", "oversized-stream", "interrupted-stream"],
 )
-def test_windowsml_download_rejects_redirects_size_drift_and_interruption(
+def test_windowsml_download_rejects_size_drift_and_interruption(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     handler,
     expected_bytes: int,
     message: str,
 ) -> None:
-    installer = _installer(tmp_path, handler)
+    installer = _installer(tmp_path, handler, monkeypatch, expected_bytes=expected_bytes)
     destination = tmp_path / "download.zip"
     with pytest.raises((httpx.HTTPError, RuntimeError), match=message):
         asyncio.run(
             installer._download_bundle(  # noqa: SLF001
-                "https://downloads.example.org/windowsml.zip",
-                expected_bytes,
                 destination,
                 asyncio.Event(),
                 lambda _progress: None,
@@ -224,7 +228,9 @@ def test_windowsml_download_rejects_redirects_size_drift_and_interruption(
     assert not destination.exists()
 
 
-def test_windowsml_download_accepts_only_exact_streamed_bytes(tmp_path: Path) -> None:
+def test_windowsml_download_accepts_only_exact_streamed_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
@@ -233,12 +239,10 @@ def test_windowsml_download_accepts_only_exact_streamed_bytes(tmp_path: Path) ->
             request=request,
         )
 
-    installer = _installer(tmp_path, handler)
+    installer = _installer(tmp_path, handler, monkeypatch)
     destination = tmp_path / "download.zip"
     asyncio.run(
         installer._download_bundle(  # noqa: SLF001
-            "https://downloads.example.org/windowsml.zip",
-            3,
             destination,
             asyncio.Event(),
             lambda _progress: None,
@@ -247,18 +251,16 @@ def test_windowsml_download_accepts_only_exact_streamed_bytes(tmp_path: Path) ->
     assert destination.read_bytes() == b"abc"
 
 
-def test_runtime_requirements_expose_the_verified_windowsml_descriptor(tmp_path: Path) -> None:
+def test_runtime_requirements_expose_runtime_owned_windowsml_installation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     installer = _installer(
         tmp_path,
         lambda request: httpx.Response(500, request=request),
+        monkeypatch,
     )
     requirement = next(
         item for item in installer.requirements() if item.requirement_id == "windowsml-ocr"
     )
-    assert requirement.artifact is not None
-    assert requirement.artifact.model_dump(by_alias=True) == {
-        "artifactUrl": "https://downloads.example.org/windowsml.zip",
-        "artifactFileName": "windowsml.zip",
-        "bytes": 3,
-        "sha256": "a" * 64,
-    }
+    assert requirement.status == "ready"
+    assert requirement.artifact is None

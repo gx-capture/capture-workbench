@@ -37,22 +37,6 @@ export function assertStagedRuntime(expectedSource) {
               'Runtime staging provenance schema digest does not match its manifest.',
             );
           }
-          if (
-            (verified.manifest.runtimeRequirements?.['windowsml-ocr']?.sha256 ??
-              null) !== provenance.windowsmlBundleSha256
-          ) {
-            throw new Error(
-              'Runtime staging provenance WindowsML digest does not match its manifest.',
-            );
-          }
-          if (
-            verified.manifest.runtimeRequirements['windowsml-ocr'].bytes !==
-            provenance.windowsmlBundleBytes
-          ) {
-            throw new Error(
-              'Runtime staging provenance WindowsML byte count does not match its manifest.',
-            );
-          }
           return { provenance, ...verified };
         }),
       );

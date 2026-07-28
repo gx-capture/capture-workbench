@@ -1,11 +1,11 @@
 use std::{fs, path::PathBuf};
 
 fn main() {
-    ensure_verification_icon();
+    ensure_product_icon();
     tauri_build::build()
 }
 
-fn ensure_verification_icon() {
+fn ensure_product_icon() {
     let path = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("manifest directory"))
         .join("icons")
         .join("icon.ico");
@@ -13,10 +13,10 @@ fn ensure_verification_icon() {
         return;
     }
     fs::create_dir_all(path.parent().expect("icon directory")).expect("create icon directory");
-    fs::write(path, verification_icon()).expect("write verification icon");
+    fs::write(path, product_icon()).expect("write product icon");
 }
 
-fn verification_icon() -> Vec<u8> {
+fn product_icon() -> Vec<u8> {
     const WIDTH: u32 = 32;
     const HEIGHT: u32 = 32;
     let pixel_bytes = WIDTH * HEIGHT * 4;

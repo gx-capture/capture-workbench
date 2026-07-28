@@ -118,9 +118,7 @@ environment and Authorization header; they are never accepted in URLs.
 - `CAPTURE_OLLAMA_MODELS_DIR=<capture-owned path>` (optional; ambient
   `OLLAMA_MODELS` is intentionally ignored so a host model store is never reused)
 - `CAPTURE_EXTRACTION_PROVIDER=runtime|fake` (`runtime` is the production default)
-- `CAPTURE_WINDOWSML_MODEL_DIR`, `CAPTURE_WINDOWSML_DEVICE_ID`,
-  `CAPTURE_WINDOWSML_BUNDLE_URL`, `CAPTURE_WINDOWSML_BUNDLE_SHA256`,
-  `CAPTURE_WINDOWSML_BUNDLE_BYTES`
+- `CAPTURE_WINDOWSML_MODEL_DIR`, `CAPTURE_WINDOWSML_DEVICE_ID`
 - `CAPTURE_WHISPER_MODELS_DIR`, `CAPTURE_WHISPER_PRIMARY_MODEL`,
   `CAPTURE_WHISPER_FALLBACK_MODEL`, `CAPTURE_WHISPER_PREFER_GPU`
 - `CAPTURE_MAX_PDF_PAGES`, `CAPTURE_MAX_IMAGE_PIXELS`, `CAPTURE_OCR_RENDER_SCALE`,
@@ -152,12 +150,11 @@ default and are pruned on startup and during requests.
 profile are actively probed; a marker file alone never reports readiness. After a runtime
 restart, a matching installation record causes requirement discovery to lazily start only the
 owned isolated Ollama lifecycle and wait boundedly for the recorded profile to appear. The
-synchronous installer contract runs off the API event loop. WindowsML installation
-accepts only an explicitly configured URL/exact-compressed-bytes/SHA-256 descriptor. Production
-uses canonical public HTTPS (the `file://` seam is test/development only), disables redirects,
-and extracts exactly the six allowlisted ZIP entries with traversal/ADS/symlink/expansion guards.
-The `windowsml-ocr` requirement exposes that verified `artifactUrl`, `artifactFileName`, `bytes`,
-and `sha256` descriptor; other requirements do not synthesize an artifact descriptor.
+synchronous installer contract runs off the API event loop. WindowsML installation uses the
+runtime-release-owned URL, byte count, and SHA-256; it follows the release redirect while still
+verifying the exact response bytes, then extracts exactly the six allowlisted ZIP entries with
+traversal/ADS/symlink/expansion guards. The descriptor is
+not configurable through the environment or exposed through desktop release metadata.
 Whisper installation runs the two allowlisted Hugging Face model
 downloads in a cancellable owned subprocess after `consent: true`; extraction never downloads.
 Ollama installation also requires consent, uses `winget` only, and returns
@@ -171,23 +168,7 @@ IDs are rejected as disabled.
 `build-release-artifacts` does not inspect or depend on ambient OCR/Whisper/Ollama model stores.
 The tag release workflow verifies the synchronized version, package consumer smoke, runtime
 tests, runtime artifact manifest/checksum, and package tarball before publishing the exact
-candidate. It does not perform a separate clean-install evidence or attestation lane. The
-WindowsML descriptor remains strict: production requires the real HTTPS release URL, byte count,
-and digest.
-
-Build a canonical WindowsML asset ZIP from an explicit source directory without making that
-directory a runtime or repository dependency:
-
-```powershell
-$env:CAPTURE_WINDOWSML_BUNDLE_SOURCE_DIR = 'C:\path\to\verified-models'
-$env:CAPTURE_WINDOWSML_BUNDLE_URL = 'https://public.example/releases/capture-windowsml-ocr-windows-x64.zip'
-corepack pnpm nx run capture-runtime:build-windowsml-bundle
-```
-
-The builder includes only the six allowlisted OCR files, uses fixed ZIP metadata and stored
-entries for byte reproducibility, verifies the archive file list/CRC, and emits a descriptor
-containing its exact bytes and lowercase SHA-256. Model files and generated bundles remain ignored
-build output.
+candidate. It does not perform a separate clean-install evidence or attestation lane.
 
 ## Host structuring
 

@@ -71,12 +71,8 @@ def _handler(requests: list[httpx.Request], *, digest: str) -> httpx.MockTranspo
         candidate = {
             "blocks": [
                 {
-                    "blockId": f"block-{segment['segmentId']}",
-                    "order": segment["order"],
                     "type": "paragraph",
                     "sourceSegmentId": segment["segmentId"],
-                    "locator": segment["locator"],
-                    "sourceText": segment["text"],
                     "targetText": "translated text",
                 }
             ]

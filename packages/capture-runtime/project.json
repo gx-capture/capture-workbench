@@ -91,15 +91,6 @@
         "command": "uv run --python 3.12 --extra windowsml --extra whisper python scripts/build_executable.py --require-engines"
       }
     },
-    "build-windowsml-bundle": {
-      "cache": false,
-      "executor": "nx:run-commands",
-      "outputs": ["{projectRoot}/dist/windowsml"],
-      "options": {
-        "cwd": "packages/capture-runtime",
-        "command": "uv run --python 3.12 python scripts/build_windowsml_bundle.py"
-      }
-    },
     "build-release-artifacts": {
       "cache": false,
       "executor": "nx:run-commands",
