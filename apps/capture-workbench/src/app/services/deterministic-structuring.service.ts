@@ -4,7 +4,7 @@ import type {
   CaptureDocumentV1,
   CaptureStructuringProvider,
   CaptureStructuringRequest,
-} from '@gx/capture-workbench';
+} from '@gx-capture/capture-workbench';
 import { DeterministicDocumentService } from './deterministic-document.service';
 
 @Injectable({ providedIn: 'root' })

@@ -24,11 +24,11 @@ test('local package publication is idempotent only for exact integrity', () => {
 
 test('local package paths preserve the scoped package identity', () => {
   assert.equal(
-    packageArchiveName('@gx/capture-workbench', '0.3.0'),
-    'gx-capture-workbench-0.3.0.tgz',
+    packageArchiveName('@gx-capture/capture-workbench', '0.3.0'),
+    'gx-capture-capture-workbench-0.3.0.tgz',
   );
   assert.equal(
-    packageMetadataPath('@gx/capture-workbench'),
-    '/@gx%2fcapture-workbench',
+    packageMetadataPath('@gx-capture/capture-workbench'),
+    '/@gx-capture%2fcapture-workbench',
   );
 });

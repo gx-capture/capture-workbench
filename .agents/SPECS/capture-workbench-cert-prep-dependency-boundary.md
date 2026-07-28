@@ -3,7 +3,7 @@
 ## Purpose
 
 Keep `@angular/elements` as the implementation tool and package-owned
-dependency of `@gx/capture-workbench`, while removing the unused direct
+dependency of `@gx-capture/capture-workbench`, while removing the unused direct
 `@angular/elements` dependency from cert-prep. Cert Prep consumes the public
 `defineCaptureWorkbenchElement()` API; it does not create Angular custom
 elements itself.
@@ -42,7 +42,7 @@ over-designed.
 
 ## Decisions
 
-- `@gx/capture-workbench` owns the Angular Elements implementation boundary.
+- `@gx-capture/capture-workbench` owns the Angular Elements implementation boundary.
 - Cert Prep must not import `createCustomElement`, `NgElement`, or
   `@angular/elements` directly.
 - The Workbench package owns `@angular/elements` as a regular dependency pinned

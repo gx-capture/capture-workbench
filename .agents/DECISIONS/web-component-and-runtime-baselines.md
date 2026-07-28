@@ -25,7 +25,7 @@ dependencies are property-first; only a small common primitive attribute set is
 documented. The JSON configuration attribute and `capture-config-error` are
 intentional 0.x breaking-change removals.
 
-The npm scope changes to `@gx` only. GitHub URLs retain their real owner
+The npm scope changes to `@gx-capture` only. GitHub URLs retain their real owner
 `WodenWang820118`; changing them would point releases and schema identifiers at
 a repository that does not exist. The same distinction applies to copyright.
 

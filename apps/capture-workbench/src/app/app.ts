@@ -9,7 +9,7 @@ import {
   type CaptureCompletedEvent,
   type CaptureFailedEvent,
   type CaptureStructuringMode,
-} from '@gx/capture-workbench';
+} from '@gx-capture/capture-workbench';
 import { ValidationCaptureClientService } from './services/validation-client.service';
 import { CaptureWorkbenchUiState } from './services/capture-workbench-ui-state.service';
 

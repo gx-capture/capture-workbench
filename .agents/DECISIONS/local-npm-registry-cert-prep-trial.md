@@ -3,7 +3,7 @@
 ## Accepted approach
 
 Use Verdaccio on `127.0.0.1:4873` as a local npm-compatible registry. Publish
-the packed `@gx/capture-workbench` tarball there, then let cert-prep's isolated
+the packed `@gx-capture/capture-workbench` tarball there, then let cert-prep's isolated
 trial consumer run ordinary `pnpm install` against that registry.
 
 ## Rejected alternatives

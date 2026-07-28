@@ -66,7 +66,7 @@ or user-visible capture behavior.
   fixture exceptions. The runtime handshake uses `rxResource` with `forkJoin`
   and `take(1)` on both one-shot streams so browser fetch/Response completion
   cannot leave the resource in `loading`.
-- `@gx/capture-workbench` consumers and README examples use the new contract.
+- `@gx-capture/capture-workbench` consumers and README examples use the new contract.
 
 ## Test plan
 

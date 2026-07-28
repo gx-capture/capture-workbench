@@ -41,7 +41,7 @@ jobs:
           node-version: 24
           cache: pnpm
           registry-url: https://npm.pkg.github.com
-          scope: '@gx'
+          scope: '@gx-capture'
 
       - name: Install uv and Python 3.12
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
@@ -109,18 +109,30 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Install pnpm
+        uses: pnpm/action-setup@b0f76dfb45f55f8421693e4803ac7bb65143bd34 # v6
+        with:
+          version: 11.15.1
+          run_install: false
+
       - name: Install Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 24
           registry-url: https://npm.pkg.github.com
-          scope: '@gx'
+          scope: '@gx-capture'
 
       - name: Download release candidate
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: capture-candidate-${{ github.ref_name }}
           path: publication
+
+      - name: Install publication script dependencies
+        shell: pwsh
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
+        run: pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Publish runtime first, then the exact Capture Workbench package idempotently
         shell: pwsh
