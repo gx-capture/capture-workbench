@@ -16,7 +16,12 @@ from capture_runtime.ollama import (
     RuntimeUnavailableError,
 )
 from capture_runtime.structuring import (
+    CAPTURE_BLOCK_BATCH_SCHEMA,
+    CAPTURE_IDENTITY_BLOCK_BATCH_SCHEMA,
+    OLLAMA_CAPTURE_BLOCK_BATCH_SCHEMA,
+    OLLAMA_IDENTITY_BLOCK_BATCH_SCHEMA,
     StructuringValidationError,
+    ollama_structuring_batch_schema,
     validate_structuring_candidate,
 )
 
@@ -103,19 +108,51 @@ def _tags(config: OllamaRuntimeConfig) -> httpx.Response:
 
 def _valid_candidate(request_payload: dict[str, object]) -> str:
     prompt = json.loads(str(request_payload["prompt"]))
-    blocks = [
-        {
-            "blockId": f"block-{segment['segmentId']}",
-            "order": segment["order"],
+    blocks = []
+    for segment in prompt["rawSegments"]:
+        segment_id = segment.get("segmentId") or segment["sourceSegmentId"]
+        block = {
             "type": "paragraph",
-            "sourceSegmentId": segment["segmentId"],
-            "locator": segment["locator"],
-            "sourceText": segment["text"],
-            "targetText": f"Target: {segment['text']}",
+            "sourceSegmentId": segment_id,
         }
-        for segment in prompt["rawSegments"]
-    ]
+        if prompt["targetLanguage"] is not None:
+            block["targetText"] = f"Target: {segment['text']}"
+        blocks.append(block)
     return json.dumps({"blocks": blocks}, ensure_ascii=False)
+
+
+def _contains_max_length(value: object) -> bool:
+    if isinstance(value, dict):
+        return "maxLength" in value or any(_contains_max_length(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_contains_max_length(item) for item in value)
+    return False
+
+
+def test_ollama_generation_schema_keeps_shape_but_omits_grammar_hostile_maxima() -> None:
+    assert CAPTURE_BLOCK_BATCH_SCHEMA["title"] == OLLAMA_CAPTURE_BLOCK_BATCH_SCHEMA["title"]
+    assert _contains_max_length(CAPTURE_BLOCK_BATCH_SCHEMA)
+    assert not _contains_max_length(OLLAMA_CAPTURE_BLOCK_BATCH_SCHEMA)
+    definitions = OLLAMA_CAPTURE_BLOCK_BATCH_SCHEMA["$defs"]
+    assert "CaptureSemanticBlockV1" in definitions
+    assert "PageLocatorV1" not in definitions
+    assert "TimeLocatorV1" not in definitions
+
+
+def test_identity_generation_schema_excludes_source_text_projection() -> None:
+    assert CAPTURE_IDENTITY_BLOCK_BATCH_SCHEMA["title"] == "CaptureIdentityBlockBatchV1"
+    assert not _contains_max_length(OLLAMA_IDENTITY_BLOCK_BATCH_SCHEMA)
+    identity_definition = OLLAMA_IDENTITY_BLOCK_BATCH_SCHEMA["$defs"][
+        "CaptureIdentitySemanticBlockV1"
+    ]
+    assert "targetText" not in identity_definition["properties"]
+    assert (
+        ollama_structuring_batch_schema(target_language=None) == OLLAMA_IDENTITY_BLOCK_BATCH_SCHEMA
+    )
+    assert (
+        ollama_structuring_batch_schema(target_language="zh-TW")
+        == OLLAMA_CAPTURE_BLOCK_BATCH_SCHEMA
+    )
 
 
 def test_isolated_ollama_structures_token_bounded_batches(tmp_path: Path) -> None:
@@ -147,12 +184,13 @@ def test_isolated_ollama_structures_token_bounded_batches(tmp_path: Path) -> Non
     assert lifecycle.starts == 1
     assert document.created_at == NOW
     assert document.completed_at == COMPLETED_AT
-    assert len(generate_calls) >= 2
+    assert len(generate_calls) == 1
     supplied_ids: list[str] = []
     for call in generate_calls:
         prompt = json.loads(str(call["prompt"]))
         supplied_ids.extend(segment["segmentId"] for segment in prompt["rawSegments"])
         assert call["format"]["title"] == "CaptureBlockBatchV1"
+        assert call["think"] is False
         assert 0 < call["options"]["num_ctx"] <= 8_192
         assert 0 < call["options"]["num_predict"] <= 4_096
     assert supplied_ids == [segment.segment_id for segment in raw.segments]
@@ -162,8 +200,45 @@ def test_isolated_ollama_structures_token_bounded_batches(tmp_path: Path) -> Non
     ]
 
 
-@pytest.mark.parametrize("mutation", ["count", "order", "locator", "sourceText", "blockId"])
-def test_isolated_ollama_rejects_mutated_batch_provenance(
+def test_isolated_ollama_rebuilds_trusted_identity_target_from_raw_segments(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    generate_calls: list[dict[str, object]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/tags":
+            return _tags(config)
+        payload = json.loads(request.content)
+        generate_calls.append(payload)
+        return httpx.Response(200, json={"response": _valid_candidate(payload)})
+
+    provider = OllamaCaptureStructuringProvider(
+        FakeLifecycle(config),  # type: ignore[arg-type]
+        clock=FixedClock(),
+        transport=httpx.MockTransport(handler),
+    )
+
+    document = asyncio.run(
+        provider.structure(_raw(), target_language=None, cancel_event=asyncio.Event())
+    )
+
+    assert isinstance(document, CaptureDocumentV1)
+    assert validate_structuring_candidate(document, _raw()) == document
+    assert document.blocks[0].block_id == "block-page-1"
+    assert document.blocks[0].source_segment_id == "page-1"
+    assert document.blocks[0].source_text == _raw().segments[0].text
+    assert document.blocks[0].target_text == _raw().segments[0].text
+    identity_definition = generate_calls[0]["format"]["$defs"]["CaptureIdentitySemanticBlockV1"]
+    assert "targetText" not in identity_definition["properties"]
+    identity_prompt = json.loads(str(generate_calls[0]["prompt"]))
+    assert identity_prompt["rawSegments"] == [
+        {"sourceSegmentId": "page-1", "textPreview": _raw().segments[0].text}
+    ]
+
+
+@pytest.mark.parametrize("mutation", ["count", "sourceSegmentId", "type", "targetText"])
+def test_isolated_ollama_rejects_unbound_or_invalid_batch_semantics(
     tmp_path: Path,
     mutation: str,
 ) -> None:
@@ -177,14 +252,12 @@ def test_isolated_ollama_rejects_mutated_batch_provenance(
         blocks = candidate["blocks"]
         if mutation == "count":
             blocks.pop()
-        elif mutation == "order":
-            blocks[0]["order"] += 1
-        elif mutation == "locator":
-            blocks[0]["locator"]["page"] += 1
-        elif mutation == "sourceText":
-            blocks[0]["sourceText"] += " changed"
+        elif mutation == "sourceSegmentId":
+            blocks[0]["sourceSegmentId"] = "page-999"
+        elif mutation == "type":
+            blocks[0]["type"] = "invented"
         else:
-            blocks[0]["blockId"] = "model-invented-id"
+            blocks[0]["targetText"] = 42
         return httpx.Response(200, json={"response": json.dumps(candidate)})
 
     provider = OllamaCaptureStructuringProvider(
@@ -193,8 +266,10 @@ def test_isolated_ollama_rejects_mutated_batch_provenance(
         transport=httpx.MockTransport(handler),
     )
 
-    with pytest.raises(StructuringValidationError, match="batch|provenance"):
-        asyncio.run(provider.structure(_raw(), target_language=None, cancel_event=asyncio.Event()))
+    with pytest.raises(StructuringValidationError, match="batch|identity|semantic"):
+        asyncio.run(
+            provider.structure(_raw(), target_language="zh-TW", cancel_event=asyncio.Event())
+        )
 
 
 def test_isolated_ollama_fails_before_generation_for_oversized_segment(
@@ -220,7 +295,7 @@ def test_isolated_ollama_fails_before_generation_for_oversized_segment(
         asyncio.run(
             provider.structure(
                 _raw(text_chars=20_000),
-                target_language=None,
+                target_language="zh-TW",
                 cancel_event=asyncio.Event(),
             )
         )

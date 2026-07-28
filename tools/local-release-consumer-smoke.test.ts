@@ -33,14 +33,6 @@ async function createFixture(): Promise<string> {
     sha256: digest(executable),
     schemaFileName: RUNTIME_ASSET_NAMES[3],
     schemaSha256: digest(schema),
-    runtimeRequirements: {
-      'windowsml-ocr': {
-        artifactUrl: 'https://example.com/capture-windowsml-ocr.zip',
-        artifactFileName: 'capture-windowsml-ocr.zip',
-        bytes: 1,
-        sha256: '0'.repeat(64),
-      },
-    },
   };
   await writeFile(join(directory, manifest.fileName), executable);
   await writeFile(join(directory, manifest.schemaFileName), schema);
@@ -123,7 +115,6 @@ test('runtime manifest validation rejects non-Windows releases', () => {
           sha256: '0'.repeat(64),
           schemaFileName: RUNTIME_ASSET_NAMES[3],
           schemaSha256: '0'.repeat(64),
-          runtimeRequirements: {},
         },
         version,
       ),

@@ -104,7 +104,7 @@ export function createInstalledRegistry({
       concatMap((existing) => {
         const found = existing.filter(Boolean);
         return found.length > 0
-          ? throwError(() => new Error('A pre-existing Capture Workbench Verification installation was found; refusing to modify it.'))
+          ? throwError(() => new Error('A pre-existing Capture Workbench installation was found; refusing to modify it.'))
           : of(undefined);
       }),
     );

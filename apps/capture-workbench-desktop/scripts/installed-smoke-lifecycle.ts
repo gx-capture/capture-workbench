@@ -1,6 +1,5 @@
 import { spawn } from 'node:child_process';
-import { lstat } from 'node:fs';
-import { mkdir, readdir, realpath, rm } from 'node:fs/promises';
+import { lstat, mkdir, readdir, realpath, rm } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 
 import {
@@ -95,7 +94,7 @@ export function createInstalledSmokeLifecycle({
         defer(() => from(readdir(directoryRealPath, { withFileTypes: true }))).pipe(
           map((entries) =>
             entries.filter(
-              (entry) => entry.isFile() && /_x64-setup\.exe$/iu.test(entry.name),
+              (entry) => entry.isFile() && /^Capture Workbench_\d+\.\d+\.\d+_x64-setup\.exe$/u.test(entry.name),
             ),
           ),
           concatMap((installers) => {

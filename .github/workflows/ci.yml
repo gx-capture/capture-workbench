@@ -67,7 +67,7 @@ jobs:
           pnpm nx run capture-runtime:test
           pnpm nx run capture-runtime:build
 
-      - name: Verify Tauri harness
+      - name: Verify Capture Workbench desktop product
         shell: pwsh
         run: |
           pnpm nx run capture-workbench-desktop:cargo-fmt-check

@@ -67,13 +67,11 @@ const manifestFields = Object.freeze([
   'fileName',
   'manifestVersion',
   'platform',
-  'runtimeRequirements',
   'runtimeVersion',
   'schemaFileName',
   'schemaSha256',
   'sha256',
 ]);
-const maxWindowsmlBundleBytes = 536_870_912;
 
 export function validateRuntime(manifestPath, artifactPath, schemaPath) {
   return defer(() => from(readFile(manifestPath, 'utf8'))).pipe(
@@ -183,100 +181,6 @@ export function validateManifestShape(manifest) {
       'Capture document schemaSha256 must contain 64 hexadecimal characters.',
     );
   }
-  if (
-    !manifest.runtimeRequirements ||
-    typeof manifest.runtimeRequirements !== 'object' ||
-    Array.isArray(manifest.runtimeRequirements) ||
-    JSON.stringify(Object.keys(manifest.runtimeRequirements)) !==
-      JSON.stringify(['windowsml-ocr'])
-  ) {
-    throw new Error(
-      'Capture runtime manifest requires only runtimeRequirements.windowsml-ocr.',
-    );
-  }
-  const windowsml = manifest.runtimeRequirements['windowsml-ocr'];
-  validateWindowsmlRequirement(windowsml);
-}
-
-function validateWindowsmlRequirement(descriptor) {
-  if (
-    !descriptor ||
-    typeof descriptor !== 'object' ||
-    Array.isArray(descriptor)
-  ) {
-    throw new Error('WindowsML runtime requirement must be a JSON object.');
-  }
-  const fields = Object.keys(descriptor).sort();
-  if (
-    fields.length !== 4 ||
-    fields[0] !== 'artifactFileName' ||
-    fields[1] !== 'artifactUrl' ||
-    fields[2] !== 'bytes' ||
-    fields[3] !== 'sha256'
-  ) {
-    throw new Error(
-      'WindowsML runtime requirement contains unsupported descriptor fields.',
-    );
-  }
-  if (
-    typeof descriptor.artifactUrl !== 'string' ||
-    descriptor.artifactUrl.includes('%') ||
-    descriptor.artifactUrl.includes('\\') ||
-    [...descriptor.artifactUrl].some(
-      (character) => character.codePointAt(0) < 0x20,
-    )
-  ) {
-    throw new Error('WindowsML artifact URL is invalid.');
-  }
-  const match = descriptor.artifactUrl.match(
-    /^https:\/\/((?=.{1,253}\/)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*\.[a-z]{2,63})(\/(?:[A-Za-z0-9._~-]+\/)*([A-Za-z0-9._-]+\.zip))$/u,
-  );
-  if (!match) {
-    throw new Error('WindowsML artifact URL is invalid.');
-  }
-  if (match[2].split('/').some((segment) => ['.', '..'].includes(segment))) {
-    throw new Error('WindowsML artifact URL is invalid.');
-  }
-  const hostname = match[1];
-  if (
-    hostname === 'localhost' ||
-    ['.invalid', '.example', '.test', '.localhost'].some((suffix) =>
-      hostname.endsWith(suffix),
-    )
-  ) {
-    throw new Error(
-      'WindowsML artifact URL must be public HTTPS without credentials, query, or fragment.',
-    );
-  }
-  const urlFileName = match[3];
-  if (
-    typeof descriptor.artifactFileName !== 'string' ||
-    descriptor.artifactFileName !== urlFileName ||
-    descriptor.artifactFileName.length === 0 ||
-    /[\\/:]/u.test(descriptor.artifactFileName) ||
-    !/^[A-Za-z0-9._-]+\.zip$/iu.test(descriptor.artifactFileName)
-  ) {
-    throw new Error(
-      'WindowsML artifactFileName must be the plain .zip name from artifactUrl.',
-    );
-  }
-  if (
-    !Number.isSafeInteger(descriptor.bytes) ||
-    descriptor.bytes < 1 ||
-    descriptor.bytes > maxWindowsmlBundleBytes
-  ) {
-    throw new Error(
-      'WindowsML artifact bytes must be an integer from 1 through 536870912.',
-    );
-  }
-  if (
-    typeof descriptor.sha256 !== 'string' ||
-    !/^[a-f0-9]{64}$/u.test(descriptor.sha256)
-  ) {
-    throw new Error(
-      'WindowsML artifact sha256 must contain 64 lowercase hexadecimal characters.',
-    );
-  }
 }
 
 export function stageRuntime({
@@ -308,10 +212,6 @@ export function stageRuntime({
                 source,
                 runtimeVersion: manifest.runtimeVersion,
                 schemaSha256: manifest.schemaSha256,
-                windowsmlBundleSha256:
-                  manifest.runtimeRequirements?.['windowsml-ocr']?.sha256 ?? null,
-                windowsmlBundleBytes:
-                  manifest.runtimeRequirements?.['windowsml-ocr']?.bytes ?? null,
               },
               null,
               2,

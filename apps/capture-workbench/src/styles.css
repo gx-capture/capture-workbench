@@ -1,16 +1,14 @@
 html {
   color-scheme: light;
-  background: #f5f7fb;
-  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  background: #f2efe7;
+  font-family: 'Microsoft JhengHei UI', 'Microsoft JhengHei', ui-sans-serif, system-ui, sans-serif;
 }
 
 body {
   min-width: 20rem;
   min-height: 100vh;
   margin: 0;
-  background:
-    radial-gradient(circle at 90% 0%, rgb(79 70 229 / 10%), transparent 30rem),
-    #f5f7fb;
+  background: #f2efe7;
 }
 
 button,

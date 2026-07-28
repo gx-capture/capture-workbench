@@ -1,13 +1,14 @@
-# Capture Workbench Desktop Harness
+# Capture Workbench Desktop
 
-This Tauri 2 app is the Windows 11 x64 packaging and deterministic verification host for Capture Workbench. It is intentionally not the public desktop product.
+This Tauri 2 app is the Windows 11 x64, local-first Capture Workbench product.
+It owns the user's private source/result library and starts one verified
+Capture Runtime sidecar with a memory-only bearer token.
 
-The harness starts one verified `capture-runtime` sidecar on a random loopback port with a memory-only 256-bit bearer token. Its default development provider is an isolated Ollama lane with dedicated app data, model storage, port, profile, and PID file.
+The desktop host starts one verified `capture-runtime` sidecar on a random loopback port with a memory-only 256-bit bearer token. Its product provider is an isolated Ollama lane with dedicated app data, model storage, port, profile, and PID file.
 
-From a fresh checkout, run `corepack pnpm dev`. The root script uses the
-`dev-deterministic` target, which stages test-only runtime assets before Tauri
-starts. To exercise explicitly staged real runtime assets instead, stage them
-first and run `corepack pnpm dev:staged-runtime`; that path never stages a fake for you.
+Run `corepack pnpm dev` for the product lane. It generates and stages release
+runtime assets before Tauri starts. `corepack pnpm dev:deterministic` remains a
+diagnostic-only test lane and never proves real engines or Ollama.
 
 ## Native checks
 
@@ -20,7 +21,7 @@ corepack pnpm nx run capture-workbench-desktop:package-qa-test
 
 ## Runtime staging
 
-Release automation must stage a Windows x64 runtime and its release manifest before `build`:
+Release automation must stage a Windows x64 runtime and its release manifest before the NSIS product build:
 
 ```powershell
 node apps/capture-workbench-desktop/scripts/stage-runtime.ts `
@@ -28,21 +29,35 @@ node apps/capture-workbench-desktop/scripts/stage-runtime.ts `
   --manifest <capture-runtime-manifest.json> `
   --schema <capture-document-v1.schema.json> `
   --source release
-corepack pnpm nx run capture-workbench-desktop:build-nsis-release
+corepack pnpm nx run capture-workbench-desktop:build-nsis
 ```
 
 The ordinary `build` target compiles the Tauri app with `--no-bundle` so workspace-wide verification does not silently package a fake runtime. `stage-deterministic-runtime` and `build-nsis-deterministic` are test-only and are not publication artifacts.
 
+## Opt-in real Ollama smoke
+
+After the first-run wizard has prepared an isolated app-data directory, a user may prove a
+staged release runtime against one real PDF. This target is excluded from normal CI and never
+downloads a model itself:
+
+```powershell
+$env:CAPTURE_REAL_SMOKE_PDF = 'C:\path\to\user-provided.pdf'
+$env:CAPTURE_REAL_SMOKE_APP_DATA = 'C:\prepared\Capture Workbench app-data'
+corepack pnpm nx run capture-workbench-desktop:smoke-real-ollama
+```
+
+It accepts only that source PDF and records no source path or bearer token in its evidence.
+
 ## Installed deterministic smoke
 
-The installed harness check is intentionally opt-in because it performs a
+The installed deterministic smoke is intentionally opt-in because it performs a
 silent, current-user NSIS install and uninstall:
 
 ```powershell
 corepack pnpm nx run capture-workbench-desktop:smoke-installed-deterministic --skipNxCache
 ```
 
-It refuses to run over an existing Capture Workbench Verification install,
+It refuses to run over an existing Capture Workbench install,
 uses only an owned directory below `tmp/capture-workbench-desktop`, launches
 WebView2 debugging with process-scoped environment variables, and uploads one
 deterministic PDF, image, and audio fixture through the installed UI. Cleanup
@@ -56,11 +71,11 @@ real WindowsML, Whisper, Ollama, or licensed-fixture behavior.
 ## Loopback ownership boundary
 
 The current sidecar interface accepts port numbers rather than already-bound
-sockets. The harness therefore cannot hold a reservation while the runtime
+sockets. The desktop host therefore cannot hold a reservation while the runtime
 binds. Startup mitigates that TOCTOU window with at most three attempts within
 one 60-second budget; every attempt uses previously unused runtime/Ollama ports
 and a new bearer token. A failed attempt is stopped through its own Windows job
-object before another attempt begins. The harness never deletes the shared
+object before another attempt begins. The desktop host never deletes the shared
 Ollama PID record; the runtime lifecycle reconciles it only after proving the
 recorded PID is no longer alive. Shutdown cancellation prevents further attempts.
 On Windows the runtime root is created suspended, assigned to that attempt's
@@ -71,5 +86,5 @@ The runtime HTTP port is proven bound by the authenticated readiness handshake.
 The isolated Ollama port can still be claimed by another process after runtime
 readiness but before Ollama is started later. Fully eliminating that late-bind
 race requires a future runtime contract that accepts an inherited socket (or
-performs its own bind-and-launch recovery); the harness never resolves it by
+performs its own bind-and-launch recovery); the desktop host never resolves it by
 killing an unrelated process.

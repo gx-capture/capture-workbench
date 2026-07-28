@@ -18,6 +18,10 @@ test('Nx separates root verification build from release and deterministic NSIS l
   assert.deepEqual(project.targets['dev-deterministic'].dependsOn, [
     'stage-deterministic-runtime',
   ]);
+  assert.deepEqual(project.targets['dev-product'].dependsOn, [
+    'stage-product-runtime',
+  ]);
+  assert.equal(project.targets.dev, undefined);
   assert.match(
     project.targets['build-nsis-release'].options.commands[0],
     /assert-staged-runtime\.ts --release/u,
@@ -30,6 +34,13 @@ test('Nx separates root verification build from release and deterministic NSIS l
   assert.deepEqual(project.targets['package-qa'].dependsOn, [
     'build-nsis-deterministic',
   ]);
+  assert.deepEqual(project.targets['smoke-real-ollama'].dependsOn, [
+    'stage-product-runtime',
+  ]);
+  assert.match(
+    project.targets['smoke-real-ollama'].metadata.description,
+    /excluded from ordinary CI/u,
+  );
 });
 
 test('production CSP is strict while allowing only dynamic loopback API ports', async () => {
@@ -62,6 +73,28 @@ test('QA evidence rejects authorization material', () => {
   );
 });
 
+test('renderer IPC never receives the sidecar bearer token', async () => {
+  const [commands, desktopHost] = await Promise.all([
+    readFile(join(appRoot, 'src-tauri', 'src', 'commands.rs'), 'utf8'),
+    readFile(
+      join(
+        appRoot,
+        '..',
+        'capture-workbench',
+        'src',
+        'app',
+        'services',
+        'desktop-runtime-client.service.ts',
+      ),
+      'utf8',
+    ),
+  ]);
+  assert.doesNotMatch(commands, /pub fn backend_config/u);
+  assert.doesNotMatch(desktopHost, /backend_config|bearerToken|Authorization/u);
+  assert.match(commands, /runtime_create_capture/u);
+  assert.match(desktopHost, /runtime_create_capture/u);
+});
+
 test('native cleanup is PID-scoped and never executable-name scoped', async () => {
   const source = await readFile(
     join(appRoot, 'src-tauri', 'src', 'process.rs'),
@@ -89,6 +122,51 @@ test('desktop launcher advertises the bounded 50 MiB upload policy', async () =>
   assert.match(launchPolicy, /DEFAULT_MAX_UPLOAD_BYTES\.to_string\(\)/u);
 });
 
+test('WindowsML bundle metadata is runtime-owned, never injected by the host', async () => {
+  const workspaceRoot = join(appRoot, '..', '..');
+  const [launcher, stageRuntime, releaseBuilder, requirements] =
+    await Promise.all([
+      readFile(join(appRoot, 'src-tauri', 'src', 'launcher.rs'), 'utf8'),
+      readFile(join(appRoot, 'scripts', 'stage-runtime.ts'), 'utf8'),
+      readFile(
+        join(
+          workspaceRoot,
+          'packages',
+          'capture-runtime',
+          'scripts',
+          'build_release_artifacts.py',
+        ),
+        'utf8',
+      ),
+      readFile(
+        join(
+          workspaceRoot,
+          'packages',
+          'capture-runtime',
+          'src',
+          'capture_runtime',
+          'constants',
+          'requirements.py',
+        ),
+        'utf8',
+      ),
+    ]);
+  for (const source of [launcher, stageRuntime, releaseBuilder]) {
+    assert.doesNotMatch(source, /CAPTURE_WINDOWSML_BUNDLE/u);
+    assert.doesNotMatch(source, /runtimeRequirements/u);
+  }
+  assert.match(requirements, /WINDOWSML_BUNDLE_URL/u);
+  assert.match(requirements, /WINDOWSML_BUNDLE_SHA256/u);
+});
+
+test('real Ollama smoke uses the capture contract and validates profile provenance', async () => {
+  const source = await readFile(join(appRoot, 'scripts', 'real-ollama-smoke.ts'), 'utf8');
+  assert.match(source, /form\.set\('sourceKind', 'pdf'\)/u);
+  assert.match(source, /capture-workbench-qwen3\.5-4b-structure-v1/u);
+  assert.match(source, /\^sha256:\[a-f0-9\]\{64\}/u);
+  assert.doesNotMatch(source, /CAPTURE_WINDOWSML_BUNDLE/u);
+});
+
 test('deterministic runtime checks exact Host authority and canonical v1 names', async () => {
   const fixtureRoot = join(
     appRoot,
@@ -113,7 +191,14 @@ test('deterministic runtime checks exact Host authority and canonical v1 names',
 
 test('release workflow is SHA-pinned, least-privilege, and runtime-first', async () => {
   const workspaceRoot = join(appRoot, '..', '..');
-  const [workflow, releaseBuilder, ciWorkflow, publisher, runtimeProject] =
+  const [
+    workflow,
+    releaseBuilder,
+    executableBuilder,
+    ciWorkflow,
+    publisher,
+    runtimeProject,
+  ] =
     await Promise.all([
       readFile(
         join(workspaceRoot, '.github', 'workflows', 'release.yml'),
@@ -126,6 +211,16 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
           'capture-runtime',
           'scripts',
           'build_release_artifacts.py',
+        ),
+        'utf8',
+      ),
+      readFile(
+        join(
+          workspaceRoot,
+          'packages',
+          'capture-runtime',
+          'scripts',
+          'build_executable.py',
         ),
         'utf8',
       ),
@@ -151,6 +246,8 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
     /clean-install|attestation|production-preflight/u,
   );
   assert.match(workflow, /publish:[\s\S]*needs: build-candidate/u);
+  assert.match(workflow, /capture-workbench-desktop:build-nsis/u);
+  assert.match(workflow, /gh release upload/u);
   assert.match(
     workflow,
     /publish:[\s\S]*contents: write[\s\S]*packages: write/u,
@@ -170,6 +267,8 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
     releaseBuilder,
     /RuntimeSettings|OLLAMA_MODELS|WHISPER_MODELS/u,
   );
+  assert.match(executableBuilder, /--collect-all[\s\S]*"pypdf"/u);
+  assert.match(executableBuilder, /"pypdf",/u);
   assert.match(
     publisher,
     /preflightPackagePublication[\s\S]*ensureRuntimeReleasePublic[\s\S]*applyPackagePublication/u,

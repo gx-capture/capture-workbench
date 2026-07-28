@@ -1,8 +1,8 @@
 {
   "$schema": "../../../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "Capture Workbench Verification",
+  "productName": "Capture Workbench",
   "version": "0.3.0",
-  "identifier": "io.github.wodenwang820118.capture-workbench.verification",
+  "identifier": "io.github.wodenwang820118.capture-workbench",
   "build": {
     "beforeDevCommand": "corepack pnpm nx run capture-workbench:serve",
     "devUrl": "http://localhost:4200",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Capture Workbench Verification",
+        "title": "Capture Workbench",
         "width": 1280,
         "height": 860,
         "minWidth": 960,
