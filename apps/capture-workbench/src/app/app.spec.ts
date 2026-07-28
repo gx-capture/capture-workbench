@@ -5,8 +5,8 @@ import { App } from './app';
 import { DesktopWorkspaceStore } from './services/desktop-workspace.store';
 
 describe('App', () => {
-  it('mounts Angular Material controls in the Traditional Chinese desktop workbench', async () => {
-    await TestBed.configureTestingModule({
+  it('mounts Angular Material controls in the Traditional Chinese desktop workbench', () =>
+    TestBed.configureTestingModule({
       imports: [App],
       providers: [
         provideNoopAnimations(),
@@ -15,17 +15,17 @@ describe('App', () => {
           useValue: workspaceStub(),
         },
       ],
-    }).compileComponents();
-
-    const fixture = TestBed.createComponent(App);
-    fixture.detectChanges();
-    await fixture.whenStable();
-
-    expect(fixture.nativeElement.querySelector('h1')?.textContent).toContain('文件擷取工作台');
-    expect(fixture.nativeElement.querySelector('input[type="file"]')).not.toBeNull();
-    expect(fixture.nativeElement.querySelector('.mat-mdc-form-field')).not.toBeNull();
-    expect(fixture.nativeElement.querySelector('.mat-mdc-button-base')).not.toBeNull();
-  });
+    }).compileComponents().then(() => {
+      const fixture = TestBed.createComponent(App);
+      fixture.detectChanges();
+      return fixture.whenStable().then(() => {
+        expect(fixture.nativeElement.querySelector('h1')?.textContent).toContain('文件擷取工作台');
+        expect(fixture.nativeElement.querySelector('input[type="file"]')).not.toBeNull();
+        expect(fixture.nativeElement.querySelector('.mat-mdc-form-field')).not.toBeNull();
+        expect(fixture.nativeElement.querySelector('.mat-mdc-button-base')).not.toBeNull();
+      });
+    }),
+  );
 });
 
 function workspaceStub() {
@@ -53,7 +53,7 @@ function workspaceStub() {
     export: vi.fn(),
     delete: vi.fn(),
     formatBytes: (bytes: number) => `${bytes} B`,
-    formatDate: () => '2026年7月28日 上午11:18',
+    formatDate: () => '2026 年 7 月 28 日 11:18',
     stageLabel: () => '已完成',
     statusLabel: () => '已完成',
   };

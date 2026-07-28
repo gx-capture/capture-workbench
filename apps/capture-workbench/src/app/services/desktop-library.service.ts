@@ -1,38 +1,44 @@
-import { Injectable } from '@angular/core';
-import { invoke, isTauri } from '@tauri-apps/api/core';
+import { Injectable, inject } from '@angular/core';
 import type {
   CaptureDocumentV1,
   RawCaptureV1,
 } from '@gx-capture/capture-workbench';
+import { defer, from, map, Observable, switchMap } from 'rxjs';
 import type {
   DesktopLibraryDetail,
   DesktopLibraryExport,
   DesktopLibraryStatus,
   DesktopLibrarySummary,
 } from '../contracts';
+import { DesktopTauriCommandService } from './desktop-tauri-command.service';
 
 @Injectable({ providedIn: 'root' })
 export class DesktopLibraryService {
-  async createSource(file: File): Promise<DesktopLibrarySummary> {
-    return this.invoke<DesktopLibrarySummary>('library_create_source', {
-      input: {
+  private readonly commands = inject(DesktopTauriCommandService);
+
+  createSource(file: File): Observable<DesktopLibrarySummary> {
+    return defer(() => from(file.arrayBuffer())).pipe(
+      map((buffer) => ({
         fileName: file.name,
         mediaType: file.type,
-        bytes: Array.from(new Uint8Array(await file.arrayBuffer())),
-      },
-    });
+        bytes: Array.from(new Uint8Array(buffer)),
+      })),
+      switchMap((input) =>
+        this.commands.invoke<DesktopLibrarySummary>('library_create_source', { input }),
+      ),
+    );
   }
 
-  list(query = '', status = ''): Promise<readonly DesktopLibrarySummary[]> {
-    return this.invoke<readonly DesktopLibrarySummary[]>('library_list', {
+  list(query = '', status = '', signal?: AbortSignal): Observable<readonly DesktopLibrarySummary[]> {
+    return this.commands.invoke<readonly DesktopLibrarySummary[]>('library_list', {
       request: { query, status },
-    });
+    }, signal);
   }
 
-  get(documentId: string): Promise<DesktopLibraryDetail> {
-    return this.invoke<DesktopLibraryDetail>('library_get', {
+  get(documentId: string, signal?: AbortSignal): Observable<DesktopLibraryDetail> {
+    return this.commands.invoke<DesktopLibraryDetail>('library_get', {
       request: { documentId },
-    });
+    }, signal);
   }
 
   updateCapture(input: {
@@ -44,26 +50,19 @@ export class DesktopLibraryService {
     readonly result?: CaptureDocumentV1;
     readonly errorCode?: string;
     readonly errorMessage?: string;
-  }): Promise<DesktopLibrarySummary> {
-    return this.invoke<DesktopLibrarySummary>('library_update_capture', {
+  }): Observable<DesktopLibrarySummary> {
+    return this.commands.invoke<DesktopLibrarySummary>('library_update_capture', {
       update: input,
     });
   }
 
-  export(documentId: string, format: 'json' | 'text'): Promise<DesktopLibraryExport> {
-    return this.invoke<DesktopLibraryExport>('library_export', {
+  export(documentId: string, format: 'json' | 'text'): Observable<DesktopLibraryExport> {
+    return this.commands.invoke<DesktopLibraryExport>('library_export', {
       request: { documentId, format },
     });
   }
 
-  delete(documentId: string): Promise<void> {
-    return this.invoke<void>('library_delete', { request: { documentId } });
-  }
-
-  private async invoke<T>(command: string, args: Record<string, unknown>): Promise<T> {
-    if (!isTauri()) {
-      throw new Error('Capture Workbench 必須在 Windows 桌面 App 中開啟。');
-    }
-    return invoke<T>(command, args);
+  delete(documentId: string): Observable<void> {
+    return this.commands.invoke<void>('library_delete', { request: { documentId } });
   }
 }
