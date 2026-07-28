@@ -22,13 +22,15 @@ dependencies = [
 
 [project.optional-dependencies]
 windowsml = [
-  "onnxruntime-windowsml>=1.24.0,<2.0.0; sys_platform == 'win32'",
+  "onnxruntime-directml==1.24.4; sys_platform == 'win32'",
   "paddleocr==3.7.0",
   "paddlex[ocr-core]==3.7.1",
 ]
 whisper = [
-  "faster-whisper>=1.2.0,<2.0.0",
+  "faster-whisper==1.2.1",
   "huggingface-hub>=1.18.0,<2.0.0",
+  "onnxruntime-directml==1.24.4; sys_platform == 'win32'",
+  "onnxruntime>=1.14,<2.0; sys_platform != 'win32'",
 ]
 
 [project.scripts]
@@ -44,6 +46,11 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/capture_runtime"]
+
+[tool.uv]
+exclude-dependencies = [
+  { package = { name = "faster-whisper", version = "1.2.1" }, dependencies = ["onnxruntime"] },
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

@@ -33,6 +33,7 @@ interface RealDesktopSmokeEvidence {
   readonly realEnginesExercised: true;
   readonly sourceKind: 'pdf';
   readonly rawOcrVisible: true;
+  readonly ocrDevice: 'windowsml-dml' | 'cpu';
   readonly structuringEngine: 'ollama';
   readonly model: 'capture-workbench-qwen3.5-4b-structure-v1';
   readonly modelDigest: string;
@@ -46,6 +47,7 @@ export function assertRealDesktopSmokeEvidence(value: unknown): asserts value is
   assert.equal(report?.realEnginesExercised, true);
   assert.equal(report?.sourceKind, 'pdf');
   assert.equal(report?.rawOcrVisible, true);
+  assert.ok(report?.ocrDevice === 'windowsml-dml' || report?.ocrDevice === 'cpu');
   assert.equal(report?.structuringEngine, 'ollama');
   assert.equal(report?.model, 'capture-workbench-qwen3.5-4b-structure-v1');
   assert.match(report?.modelDigest ?? '', /^sha256:[a-f0-9]{64}$/u);
@@ -149,6 +151,13 @@ async function main(): Promise<void> {
       throw new Error('Standalone desktop UI did not display structured result text.');
     }
     const structured = parseStructuredProvenance(provenance);
+    const ocr = parseOcrProvenance(provenance);
+    const expectedOcrDevice = process.env.CAPTURE_REAL_DESKTOP_EXPECTED_OCR_DEVICE?.trim();
+    if (expectedOcrDevice && ocr.device !== expectedOcrDevice) {
+      throw new Error(
+        `Standalone desktop OCR used ${ocr.device}; expected ${expectedOcrDevice}.`,
+      );
+    }
     if (
       structured.engine !== 'ollama' ||
       structured.model !== 'capture-workbench-qwen3.5-4b-structure-v1' ||
@@ -168,6 +177,7 @@ async function main(): Promise<void> {
       realEnginesExercised: true,
       sourceKind: 'pdf',
       rawOcrVisible: true,
+      ocrDevice: ocr.device,
       structuringEngine: 'ollama',
       model: 'capture-workbench-qwen3.5-4b-structure-v1',
       modelDigest: structured.digest,
@@ -186,6 +196,17 @@ function parseStructuredProvenance(provenance: readonly string[]): { engine: str
   const value = provenance.find((entry) => entry.includes('capture-workbench-qwen3.5-4b-structure-v1')) ?? '';
   const [engine = '', model = '', digest = ''] = value.split(' · ').map((entry) => entry.trim());
   return { engine, model, digest };
+}
+
+function parseOcrProvenance(
+  provenance: readonly string[],
+): { engine: string; model: string; device: 'windowsml-dml' | 'cpu' } {
+  const value = provenance.find((entry) => entry.startsWith('windowsml-ocr · ')) ?? '';
+  const [engine = '', model = '', device = ''] = value.split(' · ').map((entry) => entry.trim());
+  if (engine !== 'windowsml-ocr' || !model || (device !== 'windowsml-dml' && device !== 'cpu')) {
+    throw new Error('Standalone desktop UI did not display a recognized OCR device provenance.');
+  }
+  return { engine, model, device };
 }
 
 function assertConfiguredHostAppData(appData: string): void {

@@ -118,7 +118,8 @@ environment and Authorization header; they are never accepted in URLs.
 - `CAPTURE_OLLAMA_MODELS_DIR=<capture-owned path>` (optional; ambient
   `OLLAMA_MODELS` is intentionally ignored so a host model store is never reused)
 - `CAPTURE_EXTRACTION_PROVIDER=runtime|fake` (`runtime` is the production default)
-- `CAPTURE_WINDOWSML_MODEL_DIR`, `CAPTURE_WINDOWSML_DEVICE_ID`
+- `CAPTURE_WINDOWSML_MODEL_DIR`, `CAPTURE_WINDOWSML_DEVICE_ID` (DirectML adapter index; defaults
+  to `0`, the AMD Radeon 880M iGPU route used by cert-prep)
 - `CAPTURE_WHISPER_MODELS_DIR`, `CAPTURE_WHISPER_PRIMARY_MODEL`,
   `CAPTURE_WHISPER_FALLBACK_MODEL`, `CAPTURE_WHISPER_PREFER_GPU`
 - `CAPTURE_MAX_PDF_PAGES`, `CAPTURE_MAX_IMAGE_PIXELS`, `CAPTURE_OCR_RENDER_SCALE`,
@@ -136,7 +137,10 @@ The deterministic extractor is deliberately opt-in. The standalone production ex
 implemented in this package and has no imports from Cert Prep or another host: embedded PDF
 pages use pypdf, scanned pages render through pypdfium2 and use WindowsML OCR, PNG/JPEG/WebP
 are EXIF-corrected and normalized to RGB PNG before OCR, and supported audio uses local-only
-faster-whisper models. DML has one explicit CPU retry; Whisper has a CUDA-resource CPU fallback.
+faster-whisper models. Windows OCR uses DirectML when `DmlExecutionProvider` is registered and
+falls back to CPU only when that provider is absent; a registered DML provider that fails during
+initialization or inference is reported as an extraction failure. Whisper retains its separate
+CUDA-resource CPU fallback.
 Missing dependencies or model assets produce `requirement_unavailable`, never fake content.
 
 Capture creation requires multipart fields `file`, `sourceKind=pdf|image|audio`, and optional

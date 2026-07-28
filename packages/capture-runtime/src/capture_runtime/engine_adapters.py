@@ -128,7 +128,7 @@ def _paddle_texts(results: Any) -> list[str]:
 
 
 class WindowsMLOcrAdapter:
-    """PaddleOCR 3.7 ONNX pipeline with DML-first and one CPU retry."""
+    """PaddleOCR 3.7 ONNX pipeline with DML-first and strict CPU fallback."""
 
     def __init__(
         self,
@@ -216,14 +216,11 @@ class WindowsMLOcrAdapter:
         except Exception as error:
             if self._device == "cpu":
                 raise
-            self._device = "cpu"
-            self._warning = (
-                "WindowsML DML execution failed; CPU OCR fallback was used: "
+            raise EngineRuntimeUnavailableError(
+                "WindowsML DirectML OCR execution failed while a GPU provider was available; "
+                "CPU fallback is disabled: "
                 f"{type(error).__name__}: {error}"
-            )[:500]
-            self._pipeline = None
-            pipeline = self._get_pipeline()
-            results = self._predict(pipeline, image_png)
+            ) from error
         if self._model_digest is None:
             self._model_digest = _directory_digest(self.model_dir, WINDOWSML_REQUIRED_MODEL_FILES)
         return OcrTextResult(
