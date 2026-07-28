@@ -1,5 +1,5 @@
-import { Injectable } from '@angular/core';
-import { invoke, isTauri } from '@tauri-apps/api/core';
+import { computed, Injectable, inject } from '@angular/core';
+import { rxResource } from '@angular/core/rxjs-interop';
 import {
   type CaptureDocumentV1,
   type CaptureJobV1,
@@ -8,12 +8,46 @@ import {
   type RuntimeInstallationV1,
   type RuntimeRequirementV1,
 } from '@gx-capture/capture-workbench';
-import { defer, map, type Observable } from 'rxjs';
+import {
+  EMPTY,
+  defer,
+  expand,
+  filter,
+  map,
+  Observable,
+  switchMap,
+  takeWhile,
+  tap,
+  timeout,
+  throwError,
+  timer,
+} from 'rxjs';
 import type { DesktopRuntimeStatus } from '../contracts';
+import { DesktopTauriCommandService } from './desktop-tauri-command.service';
 
-export class DesktopCaptureClient {
+const STARTING_STATUS: DesktopRuntimeStatus = {
+  status: 'starting',
+  detail: 'Runtime 正在啟動…',
+};
+
+@Injectable({ providedIn: 'root' })
+export class DesktopRuntimeClientService {
+  private readonly commands = inject(DesktopTauriCommandService);
+
+  readonly readiness = rxResource<DesktopRuntimeStatus, undefined>({
+    defaultValue: STARTING_STATUS,
+    stream: ({ abortSignal }) => this.waitUntilReady$(abortSignal),
+  });
+  readonly status = this.readiness.value;
+  readonly resourceStatus = this.readiness.status;
+  readonly error = this.readiness.error;
+  readonly ready = computed(
+    () => this.resourceStatus() === 'resolved' && this.status().status === 'ready',
+  );
+
   getRequirements(signal?: AbortSignal): Observable<readonly RuntimeRequirementV1[]> {
-    return this.invoke<{ readonly items: readonly RuntimeRequirementV1[] }>('runtime_requirements', {}, signal)
+    return this.commands
+      .invoke<{ readonly items: readonly RuntimeRequirementV1[] }>('runtime_requirements', {}, signal)
       .pipe(map((response) => response.items));
   }
 
@@ -22,81 +56,68 @@ export class DesktopCaptureClient {
     readonly requirementId: CaptureRequirementId;
     readonly consent: true;
   }, signal?: AbortSignal): Observable<RuntimeInstallationV1> {
-    return this.invoke('runtime_start_installation', {
+    return this.commands.invoke('runtime_start_installation', {
       input: { clientRequestId: input.clientRequestId, requirementId: input.requirementId },
     }, signal);
   }
 
   getInstallation(installationId: string, signal?: AbortSignal): Observable<RuntimeInstallationV1> {
-    return this.invoke('runtime_get_installation', { input: { id: installationId } }, signal);
+    return this.commands.invoke('runtime_get_installation', { input: { id: installationId } }, signal);
   }
 
   createCapture(documentId: string, clientRequestId: string, signal?: AbortSignal): Observable<CaptureJobV1> {
-    return this.invoke('runtime_create_capture', {
+    return this.commands.invoke('runtime_create_capture', {
       input: { documentId, clientRequestId },
     }, signal);
   }
 
   getCapture(captureId: string, signal?: AbortSignal): Observable<CaptureJobV1> {
-    return this.invoke('runtime_get_capture', { input: { id: captureId } }, signal);
+    return this.commands.invoke('runtime_get_capture', { input: { id: captureId } }, signal);
   }
 
   cancelCapture(captureId: string, signal?: AbortSignal): Observable<CaptureJobV1> {
-    return this.invoke('runtime_cancel_capture', { input: { id: captureId } }, signal);
+    return this.commands.invoke('runtime_cancel_capture', { input: { id: captureId } }, signal);
   }
 
   getRaw(captureId: string, signal?: AbortSignal): Observable<RawCaptureV1> {
-    return this.invoke('runtime_get_raw', { input: { id: captureId } }, signal);
+    return this.commands.invoke('runtime_get_raw', { input: { id: captureId } }, signal);
   }
 
   getResult(captureId: string, signal?: AbortSignal): Observable<CaptureDocumentV1> {
-    return this.invoke('runtime_get_result', { input: { id: captureId } }, signal);
+    return this.commands.invoke('runtime_get_result', { input: { id: captureId } }, signal);
   }
 
   deleteCapture(captureId: string, signal?: AbortSignal): Observable<void> {
-    return this.invoke<null>('runtime_delete_capture', { input: { id: captureId } }, signal)
+    return this.commands
+      .invoke<null>('runtime_delete_capture', { input: { id: captureId } }, signal)
       .pipe(map(() => undefined));
   }
 
-  private invoke<T>(command: string, args: Record<string, unknown>, signal?: AbortSignal): Observable<T> {
-    return defer(() => {
-      if (signal?.aborted) return Promise.reject(new DOMException('處理已取消。', 'AbortError'));
-      if (!isTauri()) return Promise.reject(new Error('Capture Workbench 僅能在 Windows 桌面 App 中使用。'));
-      return invoke<T>(command, args);
-    });
-  }
-}
-
-@Injectable({ providedIn: 'root' })
-export class DesktopRuntimeClientService {
-  private client?: DesktopCaptureClient;
-
-  async getClient(): Promise<DesktopCaptureClient> {
-    if (this.client) return this.client;
-    await this.waitUntilReady();
-    this.client = new DesktopCaptureClient();
-    return this.client;
+  reload(): void {
+    this.readiness.reload();
   }
 
-  async status(): Promise<DesktopRuntimeStatus> {
-    if (!isTauri()) {
-      throw new Error('Capture Workbench 僅能在 Windows 桌面 App 中使用。');
-    }
-    return invoke<DesktopRuntimeStatus>('desktop_runtime_status');
+  private status$(signal: AbortSignal): Observable<DesktopRuntimeStatus> {
+    return this.commands.invoke<DesktopRuntimeStatus>('desktop_runtime_status', {}, signal);
   }
 
-  private async waitUntilReady(): Promise<void> {
-    const deadline = Date.now() + 60_000;
-    let lastDetail = 'Runtime 正在準備中。';
-    while (Date.now() < deadline) {
-      const status = await this.status();
-      lastDetail = status.detail;
-      if (status.status === 'ready') return;
-      if (status.status === 'failed' || status.status === 'stopped') {
-        throw new Error(status.detail);
-      }
-      await new Promise<void>((resolve) => globalThis.setTimeout(resolve, 500));
-    }
-    throw new Error(`Capture Runtime 準備逾時：${lastDetail}`);
+  private waitUntilReady$(signal: AbortSignal): Observable<DesktopRuntimeStatus> {
+    let lastDetail = STARTING_STATUS.detail;
+    return defer(() => this.status$(signal)).pipe(
+      tap((status) => lastDetail = status.detail),
+      expand((status) => {
+        if (status.status === 'ready') return EMPTY;
+        if (status.status === 'failed' || status.status === 'stopped') {
+          return throwError(() => new Error(status.detail));
+        }
+        return timer(500).pipe(switchMap(() => this.status$(signal)));
+      }),
+      filter((status) => status.status === 'ready'),
+      takeWhile((status) => status.status === 'ready', true),
+      timeout({
+        first: 60_000,
+        with: () => throwError(() => new Error(`Capture Runtime 準備逾時：${lastDetail}`)),
+      }),
+    );
   }
 }

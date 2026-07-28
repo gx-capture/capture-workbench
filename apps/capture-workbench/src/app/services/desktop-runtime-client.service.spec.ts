@@ -1,0 +1,31 @@
+import { TestBed } from '@angular/core/testing';
+import { of } from 'rxjs';
+import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
+import { DesktopTauriCommandService } from './desktop-tauri-command.service';
+
+describe('DesktopRuntimeClientService', () => {
+  it('exposes runtime readiness through rxResource and commands through Observables', () => {
+    const commands = {
+      invoke: vi.fn((command: string) => command === 'desktop_runtime_status'
+        ? of({ status: 'ready', detail: 'Runtime ready' })
+        : of({ items: [] })),
+    };
+    TestBed.configureTestingModule({
+      providers: [
+        { provide: DesktopTauriCommandService, useValue: commands },
+        DesktopRuntimeClientService,
+      ],
+    });
+
+    const service = TestBed.inject(DesktopRuntimeClientService);
+    TestBed.tick();
+
+    expect(service.readiness.status()).toBe('resolved');
+    expect(service.ready()).toBe(true);
+
+    let requirements: readonly unknown[] | undefined;
+    service.getRequirements().subscribe((value) => requirements = value);
+    expect(requirements).toEqual([]);
+    expect(commands.invoke).toHaveBeenCalledWith('runtime_requirements', {}, undefined);
+  });
+});

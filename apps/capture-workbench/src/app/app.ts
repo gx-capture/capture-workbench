@@ -3,7 +3,6 @@ import {
   Component,
   ElementRef,
   inject,
-  OnInit,
   viewChild,
 } from '@angular/core';
 import { MatButton } from '@angular/material/button';
@@ -32,12 +31,12 @@ import { DesktopWorkspaceStore } from './services/desktop-workspace.store';
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
-export class App implements OnInit {
+export class App {
   protected readonly store = inject(DesktopWorkspaceStore);
   protected readonly sourceInput = viewChild.required<ElementRef<HTMLInputElement>>('sourceInput');
 
-  ngOnInit(): void {
-    void this.store.initialize();
+  constructor() {
+    this.store.initialize();
   }
 
   protected addFiles(event: Event): void {
