@@ -1,9 +1,15 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { copyFileSync } from 'node:fs';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import test from 'node:test';
 
 import {
@@ -12,6 +18,8 @@ import {
   sha512Integrity,
 } from './publish-release.ts';
 
+const version = '0.3.2';
+const tag = `v${version}`;
 const runtimeAssetNames = [
   'capture-runtime-x86_64-pc-windows-msvc.exe',
   'capture-runtime-x86_64-pc-windows-msvc.exe.sha256',
@@ -19,64 +27,157 @@ const runtimeAssetNames = [
   'capture-document-v1.schema.json',
 ];
 
-async function createRuntimeFixture(directory, version) {
-  const runtimeDirectory = join(directory, 'runtime');
-  await mkdir(runtimeDirectory);
-  const executable = Buffer.from('runtime executable');
-  const executablePath = join(runtimeDirectory, runtimeAssetNames[0]);
-  await writeFile(executablePath, executable);
-  const executableDigest = createHash('sha256').update(executable).digest('hex');
-  await writeFile(
-    join(runtimeDirectory, runtimeAssetNames[1]),
-    `${executableDigest}  ${runtimeAssetNames[0]}\n`,
-    'utf8',
-  );
-  const schema = Buffer.from('{"$schema":"https://json-schema.org/draft/2020-12/schema"}\n');
-  const schemaPath = join(runtimeDirectory, runtimeAssetNames[3]);
-  await writeFile(schemaPath, schema);
-  const schemaDigest = createHash('sha256').update(schema).digest('hex');
-  await writeFile(
-    join(runtimeDirectory, runtimeAssetNames[2]),
-    JSON.stringify({
-      runtimeVersion: version,
-      fileName: runtimeAssetNames[0],
-      bytes: executable.byteLength,
-      sha256: executableDigest,
-      schemaFileName: runtimeAssetNames[3],
-      schemaSha256: schemaDigest,
-    }),
-    'utf8',
-  );
-  const installerPath = join(directory, 'capture-workbench-installer.exe');
-  await writeFile(installerPath, 'installer bytes', 'utf8');
-  return { runtimeDirectory, installerPath };
+function hash(bytes, algorithm, encoding = 'hex') {
+  return createHash(algorithm).update(bytes).digest(encoding);
 }
 
 function success(stdout = '') {
   return { status: 0, stdout, stderr: '' };
 }
 
-function npmInspection(version, integrity) {
-  return JSON.stringify([
-    {
-      name: '@gx-capture/capture-workbench',
-      version,
-      integrity,
-    },
-  ]);
+function failure(stderr) {
+  return { status: 1, stdout: '', stderr };
 }
 
 function observe(observable) {
   return new Promise((resolve, reject) => {
-    let value;
-    observable.subscribe({
-      next: (nextValue) => {
-        value = nextValue;
-      },
-      error: reject,
-      complete: () => resolve(value),
-    });
+    observable.subscribe({ error: reject, complete: resolve });
   });
+}
+
+function createCandidate() {
+  const root = mkdtempSync(join(tmpdir(), 'capture-publisher-'));
+  const runtimeDirectory = join(root, 'runtime');
+  mkdirSync(runtimeDirectory);
+  const executableName = runtimeAssetNames[0];
+  const executable = Buffer.from('runtime executable bytes');
+  const executableDigest = hash(executable, 'sha256');
+  const schema = Buffer.from('{"type":"object"}\n');
+  const schemaDigest = hash(schema, 'sha256');
+  writeFileSync(join(runtimeDirectory, executableName), executable);
+  writeFileSync(
+    join(runtimeDirectory, runtimeAssetNames[1]),
+    `${executableDigest}  ${executableName}\n`,
+  );
+  writeFileSync(
+    join(runtimeDirectory, runtimeAssetNames[2]),
+    `${JSON.stringify({
+      runtimeVersion: version,
+      fileName: executableName,
+      bytes: executable.length,
+      sha256: executableDigest,
+      schemaFileName: runtimeAssetNames[3],
+      schemaSha256: schemaDigest,
+    })}\n`,
+  );
+  writeFileSync(join(runtimeDirectory, runtimeAssetNames[3]), schema);
+  const installerPath = join(root, `Capture Workbench_${version}_x64-setup.exe`);
+  writeFileSync(installerPath, 'installer bytes');
+  const packagePath = join(root, `gx-capture-capture-workbench-${version}.tgz`);
+  const packageBytes = Buffer.from('package bytes');
+  writeFileSync(packagePath, packageBytes);
+  const packageIntegrity = `sha512-${hash(
+    packageBytes,
+    'sha512',
+    'base64',
+  )}`;
+  return {
+    root,
+    input: {
+      tag,
+      version,
+      runtimeDirectory,
+      installerPath,
+      packagePath,
+    },
+    assets: [...runtimeAssetNames, basename(installerPath)].map((name) =>
+      name === basename(installerPath)
+        ? installerPath
+        : join(runtimeDirectory, name),
+    ),
+    packageIntegrity,
+  };
+}
+
+function createRemote(candidate, initial = {}) {
+  const calls = [];
+  const assets = new Map(
+    (initial.assets ?? []).map((path) => [
+      basename(path),
+      Buffer.from(readFileSync(path)),
+    ]),
+  );
+  const state = {
+    release: initial.release ?? 'missing',
+    packageIntegrity: initial.packageIntegrity,
+    fail: initial.fail,
+  };
+  const runCommand = (command, args) => {
+    calls.push([command, ...args]);
+    if (command === 'npm' && args[0] === 'pack') {
+      return success(
+        JSON.stringify([
+          {
+            name: '@gx-capture/capture-workbench',
+            version,
+            integrity: candidate.packageIntegrity,
+          },
+        ]),
+      );
+    }
+    if (command === 'npm' && args[0] === 'view') {
+      return state.packageIntegrity === undefined
+        ? failure('E404 Not Found')
+        : success(JSON.stringify(state.packageIntegrity));
+    }
+    if (command === 'npm' && args[0] === 'publish') {
+      if (state.fail === 'publish') throw new Error('simulated npm failure');
+      state.packageIntegrity = candidate.packageIntegrity;
+      return success();
+    }
+    if (command === 'gh' && args[0] === 'release' && args[1] === 'view') {
+      return state.release === 'missing'
+        ? failure('release not found')
+        : success(JSON.stringify({ isDraft: state.release === 'draft' }));
+    }
+    if (command === 'gh' && args[0] === 'release' && args[1] === 'create') {
+      state.release = 'draft';
+      return success();
+    }
+    if (command === 'gh' && args[0] === 'release' && args[1] === 'download') {
+      const name = args[args.indexOf('--pattern') + 1];
+      const destination = args[args.indexOf('--dir') + 1];
+      const bytes = assets.get(name);
+      if (!bytes) return failure('no assets matched');
+      writeFileSync(join(destination, name), bytes);
+      return success();
+    }
+    if (command === 'gh' && args[0] === 'release' && args[1] === 'upload') {
+      const path = args[3];
+      if (state.fail === `upload:${basename(path)}`) {
+        throw new Error('simulated upload failure');
+      }
+      assets.set(basename(path), Buffer.from(readFileSync(path)));
+      return success();
+    }
+    if (command === 'gh' && args[0] === 'release' && args[1] === 'edit') {
+      if (state.fail === 'edit') throw new Error('simulated edit failure');
+      state.release = 'public';
+      return success();
+    }
+    throw new Error(`Unexpected command: ${command} ${args.join(' ')}`);
+  };
+  return { assets, calls, runCommand, state };
+}
+
+function mutations(calls) {
+  return calls.filter(
+    ([command, group, operation]) =>
+      (command === 'gh' &&
+        group === 'release' &&
+        ['create', 'upload', 'edit'].includes(operation)) ||
+      (command === 'npm' && group === 'publish'),
+  );
 }
 
 test('package publication is idempotent only for exact integrity', () => {
@@ -95,133 +196,263 @@ test('package publication is idempotent only for exact integrity', () => {
 });
 
 test('package integrity uses exact tarball bytes', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'capture-package-integrity-'));
+  const root = mkdtempSync(join(tmpdir(), 'capture-integrity-'));
   try {
-    const path = join(directory, 'package.tgz');
-    await writeFile(path, 'first', 'utf8');
-    const first = await observe(sha512Integrity(path));
-    await writeFile(path, 'second', 'utf8');
-    const second = await observe(sha512Integrity(path));
-    assert.match(first, /^sha512-[A-Za-z0-9+/]+={0,2}$/u);
+    const path = join(root, 'package.tgz');
+    writeFileSync(path, 'first');
+    const first = await new Promise((resolve, reject) =>
+      sha512Integrity(path).subscribe({ next: resolve, error: reject }),
+    );
+    writeFileSync(path, 'second');
+    const second = await new Promise((resolve, reject) =>
+      sha512Integrity(path).subscribe({ next: resolve, error: reject }),
+    );
     assert.notEqual(first, second);
   } finally {
-    await rm(directory, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
-test('registry integrity conflict stops before every GitHub release mutation', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'capture-publish-conflict-'));
+test('missing state creates a draft and makes public only after assets and package verify', async () => {
+  const candidate = createCandidate();
   try {
-    const packagePath = join(directory, 'capture-workbench-0.1.0.tgz');
-    await writeFile(packagePath, 'local package bytes', 'utf8');
-    const runtime = await createRuntimeFixture(directory, '0.1.0');
-    const localIntegrity = await observe(sha512Integrity(packagePath));
-    const calls = [];
-    const runCommand = (command, args) => {
-      calls.push([command, ...args]);
-      if (command === 'npm' && args[0] === 'pack') {
-        return success(npmInspection('0.1.0', localIntegrity));
-      }
-      if (command === 'npm' && args[0] === 'view') {
-        return success(JSON.stringify('sha512-conflicting'));
-      }
-      if (
-        command === 'gh' &&
-        args[0] === 'release' &&
-        args[1] === 'view'
-      ) {
-        return success(JSON.stringify({ isDraft: false }));
-      }
-      throw new Error(`Unexpected command: ${command} ${args.join(' ')}`);
-    };
+    const remote = createRemote(candidate);
+    await observe(
+      publishRelease(candidate.input, { runCommand: remote.runCommand }),
+    );
+    assert.equal(remote.state.release, 'public');
+    assert.equal(remote.state.packageIntegrity, candidate.packageIntegrity);
+    assert.deepEqual([...remote.assets.keys()].sort(), [
+      ...runtimeAssetNames,
+      basename(candidate.input.installerPath),
+    ].sort());
+    const mutationCalls = mutations(remote.calls);
+    assert.deepEqual(mutationCalls[0].slice(0, 3), [
+      'gh',
+      'release',
+      'create',
+    ]);
+    assert.deepEqual(mutationCalls.at(-1).slice(0, 3), [
+      'gh',
+      'release',
+      'edit',
+    ]);
+  } finally {
+    rmSync(candidate.root, { recursive: true, force: true });
+  }
+});
 
+test('draft retry uploads only missing assets and skips an exact package', async () => {
+  const candidate = createCandidate();
+  try {
+    const remote = createRemote(candidate, {
+      release: 'draft',
+      packageIntegrity: candidate.packageIntegrity,
+      assets: candidate.assets.slice(0, 4),
+    });
+    await observe(
+      publishRelease(candidate.input, { runCommand: remote.runCommand }),
+    );
+    const uploads = remote.calls.filter(
+      ([command, group, operation]) =>
+        command === 'gh' && group === 'release' && operation === 'upload',
+    );
+    assert.equal(uploads.length, 1);
+    assert.equal(basename(uploads[0][4]), basename(candidate.input.installerPath));
+    assert.equal(
+      remote.calls.some(
+        ([command, operation]) =>
+          command === 'npm' && operation === 'publish',
+      ),
+      false,
+    );
+  } finally {
+    rmSync(candidate.root, { recursive: true, force: true });
+  }
+});
+
+test('exact public release retry is read-only', async () => {
+  const candidate = createCandidate();
+  try {
+    const remote = createRemote(candidate, {
+      release: 'public',
+      packageIntegrity: candidate.packageIntegrity,
+      assets: candidate.assets,
+    });
+    await observe(
+      publishRelease(candidate.input, { runCommand: remote.runCommand }),
+    );
+    assert.deepEqual(mutations(remote.calls), []);
+  } finally {
+    rmSync(candidate.root, { recursive: true, force: true });
+  }
+});
+
+test('public release with a missing or different asset fails read-only', async () => {
+  const candidate = createCandidate();
+  try {
+    const missing = createRemote(candidate, {
+      release: 'public',
+      packageIntegrity: candidate.packageIntegrity,
+      assets: candidate.assets.slice(0, 4),
+    });
     await assert.rejects(
-      observe(publishRelease(
-        {
-          tag: 'v0.1.0',
-          version: '0.1.0',
-          ...runtime,
-          packagePath,
-        },
-        { runCommand },
-      )),
+      observe(
+        publishRelease(candidate.input, { runCommand: missing.runCommand }),
+      ),
+      /missing/u,
+    );
+    assert.deepEqual(mutations(missing.calls), []);
+
+    const different = createRemote(candidate, {
+      release: 'public',
+      packageIntegrity: candidate.packageIntegrity,
+      assets: candidate.assets,
+    });
+    different.assets.set(runtimeAssetNames[0], Buffer.from('different'));
+    await assert.rejects(
+      observe(
+        publishRelease(candidate.input, { runCommand: different.runCommand }),
+      ),
+      /differs/u,
+    );
+    assert.deepEqual(mutations(different.calls), []);
+  } finally {
+    rmSync(candidate.root, { recursive: true, force: true });
+  }
+});
+
+test('package conflict and malformed local candidate stop before mutations', async () => {
+  const candidate = createCandidate();
+  try {
+    const conflict = createRemote(candidate, {
+      packageIntegrity: 'sha512-different',
+    });
+    await assert.rejects(
+      observe(
+        publishRelease(candidate.input, { runCommand: conflict.runCommand }),
+      ),
       /integrity differs/u,
     );
-    assert.equal(
-      calls.filter(
-        ([command, group, operation]) =>
-          command === 'gh' &&
-          group === 'release' &&
-          ['create', 'upload', 'edit'].includes(operation),
-      ).length,
-      0,
+    assert.deepEqual(mutations(conflict.calls), []);
+
+    writeFileSync(join(candidate.input.runtimeDirectory, 'unexpected.txt'), 'x');
+    const invalid = createRemote(candidate);
+    await assert.rejects(
+      observe(
+        publishRelease(candidate.input, { runCommand: invalid.runCommand }),
+      ),
+      /only the canonical assets/u,
     );
+    assert.deepEqual(invalid.calls, []);
   } finally {
-    await rm(directory, { recursive: true, force: true });
+    rmSync(candidate.root, { recursive: true, force: true });
   }
 });
 
-test('exact existing package and public runtime remain mutation-free on retries', async () => {
-  const directory = await mkdtemp(
-    join(tmpdir(), 'capture-publish-idempotent-'),
-  );
+test('symlinked candidate assets are rejected during local preflight', async (t) => {
+  const candidate = createCandidate();
   try {
-    const runtimeDirectory = join(directory, 'runtime');
-    const packagePath = join(directory, 'capture-workbench-0.1.0.tgz');
-    await writeFile(packagePath, 'exact package bytes', 'utf8');
-    const runtime = await createRuntimeFixture(directory, '0.1.0');
-    const localIntegrity = await observe(sha512Integrity(packagePath));
-    const calls = [];
-    const runCommand = (command, args) => {
-      calls.push([command, ...args]);
-      if (command === 'npm' && args[0] === 'pack') {
-        return success(npmInspection('0.1.0', localIntegrity));
+    const asset = join(candidate.input.runtimeDirectory, runtimeAssetNames[3]);
+    rmSync(asset);
+    try {
+      symlinkSync(candidate.input.packagePath, asset);
+    } catch (error) {
+      if (error?.code === 'EPERM') {
+        t.skip('Windows symlink creation is not available.');
+        return;
       }
-      if (command === 'npm' && args[0] === 'view') {
-        return success(JSON.stringify(localIntegrity));
-      }
-      if (command === 'gh' && args[0] === 'release' && args[1] === 'view') {
-        return success(JSON.stringify({ isDraft: false }));
-      }
-      if (command === 'gh' && args[0] === 'release' && args[1] === 'download') {
-        const pattern = args[args.indexOf('--pattern') + 1];
-        const destination = args[args.indexOf('--dir') + 1];
-        copyFileSync(
-          runtimeAssetNames.includes(pattern)
-            ? join(runtimeDirectory, pattern)
-            : join(directory, pattern),
-          join(destination, pattern),
-        );
-        return success();
-      }
-      throw new Error(`Unexpected command: ${command} ${args.join(' ')}`);
-    };
-    const input = {
-      tag: 'v0.1.0',
-      version: '0.1.0',
-      ...runtime,
-      packagePath,
-    };
-
-    await observe(publishRelease(input, { runCommand }));
-    await observe(publishRelease(input, { runCommand }));
-
-    assert.equal(
-      calls.filter(
-        ([command, group, operation]) =>
-          command === 'gh' &&
-          group === 'release' &&
-          ['create', 'upload', 'edit'].includes(operation),
-      ).length,
-      0,
+      throw error;
+    }
+    const remote = createRemote(candidate);
+    await assert.rejects(
+      observe(
+        publishRelease(candidate.input, { runCommand: remote.runCommand }),
+      ),
+      /non-symlink/u,
     );
+    assert.deepEqual(remote.calls, []);
+  } finally {
+    rmSync(candidate.root, { recursive: true, force: true });
+  }
+});
+
+test('candidate installer must be a regular nonempty file before remote inspection', async () => {
+  const candidate = createCandidate();
+  try {
+    rmSync(candidate.input.installerPath);
+    mkdirSync(candidate.input.installerPath);
+    const remote = createRemote(candidate);
+    await assert.rejects(
+      observe(
+        publishRelease(candidate.input, { runCommand: remote.runCommand }),
+      ),
+      /regular non-symlink file/u,
+    );
+    assert.deepEqual(remote.calls, []);
+  } finally {
+    rmSync(candidate.root, { recursive: true, force: true });
+  }
+});
+
+test('upload and npm failures leave the release draft', async () => {
+  for (const fail of [
+    `upload:${runtimeAssetNames[0]}`,
+    'publish',
+  ]) {
+    const candidate = createCandidate();
+    try {
+      const remote = createRemote(candidate, { fail });
+      await assert.rejects(
+        observe(
+          publishRelease(candidate.input, { runCommand: remote.runCommand }),
+        ),
+        /simulated/u,
+      );
+      assert.equal(remote.state.release, 'draft');
+      assert.equal(
+        remote.calls.some(
+          ([command, group, operation]) =>
+            command === 'gh' &&
+            group === 'release' &&
+            operation === 'edit',
+        ),
+        false,
+      );
+    } finally {
+      rmSync(candidate.root, { recursive: true, force: true });
+    }
+  }
+});
+
+test('failed final edit is resumable without replacing matching bytes', async () => {
+  const candidate = createCandidate();
+  try {
+    const remote = createRemote(candidate, { fail: 'edit' });
+    await assert.rejects(
+      observe(
+        publishRelease(candidate.input, { runCommand: remote.runCommand }),
+      ),
+      /simulated edit/u,
+    );
+    assert.equal(remote.state.release, 'draft');
+    const uploadsAfterFailure = remote.calls.filter(
+      ([command, group, operation]) =>
+        command === 'gh' && group === 'release' && operation === 'upload',
+    ).length;
+    remote.state.fail = undefined;
+    await observe(
+      publishRelease(candidate.input, { runCommand: remote.runCommand }),
+    );
+    assert.equal(remote.state.release, 'public');
     assert.equal(
-      calls.filter(
-        ([command, operation]) => command === 'npm' && operation === 'publish',
+      remote.calls.filter(
+        ([command, group, operation]) =>
+          command === 'gh' && group === 'release' && operation === 'upload',
       ).length,
-      0,
+      uploadsAfterFailure,
     );
   } finally {
-    await rm(directory, { recursive: true, force: true });
+    rmSync(candidate.root, { recursive: true, force: true });
   }
 });

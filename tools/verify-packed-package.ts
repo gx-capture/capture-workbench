@@ -12,7 +12,7 @@ const archiveName = `${manifest.name.replace(/^@/u, '').replace('/', '-')}-${man
 const archivePath = join(archiveDirectory, archiveName);
 
 assert(manifest.name === '@gx-capture/capture-workbench', 'Unexpected package name.');
-assert(manifest.version === '0.3.1', 'Unexpected package version.');
+assert(manifest.version === '0.3.2', 'Unexpected package version.');
 assert(
   manifest.repository?.url ===
     'git+https://github.com/gx-capture/capture-workbench.git',
@@ -33,7 +33,16 @@ assert(
 );
 assert(
   manifest.dependencies?.['@angular/compiler'] === '22.0.7',
-  'The packed package must own its non-Angular-host JIT fallback.',
+  'The packed package must own its non-Angular-host compiler fallback.',
+);
+assert(
+  manifest.module === 'loader.mjs' &&
+    manifest.exports?.['.']?.default === './loader.mjs',
+  'The packed package must route public imports through its compiler loader.',
+);
+assert(
+  JSON.stringify(manifest.sideEffects) === JSON.stringify(['./loader.mjs']),
+  'Only the package compiler loader may be marked side-effectful.',
 );
 for (const dependency of [
   ...Object.values(manifest.dependencies ?? {}),
@@ -80,6 +89,7 @@ const files = new Set(
 );
 assert(files.has('LICENSE'), 'Tarball is missing LICENSE.');
 assert(files.has('README.md'), 'Tarball is missing README.md.');
+assert(files.has('loader.mjs'), 'Tarball is missing its compiler loader.');
 assert(
   [...files].some((file) => typeof file === 'string' && file.endsWith('.d.ts')),
   'Tarball is missing typings.',
@@ -92,6 +102,20 @@ assert(
       file.endsWith('.mjs'),
   ),
   'Tarball is missing FESM output.',
+);
+const fesm = readFileSync(
+  join(packageDirectory, 'fesm2022/gx-capture-capture-workbench.mjs'),
+  'utf8',
+);
+assert(
+  /ɵɵngDeclare/u.test(fesm),
+  'The published Angular library must retain partial compilation metadata.',
+);
+const loader = readFileSync(join(packageDirectory, 'loader.mjs'), 'utf8');
+assert(
+  loader ===
+    "import '@angular/compiler';\nexport * from './fesm2022/gx-capture-capture-workbench.mjs';\n",
+  'The package compiler loader must initialize Angular before the FESM.',
 );
 
 process.stdout.write(

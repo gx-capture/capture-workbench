@@ -14,6 +14,49 @@ Host applications may supply their existing AI provider through the
 `CaptureStructuringProvider` interface. The standalone Workbench uses its own
 isolated Ollama process and model store to prove the complete flow.
 
+Source, releases, and package metadata use the
+[`gx-capture/capture-workbench`](https://github.com/gx-capture/capture-workbench)
+organization repository.
+
+## Install the exact package
+
+Copy `.npmrc.example` into the consuming workspace or merge its two lines into
+the workspace npm configuration. Supply a token with `read:packages` through
+the environment; never commit it.
+
+```powershell
+$env:GITHUB_PACKAGES_TOKEN = '<read:packages token>'
+corepack pnpm add @gx-capture/capture-workbench@0.3.2 --save-exact
+```
+
+Angular hosts may import `CaptureWorkbenchComponent` and provide a
+`CaptureClient` with `provideCaptureClient()`. Framework-neutral, React, Vue,
+and Angular custom-element hosts import only the public package API, call
+`defineCaptureWorkbenchElement()`, and render `<capture-workbench>`. The
+package owns its Angular Elements implementation and a narrow compiler loader
+for non-Angular bundlers; hosts must not import `@angular/elements` or
+`@angular/compiler` directly.
+
+Object dependencies (`client`, `config`, `structuringProvider`, and
+`preprocessor`) are DOM properties, not attributes. Simple declarative
+attributes, the five composed/bubbling custom events, registration behavior,
+and supported CSS variables are documented in the
+[package README](packages/capture-angular/README.md).
+
+## Runtime and Windows desktop distribution
+
+The npm package never owns native processes, filesystems, tokens, or model
+lifecycle. Those remain in `capture-runtime` and the Tauri desktop harness.
+Each release candidate binds the four canonical runtime assets, one exact
+package tarball, and one NSIS installer. The publisher keeps a release in draft
+until every asset and the package integrity match; a public release retry is
+read-only.
+
+Desktop source selection uses the native Tauri dialog and native drag/drop
+paths. Rust validates, bounds, and copies the source into app-owned storage
+before capture. Source paths and sidecar bearer tokens are excluded from IPC
+responses, library summaries, logs, and QA evidence.
+
 ## Development
 
 Requires Node.js 24 or newer and pnpm 11 or newer. Corepack selects the

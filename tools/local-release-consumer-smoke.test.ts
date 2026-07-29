@@ -11,7 +11,7 @@ import {
   verifyRuntimeRelease,
 } from './local-release-consumer-smoke.ts';
 
-const version = '0.3.1';
+const version = '0.3.2';
 
 function digest(bytes: Buffer): string {
   return createHash('sha256').update(bytes).digest('hex');

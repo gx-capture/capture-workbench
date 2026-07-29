@@ -804,6 +804,52 @@ describe('DesktopWorkspaceStore', () => {
       }),
     );
   });
+
+  it('blocks direct deletion while a native capture is active', () => {
+    const pendingCapture = new Subject<CaptureJobV1>();
+    const deleteDocument = vi.fn(() => of(undefined));
+    const confirm = vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
+    const library = libraryStub({
+      createSource: vi.fn(() => of(summary)),
+      delete: deleteDocument,
+    });
+    const store = initializeStore(
+      library,
+      runtimeStub({ createCapture: vi.fn(() => pendingCapture) }),
+    );
+
+    store.addSourcePaths(['C:\\private\\active.pdf']);
+    TestBed.tick();
+    store.delete(summary.documentId);
+
+    expect(deleteDocument).not.toHaveBeenCalled();
+    expect(confirm).not.toHaveBeenCalled();
+    pendingCapture.complete();
+    confirm.mockRestore();
+  });
+
+  it('blocks direct deletion while a durable runtime capture id is retained', () => {
+    const retained = {
+      ...summary,
+      status: 'recovery_required',
+      captureId: 'capture-retained',
+    } satisfies DesktopLibrarySummary;
+    const deleteDocument = vi.fn(() => of(undefined));
+    const confirm = vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
+    const store = initializeStore(
+      libraryStub({
+        list: vi.fn(() => of([retained])),
+        delete: deleteDocument,
+      }),
+      runtimeStub(),
+    );
+
+    store.delete(retained.documentId);
+
+    expect(deleteDocument).not.toHaveBeenCalled();
+    expect(confirm).not.toHaveBeenCalled();
+    confirm.mockRestore();
+  });
 });
 
 function initializeStore(

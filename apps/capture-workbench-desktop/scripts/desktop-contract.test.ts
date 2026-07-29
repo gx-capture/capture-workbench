@@ -130,6 +130,58 @@ test('blocking native I/O is isolated behind async Tauri commands', async () => 
   assert.match(commands, /pub fn desktop_runtime_status/u);
 });
 
+test('native source import keeps renderer IPC path-only and responses path-free', async () => {
+  const workspaceRoot = join(appRoot, '..', '..');
+  const [renderer, contracts, library, capability, desktopHost] = await Promise.all([
+    readFile(
+      join(
+        workspaceRoot,
+        'apps',
+        'capture-workbench',
+        'src',
+        'app',
+        'services',
+        'desktop-library.service.ts',
+      ),
+      'utf8',
+    ),
+    readFile(join(appRoot, 'src-tauri', 'src', 'contracts', 'library.rs'), 'utf8'),
+    readFile(join(appRoot, 'src-tauri', 'src', 'library.rs'), 'utf8'),
+    readFile(
+      join(appRoot, 'src-tauri', 'capabilities', 'default.json'),
+      'utf8',
+    ),
+    readFile(join(appRoot, 'src-tauri', 'src', 'lib.rs'), 'utf8'),
+  ]);
+  const capabilityContract = JSON.parse(capability);
+  assert.deepEqual(capabilityContract.windows, ['main']);
+  assert.deepEqual(capabilityContract.permissions, [
+    'core:default',
+    'dialog:allow-open',
+  ]);
+  assert.doesNotMatch(
+    JSON.stringify(capabilityContract.permissions),
+    /dialog:(?:default|allow-(?:ask|confirm|message|save))/u,
+  );
+  assert.match(desktopHost, /plugin\(tauri_plugin_dialog::init\(\)\)/u);
+  assert.match(renderer, /open\(\{[\s\S]*multiple: true/u);
+  assert.match(renderer, /onDragDropEvent/u);
+  assert.match(renderer, /library_import_source/u);
+  assert.match(renderer, /request: \{ sourcePath \}/u);
+  assert.doesNotMatch(
+    renderer,
+    /arrayBuffer\(|Array\.from\(|Uint8Array|FileList/u,
+  );
+  const summary = contracts.match(
+    /pub struct LibraryDocumentSummary \{(?<body>[\s\S]*?)\r?\n\}/u,
+  )?.groups?.['body'];
+  assert.ok(summary);
+  assert.doesNotMatch(summary, /path|bytes/u);
+  assert.match(library, /fs::canonicalize/u);
+  assert.match(library, /take\(MAX_SOURCE_BYTES as u64 \+ 1\)/u);
+  assert.match(library, /verified_media_type/u);
+});
+
 test('native cleanup is PID-scoped and never executable-name scoped', async () => {
   const source = await readFile(
     join(appRoot, 'src-tauri', 'src', 'process.rs'),
@@ -281,8 +333,24 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
     /clean-install|attestation|production-preflight/u,
   );
   assert.match(workflow, /publish:[\s\S]*needs: build-candidate/u);
+  assert.match(workflow, /fetch-depth: 0/u);
+  const fetchMainIndex = workflow.indexOf(
+    'git fetch --no-tags origin refs/heads/main:refs/remotes/origin/main',
+  );
+  const mergeBaseIndex = workflow.indexOf('git merge-base --is-ancestor');
+  const installPnpmIndex = workflow.indexOf('Install pnpm');
+  assert.ok(fetchMainIndex >= 0);
+  assert.ok(fetchMainIndex < mergeBaseIndex);
+  assert.ok(mergeBaseIndex < installPnpmIndex);
+  assert.ok(
+    workflow.indexOf('Verify tag commit belongs to main') <
+      installPnpmIndex,
+  );
+  assert.match(workflow, /git merge-base --is-ancestor/u);
+  assert.match(workflow, /run: pnpm verify/u);
   assert.match(workflow, /capture-workbench-desktop:build-nsis/u);
-  assert.match(workflow, /gh release upload/u);
+  assert.match(workflow, /--installer \$installers\[0\]\.FullName/u);
+  assert.doesNotMatch(workflow, /--clobber|gh release upload/u);
   assert.match(
     workflow,
     /publish:[\s\S]*contents: write[\s\S]*packages: write/u,
@@ -291,6 +359,7 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   assert.equal((workflow.match(/packages: write/gu) ?? []).length, 1);
   assert.match(ciWorkflow, /capture-workbench:test/u);
   assert.match(ciWorkflow, /capture-workbench:production-bundle-check/u);
+  assert.match(ciWorkflow, /branches: \[main, develop\]/u);
 
   const project = JSON.parse(runtimeProject);
   assert.equal(project.targets['production-preflight'], undefined);

@@ -1,6 +1,6 @@
 use std::{
     fs::{self, File},
-    io::{ErrorKind, Read},
+    io::{self, ErrorKind, Read},
     path::{Component, Path, PathBuf},
     sync::Mutex,
     time::{SystemTime, UNIX_EPOCH},
@@ -24,6 +24,32 @@ const MAX_SOURCE_BYTES: usize = 50 * 1024 * 1024;
 const SOURCE_FILE_NAME: &str = "source.bin";
 const RAW_FILE_NAME: &str = "raw.json";
 const RESULT_FILE_NAME: &str = "result.json";
+
+#[cfg(test)]
+thread_local! {
+    static TRANSACTION_FAILURE_POINT: std::cell::RefCell<Option<String>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn inject_transaction_failure(point: &str) -> io::Result<()> {
+    TRANSACTION_FAILURE_POINT.with(|configured| {
+        let should_fail = configured.borrow().as_deref() == Some(point);
+        if should_fail {
+            configured.borrow_mut().take();
+            Err(io::Error::other(format!(
+                "injected transaction failure: {point}"
+            )))
+        } else {
+            Ok(())
+        }
+    })
+}
+
+#[cfg(not(test))]
+fn inject_transaction_failure(_point: &str) -> io::Result<()> {
+    Ok(())
+}
 
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -615,9 +641,11 @@ fn commit_library_transaction(
     mut transaction: LibraryTransaction,
     prepared: Vec<PreparedTransactionEntry>,
 ) -> Result<(), String> {
-    for entry in &prepared {
+    for (index, entry) in prepared.iter().enumerate() {
         let temporary = transaction_path(root, &entry.journal.temporary_file_name)?;
-        if let Err(error) = fs::write(&temporary, &entry.bytes) {
+        if let Err(error) = inject_transaction_failure(&format!("stage-write-{index}"))
+            .and_then(|()| fs::write(&temporary, &entry.bytes))
+        {
             for cleanup in &prepared {
                 let _ = remove_file_if_exists(&transaction_path(
                     root,
@@ -633,19 +661,23 @@ fn commit_library_transaction(
     transaction.stage = TransactionStage::Replacing;
     write_transaction_journal(root, &transaction)?;
 
-    for entry in &transaction.entries {
+    for (index, entry) in transaction.entries.iter().enumerate() {
         let target = transaction_path(root, &entry.target_file_name)?;
         let temporary = transaction_path(root, &entry.temporary_file_name)?;
         let backup = transaction_path(root, &entry.backup_file_name)?;
         let replacement = (|| -> Result<(), String> {
             if entry.had_target {
-                fs::rename(&target, &backup).map_err(|error| {
-                    format!("Capture library transaction backup cannot be created: {error}")
-                })?;
+                inject_transaction_failure(&format!("rename-{index}-backup"))
+                    .and_then(|()| fs::rename(&target, &backup))
+                    .map_err(|error| {
+                        format!("Capture library transaction backup cannot be created: {error}")
+                    })?;
             }
-            fs::rename(&temporary, &target).map_err(|error| {
-                format!("Capture library transaction data cannot be finalized: {error}")
-            })?;
+            inject_transaction_failure(&format!("rename-{index}-target"))
+                .and_then(|()| fs::rename(&temporary, &target))
+                .map_err(|error| {
+                    format!("Capture library transaction data cannot be finalized: {error}")
+                })?;
             Ok(())
         })();
         if let Err(error) = replacement {
@@ -745,6 +777,10 @@ fn finalize_library_transaction(
 }
 
 fn remove_file_if_exists(path: &Path) -> Result<(), String> {
+    if path.file_name().and_then(|name| name.to_str()) == Some(TRANSACTION_FILE_NAME) {
+        inject_transaction_failure("cleanup-journal")
+            .map_err(|error| format!("Capture library transaction cleanup failed: {error}"))?;
+    }
     match fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
@@ -785,6 +821,112 @@ mod tests {
     use super::*;
     use std::fs::OpenOptions;
     use std::io::{Seek, SeekFrom, Write};
+
+    struct TransactionFailureGuard;
+
+    impl TransactionFailureGuard {
+        fn at(point: &str) -> Self {
+            TRANSACTION_FAILURE_POINT.with(|configured| {
+                assert!(configured.borrow().is_none());
+                configured.replace(Some(point.to_string()));
+            });
+            Self
+        }
+    }
+
+    impl Drop for TransactionFailureGuard {
+        fn drop(&mut self) {
+            TRANSACTION_FAILURE_POINT.with(|configured| {
+                configured.take();
+            });
+        }
+    }
+
+    fn completed_update(document_id: &str, marker: &str) -> LibraryCaptureUpdate {
+        LibraryCaptureUpdate {
+            document_id: document_id.into(),
+            capture_id: None,
+            clear_capture_id: true,
+            status: "completed".into(),
+            stage: Some("completed".into()),
+            raw: Some(serde_json::json!({ "sourceText": marker })),
+            result: Some(serde_json::json!({ "targetText": marker })),
+            error_code: None,
+            error_message: None,
+            recovery_code: None,
+            recovery_message: None,
+        }
+    }
+
+    fn leave_replacing_transaction(
+        library: &LibraryStore,
+        document_id: &str,
+        applied_entries: usize,
+    ) {
+        let transaction_id = format!("{:032x}", applied_entries + 2);
+        let document_directory = library
+            .document_directory(document_id)
+            .expect("document directory");
+        let mut next_index = library.lock_index().expect("index").clone();
+        next_index.documents[0].status = "failed".into();
+        let prepared = vec![
+            prepare_transaction_entry(
+                &library.root,
+                &document_directory.join(RAW_FILE_NAME),
+                &transaction_id,
+                serde_json::to_vec_pretty(&serde_json::json!({ "sourceText": "after" }))
+                    .expect("raw"),
+            )
+            .expect("raw entry"),
+            prepare_transaction_entry(
+                &library.root,
+                &document_directory.join(RESULT_FILE_NAME),
+                &transaction_id,
+                serde_json::to_vec_pretty(&serde_json::json!({ "targetText": "after" }))
+                    .expect("result"),
+            )
+            .expect("result entry"),
+            prepare_transaction_entry(
+                &library.root,
+                &library.root.join(INDEX_FILE_NAME),
+                &transaction_id,
+                serde_json::to_vec_pretty(&next_index).expect("index"),
+            )
+            .expect("index entry"),
+        ];
+        for entry in &prepared {
+            fs::write(
+                transaction_path(&library.root, &entry.journal.temporary_file_name)
+                    .expect("temporary path"),
+                &entry.bytes,
+            )
+            .expect("temporary bytes");
+        }
+        let mut transaction = LibraryTransaction {
+            transaction_id,
+            document_id: document_id.into(),
+            operation: "update_capture".into(),
+            target_index_version: INDEX_VERSION,
+            stage: TransactionStage::Replacing,
+            applied_entries: 0,
+            entries: prepared.iter().map(|entry| entry.journal.clone()).collect(),
+        };
+        write_transaction_journal(&library.root, &transaction).expect("journal");
+        for entry in transaction.entries.iter().take(applied_entries) {
+            fs::rename(
+                transaction_path(&library.root, &entry.target_file_name).expect("target"),
+                transaction_path(&library.root, &entry.backup_file_name).expect("backup"),
+            )
+            .expect("backup");
+            fs::rename(
+                transaction_path(&library.root, &entry.temporary_file_name).expect("temporary"),
+                transaction_path(&library.root, &entry.target_file_name).expect("target"),
+            )
+            .expect("replace");
+            transaction.applied_entries += 1;
+            write_transaction_journal(&library.root, &transaction).expect("advanced journal");
+        }
+    }
 
     #[test]
     fn source_lifecycle_is_opaque_and_persistent() {
@@ -848,6 +990,230 @@ mod tests {
             .list(LibraryListRequest::default())
             .expect("list")
             .is_empty());
+    }
+
+    #[test]
+    fn transaction_failures_preserve_index_raw_and_result_across_restart() {
+        for failure_point in [
+            "stage-write-0",
+            "stage-write-1",
+            "stage-write-2",
+            "rename-0-backup",
+            "rename-0-target",
+            "rename-1-backup",
+            "rename-1-target",
+            "rename-2-backup",
+            "rename-2-target",
+        ] {
+            let directory = tempfile::tempdir().expect("temporary app data");
+            let library = LibraryStore::open(directory.path()).expect("library");
+            let created = library
+                .create_source(LibrarySourceInput {
+                    file_name: "transaction.pdf".into(),
+                    media_type: "application/pdf".into(),
+                    bytes: b"pdf bytes".to_vec(),
+                })
+                .expect("source");
+            library
+                .update_capture(completed_update(&created.document_id, "before"))
+                .expect("baseline");
+
+            let guard = TransactionFailureGuard::at(failure_point);
+            let error = library
+                .update_capture(completed_update(&created.document_id, "after"))
+                .expect_err("injected failure");
+            drop(guard);
+            assert!(
+                error.contains("transaction"),
+                "{failure_point} returned unexpected error: {error}"
+            );
+
+            let current = library
+                .get(LibraryDocumentRequest {
+                    document_id: created.document_id.clone(),
+                })
+                .expect("in-memory detail");
+            assert_eq!(current.raw.expect("raw")["sourceText"], "before");
+            assert_eq!(current.result.expect("result")["targetText"], "before");
+            drop(library);
+
+            let reopened = LibraryStore::open(directory.path()).expect("reopened");
+            let recovered = reopened
+                .get(LibraryDocumentRequest {
+                    document_id: created.document_id,
+                })
+                .expect("recovered detail");
+            assert_eq!(recovered.summary.status, "completed");
+            assert_eq!(recovered.raw.expect("raw")["sourceText"], "before");
+            assert_eq!(recovered.result.expect("result")["targetText"], "before");
+            assert!(!reopened.root.join(TRANSACTION_FILE_NAME).exists());
+        }
+    }
+
+    #[test]
+    fn interrupted_replacing_transaction_rolls_back_on_open() {
+        let directory = tempfile::tempdir().expect("temporary app data");
+        let library = LibraryStore::open(directory.path()).expect("library");
+        let created = library
+            .create_source(LibrarySourceInput {
+                file_name: "interrupted.pdf".into(),
+                media_type: "application/pdf".into(),
+                bytes: b"pdf bytes".to_vec(),
+            })
+            .expect("source");
+        library
+            .update_capture(completed_update(&created.document_id, "before"))
+            .expect("baseline");
+
+        let transaction_id = "1".repeat(32);
+        let document_directory = library
+            .document_directory(&created.document_id)
+            .expect("document directory");
+        let mut next_index = library.lock_index().expect("index").clone();
+        next_index.documents[0].status = "failed".into();
+        let prepared = vec![
+            prepare_transaction_entry(
+                &library.root,
+                &document_directory.join(RAW_FILE_NAME),
+                &transaction_id,
+                serde_json::to_vec_pretty(&serde_json::json!({ "sourceText": "after" }))
+                    .expect("raw"),
+            )
+            .expect("raw entry"),
+            prepare_transaction_entry(
+                &library.root,
+                &document_directory.join(RESULT_FILE_NAME),
+                &transaction_id,
+                serde_json::to_vec_pretty(&serde_json::json!({ "targetText": "after" }))
+                    .expect("result"),
+            )
+            .expect("result entry"),
+            prepare_transaction_entry(
+                &library.root,
+                &library.root.join(INDEX_FILE_NAME),
+                &transaction_id,
+                serde_json::to_vec_pretty(&next_index).expect("index"),
+            )
+            .expect("index entry"),
+        ];
+        for entry in &prepared {
+            fs::write(
+                transaction_path(&library.root, &entry.journal.temporary_file_name)
+                    .expect("temporary path"),
+                &entry.bytes,
+            )
+            .expect("temporary bytes");
+        }
+        let mut transaction = LibraryTransaction {
+            transaction_id,
+            document_id: created.document_id.clone(),
+            operation: "update_capture".into(),
+            target_index_version: INDEX_VERSION,
+            stage: TransactionStage::Replacing,
+            applied_entries: 0,
+            entries: prepared.iter().map(|entry| entry.journal.clone()).collect(),
+        };
+        write_transaction_journal(&library.root, &transaction).expect("journal");
+        let first = &transaction.entries[0];
+        fs::rename(
+            transaction_path(&library.root, &first.target_file_name).expect("target"),
+            transaction_path(&library.root, &first.backup_file_name).expect("backup"),
+        )
+        .expect("backup first");
+        fs::rename(
+            transaction_path(&library.root, &first.temporary_file_name).expect("temporary"),
+            transaction_path(&library.root, &first.target_file_name).expect("target"),
+        )
+        .expect("replace first");
+        transaction.applied_entries = 1;
+        write_transaction_journal(&library.root, &transaction).expect("advanced journal");
+        drop(library);
+
+        let reopened = LibraryStore::open(directory.path()).expect("recovered");
+        let detail = reopened
+            .get(LibraryDocumentRequest {
+                document_id: created.document_id,
+            })
+            .expect("detail");
+        assert_eq!(detail.summary.status, "completed");
+        assert_eq!(detail.raw.expect("raw")["sourceText"], "before");
+        assert_eq!(detail.result.expect("result")["targetText"], "before");
+        assert!(!reopened.root.join(TRANSACTION_FILE_NAME).exists());
+    }
+
+    #[test]
+    fn restart_recovers_every_replacing_transaction_stage() {
+        for applied_entries in 0..=3 {
+            let directory = tempfile::tempdir().expect("temporary app data");
+            let library = LibraryStore::open(directory.path()).expect("library");
+            let created = library
+                .create_source(LibrarySourceInput {
+                    file_name: "stage-restart.pdf".into(),
+                    media_type: "application/pdf".into(),
+                    bytes: b"pdf bytes".to_vec(),
+                })
+                .expect("source");
+            library
+                .update_capture(completed_update(&created.document_id, "before"))
+                .expect("baseline");
+            leave_replacing_transaction(&library, &created.document_id, applied_entries);
+            drop(library);
+
+            let reopened = LibraryStore::open(directory.path()).expect("recovered");
+            let detail = reopened
+                .get(LibraryDocumentRequest {
+                    document_id: created.document_id,
+                })
+                .expect("detail");
+            let expected = if applied_entries == 3 {
+                "after"
+            } else {
+                "before"
+            };
+            let expected_status = if applied_entries == 3 {
+                "failed"
+            } else {
+                "completed"
+            };
+            assert_eq!(detail.summary.status, expected_status);
+            assert_eq!(detail.raw.expect("raw")["sourceText"], expected);
+            assert_eq!(detail.result.expect("result")["targetText"], expected);
+            assert!(!reopened.root.join(TRANSACTION_FILE_NAME).exists());
+        }
+    }
+
+    #[test]
+    fn committed_transaction_with_cleanup_failure_finishes_on_open() {
+        let directory = tempfile::tempdir().expect("temporary app data");
+        let library = LibraryStore::open(directory.path()).expect("library");
+        let created = library
+            .create_source(LibrarySourceInput {
+                file_name: "cleanup.pdf".into(),
+                media_type: "application/pdf".into(),
+                bytes: b"pdf bytes".to_vec(),
+            })
+            .expect("source");
+        library
+            .update_capture(completed_update(&created.document_id, "before"))
+            .expect("baseline");
+
+        let guard = TransactionFailureGuard::at("cleanup-journal");
+        library
+            .update_capture(completed_update(&created.document_id, "after"))
+            .expect("committed update");
+        drop(guard);
+        assert!(library.root.join(TRANSACTION_FILE_NAME).exists());
+        drop(library);
+
+        let reopened = LibraryStore::open(directory.path()).expect("recovered");
+        let detail = reopened
+            .get(LibraryDocumentRequest {
+                document_id: created.document_id,
+            })
+            .expect("detail");
+        assert_eq!(detail.raw.expect("raw")["sourceText"], "after");
+        assert_eq!(detail.result.expect("result")["targetText"], "after");
+        assert!(!reopened.root.join(TRANSACTION_FILE_NAME).exists());
     }
 
     #[test]

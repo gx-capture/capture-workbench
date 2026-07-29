@@ -31,13 +31,6 @@ const corepackCli = join(
   'corepack.js',
 );
 function write(relativePath, contents) {
-  if (
-    relativePath === 'vanilla/src/main.ts' ||
-    relativePath === 'react/src/main.tsx' ||
-    relativePath === 'vue/src/main.ts'
-  ) {
-    contents = `import '@angular/compiler';\n${contents}`;
-  }
   const target = join(fixtureRoot, relativePath);
   mkdirSync(dirname(target), { recursive: true });
   writeFileSync(target, contents, 'utf8');
@@ -153,13 +146,17 @@ function stopProcessTree(child) {
 
 async function browserSmoke(name, cwd, outDir, verify) {
   const port = await freePort();
+  const viteCli = join(
+    fixtureRoot,
+    'node_modules',
+    'vite',
+    'bin',
+    'vite.js',
+  );
   const child = spawn(
     process.execPath,
     [
-      corepackCli,
-      'pnpm',
-      'exec',
-      'vite',
+      viteCli,
       'preview',
       '--host',
       '127.0.0.1',
@@ -444,7 +441,7 @@ allowBuilds:
   );
   write(
     'src/app/fake-client.ts',
-    `import type { CaptureClient } from '@gx-capture/capture-workbench';\nimport { of } from 'rxjs';\n\nconst source = { sha256: 'a'.repeat(64), fileName: 'fixture.pdf', mediaType: 'application/pdf', bytes: 16 };\nconst raw = { schemaVersion: '1', diagnosticOnly: true, source, segments: [{ segmentId: 'segment-1', order: 0, locator: { kind: 'page', page: 1 }, text: 'page one' }], sourceText: 'page one', extractionEngine: { engine: 'windowsml', model: 'ocr-v1', digest: \`sha256:\${'b'.repeat(64)}\` }, warnings: [], createdAt: '2026-07-29T00:00:00Z' };\nconst document = { schemaVersion: '1', source, rawSegments: raw.segments, blocks: [{ blockId: 'block-1', order: 0, sourceSegmentId: 'segment-1', type: 'paragraph', locator: { kind: 'page', page: 1 }, sourceText: 'page one', targetText: 'page one' }], sourceText: 'page one', targetText: 'page one', extractionEngine: raw.extractionEngine, structuringEngine: { engine: 'ollama', model: 'fixture', digest: \`sha256:\${'c'.repeat(64)}\` }, warnings: [], createdAt: raw.createdAt, completedAt: '2026-07-29T00:00:01Z' };\nconst job = { captureId: 'capture-1', status: 'completed', stage: 'completed', structuringMode: 'runtime', progress: 1, source, createdAt: raw.createdAt, updatedAt: raw.createdAt };\nexport const fakeClient = {\n  getReady: () => of({ ready: true, service: 'capture-runtime', runtimeVersion: '0.3.1', apiVersion: '1.0', captureDocumentSchemaVersion: '1', capabilities: { captureKinds: ['pdf', 'image', 'audio'], structuringModes: ['runtime', 'host'], supportsCancellation: true, supportsRawDiagnostics: true, maxUploadBytes: 50 * 1024 * 1024 } }),\n  getRequirements: () => of([]), startInstallation: () => of({}), listInstallations: () => of([]), getInstallation: () => of({}), cancelInstallation: () => of({}),\n  createCapture: () => of(job), getCapture: () => of(job), cancelCapture: () => of({ ...job, status: 'cancelled', stage: 'cancelled' }),\n  getRaw: () => of(raw), getResult: () => of(document), commitStructuredResult: () => of(job), reportStructuringFailure: () => of(job), deleteCapture: () => of(undefined),\n} as unknown as CaptureClient;\n`,
+    `import type { CaptureClient } from '@gx-capture/capture-workbench';\nimport { of } from 'rxjs';\n\nconst source = { sha256: 'a'.repeat(64), fileName: 'fixture.pdf', mediaType: 'application/pdf', bytes: 16 };\nconst raw = { schemaVersion: '1', diagnosticOnly: true, source, segments: [{ segmentId: 'segment-1', order: 0, locator: { kind: 'page', page: 1 }, text: 'page one' }], sourceText: 'page one', extractionEngine: { engine: 'windowsml', model: 'ocr-v1', digest: \`sha256:\${'b'.repeat(64)}\` }, warnings: [], createdAt: '2026-07-29T00:00:00Z' };\nconst document = { schemaVersion: '1', source, rawSegments: raw.segments, blocks: [{ blockId: 'block-1', order: 0, sourceSegmentId: 'segment-1', type: 'paragraph', locator: { kind: 'page', page: 1 }, sourceText: 'page one', targetText: 'page one' }], sourceText: 'page one', targetText: 'page one', extractionEngine: raw.extractionEngine, structuringEngine: { engine: 'ollama', model: 'fixture', digest: \`sha256:\${'c'.repeat(64)}\` }, warnings: [], createdAt: raw.createdAt, completedAt: '2026-07-29T00:00:01Z' };\nconst job = { captureId: 'capture-1', status: 'completed', stage: 'completed', structuringMode: 'runtime', progress: 1, source, createdAt: raw.createdAt, updatedAt: raw.createdAt };\nexport const fakeClient = {\n  getReady: () => of({ ready: true, service: 'capture-runtime', runtimeVersion: '0.3.2', apiVersion: '1.0', captureDocumentSchemaVersion: '1', capabilities: { captureKinds: ['pdf', 'image', 'audio'], structuringModes: ['runtime', 'host'], supportsCancellation: true, supportsRawDiagnostics: true, maxUploadBytes: 50 * 1024 * 1024 } }),\n  getRequirements: () => of([]), startInstallation: () => of({}), listInstallations: () => of([]), getInstallation: () => of({}), cancelInstallation: () => of({}),\n  createCapture: () => of(job), getCapture: () => of(job), cancelCapture: () => of({ ...job, status: 'cancelled', stage: 'cancelled' }),\n  getRaw: () => of(raw), getResult: () => of(document), commitStructuredResult: () => of(job), reportStructuringFailure: () => of(job), deleteCapture: () => of(undefined),\n} as unknown as CaptureClient;\n`,
   );
   write(
     'src/app/direct-app.ts',
@@ -465,7 +462,7 @@ allowBuilds:
   );
   write(
     'vanilla/src/main.ts',
-    `import '@angular/compiler';\nimport { createCaptureWorkbenchCustomEvent, defineCaptureWorkbenchElement, type CaptureWorkbenchElement } from '@gx-capture/capture-workbench';\nimport { fakeClient } from '../../src/app/fake-client';\n\ndeclare global { interface Window { __captureReady?: boolean; __captureState?: any; } }\nconst sentinelIds = ['outside-button', 'outside-paragraph', 'outside-error'];\nconst snapshot = () => sentinelIds.map((id) => { const style = getComputedStyle(document.getElementById(id)!); return [style.padding, style.border, style.backgroundColor, style.margin, style.color]; });\nconst before = snapshot();\nconst capture = document.querySelector('capture-workbench') as CaptureWorkbenchElement;\nlet eventBubbles = false;\nlet eventComposed = false;\ndocument.addEventListener('capture-completed', (event) => { eventBubbles = event.bubbles; eventComposed = event.composed; }, { once: true });\nawait new Promise<void>((resolve, reject) => defineCaptureWorkbenchElement().subscribe({ next: () => resolve(), error: reject }));\nawait customElements.whenDefined('capture-workbench');\ncapture.config = { showRuntimeSetup: false, pollIntervalMs: 0 };\ncapture.client = fakeClient;\ncapture.dispatchEvent(createCaptureWorkbenchCustomEvent('capture-completed', { taskId: 'fixture', document: {} as never }));\nawait new Promise((resolve) => requestAnimationFrame(() => resolve(undefined)));\nconst inner = capture.querySelector('gx-capture-workbench');\nwindow.__captureState = { defined: customElements.get('capture-workbench') !== undefined, shadow: inner?.shadowRoot !== null, configured: capture.config.showRuntimeSetup === false && inner?.shadowRoot?.querySelector('input[type=file]')?.hasAttribute('multiple') === true, clientPropertyOnly: capture.client === fakeClient && !capture.hasAttribute('client'), stylesIsolated: JSON.stringify(before) === JSON.stringify(snapshot()), eventBubbles, eventComposed };\nwindow.__captureReady = true;\n`,
+    `import { createCaptureWorkbenchCustomEvent, defineCaptureWorkbenchElement, type CaptureWorkbenchElement } from '@gx-capture/capture-workbench';\nimport { fakeClient } from '../../src/app/fake-client';\n\ndeclare global { interface Window { __captureReady?: boolean; __captureState?: any; } }\nconst sentinelIds = ['outside-button', 'outside-paragraph', 'outside-error'];\nconst snapshot = () => sentinelIds.map((id) => { const style = getComputedStyle(document.getElementById(id)!); return [style.padding, style.border, style.backgroundColor, style.margin, style.color]; });\nconst before = snapshot();\nconst capture = document.querySelector('capture-workbench') as CaptureWorkbenchElement;\nlet eventBubbles = false;\nlet eventComposed = false;\ndocument.addEventListener('capture-completed', (event) => { eventBubbles = event.bubbles; eventComposed = event.composed; }, { once: true });\nawait new Promise<void>((resolve, reject) => defineCaptureWorkbenchElement().subscribe({ next: () => resolve(), error: reject }));\nawait customElements.whenDefined('capture-workbench');\ncapture.config = { showRuntimeSetup: false, pollIntervalMs: 0 };\ncapture.client = fakeClient;\ncapture.dispatchEvent(createCaptureWorkbenchCustomEvent('capture-completed', { taskId: 'fixture', document: {} as never }));\nawait new Promise((resolve) => requestAnimationFrame(() => resolve(undefined)));\nconst inner = capture.querySelector('gx-capture-workbench');\nwindow.__captureState = { defined: customElements.get('capture-workbench') !== undefined, shadow: inner?.shadowRoot !== null, configured: capture.config.showRuntimeSetup === false && inner?.shadowRoot?.querySelector('input[type=file]')?.hasAttribute('multiple') === true, clientPropertyOnly: capture.client === fakeClient && !capture.hasAttribute('client'), stylesIsolated: JSON.stringify(before) === JSON.stringify(snapshot()), eventBubbles, eventComposed };\nwindow.__captureReady = true;\n`,
   );
   write(
     'vanilla/vite.config.ts',
@@ -478,7 +475,7 @@ allowBuilds:
   );
   write(
     'react/src/main.tsx',
-    `import '@angular/compiler';\nimport { createRoot } from 'react-dom/client';\nimport { useEffect, useRef } from 'react';\nimport { defineCaptureWorkbenchElement, type CaptureWorkbenchElement } from '@gx-capture/capture-workbench';\n\ndeclare global { namespace JSX { interface IntrinsicElements { 'capture-workbench': React.DetailedHTMLProps<React.HTMLAttributes<HTMLElement>, HTMLElement>; } } interface Window { __captureReady?: boolean; __captureState?: any; } }\nfunction App() {\n  const ref = useRef<HTMLElement>(null);\n  useEffect(() => {\n    const capture = ref.current as CaptureWorkbenchElement | null;\n    if (!capture) return;\n    capture.config = { outputMode: 'text', showRuntimeSetup: false };\n    let calls = 0;\n    const onCompleted = () => { calls += 1; };\n    capture.addEventListener('capture-completed', onCompleted);\n    capture.dispatchEvent(new CustomEvent('capture-completed'));\n    capture.removeEventListener('capture-completed', onCompleted);\n    capture.dispatchEvent(new CustomEvent('capture-completed'));\n    window.__captureState = { mounted: capture.isConnected, configured: capture.config.outputMode === 'text', listenerRemoved: calls === 1, defineCount: customElements.get('capture-workbench') ? 1 : 0 };\n    window.__captureReady = true;\n  }, []);\n  return <capture-workbench ref={ref} />;\n}\n\nawait new Promise<void>((resolve, reject) => defineCaptureWorkbenchElement().subscribe({ next: () => resolve(), error: reject }));\ncreateRoot(document.getElementById('root')!).render(<App />);\n`,
+    `import { createRoot } from 'react-dom/client';\nimport { useEffect, useRef } from 'react';\nimport { defineCaptureWorkbenchElement, type CaptureWorkbenchElement } from '@gx-capture/capture-workbench';\n\ndeclare global { namespace JSX { interface IntrinsicElements { 'capture-workbench': React.DetailedHTMLProps<React.HTMLAttributes<HTMLElement>, HTMLElement>; } } interface Window { __captureReady?: boolean; __captureState?: any; } }\nfunction App() {\n  const ref = useRef<HTMLElement>(null);\n  useEffect(() => {\n    const capture = ref.current as CaptureWorkbenchElement | null;\n    if (!capture) return;\n    capture.config = { outputMode: 'text', showRuntimeSetup: false };\n    let calls = 0;\n    const onCompleted = () => { calls += 1; };\n    capture.addEventListener('capture-completed', onCompleted);\n    capture.dispatchEvent(new CustomEvent('capture-completed'));\n    capture.removeEventListener('capture-completed', onCompleted);\n    capture.dispatchEvent(new CustomEvent('capture-completed'));\n    window.__captureState = { mounted: capture.isConnected, configured: capture.config.outputMode === 'text', listenerRemoved: calls === 1, defineCount: customElements.get('capture-workbench') ? 1 : 0 };\n    window.__captureReady = true;\n  }, []);\n  return <capture-workbench ref={ref} />;\n}\n\nawait new Promise<void>((resolve, reject) => defineCaptureWorkbenchElement().subscribe({ next: () => resolve(), error: reject }));\ncreateRoot(document.getElementById('root')!).render(<App />);\n`,
   );
   write(
     'react/vite.config.ts',
@@ -495,7 +492,7 @@ allowBuilds:
   );
   write(
     'vue/src/main.ts',
-    `import '@angular/compiler';\nimport { createApp } from 'vue';\nimport { defineCaptureWorkbenchElement } from '@gx-capture/capture-workbench';\nimport App from './App.vue';\n\nawait new Promise<void>((resolve, reject) => defineCaptureWorkbenchElement().subscribe({ next: () => resolve(), error: reject }));\ncreateApp(App).mount('#app');\n`,
+    `import { createApp } from 'vue';\nimport { defineCaptureWorkbenchElement } from '@gx-capture/capture-workbench';\nimport App from './App.vue';\n\nawait new Promise<void>((resolve, reject) => defineCaptureWorkbenchElement().subscribe({ next: () => resolve(), error: reject }));\ncreateApp(App).mount('#app');\n`,
   );
   write(
     'vue/vite.config.ts',
@@ -520,6 +517,22 @@ allowBuilds:
             throw new Error(
               'Packed Capture Workbench package is missing its MIT LICENSE.',
             );
+          }
+          for (const hostEntry of [
+            'vanilla/src/main.ts',
+            'react/src/main.tsx',
+            'vue/src/main.ts',
+          ]) {
+            const source = readFileSync(join(fixtureRoot, hostEntry), 'utf8');
+            if (
+              source.includes("from '@angular/elements'") ||
+              source.includes("from '@angular/compiler'") ||
+              source.includes("import '@angular/compiler'")
+            ) {
+              throw new Error(
+                `${hostEntry} must use only the public Capture Workbench element API.`,
+              );
+            }
           }
           return of(undefined);
         }),

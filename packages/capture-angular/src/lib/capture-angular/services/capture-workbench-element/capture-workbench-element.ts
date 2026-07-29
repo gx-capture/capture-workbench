@@ -1,5 +1,3 @@
-import '@angular/compiler';
-
 import {
   Injectable,
   provideZonelessChangeDetection,
@@ -72,6 +70,12 @@ export type CaptureWorkbenchElement = NgElement &
 
 @Injectable({ providedIn: 'root' })
 export class CaptureWorkbenchElementRegistrationService {
+  protected createAngularApplication(
+    config: ApplicationConfig,
+  ): ReturnType<typeof createApplication> {
+    return createApplication(config);
+  }
+
   /**
    * Registers the framework-neutral capture element with Angular Elements.
    * Registration is idempotent for a tag name so independent bundles can safely
@@ -107,7 +111,7 @@ export class CaptureWorkbenchElementRegistrationService {
       ],
     };
     const registration: Observable<void> = defer(
-      () => from(createApplication(applicationConfig)),
+      () => from(this.createAngularApplication(applicationConfig)),
     ).pipe(
       map((applicationRef) => {
         try {

@@ -12,7 +12,7 @@ test('shows one explicit Traditional Chinese setup wizard for missing core requi
   await expect(page.getByRole('button', { name: '同意並安裝核心需求' })).toBeVisible();
   await expect(page.getByText('WindowsML OCR')).toBeVisible();
   await expect(page.getByText('隔離 Ollama', { exact: true })).toBeVisible();
-  await expect(page.getByLabel('選擇檔案')).toBeDisabled();
+  await expect(page.getByRole('button', { name: '選擇檔案' })).toBeDisabled();
 });
 
 test('renders the Material desktop queue and history filter through the authenticated runtime client', async ({ page }) => {

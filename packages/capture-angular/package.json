@@ -1,6 +1,6 @@
 {
   "name": "@gx-capture/capture-workbench",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Capture Workbench UI for the Capture Runtime sidecar.",
   "license": "MIT",
   "repository": {
@@ -23,5 +23,7 @@
     "@angular/platform-browser": "^22.0.0",
     "rxjs": "^7.8.0"
   },
-  "sideEffects": false
+  "sideEffects": [
+    "./loader.mjs"
+  ]
 }

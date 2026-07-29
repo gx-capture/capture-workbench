@@ -195,6 +195,9 @@ importers:
 
   packages/capture-angular:
     dependencies:
+      '@angular/compiler':
+        specifier: 22.0.7
+        version: 22.0.7
       '@angular/core':
         specifier: ^22.0.0
         version: 22.0.7(@angular/compiler@22.0.7)(rxjs@7.8.2)
