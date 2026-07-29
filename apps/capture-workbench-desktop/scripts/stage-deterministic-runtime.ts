@@ -76,15 +76,6 @@ export function stageDeterministicRuntime(): Observable<unknown> {
                 sha256: digest,
                 schemaFileName: 'capture-document-v1.schema.json',
                 schemaSha256,
-                runtimeRequirements: {
-                  'windowsml-ocr': {
-                    artifactUrl:
-                      'https://downloads.example.org/capture-windowsml-ocr-windows-x64.zip',
-                    artifactFileName: 'capture-windowsml-ocr-windows-x64.zip',
-                    bytes: 1,
-                    sha256: '0'.repeat(64),
-                  },
-                },
               };
               return defer(() =>
                 from(writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')),

@@ -2,7 +2,7 @@ use std::fmt;
 
 use serde::Serialize;
 
-/// Memory-only connection information returned to the Angular verification host.
+/// Memory-only connection information returned to the Angular desktop host.
 #[derive(Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BackendConfig {
@@ -77,7 +77,7 @@ impl DesktopRuntimeStatus {
     pub(crate) fn stopped() -> Self {
         Self {
             status: "stopped".into(),
-            detail: "Capture runtime was stopped by the desktop harness.".into(),
+            detail: "Capture runtime was stopped by Capture Workbench.".into(),
             base_url: None,
             runtime_version: None,
             api_version: None,

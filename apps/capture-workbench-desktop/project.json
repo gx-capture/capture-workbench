@@ -6,9 +6,13 @@
   "tags": ["scope:capture", "type:desktop", "platform:windows"],
   "implicitDependencies": ["capture-workbench"],
   "targets": {
-    "dev": {
+    "dev-product": {
       "continuous": true,
       "executor": "nx:run-commands",
+      "dependsOn": ["stage-product-runtime"],
+      "metadata": {
+        "description": "Product desktop development with a verified release runtime and real providers."
+      },
       "options": {
         "command": "corepack pnpm exec tauri dev --target x86_64-pc-windows-msvc --config apps/capture-workbench-desktop/src-tauri/tauri.conf.json"
       }
@@ -32,20 +36,6 @@
       ],
       "options": {
         "command": "corepack pnpm exec tauri build --target x86_64-pc-windows-msvc --no-bundle --ci --config apps/capture-workbench-desktop/src-tauri/tauri.conf.json"
-      }
-    },
-    "build-nsis-release": {
-      "cache": false,
-      "executor": "nx:run-commands",
-      "outputs": [
-        "{projectRoot}/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis"
-      ],
-      "options": {
-        "commands": [
-          "node apps/capture-workbench-desktop/scripts/assert-staged-runtime.ts --release",
-          "corepack pnpm exec tauri build --target x86_64-pc-windows-msvc --bundles nsis --ci --config apps/capture-workbench-desktop/src-tauri/tauri.conf.json"
-        ],
-        "parallel": false
       }
     },
     "build-nsis-deterministic": {
@@ -103,6 +93,39 @@
         "command": "node apps/capture-workbench-desktop/scripts/stage-deterministic-runtime.ts"
       }
     },
+    "stage-product-runtime": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "outputs": [
+        "{projectRoot}/src-tauri/binaries/capture-runtime-x86_64-pc-windows-msvc.exe",
+        "{projectRoot}/src-tauri/resources/capture-runtime-manifest.json",
+        "{projectRoot}/src-tauri/resources/capture-document-v1.schema.json"
+      ],
+      "options": {
+        "commands": [
+          "corepack pnpm nx run capture-runtime:build-release-artifacts",
+          "node apps/capture-workbench-desktop/scripts/stage-runtime.ts --artifact packages/capture-runtime/dist/release/capture-runtime-x86_64-pc-windows-msvc.exe --manifest packages/capture-runtime/dist/release/capture-runtime-manifest.json --schema packages/capture-runtime/dist/release/capture-document-v1.schema.json --source release"
+        ],
+        "parallel": false
+      }
+    },
+    "build-nsis": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "metadata": {
+        "description": "Packages only an already staged, verified release runtime."
+      },
+      "outputs": [
+        "{projectRoot}/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis"
+      ],
+      "options": {
+        "commands": [
+          "node apps/capture-workbench-desktop/scripts/assert-staged-runtime.ts --release",
+          "corepack pnpm exec tauri build --target x86_64-pc-windows-msvc --bundles nsis --ci --config apps/capture-workbench-desktop/src-tauri/tauri.conf.json"
+        ],
+        "parallel": false
+      }
+    },
     "package-qa-test": {
       "cache": true,
       "executor": "nx:run-commands",
@@ -126,6 +149,34 @@
       "outputs": ["{workspaceRoot}/tmp/capture-workbench-desktop/smoke"],
       "options": {
         "command": "node apps/capture-workbench-desktop/scripts/deterministic-smoke.ts"
+      }
+    },
+    "smoke-real-ollama": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "metadata": {
+        "description": "Opt-in Windows real-engine smoke. Requires a prepared isolated app-data directory and a user-provided PDF; excluded from ordinary CI."
+      },
+      "dependsOn": ["stage-product-runtime"],
+      "outputs": ["{workspaceRoot}/tmp/capture-workbench-desktop/real-ollama-smoke/real-ollama-smoke.json"],
+      "options": {
+        "command": "node apps/capture-workbench-desktop/scripts/real-ollama-smoke.ts"
+      }
+    },
+    "smoke-real-desktop-ocr": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "metadata": {
+        "description": "Opt-in Windows standalone-app OCR smoke. Requires an explicitly prepared host app-data directory and a user-provided PDF; excluded from ordinary CI."
+      },
+      "outputs": ["{workspaceRoot}/tmp/capture-workbench-desktop/real-desktop-ocr-smoke/real-desktop-ocr-smoke.json"],
+      "options": {
+        "commands": [
+          "corepack pnpm nx run capture-workbench-desktop:stage-product-runtime",
+          "corepack pnpm nx run capture-workbench-desktop:build",
+          "node apps/capture-workbench-desktop/scripts/real-desktop-ocr-smoke.ts"
+        ],
+        "parallel": false
       }
     },
     "smoke-installed-deterministic": {

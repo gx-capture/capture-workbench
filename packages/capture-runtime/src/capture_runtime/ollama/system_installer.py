@@ -13,7 +13,6 @@ import sys
 import time
 from collections.abc import Callable, Collection
 from pathlib import Path
-from urllib.parse import unquote, urlsplit
 from uuid import uuid4
 
 import httpx
@@ -24,13 +23,12 @@ from capture_runtime.constants import (
     OLLAMA_MODEL_REQUIREMENT_ID,
     OLLAMA_RUNTIME_REQUIREMENT_ID,
     WHISPER_REQUIREMENT_ID,
+    WINDOWSML_BUNDLE_BYTES,
+    WINDOWSML_BUNDLE_SHA256,
+    WINDOWSML_BUNDLE_URL,
     WINDOWSML_REQUIREMENT_ID,
 )
-from capture_runtime.contracts import (
-    RuntimeArtifactDescriptorV1,
-    RuntimeRequirementStatus,
-    RuntimeRequirementV1,
-)
+from capture_runtime.contracts import RuntimeRequirementStatus, RuntimeRequirementV1
 from capture_runtime.engine_adapters import (
     OcrAdapter,
     WhisperAdapter,
@@ -47,11 +45,6 @@ from capture_runtime.ollama.lifecycle_impl import (
     ManualActionRequiredError,
     OllamaOwnershipError,
     RuntimeUnavailableError,
-)
-from capture_runtime.release import (
-    MAX_WINDOWSML_BUNDLE_BYTES,
-    _canonical_public_https_artifact,
-    windowsml_requirement_descriptor,
 )
 
 
@@ -86,7 +79,9 @@ class SystemRuntimeInstaller:
         self._ocr_adapter = ocr_adapter
         self._whisper_adapter = whisper_adapter
         self._http_client_factory = http_client_factory or (
-            lambda: httpx.AsyncClient(timeout=120, follow_redirects=False)
+            # GitHub release assets redirect to a signed object URL. The pinned
+            # byte count and SHA-256 still gate the downloaded bytes.
+            lambda: httpx.AsyncClient(timeout=120, follow_redirects=True)
         )
         self._enabled_requirement_ids = (
             None if enabled_requirement_ids is None else frozenset(enabled_requirement_ids)
@@ -136,13 +131,10 @@ class SystemRuntimeInstaller:
                         else RuntimeRequirementStatus.UNAVAILABLE
                         if not ocr_probe.code_ready
                         else RuntimeRequirementStatus.INSTALLABLE
-                        if self._extraction_config.windowsml_bundle_url is not None
-                        else RuntimeRequirementStatus.MANUAL_ACTION_REQUIRED
                     ),
                     required_for=["pdf", "image"],
                     install_strategy="bundled",
                     detail=ocr_probe.detail,
-                    artifact=self._windowsml_artifact_descriptor(),
                 )
             )
         if whisper_enabled:
@@ -204,15 +196,6 @@ class SystemRuntimeInstaller:
             )
         return requirements
 
-    def _windowsml_artifact_descriptor(self) -> RuntimeArtifactDescriptorV1 | None:
-        url = self._extraction_config.windowsml_bundle_url
-        byte_count = self._extraction_config.windowsml_bundle_bytes
-        digest = self._extraction_config.windowsml_bundle_sha256
-        if url is None or byte_count is None or digest is None or not url.startswith("https://"):
-            return None
-        descriptor = windowsml_requirement_descriptor(url, byte_count, digest)
-        return RuntimeArtifactDescriptorV1.model_validate(descriptor)
-
     async def install(
         self,
         requirement_id: str,
@@ -239,13 +222,6 @@ class SystemRuntimeInstaller:
         cancel_event: asyncio.Event,
         report_progress: Callable[[float], None],
     ) -> None:
-        url = self._extraction_config.windowsml_bundle_url
-        expected_sha256 = self._extraction_config.windowsml_bundle_sha256
-        expected_bytes = self._extraction_config.windowsml_bundle_bytes
-        if url is None or expected_sha256 is None or expected_bytes is None:
-            raise ManualActionRequiredError(
-                "A checksum-pinned WindowsML model bundle is not configured"
-            )
         target = self._extraction_config.windowsml_model_dir
         target.parent.mkdir(parents=True, exist_ok=True)
         archive = target.parent / f".{target.name}.{uuid4().hex}.zip"
@@ -255,14 +231,12 @@ class SystemRuntimeInstaller:
         report_progress(0.05)
         try:
             await self._download_bundle(
-                url,
-                expected_bytes,
                 archive,
                 cancel_event,
                 report_progress,
             )
             actual_sha256 = _sha256_file(archive)
-            if actual_sha256 != expected_sha256:
+            if actual_sha256 != WINDOWSML_BUNDLE_SHA256:
                 raise RuntimeError("WindowsML model bundle SHA-256 verification failed")
             report_progress(0.75)
             _extract_safe_zip(archive, staging, cancel_event)
@@ -306,16 +280,12 @@ class SystemRuntimeInstaller:
 
     async def _download_bundle(
         self,
-        url: str,
-        expected_bytes: int,
         destination: Path,
         cancel_event: asyncio.Event,
         report_progress: Callable[[float], None],
     ) -> None:
         try:
             await self._download_bundle_to_path(
-                url,
-                expected_bytes,
                 destination,
                 cancel_event,
                 report_progress,
@@ -326,41 +296,12 @@ class SystemRuntimeInstaller:
 
     async def _download_bundle_to_path(
         self,
-        url: str,
-        expected_bytes: int,
         destination: Path,
         cancel_event: asyncio.Event,
         report_progress: Callable[[float], None],
     ) -> None:
-        if not 1 <= expected_bytes <= MAX_WINDOWSML_BUNDLE_BYTES:
-            raise RuntimeError("WindowsML bundle byte count is outside the supported range")
-        parsed = urlsplit(url)
-        if parsed.scheme == "file":
-            source = Path(unquote(parsed.path.lstrip("/")))
-            if os.name == "nt" and len(parsed.path) >= 3 and parsed.path[2] == ":":
-                source = Path(unquote(parsed.path.lstrip("/")))
-            if not source.is_file():
-                raise RuntimeError("Configured WindowsML bundle file is unavailable")
-            total = source.stat().st_size
-            if total != expected_bytes:
-                raise RuntimeError("WindowsML model bundle byte count verification failed")
-            copied = 0
-            with source.open("rb") as reader, destination.open("xb") as writer:
-                while chunk := reader.read(1024 * 1024):
-                    if cancel_event.is_set():
-                        raise asyncio.CancelledError
-                    writer.write(chunk)
-                    copied += len(chunk)
-                    report_progress(0.05 + 0.6 * (copied / expected_bytes))
-            return
-        if parsed.scheme != "https":
-            raise RuntimeError("WindowsML bundle URL must use HTTPS or file://")
-        try:
-            _canonical_public_https_artifact(url)
-        except ValueError as error:
-            raise RuntimeError(str(error)) from error
         async with self._http_client_factory() as client:
-            async with client.stream("GET", url) as response:
+            async with client.stream("GET", WINDOWSML_BUNDLE_URL) as response:
                 response.raise_for_status()
                 declared_length = response.headers.get("content-length")
                 if declared_length is not None:
@@ -368,7 +309,7 @@ class SystemRuntimeInstaller:
                         content_length = int(declared_length)
                     except ValueError as error:
                         raise RuntimeError("WindowsML bundle Content-Length is invalid") from error
-                    if content_length != expected_bytes:
+                    if content_length != WINDOWSML_BUNDLE_BYTES:
                         raise RuntimeError(
                             "WindowsML model bundle Content-Length verification failed"
                         )
@@ -377,12 +318,12 @@ class SystemRuntimeInstaller:
                     async for chunk in response.aiter_bytes(1024 * 1024):
                         if cancel_event.is_set():
                             raise asyncio.CancelledError
-                        if copied + len(chunk) > expected_bytes:
+                        if copied + len(chunk) > WINDOWSML_BUNDLE_BYTES:
                             raise RuntimeError("WindowsML model bundle exceeded its declared bytes")
                         writer.write(chunk)
                         copied += len(chunk)
-                        report_progress(0.05 + 0.6 * (copied / expected_bytes))
-                if copied != expected_bytes:
+                        report_progress(0.05 + 0.6 * (copied / WINDOWSML_BUNDLE_BYTES))
+                if copied != WINDOWSML_BUNDLE_BYTES:
                     raise RuntimeError("WindowsML model bundle byte count verification failed")
 
     async def _install_whisper(
@@ -511,7 +452,10 @@ class SystemRuntimeInstaller:
             "SYSTEM Return only JSON matching the supplied schema. "
             "Preserve source provenance exactly.\n"
         )
-        modelfile.write_text(modelfile_text, encoding="utf-8")
+        # Preserve the exact LF bytes used by the readiness marker. Path.write_text
+        # would translate newlines on Windows and make every later probe fail.
+        modelfile_bytes = modelfile_text.encode("utf-8")
+        modelfile.write_bytes(modelfile_bytes)
         create = await self._runner.run(
             [
                 executable,
@@ -532,7 +476,7 @@ class SystemRuntimeInstaller:
             {
                 "profileId": self._lifecycle.config.profile_id,
                 "baseModel": self._lifecycle.config.base_model,
-                "modelfileSha256": hashlib.sha256(modelfile_text.encode()).hexdigest(),
+                "modelfileSha256": hashlib.sha256(modelfile_bytes).hexdigest(),
                 "installedAt": self._clock.now().isoformat(),
             },
         )

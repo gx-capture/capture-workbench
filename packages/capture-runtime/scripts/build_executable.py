@@ -39,6 +39,8 @@ def main() -> None:
         "PIL",
         "--collect-all",
         "pypdfium2",
+        "--collect-all",
+        "pypdf",
     ]
     optional_modules = (
         "onnxruntime",
@@ -66,6 +68,7 @@ def main() -> None:
         "opencv-contrib-python",
         "pyclipper",
         "pypdfium2",
+        "pypdf",
         "python-bidi",
         "shapely",
     )

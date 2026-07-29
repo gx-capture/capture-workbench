@@ -19,11 +19,6 @@ jobs:
     permissions:
       contents: read
       packages: read
-    env:
-      CAPTURE_WINDOWSML_BUNDLE_URL: ${{ vars.CAPTURE_WINDOWSML_BUNDLE_URL }}
-      CAPTURE_WINDOWSML_BUNDLE_SHA256: ${{ vars.CAPTURE_WINDOWSML_BUNDLE_SHA256 }}
-      CAPTURE_WINDOWSML_BUNDLE_BYTES: ${{ vars.CAPTURE_WINDOWSML_BUNDLE_BYTES }}
-
     steps:
       - name: Check out source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -72,6 +67,16 @@ jobs:
           pnpm nx run capture-runtime:test
           pnpm nx run capture-runtime:build-release-artifacts
 
+      - name: Build Capture Workbench Windows installer with the verified release runtime
+        shell: pwsh
+        run: |
+          node apps/capture-workbench-desktop/scripts/stage-runtime.ts `
+            --artifact packages/capture-runtime/dist/release/capture-runtime-x86_64-pc-windows-msvc.exe `
+            --manifest packages/capture-runtime/dist/release/capture-runtime-manifest.json `
+            --schema packages/capture-runtime/dist/release/capture-document-v1.schema.json `
+            --source release
+          pnpm nx run capture-workbench-desktop:build-nsis
+
       - name: Assemble release candidate
         shell: pwsh
         run: |
@@ -83,9 +88,15 @@ jobs:
           $candidate = Join-Path $env:RUNNER_TEMP 'capture-candidate'
           $runtime = Join-Path $candidate 'runtime'
           $package = Join-Path $candidate 'package'
-          New-Item -ItemType Directory -Path $runtime, $package | Out-Null
+          $desktop = Join-Path $candidate 'desktop'
+          New-Item -ItemType Directory -Path $runtime, $package, $desktop | Out-Null
           Copy-Item packages/capture-runtime/dist/release/* -Destination $runtime
           Copy-Item $packages[0].FullName -Destination $package
+          $installers = @(Get-ChildItem apps/capture-workbench-desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis -Filter '*.exe' -File -Recurse)
+          if ($installers.Count -ne 1) {
+            throw "Expected exactly one Capture Workbench NSIS installer, found $($installers.Count)."
+          }
+          Copy-Item $installers[0].FullName -Destination $desktop
           "CAPTURE_CANDIDATE_PATH=$candidate" >> $env:GITHUB_ENV
 
       - name: Upload release candidate
@@ -148,3 +159,14 @@ jobs:
             --tag "${{ github.ref_name }}" `
             --runtime-dir publication/runtime `
             --package $packages[0].FullName
+
+      - name: Publish the exact Capture Workbench Windows installer
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $installers = @(Get-ChildItem publication/desktop -Filter '*.exe' -File)
+          if ($installers.Count -ne 1) {
+            throw "Expected exactly one Capture Workbench NSIS installer, found $($installers.Count)."
+          }
+          gh release upload "${{ github.ref_name }}" $installers[0].FullName --clobber
