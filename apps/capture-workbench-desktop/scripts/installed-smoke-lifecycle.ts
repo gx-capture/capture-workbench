@@ -22,6 +22,13 @@ import {
 import { sha256File } from './stage-runtime.ts';
 import { assertStrictDescendant } from './contracts/installed.ts';
 
+export function expectedInstallerName(version) {
+  if (!/^\d+\.\d+\.\d+$/u.test(version)) {
+    throw new Error('Expected installer version must be semantic x.y.z.');
+  }
+  return `Capture Workbench_${version}_x64-setup.exe`;
+}
+
 export function createInstalledSmokeLifecycle({
   workspaceRoot,
   smokeRoot,
@@ -61,7 +68,10 @@ export function createInstalledSmokeLifecycle({
         if (!metadata) return of(undefined);
         if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
           return throwError(
-            () => new Error('Recursive removal target must be an owned real directory.'),
+            () =>
+              new Error(
+                'Recursive removal target must be an owned real directory.',
+              ),
           );
         }
         return defer(() =>
@@ -78,7 +88,10 @@ export function createInstalledSmokeLifecycle({
     );
   }
 
-  function findDeterministicInstaller() {
+  function findDeterministicInstaller(expectedVersion) {
+    const expectedName = expectedVersion
+      ? expectedInstallerName(expectedVersion)
+      : undefined;
     return forkJoin({
       workspaceRealPath: defer(() => from(realpath(workspaceRoot))),
       directoryRealPath: defer(() => from(realpath(nsisDirectory))),
@@ -91,10 +104,18 @@ export function createInstalledSmokeLifecycle({
         ),
       ),
       switchMap(({ directoryRealPath }) =>
-        defer(() => from(readdir(directoryRealPath, { withFileTypes: true }))).pipe(
+        defer(() =>
+          from(readdir(directoryRealPath, { withFileTypes: true })),
+        ).pipe(
           map((entries) =>
             entries.filter(
-              (entry) => entry.isFile() && /^Capture Workbench_\d+\.\d+\.\d+_x64-setup\.exe$/u.test(entry.name),
+              (entry) =>
+                entry.isFile() &&
+                (expectedName
+                  ? entry.name === expectedName
+                  : /^Capture Workbench_\d+\.\d+\.\d+_x64-setup\.exe$/u.test(
+                      entry.name,
+                    )),
             ),
           ),
           concatMap((installers) => {
@@ -102,7 +123,7 @@ export function createInstalledSmokeLifecycle({
               return throwError(
                 () =>
                   new Error(
-                    `Expected exactly one deterministic x64 NSIS installer, found ${installers.length}.`,
+                    `Expected exactly one matching x64 NSIS installer, found ${installers.length}.`,
                   ),
               );
             }
@@ -114,12 +135,21 @@ export function createInstalledSmokeLifecycle({
               concatMap(({ metadata, actualPath }) => {
                 if (!metadata.isFile() || metadata.isSymbolicLink()) {
                   return throwError(
-                    () => new Error('Deterministic NSIS installer must be a regular file.'),
+                    () =>
+                      new Error(
+                        'Deterministic NSIS installer must be a regular file.',
+                      ),
                   );
                 }
-                if (dirname(actualPath).toLowerCase() !== directoryRealPath.toLowerCase()) {
+                if (
+                  dirname(actualPath).toLowerCase() !==
+                  directoryRealPath.toLowerCase()
+                ) {
                   return throwError(
-                    () => new Error('Deterministic NSIS installer escaped its artifact directory.'),
+                    () =>
+                      new Error(
+                        'Deterministic NSIS installer escaped its artifact directory.',
+                      ),
                   );
                 }
                 return sha256File(actualPath).pipe(
@@ -146,7 +176,9 @@ export function createInstalledSmokeLifecycle({
     }).pipe(
       concatMap(({ metadata, actual }) => {
         if (!metadata.isFile() || metadata.isSymbolicLink()) {
-          return throwError(() => new Error(`${label} must be a regular file.`));
+          return throwError(
+            () => new Error(`${label} must be a regular file.`),
+          );
         }
         assertStrictDescendant(root, actual, label);
         return of(actual);
@@ -157,7 +189,8 @@ export function createInstalledSmokeLifecycle({
   function childOutcome(child) {
     return new Observable((subscriber) => {
       const onError = (error) => subscriber.next({ kind: 'error', error });
-      const onExit = (code, signal) => subscriber.next({ kind: 'exit', code, signal });
+      const onExit = (code, signal) =>
+        subscriber.next({ kind: 'exit', code, signal });
       child.once('error', onError);
       child.once('exit', onExit);
       return () => {
@@ -182,12 +215,17 @@ export function createInstalledSmokeLifecycle({
           if (outcome.kind === 'timeout') {
             return terminateTrackedProcessTree(child, label).pipe(
               concatMap(() =>
-                throwError(() => new Error(`${label} timed out after ${timeout} ms.`)),
+                throwError(
+                  () => new Error(`${label} timed out after ${timeout} ms.`),
+                ),
               ),
             );
           }
           if (outcome.kind === 'error') {
-            return throwError(() => new Error(`${label} could not run: ${outcome.error.message}`));
+            return throwError(
+              () =>
+                new Error(`${label} could not run: ${outcome.error.message}`),
+            );
           }
           if (outcome.code !== 0) {
             return throwError(

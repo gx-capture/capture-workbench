@@ -18,6 +18,7 @@ import {
   releaseExclusiveSmokeLock,
   uninstallerArguments,
 } from './installed-deterministic-smoke.ts';
+import { expectedInstallerName } from './installed-smoke-lifecycle.ts';
 import { appRoot } from './stage-runtime.ts';
 
 function observe(observable) {
@@ -32,6 +33,14 @@ function observe(observable) {
     });
   });
 }
+
+test('installed measurement derives the exact installer name from release metadata', () => {
+  assert.equal(
+    expectedInstallerName('0.3.2'),
+    'Capture Workbench_0.3.2_x64-setup.exe',
+  );
+  assert.throws(() => expectedInstallerName('0.3.2-beta'), /semantic x\.y\.z/u);
+});
 
 test('installed smoke paths and NSIS arguments stay inside the exact tmp subtree', () => {
   const root = resolve(

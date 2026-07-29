@@ -81,6 +81,17 @@ jobs:
             --source release
           pnpm nx run capture-workbench-desktop:build-nsis
 
+      - name: Verify exact installed size and packaging budgets
+        shell: pwsh
+        run: |
+          node apps/capture-workbench-desktop/scripts/installed-deterministic-smoke.ts --measure-release-size
+          pnpm nx run capture-runtime:size-regression-check
+          $report = 'packages/capture-runtime/dist/size/runtime-size-report.json'
+          $releasedReport = 'packages/capture-runtime/dist/release/runtime-size-report.json'
+          Copy-Item -LiteralPath $report -Destination $releasedReport
+          $digest = (Get-FileHash -LiteralPath $releasedReport -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$digest  runtime-size-report.json" | Set-Content -LiteralPath "$releasedReport.sha256" -Encoding utf8NoBOM
+
       - name: Assemble release candidate
         shell: pwsh
         run: |

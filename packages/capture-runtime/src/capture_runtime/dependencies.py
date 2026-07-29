@@ -14,6 +14,8 @@ from capture_runtime.constants import (
     WINDOWSML_REQUIREMENT_ID,
 )
 from capture_runtime.contracts import StructuringMode
+from capture_runtime.engine_catalog import load_engine_catalog
+from capture_runtime.engine_installation import EngineInstallationManager
 from capture_runtime.extractors import (
     CaptureExtractor,
     DeterministicCaptureExtractor,
@@ -34,6 +36,8 @@ from capture_runtime.structuring import (
     FakeCaptureStructuringProvider,
     HostOnlyCaptureStructuringProvider,
 )
+from capture_runtime.worker_client import WorkerClient
+from capture_runtime.worker_process import WorkerProcess
 
 
 @dataclass(slots=True)
@@ -50,6 +54,7 @@ class RuntimeDependencies:
     installation_repository: InstallationRepository
     capture_service: CaptureService
     installation_service: InstallationService
+    engine_manager: EngineInstallationManager
     staging_root: Path
     supported_structuring_modes: list[StructuringMode]
     disabled_requirement_ids: set[str]
@@ -75,7 +80,18 @@ def build_runtime_dependencies(
         process_controller=process_controller,
         clock=runtime_clock,
     )
-    standalone_extractor = StandaloneRuntimeCaptureExtractor(runtime_clock, settings.extraction)
+    worker_process = WorkerProcess()
+    worker_client = WorkerClient(worker_process)
+    engine_manager = EngineInstallationManager(
+        settings.app_data_dir / "engines",
+        load_engine_catalog(),
+        worker_client=worker_client,
+    )
+    standalone_extractor = StandaloneRuntimeCaptureExtractor(
+        runtime_clock,
+        settings.extraction,
+        engine_manager=engine_manager,
+    )
     active_extractor = extractor
     if active_extractor is None:
         active_extractor = (
@@ -117,11 +133,10 @@ def build_runtime_dependencies(
     )
     active_installer = installer or SystemRuntimeInstaller(
         lifecycle,
-        extraction_config=settings.extraction,
-        ocr_adapter=standalone_extractor.ocr_adapter,
-        whisper_adapter=standalone_extractor.whisper_adapter,
+        engine_manager=engine_manager,
         clock=runtime_clock,
         enabled_requirement_ids=enabled_requirement_ids,
+        extraction_config=settings.extraction,
     )
 
     active_capture_repository = capture_repository or CaptureRepository(
@@ -157,6 +172,7 @@ def build_runtime_dependencies(
         installation_repository=active_installation_repository,
         capture_service=capture_service,
         installation_service=installation_service,
+        engine_manager=engine_manager,
         staging_root=staging_root,
         supported_structuring_modes=supported_structuring_modes,
         disabled_requirement_ids=disabled_requirement_ids,

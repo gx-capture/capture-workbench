@@ -1,0 +1,16 @@
+{
+  "catalogVersion": "1",
+  "requirements": [
+    {
+      "artifacts": [],
+      "requirementId": "windowsml-ocr",
+      "unavailableReason": "A release catalog with exact OCR worker and model artifacts was not injected."
+    },
+    {
+      "artifacts": [],
+      "requirementId": "whisper-primary",
+      "unavailableReason": "A release catalog with exact Whisper worker and model artifacts was not injected."
+    }
+  ],
+  "runtimeVersion": "0.3.2"
+}

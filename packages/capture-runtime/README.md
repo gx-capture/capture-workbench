@@ -13,12 +13,14 @@ uv run ruff check src tests
 uv run mypy src
 ```
 
-Production packaging installs the optional engines explicitly:
+Production packaging builds the lightweight core and optional workers separately:
 
 ```powershell
-corepack pnpm nx run capture-runtime:prepare-production-environment
-corepack pnpm nx run capture-runtime:verify-production-environment
-corepack pnpm nx run capture-runtime:build-production-executable
+corepack pnpm nx run capture-runtime:build-core-executable
+corepack pnpm nx run capture-runtime:build-ocr-worker
+corepack pnpm nx run capture-runtime:build-whisper-worker
+corepack pnpm nx run capture-runtime:verify-core-boundary
+corepack pnpm nx run capture-runtime:verify-worker-boundaries
 ```
 
 The prepare target deliberately reinstalls `onnxruntime-directml`. The DirectML, generic, and
@@ -26,7 +28,8 @@ legacy WindowsML distributions share the `onnxruntime` Python namespace, so rein
 selected distribution repairs an existing checkout when uv removes a previously selected ORT
 distribution during an exact sync. Production execution uses `uv run --no-sync` only after this
 gate verifies that DirectML is the sole namespace owner and both DML and CPU providers are
-registered.
+registered. That environment gate belongs to the optional worker builds; the
+core executable has no ONNX Runtime, OCR, PDFium, Pillow, or Whisper dependency.
 
 From the workspace root, use `corepack pnpm nx run capture-runtime:test` and the other declared Nx
 targets.
@@ -99,11 +102,13 @@ $result = Invoke-RestMethod `
   -Headers $headers
 ```
 
-The runtime still owns PDF/image extraction, WindowsML OCR, Whisper, upload
-limits, retention, provenance, and final schema validation. External Ollama
-only changes who owns structured generation. A host that owns all structuring
-instead should use `CAPTURE_STRUCTURING_PROVIDER=host` and the `/raw` plus
-`/structure` protocol described below.
+The runtime core still owns embedded PDF text extraction, job lifecycle,
+upload limits, retention, provenance validation, and final schema validation.
+Installed runtime-owned workers handle scanned PDF/image OCR and audio
+transcription. External Ollama only changes who owns structured generation. A
+host that owns all structuring instead should use
+`CAPTURE_STRUCTURING_PROVIDER=host` and the `/raw` plus `/structure` protocol
+described below.
 
 ## Runtime configuration
 
@@ -141,17 +146,19 @@ environment and Authorization header; they are never accepted in URLs.
 Run with `capture-runtime serve`. Production binds only `127.0.0.1` and disables API docs
 unless explicitly enabled for development.
 
-The deterministic extractor is deliberately opt-in. The standalone production extractor is
-implemented in this package and has no imports from Cert Prep or another host: embedded PDF
-pages use pypdf, scanned pages render through pypdfium2 and use WindowsML OCR, PNG/JPEG/WebP
-are EXIF-corrected and normalized to RGB PNG before OCR, and supported audio uses local-only
-faster-whisper models. Windows OCR creates a DML-first session when `DmlExecutionProvider` is
-registered, with `CPUExecutionProvider` second for unsupported kernels. It selects a CPU-only
-pipeline only when DML is absent; a registered DML session that fails during initialization or
-inference is reported as an extraction failure instead of creating a second CPU-only pipeline.
-`windowsml-dml` provenance therefore means DML-first session configuration, not that every
-operator ran on the GPU. Whisper retains its separate CUDA-resource CPU fallback.
-Missing dependencies or model assets produce `requirement_unavailable`, never fake content.
+The deterministic extractor is deliberately opt-in. The standalone production
+core has no imports from Cert Prep or another host. Embedded PDF pages use
+`pypdf`; scanned PDF/image work is sent through the installed OCR worker, which
+owns PDFium, Pillow, Paddle, and ONNX Runtime DirectML. Audio is sent through
+the installed faster-whisper worker. Windows OCR creates a DML-first session
+when `DmlExecutionProvider` is registered, with `CPUExecutionProvider` second
+for unsupported kernels. It selects a CPU-only pipeline only when DML is
+absent; a registered DML session that fails during initialization or inference
+is reported as an extraction failure instead of creating a second CPU-only
+pipeline. `windowsml-dml` provenance therefore means DML-first session
+configuration, not that every operator ran on the GPU. Whisper retains its
+separate CUDA-resource CPU fallback. Missing workers or model assets produce
+`requirement_unavailable`, never fake content or a runtime package download.
 
 Capture creation requires multipart fields `file`, `sourceKind=pdf|image|audio`, and optional
 `structuringMode` / `targetLanguage`, plus a UUID `X-Idempotency-Key`. The runtime sniffs the
@@ -160,29 +167,34 @@ copied in bounded chunks to an app-data staging file and atomically moved into t
 terminal jobs delete the source bytes. Metadata and raw/result JSON expire after 24 hours by
 default and are pruned on startup and during requests.
 
-`GET /v1/runtime/requirements` uses stable requirement IDs. Ollama and the dedicated capture
-profile are actively probed; a marker file alone never reports readiness. After a runtime
-restart, a matching installation record causes requirement discovery to lazily start only the
-owned isolated Ollama lifecycle and wait boundedly for the recorded profile to appear. The
-synchronous installer contract runs off the API event loop. WindowsML installation uses the
-runtime-release-owned URL, byte count, and SHA-256; it follows the release redirect while still
-verifying the exact response bytes, then extracts exactly the six allowlisted ZIP entries with
-traversal/ADS/symlink/expansion guards. The descriptor is
-not configurable through the environment or exposed through desktop release metadata.
-Whisper installation runs the two allowlisted Hugging Face model
-downloads in a cancellable owned subprocess after `consent: true`; extraction never downloads.
-Ollama installation also requires consent, uses `winget` only, and returns
-`manual_action_required` when `winget` is absent.
+`GET /v1/runtime/requirements` uses stable requirement IDs. OCR and Whisper
+descriptors come only from the core-embedded, checksum-pinned engine catalog;
+the renderer cannot supply a URL, checksum, command, or local path. Explicit
+installation jobs stream and verify exact bytes, apply traversal/UNC/symlink/
+collision/expansion/inner-manifest guards, probe the worker and model, and
+atomically activate a side-by-side version. A failed upgrade retains the
+previous `active.json`; an installed version is reverified and works offline.
+No installation or extraction path runs `pip`, `uv`, or a Hugging Face model
+download. Ollama remains independent: it is actively probed, requires consent
+for `winget` installation, and lazily starts only its owned isolated profile
+after restart.
 
 When `CAPTURE_STRUCTURING_PROVIDER=host`, requirement discovery is scoped to
 WindowsML and Whisper before probing begins. The process neither probes Ollama
 nor advertises its application/model requirements, and both Ollama installation
 IDs are rejected as disabled.
 
-`build-release-artifacts` does not inspect or depend on ambient OCR/Whisper/Ollama model stores.
-The tag release workflow verifies the synchronized version, package consumer smoke, runtime
-tests, runtime artifact manifest/checksum, and package tarball before publishing the exact
-candidate. It does not perform a separate clean-install evidence or attestation lane.
+`build-release-artifacts` does not inspect or depend on ambient
+OCR/Whisper/Ollama model stores. A publication build requires exact externally
+prepared model ZIPs and files manifests through
+`CAPTURE_OCR_MODEL_ARCHIVE`, `CAPTURE_OCR_MODEL_MANIFEST`,
+`CAPTURE_WHISPER_MODEL_ARCHIVE`, and `CAPTURE_WHISPER_MODEL_MANIFEST`.
+Generation stages those exact files beside the workers and fails on missing
+inputs or same-name/different-byte collisions. The tag release workflow
+verifies the complete catalog, every archive/sidecar/checksum, core-only NSIS,
+installed size report, synchronized package, and re-downloaded draft assets
+before publication. It does not perform a separate clean-install attestation
+lane.
 
 ## Host structuring
 

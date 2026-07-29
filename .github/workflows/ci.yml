@@ -11,7 +11,7 @@ permissions:
 jobs:
   verify-windows-x64:
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
 
     steps:
       - name: Check out source
@@ -66,6 +66,40 @@ jobs:
           pnpm nx run capture-runtime:typecheck
           pnpm nx run capture-runtime:test
           pnpm nx run capture-runtime:build
+
+      - name: Build and verify optional engine workers
+        shell: pwsh
+        run: pnpm nx run capture-runtime:verify-worker-boundaries
+
+      - name: Verify the core-only Windows installer and measured size budgets
+        shell: pwsh
+        run: |
+          pnpm nx run capture-workbench-desktop:stage-core-runtime
+          pnpm nx run capture-runtime:verify-core-boundary
+          pnpm nx run capture-workbench-desktop:build-nsis
+          node apps/capture-workbench-desktop/scripts/installed-deterministic-smoke.ts --measure-release-size
+          pnpm nx run capture-runtime:size-regression-check
+
+      - name: Upload runtime packaging diagnostics
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: capture-runtime-packaging-${{ github.sha }}
+          path: |
+            packages/capture-runtime/dist/size/runtime-size-report.json
+            packages/capture-runtime/dist/engines/*-files.json
+            packages/capture-runtime/dist/core-inventory.txt
+            packages/capture-runtime/dist/core-inventory-recursive.txt
+            packages/capture-runtime/dist/ocr-worker-inventory.txt
+            packages/capture-runtime/dist/whisper-worker-inventory.txt
+            packages/capture-runtime/.build/pyinstaller/core-onefile/capture-runtime/xref-capture-runtime.html
+            packages/capture-runtime/.build/pyinstaller/core-onefile/capture-runtime/warn-capture-runtime.txt
+            packages/capture-runtime/.build/pyinstaller/ocr-worker/capture-engine-ocr/xref-capture-engine-ocr.html
+            packages/capture-runtime/.build/pyinstaller/ocr-worker/capture-engine-ocr/warn-capture-engine-ocr.txt
+            packages/capture-runtime/.build/pyinstaller/whisper-worker/capture-engine-whisper/xref-capture-engine-whisper.html
+            packages/capture-runtime/.build/pyinstaller/whisper-worker/capture-engine-whisper/warn-capture-engine-whisper.txt
+            tmp/capture-workbench-desktop/installed-smoke/installed-size.json
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Verify Capture Workbench desktop product
         shell: pwsh

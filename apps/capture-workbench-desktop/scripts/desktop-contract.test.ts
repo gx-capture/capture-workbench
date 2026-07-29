@@ -43,7 +43,10 @@ test('Nx separates root verification build from release and deterministic NSIS l
     /excluded from ordinary CI/u,
   );
   const directmlSmoke = project.targets['smoke-real-desktop-ocr-directml'];
-  assert.match(directmlSmoke.metadata.description, /requires DirectML provenance/u);
+  assert.match(
+    directmlSmoke.metadata.description,
+    /requires DirectML provenance/u,
+  );
   assert.match(
     directmlSmoke.options.commands.at(-1),
     /--expected-ocr-device windowsml-dml$/u,
@@ -61,6 +64,11 @@ test('production CSP is strict while allowing only dynamic loopback API ports', 
   assert.doesNotMatch(csp, /unsafe-eval|https:\/\/|wss:\/\//u);
   assert.doesNotMatch(csp, /(?:^|[ ;])\*(?:[ ;]|$)/u);
   assert.deepEqual(config.bundle.targets, ['nsis']);
+  assert.deepEqual(config.bundle.resources, [
+    'binaries/capture-runtime-x86_64-pc-windows-msvc.exe',
+    'resources/capture-runtime-manifest.json',
+    'resources/capture-document-v1.schema.json',
+  ]);
   assert.match(
     config.build.beforeBuildCommand,
     /capture-workbench:production-bundle-check/u,
@@ -132,27 +140,31 @@ test('blocking native I/O is isolated behind async Tauri commands', async () => 
 
 test('native source import keeps renderer IPC path-only and responses path-free', async () => {
   const workspaceRoot = join(appRoot, '..', '..');
-  const [renderer, contracts, library, capability, desktopHost] = await Promise.all([
-    readFile(
-      join(
-        workspaceRoot,
-        'apps',
-        'capture-workbench',
-        'src',
-        'app',
-        'services',
-        'desktop-library.service.ts',
+  const [renderer, contracts, library, capability, desktopHost] =
+    await Promise.all([
+      readFile(
+        join(
+          workspaceRoot,
+          'apps',
+          'capture-workbench',
+          'src',
+          'app',
+          'services',
+          'desktop-library.service.ts',
+        ),
+        'utf8',
       ),
-      'utf8',
-    ),
-    readFile(join(appRoot, 'src-tauri', 'src', 'contracts', 'library.rs'), 'utf8'),
-    readFile(join(appRoot, 'src-tauri', 'src', 'library.rs'), 'utf8'),
-    readFile(
-      join(appRoot, 'src-tauri', 'capabilities', 'default.json'),
-      'utf8',
-    ),
-    readFile(join(appRoot, 'src-tauri', 'src', 'lib.rs'), 'utf8'),
-  ]);
+      readFile(
+        join(appRoot, 'src-tauri', 'src', 'contracts', 'library.rs'),
+        'utf8',
+      ),
+      readFile(join(appRoot, 'src-tauri', 'src', 'library.rs'), 'utf8'),
+      readFile(
+        join(appRoot, 'src-tauri', 'capabilities', 'default.json'),
+        'utf8',
+      ),
+      readFile(join(appRoot, 'src-tauri', 'src', 'lib.rs'), 'utf8'),
+    ]);
   const capabilityContract = JSON.parse(capability);
   assert.deepEqual(capabilityContract.windows, ['main']);
   assert.deepEqual(capabilityContract.permissions, [
@@ -247,7 +259,10 @@ test('WindowsML bundle metadata is runtime-owned, never injected by the host', a
 });
 
 test('real Ollama smoke uses the capture contract and validates profile provenance', async () => {
-  const source = await readFile(join(appRoot, 'scripts', 'real-ollama-smoke.ts'), 'utf8');
+  const source = await readFile(
+    join(appRoot, 'scripts', 'real-ollama-smoke.ts'),
+    'utf8',
+  );
   assert.match(source, /form\.set\('sourceKind', 'pdf'\)/u);
   assert.match(source, /capture-workbench-qwen3\.5-4b-structure-v1/u);
   assert.match(source, /\^sha256:\[a-f0-9\]\{64\}/u);
@@ -285,39 +300,38 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
     ciWorkflow,
     publisher,
     runtimeProject,
-  ] =
-    await Promise.all([
-      readFile(
-        join(workspaceRoot, '.github', 'workflows', 'release.yml'),
-        'utf8',
+  ] = await Promise.all([
+    readFile(
+      join(workspaceRoot, '.github', 'workflows', 'release.yml'),
+      'utf8',
+    ),
+    readFile(
+      join(
+        workspaceRoot,
+        'packages',
+        'capture-runtime',
+        'scripts',
+        'build_release_artifacts.py',
       ),
-      readFile(
-        join(
-          workspaceRoot,
-          'packages',
-          'capture-runtime',
-          'scripts',
-          'build_release_artifacts.py',
-        ),
-        'utf8',
+      'utf8',
+    ),
+    readFile(
+      join(
+        workspaceRoot,
+        'packages',
+        'capture-runtime',
+        'scripts',
+        'build_executable.py',
       ),
-      readFile(
-        join(
-          workspaceRoot,
-          'packages',
-          'capture-runtime',
-          'scripts',
-          'build_executable.py',
-        ),
-        'utf8',
-      ),
-      readFile(join(workspaceRoot, '.github', 'workflows', 'ci.yml'), 'utf8'),
-      readFile(join(workspaceRoot, 'tools', 'publish-release.ts'), 'utf8'),
-      readFile(
-        join(workspaceRoot, 'packages', 'capture-runtime', 'project.json'),
-        'utf8',
-      ),
-    ]);
+      'utf8',
+    ),
+    readFile(join(workspaceRoot, '.github', 'workflows', 'ci.yml'), 'utf8'),
+    readFile(join(workspaceRoot, 'tools', 'publish-release.ts'), 'utf8'),
+    readFile(
+      join(workspaceRoot, 'packages', 'capture-runtime', 'project.json'),
+      'utf8',
+    ),
+  ]);
   const actionReferences = [workflow, ciWorkflow].flatMap((source) =>
     [...source.matchAll(/uses:\s*[^@\s]+@([^\s#]+)/gu)].map(
       (match) => match[1],
@@ -343,8 +357,7 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   assert.ok(fetchMainIndex < mergeBaseIndex);
   assert.ok(mergeBaseIndex < installPnpmIndex);
   assert.ok(
-    workflow.indexOf('Verify tag commit belongs to main') <
-      installPnpmIndex,
+    workflow.indexOf('Verify tag commit belongs to main') < installPnpmIndex,
   );
   assert.match(workflow, /git merge-base --is-ancestor/u);
   assert.match(workflow, /run: pnpm verify/u);
@@ -367,15 +380,23 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
     JSON.stringify(project.targets['build-release-artifacts'].dependsOn),
     /production-preflight/u,
   );
-  assert.deepEqual(project.targets['generate-production-schema'].dependsOn, [
-    'verify-production-environment',
-  ]);
+  assert.equal(
+    project.targets['generate-production-schema'].dependsOn,
+    undefined,
+  );
   assert.deepEqual(project.targets['build-production-executable'].dependsOn, [
-    'verify-production-environment',
+    'generate-release-engine-catalog',
   ]);
   assert.deepEqual(project.targets['build-release-artifacts'].dependsOn, [
     'build-production-executable',
     'generate-production-schema',
+    'verify-worker-boundaries',
+  ]);
+  assert.deepEqual(project.targets['build-ocr-worker'].dependsOn, [
+    'verify-production-environment',
+  ]);
+  assert.deepEqual(project.targets['build-whisper-worker'].dependsOn, [
+    'verify-production-environment',
   ]);
   assert.match(
     project.targets['prepare-production-environment'].options.command,
@@ -393,8 +414,9 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
     releaseBuilder,
     /RuntimeSettings|OLLAMA_MODELS|WHISPER_MODELS/u,
   );
-  assert.match(executableBuilder, /--collect-all[\s\S]*"pypdf"/u);
-  assert.match(executableBuilder, /"pypdf",/u);
+  assert.match(executableBuilder, /capture-runtime\.spec/u);
+  assert.match(executableBuilder, /CAPTURE_ENGINE_CATALOG_BUILD_PATH/u);
+  assert.doesNotMatch(executableBuilder, /--collect-all/u);
   assert.match(
     publisher,
     /preflightCandidate[\s\S]*ensureDraftAssets[\s\S]*publishPackage/u,

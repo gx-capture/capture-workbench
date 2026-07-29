@@ -1,0 +1,158 @@
+{
+  "arch": "amd64",
+  "installedBytes": null,
+  "installedBytesBlocker": "Installed directory was not supplied or does not exist.",
+  "nsisInstaller": {
+    "bytes": 208071907,
+    "path": "C:/software-dev/capture-workbench/apps/capture-workbench-desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/Capture Workbench_0.3.2_x64-setup.exe",
+    "sha256": "5c6c926a7131013654a0c903948c14060cbac94ff964e5cf9845835bb99c7806"
+  },
+  "platform": "windows",
+  "pyinstaller": {
+    "blocker": null,
+    "categories": {
+      "core": 5375040,
+      "ocr": 216786363,
+      "other": 341541991,
+      "pdf": 1500307,
+      "whisper": 135751901
+    },
+    "files": [
+      {
+        "bytes": 206305107,
+        "path": "capture-runtime/capture-runtime.pkg"
+      },
+      {
+        "bytes": 39504057,
+        "path": "capture-runtime/PYZ-00.pyz"
+      },
+      {
+        "bytes": 12708843,
+        "path": "capture-runtime/xref-capture-runtime.html"
+      },
+      {
+        "bytes": 2698010,
+        "path": "capture-runtime/Analysis-00.toc"
+      },
+      {
+        "bytes": 1334834,
+        "path": "capture-runtime/base_library.zip"
+      },
+      {
+        "bytes": 1310036,
+        "path": "capture-runtime/PYZ-00.toc"
+      },
+      {
+        "bytes": 747694,
+        "path": "capture-runtime/EXE-00.toc"
+      },
+      {
+        "bytes": 745847,
+        "path": "capture-runtime/PKG-00.toc"
+      },
+      {
+        "bytes": 356426,
+        "path": "capture-runtime/warn-capture-runtime.txt"
+      },
+      {
+        "bytes": 32130,
+        "path": "capture-runtime/localpycs/pyimod02_importers.pyc"
+      },
+      {
+        "bytes": 6146,
+        "path": "capture-runtime/localpycs/pyimod03_ctypes.pyc"
+      },
+      {
+        "bytes": 4842,
+        "path": "capture-runtime/localpycs/pyimod01_archive.pyc"
+      },
+      {
+        "bytes": 2503,
+        "path": "capture-runtime.spec"
+      },
+      {
+        "bytes": 1630,
+        "path": "capture-runtime/localpycs/pyimod04_pywin32.pyc"
+      },
+      {
+        "bytes": 305,
+        "path": "capture-runtime/localpycs/struct.pyc"
+      }
+    ],
+    "topFiles": [
+      {
+        "bytes": 206305107,
+        "path": "capture-runtime/capture-runtime.pkg"
+      },
+      {
+        "bytes": 39504057,
+        "path": "capture-runtime/PYZ-00.pyz"
+      },
+      {
+        "bytes": 12708843,
+        "path": "capture-runtime/xref-capture-runtime.html"
+      },
+      {
+        "bytes": 2698010,
+        "path": "capture-runtime/Analysis-00.toc"
+      },
+      {
+        "bytes": 1334834,
+        "path": "capture-runtime/base_library.zip"
+      },
+      {
+        "bytes": 1310036,
+        "path": "capture-runtime/PYZ-00.toc"
+      },
+      {
+        "bytes": 747694,
+        "path": "capture-runtime/EXE-00.toc"
+      },
+      {
+        "bytes": 745847,
+        "path": "capture-runtime/PKG-00.toc"
+      },
+      {
+        "bytes": 356426,
+        "path": "capture-runtime/warn-capture-runtime.txt"
+      },
+      {
+        "bytes": 32130,
+        "path": "capture-runtime/localpycs/pyimod02_importers.pyc"
+      },
+      {
+        "bytes": 6146,
+        "path": "capture-runtime/localpycs/pyimod03_ctypes.pyc"
+      },
+      {
+        "bytes": 4842,
+        "path": "capture-runtime/localpycs/pyimod01_archive.pyc"
+      },
+      {
+        "bytes": 2503,
+        "path": "capture-runtime.spec"
+      },
+      {
+        "bytes": 1630,
+        "path": "capture-runtime/localpycs/pyimod04_pywin32.pyc"
+      },
+      {
+        "bytes": 305,
+        "path": "capture-runtime/localpycs/struct.pyc"
+      }
+    ]
+  },
+  "pythonVersion": "3.12.12",
+  "reportVersion": "1",
+  "runtimeExecutable": {
+    "bytes": 206652755,
+    "path": "C:/software-dev/capture-workbench/packages/capture-runtime/dist/executable/capture-runtime.exe",
+    "sha256": "d787dc096d688c6b834432f98410aedddd6e4f797b36b4a76a3e6693b35bbcf9"
+  },
+  "startup": {
+    "blocker": "TimeoutError: runtime did not become ready within 120s",
+    "coldMilliseconds": null,
+    "samplesMilliseconds": [],
+    "warmMilliseconds": null
+  }
+}

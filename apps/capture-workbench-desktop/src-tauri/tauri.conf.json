@@ -30,7 +30,11 @@
     "active": true,
     "targets": ["nsis"],
     "icon": ["icons/icon.ico"],
-    "resources": ["binaries/*", "resources/*.json"],
+    "resources": [
+      "binaries/capture-runtime-x86_64-pc-windows-msvc.exe",
+      "resources/capture-runtime-manifest.json",
+      "resources/capture-document-v1.schema.json"
+    ],
     "windows": {
       "nsis": {
         "installMode": "currentUser"

@@ -109,6 +109,27 @@
         "parallel": false
       }
     },
+    "stage-core-runtime": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "dependsOn": [
+        {
+          "target": "build-core-release-artifacts",
+          "projects": ["capture-runtime"]
+        }
+      ],
+      "outputs": [
+        "{projectRoot}/src-tauri/binaries/capture-runtime-x86_64-pc-windows-msvc.exe",
+        "{projectRoot}/src-tauri/resources/capture-runtime-manifest.json",
+        "{projectRoot}/src-tauri/resources/capture-document-v1.schema.json"
+      ],
+      "metadata": {
+        "description": "Stages the measured core-only release set for NSIS boundary and size verification."
+      },
+      "options": {
+        "command": "node apps/capture-workbench-desktop/scripts/stage-runtime.ts --artifact packages/capture-runtime/dist/core-release/capture-runtime-x86_64-pc-windows-msvc.exe --manifest packages/capture-runtime/dist/core-release/capture-runtime-manifest.json --schema packages/capture-runtime/dist/core-release/capture-document-v1.schema.json --source release"
+      }
+    },
     "build-nsis": {
       "cache": false,
       "executor": "nx:run-commands",
@@ -158,7 +179,9 @@
         "description": "Opt-in Windows real-engine smoke. Requires a prepared isolated app-data directory and a user-provided PDF; excluded from ordinary CI."
       },
       "dependsOn": ["stage-product-runtime"],
-      "outputs": ["{workspaceRoot}/tmp/capture-workbench-desktop/real-ollama-smoke/real-ollama-smoke.json"],
+      "outputs": [
+        "{workspaceRoot}/tmp/capture-workbench-desktop/real-ollama-smoke/real-ollama-smoke.json"
+      ],
       "options": {
         "command": "node apps/capture-workbench-desktop/scripts/real-ollama-smoke.ts"
       }
@@ -169,7 +192,9 @@
       "metadata": {
         "description": "Opt-in Windows standalone-app OCR smoke. Requires an explicitly prepared host app-data directory and a user-provided PDF; excluded from ordinary CI."
       },
-      "outputs": ["{workspaceRoot}/tmp/capture-workbench-desktop/real-desktop-ocr-smoke/real-desktop-ocr-smoke.json"],
+      "outputs": [
+        "{workspaceRoot}/tmp/capture-workbench-desktop/real-desktop-ocr-smoke/real-desktop-ocr-smoke.json"
+      ],
       "options": {
         "commands": [
           "corepack pnpm nx run capture-workbench-desktop:stage-product-runtime",
@@ -209,6 +234,24 @@
       ],
       "options": {
         "command": "node apps/capture-workbench-desktop/scripts/installed-deterministic-smoke.ts"
+      }
+    },
+    "measure-installed-core-size": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "metadata": {
+        "description": "Performs a scoped release install/uninstall solely to record installed core-only NSIS bytes."
+      },
+      "outputs": [
+        "{workspaceRoot}/tmp/capture-workbench-desktop/installed-smoke/installed-size.json"
+      ],
+      "options": {
+        "commands": [
+          "corepack pnpm nx run capture-workbench-desktop:stage-core-runtime",
+          "corepack pnpm nx run capture-workbench-desktop:build-nsis",
+          "node apps/capture-workbench-desktop/scripts/installed-deterministic-smoke.ts --measure-release-size"
+        ],
+        "parallel": false
       }
     }
   }

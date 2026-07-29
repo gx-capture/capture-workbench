@@ -1,14 +1,7 @@
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { createReadStream } from 'node:fs';
-import {
-  lstat,
-  mkdtemp,
-  readFile,
-  readdir,
-  rm,
-  stat,
-} from 'node:fs/promises';
+import { lstat, mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -16,12 +9,14 @@ import { Observable, defer, from, map } from 'rxjs';
 
 const packageName = '@gx-capture/capture-workbench';
 const registry = 'https://npm.pkg.github.com';
-const runtimeAssetNames = Object.freeze([
+const coreRuntimeAssetNames = Object.freeze([
   'capture-runtime-x86_64-pc-windows-msvc.exe',
   'capture-runtime-x86_64-pc-windows-msvc.exe.sha256',
   'capture-runtime-manifest.json',
   'capture-document-v1.schema.json',
 ]);
+const engineCatalogName = 'capture-engine-catalog.json';
+const runtimeSizeReportName = 'runtime-size-report.json';
 
 function run(command, args, { allowFailure = false } = {}) {
   const executable =
@@ -112,7 +107,9 @@ async function assertRegularFile(path, label) {
 async function inspectPackage(version, packagePath, runCommand) {
   await assertRegularFile(packagePath, 'Capture Workbench package');
   if (!packagePath.endsWith('.tgz')) {
-    throw new Error('Capture Workbench publication input must be one .tgz file.');
+    throw new Error(
+      'Capture Workbench publication input must be one .tgz file.',
+    );
   }
   const localIntegrity = `sha512-${await hashFile(
     packagePath,
@@ -142,26 +139,137 @@ async function inspectPackage(version, packagePath, runCommand) {
 
 async function preflightCandidate(input, runCommand) {
   const runtimeEntries = await readdir(input.runtimeDirectory);
-  const sortedEntries = [...runtimeEntries].sort();
-  const expectedEntries = [...runtimeAssetNames].sort();
-  if (JSON.stringify(sortedEntries) !== JSON.stringify(expectedEntries)) {
-    throw new Error(
-      'Runtime release directory must contain only the canonical assets.',
-    );
-  }
-  const runtimeAssets = runtimeAssetNames.map((name) =>
+  const coreRuntimeAssets = coreRuntimeAssetNames.map((name) =>
     join(input.runtimeDirectory, name),
   );
-  for (const path of runtimeAssets) {
+  for (const path of coreRuntimeAssets) {
     await assertRegularFile(path, `Runtime asset ${basename(path)}`);
   }
+  const catalogPath = join(input.runtimeDirectory, engineCatalogName);
+  const sizeReportPath = join(input.runtimeDirectory, runtimeSizeReportName);
+  const catalog = JSON.parse(await readFile(catalogPath, 'utf8'));
+  if (
+    catalog?.catalogVersion !== '1' ||
+    catalog?.runtimeVersion !== input.version ||
+    !Array.isArray(catalog.requirements) ||
+    JSON.stringify(
+      catalog.requirements.map((item) => item.requirementId).sort(),
+    ) !== JSON.stringify(['whisper-primary', 'windowsml-ocr'])
+  ) {
+    throw new Error(
+      'Engine catalog identity, version, or requirement set is invalid.',
+    );
+  }
+  const descriptors = catalog.requirements.flatMap((requirement) => {
+    if (
+      requirement.unavailableReason !== null ||
+      !Array.isArray(requirement.artifacts) ||
+      requirement.artifacts.length !== 2 ||
+      requirement.artifacts.some(
+        (artifact) => artifact.requirementId !== requirement.requirementId,
+      )
+    ) {
+      throw new Error(
+        `Engine catalog requirement is incomplete: ${String(requirement.requirementId)}.`,
+      );
+    }
+    return requirement.artifacts;
+  });
+  const sidecarNames = runtimeEntries.filter((name) =>
+    name.endsWith('-files.json'),
+  );
+  const engineAssetNames = new Set();
+  for (const descriptor of descriptors) {
+    if (
+      !['worker', 'model'].includes(descriptor.role) ||
+      typeof descriptor.fileName !== 'string' ||
+      !descriptor.fileName.endsWith('.zip') ||
+      !Number.isSafeInteger(descriptor.bytes) ||
+      descriptor.bytes < 1 ||
+      !/^[a-f0-9]{64}$/u.test(descriptor.sha256) ||
+      !/^[a-f0-9]{64}$/u.test(descriptor.filesManifestSha256)
+    ) {
+      throw new Error('Engine catalog artifact descriptor is invalid.');
+    }
+    const archive = join(input.runtimeDirectory, descriptor.fileName);
+    const archiveMetadata = await assertRegularFile(
+      archive,
+      `Engine archive ${descriptor.fileName}`,
+    );
+    if (
+      archiveMetadata.size !== descriptor.bytes ||
+      (await hashFile(archive, 'sha256')) !== descriptor.sha256
+    ) {
+      throw new Error(
+        `Engine archive differs from catalog: ${descriptor.fileName}.`,
+      );
+    }
+    const matchingSidecars = [];
+    for (const name of sidecarNames) {
+      const candidate = join(input.runtimeDirectory, name);
+      if (
+        (await hashFile(candidate, 'sha256')) === descriptor.filesManifestSha256
+      ) {
+        matchingSidecars.push(name);
+      }
+    }
+    if (matchingSidecars.length !== 1) {
+      throw new Error(
+        `Engine archive needs exactly one matching files manifest: ${descriptor.fileName}.`,
+      );
+    }
+    for (const name of [descriptor.fileName, matchingSidecars[0]]) {
+      const asset = join(input.runtimeDirectory, name);
+      const checksum = join(input.runtimeDirectory, `${name}.sha256`);
+      await assertRegularFile(checksum, `Checksum for ${name}`);
+      if (
+        (await readFile(checksum, 'utf8')).trim() !==
+        `${await hashFile(asset, 'sha256')}  ${name}`
+      ) {
+        throw new Error(`Release checksum does not match ${name}.`);
+      }
+      engineAssetNames.add(name);
+      engineAssetNames.add(`${name}.sha256`);
+    }
+  }
+  for (const name of [engineCatalogName, runtimeSizeReportName]) {
+    const asset = join(input.runtimeDirectory, name);
+    const checksum = join(input.runtimeDirectory, `${name}.sha256`);
+    await assertRegularFile(asset, name);
+    await assertRegularFile(checksum, `Checksum for ${name}`);
+    if (
+      (await readFile(checksum, 'utf8')).trim() !==
+      `${await hashFile(asset, 'sha256')}  ${name}`
+    ) {
+      throw new Error(`Release checksum does not match ${name}.`);
+    }
+  }
+  const expectedEntries = [
+    ...coreRuntimeAssetNames,
+    ...engineAssetNames,
+    engineCatalogName,
+    `${engineCatalogName}.sha256`,
+    runtimeSizeReportName,
+    `${runtimeSizeReportName}.sha256`,
+  ].sort();
+  if (
+    JSON.stringify([...runtimeEntries].sort()) !==
+    JSON.stringify(expectedEntries)
+  ) {
+    throw new Error(
+      'Runtime release directory must contain only catalogued canonical assets.',
+    );
+  }
+  const runtimeAssets = expectedEntries.map((name) =>
+    join(input.runtimeDirectory, name),
+  );
   const installerMetadata = await assertRegularFile(
     input.installerPath,
     'NSIS installer',
   );
   if (
     !input.installerPath.toLowerCase().endsWith('.exe') ||
-    resolve(input.installerPath) === resolve(runtimeAssets[0]) ||
+    resolve(input.installerPath) === resolve(coreRuntimeAssets[0]) ||
     dirname(resolve(input.installerPath)) === resolve(input.runtimeDirectory)
   ) {
     throw new Error(
@@ -172,30 +280,44 @@ async function preflightCandidate(input, runCommand) {
     throw new Error('NSIS installer is empty.');
   }
 
-  const executable = runtimeAssets[0];
+  const executable = coreRuntimeAssets[0];
   const executableMetadata = await stat(executable);
   const executableDigest = await hashFile(executable, 'sha256');
-  const checksum = (
-    await readFile(runtimeAssets[1], 'utf8')
-  ).trim();
+  const checksum = (await readFile(coreRuntimeAssets[1], 'utf8')).trim();
   if (checksum !== `${executableDigest}  ${basename(executable)}`) {
     throw new Error('Runtime executable checksum file does not match.');
   }
-  const manifest = JSON.parse(await readFile(runtimeAssets[2], 'utf8'));
-  const schemaDigest = await hashFile(runtimeAssets[3], 'sha256');
+  const manifest = JSON.parse(await readFile(coreRuntimeAssets[2], 'utf8'));
+  const schemaDigest = await hashFile(coreRuntimeAssets[3], 'sha256');
   if (
     manifest.runtimeVersion !== input.version ||
     manifest.fileName !== basename(executable) ||
     manifest.bytes !== executableMetadata.size ||
     manifest.sha256 !== executableDigest ||
-    manifest.schemaFileName !== basename(runtimeAssets[3]) ||
+    manifest.schemaFileName !== basename(coreRuntimeAssets[3]) ||
     manifest.schemaSha256 !== schemaDigest
   ) {
     throw new Error(
       'Runtime manifest, schema, executable, and release version are inconsistent.',
     );
   }
-  JSON.parse(await readFile(runtimeAssets[3], 'utf8'));
+  JSON.parse(await readFile(coreRuntimeAssets[3], 'utf8'));
+  const sizeReport = JSON.parse(await readFile(sizeReportPath, 'utf8'));
+  if (
+    sizeReport?.runtimeExecutable?.bytes !== executableMetadata.size ||
+    sizeReport?.runtimeExecutable?.sha256 !== executableDigest ||
+    sizeReport?.nsisInstaller?.bytes !== installerMetadata.size ||
+    sizeReport?.nsisInstaller?.sha256 !==
+      (await hashFile(input.installerPath, 'sha256')) ||
+    !Number.isSafeInteger(sizeReport?.installedBytes) ||
+    sizeReport.installedBytes < 1 ||
+    sizeReport?.installedBytesBlocker !== null ||
+    sizeReport?.startup?.blocker !== null
+  ) {
+    throw new Error(
+      'Runtime size report does not match the exact release candidate.',
+    );
+  }
   const packagePlan = await inspectPackage(
     input.version,
     input.packagePath,
@@ -347,7 +469,9 @@ function publishPackage(packagePlan, runCommand) {
   }
   const published = existingPackageIntegrity(packagePlan.version, runCommand);
   if (published === undefined) {
-    throw new Error('Package registry did not expose the version after publish.');
+    throw new Error(
+      'Package registry did not expose the version after publish.',
+    );
   }
   packagePublicationDecision(published, packagePlan.localIntegrity);
 }
@@ -359,7 +483,9 @@ async function publishReleaseAsync(input, runCommand) {
   const existingIntegrity = existingPackageIntegrity(input.version, runCommand);
   if (state === 'public') {
     if (existingIntegrity === undefined) {
-      throw new Error('Public release exists but the synchronized package is missing.');
+      throw new Error(
+        'Public release exists but the synchronized package is missing.',
+      );
     }
     packagePublicationDecision(
       existingIntegrity,
@@ -383,7 +509,8 @@ async function publishReleaseAsync(input, runCommand) {
     ]);
     state = 'draft';
   }
-  if (state !== 'draft') throw new Error('Release must remain draft during publication.');
+  if (state !== 'draft')
+    throw new Error('Release must remain draft during publication.');
 
   await ensureDraftAssets(input.tag, candidate.assets, runCommand);
   publishPackage(candidate.packagePlan, runCommand);

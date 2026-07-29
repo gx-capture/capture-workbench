@@ -2,17 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import zipfile
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 
-import httpx
 import pytest
 from PIL import Image
 
 import capture_runtime.extractors as extractor_module
-import capture_runtime.ollama.system_installer as system_installer_module
 from capture_runtime.clock import SystemClock
 from capture_runtime.config import ExtractionRuntimeConfig, OllamaRuntimeConfig, RuntimeSettings
 from capture_runtime.contracts import CaptureSourceV1
@@ -27,9 +24,7 @@ from capture_runtime.engine_adapters import (
 )
 from capture_runtime.extractors import StandaloneRuntimeCaptureExtractor
 from capture_runtime.ollama import (
-    CommandResult,
     IsolatedOllamaLifecycle,
-    SystemRuntimeInstaller,
 )
 
 
@@ -371,150 +366,3 @@ def _lifecycle(tmp_path: Path) -> IsolatedOllamaLifecycle:
         executable_resolver=lambda: None,
         clock=SystemClock(),
     )
-
-
-def test_runtime_owned_windowsml_bundle_installs_and_reprobes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    source = tmp_path / "models"
-    _write_windowsml_models(source)
-    archive = tmp_path / "windowsml.zip"
-    with zipfile.ZipFile(archive, "w") as bundle:
-        for path in source.rglob("*"):
-            if path.is_file():
-                bundle.write(path, path.relative_to(source).as_posix())
-    archive_bytes = archive.read_bytes()
-    monkeypatch.setattr(
-        system_installer_module,
-        "WINDOWSML_BUNDLE_URL",
-        "https://downloads.example.test/windowsml.zip",
-    )
-    monkeypatch.setattr(system_installer_module, "WINDOWSML_BUNDLE_BYTES", len(archive_bytes))
-    monkeypatch.setattr(
-        system_installer_module,
-        "WINDOWSML_BUNDLE_SHA256",
-        hashlib.sha256(archive_bytes).hexdigest(),
-    )
-    config = _config(tmp_path)
-
-    class AssetProbeOcr(FakeOcrAdapter):
-        def probe(self) -> EngineProbe:
-            missing = [
-                relative
-                for relative in (
-                    "det/inference.onnx",
-                    "det/inference.yml",
-                    "rec/inference.onnx",
-                    "rec/inference.yml",
-                    "rec/ppocr_keys_v1.txt",
-                    "pipeline.json",
-                )
-                if not (config.windowsml_model_dir / relative).is_file()
-            ]
-            return EngineProbe(
-                not missing, True, not missing, "ready" if not missing else "missing"
-            )
-
-    installer = SystemRuntimeInstaller(
-        _lifecycle(tmp_path),
-        winget_resolver=lambda: None,
-        extraction_config=config,
-        ocr_adapter=AssetProbeOcr(),
-        whisper_adapter=FakeWhisperAdapter(),
-        clock=SystemClock(),
-        http_client_factory=lambda: httpx.AsyncClient(
-            transport=httpx.MockTransport(
-                lambda request: httpx.Response(
-                    200,
-                    headers={"content-length": str(len(archive_bytes))},
-                    content=archive_bytes,
-                    request=request,
-                )
-            ),
-            follow_redirects=True,
-        ),
-    )
-    before = next(
-        item for item in installer.requirements() if item.requirement_id == "windowsml-ocr"
-    )
-    assert before.status == "installable"
-    progress: list[float] = []
-    asyncio.run(
-        installer.install(
-            "windowsml-ocr", cancel_event=asyncio.Event(), report_progress=progress.append
-        )
-    )
-    assert progress[-1] == 1
-    after = next(
-        item for item in installer.requirements() if item.requirement_id == "windowsml-ocr"
-    )
-    assert after.status == "ready"
-
-
-def test_whisper_install_runs_cancellable_model_subprocesses_and_reprobes(
-    tmp_path: Path,
-) -> None:
-    config = _config(tmp_path)
-    adapter = FasterWhisperAdapter(
-        config.whisper_models_dir,
-        primary_model=config.whisper_primary_model,
-        fallback_model=config.whisper_fallback_model,
-        prefer_gpu=False,
-        max_duration_ms=config.max_audio_duration_ms,
-        model_factory=lambda *_args, **_kwargs: object(),
-    )
-
-    class DownloadRunner:
-        def __init__(self) -> None:
-            self.commands: list[list[str]] = []
-            self.environments: list[dict[str, str]] = []
-
-        async def run(
-            self,
-            arguments: list[str],
-            *,
-            environment,
-            cwd,
-            cancel_event: asyncio.Event,
-            timeout_seconds: float,
-        ) -> CommandResult:
-            del cwd, timeout_seconds
-            if cancel_event.is_set():
-                raise asyncio.CancelledError
-            self.commands.append(arguments)
-            self.environments.append(dict(environment))
-            model = arguments[arguments.index("--model") + 1]
-            output = Path(arguments[arguments.index("--output") + 1])
-            _write_whisper_model(output.parent, model)
-            return CommandResult(0, "downloaded")
-
-    runner = DownloadRunner()
-    installer = SystemRuntimeInstaller(
-        _lifecycle(tmp_path),
-        command_runner=runner,
-        winget_resolver=lambda: None,
-        extraction_config=config,
-        ocr_adapter=FakeOcrAdapter(),
-        whisper_adapter=adapter,
-        clock=SystemClock(),
-    )
-    before = next(
-        item for item in installer.requirements() if item.requirement_id == "whisper-primary"
-    )
-    assert before.status == "installable"
-    asyncio.run(
-        installer.install(
-            "whisper-primary",
-            cancel_event=asyncio.Event(),
-            report_progress=lambda _value: None,
-        )
-    )
-    assert len(runner.commands) == 2
-    assert all(
-        environment["HF_HOME"] == str(config.whisper_models_dir.parent / ".huggingface")
-        and environment["HF_HUB_CACHE"]
-        == str(config.whisper_models_dir.parent / ".huggingface" / "hub")
-        and "HF_TOKEN" not in environment
-        for environment in runner.environments
-    )
-    assert adapter.probe().ready is True

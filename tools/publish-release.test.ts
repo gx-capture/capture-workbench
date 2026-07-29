@@ -4,6 +4,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -26,6 +27,8 @@ const runtimeAssetNames = [
   'capture-runtime-manifest.json',
   'capture-document-v1.schema.json',
 ];
+const engineCatalogName = 'capture-engine-catalog.json';
+const runtimeSizeReportName = 'runtime-size-report.json';
 
 function hash(bytes, algorithm, encoding = 'hex') {
   return createHash(algorithm).update(bytes).digest(encoding);
@@ -71,16 +74,96 @@ function createCandidate() {
     })}\n`,
   );
   writeFileSync(join(runtimeDirectory, runtimeAssetNames[3]), schema);
-  const installerPath = join(root, `Capture Workbench_${version}_x64-setup.exe`);
-  writeFileSync(installerPath, 'installer bytes');
+  const installerPath = join(
+    root,
+    `Capture Workbench_${version}_x64-setup.exe`,
+  );
+  const installerBytes = Buffer.from('installer bytes');
+  writeFileSync(installerPath, installerBytes);
+  const descriptors = [
+    ['windowsml-ocr', 'worker', 'capture-engine-ocr.zip'],
+    ['windowsml-ocr', 'model', 'capture-model-ocr.zip'],
+    ['whisper-primary', 'worker', 'capture-engine-whisper.zip'],
+    ['whisper-primary', 'model', 'capture-model-whisper.zip'],
+  ].map(([requirementId, role, fileName]) => {
+    const archive = Buffer.from(`${fileName} bytes`);
+    const sidecarName = `${fileName.slice(0, -4)}-files.json`;
+    const sidecar = Buffer.from(
+      `${JSON.stringify({
+        manifestVersion: '1',
+        files: [
+          {
+            path: fileName,
+            bytes: archive.length,
+            sha256: hash(archive, 'sha256'),
+          },
+        ],
+      })}\n`,
+    );
+    writeFileSync(join(runtimeDirectory, fileName), archive);
+    writeFileSync(join(runtimeDirectory, sidecarName), sidecar);
+    for (const [name, bytes] of [
+      [fileName, archive],
+      [sidecarName, sidecar],
+    ]) {
+      writeFileSync(
+        join(runtimeDirectory, `${name}.sha256`),
+        `${hash(bytes, 'sha256')}  ${name}\n`,
+      );
+    }
+    return {
+      requirementId,
+      role,
+      fileName,
+      bytes: archive.length,
+      sha256: hash(archive, 'sha256'),
+      filesManifestSha256: hash(sidecar, 'sha256'),
+    };
+  });
+  const catalog = Buffer.from(
+    `${JSON.stringify({
+      catalogVersion: '1',
+      runtimeVersion: version,
+      requirements: ['windowsml-ocr', 'whisper-primary'].map(
+        (requirementId) => ({
+          requirementId,
+          unavailableReason: null,
+          artifacts: descriptors.filter(
+            (descriptor) => descriptor.requirementId === requirementId,
+          ),
+        }),
+      ),
+    })}\n`,
+  );
+  writeFileSync(join(runtimeDirectory, engineCatalogName), catalog);
+  writeFileSync(
+    join(runtimeDirectory, `${engineCatalogName}.sha256`),
+    `${hash(catalog, 'sha256')}  ${engineCatalogName}\n`,
+  );
+  const sizeReport = Buffer.from(
+    `${JSON.stringify({
+      runtimeExecutable: {
+        bytes: executable.length,
+        sha256: executableDigest,
+      },
+      nsisInstaller: {
+        bytes: installerBytes.length,
+        sha256: hash(installerBytes, 'sha256'),
+      },
+      installedBytes: 12345,
+      installedBytesBlocker: null,
+      startup: { blocker: null },
+    })}\n`,
+  );
+  writeFileSync(join(runtimeDirectory, runtimeSizeReportName), sizeReport);
+  writeFileSync(
+    join(runtimeDirectory, `${runtimeSizeReportName}.sha256`),
+    `${hash(sizeReport, 'sha256')}  ${runtimeSizeReportName}\n`,
+  );
   const packagePath = join(root, `gx-capture-capture-workbench-${version}.tgz`);
   const packageBytes = Buffer.from('package bytes');
   writeFileSync(packagePath, packageBytes);
-  const packageIntegrity = `sha512-${hash(
-    packageBytes,
-    'sha512',
-    'base64',
-  )}`;
+  const packageIntegrity = `sha512-${hash(packageBytes, 'sha512', 'base64')}`;
   return {
     root,
     input: {
@@ -90,11 +173,12 @@ function createCandidate() {
       installerPath,
       packagePath,
     },
-    assets: [...runtimeAssetNames, basename(installerPath)].map((name) =>
-      name === basename(installerPath)
-        ? installerPath
-        : join(runtimeDirectory, name),
-    ),
+    assets: [
+      ...readdirSync(runtimeDirectory).map((name) =>
+        join(runtimeDirectory, name),
+      ),
+      installerPath,
+    ],
     packageIntegrity,
   };
 }
@@ -222,16 +306,12 @@ test('missing state creates a draft and makes public only after assets and packa
     );
     assert.equal(remote.state.release, 'public');
     assert.equal(remote.state.packageIntegrity, candidate.packageIntegrity);
-    assert.deepEqual([...remote.assets.keys()].sort(), [
-      ...runtimeAssetNames,
-      basename(candidate.input.installerPath),
-    ].sort());
+    assert.deepEqual(
+      [...remote.assets.keys()].sort(),
+      candidate.assets.map((path) => basename(path)).sort(),
+    );
     const mutationCalls = mutations(remote.calls);
-    assert.deepEqual(mutationCalls[0].slice(0, 3), [
-      'gh',
-      'release',
-      'create',
-    ]);
+    assert.deepEqual(mutationCalls[0].slice(0, 3), ['gh', 'release', 'create']);
     assert.deepEqual(mutationCalls.at(-1).slice(0, 3), [
       'gh',
       'release',
@@ -248,7 +328,7 @@ test('draft retry uploads only missing assets and skips an exact package', async
     const remote = createRemote(candidate, {
       release: 'draft',
       packageIntegrity: candidate.packageIntegrity,
-      assets: candidate.assets.slice(0, 4),
+      assets: candidate.assets.slice(0, -1),
     });
     await observe(
       publishRelease(candidate.input, { runCommand: remote.runCommand }),
@@ -258,11 +338,13 @@ test('draft retry uploads only missing assets and skips an exact package', async
         command === 'gh' && group === 'release' && operation === 'upload',
     );
     assert.equal(uploads.length, 1);
-    assert.equal(basename(uploads[0][4]), basename(candidate.input.installerPath));
+    assert.equal(
+      basename(uploads[0][4]),
+      basename(candidate.input.installerPath),
+    );
     assert.equal(
       remote.calls.some(
-        ([command, operation]) =>
-          command === 'npm' && operation === 'publish',
+        ([command, operation]) => command === 'npm' && operation === 'publish',
       ),
       false,
     );
@@ -294,7 +376,7 @@ test('public release with a missing or different asset fails read-only', async (
     const missing = createRemote(candidate, {
       release: 'public',
       packageIntegrity: candidate.packageIntegrity,
-      assets: candidate.assets.slice(0, 4),
+      assets: candidate.assets.slice(0, -1),
     });
     await assert.rejects(
       observe(
@@ -336,13 +418,16 @@ test('package conflict and malformed local candidate stop before mutations', asy
     );
     assert.deepEqual(mutations(conflict.calls), []);
 
-    writeFileSync(join(candidate.input.runtimeDirectory, 'unexpected.txt'), 'x');
+    writeFileSync(
+      join(candidate.input.runtimeDirectory, 'unexpected.txt'),
+      'x',
+    );
     const invalid = createRemote(candidate);
     await assert.rejects(
       observe(
         publishRelease(candidate.input, { runCommand: invalid.runCommand }),
       ),
-      /only the canonical assets/u,
+      /only .*canonical assets/u,
     );
     assert.deepEqual(invalid.calls, []);
   } finally {
@@ -396,10 +481,7 @@ test('candidate installer must be a regular nonempty file before remote inspecti
 });
 
 test('upload and npm failures leave the release draft', async () => {
-  for (const fail of [
-    `upload:${runtimeAssetNames[0]}`,
-    'publish',
-  ]) {
+  for (const fail of [`upload:${runtimeAssetNames[0]}`, 'publish']) {
     const candidate = createCandidate();
     try {
       const remote = createRemote(candidate, { fail });
@@ -413,9 +495,7 @@ test('upload and npm failures leave the release draft', async () => {
       assert.equal(
         remote.calls.some(
           ([command, group, operation]) =>
-            command === 'gh' &&
-            group === 'release' &&
-            operation === 'edit',
+            command === 'gh' && group === 'release' && operation === 'edit',
         ),
         false,
       );

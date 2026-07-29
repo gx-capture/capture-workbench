@@ -6,6 +6,7 @@ import {
   concatMap,
   defer,
   from,
+  forkJoin,
   map,
   of,
   switchMap,
@@ -78,18 +79,41 @@ export function createInstalledRegistry({
     );
   }
 
+  function registryKeyExistsInAnyView(key) {
+    return from(registryViews).pipe(
+      concatMap((view) => registryKeyExists(key, view)),
+      toArray(),
+      map((presentViews) => presentViews.some(Boolean)),
+    );
+  }
+
   function waitForInstalledDirectoryRemoval(directory) {
     return waitUntil(
-      () => pathExists(directory).pipe(map((exists) => !exists)),
+      () =>
+        forkJoin({
+          directoryExists: pathExists(directory),
+          uninstallKeyPresent:
+            registryKeyExistsInAnyView(uninstallRegistryKey),
+        }).pipe(
+          map(
+            ({ directoryExists, uninstallKeyPresent }) =>
+              !directoryExists && !uninstallKeyPresent,
+          ),
+        ),
       30_000,
-      'Installed NSIS uninstaller did not remove its exact install directory.',
+      'Installed NSIS uninstaller did not remove its exact install directory and uninstall registry key.',
     ).pipe(
-      concatMap(() => registryKeyExists(uninstallRegistryKey)),
-      concatMap((exists) =>
-        exists
-          ? throwError(() => new Error('Installed NSIS uninstaller left its uninstall registry key.'))
-          : of(undefined),
+      concatMap(() =>
+        forkJoin({
+          uninstallKeyPresent:
+            registryKeyExistsInAnyView(uninstallRegistryKey),
+          productKeyPresent: registryKeyExistsInAnyView(productRegistryKey),
+        }),
       ),
+      map(({ uninstallKeyPresent, productKeyPresent }) => ({
+        uninstallKeyRemoved: !uninstallKeyPresent,
+        productKeyRetained: productKeyPresent,
+      })),
     );
   }
 
