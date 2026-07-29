@@ -114,3 +114,28 @@ Commands that call `LibraryStore` or `runtime_client` clone managed state into a
   production sidecar/Tauri build, using the tracked real PDF and the standard
   Tauri host AppData. Its redacted report records real engines, visible OCR,
   isolated Ollama provenance, and post-verification document deletion.
+
+## Replacement PR closeout (2026-07-29)
+
+- [PR #5](https://github.com/WodenWang820118/capture-workbench/pull/5)
+  contains the standalone desktop hardening slice at reviewed HEAD
+  `90c87c15228122aed48ffb1cc454f489ceaee76a`. GitGuardian and
+  [`verify-windows-x64`](https://github.com/WodenWang820118/capture-workbench/actions/runs/30417868697)
+  succeeded at that HEAD.
+- [PR #6](https://github.com/WodenWang820118/capture-workbench/pull/6) is the
+  stacked DirectML slice. At implementation HEAD
+  `5f50120a6d6a65c02d047fb3b410c145f27766cd`, GitGuardian and
+  [`verify-windows-x64`](https://github.com/WodenWang820118/capture-workbench/actions/runs/30421151824)
+  succeeded, including the desktop product and Playwright reference-flow
+  steps.
+- The repo-owned
+  `capture-workbench-desktop:smoke-real-desktop-ocr-directml` gate passed with
+  an image-only scanned PDF. Its redacted report records
+  `releaseGateSatisfied=true`, `realEnginesExercised=true`,
+  `rawOcrVisible=true`, `ocrDevice=windowsml-dml`, isolated Ollama model
+  provenance, successful document deletion, and no owned desktop/runtime
+  process residue.
+- The broad [PR #4](https://github.com/WodenWang820118/capture-workbench/pull/4)
+  was linked to both green replacements and
+  [closed as superseded](https://github.com/WodenWang820118/capture-workbench/pull/4#issuecomment-5112913276)
+  at `2026-07-29T04:13:09Z`.
