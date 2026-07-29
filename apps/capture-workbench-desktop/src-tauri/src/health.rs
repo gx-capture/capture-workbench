@@ -144,7 +144,6 @@ mod tests {
         EXPECTED_API_VERSION, EXPECTED_CAPTURE_DOCUMENT_SCHEMA_VERSION, EXPECTED_MANIFEST_VERSION,
         EXPECTED_RUNTIME_VERSION, RUNTIME_BINARY_TARGET_FILE,
     };
-    use crate::contracts::manifest::{RuntimeRequirements, WindowsMlArtifactDescriptor};
     use std::{net::TcpListener, sync::mpsc, thread};
 
     fn manifest() -> RuntimeManifest {
@@ -160,14 +159,6 @@ mod tests {
             sha256: "0".repeat(64),
             schema_file_name: "capture-document-v1.schema.json".into(),
             schema_sha256: "1".repeat(64),
-            runtime_requirements: RuntimeRequirements {
-                windowsml_ocr: WindowsMlArtifactDescriptor {
-                    artifact_url: "https://downloads.example.org/capture-windowsml.zip".into(),
-                    artifact_file_name: "capture-windowsml.zip".into(),
-                    bytes: 123_456,
-                    sha256: "a".repeat(64),
-                },
-            },
         }
     }
 
@@ -207,7 +198,7 @@ mod tests {
 
     #[test]
     fn incompatible_schema_fails_without_echoing_response_body() {
-        let body = br#"{"ready":true,"runtimeVersion":"0.3.0","apiVersion":"1.0","captureDocumentSchemaVersion":"99","capabilities":{}}"#;
+        let body = br#"{"ready":true,"runtimeVersion":"0.3.2","apiVersion":"1.0","captureDocumentSchemaVersion":"99","capabilities":{}}"#;
         let response = format!(
             "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{}",
             body.len(),

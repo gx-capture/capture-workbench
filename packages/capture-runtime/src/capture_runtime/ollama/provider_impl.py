@@ -17,11 +17,11 @@ from capture_runtime.contracts import (
 )
 from capture_runtime.ollama.lifecycle_impl import IsolatedOllamaLifecycle, RuntimeUnavailableError
 from capture_runtime.structuring import (
-    CAPTURE_BLOCK_BATCH_SCHEMA,
     DEFAULT_STRUCTURING_NUM_CTX,
     DEFAULT_STRUCTURING_NUM_PREDICT,
     assemble_structuring_document,
     build_structuring_batch_prompt,
+    ollama_structuring_batch_schema,
     plan_structuring_batches,
     structuring_batch_generation_options,
     validate_structuring_batch,
@@ -92,7 +92,13 @@ class OllamaCaptureStructuringProvider:
                     num_ctx=num_ctx,
                     num_predict=num_predict,
                 )
-                blocks.extend(validate_structuring_batch(candidate, plan.segments))
+                blocks.extend(
+                    validate_structuring_batch(
+                        candidate,
+                        plan.segments,
+                        target_language=target_language,
+                    )
+                )
         return assemble_structuring_document(
             raw,
             blocks,
@@ -118,7 +124,8 @@ class OllamaCaptureStructuringProvider:
                 json={
                     "model": self._lifecycle.config.profile_id,
                     "stream": False,
-                    "format": CAPTURE_BLOCK_BATCH_SCHEMA,
+                    "think": False,
+                    "format": ollama_structuring_batch_schema(target_language=target_language),
                     "prompt": json.dumps(prompt, ensure_ascii=False, separators=(",", ":")),
                     "options": {"num_ctx": num_ctx, "num_predict": num_predict},
                 },

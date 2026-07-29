@@ -271,7 +271,7 @@
       "type": "object"
     }
   },
-  "$id": "https://github.com/WodenWang820118/capture-workbench/schema/capture-document-v1.schema.json",
+  "$id": "https://github.com/gx-capture/capture-workbench/schema/capture-document-v1.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {

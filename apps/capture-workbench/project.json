@@ -19,10 +19,18 @@
             "input": "apps/capture-workbench/public"
           }
         ],
-        "styles": ["apps/capture-workbench/src/styles.css"]
+        "styles": [
+          "node_modules/@angular/material/prebuilt-themes/azure-blue.css",
+          "apps/capture-workbench/src/styles.css"
+        ]
       },
       "configurations": {
         "production": {
+          "optimization": {
+            "styles": {
+              "inlineCritical": false
+            }
+          },
           "budgets": [
             {
               "type": "initial",
@@ -31,23 +39,17 @@
             },
             {
               "type": "anyComponentStyle",
-              "maximumWarning": "4kb",
-              "maximumError": "8kb"
+              "maximumWarning": "8kb",
+              "maximumError": "10kb"
             }
           ],
           "outputHashing": "all"
         },
-        "development": {
-          "optimization": false,
-          "extractLicenses": false,
-          "sourceMap": true,
-          "fileReplacements": [
-            {
-              "replace": "apps/capture-workbench/src/app/services/validation-fixture.service.ts",
-              "with": "apps/capture-workbench/src/app/services/validation-fixture.service.development.ts"
-            }
-          ]
-        }
+    "development": {
+      "optimization": false,
+      "extractLicenses": false,
+      "sourceMap": true
+    }
       },
       "defaultConfiguration": "production"
     },

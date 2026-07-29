@@ -7,6 +7,7 @@ import {
   CaptureWorkbenchTestInputSource,
   DOCUMENT,
   RAW,
+  captureWorkbenchRoot,
   createCaptureWorkbenchTestInputSource,
   fakeClient,
   job,
@@ -80,7 +81,8 @@ describe('CaptureWorkbenchComponent', () => {
       expect.objectContaining({ fileName: 'scan.pdf', raw: RAW }),
     );
     expect(
-      fixture.nativeElement.querySelector('.raw-diagnostics').textContent,
+      captureWorkbenchRoot(fixture).querySelector('.raw-diagnostics')
+        ?.textContent,
     ).toContain('diagnostic only');
   });
 

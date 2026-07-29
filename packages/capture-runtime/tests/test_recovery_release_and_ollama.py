@@ -28,7 +28,6 @@ from capture_runtime.ollama import (
 )
 from capture_runtime.release import (
     build_release_artifacts,
-    windowsml_requirement_descriptor,
     write_capture_document_schema,
 )
 
@@ -119,58 +118,18 @@ def test_schema_and_manifest_are_generated_from_pydantic(tmp_path: Path) -> None
         executable=executable,
         schema=schema_path,
         output_dir=tmp_path / "release",
-        windowsml_bundle_url=(
-            "https://github.com/WodenWang820118/capture-workbench/releases/download/"
-            "windowsml-v1/capture-windowsml-ocr-windows-x64.zip"
-        ),
-        windowsml_bundle_bytes=123456,
-        windowsml_bundle_sha256="a" * 64,
     )
     assert manifest["platform"] == "windows"
     assert manifest["arch"] == "x86_64"
     assert manifest["bytes"] == len(b"deterministic executable")
     assert manifest["sha256"] == hashlib.sha256(b"deterministic executable").hexdigest()
-    assert manifest["runtimeRequirements"]["windowsml-ocr"] == {
-        "artifactUrl": (
-            "https://github.com/WodenWang820118/capture-workbench/releases/download/"
-            "windowsml-v1/capture-windowsml-ocr-windows-x64.zip"
-        ),
-        "artifactFileName": "capture-windowsml-ocr-windows-x64.zip",
-        "bytes": 123456,
-        "sha256": "a" * 64,
-    }
+    assert "runtimeRequirements" not in manifest
     assert (
         json.loads(
             (tmp_path / "release" / "capture-runtime-manifest.json").read_text(encoding="utf-8")
         )
         == manifest
     )
-
-
-@pytest.mark.parametrize(
-    "url",
-    [
-        "http://downloads.example.org/capture-windowsml.zip",
-        "https://token@downloads.example.org/capture-windowsml.zip",
-        "https://downloads.example.org:8443/capture-windowsml.zip",
-        "https://downloads.example.org/capture-windowsml.zip?token=secret",
-        "https://downloads.example.org/capture-windowsml.zip#secret",
-        "https://example.invalid/capture-windowsml.zip",
-        "https://downloads.example.org/not-a-zip.exe",
-    ],
-)
-def test_windowsml_release_descriptor_rejects_unsafe_urls(url: str) -> None:
-    with pytest.raises(ValueError):
-        windowsml_requirement_descriptor(url, 123456, "a" * 64)
-
-
-def test_windowsml_release_descriptor_rejects_non_lowercase_digest() -> None:
-    with pytest.raises(ValueError):
-        windowsml_requirement_descriptor(
-            "https://downloads.example.org/capture-windowsml.zip",
-            123456,
-            "A" * 64,
-        )
 
 
 def test_contract_rejects_extra_fields() -> None:
@@ -328,19 +287,6 @@ def test_external_ollama_ignores_owned_ollama_host_override() -> None:
     assert settings.external_ollama is not None
     assert settings.external_ollama.endpoint_url == "https://ollama.example.test"
     assert settings.ollama.host_url == "http://127.0.0.1:11439"
-
-
-def test_windowsml_descriptor_environment_is_atomic_and_bounded() -> None:
-    base = {
-        "CAPTURE_WINDOWSML_BUNDLE_URL": "https://downloads.example.org/windowsml.zip",
-        "CAPTURE_WINDOWSML_BUNDLE_SHA256": "a" * 64,
-    }
-    with pytest.raises(ValueError, match="must be configured together"):
-        RuntimeSettings.from_env(base)
-    with pytest.raises(ValueError, match="between 1 and 536870912"):
-        RuntimeSettings.from_env({**base, "CAPTURE_WINDOWSML_BUNDLE_BYTES": "536870913"})
-    settings = RuntimeSettings.from_env({**base, "CAPTURE_WINDOWSML_BUNDLE_BYTES": "123456"})
-    assert settings.extraction.windowsml_bundle_bytes == 123456
 
 
 def test_ollama_lifecycle_stops_only_its_owned_process(tmp_path: Path) -> None:

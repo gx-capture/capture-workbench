@@ -20,6 +20,7 @@ const forbiddenMarkers = [
   'unknown fake installation',
   'capture fakes',
 ];
+const indexPath = join(bundleRoot, 'index.html');
 
 function collectJavascriptFiles(directory) {
   return defer(() => from(readdir(directory, { withFileTypes: true }))).pipe(
@@ -44,7 +45,19 @@ function verifyProductionBundle() {
           () => new Error(`No production JavaScript bundles found under ${bundleRoot}`),
         );
       }
-      return from(javascriptFiles).pipe(
+      return defer(() => from(readFile(indexPath, 'utf8'))).pipe(
+        map((index) => {
+          if (/rel="stylesheet"[^>]*media="print"[^>]*onload=/iu.test(index)) {
+            throw new Error(
+              'Production stylesheet uses an inline onload handler that strict Tauri CSP blocks; disable Angular critical-CSS inlining for this desktop bundle.',
+            );
+          }
+          if (!/rel="stylesheet"[^>]*href="styles-[^"]+\.css"/iu.test(index)) {
+            throw new Error('Production bundle does not link its stylesheet as a normal self-hosted asset.');
+          }
+          return undefined;
+        }),
+        concatMap(() => from(javascriptFiles)),
         concatMap((file) =>
           defer(() => from(readFile(file, 'utf8'))).pipe(
             map((contents) => ({ file, normalizedContents: contents.toLowerCase() })),

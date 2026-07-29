@@ -1,9 +1,9 @@
 export const INSTALLED_EXECUTABLE_NAME = 'capture-workbench-desktop.exe';
 export const UNINSTALLER_NAME = 'uninstall.exe';
 export const PRODUCT_REGISTRY_KEY =
-  'HKCU\\Software\\github\\Capture Workbench Verification';
+  'HKCU\\Software\\github\\Capture Workbench';
 export const UNINSTALL_REGISTRY_KEY =
-  'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Capture Workbench Verification';
+  'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Capture Workbench';
 export const REGISTRY_VIEWS = ['64', '32'];
 
 export const EXPECTED_REQUIREMENT_IDS = [

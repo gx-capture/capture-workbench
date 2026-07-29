@@ -1,37 +1,170 @@
-<main>
-  <section class="intro">
-    <p class="kicker">Capture Workbench</p>
-    <h1>Packaged workflow validation host</h1>
-    <p>
-      This Tauri-oriented reference app proves clean installation and package
-      integration. It is not the public desktop product.
-    </p>
-    <p class="client-mode" [attr.data-client-mode]="clientMode">
-      Client path: {{ clientMode }}
-    </p>
-    <div class="mode-switch" aria-label="Structuring provider">
-      <button
-        type="button"
-        [class.active]="structuringMode() === 'runtime'"
-        (click)="selectMode('runtime')"
-      >
-        Isolated runtime provider
-      </button>
-      @if (hostStructuringAvailable) {
-      <button
-        type="button"
-        [class.active]="structuringMode() === 'host'"
-        (click)="selectMode('host')"
-      >
-        Host provider interface
-      </button>
-      }
+<main class="workbench-shell">
+  <aside class="library-rail" aria-label="Capture Workbench 導覽">
+    <div class="brand" aria-label="Capture Workbench">
+      <span aria-hidden="true">cw</span>
+      <div><strong>Capture</strong><small>WORKBENCH</small></div>
     </div>
-    <p class="event" aria-live="polite">{{ lastEvent() }}</p>
+
+    <nav aria-label="工作區導覽">
+      <span class="nav-current"><span>處理佇列</span><b>{{ store.documents().length }}</b></span>
+      <span class="nav-muted">歷史資料庫</span>
+    </nav>
+
+    <div class="library-filter">
+      <mat-form-field appearance="outline" subscriptSizing="dynamic">
+        <mat-label>搜尋文件</mat-label>
+        <input matInput type="search" [value]="store.query()" (input)="store.updateQuery($any($event.target).value)" placeholder="搜尋檔名" />
+      </mat-form-field>
+      <mat-form-field appearance="outline" subscriptSizing="dynamic">
+        <mat-label>處理狀態</mat-label>
+        <mat-select [value]="store.statusFilter()" (selectionChange)="store.updateStatusFilter($event.value)">
+          <mat-option value="">全部</mat-option>
+          <mat-option value="queued">等待處理</mat-option>
+          <mat-option value="processing">處理中</mat-option>
+          <mat-option value="persisting">正在保存</mat-option>
+          <mat-option value="recovery_required">需要復原</mat-option>
+          <mat-option value="completed">已完成</mat-option>
+          <mat-option value="failed">處理失敗</mat-option>
+          <mat-option value="canceled">已取消</mat-option>
+        </mat-select>
+      </mat-form-field>
+    </div>
+
+    <div class="rail-footer" aria-live="polite">
+      <span class="runtime-dot" [attr.data-state]="store.state()"></span>
+      {{ store.state() === 'ready' ? 'Runtime 已準備完成' : 'Runtime 等待準備' }}
+    </div>
+  </aside>
+
+  <section class="workspace" aria-labelledby="workspace-title">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">LOCAL DOCUMENT INTELLIGENCE</p>
+        <h1 id="workspace-title">文件擷取工作台</h1>
+      </div>
+      <span class="model-chip"><span aria-hidden="true"></span>Ollama · qwen3.5:4b</span>
+    </header>
+
+    @if (store.state() === 'needs-setup') {
+      <mat-card class="setup-card" appearance="outlined" aria-labelledby="setup-title">
+        <div>
+          <p class="eyebrow">首次準備</p>
+          <h2 id="setup-title">啟用本機文件處理</h2>
+          <p>{{ store.message() }}</p>
+          <ul>
+            @for (requirement of store.coreMissing(); track requirement.requirementId) {
+              <li>
+                <span>{{ requirement.displayName }}</span>
+                <small>{{ requirement.status === 'manual_action_required' ? '需要手動修復。' : (requirement.detail ?? '等待安裝。') }}</small>
+              </li>
+            }
+          </ul>
+        </div>
+        <button mat-flat-button type="button" [disabled]="store.installing()" (click)="store.installCoreRequirements()">
+          @if (store.installing()) { <mat-spinner diameter="18" /> }
+          {{ store.installing() ? '正在準備…' : '同意並安裝核心需求' }}
+        </button>
+      </mat-card>
+    } @else if (store.state() === 'error') {
+      <mat-card class="error-card" appearance="outlined" role="alert">
+        <strong>無法連線到 Capture Runtime</strong>
+        <p>{{ store.message() }}</p>
+        <button mat-stroked-button type="button" (click)="store.initialize()">重新連線</button>
+      </mat-card>
+    }
+
+    <mat-card class="intake" appearance="outlined" [class.is-disabled]="!store.canCapture()">
+      <p class="eyebrow">匯入文件</p>
+      <h2>拖放檔案，或從電腦選擇來源。</h2>
+      <p>支援 PDF、PNG、JPEG 與音訊。系統會依序進行 OCR、啟動隔離 Ollama，並儲存可檢閱的結構化結果。</p>
+      <button mat-flat-button type="button" [disabled]="!store.canCapture()" (click)="openFilePicker()">選擇檔案</button>
+      <span class="intake-hint">可一次選取多個檔案，也可直接拖放到視窗。</span>
+    </mat-card>
+
+    <section class="queue-section" aria-labelledby="queue-title">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">處理佇列與歷史</p>
+          <h2 id="queue-title">我的文件</h2>
+        </div>
+        <p aria-live="polite">{{ store.message() }}</p>
+      </div>
+
+      @if (store.documents().length === 0) {
+        <div class="empty-state">尚未加入文件。先選擇來源，完成準備後就會在這裡追蹤處理進度。</div>
+      } @else {
+        <ol class="document-list">
+          @for (item of store.documents(); track item.documentId) {
+            <li>
+              <button type="button" class="document-card" [class.selected]="store.selectedId() === item.documentId" (click)="store.select(item.documentId)">
+                <span class="file-mark">{{ item.mediaType === 'application/pdf' ? 'PDF' : 'FILE' }}</span>
+                <span class="document-copy">
+                  <strong>{{ item.fileName }}</strong>
+                  <small>{{ store.stageLabel(item.stage) }} · {{ store.formatBytes(item.byteLength) }}</small>
+                </span>
+                <span class="status" [attr.data-status]="item.status">{{ store.statusLabel(item.status) }}</span>
+              </button>
+            </li>
+          }
+        </ol>
+      }
+    </section>
   </section>
 
-  <gx-capture-workbench
-    (completed)="recordCompletion($event)"
-    (failed)="recordFailure($event)"
-  />
+  <aside class="detail-pane" aria-label="文件詳情">
+    @if (store.selected(); as item) {
+      <div class="detail-heading">
+        <p class="eyebrow">文件詳情</p>
+        <h2>{{ item.fileName }}</h2>
+        <p>{{ store.formatDate(item.updatedAtMs) }}</p>
+      </div>
+      <mat-divider />
+
+      <div class="stage-line" [attr.data-stage]="item.stage">
+        <span aria-hidden="true"></span><span>OCR</span><span>Ollama 結構化</span><span>儲存結果</span>
+      </div>
+
+      @if (item.errorMessage) {
+        <div class="detail-error" role="alert"><strong>{{ item.errorCode ?? 'capture_failed' }}</strong><p>{{ item.errorMessage }}</p></div>
+      }
+      @if (item.recoveryMessage) {
+        <div class="detail-error" role="alert"><strong>{{ item.recoveryCode ?? 'recovery_required' }}</strong><p>{{ item.recoveryMessage }}</p></div>
+      }
+      @if (item.raw) {
+        <section class="review-block"><h3>OCR 原始結果</h3><pre>{{ item.raw.sourceText }}</pre></section>
+      }
+      @if (item.result) {
+        <section class="review-block result">
+          <h3>結構化結果</h3>
+          <pre>{{ item.result.targetText }}</pre>
+          <dl class="provenance">
+            <div><dt>OCR</dt><dd>{{ item.result.extractionEngine.engine }} · {{ item.result.extractionEngine.model }} · {{ item.result.extractionEngine.device }}</dd></div>
+            <div><dt>結構化</dt><dd>{{ item.result.structuringEngine.engine }} · {{ item.result.structuringEngine.model }} · {{ item.result.structuringEngine.digest }}</dd></div>
+          </dl>
+          <small>模型資訊來自已保存的 provenance，可辨識真實 Ollama 結果。</small>
+        </section>
+      }
+      <div class="detail-actions">
+        @if (store.busyIds().has(item.documentId)) {
+          <button mat-stroked-button type="button" class="danger" (click)="store.cancel(item.documentId)">取消處理</button>
+        } @else {
+          <button mat-stroked-button type="button" (click)="store.retry(item.documentId)">重新處理</button>
+        }
+        <button mat-stroked-button type="button" [disabled]="!item.result" (click)="store.export(item.documentId, 'text')">匯出文字</button>
+        <button mat-stroked-button type="button" [disabled]="!item.result" (click)="store.export(item.documentId, 'json')">匯出 JSON</button>
+        <button mat-button type="button" class="danger" [disabled]="store.busyIds().has(item.documentId) || !!item.captureId" (click)="store.delete(item.documentId)">刪除</button>
+        @if (store.busyIds().has(item.documentId)) {
+          <small>請先取消處理。</small>
+        } @else if (item.captureId) {
+          <small>請先完成 Runtime 清理。</small>
+        }
+      </div>
+    } @else {
+      <div class="detail-empty">
+        <span aria-hidden="true">↗</span>
+        <h2>選擇一份文件</h2>
+        <p>在這裡檢閱 OCR、Ollama 結果、模型 provenance，並匯出或刪除已保存的資料。</p>
+      </div>
+    }
+  </aside>
 </main>

@@ -1,43 +1,60 @@
+import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import { CAPTURE_STRUCTURING_PROVIDER } from '@gx-capture/capture-workbench';
+import { provideNoopAnimations } from '@angular/platform-browser/animations';
 import { App } from './app';
-import { appConfig } from './app.config';
-import { CaptureWorkbenchUiState } from './services/capture-workbench-ui-state.service';
+import { DesktopWorkspaceStore } from './services/desktop-workspace.store';
 
 describe('App', () => {
-  beforeEach(async () => {
-    await TestBed.configureTestingModule({
+  it('mounts Angular Material controls in the Traditional Chinese desktop workbench', () =>
+    TestBed.configureTestingModule({
       imports: [App],
-      providers: appConfig.providers,
-    }).compileComponents();
-  });
-
-  it('renders the validation host and packaged component', async () => {
-    const fixture = TestBed.createComponent(App);
-    fixture.detectChanges();
-    await fixture.whenStable();
-    fixture.detectChanges();
-    const compiled = fixture.nativeElement as HTMLElement;
-    expect(compiled.querySelector('h1')?.textContent).toContain(
-      'Packaged workflow validation host',
-    );
-    expect(compiled.querySelector('gx-capture-workbench')).not.toBeNull();
-    expect(compiled.querySelector('.client-mode')?.getAttribute('data-client-mode')).toBe(
-      'browser-unconfigured',
-    );
-    expect(
-      Array.from(compiled.querySelectorAll('button')).some(
-        (button) => button.textContent?.trim() === 'Host provider interface',
-      ),
-    ).toBe(false);
-    expect(TestBed.inject(CAPTURE_STRUCTURING_PROVIDER, null)).toBeNull();
-  });
-
-  it('cannot switch an unconfigured browser to host structuring', () => {
-    const uiState = TestBed.inject(CaptureWorkbenchUiState);
-
-    uiState.selectMode('host');
-
-    expect(uiState.config().structuringMode).toBe('runtime');
-  });
+      providers: [
+        provideNoopAnimations(),
+        {
+          provide: DesktopWorkspaceStore,
+          useValue: workspaceStub(),
+        },
+      ],
+    }).compileComponents().then(() => {
+      const fixture = TestBed.createComponent(App);
+      fixture.detectChanges();
+      return fixture.whenStable().then(() => {
+        expect(fixture.nativeElement.querySelector('h1')?.textContent).toContain('文件擷取工作台');
+        expect(fixture.nativeElement.textContent).toContain('拖放到視窗');
+        expect(fixture.nativeElement.querySelector('.mat-mdc-form-field')).not.toBeNull();
+        expect(fixture.nativeElement.querySelector('.mat-mdc-button-base')).not.toBeNull();
+      });
+    }),
+  );
 });
+
+function workspaceStub() {
+  return {
+    state: signal<'ready'>('ready'),
+    message: signal('Capture Runtime 已準備完成，可以開始處理文件。'),
+    requirements: signal([]),
+    documents: signal([]),
+    selectedId: signal<string | null>(null),
+    selected: signal(null),
+    query: signal(''),
+    statusFilter: signal(''),
+    installing: signal(false),
+    busyIds: signal(new Set<string>()),
+    canCapture: signal(true),
+    coreMissing: signal([]),
+    initialize: vi.fn(),
+    installCoreRequirements: vi.fn(),
+    chooseSources: vi.fn(),
+    select: vi.fn(),
+    updateQuery: vi.fn(),
+    updateStatusFilter: vi.fn(),
+    retry: vi.fn(),
+    cancel: vi.fn(),
+    export: vi.fn(),
+    delete: vi.fn(),
+    formatBytes: (bytes: number) => `${bytes} B`,
+    formatDate: () => '2026 年 7 月 28 日 11:18',
+    stageLabel: () => '已完成',
+    statusLabel: () => '已完成',
+  };
+}

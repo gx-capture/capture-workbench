@@ -18,10 +18,15 @@ test('Nx separates root verification build from release and deterministic NSIS l
   assert.deepEqual(project.targets['dev-deterministic'].dependsOn, [
     'stage-deterministic-runtime',
   ]);
+  assert.deepEqual(project.targets['dev-product'].dependsOn, [
+    'stage-product-runtime',
+  ]);
+  assert.equal(project.targets.dev, undefined);
   assert.match(
-    project.targets['build-nsis-release'].options.commands[0],
+    project.targets['build-nsis'].options.commands[0],
     /assert-staged-runtime\.ts --release/u,
   );
+  assert.equal(project.targets['build-nsis-release'], undefined);
   assert.ok(
     project.targets['stage-deterministic-runtime'].outputs.some((output) =>
       output.endsWith('capture-document-v1.schema.json'),
@@ -30,6 +35,22 @@ test('Nx separates root verification build from release and deterministic NSIS l
   assert.deepEqual(project.targets['package-qa'].dependsOn, [
     'build-nsis-deterministic',
   ]);
+  assert.deepEqual(project.targets['smoke-real-ollama'].dependsOn, [
+    'stage-product-runtime',
+  ]);
+  assert.match(
+    project.targets['smoke-real-ollama'].metadata.description,
+    /excluded from ordinary CI/u,
+  );
+  const directmlSmoke = project.targets['smoke-real-desktop-ocr-directml'];
+  assert.match(
+    directmlSmoke.metadata.description,
+    /requires DirectML provenance/u,
+  );
+  assert.match(
+    directmlSmoke.options.commands.at(-1),
+    /--expected-ocr-device windowsml-dml$/u,
+  );
 });
 
 test('production CSP is strict while allowing only dynamic loopback API ports', async () => {
@@ -43,6 +64,11 @@ test('production CSP is strict while allowing only dynamic loopback API ports', 
   assert.doesNotMatch(csp, /unsafe-eval|https:\/\/|wss:\/\//u);
   assert.doesNotMatch(csp, /(?:^|[ ;])\*(?:[ ;]|$)/u);
   assert.deepEqual(config.bundle.targets, ['nsis']);
+  assert.deepEqual(config.bundle.resources, [
+    'binaries/capture-runtime-x86_64-pc-windows-msvc.exe',
+    'resources/capture-runtime-manifest.json',
+    'resources/capture-document-v1.schema.json',
+  ]);
   assert.match(
     config.build.beforeBuildCommand,
     /capture-workbench:production-bundle-check/u,
@@ -60,6 +86,112 @@ test('QA evidence rejects authorization material', () => {
     () => assertRedactedEvidence({ authorization: 'Bearer should-not-appear' }),
     /authorization material/u,
   );
+});
+
+test('renderer IPC never receives the sidecar bearer token', async () => {
+  const [commands, desktopHost] = await Promise.all([
+    readFile(join(appRoot, 'src-tauri', 'src', 'commands.rs'), 'utf8'),
+    readFile(
+      join(
+        appRoot,
+        '..',
+        'capture-workbench',
+        'src',
+        'app',
+        'services',
+        'desktop-runtime-client.service.ts',
+      ),
+      'utf8',
+    ),
+  ]);
+  assert.doesNotMatch(commands, /pub fn backend_config/u);
+  assert.doesNotMatch(desktopHost, /backend_config|bearerToken|Authorization/u);
+  assert.match(commands, /runtime_create_capture/u);
+  assert.match(desktopHost, /runtime_create_capture/u);
+});
+
+test('blocking native I/O is isolated behind async Tauri commands', async () => {
+  const commands = await readFile(
+    join(appRoot, 'src-tauri', 'src', 'commands.rs'),
+    'utf8',
+  );
+  assert.match(commands, /tauri::async_runtime::spawn_blocking/u);
+  for (const command of [
+    'library_import_source',
+    'library_update_capture',
+    'library_list',
+    'library_get',
+    'library_export',
+    'library_delete',
+    'runtime_requirements',
+    'runtime_start_installation',
+    'runtime_get_installation',
+    'runtime_create_capture',
+    'runtime_get_capture',
+    'runtime_cancel_capture',
+    'runtime_get_raw',
+    'runtime_get_result',
+    'runtime_delete_capture',
+  ]) {
+    assert.match(commands, new RegExp(`pub async fn ${command}`, 'u'));
+  }
+  assert.match(commands, /pub fn desktop_runtime_status/u);
+});
+
+test('native source import keeps renderer IPC path-only and responses path-free', async () => {
+  const workspaceRoot = join(appRoot, '..', '..');
+  const [renderer, contracts, library, capability, desktopHost] =
+    await Promise.all([
+      readFile(
+        join(
+          workspaceRoot,
+          'apps',
+          'capture-workbench',
+          'src',
+          'app',
+          'services',
+          'desktop-library.service.ts',
+        ),
+        'utf8',
+      ),
+      readFile(
+        join(appRoot, 'src-tauri', 'src', 'contracts', 'library.rs'),
+        'utf8',
+      ),
+      readFile(join(appRoot, 'src-tauri', 'src', 'library.rs'), 'utf8'),
+      readFile(
+        join(appRoot, 'src-tauri', 'capabilities', 'default.json'),
+        'utf8',
+      ),
+      readFile(join(appRoot, 'src-tauri', 'src', 'lib.rs'), 'utf8'),
+    ]);
+  const capabilityContract = JSON.parse(capability);
+  assert.deepEqual(capabilityContract.windows, ['main']);
+  assert.deepEqual(capabilityContract.permissions, [
+    'core:default',
+    'dialog:allow-open',
+  ]);
+  assert.doesNotMatch(
+    JSON.stringify(capabilityContract.permissions),
+    /dialog:(?:default|allow-(?:ask|confirm|message|save))/u,
+  );
+  assert.match(desktopHost, /plugin\(tauri_plugin_dialog::init\(\)\)/u);
+  assert.match(renderer, /open\(\{[\s\S]*multiple: true/u);
+  assert.match(renderer, /onDragDropEvent/u);
+  assert.match(renderer, /library_import_source/u);
+  assert.match(renderer, /request: \{ sourcePath \}/u);
+  assert.doesNotMatch(
+    renderer,
+    /arrayBuffer\(|Array\.from\(|Uint8Array|FileList/u,
+  );
+  const summary = contracts.match(
+    /pub struct LibraryDocumentSummary \{(?<body>[\s\S]*?)\r?\n\}/u,
+  )?.groups?.['body'];
+  assert.ok(summary);
+  assert.doesNotMatch(summary, /path|bytes/u);
+  assert.match(library, /fs::canonicalize/u);
+  assert.match(library, /take\(MAX_SOURCE_BYTES as u64 \+ 1\)/u);
+  assert.match(library, /verified_media_type/u);
 });
 
 test('native cleanup is PID-scoped and never executable-name scoped', async () => {
@@ -89,6 +221,54 @@ test('desktop launcher advertises the bounded 50 MiB upload policy', async () =>
   assert.match(launchPolicy, /DEFAULT_MAX_UPLOAD_BYTES\.to_string\(\)/u);
 });
 
+test('WindowsML bundle metadata is runtime-owned, never injected by the host', async () => {
+  const workspaceRoot = join(appRoot, '..', '..');
+  const [launcher, stageRuntime, releaseBuilder, requirements] =
+    await Promise.all([
+      readFile(join(appRoot, 'src-tauri', 'src', 'launcher.rs'), 'utf8'),
+      readFile(join(appRoot, 'scripts', 'stage-runtime.ts'), 'utf8'),
+      readFile(
+        join(
+          workspaceRoot,
+          'packages',
+          'capture-runtime',
+          'scripts',
+          'build_release_artifacts.py',
+        ),
+        'utf8',
+      ),
+      readFile(
+        join(
+          workspaceRoot,
+          'packages',
+          'capture-runtime',
+          'src',
+          'capture_runtime',
+          'constants',
+          'requirements.py',
+        ),
+        'utf8',
+      ),
+    ]);
+  for (const source of [launcher, stageRuntime, releaseBuilder]) {
+    assert.doesNotMatch(source, /CAPTURE_WINDOWSML_BUNDLE/u);
+    assert.doesNotMatch(source, /runtimeRequirements/u);
+  }
+  assert.match(requirements, /WINDOWSML_BUNDLE_URL/u);
+  assert.match(requirements, /WINDOWSML_BUNDLE_SHA256/u);
+});
+
+test('real Ollama smoke uses the capture contract and validates profile provenance', async () => {
+  const source = await readFile(
+    join(appRoot, 'scripts', 'real-ollama-smoke.ts'),
+    'utf8',
+  );
+  assert.match(source, /form\.set\('sourceKind', 'pdf'\)/u);
+  assert.match(source, /capture-workbench-qwen3\.5-4b-structure-v1/u);
+  assert.match(source, /\^sha256:\[a-f0-9\]\{64\}/u);
+  assert.doesNotMatch(source, /CAPTURE_WINDOWSML_BUNDLE/u);
+});
+
 test('deterministic runtime checks exact Host authority and canonical v1 names', async () => {
   const fixtureRoot = join(
     appRoot,
@@ -113,29 +293,45 @@ test('deterministic runtime checks exact Host authority and canonical v1 names',
 
 test('release workflow is SHA-pinned, least-privilege, and runtime-first', async () => {
   const workspaceRoot = join(appRoot, '..', '..');
-  const [workflow, releaseBuilder, ciWorkflow, publisher, runtimeProject] =
-    await Promise.all([
-      readFile(
-        join(workspaceRoot, '.github', 'workflows', 'release.yml'),
-        'utf8',
+  const [
+    workflow,
+    releaseBuilder,
+    executableBuilder,
+    ciWorkflow,
+    publisher,
+    runtimeProject,
+  ] = await Promise.all([
+    readFile(
+      join(workspaceRoot, '.github', 'workflows', 'release.yml'),
+      'utf8',
+    ),
+    readFile(
+      join(
+        workspaceRoot,
+        'packages',
+        'capture-runtime',
+        'scripts',
+        'build_release_artifacts.py',
       ),
-      readFile(
-        join(
-          workspaceRoot,
-          'packages',
-          'capture-runtime',
-          'scripts',
-          'build_release_artifacts.py',
-        ),
-        'utf8',
+      'utf8',
+    ),
+    readFile(
+      join(
+        workspaceRoot,
+        'packages',
+        'capture-runtime',
+        'scripts',
+        'build_executable.py',
       ),
-      readFile(join(workspaceRoot, '.github', 'workflows', 'ci.yml'), 'utf8'),
-      readFile(join(workspaceRoot, 'tools', 'publish-release.ts'), 'utf8'),
-      readFile(
-        join(workspaceRoot, 'packages', 'capture-runtime', 'project.json'),
-        'utf8',
-      ),
-    ]);
+      'utf8',
+    ),
+    readFile(join(workspaceRoot, '.github', 'workflows', 'ci.yml'), 'utf8'),
+    readFile(join(workspaceRoot, 'tools', 'publish-release.ts'), 'utf8'),
+    readFile(
+      join(workspaceRoot, 'packages', 'capture-runtime', 'project.json'),
+      'utf8',
+    ),
+  ]);
   const actionReferences = [workflow, ciWorkflow].flatMap((source) =>
     [...source.matchAll(/uses:\s*[^@\s]+@([^\s#]+)/gu)].map(
       (match) => match[1],
@@ -151,6 +347,23 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
     /clean-install|attestation|production-preflight/u,
   );
   assert.match(workflow, /publish:[\s\S]*needs: build-candidate/u);
+  assert.match(workflow, /fetch-depth: 0/u);
+  const fetchMainIndex = workflow.indexOf(
+    'git fetch --no-tags origin refs/heads/main:refs/remotes/origin/main',
+  );
+  const mergeBaseIndex = workflow.indexOf('git merge-base --is-ancestor');
+  const installPnpmIndex = workflow.indexOf('Install pnpm');
+  assert.ok(fetchMainIndex >= 0);
+  assert.ok(fetchMainIndex < mergeBaseIndex);
+  assert.ok(mergeBaseIndex < installPnpmIndex);
+  assert.ok(
+    workflow.indexOf('Verify tag commit belongs to main') < installPnpmIndex,
+  );
+  assert.match(workflow, /git merge-base --is-ancestor/u);
+  assert.match(workflow, /run: pnpm verify/u);
+  assert.match(workflow, /capture-workbench-desktop:build-nsis/u);
+  assert.match(workflow, /--installer \$installers\[0\]\.FullName/u);
+  assert.doesNotMatch(workflow, /--clobber|gh release upload/u);
   assert.match(
     workflow,
     /publish:[\s\S]*contents: write[\s\S]*packages: write/u,
@@ -159,6 +372,7 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   assert.equal((workflow.match(/packages: write/gu) ?? []).length, 1);
   assert.match(ciWorkflow, /capture-workbench:test/u);
   assert.match(ciWorkflow, /capture-workbench:production-bundle-check/u);
+  assert.match(ciWorkflow, /branches: \[main, develop\]/u);
 
   const project = JSON.parse(runtimeProject);
   assert.equal(project.targets['production-preflight'], undefined);
@@ -166,12 +380,45 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
     JSON.stringify(project.targets['build-release-artifacts'].dependsOn),
     /production-preflight/u,
   );
+  assert.equal(
+    project.targets['generate-production-schema'].dependsOn,
+    undefined,
+  );
+  assert.deepEqual(project.targets['build-production-executable'].dependsOn, [
+    'generate-release-engine-catalog',
+  ]);
+  assert.deepEqual(project.targets['build-release-artifacts'].dependsOn, [
+    'build-production-executable',
+    'generate-production-schema',
+    'verify-worker-boundaries',
+  ]);
+  assert.deepEqual(project.targets['build-ocr-worker'].dependsOn, [
+    'verify-production-environment',
+  ]);
+  assert.deepEqual(project.targets['build-whisper-worker'].dependsOn, [
+    'verify-production-environment',
+  ]);
+  assert.match(
+    project.targets['prepare-production-environment'].options.command,
+    /uv sync[\s\S]*--reinstall-package onnxruntime-directml/u,
+  );
+  for (const target of [
+    'verify-production-environment',
+    'generate-production-schema',
+    'build-production-executable',
+    'build-release-artifacts',
+  ]) {
+    assert.match(project.targets[target].options.command, /uv run --no-sync/u);
+  }
   assert.doesNotMatch(
     releaseBuilder,
     /RuntimeSettings|OLLAMA_MODELS|WHISPER_MODELS/u,
   );
+  assert.match(executableBuilder, /capture-runtime\.spec/u);
+  assert.match(executableBuilder, /CAPTURE_ENGINE_CATALOG_BUILD_PATH/u);
+  assert.doesNotMatch(executableBuilder, /--collect-all/u);
   assert.match(
     publisher,
-    /preflightPackagePublication[\s\S]*ensureRuntimeReleasePublic[\s\S]*applyPackagePublication/u,
+    /preflightCandidate[\s\S]*ensureDraftAssets[\s\S]*publishPackage/u,
   );
 });

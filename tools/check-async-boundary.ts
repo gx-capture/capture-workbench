@@ -35,6 +35,17 @@ function exceptionReason(relativePath) {
   if (/^apps[\\/]capture-workbench-e2e[\\/]/u.test(relativePath)) {
     return 'Playwright test API boundary';
   }
+  if (relativePath === 'apps/capture-workbench/src/app/app.config.ts') {
+    return 'Angular bootstrap provider boundary';
+  }
+  if (
+    relativePath ===
+      'apps/capture-workbench-desktop/scripts/real-desktop-ocr-smoke.ts' ||
+    relativePath ===
+      'apps/capture-workbench-desktop/scripts/real-ollama-smoke.ts'
+  ) {
+    return 'opt-in real-engine CLI boundary';
+  }
   if (/\.(spec|test)\.ts$/u.test(relativePath)) {
     return 'Angular/Node test-runner boundary';
   }
@@ -46,6 +57,9 @@ function exceptionReason(relativePath) {
   }
   if (relativePath === 'tools/local-release-consumer-smoke.ts') {
     return 'local release consumer process boundary';
+  }
+  if (relativePath === 'tools/publish-release.ts') {
+    return 'release publication CLI process boundary';
   }
   return undefined;
 }

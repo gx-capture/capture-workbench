@@ -20,10 +20,10 @@ Then install an exact synchronized version:
 
 ```powershell
 $env:GITHUB_PACKAGES_TOKEN = '<read:packages token>'
-corepack pnpm add @gx-capture/capture-workbench@0.3.0 --save-exact
+corepack pnpm add @gx-capture/capture-workbench@0.3.2 --save-exact
 ```
 
-## v0.3.0 breaking Angular integration contract
+## v0.3.2 Angular integration contract
 
 All public asynchronous client, provider, preprocessor, and reconciliation
 context methods return cold `Observable<T>` values. Compose them with RxJS and
@@ -161,8 +161,12 @@ and return the `File` that should be hashed and captured.
 ## Web Component
 
 Register the framework-neutral element once during application startup. Angular
-Angular Elements owns the element lifecycle; the public configuration API is
-property-first:
+Elements owns the element lifecycle; the public configuration API is
+property-first. `@angular/elements` is a package-owned implementation
+dependency. A package-owned loader initializes Angular's compiler before the
+partially compiled FESM for non-Angular bundlers. Consumers import only
+`@gx-capture/capture-workbench`; they do not import `@angular/elements` or
+`@angular/compiler` directly:
 
 ```ts
 import { CAPTURE_WORKBENCH_CUSTOM_EVENTS, defineCaptureWorkbenchElement, type CaptureWorkbenchElement } from '@gx-capture/capture-workbench';
@@ -192,10 +196,16 @@ HTML.
 
 All events bubble and are composed. Their stable names and detail values are:
 
+- `capture-review-required` — `CaptureReviewRequiredEvent`
 - `capture-completed` — `CaptureCompletedEvent`
 - `capture-failed` — `CaptureFailedEvent`
 - `capture-canceled` — `CaptureTaskView`
 - `capture-task-changed` — `CaptureTaskView`
+
+Registration is idempotent across package service instances and repeated calls.
+Re-registering a tag owned by this package succeeds; a tag owned by another
+constructor fails explicitly. Failed startup does not poison the tag, so a
+later registration attempt may retry after the underlying error is corrected.
 
 The framework-neutral fixture is
 [`fixtures/web-component/index.html`](./fixtures/web-component/index.html).

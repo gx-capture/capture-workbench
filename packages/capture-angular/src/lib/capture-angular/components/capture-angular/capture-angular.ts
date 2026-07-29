@@ -34,7 +34,7 @@ import { CaptureWorkbenchStore } from '../../services/capture-workbench-store/ca
   ],
   templateUrl: './capture-angular.html',
   styleUrl: './capture-angular.css',
-  encapsulation: ViewEncapsulation.None,
+  encapsulation: ViewEncapsulation.ShadowDom,
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class CaptureWorkbenchComponent {

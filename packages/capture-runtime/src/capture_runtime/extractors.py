@@ -4,19 +4,18 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import importlib.metadata
 import tempfile
-import warnings as image_warnings
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
-import pypdfium2 as pdfium  # type: ignore[import-untyped]
-from PIL import Image, ImageOps, UnidentifiedImageError
 from pypdf import PdfReader
 
 from capture_runtime.clock import Clock
 from capture_runtime.config import ExtractionRuntimeConfig
+from capture_runtime.constants import WHISPER_REQUIREMENT_ID, WINDOWSML_REQUIREMENT_ID
 from capture_runtime.contracts import (
     CaptureEngineV1,
     CaptureSourceKind,
@@ -27,14 +26,14 @@ from capture_runtime.contracts import (
     TimeLocatorV1,
     project_source_text,
 )
-from capture_runtime.engine_adapters import (
-    EngineRuntimeUnavailableError,
-    FasterWhisperAdapter,
-    OcrAdapter,
-    WhisperAdapter,
-    WindowsMLOcrAdapter,
-    pdf_embedded_engine_digest,
-)
+from capture_runtime.engine_installation import EngineInstallationManager
+from capture_runtime.worker_client import WorkerRunResult
+from capture_runtime.worker_process import WorkerCancelledError, WorkerExecutionError
+
+if TYPE_CHECKING:
+    from PIL import Image
+
+    from capture_runtime.engine_adapters import OcrAdapter, WhisperAdapter
 
 
 class UnsupportedMediaError(ValueError):
@@ -94,19 +93,13 @@ class StandaloneRuntimeCaptureExtractor:
         *,
         ocr_adapter: OcrAdapter | None = None,
         whisper_adapter: WhisperAdapter | None = None,
+        engine_manager: EngineInstallationManager | None = None,
     ) -> None:
         self._clock = clock
         self.config = config
-        self.ocr_adapter = ocr_adapter or WindowsMLOcrAdapter(
-            config.windowsml_model_dir, device_id=config.windowsml_device_id
-        )
-        self.whisper_adapter = whisper_adapter or FasterWhisperAdapter(
-            config.whisper_models_dir,
-            primary_model=config.whisper_primary_model,
-            fallback_model=config.whisper_fallback_model,
-            prefer_gpu=config.whisper_prefer_gpu,
-            max_duration_ms=config.max_audio_duration_ms,
-        )
+        self.ocr_adapter = ocr_adapter
+        self.whisper_adapter = whisper_adapter
+        self.engine_manager = engine_manager
 
     def sniff(self, content: bytes) -> SniffedSource:
         return sniff_source(content)
@@ -117,12 +110,243 @@ class StandaloneRuntimeCaptureExtractor:
         source: CaptureSourceV1,
         cancel_event: asyncio.Event,
     ) -> RawCaptureV1:
+        if self.engine_manager is not None:
+            return await self._extract_with_workers(content, source, cancel_event)
         try:
             return await asyncio.to_thread(self._extract_sync, content, source, cancel_event)
-        except EngineRuntimeUnavailableError as error:
-            raise ExtractionRuntimeUnavailableError(str(error)) from error
         except InterruptedError as error:
             raise asyncio.CancelledError from error
+
+    async def _extract_with_workers(
+        self,
+        content: bytes,
+        source: CaptureSourceV1,
+        cancel_event: asyncio.Event,
+    ) -> RawCaptureV1:
+        sniffed = self.sniff(content)
+        self._checkpoint(cancel_event)
+        try:
+            if sniffed.kind is CaptureSourceKind.PDF:
+                segments, engine, warnings = await self._extract_pdf_with_worker(
+                    content, cancel_event
+                )
+            elif sniffed.kind is CaptureSourceKind.IMAGE:
+                result = await self._run_worker(
+                    WINDOWSML_REQUIREMENT_ID,
+                    content,
+                    sniffed.media_type,
+                    {
+                        "deviceId": self.config.windowsml_device_id,
+                        "maxImagePixels": self.config.max_image_pixels,
+                    },
+                    cancel_event,
+                )
+                segments = self._page_segments(result)
+                engine = self._capture_engine(result, expected_engine="windowsml-ocr")
+                warnings = list(result.warnings)
+            else:
+                result = await self._run_worker(
+                    WHISPER_REQUIREMENT_ID,
+                    content,
+                    sniffed.media_type,
+                    {
+                        "maxDurationMs": self.config.max_audio_duration_ms,
+                        "preferGpu": self.config.whisper_prefer_gpu,
+                    },
+                    cancel_event,
+                )
+                segments = self._time_segments(result)
+                engine = self._capture_engine(result, expected_engine="whisper-primary")
+                warnings = list(result.warnings)
+        except WorkerCancelledError as error:
+            raise asyncio.CancelledError from error
+        except WorkerExecutionError as error:
+            raise ExtractionRuntimeUnavailableError(str(error)) from error
+        self._checkpoint(cancel_event)
+        if not segments:
+            raise ValueError("Extraction produced no non-empty content.")
+        return RawCaptureV1(
+            source=source,
+            segments=segments,
+            source_text=project_source_text(segments),
+            extraction_engine=engine,
+            warnings=_unique_warnings(warnings),
+            created_at=self._clock.now(),
+        )
+
+    async def _extract_pdf_with_worker(
+        self,
+        content: bytes,
+        cancel_event: asyncio.Event,
+    ) -> tuple[list[RawCaptureSegmentV1], CaptureEngineV1, list[str]]:
+        try:
+            reader = PdfReader(BytesIO(content))
+        except Exception as error:
+            raise ValueError("Uploaded PDF is not readable.") from error
+        if not reader.pages:
+            raise ValueError("Uploaded PDF has no pages.")
+        if len(reader.pages) > self.config.max_pdf_pages:
+            raise ValueError(
+                f"PDF has {len(reader.pages)} pages; limit is {self.config.max_pdf_pages}."
+            )
+        embedded: dict[int, str] = {}
+        missing: list[int] = []
+        for page_number, page in enumerate(reader.pages, start=1):
+            self._checkpoint(cancel_event)
+            try:
+                text = (page.extract_text() or "").strip()
+            except Exception as error:
+                raise ValueError(f"Could not inspect PDF page {page_number}.") from error
+            if text:
+                embedded[page_number] = text
+            else:
+                missing.append(page_number)
+        worker_result: WorkerRunResult | None = None
+        worker_pages: dict[int, str] = {}
+        warnings: list[str] = []
+        if missing:
+            worker_result = await self._run_worker(
+                WINDOWSML_REQUIREMENT_ID,
+                content,
+                "application/pdf",
+                {
+                    "deviceId": self.config.windowsml_device_id,
+                    "pages": missing,
+                    "renderScale": self.config.ocr_render_scale,
+                },
+                cancel_event,
+            )
+            if worker_result.engine != "windowsml-ocr":
+                raise ValueError("OCR worker returned incompatible engine provenance")
+            if worker_result.device not in {"windowsml-dml", "cpu"}:
+                raise ValueError("OCR worker returned incompatible device provenance")
+            worker_pages = {
+                item.page: item.text for item in worker_result.segments if item.page is not None
+            }
+            warnings.extend(worker_result.warnings)
+        segments: list[RawCaptureSegmentV1] = []
+        for page_number in range(1, len(reader.pages) + 1):
+            text = embedded.get(page_number) or worker_pages.get(page_number, "")
+            if text:
+                segments.append(
+                    RawCaptureSegmentV1(
+                        segment_id=f"page-{page_number}",
+                        order=len(segments),
+                        locator=PageLocatorV1(page=page_number),
+                        text=text,
+                    )
+                )
+        if embedded:
+            warnings.append(f"Used embedded PDF text on {len(embedded)} page(s).")
+        if worker_result is not None and embedded:
+            embedded_digest = pdf_embedded_engine_digest()
+            digest = hashlib.sha256(
+                f"{embedded_digest}:{worker_result.digest}".encode()
+            ).hexdigest()
+            engine = CaptureEngineV1(
+                engine="pdf-embedded+windowsml-ocr",
+                model=f"pypdf+{worker_result.model}",
+                digest=f"sha256:{digest}",
+                device=worker_result.device,
+            )
+        elif worker_result is not None:
+            engine = self._capture_engine(worker_result, expected_engine="windowsml-ocr")
+        else:
+            version = importlib.metadata.version("pypdf")
+            engine = CaptureEngineV1(
+                engine="pdf-embedded-text",
+                model=f"pypdf-{version}",
+                digest=pdf_embedded_engine_digest(),
+                device="cpu",
+            )
+        return segments, engine, warnings
+
+    async def _run_worker(
+        self,
+        requirement_id: str,
+        content: bytes,
+        media_type: str,
+        options: dict[str, object],
+        cancel_event: asyncio.Event,
+    ) -> WorkerRunResult:
+        assert self.engine_manager is not None
+        engine = self.engine_manager.active_engine(requirement_id)
+        if engine is None:
+            raise ExtractionRuntimeUnavailableError(
+                f"Runtime requirement {requirement_id} is not installed and ready."
+            )
+        self.config.temp_dir.mkdir(parents=True, exist_ok=True)
+        suffix = {
+            "application/pdf": ".pdf",
+            "image/png": ".png",
+            "image/jpeg": ".jpg",
+            "image/webp": ".webp",
+            "audio/wav": ".wav",
+            "audio/mpeg": ".mp3",
+            "audio/flac": ".flac",
+            "audio/ogg": ".ogg",
+            "audio/mp4": ".m4a",
+        }.get(media_type, ".source")
+        with tempfile.NamedTemporaryFile(
+            prefix="capture-worker-source-",
+            suffix=suffix,
+            dir=self.config.temp_dir,
+            delete=False,
+        ) as temporary:
+            temporary.write(content)
+            path = Path(temporary.name).resolve()
+        try:
+            return await self.engine_manager.worker_client.run(
+                engine,
+                source_path=path,
+                media_type=media_type,
+                options=options,
+                cancel_event=cancel_event,
+            )
+        finally:
+            path.unlink(missing_ok=True)
+
+    @staticmethod
+    def _capture_engine(result: WorkerRunResult, *, expected_engine: str) -> CaptureEngineV1:
+        if result.engine != expected_engine:
+            raise ValueError("worker returned incompatible engine provenance")
+        if expected_engine == "windowsml-ocr" and result.device not in {
+            "windowsml-dml",
+            "cpu",
+        }:
+            raise ValueError("OCR worker returned incompatible device provenance")
+        return CaptureEngineV1(
+            engine=result.engine,
+            model=result.model,
+            digest=result.digest,
+            device=result.device,
+        )
+
+    @staticmethod
+    def _page_segments(result: WorkerRunResult) -> list[RawCaptureSegmentV1]:
+        return [
+            RawCaptureSegmentV1(
+                segment_id=f"page-{item.page}",
+                order=index,
+                locator=PageLocatorV1(page=item.page),
+                text=item.text,
+            )
+            for index, item in enumerate(result.segments)
+            if item.page is not None
+        ]
+
+    @staticmethod
+    def _time_segments(result: WorkerRunResult) -> list[RawCaptureSegmentV1]:
+        return [
+            RawCaptureSegmentV1(
+                segment_id=f"segment-{index + 1}",
+                order=index,
+                locator=TimeLocatorV1(start_ms=item.start_ms, end_ms=item.end_ms),
+                text=item.text,
+            )
+            for index, item in enumerate(result.segments)
+            if item.start_ms is not None and item.end_ms is not None
+        ]
 
     def _extract_sync(
         self,
@@ -179,6 +403,10 @@ class StandaloneRuntimeCaptureExtractor:
                 text = embedded
                 embedded_pages += 1
             else:
+                if self.ocr_adapter is None:
+                    raise ExtractionRuntimeUnavailableError(
+                        "WindowsML OCR worker is not configured."
+                    )
                 image_png = self._render_pdf_page(content, page_number - 1)
                 self._checkpoint(cancel_event)
                 result = self.ocr_adapter.extract_png(image_png)
@@ -226,6 +454,8 @@ class StandaloneRuntimeCaptureExtractor:
         return segments, engine, _unique_warnings(warnings)
 
     def _render_pdf_page(self, content: bytes, page_index: int) -> bytes:
+        import pypdfium2 as pdfium  # type: ignore[import-untyped]
+
         document = None
         bitmap = None
         try:
@@ -246,6 +476,10 @@ class StandaloneRuntimeCaptureExtractor:
     def _extract_image(
         self, content: bytes, cancel_event: asyncio.Event
     ) -> tuple[list[RawCaptureSegmentV1], CaptureEngineV1, list[str]]:
+        import warnings as image_warnings
+
+        from PIL import Image, UnidentifiedImageError
+
         try:
             with image_warnings.catch_warnings():
                 image_warnings.simplefilter("error", Image.DecompressionBombWarning)
@@ -272,6 +506,8 @@ class StandaloneRuntimeCaptureExtractor:
         ) as error:
             raise ValueError("Uploaded image is not readable.") from error
         self._checkpoint(cancel_event)
+        if self.ocr_adapter is None:
+            raise ExtractionRuntimeUnavailableError("WindowsML OCR worker is not configured.")
         result = self.ocr_adapter.extract_png(normalized_png)
         text = result.text.strip()
         segments = (
@@ -318,6 +554,8 @@ class StandaloneRuntimeCaptureExtractor:
             temporary.write(content)
             path = Path(temporary.name)
         try:
+            if self.whisper_adapter is None:
+                raise ExtractionRuntimeUnavailableError("Whisper worker is not configured.")
             result = self.whisper_adapter.transcribe(path, should_cancel=cancel_event.is_set)
         finally:
             path.unlink(missing_ok=True)
@@ -349,6 +587,8 @@ class StandaloneRuntimeCaptureExtractor:
 
 
 def _normalize_image_png(image: Image.Image) -> bytes:
+    from PIL import Image, ImageOps
+
     oriented = ImageOps.exif_transpose(image)
     if "A" in oriented.getbands() or "transparency" in oriented.info:
         rgba = oriented.convert("RGBA")
@@ -368,6 +608,11 @@ def _unique_warnings(warnings: list[str]) -> list[str]:
 def _engine_digest(engine: str, model: str) -> str:
     value = hashlib.sha256(f"{engine}:{model}".encode()).hexdigest()
     return f"sha256:{value}"
+
+
+def pdf_embedded_engine_digest() -> str:
+    version = importlib.metadata.version("pypdf")
+    return _engine_digest("pypdf", version)
 
 
 class DeterministicCaptureExtractor:

@@ -15,7 +15,7 @@ import { of } from 'rxjs';
 export const READY: RuntimeReadyV1 = {
   ready: true,
   service: 'capture-runtime',
-  runtimeVersion: '0.3.0',
+  runtimeVersion: '0.3.2',
   apiVersion: '1.0',
   captureDocumentSchemaVersion: '1',
   capabilities: {
@@ -144,9 +144,17 @@ export function selectFiles(
   fixture: { readonly nativeElement: HTMLElement },
   files: readonly File[],
 ): void {
-  const input = fixture.nativeElement.querySelector(
+  const input = captureWorkbenchRoot(fixture).querySelector(
     'input[type=file]',
   ) as HTMLInputElement;
   Object.defineProperty(input, 'files', { value: files, configurable: true });
   input.dispatchEvent(new Event('change'));
+}
+
+export function captureWorkbenchRoot(fixture: {
+  readonly nativeElement: HTMLElement;
+}): ShadowRoot {
+  const root = fixture.nativeElement.shadowRoot;
+  if (!root) throw new Error('Expected Capture Workbench Shadow DOM.');
+  return root;
 }

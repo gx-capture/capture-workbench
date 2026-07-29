@@ -132,6 +132,7 @@ def create_app(
         finally:
             await runtime_dependencies.installation_service.shutdown()
             await runtime_dependencies.capture_service.shutdown()
+            await runtime_dependencies.engine_manager.shutdown()
             runtime_dependencies.lifecycle.stop()
 
     docs_url = "/docs" if runtime_settings.enable_api_docs else None

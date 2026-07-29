@@ -11,6 +11,8 @@ from urllib.parse import urlsplit
 
 from capture_runtime.constants import CAPTURE_OLLAMA_BASE_MODEL, CAPTURE_OLLAMA_PROFILE_ID
 
+WINDOWSML_DEFAULT_DEVICE_ID = 0
+
 _CHILD_PROCESS_ENVIRONMENT_ALLOWLIST = frozenset(
     {
         "APPDATA",
@@ -119,9 +121,6 @@ class ExtractionRuntimeConfig:
     whisper_primary_model: str
     whisper_fallback_model: str
     whisper_prefer_gpu: bool
-    windowsml_bundle_url: str | None
-    windowsml_bundle_sha256: str | None
-    windowsml_bundle_bytes: int | None
 
 
 def _external_ollama_endpoint(value: str) -> str:
@@ -234,7 +233,9 @@ class RuntimeSettings:
         max_candidate_bytes = int(env.get("CAPTURE_MAX_CANDIDATE_BYTES", str(8 * 1024 * 1024)))
         if max_candidate_bytes <= 0:
             raise ValueError("CAPTURE_MAX_CANDIDATE_BYTES must be positive")
-        windowsml_device_id = int(env.get("CAPTURE_WINDOWSML_DEVICE_ID", "0"))
+        windowsml_device_id = int(
+            env.get("CAPTURE_WINDOWSML_DEVICE_ID", str(WINDOWSML_DEFAULT_DEVICE_ID))
+        )
         if windowsml_device_id < 0:
             raise ValueError("CAPTURE_WINDOWSML_DEVICE_ID must be non-negative")
         max_pdf_pages = int(env.get("CAPTURE_MAX_PDF_PAGES", "200"))
@@ -263,51 +264,7 @@ class RuntimeSettings:
             whisper_primary_model=env.get("CAPTURE_WHISPER_PRIMARY_MODEL", "large-v3-turbo"),
             whisper_fallback_model=env.get("CAPTURE_WHISPER_FALLBACK_MODEL", "small"),
             whisper_prefer_gpu=_bool(env.get("CAPTURE_WHISPER_PREFER_GPU"), True),
-            windowsml_bundle_url=(env.get("CAPTURE_WINDOWSML_BUNDLE_URL", "").strip() or None),
-            windowsml_bundle_sha256=(
-                env.get("CAPTURE_WINDOWSML_BUNDLE_SHA256", "").strip().lower() or None
-            ),
-            windowsml_bundle_bytes=(
-                int(env["CAPTURE_WINDOWSML_BUNDLE_BYTES"])
-                if env.get("CAPTURE_WINDOWSML_BUNDLE_BYTES", "").strip()
-                else None
-            ),
         )
-        configured_windowsml_descriptor_fields = (
-            extraction.windowsml_bundle_url,
-            extraction.windowsml_bundle_sha256,
-            extraction.windowsml_bundle_bytes,
-        )
-        if any(value is None for value in configured_windowsml_descriptor_fields) and any(
-            value is not None for value in configured_windowsml_descriptor_fields
-        ):
-            raise ValueError(
-                "CAPTURE_WINDOWSML_BUNDLE_URL, CAPTURE_WINDOWSML_BUNDLE_SHA256, and "
-                "CAPTURE_WINDOWSML_BUNDLE_BYTES must be configured together"
-            )
-        if extraction.windowsml_bundle_sha256 is not None and (
-            len(extraction.windowsml_bundle_sha256) != 64
-            or any(
-                character not in "0123456789abcdef"
-                for character in extraction.windowsml_bundle_sha256
-            )
-        ):
-            raise ValueError("CAPTURE_WINDOWSML_BUNDLE_SHA256 must be 64 lowercase hex characters")
-        if extraction.windowsml_bundle_bytes is not None and not (
-            1 <= extraction.windowsml_bundle_bytes <= 512 * 1024 * 1024
-        ):
-            raise ValueError("CAPTURE_WINDOWSML_BUNDLE_BYTES must be between 1 and 536870912")
-        if extraction.windowsml_bundle_url is not None:
-            bundle_scheme = urlsplit(extraction.windowsml_bundle_url).scheme
-            if bundle_scheme == "https":
-                from capture_runtime.release import _canonical_public_https_artifact
-
-                _canonical_public_https_artifact(extraction.windowsml_bundle_url)
-            elif bundle_scheme != "file":
-                raise ValueError(
-                    "CAPTURE_WINDOWSML_BUNDLE_URL must be canonical public HTTPS "
-                    "or the development-only file:// seam"
-                )
         supported_whisper_models = {"large-v3-turbo", "small"}
         if {
             extraction.whisper_primary_model,

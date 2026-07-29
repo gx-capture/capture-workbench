@@ -36,6 +36,13 @@ import { CaptureWorkbenchElementFacadeComponent } from '../../components/capture
 
 export const CAPTURE_WORKBENCH_ELEMENT_TAG = 'capture-workbench';
 
+const CAPTURE_WORKBENCH_REGISTRY_KEY = Symbol.for(
+  '@gx-capture/capture-workbench/custom-element-registrations',
+);
+const CAPTURE_WORKBENCH_ELEMENT_BRAND = Symbol.for(
+  '@gx-capture/capture-workbench/element',
+);
+
 const CAPTURE_WORKBENCH_DECLARATIVE_ATTRIBUTES = Object.freeze([
   'output-mode',
   'multiple',
@@ -63,7 +70,11 @@ export type CaptureWorkbenchElement = NgElement &
 
 @Injectable({ providedIn: 'root' })
 export class CaptureWorkbenchElementRegistrationService {
-  private readonly registrations = new Map<string, Observable<void>>();
+  protected createAngularApplication(
+    config: ApplicationConfig,
+  ): ReturnType<typeof createApplication> {
+    return createApplication(config);
+  }
 
   /**
    * Registers the framework-neutral capture element with Angular Elements.
@@ -72,15 +83,26 @@ export class CaptureWorkbenchElementRegistrationService {
    */
   register(options: CaptureWorkbenchElementOptions = {}): Observable<void> {
     const tagName = options.tagName ?? CAPTURE_WORKBENCH_ELEMENT_TAG;
-    if (!tagName.includes('-')) {
+    if (!isValidCustomElementName(tagName)) {
       return throwError(
-        () => new Error('A custom element tag name must contain a hyphen.'),
+        () => new Error(`Invalid custom element tag name: ${tagName}`),
       );
     }
 
-    const existing = this.registrations.get(tagName);
-    if (existing) return existing;
-    if (customElements.get(tagName)) return of(undefined);
+    const registrations = globalRegistrations();
+    const existingRegistration = registrations.get(tagName);
+    if (existingRegistration) return existingRegistration;
+    const existingConstructor = customElements.get(tagName);
+    if (existingConstructor) {
+      return isCaptureWorkbenchElement(existingConstructor)
+        ? of(undefined)
+        : throwError(
+            () =>
+              new Error(
+                `Custom element tag "${tagName}" is already owned by another constructor.`,
+              ),
+          );
+    }
 
     const applicationConfig: ApplicationConfig = {
       providers: [
@@ -88,35 +110,104 @@ export class CaptureWorkbenchElementRegistrationService {
         ...(options.providers ?? []),
       ],
     };
-    const registration = defer(() =>
-      from(createApplication(applicationConfig)),
+    const registration: Observable<void> = defer(
+      () => from(this.createAngularApplication(applicationConfig)),
     ).pipe(
       map((applicationRef) => {
-        const elementConstructor = createCustomElement(
-          CaptureWorkbenchElementFacadeComponent,
-          { injector: applicationRef.injector },
-        );
-        // Angular Elements exposes every component input as an observed
-        // attribute by default. Keep object-only inputs property-first by
-        // narrowing the browser-facing attribute list after creation; their
-        // generated property accessors remain fully managed by Angular.
-        Object.defineProperty(elementConstructor, 'observedAttributes', {
-          configurable: true,
-          enumerable: true,
-          value: CAPTURE_WORKBENCH_DECLARATIVE_ATTRIBUTES,
-        });
-        customElements.define(tagName, elementConstructor);
-        return undefined;
+        try {
+          const winnerBeforeCreation = customElements.get(tagName);
+          if (winnerBeforeCreation) {
+            if (!isCaptureWorkbenchElement(winnerBeforeCreation)) {
+              throw new Error(
+                `Custom element tag "${tagName}" is already owned by another constructor.`,
+              );
+            }
+            applicationRef.destroy();
+            return undefined;
+          }
+
+          const elementConstructor = createCustomElement(
+            CaptureWorkbenchElementFacadeComponent,
+            { injector: applicationRef.injector },
+          );
+          Object.defineProperty(
+            elementConstructor,
+            CAPTURE_WORKBENCH_ELEMENT_BRAND,
+            {
+              configurable: false,
+              enumerable: false,
+              value: true,
+              writable: false,
+            },
+          );
+          // Angular Elements exposes every component input as an observed
+          // attribute by default. Keep object-only inputs property-first by
+          // narrowing the browser-facing attribute list after creation; their
+          // generated property accessors remain fully managed by Angular.
+          Object.defineProperty(elementConstructor, 'observedAttributes', {
+            configurable: true,
+            enumerable: true,
+            value: CAPTURE_WORKBENCH_DECLARATIVE_ATTRIBUTES,
+          });
+
+          const winnerBeforeDefinition = customElements.get(tagName);
+          if (winnerBeforeDefinition) {
+            if (!isCaptureWorkbenchElement(winnerBeforeDefinition)) {
+              throw new Error(
+                `Custom element tag "${tagName}" is already owned by another constructor.`,
+              );
+            }
+            applicationRef.destroy();
+            return undefined;
+          }
+          customElements.define(tagName, elementConstructor);
+          return undefined;
+        } catch (error) {
+          if (!applicationRef.destroyed) applicationRef.destroy();
+          throw error;
+        }
       }),
       catchError((error: unknown) => {
-        this.registrations.delete(tagName);
+        if (registrations.get(tagName) === registration) {
+          registrations.delete(tagName);
+        }
         return throwError(() => error);
       }),
       shareReplay({ bufferSize: 1, refCount: false }),
     );
-    this.registrations.set(tagName, registration);
+    registrations.set(tagName, registration);
     return registration;
   }
+}
+
+function globalRegistrations(): Map<string, Observable<void>> {
+  const owner = globalThis as typeof globalThis & {
+    [key: symbol]: Map<string, Observable<void>> | undefined;
+  };
+  const existing = owner[CAPTURE_WORKBENCH_REGISTRY_KEY];
+  if (existing) return existing;
+  const registrations = new Map<string, Observable<void>>();
+  Object.defineProperty(owner, CAPTURE_WORKBENCH_REGISTRY_KEY, {
+    configurable: false,
+    enumerable: false,
+    value: registrations,
+    writable: false,
+  });
+  return registrations;
+}
+
+function isCaptureWorkbenchElement(
+  constructor: CustomElementConstructor,
+): boolean {
+  return (
+    constructor as CustomElementConstructor & {
+      [key: symbol]: unknown;
+    }
+  )[CAPTURE_WORKBENCH_ELEMENT_BRAND] === true;
+}
+
+function isValidCustomElementName(tagName: string): boolean {
+  return /^[a-z][a-z0-9._-]*-[a-z0-9._-]*$/u.test(tagName);
 }
 
 const publicElementRegistrationService =

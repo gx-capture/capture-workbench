@@ -1,0 +1,13 @@
+{
+  "budgetVersion": "1",
+  "evidence": {
+    "headroomBasisPoints": 1000,
+    "measuredAtUtc": "2026-07-29",
+    "measurementReport": "dist/size/runtime-size-report.json",
+    "measurementReportSha256": "00583e32ec6a71f0ff9be6908296e8885580cb57ccb45f749dbe11298d2dda7b",
+    "nsisInstallerMeasuredBytes": 23431713,
+    "runtimeExecutableMeasuredBytes": 21567461
+  },
+  "nsisInstallerBytes": 25774885,
+  "runtimeExecutableBytes": 23724208
+}

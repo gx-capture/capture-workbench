@@ -5,12 +5,14 @@ mod contracts;
 mod health;
 mod launch_policy;
 mod launcher;
+mod library;
 mod manifest;
 mod process;
 mod resources;
+mod runtime_client;
 mod state;
 
-use std::fs;
+use std::{fs, sync::Arc};
 
 use tauri::Manager;
 
@@ -20,6 +22,7 @@ pub use state::DesktopState;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let data_dir = app.path().app_data_dir().map_err(|error| {
                 format!("Capture Workbench app data path is unavailable: {error}")
@@ -28,7 +31,9 @@ pub fn run() {
                 format!("Capture Workbench app data cannot be created: {error}")
             })?;
 
+            let library = library::LibraryStore::open(&data_dir)?;
             let state = DesktopState::new(data_dir);
+            app.manage(Arc::new(library));
             app.manage(state.clone());
             match resources::resolve_runtime_assets(app) {
                 Ok(assets) => state.start(assets),
@@ -47,9 +52,23 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
-            commands::backend_config,
-            commands::desktop_runtime_status
+            commands::desktop_runtime_status,
+            commands::library_import_source,
+            commands::library_update_capture,
+            commands::library_list,
+            commands::library_get,
+            commands::library_export,
+            commands::library_delete,
+            commands::runtime_requirements,
+            commands::runtime_start_installation,
+            commands::runtime_get_installation,
+            commands::runtime_create_capture,
+            commands::runtime_get_capture,
+            commands::runtime_cancel_capture,
+            commands::runtime_get_raw,
+            commands::runtime_get_result,
+            commands::runtime_delete_capture
         ])
         .run(tauri::generate_context!())
-        .expect("failed to run Capture Workbench desktop verification harness");
+        .expect("failed to run Capture Workbench desktop application");
 }

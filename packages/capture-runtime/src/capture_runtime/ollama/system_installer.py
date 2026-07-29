@@ -1,20 +1,20 @@
-"""System-backed runtime requirement installer."""
+"""System-backed runtime requirement installer.
+
+Optional OCR/Whisper artifacts are delegated to the engine installation owner;
+this module retains the existing app-managed Ollama lifecycle.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import hashlib
 import json
-import os
 import re
 import shutil
 import subprocess
-import sys
 import time
 from collections.abc import Callable, Collection
 from pathlib import Path
-from urllib.parse import unquote, urlsplit
-from uuid import uuid4
 
 import httpx
 
@@ -31,16 +31,12 @@ from capture_runtime.contracts import (
     RuntimeRequirementStatus,
     RuntimeRequirementV1,
 )
-from capture_runtime.engine_adapters import (
-    OcrAdapter,
-    WhisperAdapter,
-)
+from capture_runtime.engine_catalog import EngineCatalogError
+from capture_runtime.engine_installation import EngineInstallationManager, sha256_file
 from capture_runtime.ollama.installer_runtime import (
     AsyncSubprocessCommandRunner,
     CommandRunner,
     _atomic_json,
-    _extract_safe_zip,
-    _sha256_file,
 )
 from capture_runtime.ollama.lifecycle_impl import (
     IsolatedOllamaLifecycle,
@@ -48,46 +44,41 @@ from capture_runtime.ollama.lifecycle_impl import (
     OllamaOwnershipError,
     RuntimeUnavailableError,
 )
-from capture_runtime.release import (
-    MAX_WINDOWSML_BUNDLE_BYTES,
-    _canonical_public_https_artifact,
-    windowsml_requirement_descriptor,
-)
 
 
 class SystemRuntimeInstaller:
-    """Probe/install product requirements without script-download fallbacks."""
+    """Probe/install product requirements without dynamic package installation."""
 
     def __init__(
         self,
         lifecycle: IsolatedOllamaLifecycle,
         *,
+        engine_manager: EngineInstallationManager | None = None,
+        clock: Clock,
         command_runner: CommandRunner | None = None,
         winget_resolver: Callable[[], str | None] | None = None,
-        extraction_config: ExtractionRuntimeConfig,
-        ocr_adapter: OcrAdapter,
-        whisper_adapter: WhisperAdapter,
-        clock: Clock,
-        http_client_factory: Callable[[], httpx.AsyncClient] | None = None,
         enabled_requirement_ids: Collection[str] | None = None,
         model_readiness_timeout_seconds: float = 10,
         model_readiness_poll_interval_seconds: float = 0.2,
+        extraction_config: ExtractionRuntimeConfig | None = None,
+        ocr_adapter: object | None = None,
+        whisper_adapter: object | None = None,
+        http_client_factory: object | None = None,
     ) -> None:
         if model_readiness_timeout_seconds < 0:
             raise ValueError("model_readiness_timeout_seconds must be non-negative")
         if model_readiness_poll_interval_seconds < 0:
             raise ValueError("model_readiness_poll_interval_seconds must be non-negative")
         self._lifecycle = lifecycle
+        self._engine_manager = engine_manager
+        self._windowsml_device_id = (
+            extraction_config.windowsml_device_id if extraction_config is not None else 0
+        )
+        del ocr_adapter, whisper_adapter, http_client_factory
         self._runner = command_runner or AsyncSubprocessCommandRunner()
         self._resolve_winget = winget_resolver or (lambda: shutil.which("winget"))
         self._clock = clock
         self._markers = lifecycle.config.app_data_dir / "requirements"
-        self._extraction_config = extraction_config
-        self._ocr_adapter = ocr_adapter
-        self._whisper_adapter = whisper_adapter
-        self._http_client_factory = http_client_factory or (
-            lambda: httpx.AsyncClient(timeout=120, follow_redirects=False)
-        )
         self._enabled_requirement_ids = (
             None if enabled_requirement_ids is None else frozenset(enabled_requirement_ids)
         )
@@ -109,61 +100,66 @@ class SystemRuntimeInstaller:
         def is_enabled(requirement_id: str) -> bool:
             return effective_requirement_ids is None or requirement_id in effective_requirement_ids
 
-        windowsml_enabled = is_enabled(WINDOWSML_REQUIREMENT_ID)
-        whisper_enabled = is_enabled(WHISPER_REQUIREMENT_ID)
+        requirements: list[RuntimeRequirementV1] = []
+        for requirement_id, kind, display_name, required_for in (
+            (WINDOWSML_REQUIREMENT_ID, "OCR", "WindowsML OCR", ["pdf", "image"]),
+            (WHISPER_REQUIREMENT_ID, "transcription", "Whisper transcription", ["audio"]),
+        ):
+            if not is_enabled(requirement_id):
+                continue
+            try:
+                if self._engine_manager is None:
+                    raise EngineCatalogError("engine manager is unavailable")
+                descriptor = self._engine_manager.requirement(requirement_id)
+                active = self._engine_manager.active_engine(requirement_id)
+                artifact = (
+                    RuntimeArtifactDescriptorV1(
+                        artifact_url=descriptor.artifact("worker").url,
+                        artifact_file_name=descriptor.artifact("worker").file_name,
+                        bytes=descriptor.artifact("worker").bytes,
+                        sha256=descriptor.artifact("worker").sha256,
+                    )
+                    if descriptor.complete
+                    else None
+                )
+                status = (
+                    RuntimeRequirementStatus.READY
+                    if active is not None
+                    else RuntimeRequirementStatus.INSTALLABLE
+                    if descriptor.complete
+                    else RuntimeRequirementStatus.UNAVAILABLE
+                )
+                detail = (
+                    None
+                    if active is not None
+                    else descriptor.unavailable_reason
+                    if not descriptor.complete
+                    else "Pinned worker and model artifacts are available for installation."
+                )
+            except EngineCatalogError:
+                status = RuntimeRequirementStatus.UNAVAILABLE
+                artifact = None
+                detail = "Runtime-owned engine catalog entry is unavailable."
+            requirements.append(
+                RuntimeRequirementV1(
+                    requirement_id=requirement_id,
+                    kind=kind,
+                    display_name=display_name,
+                    status=status,
+                    required_for=required_for,
+                    install_strategy="runtime-catalog",
+                    detail=detail,
+                    artifact=artifact,
+                )
+            )
+
         ollama_runtime_enabled = is_enabled(OLLAMA_RUNTIME_REQUIREMENT_ID)
         ollama_model_enabled = is_enabled(OLLAMA_MODEL_REQUIREMENT_ID)
-
         ollama_available = (
             self._lifecycle.executable() is not None
             if ollama_runtime_enabled or ollama_model_enabled
             else False
         )
-        winget_available = self._resolve_winget() is not None if ollama_runtime_enabled else False
-        model_ready = self._active_model_profile_ready() if ollama_model_enabled else False
-
-        requirements: list[RuntimeRequirementV1] = []
-        if windowsml_enabled:
-            ocr_probe = self._ocr_adapter.probe()
-            requirements.append(
-                RuntimeRequirementV1(
-                    requirement_id=WINDOWSML_REQUIREMENT_ID,
-                    kind="OCR",
-                    display_name="WindowsML OCR",
-                    status=(
-                        RuntimeRequirementStatus.READY
-                        if ocr_probe.ready
-                        else RuntimeRequirementStatus.UNAVAILABLE
-                        if not ocr_probe.code_ready
-                        else RuntimeRequirementStatus.INSTALLABLE
-                        if self._extraction_config.windowsml_bundle_url is not None
-                        else RuntimeRequirementStatus.MANUAL_ACTION_REQUIRED
-                    ),
-                    required_for=["pdf", "image"],
-                    install_strategy="bundled",
-                    detail=ocr_probe.detail,
-                    artifact=self._windowsml_artifact_descriptor(),
-                )
-            )
-        if whisper_enabled:
-            whisper_probe = self._whisper_adapter.probe()
-            requirements.append(
-                RuntimeRequirementV1(
-                    requirement_id=WHISPER_REQUIREMENT_ID,
-                    kind="transcription",
-                    display_name="Whisper transcription",
-                    status=(
-                        RuntimeRequirementStatus.READY
-                        if whisper_probe.ready
-                        else RuntimeRequirementStatus.UNAVAILABLE
-                        if not whisper_probe.code_ready
-                        else RuntimeRequirementStatus.INSTALLABLE
-                    ),
-                    required_for=["audio"],
-                    install_strategy="bundled",
-                    detail=whisper_probe.detail,
-                )
-            )
         if ollama_runtime_enabled:
             requirements.append(
                 RuntimeRequirementV1(
@@ -174,7 +170,7 @@ class SystemRuntimeInstaller:
                         RuntimeRequirementStatus.READY
                         if ollama_available
                         else RuntimeRequirementStatus.INSTALLABLE
-                        if winget_available
+                        if self._resolve_winget() is not None
                         else RuntimeRequirementStatus.MANUAL_ACTION_REQUIRED
                     ),
                     required_for=["runtime-structuring"],
@@ -183,6 +179,7 @@ class SystemRuntimeInstaller:
                 )
             )
         if ollama_model_enabled:
+            model_ready = self._active_model_profile_ready()
             requirements.append(
                 RuntimeRequirementV1(
                     requirement_id=OLLAMA_MODEL_REQUIREMENT_ID,
@@ -197,21 +194,12 @@ class SystemRuntimeInstaller:
                     ),
                     required_for=["runtime-structuring"],
                     install_strategy="ollama",
-                    detail=None
-                    if model_ready
-                    else f"Requires {self._lifecycle.config.base_model}.",
+                    detail=(
+                        None if model_ready else f"Requires {self._lifecycle.config.base_model}."
+                    ),
                 )
             )
         return requirements
-
-    def _windowsml_artifact_descriptor(self) -> RuntimeArtifactDescriptorV1 | None:
-        url = self._extraction_config.windowsml_bundle_url
-        byte_count = self._extraction_config.windowsml_bundle_bytes
-        digest = self._extraction_config.windowsml_bundle_sha256
-        if url is None or byte_count is None or digest is None or not url.startswith("https://"):
-            return None
-        descriptor = windowsml_requirement_descriptor(url, byte_count, digest)
-        return RuntimeArtifactDescriptorV1.model_validate(descriptor)
 
     async def install(
         self,
@@ -220,11 +208,19 @@ class SystemRuntimeInstaller:
         cancel_event: asyncio.Event,
         report_progress: Callable[[float], None],
     ) -> None:
-        if requirement_id == WINDOWSML_REQUIREMENT_ID:
-            await self._install_windowsml(cancel_event, report_progress)
-            return
-        if requirement_id == WHISPER_REQUIREMENT_ID:
-            await self._install_whisper(cancel_event, report_progress)
+        if requirement_id in {WINDOWSML_REQUIREMENT_ID, WHISPER_REQUIREMENT_ID}:
+            if self._engine_manager is None:
+                raise RuntimeError("runtime-owned engine catalog is unavailable")
+            await self._engine_manager.install(
+                requirement_id,
+                cancel_event=cancel_event,
+                report_progress=report_progress,
+                probe_options=(
+                    {"deviceId": self._windowsml_device_id}
+                    if requirement_id == WINDOWSML_REQUIREMENT_ID
+                    else None
+                ),
+            )
             return
         if requirement_id == OLLAMA_RUNTIME_REQUIREMENT_ID:
             await self._install_ollama(cancel_event, report_progress)
@@ -233,226 +229,6 @@ class SystemRuntimeInstaller:
             await self._install_model(cancel_event, report_progress)
             return
         raise ValueError(f"unknown requirementId: {requirement_id}")
-
-    async def _install_windowsml(
-        self,
-        cancel_event: asyncio.Event,
-        report_progress: Callable[[float], None],
-    ) -> None:
-        url = self._extraction_config.windowsml_bundle_url
-        expected_sha256 = self._extraction_config.windowsml_bundle_sha256
-        expected_bytes = self._extraction_config.windowsml_bundle_bytes
-        if url is None or expected_sha256 is None or expected_bytes is None:
-            raise ManualActionRequiredError(
-                "A checksum-pinned WindowsML model bundle is not configured"
-            )
-        target = self._extraction_config.windowsml_model_dir
-        target.parent.mkdir(parents=True, exist_ok=True)
-        archive = target.parent / f".{target.name}.{uuid4().hex}.zip"
-        staging = target.parent / f".{target.name}.{uuid4().hex}.staging"
-        backup = target.parent / f".{target.name}.{uuid4().hex}.backup"
-        installed = False
-        report_progress(0.05)
-        try:
-            await self._download_bundle(
-                url,
-                expected_bytes,
-                archive,
-                cancel_event,
-                report_progress,
-            )
-            actual_sha256 = _sha256_file(archive)
-            if actual_sha256 != expected_sha256:
-                raise RuntimeError("WindowsML model bundle SHA-256 verification failed")
-            report_progress(0.75)
-            _extract_safe_zip(archive, staging, cancel_event)
-            missing = [
-                relative
-                for relative in (
-                    "det/inference.onnx",
-                    "det/inference.yml",
-                    "rec/inference.onnx",
-                    "rec/inference.yml",
-                    "rec/ppocr_keys_v1.txt",
-                    "pipeline.json",
-                )
-                if not (staging / relative).is_file()
-            ]
-            if missing:
-                raise RuntimeError("WindowsML model bundle is incomplete: " + ", ".join(missing))
-            if cancel_event.is_set():
-                raise asyncio.CancelledError
-            if target.exists():
-                os.replace(target, backup)
-            try:
-                os.replace(staging, target)
-            except Exception:
-                if backup.exists() and not target.exists():
-                    os.replace(backup, target)
-                raise
-            probe = self._ocr_adapter.probe()
-            if not probe.ready:
-                raise RuntimeError(f"WindowsML OCR post-install probe failed: {probe.detail}")
-            installed = True
-            shutil.rmtree(backup, ignore_errors=True)
-            report_progress(1)
-        finally:
-            archive.unlink(missing_ok=True)
-            shutil.rmtree(staging, ignore_errors=True)
-            if backup.exists() and not installed:
-                shutil.rmtree(target, ignore_errors=True)
-                os.replace(backup, target)
-            shutil.rmtree(backup, ignore_errors=True)
-
-    async def _download_bundle(
-        self,
-        url: str,
-        expected_bytes: int,
-        destination: Path,
-        cancel_event: asyncio.Event,
-        report_progress: Callable[[float], None],
-    ) -> None:
-        try:
-            await self._download_bundle_to_path(
-                url,
-                expected_bytes,
-                destination,
-                cancel_event,
-                report_progress,
-            )
-        except BaseException:
-            destination.unlink(missing_ok=True)
-            raise
-
-    async def _download_bundle_to_path(
-        self,
-        url: str,
-        expected_bytes: int,
-        destination: Path,
-        cancel_event: asyncio.Event,
-        report_progress: Callable[[float], None],
-    ) -> None:
-        if not 1 <= expected_bytes <= MAX_WINDOWSML_BUNDLE_BYTES:
-            raise RuntimeError("WindowsML bundle byte count is outside the supported range")
-        parsed = urlsplit(url)
-        if parsed.scheme == "file":
-            source = Path(unquote(parsed.path.lstrip("/")))
-            if os.name == "nt" and len(parsed.path) >= 3 and parsed.path[2] == ":":
-                source = Path(unquote(parsed.path.lstrip("/")))
-            if not source.is_file():
-                raise RuntimeError("Configured WindowsML bundle file is unavailable")
-            total = source.stat().st_size
-            if total != expected_bytes:
-                raise RuntimeError("WindowsML model bundle byte count verification failed")
-            copied = 0
-            with source.open("rb") as reader, destination.open("xb") as writer:
-                while chunk := reader.read(1024 * 1024):
-                    if cancel_event.is_set():
-                        raise asyncio.CancelledError
-                    writer.write(chunk)
-                    copied += len(chunk)
-                    report_progress(0.05 + 0.6 * (copied / expected_bytes))
-            return
-        if parsed.scheme != "https":
-            raise RuntimeError("WindowsML bundle URL must use HTTPS or file://")
-        try:
-            _canonical_public_https_artifact(url)
-        except ValueError as error:
-            raise RuntimeError(str(error)) from error
-        async with self._http_client_factory() as client:
-            async with client.stream("GET", url) as response:
-                response.raise_for_status()
-                declared_length = response.headers.get("content-length")
-                if declared_length is not None:
-                    try:
-                        content_length = int(declared_length)
-                    except ValueError as error:
-                        raise RuntimeError("WindowsML bundle Content-Length is invalid") from error
-                    if content_length != expected_bytes:
-                        raise RuntimeError(
-                            "WindowsML model bundle Content-Length verification failed"
-                        )
-                copied = 0
-                with destination.open("xb") as writer:
-                    async for chunk in response.aiter_bytes(1024 * 1024):
-                        if cancel_event.is_set():
-                            raise asyncio.CancelledError
-                        if copied + len(chunk) > expected_bytes:
-                            raise RuntimeError("WindowsML model bundle exceeded its declared bytes")
-                        writer.write(chunk)
-                        copied += len(chunk)
-                        report_progress(0.05 + 0.6 * (copied / expected_bytes))
-                if copied != expected_bytes:
-                    raise RuntimeError("WindowsML model bundle byte count verification failed")
-
-    async def _install_whisper(
-        self,
-        cancel_event: asyncio.Event,
-        report_progress: Callable[[float], None],
-    ) -> None:
-        if not self._whisper_adapter.probe().code_ready:
-            raise ManualActionRequiredError(
-                "The packaged runtime does not include faster-whisper download support"
-            )
-        models = tuple(
-            dict.fromkeys(
-                (
-                    self._extraction_config.whisper_primary_model,
-                    self._extraction_config.whisper_fallback_model,
-                )
-            )
-        )
-        for index, model in enumerate(models):
-            if cancel_event.is_set():
-                raise asyncio.CancelledError
-            output = self._extraction_config.whisper_models_dir / model
-            if getattr(sys, "frozen", False):
-                arguments = [
-                    sys.executable,
-                    "_download-whisper",
-                    "--model",
-                    model,
-                    "--output",
-                    str(output),
-                ]
-            else:
-                arguments = [
-                    sys.executable,
-                    "-m",
-                    "capture_runtime.whisper_download",
-                    "--model",
-                    model,
-                    "--output",
-                    str(output),
-                ]
-            report_progress(0.05 + (index / len(models)) * 0.85)
-            result = await self._runner.run(
-                arguments,
-                environment=self._whisper_download_environment(),
-                cwd=self._extraction_config.whisper_models_dir.parent,
-                cancel_event=cancel_event,
-                timeout_seconds=7200,
-            )
-            if result.return_code != 0:
-                raise RuntimeError(
-                    f"Whisper model download failed ({result.return_code}): {result.output}"
-                )
-        probe = self._whisper_adapter.probe()
-        if not probe.ready:
-            raise RuntimeError(f"Whisper post-install probe failed: {probe.detail}")
-        report_progress(1)
-
-    def _whisper_download_environment(self) -> dict[str, str]:
-        environment = sanitized_child_environment()
-        cache_root = self._extraction_config.whisper_models_dir.parent / ".huggingface"
-        environment.update(
-            {
-                "HF_HOME": str(cache_root),
-                "HF_HUB_CACHE": str(cache_root / "hub"),
-                "HF_HUB_DISABLE_TELEMETRY": "1",
-            }
-        )
-        return environment
 
     async def _install_ollama(
         self,
@@ -511,7 +287,8 @@ class SystemRuntimeInstaller:
             "SYSTEM Return only JSON matching the supplied schema. "
             "Preserve source provenance exactly.\n"
         )
-        modelfile.write_text(modelfile_text, encoding="utf-8")
+        modelfile_bytes = modelfile_text.encode("utf-8")
+        modelfile.write_bytes(modelfile_bytes)
         create = await self._runner.run(
             [
                 executable,
@@ -532,7 +309,7 @@ class SystemRuntimeInstaller:
             {
                 "profileId": self._lifecycle.config.profile_id,
                 "baseModel": self._lifecycle.config.base_model,
-                "modelfileSha256": hashlib.sha256(modelfile_text.encode()).hexdigest(),
+                "modelfileSha256": hashlib.sha256(modelfile_bytes).hexdigest(),
                 "installedAt": self._clock.now().isoformat(),
             },
         )
@@ -550,7 +327,6 @@ class SystemRuntimeInstaller:
             subprocess.SubprocessError,
         ):
             return False
-
         expected_names = {
             self._lifecycle.config.profile_id,
             f"{self._lifecycle.config.profile_id}:latest",
@@ -598,7 +374,7 @@ class SystemRuntimeInstaller:
                 payload["profileId"] == self._lifecycle.config.profile_id
                 and payload["baseModel"] == self._lifecycle.config.base_model
                 and bool(re.fullmatch(r"[0-9a-f]{64}", modelfile_digest))
-                and _sha256_file(modelfile) == modelfile_digest
+                and sha256_file(modelfile) == modelfile_digest
             )
         except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError):
             return False

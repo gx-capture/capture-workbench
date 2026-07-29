@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import zipfile
-from dataclasses import replace
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,10 +11,11 @@ from PIL import Image
 
 import capture_runtime.extractors as extractor_module
 from capture_runtime.clock import SystemClock
-from capture_runtime.config import ExtractionRuntimeConfig, OllamaRuntimeConfig
+from capture_runtime.config import ExtractionRuntimeConfig, OllamaRuntimeConfig, RuntimeSettings
 from capture_runtime.contracts import CaptureSourceV1
 from capture_runtime.engine_adapters import (
     EngineProbe,
+    EngineRuntimeUnavailableError,
     FasterWhisperAdapter,
     OcrTextResult,
     WhisperTextSegment,
@@ -25,9 +24,7 @@ from capture_runtime.engine_adapters import (
 )
 from capture_runtime.extractors import StandaloneRuntimeCaptureExtractor
 from capture_runtime.ollama import (
-    CommandResult,
     IsolatedOllamaLifecycle,
-    SystemRuntimeInstaller,
 )
 
 
@@ -65,13 +62,10 @@ def _config(tmp_path: Path) -> ExtractionRuntimeConfig:
         whisper_primary_model="large-v3-turbo",
         whisper_fallback_model="small",
         whisper_prefer_gpu=True,
-        windowsml_bundle_url=None,
-        windowsml_bundle_sha256=None,
-        windowsml_bundle_bytes=None,
     )
 
 
-def test_windowsml_adapter_uses_one_dml_to_cpu_retry_and_model_digest(
+def test_windowsml_adapter_prefers_dml_with_cert_prep_adapter_zero_and_model_digest(
     tmp_path: Path,
 ) -> None:
     model_dir = tmp_path / "windowsml"
@@ -82,18 +76,13 @@ def test_windowsml_adapter_uses_one_dml_to_cpu_retry_and_model_digest(
         json = {"res": {"rec_texts": ["First", "Second"]}}
 
     class Pipeline:
-        def __init__(self, fail: bool) -> None:
-            self.fail = fail
-
         def predict(self, source: str) -> list[Result]:
             assert Path(source).is_file()
-            if self.fail:
-                raise RuntimeError("DML operator failed")
             return [Result()]
 
     def factory(**kwargs: object) -> Pipeline:
         configurations.append(kwargs["engine_config"])
-        return Pipeline(fail=len(configurations) == 1)
+        return Pipeline()
 
     adapter = WindowsMLOcrAdapter(
         model_dir,
@@ -102,14 +91,104 @@ def test_windowsml_adapter_uses_one_dml_to_cpu_retry_and_model_digest(
     )
     result = adapter.extract_png(b"valid-png-bytes-for-fake-pipeline")
     assert result.text == "First\nSecond"
-    assert result.device == "cpu"
+    assert result.device == "windowsml-dml"
     assert result.digest.startswith("sha256:")
-    assert "CPU OCR fallback" in (result.warning or "")
+    assert result.warning is None
     assert configurations[0]["providers"] == [
         "DmlExecutionProvider",
         "CPUExecutionProvider",
     ]
-    assert configurations[1]["providers"] == ["CPUExecutionProvider"]
+    assert configurations[0]["provider_options"] == [{"device_id": 0}, {}]
+    assert configurations[0]["enable_mem_pattern"] is False
+    assert configurations[0]["execution_mode"] == "sequential"
+
+
+def test_windowsml_adapter_uses_cpu_only_when_dml_is_unavailable(tmp_path: Path) -> None:
+    model_dir = tmp_path / "windowsml"
+    _write_windowsml_models(model_dir)
+    configurations: list[dict[str, object]] = []
+
+    class Result:
+        json = {"res": {"rec_texts": ["CPU result"]}}
+
+    class Pipeline:
+        def predict(self, source: str) -> list[Result]:
+            assert Path(source).is_file()
+            return [Result()]
+
+    def factory(**kwargs: object) -> Pipeline:
+        configurations.append(kwargs["engine_config"])
+        return Pipeline()
+
+    adapter = WindowsMLOcrAdapter(
+        model_dir,
+        pipeline_factory=factory,
+        provider_resolver=lambda: ["CPUExecutionProvider"],
+    )
+
+    result = adapter.extract_png(b"valid-png-bytes-for-fake-pipeline")
+
+    assert result.text == "CPU result"
+    assert result.device == "cpu"
+    assert "CPU OCR fallback" in (result.warning or "")
+    assert configurations == [
+        {
+            "providers": ["CPUExecutionProvider"],
+            "provider_options": [{}],
+            "enable_mem_pattern": False,
+            "execution_mode": "sequential",
+        }
+    ]
+
+
+def test_windowsml_adapter_dml_failure_does_not_create_cpu_only_retry(tmp_path: Path) -> None:
+    model_dir = tmp_path / "windowsml"
+    _write_windowsml_models(model_dir)
+    configurations: list[dict[str, object]] = []
+
+    class Pipeline:
+        def predict(self, _source: str) -> list[object]:
+            raise RuntimeError("DML operator failed")
+
+    def factory(**kwargs: object) -> Pipeline:
+        configurations.append(kwargs["engine_config"])
+        return Pipeline()
+
+    adapter = WindowsMLOcrAdapter(
+        model_dir,
+        pipeline_factory=factory,
+        provider_resolver=lambda: ["DmlExecutionProvider", "CPUExecutionProvider"],
+    )
+
+    with pytest.raises(EngineRuntimeUnavailableError, match="CPU-only pipeline retry is disabled"):
+        adapter.extract_png(b"valid-png-bytes-for-fake-pipeline")
+
+    assert len(configurations) == 1
+    assert configurations[0]["providers"] == [
+        "DmlExecutionProvider",
+        "CPUExecutionProvider",
+    ]
+
+
+def test_windowsml_adapter_is_unavailable_without_dml_or_cpu(tmp_path: Path) -> None:
+    model_dir = tmp_path / "windowsml"
+    _write_windowsml_models(model_dir)
+    adapter = WindowsMLOcrAdapter(
+        model_dir,
+        pipeline_factory=lambda **_kwargs: object(),
+        provider_resolver=lambda: [],
+    )
+
+    probe = adapter.probe()
+
+    assert probe.ready is False
+    assert "CPUExecutionProvider is required" in probe.detail
+
+
+def test_runtime_settings_defaults_to_cert_prep_i_gpu_adapter() -> None:
+    settings = RuntimeSettings.from_env({"CAPTURE_API_TOKEN": "a" * 32})
+
+    assert settings.extraction.windowsml_device_id == 0
 
 
 def test_faster_whisper_uses_local_paths_gpu_fallback_and_bounded_segments(
@@ -287,131 +366,3 @@ def _lifecycle(tmp_path: Path) -> IsolatedOllamaLifecycle:
         executable_resolver=lambda: None,
         clock=SystemClock(),
     )
-
-
-def test_checksum_pinned_windowsml_bundle_installs_and_reprobes(tmp_path: Path) -> None:
-    source = tmp_path / "models"
-    _write_windowsml_models(source)
-    archive = tmp_path / "windowsml.zip"
-    with zipfile.ZipFile(archive, "w") as bundle:
-        for path in source.rglob("*"):
-            if path.is_file():
-                bundle.write(path, path.relative_to(source).as_posix())
-    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
-    config = replace(
-        _config(tmp_path),
-        windowsml_bundle_url=archive.as_uri(),
-        windowsml_bundle_sha256=digest,
-        windowsml_bundle_bytes=archive.stat().st_size,
-    )
-
-    class AssetProbeOcr(FakeOcrAdapter):
-        def probe(self) -> EngineProbe:
-            missing = [
-                relative
-                for relative in (
-                    "det/inference.onnx",
-                    "det/inference.yml",
-                    "rec/inference.onnx",
-                    "rec/inference.yml",
-                    "rec/ppocr_keys_v1.txt",
-                    "pipeline.json",
-                )
-                if not (config.windowsml_model_dir / relative).is_file()
-            ]
-            return EngineProbe(
-                not missing, True, not missing, "ready" if not missing else "missing"
-            )
-
-    installer = SystemRuntimeInstaller(
-        _lifecycle(tmp_path),
-        winget_resolver=lambda: None,
-        extraction_config=config,
-        ocr_adapter=AssetProbeOcr(),
-        whisper_adapter=FakeWhisperAdapter(),
-        clock=SystemClock(),
-    )
-    before = next(
-        item for item in installer.requirements() if item.requirement_id == "windowsml-ocr"
-    )
-    assert before.status == "installable"
-    progress: list[float] = []
-    asyncio.run(
-        installer.install(
-            "windowsml-ocr", cancel_event=asyncio.Event(), report_progress=progress.append
-        )
-    )
-    assert progress[-1] == 1
-    after = next(
-        item for item in installer.requirements() if item.requirement_id == "windowsml-ocr"
-    )
-    assert after.status == "ready"
-
-
-def test_whisper_install_runs_cancellable_model_subprocesses_and_reprobes(
-    tmp_path: Path,
-) -> None:
-    config = _config(tmp_path)
-    adapter = FasterWhisperAdapter(
-        config.whisper_models_dir,
-        primary_model=config.whisper_primary_model,
-        fallback_model=config.whisper_fallback_model,
-        prefer_gpu=False,
-        max_duration_ms=config.max_audio_duration_ms,
-        model_factory=lambda *_args, **_kwargs: object(),
-    )
-
-    class DownloadRunner:
-        def __init__(self) -> None:
-            self.commands: list[list[str]] = []
-            self.environments: list[dict[str, str]] = []
-
-        async def run(
-            self,
-            arguments: list[str],
-            *,
-            environment,
-            cwd,
-            cancel_event: asyncio.Event,
-            timeout_seconds: float,
-        ) -> CommandResult:
-            del cwd, timeout_seconds
-            if cancel_event.is_set():
-                raise asyncio.CancelledError
-            self.commands.append(arguments)
-            self.environments.append(dict(environment))
-            model = arguments[arguments.index("--model") + 1]
-            output = Path(arguments[arguments.index("--output") + 1])
-            _write_whisper_model(output.parent, model)
-            return CommandResult(0, "downloaded")
-
-    runner = DownloadRunner()
-    installer = SystemRuntimeInstaller(
-        _lifecycle(tmp_path),
-        command_runner=runner,
-        winget_resolver=lambda: None,
-        extraction_config=config,
-        ocr_adapter=FakeOcrAdapter(),
-        whisper_adapter=adapter,
-        clock=SystemClock(),
-    )
-    before = next(
-        item for item in installer.requirements() if item.requirement_id == "whisper-primary"
-    )
-    assert before.status == "installable"
-    asyncio.run(
-        installer.install(
-            "whisper-primary",
-            cancel_event=asyncio.Event(),
-            report_progress=lambda _value: None,
-        )
-    )
-    assert len(runner.commands) == 2
-    assert all(
-        environment["HF_HOME"] == str(config.whisper_models_dir.parent / ".huggingface")
-        and environment["HF_HUB_CACHE"]
-        == str(config.whisper_models_dir.parent / ".huggingface" / "hub")
-        and "HF_TOKEN" not in environment
-        for environment in runner.environments
-    )
-    assert adapter.probe().ready is True

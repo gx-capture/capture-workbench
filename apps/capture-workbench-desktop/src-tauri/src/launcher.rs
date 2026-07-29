@@ -13,7 +13,7 @@ use crate::{
         LOOPBACK_HOST, MAX_LAUNCH_ATTEMPTS, READY_POLL_INTERVAL, READY_TIMEOUT, RETRY_DELAY,
         RETRY_POLL_INTERVAL, TOTAL_LAUNCH_TIMEOUT,
     },
-    contracts::{ProbeResult, ReadyHandshake, RuntimeManifest, WindowsMlArtifactDescriptor},
+    contracts::{ProbeResult, ReadyHandshake, RuntimeManifest},
     health::probe_ready_once,
     launch_policy::{child_environment_name_is_allowed, LaunchPolicy, LaunchPolicyFactory},
     manifest::verify_runtime,
@@ -58,8 +58,7 @@ pub(crate) fn launch_runtime(
             let policy = policy_factory.next().map_err(LaunchAttemptError::Fatal)?;
             prepare_isolated_directories(&policy).map_err(LaunchAttemptError::Fatal)?;
 
-            let windowsml = &verified.manifest.runtime_requirements.windowsml_ocr;
-            let mut command = runtime_command(&verified.executable_path, &policy, windowsml);
+            let mut command = runtime_command(&verified.executable_path, &policy);
             let mut child =
                 OwnedRuntimeProcess::spawn(&mut command).map_err(LaunchAttemptError::Fatal)?;
 
@@ -166,11 +165,7 @@ fn prepare_isolated_directories(policy: &LaunchPolicy) -> Result<(), String> {
     Ok(())
 }
 
-fn runtime_command(
-    executable: &Path,
-    policy: &LaunchPolicy,
-    windowsml: &WindowsMlArtifactDescriptor,
-) -> Command {
+fn runtime_command(executable: &Path, policy: &LaunchPolicy) -> Command {
     let mut command = Command::new(executable);
     command
         .env_clear()
@@ -192,13 +187,6 @@ fn runtime_command(
     for (name, value) in policy.environment() {
         command.env(name, value);
     }
-    command.env("CAPTURE_WINDOWSML_BUNDLE_URL", &windowsml.artifact_url);
-    command.env(
-        "CAPTURE_WINDOWSML_BUNDLE_BYTES",
-        windowsml.bytes.to_string(),
-    );
-    command.env("CAPTURE_WINDOWSML_BUNDLE_SHA256", &windowsml.sha256);
-
     command
 }
 
@@ -339,13 +327,7 @@ mod tests {
     #[test]
     fn launch_environment_isolates_ollama_and_disables_docs() {
         let policy = LaunchPolicy::deterministic(PathBuf::from("workbench-data"), 41001, 41002);
-        let windowsml = WindowsMlArtifactDescriptor {
-            artifact_url: "https://downloads.example.org/capture-windowsml.zip".into(),
-            artifact_file_name: "capture-windowsml.zip".into(),
-            bytes: 123_456,
-            sha256: "a".repeat(64),
-        };
-        let command = runtime_command(Path::new("capture-runtime.exe"), &policy, &windowsml);
+        let command = runtime_command(Path::new("capture-runtime.exe"), &policy);
         let args: Vec<_> = command
             .get_args()
             .map(|arg| arg.to_string_lossy().into_owned())
@@ -387,19 +369,6 @@ mod tests {
             env_value(&command, "CAPTURE_ALLOWED_HOSTS").as_deref(),
             Some("127.0.0.1:41001")
         );
-        assert_eq!(
-            env_value(&command, "CAPTURE_WINDOWSML_BUNDLE_URL").as_deref(),
-            Some("https://downloads.example.org/capture-windowsml.zip")
-        );
-        assert_eq!(
-            env_value(&command, "CAPTURE_WINDOWSML_BUNDLE_BYTES").as_deref(),
-            Some("123456")
-        );
-        assert_eq!(
-            env_value(&command, "CAPTURE_WINDOWSML_BUNDLE_SHA256").as_deref(),
-            Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-        );
-
         for poisoned in [
             "CERT_PREP_API_TOKEN",
             "LAW_PREP_API_TOKEN",

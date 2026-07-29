@@ -34,7 +34,12 @@
       "outputs": ["{workspaceRoot}/dist/packs"],
       "options": {
         "cwd": "dist/packages/capture-angular",
-        "command": "corepack pnpm pack --pack-destination ../../packs"
+        "commands": [
+          "node ../../../tools/finalize-packed-package.ts .",
+          "corepack pnpm pack --pack-destination ../../packs",
+          "node ../../../tools/verify-packed-package.ts . ../../packs"
+        ],
+        "parallel": false
       }
     },
     "clean-consumer-smoke": {

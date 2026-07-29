@@ -12,7 +12,7 @@ use sha2::{Digest, Sha256};
 
 use crate::http::{api_error, api_error_details, find_bytes, Request, Response};
 
-const RUNTIME_VERSION: &str = "0.3.0";
+const RUNTIME_VERSION: &str = "0.3.2";
 const API_VERSION: &str = "1.0";
 const SCHEMA_VERSION: &str = "1";
 const CREATED_AT: &str = "2000-01-01T00:00:00Z";

@@ -11,6 +11,7 @@ import { CaptureWorkbenchComponent } from './capture-angular';
 import {
   CaptureWorkbenchTestInputSource,
   DOCUMENT,
+  captureWorkbenchRoot,
   createCaptureWorkbenchTestInputSource,
   fakeClient,
   job,
@@ -57,7 +58,8 @@ describe('CaptureWorkbenchComponent', () => {
       document: DOCUMENT,
     });
     expect(
-      fixture.nativeElement.querySelector('.result-preview').textContent,
+      captureWorkbenchRoot(fixture).querySelector('.result-preview')
+        ?.textContent,
     ).toContain('page one');
   });
 
@@ -331,7 +333,7 @@ describe('CaptureWorkbenchComponent', () => {
     expect(confirmCapture).not.toHaveBeenCalled();
     expect(reviewRequired).toHaveBeenCalledOnce();
     expect(completed).not.toHaveBeenCalled();
-    const textarea = fixture.nativeElement.querySelector(
+    const textarea = captureWorkbenchRoot(fixture).querySelector(
       '.ocr-review textarea',
     ) as HTMLTextAreaElement;
     expect(textarea.value).toBe('page one');
@@ -349,7 +351,7 @@ describe('CaptureWorkbenchComponent', () => {
     expect(valueSetter).not.toHaveBeenCalled();
     expect(defaultValueSetter).not.toHaveBeenCalled();
     (
-      fixture.nativeElement.querySelector(
+      captureWorkbenchRoot(fixture).querySelector(
         '.ocr-review .primary',
       ) as HTMLButtonElement
     ).click();
@@ -453,7 +455,7 @@ describe('CaptureWorkbenchComponent', () => {
     );
 
     (
-      fixture.nativeElement.querySelector(
+      captureWorkbenchRoot(fixture).querySelector(
         '.ocr-review .secondary',
       ) as HTMLButtonElement
     ).click();

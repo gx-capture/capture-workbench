@@ -6,6 +6,7 @@ import {
   catchError,
   concatMap,
   defer,
+  from,
   fromEvent,
   map,
   of,

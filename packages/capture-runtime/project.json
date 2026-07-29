@@ -62,6 +62,19 @@
         "command": "uv run --python 3.12 python scripts/generate_schema.py --output dist/schema/capture-document-v1.schema.json"
       }
     },
+    "generate-production-schema": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "inputs": ["production"],
+      "outputs": ["{projectRoot}/dist/schema"],
+      "metadata": {
+        "description": "Generates the release schema without mutating the verified production environment."
+      },
+      "options": {
+        "cwd": "packages/capture-runtime",
+        "command": "uv run --no-sync --python 3.12 python scripts/generate_schema.py --output dist/schema/capture-document-v1.schema.json"
+      }
+    },
     "sync-angular-schema": {
       "executor": "nx:run-commands",
       "cache": false,
@@ -78,37 +91,190 @@
       "outputs": ["{projectRoot}/dist/executable"],
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --python 3.12 python scripts/build_executable.py"
+        "command": "uv run --python 3.12 python scripts/build_executable.py --layout onefile"
+      }
+    },
+    "build-core-executable": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "inputs": ["production"],
+      "outputs": [
+        "{projectRoot}/dist/executable",
+        "{projectRoot}/dist/core-onefile"
+      ],
+      "options": {
+        "cwd": "packages/capture-runtime",
+        "command": "uv run --python 3.12 python scripts/build_executable.py --layout onefile"
+      }
+    },
+    "build-core-onedir": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "inputs": ["production"],
+      "outputs": ["{projectRoot}/dist/core-onedir"],
+      "options": {
+        "cwd": "packages/capture-runtime",
+        "command": "uv run --python 3.12 python scripts/build_executable.py --layout onedir"
+      }
+    },
+    "prepare-production-environment": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "metadata": {
+        "description": "Synchronizes optional worker dependencies and repairs overlapping ONNX Runtime namespace transitions."
+      },
+      "options": {
+        "cwd": "packages/capture-runtime",
+        "command": "uv sync --python 3.12 --extra windowsml --extra whisper --reinstall-package onnxruntime-directml"
+      }
+    },
+    "verify-production-environment": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "dependsOn": ["prepare-production-environment"],
+      "metadata": {
+        "description": "Requires DirectML to be the sole ONNX Runtime distribution and provider for Windows production builds."
+      },
+      "options": {
+        "cwd": "packages/capture-runtime",
+        "command": "uv run --no-sync --python 3.12 python scripts/verify_production_environment.py"
       }
     },
     "build-production-executable": {
       "cache": true,
       "executor": "nx:run-commands",
+      "dependsOn": ["generate-release-engine-catalog"],
       "inputs": ["production"],
       "outputs": ["{projectRoot}/dist/executable"],
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --python 3.12 --extra windowsml --extra whisper python scripts/build_executable.py --require-engines"
+        "command": "uv run --no-sync --python 3.12 python scripts/build_executable.py --layout onefile"
       }
     },
-    "build-windowsml-bundle": {
-      "cache": false,
+    "build-ocr-worker": {
+      "cache": true,
       "executor": "nx:run-commands",
-      "outputs": ["{projectRoot}/dist/windowsml"],
+      "dependsOn": ["verify-production-environment"],
+      "inputs": ["production"],
+      "outputs": [
+        "{projectRoot}/dist/engines/capture-engine-ocr-*.zip",
+        "{projectRoot}/dist/engines/capture-engine-ocr-*-files.json"
+      ],
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --python 3.12 python scripts/build_windowsml_bundle.py"
+        "command": "uv run --no-sync --python 3.12 python scripts/build_ocr_worker.py"
+      }
+    },
+    "build-whisper-worker": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "dependsOn": ["verify-production-environment"],
+      "inputs": ["production"],
+      "outputs": [
+        "{projectRoot}/dist/engines/capture-engine-whisper-*.zip",
+        "{projectRoot}/dist/engines/capture-engine-whisper-*-files.json"
+      ],
+      "options": {
+        "cwd": "packages/capture-runtime",
+        "command": "uv run --no-sync --python 3.12 python scripts/build_whisper_worker.py"
+      }
+    },
+    "generate-engine-catalog": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "dependsOn": ["build-ocr-worker", "build-whisper-worker"],
+      "inputs": ["production"],
+      "outputs": ["{projectRoot}/dist/catalog/capture-engine-catalog.json"],
+      "options": {
+        "cwd": "packages/capture-runtime",
+        "command": "uv run --no-sync --python 3.12 python scripts/generate_engine_catalog.py --output dist/catalog/capture-engine-catalog.json --ocr-worker-archive dist/engines/capture-engine-ocr-0.3.2-windows-x64.zip --ocr-worker-manifest dist/engines/capture-engine-ocr-0.3.2-windows-x64-files.json --whisper-worker-archive dist/engines/capture-engine-whisper-0.3.2-windows-x64.zip --whisper-worker-manifest dist/engines/capture-engine-whisper-0.3.2-windows-x64-files.json"
+      }
+    },
+    "generate-release-engine-catalog": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "dependsOn": ["build-ocr-worker", "build-whisper-worker"],
+      "inputs": ["production"],
+      "outputs": ["{projectRoot}/dist/catalog/capture-engine-catalog.json"],
+      "metadata": {
+        "description": "Generates a publication catalog and fails unless exact pinned OCR and Whisper model archives/manifests are supplied."
+      },
+      "options": {
+        "cwd": "packages/capture-runtime",
+        "command": "uv run --no-sync --python 3.12 python scripts/generate_engine_catalog.py --require-complete --output dist/catalog/capture-engine-catalog.json --ocr-worker-archive dist/engines/capture-engine-ocr-0.3.2-windows-x64.zip --ocr-worker-manifest dist/engines/capture-engine-ocr-0.3.2-windows-x64-files.json --whisper-worker-archive dist/engines/capture-engine-whisper-0.3.2-windows-x64.zip --whisper-worker-manifest dist/engines/capture-engine-whisper-0.3.2-windows-x64-files.json"
+      }
+    },
+    "verify-core-boundary": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "dependsOn": ["build-core-executable"],
+      "outputs": [
+        "{projectRoot}/dist/core-inventory.txt",
+        "{projectRoot}/dist/core-inventory-recursive.txt"
+      ],
+      "options": {
+        "cwd": "packages/capture-runtime",
+        "command": "uv run --python 3.12 python scripts/verify_boundaries.py --core dist/executable/capture-runtime.exe --core-inventory dist/core-inventory.txt --core-recursive-inventory dist/core-inventory-recursive.txt"
+      }
+    },
+    "verify-worker-boundaries": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "dependsOn": ["build-ocr-worker", "build-whisper-worker"],
+      "outputs": [
+        "{projectRoot}/dist/ocr-worker-inventory.txt",
+        "{projectRoot}/dist/whisper-worker-inventory.txt"
+      ],
+      "options": {
+        "cwd": "packages/capture-runtime",
+        "command": "uv run --no-sync --python 3.12 python scripts/verify_boundaries.py --ocr-worker dist/engines/capture-engine-ocr-0.3.2-windows-x64.zip --ocr-inventory dist/ocr-worker-inventory.txt --whisper-worker dist/engines/capture-engine-whisper-0.3.2-windows-x64.zip --whisper-inventory dist/whisper-worker-inventory.txt"
+      }
+    },
+    "bundle-size-report": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "outputs": ["{projectRoot}/dist/size/runtime-size-report.json"],
+      "options": {
+        "cwd": "packages/capture-runtime",
+        "command": "uv run --python 3.12 python scripts/report_bundle_size.py --executable dist/executable/capture-runtime.exe --installer \"../../apps/capture-workbench-desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/Capture Workbench_0.3.2_x64-setup.exe\" --installed-size-evidence ../../tmp/capture-workbench-desktop/installed-smoke/installed-size.json --pyinstaller-work .build/pyinstaller/core-onefile --startup-samples 2 --output dist/size/runtime-size-report.json"
+      }
+    },
+    "size-regression-check": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "dependsOn": ["bundle-size-report"],
+      "options": {
+        "cwd": "packages/capture-runtime",
+        "command": "uv run --python 3.12 python scripts/size_regression_check.py --report dist/size/runtime-size-report.json --budgets size-budgets/windows-x64.json"
       }
     },
     "build-release-artifacts": {
       "cache": false,
       "executor": "nx:run-commands",
-      "dependsOn": ["build-production-executable", "generate-schema"],
+      "dependsOn": [
+        "build-production-executable",
+        "generate-production-schema",
+        "verify-worker-boundaries"
+      ],
       "inputs": ["production"],
       "outputs": ["{projectRoot}/dist/release"],
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --python 3.12 python scripts/build_release_artifacts.py"
+        "command": "uv run --no-sync --python 3.12 python scripts/build_release_artifacts.py"
+      }
+    },
+    "build-core-release-artifacts": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "dependsOn": ["build-core-executable", "generate-schema"],
+      "inputs": ["production"],
+      "outputs": ["{projectRoot}/dist/core-release"],
+      "metadata": {
+        "description": "Builds the core-only runtime artifact set permitted in the initial NSIS package."
+      },
+      "options": {
+        "cwd": "packages/capture-runtime",
+        "command": "uv run --python 3.12 python scripts/build_core_release_artifacts.py"
       }
     },
     "local-release-consumer-smoke": {

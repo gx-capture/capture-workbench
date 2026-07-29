@@ -1,5 +1,9 @@
-gx-capture-workbench {
+:host {
   display: block;
+}
+
+:host([hidden]) {
+  display: none;
 }
 
 * {

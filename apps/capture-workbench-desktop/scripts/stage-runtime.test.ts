@@ -1,8 +1,7 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import test from 'node:test';
 import {
   sha256File,
@@ -10,23 +9,10 @@ import {
   validateRuntime,
 } from './stage-runtime.ts';
 
-const scriptDirectory = dirname(fileURLToPath(import.meta.url));
-
-function materializeCorpusCase(item, base) {
-  const manifest = structuredClone(item.manifest ?? base);
-  Object.assign(manifest, item.patch ?? {});
-  if (item.remove) delete manifest[item.remove];
-  Object.assign(manifest.runtimeRequirements, item.requirementPatch ?? {});
-  const descriptor = manifest.runtimeRequirements['windowsml-ocr'];
-  Object.assign(descriptor, item.descriptorPatch ?? {});
-  if (item.descriptorRemove) delete descriptor[item.descriptorRemove];
-  return manifest;
-}
-
 function manifestFor(bytes, sha256, schemaSha256) {
   return {
     manifestVersion: '1',
-  runtimeVersion: '0.3.0',
+  runtimeVersion: '0.3.2',
     apiVersion: '1.0',
     captureDocumentSchemaVersion: '1',
     platform: 'windows',
@@ -36,14 +22,6 @@ function manifestFor(bytes, sha256, schemaSha256) {
     sha256,
     schemaFileName: 'capture-document-v1.schema.json',
     schemaSha256,
-    runtimeRequirements: {
-      'windowsml-ocr': {
-        artifactUrl: 'https://downloads.example.org/capture-windowsml-ocr.zip',
-        artifactFileName: 'capture-windowsml-ocr.zip',
-        bytes: 123456,
-        sha256: '2'.repeat(64),
-      },
-    },
   };
 }
 
@@ -126,59 +104,4 @@ test('staging manifest rejects schema drift and path traversal', () => {
     () => validateManifestShape({ ...valid, schemaSha256: 'not-a-digest' }),
     /schemaSha256/u,
   );
-  const requirement = valid.runtimeRequirements['windowsml-ocr'];
-  assert.throws(
-    () =>
-      validateManifestShape({
-        ...valid,
-        runtimeRequirements: {
-          'windowsml-ocr': {
-            ...requirement,
-            artifactUrl:
-              'https://downloads.example.org/capture-windowsml-ocr.zip?token=secret',
-          },
-        },
-      }),
-    /artifact URL is invalid|public HTTPS/u,
-  );
-  assert.throws(
-    () =>
-      validateManifestShape({
-        ...valid,
-        runtimeRequirements: {
-          'windowsml-ocr': { ...requirement, sha256: 'A'.repeat(64) },
-        },
-      }),
-    /lowercase hexadecimal/u,
-  );
-  assert.throws(
-    () =>
-      validateManifestShape({
-        ...valid,
-        runtimeRequirements: {},
-      }),
-    /runtimeRequirements/u,
-  );
-});
-
-test('shared release manifest corpus matches the JavaScript contract', async () => {
-  const corpus = JSON.parse(
-    await readFile(
-      resolve(scriptDirectory, '../../../tools/release-manifest-corpus.json'),
-      'utf8',
-    ),
-  );
-  const base = corpus.cases.find((item) => item.valid).manifest;
-  for (const item of corpus.cases) {
-    const manifest = materializeCorpusCase(item, base);
-    if (item.valid) {
-      assert.doesNotThrow(() => validateManifestShape(manifest), item.name);
-    } else {
-      assert.throws(
-        () => validateManifestShape(manifest),
-        undefined,
-        item.name,
-      );
-    }
-  }
 });

@@ -1,11 +1,14 @@
 import {
   CAPTURE_WORKBENCH_CUSTOM_EVENTS,
+  CaptureWorkbenchElementRegistrationService,
   createCaptureWorkbenchCustomEvent,
   defineCaptureWorkbenchElement,
   type CaptureWorkbenchElement,
 } from './capture-workbench-element';
 import { CaptureWorkbenchElementFacadeComponent } from '../../components/capture-workbench-element-facade/capture-workbench-element-facade';
+import { type ApplicationConfig, type ApplicationRef } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
+import { firstValueFrom } from 'rxjs';
 
 describe('Capture Workbench custom element', () => {
   it('uses bubbling, composed events with stable names', () => {
@@ -163,7 +166,92 @@ describe('Capture Workbench custom element', () => {
       error: (value) => (error = value),
     });
     expect(error).toEqual(expect.objectContaining({
-      message: expect.stringMatching(/must contain a hyphen/u),
+      message: expect.stringMatching(/invalid custom element tag name/iu),
     }));
+  });
+
+  it('shares one registration across service instances and repeated calls', async () => {
+    const tagName = `capture-workbench-shared-${Date.now()}`;
+    const first = new CaptureWorkbenchElementRegistrationService();
+    const second = new CaptureWorkbenchElementRegistrationService();
+
+    const firstRegistration = first.register({ tagName });
+    expect(first.register({ tagName })).toBe(firstRegistration);
+    expect(second.register({ tagName })).toBe(firstRegistration);
+
+    await Promise.all([
+      firstValueFrom(firstRegistration),
+      firstValueFrom(second.register({ tagName })),
+    ]);
+    expect(customElements.get(tagName)).toBeDefined();
+  });
+
+  it('rejects a tag already owned by another constructor', async () => {
+    const tagName = `capture-workbench-conflict-${Date.now()}`;
+    customElements.define(tagName, class extends HTMLElement {});
+
+    await expect(
+      firstValueFrom(defineCaptureWorkbenchElement({ tagName })),
+    ).rejects.toThrow(/already owned by another constructor/u);
+  });
+
+  it('evicts a failed registration so the same tag can be retried', async () => {
+    const tagName = `capture-workbench-retry-${Date.now()}`;
+    class RetryRegistrationService extends CaptureWorkbenchElementRegistrationService {
+      private attempts = 0;
+
+      protected override createAngularApplication(
+        config: ApplicationConfig,
+      ): Promise<ApplicationRef> {
+        this.attempts += 1;
+        return this.attempts === 1
+          ? Promise.reject(new Error('expected startup failure'))
+          : super.createAngularApplication(config);
+      }
+    }
+    const service = new RetryRegistrationService();
+
+    await expect(firstValueFrom(service.register({ tagName }))).rejects.toThrow(
+      /expected startup failure/u,
+    );
+    await expect(
+      firstValueFrom(service.register({ tagName })),
+    ).resolves.toBeUndefined();
+    expect(customElements.get(tagName)).toBeDefined();
+  });
+
+  it('destroys the race-losing Angular application when another branded bundle wins', async () => {
+    const tagName = `capture-workbench-race-${Date.now()}`;
+    let resolveApplication: ((application: ApplicationRef) => void) | undefined;
+    let destroyed = false;
+    class DelayedRegistrationService extends CaptureWorkbenchElementRegistrationService {
+      protected override createAngularApplication(): Promise<ApplicationRef> {
+        return new Promise((resolve) => {
+          resolveApplication = resolve;
+        });
+      }
+    }
+    class WinningElement extends HTMLElement {}
+    Object.defineProperty(
+      WinningElement,
+      Symbol.for('@gx-capture/capture-workbench/element'),
+      { value: true },
+    );
+    const service = new DelayedRegistrationService();
+    const registration = firstValueFrom(service.register({ tagName }));
+    customElements.define(tagName, WinningElement);
+    const application = {
+      get destroyed() {
+        return destroyed;
+      },
+      destroy() {
+        destroyed = true;
+      },
+    } as ApplicationRef;
+    resolveApplication?.(application);
+
+    await expect(registration).resolves.toBeUndefined();
+    expect(destroyed).toBe(true);
+    expect(customElements.get(tagName)).toBe(WinningElement);
   });
 });

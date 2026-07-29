@@ -11,6 +11,7 @@ import {
   CaptureWorkbenchTestInputSource,
   RAW,
   READY,
+  captureWorkbenchRoot,
   createCaptureWorkbenchTestInputSource,
   fakeClient,
 } from './capture-angular-test-support';
@@ -85,13 +86,13 @@ describe('CaptureWorkbenchComponent', () => {
     expect(client.startInstallation).not.toHaveBeenCalled();
     expect(
       Array.from(
-        fixture.nativeElement.querySelectorAll(
+        captureWorkbenchRoot(fixture).querySelectorAll(
           '[data-requirement-id]',
         ) as NodeListOf<HTMLElement>,
         (element) => element.dataset['requirementId'],
       ),
     ).toEqual(['ollama-runtime', 'capture-ollama-model', 'whisper-primary']);
-    const installButton = fixture.nativeElement.querySelector(
+    const installButton = captureWorkbenchRoot(fixture).querySelector(
       '.runtime-card .primary',
     ) as HTMLButtonElement | null;
     expect(installButton).not.toBeNull();
@@ -106,10 +107,10 @@ describe('CaptureWorkbenchComponent', () => {
     );
     expect(client.startInstallation).toHaveBeenCalledTimes(1);
     fixture.detectChanges();
-    expect(fixture.nativeElement.textContent).toContain(
+    expect(captureWorkbenchRoot(fixture).textContent).toContain(
       'Manual action is required',
     );
-    expect(fixture.nativeElement.textContent).toContain(
+    expect(captureWorkbenchRoot(fixture).textContent).toContain(
       'unavailable on the current system',
     );
   });
