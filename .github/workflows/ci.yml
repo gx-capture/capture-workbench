@@ -42,6 +42,10 @@ jobs:
         shell: pwsh
         run: pnpm install --frozen-lockfile
 
+      - name: Install Playwright Chromium
+        shell: pwsh
+        run: pnpm exec playwright install chromium
+
       - name: Verify Capture Workbench package
         shell: pwsh
         run: |
@@ -112,6 +116,4 @@ jobs:
 
       - name: Verify reference flow
         shell: pwsh
-        run: |
-          pnpm exec playwright install chromium
-          pnpm nx run capture-workbench-e2e:e2e
+        run: pnpm nx run capture-workbench-e2e:e2e
