@@ -66,6 +66,8 @@ export class DesktopLibraryService {
     readonly result?: CaptureDocumentV1;
     readonly errorCode?: string;
     readonly errorMessage?: string;
+    readonly recoveryCode?: string;
+    readonly recoveryMessage?: string;
   }): Observable<DesktopLibrarySummary> {
     return this.commands.invoke<DesktopLibrarySummary>('library_update_capture', {
       update: input,

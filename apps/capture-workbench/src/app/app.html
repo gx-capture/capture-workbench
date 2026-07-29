@@ -128,6 +128,9 @@
       @if (item.errorMessage) {
         <div class="detail-error" role="alert"><strong>{{ item.errorCode ?? 'capture_failed' }}</strong><p>{{ item.errorMessage }}</p></div>
       }
+      @if (item.recoveryMessage) {
+        <div class="detail-error" role="alert"><strong>{{ item.recoveryCode ?? 'recovery_required' }}</strong><p>{{ item.recoveryMessage }}</p></div>
+      }
       @if (item.raw) {
         <section class="review-block"><h3>OCR 原始結果</h3><pre>{{ item.raw.sourceText }}</pre></section>
       }

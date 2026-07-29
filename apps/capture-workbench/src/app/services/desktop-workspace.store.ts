@@ -45,6 +45,10 @@ interface ActiveCapture {
   cancelRequested: boolean;
   cancelSent: boolean;
   lastStage?: string;
+  terminalCommitted?: boolean;
+  terminalStatus?: DesktopLibraryStatus;
+  terminalErrorCode?: string;
+  terminalErrorMessage?: string;
   readonly cancelWake: Subject<void>;
 }
 
@@ -212,7 +216,7 @@ export class DesktopWorkspaceStore {
     if (!this.canCapture()) return;
     const document = this.documents().find((item) => item.documentId === documentId)
       ?? (this.selected()?.documentId === documentId ? this.selected() : undefined);
-    const operation = document?.status === 'recovery_required' && document.captureId
+    const operation = document?.captureId
       ? this.recoverCapture$(document)
       : this.captureExisting$(documentId);
     operation.subscribe({
@@ -352,7 +356,7 @@ export class DesktopWorkspaceStore {
           }).pipe(map(() => job));
         }),
         switchMap((job) => this.waitForTerminal$(documentId, job, active)),
-        switchMap((job) => this.persistTerminal$(documentId, job)),
+        switchMap((job) => this.persistTerminal$(documentId, job, active)),
       );
 
       return this.trackCaptureLifecycle$(documentId, active, work$);
@@ -368,22 +372,27 @@ export class DesktopWorkspaceStore {
       ) {
         return EMPTY;
       }
+      const terminalCommitted = hasCommittedTerminalData(document);
       const active: ActiveCapture = {
         captureId: document.captureId,
         cancelRequested: false,
         cancelSent: false,
         lastStage: document.stage,
+        terminalCommitted,
+        terminalStatus: terminalCommitted ? committedTerminalStatus(document) : undefined,
+        terminalErrorCode: terminalCommitted ? document.errorCode : undefined,
+        terminalErrorMessage: terminalCommitted ? document.errorMessage : undefined,
         cancelWake: new Subject<void>(),
       };
       this.activeCaptures.set(document.documentId, active);
       this.markBusy(document.documentId, true);
 
-      const work$ = document.errorCode === 'runtime_cleanup_failed'
+      const work$ = terminalCommitted
         ? this.retryRuntimeCleanup$(document)
         : this.runtime.getCapture(document.captureId).pipe(
           tap((job) => active.lastStage = job.stage),
           switchMap((job) => this.waitForTerminal$(document.documentId, job, active)),
-          switchMap((job) => this.persistTerminal$(document.documentId, job)),
+          switchMap((job) => this.persistTerminal$(document.documentId, job, active)),
         );
       return this.trackCaptureLifecycle$(document.documentId, active, work$);
     });
@@ -465,7 +474,11 @@ export class DesktopWorkspaceStore {
     return this.runtime.cancelCapture(captureId);
   }
 
-  private persistTerminal$(documentId: string, job: CaptureJobV1) {
+  private persistTerminal$(
+    documentId: string,
+    job: CaptureJobV1,
+    active: ActiveCapture,
+  ) {
     return this.library.updateCapture({
       documentId,
       captureId: job.captureId,
@@ -473,6 +486,12 @@ export class DesktopWorkspaceStore {
       stage: job.stage,
     }).pipe(
       switchMap(() => this.persistTerminalData$(documentId, job)),
+      tap(() => {
+        active.terminalCommitted = true;
+        active.terminalStatus = terminalLibraryStatus(job);
+        active.terminalErrorCode = job.error?.code;
+        active.terminalErrorMessage = job.error?.message;
+      }),
       switchMap(() => this.cleanupAfterCommit$(documentId, job)),
     );
   }
@@ -497,12 +516,12 @@ export class DesktopWorkspaceStore {
         }),
       );
     }
-    if (job.status === 'failed') {
+    if (job.status === 'failed' || job.status === 'cancelled') {
       return this.runtime.getRaw(job.captureId).pipe(
         switchMap((raw) => this.library.updateCapture({
           documentId,
           captureId: job.captureId,
-          status: 'failed',
+          status: terminalLibraryStatus(job),
           stage: job.stage,
           raw: raw ?? undefined,
           errorCode: job.error?.code,
@@ -510,14 +529,7 @@ export class DesktopWorkspaceStore {
         })),
       );
     }
-    return this.library.updateCapture({
-      documentId,
-      captureId: job.captureId,
-      status: 'canceled',
-      stage: job.stage,
-      errorCode: job.error?.code,
-      errorMessage: job.error?.message,
-    });
+    return throwError(() => new Error(`Capture Runtime returned unsupported terminal status: ${job.status}`));
   }
 
   private cleanupAfterCommit$(documentId: string, job: CaptureJobV1) {
@@ -536,8 +548,10 @@ export class DesktopWorkspaceStore {
         captureId: job.captureId,
         status: 'recovery_required',
         stage: job.stage,
-        errorCode: 'runtime_cleanup_failed',
-        errorMessage: errorMessage(error),
+        errorCode: job.error?.code,
+        errorMessage: job.error?.message,
+        recoveryCode: 'runtime_cleanup_failed',
+        recoveryMessage: errorMessage(error),
       })),
     );
   }
@@ -548,17 +562,21 @@ export class DesktopWorkspaceStore {
     return this.runtime.deleteCapture(captureId).pipe(
       switchMap(() => this.library.updateCapture({
         documentId: document.documentId,
-        status: terminalStatusFromStage(document.stage),
+        status: committedTerminalStatus(document),
         stage: document.stage,
         clearCaptureId: true,
+        errorCode: document.errorCode,
+        errorMessage: document.errorMessage,
       })),
       catchError((error) => this.library.updateCapture({
         documentId: document.documentId,
         captureId,
         status: 'recovery_required',
         stage: document.stage,
-        errorCode: 'runtime_cleanup_failed',
-        errorMessage: errorMessage(error),
+        errorCode: document.errorCode,
+        errorMessage: document.errorMessage,
+        recoveryCode: 'runtime_cleanup_failed',
+        recoveryMessage: errorMessage(error),
       })),
     );
   }
@@ -569,13 +587,25 @@ export class DesktopWorkspaceStore {
     error: unknown,
   ) {
     if (active.captureId) {
+      if (active.terminalCommitted) {
+        return this.library.updateCapture({
+          documentId,
+          captureId: active.captureId,
+          status: 'recovery_required',
+          stage: active.lastStage ?? terminalStage(active.terminalStatus),
+          errorCode: active.terminalErrorCode,
+          errorMessage: active.terminalErrorMessage,
+          recoveryCode: 'runtime_cleanup_failed',
+          recoveryMessage: errorMessage(error),
+        });
+      }
       return this.library.updateCapture({
         documentId,
         captureId: active.captureId,
         status: 'recovery_required',
         stage: active.lastStage ?? 'recovery_required',
-        errorCode: active.cancelSent ? 'cancel_failed' : 'capture_recovery_required',
-        errorMessage: errorMessage(error),
+        recoveryCode: active.cancelSent ? 'cancel_failed' : 'capture_recovery_required',
+        recoveryMessage: errorMessage(error),
       });
     }
     return this.library.updateCapture({
@@ -652,6 +682,27 @@ function terminalLibraryStatus(job: CaptureJobV1): DesktopLibraryStatus {
 function terminalStatusFromStage(stage?: string): DesktopLibraryStatus {
   if (stage === 'cancelled') return 'canceled';
   if (stage === 'failed') return 'failed';
+  return 'completed';
+}
+
+function hasCommittedTerminalData(document: DesktopLibrarySummary): boolean {
+  return document.recoveryCode === 'runtime_cleanup_failed'
+    || document.status === 'completed'
+    || document.status === 'failed'
+    || document.status === 'canceled';
+}
+
+function committedTerminalStatus(document: DesktopLibrarySummary): DesktopLibraryStatus {
+  return document.status === 'completed'
+    || document.status === 'failed'
+    || document.status === 'canceled'
+    ? document.status
+    : terminalStatusFromStage(document.stage);
+}
+
+function terminalStage(status?: DesktopLibraryStatus): string {
+  if (status === 'canceled') return 'cancelled';
+  if (status === 'failed') return 'failed';
   return 'completed';
 }
 

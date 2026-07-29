@@ -45,6 +45,10 @@ struct StoredDocument {
     capture_id: Option<String>,
     error_code: Option<String>,
     error_message: Option<String>,
+    #[serde(default)]
+    recovery_code: Option<String>,
+    #[serde(default)]
+    recovery_message: Option<String>,
 }
 
 impl StoredDocument {
@@ -61,6 +65,8 @@ impl StoredDocument {
             capture_id: self.capture_id.clone(),
             error_code: self.error_code.clone(),
             error_message: self.error_message.clone(),
+            recovery_code: self.recovery_code.clone(),
+            recovery_message: self.recovery_message.clone(),
         }
     }
 }
@@ -126,6 +132,8 @@ impl LibraryStore {
             capture_id: None,
             error_code: None,
             error_message: None,
+            recovery_code: None,
+            recovery_message: None,
         };
         let summary = document.summary();
         let mut index = self.lock_index()?;
@@ -171,6 +179,8 @@ impl LibraryStore {
         document.stage = update.stage;
         document.error_code = update.error_code;
         document.error_message = update.error_message;
+        document.recovery_code = update.recovery_code;
+        document.recovery_message = update.recovery_message;
         document.updated_at_ms = now_ms()?;
         let summary = document.summary();
         self.save_index(&index)?;
@@ -459,6 +469,8 @@ mod tests {
                 result: Some(serde_json::json!({ "targetText": "Structured" })),
                 error_code: None,
                 error_message: None,
+                recovery_code: None,
+                recovery_message: None,
             })
             .expect("update");
         let detail = library
@@ -534,6 +546,8 @@ mod tests {
                 result: None,
                 error_code: Some("expected".into()),
                 error_message: Some("test".into()),
+                recovery_code: None,
+                recovery_message: None,
             })
             .expect("write backup");
         fs::write(
@@ -573,6 +587,8 @@ mod tests {
                 result: None,
                 error_code: None,
                 error_message: None,
+                recovery_code: None,
+                recovery_message: None,
             })
             .expect("link capture");
         assert_eq!(linked.capture_id.as_deref(), Some("capture-1"));
@@ -586,26 +602,43 @@ mod tests {
                 stage: Some("completed".into()),
                 raw: None,
                 result: None,
-                error_code: Some("runtime_cleanup_failed".into()),
-                error_message: Some("retry cleanup".into()),
+                error_code: Some("runtime_terminal_failed".into()),
+                error_message: Some("terminal evidence".into()),
+                recovery_code: Some("runtime_cleanup_failed".into()),
+                recovery_message: Some("retry cleanup".into()),
             })
             .expect("preserve capture");
         assert_eq!(preserved.capture_id.as_deref(), Some("capture-1"));
+        assert_eq!(
+            preserved.error_code.as_deref(),
+            Some("runtime_terminal_failed")
+        );
+        assert_eq!(
+            preserved.recovery_code.as_deref(),
+            Some("runtime_cleanup_failed")
+        );
 
         let cleared = library
             .update_capture(LibraryCaptureUpdate {
                 document_id: created.document_id.clone(),
                 capture_id: None,
                 clear_capture_id: true,
-                status: "completed".into(),
-                stage: Some("completed".into()),
+                status: "failed".into(),
+                stage: Some("failed".into()),
                 raw: None,
                 result: None,
-                error_code: None,
-                error_message: None,
+                error_code: Some("runtime_terminal_failed".into()),
+                error_message: Some("terminal evidence".into()),
+                recovery_code: None,
+                recovery_message: None,
             })
             .expect("clear capture");
         assert_eq!(cleared.capture_id, None);
+        assert_eq!(
+            cleared.error_code.as_deref(),
+            Some("runtime_terminal_failed")
+        );
+        assert_eq!(cleared.recovery_code, None);
 
         assert!(library
             .update_capture(LibraryCaptureUpdate {
@@ -618,6 +651,8 @@ mod tests {
                 result: None,
                 error_code: None,
                 error_message: None,
+                recovery_code: None,
+                recovery_message: None,
             })
             .is_err());
     }

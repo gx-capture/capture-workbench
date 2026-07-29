@@ -14,9 +14,18 @@
 - The desktop library persists a runtime capture ID immediately after create.
   Terminal data moves through `persisting`; failed retrieval, local commit, or
   runtime cleanup moves to `recovery_required` without losing that ID.
+- Any retained runtime ID is authoritative after restart. Nonterminal work
+  queries that ID, and already-committed terminal work retries only cleanup.
 - Runtime DELETE happens only after a durable terminal library commit. HTTP 404
   is idempotent cleanup success. Other cleanup failures retain the capture ID
   and a recovery action.
+- Failed/canceled terminal error evidence is stored independently from recovery
+  diagnostics, so a cleanup failure and later retry cannot erase provenance.
+- Lifecycle fallback is phase-aware. Once terminal data is committed, nested
+  cleanup/update failures can only produce cleanup-only recovery metadata; they
+  cannot fall back to capture replay or discard terminal errors.
+- Canceled jobs retrieve optional raw data before their durable commit and
+  DELETE; only the runtime's defined no-raw response is treated as empty.
 - `LibraryCaptureUpdate.clearCaptureId` is the only operation that clears a
   stored runtime ID. Omitting both capture-ID fields preserves the current ID.
 - Renderer file validation is fail-fast and exactly matches the native six-MIME

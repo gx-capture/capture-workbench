@@ -22,6 +22,8 @@ pub struct LibraryCaptureUpdate {
     pub result: Option<Value>,
     pub error_code: Option<String>,
     pub error_message: Option<String>,
+    pub recovery_code: Option<String>,
+    pub recovery_message: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -65,6 +67,8 @@ pub struct LibraryDocumentSummary {
     pub capture_id: Option<String>,
     pub error_code: Option<String>,
     pub error_message: Option<String>,
+    pub recovery_code: Option<String>,
+    pub recovery_message: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]

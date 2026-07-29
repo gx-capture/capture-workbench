@@ -25,6 +25,8 @@ export interface DesktopLibrarySummary {
   readonly captureId?: string;
   readonly errorCode?: string;
   readonly errorMessage?: string;
+  readonly recoveryCode?: string;
+  readonly recoveryMessage?: string;
 }
 
 export interface DesktopLibraryDetail extends DesktopLibrarySummary {

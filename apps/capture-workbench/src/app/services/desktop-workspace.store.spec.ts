@@ -155,6 +155,88 @@ describe('DesktopWorkspaceStore', () => {
     expect(deleteCapture).toHaveBeenCalledWith('capture-1');
   });
 
+  it.each(['processing', 'persisting'] as const)(
+    'resumes a retained runtime job after restart from %s without creating a replacement',
+    (status) => {
+      const retained = {
+        ...summary,
+        status,
+        stage: status === 'processing' ? 'extracting' : 'completed',
+        captureId: 'capture-restart',
+      } satisfies DesktopLibrarySummary;
+      const terminal = job({
+        ...completedJob,
+        captureId: 'capture-restart',
+      });
+      const createCapture = vi.fn(() => of(completedJob));
+      const getCapture = vi.fn(() => of(terminal));
+      const deleteCapture = vi.fn(() => of(undefined));
+      const library = libraryStub({
+        list: vi.fn(() => of([retained])),
+        get: vi.fn(() => of(retained as DesktopLibraryDetail)),
+      });
+      const store = initializeStore(
+        library,
+        runtimeStub({ createCapture, getCapture, deleteCapture }),
+      );
+
+      store.retry(retained.documentId);
+      TestBed.tick();
+
+      expect(createCapture).not.toHaveBeenCalled();
+      expect(getCapture).toHaveBeenCalledWith('capture-restart');
+      expect(deleteCapture).toHaveBeenCalledWith('capture-restart');
+    },
+  );
+
+  it.each([
+    ['completed', 'completed'],
+    ['failed', 'failed'],
+    ['canceled', 'cancelled'],
+  ] as const)(
+    'retries only cleanup after restart when %s terminal data is already committed',
+    (status, stage) => {
+      const retained = {
+        ...summary,
+        status,
+        stage,
+        captureId: 'capture-committed',
+        errorCode: status === 'completed' ? undefined : 'terminal_error',
+        errorMessage: status === 'completed' ? undefined : 'terminal evidence',
+      } satisfies DesktopLibrarySummary;
+      const createCapture = vi.fn(() => of(completedJob));
+      const getCapture = vi.fn(() => of(completedJob));
+      const getRaw = vi.fn(() => of(raw));
+      const deleteCapture = vi.fn(() => of(undefined));
+      const updateCapture = vi.fn((update: Record<string, unknown>) =>
+        of({ ...retained, ...update } as DesktopLibrarySummary));
+      const store = initializeStore(
+        libraryStub({
+          list: vi.fn(() => of([retained])),
+          get: vi.fn(() => of(retained as DesktopLibraryDetail)),
+          updateCapture,
+        }),
+        runtimeStub({ createCapture, getCapture, getRaw, deleteCapture }),
+      );
+
+      store.retry(retained.documentId);
+      TestBed.tick();
+
+      expect(createCapture).not.toHaveBeenCalled();
+      expect(getCapture).not.toHaveBeenCalled();
+      expect(getRaw).not.toHaveBeenCalled();
+      expect(deleteCapture).toHaveBeenCalledWith('capture-committed');
+      expect(captureUpdates(updateCapture)).toContainEqual(
+        expect.objectContaining({
+          status,
+          clearCaptureId: true,
+          errorCode: retained.errorCode,
+          errorMessage: retained.errorMessage,
+        }),
+      );
+    },
+  );
+
   it('remembers repeated cancel clicks before create resolves and sends one independent request', () => {
     const created = new Subject<CaptureJobV1>();
     const cancelCapture = vi.fn(() => of(cancelledJob));
@@ -227,6 +309,60 @@ describe('DesktopWorkspaceStore', () => {
     expect(deleteCapture).toHaveBeenCalledWith('capture-1');
   });
 
+  it('persists optional raw data before deleting a canceled runtime job', () => {
+    const updateCapture = vi.fn((update: Record<string, unknown>) =>
+      of({ ...summary, ...update } as DesktopLibrarySummary));
+    const getRaw = vi.fn(() => of(raw));
+    const deleteCapture = vi.fn(() => of(undefined));
+    const store = initializeStore(
+      libraryStub({ updateCapture }),
+      runtimeStub({
+        createCapture: vi.fn(() => of(cancelledJob)),
+        getRaw,
+        deleteCapture,
+      }),
+    );
+
+    store.retry(summary.documentId);
+    TestBed.tick();
+
+    expect(getRaw).toHaveBeenCalledWith('capture-1');
+    expect(captureUpdates(updateCapture)).toContainEqual(
+      expect.objectContaining({
+        status: 'canceled',
+        captureId: 'capture-1',
+        raw,
+      }),
+    );
+    expect(deleteCapture).toHaveBeenCalledWith('capture-1');
+  });
+
+  it('retains a canceled runtime job when optional raw retrieval fails', () => {
+    const updateCapture = vi.fn((update: Record<string, unknown>) =>
+      of({ ...summary, ...update } as DesktopLibrarySummary));
+    const deleteCapture = vi.fn(() => of(undefined));
+    const store = initializeStore(
+      libraryStub({ updateCapture }),
+      runtimeStub({
+        createCapture: vi.fn(() => of(cancelledJob)),
+        getRaw: vi.fn(() => throwError(() => new Error('raw transport failed'))),
+        deleteCapture,
+      }),
+    );
+
+    store.retry(summary.documentId);
+    TestBed.tick();
+
+    expect(captureUpdates(updateCapture)).toContainEqual(
+      expect.objectContaining({
+        status: 'recovery_required',
+        captureId: 'capture-1',
+        recoveryCode: 'capture_recovery_required',
+      }),
+    );
+    expect(deleteCapture).not.toHaveBeenCalled();
+  });
+
   it('retains the capture ID and skips DELETE when cancellation fails', () => {
     const updateCapture = vi.fn((update: Record<string, unknown>) =>
       of({ ...summary, ...update } as DesktopLibrarySummary));
@@ -247,7 +383,7 @@ describe('DesktopWorkspaceStore', () => {
       expect.objectContaining({
         status: 'recovery_required',
         captureId: 'capture-1',
-        errorCode: 'cancel_failed',
+        recoveryCode: 'cancel_failed',
       }),
     );
     expect(deleteCapture).not.toHaveBeenCalled();
@@ -278,7 +414,7 @@ describe('DesktopWorkspaceStore', () => {
       expect.objectContaining({
         status: 'recovery_required',
         captureId: 'capture-1',
-        errorCode: 'capture_recovery_required',
+        recoveryCode: 'capture_recovery_required',
       }),
     );
     expect(deleteCapture).not.toHaveBeenCalled();
@@ -339,9 +475,262 @@ describe('DesktopWorkspaceStore', () => {
       expect.objectContaining({
         status: 'recovery_required',
         captureId: 'capture-1',
-        errorCode: 'runtime_cleanup_failed',
+        recoveryCode: 'runtime_cleanup_failed',
       }),
     );
+  });
+
+  it.each([
+    ['failed', 'failed'],
+    ['cancelled', 'canceled'],
+  ] as const)(
+    'keeps %s terminal evidence separate when runtime cleanup fails',
+    (runtimeStatus, libraryStatus) => {
+      const terminal = job({
+        captureId: 'capture-terminal-error',
+        status: runtimeStatus,
+        stage: runtimeStatus,
+        error: {
+          code: 'terminal_error',
+          message: 'terminal evidence',
+        },
+      });
+      const updateCapture = vi.fn((update: Record<string, unknown>) =>
+        of({ ...summary, ...update } as DesktopLibrarySummary));
+      const deleteCapture = vi.fn(() =>
+        throwError(() => new Error('cleanup transport failed')));
+      const store = initializeStore(
+        libraryStub({ updateCapture }),
+        runtimeStub({
+          createCapture: vi.fn(() => of(terminal)),
+          deleteCapture,
+        }),
+      );
+
+      store.retry(summary.documentId);
+      TestBed.tick();
+
+      expect(captureUpdates(updateCapture)).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          status: libraryStatus,
+          captureId: 'capture-terminal-error',
+          raw,
+          errorCode: 'terminal_error',
+          errorMessage: 'terminal evidence',
+        }),
+        expect.objectContaining({
+          status: 'recovery_required',
+          captureId: 'capture-terminal-error',
+          errorCode: 'terminal_error',
+          errorMessage: 'terminal evidence',
+          recoveryCode: 'runtime_cleanup_failed',
+          recoveryMessage: 'cleanup transport failed',
+        }),
+      ]));
+    },
+  );
+
+  it.each([
+    ['failed', 'failed'],
+    ['canceled', 'cancelled'],
+  ] as const)(
+    'preserves %s terminal evidence when retrying cleanup after restart',
+    (status, stage) => {
+      const recovery = {
+        ...summary,
+        status: 'recovery_required',
+        stage,
+        captureId: 'capture-cleanup-terminal',
+        errorCode: 'terminal_error',
+        errorMessage: 'terminal evidence',
+        recoveryCode: 'runtime_cleanup_failed',
+        recoveryMessage: 'cleanup transport failed',
+      } satisfies DesktopLibrarySummary;
+      const createCapture = vi.fn(() => of(completedJob));
+      const getCapture = vi.fn(() => of(completedJob));
+      const getRaw = vi.fn(() => of(raw));
+      const deleteCapture = vi.fn(() => of(undefined));
+      const updateCapture = vi.fn((update: Record<string, unknown>) =>
+        of({ ...recovery, ...update } as DesktopLibrarySummary));
+      const store = initializeStore(
+        libraryStub({
+          list: vi.fn(() => of([recovery])),
+          get: vi.fn(() => of(recovery as DesktopLibraryDetail)),
+          updateCapture,
+        }),
+        runtimeStub({ createCapture, getCapture, getRaw, deleteCapture }),
+      );
+
+      store.retry(recovery.documentId);
+      TestBed.tick();
+
+      expect(createCapture).not.toHaveBeenCalled();
+      expect(getCapture).not.toHaveBeenCalled();
+      expect(getRaw).not.toHaveBeenCalled();
+      expect(deleteCapture).toHaveBeenCalledWith('capture-cleanup-terminal');
+      expect(captureUpdates(updateCapture)).toContainEqual(
+        expect.objectContaining({
+          status,
+          clearCaptureId: true,
+          errorCode: 'terminal_error',
+          errorMessage: 'terminal evidence',
+        }),
+      );
+    },
+  );
+
+  it('keeps cleanup-only recovery durable when both post-commit library writes fail', () => {
+    const terminal = job({
+      captureId: 'capture-double-write',
+      status: 'failed',
+      stage: 'failed',
+      error: {
+        code: 'terminal_error',
+        message: 'terminal evidence',
+      },
+    });
+    let durable: DesktopLibrarySummary = summary;
+    let clearWriteFailed = false;
+    let recoveryWriteFailed = false;
+    const updateCapture = vi.fn((update: Record<string, unknown>) => {
+      if (
+        update['clearCaptureId'] === true
+        && update['status'] === 'failed'
+        && !clearWriteFailed
+      ) {
+        clearWriteFailed = true;
+        return throwError(() => new Error('clear link write failed'));
+      }
+      if (
+        update['recoveryCode'] === 'runtime_cleanup_failed'
+        && !recoveryWriteFailed
+      ) {
+        recoveryWriteFailed = true;
+        return throwError(() => new Error('recovery metadata write failed'));
+      }
+      durable = applyDurableCaptureUpdate(durable, update);
+      return of(durable);
+    });
+    const library = libraryStub({
+      list: vi.fn(() => of([durable])),
+      get: vi.fn(() => of(durable as DesktopLibraryDetail)),
+      updateCapture,
+    });
+    const deleteCapture = vi.fn(() => of(undefined));
+    const firstStore = initializeStore(
+      library,
+      runtimeStub({
+        createCapture: vi.fn(() => of(terminal)),
+        deleteCapture,
+      }),
+    );
+
+    firstStore.retry(summary.documentId);
+    TestBed.tick();
+
+    expect(clearWriteFailed).toBe(true);
+    expect(recoveryWriteFailed).toBe(true);
+    expect(durable).toEqual(expect.objectContaining({
+      status: 'recovery_required',
+      stage: 'failed',
+      captureId: 'capture-double-write',
+      errorCode: 'terminal_error',
+      errorMessage: 'terminal evidence',
+      recoveryCode: 'runtime_cleanup_failed',
+      recoveryMessage: 'recovery metadata write failed',
+    }));
+
+    TestBed.resetTestingModule();
+    const createAfterRestart = vi.fn(() => of(completedJob));
+    const getAfterRestart = vi.fn(() => of(completedJob));
+    const getRawAfterRestart = vi.fn(() => of(raw));
+    const restartedStore = initializeStore(
+      library,
+      runtimeStub({
+        createCapture: createAfterRestart,
+        getCapture: getAfterRestart,
+        getRaw: getRawAfterRestart,
+        deleteCapture,
+      }),
+    );
+
+    restartedStore.retry(summary.documentId);
+    TestBed.tick();
+
+    expect(createAfterRestart).not.toHaveBeenCalled();
+    expect(getAfterRestart).not.toHaveBeenCalled();
+    expect(getRawAfterRestart).not.toHaveBeenCalled();
+    expect(deleteCapture).toHaveBeenCalledTimes(2);
+    expect(durable).toEqual(expect.objectContaining({
+      status: 'failed',
+      captureId: undefined,
+      errorCode: 'terminal_error',
+      errorMessage: 'terminal evidence',
+      recoveryCode: undefined,
+      recoveryMessage: undefined,
+    }));
+  });
+
+  it('keeps cleanup-only recovery durable when retry cleanup writes fail twice', () => {
+    let durable: DesktopLibrarySummary = {
+      ...summary,
+      status: 'recovery_required',
+      stage: 'cancelled',
+      captureId: 'capture-retry-double-write',
+      errorCode: 'terminal_cancelled',
+      errorMessage: 'canceled terminal evidence',
+      recoveryCode: 'runtime_cleanup_failed',
+      recoveryMessage: 'initial cleanup failure',
+    };
+    let clearWriteFailed = false;
+    let recoveryWriteFailed = false;
+    const updateCapture = vi.fn((update: Record<string, unknown>) => {
+      if (update['clearCaptureId'] === true && !clearWriteFailed) {
+        clearWriteFailed = true;
+        return throwError(() => new Error('retry clear link write failed'));
+      }
+      if (
+        update['recoveryCode'] === 'runtime_cleanup_failed'
+        && !recoveryWriteFailed
+      ) {
+        recoveryWriteFailed = true;
+        return throwError(() => new Error('retry recovery metadata write failed'));
+      }
+      durable = applyDurableCaptureUpdate(durable, update);
+      return of(durable);
+    });
+    const library = libraryStub({
+      list: vi.fn(() => of([durable])),
+      get: vi.fn(() => of(durable as DesktopLibraryDetail)),
+      updateCapture,
+    });
+    const createCapture = vi.fn(() => of(completedJob));
+    const getCapture = vi.fn(() => of(completedJob));
+    const getRaw = vi.fn(() => of(raw));
+    const deleteCapture = vi.fn(() => of(undefined));
+    const store = initializeStore(
+      library,
+      runtimeStub({ createCapture, getCapture, getRaw, deleteCapture }),
+    );
+
+    store.retry(summary.documentId);
+    TestBed.tick();
+
+    expect(clearWriteFailed).toBe(true);
+    expect(recoveryWriteFailed).toBe(true);
+    expect(createCapture).not.toHaveBeenCalled();
+    expect(getCapture).not.toHaveBeenCalled();
+    expect(getRaw).not.toHaveBeenCalled();
+    expect(deleteCapture).toHaveBeenCalledOnce();
+    expect(durable).toEqual(expect.objectContaining({
+      status: 'recovery_required',
+      stage: 'cancelled',
+      captureId: 'capture-retry-double-write',
+      errorCode: 'terminal_cancelled',
+      errorMessage: 'canceled terminal evidence',
+      recoveryCode: 'runtime_cleanup_failed',
+      recoveryMessage: 'retry recovery metadata write failed',
+    }));
   });
 
   it('recovers persistence with the same runtime ID and never creates a new job', () => {
@@ -350,7 +739,7 @@ describe('DesktopWorkspaceStore', () => {
       status: 'recovery_required',
       stage: 'completed',
       captureId: 'capture-recovery',
-      errorCode: 'capture_recovery_required',
+      recoveryCode: 'capture_recovery_required',
     } satisfies DesktopLibrarySummary;
     const createCapture = vi.fn(() => of(completedJob));
     const getCapture = vi.fn(() => of(job({
@@ -379,7 +768,7 @@ describe('DesktopWorkspaceStore', () => {
       status: 'recovery_required',
       stage: 'completed',
       captureId: 'capture-cleanup',
-      errorCode: 'runtime_cleanup_failed',
+      recoveryCode: 'runtime_cleanup_failed',
     } satisfies DesktopLibrarySummary;
     const updateCapture = vi.fn((update: Record<string, unknown>) =>
       of({ ...recovery, ...update } as DesktopLibrarySummary));
@@ -460,6 +849,27 @@ function captureUpdates(
   return updateCapture.mock.calls.map(
     ([update]) => update as Record<string, unknown>,
   );
+}
+
+function applyDurableCaptureUpdate(
+  current: DesktopLibrarySummary,
+  update: Record<string, unknown>,
+): DesktopLibrarySummary {
+  return {
+    ...current,
+    ...update,
+    captureId: update['clearCaptureId'] === true
+      ? undefined
+      : typeof update['captureId'] === 'string'
+        ? update['captureId']
+        : current.captureId,
+    errorCode: typeof update['errorCode'] === 'string' ? update['errorCode'] : undefined,
+    errorMessage: typeof update['errorMessage'] === 'string' ? update['errorMessage'] : undefined,
+    recoveryCode: typeof update['recoveryCode'] === 'string' ? update['recoveryCode'] : undefined,
+    recoveryMessage: typeof update['recoveryMessage'] === 'string'
+      ? update['recoveryMessage']
+      : undefined,
+  } as DesktopLibrarySummary;
 }
 
 function job(input: Record<string, unknown>): CaptureJobV1 {
