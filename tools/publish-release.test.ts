@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { copyFileSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -17,6 +18,39 @@ const runtimeAssetNames = [
   'capture-runtime-manifest.json',
   'capture-document-v1.schema.json',
 ];
+
+async function createRuntimeFixture(directory, version) {
+  const runtimeDirectory = join(directory, 'runtime');
+  await mkdir(runtimeDirectory);
+  const executable = Buffer.from('runtime executable');
+  const executablePath = join(runtimeDirectory, runtimeAssetNames[0]);
+  await writeFile(executablePath, executable);
+  const executableDigest = createHash('sha256').update(executable).digest('hex');
+  await writeFile(
+    join(runtimeDirectory, runtimeAssetNames[1]),
+    `${executableDigest}  ${runtimeAssetNames[0]}\n`,
+    'utf8',
+  );
+  const schema = Buffer.from('{"$schema":"https://json-schema.org/draft/2020-12/schema"}\n');
+  const schemaPath = join(runtimeDirectory, runtimeAssetNames[3]);
+  await writeFile(schemaPath, schema);
+  const schemaDigest = createHash('sha256').update(schema).digest('hex');
+  await writeFile(
+    join(runtimeDirectory, runtimeAssetNames[2]),
+    JSON.stringify({
+      runtimeVersion: version,
+      fileName: runtimeAssetNames[0],
+      bytes: executable.byteLength,
+      sha256: executableDigest,
+      schemaFileName: runtimeAssetNames[3],
+      schemaSha256: schemaDigest,
+    }),
+    'utf8',
+  );
+  const installerPath = join(directory, 'capture-workbench-installer.exe');
+  await writeFile(installerPath, 'installer bytes', 'utf8');
+  return { runtimeDirectory, installerPath };
+}
 
 function success(stdout = '') {
   return { status: 0, stdout, stderr: '' };
@@ -80,6 +114,7 @@ test('registry integrity conflict stops before every GitHub release mutation', a
   try {
     const packagePath = join(directory, 'capture-workbench-0.1.0.tgz');
     await writeFile(packagePath, 'local package bytes', 'utf8');
+    const runtime = await createRuntimeFixture(directory, '0.1.0');
     const localIntegrity = await observe(sha512Integrity(packagePath));
     const calls = [];
     const runCommand = (command, args) => {
@@ -90,6 +125,13 @@ test('registry integrity conflict stops before every GitHub release mutation', a
       if (command === 'npm' && args[0] === 'view') {
         return success(JSON.stringify('sha512-conflicting'));
       }
+      if (
+        command === 'gh' &&
+        args[0] === 'release' &&
+        args[1] === 'view'
+      ) {
+        return success(JSON.stringify({ isDraft: false }));
+      }
       throw new Error(`Unexpected command: ${command} ${args.join(' ')}`);
     };
 
@@ -98,7 +140,7 @@ test('registry integrity conflict stops before every GitHub release mutation', a
         {
           tag: 'v0.1.0',
           version: '0.1.0',
-          runtimeDirectory: join(directory, 'runtime-not-needed'),
+          ...runtime,
           packagePath,
         },
         { runCommand },
@@ -114,10 +156,6 @@ test('registry integrity conflict stops before every GitHub release mutation', a
       ).length,
       0,
     );
-    assert.equal(
-      calls.some(([command]) => command === 'gh'),
-      false,
-    );
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -130,13 +168,8 @@ test('exact existing package and public runtime remain mutation-free on retries'
   try {
     const runtimeDirectory = join(directory, 'runtime');
     const packagePath = join(directory, 'capture-workbench-0.1.0.tgz');
-    await mkdir(runtimeDirectory);
     await writeFile(packagePath, 'exact package bytes', 'utf8');
-    await Promise.all(
-      runtimeAssetNames.map((name) =>
-        writeFile(join(runtimeDirectory, name), `asset:${name}`, 'utf8'),
-      ),
-    );
+    const runtime = await createRuntimeFixture(directory, '0.1.0');
     const localIntegrity = await observe(sha512Integrity(packagePath));
     const calls = [];
     const runCommand = (command, args) => {
@@ -154,7 +187,9 @@ test('exact existing package and public runtime remain mutation-free on retries'
         const pattern = args[args.indexOf('--pattern') + 1];
         const destination = args[args.indexOf('--dir') + 1];
         copyFileSync(
-          join(runtimeDirectory, pattern),
+          runtimeAssetNames.includes(pattern)
+            ? join(runtimeDirectory, pattern)
+            : join(directory, pattern),
           join(destination, pattern),
         );
         return success();
@@ -164,7 +199,7 @@ test('exact existing package and public runtime remain mutation-free on retries'
     const input = {
       tag: 'v0.1.0',
       version: '0.1.0',
-      runtimeDirectory,
+      ...runtime,
       packagePath,
     };
 

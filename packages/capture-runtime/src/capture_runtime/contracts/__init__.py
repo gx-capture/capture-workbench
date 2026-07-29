@@ -340,7 +340,7 @@ class RuntimeReadyV1(StrictModel):
     ready: bool
     service: Literal["capture-runtime"] = "capture-runtime"
     api_version: Literal["1.0"] = API_VERSION
-    runtime_version: Literal["0.3.0"] = RUNTIME_VERSION
+    runtime_version: Literal["0.3.1"] = RUNTIME_VERSION
     capture_document_schema_version: Literal["1"] = CAPTURE_DOCUMENT_SCHEMA_VERSION
     capabilities: RuntimeCapabilitiesV1
     message: str | None = None

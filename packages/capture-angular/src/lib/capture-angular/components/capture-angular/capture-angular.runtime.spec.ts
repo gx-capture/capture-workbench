@@ -5,6 +5,7 @@ import { CaptureWorkbenchComponent } from './capture-angular';
 import {
   CaptureWorkbenchTestInputSource,
   READY,
+  captureWorkbenchRoot,
   createCaptureWorkbenchTestInputSource,
   fakeClient,
 } from './capture-angular-test-support';
@@ -34,10 +35,10 @@ describe('CaptureWorkbenchComponent', () => {
     await fixture.whenStable();
     fixture.detectChanges();
 
-    const panel = fixture.nativeElement.querySelector(
+    const panel = captureWorkbenchRoot(fixture).querySelector(
       '.capture-workbench',
     ) as HTMLElement;
-    const input = fixture.nativeElement.querySelector(
+    const input = captureWorkbenchRoot(fixture).querySelector(
       'input[type=file]',
     ) as HTMLInputElement;
     expect(panel.style.width).toBe('32rem');
@@ -104,7 +105,9 @@ describe('CaptureWorkbenchComponent', () => {
 
     expect(client.getReady).toHaveBeenCalledOnce();
     expect(client.getRequirements).toHaveBeenCalledOnce();
-    expect(fixture.nativeElement.querySelector('.runtime-card')).toBeNull();
+    expect(
+      captureWorkbenchRoot(fixture).querySelector('.runtime-card'),
+    ).toBeNull();
   });
 
   it('skips its handshake only with explicit hostManagedHandshake', async () => {

@@ -1,23 +1,25 @@
 {
   "name": "@gx-capture/capture-workbench",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Capture Workbench UI for the Capture Runtime sidecar.",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/WodenWang820118/capture-workbench.git",
+    "url": "git+https://github.com/gx-capture/capture-workbench.git",
     "directory": "packages/capture-angular"
   },
-  "homepage": "https://github.com/WodenWang820118/capture-workbench#readme",
+  "homepage": "https://github.com/gx-capture/capture-workbench#readme",
   "publishConfig": {
     "registry": "https://npm.pkg.github.com",
     "access": "public"
   },
   "dependencies": {
+    "@angular/compiler": "22.0.7",
     "@angular/elements": "22.0.7"
   },
   "peerDependencies": {
     "@angular/core": "^22.0.0",
+    "@angular/forms": "^22.0.0",
     "@angular/platform-browser": "^22.0.0",
     "rxjs": "^7.8.0"
   },

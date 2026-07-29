@@ -58,6 +58,9 @@ function exceptionReason(relativePath) {
   if (relativePath === 'tools/local-release-consumer-smoke.ts') {
     return 'local release consumer process boundary';
   }
+  if (relativePath === 'tools/publish-release.ts') {
+    return 'release publication CLI process boundary';
+  }
   return undefined;
 }
 

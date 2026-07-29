@@ -4,8 +4,8 @@ use crate::{
     config::DesktopRuntimeStatus,
     contracts::{
         LibraryCaptureUpdate, LibraryDocumentDetail, LibraryDocumentRequest,
-        LibraryDocumentSummary, LibraryExportPayload, LibraryExportRequest, LibraryListRequest,
-        LibrarySourceInput, RuntimeCreateCaptureInput, RuntimeIdInput,
+        LibraryDocumentSummary, LibraryExportPayload, LibraryExportRequest,
+        LibraryImportSourceRequest, LibraryListRequest, RuntimeCreateCaptureInput, RuntimeIdInput,
         RuntimeInstallationStartInput,
     },
     library::LibraryStore,
@@ -30,12 +30,12 @@ where
 }
 
 #[tauri::command]
-pub async fn library_create_source(
+pub async fn library_import_source(
     library: tauri::State<'_, Arc<LibraryStore>>,
-    input: LibrarySourceInput,
+    request: LibraryImportSourceRequest,
 ) -> Result<LibraryDocumentSummary, String> {
     let library = Arc::clone(library.inner());
-    run_blocking(move || library.create_source(input)).await
+    run_blocking(move || library.import_source(request)).await
 }
 
 #[tauri::command]

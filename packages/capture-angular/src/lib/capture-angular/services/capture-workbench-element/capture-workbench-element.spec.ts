@@ -1,11 +1,13 @@
 import {
   CAPTURE_WORKBENCH_CUSTOM_EVENTS,
+  CaptureWorkbenchElementRegistrationService,
   createCaptureWorkbenchCustomEvent,
   defineCaptureWorkbenchElement,
   type CaptureWorkbenchElement,
 } from './capture-workbench-element';
 import { CaptureWorkbenchElementFacadeComponent } from '../../components/capture-workbench-element-facade/capture-workbench-element-facade';
 import { TestBed } from '@angular/core/testing';
+import { firstValueFrom } from 'rxjs';
 
 describe('Capture Workbench custom element', () => {
   it('uses bubbling, composed events with stable names', () => {
@@ -163,7 +165,32 @@ describe('Capture Workbench custom element', () => {
       error: (value) => (error = value),
     });
     expect(error).toEqual(expect.objectContaining({
-      message: expect.stringMatching(/must contain a hyphen/u),
+      message: expect.stringMatching(/invalid custom element tag name/iu),
     }));
+  });
+
+  it('shares one registration across service instances and repeated calls', async () => {
+    const tagName = `capture-workbench-shared-${Date.now()}`;
+    const first = new CaptureWorkbenchElementRegistrationService();
+    const second = new CaptureWorkbenchElementRegistrationService();
+
+    const firstRegistration = first.register({ tagName });
+    expect(first.register({ tagName })).toBe(firstRegistration);
+    expect(second.register({ tagName })).toBe(firstRegistration);
+
+    await Promise.all([
+      firstValueFrom(firstRegistration),
+      firstValueFrom(second.register({ tagName })),
+    ]);
+    expect(customElements.get(tagName)).toBeDefined();
+  });
+
+  it('rejects a tag already owned by another constructor', async () => {
+    const tagName = `capture-workbench-conflict-${Date.now()}`;
+    customElements.define(tagName, class extends HTMLElement {});
+
+    await expect(
+      firstValueFrom(defineCaptureWorkbenchElement({ tagName })),
+    ).rejects.toThrow(/already owned by another constructor/u);
   });
 });

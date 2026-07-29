@@ -22,6 +22,7 @@ pub use state::DesktopState;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let data_dir = app.path().app_data_dir().map_err(|error| {
                 format!("Capture Workbench app data path is unavailable: {error}")
@@ -52,7 +53,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::desktop_runtime_status,
-            commands::library_create_source,
+            commands::library_import_source,
             commands::library_update_capture,
             commands::library_list,
             commands::library_get,

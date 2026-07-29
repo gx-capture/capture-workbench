@@ -1,5 +1,12 @@
-import { computed, effect, Injectable, inject, signal } from '@angular/core';
-import { rxResource } from '@angular/core/rxjs-interop';
+import {
+  computed,
+  DestroyRef,
+  effect,
+  Injectable,
+  inject,
+  signal,
+} from '@angular/core';
+import { rxResource, takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import {
   EMPTY,
   catchError,
@@ -32,10 +39,7 @@ import type {
   DesktopLibraryStatus,
   DesktopLibrarySummary,
 } from '../contracts';
-import {
-  desktopSourceKind,
-  DesktopLibraryService,
-} from './desktop-library.service';
+import { DesktopLibraryService } from './desktop-library.service';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
 
 type WorkspaceState = 'starting' | 'needs-setup' | 'ready' | 'error';
@@ -109,7 +113,9 @@ export class DesktopWorkspaceStore {
 
   private readonly runtime = inject(DesktopRuntimeClientService);
   private readonly library = inject(DesktopLibraryService);
+  private readonly destroyRef = inject(DestroyRef);
   private readonly activeCaptures = new Map<string, ActiveCapture>();
+  private dropListenerStarted = false;
 
   private readonly requirementsResource = rxResource<
     readonly RuntimeRequirementV1[],
@@ -161,6 +167,16 @@ export class DesktopWorkspaceStore {
   });
 
   initialize(): void {
+    if (!this.dropListenerStarted) {
+      this.dropListenerStarted = true;
+      this.library
+        .droppedSources()
+        .pipe(takeUntilDestroyed(this.destroyRef))
+        .subscribe({
+          next: (paths) => this.addSourcePaths(paths),
+          error: (error: unknown) => this.message.set(errorMessage(error)),
+        });
+    }
     this.runtime.reload();
     this.requirementsResource.reload();
     this.documentsResource.reload();
@@ -203,10 +219,18 @@ export class DesktopWorkspaceStore {
     });
   }
 
-  addFiles(files: FileList | readonly File[]): void {
+  chooseSources(): void {
     if (!this.runtime.ready() || !this.canCapture()) return;
-    from(Array.from(files)).pipe(
-      concatMap((file) => this.prepareFile$(file)),
+    this.library.selectSources().subscribe({
+      next: (paths) => this.addSourcePaths(paths),
+      error: (error: unknown) => this.message.set(errorMessage(error)),
+    });
+  }
+
+  addSourcePaths(paths: readonly string[]): void {
+    if (!this.runtime.ready() || !this.canCapture()) return;
+    from(paths).pipe(
+      concatMap((sourcePath) => this.captureNewSource$(sourcePath)),
     ).subscribe({
       error: (error: unknown) => this.message.set(errorMessage(error)),
     });
@@ -233,6 +257,20 @@ export class DesktopWorkspaceStore {
   }
 
   delete(documentId: string): void {
+    if (this.activeCaptures.has(documentId) || this.busyIds().has(documentId)) {
+      this.message.set('請先取消處理，再刪除文件。');
+      return;
+    }
+    const document = this.documents().find(
+      (candidate) => candidate.documentId === documentId,
+    ) ??
+      (this.selected()?.documentId === documentId
+        ? this.selected()
+        : undefined);
+    if (document?.captureId) {
+      this.message.set('請先完成 Runtime 清理，再刪除文件。');
+      return;
+    }
     if (!globalThis.confirm('確定要刪除這份文件嗎？')) return;
     this.library.delete(documentId).subscribe({
       next: () => {
@@ -297,29 +335,22 @@ export class DesktopWorkspaceStore {
     } as Record<DesktopLibrarySummary['status'], string>)[status];
   }
 
-  private prepareFile$(file: File): Observable<void> {
-    let sourceKind: ReturnType<typeof desktopSourceKind>;
-    try {
-      sourceKind = desktopSourceKind(file);
-    } catch (error) {
-      this.message.set(errorMessage(error));
-      return EMPTY;
-    }
-    if (sourceKind === 'audio' && !this.audioReady()) {
-      this.requestedRequirements.update((current) => new Set([...current, 'whisper-primary']));
-      this.message.set('音訊來源需要先安裝 Whisper。');
-      return EMPTY;
-    }
-    return this.captureNewFile$(file);
-  }
-
-  private captureNewFile$(file: File): Observable<void> {
-    return this.library.createSource(file).pipe(
+  private captureNewSource$(sourcePath: string): Observable<void> {
+    return this.library.createSource(sourcePath).pipe(
       tap((document) => {
         this.selectedId.set(document.documentId);
         this.refreshDocuments();
       }),
-      switchMap((document) => this.captureExisting$(document.documentId)),
+      switchMap((document) => {
+        if (document.mediaType.startsWith('audio/') && !this.audioReady()) {
+          this.requestedRequirements.update(
+            (current) => new Set([...current, 'whisper-primary']),
+          );
+          this.message.set('音訊來源需要先安裝 Whisper。');
+          return EMPTY;
+        }
+        return this.captureExisting$(document.documentId);
+      }),
       catchError((error) => {
         this.message.set(errorMessage(error));
         return EMPTY;

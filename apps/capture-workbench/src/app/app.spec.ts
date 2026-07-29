@@ -20,7 +20,7 @@ describe('App', () => {
       fixture.detectChanges();
       return fixture.whenStable().then(() => {
         expect(fixture.nativeElement.querySelector('h1')?.textContent).toContain('文件擷取工作台');
-        expect(fixture.nativeElement.querySelector('input[type="file"]')).not.toBeNull();
+        expect(fixture.nativeElement.textContent).toContain('拖放到視窗');
         expect(fixture.nativeElement.querySelector('.mat-mdc-form-field')).not.toBeNull();
         expect(fixture.nativeElement.querySelector('.mat-mdc-button-base')).not.toBeNull();
       });
@@ -44,7 +44,7 @@ function workspaceStub() {
     coreMissing: signal([]),
     initialize: vi.fn(),
     installCoreRequirements: vi.fn(),
-    addFiles: vi.fn(),
+    chooseSources: vi.fn(),
     select: vi.fn(),
     updateQuery: vi.fn(),
     updateStatusFilter: vi.fn(),

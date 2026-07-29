@@ -8,8 +8,8 @@ pub use desktop::{BackendConfig, DesktopRuntimeStatus};
 pub use health::{ProbeResult, ReadyHandshake};
 pub use library::{
     LibraryCaptureUpdate, LibraryDocumentDetail, LibraryDocumentRequest, LibraryDocumentSummary,
-    LibraryExportFormat, LibraryExportPayload, LibraryExportRequest, LibraryListRequest,
-    LibrarySourceInput, LibrarySourcePayload,
+    LibraryExportFormat, LibraryExportPayload, LibraryExportRequest, LibraryImportSourceRequest,
+    LibraryListRequest, LibrarySourceInput, LibrarySourcePayload,
 };
 pub use manifest::{RuntimeManifest, VerifiedRuntime};
 pub use runtime::{RuntimeCreateCaptureInput, RuntimeIdInput, RuntimeInstallationStartInput};

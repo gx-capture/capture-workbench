@@ -109,7 +109,7 @@ test('blocking native I/O is isolated behind async Tauri commands', async () => 
   );
   assert.match(commands, /tauri::async_runtime::spawn_blocking/u);
   for (const command of [
-    'library_create_source',
+    'library_import_source',
     'library_update_capture',
     'library_list',
     'library_get',
@@ -328,6 +328,6 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   assert.match(executableBuilder, /"pypdf",/u);
   assert.match(
     publisher,
-    /preflightPackagePublication[\s\S]*ensureRuntimeReleasePublic[\s\S]*applyPackagePublication/u,
+    /preflightCandidate[\s\S]*ensureDraftAssets[\s\S]*publishPackage/u,
   );
 });

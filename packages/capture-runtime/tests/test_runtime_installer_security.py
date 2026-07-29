@@ -11,6 +11,7 @@ import pytest
 import capture_runtime.ollama.system_installer as system_installer_module
 from capture_runtime.clock import SystemClock
 from capture_runtime.config import ExtractionRuntimeConfig, OllamaRuntimeConfig
+from capture_runtime.constants import RUNTIME_VERSION, WINDOWSML_BUNDLE_URL
 from capture_runtime.engine_adapters import WINDOWSML_REQUIRED_MODEL_FILES, EngineProbe
 from capture_runtime.ollama import (
     IsolatedOllamaLifecycle,
@@ -37,6 +38,13 @@ class ChunkStream(httpx.AsyncByteStream):
 
     async def aclose(self) -> None:
         return None
+
+
+def test_windowsml_bundle_uses_the_published_runtime_version() -> None:
+    assert (
+        f"/releases/download/v{RUNTIME_VERSION}/capture-windowsml-ocr-windows-x64.zip"
+        in WINDOWSML_BUNDLE_URL
+    )
 
 
 def _installer(

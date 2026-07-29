@@ -1,7 +1,7 @@
 use std::{
-    fs,
-    io::ErrorKind,
-    path::{Path, PathBuf},
+    fs::{self, File},
+    io::{ErrorKind, Read},
+    path::{Component, Path, PathBuf},
     sync::Mutex,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -12,19 +12,20 @@ use serde_json::Value;
 
 use crate::contracts::{
     LibraryCaptureUpdate, LibraryDocumentDetail, LibraryDocumentRequest, LibraryDocumentSummary,
-    LibraryExportFormat, LibraryExportPayload, LibraryExportRequest, LibraryListRequest,
-    LibrarySourceInput, LibrarySourcePayload,
+    LibraryExportFormat, LibraryExportPayload, LibraryExportRequest, LibraryImportSourceRequest,
+    LibraryListRequest, LibrarySourceInput, LibrarySourcePayload,
 };
 
 const INDEX_FILE_NAME: &str = "library-index-v1.json";
 const INDEX_BACKUP_FILE_NAME: &str = "library-index-v1.backup.json";
+const TRANSACTION_FILE_NAME: &str = "library-transaction-v1.json";
 const INDEX_VERSION: u8 = 1;
 const MAX_SOURCE_BYTES: usize = 50 * 1024 * 1024;
 const SOURCE_FILE_NAME: &str = "source.bin";
 const RAW_FILE_NAME: &str = "raw.json";
 const RESULT_FILE_NAME: &str = "result.json";
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct LibraryIndex {
     version: u8,
@@ -83,6 +84,7 @@ impl LibraryStore {
         let root = app_data_dir.join("library");
         fs::create_dir_all(root.join("items"))
             .map_err(|error| format!("Capture library cannot be created: {error}"))?;
+        recover_library_transaction(&root)?;
         let index_path = root.join(INDEX_FILE_NAME);
         let index = match fs::read(&index_path) {
             Ok(bytes) => match serde_json::from_slice::<LibraryIndex>(&bytes) {
@@ -146,6 +148,52 @@ impl LibraryStore {
         Ok(summary)
     }
 
+    pub(crate) fn import_source(
+        &self,
+        request: LibraryImportSourceRequest,
+    ) -> Result<LibraryDocumentSummary, String> {
+        let source = PathBuf::from(request.source_path);
+        let source_metadata = fs::symlink_metadata(&source)
+            .map_err(|_| "Selected source cannot be inspected.".to_string())?;
+        if source_metadata.file_type().is_symlink() || !source_metadata.file_type().is_file() {
+            return Err("Selected source must be a regular non-symlink file.".into());
+        }
+        if source_metadata.len() == 0 || source_metadata.len() > MAX_SOURCE_BYTES as u64 {
+            return Err("Selected source exceeds the desktop library limit.".into());
+        }
+
+        let canonical = fs::canonicalize(&source)
+            .map_err(|_| "Selected source cannot be resolved.".to_string())?;
+        let canonical_metadata = fs::metadata(&canonical)
+            .map_err(|_| "Selected source cannot be inspected.".to_string())?;
+        if !canonical_metadata.is_file() || canonical_metadata.len() != source_metadata.len() {
+            return Err("Selected source changed during import.".into());
+        }
+        let file_name = canonical
+            .file_name()
+            .and_then(|value| value.to_str())
+            .ok_or_else(|| "Selected source file name is invalid.".to_string())?
+            .to_string();
+
+        let mut reader =
+            File::open(&canonical).map_err(|_| "Selected source cannot be opened.".to_string())?;
+        let mut bytes = Vec::with_capacity(canonical_metadata.len() as usize);
+        reader
+            .by_ref()
+            .take(MAX_SOURCE_BYTES as u64 + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|_| "Selected source cannot be read.".to_string())?;
+        if bytes.len() as u64 != canonical_metadata.len() {
+            return Err("Selected source changed during import.".into());
+        }
+        let media_type = verified_media_type(&file_name, &bytes)?;
+        self.create_source(LibrarySourceInput {
+            file_name,
+            media_type: media_type.into(),
+            bytes,
+        })
+    }
+
     pub(crate) fn update_capture(
         &self,
         update: LibraryCaptureUpdate,
@@ -158,18 +206,14 @@ impl LibraryStore {
             );
         }
         let mut index = self.lock_index()?;
-        let document = index
+        let position = index
             .documents
-            .iter_mut()
-            .find(|candidate| candidate.document_id == update.document_id)
+            .iter()
+            .position(|candidate| candidate.document_id == update.document_id)
             .ok_or_else(|| "Capture library document was not found.".to_string())?;
+        let mut next_index = index.clone();
+        let document = &mut next_index.documents[position];
         let directory = self.document_directory(&document.document_id)?;
-        if let Some(raw) = &update.raw {
-            atomic_write_json(&directory.join(RAW_FILE_NAME), raw)?;
-        }
-        if let Some(result) = &update.result {
-            atomic_write_json(&directory.join(RESULT_FILE_NAME), result)?;
-        }
         if update.clear_capture_id {
             document.capture_id = None;
         } else if update.capture_id.is_some() {
@@ -183,7 +227,54 @@ impl LibraryStore {
         document.recovery_message = update.recovery_message;
         document.updated_at_ms = now_ms()?;
         let summary = document.summary();
-        self.save_index(&index)?;
+
+        let transaction_id = random_document_id()?;
+        let mut prepared = Vec::new();
+        if let Some(raw) = &update.raw {
+            prepared.push(prepare_transaction_entry(
+                &self.root,
+                &directory.join(RAW_FILE_NAME),
+                &transaction_id,
+                serde_json::to_vec_pretty(raw)
+                    .map_err(|error| format!("Capture library JSON cannot be encoded: {error}"))?,
+            )?);
+        }
+        if let Some(result) = &update.result {
+            prepared.push(prepare_transaction_entry(
+                &self.root,
+                &directory.join(RESULT_FILE_NAME),
+                &transaction_id,
+                serde_json::to_vec_pretty(result)
+                    .map_err(|error| format!("Capture library JSON cannot be encoded: {error}"))?,
+            )?);
+        }
+        let index_path = self.root.join(INDEX_FILE_NAME);
+        prepared.push(prepare_transaction_entry(
+            &self.root,
+            &index_path,
+            &transaction_id,
+            serde_json::to_vec_pretty(&next_index)
+                .map_err(|error| format!("Capture library index cannot be encoded: {error}"))?,
+        )?);
+        if index_path.exists() {
+            fs::copy(&index_path, self.root.join(INDEX_BACKUP_FILE_NAME)).map_err(|error| {
+                format!("Capture library recovery copy cannot be written: {error}")
+            })?;
+        }
+        commit_library_transaction(
+            &self.root,
+            LibraryTransaction {
+                transaction_id,
+                document_id: update.document_id,
+                operation: "update_capture".into(),
+                target_index_version: INDEX_VERSION,
+                stage: TransactionStage::Prepared,
+                applied_entries: 0,
+                entries: prepared.iter().map(|entry| entry.journal.clone()).collect(),
+            },
+            prepared,
+        )?;
+        *index = next_index;
         Ok(summary)
     }
 
@@ -284,6 +375,9 @@ impl LibraryStore {
             .iter()
             .position(|document| document.document_id == request.document_id)
             .ok_or_else(|| "Capture library document was not found.".to_string())?;
+        if index.documents[position].capture_id.is_some() {
+            return Err("Capture library document still owns an active runtime capture.".into());
+        }
         let directory = self.document_directory(&request.document_id)?;
         let tombstone = directory.with_extension("deleting");
         fs::rename(&directory, &tombstone).map_err(|error| {
@@ -359,6 +453,69 @@ fn validate_source_input(input: &LibrarySourceInput) -> Result<(), String> {
     Ok(())
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LibraryTransaction {
+    transaction_id: String,
+    document_id: String,
+    operation: String,
+    target_index_version: u8,
+    stage: TransactionStage,
+    applied_entries: usize,
+    entries: Vec<TransactionEntry>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum TransactionStage {
+    Prepared,
+    Replacing,
+    Committed,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TransactionEntry {
+    temporary_file_name: String,
+    target_file_name: String,
+    backup_file_name: String,
+    had_target: bool,
+}
+
+struct PreparedTransactionEntry {
+    journal: TransactionEntry,
+    bytes: Vec<u8>,
+}
+
+fn verified_media_type(file_name: &str, bytes: &[u8]) -> Result<&'static str, String> {
+    let extension = Path::new(file_name)
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default();
+    let media_type = if bytes.starts_with(b"%PDF-") {
+        ("application/pdf", matches!(extension.as_str(), "pdf"))
+    } else if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        ("image/png", matches!(extension.as_str(), "png"))
+    } else if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+        ("image/jpeg", matches!(extension.as_str(), "jpg" | "jpeg"))
+    } else if bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WAVE" {
+        ("audio/wav", matches!(extension.as_str(), "wav"))
+    } else if bytes.starts_with(b"ID3")
+        || (bytes.len() >= 2 && bytes[0] == 0xff && bytes[1] & 0xe0 == 0xe0)
+    {
+        ("audio/mpeg", matches!(extension.as_str(), "mp3"))
+    } else if bytes.len() >= 12 && &bytes[4..8] == b"ftyp" {
+        ("audio/mp4", matches!(extension.as_str(), "m4a" | "mp4"))
+    } else {
+        return Err("Selected source signature is unsupported.".into());
+    };
+    if !media_type.1 {
+        return Err("Selected source extension does not match its signature.".into());
+    }
+    Ok(media_type.0)
+}
+
 fn validate_document_id(value: &str) -> Result<(), String> {
     if value.len() != 32 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Err("Capture library document identifier is invalid.".into());
@@ -406,18 +563,203 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
         .map_err(|error| format!("Capture library cannot finalize data: {error}"))
 }
 
+fn prepare_transaction_entry(
+    root: &Path,
+    target: &Path,
+    transaction_id: &str,
+    bytes: Vec<u8>,
+) -> Result<PreparedTransactionEntry, String> {
+    let file_name = target
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| "Capture library transaction target is invalid.".to_string())?;
+    let temporary = target.with_file_name(format!("{file_name}.{transaction_id}.next"));
+    let backup = target.with_file_name(format!("{file_name}.{transaction_id}.backup"));
+    Ok(PreparedTransactionEntry {
+        journal: TransactionEntry {
+            temporary_file_name: relative_transaction_path(root, &temporary)?,
+            target_file_name: relative_transaction_path(root, target)?,
+            backup_file_name: relative_transaction_path(root, &backup)?,
+            had_target: target.exists(),
+        },
+        bytes,
+    })
+}
+
+fn relative_transaction_path(root: &Path, path: &Path) -> Result<String, String> {
+    path.strip_prefix(root)
+        .map_err(|_| "Capture library transaction path is invalid.".to_string())
+        .map(|relative| relative.to_string_lossy().into_owned())
+}
+
+fn transaction_path(root: &Path, relative: &str) -> Result<PathBuf, String> {
+    let relative = Path::new(relative);
+    if relative.as_os_str().is_empty()
+        || relative
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err("Capture library transaction path is invalid.".into());
+    }
+    Ok(root.join(relative))
+}
+
+fn write_transaction_journal(root: &Path, transaction: &LibraryTransaction) -> Result<(), String> {
+    let bytes = serde_json::to_vec_pretty(transaction)
+        .map_err(|error| format!("Capture library transaction cannot be encoded: {error}"))?;
+    atomic_write(&root.join(TRANSACTION_FILE_NAME), &bytes)
+}
+
+fn commit_library_transaction(
+    root: &Path,
+    mut transaction: LibraryTransaction,
+    prepared: Vec<PreparedTransactionEntry>,
+) -> Result<(), String> {
+    for entry in &prepared {
+        let temporary = transaction_path(root, &entry.journal.temporary_file_name)?;
+        if let Err(error) = fs::write(&temporary, &entry.bytes) {
+            for cleanup in &prepared {
+                let _ = remove_file_if_exists(&transaction_path(
+                    root,
+                    &cleanup.journal.temporary_file_name,
+                )?);
+            }
+            return Err(format!(
+                "Capture library transaction data cannot be staged: {error}"
+            ));
+        }
+    }
+    write_transaction_journal(root, &transaction)?;
+    transaction.stage = TransactionStage::Replacing;
+    write_transaction_journal(root, &transaction)?;
+
+    for entry in &transaction.entries {
+        let target = transaction_path(root, &entry.target_file_name)?;
+        let temporary = transaction_path(root, &entry.temporary_file_name)?;
+        let backup = transaction_path(root, &entry.backup_file_name)?;
+        let replacement = (|| -> Result<(), String> {
+            if entry.had_target {
+                fs::rename(&target, &backup).map_err(|error| {
+                    format!("Capture library transaction backup cannot be created: {error}")
+                })?;
+            }
+            fs::rename(&temporary, &target).map_err(|error| {
+                format!("Capture library transaction data cannot be finalized: {error}")
+            })?;
+            Ok(())
+        })();
+        if let Err(error) = replacement {
+            rollback_library_transaction(root, &transaction)?;
+            return Err(error);
+        }
+        transaction.applied_entries += 1;
+        write_transaction_journal(root, &transaction)?;
+    }
+
+    transaction.stage = TransactionStage::Committed;
+    write_transaction_journal(root, &transaction)?;
+    if finalize_library_transaction(root, &transaction).is_err() {
+        // A committed journal is intentionally retained for `open()` to finish.
+        return Ok(());
+    }
+    Ok(())
+}
+
+fn recover_library_transaction(root: &Path) -> Result<(), String> {
+    let journal_path = root.join(TRANSACTION_FILE_NAME);
+    let bytes = match fs::read(&journal_path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(format!(
+                "Capture library transaction journal cannot be read: {error}"
+            ))
+        }
+    };
+    let transaction: LibraryTransaction = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("Capture library transaction journal is invalid: {error}"))?;
+    validate_transaction(&transaction)?;
+    if transaction.stage == TransactionStage::Committed
+        || transaction.applied_entries == transaction.entries.len()
+    {
+        finalize_library_transaction(root, &transaction)
+    } else {
+        rollback_library_transaction(root, &transaction)
+    }
+}
+
+fn validate_transaction(transaction: &LibraryTransaction) -> Result<(), String> {
+    validate_document_id(&transaction.document_id)?;
+    validate_document_id(&transaction.transaction_id)?;
+    if transaction.operation != "update_capture"
+        || transaction.target_index_version != INDEX_VERSION
+        || transaction.applied_entries > transaction.entries.len()
+        || transaction.entries.is_empty()
+    {
+        return Err("Capture library transaction journal is unsupported.".into());
+    }
+    Ok(())
+}
+
+fn rollback_library_transaction(
+    root: &Path,
+    transaction: &LibraryTransaction,
+) -> Result<(), String> {
+    for entry in transaction.entries.iter().rev() {
+        let target = transaction_path(root, &entry.target_file_name)?;
+        let temporary = transaction_path(root, &entry.temporary_file_name)?;
+        let backup = transaction_path(root, &entry.backup_file_name)?;
+        if backup.exists() {
+            remove_file_if_exists(&target)?;
+            fs::rename(&backup, &target).map_err(|error| {
+                format!("Capture library transaction cannot be rolled back: {error}")
+            })?;
+        } else if !entry.had_target {
+            remove_file_if_exists(&target)?;
+        }
+        remove_file_if_exists(&temporary)?;
+    }
+    remove_file_if_exists(&root.join(TRANSACTION_FILE_NAME))
+}
+
+fn finalize_library_transaction(
+    root: &Path,
+    transaction: &LibraryTransaction,
+) -> Result<(), String> {
+    for entry in &transaction.entries {
+        let target = transaction_path(root, &entry.target_file_name)?;
+        let temporary = transaction_path(root, &entry.temporary_file_name)?;
+        let backup = transaction_path(root, &entry.backup_file_name)?;
+        if !target.exists() && temporary.exists() {
+            fs::rename(&temporary, &target).map_err(|error| {
+                format!("Capture library transaction cannot be completed: {error}")
+            })?;
+        }
+        if !target.exists() {
+            return Err("Capture library committed transaction is incomplete.".into());
+        }
+        remove_file_if_exists(&temporary)?;
+        remove_file_if_exists(&backup)?;
+    }
+    remove_file_if_exists(&root.join(TRANSACTION_FILE_NAME))
+}
+
+fn remove_file_if_exists(path: &Path) -> Result<(), String> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!(
+            "Capture library transaction cleanup failed: {error}"
+        )),
+    }
+}
+
 fn load_backup_index(root: &Path) -> Result<LibraryIndex, String> {
     let backup_path = root.join(INDEX_BACKUP_FILE_NAME);
     let bytes = fs::read(backup_path)
         .map_err(|error| format!("Capture library recovery copy cannot be read: {error}"))?;
     serde_json::from_slice::<LibraryIndex>(&bytes)
         .map_err(|error| format!("Capture library recovery copy is invalid: {error}"))
-}
-
-fn atomic_write_json(path: &Path, value: &Value) -> Result<(), String> {
-    let bytes = serde_json::to_vec_pretty(value)
-        .map_err(|error| format!("Capture library JSON cannot be encoded: {error}"))?;
-    atomic_write(path, &bytes)
 }
 
 fn read_json_optional(path: &Path) -> Result<Option<Value>, String> {
@@ -441,6 +783,8 @@ fn stem(file_name: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs::OpenOptions;
+    use std::io::{Seek, SeekFrom, Write};
 
     #[test]
     fn source_lifecycle_is_opaque_and_persistent() {
@@ -461,8 +805,8 @@ mod tests {
         library
             .update_capture(LibraryCaptureUpdate {
                 document_id: created.document_id.clone(),
-                capture_id: Some("capture-1".into()),
-                clear_capture_id: false,
+                capture_id: None,
+                clear_capture_id: true,
                 status: "completed".into(),
                 stage: Some("completed".into()),
                 raw: Some(serde_json::json!({ "sourceText": "OCR" })),
@@ -700,6 +1044,115 @@ mod tests {
                 bytes: vec![1],
             })
             .is_err());
+        }
+    }
+
+    #[test]
+    fn native_import_verifies_signature_and_redacts_paths() {
+        let directory = tempfile::tempdir().expect("temporary app data");
+        let source = directory.path().join("private-source.pdf");
+        fs::write(&source, b"%PDF-1.7\nfixture").expect("source");
+        let library = LibraryStore::open(directory.path()).expect("library");
+
+        let imported = library
+            .import_source(LibraryImportSourceRequest {
+                source_path: source.to_string_lossy().into_owned(),
+            })
+            .expect("native import");
+        let serialized = serde_json::to_string(&imported).expect("summary");
+        assert_eq!(imported.file_name, "private-source.pdf");
+        assert_eq!(imported.media_type, "application/pdf");
+        assert!(!serialized.contains(&source.to_string_lossy().to_string()));
+
+        let mismatch = directory.path().join("mismatch.png");
+        fs::write(&mismatch, b"%PDF-1.7\nfixture").expect("mismatch");
+        let error = library
+            .import_source(LibraryImportSourceRequest {
+                source_path: mismatch.to_string_lossy().into_owned(),
+            })
+            .expect_err("signature mismatch");
+        assert!(!error.contains(&mismatch.to_string_lossy().to_string()));
+    }
+
+    #[test]
+    fn native_import_accepts_exact_limit_and_rejects_oversize_before_copy() {
+        let directory = tempfile::tempdir().expect("temporary app data");
+        let exact = directory.path().join("exact.pdf");
+        let mut exact_file = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(&exact)
+            .expect("exact source");
+        exact_file.write_all(b"%PDF-").expect("signature");
+        exact_file
+            .seek(SeekFrom::Start(MAX_SOURCE_BYTES as u64 - 1))
+            .expect("seek");
+        exact_file.write_all(&[0]).expect("limit byte");
+        drop(exact_file);
+
+        let library = LibraryStore::open(directory.path()).expect("library");
+        let imported = library
+            .import_source(LibraryImportSourceRequest {
+                source_path: exact.to_string_lossy().into_owned(),
+            })
+            .expect("exact limit");
+        assert_eq!(imported.byte_length, MAX_SOURCE_BYTES as u64);
+
+        let oversized = directory.path().join("oversized.pdf");
+        let mut oversized_file = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(&oversized)
+            .expect("oversized source");
+        oversized_file.write_all(b"%PDF-").expect("signature");
+        oversized_file
+            .set_len(MAX_SOURCE_BYTES as u64 + 1)
+            .expect("oversized length");
+        drop(oversized_file);
+        let error = library
+            .import_source(LibraryImportSourceRequest {
+                source_path: oversized.to_string_lossy().into_owned(),
+            })
+            .expect_err("oversized rejected");
+        assert!(error.contains("limit"));
+        assert!(!library
+            .root
+            .join("items")
+            .read_dir()
+            .expect("items")
+            .any(|entry| {
+                entry
+                    .ok()
+                    .and_then(|item| fs::metadata(item.path()).ok())
+                    .is_some_and(|metadata| metadata.len() > MAX_SOURCE_BYTES as u64)
+            }));
+    }
+
+    #[test]
+    fn native_import_rejects_directories_and_symlinks() {
+        let directory = tempfile::tempdir().expect("temporary app data");
+        let library = LibraryStore::open(directory.path()).expect("library");
+        assert!(library
+            .import_source(LibraryImportSourceRequest {
+                source_path: directory.path().to_string_lossy().into_owned(),
+            })
+            .is_err());
+
+        let target = directory.path().join("target.pdf");
+        let link = directory.path().join("linked.pdf");
+        fs::write(&target, b"%PDF-1.7\nfixture").expect("target");
+        #[cfg(windows)]
+        let symlink_result = std::os::windows::fs::symlink_file(&target, &link);
+        #[cfg(unix)]
+        let symlink_result = std::os::unix::fs::symlink(&target, &link);
+        if symlink_result.is_ok() {
+            assert!(library
+                .import_source(LibraryImportSourceRequest {
+                    source_path: link.to_string_lossy().into_owned(),
+                })
+                .is_err());
         }
     }
 }

@@ -1,24 +1,18 @@
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { createReadStream } from 'node:fs';
-import { lstat, mkdtemp, rm, stat } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { basename, join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import {
-  Observable,
-  catchError,
-  concatMap,
-  defer,
-  forkJoin,
-  from,
-  map,
-  of,
-  switchMap,
-  tap,
-  throwError,
-  toArray,
-} from 'rxjs';
+  lstat,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  stat,
+} from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { basename, dirname, join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { Observable, defer, from, map } from 'rxjs';
 
 const packageName = '@gx-capture/capture-workbench';
 const registry = 'https://npm.pkg.github.com';
@@ -47,28 +41,17 @@ function run(command, args, { allowFailure = false } = {}) {
 }
 
 function hashFile(path, algorithm, encoding = 'hex') {
-  return new Observable((subscriber) => {
+  return new Promise((resolveHash, reject) => {
     const hash = createHash(algorithm);
     const stream = createReadStream(path);
-    const onData = (chunk) => hash.update(chunk);
-    const onError = (error) => subscriber.error(error);
-    const onEnd = () => {
-      if (subscriber.closed) return;
-      subscriber.next(hash.digest(encoding));
-      subscriber.complete();
-    };
-    stream.on('data', onData);
-    stream.once('error', onError);
-    stream.once('end', onEnd);
-    return () => {
-      stream.off('data', onData);
-      stream.destroy();
-    };
+    stream.on('data', (chunk) => hash.update(chunk));
+    stream.once('error', reject);
+    stream.once('end', () => resolveHash(hash.digest(encoding)));
   });
 }
 
 export function sha512Integrity(path) {
-  return hashFile(path, 'sha512', 'base64').pipe(
+  return defer(() => from(hashFile(path, 'sha512', 'base64'))).pipe(
     map((digest) => `sha512-${digest}`),
   );
 }
@@ -81,68 +64,147 @@ export function packagePublicationDecision(existingIntegrity, localIntegrity) {
   );
 }
 
-function parseArguments(args) {
+export function parseArguments(args) {
+  const allowed = new Set([
+    '--tag',
+    '--runtime-dir',
+    '--installer',
+    '--package',
+  ]);
   const values = new Map();
   for (let index = 0; index < args.length; index += 2) {
     const name = args[index];
     const value = args[index + 1];
-    if (!['--tag', '--runtime-dir', '--package'].includes(name) || !value) {
-      throw new Error('Use --tag, --runtime-dir, and --package exactly once.');
+    if (!allowed.has(name) || !value) {
+      throw new Error(
+        'Use --tag, --runtime-dir, --installer, and --package exactly once.',
+      );
     }
     if (values.has(name)) throw new Error(`Duplicate argument: ${name}`);
     values.set(name, value);
   }
-  if (values.size !== 3) {
-    throw new Error('Use --tag, --runtime-dir, and --package exactly once.');
+  if (values.size !== allowed.size) {
+    throw new Error(
+      'Use --tag, --runtime-dir, --installer, and --package exactly once.',
+    );
   }
   const tag = values.get('--tag');
-  if (!/^v\d+\.\d+\.\d+$/u.test(tag))
+  if (!/^v\d+\.\d+\.\d+$/u.test(tag)) {
     throw new Error('Release tag must be vMAJOR.MINOR.PATCH.');
-  return {
+  }
+  return Object.freeze({
     tag,
     version: tag.slice(1),
     runtimeDirectory: resolve(values.get('--runtime-dir')),
+    installerPath: resolve(values.get('--installer')),
     packagePath: resolve(values.get('--package')),
-  };
+  });
 }
 
-function exactRuntimeAssets(runtimeDirectory) {
-  return from(runtimeAssetNames).pipe(
-    map((name) => join(runtimeDirectory, name)),
-    concatMap((path, index) =>
-      defer(() => from(stat(path))).pipe(
-        map((metadata) => {
-          if (!metadata.isFile())
-            throw new Error(`Runtime release asset is not a file: ${path}`);
-          if (basename(path) !== runtimeAssetNames[index]) {
-            throw new Error('Runtime release asset name is not canonical.');
-          }
-          return path;
-        }),
-      ),
-    ),
-    toArray(),
+async function assertRegularFile(path, label) {
+  const metadata = await lstat(path);
+  if (metadata.isSymbolicLink() || !metadata.isFile()) {
+    throw new Error(`${label} must be a regular non-symlink file.`);
+  }
+  return metadata;
+}
+
+async function inspectPackage(version, packagePath, runCommand) {
+  await assertRegularFile(packagePath, 'Capture Workbench package');
+  if (!packagePath.endsWith('.tgz')) {
+    throw new Error('Capture Workbench publication input must be one .tgz file.');
+  }
+  const localIntegrity = `sha512-${await hashFile(
+    packagePath,
+    'sha512',
+    'base64',
+  )}`;
+  const inspectionResult = runCommand('npm', [
+    'pack',
+    '--dry-run',
+    '--json',
+    packagePath,
+  ]);
+  const inspection = JSON.parse(inspectionResult.stdout);
+  if (
+    !Array.isArray(inspection) ||
+    inspection.length !== 1 ||
+    inspection[0].name !== packageName ||
+    inspection[0].version !== version ||
+    inspection[0].integrity !== localIntegrity
+  ) {
+    throw new Error(
+      'Capture Workbench tarball identity/version/integrity does not match the release tag.',
+    );
+  }
+  return Object.freeze({ localIntegrity, packagePath, version });
+}
+
+async function preflightCandidate(input, runCommand) {
+  const runtimeEntries = await readdir(input.runtimeDirectory);
+  const sortedEntries = [...runtimeEntries].sort();
+  const expectedEntries = [...runtimeAssetNames].sort();
+  if (JSON.stringify(sortedEntries) !== JSON.stringify(expectedEntries)) {
+    throw new Error(
+      'Runtime release directory must contain only the canonical assets.',
+    );
+  }
+  const runtimeAssets = runtimeAssetNames.map((name) =>
+    join(input.runtimeDirectory, name),
   );
-}
-
-function sha256(path) {
-  return hashFile(path, 'sha256');
-}
-
-function assertSameFile(left, right) {
-  return forkJoin({ left: defer(() => from(stat(left))), right: defer(() => from(stat(right))) }).pipe(
-    concatMap(({ left: leftStat, right: rightStat }) =>
-      forkJoin({ left: sha256(left), right: sha256(right) }).pipe(
-        map(({ left: leftDigest, right: rightDigest }) => {
-          if (leftStat.size !== rightStat.size || leftDigest !== rightDigest) {
-            throw new Error(
-              `Published runtime asset differs from local bytes: ${basename(left)}`,
-            );
-          }
-        }),
-      ),
-    ),
+  for (const path of runtimeAssets) {
+    await assertRegularFile(path, `Runtime asset ${basename(path)}`);
+  }
+  const installerMetadata = await assertRegularFile(
+    input.installerPath,
+    'NSIS installer',
   );
+  if (
+    !input.installerPath.toLowerCase().endsWith('.exe') ||
+    resolve(input.installerPath) === resolve(runtimeAssets[0]) ||
+    dirname(resolve(input.installerPath)) === resolve(input.runtimeDirectory)
+  ) {
+    throw new Error(
+      'NSIS installer must be the distinct release-candidate installer executable.',
+    );
+  }
+  if (installerMetadata.size === 0) {
+    throw new Error('NSIS installer is empty.');
+  }
+
+  const executable = runtimeAssets[0];
+  const executableMetadata = await stat(executable);
+  const executableDigest = await hashFile(executable, 'sha256');
+  const checksum = (
+    await readFile(runtimeAssets[1], 'utf8')
+  ).trim();
+  if (checksum !== `${executableDigest}  ${basename(executable)}`) {
+    throw new Error('Runtime executable checksum file does not match.');
+  }
+  const manifest = JSON.parse(await readFile(runtimeAssets[2], 'utf8'));
+  const schemaDigest = await hashFile(runtimeAssets[3], 'sha256');
+  if (
+    manifest.runtimeVersion !== input.version ||
+    manifest.fileName !== basename(executable) ||
+    manifest.bytes !== executableMetadata.size ||
+    manifest.sha256 !== executableDigest ||
+    manifest.schemaFileName !== basename(runtimeAssets[3]) ||
+    manifest.schemaSha256 !== schemaDigest
+  ) {
+    throw new Error(
+      'Runtime manifest, schema, executable, and release version are inconsistent.',
+    );
+  }
+  JSON.parse(await readFile(runtimeAssets[3], 'utf8'));
+  const packagePlan = await inspectPackage(
+    input.version,
+    input.packagePath,
+    runCommand,
+  );
+  return Object.freeze({
+    assets: [...runtimeAssets, input.installerPath],
+    packagePlan,
+  });
 }
 
 function releaseState(tag, runCommand) {
@@ -152,109 +214,18 @@ function releaseState(tag, runCommand) {
     { allowFailure: true },
   );
   if (result.status !== 0) {
-    if (/release not found|HTTP 404|not found/iu.test(result.stderr || result.stdout || '')) {
+    if (
+      /release not found|HTTP 404|not found/iu.test(
+        result.stderr || result.stdout || '',
+      )
+    ) {
       return 'missing';
     }
     throw new Error(
-      `Unable to inspect release ${tag}: ${(result.stderr || '').slice(-1000)}`,
+      `Unable to inspect release ${tag}: ${(result.stderr || result.stdout || '').slice(-1000)}`,
     );
   }
   return JSON.parse(result.stdout).isDraft ? 'draft' : 'public';
-}
-
-function ensureRuntimeReleasePublic(tag, runtimeDirectory, runCommand) {
-  return exactRuntimeAssets(runtimeDirectory).pipe(
-    switchMap((assets) =>
-      defer(() => of(releaseState(tag, runCommand))).pipe(
-        concatMap((state) => {
-          if (state === 'missing') {
-            runCommand('gh', [
-              'release',
-              'create',
-              tag,
-              '--verify-tag',
-              '--draft',
-              '--generate-notes',
-            ]);
-            return of('draft');
-          }
-          return of(state);
-        }),
-        concatMap((state) => {
-          if (state === 'draft') {
-            return from(assets).pipe(
-              tap((asset) =>
-                runCommand('gh', [
-                  'release',
-                  'upload',
-                  tag,
-                  asset,
-                  '--clobber',
-                ]),
-              ),
-              toArray(),
-              tap(() =>
-                runCommand('gh', [
-                  'release',
-                  'edit',
-                  tag,
-                  '--verify-tag',
-                  '--draft=false',
-                ]),
-              ),
-              map(() => undefined),
-            );
-          }
-          const temporaryPrefix = join(tmpdir(), 'capture-runtime-download-');
-          return defer(() => from(mkdtemp(temporaryPrefix))).pipe(
-            switchMap((temporary) =>
-              from(assets).pipe(
-                concatMap((asset) =>
-                  defer(() => {
-                    runCommand('gh', [
-                      'release',
-                      'download',
-                      tag,
-                      '--pattern',
-                      basename(asset),
-                      '--dir',
-                      temporary,
-                      '--clobber',
-                    ]);
-                    return of(undefined);
-                  }).pipe(
-                    concatMap(() => assertSameFile(asset, join(temporary, basename(asset)))),
-                  ),
-                ),
-                toArray(),
-                map(() => undefined),
-                catchError((error) =>
-                  defer(() => from(rm(temporary, { recursive: true, force: true }))).pipe(
-                    concatMap(() => throwError(() => error)),
-                  ),
-                ),
-                concatMap(() =>
-                  defer(() => from(rm(temporary, { recursive: true, force: true }))).pipe(
-                    map(() => undefined),
-                  ),
-                ),
-              ),
-            ),
-          );
-        }),
-      ).pipe(
-        concatMap(() =>
-          defer(() => of(releaseState(tag, runCommand))).pipe(
-            concatMap((state) =>
-              state === 'public'
-                ? of(undefined)
-                : throwError(() => new Error('Runtime release did not become public.')),
-            ),
-          ),
-        ),
-      ),
-    ),
-  );
 }
 
 function existingPackageIntegrity(version, runCommand) {
@@ -271,10 +242,11 @@ function existingPackageIntegrity(version, runCommand) {
     { allowFailure: true },
   );
   if (result.status !== 0) {
-    if (/E404|404 Not Found/iu.test(result.stderr || result.stdout || ''))
+    if (/E404|404 Not Found/iu.test(result.stderr || result.stdout || '')) {
       return undefined;
+    }
     throw new Error(
-      `Unable to inspect package version: ${(result.stderr || '').slice(-1000)}`,
+      `Unable to inspect package version: ${(result.stderr || result.stdout || '').slice(-1000)}`,
     );
   }
   const parsed = JSON.parse(result.stdout);
@@ -284,92 +256,152 @@ function existingPackageIntegrity(version, runCommand) {
   return parsed;
 }
 
-export function preflightPackagePublication(
-  version,
-  packagePath,
-  { runCommand = run, lstatPath = lstat } = {},
-) {
-  return defer(() => from(lstatPath(packagePath))).pipe(
-    concatMap((metadata) => {
-      if (!metadata.isFile() || !packagePath.endsWith('.tgz')) {
-        return throwError(() => new Error('Capture Workbench publication input must be one .tgz file.'));
-      }
-      return sha512Integrity(packagePath);
-    }),
-    concatMap((localIntegrity) =>
-      defer(() => of(runCommand('npm', ['pack', '--dry-run', '--json', packagePath]))).pipe(
-        map((inspection) => ({ localIntegrity, inspection: JSON.parse(inspection.stdout) })),
-      ),
-    ),
-    concatMap(({ localIntegrity, inspection }) => {
+async function assertSameFile(left, right) {
+  const [leftStat, rightStat, leftDigest, rightDigest] = await Promise.all([
+    stat(left),
+    stat(right),
+    hashFile(left, 'sha256'),
+    hashFile(right, 'sha256'),
+  ]);
+  if (leftStat.size !== rightStat.size || leftDigest !== rightDigest) {
+    throw new Error(
+      `Published release asset differs from local bytes: ${basename(left)}`,
+    );
+  }
+}
+
+async function remoteAssetStatus(tag, asset, runCommand) {
+  const temporary = await mkdtemp(join(tmpdir(), 'capture-release-asset-'));
+  try {
+    const result = runCommand(
+      'gh',
+      [
+        'release',
+        'download',
+        tag,
+        '--pattern',
+        basename(asset),
+        '--dir',
+        temporary,
+      ],
+      { allowFailure: true },
+    );
+    if (result.status !== 0) {
       if (
-        !Array.isArray(inspection) ||
-        inspection.length !== 1 ||
-        inspection[0].name !== packageName ||
-        inspection[0].version !== version ||
-        inspection[0].integrity !== localIntegrity
+        /no assets matched|not found|HTTP 404/iu.test(
+          result.stderr || result.stdout || '',
+        )
       ) {
-        return throwError(
-          () => new Error('Capture Workbench tarball identity/version/integrity does not match the release tag.'),
-        );
+        return 'missing';
       }
-      return defer(() => of(existingPackageIntegrity(version, runCommand))).pipe(
-        map((existingIntegrity) =>
-          Object.freeze({
-            version,
-            packagePath,
-            localIntegrity,
-            decision: packagePublicationDecision(existingIntegrity, localIntegrity),
-          }),
-        ),
+      throw new Error(
+        `Unable to download release asset ${basename(asset)}: ${(
+          result.stderr ||
+          result.stdout ||
+          ''
+        ).slice(-1000)}`,
       );
-    }),
-  );
+    }
+    await assertSameFile(asset, join(temporary, basename(asset)));
+    return 'same';
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
 }
 
-function applyPackagePublication(plan, runCommand) {
-  return defer(() =>
-    of(
-      packagePublicationDecision(
-        existingPackageIntegrity(plan.version, runCommand),
-        plan.localIntegrity,
-      ),
-    ),
-  ).pipe(
-    tap((decision) => {
-      if (decision === 'publish') {
-        runCommand('npm', [
-          'publish',
-          plan.packagePath,
-          '--registry',
-          registry,
-          '--access',
-          'public',
-        ]);
-      }
-    }),
-    concatMap(() => defer(() => of(existingPackageIntegrity(plan.version, runCommand)))),
-    concatMap((publishedIntegrity) => {
-      if (publishedIntegrity === undefined) {
-        return throwError(() => new Error('Package registry did not expose the version after publish.'));
-      }
-      return defer(() => of(packagePublicationDecision(publishedIntegrity, plan.localIntegrity)));
-    }),
-    map(() => undefined),
-  );
+async function verifyAllAssets(tag, assets, runCommand) {
+  for (const asset of assets) {
+    const status = await remoteAssetStatus(tag, asset, runCommand);
+    if (status !== 'same') {
+      throw new Error(
+        `Release asset is missing after publication step: ${basename(asset)}`,
+      );
+    }
+  }
 }
 
-export function publishRelease(
-  { tag, version, runtimeDirectory, packagePath },
-  { runCommand = run } = {},
-) {
-  return preflightPackagePublication(version, packagePath, { runCommand }).pipe(
-    concatMap((packagePlan) =>
-      ensureRuntimeReleasePublic(tag, runtimeDirectory, runCommand).pipe(
-        concatMap(() => applyPackagePublication(packagePlan, runCommand)),
-      ),
-    ),
+async function ensureDraftAssets(tag, assets, runCommand) {
+  for (const asset of assets) {
+    const status = await remoteAssetStatus(tag, asset, runCommand);
+    if (status === 'same') continue;
+    runCommand('gh', ['release', 'upload', tag, asset]);
+  }
+  await verifyAllAssets(tag, assets, runCommand);
+}
+
+function publishPackage(packagePlan, runCommand) {
+  const existing = existingPackageIntegrity(packagePlan.version, runCommand);
+  const decision = packagePublicationDecision(
+    existing,
+    packagePlan.localIntegrity,
   );
+  if (decision === 'publish') {
+    runCommand('npm', [
+      'publish',
+      packagePlan.packagePath,
+      '--registry',
+      registry,
+      '--access',
+      'public',
+    ]);
+  }
+  const published = existingPackageIntegrity(packagePlan.version, runCommand);
+  if (published === undefined) {
+    throw new Error('Package registry did not expose the version after publish.');
+  }
+  packagePublicationDecision(published, packagePlan.localIntegrity);
+}
+
+async function publishReleaseAsync(input, runCommand) {
+  // No release/package mutations are allowed before every local check succeeds.
+  const candidate = await preflightCandidate(input, runCommand);
+  let state = releaseState(input.tag, runCommand);
+  const existingIntegrity = existingPackageIntegrity(input.version, runCommand);
+  if (state === 'public') {
+    if (existingIntegrity === undefined) {
+      throw new Error('Public release exists but the synchronized package is missing.');
+    }
+    packagePublicationDecision(
+      existingIntegrity,
+      candidate.packagePlan.localIntegrity,
+    );
+    await verifyAllAssets(input.tag, candidate.assets, runCommand);
+    return;
+  }
+  packagePublicationDecision(
+    existingIntegrity,
+    candidate.packagePlan.localIntegrity,
+  );
+  if (state === 'missing') {
+    runCommand('gh', [
+      'release',
+      'create',
+      input.tag,
+      '--verify-tag',
+      '--draft',
+      '--generate-notes',
+    ]);
+    state = 'draft';
+  }
+  if (state !== 'draft') throw new Error('Release must remain draft during publication.');
+
+  await ensureDraftAssets(input.tag, candidate.assets, runCommand);
+  publishPackage(candidate.packagePlan, runCommand);
+  await verifyAllAssets(input.tag, candidate.assets, runCommand);
+  runCommand('gh', [
+    'release',
+    'edit',
+    input.tag,
+    '--verify-tag',
+    '--draft=false',
+  ]);
+  if (releaseState(input.tag, runCommand) !== 'public') {
+    throw new Error('Release did not become public.');
+  }
+}
+
+export function publishRelease(input, { runCommand = run } = {}) {
+  return defer(() => from(publishReleaseAsync(input, runCommand)));
 }
 
 function errorMessage(error) {
@@ -380,13 +412,15 @@ if (
   process.argv[1] &&
   pathToFileURL(resolve(process.argv[1])).href === import.meta.url
 ) {
-  defer(() => of(parseArguments(process.argv.slice(2))))
-    .pipe(switchMap((input) => publishRelease(input)))
-    .subscribe({
+  try {
+    publishRelease(parseArguments(process.argv.slice(2))).subscribe({
       error: (error) => {
         process.stderr.write(`${errorMessage(error)}\n`);
         process.exitCode = 1;
       },
     });
+  } catch (error) {
+    process.stderr.write(`${errorMessage(error)}\n`);
+    process.exitCode = 1;
+  }
 }
-

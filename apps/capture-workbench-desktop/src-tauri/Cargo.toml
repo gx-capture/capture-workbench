@@ -1,6 +1,6 @@
 [package]
 name = "capture-workbench-desktop"
-version = "0.3.0"
+version = "0.3.1"
 description = "Tauri verification harness for Capture Workbench"
 authors = ["Capture Workbench contributors"]
 edition = "2021"
@@ -24,6 +24,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2.7.2"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [

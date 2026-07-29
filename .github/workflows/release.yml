@@ -155,9 +155,14 @@ jobs:
           if ($packages.Count -ne 1) {
             throw "Expected exactly one release package tarball, found $($packages.Count)."
           }
+          $installers = @(Get-ChildItem publication/desktop -Filter '*.exe' -File)
+          if ($installers.Count -ne 1) {
+            throw "Expected exactly one Capture Workbench NSIS installer, found $($installers.Count)."
+          }
           node tools/publish-release.ts `
             --tag "${{ github.ref_name }}" `
             --runtime-dir publication/runtime `
+            --installer $installers[0].FullName `
             --package $packages[0].FullName
 
       - name: Publish the exact Capture Workbench Windows installer

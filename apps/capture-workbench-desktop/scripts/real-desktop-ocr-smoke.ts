@@ -23,7 +23,7 @@ const defaultDesktopExecutable = join(
   'release',
   'capture-workbench-desktop.exe',
 );
-const productIdentifier = 'io.github.wodenwang820118.capture-workbench';
+const productIdentifier = 'io.github.gx-capture.capture-workbench';
 const maxSourceBytes = 50 * 1024 * 1024;
 const ownedSmokeDocumentPattern =
   /^standalone-real-ocr-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.pdf$/u;

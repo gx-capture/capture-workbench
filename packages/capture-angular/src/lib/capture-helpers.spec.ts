@@ -99,7 +99,7 @@ describe('capture helpers', () => {
     const ready = {
       ready: true,
       service: 'not-capture-runtime',
-      runtimeVersion: '0.3.0',
+      runtimeVersion: '0.3.1',
       apiVersion: '1.0',
       captureDocumentSchemaVersion: '1',
       capabilities: {
@@ -120,7 +120,7 @@ describe('capture helpers', () => {
     const hostOnly: RuntimeReadyV1 = {
       ready: true,
       service: 'capture-runtime',
-      runtimeVersion: '0.3.0',
+      runtimeVersion: '0.3.1',
       apiVersion: '1.0',
       captureDocumentSchemaVersion: '1',
       capabilities: {
@@ -143,10 +143,10 @@ describe('capture helpers', () => {
   it('exports a deeply immutable canonical document schema', () => {
     expect(CAPTURE_DOCUMENT_V1_CONTRACT.schemaVersion).toBe('1');
     expect(CAPTURE_DOCUMENT_V1_CONTRACT.schemaSha256).toBe(
-      'da8565b0a4611042f62f96202d0f167ba0923d88e12b9be22832f3ee320920c3',
+      '2721093496a9f09044d5737cce70d2356d5f71757b1cd23a960e1d003ea014f2',
     );
     expect(CAPTURE_DOCUMENT_V1_SCHEMA_SHA256).toBe(
-      'da8565b0a4611042f62f96202d0f167ba0923d88e12b9be22832f3ee320920c3',
+      '2721093496a9f09044d5737cce70d2356d5f71757b1cd23a960e1d003ea014f2',
     );
     expect(Object.isFrozen(CAPTURE_DOCUMENT_V1_JSON_SCHEMA)).toBe(true);
     expect(
@@ -159,7 +159,7 @@ describe('capture helpers', () => {
         .pattern,
     ).toBe('^sha256:[0-9a-f]{64}$');
     expect(CAPTURE_DOCUMENT_V1_JSON_SCHEMA.$id).toBe(
-      'https://github.com/WodenWang820118/capture-workbench/schema/capture-document-v1.schema.json',
+      'https://github.com/gx-capture/capture-workbench/schema/capture-document-v1.schema.json',
     );
   });
 

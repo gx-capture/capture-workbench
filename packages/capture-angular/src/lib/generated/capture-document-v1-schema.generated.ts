@@ -3,4 +3,4 @@ import schema from './capture-document-v1.schema.json';
 
 export const GENERATED_CAPTURE_DOCUMENT_V1_JSON_SCHEMA = schema;
 export const GENERATED_CAPTURE_DOCUMENT_V1_SCHEMA_SHA256 =
-  'da8565b0a4611042f62f96202d0f167ba0923d88e12b9be22832f3ee320920c3' as const;
+  '2721093496a9f09044d5737cce70d2356d5f71757b1cd23a960e1d003ea014f2' as const;

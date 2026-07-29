@@ -1,73 +1,42 @@
 import { TestBed } from '@angular/core/testing';
 import { firstValueFrom, of } from 'rxjs';
 import type { DesktopLibrarySummary } from '../contracts';
-import {
-  DesktopLibraryService,
-  MAX_DESKTOP_SOURCE_BYTES,
-} from './desktop-library.service';
+import { DesktopLibraryService } from './desktop-library.service';
 import { DesktopTauriCommandService } from './desktop-tauri-command.service';
 
 const summary: DesktopLibrarySummary = {
   documentId: 'a'.repeat(32),
   fileName: 'fixture.pdf',
   mediaType: 'application/pdf',
-  byteLength: 1,
+  byteLength: 16,
   createdAtMs: 1,
   updatedAtMs: 1,
   status: 'queued',
 };
 
-describe('DesktopLibraryService source validation', () => {
-  it.each([
-    ['application/pdf', 'fixture.pdf'],
-    ['image/png', 'fixture.png'],
-    ['image/jpeg', 'fixture.jpg'],
-    ['audio/wav', 'fixture.wav'],
-    ['audio/mpeg', 'fixture.mp3'],
-    ['audio/mp4', 'fixture.m4a'],
-  ])('accepts %s before invoking the native library', async (mediaType, fileName) => {
+describe('DesktopLibraryService native source import', () => {
+  it('passes a native path to the private Rust import command without browser byte allocation', async () => {
     const { commands, service } = configure();
-    const source = fakeFile({ fileName, mediaType, size: 1 });
+    const sourcePath = String.raw`C:\private\fixture.pdf`;
 
-    await firstValueFrom(service.createSource(source.file));
+    const imported = await firstValueFrom(service.createSource(sourcePath));
 
-    expect(source.arrayBuffer).toHaveBeenCalledOnce();
-    expect(commands.invoke).toHaveBeenCalledWith('library_create_source', {
-      input: {
-        fileName,
-        mediaType,
-        bytes: [1],
-      },
+    expect(commands.invoke).toHaveBeenCalledWith('library_import_source', {
+      request: { sourcePath },
     });
+    expect(imported).toEqual(summary);
+    expect(JSON.stringify(imported)).not.toContain(sourcePath);
   });
 
-  it('accepts an exact 50 MiB declared file size before reading it', async () => {
-    const { commands, service } = configure();
-    const source = fakeFile({
-      fileName: 'limit.pdf',
-      mediaType: 'application/pdf',
-      size: MAX_DESKTOP_SOURCE_BYTES,
-    });
+  it('keeps ordinary library responses path-free', async () => {
+    const { service } = configure();
 
-    await firstValueFrom(service.createSource(source.file));
+    const imported = await firstValueFrom(
+      service.createSource(String.raw`C:\private\scan.png`),
+    );
 
-    expect(source.arrayBuffer).toHaveBeenCalledOnce();
-    expect(commands.invoke).toHaveBeenCalledOnce();
-  });
-
-  it.each([
-    ['empty source', 'empty.pdf', 'application/pdf', 0],
-    ['oversized source', 'large.pdf', 'application/pdf', MAX_DESKTOP_SOURCE_BYTES + 1],
-    ['WebP source', 'image.webp', 'image/webp', 1],
-    ['OGG source', 'voice.ogg', 'audio/ogg', 1],
-  ])('rejects %s before allocation or IPC', async (_case, fileName, mediaType, size) => {
-    const { commands, service } = configure();
-    const source = fakeFile({ fileName, mediaType, size });
-
-    await expect(firstValueFrom(service.createSource(source.file))).rejects.toBeTruthy();
-
-    expect(source.arrayBuffer).not.toHaveBeenCalled();
-    expect(commands.invoke).not.toHaveBeenCalled();
+    expect(imported).not.toHaveProperty('sourcePath');
+    expect(imported.fileName).toBe('fixture.pdf');
   });
 });
 
@@ -84,22 +53,5 @@ function configure() {
   return {
     commands,
     service: TestBed.inject(DesktopLibraryService),
-  };
-}
-
-function fakeFile(input: {
-  readonly fileName: string;
-  readonly mediaType: string;
-  readonly size: number;
-}) {
-  const arrayBuffer = vi.fn(() => Promise.resolve(Uint8Array.of(1).buffer));
-  return {
-    arrayBuffer,
-    file: {
-      name: input.fileName,
-      type: input.mediaType,
-      size: input.size,
-      arrayBuffer,
-    } as unknown as File,
   };
 }

@@ -51,7 +51,7 @@ export function stageDeterministicRuntime(): Observable<unknown> {
           const schema = `${JSON.stringify(
             {
               $schema: 'https://json-schema.org/draft/2020-12/schema',
-              $id: 'https://github.com/WodenWang820118/capture-workbench/schema/capture-document-v1.schema.json',
+              $id: 'https://github.com/gx-capture/capture-workbench/schema/capture-document-v1.schema.json',
               title: 'CaptureDocumentV1 deterministic QA fixture',
               type: 'object',
             },
@@ -66,7 +66,7 @@ export function stageDeterministicRuntime(): Observable<unknown> {
             concatMap(({ digest, schemaSha256 }) => {
               const manifest = {
                 manifestVersion: '1',
-                runtimeVersion: '0.3.0',
+                runtimeVersion: '0.3.1',
                 apiVersion: '1.0',
                 captureDocumentSchemaVersion: '1',
                 platform: 'windows',

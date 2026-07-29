@@ -1,9 +1,7 @@
 import {
   ChangeDetectionStrategy,
   Component,
-  ElementRef,
   inject,
-  viewChild,
 } from '@angular/core';
 import { MatButton } from '@angular/material/button';
 import { MatCard } from '@angular/material/card';
@@ -33,24 +31,12 @@ import { DesktopWorkspaceStore } from './services/desktop-workspace.store';
 })
 export class App {
   protected readonly store = inject(DesktopWorkspaceStore);
-  protected readonly sourceInput = viewChild.required<ElementRef<HTMLInputElement>>('sourceInput');
 
   constructor() {
     this.store.initialize();
   }
 
-  protected addFiles(event: Event): void {
-    const input = event.target as HTMLInputElement;
-    if (input.files) void this.store.addFiles(input.files);
-    input.value = '';
-  }
-
   protected openFilePicker(): void {
-    this.sourceInput().nativeElement.click();
-  }
-
-  protected dropFiles(event: DragEvent): void {
-    event.preventDefault();
-    if (event.dataTransfer?.files) void this.store.addFiles(event.dataTransfer.files);
+    this.store.chooseSources();
   }
 }

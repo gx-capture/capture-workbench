@@ -73,13 +73,12 @@
       </mat-card>
     }
 
-    <mat-card class="intake" appearance="outlined" [class.is-disabled]="!store.canCapture()" (dragover)="$event.preventDefault()" (drop)="dropFiles($event)">
+    <mat-card class="intake" appearance="outlined" [class.is-disabled]="!store.canCapture()">
       <p class="eyebrow">匯入文件</p>
       <h2>拖放檔案，或從電腦選擇來源。</h2>
       <p>支援 PDF、PNG、JPEG 與音訊。系統會依序進行 OCR、啟動隔離 Ollama，並儲存可檢閱的結構化結果。</p>
-      <input #sourceInput class="file-input" type="file" aria-label="選擇檔案" accept="application/pdf,image/png,image/jpeg,audio/wav,audio/mpeg,audio/mp4" multiple [disabled]="!store.canCapture()" (change)="addFiles($event)" />
       <button mat-flat-button type="button" [disabled]="!store.canCapture()" (click)="openFilePicker()">選擇檔案</button>
-      <span class="intake-hint">可一次選取多個檔案</span>
+      <span class="intake-hint">可一次選取多個檔案，也可直接拖放到視窗。</span>
     </mat-card>
 
     <section class="queue-section" aria-labelledby="queue-title">
@@ -153,7 +152,12 @@
         }
         <button mat-stroked-button type="button" [disabled]="!item.result" (click)="store.export(item.documentId, 'text')">匯出文字</button>
         <button mat-stroked-button type="button" [disabled]="!item.result" (click)="store.export(item.documentId, 'json')">匯出 JSON</button>
-        <button mat-button type="button" class="danger" (click)="store.delete(item.documentId)">刪除</button>
+        <button mat-button type="button" class="danger" [disabled]="store.busyIds().has(item.documentId) || !!item.captureId" (click)="store.delete(item.documentId)">刪除</button>
+        @if (store.busyIds().has(item.documentId)) {
+          <small>請先取消處理。</small>
+        } @else if (item.captureId) {
+          <small>請先完成 Runtime 清理。</small>
+        }
       </div>
     } @else {
       <div class="detail-empty">

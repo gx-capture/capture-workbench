@@ -11,6 +11,12 @@ pub struct LibrarySourceInput {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct LibraryImportSourceRequest {
+    pub source_path: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LibraryCaptureUpdate {
     pub document_id: String,
     pub capture_id: Option<String>,

@@ -1,8 +1,8 @@
 {
   "$schema": "../../../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Capture Workbench",
-  "version": "0.3.0",
-  "identifier": "io.github.wodenwang820118.capture-workbench",
+  "version": "0.3.1",
+  "identifier": "io.github.gx-capture.capture-workbench",
   "build": {
     "beforeDevCommand": "corepack pnpm nx run capture-workbench:serve",
     "devUrl": "http://localhost:4200",

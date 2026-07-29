@@ -10,6 +10,7 @@ import { CaptureWorkbenchComponent } from './capture-angular';
 import {
   CaptureWorkbenchTestInputSource,
   DOCUMENT,
+  captureWorkbenchRoot,
   RAW,
   createCaptureWorkbenchTestInputSource,
   fakeClient,
@@ -306,9 +307,11 @@ describe('CaptureWorkbenchComponent', () => {
     expect(client.commitStructuredResult).not.toHaveBeenCalled();
     fixture.detectChanges();
     expect(
-      fixture.nativeElement.querySelector('.reconciliation-actions'),
+      captureWorkbenchRoot(fixture).querySelector('.reconciliation-actions'),
     ).not.toBeNull();
-    expect(fixture.nativeElement.querySelector('.remove-action')).toBeNull();
+    expect(
+      captureWorkbenchRoot(fixture).querySelector('.remove-action'),
+    ).toBeNull();
   });
 
   it('reconciles an unknown job to completed without repeating provider work', async () => {

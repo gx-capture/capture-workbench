@@ -16,10 +16,10 @@ from capture_runtime.constants import (
 from capture_runtime.contracts import CaptureDocumentV1
 
 CAPTURE_DOCUMENT_SCHEMA_ID = (
-    "https://github.com/WodenWang820118/capture-workbench/schema/capture-document-v1.schema.json"
+    "https://github.com/gx-capture/capture-workbench/schema/capture-document-v1.schema.json"
 )
 CAPTURE_DOCUMENT_SCHEMA_RELEASE_SHA256 = (
-    "da8565b0a4611042f62f96202d0f167ba0923d88e12b9be22832f3ee320920c3"
+    "2721093496a9f09044d5737cce70d2356d5f71757b1cd23a960e1d003ea014f2"
 )
 
 

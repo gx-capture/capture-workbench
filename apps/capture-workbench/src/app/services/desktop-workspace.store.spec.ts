@@ -1,7 +1,7 @@
 import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import type { CaptureJobV1 } from '@gx-capture/capture-workbench';
-import { of, Subject, throwError } from 'rxjs';
+import { EMPTY, of, Subject, throwError } from 'rxjs';
 import type { DesktopLibraryDetail, DesktopLibrarySummary } from '../contracts';
 import { DesktopLibraryService } from './desktop-library.service';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
@@ -79,7 +79,15 @@ describe('DesktopWorkspaceStore', () => {
   });
 
   it('asks for Whisper only when an allowed audio source is selected', () => {
-    const library = libraryStub();
+    const library = libraryStub({
+      createSource: vi.fn(() =>
+        of({
+          ...summary,
+          fileName: 'voice.wav',
+          mediaType: 'audio/wav',
+        }),
+      ),
+    });
     const client = runtimeStub({
       getRequirements: vi.fn(() => of([{
         requirementId: 'whisper-primary',
@@ -92,7 +100,7 @@ describe('DesktopWorkspaceStore', () => {
     });
     const store = initializeStore(library, client);
 
-    store.addFiles([new File(['audio'], 'voice.wav', { type: 'audio/wav' })]);
+    store.addSourcePaths([String.raw`C:\private\voice.wav`]);
     TestBed.tick();
 
     expect(store.state()).toBe('needs-setup');
@@ -100,7 +108,7 @@ describe('DesktopWorkspaceStore', () => {
       'whisper-primary',
     ]);
     expect(store.message()).toBe('請先安裝缺少的本機處理需求。');
-    expect(library.createSource).not.toHaveBeenCalled();
+    expect(library.createSource).toHaveBeenCalledOnce();
   });
 
   it('persists the runtime ID before terminal data and clears it only after DELETE', () => {
@@ -819,6 +827,8 @@ function libraryStub(overrides: Record<string, unknown> = {}) {
   return Object.assign({
     list: vi.fn(() => of<readonly DesktopLibrarySummary[]>([])),
     get: vi.fn(() => of<DesktopLibraryDetail>(summary)),
+    selectSources: vi.fn(() => of<readonly string[]>([])),
+    droppedSources: vi.fn(() => EMPTY),
     createSource: vi.fn(() => of(summary)),
     updateCapture: vi.fn(() => of(summary)),
     export: vi.fn(),
