@@ -16,7 +16,7 @@ import {
   map,
   Observable,
   switchMap,
-  takeWhile,
+  take,
   tap,
   timeout,
   throwError,
@@ -29,6 +29,7 @@ const STARTING_STATUS: DesktopRuntimeStatus = {
   status: 'starting',
   detail: 'Runtime 正在啟動…',
 };
+export const DESKTOP_RUNTIME_READY_TIMEOUT_MS = 3 * 60_000;
 
 @Injectable({ providedIn: 'root' })
 export class DesktopRuntimeClientService {
@@ -79,7 +80,7 @@ export class DesktopRuntimeClientService {
     return this.commands.invoke('runtime_cancel_capture', { input: { id: captureId } }, signal);
   }
 
-  getRaw(captureId: string, signal?: AbortSignal): Observable<RawCaptureV1> {
+  getRaw(captureId: string, signal?: AbortSignal): Observable<RawCaptureV1 | null> {
     return this.commands.invoke('runtime_get_raw', { input: { id: captureId } }, signal);
   }
 
@@ -113,9 +114,9 @@ export class DesktopRuntimeClientService {
         return timer(500).pipe(switchMap(() => this.status$(signal)));
       }),
       filter((status) => status.status === 'ready'),
-      takeWhile((status) => status.status === 'ready', true),
+      take(1),
       timeout({
-        first: 60_000,
+        first: DESKTOP_RUNTIME_READY_TIMEOUT_MS,
         with: () => throwError(() => new Error(`Capture Runtime 準備逾時：${lastDetail}`)),
       }),
     );

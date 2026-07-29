@@ -98,7 +98,7 @@ pub(crate) fn cancel_capture(state: &DesktopState, input: RuntimeIdInput) -> Res
 }
 
 pub(crate) fn raw_capture(state: &DesktopState, input: RuntimeIdInput) -> Result<Value, String> {
-    capture_value(state, "GET", &input.id, "/raw", None)
+    null_for_http_rejection(capture_value(state, "GET", &input.id, "/raw", None), 409)
 }
 
 pub(crate) fn capture_result(state: &DesktopState, input: RuntimeIdInput) -> Result<Value, String> {
@@ -106,7 +106,17 @@ pub(crate) fn capture_result(state: &DesktopState, input: RuntimeIdInput) -> Res
 }
 
 pub(crate) fn delete_capture(state: &DesktopState, input: RuntimeIdInput) -> Result<Value, String> {
-    capture_value(state, "DELETE", &input.id, "", None)
+    null_for_http_rejection(capture_value(state, "DELETE", &input.id, "", None), 404)
+}
+
+fn null_for_http_rejection(
+    result: Result<Value, String>,
+    accepted_status: u16,
+) -> Result<Value, String> {
+    match result {
+        Err(error) if is_http_rejection(&error, accepted_status) => Ok(Value::Null),
+        result => result,
+    }
 }
 
 fn capture_value(
@@ -212,6 +222,10 @@ fn parse_response(response: &[u8], token: &str) -> Result<Value, String> {
         .map_err(|_| "Capture Runtime response was not valid JSON.".to_string())?;
     redact_token(&mut value, token);
     Ok(value)
+}
+
+fn is_http_rejection(error: &str, status: u16) -> bool {
+    error == format!("Capture Runtime request was rejected with HTTP {status}.")
 }
 
 fn multipart_capture_body(
@@ -385,5 +399,24 @@ mod tests {
     fn runtime_identifiers_reject_path_traversal() {
         assert!(validate_opaque_id("../capture").is_err());
         assert!(validate_document_id("../document").is_err());
+    }
+
+    #[test]
+    fn private_http_status_mapping_is_exact_and_idempotent() {
+        let not_found = Err("Capture Runtime request was rejected with HTTP 404.".into());
+        assert_eq!(
+            null_for_http_rejection(not_found, 404).expect("idempotent delete"),
+            Value::Null
+        );
+        let conflict = Err("Capture Runtime request was rejected with HTTP 409.".into());
+        assert_eq!(
+            null_for_http_rejection(conflict, 409).expect("optional raw"),
+            Value::Null
+        );
+        let unexpected = Err("Capture Runtime request was rejected with HTTP 500.".into());
+        assert_eq!(
+            null_for_http_rejection(unexpected, 404).expect_err("unexpected failure"),
+            "Capture Runtime request was rejected with HTTP 500."
+        );
     }
 }

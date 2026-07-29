@@ -144,6 +144,11 @@ impl LibraryStore {
     ) -> Result<LibraryDocumentSummary, String> {
         validate_document_id(&update.document_id)?;
         validate_status(&update.status)?;
+        if update.clear_capture_id && update.capture_id.is_some() {
+            return Err(
+                "Capture library update cannot set and clear a runtime identifier together.".into(),
+            );
+        }
         let mut index = self.lock_index()?;
         let document = index
             .documents
@@ -157,7 +162,9 @@ impl LibraryStore {
         if let Some(result) = &update.result {
             atomic_write_json(&directory.join(RESULT_FILE_NAME), result)?;
         }
-        if update.capture_id.is_some() {
+        if update.clear_capture_id {
+            document.capture_id = None;
+        } else if update.capture_id.is_some() {
             document.capture_id = update.capture_id;
         }
         document.status = update.status;
@@ -352,7 +359,14 @@ fn validate_document_id(value: &str) -> Result<(), String> {
 fn validate_status(value: &str) -> Result<(), String> {
     if !matches!(
         value,
-        "queued" | "processing" | "awaiting_confirmation" | "completed" | "failed" | "canceled"
+        "queued"
+            | "processing"
+            | "persisting"
+            | "recovery_required"
+            | "awaiting_confirmation"
+            | "completed"
+            | "failed"
+            | "canceled"
     ) {
         return Err("Capture library status is invalid.".into());
     }
@@ -438,6 +452,7 @@ mod tests {
             .update_capture(LibraryCaptureUpdate {
                 document_id: created.document_id.clone(),
                 capture_id: Some("capture-1".into()),
+                clear_capture_id: false,
                 status: "completed".into(),
                 stage: Some("completed".into()),
                 raw: Some(serde_json::json!({ "sourceText": "OCR" })),
@@ -512,6 +527,7 @@ mod tests {
             .update_capture(LibraryCaptureUpdate {
                 document_id: created.document_id,
                 capture_id: None,
+                clear_capture_id: false,
                 status: "failed".into(),
                 stage: Some("failed".into()),
                 raw: None,
@@ -532,5 +548,123 @@ mod tests {
         assert!(!serde_json::to_string(&listed)
             .expect("serialized summaries")
             .contains("items"));
+    }
+
+    #[test]
+    fn capture_identifier_is_preserved_until_explicitly_cleared() {
+        let directory = tempfile::tempdir().expect("temporary app data");
+        let library = LibraryStore::open(directory.path()).expect("library");
+        let created = library
+            .create_source(LibrarySourceInput {
+                file_name: "recovery.pdf".into(),
+                media_type: "application/pdf".into(),
+                bytes: vec![1],
+            })
+            .expect("source");
+
+        let linked = library
+            .update_capture(LibraryCaptureUpdate {
+                document_id: created.document_id.clone(),
+                capture_id: Some("capture-1".into()),
+                clear_capture_id: false,
+                status: "processing".into(),
+                stage: Some("extracting".into()),
+                raw: None,
+                result: None,
+                error_code: None,
+                error_message: None,
+            })
+            .expect("link capture");
+        assert_eq!(linked.capture_id.as_deref(), Some("capture-1"));
+
+        let preserved = library
+            .update_capture(LibraryCaptureUpdate {
+                document_id: created.document_id.clone(),
+                capture_id: None,
+                clear_capture_id: false,
+                status: "recovery_required".into(),
+                stage: Some("completed".into()),
+                raw: None,
+                result: None,
+                error_code: Some("runtime_cleanup_failed".into()),
+                error_message: Some("retry cleanup".into()),
+            })
+            .expect("preserve capture");
+        assert_eq!(preserved.capture_id.as_deref(), Some("capture-1"));
+
+        let cleared = library
+            .update_capture(LibraryCaptureUpdate {
+                document_id: created.document_id.clone(),
+                capture_id: None,
+                clear_capture_id: true,
+                status: "completed".into(),
+                stage: Some("completed".into()),
+                raw: None,
+                result: None,
+                error_code: None,
+                error_message: None,
+            })
+            .expect("clear capture");
+        assert_eq!(cleared.capture_id, None);
+
+        assert!(library
+            .update_capture(LibraryCaptureUpdate {
+                document_id: created.document_id,
+                capture_id: Some("capture-2".into()),
+                clear_capture_id: true,
+                status: "processing".into(),
+                stage: None,
+                raw: None,
+                result: None,
+                error_code: None,
+                error_message: None,
+            })
+            .is_err());
+    }
+
+    #[test]
+    fn source_validation_matches_renderer_limits_and_allowlist() {
+        for (media_type, file_name) in [
+            ("application/pdf", "fixture.pdf"),
+            ("image/png", "fixture.png"),
+            ("image/jpeg", "fixture.jpg"),
+            ("audio/wav", "fixture.wav"),
+            ("audio/mpeg", "fixture.mp3"),
+            ("audio/mp4", "fixture.m4a"),
+        ] {
+            assert!(validate_source_input(&LibrarySourceInput {
+                file_name: file_name.into(),
+                media_type: media_type.into(),
+                bytes: vec![1],
+            })
+            .is_ok());
+        }
+
+        assert!(validate_source_input(&LibrarySourceInput {
+            file_name: "limit.pdf".into(),
+            media_type: "application/pdf".into(),
+            bytes: vec![1; MAX_SOURCE_BYTES],
+        })
+        .is_ok());
+        assert!(validate_source_input(&LibrarySourceInput {
+            file_name: "empty.pdf".into(),
+            media_type: "application/pdf".into(),
+            bytes: Vec::new(),
+        })
+        .is_err());
+        assert!(validate_source_input(&LibrarySourceInput {
+            file_name: "large.pdf".into(),
+            media_type: "application/pdf".into(),
+            bytes: vec![1; MAX_SOURCE_BYTES + 1],
+        })
+        .is_err());
+        for (media_type, file_name) in [("image/webp", "image.webp"), ("audio/ogg", "voice.ogg")] {
+            assert!(validate_source_input(&LibrarySourceInput {
+                file_name: file_name.into(),
+                media_type: media_type.into(),
+                bytes: vec![1],
+            })
+            .is_err());
+        }
     }
 }

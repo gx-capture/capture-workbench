@@ -18,7 +18,7 @@
   Verify: `pnpm nx run capture-runtime:build-release-artifacts`,
   `pnpm nx run capture-runtime:local-release-consumer-smoke`,
   `node --test tools/local-release-consumer-smoke.test.ts`, and
-  `pnpm nx run capture-workbench-desktop:build-nsis-release`
+  `pnpm nx run capture-workbench-desktop:build-nsis`
 ## PR C - cert-prep
 
 - [x] Remove cert-prep root and generated trial-fixture direct dependency on

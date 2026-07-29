@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::{
     config::DesktopRuntimeStatus,
     contracts::{
@@ -17,122 +19,148 @@ pub fn desktop_runtime_status(state: tauri::State<'_, DesktopState>) -> DesktopR
     state.status()
 }
 
+async fn run_blocking<T, F>(operation: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(operation)
+        .await
+        .map_err(|_| "Capture Workbench background operation failed.".to_string())?
+}
+
 #[tauri::command]
-pub fn library_create_source(
-    library: tauri::State<'_, LibraryStore>,
+pub async fn library_create_source(
+    library: tauri::State<'_, Arc<LibraryStore>>,
     input: LibrarySourceInput,
 ) -> Result<LibraryDocumentSummary, String> {
-    library.create_source(input)
+    let library = Arc::clone(library.inner());
+    run_blocking(move || library.create_source(input)).await
 }
 
 #[tauri::command]
-pub fn library_update_capture(
-    library: tauri::State<'_, LibraryStore>,
+pub async fn library_update_capture(
+    library: tauri::State<'_, Arc<LibraryStore>>,
     update: LibraryCaptureUpdate,
 ) -> Result<LibraryDocumentSummary, String> {
-    library.update_capture(update)
+    let library = Arc::clone(library.inner());
+    run_blocking(move || library.update_capture(update)).await
 }
 
 #[tauri::command]
-pub fn library_list(
-    library: tauri::State<'_, LibraryStore>,
+pub async fn library_list(
+    library: tauri::State<'_, Arc<LibraryStore>>,
     request: LibraryListRequest,
 ) -> Result<Vec<LibraryDocumentSummary>, String> {
-    library.list(request)
+    let library = Arc::clone(library.inner());
+    run_blocking(move || library.list(request)).await
 }
 
 #[tauri::command]
-pub fn library_get(
-    library: tauri::State<'_, LibraryStore>,
+pub async fn library_get(
+    library: tauri::State<'_, Arc<LibraryStore>>,
     request: LibraryDocumentRequest,
 ) -> Result<LibraryDocumentDetail, String> {
-    library.get(request)
+    let library = Arc::clone(library.inner());
+    run_blocking(move || library.get(request)).await
 }
 
 #[tauri::command]
-pub fn library_export(
-    library: tauri::State<'_, LibraryStore>,
+pub async fn library_export(
+    library: tauri::State<'_, Arc<LibraryStore>>,
     request: LibraryExportRequest,
 ) -> Result<LibraryExportPayload, String> {
-    library.export(request)
+    let library = Arc::clone(library.inner());
+    run_blocking(move || library.export(request)).await
 }
 
 #[tauri::command]
-pub fn library_delete(
-    library: tauri::State<'_, LibraryStore>,
+pub async fn library_delete(
+    library: tauri::State<'_, Arc<LibraryStore>>,
     request: LibraryDocumentRequest,
 ) -> Result<(), String> {
-    library.delete(request)
+    let library = Arc::clone(library.inner());
+    run_blocking(move || library.delete(request)).await
 }
 
 #[tauri::command]
-pub fn runtime_requirements(
+pub async fn runtime_requirements(
     state: tauri::State<'_, DesktopState>,
 ) -> Result<serde_json::Value, String> {
-    runtime_client::requirements(&state)
+    let state = state.inner().clone();
+    run_blocking(move || runtime_client::requirements(&state)).await
 }
 
 #[tauri::command]
-pub fn runtime_start_installation(
+pub async fn runtime_start_installation(
     state: tauri::State<'_, DesktopState>,
     input: RuntimeInstallationStartInput,
 ) -> Result<serde_json::Value, String> {
-    runtime_client::start_installation(&state, input)
+    let state = state.inner().clone();
+    run_blocking(move || runtime_client::start_installation(&state, input)).await
 }
 
 #[tauri::command]
-pub fn runtime_get_installation(
+pub async fn runtime_get_installation(
     state: tauri::State<'_, DesktopState>,
     input: RuntimeIdInput,
 ) -> Result<serde_json::Value, String> {
-    runtime_client::installation(&state, input)
+    let state = state.inner().clone();
+    run_blocking(move || runtime_client::installation(&state, input)).await
 }
 
 #[tauri::command]
-pub fn runtime_create_capture(
+pub async fn runtime_create_capture(
     state: tauri::State<'_, DesktopState>,
-    library: tauri::State<'_, LibraryStore>,
+    library: tauri::State<'_, Arc<LibraryStore>>,
     input: RuntimeCreateCaptureInput,
 ) -> Result<serde_json::Value, String> {
-    runtime_client::create_capture(&state, &library, input)
+    let state = state.inner().clone();
+    let library = Arc::clone(library.inner());
+    run_blocking(move || runtime_client::create_capture(&state, library.as_ref(), input)).await
 }
 
 #[tauri::command]
-pub fn runtime_get_capture(
+pub async fn runtime_get_capture(
     state: tauri::State<'_, DesktopState>,
     input: RuntimeIdInput,
 ) -> Result<serde_json::Value, String> {
-    runtime_client::capture(&state, input)
+    let state = state.inner().clone();
+    run_blocking(move || runtime_client::capture(&state, input)).await
 }
 
 #[tauri::command]
-pub fn runtime_cancel_capture(
+pub async fn runtime_cancel_capture(
     state: tauri::State<'_, DesktopState>,
     input: RuntimeIdInput,
 ) -> Result<serde_json::Value, String> {
-    runtime_client::cancel_capture(&state, input)
+    let state = state.inner().clone();
+    run_blocking(move || runtime_client::cancel_capture(&state, input)).await
 }
 
 #[tauri::command]
-pub fn runtime_get_raw(
+pub async fn runtime_get_raw(
     state: tauri::State<'_, DesktopState>,
     input: RuntimeIdInput,
 ) -> Result<serde_json::Value, String> {
-    runtime_client::raw_capture(&state, input)
+    let state = state.inner().clone();
+    run_blocking(move || runtime_client::raw_capture(&state, input)).await
 }
 
 #[tauri::command]
-pub fn runtime_get_result(
+pub async fn runtime_get_result(
     state: tauri::State<'_, DesktopState>,
     input: RuntimeIdInput,
 ) -> Result<serde_json::Value, String> {
-    runtime_client::capture_result(&state, input)
+    let state = state.inner().clone();
+    run_blocking(move || runtime_client::capture_result(&state, input)).await
 }
 
 #[tauri::command]
-pub fn runtime_delete_capture(
+pub async fn runtime_delete_capture(
     state: tauri::State<'_, DesktopState>,
     input: RuntimeIdInput,
 ) -> Result<serde_json::Value, String> {
-    runtime_client::delete_capture(&state, input)
+    let state = state.inner().clone();
+    run_blocking(move || runtime_client::delete_capture(&state, input)).await
 }

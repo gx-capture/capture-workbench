@@ -1,9 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { assertRealDesktopSmokeEvidence } from './real-desktop-ocr-smoke.ts';
+import {
+  assertRealDesktopSmokeEvidence,
+  realDesktopRuntimeReadyTimeoutMs,
+} from './real-desktop-ocr-smoke.ts';
 
 test('real desktop OCR evidence requires real engines, Ollama provenance, cleanup, and redaction', () => {
+  assert.equal(realDesktopRuntimeReadyTimeoutMs, 180_000);
   const valid = {
     evidenceKind: 'real-standalone-tauri-ui-ocr',
     releaseGateSatisfied: true,

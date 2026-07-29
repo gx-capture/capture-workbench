@@ -38,20 +38,6 @@
         "command": "corepack pnpm exec tauri build --target x86_64-pc-windows-msvc --no-bundle --ci --config apps/capture-workbench-desktop/src-tauri/tauri.conf.json"
       }
     },
-    "build-nsis-release": {
-      "cache": false,
-      "executor": "nx:run-commands",
-      "outputs": [
-        "{projectRoot}/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis"
-      ],
-      "options": {
-        "commands": [
-          "node apps/capture-workbench-desktop/scripts/assert-staged-runtime.ts --release",
-          "corepack pnpm exec tauri build --target x86_64-pc-windows-msvc --bundles nsis --ci --config apps/capture-workbench-desktop/src-tauri/tauri.conf.json"
-        ],
-        "parallel": false
-      }
-    },
     "build-nsis-deterministic": {
       "cache": false,
       "executor": "nx:run-commands",

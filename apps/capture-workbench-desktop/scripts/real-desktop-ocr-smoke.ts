@@ -25,6 +25,7 @@ const defaultDesktopExecutable = join(
 );
 const productIdentifier = 'io.github.wodenwang820118.capture-workbench';
 const maxSourceBytes = 50 * 1024 * 1024;
+export const realDesktopRuntimeReadyTimeoutMs = 3 * 60_000;
 
 interface RealDesktopSmokeEvidence {
   readonly evidenceKind: 'real-standalone-tauri-ui-ocr';
@@ -114,7 +115,7 @@ async function main(): Promise<void> {
     const intake = page.getByLabel('選擇檔案');
     await waitUntil(
       () => intake.isEnabled().then((enabled) => enabled || undefined),
-      75_000,
+      realDesktopRuntimeReadyTimeoutMs,
       'Standalone desktop runtime did not become ready. Prepare the consented WindowsML and Ollama requirements in the configured app data first.',
     );
     await intake.setInputFiles({

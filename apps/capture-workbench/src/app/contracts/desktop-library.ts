@@ -6,6 +6,8 @@ import type {
 export type DesktopLibraryStatus =
   | 'queued'
   | 'processing'
+  | 'persisting'
+  | 'recovery_required'
   | 'awaiting_confirmation'
   | 'completed'
   | 'failed'

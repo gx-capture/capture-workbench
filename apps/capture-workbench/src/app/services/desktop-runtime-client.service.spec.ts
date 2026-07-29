@@ -1,9 +1,16 @@
 import { TestBed } from '@angular/core/testing';
 import { of } from 'rxjs';
-import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
+import {
+  DESKTOP_RUNTIME_READY_TIMEOUT_MS,
+  DesktopRuntimeClientService,
+} from './desktop-runtime-client.service';
 import { DesktopTauriCommandService } from './desktop-tauri-command.service';
 
 describe('DesktopRuntimeClientService', () => {
+  it('allows a cold packaged sidecar three minutes to become ready', () => {
+    expect(DESKTOP_RUNTIME_READY_TIMEOUT_MS).toBe(180_000);
+  });
+
   it('exposes runtime readiness through rxResource and commands through Observables', () => {
     const commands = {
       invoke: vi.fn((command: string) => command === 'desktop_runtime_status'

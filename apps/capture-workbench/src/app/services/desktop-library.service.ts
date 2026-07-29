@@ -1,6 +1,7 @@
 import { Injectable, inject } from '@angular/core';
 import type {
   CaptureDocumentV1,
+  CaptureSourceKind,
   RawCaptureV1,
 } from '@gx-capture/capture-workbench';
 import { defer, from, map, Observable, switchMap } from 'rxjs';
@@ -12,12 +13,26 @@ import type {
 } from '../contracts';
 import { DesktopTauriCommandService } from './desktop-tauri-command.service';
 
+export const MAX_DESKTOP_SOURCE_BYTES = 50 * 1024 * 1024;
+
+const DESKTOP_SOURCE_KINDS = new Map<string, CaptureSourceKind>([
+  ['application/pdf', 'pdf'],
+  ['image/png', 'image'],
+  ['image/jpeg', 'image'],
+  ['audio/wav', 'audio'],
+  ['audio/mpeg', 'audio'],
+  ['audio/mp4', 'audio'],
+]);
+
 @Injectable({ providedIn: 'root' })
 export class DesktopLibraryService {
   private readonly commands = inject(DesktopTauriCommandService);
 
   createSource(file: File): Observable<DesktopLibrarySummary> {
-    return defer(() => from(file.arrayBuffer())).pipe(
+    return defer(() => {
+      validateDesktopSource(file);
+      return from(file.arrayBuffer());
+    }).pipe(
       map((buffer) => ({
         fileName: file.name,
         mediaType: file.type,
@@ -45,6 +60,7 @@ export class DesktopLibraryService {
     readonly documentId: string;
     readonly status: DesktopLibraryStatus;
     readonly captureId?: string;
+    readonly clearCaptureId?: boolean;
     readonly stage?: string;
     readonly raw?: RawCaptureV1;
     readonly result?: CaptureDocumentV1;
@@ -65,4 +81,24 @@ export class DesktopLibraryService {
   delete(documentId: string): Observable<void> {
     return this.commands.invoke<void>('library_delete', { request: { documentId } });
   }
+}
+
+export function validateDesktopSource(file: Pick<File, 'name' | 'size' | 'type'>): void {
+  desktopSourceKind(file);
+}
+
+export function desktopSourceKind(
+  file: Pick<File, 'name' | 'size' | 'type'>,
+): CaptureSourceKind {
+  const sourceKind = DESKTOP_SOURCE_KINDS.get(file.type);
+  if (!sourceKind) {
+    throw new Error(`不支援的檔案格式：${file.name}`);
+  }
+  if (file.size === 0) {
+    throw new Error(`檔案不可為空：${file.name}`);
+  }
+  if (file.size > MAX_DESKTOP_SOURCE_BYTES) {
+    throw new Error(`檔案超過 50 MiB 上限：${file.name}`);
+  }
+  return sourceKind;
 }

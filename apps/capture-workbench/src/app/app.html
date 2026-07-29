@@ -13,7 +13,7 @@
     <div class="library-filter">
       <mat-form-field appearance="outline" subscriptSizing="dynamic">
         <mat-label>搜尋文件</mat-label>
-        <input matInput type="search" [value]="store.query()" (input)="store.updateQuery($any($event.target).value)" placeholder="檔名或內容" />
+        <input matInput type="search" [value]="store.query()" (input)="store.updateQuery($any($event.target).value)" placeholder="搜尋檔名" />
       </mat-form-field>
       <mat-form-field appearance="outline" subscriptSizing="dynamic">
         <mat-label>處理狀態</mat-label>
@@ -21,6 +21,8 @@
           <mat-option value="">全部</mat-option>
           <mat-option value="queued">等待處理</mat-option>
           <mat-option value="processing">處理中</mat-option>
+          <mat-option value="persisting">正在保存</mat-option>
+          <mat-option value="recovery_required">需要復原</mat-option>
           <mat-option value="completed">已完成</mat-option>
           <mat-option value="failed">處理失敗</mat-option>
           <mat-option value="canceled">已取消</mat-option>

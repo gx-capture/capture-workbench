@@ -14,6 +14,8 @@ pub struct LibrarySourceInput {
 pub struct LibraryCaptureUpdate {
     pub document_id: String,
     pub capture_id: Option<String>,
+    #[serde(default)]
+    pub clear_capture_id: bool,
     pub status: String,
     pub stage: Option<String>,
     pub raw: Option<Value>,

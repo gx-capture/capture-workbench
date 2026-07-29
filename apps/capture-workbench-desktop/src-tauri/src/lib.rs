@@ -12,7 +12,7 @@ mod resources;
 mod runtime_client;
 mod state;
 
-use std::fs;
+use std::{fs, sync::Arc};
 
 use tauri::Manager;
 
@@ -32,7 +32,7 @@ pub fn run() {
 
             let library = library::LibraryStore::open(&data_dir)?;
             let state = DesktopState::new(data_dir);
-            app.manage(library);
+            app.manage(Arc::new(library));
             app.manage(state.clone());
             match resources::resolve_runtime_assets(app) {
                 Ok(assets) => state.start(assets),

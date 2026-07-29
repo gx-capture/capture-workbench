@@ -23,9 +23,10 @@ test('Nx separates root verification build from release and deterministic NSIS l
   ]);
   assert.equal(project.targets.dev, undefined);
   assert.match(
-    project.targets['build-nsis-release'].options.commands[0],
+    project.targets['build-nsis'].options.commands[0],
     /assert-staged-runtime\.ts --release/u,
   );
+  assert.equal(project.targets['build-nsis-release'], undefined);
   assert.ok(
     project.targets['stage-deterministic-runtime'].outputs.some((output) =>
       output.endsWith('capture-document-v1.schema.json'),
@@ -93,6 +94,34 @@ test('renderer IPC never receives the sidecar bearer token', async () => {
   assert.doesNotMatch(desktopHost, /backend_config|bearerToken|Authorization/u);
   assert.match(commands, /runtime_create_capture/u);
   assert.match(desktopHost, /runtime_create_capture/u);
+});
+
+test('blocking native I/O is isolated behind async Tauri commands', async () => {
+  const commands = await readFile(
+    join(appRoot, 'src-tauri', 'src', 'commands.rs'),
+    'utf8',
+  );
+  assert.match(commands, /tauri::async_runtime::spawn_blocking/u);
+  for (const command of [
+    'library_create_source',
+    'library_update_capture',
+    'library_list',
+    'library_get',
+    'library_export',
+    'library_delete',
+    'runtime_requirements',
+    'runtime_start_installation',
+    'runtime_get_installation',
+    'runtime_create_capture',
+    'runtime_get_capture',
+    'runtime_cancel_capture',
+    'runtime_get_raw',
+    'runtime_get_result',
+    'runtime_delete_capture',
+  ]) {
+    assert.match(commands, new RegExp(`pub async fn ${command}`, 'u'));
+  }
+  assert.match(commands, /pub fn desktop_runtime_status/u);
 });
 
 test('native cleanup is PID-scoped and never executable-name scoped', async () => {

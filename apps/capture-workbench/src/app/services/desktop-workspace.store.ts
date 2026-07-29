@@ -4,16 +4,18 @@ import {
   EMPTY,
   catchError,
   concatMap,
-  concatWith,
   defer,
   expand,
+  filter,
   finalize,
   from,
-  ignoreElements,
   map,
   type Observable,
   of,
+  race,
+  Subject,
   switchMap,
+  take,
   takeWhile,
   tap,
   throwError,
@@ -22,15 +24,29 @@ import {
 import {
   type CaptureJobV1,
   type CaptureRequirementId,
-  type CaptureSourceKind,
   type RuntimeInstallationV1,
   type RuntimeRequirementV1,
 } from '@gx-capture/capture-workbench';
-import type { DesktopLibraryDetail, DesktopLibrarySummary } from '../contracts';
-import { DesktopLibraryService } from './desktop-library.service';
+import type {
+  DesktopLibraryDetail,
+  DesktopLibraryStatus,
+  DesktopLibrarySummary,
+} from '../contracts';
+import {
+  desktopSourceKind,
+  DesktopLibraryService,
+} from './desktop-library.service';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
 
 type WorkspaceState = 'starting' | 'needs-setup' | 'ready' | 'error';
+
+interface ActiveCapture {
+  captureId?: string;
+  cancelRequested: boolean;
+  cancelSent: boolean;
+  lastStage?: string;
+  readonly cancelWake: Subject<void>;
+}
 
 const CORE_REQUIREMENTS = new Set<CaptureRequirementId>([
   'windowsml-ocr',
@@ -89,7 +105,7 @@ export class DesktopWorkspaceStore {
 
   private readonly runtime = inject(DesktopRuntimeClientService);
   private readonly library = inject(DesktopLibraryService);
-  private readonly controllers = new Map<string, AbortController>();
+  private readonly activeCaptures = new Map<string, ActiveCapture>();
 
   private readonly requirementsResource = rxResource<
     readonly RuntimeRequirementV1[],
@@ -129,6 +145,15 @@ export class DesktopWorkspaceStore {
       ?? this.documentsResource.error()
       ?? this.selectedResource.error();
     if (error) this.message.set(errorMessage(error));
+  });
+
+  private readonly stateMessageEffect = effect(() => {
+    const state = this.state();
+    if (state === 'ready') {
+      this.message.set('Capture Runtime 已準備完成，可以開始處理文件。');
+    } else if (state === 'needs-setup') {
+      this.message.set('請先安裝缺少的本機處理需求。');
+    }
   });
 
   initialize(): void {
@@ -185,13 +210,22 @@ export class DesktopWorkspaceStore {
 
   retry(documentId: string): void {
     if (!this.canCapture()) return;
-    this.captureExisting$(documentId).subscribe({
+    const document = this.documents().find((item) => item.documentId === documentId)
+      ?? (this.selected()?.documentId === documentId ? this.selected() : undefined);
+    const operation = document?.status === 'recovery_required' && document.captureId
+      ? this.recoverCapture$(document)
+      : this.captureExisting$(documentId);
+    operation.subscribe({
       error: (error: unknown) => this.message.set(errorMessage(error)),
     });
   }
 
   cancel(documentId: string): void {
-    this.controllers.get(documentId)?.abort();
+    const active = this.activeCaptures.get(documentId);
+    if (active && !active.cancelRequested) {
+      active.cancelRequested = true;
+      active.cancelWake.next();
+    }
   }
 
   delete(documentId: string): void {
@@ -238,6 +272,8 @@ export class DesktopWorkspaceStore {
       extracting: '正在執行 OCR',
       awaiting_structuring: '等待結構化',
       structuring: '正在使用 Ollama 結構化',
+      persisting: '正在保存結果',
+      recovery_required: '需要復原',
       completed: '已完成',
       failed: '處理失敗',
       cancelled: '已取消',
@@ -248,6 +284,8 @@ export class DesktopWorkspaceStore {
     return ({
       queued: '排隊等待處理',
       processing: '處理中',
+      persisting: '正在保存',
+      recovery_required: '需要復原',
       awaiting_confirmation: '等待確認',
       completed: '已完成',
       failed: '處理失敗',
@@ -256,9 +294,11 @@ export class DesktopWorkspaceStore {
   }
 
   private prepareFile$(file: File): Observable<void> {
-    const sourceKind = sourceKindFor(file);
-    if (!sourceKind) {
-      this.message.set(`不支援的檔案類型：${file.name}`);
+    let sourceKind: ReturnType<typeof desktopSourceKind>;
+    try {
+      sourceKind = desktopSourceKind(file);
+    } catch (error) {
+      this.message.set(errorMessage(error));
       return EMPTY;
     }
     if (sourceKind === 'audio' && !this.audioReady()) {
@@ -285,114 +325,267 @@ export class DesktopWorkspaceStore {
 
   private captureExisting$(documentId: string): Observable<void> {
     return defer(() => {
-      if (!this.runtime.ready()) return EMPTY;
-      const controller = new AbortController();
-      let runtimeCaptureId: string | undefined;
-      this.controllers.set(documentId, controller);
+      if (!this.runtime.ready() || this.activeCaptures.has(documentId)) return EMPTY;
+      const active: ActiveCapture = {
+        cancelRequested: false,
+        cancelSent: false,
+        cancelWake: new Subject<void>(),
+      };
+      this.activeCaptures.set(documentId, active);
       this.markBusy(documentId, true);
 
       const work$ = this.library.updateCapture({
         documentId,
         status: 'processing',
         stage: 'uploading',
+        clearCaptureId: true,
       }).pipe(
-        switchMap(() => this.runtime.createCapture(documentId, crypto.randomUUID(), controller.signal)),
-        tap((job) => runtimeCaptureId = job.captureId),
-        switchMap((job) => this.waitForTerminal$(documentId, job, controller.signal)),
-        switchMap((job) => this.persistTerminal$(documentId, job, controller.signal)),
-        tap(() => this.reloadDocumentState(documentId)),
+        switchMap(() => this.runtime.createCapture(documentId, crypto.randomUUID())),
+        switchMap((job) => {
+          active.captureId = job.captureId;
+          active.lastStage = job.stage;
+          return this.library.updateCapture({
+            documentId,
+            captureId: job.captureId,
+            status: 'processing',
+            stage: job.stage,
+          }).pipe(map(() => job));
+        }),
+        switchMap((job) => this.waitForTerminal$(documentId, job, active)),
+        switchMap((job) => this.persistTerminal$(documentId, job)),
       );
 
-      return work$.pipe(
-        catchError((error) => this.persistCaptureFailure$(documentId, controller, error).pipe(
-          tap(() => this.reloadDocumentState(documentId)),
-          catchError((failureError) => {
-            this.message.set(errorMessage(failureError));
-            return of(undefined);
-          }),
-        )),
-        switchMap(() => this.cleanupRuntimeCapture$(runtimeCaptureId)),
-        finalize(() => {
-          this.controllers.delete(documentId);
-          this.markBusy(documentId, false);
-        }),
-        map(() => undefined),
-      );
+      return this.trackCaptureLifecycle$(documentId, active, work$);
     });
+  }
+
+  private recoverCapture$(document: DesktopLibrarySummary): Observable<void> {
+    return defer(() => {
+      if (
+        !this.runtime.ready()
+        || !document.captureId
+        || this.activeCaptures.has(document.documentId)
+      ) {
+        return EMPTY;
+      }
+      const active: ActiveCapture = {
+        captureId: document.captureId,
+        cancelRequested: false,
+        cancelSent: false,
+        lastStage: document.stage,
+        cancelWake: new Subject<void>(),
+      };
+      this.activeCaptures.set(document.documentId, active);
+      this.markBusy(document.documentId, true);
+
+      const work$ = document.errorCode === 'runtime_cleanup_failed'
+        ? this.retryRuntimeCleanup$(document)
+        : this.runtime.getCapture(document.captureId).pipe(
+          tap((job) => active.lastStage = job.stage),
+          switchMap((job) => this.waitForTerminal$(document.documentId, job, active)),
+          switchMap((job) => this.persistTerminal$(document.documentId, job)),
+        );
+      return this.trackCaptureLifecycle$(document.documentId, active, work$);
+    });
+  }
+
+  private trackCaptureLifecycle$(
+    documentId: string,
+    active: ActiveCapture,
+    work$: Observable<unknown>,
+  ): Observable<void> {
+    return work$.pipe(
+      tap(() => this.reloadDocumentState(documentId)),
+      catchError((error) => this.persistLifecycleFailure$(documentId, active, error).pipe(
+        tap(() => this.reloadDocumentState(documentId)),
+        catchError((failureError) => {
+          this.message.set(errorMessage(failureError));
+          return EMPTY;
+        }),
+      )),
+      finalize(() => {
+        active.cancelWake.complete();
+        this.activeCaptures.delete(documentId);
+        this.markBusy(documentId, false);
+      }),
+      map(() => undefined),
+    );
   }
 
   private waitForTerminal$(
     documentId: string,
     initial: CaptureJobV1,
-    signal: AbortSignal,
+    active: ActiveCapture,
   ): Observable<CaptureJobV1> {
     return of(initial).pipe(
+      tap((job) => active.lastStage = job.stage),
       expand((job) => {
-        if (job.status !== 'queued' && job.status !== 'running') return EMPTY;
-        if (signal.aborted) {
-          return this.runtime.cancelCapture(job.captureId, signal).pipe(
-            switchMap(() => throwError(() => new DOMException('處理已取消。', 'AbortError'))),
-          );
-        }
-        return this.library.updateCapture({
-          documentId,
-          captureId: job.captureId,
-          status: 'processing',
-          stage: job.stage,
-        }).pipe(
-          ignoreElements(),
-          concatWith(timer(700)),
-          switchMap(() => this.runtime.getCapture(job.captureId, signal)),
-        );
+        if (!isActiveJob(job)) return EMPTY;
+        return this.advanceCapture$(documentId, job, active);
       }),
-      takeWhile((job) => job.status === 'queued' || job.status === 'running', true),
+      filter((job) => !isActiveJob(job)),
+      take(1),
     );
   }
 
-  private persistTerminal$(documentId: string, job: CaptureJobV1, signal: AbortSignal) {
-    return this.runtime.getRaw(job.captureId, signal).pipe(
-      switchMap((raw) => {
-        if (job.status === 'completed') {
-          return this.runtime.getResult(job.captureId, signal).pipe(
+  private advanceCapture$(
+    documentId: string,
+    job: CaptureJobV1,
+    active: ActiveCapture,
+  ): Observable<CaptureJobV1> {
+    return this.library.updateCapture({
+      documentId,
+      captureId: job.captureId,
+      status: 'processing',
+      stage: job.stage,
+    }).pipe(
+      switchMap(() => {
+        if (active.cancelRequested && !active.cancelSent) {
+          return this.sendCancellation$(job.captureId, active);
+        }
+        return race(
+          timer(700).pipe(
+            switchMap(() => this.runtime.getCapture(job.captureId)),
+          ),
+          active.cancelWake.pipe(
+            take(1),
+            switchMap(() => this.sendCancellation$(job.captureId, active)),
+          ),
+        );
+      }),
+      tap((next) => active.lastStage = next.stage),
+    );
+  }
+
+  private sendCancellation$(
+    captureId: string,
+    active: ActiveCapture,
+  ): Observable<CaptureJobV1> {
+    active.cancelSent = true;
+    return this.runtime.cancelCapture(captureId);
+  }
+
+  private persistTerminal$(documentId: string, job: CaptureJobV1) {
+    return this.library.updateCapture({
+      documentId,
+      captureId: job.captureId,
+      status: 'persisting',
+      stage: job.stage,
+    }).pipe(
+      switchMap(() => this.persistTerminalData$(documentId, job)),
+      switchMap(() => this.cleanupAfterCommit$(documentId, job)),
+    );
+  }
+
+  private persistTerminalData$(documentId: string, job: CaptureJobV1) {
+    if (job.status === 'completed') {
+      return this.runtime.getRaw(job.captureId).pipe(
+        switchMap((raw) => {
+          if (!raw) {
+            return throwError(() => new Error('Capture Runtime 未提供已完成工作的原始結果。'));
+          }
+          return this.runtime.getResult(job.captureId).pipe(
             switchMap((result) => this.library.updateCapture({
               documentId,
               captureId: job.captureId,
               status: 'completed',
-              stage: 'completed',
+              stage: job.stage,
               raw,
               result,
             })),
           );
-        }
-        return this.library.updateCapture({
+        }),
+      );
+    }
+    if (job.status === 'failed') {
+      return this.runtime.getRaw(job.captureId).pipe(
+        switchMap((raw) => this.library.updateCapture({
           documentId,
           captureId: job.captureId,
-          status: job.status === 'cancelled' ? 'canceled' : 'failed',
+          status: 'failed',
           stage: job.stage,
-          raw,
+          raw: raw ?? undefined,
           errorCode: job.error?.code,
           errorMessage: job.error?.message,
-        });
-      }),
-    );
-  }
-
-  private persistCaptureFailure$(documentId: string, controller: AbortController, error: unknown) {
+        })),
+      );
+    }
     return this.library.updateCapture({
       documentId,
-      status: controller.signal.aborted ? 'canceled' : 'failed',
-      stage: controller.signal.aborted ? 'cancelled' : 'failed',
-      errorCode: controller.signal.aborted ? 'cancelled' : 'capture_failed',
-      errorMessage: controller.signal.aborted ? '處理已取消。' : errorMessage(error),
+      captureId: job.captureId,
+      status: 'canceled',
+      stage: job.stage,
+      errorCode: job.error?.code,
+      errorMessage: job.error?.message,
     });
   }
 
-  private cleanupRuntimeCapture$(captureId: string | undefined): Observable<void> {
-    if (!captureId) return of(undefined);
-    return this.runtime.deleteCapture(captureId).pipe(
-      catchError(() => EMPTY),
-      map(() => undefined),
+  private cleanupAfterCommit$(documentId: string, job: CaptureJobV1) {
+    const terminalStatus = terminalLibraryStatus(job);
+    return this.runtime.deleteCapture(job.captureId).pipe(
+      switchMap(() => this.library.updateCapture({
+        documentId,
+        status: terminalStatus,
+        stage: job.stage,
+        clearCaptureId: true,
+        errorCode: job.error?.code,
+        errorMessage: job.error?.message,
+      })),
+      catchError((error) => this.library.updateCapture({
+        documentId,
+        captureId: job.captureId,
+        status: 'recovery_required',
+        stage: job.stage,
+        errorCode: 'runtime_cleanup_failed',
+        errorMessage: errorMessage(error),
+      })),
     );
+  }
+
+  private retryRuntimeCleanup$(document: DesktopLibrarySummary) {
+    const captureId = document.captureId;
+    if (!captureId) return EMPTY;
+    return this.runtime.deleteCapture(captureId).pipe(
+      switchMap(() => this.library.updateCapture({
+        documentId: document.documentId,
+        status: terminalStatusFromStage(document.stage),
+        stage: document.stage,
+        clearCaptureId: true,
+      })),
+      catchError((error) => this.library.updateCapture({
+        documentId: document.documentId,
+        captureId,
+        status: 'recovery_required',
+        stage: document.stage,
+        errorCode: 'runtime_cleanup_failed',
+        errorMessage: errorMessage(error),
+      })),
+    );
+  }
+
+  private persistLifecycleFailure$(
+    documentId: string,
+    active: ActiveCapture,
+    error: unknown,
+  ) {
+    if (active.captureId) {
+      return this.library.updateCapture({
+        documentId,
+        captureId: active.captureId,
+        status: 'recovery_required',
+        stage: active.lastStage ?? 'recovery_required',
+        errorCode: active.cancelSent ? 'cancel_failed' : 'capture_recovery_required',
+        errorMessage: errorMessage(error),
+      });
+    }
+    return this.library.updateCapture({
+      documentId,
+      status: 'failed',
+      stage: 'failed',
+      clearCaptureId: true,
+      errorCode: 'capture_failed',
+      errorMessage: errorMessage(error),
+    });
   }
 
   private installRequirement$(requirement: RuntimeRequirementV1): Observable<RuntimeInstallationV1> {
@@ -446,11 +639,20 @@ export class DesktopWorkspaceStore {
   }
 }
 
-function sourceKindFor(file: File): CaptureSourceKind | null {
-  if (file.type === 'application/pdf') return 'pdf';
-  if (file.type.startsWith('image/')) return 'image';
-  if (file.type.startsWith('audio/')) return 'audio';
-  return null;
+function isActiveJob(job: CaptureJobV1): boolean {
+  return job.status === 'queued' || job.status === 'running';
+}
+
+function terminalLibraryStatus(job: CaptureJobV1): DesktopLibraryStatus {
+  if (job.status === 'completed') return 'completed';
+  if (job.status === 'cancelled') return 'canceled';
+  return 'failed';
+}
+
+function terminalStatusFromStage(stage?: string): DesktopLibraryStatus {
+  if (stage === 'cancelled') return 'canceled';
+  if (stage === 'failed') return 'failed';
+  return 'completed';
 }
 
 function errorMessage(error: unknown): string {
