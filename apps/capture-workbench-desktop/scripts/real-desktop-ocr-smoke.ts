@@ -6,7 +6,7 @@ import net from 'node:net';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { chromium } from '@playwright/test';
+import { chromium, type Page } from '@playwright/test';
 
 import { assertStagedRuntime } from './assert-staged-runtime.ts';
 import { assertRedactedEvidence } from './package-qa.ts';
@@ -25,7 +25,10 @@ const defaultDesktopExecutable = join(
 );
 const productIdentifier = 'io.github.wodenwang820118.capture-workbench';
 const maxSourceBytes = 50 * 1024 * 1024;
+const ownedSmokeDocumentPattern =
+  /^standalone-real-ocr-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.pdf$/u;
 export const realDesktopRuntimeReadyTimeoutMs = 3 * 60_000;
+type OcrDevice = 'windowsml-dml' | 'cpu';
 
 interface RealDesktopSmokeEvidence {
   readonly evidenceKind: 'real-standalone-tauri-ui-ocr';
@@ -33,6 +36,7 @@ interface RealDesktopSmokeEvidence {
   readonly realEnginesExercised: true;
   readonly sourceKind: 'pdf';
   readonly rawOcrVisible: true;
+  readonly ocrDevice: OcrDevice;
   readonly structuringEngine: 'ollama';
   readonly model: 'capture-workbench-qwen3.5-4b-structure-v1';
   readonly modelDigest: string;
@@ -46,6 +50,7 @@ export function assertRealDesktopSmokeEvidence(value: unknown): asserts value is
   assert.equal(report?.realEnginesExercised, true);
   assert.equal(report?.sourceKind, 'pdf');
   assert.equal(report?.rawOcrVisible, true);
+  assert.ok(report?.ocrDevice === 'windowsml-dml' || report?.ocrDevice === 'cpu');
   assert.equal(report?.structuringEngine, 'ollama');
   assert.equal(report?.model, 'capture-workbench-qwen3.5-4b-structure-v1');
   assert.match(report?.modelDigest ?? '', /^sha256:[a-f0-9]{64}$/u);
@@ -61,6 +66,10 @@ async function main(): Promise<void> {
     throw new Error('Real standalone desktop OCR smoke requires Windows x64.');
   }
 
+  const expectedOcrDevice = resolveExpectedOcrDevice(
+    process.argv.slice(2),
+    process.env.CAPTURE_REAL_DESKTOP_EXPECTED_OCR_DEVICE,
+  );
   const sourcePath = requiredPath('CAPTURE_REAL_DESKTOP_OCR_PDF');
   const appData = requiredPath('CAPTURE_REAL_DESKTOP_APP_DATA');
   const desktopExecutable = resolve(
@@ -96,13 +105,14 @@ async function main(): Promise<void> {
   });
 
   let browser: Awaited<ReturnType<typeof chromium.connectOverCDP>> | undefined;
+  let page: Page | undefined;
   try {
     browser = await waitUntil(
       () => chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`, { timeout: 1_500 }).catch(() => undefined),
       60_000,
       'Standalone desktop WebView2 CDP was not ready.',
     );
-    const page = await waitUntil(
+    page = await waitUntil(
       () => Promise.resolve(
         browser.contexts().flatMap((context) => context.pages())
           .find((candidate) => candidate.url() === 'http://tauri.localhost/'),
@@ -118,14 +128,20 @@ async function main(): Promise<void> {
       realDesktopRuntimeReadyTimeoutMs,
       'Standalone desktop runtime did not become ready. Prepare the consented WindowsML and Ollama requirements in the configured app data first.',
     );
+    await deleteCompletedOwnedSmokeDocuments(page);
     await intake.setInputFiles({
       name: sourceName,
       mimeType: 'application/pdf',
       buffer: sourceBytes,
     });
 
-    const card = page.locator('.document-card').filter({ hasText: sourceName }).last();
+    const card = exactDocumentCard(page, sourceName);
     await card.waitFor({ state: 'visible', timeout: 15_000 });
+    assert.equal(
+      await card.count(),
+      1,
+      'Standalone desktop smoke filename must identify exactly one document.',
+    );
     await waitUntil(
       () => card.locator('.status').textContent().then((status) => status?.trim() === '已完成' || undefined),
       10 * 60_000,
@@ -149,6 +165,8 @@ async function main(): Promise<void> {
       throw new Error('Standalone desktop UI did not display structured result text.');
     }
     const structured = parseStructuredProvenance(provenance);
+    const ocr = parseOcrProvenance(provenance);
+    assertExpectedOcrDevice(ocr.device, expectedOcrDevice);
     if (
       structured.engine !== 'ollama' ||
       structured.model !== 'capture-workbench-qwen3.5-4b-structure-v1' ||
@@ -158,9 +176,9 @@ async function main(): Promise<void> {
       throw new Error('Standalone desktop UI did not display isolated Ollama provenance.');
     }
 
-    page.once('dialog', (dialog) => dialog.accept());
-    await page.getByRole('button', { name: '刪除', exact: true }).click();
-    await card.waitFor({ state: 'hidden', timeout: 30_000 });
+    if (!(await deleteCompletedDocument(page, sourceName))) {
+      throw new Error('Standalone desktop smoke document was not deleted after verification.');
+    }
 
     const report: RealDesktopSmokeEvidence = {
       evidenceKind: 'real-standalone-tauri-ui-ocr',
@@ -168,6 +186,7 @@ async function main(): Promise<void> {
       realEnginesExercised: true,
       sourceKind: 'pdf',
       rawOcrVisible: true,
+      ocrDevice: ocr.device,
       structuringEngine: 'ollama',
       model: 'capture-workbench-qwen3.5-4b-structure-v1',
       modelDigest: structured.digest,
@@ -177,6 +196,15 @@ async function main(): Promise<void> {
     await writeFile(evidencePath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
     process.stdout.write(`Real standalone desktop OCR smoke report: ${evidencePath}\n`);
   } finally {
+    if (page) {
+      await deleteCompletedDocument(page, sourceName).catch((error: unknown) => {
+        process.stderr.write(
+          `Standalone desktop smoke cleanup warning: ${
+            error instanceof Error ? error.message : String(error)
+          }\n`,
+        );
+      });
+    }
     await browser?.close().catch(() => undefined);
     terminateOwnedTree(app.pid);
   }
@@ -186,6 +214,99 @@ function parseStructuredProvenance(provenance: readonly string[]): { engine: str
   const value = provenance.find((entry) => entry.includes('capture-workbench-qwen3.5-4b-structure-v1')) ?? '';
   const [engine = '', model = '', digest = ''] = value.split(' · ').map((entry) => entry.trim());
   return { engine, model, digest };
+}
+
+export function parseOcrProvenance(
+  provenance: readonly string[],
+): {
+  engine: 'windowsml-ocr' | 'pdf-embedded+windowsml-ocr';
+  model: string;
+  device: OcrDevice;
+} {
+  const value = provenance.find(
+    (entry) =>
+      entry.startsWith('windowsml-ocr · ') ||
+      entry.startsWith('pdf-embedded+windowsml-ocr · '),
+  ) ?? '';
+  const [engine = '', model = '', device = ''] = value.split(' · ').map((entry) => entry.trim());
+  if (
+    (engine !== 'windowsml-ocr' && engine !== 'pdf-embedded+windowsml-ocr') ||
+    !model ||
+    (device !== 'windowsml-dml' && device !== 'cpu')
+  ) {
+    throw new Error('Standalone desktop UI did not display a recognized OCR device provenance.');
+  }
+  return { engine, model, device };
+}
+
+export function resolveExpectedOcrDevice(
+  arguments_: readonly string[],
+  environmentValue?: string,
+): OcrDevice | undefined {
+  const option = '--expected-ocr-device';
+  const optionIndexes = arguments_
+    .map((argument, index) => (argument === option ? index : -1))
+    .filter((index) => index >= 0);
+  if (optionIndexes.length > 1) {
+    throw new Error(`${option} may be supplied only once.`);
+  }
+  const value =
+    optionIndexes.length === 1
+      ? arguments_[optionIndexes[0] + 1]?.trim()
+      : environmentValue?.trim();
+  if (value === undefined || value === '') return undefined;
+  if (value !== 'windowsml-dml' && value !== 'cpu') {
+    throw new Error(`${option} must be windowsml-dml or cpu.`);
+  }
+  return value;
+}
+
+export function assertExpectedOcrDevice(
+  actual: OcrDevice,
+  expected: OcrDevice | undefined,
+): void {
+  if (expected !== undefined && actual !== expected) {
+    throw new Error(`Standalone desktop OCR used ${actual}; expected ${expected}.`);
+  }
+}
+
+export function isOwnedSmokeDocumentName(value: string): boolean {
+  return ownedSmokeDocumentPattern.test(value);
+}
+
+async function deleteCompletedOwnedSmokeDocuments(page: Page): Promise<void> {
+  const names = await page.locator('.document-copy strong').allTextContents();
+  for (const name of names.filter(isOwnedSmokeDocumentName)) {
+    await deleteCompletedDocument(page, name);
+  }
+}
+
+function exactDocumentCard(page: Page, fileName: string) {
+  const exactName = page.getByText(fileName, { exact: true });
+  return page.locator('button.document-card').filter({ has: exactName });
+}
+
+async function deleteCompletedDocument(page: Page, fileName: string): Promise<boolean> {
+  const card = exactDocumentCard(page, fileName);
+  if ((await card.count()) === 0) return false;
+  assert.equal(
+    await card.count(),
+    1,
+    'Standalone desktop cleanup filename must identify exactly one document.',
+  );
+  if ((await card.locator('.status').getAttribute('data-status')) !== 'completed') return false;
+  await card.click();
+  const detailPane = page.locator('.detail-pane');
+  const selectedFileName = await detailPane.locator('.detail-heading h2').textContent();
+  assert.equal(
+    selectedFileName?.trim(),
+    fileName,
+    'Standalone desktop cleanup must verify the exact selected filename.',
+  );
+  page.once('dialog', (dialog) => dialog.accept());
+  await detailPane.getByRole('button', { name: '刪除', exact: true }).click();
+  await card.waitFor({ state: 'hidden', timeout: 30_000 });
+  return true;
 }
 
 function assertConfiguredHostAppData(appData: string): void {

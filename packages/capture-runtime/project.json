@@ -62,6 +62,20 @@
         "command": "uv run --python 3.12 python scripts/generate_schema.py --output dist/schema/capture-document-v1.schema.json"
       }
     },
+    "generate-production-schema": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "dependsOn": ["verify-production-environment"],
+      "inputs": ["production"],
+      "outputs": ["{projectRoot}/dist/schema"],
+      "metadata": {
+        "description": "Generates the release schema without mutating the verified production environment."
+      },
+      "options": {
+        "cwd": "packages/capture-runtime",
+        "command": "uv run --no-sync --python 3.12 python scripts/generate_schema.py --output dist/schema/capture-document-v1.schema.json"
+      }
+    },
     "sync-angular-schema": {
       "executor": "nx:run-commands",
       "cache": false,
@@ -81,25 +95,49 @@
         "command": "uv run --python 3.12 python scripts/build_executable.py"
       }
     },
+    "prepare-production-environment": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "metadata": {
+        "description": "Synchronizes the Windows production engine environment and repairs overlapping ONNX Runtime namespace transitions."
+      },
+      "options": {
+        "cwd": "packages/capture-runtime",
+        "command": "uv sync --python 3.12 --extra windowsml --extra whisper --reinstall-package onnxruntime-directml"
+      }
+    },
+    "verify-production-environment": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "dependsOn": ["prepare-production-environment"],
+      "metadata": {
+        "description": "Requires DirectML to be the sole ONNX Runtime distribution and provider for Windows production builds."
+      },
+      "options": {
+        "cwd": "packages/capture-runtime",
+        "command": "uv run --no-sync --python 3.12 python scripts/verify_production_environment.py"
+      }
+    },
     "build-production-executable": {
       "cache": true,
       "executor": "nx:run-commands",
+      "dependsOn": ["verify-production-environment"],
       "inputs": ["production"],
       "outputs": ["{projectRoot}/dist/executable"],
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --python 3.12 --extra windowsml --extra whisper python scripts/build_executable.py --require-engines"
+        "command": "uv run --no-sync --python 3.12 python scripts/build_executable.py --require-engines"
       }
     },
     "build-release-artifacts": {
       "cache": false,
       "executor": "nx:run-commands",
-      "dependsOn": ["build-production-executable", "generate-schema"],
+      "dependsOn": ["build-production-executable", "generate-production-schema"],
       "inputs": ["production"],
       "outputs": ["{projectRoot}/dist/release"],
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --python 3.12 python scripts/build_release_artifacts.py"
+        "command": "uv run --no-sync --python 3.12 python scripts/build_release_artifacts.py"
       }
     },
     "local-release-consumer-smoke": {
