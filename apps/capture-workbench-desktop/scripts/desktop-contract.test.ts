@@ -42,6 +42,12 @@ test('Nx separates root verification build from release and deterministic NSIS l
     project.targets['smoke-real-ollama'].metadata.description,
     /excluded from ordinary CI/u,
   );
+  const directmlSmoke = project.targets['smoke-real-desktop-ocr-directml'];
+  assert.match(directmlSmoke.metadata.description, /requires DirectML provenance/u);
+  assert.match(
+    directmlSmoke.options.commands.at(-1),
+    /--expected-ocr-device windowsml-dml$/u,
+  );
 });
 
 test('production CSP is strict while allowing only dynamic loopback API ports', async () => {
@@ -292,6 +298,28 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
     JSON.stringify(project.targets['build-release-artifacts'].dependsOn),
     /production-preflight/u,
   );
+  assert.deepEqual(project.targets['generate-production-schema'].dependsOn, [
+    'verify-production-environment',
+  ]);
+  assert.deepEqual(project.targets['build-production-executable'].dependsOn, [
+    'verify-production-environment',
+  ]);
+  assert.deepEqual(project.targets['build-release-artifacts'].dependsOn, [
+    'build-production-executable',
+    'generate-production-schema',
+  ]);
+  assert.match(
+    project.targets['prepare-production-environment'].options.command,
+    /uv sync[\s\S]*--reinstall-package onnxruntime-directml/u,
+  );
+  for (const target of [
+    'verify-production-environment',
+    'generate-production-schema',
+    'build-production-executable',
+    'build-release-artifacts',
+  ]) {
+    assert.match(project.targets[target].options.command, /uv run --no-sync/u);
+  }
   assert.doesNotMatch(
     releaseBuilder,
     /RuntimeSettings|OLLAMA_MODELS|WHISPER_MODELS/u,

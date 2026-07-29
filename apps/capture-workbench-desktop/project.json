@@ -179,6 +179,24 @@
         "parallel": false
       }
     },
+    "smoke-real-desktop-ocr-directml": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "metadata": {
+        "description": "Opt-in Windows standalone-app OCR release gate that requires DirectML provenance. Requires an explicitly prepared host app-data directory and a user-provided scanned PDF."
+      },
+      "outputs": [
+        "{workspaceRoot}/tmp/capture-workbench-desktop/real-desktop-ocr-smoke/real-desktop-ocr-smoke.json"
+      ],
+      "options": {
+        "commands": [
+          "corepack pnpm nx run capture-workbench-desktop:stage-product-runtime",
+          "corepack pnpm nx run capture-workbench-desktop:build",
+          "node apps/capture-workbench-desktop/scripts/real-desktop-ocr-smoke.ts --expected-ocr-device windowsml-dml"
+        ],
+        "parallel": false
+      }
+    },
     "smoke-installed-deterministic": {
       "cache": false,
       "executor": "nx:run-commands",

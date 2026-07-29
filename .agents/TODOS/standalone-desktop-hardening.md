@@ -3,7 +3,7 @@
 Implementation and local verification are complete. Keep this TODO active until
 the replacement PRs have remote evidence and the superseded PR is closed.
 
-- [ ] Confirm every required check on standalone replacement PR #5 is green at
+- [x] Confirm every required check on standalone replacement PR #5 is green at
   its final reviewed HEAD.
 - [ ] Create the stacked DirectML branch and PR, rerun its real Radeon OCR
   evidence, and confirm every required check is green.

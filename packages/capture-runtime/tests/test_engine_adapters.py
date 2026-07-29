@@ -146,7 +146,7 @@ def test_windowsml_adapter_uses_cpu_only_when_dml_is_unavailable(tmp_path: Path)
     ]
 
 
-def test_windowsml_adapter_dml_failure_does_not_create_cpu_retry(tmp_path: Path) -> None:
+def test_windowsml_adapter_dml_failure_does_not_create_cpu_only_retry(tmp_path: Path) -> None:
     model_dir = tmp_path / "windowsml"
     _write_windowsml_models(model_dir)
     configurations: list[dict[str, object]] = []
@@ -165,7 +165,7 @@ def test_windowsml_adapter_dml_failure_does_not_create_cpu_retry(tmp_path: Path)
         provider_resolver=lambda: ["DmlExecutionProvider", "CPUExecutionProvider"],
     )
 
-    with pytest.raises(EngineRuntimeUnavailableError, match="CPU fallback is disabled"):
+    with pytest.raises(EngineRuntimeUnavailableError, match="CPU-only pipeline retry is disabled"):
         adapter.extract_png(b"valid-png-bytes-for-fake-pipeline")
 
     assert len(configurations) == 1

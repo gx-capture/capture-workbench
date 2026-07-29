@@ -128,7 +128,7 @@ def _paddle_texts(results: Any) -> list[str]:
 
 
 class WindowsMLOcrAdapter:
-    """PaddleOCR 3.7 ONNX pipeline with DML-first and strict CPU fallback."""
+    """PaddleOCR 3.7 DML-first session with no separate CPU-only retry."""
 
     def __init__(
         self,
@@ -189,7 +189,7 @@ class WindowsMLOcrAdapter:
                     "CPUExecutionProvider is required for deterministic fallback.",
                 )
             detail = (
-                "WindowsML DML and CPU fallback are ready."
+                "WindowsML DML-first session with CPU execution-provider support is ready."
                 if "DmlExecutionProvider" in providers
                 else "DmlExecutionProvider is unavailable; CPU OCR fallback is ready."
             )
@@ -218,7 +218,7 @@ class WindowsMLOcrAdapter:
                 raise
             raise EngineRuntimeUnavailableError(
                 "WindowsML DirectML OCR execution failed while a GPU provider was available; "
-                "CPU fallback is disabled: "
+                "a separate CPU-only pipeline retry is disabled: "
                 f"{type(error).__name__}: {error}"
             ) from error
         if self._model_digest is None:
