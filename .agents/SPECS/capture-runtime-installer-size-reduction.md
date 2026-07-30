@@ -262,10 +262,16 @@ No external release is created by local implementation or verification.
 ## Size Baseline and Budgets
 
 `scripts/report_bundle_size.py` emits canonical JSON containing tool/runtime
-versions, executable and installer bytes, optional installed bytes, cold/warm
-startup milliseconds, top PyInstaller files, and categorized core/PDF/OCR/
-Whisper bytes. Unknown measurements are `null` with an explicit blocker; they
-are never invented.
+versions, exact executable and installer file names/bytes/SHA-256, installed
+bytes, top PyInstaller files, and categorized core/PDF/OCR/Whisper bytes.
+Installed bytes come only from exact silent install plus positive byte
+measurement and native-uninstall proof. Product-registry and run-directory
+cleanup after that proof is best-effort diagnostic hygiene. Unknown
+measurements are `null` with an explicit blocker; they are never invented.
+Canonical report v2 has no direct installed-directory input and rejects
+missing, unknown, partial, or legacy startup fields.
+Startup timing is not part of this report or its release budget. Full
+installed-app startup evidence remains opt-in.
 
 `size-baselines/windows-x64.json` records the actual pre-change artifacts.
 `size-budgets/windows-x64.json` is created only from measured post-change
@@ -280,11 +286,10 @@ Measured Windows x64 evidence for this implementation:
 | Installed core-only app | unavailable | 32,001,423 | no comparable baseline |
 
 The selected onefile core remains smaller than the previously measured
-42,197,350-byte onedir candidate. Final hardening-follow-up readiness samples
-are 1,600.332 ms cold and 1,435.840 ms warm.
+42,197,350-byte onedir candidate.
 The executable and NSIS budgets add exactly 10% headroom to the measured after
-values. The old startup and installed-size baseline remain explicit `null`
-values; no historical value was inferred.
+values. The old installed-size baseline remains an explicit `null` value; no
+historical value was inferred.
 
 ## CI and Nx Gates
 

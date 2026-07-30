@@ -44,6 +44,51 @@ function processObserverError(result, attempt, operation, code) {
   );
 }
 
+export function createTrackedProcessTreeTerminator({
+  smokeRoot,
+  workspaceRoot,
+  baseChildEnvironment,
+  windowsSystemExecutable,
+  spawnSyncProcess = spawnSync,
+}) {
+  return function terminateTrackedProcessTree(child, label) {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      return of(undefined);
+    }
+    if (!Number.isSafeInteger(child.pid) || child.pid < 1) {
+      return throwError(
+        () => new Error(`${label} did not expose a valid owned PID.`),
+      );
+    }
+    const exited = race(fromEvent(child, 'exit'), fromEvent(child, 'error')).pipe(
+      take(1),
+      map(() => undefined),
+    );
+    const result = spawnSyncProcess(
+      windowsSystemExecutable('System32', 'taskkill.exe'),
+      ['/PID', String(child.pid), '/T', '/F'],
+      {
+        env: baseChildEnvironment(process.env, smokeRoot, workspaceRoot),
+        encoding: 'utf8',
+        windowsHide: true,
+        timeout: 30_000,
+      },
+    );
+    return race(exited, timer(20_000).pipe(map(() => undefined))).pipe(
+      map(() => {
+        const stillRunning =
+          child.exitCode === null && child.signalCode === null;
+        assertTaskkillResult(result, stillRunning);
+        if (stillRunning) {
+          throw new Error(
+            `${label} remained active after exact PID tree cleanup.`,
+          );
+        }
+      }),
+    );
+  };
+}
+
 export function createInstalledProcessCleanup({
   smokeRoot,
   workspaceRoot,
@@ -52,6 +97,13 @@ export function createInstalledProcessCleanup({
   spawnSyncProcess = spawnSync,
 }) {
   const privateProcessRoots = new Set();
+  const terminateTrackedProcessTree = createTrackedProcessTreeTerminator({
+    smokeRoot,
+    workspaceRoot,
+    baseChildEnvironment,
+    windowsSystemExecutable,
+    spawnSyncProcess,
+  });
 
   function rootKey(root) {
     const resolvedRoot = resolve(root);
@@ -95,36 +147,6 @@ export function createInstalledProcessCleanup({
       );
     }
     return safeRoot;
-  }
-
-  function terminateTrackedProcessTree(child, label) {
-    if (child.exitCode !== null || child.signalCode !== null) return of(undefined);
-    if (!Number.isSafeInteger(child.pid) || child.pid < 1) {
-      return throwError(() => new Error(`${label} did not expose a valid owned PID.`));
-    }
-    const exited = race(
-      fromEvent(child, 'exit'),
-      fromEvent(child, 'error'),
-    ).pipe(take(1), map(() => undefined));
-    const result = spawnSyncProcess(
-      windowsSystemExecutable('System32', 'taskkill.exe'),
-      ['/PID', String(child.pid), '/T', '/F'],
-      {
-        env: baseChildEnvironment(process.env, smokeRoot, workspaceRoot),
-        encoding: 'utf8',
-        windowsHide: true,
-        timeout: 30_000,
-      },
-    );
-    return race(exited, timer(20_000).pipe(map(() => undefined))).pipe(
-      map(() => {
-        const stillRunning = child.exitCode === null && child.signalCode === null;
-        assertTaskkillResult(result, stillRunning);
-        if (stillRunning) {
-          throw new Error(`${label} remained active after exact PID tree cleanup.`);
-        }
-      }),
-    );
   }
 
   function waitUntil(check, timeout, message, deadline = Date.now() + timeout) {

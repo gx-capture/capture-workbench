@@ -4,6 +4,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
+import { of } from 'rxjs';
 
 import {
   assertInstalledSmokeEvidence,
@@ -19,6 +20,7 @@ import {
   installerArguments,
   nestedErrorMessages,
   releaseExclusiveSmokeLock,
+  runInstalledDeterministicSmoke,
   uninstallerArguments,
 } from './installed-deterministic-smoke.ts';
 import { expectedInstallerName } from './installed-smoke-lifecycle.ts';
@@ -43,6 +45,31 @@ test('installed measurement derives the exact installer name from release metada
     'Capture Workbench_0.3.5_x64-setup.exe',
   );
   assert.throws(() => expectedInstallerName('0.3.5-beta'), /semantic x\.y\.z/u);
+});
+
+test('release size dispatch returns before the installed app observer lane', async () => {
+  let sizeCalls = 0;
+  let observerConstructions = 0;
+  const expected = { reportPath: 'installed-size.json' };
+  const result = await observe(
+    runInstalledDeterministicSmoke(
+      { expectedSource: 'release', measureOnly: true },
+      {
+        runSizeMeasurement: () => {
+          sizeCalls += 1;
+          return of(expected);
+        },
+        createProcessCleanup: () => {
+          observerConstructions += 1;
+          throw new Error('Full Tauri/observer lane must not be constructed.');
+        },
+      },
+    ),
+  );
+
+  assert.deepEqual(result, expected);
+  assert.equal(sizeCalls, 1);
+  assert.equal(observerConstructions, 0);
 });
 
 test('installed smoke paths and NSIS arguments stay inside the exact tmp subtree', () => {

@@ -17,6 +17,106 @@ const coreRuntimeAssetNames = Object.freeze([
 ]);
 const engineCatalogName = 'capture-engine-catalog.json';
 const runtimeSizeReportName = 'runtime-size-report.json';
+const sizeReportFields = Object.freeze([
+  'arch',
+  'installedBytes',
+  'installedBytesBlocker',
+  'nsisInstaller',
+  'platform',
+  'pyinstaller',
+  'pythonVersion',
+  'reportVersion',
+  'runtimeExecutable',
+]);
+const sizeArtifactFields = Object.freeze([
+  'bytes',
+  'fileName',
+  'path',
+  'sha256',
+]);
+const pyinstallerFields = Object.freeze([
+  'blocker',
+  'categories',
+  'files',
+  'topFiles',
+]);
+const pyinstallerCategoryFields = Object.freeze([
+  'core',
+  'ocr',
+  'other',
+  'pdf',
+  'whisper',
+]);
+const pyinstallerFileFields = Object.freeze(['bytes', 'path']);
+
+function hasExactFields(value, fields) {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    Object.keys(value).length === fields.length &&
+    fields.every((field) => Object.hasOwn(value, field))
+  );
+}
+
+function isJsonInteger(value, minimum = 0) {
+  return Number.isSafeInteger(value) && value >= minimum;
+}
+
+function isSha256(value) {
+  return typeof value === 'string' && /^[a-f0-9]{64}$/u.test(value);
+}
+
+function isCanonicalSizeArtifact(value) {
+  return (
+    hasExactFields(value, sizeArtifactFields) &&
+    typeof value.path === 'string' &&
+    value.path.length > 0 &&
+    typeof value.fileName === 'string' &&
+    value.fileName.length > 0 &&
+    basename(value.path) === value.fileName &&
+    isJsonInteger(value.bytes, 1) &&
+    isSha256(value.sha256)
+  );
+}
+
+function isCanonicalPyinstallerFile(value) {
+  return (
+    hasExactFields(value, pyinstallerFileFields) &&
+    typeof value.path === 'string' &&
+    value.path.length > 0 &&
+    isJsonInteger(value.bytes)
+  );
+}
+
+function isCanonicalPyinstaller(value) {
+  if (!hasExactFields(value, pyinstallerFields)) return false;
+  const categories = value.categories;
+  return (
+    Array.isArray(value.files) &&
+    value.files.every(isCanonicalPyinstallerFile) &&
+    Array.isArray(value.topFiles) &&
+    value.topFiles.every(isCanonicalPyinstallerFile) &&
+    hasExactFields(categories, pyinstallerCategoryFields) &&
+    Object.values(categories).every((bytes) => isJsonInteger(bytes)) &&
+    (value.blocker === null || typeof value.blocker === 'string')
+  );
+}
+
+function isCanonicalSizeReport(value) {
+  return (
+    hasExactFields(value, sizeReportFields) &&
+    value.reportVersion === '2' &&
+    ['arch', 'platform', 'pythonVersion'].every(
+      (field) => typeof value[field] === 'string' && value[field].length > 0,
+    ) &&
+    isCanonicalSizeArtifact(value.runtimeExecutable) &&
+    isCanonicalSizeArtifact(value.nsisInstaller) &&
+    isJsonInteger(value.installedBytes, 1) &&
+    value.installedBytesBlocker === null &&
+    isCanonicalPyinstaller(value.pyinstaller)
+  );
+}
 
 function run(command, args, { allowFailure = false } = {}) {
   const executable =
@@ -332,15 +432,14 @@ async function preflightCandidate(input, runCommand) {
   JSON.parse(await readFile(coreRuntimeAssets[3], 'utf8'));
   const sizeReport = JSON.parse(await readFile(sizeReportPath, 'utf8'));
   if (
-    sizeReport?.runtimeExecutable?.bytes !== executableMetadata.size ||
-    sizeReport?.runtimeExecutable?.sha256 !== executableDigest ||
-    sizeReport?.nsisInstaller?.bytes !== installerMetadata.size ||
-    sizeReport?.nsisInstaller?.sha256 !==
-      (await hashFile(input.installerPath, 'sha256')) ||
-    !Number.isSafeInteger(sizeReport?.installedBytes) ||
-    sizeReport.installedBytes < 1 ||
-    sizeReport?.installedBytesBlocker !== null ||
-    sizeReport?.startup?.blocker !== null
+    !isCanonicalSizeReport(sizeReport) ||
+    sizeReport.runtimeExecutable.fileName !== basename(executable) ||
+    sizeReport.runtimeExecutable.bytes !== executableMetadata.size ||
+    sizeReport.runtimeExecutable.sha256 !== executableDigest ||
+    sizeReport.nsisInstaller.fileName !== basename(input.installerPath) ||
+    sizeReport.nsisInstaller.bytes !== installerMetadata.size ||
+    sizeReport.nsisInstaller.sha256 !==
+      (await hashFile(input.installerPath, 'sha256'))
   ) {
     throw new Error(
       'Runtime size report does not match the exact release candidate.',

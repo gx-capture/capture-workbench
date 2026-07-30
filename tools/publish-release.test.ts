@@ -164,17 +164,36 @@ function createCandidate() {
   );
   const sizeReport = Buffer.from(
     `${JSON.stringify({
-      runtimeExecutable: {
-        bytes: executable.length,
-        sha256: executableDigest,
-      },
+      arch: 'x86_64',
+      installedBytes: 12345,
+      installedBytesBlocker: null,
       nsisInstaller: {
+        path: installerPath,
+        fileName: basename(installerPath),
         bytes: installerBytes.length,
         sha256: hash(installerBytes, 'sha256'),
       },
-      installedBytes: 12345,
-      installedBytesBlocker: null,
-      startup: { blocker: null },
+      platform: 'windows',
+      pyinstaller: {
+        blocker: null,
+        categories: {
+          core: 0,
+          ocr: 0,
+          other: 0,
+          pdf: 0,
+          whisper: 0,
+        },
+        files: [],
+        topFiles: [],
+      },
+      pythonVersion: '3.12.12',
+      reportVersion: '2',
+      runtimeExecutable: {
+        path: join(runtimeDirectory, executableName),
+        fileName: executableName,
+        bytes: executable.length,
+        sha256: executableDigest,
+      },
     })}\n`,
   );
   writeFileSync(join(runtimeDirectory, runtimeSizeReportName), sizeReport);
@@ -214,6 +233,21 @@ function writeCandidateCatalog(candidate, payload) {
   writeFileSync(
     join(candidate.input.runtimeDirectory, `${engineCatalogName}.sha256`),
     `${hash(catalog, 'sha256')}  ${engineCatalogName}\n`,
+  );
+}
+
+function writeCandidateSizeReport(candidate, payload) {
+  const report = Buffer.from(`${JSON.stringify(payload)}\n`);
+  writeFileSync(
+    join(candidate.input.runtimeDirectory, runtimeSizeReportName),
+    report,
+  );
+  writeFileSync(
+    join(
+      candidate.input.runtimeDirectory,
+      `${runtimeSizeReportName}.sha256`,
+    ),
+    `${hash(report, 'sha256')}  ${runtimeSizeReportName}\n`,
   );
 }
 
@@ -546,6 +580,60 @@ test('package conflict and malformed local candidate stop before mutations', asy
     assert.deepEqual(invalid.calls, []);
   } finally {
     rmSync(candidate.root, { recursive: true, force: true });
+  }
+});
+
+test('size report must identify the exact installer before publication', async () => {
+  const candidate = createCandidate();
+  try {
+    const reportPath = join(
+      candidate.input.runtimeDirectory,
+      runtimeSizeReportName,
+    );
+    const report = JSON.parse(readFileSync(reportPath, 'utf8'));
+    report.nsisInstaller.fileName = 'other-installer.exe';
+    writeCandidateSizeReport(candidate, report);
+    const remote = createRemote(candidate);
+
+    await assert.rejects(
+      observe(
+        publishRelease(candidate.input, { runCommand: remote.runCommand }),
+      ),
+      /size report does not match the exact release candidate/u,
+    );
+    assert.deepEqual(remote.calls, []);
+  } finally {
+    rmSync(candidate.root, { recursive: true, force: true });
+  }
+});
+
+test('publisher rejects noncanonical size report v2 before mutation', async () => {
+  for (const mutate of [
+    (report) => (report.reportVersion = '1'),
+    (report) => (report.startup = { blocker: null }),
+    (report) => delete report.runtimeExecutable.sha256,
+  ]) {
+    const candidate = createCandidate();
+    try {
+      const reportPath = join(
+        candidate.input.runtimeDirectory,
+        runtimeSizeReportName,
+      );
+      const report = JSON.parse(readFileSync(reportPath, 'utf8'));
+      mutate(report);
+      writeCandidateSizeReport(candidate, report);
+      const remote = createRemote(candidate);
+
+      await assert.rejects(
+        observe(
+          publishRelease(candidate.input, { runCommand: remote.runCommand }),
+        ),
+        /size report does not match the exact release candidate/u,
+      );
+      assert.deepEqual(remote.calls, []);
+    } finally {
+      rmSync(candidate.root, { recursive: true, force: true });
+    }
   }
 });
 

@@ -773,8 +773,20 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   const ciSizeValidationIndex = ciSteps.findIndex(
     (step) => step.name === 'Verify measured size budgets',
   );
-  assert.ok(ciInstallerIndex < ciMeasureIndex);
+  const ciDesktopIndex = ciSteps.findIndex(
+    (step) => step.name === 'Verify Capture Workbench desktop product',
+  );
+  const ciReferenceIndex = ciSteps.findIndex(
+    (step) => step.name === 'Verify reference flow',
+  );
+  const ciDiagnosticsIndex = ciSteps.findIndex(
+    (step) => step.name === 'Upload runtime packaging diagnostics',
+  );
+  assert.ok(ciInstallerIndex < ciDesktopIndex);
+  assert.ok(ciDesktopIndex < ciReferenceIndex);
+  assert.ok(ciReferenceIndex < ciMeasureIndex);
   assert.ok(ciMeasureIndex < ciSizeValidationIndex);
+  assert.ok(ciSizeValidationIndex < ciDiagnosticsIndex);
   const ciMeasureStep = requiredWorkflowStep(
     ciSteps,
     'Measure exact installed size',
@@ -796,6 +808,13 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   assert.equal(
     requiredWorkflowStep(ciSteps, 'Verify measured size budgets').condition,
     "github.event_name != 'pull_request'",
+  );
+  assert.equal(
+    requiredWorkflowStep(
+      ciSteps,
+      'Upload runtime packaging diagnostics',
+    ).condition,
+    'always()',
   );
   for (const stepName of [
     'Verify Capture Workbench desktop product',
