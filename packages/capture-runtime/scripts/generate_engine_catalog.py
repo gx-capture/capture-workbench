@@ -6,7 +6,12 @@ import zipfile
 from pathlib import Path
 from urllib.parse import quote
 
-from model_source_lock import load_source_lock, model_delivery
+from model_source_lock import (
+    CORE_ONLY_RELEASE_MODE,
+    load_source_lock,
+    model_delivery,
+    release_mode,
+)
 
 from capture_runtime.constants import RUNTIME_VERSION
 from capture_runtime.engine_catalog import EngineCatalog, canonical_json_bytes
@@ -110,10 +115,7 @@ def main() -> None:
     parser.add_argument("--whisper-worker-archive", type=Path, required=True)
     parser.add_argument("--whisper-worker-manifest", type=Path, required=True)
     parser.add_argument("--model-source-lock", type=Path)
-    parser.add_argument("--require-complete", action="store_true")
     arguments = parser.parse_args()
-    if arguments.require_complete and arguments.model_source_lock is None:
-        raise SystemExit("release catalog requires an approved exact direct model source lock")
     source_lock = (
         None
         if arguments.model_source_lock is None
@@ -124,10 +126,10 @@ def main() -> None:
         != arguments.ocr_worker_archive.parent.resolve()
     ):
         raise SystemExit("OCR and Whisper worker archives must share one engine directory")
-    payload = {
-        "catalogVersion": "2",
-        "runtimeVersion": RUNTIME_VERSION,
-        "requirements": [
+    requirements = (
+        []
+        if source_lock is not None and release_mode(source_lock) == CORE_ONLY_RELEASE_MODE
+        else [
             requirement(
                 requirement_id="windowsml-ocr",
                 worker_archive=arguments.ocr_worker_archive,
@@ -148,7 +150,12 @@ def main() -> None:
                 ),
                 release_base_url=arguments.release_base_url,
             ),
-        ],
+        ]
+    )
+    payload = {
+        "catalogVersion": "2",
+        "runtimeVersion": RUNTIME_VERSION,
+        "requirements": requirements,
     }
     EngineCatalog.from_dict(payload)
     arguments.output.parent.mkdir(parents=True, exist_ok=True)

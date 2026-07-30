@@ -205,6 +205,34 @@ function createCandidate() {
   };
 }
 
+function writeCandidateCatalog(candidate, payload) {
+  const catalog = Buffer.from(`${JSON.stringify(payload)}\n`);
+  writeFileSync(
+    join(candidate.input.runtimeDirectory, engineCatalogName),
+    catalog,
+  );
+  writeFileSync(
+    join(candidate.input.runtimeDirectory, `${engineCatalogName}.sha256`),
+    `${hash(catalog, 'sha256')}  ${engineCatalogName}\n`,
+  );
+}
+
+function makeCoreOnly(candidate) {
+  for (const name of readdirSync(candidate.input.runtimeDirectory)) {
+    if (
+      name.startsWith('capture-engine-ocr') ||
+      name.startsWith('capture-engine-whisper')
+    ) {
+      rmSync(join(candidate.input.runtimeDirectory, name), { force: true });
+    }
+  }
+  writeCandidateCatalog(candidate, {
+    catalogVersion: '2',
+    requirements: [],
+    runtimeVersion: version,
+  });
+}
+
 function createRemote(candidate, initial = {}) {
   const calls = [];
   const assets = new Map(
@@ -247,9 +275,9 @@ function createRemote(candidate, initial = {}) {
         ? failure('release not found')
         : success(
             JSON.stringify({
-              assets: (
-                state.reportedAssetNames ?? [...assets.keys()]
-              ).map((name) => ({ name })),
+              assets: (state.reportedAssetNames ?? [...assets.keys()]).map(
+                (name) => ({ name }),
+              ),
               isDraft: state.release === 'draft',
             }),
           );
@@ -544,10 +572,83 @@ test('model ZIPs are rejected from the local release asset set', async () => {
   }
 });
 
+test('core-only publication accepts only core assets and excludes QA fixtures', async () => {
+  const candidate = createCandidate();
+  try {
+    makeCoreOnly(candidate);
+    const remote = createRemote(candidate);
+    await observe(
+      publishRelease(candidate.input, { runCommand: remote.runCommand }),
+    );
+    assert.equal(remote.state.release, 'public');
+    assert.ok(
+      [...remote.assets.keys()].every(
+        (name) =>
+          !name.startsWith('capture-engine-ocr') &&
+          !name.startsWith('capture-engine-whisper') &&
+          !name.startsWith('capture-model-') &&
+          !name.includes('fixture'),
+      ),
+    );
+
+    writeFileSync(
+      join(candidate.input.runtimeDirectory, 'real-ocr-fixture.png'),
+      'qa-only',
+    );
+    const invalid = createRemote(candidate);
+    await assert.rejects(
+      observe(
+        publishRelease(candidate.input, { runCommand: invalid.runCommand }),
+      ),
+      /only .*canonical assets/u,
+    );
+    assert.deepEqual(invalid.calls, []);
+  } finally {
+    rmSync(candidate.root, { recursive: true, force: true });
+  }
+});
+
+test('malformed or partial catalog requirements never select core-only', async () => {
+  for (const payload of [
+    { catalogVersion: '2', runtimeVersion: version },
+    { catalogVersion: '2', requirements: null, runtimeVersion: version },
+    {
+      catalogVersion: '2',
+      requirements: [{ requirementId: 'windowsml-ocr' }],
+      runtimeVersion: version,
+    },
+    {
+      catalogVersion: '2',
+      requirements: [],
+      runtimeVersion: version,
+      unexpected: true,
+    },
+  ]) {
+    const candidate = createCandidate();
+    try {
+      makeCoreOnly(candidate);
+      writeCandidateCatalog(candidate, payload);
+      const remote = createRemote(candidate);
+      await assert.rejects(
+        observe(
+          publishRelease(candidate.input, { runCommand: remote.runCommand }),
+        ),
+        /catalog identity, version, or requirement set is invalid/u,
+      );
+      assert.deepEqual(remote.calls, []);
+    } finally {
+      rmSync(candidate.root, { recursive: true, force: true });
+    }
+  }
+});
+
 test('worker archive names cannot escape or alias the release directory', async () => {
   const candidate = createCandidate();
   try {
-    const catalogPath = join(candidate.input.runtimeDirectory, engineCatalogName);
+    const catalogPath = join(
+      candidate.input.runtimeDirectory,
+      engineCatalogName,
+    );
     const catalog = JSON.parse(readFileSync(catalogPath, 'utf8'));
     catalog.requirements[0].artifacts[0].fileName = '../escape.zip';
     writeFileSync(catalogPath, `${JSON.stringify(catalog)}\n`);

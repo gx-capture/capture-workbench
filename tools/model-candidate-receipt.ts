@@ -47,7 +47,10 @@ function parseJsonFile(path) {
 }
 
 function parseCanonicalJsonBytes(bytes, label) {
-  if (!Buffer.isBuffer(bytes) || bytes.byteLength > maximumReceiptArchiveBytes) {
+  if (
+    !Buffer.isBuffer(bytes) ||
+    bytes.byteLength > maximumReceiptArchiveBytes
+  ) {
     throw new Error(`${label} exceeds the receipt size limit.`);
   }
   let value;
@@ -182,6 +185,57 @@ export function selectTrustedRun(
   return { run: qualifying[0], workflow };
 }
 
+export function selectTrustedMainCiRun(
+  workflow,
+  runsPayload,
+  expected,
+  { nowMs },
+) {
+  exactKeys(
+    workflow,
+    new Set(['id', 'path', 'state']),
+    'Trusted workflow metadata',
+  );
+  if (
+    workflow.path !== expected.workflowPath ||
+    workflow.state !== 'active' ||
+    !Number.isSafeInteger(workflow.id)
+  ) {
+    throw new Error('Trusted main CI workflow identity is invalid.');
+  }
+  if (
+    !Array.isArray(runsPayload?.workflow_runs) ||
+    runsPayload.total_count !== runsPayload.workflow_runs.length
+  ) {
+    throw new Error('Workflow run metadata is invalid.');
+  }
+  const qualifying = runsPayload.workflow_runs.filter((run) => {
+    const created = Date.parse(run.created_at);
+    const updated = Date.parse(run.updated_at);
+    return (
+      run.workflow_id === workflow.id &&
+      run.path === expected.workflowPath &&
+      run.event === 'push' &&
+      run.status === 'completed' &&
+      run.conclusion === 'success' &&
+      run.head_sha === expected.commitSha &&
+      run.head_branch === expected.branch &&
+      Number.isSafeInteger(run.id) &&
+      Number.isFinite(created) &&
+      Number.isFinite(updated) &&
+      created <= nowMs + allowedFutureSkewMs &&
+      updated >= created &&
+      updated <= nowMs + allowedFutureSkewMs
+    );
+  });
+  if (qualifying.length !== 1) {
+    throw new Error(
+      `Expected exactly one successful exact-commit main CI push run; found ${qualifying.length}.`,
+    );
+  }
+  return { run: qualifying[0], workflow };
+}
+
 export function selectTrustedArtifact(
   artifactsPayload,
   expected,
@@ -226,7 +280,9 @@ export function selectTrustedArtifact(
 export function assertArtifactDigest(serverDigest, archiveBytes) {
   const local = `sha256:${sha256Bytes(archiveBytes)}`;
   if (serverDigest !== local) {
-    throw new Error('Downloaded receipt artifact does not match the server digest.');
+    throw new Error(
+      'Downloaded receipt artifact does not match the server digest.',
+    );
   }
 }
 
@@ -288,7 +344,9 @@ export function createReceipt(input) {
     ) !== JSON.stringify(['whisper-primary', 'windowsml-ocr']) ||
     fixtures.size !== 2
   ) {
-    throw new Error('Real model candidate evidence is incomplete or inconsistent.');
+    throw new Error(
+      'Real model candidate evidence is incomplete or inconsistent.',
+    );
   }
   for (const item of evidenceRequirements) {
     exactKeys(
@@ -321,7 +379,9 @@ export function createReceipt(input) {
       item.segmentCount < 1 ||
       !/^sha256:[a-f0-9]{64}$/u.test(item.digest)
     ) {
-      throw new Error('Real model candidate evidence is incomplete or inconsistent.');
+      throw new Error(
+        'Real model candidate evidence is incomplete or inconsistent.',
+      );
     }
   }
   const modelManifests = modelManifestSummaries(catalog);
@@ -331,7 +391,9 @@ export function createReceipt(input) {
         requirement.modelFiles?.sourceLockSha256 !== sourceLockSha256,
     )
   ) {
-    throw new Error('Real model candidate catalog is not bound to the source lock.');
+    throw new Error(
+      'Real model candidate catalog is not bound to the source lock.',
+    );
   }
   const receipt = {
     catalogSha256: sha256File(input.catalog),
@@ -398,8 +460,7 @@ export function assertCatalogMatchesReceipt(receiptPath, catalogPath) {
     catalog?.runtimeVersion !== receipt.version ||
     catalog.requirements.some(
       (requirement) =>
-        requirement.modelFiles?.sourceLockSha256 !==
-        receipt.sourceLockSha256,
+        requirement.modelFiles?.sourceLockSha256 !== receipt.sourceLockSha256,
     ) ||
     JSON.stringify(rebuiltModelManifests) !==
       JSON.stringify(receipt.modelManifests)
@@ -449,9 +510,7 @@ export function assertCanonicalReceiptArchiveListing(listing) {
   if (typeof listing !== 'string') {
     throw new Error('Receipt artifact entry listing is invalid.');
   }
-  const entries = listing
-    .split(/\r?\n/u)
-    .filter((entry) => entry.length > 0);
+  const entries = listing.split(/\r?\n/u).filter((entry) => entry.length > 0);
   if (
     entries.length !== 1 ||
     entries[0] !== receiptFileName ||
@@ -489,15 +548,15 @@ export function readCanonicalReceiptArchive(archivePath) {
     metadata.size < 1 ||
     metadata.size > maximumReceiptArchiveBytes
   ) {
-    throw new Error('Candidate receipt archive must be a bounded regular file.');
+    throw new Error(
+      'Candidate receipt archive must be a bounded regular file.',
+    );
   }
   assertCanonicalReceiptArchiveListing(run('tar', ['-tf', archivePath]));
   assertRegularReceiptArchiveEntry(run('tar', ['-tvf', archivePath]));
-  const receiptBytes = run(
-    'tar',
-    ['-xOf', archivePath, receiptFileName],
-    { encoding: null },
-  );
+  const receiptBytes = run('tar', ['-xOf', archivePath, receiptFileName], {
+    encoding: null,
+  });
   return parseCanonicalJsonBytes(receiptBytes, 'Candidate receipt');
 }
 
@@ -563,18 +622,12 @@ function resolveReceipt(values) {
   const artifacts = ghJson(
     `repos/${repository}/actions/runs/${trusted.run.id}/artifacts?per_page=100`,
   );
-  const artifact = selectTrustedArtifact(
-    artifacts,
-    expected,
-    trusted.run,
-    { nowMs },
-  );
+  const artifact = selectTrustedArtifact(artifacts, expected, trusted.run, {
+    nowMs,
+  });
   const archiveBytes = run(
     'gh',
-    [
-      'api',
-      `repos/${repository}/actions/artifacts/${artifact.id}/zip`,
-    ],
+    ['api', `repos/${repository}/actions/artifacts/${artifact.id}/zip`],
     { encoding: null },
   );
   assertArtifactDigest(artifact.digest, archiveBytes);
@@ -593,7 +646,9 @@ function resolveReceipt(values) {
     mkdirSync(outputDirectory, { recursive: false });
     const outputMetadata = lstatSync(outputDirectory);
     if (!outputMetadata.isDirectory() || outputMetadata.isSymbolicLink()) {
-      throw new Error('Receipt output directory must be a new regular directory.');
+      throw new Error(
+        'Receipt output directory must be a new regular directory.',
+      );
     }
     writeFileSync(
       join(outputDirectory, receiptFileName),
@@ -622,6 +677,48 @@ function resolveReceipt(values) {
   }
 }
 
+function verifyMainCi(values) {
+  const repository = required(values, '--repository');
+  const commitSha = required(values, '--commit');
+  const workflowPath = required(values, '--workflow-path');
+  const branch = required(values, '--branch');
+  if (!/^[a-f0-9]{40}$/u.test(commitSha)) {
+    throw new Error('Main CI commit must be a full lowercase Git SHA.');
+  }
+  if (branch !== 'main') {
+    throw new Error(
+      'Release CI verification is restricted to the main branch.',
+    );
+  }
+  const encodedPath = encodeURIComponent(workflowPath);
+  const workflowRaw = ghJson(
+    `repos/${repository}/actions/workflows/${encodedPath}`,
+  );
+  const workflow = {
+    id: workflowRaw.id,
+    path: workflowRaw.path,
+    state: workflowRaw.state,
+  };
+  const runs = ghJson(
+    `repos/${repository}/actions/workflows/${workflow.id}/runs?branch=${encodeURIComponent(branch)}&event=push&status=success&head_sha=${commitSha}&per_page=100`,
+  );
+  const trusted = selectTrustedMainCiRun(
+    workflow,
+    runs,
+    { branch, commitSha, workflowPath },
+    { nowMs: Date.now() },
+  );
+  process.stdout.write(
+    canonicalJson({
+      branch,
+      commitSha,
+      runId: trusted.run.id,
+      workflowId: trusted.workflow.id,
+      workflowPath,
+    }),
+  );
+}
+
 if (
   process.argv[1] &&
   pathToFileURL(resolve(process.argv[1])).href === import.meta.url
@@ -642,6 +739,8 @@ if (
       });
     } else if (operation === 'resolve') {
       resolveReceipt(values);
+    } else if (operation === 'verify-main-ci') {
+      verifyMainCi(values);
     } else if (operation === 'verify-catalog') {
       assertCatalogMatchesReceipt(
         resolve(required(values, '--receipt')),
@@ -649,7 +748,7 @@ if (
       );
     } else {
       throw new Error(
-        'Receipt operation must be create, resolve, or verify-catalog.',
+        'Receipt operation must be create, resolve, verify-main-ci, or verify-catalog.',
       );
     }
   } catch (error) {

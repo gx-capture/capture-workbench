@@ -1,11 +1,11 @@
-# Direct Model Delivery Specification
+# Tiered Release and Direct Model Delivery Specification
 
 ## Purpose
 
-Keep the Capture Workbench `0.3.2` installer and GitHub Release small while
-making optional OCR and Whisper installation reproducible: after existing
-explicit user consent, download exact upstream model files into isolated
-runtime staging, prove them, and activate atomically.
+Publish Capture Workbench `0.3.2` safely in one of two canonical modes:
+core-only while model provenance is unresolved, or model-enabled after every
+existing direct-model trust gate passes. Keep the installer small and preserve
+explicit-consent, checksum-pinned model installation when models are enabled.
 
 ## Non-Goals
 
@@ -16,11 +16,46 @@ runtime staging, prove them, and activate atomically.
   persistence, package API change, or `cert-prep` operation.
 - No tag, release, package mutation, or publication from the candidate
   workflow.
+- No second release workflow, caller-selected release mode, bypass flag, or
+  best-effort fallback from malformed model metadata to core-only.
+
+## Release Mode Contract
+
+The checked-in source lock is required in both modes and is the only release
+mode input. It must be canonical sorted-key UTF-8 JSON, have the exact known
+top-level shape, and match the release and lock versions.
+
+- Core-only: `sourceLock.requirements` is exactly an empty array. The generated
+  catalog must also have `requirements: []`. Model-source approval, real
+  fixtures, a self-hosted `capture-directml` runner, and candidate receipt are
+  not required.
+- Model-enabled: `sourceLock.requirements` is non-empty. It must validate as the
+  exact approved OCR/Whisper set; the generated catalog must contain the exact
+  two complete bound requirements; and the exact-commit candidate receipt is
+  mandatory.
+- Invalid: the source lock or catalog is missing, malformed, non-canonical,
+  version-drifted, partial, unknown, or internally inconsistent. Invalid input
+  stops the release and is never treated as an empty requirements list.
+
+Exact-head main CI, synchronized versions, the complete workspace verification
+floor, and package/runtime/installer integrity are unconditional gates.
+The release workflow queries GitHub server metadata for the active trusted CI
+workflow and requires exactly one completed successful `push` run on `main`
+for the exact tag SHA. It rejects PR or release runs, wrong workflow identity,
+event, branch, or SHA, cancelled/skipped conclusions, and ambiguous success.
+
+The core-only runtime release directory contains no optional worker archive,
+model file/ZIP, or QA fixture. The empty canonical catalog is published so the
+runtime can deterministically report OCR and Whisper as unavailable with no
+artifact URL. The UI presents that unavailable state and offers no installation
+action. A direct installation request cannot begin a network download for an
+absent catalog requirement.
 
 ## Source Lock and Catalog Contract
 
-A canonical checked-in source lock is the only release-model input. Production
-validation fails unless it is explicitly approved and contains:
+A canonical checked-in source lock is the only release-model input. When its
+requirements are non-empty, production validation fails unless it is
+explicitly approved and contains:
 
 - lock/version/toolchain identity and approval record with no blockers;
 - exact OCR and Whisper requirement IDs and artifact version;
@@ -104,7 +139,7 @@ never log authorization material and send no bearer token to public sources.
 
 Nx owns:
 
-- source-lock validation;
+- canonical release-mode/source-lock validation;
 - complete release catalog generation;
 - focused direct-download/install tests; and
 - an opt-in real model candidate target that downloads the locked files and
@@ -112,7 +147,7 @@ Nx owns:
 
 Ordinary CI remains lightweight and does not download real weights.
 
-The candidate workflow runs only on `workflow_dispatch`, on a full SHA
+The model candidate workflow runs only on `workflow_dispatch`, on a full SHA
 reachable from `main`, with `contents: read` and `actions: read` only. It
 requires a self-hosted Windows x64 runner carrying the dedicated
 `capture-directml` label; `windows-latest` is forbidden because it cannot prove
@@ -124,7 +159,9 @@ output exactly with each fixture expectation, and uploads a small receipt with
 version, commit, source-lock SHA, model-manifest summaries, and asserted probe
 results.
 
-The tag workflow resolves that receipt only through GitHub server metadata. It
+The tag workflow validates and classifies the lock before model receipt work.
+For core-only it skips receipt resolution and receipt evidence assembly. For
+model-enabled it resolves the receipt only through GitHub server metadata. It
 requires the trusted workflow path/ID, dispatch event, success, exact head SHA,
 fresh server timestamps, exactly one non-expired receipt artifact, and matching
 server artifact ID/digest. After rebuilding, it requires exact equality for
@@ -136,10 +173,11 @@ rejects replay, expiry, ambiguity, wrong workflow/event/SHA/version/source
 lock/model manifest, unsuccessful runs, and tamper. It does not rebuild, stage,
 upload, hand off, or publish model files/ZIPs.
 
-The release candidate contains core runtime assets, worker ZIPs/sidecars,
-complete catalog, core-only NSIS, size report, and the package tarball. Upload
-uses compression level 0 and short retention for this ordinary-sized handoff;
-the superseded multi-gigabyte quota/cost gate is removed.
+The core-only release candidate contains core runtime assets, an empty canonical
+catalog, core-only NSIS, size report, and the package tarball. A model-enabled
+candidate additionally contains catalogued worker ZIPs/sidecars and receipt
+evidence. Neither mode contains model files/ZIPs or QA fixtures. Upload uses
+compression level 0 and short retention for this ordinary-sized handoff.
 
 ## Publisher
 
@@ -155,8 +193,17 @@ all draft/public retries it lists remote asset names and requires:
 
 ## Acceptance Criteria
 
-- Production source-lock/catalog generation fails with the checked-in blocked
-  legal/fixture record and succeeds only with a fully approved exact test lock.
+- The checked-in canonical empty-requirements lock produces a core-only empty
+  catalog and release without model approval or receipt evidence.
+- A non-empty blocked/unapproved lock fails before publication; an approved
+  non-empty lock still requires a fresh exact-commit receipt.
+- Missing, malformed, non-canonical, partial, or unknown lock/catalog
+  requirements fail closed rather than selecting core-only.
+- Core-only runtime requirements clearly report OCR/Whisper unavailable, the UI
+  offers no install action, and no absent-requirement download begins.
+- Core-only release assets contain no worker ZIP, model file/ZIP, or fixture.
+- Publisher exact-asset checks accept the canonical core-only set and continue
+  rejecting model ZIPs, extras, duplicates, and drift.
 - Worker archive security ceilings remain unchanged.
 - A checksum-pinned `model/*` direct file may exceed 512 MiB without being read
   wholly into memory; license/NOTICE/other files may not.

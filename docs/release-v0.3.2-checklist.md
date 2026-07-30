@@ -9,6 +9,22 @@ evidence.
 - [x] Version synchronized at `0.3.2`.
 - [x] Old public owner references removed; current URLs use `gx-capture`.
 - [ ] Tag commit is reachable from `main`.
+- [ ] Exactly one trusted `.github/workflows/ci.yml` `push` run completed
+      successfully on `main` for the exact intended tag commit.
+
+## Release model mode
+
+- [ ] The canonical checked-in source lock was classified from its exact bytes.
+- [ ] Core-only: source-lock and generated-catalog `requirements` are both
+      exactly empty; no model receipt, optional worker, model, or fixture asset
+      is present.
+- [ ] Model-enabled: the non-empty source lock is fully approved and the exact
+      two complete catalog requirements are bound to one fresh successful
+      exact-commit `capture-directml` candidate receipt.
+
+Missing, malformed, non-canonical, partial, or unknown requirements are not
+core-only. They block the release. The release mode is derived from repository
+metadata and has no caller override.
 
 The annotated `v0.3.1` tag was created externally and prematurely from
 `develop`. GitHub Actions run `30427950949` failed during the frozen install
@@ -56,6 +72,14 @@ Run in order from a clean checkout of the intended tag commit:
 ```powershell
 corepack pnpm install --frozen-lockfile
 corepack pnpm verify:release-version -- v0.3.2
+$candidateSha = git rev-parse HEAD
+node tools/model-candidate-receipt.ts verify-main-ci `
+  --repository "gx-capture/capture-workbench" `
+  --commit "$candidateSha" `
+  --workflow-path ".github/workflows/ci.yml" `
+  --branch "main"
+corepack pnpm nx run capture-runtime:classify-release-model-mode
+Get-Content packages/capture-runtime/dist/metadata/release-model-mode.json
 corepack pnpm verify
 corepack pnpm nx run capture-runtime:build-release-artifacts --skip-nx-cache
 node apps/capture-workbench-desktop/scripts/stage-runtime.ts `
@@ -80,7 +104,8 @@ cert-prep-style trial are consumer evidence only and do not change cert-prep.
 - [ ] GitHub Package visibility confirmed for unauthenticated or intended
       authenticated consumers.
 - [ ] Required `main` and `develop` branch protection/rulesets confirmed.
-- [ ] Draft release contains the exact four runtime assets and NSIS installer.
+- [ ] Draft release contains the exact canonical assets for the classified mode
+      and no model file/ZIP or QA fixture.
 - [ ] Published npm package integrity equals the candidate tarball integrity.
 - [ ] Release made public only after every asset and package check passed.
 

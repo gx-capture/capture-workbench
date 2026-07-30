@@ -6,6 +6,61 @@ import test from 'node:test';
 import { assertRedactedEvidence } from './package-qa.ts';
 import { appRoot } from './stage-runtime.ts';
 
+function workflowRunScripts(source: string): string[] {
+  const lines = source.split(/\r?\n/u);
+  const scripts: string[] = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const run = /^(?<indent>\s*)(?<listMarker>-\s+)?run:\s*(?<value>.*)$/u.exec(
+      lines[index],
+    );
+    if (!run?.groups) continue;
+    const indentation =
+      run.groups['indent'].length + (run.groups['listMarker']?.length ?? 0);
+    const value = run.groups['value'].trim();
+    if (!/^[|>][+-]?$/u.test(value)) {
+      scripts.push(value);
+      continue;
+    }
+    const block: string[] = [];
+    while (index + 1 < lines.length) {
+      const next = lines[index + 1];
+      const nextIndentation = /^\s*/u.exec(next)?.[0].length ?? 0;
+      if (next.trim().length > 0 && nextIndentation <= indentation) break;
+      block.push(next);
+      index += 1;
+    }
+    scripts.push(block.join('\n'));
+  }
+  return scripts;
+}
+
+test('workflow run extraction covers compact list steps and every block chomping form', () => {
+  const expression = '${{ github.ref_name }}';
+  assert.deepEqual(
+    workflowRunScripts(
+      ['steps:', `  - run: echo "${expression}"`, '  - name: next'].join('\n'),
+    ),
+    [`echo "${expression}"`],
+  );
+
+  for (const blockIndicator of ['|', '|-', '|+', '>', '>-', '>+']) {
+    assert.deepEqual(
+      workflowRunScripts(
+        [
+          'steps:',
+          `  - run: ${blockIndicator}`,
+          `      echo "${expression}"`,
+          '    env:',
+          `      SAFE_CONTEXT: ${expression}`,
+          '  - run: echo next-step',
+        ].join('\n'),
+      ),
+      [`      echo "${expression}"`, 'echo next-step'],
+      blockIndicator,
+    );
+  }
+});
+
 test('Nx separates root verification build from release and deterministic NSIS lanes', async () => {
   const project = JSON.parse(
     await readFile(join(appRoot, 'project.json'), 'utf8'),
@@ -337,8 +392,11 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
       'utf8',
     ),
   ]);
-  const actionReferences = [workflow, ciWorkflow, modelCandidateWorkflow].flatMap(
-    (source) =>
+  const actionReferences = [
+    workflow,
+    ciWorkflow,
+    modelCandidateWorkflow,
+  ].flatMap((source) =>
     [...source.matchAll(/uses:\s*[^@\s]+@([^\s#]+)/gu)].map(
       (match) => match[1],
     ),
@@ -375,9 +433,29 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   const resolveReceiptIndex = workflow.indexOf(
     'Resolve the exact trusted model candidate receipt',
   );
+  const exactMainCiIndex = workflow.indexOf(
+    'Verify successful exact-commit main CI',
+  );
+  const classifyModeIndex = workflow.indexOf(
+    'Classify canonical release model mode',
+  );
   assert.ok(installPnpmIndex < installNodeIndex);
-  assert.ok(installNodeIndex < resolveReceiptIndex);
-  assert.ok(resolveReceiptIndex < installUvIndex);
+  assert.ok(installNodeIndex < exactMainCiIndex);
+  assert.ok(exactMainCiIndex < installUvIndex);
+  assert.ok(installUvIndex < classifyModeIndex);
+  assert.ok(classifyModeIndex < resolveReceiptIndex);
+  assert.match(
+    workflow,
+    /model-candidate-receipt\.ts verify-main-ci[\s\S]*--workflow-path "\.github\/workflows\/ci\.yml"[\s\S]*--branch "main"/u,
+  );
+  assert.match(
+    workflow,
+    /Classify canonical release model mode[\s\S]*capture-runtime:classify-release-model-mode[\s\S]*releaseMode[\s\S]*core-only[\s\S]*model-enabled/u,
+  );
+  assert.match(
+    workflow,
+    /Resolve the exact trusted model candidate receipt\s*\r?\n\s+if: steps\.release-model-mode\.outputs\.mode == 'model-enabled'/u,
+  );
   assert.match(workflow, /model-candidate-receipt\.ts resolve/u);
   assert.match(workflow, /--max-age-hours "168"/u);
   const buildRuntimeIndex = workflow.indexOf(
@@ -394,7 +472,37 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   assert.ok(buildInstallerIndex > verifyCatalogIndex);
   assert.match(
     workflow,
+    /Verify the rebuilt catalog matches the trusted model candidate\s*\r?\n\s+if: steps\.release-model-mode\.outputs\.mode == 'model-enabled'/u,
+  );
+  assert.match(
+    workflow,
     /model-candidate-receipt\.ts verify-catalog[\s\S]*--receipt[\s\S]*--catalog/u,
+  );
+  assert.match(
+    workflow,
+    /\$env:RELEASE_MODEL_MODE -eq 'model-enabled'[\s\S]*model-candidate-receipt\.json[\s\S]*\$env:RELEASE_MODEL_MODE -ne 'core-only'/u,
+  );
+  const releaseRunScripts = workflowRunScripts(workflow).join('\n');
+  assert.doesNotMatch(releaseRunScripts, /\$\{\{/u);
+  assert.match(
+    workflow,
+    /Verify synchronized versions[\s\S]*env:\s*\r?\n\s+RELEASE_TAG: \$\{\{ github\.ref_name \}\}[\s\S]*run: pnpm verify:release-version -- "\$env:RELEASE_TAG"/u,
+  );
+  assert.match(
+    workflow,
+    /Assemble release candidate[\s\S]*env:\s*\r?\n\s+RELEASE_MODEL_MODE: \$\{\{ steps\.release-model-mode\.outputs\.mode \}\}[\s\S]*\$env:RELEASE_MODEL_MODE/u,
+  );
+  assert.match(
+    workflow,
+    /Publish runtime first[\s\S]*RELEASE_TAG: \$\{\{ github\.ref_name \}\}[\s\S]*--tag "\$env:RELEASE_TAG"/u,
+  );
+  assert.equal(
+    (
+      workflow.match(
+        /name: capture-candidate-\$\{\{ github\.ref_name \}\}/gu,
+      ) ?? []
+    ).length,
+    2,
   );
   assert.match(workflow, /compression-level: 0/u);
   assert.match(workflow, /retention-days: 1/u);
@@ -456,11 +564,7 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   ]);
   assert.deepEqual(
     project.targets['generate-release-engine-catalog'].dependsOn,
-    [
-      'build-ocr-worker',
-      'build-whisper-worker',
-      'validate-model-source-lock',
-    ],
+    ['build-ocr-worker', 'build-whisper-worker', 'validate-model-source-lock'],
   );
   assert.deepEqual(
     project.targets['verify-release-model-candidate'].dependsOn,
@@ -472,16 +576,20 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   assert.deepEqual(project.targets['build-whisper-worker'].dependsOn, [
     'verify-production-environment',
   ]);
-  assert.deepEqual(project.targets['validate-model-source-lock'].dependsOn, [
-    'verify-production-environment',
-  ]);
+  assert.equal(
+    project.targets['validate-model-source-lock'].dependsOn,
+    undefined,
+  );
+  assert.equal(
+    project.targets['classify-release-model-mode'].options.command,
+    'uv run --python 3.12 python scripts/model_source_lock.py classify --output dist/metadata/release-model-mode.json',
+  );
   assert.match(
     project.targets['prepare-production-environment'].options.command,
     /uv sync[\s\S]*--reinstall-package onnxruntime-directml/u,
   );
   for (const target of [
     'verify-production-environment',
-    'validate-model-source-lock',
     'generate-production-schema',
     'build-production-executable',
     'build-release-artifacts',

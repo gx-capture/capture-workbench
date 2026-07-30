@@ -50,7 +50,48 @@ jobs:
           registry-url: https://npm.pkg.github.com
           scope: '@gx-capture'
 
+      - name: Verify successful exact-commit main CI
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node tools/model-candidate-receipt.ts verify-main-ci `
+            --repository "$env:GITHUB_REPOSITORY" `
+            --commit "$env:GITHUB_SHA" `
+            --workflow-path ".github/workflows/ci.yml" `
+            --branch "main"
+
+      - name: Install uv and Python 3.12
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: '3.12'
+          enable-cache: true
+
+      - name: Install workspace dependencies
+        shell: pwsh
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify synchronized versions
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: pnpm verify:release-version -- "$env:RELEASE_TAG"
+
+      - name: Classify canonical release model mode
+        id: release-model-mode
+        shell: pwsh
+        run: |
+          pnpm nx run capture-runtime:classify-release-model-mode
+          $classification = Get-Content `
+            packages/capture-runtime/dist/metadata/release-model-mode.json `
+            -Raw | ConvertFrom-Json
+          if ($classification.releaseMode -notin @('core-only', 'model-enabled')) {
+            throw "Release model mode classification is invalid."
+          }
+          "mode=$($classification.releaseMode)" >> $env:GITHUB_OUTPUT
+
       - name: Resolve the exact trusted model candidate receipt
+        if: steps.release-model-mode.outputs.mode == 'model-enabled'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -66,20 +107,6 @@ jobs:
             --output-dir "$receiptDirectory"
           "CAPTURE_MODEL_RECEIPT_PATH=$receiptDirectory" >> $env:GITHUB_ENV
 
-      - name: Install uv and Python 3.12
-        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
-        with:
-          python-version: '3.12'
-          enable-cache: true
-
-      - name: Install workspace dependencies
-        shell: pwsh
-        run: pnpm install --frozen-lockfile
-
-      - name: Verify synchronized versions
-        shell: pwsh
-        run: pnpm verify:release-version -- "${{ github.ref_name }}"
-
       - name: Verify the complete workspace release gate
         shell: pwsh
         run: pnpm verify
@@ -89,6 +116,7 @@ jobs:
         run: pnpm nx run capture-runtime:build-release-artifacts
 
       - name: Verify the rebuilt catalog matches the trusted model candidate
+        if: steps.release-model-mode.outputs.mode == 'model-enabled'
         shell: pwsh
         run: |
           $receiptPath = Join-Path $env:CAPTURE_MODEL_RECEIPT_PATH 'model-candidate-receipt.json'
@@ -120,6 +148,8 @@ jobs:
 
       - name: Assemble release candidate
         shell: pwsh
+        env:
+          RELEASE_MODEL_MODE: ${{ steps.release-model-mode.outputs.mode }}
         run: |
           pnpm nx run capture-angular:pack
           $packages = @(Get-ChildItem dist/packs -Filter '*.tgz' -File)
@@ -130,18 +160,23 @@ jobs:
           $runtime = Join-Path $candidate 'runtime'
           $package = Join-Path $candidate 'package'
           $desktop = Join-Path $candidate 'desktop'
-          $evidence = Join-Path $candidate 'evidence'
-          New-Item -ItemType Directory -Path $runtime, $package, $desktop, $evidence | Out-Null
+          New-Item -ItemType Directory -Path $runtime, $package, $desktop | Out-Null
           Copy-Item packages/capture-runtime/dist/release/* -Destination $runtime
-          foreach ($receiptName in @(
-            'model-candidate-receipt.json',
-            'verified-model-candidate-receipt.json'
-          )) {
-            $receiptPath = Join-Path $env:CAPTURE_MODEL_RECEIPT_PATH $receiptName
-            if (-not (Test-Path -LiteralPath $receiptPath -PathType Leaf)) {
-              throw "Verified model candidate receipt evidence is incomplete."
+          if ($env:RELEASE_MODEL_MODE -eq 'model-enabled') {
+            $evidence = Join-Path $candidate 'evidence'
+            New-Item -ItemType Directory -Path $evidence | Out-Null
+            foreach ($receiptName in @(
+              'model-candidate-receipt.json',
+              'verified-model-candidate-receipt.json'
+            )) {
+              $receiptPath = Join-Path $env:CAPTURE_MODEL_RECEIPT_PATH $receiptName
+              if (-not (Test-Path -LiteralPath $receiptPath -PathType Leaf)) {
+                throw "Verified model candidate receipt evidence is incomplete."
+              }
+              Copy-Item -LiteralPath $receiptPath -Destination $evidence
             }
-            Copy-Item -LiteralPath $receiptPath -Destination $evidence
+          } elseif ($env:RELEASE_MODEL_MODE -ne 'core-only') {
+            throw "Release model mode classification is invalid."
           }
           Copy-Item $packages[0].FullName -Destination $package
           $installers = @(Get-ChildItem apps/capture-workbench-desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis -Filter '*.exe' -File -Recurse)
@@ -204,6 +239,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           NODE_AUTH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
         run: |
           $packages = @(Get-ChildItem publication/package -Filter '*.tgz' -File)
           if ($packages.Count -ne 1) {
@@ -214,7 +250,7 @@ jobs:
             throw "Expected exactly one Capture Workbench NSIS installer, found $($installers.Count)."
           }
           node tools/publish-release.ts `
-            --tag "${{ github.ref_name }}" `
+            --tag "$env:RELEASE_TAG" `
             --runtime-dir publication/runtime `
             --installer $installers[0].FullName `
             --package $packages[0].FullName

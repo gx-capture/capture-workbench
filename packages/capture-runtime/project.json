@@ -182,14 +182,26 @@
     "validate-model-source-lock": {
       "cache": true,
       "executor": "nx:run-commands",
-      "dependsOn": ["verify-production-environment"],
       "inputs": ["production"],
       "metadata": {
-        "description": "Validates approved checksum-pinned model sources without mutating the verified production environment."
+        "description": "Validates the canonical core-only or approved model-enabled release source lock."
       },
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --no-sync --python 3.12 python scripts/model_source_lock.py validate"
+        "command": "uv run --python 3.12 python scripts/model_source_lock.py validate"
+      }
+    },
+    "classify-release-model-mode": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "inputs": ["production"],
+      "outputs": ["{projectRoot}/dist/metadata/release-model-mode.json"],
+      "metadata": {
+        "description": "Writes the fail-closed release mode derived from the canonical checked-in source lock."
+      },
+      "options": {
+        "cwd": "packages/capture-runtime",
+        "command": "uv run --python 3.12 python scripts/model_source_lock.py classify --output dist/metadata/release-model-mode.json"
       }
     },
     "generate-engine-catalog": {
@@ -214,11 +226,11 @@
       "inputs": ["production"],
       "outputs": ["{projectRoot}/dist/catalog/capture-engine-catalog.json"],
       "metadata": {
-        "description": "Generates a publication catalog and fails unless exact approved direct-download OCR and Whisper source locks are supplied."
+        "description": "Generates an empty core-only catalog or a fully approved model-enabled publication catalog."
       },
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --no-sync --python 3.12 python scripts/generate_engine_catalog.py --require-complete --model-source-lock model-sources/release-model-source-lock.json --output dist/catalog/capture-engine-catalog.json --ocr-worker-archive dist/engines/capture-engine-ocr-0.3.2-windows-x64.zip --ocr-worker-manifest dist/engines/capture-engine-ocr-0.3.2-windows-x64-files.json --whisper-worker-archive dist/engines/capture-engine-whisper-0.3.2-windows-x64.zip --whisper-worker-manifest dist/engines/capture-engine-whisper-0.3.2-windows-x64-files.json"
+        "command": "uv run --no-sync --python 3.12 python scripts/generate_engine_catalog.py --model-source-lock model-sources/release-model-source-lock.json --output dist/catalog/capture-engine-catalog.json --ocr-worker-archive dist/engines/capture-engine-ocr-0.3.2-windows-x64.zip --ocr-worker-manifest dist/engines/capture-engine-ocr-0.3.2-windows-x64-files.json --whisper-worker-archive dist/engines/capture-engine-whisper-0.3.2-windows-x64.zip --whisper-worker-manifest dist/engines/capture-engine-whisper-0.3.2-windows-x64-files.json"
       }
     },
     "verify-release-model-candidate": {

@@ -115,6 +115,41 @@ describe('CaptureWorkbenchComponent', () => {
     );
   });
 
+  it('presents a core-only release without offering a model install action', async () => {
+    const detail =
+      'No downloadable model is published for this runtime release.';
+    const client = fakeClient({
+      getReady: vi.fn(() => of({ ...READY, ready: false })),
+      getRequirements: vi.fn(() =>
+        of(
+          (['windowsml-ocr', 'whisper-primary'] as const).map(
+            (requirementId): RuntimeRequirementV1 => ({
+              requirementId,
+              kind: 'model',
+              displayName: requirementId,
+              status: 'unavailable',
+              requiredFor:
+                requirementId === 'windowsml-ocr' ? ['pdf'] : ['audio'],
+              installStrategy: 'runtime-catalog',
+              detail,
+            }),
+          ),
+        ),
+      ),
+      startInstallation: vi.fn(),
+    });
+    inputSource.client.set(client);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(captureWorkbenchRoot(fixture).textContent).toContain(detail);
+    expect(
+      captureWorkbenchRoot(fixture).querySelector('.runtime-card .primary'),
+    ).toBeNull();
+    expect(client.startInstallation).not.toHaveBeenCalled();
+  });
+
   it('retries an uncertain installation once and installs a newly unlocked model', async () => {
     const ollamaRuntime: RuntimeRequirementV1 = {
       requirementId: 'ollama-runtime',

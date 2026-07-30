@@ -1,11 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import {
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -20,6 +15,7 @@ import {
   createReceipt,
   readCanonicalReceiptArchive,
   selectTrustedArtifact,
+  selectTrustedMainCiRun,
   selectTrustedRun,
   validateReceipt,
 } from './model-candidate-receipt.ts';
@@ -123,6 +119,31 @@ function artifact(overrides = {}) {
   };
 }
 
+function mainCiWorkflow(overrides = {}) {
+  return {
+    id: 31,
+    path: '.github/workflows/ci.yml',
+    state: 'active',
+    ...overrides,
+  };
+}
+
+function mainCiRun(overrides = {}) {
+  return {
+    conclusion: 'success',
+    created_at: '2026-07-30T10:00:00Z',
+    event: 'push',
+    head_branch: 'main',
+    head_sha: commitSha,
+    id: 37,
+    path: '.github/workflows/ci.yml',
+    status: 'completed',
+    updated_at: '2026-07-30T10:30:00Z',
+    workflow_id: 31,
+    ...overrides,
+  };
+}
+
 test('trusted receipt selection binds workflow, run, SHA, freshness, and artifact', () => {
   const trusted = selectTrustedRun(
     workflow(),
@@ -139,6 +160,69 @@ test('trusted receipt selection binds workflow, run, SHA, freshness, and artifac
       { nowMs },
     ).id,
     29,
+  );
+});
+
+test('trusted main CI selection requires one exact successful main push run', () => {
+  const expectedMainCi = {
+    branch: 'main',
+    commitSha,
+    workflowPath: '.github/workflows/ci.yml',
+  };
+  assert.equal(
+    selectTrustedMainCiRun(
+      mainCiWorkflow(),
+      { total_count: 1, workflow_runs: [mainCiRun()] },
+      expectedMainCi,
+      { nowMs },
+    ).run.id,
+    37,
+  );
+
+  for (const candidate of [
+    mainCiRun({ event: 'pull_request' }),
+    mainCiRun({ head_branch: 'feature' }),
+    mainCiRun({ head_sha: 'd'.repeat(40) }),
+    mainCiRun({ conclusion: 'cancelled' }),
+    mainCiRun({ conclusion: 'skipped' }),
+    mainCiRun({
+      path: '.github/workflows/release.yml',
+      workflow_id: 41,
+    }),
+  ]) {
+    assert.throws(
+      () =>
+        selectTrustedMainCiRun(
+          mainCiWorkflow(),
+          { total_count: 1, workflow_runs: [candidate] },
+          expectedMainCi,
+          { nowMs },
+        ),
+      /exactly one/u,
+    );
+  }
+  assert.throws(
+    () =>
+      selectTrustedMainCiRun(
+        mainCiWorkflow(),
+        {
+          total_count: 2,
+          workflow_runs: [mainCiRun(), mainCiRun({ id: 38 })],
+        },
+        expectedMainCi,
+        { nowMs },
+      ),
+    /found 2/u,
+  );
+  assert.throws(
+    () =>
+      selectTrustedMainCiRun(
+        mainCiWorkflow({ path: '.github/workflows/release.yml' }),
+        { total_count: 1, workflow_runs: [mainCiRun()] },
+        expectedMainCi,
+        { nowMs },
+      ),
+    /identity/u,
   );
 });
 
@@ -258,9 +342,14 @@ test('real receipt archives are streamed without filesystem extraction', () => {
   try {
     const canonicalArchive = join(root, 'canonical.zip');
     writeZip(canonicalArchive, [
-      ['model-candidate-receipt.json', Buffer.from(canonicalJson({ ok: true }))],
+      [
+        'model-candidate-receipt.json',
+        Buffer.from(canonicalJson({ ok: true })),
+      ],
     ]);
-    assert.deepEqual(readCanonicalReceiptArchive(canonicalArchive), { ok: true });
+    assert.deepEqual(readCanonicalReceiptArchive(canonicalArchive), {
+      ok: true,
+    });
 
     const nonCanonicalArchive = join(root, 'non-canonical.zip');
     writeZip(nonCanonicalArchive, [
@@ -513,11 +602,10 @@ test('receipt content cannot override server metadata or source lock', () => {
   ]) {
     assert.throws(
       () =>
-        validateReceipt(
-          { ...receipt, ...override },
-          expected,
-          { run: run(), workflow: workflow() },
-        ),
+        validateReceipt({ ...receipt, ...override }, expected, {
+          run: run(),
+          workflow: workflow(),
+        }),
       /identity or source binding/u,
     );
   }

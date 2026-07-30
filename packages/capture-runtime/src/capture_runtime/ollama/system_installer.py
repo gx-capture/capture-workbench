@@ -140,7 +140,7 @@ class SystemRuntimeInstaller:
             except EngineCatalogError:
                 status = RuntimeRequirementStatus.UNAVAILABLE
                 artifact = None
-                detail = "Runtime-owned engine catalog entry is unavailable."
+                detail = "No downloadable model is published for this runtime release."
             requirements.append(
                 RuntimeRequirementV1(
                     requirement_id=requirement_id,
