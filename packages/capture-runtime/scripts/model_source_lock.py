@@ -9,7 +9,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 LOCK_VERSION = "1"
-RELEASE_VERSION = "0.3.3"
+RELEASE_VERSION = "0.3.4"
 MAX_ENTRIES = 4096
 MAX_SINGLE_FILE_BYTES = 512 * 1024 * 1024
 MAX_TOTAL_BYTES = 2 * 1024 * 1024 * 1024

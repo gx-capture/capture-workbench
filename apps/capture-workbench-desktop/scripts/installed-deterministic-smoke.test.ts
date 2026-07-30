@@ -36,10 +36,10 @@ function observe(observable) {
 
 test('installed measurement derives the exact installer name from release metadata', () => {
   assert.equal(
-    expectedInstallerName('0.3.3'),
-    'Capture Workbench_0.3.3_x64-setup.exe',
+    expectedInstallerName('0.3.4'),
+    'Capture Workbench_0.3.4_x64-setup.exe',
   );
-  assert.throws(() => expectedInstallerName('0.3.3-beta'), /semantic x\.y\.z/u);
+  assert.throws(() => expectedInstallerName('0.3.4-beta'), /semantic x\.y\.z/u);
 });
 
 test('installed smoke paths and NSIS arguments stay inside the exact tmp subtree', () => {

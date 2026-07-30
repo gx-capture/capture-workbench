@@ -471,6 +471,38 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   assert.ok(buildRuntimeIndex > resolveReceiptIndex);
   assert.ok(verifyCatalogIndex > buildRuntimeIndex);
   assert.ok(buildInstallerIndex > verifyCatalogIndex);
+  const retainedReleaseStepNames = [
+    'Verify tag commit belongs to main',
+    'Install pnpm',
+    'Install Node.js',
+    'Verify successful exact-commit main CI',
+    'Install uv and Python 3.12',
+    'Install workspace dependencies',
+    'Verify synchronized versions',
+    'Classify canonical release model mode',
+    'Resolve the exact trusted model candidate receipt',
+    'Build production runtime artifacts without ambient model stores',
+    'Verify the rebuilt catalog matches the trusted model candidate',
+    'Build Capture Workbench Windows installer with the verified release runtime',
+    'Verify exact installed size and packaging budgets',
+    'Assemble release candidate',
+    'Upload release candidate',
+    'Download release candidate',
+    'Install publication script dependencies',
+    'Publish runtime first, then the exact Capture Workbench package idempotently',
+  ];
+  const retainedReleaseStepIndexes = retainedReleaseStepNames.map((name) => {
+    const index = workflow.indexOf(`- name: ${name}`);
+    assert.ok(index >= 0, `Missing retained release step: ${name}`);
+    return index;
+  });
+  for (let index = 1; index < retainedReleaseStepIndexes.length; index += 1) {
+    assert.ok(
+      retainedReleaseStepIndexes[index - 1] <
+        retainedReleaseStepIndexes[index],
+      `Release step order is invalid around ${retainedReleaseStepNames[index]}`,
+    );
+  }
   assert.match(
     workflow,
     /Verify the rebuilt catalog matches the trusted model candidate\s*\r?\n\s+if: steps\.release-model-mode\.outputs\.mode == 'model-enabled'/u,
@@ -483,8 +515,25 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
     workflow,
     /\$env:RELEASE_MODEL_MODE -eq 'model-enabled'[\s\S]*model-candidate-receipt\.json[\s\S]*\$env:RELEASE_MODEL_MODE -ne 'core-only'/u,
   );
-  const releaseRunScripts = workflowRunScripts(workflow).join('\n');
-  assert.doesNotMatch(releaseRunScripts, /\$\{\{/u);
+  const releaseRunScripts = workflowRunScripts(workflow);
+  assert.doesNotMatch(releaseRunScripts.join('\n'), /\$\{\{/u);
+  const normalizedReleaseRunLines = releaseRunScripts.flatMap((script) =>
+    script.split(/\r?\n/u).map((line) => line.trim()),
+  );
+  assert.equal(normalizedReleaseRunLines.includes('pnpm verify'), false);
+  assert.ok(
+    normalizedReleaseRunLines.includes('pnpm install --frozen-lockfile'),
+  );
+  assert.ok(
+    normalizedReleaseRunLines.includes(
+      'pnpm verify:release-version -- "$env:RELEASE_TAG"',
+    ),
+  );
+  assert.ok(
+    normalizedReleaseRunLines.includes(
+      'pnpm nx run capture-runtime:build-release-artifacts',
+    ),
+  );
   assert.match(
     workflow,
     /Verify synchronized versions[\s\S]*env:\s*\r?\n\s+RELEASE_TAG: \$\{\{ github\.ref_name \}\}[\s\S]*run: pnpm verify:release-version -- "\$env:RELEASE_TAG"/u,
@@ -507,8 +556,13 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   );
   assert.match(workflow, /compression-level: 0/u);
   assert.match(workflow, /retention-days: 1/u);
-  assert.match(workflow, /run: pnpm verify/u);
   assert.match(workflow, /capture-workbench-desktop:build-nsis/u);
+  assert.match(workflow, /installed-deterministic-smoke\.ts --measure-release-size/u);
+  assert.match(workflow, /capture-runtime:size-regression-check/u);
+  assert.match(workflow, /capture-angular:pack/u);
+  assert.match(workflow, /actions\/upload-artifact@[0-9a-f]{40}/u);
+  assert.match(workflow, /actions\/download-artifact@[0-9a-f]{40}/u);
+  assert.match(workflow, /publish-release\.ts/u);
   assert.match(workflow, /--installer \$installers\[0\]\.FullName/u);
   assert.doesNotMatch(workflow, /--clobber|gh release upload/u);
   assert.match(

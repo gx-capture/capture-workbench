@@ -67,7 +67,7 @@ jobs:
             throw "Could not resolve the trusted model candidate workflow id."
           }
           node tools/model-candidate-receipt.ts create `
-            --version "0.3.3" `
+            --version "0.3.4" `
             --commit "$env:GITHUB_SHA" `
             --source-lock packages/capture-runtime/model-sources/release-model-source-lock.json `
             --catalog packages/capture-runtime/dist/catalog/capture-engine-catalog.json `
@@ -80,7 +80,7 @@ jobs:
       - name: Upload only the model candidate receipt
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: capture-model-receipt-v0.3.3-${{ github.sha }}
+          name: capture-model-receipt-v0.3.4-${{ github.sha }}
           path: packages/capture-runtime/dist/candidate/model-candidate-receipt.json
           if-no-files-found: error
           retention-days: 7

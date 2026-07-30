@@ -90,7 +90,7 @@ def approved_source_lock() -> tuple[dict[str, Any], dict[tuple[str, str], bytes]
         files_with_content.sort(key=lambda item: item[0]["path"])
         requirements.append(
             {
-                "artifactVersion": "0.3.3",
+                "artifactVersion": "0.3.4",
                 "entryPoint": "model",
                 "files": [item for item, _value in files_with_content],
                 "requirementId": requirement_id,
@@ -152,7 +152,7 @@ def approved_source_lock() -> tuple[dict[str, Any], dict[tuple[str, str], bytes]
                 },
             ],
             "lockVersion": "1",
-            "releaseVersion": "0.3.3",
+            "releaseVersion": "0.3.4",
             "requirements": requirements,
         },
         content,

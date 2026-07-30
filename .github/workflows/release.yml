@@ -99,17 +99,13 @@ jobs:
           $receiptDirectory = Join-Path $env:RUNNER_TEMP 'verified-model-candidate'
           node tools/model-candidate-receipt.ts resolve `
             --repository "$env:GITHUB_REPOSITORY" `
-            --version "0.3.3" `
+            --version "0.3.4" `
             --commit "$env:GITHUB_SHA" `
             --source-lock packages/capture-runtime/model-sources/release-model-source-lock.json `
             --workflow-path ".github/workflows/model-candidate.yml" `
             --max-age-hours "168" `
             --output-dir "$receiptDirectory"
           "CAPTURE_MODEL_RECEIPT_PATH=$receiptDirectory" >> $env:GITHUB_ENV
-
-      - name: Verify the complete workspace release gate
-        shell: pwsh
-        run: pnpm verify
 
       - name: Build production runtime artifacts without ambient model stores
         shell: pwsh
