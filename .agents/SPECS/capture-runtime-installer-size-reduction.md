@@ -291,9 +291,9 @@ The executable and NSIS budgets add exactly 10% headroom to the measured after
 values. The old installed-size baseline remains an explicit `null` value; no
 historical value was inferred.
 
-## CI and Nx Gates
+## CI, Release, and Nx Gates
 
-Required targets:
+Required Nx and release targets:
 
 - `build-core-executable`
 - `build-ocr-worker`
@@ -304,10 +304,28 @@ Required targets:
 - `bundle-size-report`
 - `size-regression-check`
 
-CI uploads size JSON, inventory, xref, and warnings. It fails on measured
-budget regression, forbidden package/platform content, or mismatch among ZIP
-bytes, inner manifests, catalog, runtime manifest, release directory, and
-staged NSIS resources.
+Ordinary pull-request and `main` CI run the non-mutating boundary, package,
+desktop-product, and reference-flow gates. CI uploads inventory, xref, and
+warnings with always/warn semantics, but it does not install or uninstall the
+NSIS candidate, emit canonical installed-size evidence, or run the strict size
+budget.
+
+Release `build-candidate` is the sole owner of exact installed-size and strict
+budget proof. After rebuilding and staging the production runtime and building
+the NSIS installer, it performs the size-only install/native-uninstall proof,
+runs `size-regression-check`, copies the canonical report and SHA-256 into the
+release directory, and only then assembles and uploads the candidate for
+publication. A measured budget regression, missing evidence, forbidden
+package/platform content, or mismatch among ZIP bytes, inner manifests,
+catalog, runtime manifest, release directory, and staged NSIS resources fails
+closed before candidate upload or publication.
+
+Exact-main push run `30561666148` at
+`cb83f713ad03100e050870132364e8dc1e585649` is immutable failure evidence for
+the retired shared ownership: product/reference gates passed, then the
+installed-size step rejected a `deterministic` staged runtime where `release`
+was required. No installation, installed-size value, canonical report, tag, or
+release was produced.
 
 ## Test Plan
 

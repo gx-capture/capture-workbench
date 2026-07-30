@@ -28,22 +28,32 @@ This checklist is the active release gate. Check an item only after the exact
   PowerShell block continued and later successful commands masked the failure.
   No GitHub Release, Release asset, or `0.3.4` package was created; the
   candidate remained only an Actions artifact.
+- Exact-main push CI run `30561666148` at merge commit
+  `cb83f713ad03100e050870132364e8dc1e585649` passed package, reference-app,
+  runtime, worker, core-installer, desktop-product, and reference-flow proof.
+  Its later installed-size step failed before installation because the desktop
+  smoke had restaged the shared runtime as `deterministic` while measurement
+  required `release`. It produced no installed-size value or canonical size
+  report. No tag or release was created.
 - Never delete, move, recreate, or publish around any failed tag. The next
   candidate is `v0.3.5`.
 
 ## Proof ownership
 
-- Pull-request and `main` CI own the complete workspace
-  lint/typecheck/test/build/package/desktop/smoke proof. Pull requests skip only
-  the installed-size install/uninstall and strict size-budget steps.
-  Desktop/reference checks run independently before those main-only steps.
-  Packaging diagnostics upload even after a later failure. Exact `main` pushes
-  and release retain real installed-size and strict budget proof.
+- Pull-request and `main` CI own complete non-mutating workspace
+  lint/typecheck/test/build/package, desktop-product, and reference-flow proof.
+  Ordinary CI performs no installed-size OS mutation and no strict size-budget
+  validation. Packaging inventory, xref, and warning diagnostics still upload
+  with `always()` and warn when an expected diagnostic is absent.
 - Release must consume one successful exact-commit `.github/workflows/ci.yml`
   `push` run on `main` for the tagged SHA.
 - Release must not rerun the redundant full-workspace `pnpm verify`.
-- Native-command PowerShell blocks must fail fast. Installed-size smoke is a
-  standalone terminal step before size-budget validation.
+- Native-command PowerShell blocks must fail fast. Release `build-candidate` is
+  the sole owner of exact production-runtime/NSIS installed-size
+  install/uninstall, canonical report generation, and strict size-budget
+  validation. Its standalone measurement and validation steps run after the
+  production installer build and before candidate assembly/upload or
+  publication.
 - The size-only lane never launches Tauri or invokes the installed-app process
   observer. It requires the exact silent installer, owned installed executable
   and registry values, positive non-boolean bytes, native uninstaller, and
@@ -105,7 +115,7 @@ Measured baseline:
 
 - PR CI: `22m20s`
 - `main` CI: `20m40s`
-- Installer and size verification: about 8-10 minutes
+- Release-only installer and size verification: about 8-10 minutes
 - Desktop verification: about 4m45s
 - Optional worker build/verification: about 2m40s
 

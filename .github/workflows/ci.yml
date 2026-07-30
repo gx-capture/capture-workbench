@@ -109,23 +109,12 @@ jobs:
         shell: pwsh
         run: pnpm nx run capture-workbench-e2e:e2e
 
-      - name: Measure exact installed size
-        if: github.event_name != 'pull_request'
-        shell: pwsh
-        run: node apps/capture-workbench-desktop/scripts/installed-deterministic-smoke.ts --measure-release-size
-
-      - name: Verify measured size budgets
-        if: github.event_name != 'pull_request'
-        shell: pwsh
-        run: pnpm nx run capture-runtime:size-regression-check
-
       - name: Upload runtime packaging diagnostics
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: capture-runtime-packaging-${{ github.sha }}
           path: |
-            packages/capture-runtime/dist/size/runtime-size-report.json
             packages/capture-runtime/dist/engines/*-files.json
             packages/capture-runtime/dist/core-inventory.txt
             packages/capture-runtime/dist/core-inventory-recursive.txt
@@ -137,6 +126,5 @@ jobs:
             packages/capture-runtime/.build/pyinstaller/ocr-worker/capture-engine-ocr/warn-capture-engine-ocr.txt
             packages/capture-runtime/.build/pyinstaller/whisper-worker/capture-engine-whisper/xref-capture-engine-whisper.html
             packages/capture-runtime/.build/pyinstaller/whisper-worker/capture-engine-whisper/warn-capture-engine-whisper.txt
-            tmp/capture-workbench-desktop/installed-smoke/installed-size.json
           if-no-files-found: warn
           retention-days: 7
