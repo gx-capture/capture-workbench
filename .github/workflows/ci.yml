@@ -138,5 +138,5 @@ jobs:
             packages/capture-runtime/.build/pyinstaller/whisper-worker/capture-engine-whisper/xref-capture-engine-whisper.html
             packages/capture-runtime/.build/pyinstaller/whisper-worker/capture-engine-whisper/warn-capture-engine-whisper.txt
             tmp/capture-workbench-desktop/installed-smoke/installed-size.json
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 7

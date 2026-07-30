@@ -46,6 +46,12 @@ function exceptionReason(relativePath) {
   ) {
     return 'opt-in real-engine CLI boundary';
   }
+  if (
+    relativePath ===
+    'apps/capture-workbench-desktop/scripts/installed-deterministic-smoke.ts'
+  ) {
+    return 'installed desktop/release CLI process boundary';
+  }
   if (/\.(spec|test)\.ts$/u.test(relativePath)) {
     return 'Angular/Node test-runner boundary';
   }

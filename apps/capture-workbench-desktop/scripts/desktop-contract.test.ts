@@ -47,6 +47,7 @@ interface WorkflowStep {
   readonly name: string;
   readonly script?: string;
   readonly shell?: string;
+  readonly source: string;
 }
 
 function workflowNamedSteps(source: string): WorkflowStep[] {
@@ -80,6 +81,7 @@ function workflowNamedSteps(source: string): WorkflowStep[] {
       name: start.groups['name'].trim(),
       script,
       shell,
+      source: stepSource,
     });
   }
   return steps;
@@ -809,13 +811,13 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
     requiredWorkflowStep(ciSteps, 'Verify measured size budgets').condition,
     "github.event_name != 'pull_request'",
   );
-  assert.equal(
-    requiredWorkflowStep(
-      ciSteps,
-      'Upload runtime packaging diagnostics',
-    ).condition,
-    'always()',
+  const ciDiagnosticsStep = requiredWorkflowStep(
+    ciSteps,
+    'Upload runtime packaging diagnostics',
   );
+  assert.equal(ciDiagnosticsStep.condition, 'always()');
+  assert.match(ciDiagnosticsStep.source, /if-no-files-found:\s*warn/u);
+  assert.doesNotMatch(ciDiagnosticsStep.source, /continue-on-error:\s*true/u);
   for (const stepName of [
     'Verify Capture Workbench desktop product',
     'Verify reference flow',
