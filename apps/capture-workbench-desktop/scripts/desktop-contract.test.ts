@@ -43,6 +43,7 @@ function workflowRunScripts(source: string): string[] {
 
 interface WorkflowStep {
   readonly blockRun: boolean;
+  readonly condition?: string;
   readonly name: string;
   readonly script?: string;
   readonly shell?: string;
@@ -68,11 +69,14 @@ function workflowNamedSteps(source: string): WorkflowStep[] {
     const shell = /^\s*shell:\s*(?<shell>\S+)\s*$/mu.exec(stepSource)?.groups?.[
       'shell'
     ];
+    const condition = /^\s*if:\s*(?<condition>.+?)\s*$/mu.exec(stepSource)
+      ?.groups?.['condition'];
     const runValue = /^\s*run:\s*(?<value>.*)$/mu.exec(stepSource)?.groups?.[
       'value'
     ];
     steps.push({
       blockRun: isWorkflowBlockScalarHeader(runValue ?? ''),
+      condition,
       name: start.groups['name'].trim(),
       script,
       shell,
@@ -776,6 +780,7 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
     'Measure exact installed size',
   );
   assert.equal(ciMeasureStep.blockRun, false);
+  assert.equal(ciMeasureStep.condition, "github.event_name != 'pull_request'");
   assert.equal(ciMeasureStep.script, installedSizeCommand);
   assert.doesNotMatch(
     requiredWorkflowStep(
@@ -788,6 +793,20 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
     requiredWorkflowStep(ciSteps, 'Verify measured size budgets').script ?? '',
     /measure-release-size/u,
   );
+  assert.equal(
+    requiredWorkflowStep(ciSteps, 'Verify measured size budgets').condition,
+    "github.event_name != 'pull_request'",
+  );
+  for (const stepName of [
+    'Verify Capture Workbench desktop product',
+    'Verify reference flow',
+  ]) {
+    assert.equal(
+      requiredWorkflowStep(ciSteps, stepName).condition,
+      undefined,
+      `${stepName} must still run after PR-only installed-size skips.`,
+    );
+  }
 
   const releaseInstallerIndex = releaseSteps.findIndex(
     (step) =>

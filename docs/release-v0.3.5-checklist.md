@@ -34,12 +34,18 @@ This checklist is the active release gate. Check an item only after the exact
 ## Proof ownership
 
 - Pull-request and `main` CI own the complete workspace
-  lint/typecheck/test/build/package/desktop/smoke proof.
+  lint/typecheck/test/build/package/desktop/smoke proof. Pull requests skip only
+  the installed-size install/uninstall and strict size-budget steps; later
+  desktop/reference checks still run. Exact `main` pushes and release retain
+  real installed-size and strict budget proof.
 - Release must consume one successful exact-commit `.github/workflows/ci.yml`
   `push` run on `main` for the tagged SHA.
 - Release must not rerun the redundant full-workspace `pnpm verify`.
 - Native-command PowerShell blocks must fail fast. Installed-size smoke is a
   standalone terminal step before size-budget validation.
+- Installed-smoke PID ownership is executable-path scoped to exact current-run
+  private roots registered only after residual drain and empty-tree recreation;
+  unknown observation or residue fails closed.
 - Release still owns ancestry, frozen install, synchronized-version,
   canonical source-lock classification, model receipt/catalog rules,
   production `build-release-artifacts`, runtime staging, NSIS build,

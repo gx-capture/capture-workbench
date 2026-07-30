@@ -1,5 +1,7 @@
 import { spawnSync } from 'node:child_process';
+import { lstatSync, readdirSync, realpathSync } from 'node:fs';
 import net from 'node:net';
+import { resolve } from 'node:path';
 
 import {
   Observable,
@@ -23,12 +25,78 @@ import {
   assertTaskkillResult,
 } from './contracts/installed.ts';
 
+const ownedProcessObserverAttemptLimit = 2;
+const ownedProcessObserverTimeoutMs = 10_000;
+const safeDiagnosticToken = /^[A-Za-z0-9_-]+$/u;
+
+function diagnosticToken(value, fallback = 'none') {
+  const candidate = value === undefined || value === null ? fallback : String(value);
+  return safeDiagnosticToken.test(candidate) ? candidate : fallback;
+}
+
+function processObserverError(result, attempt, operation, code) {
+  const errorCode = diagnosticToken(result.error?.code, code);
+  const status = Number.isInteger(result.status) ? String(result.status) : 'none';
+  const signal = diagnosticToken(result.signal);
+  const timedOut = errorCode === 'ETIMEDOUT';
+  return new Error(
+    `Owned process observer failed (operation=${operation}; observer=get-process; attempt=${attempt}/${ownedProcessObserverAttemptLimit}; timeout=${String(timedOut)}; code=${errorCode}; status=${status}; signal=${signal}).`,
+  );
+}
+
 export function createInstalledProcessCleanup({
   smokeRoot,
   workspaceRoot,
   baseChildEnvironment,
   windowsSystemExecutable,
+  spawnSyncProcess = spawnSync,
 }) {
+  const privateProcessRoots = new Set();
+
+  function rootKey(root) {
+    const resolvedRoot = resolve(root);
+    return process.platform === 'win32'
+      ? resolvedRoot.toLowerCase()
+      : resolvedRoot;
+  }
+
+  function registerPrivateProcessRoots(roots) {
+    const safeRoots = roots.map((root) =>
+      assertStrictDescendant(smokeRoot, root, 'Private process root'),
+    );
+    for (const safeRoot of safeRoots) {
+      const metadata = lstatSync(safeRoot);
+      const actualRoot = realpathSync(safeRoot);
+      if (
+        !metadata.isDirectory() ||
+        metadata.isSymbolicLink() ||
+        rootKey(actualRoot) !== rootKey(safeRoot) ||
+        readdirSync(safeRoot).length !== 0
+      ) {
+        throw new Error(
+          'A current-run private process root must be a real empty directory.',
+        );
+      }
+    }
+    for (const safeRoot of safeRoots) {
+      privateProcessRoots.add(rootKey(safeRoot));
+    }
+  }
+
+  function assertCurrentRunPrivateProcessRoot(root) {
+    const safeRoot = assertStrictDescendant(
+      smokeRoot,
+      root,
+      'Private process root',
+    );
+    if (!privateProcessRoots.has(rootKey(safeRoot))) {
+      throw new Error(
+        'Private process root is not registered for the current installed-smoke run.',
+      );
+    }
+    return safeRoot;
+  }
+
   function terminateTrackedProcessTree(child, label) {
     if (child.exitCode !== null || child.signalCode !== null) return of(undefined);
     if (!Number.isSafeInteger(child.pid) || child.pid < 1) {
@@ -38,7 +106,7 @@ export function createInstalledProcessCleanup({
       fromEvent(child, 'exit'),
       fromEvent(child, 'error'),
     ).pipe(take(1), map(() => undefined));
-    const result = spawnSync(
+    const result = spawnSyncProcess(
       windowsSystemExecutable('System32', 'taskkill.exe'),
       ['/PID', String(child.pid), '/T', '/F'],
       {
@@ -71,16 +139,20 @@ export function createInstalledProcessCleanup({
     );
   }
 
-  function processesRunningUnder(root) {
-    const safeRoot = assertStrictDescendant(smokeRoot, root, 'Owned process root');
+  function observeExecutableProcessesUnder(root) {
+    const safeRoot = assertStrictDescendant(
+      smokeRoot,
+      root,
+      'Executable process root',
+    );
     const script = `
 $root = [IO.Path]::GetFullPath($env:CAPTURE_SMOKE_PROCESS_ROOT).TrimEnd('\\') + '\\'
-$items = @(Get-CimInstance Win32_Process | ForEach-Object {
+$items = @(Get-Process | ForEach-Object {
   try {
-    if ($_.ExecutablePath) {
-      $path = [IO.Path]::GetFullPath($_.ExecutablePath)
+    if ($_.Path) {
+      $path = [IO.Path]::GetFullPath($_.Path)
       if ($path.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) {
-        [pscustomobject]@{ pid = [int]$_.ProcessId }
+        [pscustomobject]@{ pid = [int]$_.Id }
       }
     }
   } catch {}
@@ -91,9 +163,14 @@ ConvertTo-Json -Compress -InputObject $items
       ...baseChildEnvironment(process.env, smokeRoot, workspaceRoot),
       CAPTURE_SMOKE_PROCESS_ROOT: safeRoot,
     };
-    return defer(() =>
-      of(
-        spawnSync(
+    return defer(() => {
+      let lastError;
+      for (
+        let attempt = 1;
+        attempt <= ownedProcessObserverAttemptLimit;
+        attempt += 1
+      ) {
+        const result = spawnSyncProcess(
           windowsSystemExecutable(
             'System32',
             'WindowsPowerShell',
@@ -105,31 +182,75 @@ ConvertTo-Json -Compress -InputObject $items
             env: environment,
             encoding: 'utf8',
             windowsHide: true,
-            timeout: 30_000,
+            timeout: ownedProcessObserverTimeoutMs,
           },
-        ),
-      ),
-    ).pipe(
-      map((result) => {
+        );
         if (result.error || result.status !== 0) {
-          const detail = (result.error?.message ?? result.stderr ?? '')
-            .trim()
-            .slice(0, 500);
-          throw new Error(
-            `Owned installed process query failed${detail ? `: ${detail}` : '.'}`,
-          );
+          lastError = processObserverError(result, attempt, 'query', 'NONZERO');
+          continue;
         }
-        const output = result.stdout.trim();
-        if (!output) return [];
-        const value = JSON.parse(output);
-        return Array.isArray(value) ? value : [value];
-      }),
-    );
+        const output = String(result.stdout ?? '').trim();
+        if (!output) {
+          lastError = processObserverError(
+            result,
+            attempt,
+            'validate',
+            'EMPTY_OUTPUT',
+          );
+          continue;
+        }
+        let value;
+        try {
+          value = JSON.parse(output);
+        } catch {
+          lastError = processObserverError(
+            result,
+            attempt,
+            'parse',
+            'INVALID_JSON',
+          );
+          continue;
+        }
+        const processes = Array.isArray(value) ? value : [value];
+        if (
+          processes.some(
+            (candidate) =>
+              typeof candidate !== 'object' ||
+              candidate === null ||
+              !Number.isSafeInteger(candidate.pid) ||
+              candidate.pid < 1,
+          )
+        ) {
+          lastError = processObserverError(
+            result,
+            attempt,
+            'validate',
+            'INVALID_OUTPUT',
+          );
+          continue;
+        }
+        return of(processes.map((candidate) => ({ pid: candidate.pid })));
+      }
+      return throwError(
+        () =>
+          lastError ??
+          new Error(
+            'Owned process observer failed (operation=query; observer=get-process; attempt=none; timeout=false; code=UNKNOWN; status=none; signal=none).',
+          ),
+      );
+    });
   }
 
-  function taskkillOwnedPid(pid, ownedRoot) {
+  // Process ownership in this harness is path-scoped: an observed PID is owned
+  // only when its executable is located below an exact registered private root.
+  function processesRunningUnder(root) {
+    const safeRoot = assertCurrentRunPrivateProcessRoot(root);
+    return observeExecutableProcessesUnder(safeRoot);
+  }
+
+  function taskkillOwnedPid(pid, ownedRoot, observeProcesses) {
     return defer(() => {
-      const result = spawnSync(
+      const result = spawnSyncProcess(
         windowsSystemExecutable('System32', 'taskkill.exe'),
         ['/PID', String(pid), '/T', '/F'],
         {
@@ -142,7 +263,7 @@ ConvertTo-Json -Compress -InputObject $items
       return of(result);
     }).pipe(
       concatMap((result) =>
-        processesRunningUnder(ownedRoot).pipe(
+        observeProcesses(ownedRoot).pipe(
           map((processes) => {
             const stillOwned = processes.some((candidate) => candidate.pid === pid);
             assertTaskkillResult(result, stillOwned);
@@ -152,25 +273,29 @@ ConvertTo-Json -Compress -InputObject $items
     );
   }
 
-  function stopAndProveOwnedProcesses(pid, ownedRoot) {
+  function stopAndProveProcesses(pid, ownedRoot, observeProcesses) {
     if (pid !== undefined && (!Number.isSafeInteger(pid) || pid < 1)) {
       return throwError(() => new Error('Owned Tauri PID is invalid.'));
     }
-    return processesRunningUnder(ownedRoot).pipe(
+    return observeProcesses(ownedRoot).pipe(
       concatMap((before) =>
         pid !== undefined && before.some((process_) => process_.pid === pid)
-          ? taskkillOwnedPid(pid, ownedRoot)
+          ? taskkillOwnedPid(pid, ownedRoot, observeProcesses)
           : of(undefined),
       ),
       concatMap(() => timer(250)),
-      concatMap(() => processesRunningUnder(ownedRoot)),
+      concatMap(() => observeProcesses(ownedRoot)),
       concatMap((processes) =>
         from(processes).pipe(
           concatMap((process_) =>
-            processesRunningUnder(ownedRoot).pipe(
+            observeProcesses(ownedRoot).pipe(
               concatMap((current) =>
                 current.some((candidate) => candidate.pid === process_.pid)
-                  ? taskkillOwnedPid(process_.pid, ownedRoot)
+                  ? taskkillOwnedPid(
+                      process_.pid,
+                      ownedRoot,
+                      observeProcesses,
+                    )
                   : of(undefined),
               ),
             ),
@@ -180,7 +305,10 @@ ConvertTo-Json -Compress -InputObject $items
       ),
       concatMap(() =>
         waitUntil(
-          () => processesRunningUnder(ownedRoot).pipe(map((processes) => processes.length === 0)),
+          () =>
+            observeProcesses(ownedRoot).pipe(
+              map((processes) => processes.length === 0),
+            ),
           20_000,
           'Owned installed app/runtime processes remained after tree cleanup.',
         ),
@@ -188,10 +316,22 @@ ConvertTo-Json -Compress -InputObject $items
     );
   }
 
-  function stopAndProveOwnedProcessRoots(ownedRoots) {
-    return from(ownedRoots).pipe(
-      concatMap((ownedRoot) =>
-        stopAndProveOwnedProcesses(undefined, ownedRoot).pipe(
+  function stopAndProveOwnedProcesses(pid, ownedRoot) {
+    return stopAndProveProcesses(pid, ownedRoot, processesRunningUnder);
+  }
+
+  function stopAndProveResidualProcesses(pid, residualRoot) {
+    return stopAndProveProcesses(
+      pid,
+      residualRoot,
+      observeExecutableProcessesUnder,
+    );
+  }
+
+  function stopAndProveProcessRoots(processRoots, stopAndProve) {
+    return from(processRoots).pipe(
+      concatMap((processRoot) =>
+        stopAndProve(undefined, processRoot).pipe(
           catchError((error) => throwError(() => error)),
         ),
       ),
@@ -206,6 +346,20 @@ ConvertTo-Json -Compress -InputObject $items
             ),
         ),
       ),
+    );
+  }
+
+  function stopAndProveOwnedProcessRoots(ownedRoots) {
+    return stopAndProveProcessRoots(
+      ownedRoots,
+      stopAndProveOwnedProcesses,
+    );
+  }
+
+  function stopAndProveResidualProcessRoots(residualRoots) {
+    return stopAndProveProcessRoots(
+      residualRoots,
+      stopAndProveResidualProcesses,
     );
   }
 
@@ -244,9 +398,11 @@ ConvertTo-Json -Compress -InputObject $items
   }
 
   return {
+    registerPrivateProcessRoots,
     terminateTrackedProcessTree,
     stopAndProveOwnedProcesses,
     stopAndProveOwnedProcessRoots,
+    stopAndProveResidualProcessRoots,
     processesRunningUnder,
     waitForLoopbackPortRelease,
   };

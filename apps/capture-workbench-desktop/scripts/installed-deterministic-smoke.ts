@@ -342,6 +342,7 @@ export function runInstalledDeterministicSmoke({
         cdpPort: undefined,
         installer: undefined,
         installationAttempted: false,
+        privateProcessRootsRegistered: false,
         exerciseResult: undefined,
         exerciseError: undefined,
         cleanupErrors: [],
@@ -375,7 +376,7 @@ export function runInstalledDeterministicSmoke({
         tap((installer) => (state.installer = installer)),
         concatMap(() => registry.assertNoPreExistingInstallation()),
         concatMap(() =>
-          processCleanup.stopAndProveOwnedProcessRoots([
+          processCleanup.stopAndProveResidualProcessRoots([
             installDirectory,
             temporaryDirectory,
           ]),
@@ -395,6 +396,13 @@ export function runInstalledDeterministicSmoke({
             toArray(),
           ),
         ),
+        tap(() => {
+          processCleanup.registerPrivateProcessRoots([
+            installDirectory,
+            temporaryDirectory,
+          ]);
+          state.privateProcessRootsRegistered = true;
+        }),
         tap(() => (state.installationAttempted = true)),
         concatMap(() =>
           lifecycle.runCheckedExecutable(
@@ -497,10 +505,15 @@ export function runInstalledDeterministicSmoke({
         ),
         concatMap(() =>
           attempt(
-            processCleanup.stopAndProveOwnedProcessRoots([
-              installDirectory,
-              temporaryDirectory,
-            ]),
+            state.privateProcessRootsRegistered
+              ? processCleanup.stopAndProveOwnedProcessRoots([
+                  installDirectory,
+                  temporaryDirectory,
+                ])
+              : processCleanup.stopAndProveResidualProcessRoots([
+                  installDirectory,
+                  temporaryDirectory,
+                ]),
             () => (state.cleanup.ownedProcessesStopped = true),
           ),
         ),
@@ -613,10 +626,15 @@ export function runInstalledDeterministicSmoke({
           ).pipe(
             concatMap(() =>
               attempt(
-                processCleanup.stopAndProveOwnedProcessRoots([
-                  installDirectory,
-                  temporaryDirectory,
-                ]),
+                state.privateProcessRootsRegistered
+                  ? processCleanup.stopAndProveOwnedProcessRoots([
+                      installDirectory,
+                      temporaryDirectory,
+                    ])
+                  : processCleanup.stopAndProveResidualProcessRoots([
+                      installDirectory,
+                      temporaryDirectory,
+                    ]),
                 () => (state.cleanup.ownedProcessesStopped = true),
               ),
             ),

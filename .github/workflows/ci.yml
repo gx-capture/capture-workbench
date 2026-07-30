@@ -95,10 +95,12 @@ jobs:
           pnpm nx run capture-workbench-desktop:build-nsis
 
       - name: Measure exact installed size
+        if: github.event_name != 'pull_request'
         shell: pwsh
         run: node apps/capture-workbench-desktop/scripts/installed-deterministic-smoke.ts --measure-release-size
 
       - name: Verify measured size budgets
+        if: github.event_name != 'pull_request'
         shell: pwsh
         run: pnpm nx run capture-runtime:size-regression-check
 
