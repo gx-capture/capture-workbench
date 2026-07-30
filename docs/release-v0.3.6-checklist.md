@@ -1,7 +1,7 @@
-# Capture Workbench v0.3.5 Release Checklist
+# Capture Workbench v0.3.6 Release Checklist
 
 This checklist is the active release gate. Check an item only after the exact
-`v0.3.5` candidate or tagged commit has produced the stated evidence.
+`v0.3.6` candidate or tagged commit has produced the stated evidence.
 
 ## Immutable failed-release evidence
 
@@ -35,8 +35,19 @@ This checklist is the active release gate. Check an item only after the exact
   smoke had restaged the shared runtime as `deterministic` while measurement
   required `release`. It produced no installed-size value or canonical size
   report. No tag or release was created.
+- The lightweight `v0.3.5` tag remains at
+  `d3b466d640fc1c3a8424770b6a3c49cdd41cce05`. Release run `30568222541`
+  completed `build-candidate`: production runtime, NSIS, exact 31,765,918-byte
+  installed-size/native-uninstall proof, strict budgets, candidate assembly,
+  and upload all passed. Publish then failed in local preflight because the
+  size report named the raw `capture-runtime.exe` intermediate while the
+  candidate and runtime manifest named
+  `capture-runtime-x86_64-pc-windows-msvc.exe`. The runtime bytes and SHA-256
+  matched. Preflight failed before any GitHub Release, Release asset, or
+  `0.3.5` package mutation; the candidate remained only one short-lived
+  Actions artifact.
 - Never delete, move, recreate, or publish around any failed tag. The next
-  candidate is `v0.3.5`.
+  candidate is `v0.3.6`.
 
 ## Proof ownership
 
@@ -71,10 +82,15 @@ This checklist is the active release gate. Check an item only after the exact
   production `build-release-artifacts`, runtime staging, NSIS build,
   installed-size/budget checks, candidate assembly/upload, downloaded-byte and
   package-integrity verification, and fail-closed publication.
+- The canonical size report measures
+  `dist/release/capture-runtime-x86_64-pc-windows-msvc.exe`.
+  `runtimeExecutable.path` identifies that actual candidate input,
+  `runtimeExecutable.fileName` is its basename, and bytes/SHA-256 bind the
+  exact candidate asset. The publisher comparison stays strict.
 
 ## Candidate identity
 
-- [x] All live first-party version owners are synchronized at `0.3.5`.
+- [x] All live first-party version owners are synchronized at `0.3.6`.
 - [x] Canonical source-lock bytes classify as exactly `core-only`, with empty
       requirements and no model candidate receipt.
 - [ ] Tag commit is reachable from `main`.
@@ -82,13 +98,14 @@ This checklist is the active release gate. Check an item only after the exact
 
 ## Automated candidate evidence
 
-- [x] Focused workflow contract and version checks pass.
+- [x] Focused workflow contract, canonical report identity, publisher, and
+      version checks pass.
 - [x] Full `corepack pnpm verify` passes for the exact candidate tree.
 - [x] Production runtime release artifacts are rebuilt without ambient model
       stores.
 - [x] The staged runtime manifest/schema/executable are internally consistent.
-- [ ] The exact `0.3.5` NSIS installer passes installed-size and budget checks.
-- [x] The exact `0.3.5` package tarball passes isolated Angular, Vanilla,
+- [x] The exact `0.3.6` NSIS installer passes installed-size and budget checks.
+- [x] The exact `0.3.6` package tarball passes isolated Angular, Vanilla,
       React, and Vue consumer proof.
 - [x] Core-only candidates contain no model, optional-worker, fixture, receipt,
       or model ZIP asset.
@@ -98,9 +115,9 @@ This checklist is the active release gate. Check an item only after the exact
 
 ## Git and publication boundary
 
-- [ ] Independent review approves the exact candidate tree.
+- [x] Independent review approves the exact candidate tree.
 - [ ] The reviewed tree is committed and merged to `main`.
-- [ ] Lightweight `v0.3.5` is created exactly once at the reviewed `main`
+- [ ] Lightweight `v0.3.6` is created exactly once at the reviewed `main`
       commit.
 - [ ] Release workflow `build-candidate` and `publish` jobs are terminal
       success for the immutable tag SHA.

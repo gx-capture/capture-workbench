@@ -12,7 +12,7 @@ const archiveName = `${manifest.name.replace(/^@/u, '').replace('/', '-')}-${man
 const archivePath = join(archiveDirectory, archiveName);
 
 assert(manifest.name === '@gx-capture/capture-workbench', 'Unexpected package name.');
-assert(manifest.version === '0.3.5', 'Unexpected package version.');
+assert(manifest.version === '0.3.6', 'Unexpected package version.');
 assert(
   manifest.repository?.url ===
     'git+https://github.com/gx-capture/capture-workbench.git',

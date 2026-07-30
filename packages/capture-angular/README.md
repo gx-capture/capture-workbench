@@ -20,10 +20,10 @@ Then install an exact synchronized version:
 
 ```powershell
 $env:GITHUB_PACKAGES_TOKEN = '<read:packages token>'
-corepack pnpm add @gx-capture/capture-workbench@0.3.5 --save-exact
+corepack pnpm add @gx-capture/capture-workbench@0.3.6 --save-exact
 ```
 
-## v0.3.5 Angular integration contract
+## v0.3.6 Angular integration contract
 
 All public asynchronous client, provider, preprocessor, and reconciliation
 context methods return cold `Observable<T>` values. Compose them with RxJS and

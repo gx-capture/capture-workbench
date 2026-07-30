@@ -81,7 +81,7 @@ LF:
 ```json
 {
   "catalogVersion": "1",
-  "runtimeVersion": "0.3.5",
+  "runtimeVersion": "0.3.6",
   "requirements": [
     {
       "requirementId": "windowsml-ocr",
@@ -89,17 +89,17 @@ LF:
         {
           "role": "worker",
           "requirementId": "windowsml-ocr",
-          "artifactVersion": "0.3.5",
+          "artifactVersion": "0.3.6",
           "workerProtocolVersion": "1",
           "platform": "windows",
           "arch": "x86_64",
-          "fileName": "capture-engine-ocr-0.3.5-windows-x64.zip",
+          "fileName": "capture-engine-ocr-0.3.6-windows-x64.zip",
           "bytes": 1,
           "sha256": "<64 lowercase hex>",
           "extractedBytes": 1,
           "entryPoint": "capture-engine-ocr.exe",
           "filesManifestSha256": "<64 lowercase hex>",
-          "url": "https://github.com/gx-capture/capture-workbench/releases/download/v0.3.5/..."
+          "url": "https://github.com/gx-capture/capture-workbench/releases/download/v0.3.6/..."
         }
       ]
     }
@@ -146,9 +146,9 @@ Each requirement is owned below:
 {
   "stateVersion": "1",
   "requirementId": "windowsml-ocr",
-  "artifactVersion": "0.3.5",
+  "artifactVersion": "0.3.6",
   "workerProtocolVersion": "1",
-  "entryPoint": "versions/0.3.5/worker/capture-engine-ocr.exe",
+  "entryPoint": "versions/0.3.6/worker/capture-engine-ocr.exe",
   "activatedArtifacts": [
     {"role": "worker", "sha256": "<hex>"},
     {"role": "model", "sha256": "<hex>"}
@@ -319,6 +319,15 @@ publication. A measured budget regression, missing evidence, forbidden
 package/platform content, or mismatch among ZIP bytes, inner manifests,
 catalog, runtime manifest, release directory, and staged NSIS resources fails
 closed before candidate upload or publication.
+
+The canonical report measures
+`dist/release/capture-runtime-x86_64-pc-windows-msvc.exe`, which is the exact
+runtime asset copied into the candidate and later published. The
+`runtimeExecutable.path` field is that actual measured path, `fileName` is
+exactly its basename, and `bytes`/`sha256` bind those same candidate bytes.
+The raw `dist/executable/capture-runtime.exe` PyInstaller intermediate is not a
+release-report identity. Report v2 schema and publisher comparisons remain
+strict.
 
 Exact-main push run `30561666148` at
 `cb83f713ad03100e050870132364e8dc1e585649` is immutable failure evidence for

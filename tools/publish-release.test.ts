@@ -10,7 +10,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import test from 'node:test';
 
 import {
@@ -19,7 +19,7 @@ import {
   sha512Integrity,
 } from './publish-release.ts';
 
-const version = '0.3.5';
+const version = '0.3.6';
 const tag = `v${version}`;
 const runtimeAssetNames = [
   'capture-runtime-x86_64-pc-windows-msvc.exe',
@@ -607,6 +607,34 @@ test('size report must identify the exact installer before publication', async (
   }
 });
 
+test('size report must identify the exact runtime filename before publication', async () => {
+  const candidate = createCandidate();
+  try {
+    const reportPath = join(
+      candidate.input.runtimeDirectory,
+      runtimeSizeReportName,
+    );
+    const report = JSON.parse(readFileSync(reportPath, 'utf8'));
+    report.runtimeExecutable.path = join(
+      dirname(report.runtimeExecutable.path),
+      'capture-runtime.exe',
+    );
+    report.runtimeExecutable.fileName = 'capture-runtime.exe';
+    writeCandidateSizeReport(candidate, report);
+    const remote = createRemote(candidate);
+
+    await assert.rejects(
+      observe(
+        publishRelease(candidate.input, { runCommand: remote.runCommand }),
+      ),
+      /size report does not match the exact release candidate/u,
+    );
+    assert.deepEqual(remote.calls, []);
+  } finally {
+    rmSync(candidate.root, { recursive: true, force: true });
+  }
+});
+
 test('publisher rejects noncanonical size report v2 before mutation', async () => {
   for (const mutate of [
     (report) => (report.reportVersion = '1'),
@@ -643,7 +671,7 @@ test('model ZIPs are rejected from the local release asset set', async () => {
     writeFileSync(
       join(
         candidate.input.runtimeDirectory,
-        'capture-model-whisper-primary-0.3.5.zip',
+        'capture-model-whisper-primary-0.3.6.zip',
       ),
       'forbidden model archive',
     );

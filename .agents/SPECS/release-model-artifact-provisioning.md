@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Publish Capture Workbench `0.3.5` safely in one of two canonical modes:
+Publish Capture Workbench `0.3.6` safely in one of two canonical modes:
 core-only while model provenance is unresolved, or model-enabled after every
 existing direct-model trust gate passes. Keep the installer small and preserve
 explicit-consent, checksum-pinned model installation when models are enabled.
