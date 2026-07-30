@@ -66,6 +66,9 @@ This checklist is the active release gate. Check an item only after the exact
       React, and Vue consumer proof.
 - [x] Core-only candidates contain no model, optional-worker, fixture, receipt,
       or model ZIP asset.
+- [x] PR #12 run `30542133653` clean-environment dependency failure is repaired
+      through the default dev group; isolated locked runtime gates and the core
+      boundary pass without optional extras or relaxed type ignores.
 
 ## Git and publication boundary
 
