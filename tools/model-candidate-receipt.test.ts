@@ -25,10 +25,10 @@ const commitSha = 'a'.repeat(40);
 const sourceLockSha256 = 'b'.repeat(64);
 const workflowPath = '.github/workflows/model-candidate.yml';
 const expected = {
-  artifactName: `capture-model-receipt-v0.3.5-${commitSha}`,
+  artifactName: `capture-model-receipt-v0.3.6-${commitSha}`,
   commitSha,
   sourceLockSha256,
-  version: '0.3.5',
+  version: '0.3.6',
   workflowPath,
 };
 
@@ -432,7 +432,7 @@ test('receipt creation binds exact source-lock fixture expectations', () => {
       .digest('hex');
     const catalog = {
       catalogVersion: '2',
-      runtimeVersion: '0.3.5',
+      runtimeVersion: '0.3.6',
       requirements: ['whisper-primary', 'windowsml-ocr'].map(
         (requirementId, index) => ({
           artifacts: [
@@ -490,7 +490,7 @@ test('receipt creation binds exact source-lock fixture expectations', () => {
       output: outputPath,
       runId: '23',
       sourceLock: sourceLockPath,
-      version: '0.3.5',
+      version: '0.3.6',
       workflowId: '17',
       workflowPath,
     };
@@ -584,7 +584,7 @@ test('receipt content cannot override server metadata or source lock', () => {
     receiptVersion: '1',
     runId: 23,
     sourceLockSha256,
-    version: '0.3.5',
+    version: '0.3.6',
     workflowId: 17,
     workflowPath,
   };

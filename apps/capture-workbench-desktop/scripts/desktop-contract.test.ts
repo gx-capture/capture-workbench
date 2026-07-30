@@ -957,6 +957,16 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   );
 
   const project = JSON.parse(runtimeProject);
+  const bundleSizeReportCommand =
+    project.targets['bundle-size-report'].options.command;
+  assert.match(
+    bundleSizeReportCommand,
+    /--executable dist\/release\/capture-runtime-x86_64-pc-windows-msvc\.exe/u,
+  );
+  assert.doesNotMatch(
+    bundleSizeReportCommand,
+    /--executable dist\/executable\/capture-runtime\.exe/u,
+  );
   assert.equal(project.targets['production-preflight'], undefined);
   assert.doesNotMatch(
     JSON.stringify(project.targets['build-release-artifacts'].dependsOn),
