@@ -42,6 +42,10 @@ jobs:
         shell: pwsh
         run: pnpm install --frozen-lockfile
 
+      - name: Verify canonical release metadata
+        shell: pwsh
+        run: pnpm nx run capture-runtime:classify-release-model-mode
+
       - name: Install Playwright Chromium
         shell: pwsh
         run: pnpm exec playwright install chromium
