@@ -15,7 +15,7 @@ import pytest
 
 from capture_runtime.clock import SystemClock
 from capture_runtime.config import ExtractionRuntimeConfig
-from capture_runtime.engine_catalog import EngineCatalog
+from capture_runtime.engine_catalog import EngineCatalog, EngineCatalogError
 from capture_runtime.engine_installation import (
     ArtifactDownloader,
     EngineInstallationError,
@@ -589,6 +589,51 @@ class _LifecycleConfig:
 @dataclass
 class _Lifecycle:
     config: _LifecycleConfig
+
+
+def test_core_only_catalog_reports_models_unavailable_without_downloading(
+    tmp_path: Path,
+) -> None:
+    catalog = EngineCatalog.from_dict(
+        {
+            "catalogVersion": "2",
+            "runtimeVersion": "0.3.2",
+            "requirements": [],
+        }
+    )
+    worker_downloader = CopyDownloader({}, fail=True)
+    model_downloader = CopyModelDownloader({})
+    manager = EngineInstallationManager(
+        tmp_path / "engines",
+        catalog,
+        worker_client=FakeWorkerClient(),  # type: ignore[arg-type]
+        downloader=worker_downloader,
+        model_downloader=model_downloader,
+    )
+    installer = SystemRuntimeInstaller(
+        _Lifecycle(_LifecycleConfig(tmp_path / "app-data")),  # type: ignore[arg-type]
+        engine_manager=manager,
+        clock=SystemClock(),
+        enabled_requirement_ids={"windowsml-ocr", "whisper-primary"},
+    )
+
+    requirements = {item.requirement_id: item for item in installer.requirements()}
+    for requirement_id in ("windowsml-ocr", "whisper-primary"):
+        requirement = requirements[requirement_id]
+        assert requirement.status.value == "unavailable"
+        assert requirement.artifact is None
+        assert requirement.detail == "No downloadable model is published for this runtime release."
+
+    with pytest.raises(EngineCatalogError, match="unknown engine requirement"):
+        asyncio.run(
+            installer.install(
+                "windowsml-ocr",
+                cancel_event=asyncio.Event(),
+                report_progress=lambda _value: None,
+            )
+        )
+    assert worker_downloader.calls == 0
+    assert model_downloader.calls == 0
 
 
 def test_system_installer_passes_nonzero_directml_device_to_model_probe(tmp_path: Path) -> None:

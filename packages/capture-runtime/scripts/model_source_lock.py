@@ -14,6 +14,8 @@ MAX_ENTRIES = 4096
 MAX_SINGLE_FILE_BYTES = 512 * 1024 * 1024
 MAX_TOTAL_BYTES = 2 * 1024 * 1024 * 1024
 REQUIREMENT_IDS = ("whisper-primary", "windowsml-ocr")
+CORE_ONLY_RELEASE_MODE = "core-only"
+MODEL_ENABLED_RELEASE_MODE = "model-enabled"
 HEX = frozenset("0123456789abcdef")
 WINDOWS_FORBIDDEN_PATH_CHARACTERS = frozenset('<>:"|?*')
 WINDOWS_RESERVED_DEVICE_BASENAMES = frozenset(
@@ -159,13 +161,17 @@ def validate_source_lock(
             raise ModelSourceLockError("blocked source lock must identify unresolved blockers")
     else:
         raise ModelSourceLockError("model source lock approval status is invalid")
-    if require_approved and approval["status"] != "approved":
-        raise ModelSourceLockError("model source lock is blocked: " + "; ".join(blockers))
-
     requirements = lock["requirements"]
     if not isinstance(requirements, list):
         raise ModelSourceLockError("model source lock requirements must be a list")
-    if approval["status"] == "approved" and len(requirements) != len(REQUIREMENT_IDS):
+    core_only = len(requirements) == 0
+    if require_approved and not core_only and approval["status"] != "approved":
+        raise ModelSourceLockError("model source lock is blocked: " + "; ".join(blockers))
+    if (
+        not core_only
+        and approval["status"] == "approved"
+        and len(requirements) != len(REQUIREMENT_IDS)
+    ):
         raise ModelSourceLockError("approved source lock needs exact OCR and Whisper requirements")
     requirement_ids: list[str] = []
     for requirement_index, raw_requirement in enumerate(requirements):
@@ -308,7 +314,7 @@ def validate_source_lock(
     fixtures = lock["fixtures"]
     if not isinstance(fixtures, list):
         raise ModelSourceLockError("fixtures must be a list")
-    if approval["status"] == "approved" and len(fixtures) != 2:
+    if not core_only and approval["status"] == "approved" and len(fixtures) != 2:
         raise ModelSourceLockError("approved source lock needs real OCR and Whisper fixtures")
     fixture_ids: list[str] = []
     fixture_kinds: list[str] = []
@@ -405,7 +411,11 @@ def validate_source_lock(
         if fixture_revision not in fixture_url or fixture_revision not in license_url:
             raise ModelSourceLockError(f"fixture[{index}] URLs must contain the immutable revision")
         _text(fixture["spdx"], f"fixture[{index}].spdx")
-    if approval["status"] == "approved" and sorted(fixture_kinds) != ["ocr", "whisper"]:
+    if (
+        not core_only
+        and approval["status"] == "approved"
+        and sorted(fixture_kinds) != ["ocr", "whisper"]
+    ):
         raise ModelSourceLockError("fixture kinds must be exactly OCR and Whisper")
     if fixture_ids != sorted(fixture_ids) or len(set(fixture_ids)) != len(fixture_ids):
         raise ModelSourceLockError("fixture IDs must be sorted and unique")
@@ -426,6 +436,10 @@ def load_source_lock(path: Path, *, require_approved: bool = True) -> dict[str, 
 
 def source_lock_sha256(lock: dict[str, Any]) -> str:
     return hashlib.sha256(canonical_json_bytes(lock)).hexdigest()
+
+
+def release_mode(lock: dict[str, Any]) -> str:
+    return CORE_ONLY_RELEASE_MODE if not lock["requirements"] else MODEL_ENABLED_RELEASE_MODE
 
 
 def model_delivery(lock: dict[str, Any], requirement_id: str) -> dict[str, Any]:
@@ -451,7 +465,7 @@ def model_delivery(lock: dict[str, Any], requirement_id: str) -> dict[str, Any]:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("operation", choices=("validate",))
+    parser.add_argument("operation", choices=("classify", "validate"))
     parser.add_argument(
         "--lock",
         type=Path,
@@ -459,8 +473,19 @@ def main() -> None:
         / "model-sources"
         / "release-model-source-lock.json",
     )
+    parser.add_argument("--output", type=Path)
     arguments = parser.parse_args()
-    load_source_lock(arguments.lock)
+    lock = load_source_lock(arguments.lock)
+    if arguments.operation == "classify":
+        payload = {"releaseMode": release_mode(lock)}
+        content = canonical_json_bytes(payload)
+        if arguments.output is None:
+            print(content.decode("utf-8"), end="")
+        else:
+            arguments.output.parent.mkdir(parents=True, exist_ok=True)
+            arguments.output.write_bytes(content)
+    elif arguments.output is not None:
+        raise SystemExit("--output is supported only by classify")
 
 
 if __name__ == "__main__":

@@ -25,12 +25,25 @@ def _load_module() -> ModuleType:
 model_source_lock = _load_module()
 
 
-def test_blocked_production_lock_fails_closed() -> None:
+def test_blocked_empty_production_lock_is_canonical_core_only() -> None:
     source = (
         Path(__file__).resolve().parents[1] / "model-sources" / "release-model-source-lock.json"
     )
+    lock = model_source_lock.load_source_lock(source)
+    assert lock["requirements"] == []
+    assert model_source_lock.release_mode(lock) == model_source_lock.CORE_ONLY_RELEASE_MODE
+
+
+def test_nonempty_blocked_source_lock_fails_closed() -> None:
+    payload, _content = approved_source_lock()
+    payload["approval"] = {
+        "approvedAt": None,
+        "approvedBy": None,
+        "blockers": ["Model sources are not approved."],
+        "status": "blocked",
+    }
     with pytest.raises(model_source_lock.ModelSourceLockError, match="source lock is blocked"):
-        model_source_lock.load_source_lock(source)
+        model_source_lock.validate_source_lock(payload)
 
 
 def test_approved_lock_generates_checksum_pinned_manifest_equivalent(
@@ -147,6 +160,18 @@ def test_approved_lock_generates_checksum_pinned_manifest_equivalent(
         (
             lambda payload: payload["fixtures"][1].update({"id": payload["fixtures"][0]["id"]}),
             "sorted and unique",
+        ),
+        (
+            lambda payload: payload.pop("requirements"),
+            "fields must be",
+        ),
+        (
+            lambda payload: payload.update({"requirements": None}),
+            "requirements must be a list",
+        ),
+        (
+            lambda payload: payload.update({"requirements": payload["requirements"][:1]}),
+            "exact OCR and Whisper requirements",
         ),
     ],
 )

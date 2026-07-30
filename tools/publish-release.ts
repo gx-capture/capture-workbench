@@ -148,13 +148,22 @@ async function preflightCandidate(input, runCommand) {
   const catalogPath = join(input.runtimeDirectory, engineCatalogName);
   const sizeReportPath = join(input.runtimeDirectory, runtimeSizeReportName);
   const catalog = JSON.parse(await readFile(catalogPath, 'utf8'));
+  const catalogFields =
+    catalog && typeof catalog === 'object' ? Object.keys(catalog).sort() : [];
+  const requirementIds = Array.isArray(catalog?.requirements)
+    ? catalog.requirements.map((item) => item?.requirementId).sort()
+    : null;
+  const validRequirementSet =
+    requirementIds !== null &&
+    (requirementIds.length === 0 ||
+      JSON.stringify(requirementIds) ===
+        JSON.stringify(['whisper-primary', 'windowsml-ocr']));
   if (
+    JSON.stringify(catalogFields) !==
+      JSON.stringify(['catalogVersion', 'requirements', 'runtimeVersion']) ||
     catalog?.catalogVersion !== '2' ||
     catalog?.runtimeVersion !== input.version ||
-    !Array.isArray(catalog.requirements) ||
-    JSON.stringify(
-      catalog.requirements.map((item) => item.requirementId).sort(),
-    ) !== JSON.stringify(['whisper-primary', 'windowsml-ocr'])
+    !validRequirementSet
   ) {
     throw new Error(
       'Engine catalog identity, version, or requirement set is invalid.',
@@ -370,13 +379,7 @@ function releaseState(tag, runCommand) {
 }
 
 function remoteAssetNames(tag, runCommand) {
-  const result = runCommand('gh', [
-    'release',
-    'view',
-    tag,
-    '--json',
-    'assets',
-  ]);
+  const result = runCommand('gh', ['release', 'view', tag, '--json', 'assets']);
   const payload = JSON.parse(result.stdout);
   if (
     !Array.isArray(payload?.assets) ||
@@ -392,12 +395,7 @@ function remoteAssetNames(tag, runCommand) {
   return payload.assets.map((asset) => asset.name);
 }
 
-function assertRemoteAssetNames(
-  tag,
-  assets,
-  runCommand,
-  { allowMissing },
-) {
+function assertRemoteAssetNames(tag, assets, runCommand, { allowMissing }) {
   const expected = assets.map((asset) => basename(asset)).sort();
   const actual = remoteAssetNames(tag, runCommand);
   if (new Set(actual).size !== actual.length) {

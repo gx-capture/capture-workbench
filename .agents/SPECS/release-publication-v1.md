@@ -1,5 +1,12 @@
 # Direct Release Publication V1
 
+> Historical baseline. `v0.3-pre-release-closeout.md` and
+> `release-model-artifact-provisioning.md` supersede its candidate contents and
+> gates. The current tag workflow derives core-only versus model-enabled mode
+> from the canonical checked-in source lock, requires successful exact-SHA main
+> CI in both modes, and requires model receipt evidence only for non-empty
+> model requirements.
+
 ## Purpose
 
 Publish `@gx-capture/capture-workbench` and the Windows x64 `capture-runtime` assets

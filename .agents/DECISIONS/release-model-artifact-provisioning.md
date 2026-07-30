@@ -1,4 +1,4 @@
-# Direct Model Delivery Decisions
+# Tiered Release and Direct Model Delivery Decisions
 
 ## Scope and Evidence
 
@@ -12,8 +12,46 @@
 - Exact OCR/Whisper user-directed upstream download/use terms, required
   attribution/NOTICE, canonical source ownership, first-party `pipeline.json`
   derivation, and redistribution permission for first-party-copied
-  license/NOTICE/fixture bytes remain unresolved. Production catalog generation
-  must fail closed until those prerequisites are approved.
+  license/NOTICE/fixture bytes remain unresolved. Model-enabled catalog
+  generation must fail closed until those prerequisites are approved.
+
+## Approved Two-Tier Release Classification
+
+The user approved a core-only / model-enabled release scheme on 2026-07-30.
+The existing source-lock validator, engine-catalog generator, tag workflow, and
+publisher remain the only owners. No parallel publication workflow or bypass
+flag is added.
+
+Release mode is derived only from a canonical checked-in source lock and the
+canonical catalog it generates:
+
+- `requirements: []` is core-only. The lock must still be present, canonical,
+  version-synchronized, and structurally valid, but model-source approval,
+  fixtures, a `capture-directml` runner, and a model-candidate receipt do not
+  gate this mode.
+- A non-empty `requirements` list is model-enabled. It must be the exact
+  approved OCR/Whisper set and satisfy every immutable source, license, NOTICE,
+  fixture, DirectML runner, fresh exact-commit receipt, and catalog-binding
+  gate.
+- A missing, malformed, non-canonical, version-drifted, partial, or unknown
+  requirements value is invalid. It is never reclassified as core-only.
+
+The core-only catalog has `requirements: []`. Its release directory and GitHub
+Release contain only the core runtime, schema/manifest/checksums, empty engine
+catalog, size evidence, NSIS installer, and package tarball. Optional worker
+archives, model files/ZIPs, and QA fixtures are absent. Runtime requirement
+reporting exposes OCR and Whisper as unavailable with no downloadable artifact,
+and an installation attempt fails before any download begins.
+
+Exact-head main CI, synchronized versions, and package/runtime/installer
+integrity remain mandatory in both modes.
+
+The tag workflow resolves exact-head CI through GitHub server metadata for the
+active checked-in `.github/workflows/ci.yml` workflow. It requires exactly one
+completed successful `push` run whose `head_branch` is `main` and whose
+`head_sha` equals the tag commit. A PR run, release-workflow run, wrong event,
+branch, SHA, workflow path/ID, cancelled/skipped result, malformed metadata, or
+ambiguous successful run fails closed.
 
 ## Approved Delivery Scheme
 
@@ -70,15 +108,18 @@ own not-yet-existing commit.
 
 ## Release and Receipt Trust
 
-The pre-tag candidate workflow remains explicit `workflow_dispatch`,
-read-only, and non-publishing. Once the legal/source lock is approved, it
+For model-enabled releases, the pre-tag candidate workflow remains explicit
+`workflow_dispatch`, read-only, and non-publishing. Once the legal/source lock
+is approved, it
 performs the normal consent-equivalent direct downloads on an explicitly
 labeled self-hosted Windows x64 DirectML runner, verifies real OCR and Whisper
 fixtures, and uploads only a small canonical receipt. GitHub-hosted
 `windows-latest` does not prove the product DirectML GPU lane and is forbidden
 for this job.
 
-The tag workflow grants `actions: read` only to `build-candidate` and trusts
+The tag workflow first derives the release mode from the canonical checked-in
+lock. Core-only releases do not query or copy candidate-receipt evidence.
+Model-enabled releases grant `actions: read` to `build-candidate` and trust
 GitHub server-side metadata, not receipt claims:
 
 - checked-in candidate workflow path and stable workflow ID;
@@ -118,7 +159,7 @@ names are never in the expected release set.
 - First-party hosting remains a separate future decision if immutable upstream
   availability is inadequate.
 
-## Remaining Blockers
+## Remaining Model-Enabled Blockers
 
 - Approve exact PaddleX/PaddleOCR user-directed upstream download/use terms,
   canonical owner, and required attribution/NOTICE.
@@ -133,3 +174,7 @@ names are never in the expected release set.
   download/use terms, and required attribution/NOTICE for both snapshots.
 - Register and secure an authorized self-hosted Windows x64 GPU runner with the
   exact `capture-directml` label; the repository currently has no such runner.
+
+These blockers prevent only a model-enabled release. They do not block a
+core-only release whose canonical source lock and generated catalog both have
+an empty `requirements` list.

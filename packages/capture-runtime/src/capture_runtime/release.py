@@ -45,10 +45,10 @@ def _validated_engine_release_files(
     catalog = EngineCatalog.from_dict(json.loads(engine_catalog.read_text(encoding="utf-8")))
     if engine_catalog.read_bytes() != canonical_json_bytes(catalog.to_dict()):
         raise ValueError("release engine catalog bytes are not canonical")
-    if {item.requirement_id for item in catalog.requirements} != {
-        "windowsml-ocr",
-        "whisper-primary",
-    }:
+    requirement_ids = {item.requirement_id for item in catalog.requirements}
+    if not requirement_ids:
+        return ()
+    if requirement_ids != {"windowsml-ocr", "whisper-primary"}:
         raise ValueError("release engine catalog requirement set is invalid")
     incomplete = [item.requirement_id for item in catalog.requirements if not item.complete]
     if incomplete:
@@ -149,6 +149,20 @@ def build_release_artifacts(
         raise ValueError("release engine directory and catalog must be supplied together")
     if engine_dir is not None and engine_catalog is not None:
         engine_files = _validated_engine_release_files(engine_dir, engine_catalog)
+    resolved_output_dir = output_dir.resolve()
+    if resolved_output_dir == Path(resolved_output_dir.anchor):
+        raise ValueError("release output directory cannot be a filesystem root")
+    protected_inputs = (executable, schema, *engine_files)
+    if engine_dir is not None:
+        protected_inputs += (engine_dir,)
+    if engine_catalog is not None:
+        protected_inputs += (engine_catalog,)
+    if any(item.resolve().is_relative_to(resolved_output_dir) for item in protected_inputs):
+        raise ValueError("release output directory cannot contain release inputs")
+    if output_dir.exists():
+        if not output_dir.is_dir():
+            raise NotADirectoryError(output_dir)
+        shutil.rmtree(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     released_executable = output_dir / "capture-runtime-x86_64-pc-windows-msvc.exe"
     released_schema = output_dir / "capture-document-v1.schema.json"
