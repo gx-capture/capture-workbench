@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import os
-import shutil
 import zipfile
 from pathlib import Path
 from urllib.parse import quote
+
+from model_source_lock import load_source_lock, model_delivery
 
 from capture_runtime.constants import RUNTIME_VERSION
 from capture_runtime.engine_catalog import EngineCatalog, canonical_json_bytes
@@ -60,51 +60,23 @@ def descriptor(
     }
 
 
-def optional_path(cli_value: Path | None, environment_name: str) -> Path | None:
-    if cli_value is not None:
-        return cli_value
-    value = os.environ.get(environment_name)
-    return Path(value) if value else None
-
-
-def stage_model_pair(
-    archive: Path | None,
-    manifest: Path | None,
-    *,
-    engine_dir: Path,
-) -> tuple[Path | None, Path | None]:
-    if archive is None or manifest is None:
-        return None, None
-    if not archive.is_file() or not manifest.is_file():
-        raise FileNotFoundError(archive if not archive.is_file() else manifest)
-    staged: list[Path] = []
-    for source in (archive, manifest):
-        destination = engine_dir / source.name
-        if source.resolve() != destination.resolve():
-            if destination.exists() and sha256_file(destination) != sha256_file(source):
-                raise ValueError(f"model artifact staging collision: {destination.name}")
-            shutil.copy2(source, destination)
-        staged.append(destination)
-    return staged[0], staged[1]
-
-
 def requirement(
     *,
     requirement_id: str,
     worker_archive: Path,
     worker_manifest: Path,
     worker_entry_point: str,
-    model_archive: Path | None,
-    model_manifest: Path | None,
+    direct_model_files: dict[str, object] | None,
     release_base_url: str,
 ) -> dict[str, object]:
-    if model_archive is None or model_manifest is None:
+    if direct_model_files is None:
         return {
             "requirementId": requirement_id,
             "artifacts": [],
+            "modelFiles": None,
             "unavailableReason": (
-                f"Exact pinned {requirement_id} model artifact bytes were not supplied "
-                "at catalog generation time."
+                f"An approved exact {requirement_id} direct model source lock "
+                "was not supplied at catalog generation time."
             ),
         }
     return {
@@ -118,15 +90,8 @@ def requirement(
                 entry_point=worker_entry_point,
                 release_base_url=release_base_url,
             ),
-            descriptor(
-                requirement_id=requirement_id,
-                role="model",
-                archive=model_archive,
-                manifest=model_manifest,
-                entry_point="model",
-                release_base_url=release_base_url,
-            ),
         ],
+        "modelFiles": direct_model_files,
         "unavailableReason": None,
     }
 
@@ -144,41 +109,23 @@ def main() -> None:
     parser.add_argument("--ocr-worker-manifest", type=Path, required=True)
     parser.add_argument("--whisper-worker-archive", type=Path, required=True)
     parser.add_argument("--whisper-worker-manifest", type=Path, required=True)
-    parser.add_argument("--ocr-model-archive", type=Path)
-    parser.add_argument("--ocr-model-manifest", type=Path)
-    parser.add_argument("--whisper-model-archive", type=Path)
-    parser.add_argument("--whisper-model-manifest", type=Path)
+    parser.add_argument("--model-source-lock", type=Path)
     parser.add_argument("--require-complete", action="store_true")
     arguments = parser.parse_args()
-    ocr_model_archive = optional_path(arguments.ocr_model_archive, "CAPTURE_OCR_MODEL_ARCHIVE")
-    ocr_model_manifest = optional_path(arguments.ocr_model_manifest, "CAPTURE_OCR_MODEL_MANIFEST")
-    whisper_model_archive = optional_path(
-        arguments.whisper_model_archive, "CAPTURE_WHISPER_MODEL_ARCHIVE"
+    if arguments.require_complete and arguments.model_source_lock is None:
+        raise SystemExit("release catalog requires an approved exact direct model source lock")
+    source_lock = (
+        None
+        if arguments.model_source_lock is None
+        else load_source_lock(arguments.model_source_lock)
     )
-    whisper_model_manifest = optional_path(
-        arguments.whisper_model_manifest, "CAPTURE_WHISPER_MODEL_MANIFEST"
-    )
-    if (ocr_model_archive is None) != (ocr_model_manifest is None):
-        raise SystemExit("OCR model archive and manifest must be supplied together")
-    if (whisper_model_archive is None) != (whisper_model_manifest is None):
-        raise SystemExit("Whisper model archive and manifest must be supplied together")
-    if arguments.require_complete and (ocr_model_archive is None or whisper_model_archive is None):
-        raise SystemExit("release catalog requires exact OCR and Whisper model archives/manifests")
-    engine_dir = arguments.ocr_worker_archive.parent
-    if arguments.whisper_worker_archive.parent.resolve() != engine_dir.resolve():
+    if (
+        arguments.whisper_worker_archive.parent.resolve()
+        != arguments.ocr_worker_archive.parent.resolve()
+    ):
         raise SystemExit("OCR and Whisper worker archives must share one engine directory")
-    ocr_model_archive, ocr_model_manifest = stage_model_pair(
-        ocr_model_archive,
-        ocr_model_manifest,
-        engine_dir=engine_dir,
-    )
-    whisper_model_archive, whisper_model_manifest = stage_model_pair(
-        whisper_model_archive,
-        whisper_model_manifest,
-        engine_dir=engine_dir,
-    )
     payload = {
-        "catalogVersion": "1",
+        "catalogVersion": "2",
         "runtimeVersion": RUNTIME_VERSION,
         "requirements": [
             requirement(
@@ -186,8 +133,9 @@ def main() -> None:
                 worker_archive=arguments.ocr_worker_archive,
                 worker_manifest=arguments.ocr_worker_manifest,
                 worker_entry_point="capture-engine-ocr.exe",
-                model_archive=ocr_model_archive,
-                model_manifest=ocr_model_manifest,
+                direct_model_files=(
+                    None if source_lock is None else model_delivery(source_lock, "windowsml-ocr")
+                ),
                 release_base_url=arguments.release_base_url,
             ),
             requirement(
@@ -195,8 +143,9 @@ def main() -> None:
                 worker_archive=arguments.whisper_worker_archive,
                 worker_manifest=arguments.whisper_worker_manifest,
                 worker_entry_point="capture-engine-whisper.exe",
-                model_archive=whisper_model_archive,
-                model_manifest=whisper_model_manifest,
+                direct_model_files=(
+                    None if source_lock is None else model_delivery(source_lock, "whisper-primary")
+                ),
                 release_base_url=arguments.release_base_url,
             ),
         ],

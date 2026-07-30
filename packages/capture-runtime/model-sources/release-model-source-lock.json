@@ -1,0 +1,17 @@
+{
+  "approval": {
+    "approvedAt": null,
+    "approvedBy": null,
+    "blockers": [
+      "Approve exact PaddleX/PaddleOCR user-directed upstream download/use terms, canonical owners, and required attribution/NOTICE.",
+      "Approve and commit first-party OCR pipeline.json, license, NOTICE, and real fixture bytes, then bind them from a later source-lock commit to immutable raw gx-capture/capture-workbench URLs at the earlier full commit SHA; the lock cannot self-reference.",
+      "Confirm the redirected Whisper primary owner and approve user-directed upstream download/use plus required attribution/NOTICE for both pinned Whisper snapshots.",
+      "Approve first-party copying/redistribution of checksum-pinned real OCR and Whisper fixture/license bytes with normalized expected text and engine/model/device expectations."
+    ],
+    "status": "blocked"
+  },
+  "fixtures": [],
+  "lockVersion": "1",
+  "releaseVersion": "0.3.2",
+  "requirements": []
+}

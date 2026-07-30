@@ -149,7 +149,7 @@ async function preflightCandidate(input, runCommand) {
   const sizeReportPath = join(input.runtimeDirectory, runtimeSizeReportName);
   const catalog = JSON.parse(await readFile(catalogPath, 'utf8'));
   if (
-    catalog?.catalogVersion !== '1' ||
+    catalog?.catalogVersion !== '2' ||
     catalog?.runtimeVersion !== input.version ||
     !Array.isArray(catalog.requirements) ||
     JSON.stringify(
@@ -164,10 +164,23 @@ async function preflightCandidate(input, runCommand) {
     if (
       requirement.unavailableReason !== null ||
       !Array.isArray(requirement.artifacts) ||
-      requirement.artifacts.length !== 2 ||
+      requirement.artifacts.length !== 1 ||
       requirement.artifacts.some(
-        (artifact) => artifact.requirementId !== requirement.requirementId,
-      )
+        (artifact) =>
+          artifact.requirementId !== requirement.requirementId ||
+          artifact.role !== 'worker',
+      ) ||
+      requirement.modelFiles?.artifactVersion !== input.version ||
+      requirement.modelFiles?.entryPoint !== 'model' ||
+      !Number.isSafeInteger(requirement.modelFiles?.entryCount) ||
+      requirement.modelFiles.entryCount < 1 ||
+      !Array.isArray(requirement.modelFiles?.files) ||
+      requirement.modelFiles.files.length !==
+        requirement.modelFiles.entryCount ||
+      !Number.isSafeInteger(requirement.modelFiles?.extractedBytes) ||
+      requirement.modelFiles.extractedBytes < 1 ||
+      !/^[a-f0-9]{64}$/u.test(requirement.modelFiles?.manifestSha256) ||
+      !/^[a-f0-9]{64}$/u.test(requirement.modelFiles?.sourceLockSha256)
     ) {
       throw new Error(
         `Engine catalog requirement is incomplete: ${String(requirement.requirementId)}.`,
@@ -175,14 +188,19 @@ async function preflightCandidate(input, runCommand) {
     }
     return requirement.artifacts;
   });
+  const descriptorNames = descriptors.map((descriptor) => descriptor.fileName);
+  if (new Set(descriptorNames).size !== descriptorNames.length) {
+    throw new Error('Engine catalog worker archive names must be unique.');
+  }
   const sidecarNames = runtimeEntries.filter((name) =>
     name.endsWith('-files.json'),
   );
   const engineAssetNames = new Set();
   for (const descriptor of descriptors) {
     if (
-      !['worker', 'model'].includes(descriptor.role) ||
+      descriptor.role !== 'worker' ||
       typeof descriptor.fileName !== 'string' ||
+      descriptor.fileName !== basename(descriptor.fileName) ||
       !descriptor.fileName.endsWith('.zip') ||
       !Number.isSafeInteger(descriptor.bytes) ||
       descriptor.bytes < 1 ||
@@ -270,7 +288,8 @@ async function preflightCandidate(input, runCommand) {
   if (
     !input.installerPath.toLowerCase().endsWith('.exe') ||
     resolve(input.installerPath) === resolve(coreRuntimeAssets[0]) ||
-    dirname(resolve(input.installerPath)) === resolve(input.runtimeDirectory)
+    dirname(resolve(input.installerPath)) === resolve(input.runtimeDirectory) ||
+    expectedEntries.includes(basename(input.installerPath))
   ) {
     throw new Error(
       'NSIS installer must be the distinct release-candidate installer executable.',
@@ -348,6 +367,54 @@ function releaseState(tag, runCommand) {
     );
   }
   return JSON.parse(result.stdout).isDraft ? 'draft' : 'public';
+}
+
+function remoteAssetNames(tag, runCommand) {
+  const result = runCommand('gh', [
+    'release',
+    'view',
+    tag,
+    '--json',
+    'assets',
+  ]);
+  const payload = JSON.parse(result.stdout);
+  if (
+    !Array.isArray(payload?.assets) ||
+    payload.assets.some(
+      (asset) =>
+        typeof asset?.name !== 'string' ||
+        asset.name.length === 0 ||
+        asset.name !== basename(asset.name),
+    )
+  ) {
+    throw new Error('Release returned an invalid remote asset-name set.');
+  }
+  return payload.assets.map((asset) => asset.name);
+}
+
+function assertRemoteAssetNames(
+  tag,
+  assets,
+  runCommand,
+  { allowMissing },
+) {
+  const expected = assets.map((asset) => basename(asset)).sort();
+  const actual = remoteAssetNames(tag, runCommand);
+  if (new Set(actual).size !== actual.length) {
+    throw new Error('Release contains duplicate remote asset names.');
+  }
+  const expectedSet = new Set(expected);
+  const extras = actual.filter((name) => !expectedSet.has(name)).sort();
+  if (extras.length > 0) {
+    throw new Error(
+      `Release contains unexpected remote assets: ${extras.join(', ')}.`,
+    );
+  }
+  const actualSet = new Set(actual);
+  const missing = expected.filter((name) => !actualSet.has(name));
+  if (!allowMissing && missing.length > 0) {
+    throw new Error(`Release assets are missing: ${missing.join(', ')}.`);
+  }
 }
 
 function existingPackageIntegrity(version, runCommand) {
@@ -432,6 +499,7 @@ async function remoteAssetStatus(tag, asset, runCommand) {
 }
 
 async function verifyAllAssets(tag, assets, runCommand) {
+  assertRemoteAssetNames(tag, assets, runCommand, { allowMissing: false });
   for (const asset of assets) {
     const status = await remoteAssetStatus(tag, asset, runCommand);
     if (status !== 'same') {
@@ -443,6 +511,7 @@ async function verifyAllAssets(tag, assets, runCommand) {
 }
 
 async function ensureDraftAssets(tag, assets, runCommand) {
+  assertRemoteAssetNames(tag, assets, runCommand, { allowMissing: true });
   for (const asset of assets) {
     const status = await remoteAssetStatus(tag, asset, runCommand);
     if (status === 'same') continue;
@@ -513,6 +582,9 @@ async function publishReleaseAsync(input, runCommand) {
     throw new Error('Release must remain draft during publication.');
 
   await ensureDraftAssets(input.tag, candidate.assets, runCommand);
+  assertRemoteAssetNames(input.tag, candidate.assets, runCommand, {
+    allowMissing: false,
+  });
   publishPackage(candidate.packagePlan, runCommand);
   await verifyAllAssets(input.tag, candidate.assets, runCommand);
   runCommand('gh', [

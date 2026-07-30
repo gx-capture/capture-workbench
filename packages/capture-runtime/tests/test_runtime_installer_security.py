@@ -11,11 +11,18 @@ from pathlib import Path
 import httpx
 import pytest
 
-from capture_runtime.engine_catalog import EngineArtifactDescriptor
+import capture_runtime.engine_installation as engine_installation
+from capture_runtime.engine_catalog import (
+    EngineArtifactDescriptor,
+    EngineCatalogError,
+    EngineModelDeliveryDescriptor,
+    EngineModelFileDescriptor,
+)
 from capture_runtime.engine_installation import (
     MAX_FILES_MANIFEST_BYTES,
     EngineInstallationError,
     HttpArtifactDownloader,
+    HttpModelFileDownloader,
     safe_extract_artifact,
 )
 
@@ -224,6 +231,22 @@ def test_safe_engine_zip_rejects_checksum_and_cancellation(tmp_path: Path) -> No
         safe_extract_artifact(archive, tmp_path / "cancelled", descriptor, cancel_event=cancelled)
 
 
+def test_worker_archive_entry_ceiling_remains_unchanged(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(engine_installation, "MAX_SINGLE_EXTRACTED_FILE_BYTES", 512)
+    archive = tmp_path / "worker-large.zip"
+    descriptor, _ = _archive(archive, {"capture-engine-ocr.exe": b"x" * 513})
+    with pytest.raises(EngineInstallationError, match="file exceeds size limit"):
+        safe_extract_artifact(
+            archive,
+            tmp_path / "worker-large",
+            descriptor,
+            cancel_event=asyncio.Event(),
+        )
+
+
 @pytest.mark.parametrize(
     ("response_bytes", "declared", "message"),
     [
@@ -262,3 +285,260 @@ def test_http_downloader_rejects_size_drift(
             )
         )
     assert not (tmp_path / "download.zip").exists()
+
+
+def _direct_model_file(
+    content: bytes,
+    *,
+    path: str = "model/model.bin",
+    kind: str = "source",
+    redirect_hosts: list[str] | None = None,
+) -> EngineModelFileDescriptor:
+    revision = "a" * 40
+    return EngineModelFileDescriptor.from_dict(
+        {
+            "bytes": len(content),
+            "derivation": None,
+            "kind": kind,
+            "licensePath": "licenses/LICENSE.txt",
+            "noticePath": "notices/NOTICE.txt",
+            "owner": "test-owner",
+            "path": path,
+            "redirectHosts": redirect_hosts or [],
+            "revision": revision,
+            "sha256": hashlib.sha256(content).hexdigest(),
+            "spdx": "MIT",
+            "url": f"https://models.example.test/{revision}/model.bin",
+        }
+    )
+
+
+def test_direct_model_catalog_rejects_initial_host_in_redirect_allowlist() -> None:
+    payload = _direct_model_file(b"model").to_dict()
+    payload["redirectHosts"] = ["models.example.test"]
+    with pytest.raises(EngineCatalogError, match="extra hosts"):
+        EngineModelFileDescriptor.from_dict(payload)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "model/NUL",
+        "model/file.",
+        "model/file ",
+        "model/file:stream",
+    ],
+)
+def test_direct_model_catalog_rejects_windows_unsafe_paths(path: str) -> None:
+    payload = _direct_model_file(b"model").to_dict()
+    payload["path"] = path
+    with pytest.raises(EngineCatalogError, match="Windows-unsafe"):
+        EngineModelFileDescriptor.from_dict(payload)
+
+
+def test_direct_model_catalog_rejects_case_colliding_paths() -> None:
+    source = _direct_model_file(b"model").to_dict()
+    alias = {**source, "path": "model/MODEL.bin"}
+    files = [
+        {
+            **source,
+            "kind": "license",
+            "licensePath": None,
+            "noticePath": None,
+            "path": "licenses/LICENSE.txt",
+        },
+        alias,
+        source,
+        {
+            **source,
+            "kind": "notice",
+            "licensePath": None,
+            "noticePath": None,
+            "path": "notices/NOTICE.txt",
+        },
+    ]
+    with pytest.raises(EngineCatalogError, match="sorted and unique"):
+        EngineModelDeliveryDescriptor.from_dict(
+            {
+                "artifactVersion": "0.3.2",
+                "entryCount": len(files),
+                "entryPoint": "model",
+                "extractedBytes": sum(item["bytes"] for item in files),
+                "files": files,
+                "manifestSha256": "0" * 64,
+                "sourceLockSha256": "1" * 64,
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "retry_delays",
+    [(), (-1,), (31,), (0, 0, 0, 0, 0, 0)],
+)
+def test_direct_model_retry_schedule_is_bounded(
+    retry_delays: tuple[float, ...],
+) -> None:
+    with pytest.raises(ValueError, match="retry schedule"):
+        HttpModelFileDownloader(retry_delays=retry_delays)
+
+
+def test_direct_model_download_validates_allowlisted_signed_redirect_before_streaming(
+    tmp_path: Path,
+) -> None:
+    content = b"direct model"
+    descriptor = _direct_model_file(
+        content,
+        redirect_hosts=["cdn.example.test"],
+    )
+    requested: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(str(request.url))
+        if request.url.host == "models.example.test":
+            return httpx.Response(
+                302,
+                headers={"location": "https://cdn.example.test/signed/model.bin?signature=locked"},
+                request=request,
+            )
+        return httpx.Response(
+            200,
+            headers={"content-length": str(len(content))},
+            content=content,
+            request=request,
+        )
+
+    downloader = HttpModelFileDownloader(
+        lambda: httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            follow_redirects=True,
+        ),
+        retry_delays=(0,),
+    )
+    destination = tmp_path / "model.bin"
+    asyncio.run(
+        downloader.download(
+            descriptor,
+            destination,
+            cancel_event=asyncio.Event(),
+            progress=lambda _copied: None,
+        )
+    )
+    assert destination.read_bytes() == content
+    assert requested == [
+        descriptor.url,
+        "https://cdn.example.test/signed/model.bin?signature=locked",
+    ]
+
+
+@pytest.mark.parametrize(
+    "location",
+    [
+        "http://cdn.example.test/model.bin",
+        "https://user:password@cdn.example.test/model.bin",
+        "https://unapproved.example.test/model.bin",
+        "https://models.example.test/model.bin?signature=not-allowed",
+        "mailto:model@example.test",
+    ],
+)
+def test_direct_model_rejects_redirect_before_contacting_unapproved_target(
+    tmp_path: Path,
+    location: str,
+) -> None:
+    content = b"direct model"
+    descriptor = _direct_model_file(
+        content,
+        redirect_hosts=["cdn.example.test"],
+    )
+    requested: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(str(request.url))
+        return httpx.Response(
+            302,
+            headers={"location": location},
+            request=request,
+        )
+
+    downloader = HttpModelFileDownloader(
+        lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        retry_delays=(0,),
+    )
+    with pytest.raises(EngineInstallationError, match="redirect"):
+        asyncio.run(
+            downloader.download(
+                descriptor,
+                tmp_path / "rejected.bin",
+                cancel_event=asyncio.Event(),
+                progress=lambda _copied: None,
+            )
+        )
+    assert requested == [descriptor.url]
+    assert not (tmp_path / "rejected.bin").exists()
+
+
+@pytest.mark.parametrize(
+    ("chunks", "expected_message"),
+    [
+        ([b"tampered byte"], "checksum"),
+        ([b"partial"], "byte count"),
+    ],
+)
+def test_direct_model_rejects_tamper_and_partial_download(
+    tmp_path: Path,
+    chunks: list[bytes],
+    expected_message: str,
+) -> None:
+    expected = b"expected byte"
+    descriptor = _direct_model_file(expected)
+    downloader = HttpModelFileDownloader(
+        lambda: httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    200,
+                    stream=ChunkStream(chunks),
+                    request=request,
+                )
+            )
+        ),
+        retry_delays=(0,),
+    )
+    destination = tmp_path / "drift.bin"
+    with pytest.raises(EngineInstallationError, match=expected_message):
+        asyncio.run(
+            downloader.download(
+                descriptor,
+                destination,
+                cancel_event=asyncio.Event(),
+                progress=lambda _copied: None,
+            )
+        )
+    assert not destination.exists()
+
+
+def test_direct_model_cancellation_removes_partial_file(tmp_path: Path) -> None:
+    content = b"expected byte"
+    descriptor = _direct_model_file(content)
+    cancelled = asyncio.Event()
+    downloader = HttpModelFileDownloader(
+        lambda: httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    200,
+                    stream=ChunkStream([b"expected", b" byte"]),
+                    request=request,
+                )
+            )
+        ),
+        retry_delays=(0,),
+    )
+    destination = tmp_path / "cancelled.bin"
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(
+            downloader.download(
+                descriptor,
+                destination,
+                cancel_event=cancelled,
+                progress=lambda _copied: cancelled.set(),
+            )
+        )
+    assert not destination.exists()

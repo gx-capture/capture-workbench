@@ -1,15 +1,17 @@
 {
-  "catalogVersion": "1",
+  "catalogVersion": "2",
   "requirements": [
     {
       "artifacts": [],
+      "modelFiles": null,
       "requirementId": "windowsml-ocr",
-      "unavailableReason": "A release catalog with exact OCR worker and model artifacts was not injected."
+      "unavailableReason": "A release catalog with an exact OCR worker and approved direct model source lock was not injected."
     },
     {
       "artifacts": [],
+      "modelFiles": null,
       "requirementId": "whisper-primary",
-      "unavailableReason": "A release catalog with exact Whisper worker and model artifacts was not injected."
+      "unavailableReason": "A release catalog with an exact Whisper worker and approved direct model source lock was not injected."
     }
   ],
   "runtimeVersion": "0.3.2"
