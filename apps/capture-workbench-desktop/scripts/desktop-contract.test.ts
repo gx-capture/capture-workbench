@@ -769,12 +769,6 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   const ciInstallerIndex = ciSteps.findIndex(
     (step) => step.name === 'Build and verify the core-only Windows installer',
   );
-  const ciMeasureIndex = ciSteps.findIndex(
-    (step) => step.name === 'Measure exact installed size',
-  );
-  const ciSizeValidationIndex = ciSteps.findIndex(
-    (step) => step.name === 'Verify measured size budgets',
-  );
   const ciDesktopIndex = ciSteps.findIndex(
     (step) => step.name === 'Verify Capture Workbench desktop product',
   );
@@ -784,33 +778,23 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   const ciDiagnosticsIndex = ciSteps.findIndex(
     (step) => step.name === 'Upload runtime packaging diagnostics',
   );
+  requiredWorkflowStep(
+    ciSteps,
+    'Build and verify the core-only Windows installer',
+  );
   assert.ok(ciInstallerIndex < ciDesktopIndex);
   assert.ok(ciDesktopIndex < ciReferenceIndex);
-  assert.ok(ciReferenceIndex < ciMeasureIndex);
-  assert.ok(ciMeasureIndex < ciSizeValidationIndex);
-  assert.ok(ciSizeValidationIndex < ciDiagnosticsIndex);
-  const ciMeasureStep = requiredWorkflowStep(
-    ciSteps,
-    'Measure exact installed size',
-  );
-  assert.equal(ciMeasureStep.blockRun, false);
-  assert.equal(ciMeasureStep.condition, "github.event_name != 'pull_request'");
-  assert.equal(ciMeasureStep.script, installedSizeCommand);
-  assert.doesNotMatch(
-    requiredWorkflowStep(
-      ciSteps,
-      'Build and verify the core-only Windows installer',
-    ).script ?? '',
-    /measure-release-size/u,
-  );
-  assert.doesNotMatch(
-    requiredWorkflowStep(ciSteps, 'Verify measured size budgets').script ?? '',
-    /measure-release-size/u,
+  assert.ok(ciReferenceIndex < ciDiagnosticsIndex);
+  assert.equal(
+    ciSteps.some((step) => step.name === 'Measure exact installed size'),
+    false,
   );
   assert.equal(
-    requiredWorkflowStep(ciSteps, 'Verify measured size budgets').condition,
-    "github.event_name != 'pull_request'",
+    ciSteps.some((step) => step.name === 'Verify measured size budgets'),
+    false,
   );
+  assert.doesNotMatch(ciWorkflow, /installed-deterministic-smoke\.ts --measure-release-size/u);
+  assert.doesNotMatch(ciWorkflow, /capture-runtime:size-regression-check/u);
   const ciDiagnosticsStep = requiredWorkflowStep(
     ciSteps,
     'Upload runtime packaging diagnostics',
@@ -818,6 +802,8 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   assert.equal(ciDiagnosticsStep.condition, 'always()');
   assert.match(ciDiagnosticsStep.source, /if-no-files-found:\s*warn/u);
   assert.doesNotMatch(ciDiagnosticsStep.source, /continue-on-error:\s*true/u);
+  assert.doesNotMatch(ciDiagnosticsStep.source, /runtime-size-report\.json/u);
+  assert.doesNotMatch(ciDiagnosticsStep.source, /installed-size\.json/u);
   for (const stepName of [
     'Verify Capture Workbench desktop product',
     'Verify reference flow',
@@ -825,7 +811,7 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
     assert.equal(
       requiredWorkflowStep(ciSteps, stepName).condition,
       undefined,
-      `${stepName} must still run after PR-only installed-size skips.`,
+      `${stepName} must remain unconditional in ordinary CI.`,
     );
   }
 
@@ -840,20 +826,85 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   const releaseSizeValidationIndex = releaseSteps.findIndex(
     (step) => step.name === 'Verify exact installed size and packaging budgets',
   );
+  const releaseAssembleIndex = releaseSteps.findIndex(
+    (step) => step.name === 'Assemble release candidate',
+  );
+  const releaseUploadIndex = releaseSteps.findIndex(
+    (step) => step.name === 'Upload release candidate',
+  );
+  const releaseDownloadIndex = releaseSteps.findIndex(
+    (step) => step.name === 'Download release candidate',
+  );
+  const releasePublishIndex = releaseSteps.findIndex(
+    (step) =>
+      step.name ===
+      'Publish runtime first, then the exact Capture Workbench package idempotently',
+  );
+  requiredWorkflowStep(
+    releaseSteps,
+    'Build Capture Workbench Windows installer with the verified release runtime',
+  );
   assert.ok(releaseInstallerIndex < releaseMeasureIndex);
   assert.ok(releaseMeasureIndex < releaseSizeValidationIndex);
+  assert.ok(releaseSizeValidationIndex < releaseAssembleIndex);
+  assert.ok(releaseAssembleIndex < releaseUploadIndex);
+  assert.ok(releaseUploadIndex < releaseDownloadIndex);
+  assert.ok(releaseDownloadIndex < releasePublishIndex);
   const releaseMeasureStep = requiredWorkflowStep(
     releaseSteps,
     'Measure exact installed size',
   );
   assert.equal(releaseMeasureStep.blockRun, false);
   assert.equal(releaseMeasureStep.script, installedSizeCommand);
+  const releaseSizeValidationStep = requiredWorkflowStep(
+    releaseSteps,
+    'Verify exact installed size and packaging budgets',
+  );
   assert.doesNotMatch(
-    requiredWorkflowStep(
-      releaseSteps,
-      'Verify exact installed size and packaging budgets',
-    ).script ?? '',
+    releaseSizeValidationStep.script ?? '',
     /measure-release-size/u,
+  );
+  assert.match(
+    releaseSizeValidationStep.script ?? '',
+    /capture-runtime:size-regression-check/u,
+  );
+  assert.match(
+    releaseSizeValidationStep.script ?? '',
+    /runtime-size-report\.json[\s\S]*Get-FileHash[\s\S]*runtime-size-report\.json.*\.sha256/u,
+  );
+  assert.match(
+    requiredWorkflowStep(releaseSteps, 'Assemble release candidate').script ??
+      '',
+    /Copy-Item packages\/capture-runtime\/dist\/release\/\* -Destination \$runtime/u,
+  );
+  const releaseUploadStep = requiredWorkflowStep(
+    releaseSteps,
+    'Upload release candidate',
+  );
+  const releaseDownloadStep = requiredWorkflowStep(
+    releaseSteps,
+    'Download release candidate',
+  );
+  for (const candidateTransferStep of [
+    releaseUploadStep,
+    releaseDownloadStep,
+  ]) {
+    assert.match(
+      candidateTransferStep.source,
+      /name:\s*capture-candidate-\$\{\{ github\.ref_name \}\}/u,
+    );
+  }
+  const releasePublishStep = requiredWorkflowStep(
+    releaseSteps,
+    'Publish runtime first, then the exact Capture Workbench package idempotently',
+  );
+  assert.match(
+    releasePublishStep.script ?? '',
+    /--runtime-dir publication\/runtime/u,
+  );
+  assert.match(
+    releasePublishStep.script ?? '',
+    /--installer \$installers\[0\]\.FullName/u,
   );
 
   for (const [workflowName, steps] of [
