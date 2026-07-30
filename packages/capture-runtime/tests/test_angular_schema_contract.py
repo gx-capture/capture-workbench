@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from capture_runtime.contracts import RuntimeArtifactDescriptorV1
+from capture_runtime.engine_catalog import EngineCatalog, canonical_json_bytes
 from capture_runtime.release import (
     CAPTURE_DOCUMENT_SCHEMA_ID,
     CAPTURE_DOCUMENT_SCHEMA_RELEASE_SHA256,
@@ -88,12 +89,20 @@ def test_release_artifacts_fail_closed_on_incomplete_engine_catalog(
     engine_dir = tmp_path / "engines"
     engine_dir.mkdir()
     (engine_dir / "capture-engine-ocr.zip").write_bytes(b"worker")
-    catalog = (
+    source_catalog = (
         Path(__file__).resolve().parents[1]
         / "src"
         / "capture_runtime"
         / "assets"
         / "engine-catalog.json"
+    )
+    catalog = tmp_path / "engine-catalog.json"
+    catalog.write_bytes(
+        canonical_json_bytes(
+            EngineCatalog.from_dict(
+                json.loads(source_catalog.read_text(encoding="utf-8"))
+            ).to_dict()
+        )
     )
     with pytest.raises(ValueError, match="catalog is incomplete"):
         build_release_artifacts(
