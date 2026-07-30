@@ -14,7 +14,10 @@ import {
   assertTaskkillResult,
   acquireExclusiveSmokeLock,
   buildInstalledAppEnvironment,
+  installedSmokeDiagnosticMessageLimit,
+  installedSmokeDiagnosticRedactionMarker,
   installerArguments,
+  nestedErrorMessages,
   releaseExclusiveSmokeLock,
   uninstallerArguments,
 } from './installed-deterministic-smoke.ts';
@@ -36,10 +39,10 @@ function observe(observable) {
 
 test('installed measurement derives the exact installer name from release metadata', () => {
   assert.equal(
-    expectedInstallerName('0.3.4'),
-    'Capture Workbench_0.3.4_x64-setup.exe',
+    expectedInstallerName('0.3.5'),
+    'Capture Workbench_0.3.5_x64-setup.exe',
   );
-  assert.throws(() => expectedInstallerName('0.3.4-beta'), /semantic x\.y\.z/u);
+  assert.throws(() => expectedInstallerName('0.3.5-beta'), /semantic x\.y\.z/u);
 });
 
 test('installed smoke paths and NSIS arguments stay inside the exact tmp subtree', () => {
@@ -167,6 +170,106 @@ test('uninstall and recursive cleanup fail closed until owned processes are prov
     () => assertInstallationCleanupAllowed(undefined),
     /without proving all owned processes stopped/u,
   );
+});
+
+test('installed smoke diagnostics recursively expose the nested cleanup cause', () => {
+  const cleanupCause = new Error(
+    'Owned installed app/runtime processes remained after tree cleanup.',
+  );
+  const rootFailure = new AggregateError(
+    [
+      new AggregateError(
+        [cleanupCause],
+        'One or more installed-smoke process roots could not be cleaned safely.',
+      ),
+    ],
+    'Installed deterministic Tauri smoke failed or could not clean up safely.',
+  );
+
+  assert.deepEqual(nestedErrorMessages(rootFailure), [
+    'Installed deterministic Tauri smoke failed or could not clean up safely.',
+    'One or more installed-smoke process roots could not be cleaned safely.',
+    'Owned installed app/runtime processes remained after tree cleanup.',
+  ]);
+});
+
+test('installed smoke diagnostics redact nested paths and secrets while retaining safe causes', () => {
+  const absoluteWindowsPathDiagnostics = [
+    ['spawn failed for C:\\Users\\Alice\\Capture\\runtime.exe', 'C:\\Users\\Alice\\Capture\\runtime.exe'],
+    ['spawn failed for D:/Users/Alice/Capture/runtime.exe', 'D:/Users/Alice/Capture/runtime.exe'],
+    ['cleanup failed for \\\\server01\\private-share\\cleanup.ps1', '\\\\server01\\private-share\\cleanup.ps1'],
+    ['cleanup failed for \\Users\\Alice\\Capture\\cleanup.ps1', '\\Users\\Alice\\Capture\\cleanup.ps1'],
+    ['cleanup failed for /Users/Alice/Capture/cleanup.ps1', '/Users/Alice/Capture/cleanup.ps1'],
+    ['failed:C:\\Users\\Alice\\x.txt', 'C:\\Users\\Alice\\x.txt'],
+    ['file:///C:/Users/Alice/x.txt', 'C:/Users/Alice/x.txt'],
+    ['prefix\\\\server\\share\\x.txt', '\\\\server\\share\\x.txt'],
+    ['failed:\\Users\\Alice\\x.txt', '\\Users\\Alice\\x.txt'],
+    ['failed:/Users/Alice/x.txt', '/Users/Alice/x.txt'],
+  ];
+  const sensitiveDiagnostics = [
+    ['GITHUB_TOKEN', 'github-value-that-must-never-appear'],
+    ['NODE_AUTH_TOKEN', 'node-value-that-must-never-appear'],
+    ['refresh_token', 'refresh-value-that-must-never-appear'],
+    ['accessToken', 'access-value-that-must-never-appear'],
+    ['apiToken', 'api-value-that-must-never-appear'],
+    ['authorization', 'authorization-value-that-must-never-appear'],
+    ['bearer', 'bearer-value-that-must-never-appear'],
+    ['secret', 'secret-value-that-must-never-appear'],
+    ['secretToken', 'secret-token-value-that-must-never-appear'],
+    ['BeArEr', 'mixed-bearer-value-that-must-never-appear'],
+    ['ToKeN', 'mixed-token-value-that-must-never-appear'],
+    ['SeCrEt', 'mixed-secret-value-that-must-never-appear'],
+    ['AuThOrIzAtIoN', 'mixed-authorization-value-that-must-never-appear'],
+    ['GiThUb_ToKeN', 'mixed-github-value-that-must-never-appear'],
+    ['aPiToKeN', 'mixed-api-value-that-must-never-appear'],
+    ['SeCrEtToKeN', 'mixed-secret-token-value-that-must-never-appear'],
+  ] as const;
+  const safeCause =
+    'Owned installed app/runtime processes remained after tree cleanup.';
+  const rootFailure = new AggregateError(
+    [
+      ...absoluteWindowsPathDiagnostics.map(
+        ([message]) => new Error(message),
+      ),
+      new AggregateError(
+        [
+          new Error(safeCause),
+          ...sensitiveDiagnostics.map(
+            ([label, value], index) =>
+              new Error(
+                index % 3 === 0
+                  ? `${label}: ${value}`
+                  : index % 3 === 1
+                    ? `${label} = ${value}`
+                    : `${label} ${value}`,
+              ),
+          ),
+        ],
+        'PowerShell cleanup collected nested failures.',
+      ),
+      new Error('bounded-safe-detail-'.repeat(80)),
+    ],
+    'Installed deterministic Tauri smoke failed or could not clean up safely.',
+  );
+
+  const messages = nestedErrorMessages(rootFailure);
+  const output = messages.join('\n');
+  assert.ok(messages.includes(safeCause));
+  assert.ok(messages.includes(installedSmokeDiagnosticRedactionMarker));
+  for (const [message, path] of absoluteWindowsPathDiagnostics) {
+    assert.equal(output.includes(message), false, message);
+    assert.equal(output.includes(path), false, path);
+  }
+  for (const [label, value] of sensitiveDiagnostics) {
+    assert.equal(output.toLowerCase().includes(label.toLowerCase()), false, label);
+    assert.equal(output.includes(value), false, value);
+  }
+  assert.ok(
+    messages.every(
+      (message) => message.length <= installedSmokeDiagnosticMessageLimit,
+    ),
+  );
+  assert.ok(messages.some((message) => message.endsWith('...')));
 });
 
 test('exclusive smoke lock rejects concurrent product mutation and is reusable after release', async (t) => {

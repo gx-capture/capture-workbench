@@ -15,7 +15,7 @@ import { of } from 'rxjs';
 export const READY: RuntimeReadyV1 = {
   ready: true,
   service: 'capture-runtime',
-  runtimeVersion: '0.3.4',
+  runtimeVersion: '0.3.5',
   apiVersion: '1.0',
   captureDocumentSchemaVersion: '1',
   capabilities: {

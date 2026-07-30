@@ -6,6 +6,13 @@ import test from 'node:test';
 import { assertRedactedEvidence } from './package-qa.ts';
 import { appRoot } from './stage-runtime.ts';
 
+const workflowBlockScalarHeader =
+  /^[|>](?:(?:[+-][1-9]?)|(?:[1-9][+-]?))?(?:\s+#.*)?$/u;
+
+function isWorkflowBlockScalarHeader(value: string): boolean {
+  return workflowBlockScalarHeader.test(value.trim());
+}
+
 function workflowRunScripts(source: string): string[] {
   const lines = source.split(/\r?\n/u);
   const scripts: string[] = [];
@@ -17,7 +24,7 @@ function workflowRunScripts(source: string): string[] {
     const indentation =
       run.groups['indent'].length + (run.groups['listMarker']?.length ?? 0);
     const value = run.groups['value'].trim();
-    if (!/^[|>][+-]?$/u.test(value)) {
+    if (!isWorkflowBlockScalarHeader(value)) {
       scripts.push(value);
       continue;
     }
@@ -34,7 +41,105 @@ function workflowRunScripts(source: string): string[] {
   return scripts;
 }
 
-test('workflow run extraction covers compact list steps and every block chomping form', () => {
+interface WorkflowStep {
+  readonly blockRun: boolean;
+  readonly condition?: string;
+  readonly name: string;
+  readonly script?: string;
+  readonly shell?: string;
+}
+
+function workflowNamedSteps(source: string): WorkflowStep[] {
+  const lines = source.split(/\r?\n/u);
+  const steps: WorkflowStep[] = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const start = /^(?<indent>\s*)- name:\s*(?<name>.+)$/u.exec(lines[index]);
+    if (!start?.groups) continue;
+    const indentation = start.groups['indent'].length;
+    const block = [lines[index]];
+    while (index + 1 < lines.length) {
+      const next = lines[index + 1];
+      const nextIndentation = /^\s*/u.exec(next)?.[0].length ?? 0;
+      if (next.trim().length > 0 && nextIndentation <= indentation) break;
+      block.push(next);
+      index += 1;
+    }
+    const stepSource = block.join('\n');
+    const script = workflowRunScripts(stepSource)[0];
+    const shell = /^\s*shell:\s*(?<shell>\S+)\s*$/mu.exec(stepSource)?.groups?.[
+      'shell'
+    ];
+    const condition = /^\s*if:\s*(?<condition>.+?)\s*$/mu.exec(stepSource)
+      ?.groups?.['condition'];
+    const runValue = /^\s*run:\s*(?<value>.*)$/mu.exec(stepSource)?.groups?.[
+      'value'
+    ];
+    steps.push({
+      blockRun: isWorkflowBlockScalarHeader(runValue ?? ''),
+      condition,
+      name: start.groups['name'].trim(),
+      script,
+      shell,
+    });
+  }
+  return steps;
+}
+
+function requiredWorkflowStep(
+  steps: readonly WorkflowStep[],
+  name: string,
+): WorkflowStep {
+  const matches = steps.filter((step) => step.name === name);
+  assert.equal(matches.length, 1, `Expected one workflow step named ${name}.`);
+  return matches[0];
+}
+
+function nativeCommandLines(script: string): string[] {
+  return script
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => /^(?:cargo|gh|git|node|npm|pnpm|rustup|uv)\b/u.test(line));
+}
+
+function invokesFullWorkspaceVerify(line: string): boolean {
+  return /^(?:corepack\s+)?pnpm(?:\s+(?!verify(?=\s|$))\S+)*\s+verify(?=\s|$)/u.test(
+    line.trim(),
+  );
+}
+
+function assertNativeErrorPreferenceWindow(
+  script: string,
+  expectedInvocation: RegExp,
+  expectedExitCapture: string,
+  expectedBranch: string,
+): void {
+  const lines = script
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith('#'));
+  const disabledIndexes = lines
+    .map((line, index) =>
+      line === '$PSNativeCommandUseErrorActionPreference = $false'
+        ? index
+        : -1,
+    )
+    .filter((index) => index >= 0);
+  assert.equal(
+    disabledIndexes.length,
+    1,
+    'Expected exactly one intentional native-error preference disable.',
+  );
+  const disabledIndex = disabledIndexes[0];
+  assert.match(lines[disabledIndex + 1] ?? '', expectedInvocation);
+  assert.equal(lines[disabledIndex + 2], expectedExitCapture);
+  assert.equal(
+    lines[disabledIndex + 3],
+    '$PSNativeCommandUseErrorActionPreference = $true',
+  );
+  assert.equal(lines[disabledIndex + 4], expectedBranch);
+}
+
+test('workflow run extraction covers compact steps and every valid block scalar header', () => {
   const expression = '${{ github.ref_name }}';
   assert.deepEqual(
     workflowRunScripts(
@@ -43,22 +148,73 @@ test('workflow run extraction covers compact list steps and every block chomping
     [`echo "${expression}"`],
   );
 
-  for (const blockIndicator of ['|', '|-', '|+', '>', '>-', '>+']) {
+  for (const blockIndicator of [
+    '|',
+    '|-',
+    '|+',
+    '|2',
+    '|-2',
+    '|2-',
+    '|+2',
+    '|2+',
+    '| # literal comment',
+    '>',
+    '>-',
+    '>+',
+    '>2',
+    '>-2',
+    '>2-',
+    '>+2',
+    '>2+',
+    '> # folded comment',
+  ]) {
+    const workflow = [
+      'steps:',
+      '  - name: scalar step',
+      '    shell: pwsh',
+      `    run: ${blockIndicator}`,
+      `      echo "${expression}"`,
+      '      node tools/check.mjs',
+      '    env:',
+      `      SAFE_CONTEXT: ${expression}`,
+      '  - name: next',
+      '    run: echo next-step',
+    ].join('\n');
     assert.deepEqual(
-      workflowRunScripts(
-        [
-          'steps:',
-          `  - run: ${blockIndicator}`,
-          `      echo "${expression}"`,
-          '    env:',
-          `      SAFE_CONTEXT: ${expression}`,
-          '  - run: echo next-step',
-        ].join('\n'),
-      ),
-      [`      echo "${expression}"`, 'echo next-step'],
+      workflowRunScripts(workflow),
+      [`      echo "${expression}"\n      node tools/check.mjs`, 'echo next-step'],
+      blockIndicator,
+    );
+    const scalarStep = requiredWorkflowStep(
+      workflowNamedSteps(workflow),
+      'scalar step',
+    );
+    assert.equal(scalarStep.blockRun, true, blockIndicator);
+    assert.equal(
+      scalarStep.script,
+      `      echo "${expression}"\n      node tools/check.mjs`,
       blockIndicator,
     );
   }
+});
+
+test('release command detection rejects full verify variants but permits the version script', () => {
+  for (const command of [
+    'pnpm verify',
+    'pnpm verify --filter capture-runtime',
+    'pnpm --silent verify -- --changed',
+    'pnpm run verify --reporter append-only',
+    'corepack pnpm verify',
+    'corepack pnpm --silent run verify --filter capture-angular',
+  ]) {
+    assert.equal(invokesFullWorkspaceVerify(command), true, command);
+  }
+  assert.equal(
+    invokesFullWorkspaceVerify(
+      'pnpm verify:release-version -- "$env:RELEASE_TAG"',
+    ),
+    false,
+  );
 });
 
 test('Nx separates root verification build from release and deterministic NSIS lanes', async () => {
@@ -484,6 +640,7 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
     'Build production runtime artifacts without ambient model stores',
     'Verify the rebuilt catalog matches the trusted model candidate',
     'Build Capture Workbench Windows installer with the verified release runtime',
+    'Measure exact installed size',
     'Verify exact installed size and packaging budgets',
     'Assemble release candidate',
     'Upload release candidate',
@@ -520,7 +677,10 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   const normalizedReleaseRunLines = releaseRunScripts.flatMap((script) =>
     script.split(/\r?\n/u).map((line) => line.trim()),
   );
-  assert.equal(normalizedReleaseRunLines.includes('pnpm verify'), false);
+  assert.equal(
+    normalizedReleaseRunLines.some((line) => invokesFullWorkspaceVerify(line)),
+    false,
+  );
   assert.ok(
     normalizedReleaseRunLines.includes('pnpm install --frozen-lockfile'),
   );
@@ -599,6 +759,131 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   assert.match(ciWorkflow, /capture-workbench:production-bundle-check/u);
   assert.match(ciWorkflow, /branches: \[main, develop\]/u);
 
+  const ciSteps = workflowNamedSteps(ciWorkflow);
+  const releaseSteps = workflowNamedSteps(workflow);
+  const modelCandidateSteps = workflowNamedSteps(modelCandidateWorkflow);
+  const installedSizeCommand =
+    'node apps/capture-workbench-desktop/scripts/installed-deterministic-smoke.ts --measure-release-size';
+  const ciInstallerIndex = ciSteps.findIndex(
+    (step) => step.name === 'Build and verify the core-only Windows installer',
+  );
+  const ciMeasureIndex = ciSteps.findIndex(
+    (step) => step.name === 'Measure exact installed size',
+  );
+  const ciSizeValidationIndex = ciSteps.findIndex(
+    (step) => step.name === 'Verify measured size budgets',
+  );
+  assert.ok(ciInstallerIndex < ciMeasureIndex);
+  assert.ok(ciMeasureIndex < ciSizeValidationIndex);
+  const ciMeasureStep = requiredWorkflowStep(
+    ciSteps,
+    'Measure exact installed size',
+  );
+  assert.equal(ciMeasureStep.blockRun, false);
+  assert.equal(ciMeasureStep.condition, "github.event_name != 'pull_request'");
+  assert.equal(ciMeasureStep.script, installedSizeCommand);
+  assert.doesNotMatch(
+    requiredWorkflowStep(
+      ciSteps,
+      'Build and verify the core-only Windows installer',
+    ).script ?? '',
+    /measure-release-size/u,
+  );
+  assert.doesNotMatch(
+    requiredWorkflowStep(ciSteps, 'Verify measured size budgets').script ?? '',
+    /measure-release-size/u,
+  );
+  assert.equal(
+    requiredWorkflowStep(ciSteps, 'Verify measured size budgets').condition,
+    "github.event_name != 'pull_request'",
+  );
+  for (const stepName of [
+    'Verify Capture Workbench desktop product',
+    'Verify reference flow',
+  ]) {
+    assert.equal(
+      requiredWorkflowStep(ciSteps, stepName).condition,
+      undefined,
+      `${stepName} must still run after PR-only installed-size skips.`,
+    );
+  }
+
+  const releaseInstallerIndex = releaseSteps.findIndex(
+    (step) =>
+      step.name ===
+      'Build Capture Workbench Windows installer with the verified release runtime',
+  );
+  const releaseMeasureIndex = releaseSteps.findIndex(
+    (step) => step.name === 'Measure exact installed size',
+  );
+  const releaseSizeValidationIndex = releaseSteps.findIndex(
+    (step) => step.name === 'Verify exact installed size and packaging budgets',
+  );
+  assert.ok(releaseInstallerIndex < releaseMeasureIndex);
+  assert.ok(releaseMeasureIndex < releaseSizeValidationIndex);
+  const releaseMeasureStep = requiredWorkflowStep(
+    releaseSteps,
+    'Measure exact installed size',
+  );
+  assert.equal(releaseMeasureStep.blockRun, false);
+  assert.equal(releaseMeasureStep.script, installedSizeCommand);
+  assert.doesNotMatch(
+    requiredWorkflowStep(
+      releaseSteps,
+      'Verify exact installed size and packaging budgets',
+    ).script ?? '',
+    /measure-release-size/u,
+  );
+
+  for (const [workflowName, steps] of [
+    ['CI', ciSteps],
+    ['Release', releaseSteps],
+    ['Model Candidate', modelCandidateSteps],
+  ] as const) {
+    const nativeBlockSteps = steps.filter(
+      (step) =>
+        step.shell === 'pwsh' &&
+        step.blockRun &&
+        step.script !== undefined &&
+        nativeCommandLines(step.script).length > 0,
+    );
+    assert.ok(
+      nativeBlockSteps.length > 0,
+      `${workflowName} must retain native PowerShell block coverage.`,
+    );
+    for (const step of nativeBlockSteps) {
+      assert.match(
+        step.script ?? '',
+        /^\s*\$ErrorActionPreference = 'Stop'\s*\r?\n\s*\$PSNativeCommandUseErrorActionPreference = \$true/mu,
+        `${workflowName} step ${step.name} must fail fast on native errors.`,
+      );
+    }
+  }
+
+  for (const ancestryStep of [
+    requiredWorkflowStep(releaseSteps, 'Verify tag commit belongs to main'),
+    requiredWorkflowStep(
+      modelCandidateSteps,
+      'Verify candidate commit belongs to main',
+    ),
+  ]) {
+    assertNativeErrorPreferenceWindow(
+      ancestryStep.script ?? '',
+      /^git merge-base --is-ancestor "\$env:GITHUB_SHA" refs\/remotes\/origin\/main$/u,
+      '$ancestorExitCode = $LASTEXITCODE',
+      'if ($ancestorExitCode -ne 0) {',
+    );
+  }
+  assertNativeErrorPreferenceWindow(
+    requiredWorkflowStep(
+      modelCandidateSteps,
+      'Create the small commit-bound model candidate receipt',
+    ).script ?? '',
+    /^\$workflowId = gh api "repos\/\$env:GITHUB_REPOSITORY\/actions\/workflows\/model-candidate\.yml" --jq '\.id'$/u,
+    '$workflowLookupExitCode = $LASTEXITCODE',
+    'if ($workflowLookupExitCode -ne 0 -or -not $workflowId) {',
+  );
+
   const project = JSON.parse(runtimeProject);
   assert.equal(project.targets['production-preflight'], undefined);
   assert.doesNotMatch(
@@ -657,6 +942,22 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   );
   assert.match(executableBuilder, /capture-runtime\.spec/u);
   assert.match(executableBuilder, /CAPTURE_ENGINE_CATALOG_BUILD_PATH/u);
+  assert.match(
+    executableBuilder,
+    /add_argument\("--catalog", type=Path, required=True\)/u,
+  );
+  assert.doesNotMatch(
+    executableBuilder,
+    /root \/ "dist" \/ "catalog" \/ "capture-engine-catalog\.json"/u,
+  );
+  assert.match(
+    project.targets['build-core-executable'].options.command,
+    /--catalog src\/capture_runtime\/assets\/engine-catalog\.json$/u,
+  );
+  assert.match(
+    project.targets['build-production-executable'].options.command,
+    /--catalog dist\/catalog\/capture-engine-catalog\.json$/u,
+  );
   assert.doesNotMatch(executableBuilder, /--collect-all/u);
   assert.match(
     publisher,

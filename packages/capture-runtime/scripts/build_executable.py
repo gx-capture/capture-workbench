@@ -11,15 +11,18 @@ from pathlib import Path
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--layout", choices=("onefile", "onedir"), default="onefile")
+    parser.add_argument("--catalog", type=Path, required=True)
     arguments = parser.parse_args()
     if sys.version_info[:2] != (3, 12):
         raise SystemExit("capture-runtime executable requires Python 3.12")
     if platform.system() != "Windows" or platform.machine().lower() not in {"amd64", "x86_64"}:
         raise SystemExit("capture-runtime v1 executable is Windows x64 only")
     root = Path(__file__).resolve().parents[1]
-    catalog = root / "dist" / "catalog" / "capture-engine-catalog.json"
+    catalog = arguments.catalog
+    if not catalog.is_absolute():
+        catalog = root / catalog
     if not catalog.is_file():
-        catalog = root / "src" / "capture_runtime" / "assets" / "engine-catalog.json"
+        raise SystemExit(f"Capture Runtime engine catalog does not exist: {catalog}")
     embedded_catalog = root / ".build" / "catalog" / "capture-engine-catalog.json"
     embedded_catalog.parent.mkdir(parents=True, exist_ok=True)
     embedded_catalog.write_bytes(catalog.read_bytes())

@@ -4,7 +4,7 @@
   "installedBytesBlocker": "Installed directory was not supplied or does not exist.",
   "nsisInstaller": {
     "bytes": 208071907,
-    "path": "C:/software-dev/capture-workbench/apps/capture-workbench-desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/Capture Workbench_0.3.4_x64-setup.exe",
+    "path": "C:/software-dev/capture-workbench/apps/capture-workbench-desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/Capture Workbench_0.3.5_x64-setup.exe",
     "sha256": "5c6c926a7131013654a0c903948c14060cbac94ff964e5cf9845835bb99c7806"
   },
   "platform": "windows",
