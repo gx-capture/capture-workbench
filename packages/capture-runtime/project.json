@@ -279,7 +279,7 @@
       "outputs": ["{projectRoot}/dist/size/runtime-size-report.json"],
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --python 3.12 python scripts/report_bundle_size.py --executable dist/executable/capture-runtime.exe --installer \"../../apps/capture-workbench-desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/Capture Workbench_0.3.5_x64-setup.exe\" --installed-size-evidence ../../tmp/capture-workbench-desktop/installed-smoke/installed-size.json --pyinstaller-work .build/pyinstaller/core-onefile --startup-samples 2 --output dist/size/runtime-size-report.json"
+        "command": "uv run --python 3.12 python scripts/report_bundle_size.py --executable dist/executable/capture-runtime.exe --installer \"../../apps/capture-workbench-desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/Capture Workbench_0.3.5_x64-setup.exe\" --installed-size-evidence ../../tmp/capture-workbench-desktop/installed-smoke/installed-size.json --pyinstaller-work .build/pyinstaller/core-onefile --output dist/size/runtime-size-report.json"
       }
     },
     "size-regression-check": {

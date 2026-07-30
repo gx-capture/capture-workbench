@@ -2,8 +2,80 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 from pathlib import Path
+
+REPORT_FIELDS = {
+    "arch",
+    "installedBytes",
+    "installedBytesBlocker",
+    "nsisInstaller",
+    "platform",
+    "pyinstaller",
+    "pythonVersion",
+    "reportVersion",
+    "runtimeExecutable",
+}
+ARTIFACT_FIELDS = {"bytes", "fileName", "path", "sha256"}
+PYINSTALLER_FIELDS = {"blocker", "categories", "files", "topFiles"}
+PYINSTALLER_CATEGORY_FIELDS = {"core", "ocr", "other", "pdf", "whisper"}
+PYINSTALLER_FILE_FIELDS = {"bytes", "path"}
+MAX_SAFE_JSON_INTEGER = 2**53 - 1
+
+
+def _json_integer(value: object, *, minimum: int = 0) -> bool:
+    return (
+        not isinstance(value, bool)
+        and isinstance(value, int)
+        and minimum <= value <= MAX_SAFE_JSON_INTEGER
+    )
+
+
+def _sha256(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
+def _canonical_artifact(value: object) -> bool:
+    return (
+        isinstance(value, dict)
+        and set(value) == ARTIFACT_FIELDS
+        and isinstance(value["path"], str)
+        and bool(value["path"])
+        and isinstance(value["fileName"], str)
+        and bool(value["fileName"])
+        and Path(value["path"]).name == value["fileName"]
+        and _json_integer(value["bytes"], minimum=1)
+        and _sha256(value["sha256"])
+    )
+
+
+def _canonical_pyinstaller_file(value: object) -> bool:
+    return (
+        isinstance(value, dict)
+        and set(value) == PYINSTALLER_FILE_FIELDS
+        and isinstance(value["path"], str)
+        and bool(value["path"])
+        and _json_integer(value["bytes"])
+    )
+
+
+def _canonical_pyinstaller(value: object) -> bool:
+    if not isinstance(value, dict) or set(value) != PYINSTALLER_FIELDS:
+        return False
+    categories = value["categories"]
+    return (
+        isinstance(value["files"], list)
+        and all(_canonical_pyinstaller_file(item) for item in value["files"])
+        and isinstance(value["topFiles"], list)
+        and all(_canonical_pyinstaller_file(item) for item in value["topFiles"])
+        and isinstance(categories, dict)
+        and set(categories) == PYINSTALLER_CATEGORY_FIELDS
+        and all(_json_integer(item) for item in categories.values())
+        and (value["blocker"] is None or isinstance(value["blocker"], str))
+    )
 
 
 def validate_budgets(budgets: object) -> dict[str, object]:
@@ -59,63 +131,31 @@ def validate_budgets(budgets: object) -> dict[str, object]:
 def validate_report(report: object, budgets: dict[str, object]) -> None:
     if not isinstance(report, dict):
         raise ValueError("size report must be a JSON object")
-    failures = []
-    installed_bytes = report.get("installedBytes")
-    if (
-        isinstance(installed_bytes, bool)
-        or not isinstance(installed_bytes, int)
-        or installed_bytes < 1
+    if set(report) != REPORT_FIELDS:
+        raise ValueError("size report fields are invalid")
+    if report["reportVersion"] != "2":
+        raise ValueError("size report version is unsupported")
+    if not all(
+        isinstance(report[field], str) and bool(report[field])
+        for field in ("arch", "platform", "pythonVersion")
     ):
-        failures.append("installedBytes must be a positive JSON integer")
-    if "installedBytesBlocker" not in report or report["installedBytesBlocker"] is not None:
+        raise ValueError("size report platform metadata is invalid")
+    if not _canonical_pyinstaller(report["pyinstaller"]):
+        raise ValueError("size report PyInstaller fields are invalid")
+    failures = []
+    installed_bytes = report["installedBytes"]
+    if not _json_integer(installed_bytes, minimum=1):
+        failures.append("installedBytes must be a positive safe JSON integer")
+    if report["installedBytesBlocker"] is not None:
         failures.append("installedBytesBlocker must be null")
-    startup = report.get("startup")
-    if not isinstance(startup, dict):
-        failures.append("startup measurement must be an object")
-    elif set(startup) != {
-        "blocker",
-        "coldMilliseconds",
-        "samplesMilliseconds",
-        "warmMilliseconds",
-    }:
-        failures.append("startup measurement fields are invalid")
-    else:
-        if startup["blocker"] is not None:
-            failures.append("startup blocker must be null")
-        samples = startup["samplesMilliseconds"]
-        valid_samples = (
-            isinstance(samples, list)
-            and len(samples) == 2
-            and all(_finite_nonnegative_number(sample) for sample in samples)
-        )
-        if not valid_samples:
-            failures.append(
-                "startup samples must contain exactly two finite nonnegative JSON numbers"
-            )
-        cold = startup["coldMilliseconds"]
-        warm = startup["warmMilliseconds"]
-        valid_cold = _finite_nonnegative_number(cold)
-        valid_warm = _finite_nonnegative_number(warm)
-        if not valid_cold:
-            failures.append("startup coldMilliseconds must be a finite nonnegative JSON number")
-        if not valid_warm:
-            failures.append("startup warmMilliseconds must be a finite nonnegative JSON number")
-        if valid_samples and valid_cold and cold != samples[0]:
-            failures.append("startup coldMilliseconds must equal the first sample")
-        if valid_samples and valid_warm and warm != samples[1]:
-            failures.append("startup warmMilliseconds must equal the second sample")
     checks = (
         ("runtimeExecutable", "runtimeExecutableBytes"),
         ("nsisInstaller", "nsisInstallerBytes"),
     )
     for report_name, budget_name in checks:
-        artifact = report.get(report_name)
-        if (
-            not isinstance(artifact, dict)
-            or isinstance(artifact.get("bytes"), bool)
-            or not isinstance(artifact.get("bytes"), int)
-        ):
-            failures.append(f"{report_name} measurement is unavailable")
+        artifact = report[report_name]
+        if not _canonical_artifact(artifact):
+            failures.append(f"{report_name} fields are invalid")
             continue
         if artifact["bytes"] > budgets[budget_name]:
             failures.append(
@@ -123,15 +163,6 @@ def validate_report(report: object, budgets: dict[str, object]) -> None:
             )
     if failures:
         raise ValueError("; ".join(failures))
-
-
-def _finite_nonnegative_number(value: object) -> bool:
-    return (
-        not isinstance(value, bool)
-        and isinstance(value, int | float)
-        and math.isfinite(value)
-        and value >= 0
-    )
 
 
 def main() -> None:

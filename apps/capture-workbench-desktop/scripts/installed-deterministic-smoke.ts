@@ -18,6 +18,7 @@ import {
   catchError,
   concatMap,
   defer,
+  firstValueFrom,
   from,
   map,
   of,
@@ -57,7 +58,10 @@ import {
   installedPage,
   reserveLoopbackPort,
 } from './installed-browser.ts';
-import { createInstalledProcessCleanup } from './installed-process-cleanup.ts';
+import {
+  createInstalledProcessCleanup,
+  createTrackedProcessTreeTerminator,
+} from './installed-process-cleanup.ts';
 import { createInstalledRegistry } from './installed-registry.ts';
 import { createInstalledSmokeLifecycle } from './installed-smoke-lifecycle.ts';
 
@@ -265,18 +269,245 @@ function directoryBytes(directory) {
   );
 }
 
-export function runInstalledDeterministicSmoke({
-  expectedSource = 'deterministic',
-  measureOnly = false,
-} = {}) {
+function runInstalledSizeMeasurement() {
+  const registry = createInstalledRegistry({
+    smokeRoot,
+    workspaceRoot,
+    registryViews,
+    productRegistryKey,
+    uninstallRegistryKey,
+    baseChildEnvironment,
+    pathExists,
+  });
+  const terminateTrackedProcessTree = createTrackedProcessTreeTerminator({
+    smokeRoot,
+    workspaceRoot,
+    baseChildEnvironment,
+    windowsSystemExecutable: registry.windowsSystemExecutable,
+  });
+  const lifecycle = createInstalledSmokeLifecycle({
+    workspaceRoot,
+    smokeRoot,
+    runRoot,
+    nsisDirectory,
+    childEnvironmentAllowlist,
+    terminateTrackedProcessTree,
+  });
+
+  return defer(async () => {
+    await firstValueFrom(lifecycle.prepareSmokeDirectories());
+    const smokeLock = await firstValueFrom(
+      acquireLock(smokeRoot, smokeLockPath),
+    );
+    try {
+      let installer;
+      let installedBytes;
+      let installationAttempted = false;
+      let measurementError;
+      let nativeUninstallError;
+      const nativeUninstall = {
+        uninstallerCompleted: false,
+        installDirectoryRemoved: false,
+        nativeUninstallKeyRemoved: false,
+        productRegistryKeyRetainedAfterNativeUninstall: false,
+      };
+      const hygiene = {
+        registryResidueRemoved: false,
+        isolatedRunDataRemoved: false,
+      };
+
+      await rm(installedSizeEvidencePath, { force: true });
+      try {
+        const { manifest } = await firstValueFrom(
+          assertStagedRuntime('release'),
+        );
+        installer = await firstValueFrom(
+          lifecycle.findDeterministicInstaller(manifest.runtimeVersion),
+        );
+        await firstValueFrom(registry.assertNoPreExistingInstallation());
+        await firstValueFrom(lifecycle.safeRemoveTree(smokeRoot, runRoot));
+        await Promise.all(
+          [installDirectory, temporaryDirectory].map((path) =>
+            mkdir(path, { recursive: true }),
+          ),
+        );
+        installationAttempted = true;
+        await firstValueFrom(
+          lifecycle.runCheckedExecutable(
+            installer.path,
+            installerArguments(smokeRoot, installDirectory),
+            'Release-size NSIS installer',
+            baseChildEnvironment(process.env, temporaryDirectory),
+            180_000,
+          ),
+        );
+        await firstValueFrom(
+          lifecycle.assertOwnedRegularFile(
+            installDirectory,
+            join(installDirectory, installedExecutableName),
+            'Installed Tauri executable',
+          ),
+        );
+        await firstValueFrom(
+          registry.assertInstalledRegistryPointsToOwnedDirectory(
+            installDirectory,
+          ),
+        );
+        installedBytes = await firstValueFrom(
+          directoryBytes(installDirectory),
+        );
+        if (!Number.isSafeInteger(installedBytes) || installedBytes < 1) {
+          throw new Error(
+            'Installed size measurement must be a positive non-boolean safe integer.',
+          );
+        }
+      } catch (error) {
+        measurementError = error;
+      }
+
+      if (installationAttempted) {
+        try {
+          const uninstallerPath = join(installDirectory, uninstallerName);
+          if (!(await firstValueFrom(pathExists(uninstallerPath)))) {
+            throw new Error(
+              'Installed uninstaller is missing from the owned install directory.',
+            );
+          }
+          const uninstaller = await firstValueFrom(
+            lifecycle.assertOwnedRegularFile(
+              installDirectory,
+              uninstallerPath,
+              'Installed uninstaller',
+            ),
+          );
+          await firstValueFrom(
+            registry.assertInstalledRegistryPointsToOwnedDirectory(
+              installDirectory,
+            ),
+          );
+          await firstValueFrom(
+            lifecycle.runCheckedExecutable(
+              uninstaller,
+              uninstallerArguments(smokeRoot, installDirectory),
+              'Installed NSIS uninstaller',
+              baseChildEnvironment(process.env, temporaryDirectory),
+              180_000,
+            ),
+          );
+          nativeUninstall.uninstallerCompleted = true;
+          const nativeRegistryState = await firstValueFrom(
+            registry.waitForInstalledDirectoryRemoval(installDirectory),
+          );
+          nativeUninstall.installDirectoryRemoved = true;
+          nativeUninstall.nativeUninstallKeyRemoved =
+            nativeRegistryState.uninstallKeyRemoved;
+          nativeUninstall.productRegistryKeyRetainedAfterNativeUninstall =
+            nativeRegistryState.productKeyRetained;
+        } catch (error) {
+          nativeUninstallError = error;
+        }
+      }
+
+      const hardFailures = [measurementError, nativeUninstallError].filter(
+        Boolean,
+      );
+      if (
+        hardFailures.length === 0 &&
+        Number.isSafeInteger(installedBytes) &&
+        installedBytes >= 1
+      ) {
+        try {
+          await firstValueFrom(
+            registry.removeOwnedRegistryResidue(installDirectory),
+          );
+          hygiene.registryResidueRemoved = true;
+        } catch {
+          // Diagnostic hygiene does not invalidate native-uninstall proof.
+        }
+        try {
+          await firstValueFrom(
+            lifecycle.safeRemoveTree(smokeRoot, runRoot),
+          );
+          hygiene.isolatedRunDataRemoved = !(
+            await firstValueFrom(pathExists(runRoot))
+          );
+        } catch {
+          // Diagnostic hygiene does not invalidate native-uninstall proof.
+        }
+      }
+
+      if (hardFailures.length > 0) {
+        throw new AggregateError(
+          hardFailures,
+          'Release installed-size measurement or native uninstall proof failed.',
+        );
+      }
+      if (
+        !installer ||
+        !Number.isSafeInteger(installedBytes) ||
+        installedBytes < 1 ||
+        nativeUninstall.uninstallerCompleted !== true ||
+        nativeUninstall.installDirectoryRemoved !== true ||
+        nativeUninstall.nativeUninstallKeyRemoved !== true
+      ) {
+        throw new Error(
+          'Release installed-size evidence is incomplete or unsafe.',
+        );
+      }
+      const report = {
+        evidenceKind: 'release-installed-size',
+        releaseGateSatisfied: false,
+        platform: 'windows',
+        arch: 'x86_64',
+        bundle: 'nsis',
+        installer: {
+          fileName: installer.fileName,
+          bytes: installer.bytes,
+          sha256: installer.sha256,
+        },
+        installedBytes,
+        cleanup: {
+          ...nativeUninstall,
+          ...hygiene,
+        },
+        disclaimer:
+          'Scoped release install-size measurement only; Tauri startup and process observation were not performed.',
+      };
+      await firstValueFrom(writeEvidence(report, installedSizeEvidencePath));
+      return { report, reportPath: installedSizeEvidencePath };
+    } finally {
+      await firstValueFrom(releaseLock(smokeLock));
+    }
+  });
+}
+
+export function runInstalledDeterministicSmoke(
+  {
+    expectedSource = 'deterministic',
+    measureOnly = false,
+  } = {},
+  {
+    runSizeMeasurement = runInstalledSizeMeasurement,
+    createProcessCleanup = createInstalledProcessCleanup,
+  } = {},
+) {
   if (process.platform !== 'win32') {
     return throwError(
       () =>
         new Error('Installed deterministic Tauri smoke requires Windows x64.'),
     );
   }
+  if (measureOnly) {
+    if (expectedSource !== 'release') {
+      return throwError(
+        () =>
+          new Error('Installed size-only evidence requires the release stage.'),
+      );
+    }
+    return runSizeMeasurement();
+  }
 
-  const processCleanup = createInstalledProcessCleanup({
+  const processCleanup = createProcessCleanup({
     smokeRoot,
     workspaceRoot,
     baseChildEnvironment,
@@ -317,13 +548,6 @@ export function runInstalledDeterministicSmoke({
         new Error('Installed smoke source must be deterministic or release.'),
     );
   }
-  if (measureOnly && expectedSource !== 'release') {
-    return throwError(
-      () =>
-        new Error('Installed size-only evidence requires the release stage.'),
-    );
-  }
-
   return assertStagedRuntime(expectedSource).pipe(
     concatMap(({ manifest }) =>
       lifecycle
@@ -357,7 +581,6 @@ export function runInstalledDeterministicSmoke({
           registryResidueRemoved: false,
           isolatedRunDataRemoved: false,
         },
-        installedBytes: undefined,
       };
 
       const attempt = (operation, onSuccess = () => undefined) =>
@@ -426,64 +649,51 @@ export function runInstalledDeterministicSmoke({
           ),
         ),
         concatMap(() =>
-          measureOnly
-            ? directoryBytes(installDirectory).pipe(
-                tap((bytes) => {
-                  if (!Number.isSafeInteger(bytes) || bytes < 1) {
-                    throw new Error(
-                      'Installed size measurement must be a positive safe integer.',
-                    );
-                  }
-                  state.installedBytes = bytes;
-                }),
-              )
-            : reserveLoopbackPort().pipe(
-                tap((port) => {
-                  state.cdpPort = port;
-                  const appEnvironment = buildInstalledAppEnvironment(
-                    process.env,
-                    {
-                      root: runRoot,
-                      appData: appDataDirectory,
-                      localAppData: localAppDataDirectory,
-                      temporary: temporaryDirectory,
-                      webViewData: webViewDataDirectory,
-                    },
-                    port,
-                  );
-                  state.appProcess = spawn(
-                    join(installDirectory, installedExecutableName),
-                    [],
-                    {
-                      cwd: installDirectory,
-                      env: appEnvironment,
-                      stdio: 'ignore',
-                      windowsHide: true,
-                    },
-                  );
-                  state.appProcess.on('error', () => undefined);
-                }),
-                concatMap(() =>
-                  connectToInstalledWebView(state.cdpPort, state.appProcess),
-                ),
-                tap((browser) => (state.browser = browser)),
-                concatMap(() => installedPage(state.browser, state.appProcess)),
-                concatMap((page) => exerciseInstalledUi(page)),
-                tap(
-                  (exerciseResult) => (state.exerciseResult = exerciseResult),
-                ),
-                concatMap(() =>
-                  processCleanup.processesRunningUnder(installDirectory),
-                ),
-                tap((processes) => {
-                  state.cleanup.ownedProcessCount = processes.length;
-                  if (state.cleanup.ownedProcessCount < 2) {
-                    throw new Error(
-                      'Installed smoke did not observe both the owned Tauri app and runtime process.',
-                    );
-                  }
-                }),
-              ),
+          reserveLoopbackPort().pipe(
+            tap((port) => {
+              state.cdpPort = port;
+              const appEnvironment = buildInstalledAppEnvironment(
+                process.env,
+                {
+                  root: runRoot,
+                  appData: appDataDirectory,
+                  localAppData: localAppDataDirectory,
+                  temporary: temporaryDirectory,
+                  webViewData: webViewDataDirectory,
+                },
+                port,
+              );
+              state.appProcess = spawn(
+                join(installDirectory, installedExecutableName),
+                [],
+                {
+                  cwd: installDirectory,
+                  env: appEnvironment,
+                  stdio: 'ignore',
+                  windowsHide: true,
+                },
+              );
+              state.appProcess.on('error', () => undefined);
+            }),
+            concatMap(() =>
+              connectToInstalledWebView(state.cdpPort, state.appProcess),
+            ),
+            tap((browser) => (state.browser = browser)),
+            concatMap(() => installedPage(state.browser, state.appProcess)),
+            concatMap((page) => exerciseInstalledUi(page)),
+            tap((exerciseResult) => (state.exerciseResult = exerciseResult)),
+            concatMap(() =>
+              processCleanup.processesRunningUnder(installDirectory),
+            ),
+            tap((processes) => {
+              state.cleanup.ownedProcessCount = processes.length;
+              if (state.cleanup.ownedProcessCount < 2) {
+                throw new Error(
+                  'Installed smoke did not observe both the owned Tauri app and runtime process.',
+                );
+              }
+            }),
+          ),
         ),
         map(() => undefined),
         catchError((error) => {
@@ -669,27 +879,6 @@ export function runInstalledDeterministicSmoke({
                   [state.exerciseError, ...state.cleanupErrors].filter(Boolean),
                   'Installed deterministic Tauri smoke failed or could not clean up safely.',
                 ),
-            );
-          }
-          if (measureOnly) {
-            const report = {
-              evidenceKind: 'release-installed-size',
-              releaseGateSatisfied: false,
-              platform: 'windows',
-              arch: 'x86_64',
-              bundle: 'nsis',
-              installer: {
-                fileName: state.installer.fileName,
-                bytes: state.installer.bytes,
-                sha256: state.installer.sha256,
-              },
-              installedBytes: state.installedBytes,
-              cleanup: state.cleanup,
-              disclaimer:
-                'Scoped release install-size measurement only; no real engine behavior was exercised.',
-            };
-            return writeEvidence(report, installedSizeEvidencePath).pipe(
-              map(() => ({ report, reportPath: installedSizeEvidencePath })),
             );
           }
           const report = {

@@ -35,17 +35,27 @@ This checklist is the active release gate. Check an item only after the exact
 
 - Pull-request and `main` CI own the complete workspace
   lint/typecheck/test/build/package/desktop/smoke proof. Pull requests skip only
-  the installed-size install/uninstall and strict size-budget steps; later
-  desktop/reference checks still run. Exact `main` pushes and release retain
-  real installed-size and strict budget proof.
+  the installed-size install/uninstall and strict size-budget steps.
+  Desktop/reference checks run independently before those main-only steps.
+  Packaging diagnostics upload even after a later failure. Exact `main` pushes
+  and release retain real installed-size and strict budget proof.
 - Release must consume one successful exact-commit `.github/workflows/ci.yml`
   `push` run on `main` for the tagged SHA.
 - Release must not rerun the redundant full-workspace `pnpm verify`.
 - Native-command PowerShell blocks must fail fast. Installed-size smoke is a
   standalone terminal step before size-budget validation.
-- Installed-smoke PID ownership is executable-path scoped to exact current-run
+- The size-only lane never launches Tauri or invokes the installed-app process
+  observer. It requires the exact silent installer, owned installed executable
+  and registry values, positive non-boolean bytes, native uninstaller, and
+  absence of the exact install directory and uninstall key. Canonical size
+  report v2 accepts only that evidence path and its exact schema. Later
+  product-key and run-directory cleanup is best-effort diagnostic hygiene.
+- Full installed-smoke PID ownership is executable-path scoped to exact current-run
   private roots registered only after residual drain and empty-tree recreation;
   unknown observation or residue fails closed.
+- Exact-main CI run `30551954051` failed in the former size-only process
+  observer before size validation. It created no tag or release and does not
+  satisfy the replacement exact-main proof.
 - Release still owns ancestry, frozen install, synchronized-version,
   canonical source-lock classification, model receipt/catalog rules,
   production `build-release-artifacts`, runtime staging, NSIS build,
@@ -67,7 +77,7 @@ This checklist is the active release gate. Check an item only after the exact
 - [x] Production runtime release artifacts are rebuilt without ambient model
       stores.
 - [x] The staged runtime manifest/schema/executable are internally consistent.
-- [x] The exact `0.3.5` NSIS installer passes installed-size and budget checks.
+- [ ] The exact `0.3.5` NSIS installer passes installed-size and budget checks.
 - [x] The exact `0.3.5` package tarball passes isolated Angular, Vanilla,
       React, and Vue consumer proof.
 - [x] Core-only candidates contain no model, optional-worker, fixture, receipt,
