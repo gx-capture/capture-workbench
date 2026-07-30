@@ -81,7 +81,7 @@ LF:
 ```json
 {
   "catalogVersion": "1",
-  "runtimeVersion": "0.3.4",
+  "runtimeVersion": "0.3.5",
   "requirements": [
     {
       "requirementId": "windowsml-ocr",
@@ -89,17 +89,17 @@ LF:
         {
           "role": "worker",
           "requirementId": "windowsml-ocr",
-          "artifactVersion": "0.3.4",
+          "artifactVersion": "0.3.5",
           "workerProtocolVersion": "1",
           "platform": "windows",
           "arch": "x86_64",
-          "fileName": "capture-engine-ocr-0.3.4-windows-x64.zip",
+          "fileName": "capture-engine-ocr-0.3.5-windows-x64.zip",
           "bytes": 1,
           "sha256": "<64 lowercase hex>",
           "extractedBytes": 1,
           "entryPoint": "capture-engine-ocr.exe",
           "filesManifestSha256": "<64 lowercase hex>",
-          "url": "https://github.com/gx-capture/capture-workbench/releases/download/v0.3.4/..."
+          "url": "https://github.com/gx-capture/capture-workbench/releases/download/v0.3.5/..."
         }
       ]
     }
@@ -146,9 +146,9 @@ Each requirement is owned below:
 {
   "stateVersion": "1",
   "requirementId": "windowsml-ocr",
-  "artifactVersion": "0.3.4",
+  "artifactVersion": "0.3.5",
   "workerProtocolVersion": "1",
-  "entryPoint": "versions/0.3.4/worker/capture-engine-ocr.exe",
+  "entryPoint": "versions/0.3.5/worker/capture-engine-ocr.exe",
   "activatedArtifacts": [
     {"role": "worker", "sha256": "<hex>"},
     {"role": "model", "sha256": "<hex>"}

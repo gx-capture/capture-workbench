@@ -30,10 +30,15 @@ jobs:
       - name: Verify tag commit belongs to main
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           git fetch --no-tags origin refs/heads/main:refs/remotes/origin/main
           git rev-parse --verify refs/remotes/origin/main
+          $PSNativeCommandUseErrorActionPreference = $false
           git merge-base --is-ancestor "$env:GITHUB_SHA" refs/remotes/origin/main
-          if ($LASTEXITCODE -ne 0) {
+          $ancestorExitCode = $LASTEXITCODE
+          $PSNativeCommandUseErrorActionPreference = $true
+          if ($ancestorExitCode -ne 0) {
             throw "Release tag commit must be reachable from origin/main."
           }
 
@@ -55,6 +60,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           node tools/model-candidate-receipt.ts verify-main-ci `
             --repository "$env:GITHUB_REPOSITORY" `
             --commit "$env:GITHUB_SHA" `
@@ -81,6 +88,8 @@ jobs:
         id: release-model-mode
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           pnpm nx run capture-runtime:classify-release-model-mode
           $classification = Get-Content `
             packages/capture-runtime/dist/metadata/release-model-mode.json `
@@ -96,10 +105,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           $receiptDirectory = Join-Path $env:RUNNER_TEMP 'verified-model-candidate'
           node tools/model-candidate-receipt.ts resolve `
             --repository "$env:GITHUB_REPOSITORY" `
-            --version "0.3.4" `
+            --version "0.3.5" `
             --commit "$env:GITHUB_SHA" `
             --source-lock packages/capture-runtime/model-sources/release-model-source-lock.json `
             --workflow-path ".github/workflows/model-candidate.yml" `
@@ -115,6 +126,8 @@ jobs:
         if: steps.release-model-mode.outputs.mode == 'model-enabled'
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           $receiptPath = Join-Path $env:CAPTURE_MODEL_RECEIPT_PATH 'model-candidate-receipt.json'
           $catalogPath = 'packages/capture-runtime/dist/release/capture-engine-catalog.json'
           node tools/model-candidate-receipt.ts verify-catalog `
@@ -124,6 +137,8 @@ jobs:
       - name: Build Capture Workbench Windows installer with the verified release runtime
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           node apps/capture-workbench-desktop/scripts/stage-runtime.ts `
             --artifact packages/capture-runtime/dist/release/capture-runtime-x86_64-pc-windows-msvc.exe `
             --manifest packages/capture-runtime/dist/release/capture-runtime-manifest.json `
@@ -131,10 +146,15 @@ jobs:
             --source release
           pnpm nx run capture-workbench-desktop:build-nsis
 
+      - name: Measure exact installed size
+        shell: pwsh
+        run: node apps/capture-workbench-desktop/scripts/installed-deterministic-smoke.ts --measure-release-size
+
       - name: Verify exact installed size and packaging budgets
         shell: pwsh
         run: |
-          node apps/capture-workbench-desktop/scripts/installed-deterministic-smoke.ts --measure-release-size
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           pnpm nx run capture-runtime:size-regression-check
           $report = 'packages/capture-runtime/dist/size/runtime-size-report.json'
           $releasedReport = 'packages/capture-runtime/dist/release/runtime-size-report.json'
@@ -147,6 +167,8 @@ jobs:
         env:
           RELEASE_MODEL_MODE: ${{ steps.release-model-mode.outputs.mode }}
         run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           pnpm nx run capture-angular:pack
           $packages = @(Get-ChildItem dist/packs -Filter '*.tgz' -File)
           if ($packages.Count -ne 1) {
@@ -237,6 +259,8 @@ jobs:
           NODE_AUTH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           $packages = @(Get-ChildItem publication/package -Filter '*.tgz' -File)
           if ($packages.Count -ne 1) {
             throw "Expected exactly one release package tarball, found $($packages.Count)."

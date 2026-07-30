@@ -53,6 +53,8 @@ jobs:
       - name: Verify Capture Workbench package
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           pnpm nx run capture-angular:lint
           pnpm nx run capture-angular:test
           pnpm nx run capture-angular:build
@@ -61,6 +63,8 @@ jobs:
       - name: Verify reference app
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           pnpm nx run capture-workbench:lint
           pnpm nx run capture-workbench:test
           pnpm nx run capture-workbench:build
@@ -69,6 +73,8 @@ jobs:
       - name: Verify capture runtime
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           pnpm nx run capture-runtime:python-version-check
           pnpm nx run capture-runtime:lint
           pnpm nx run capture-runtime:typecheck
@@ -79,14 +85,22 @@ jobs:
         shell: pwsh
         run: pnpm nx run capture-runtime:verify-worker-boundaries
 
-      - name: Verify the core-only Windows installer and measured size budgets
+      - name: Build and verify the core-only Windows installer
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           pnpm nx run capture-workbench-desktop:stage-core-runtime
           pnpm nx run capture-runtime:verify-core-boundary
           pnpm nx run capture-workbench-desktop:build-nsis
-          node apps/capture-workbench-desktop/scripts/installed-deterministic-smoke.ts --measure-release-size
-          pnpm nx run capture-runtime:size-regression-check
+
+      - name: Measure exact installed size
+        shell: pwsh
+        run: node apps/capture-workbench-desktop/scripts/installed-deterministic-smoke.ts --measure-release-size
+
+      - name: Verify measured size budgets
+        shell: pwsh
+        run: pnpm nx run capture-runtime:size-regression-check
 
       - name: Upload runtime packaging diagnostics
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -112,6 +126,8 @@ jobs:
       - name: Verify Capture Workbench desktop product
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           pnpm nx run capture-workbench-desktop:cargo-fmt-check
           pnpm nx run capture-workbench-desktop:cargo-check
           pnpm nx run capture-workbench-desktop:cargo-test

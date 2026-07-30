@@ -1,7 +1,7 @@
-# Capture Workbench v0.3.4 Release Checklist
+# Capture Workbench v0.3.5 Release Checklist
 
 This checklist is the active release gate. Check an item only after the exact
-`v0.3.4` candidate or tagged commit has produced the stated evidence.
+`v0.3.5` candidate or tagged commit has produced the stated evidence.
 
 ## Immutable failed-release evidence
 
@@ -18,8 +18,18 @@ This checklist is the active release gate. Check an item only after the exact
   had no staged Tauri sidecar and no optional `pypdfium2` or Pillow worker
   dependencies. `publish` was skipped; no `v0.3.3` GitHub Release, assets, or
   package were created.
-- Never delete, move, recreate, or publish around either failed tag. The next
-  candidate is `v0.3.4`.
+- The lightweight `v0.3.4` tag remains at
+  `4d2e5cb5f3b5be1a0350ea4ca03c53e40cdd5c79`. Release run `30530781199`
+  completed `build-candidate` successfully. `publish` then failed locally in
+  candidate preflight because `runtime-size-report.json` had
+  `installedBytes: null` and the blocker
+  `Installed directory or installed-size evidence was not supplied.` The
+  installed deterministic smoke had reported unsafe cleanup, but its enclosing
+  PowerShell block continued and later successful commands masked the failure.
+  No GitHub Release, Release asset, or `0.3.4` package was created; the
+  candidate remained only an Actions artifact.
+- Never delete, move, recreate, or publish around any failed tag. The next
+  candidate is `v0.3.5`.
 
 ## Proof ownership
 
@@ -28,6 +38,8 @@ This checklist is the active release gate. Check an item only after the exact
 - Release must consume one successful exact-commit `.github/workflows/ci.yml`
   `push` run on `main` for the tagged SHA.
 - Release must not rerun the redundant full-workspace `pnpm verify`.
+- Native-command PowerShell blocks must fail fast. Installed-size smoke is a
+  standalone terminal step before size-budget validation.
 - Release still owns ancestry, frozen install, synchronized-version,
   canonical source-lock classification, model receipt/catalog rules,
   production `build-release-artifacts`, runtime staging, NSIS build,
@@ -36,7 +48,7 @@ This checklist is the active release gate. Check an item only after the exact
 
 ## Candidate identity
 
-- [x] All live first-party version owners are synchronized at `0.3.4`.
+- [x] All live first-party version owners are synchronized at `0.3.5`.
 - [x] Canonical source-lock bytes classify as exactly `core-only`, with empty
       requirements and no model candidate receipt.
 - [ ] Tag commit is reachable from `main`.
@@ -46,20 +58,20 @@ This checklist is the active release gate. Check an item only after the exact
 
 - [x] Focused workflow contract and version checks pass.
 - [x] Full `corepack pnpm verify` passes for the exact candidate tree.
-- [ ] Production runtime release artifacts are rebuilt without ambient model
+- [x] Production runtime release artifacts are rebuilt without ambient model
       stores.
-- [ ] The staged runtime manifest/schema/executable are internally consistent.
-- [ ] The exact `0.3.4` NSIS installer passes installed-size and budget checks.
-- [x] The exact `0.3.4` package tarball passes isolated Angular, Vanilla,
+- [x] The staged runtime manifest/schema/executable are internally consistent.
+- [x] The exact `0.3.5` NSIS installer passes installed-size and budget checks.
+- [x] The exact `0.3.5` package tarball passes isolated Angular, Vanilla,
       React, and Vue consumer proof.
-- [ ] Core-only candidates contain no model, optional-worker, fixture, receipt,
+- [x] Core-only candidates contain no model, optional-worker, fixture, receipt,
       or model ZIP asset.
 
 ## Git and publication boundary
 
 - [ ] Independent review approves the exact candidate tree.
 - [ ] The reviewed tree is committed and merged to `main`.
-- [ ] Lightweight `v0.3.4` is created exactly once at the reviewed `main`
+- [ ] Lightweight `v0.3.5` is created exactly once at the reviewed `main`
       commit.
 - [ ] Release workflow `build-candidate` and `publish` jobs are terminal
       success for the immutable tag SHA.

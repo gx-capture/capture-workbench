@@ -25,10 +25,15 @@ jobs:
       - name: Verify candidate commit belongs to main
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           git fetch --no-tags origin refs/heads/main:refs/remotes/origin/main
           git rev-parse --verify refs/remotes/origin/main
+          $PSNativeCommandUseErrorActionPreference = $false
           git merge-base --is-ancestor "$env:GITHUB_SHA" refs/remotes/origin/main
-          if ($LASTEXITCODE -ne 0) {
+          $ancestorExitCode = $LASTEXITCODE
+          $PSNativeCommandUseErrorActionPreference = $true
+          if ($ancestorExitCode -ne 0) {
             throw "Model candidate commit must be reachable from origin/main."
           }
 
@@ -62,12 +67,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          $PSNativeCommandUseErrorActionPreference = $false
           $workflowId = gh api "repos/$env:GITHUB_REPOSITORY/actions/workflows/model-candidate.yml" --jq '.id'
-          if ($LASTEXITCODE -ne 0 -or -not $workflowId) {
+          $workflowLookupExitCode = $LASTEXITCODE
+          $PSNativeCommandUseErrorActionPreference = $true
+          if ($workflowLookupExitCode -ne 0 -or -not $workflowId) {
             throw "Could not resolve the trusted model candidate workflow id."
           }
           node tools/model-candidate-receipt.ts create `
-            --version "0.3.4" `
+            --version "0.3.5" `
             --commit "$env:GITHUB_SHA" `
             --source-lock packages/capture-runtime/model-sources/release-model-source-lock.json `
             --catalog packages/capture-runtime/dist/catalog/capture-engine-catalog.json `
@@ -80,7 +90,7 @@ jobs:
       - name: Upload only the model candidate receipt
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: capture-model-receipt-v0.3.4-${{ github.sha }}
+          name: capture-model-receipt-v0.3.5-${{ github.sha }}
           path: packages/capture-runtime/dist/candidate/model-candidate-receipt.json
           if-no-files-found: error
           retention-days: 7

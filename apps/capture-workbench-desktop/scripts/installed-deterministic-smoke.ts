@@ -11,7 +11,7 @@ import {
   stat,
   writeFile,
 } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { join, resolve, win32 } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import {
@@ -725,6 +725,73 @@ function errorMessage(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
+export const installedSmokeDiagnosticRedactionMarker =
+  '[redacted unsafe diagnostic]';
+export const installedSmokeDiagnosticMessageLimit = 512;
+const installedSmokeDiagnosticCountLimit = 32;
+const sensitiveDiagnosticFragments = [
+  'authorization',
+  'bearer',
+  'secret',
+  'token',
+];
+
+function containsSensitiveDiagnosticLabel(value) {
+  const compactOriginal = value.toLowerCase().replace(/[^a-z\d]+/gu, '');
+  return sensitiveDiagnosticFragments.some((fragment) =>
+    compactOriginal.includes(fragment),
+  );
+}
+
+function containsAbsoluteWindowsPath(value) {
+  const substringCandidates = [
+    ...value.matchAll(/[A-Za-z]:[\\/]/gu),
+    ...value.matchAll(/[\\/]{2}[^\\/\s]+[\\/][^\\/\s]+/gu),
+    ...value.matchAll(
+      /(?:^|[\s"'`()[\]{}<>,;=:])(?<rooted>[\\/](?![\\/])[^\\/\s]+)/gu,
+    ),
+  ];
+  return substringCandidates.some((match) =>
+    win32.isAbsolute(match.groups?.['rooted'] ?? value.slice(match.index)),
+  );
+}
+
+function sanitizedDiagnosticMessage(error) {
+  const raw = errorMessage(error);
+  if (
+    containsSensitiveDiagnosticLabel(raw) ||
+    containsAbsoluteWindowsPath(raw)
+  ) {
+    return installedSmokeDiagnosticRedactionMarker;
+  }
+  const normalized = raw.replace(/\s+/gu, ' ').trim();
+  if (normalized.length <= installedSmokeDiagnosticMessageLimit) {
+    return normalized;
+  }
+  return `${normalized.slice(0, installedSmokeDiagnosticMessageLimit - 3)}...`;
+}
+
+export function nestedErrorMessages(error) {
+  const messages = [];
+  const visited = new Set();
+  const visit = (candidate) => {
+    if (messages.length >= installedSmokeDiagnosticCountLimit) return;
+    if (visited.has(candidate)) return;
+    if (
+      (typeof candidate === 'object' && candidate !== null) ||
+      typeof candidate === 'function'
+    ) {
+      visited.add(candidate);
+    }
+    messages.push(sanitizedDiagnosticMessage(candidate));
+    if (candidate instanceof AggregateError) {
+      for (const cause of candidate.errors) visit(cause);
+    }
+  };
+  visit(error);
+  return messages;
+}
+
 if (
   process.argv[1] &&
   pathToFileURL(resolve(process.argv[1])).href === import.meta.url
@@ -745,12 +812,9 @@ if (
       next: ({ reportPath }) =>
         process.stdout.write(`Installed smoke evidence: ${reportPath}\n`),
       error: (error) => {
-        process.stderr.write(`${errorMessage(error)}\n`);
-        if (error instanceof AggregateError) {
-          for (const cause of error.errors) {
-            process.stderr.write(`- ${errorMessage(cause)}\n`);
-          }
-        }
+        const [summary, ...causes] = nestedErrorMessages(error);
+        process.stderr.write(`${summary}\n`);
+        for (const cause of causes) process.stderr.write(`- ${cause}\n`);
         process.exitCode = 1;
       },
     });

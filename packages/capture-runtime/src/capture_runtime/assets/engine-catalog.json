@@ -14,5 +14,5 @@
       "unavailableReason": "A release catalog with an exact Whisper worker and approved direct model source lock was not injected."
     }
   ],
-  "runtimeVersion": "0.3.4"
+  "runtimeVersion": "0.3.5"
 }
