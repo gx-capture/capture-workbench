@@ -171,13 +171,19 @@ default and are pruned on startup and during requests.
 descriptors come only from the core-embedded, checksum-pinned engine catalog;
 the renderer cannot supply a URL, checksum, command, or local path. Explicit
 installation jobs stream and verify exact bytes, apply traversal/UNC/symlink/
-collision/expansion/inner-manifest guards, probe the worker and model, and
-atomically activate a side-by-side version. A failed upgrade retains the
-previous `active.json`; an installed version is reverified and works offline.
-No installation or extraction path runs `pip`, `uv`, or a Hugging Face model
-download. Ollama remains independent: it is actively probed, requires consent
-for `winget` installation, and lazily starts only its owned isolated profile
-after restart.
+collision/expansion/inner-manifest guards to worker archives, download the
+catalog's immutable checksum-pinned model files into isolated staging, probe
+the worker and model, and atomically activate a side-by-side version. Redirect
+targets are validated before contact, and only explicitly allowlisted CDN
+hosts may carry signed queries. A failed upgrade retains the previous
+`active.json`; same-process residue is removed immediately, while validated
+UUID staging/dot-temporary crash residue is removed under the requirement lock
+at the next install without following reparse points or deleting final
+versions. An installed version is reverified and works offline. No
+installation or extraction path runs `pip`, `uv`, or mutable Hugging Face
+client resolution. Ollama remains independent: it is actively probed, requires
+consent for `winget` installation, and lazily starts only its owned isolated
+profile after restart.
 
 When `CAPTURE_STRUCTURING_PROVIDER=host`, requirement discovery is scoped to
 WindowsML and Whisper before probing begins. The process neither probes Ollama
@@ -185,16 +191,22 @@ nor advertises its application/model requirements, and both Ollama installation
 IDs are rejected as disabled.
 
 `build-release-artifacts` does not inspect or depend on ambient
-OCR/Whisper/Ollama model stores. A publication build requires exact externally
-prepared model ZIPs and files manifests through
-`CAPTURE_OCR_MODEL_ARCHIVE`, `CAPTURE_OCR_MODEL_MANIFEST`,
-`CAPTURE_WHISPER_MODEL_ARCHIVE`, and `CAPTURE_WHISPER_MODEL_MANIFEST`.
-Generation stages those exact files beside the workers and fails on missing
-inputs or same-name/different-byte collisions. The tag release workflow
-verifies the complete catalog, every archive/sidecar/checksum, core-only NSIS,
-installed size report, synchronized package, and re-downloaded draft assets
-before publication. It does not perform a separate clean-install attestation
-lane.
+OCR/Whisper/Ollama model stores or accept ambient model-archive environment
+variables. A publication build requires the canonical checked-in model source
+lock to approve exact immutable URLs/revisions, destinations, owners,
+licenses/NOTICE files, bytes, hashes, derivation provenance, and real fixture
+expectations. The catalog embeds the resulting direct-file descriptors; only
+worker ZIPs remain release assets.
+
+An explicit model-candidate workflow runs real probes on an authorized
+self-hosted Windows x64 DirectML runner and uploads only a small commit-bound
+receipt. The tag workflow resolves that receipt through GitHub server-side
+workflow/run/artifact identity and digest metadata, then verifies the rebuilt
+catalog's exact runtime version, source-lock SHA, and ordered direct-model
+manifest bindings (independent worker ZIP bytes may differ), every worker
+archive/sidecar/checksum, core-only NSIS, installed size report, synchronized
+package, and exact remote release asset-name set before publication. Model
+files and model ZIPs never enter the Actions handoff or GitHub Release.
 
 ## Host structuring
 

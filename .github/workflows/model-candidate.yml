@@ -1,0 +1,86 @@
+name: Model Candidate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: capture-workbench-model-candidate-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  verify-model-candidate:
+    runs-on: [self-hosted, Windows, X64, capture-directml]
+    timeout-minutes: 90
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify candidate commit belongs to main
+        shell: pwsh
+        run: |
+          git fetch --no-tags origin refs/heads/main:refs/remotes/origin/main
+          git rev-parse --verify refs/remotes/origin/main
+          git merge-base --is-ancestor "$env:GITHUB_SHA" refs/remotes/origin/main
+          if ($LASTEXITCODE -ne 0) {
+            throw "Model candidate commit must be reachable from origin/main."
+          }
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@b0f76dfb45f55f8421693e4803ac7bb65143bd34 # v6
+        with:
+          version: 11.15.1
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install uv and Python 3.12
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: '3.12'
+          enable-cache: true
+
+      - name: Install workspace dependencies
+        shell: pwsh
+        run: pnpm install --frozen-lockfile
+
+      - name: Download exact pinned model files and run real OCR and Whisper probes
+        shell: pwsh
+        run: pnpm nx run capture-runtime:verify-release-model-candidate
+
+      - name: Create the small commit-bound model candidate receipt
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $workflowId = gh api "repos/$env:GITHUB_REPOSITORY/actions/workflows/model-candidate.yml" --jq '.id'
+          if ($LASTEXITCODE -ne 0 -or -not $workflowId) {
+            throw "Could not resolve the trusted model candidate workflow id."
+          }
+          node tools/model-candidate-receipt.ts create `
+            --version "0.3.2" `
+            --commit "$env:GITHUB_SHA" `
+            --source-lock packages/capture-runtime/model-sources/release-model-source-lock.json `
+            --catalog packages/capture-runtime/dist/catalog/capture-engine-catalog.json `
+            --evidence packages/capture-runtime/dist/candidate/model-probe-evidence.json `
+            --workflow-id "$workflowId" `
+            --workflow-path ".github/workflows/model-candidate.yml" `
+            --run-id "$env:GITHUB_RUN_ID" `
+            --output packages/capture-runtime/dist/candidate/model-candidate-receipt.json
+
+      - name: Upload only the model candidate receipt
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: capture-model-receipt-v0.3.2-${{ github.sha }}
+          path: packages/capture-runtime/dist/candidate/model-candidate-receipt.json
+          if-no-files-found: error
+          retention-days: 7

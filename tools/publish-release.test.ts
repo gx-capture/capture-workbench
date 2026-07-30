@@ -82,9 +82,7 @@ function createCandidate() {
   writeFileSync(installerPath, installerBytes);
   const descriptors = [
     ['windowsml-ocr', 'worker', 'capture-engine-ocr.zip'],
-    ['windowsml-ocr', 'model', 'capture-model-ocr.zip'],
     ['whisper-primary', 'worker', 'capture-engine-whisper.zip'],
-    ['whisper-primary', 'model', 'capture-model-whisper.zip'],
   ].map(([requirementId, role, fileName]) => {
     const archive = Buffer.from(`${fileName} bytes`);
     const sidecarName = `${fileName.slice(0, -4)}-files.json`;
@@ -122,7 +120,7 @@ function createCandidate() {
   });
   const catalog = Buffer.from(
     `${JSON.stringify({
-      catalogVersion: '1',
+      catalogVersion: '2',
       runtimeVersion: version,
       requirements: ['windowsml-ocr', 'whisper-primary'].map(
         (requirementId) => ({
@@ -131,6 +129,30 @@ function createCandidate() {
           artifacts: descriptors.filter(
             (descriptor) => descriptor.requirementId === requirementId,
           ),
+          modelFiles: {
+            artifactVersion: version,
+            entryCount: 1,
+            entryPoint: 'model',
+            extractedBytes: 1,
+            files: [
+              {
+                bytes: 1,
+                derivation: null,
+                kind: 'source',
+                licensePath: 'licenses/LICENSE.txt',
+                noticePath: 'notices/NOTICE.txt',
+                owner: 'test-owner',
+                path: 'model/model.bin',
+                redirectHosts: [],
+                revision: 'a'.repeat(40),
+                sha256: 'b'.repeat(64),
+                spdx: 'MIT',
+                url: `https://models.example.test/${'a'.repeat(40)}/model.bin`,
+              },
+            ],
+            manifestSha256: 'c'.repeat(64),
+            sourceLockSha256: 'd'.repeat(64),
+          },
         }),
       ),
     })}\n`,
@@ -195,6 +217,7 @@ function createRemote(candidate, initial = {}) {
     release: initial.release ?? 'missing',
     packageIntegrity: initial.packageIntegrity,
     fail: initial.fail,
+    reportedAssetNames: initial.reportedAssetNames,
   };
   const runCommand = (command, args) => {
     calls.push([command, ...args]);
@@ -222,7 +245,14 @@ function createRemote(candidate, initial = {}) {
     if (command === 'gh' && args[0] === 'release' && args[1] === 'view') {
       return state.release === 'missing'
         ? failure('release not found')
-        : success(JSON.stringify({ isDraft: state.release === 'draft' }));
+        : success(
+            JSON.stringify({
+              assets: (
+                state.reportedAssetNames ?? [...assets.keys()]
+              ).map((name) => ({ name })),
+              isDraft: state.release === 'draft',
+            }),
+          );
     }
     if (command === 'gh' && args[0] === 'release' && args[1] === 'create') {
       state.release = 'draft';
@@ -404,6 +434,62 @@ test('public release with a missing or different asset fails read-only', async (
   }
 });
 
+test('draft retries reject extra or duplicate remote asset names before mutation', async () => {
+  const candidate = createCandidate();
+  try {
+    for (const reportedAssetNames of [
+      [
+        ...candidate.assets.map((path) => basename(path)),
+        'unexpected-remote.bin',
+      ],
+      [
+        ...candidate.assets.map((path) => basename(path)),
+        basename(candidate.assets[0]),
+      ],
+    ]) {
+      const remote = createRemote(candidate, {
+        release: 'draft',
+        packageIntegrity: candidate.packageIntegrity,
+        assets: candidate.assets,
+        reportedAssetNames,
+      });
+      await assert.rejects(
+        observe(
+          publishRelease(candidate.input, { runCommand: remote.runCommand }),
+        ),
+        /unexpected remote assets|duplicate remote asset names/u,
+      );
+      assert.deepEqual(mutations(remote.calls), []);
+    }
+  } finally {
+    rmSync(candidate.root, { recursive: true, force: true });
+  }
+});
+
+test('public retries reject an extra remote asset and stay read-only', async () => {
+  const candidate = createCandidate();
+  try {
+    const remote = createRemote(candidate, {
+      release: 'public',
+      packageIntegrity: candidate.packageIntegrity,
+      assets: candidate.assets,
+      reportedAssetNames: [
+        ...candidate.assets.map((path) => basename(path)),
+        'unexpected-remote.bin',
+      ],
+    });
+    await assert.rejects(
+      observe(
+        publishRelease(candidate.input, { runCommand: remote.runCommand }),
+      ),
+      /unexpected remote assets/u,
+    );
+    assert.deepEqual(mutations(remote.calls), []);
+  } finally {
+    rmSync(candidate.root, { recursive: true, force: true });
+  }
+});
+
 test('package conflict and malformed local candidate stop before mutations', async () => {
   const candidate = createCandidate();
   try {
@@ -430,6 +516,49 @@ test('package conflict and malformed local candidate stop before mutations', asy
       /only .*canonical assets/u,
     );
     assert.deepEqual(invalid.calls, []);
+  } finally {
+    rmSync(candidate.root, { recursive: true, force: true });
+  }
+});
+
+test('model ZIPs are rejected from the local release asset set', async () => {
+  const candidate = createCandidate();
+  try {
+    writeFileSync(
+      join(
+        candidate.input.runtimeDirectory,
+        'capture-model-whisper-primary-0.3.2.zip',
+      ),
+      'forbidden model archive',
+    );
+    const remote = createRemote(candidate);
+    await assert.rejects(
+      observe(
+        publishRelease(candidate.input, { runCommand: remote.runCommand }),
+      ),
+      /only .*canonical assets/u,
+    );
+    assert.deepEqual(remote.calls, []);
+  } finally {
+    rmSync(candidate.root, { recursive: true, force: true });
+  }
+});
+
+test('worker archive names cannot escape or alias the release directory', async () => {
+  const candidate = createCandidate();
+  try {
+    const catalogPath = join(candidate.input.runtimeDirectory, engineCatalogName);
+    const catalog = JSON.parse(readFileSync(catalogPath, 'utf8'));
+    catalog.requirements[0].artifacts[0].fileName = '../escape.zip';
+    writeFileSync(catalogPath, `${JSON.stringify(catalog)}\n`);
+    const remote = createRemote(candidate);
+    await assert.rejects(
+      observe(
+        publishRelease(candidate.input, { runCommand: remote.runCommand }),
+      ),
+      /artifact descriptor is invalid/u,
+    );
+    assert.deepEqual(remote.calls, []);
   } finally {
     rmSync(candidate.root, { recursive: true, force: true });
   }

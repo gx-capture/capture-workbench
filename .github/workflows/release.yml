@@ -17,6 +17,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 90
     permissions:
+      actions: read
       contents: read
       packages: read
     steps:
@@ -49,6 +50,22 @@ jobs:
           registry-url: https://npm.pkg.github.com
           scope: '@gx-capture'
 
+      - name: Resolve the exact trusted model candidate receipt
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $receiptDirectory = Join-Path $env:RUNNER_TEMP 'verified-model-candidate'
+          node tools/model-candidate-receipt.ts resolve `
+            --repository "$env:GITHUB_REPOSITORY" `
+            --version "0.3.2" `
+            --commit "$env:GITHUB_SHA" `
+            --source-lock packages/capture-runtime/model-sources/release-model-source-lock.json `
+            --workflow-path ".github/workflows/model-candidate.yml" `
+            --max-age-hours "168" `
+            --output-dir "$receiptDirectory"
+          "CAPTURE_MODEL_RECEIPT_PATH=$receiptDirectory" >> $env:GITHUB_ENV
+
       - name: Install uv and Python 3.12
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
@@ -70,6 +87,15 @@ jobs:
       - name: Build production runtime artifacts without ambient model stores
         shell: pwsh
         run: pnpm nx run capture-runtime:build-release-artifacts
+
+      - name: Verify the rebuilt catalog matches the trusted model candidate
+        shell: pwsh
+        run: |
+          $receiptPath = Join-Path $env:CAPTURE_MODEL_RECEIPT_PATH 'model-candidate-receipt.json'
+          $catalogPath = 'packages/capture-runtime/dist/release/capture-engine-catalog.json'
+          node tools/model-candidate-receipt.ts verify-catalog `
+            --receipt "$receiptPath" `
+            --catalog "$catalogPath"
 
       - name: Build Capture Workbench Windows installer with the verified release runtime
         shell: pwsh
@@ -104,8 +130,19 @@ jobs:
           $runtime = Join-Path $candidate 'runtime'
           $package = Join-Path $candidate 'package'
           $desktop = Join-Path $candidate 'desktop'
-          New-Item -ItemType Directory -Path $runtime, $package, $desktop | Out-Null
+          $evidence = Join-Path $candidate 'evidence'
+          New-Item -ItemType Directory -Path $runtime, $package, $desktop, $evidence | Out-Null
           Copy-Item packages/capture-runtime/dist/release/* -Destination $runtime
+          foreach ($receiptName in @(
+            'model-candidate-receipt.json',
+            'verified-model-candidate-receipt.json'
+          )) {
+            $receiptPath = Join-Path $env:CAPTURE_MODEL_RECEIPT_PATH $receiptName
+            if (-not (Test-Path -LiteralPath $receiptPath -PathType Leaf)) {
+              throw "Verified model candidate receipt evidence is incomplete."
+            }
+            Copy-Item -LiteralPath $receiptPath -Destination $evidence
+          }
           Copy-Item $packages[0].FullName -Destination $package
           $installers = @(Get-ChildItem apps/capture-workbench-desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis -Filter '*.exe' -File -Recurse)
           if ($installers.Count -ne 1) {
@@ -120,7 +157,8 @@ jobs:
           name: capture-candidate-${{ github.ref_name }}
           path: ${{ env.CAPTURE_CANDIDATE_PATH }}
           if-no-files-found: error
-          retention-days: 3
+          retention-days: 1
+          compression-level: 0
 
   publish:
     needs: build-candidate

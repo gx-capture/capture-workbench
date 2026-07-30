@@ -326,11 +326,14 @@ with the exact command and blocker; deterministic evidence is not described as
 real-engine proof.
 
 The current repository intentionally contains an incomplete development
-catalog because no exact pinned OCR/Whisper model archives were supplied.
-Publication catalog generation requires all four
-`CAPTURE_*_MODEL_ARCHIVE`/`CAPTURE_*_MODEL_MANIFEST` inputs and fails closed
-without them. This does not weaken deterministic/unit verification and does
-leave the real-engine and publication acceptance items open.
+catalog because the exact OCR/Whisper source, license, NOTICE, derived-pipeline,
+and real-fixture records are not yet approved. Publication catalog generation
+requires the canonical checked-in direct-model source lock to pass and fails
+closed while that lock is blocked. Model ZIP inputs and
+`CAPTURE_*_MODEL_ARCHIVE`/`CAPTURE_*_MODEL_MANIFEST` environment variables are
+retired. This does not weaken deterministic/unit verification and leaves the
+real-engine and publication acceptance items open until both the lock and an
+authorized self-hosted Windows x64 DirectML runner are available.
 
 ## Hardening Follow-up
 

@@ -5,6 +5,7 @@ import zipfile
 from pathlib import Path
 
 import pytest
+from direct_model_fixtures import approved_source_lock
 
 from capture_runtime.engine_catalog import canonical_json_bytes
 from capture_runtime.release import build_release_artifacts, write_capture_document_schema
@@ -18,12 +19,11 @@ def artifact(
     engine_dir: Path,
     *,
     requirement_id: str,
-    role: str,
     file_name: str,
     entry_point: str,
 ) -> dict[str, object]:
-    payload_name = entry_point if role == "worker" else "model/model.bin"
-    payload = f"{requirement_id}-{role}".encode()
+    payload_name = entry_point
+    payload = f"{requirement_id}-worker".encode()
     manifest = canonical_json_bytes(
         {
             "manifestVersion": "1",
@@ -45,7 +45,7 @@ def artifact(
     with zipfile.ZipFile(archive) as source:
         extracted_bytes = sum(item.file_size for item in source.infolist())
     return {
-        "role": role,
+        "role": "worker",
         "requirementId": requirement_id,
         "artifactVersion": "0.3.2",
         "workerProtocolVersion": "1",
@@ -62,21 +62,30 @@ def artifact(
 
 
 def complete_catalog(engine_dir: Path, catalog_path: Path) -> None:
+    source_lock, _content = approved_source_lock()
+    source_lock_sha256 = hashlib.sha256(canonical_json_bytes(source_lock)).hexdigest()
     requirements = []
-    for requirement_id, worker_name, model_name, entry_point in (
+    for requirement_id, worker_name, entry_point in (
         (
             "windowsml-ocr",
             "capture-engine-ocr.zip",
-            "capture-model-ocr.zip",
             "capture-engine-ocr.exe",
         ),
         (
             "whisper-primary",
             "capture-engine-whisper.zip",
-            "capture-model-whisper.zip",
             "capture-engine-whisper.exe",
         ),
     ):
+        locked = next(
+            item for item in source_lock["requirements"] if item["requirementId"] == requirement_id
+        )
+        model_manifest = {
+            "artifactVersion": locked["artifactVersion"],
+            "entryPoint": locked["entryPoint"],
+            "files": locked["files"],
+            "manifestVersion": "1",
+        }
         requirements.append(
             {
                 "requirementId": requirement_id,
@@ -84,25 +93,28 @@ def complete_catalog(engine_dir: Path, catalog_path: Path) -> None:
                     artifact(
                         engine_dir,
                         requirement_id=requirement_id,
-                        role="worker",
                         file_name=worker_name,
                         entry_point=entry_point,
                     ),
-                    artifact(
-                        engine_dir,
-                        requirement_id=requirement_id,
-                        role="model",
-                        file_name=model_name,
-                        entry_point="model",
-                    ),
                 ],
+                "modelFiles": {
+                    "artifactVersion": locked["artifactVersion"],
+                    "entryCount": len(locked["files"]),
+                    "entryPoint": locked["entryPoint"],
+                    "extractedBytes": sum(item["bytes"] for item in locked["files"]),
+                    "files": locked["files"],
+                    "manifestSha256": hashlib.sha256(
+                        canonical_json_bytes(model_manifest)
+                    ).hexdigest(),
+                    "sourceLockSha256": source_lock_sha256,
+                },
                 "unavailableReason": None,
             }
         )
     catalog_path.write_bytes(
         canonical_json_bytes(
             {
-                "catalogVersion": "1",
+                "catalogVersion": "2",
                 "runtimeVersion": "0.3.2",
                 "requirements": requirements,
             }

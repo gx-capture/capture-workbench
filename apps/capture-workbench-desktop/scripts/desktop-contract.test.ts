@@ -298,6 +298,7 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
     releaseBuilder,
     executableBuilder,
     ciWorkflow,
+    modelCandidateWorkflow,
     publisher,
     runtimeProject,
   ] = await Promise.all([
@@ -326,22 +327,31 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
       'utf8',
     ),
     readFile(join(workspaceRoot, '.github', 'workflows', 'ci.yml'), 'utf8'),
+    readFile(
+      join(workspaceRoot, '.github', 'workflows', 'model-candidate.yml'),
+      'utf8',
+    ),
     readFile(join(workspaceRoot, 'tools', 'publish-release.ts'), 'utf8'),
     readFile(
       join(workspaceRoot, 'packages', 'capture-runtime', 'project.json'),
       'utf8',
     ),
   ]);
-  const actionReferences = [workflow, ciWorkflow].flatMap((source) =>
+  const actionReferences = [workflow, ciWorkflow, modelCandidateWorkflow].flatMap(
+    (source) =>
     [...source.matchAll(/uses:\s*[^@\s]+@([^\s#]+)/gu)].map(
       (match) => match[1],
     ),
   );
-  assert.ok(actionReferences.length >= 8);
+  assert.ok(actionReferences.length >= 13);
   assert.ok(
     actionReferences.every((reference) => /^[0-9a-f]{40}$/u.test(reference)),
   );
   assert.match(workflow, /permissions:\s*\r?\n\s+contents: read/u);
+  assert.match(
+    workflow,
+    /build-candidate:[\s\S]*permissions:[\s\S]*actions: read[\s\S]*contents: read/u,
+  );
   assert.doesNotMatch(
     workflow,
     /clean-install|attestation|production-preflight/u,
@@ -353,6 +363,8 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   );
   const mergeBaseIndex = workflow.indexOf('git merge-base --is-ancestor');
   const installPnpmIndex = workflow.indexOf('Install pnpm');
+  const installNodeIndex = workflow.indexOf('Install Node.js');
+  const installUvIndex = workflow.indexOf('Install uv and Python 3.12');
   assert.ok(fetchMainIndex >= 0);
   assert.ok(fetchMainIndex < mergeBaseIndex);
   assert.ok(mergeBaseIndex < installPnpmIndex);
@@ -360,6 +372,32 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
     workflow.indexOf('Verify tag commit belongs to main') < installPnpmIndex,
   );
   assert.match(workflow, /git merge-base --is-ancestor/u);
+  const resolveReceiptIndex = workflow.indexOf(
+    'Resolve the exact trusted model candidate receipt',
+  );
+  assert.ok(installPnpmIndex < installNodeIndex);
+  assert.ok(installNodeIndex < resolveReceiptIndex);
+  assert.ok(resolveReceiptIndex < installUvIndex);
+  assert.match(workflow, /model-candidate-receipt\.ts resolve/u);
+  assert.match(workflow, /--max-age-hours "168"/u);
+  const buildRuntimeIndex = workflow.indexOf(
+    'Build production runtime artifacts without ambient model stores',
+  );
+  const verifyCatalogIndex = workflow.indexOf(
+    'Verify the rebuilt catalog matches the trusted model candidate',
+  );
+  const buildInstallerIndex = workflow.indexOf(
+    'Build Capture Workbench Windows installer',
+  );
+  assert.ok(buildRuntimeIndex > resolveReceiptIndex);
+  assert.ok(verifyCatalogIndex > buildRuntimeIndex);
+  assert.ok(buildInstallerIndex > verifyCatalogIndex);
+  assert.match(
+    workflow,
+    /model-candidate-receipt\.ts verify-catalog[\s\S]*--receipt[\s\S]*--catalog/u,
+  );
+  assert.match(workflow, /compression-level: 0/u);
+  assert.match(workflow, /retention-days: 1/u);
   assert.match(workflow, /run: pnpm verify/u);
   assert.match(workflow, /capture-workbench-desktop:build-nsis/u);
   assert.match(workflow, /--installer \$installers\[0\]\.FullName/u);
@@ -370,6 +408,30 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   );
   assert.equal((workflow.match(/contents: write/gu) ?? []).length, 1);
   assert.equal((workflow.match(/packages: write/gu) ?? []).length, 1);
+  assert.match(modelCandidateWorkflow, /workflow_dispatch:/u);
+  assert.doesNotMatch(modelCandidateWorkflow, /\bpush:|\bpull_request:/u);
+  assert.match(
+    modelCandidateWorkflow,
+    /runs-on: \[self-hosted, Windows, X64, capture-directml\]/u,
+  );
+  assert.doesNotMatch(modelCandidateWorkflow, /runs-on: windows-latest/u);
+  assert.match(
+    modelCandidateWorkflow,
+    /permissions:\s*\r?\n\s+actions: read\s*\r?\n\s+contents: read/u,
+  );
+  assert.doesNotMatch(
+    modelCandidateWorkflow,
+    /contents: write|packages: write|capture-model-[^\s'"]*\.zip|download-artifact/u,
+  );
+  assert.match(
+    modelCandidateWorkflow,
+    /capture-runtime:verify-release-model-candidate/u,
+  );
+  assert.match(modelCandidateWorkflow, /model-candidate-receipt\.ts create/u);
+  assert.match(
+    modelCandidateWorkflow,
+    /Upload only the model candidate receipt[\s\S]*model-candidate-receipt\.json/u,
+  );
   assert.match(ciWorkflow, /capture-workbench:test/u);
   assert.match(ciWorkflow, /capture-workbench:production-bundle-check/u);
   assert.match(ciWorkflow, /branches: \[main, develop\]/u);
@@ -392,10 +454,25 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
     'generate-production-schema',
     'verify-worker-boundaries',
   ]);
+  assert.deepEqual(
+    project.targets['generate-release-engine-catalog'].dependsOn,
+    [
+      'build-ocr-worker',
+      'build-whisper-worker',
+      'validate-model-source-lock',
+    ],
+  );
+  assert.deepEqual(
+    project.targets['verify-release-model-candidate'].dependsOn,
+    ['generate-release-engine-catalog'],
+  );
   assert.deepEqual(project.targets['build-ocr-worker'].dependsOn, [
     'verify-production-environment',
   ]);
   assert.deepEqual(project.targets['build-whisper-worker'].dependsOn, [
+    'verify-production-environment',
+  ]);
+  assert.deepEqual(project.targets['validate-model-source-lock'].dependsOn, [
     'verify-production-environment',
   ]);
   assert.match(
@@ -404,6 +481,7 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   );
   for (const target of [
     'verify-production-environment',
+    'validate-model-source-lock',
     'generate-production-schema',
     'build-production-executable',
     'build-release-artifacts',
@@ -419,6 +497,6 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   assert.doesNotMatch(executableBuilder, /--collect-all/u);
   assert.match(
     publisher,
-    /preflightCandidate[\s\S]*ensureDraftAssets[\s\S]*publishPackage/u,
+    /preflightCandidate[\s\S]*assertRemoteAssetNames[\s\S]*ensureDraftAssets[\s\S]*publishPackage/u,
   );
 });

@@ -112,14 +112,15 @@ class SystemRuntimeInstaller:
                     raise EngineCatalogError("engine manager is unavailable")
                 descriptor = self._engine_manager.requirement(requirement_id)
                 active = self._engine_manager.active_engine(requirement_id)
+                worker = descriptor.worker_artifact() if descriptor.complete else None
                 artifact = (
                     RuntimeArtifactDescriptorV1(
-                        artifact_url=descriptor.artifact("worker").url,
-                        artifact_file_name=descriptor.artifact("worker").file_name,
-                        bytes=descriptor.artifact("worker").bytes,
-                        sha256=descriptor.artifact("worker").sha256,
+                        artifact_url=worker.url,
+                        artifact_file_name=worker.file_name,
+                        bytes=worker.bytes,
+                        sha256=worker.sha256,
                     )
-                    if descriptor.complete
+                    if worker is not None
                     else None
                 )
                 status = (
@@ -134,7 +135,7 @@ class SystemRuntimeInstaller:
                     if active is not None
                     else descriptor.unavailable_reason
                     if not descriptor.complete
-                    else "Pinned worker and model artifacts are available for installation."
+                    else "Pinned worker and direct model files are available for installation."
                 )
             except EngineCatalogError:
                 status = RuntimeRequirementStatus.UNAVAILABLE
