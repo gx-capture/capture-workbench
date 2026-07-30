@@ -378,7 +378,7 @@ mod tests {
             &BackendConfig {
                 base_url: format!("http://127.0.0.1:{port}"),
                 token: "secret-token".into(),
-                runtime_version: "0.3.2".into(),
+                runtime_version: "0.3.3".into(),
                 api_version: "1.0".into(),
                 capture_document_schema_version: "1".into(),
             },

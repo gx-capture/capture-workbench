@@ -1,6 +1,6 @@
 {
   "name": "@gx-capture/capture-workbench",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Capture Workbench UI for the Capture Runtime sidecar.",
   "license": "MIT",
   "repository": {

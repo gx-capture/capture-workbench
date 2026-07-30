@@ -26,7 +26,7 @@ the environment; never commit it.
 
 ```powershell
 $env:GITHUB_PACKAGES_TOKEN = '<read:packages token>'
-corepack pnpm add @gx-capture/capture-workbench@0.3.2 --save-exact
+corepack pnpm add @gx-capture/capture-workbench@0.3.3 --save-exact
 ```
 
 Angular hosts may import `CaptureWorkbenchComponent` and provide a

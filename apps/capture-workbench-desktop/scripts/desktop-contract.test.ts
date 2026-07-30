@@ -276,7 +276,7 @@ test('desktop launcher advertises the bounded 50 MiB upload policy', async () =>
   assert.match(launchPolicy, /DEFAULT_MAX_UPLOAD_BYTES\.to_string\(\)/u);
 });
 
-test('WindowsML bundle metadata is runtime-owned, never injected by the host', async () => {
+test('WindowsML bundle provenance is runtime-owned without a hard-coded release URL', async () => {
   const workspaceRoot = join(appRoot, '..', '..');
   const [launcher, stageRuntime, releaseBuilder, requirements] =
     await Promise.all([
@@ -309,7 +309,8 @@ test('WindowsML bundle metadata is runtime-owned, never injected by the host', a
     assert.doesNotMatch(source, /CAPTURE_WINDOWSML_BUNDLE/u);
     assert.doesNotMatch(source, /runtimeRequirements/u);
   }
-  assert.match(requirements, /WINDOWSML_BUNDLE_URL/u);
+  assert.doesNotMatch(requirements, /WINDOWSML_BUNDLE_URL/u);
+  assert.doesNotMatch(requirements, /capture-windowsml-ocr-windows-x64\.zip/u);
   assert.match(requirements, /WINDOWSML_BUNDLE_SHA256/u);
 });
 

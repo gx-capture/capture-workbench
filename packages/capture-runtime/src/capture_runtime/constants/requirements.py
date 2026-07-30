@@ -5,12 +5,9 @@ from typing import Final
 CAPTURE_OLLAMA_PROFILE_ID: Final = "capture-workbench-qwen3.5-4b-structure-v1"
 CAPTURE_OLLAMA_BASE_MODEL: Final = "qwen3.5:4b"
 
-# The consented WindowsML download is a runtime-release invariant. It is not
-# configured by CI, the desktop host, or the renderer.
-WINDOWSML_BUNDLE_URL: Final = (
-    "https://github.com/gx-capture/capture-workbench/releases/download/"
-    "v0.3.2/capture-windowsml-ocr-windows-x64.zip"
-)
+# The approved WindowsML bundle digest and size are runtime-release invariants.
+# Its source URL comes from an approved release catalog instead of a hard-coded
+# release asset path.
 WINDOWSML_BUNDLE_BYTES: Final = 138_837_175
 WINDOWSML_BUNDLE_SHA256: Final = "a88c9a3097771d07bd1d940db6acdcbb5336e7c6c85406f5c22655ed6930704a"
 

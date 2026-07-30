@@ -1,12 +1,13 @@
-# Capture Workbench v0.3.2 Release Checklist
+# Capture Workbench v0.3.3 Release Checklist
 
-This checklist is the release gate, not a record of intent. Check an item only
-after the exact candidate bytes and the current commit have produced the stated
-evidence.
+This checklist is the release gate, not a record of intent. Check a locally
+verifiable item only after the exact candidate bytes have produced the stated
+evidence; commit- and GitHub-bound items remain open until the exact intended
+tag commit produces their evidence.
 
 ## Candidate identity
 
-- [x] Version synchronized at `0.3.2`.
+- [x] Version synchronized at `0.3.3`.
 - [x] Old public owner references removed; current URLs use `gx-capture`.
 - [ ] Tag commit is reachable from `main`.
 - [ ] Exactly one trusted `.github/workflows/ci.yml` `push` run completed
@@ -14,8 +15,8 @@ evidence.
 
 ## Release model mode
 
-- [ ] The canonical checked-in source lock was classified from its exact bytes.
-- [ ] Core-only: source-lock and generated-catalog `requirements` are both
+- [x] The canonical checked-in source lock was classified from its exact bytes.
+- [x] Core-only: source-lock and generated-catalog `requirements` are both
       exactly empty; no model receipt, optional worker, model, or fixture asset
       is present.
 - [ ] Model-enabled: the non-empty source lock is fully approved and the exact
@@ -30,21 +31,53 @@ The annotated `v0.3.1` tag was created externally and prematurely from
 `develop`. GitHub Actions run `30427950949` failed during the frozen install
 because that tag did not contain its matching lockfile. No build, package,
 installer, or publish step ran, and no `v0.3.1` GitHub Release was created.
-The tag is nevertheless occupied and must not be overwritten, so it cannot
-remain the candidate version. Read-only checks found no local or remote
-`v0.3.2` tag and no `v0.3.2` GitHub Release.
+The tag is nevertheless occupied and must not be overwritten.
+
+The lightweight `v0.3.2` tag points to main merge commit
+`8d5b3364320f60a1f16cf9ee222663150cb57c11`. Release run `30517094297`
+passed ancestry, exact-main-CI, dependency, and version gates, then failed
+before build or publication because Windows checkout converted the canonical
+source-lock JSON to CRLF. The classifier rejected those non-canonical bytes;
+the publish job was skipped, and no `v0.3.2` GitHub Release, package, or assets
+were created. Preserve the tag and run as immutable failure evidence. The next
+candidate is `v0.3.3`.
 
 ## Automated candidate evidence
 
 - [x] Packed package consumer smoke passed for the final candidate.
 - [x] Angular, Vanilla, React, and Vue Web Component browser smoke passed for
       the final candidate.
-- [x] `corepack pnpm verify` passed from a frozen install.
+- [ ] `corepack pnpm verify` passed from a frozen install.
 - [x] Production runtime canonical asset set built and verified.
-- [x] Exact `0.3.2` package tarball built and verified.
-- [x] Exact `0.3.2` NSIS installer built and verified.
+- [x] Exact `0.3.3` package tarball built and verified.
+- [ ] Exact `0.3.3` NSIS installer built and verified.
 
-Local evidence on the uncommitted closeout worktree above `410c914`:
+Local uncommitted `v0.3.3` recovery evidence:
+
+- `pnpm verify:release-version -- v0.3.3` passed.
+- The exact 960-byte source lock contains no CR byte, ends in LF, and
+  classified as `core-only`; a real temporary Git checkout with
+  `core.autocrlf=true` is covered by the passing runtime tests.
+- `pnpm verify` passed, including 161 runtime tests, 34 desktop Rust tests,
+  63 package QA tests plus one expected Windows symlink skip, four clean
+  consumer builds/browser smokes, deterministic desktop smoke, and three
+  Playwright tests. The frozen-install-specific gate remains open because this
+  local run did not reinstall dependencies first.
+- `build-release-artifacts` produced exactly six canonical release files. The
+  executable is 21,580,980 bytes with SHA-256
+  `e1b7c12c66876f6d61e80f21f97db19acf0d5e3c5771ca3a9d1270357b00b7c4`;
+  the empty-requirements catalog is 79 bytes with SHA-256
+  `b6238b01334485c9c1e49f1ea7f784960c100948dad30ffb24878f0465910a72`.
+  No optional worker, model, fixture, model receipt, ZIP, or model binary is in
+  the release directory.
+- `gx-capture-capture-workbench-0.3.3.tgz` is 84,363 bytes with SHA-256
+  `69ce2abefb33d2b73f9da5f04b97307f9f49d074ade98bdb75579c8c13d24f05`.
+- Read-only remote checks found no `v0.3.3` tag and no `v0.3.3` GitHub Release.
+  No NSIS build, Git mutation, package publication, tag, or release was
+  performed.
+
+Historical `v0.3.2` local evidence on the uncommitted closeout worktree above
+`410c914`:
 
 - `gx-capture-capture-workbench-0.3.2.tgz`: 84,363 bytes,
   SHA-256 `e408a8c5dd0027577ff87267e586d5813f9bf7fdaf93a77eb605c43e3be2ff50`.
@@ -63,15 +96,15 @@ Local evidence on the uncommitted closeout worktree above `410c914`:
 - The release ancestry step refreshes `refs/remotes/origin/main` with an
   explicit `--no-tags` fetch before `merge-base` and before tool installation.
 
-These local results prove the implementation and candidate-building path. They
-do not prove that a future `v0.3.2` tag contains this worktree, is reachable
-from `main`, or satisfies any manual GitHub boundary below.
+These historical results proved the implementation and candidate-building path
+for `v0.3.2`; they are not `v0.3.3` candidate evidence and do not satisfy any
+manual GitHub boundary below.
 
 Run in order from a clean checkout of the intended tag commit:
 
 ```powershell
 corepack pnpm install --frozen-lockfile
-corepack pnpm verify:release-version -- v0.3.2
+corepack pnpm verify:release-version -- v0.3.3
 $candidateSha = git rev-parse HEAD
 node tools/model-candidate-receipt.ts verify-main-ci `
   --repository "gx-capture/capture-workbench" `
@@ -114,9 +147,12 @@ Current read-only evidence:
 - Public `v0.3.0` exists with the four runtime assets and no installer.
 - The annotated `v0.3.1` tag is externally occupied; its workflow failed and
   no `v0.3.1` GitHub Release exists.
-- No local or remote `v0.3.2` tag and no `v0.3.2` GitHub Release were found.
+- The lightweight `v0.3.2` tag is externally occupied at `8d5b3364320f60a1f16cf9ee222663150cb57c11`;
+  run `30517094297` failed before publication, and no `v0.3.2` GitHub Release
+  exists.
+- No local or remote `v0.3.3` tag and no `v0.3.3` GitHub Release were found.
 - Unauthenticated GitHub Packages inspection returns `E401`; package
-  visibility and the `0.3.0`/`0.3.1`/`0.3.2` package state are therefore
+  visibility and the `0.3.0`/`0.3.1`/`0.3.2`/`0.3.3` package state are therefore
   unverified.
 - Organization branch-protection settings were not changed or claimed by this
   closeout.
