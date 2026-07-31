@@ -35,8 +35,8 @@ def valid_report() -> dict[str, object]:
         "installedBytesBlocker": None,
         "nsisInstaller": {
             "bytes": 101,
-            "fileName": "Capture Workbench_0.3.7_x64-setup.exe",
-            "path": "dist/Capture Workbench_0.3.7_x64-setup.exe",
+            "fileName": "Capture Workbench_0.3.8_x64-setup.exe",
+            "path": "dist/Capture Workbench_0.3.8_x64-setup.exe",
             "sha256": "b" * 64,
         },
         "platform": "windows",

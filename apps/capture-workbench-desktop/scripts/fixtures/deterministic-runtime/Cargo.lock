@@ -13,7 +13,7 @@ dependencies = [
 
 [[package]]
 name = "capture-runtime-deterministic-fixture"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "serde_json",
  "sha2",

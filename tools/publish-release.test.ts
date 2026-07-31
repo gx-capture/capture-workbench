@@ -19,7 +19,7 @@ import {
   sha512Integrity,
 } from './publish-release.ts';
 
-const version = '0.3.7';
+const version = '0.3.8';
 const tag = `v${version}`;
 const runtimeAssetNames = [
   'capture-runtime-x86_64-pc-windows-msvc.exe',
@@ -76,7 +76,7 @@ function createCandidate() {
   writeFileSync(join(runtimeDirectory, runtimeAssetNames[3]), schema);
   const installerPath = join(
     root,
-    `Capture Workbench_${version}_x64-setup.exe`,
+    `Capture.Workbench_${version}_x64-setup.exe`,
   );
   const installerBytes = Buffer.from('installer bytes');
   writeFileSync(installerPath, installerBytes);
@@ -427,7 +427,7 @@ test('zero-asset draft uploads from inventory before readback, package, and publ
     assert.match(releaseNotes, /SHA-256/u);
     assert.match(
       releaseNotes,
-      /@gx-capture\/capture-workbench@0\.3\.7.*GitHub Packages.*never a GitHub Release asset/us,
+      /@gx-capture\/capture-workbench@0\.3\.8.*GitHub Packages.*never a GitHub Release asset/us,
     );
     const firstUploadIndex = remote.calls.findIndex(
       ([command, group, operation]) =>
@@ -620,7 +620,7 @@ test('draft retries reject extra or duplicate remote asset names before mutation
         observe(
           publishRelease(candidate.input, { runCommand: remote.runCommand }),
         ),
-        /unexpected remote assets|duplicate remote asset names/u,
+        /unexpected remote assets|duplicate (remote asset names|asset basenames)/u,
       );
       assert.deepEqual(mutations(remote.calls), []);
     }
@@ -645,6 +645,41 @@ test('draft retries reject an existing asset with different bytes before mutatio
       /differs/u,
     );
     assert.deepEqual(mutations(remote.calls), []);
+  } finally {
+    rmSync(candidate.root, { recursive: true, force: true });
+  }
+});
+
+test('space-bearing candidate assets are rejected before the first GitHub mutation', async () => {
+  const candidate = createCandidate();
+  try {
+    const unstableInstallerPath = join(
+      candidate.root,
+      `Capture Workbench_${version}_x64-setup.exe`,
+    );
+    writeFileSync(unstableInstallerPath, 'installer bytes');
+    candidate.input.installerPath = unstableInstallerPath;
+    const reportPath = join(
+      candidate.input.runtimeDirectory,
+      runtimeSizeReportName,
+    );
+    const report = JSON.parse(readFileSync(reportPath, 'utf8'));
+    report.nsisInstaller.path = unstableInstallerPath;
+    report.nsisInstaller.fileName = basename(unstableInstallerPath);
+    writeCandidateSizeReport(candidate, report);
+    const remote = createRemote(candidate);
+
+    await assert.rejects(
+      observe(
+        publishRelease(candidate.input, { runCommand: remote.runCommand }),
+      ),
+      /GitHub-unstable asset basenames/u,
+    );
+    assert.deepEqual(mutations(remote.calls), []);
+    assert.equal(
+      remote.calls.some(([command]) => command === 'gh'),
+      false,
+    );
   } finally {
     rmSync(candidate.root, { recursive: true, force: true });
   }
@@ -793,7 +828,7 @@ test('model ZIPs are rejected from the local release asset set', async () => {
     writeFileSync(
       join(
         candidate.input.runtimeDirectory,
-        'capture-model-whisper-primary-0.3.7.zip',
+        'capture-model-whisper-primary-0.3.8.zip',
       ),
       'forbidden model archive',
     );
@@ -829,6 +864,22 @@ test('core-only publication accepts only core assets and excludes QA fixtures', 
         `${runtimeSizeReportName}.sha256`,
         basename(candidate.input.installerPath),
       ].sort(),
+    );
+    assert.equal(remote.assets.size, 9);
+    assert.ok(
+      [...remote.assets.keys()].every((name) =>
+        /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/u.test(name),
+      ),
+    );
+    assert.deepEqual(
+      remote.calls
+        .filter(
+          ([command, group, operation]) =>
+            command === 'gh' && group === 'release' && operation === 'upload',
+        )
+        .map(([, , , , path]) => basename(path))
+        .sort(),
+      [...remote.assets.keys()].sort(),
     );
     assert.ok(
       [...remote.assets.keys()].every(

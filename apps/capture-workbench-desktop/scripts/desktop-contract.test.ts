@@ -872,10 +872,36 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
     releaseSizeValidationStep.script ?? '',
     /runtime-size-report\.json[\s\S]*Get-FileHash[\s\S]*runtime-size-report\.json.*\.sha256/u,
   );
-  assert.match(
+  const candidateAssemblyScript =
     requiredWorkflowStep(releaseSteps, 'Assemble release candidate').script ??
-      '',
+    '';
+  assert.match(
+    candidateAssemblyScript,
     /Copy-Item packages\/capture-runtime\/dist\/release\/\* -Destination \$runtime/u,
+  );
+  assert.match(
+    candidateAssemblyScript,
+    /Capture\.Workbench_\$\(\$Matches\.version\)_x64-setup\.exe/u,
+  );
+  assert.match(
+    candidateAssemblyScript,
+    /Canonical release installer name is not GitHub-stable/u,
+  );
+  assert.match(
+    candidateAssemblyScript,
+    /Copy-Item -LiteralPath \$installers\[0\]\.FullName -Destination \$stagedInstaller/u,
+  );
+  assert.match(
+    candidateAssemblyScript,
+    /Canonical staged installer bytes differ from the Tauri-generated installer/u,
+  );
+  assert.match(
+    candidateAssemblyScript,
+    /path = "desktop\/\$canonicalInstallerName"[\s\S]*fileName = \$canonicalInstallerName/u,
+  );
+  assert.match(
+    candidateAssemblyScript,
+    /runtime-size-report\.json[\s\S]*Get-FileHash[\s\S]*runtime-size-report\.json.*\.sha256/u,
   );
   const releaseUploadStep = requiredWorkflowStep(
     releaseSteps,

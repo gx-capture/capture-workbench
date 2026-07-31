@@ -41,10 +41,10 @@ function observe(observable) {
 
 test('installed measurement derives the exact installer name from release metadata', () => {
   assert.equal(
-    expectedInstallerName('0.3.7'),
-    'Capture Workbench_0.3.7_x64-setup.exe',
+    expectedInstallerName('0.3.8'),
+    'Capture Workbench_0.3.8_x64-setup.exe',
   );
-  assert.throws(() => expectedInstallerName('0.3.7-beta'), /semantic x\.y\.z/u);
+  assert.throws(() => expectedInstallerName('0.3.8-beta'), /semantic x\.y\.z/u);
 });
 
 test('release size dispatch returns before the installed app observer lane', async () => {
