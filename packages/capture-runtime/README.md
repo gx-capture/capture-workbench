@@ -205,8 +205,10 @@ workflow/run/artifact identity and digest metadata, then verifies the rebuilt
 catalog's exact runtime version, source-lock SHA, and ordered direct-model
 manifest bindings (independent worker ZIP bytes may differ), every worker
 archive/sidecar/checksum, core-only NSIS, installed size report, synchronized
-package, and exact remote release asset-name set before publication. Model
-files and model ZIPs never enter the Actions handoff or GitHub Release.
+package integrity, and exact remote release asset-name set before publication.
+The package tarball is an Actions handoff and GitHub Packages artifact, never a
+GitHub Release asset. Model files and model ZIPs never enter the Actions
+handoff or GitHub Release.
 
 ## Host structuring
 

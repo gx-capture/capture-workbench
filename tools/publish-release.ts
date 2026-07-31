@@ -49,6 +49,16 @@ const pyinstallerCategoryFields = Object.freeze([
 ]);
 const pyinstallerFileFields = Object.freeze(['bytes', 'path']);
 
+function feasibilityReleaseNotes(version) {
+  return [
+    '## Windows installer feasibility notice',
+    `This is an unsigned feasibility release for Capture Workbench v${version}.`,
+    'The NSIS installer is not Authenticode-signed; Windows may show an Unknown publisher or SmartScreen warning.',
+    'Verify the SHA-256 checksum for every downloaded GitHub Release asset before running the installer.',
+    `\`${packageName}@${version}\` is published only to GitHub Packages; its package tarball is a workflow handoff and registry artifact, never a GitHub Release asset.`,
+  ].join('\n\n');
+}
+
 function hasExactFields(value, fields) {
   return (
     value !== null &&
@@ -512,6 +522,7 @@ function assertRemoteAssetNames(tag, assets, runCommand, { allowMissing }) {
   if (!allowMissing && missing.length > 0) {
     throw new Error(`Release assets are missing: ${missing.join(', ')}.`);
   }
+  return actualSet;
 }
 
 function existingPackageIntegrity(version, runCommand) {
@@ -608,11 +619,20 @@ async function verifyAllAssets(tag, assets, runCommand) {
 }
 
 async function ensureDraftAssets(tag, assets, runCommand) {
-  assertRemoteAssetNames(tag, assets, runCommand, { allowMissing: true });
+  const remoteNames = assertRemoteAssetNames(tag, assets, runCommand, {
+    allowMissing: true,
+  });
   for (const asset of assets) {
+    if (!remoteNames.has(basename(asset))) {
+      runCommand('gh', ['release', 'upload', tag, asset]);
+      continue;
+    }
     const status = await remoteAssetStatus(tag, asset, runCommand);
-    if (status === 'same') continue;
-    runCommand('gh', ['release', 'upload', tag, asset]);
+    if (status !== 'same') {
+      throw new Error(
+        `Release asset disappeared after inventory validation: ${basename(asset)}.`,
+      );
+    }
   }
   await verifyAllAssets(tag, assets, runCommand);
 }
@@ -672,6 +692,8 @@ async function publishReleaseAsync(input, runCommand) {
       '--verify-tag',
       '--draft',
       '--generate-notes',
+      '--notes',
+      feasibilityReleaseNotes(input.version),
     ]);
     state = 'draft';
   }

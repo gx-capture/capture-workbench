@@ -36,11 +36,13 @@ canonical catalog it generates:
 - A missing, malformed, non-canonical, version-drifted, partial, or unknown
   requirements value is invalid. It is never reclassified as core-only.
 
-The core-only catalog has `requirements: []`. Its release directory and GitHub
-Release contain only the core runtime, schema/manifest/checksums, empty engine
-catalog, size evidence, NSIS installer, and package tarball. Optional worker
-archives, model files/ZIPs, and QA fixtures are absent. Runtime requirement
-reporting exposes OCR and Whisper as unavailable with no downloadable artifact,
+The core-only catalog has `requirements: []`. Its release directory contains
+the core runtime, schema/manifest/checksums, empty engine catalog, size
+evidence, NSIS installer, and package tarball handoff. Its GitHub Release
+contains only the canonical runtime assets and NSIS installer; the package
+tarball is GitHub Packages-only. Optional worker archives, model files/ZIPs,
+and QA fixtures are absent. Runtime requirement reporting exposes OCR and
+Whisper as unavailable with no downloadable artifact,
 and an installation attempt fails before any download begins.
 
 Exact-head main CI, synchronized versions, and package/runtime/installer

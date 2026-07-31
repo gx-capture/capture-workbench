@@ -26,7 +26,7 @@ the environment; never commit it.
 
 ```powershell
 $env:GITHUB_PACKAGES_TOKEN = '<read:packages token>'
-corepack pnpm add @gx-capture/capture-workbench@0.3.6 --save-exact
+corepack pnpm add @gx-capture/capture-workbench@0.3.7 --save-exact
 ```
 
 Angular hosts may import `CaptureWorkbenchComponent` and provide a
@@ -47,10 +47,11 @@ and supported CSS variables are documented in the
 
 The npm package never owns native processes, filesystems, tokens, or model
 lifecycle. Those remain in `capture-runtime` and the Tauri desktop harness.
-Each release candidate binds the four canonical runtime assets, one exact
-package tarball, and one NSIS installer. The publisher keeps a release in draft
-until every asset and the package integrity match; a public release retry is
-read-only.
+Each release candidate binds the canonical runtime assets and one NSIS
+installer. Its exact package tarball is a workflow handoff and GitHub Packages
+publication input, never a GitHub Release asset. The publisher keeps a release
+in draft until every Release asset and the package integrity match; a public
+release retry is read-only.
 
 Desktop source selection uses the native Tauri dialog and native drag/drop
 paths. Rust validates, bounds, and copies the source into app-owned storage

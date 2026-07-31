@@ -19,7 +19,7 @@ import {
   sha512Integrity,
 } from './publish-release.ts';
 
-const version = '0.3.6';
+const version = '0.3.7';
 const tag = `v${version}`;
 const runtimeAssetNames = [
   'capture-runtime-x86_64-pc-windows-msvc.exe',
@@ -324,7 +324,13 @@ function createRemote(candidate, initial = {}) {
       const name = args[args.indexOf('--pattern') + 1];
       const destination = args[args.indexOf('--dir') + 1];
       const bytes = assets.get(name);
-      if (!bytes) return failure('no assets matched');
+      if (!bytes) {
+        return failure(
+          assets.size === 0
+            ? 'no assets to download'
+            : 'no assets match the file pattern',
+        );
+      }
       writeFileSync(join(destination, name), bytes);
       return success();
     }
@@ -389,7 +395,7 @@ test('package integrity uses exact tarball bytes', async () => {
   }
 });
 
-test('missing state creates a draft and makes public only after assets and package verify', async () => {
+test('zero-asset draft uploads from inventory before readback, package, and public edit', async () => {
   const candidate = createCandidate();
   try {
     const remote = createRemote(candidate);
@@ -409,6 +415,70 @@ test('missing state creates a draft and makes public only after assets and packa
       'release',
       'edit',
     ]);
+    const createIndex = remote.calls.findIndex(
+      ([command, group, operation]) =>
+        command === 'gh' && group === 'release' && operation === 'create',
+    );
+    const createCall = remote.calls[createIndex];
+    const releaseNotes = createCall[createCall.indexOf('--notes') + 1];
+    assert.ok(createCall.includes('--generate-notes'));
+    assert.match(releaseNotes, /unsigned feasibility release/u);
+    assert.match(releaseNotes, /Unknown publisher or SmartScreen/u);
+    assert.match(releaseNotes, /SHA-256/u);
+    assert.match(
+      releaseNotes,
+      /@gx-capture\/capture-workbench@0\.3\.7.*GitHub Packages.*never a GitHub Release asset/us,
+    );
+    const firstUploadIndex = remote.calls.findIndex(
+      ([command, group, operation]) =>
+        command === 'gh' && group === 'release' && operation === 'upload',
+    );
+    const packagePublishIndex = remote.calls.findIndex(
+      ([command, operation]) =>
+        command === 'npm' && operation === 'publish',
+    );
+    const publicEditIndex = remote.calls.findIndex(
+      ([command, group, operation]) =>
+        command === 'gh' && group === 'release' && operation === 'edit',
+    );
+    assert.ok(createIndex < firstUploadIndex);
+    assert.ok(firstUploadIndex < packagePublishIndex);
+    assert.ok(packagePublishIndex < publicEditIndex);
+    assert.equal(
+      remote.calls
+        .slice(createIndex + 1, firstUploadIndex)
+        .some(
+          ([command, group, operation]) =>
+            command === 'gh' &&
+            group === 'release' &&
+            operation === 'download',
+        ),
+      false,
+    );
+    assert.equal(
+      mutationCalls.filter(
+        ([command, group, operation]) =>
+          command === 'gh' && group === 'release' && operation === 'upload',
+      ).length,
+      candidate.assets.length,
+    );
+    assert.equal(
+      remote.calls.some(
+        ([command, group, operation, , , flag]) =>
+          command === 'gh' &&
+          group === 'release' &&
+          operation === 'upload' &&
+          flag === '--clobber',
+      ),
+      false,
+    );
+    assert.equal(
+      remote.calls.filter(
+        ([command, group, operation]) =>
+          command === 'gh' && group === 'release' && operation === 'download',
+      ).length,
+      candidate.assets.length * 2,
+    );
   } finally {
     rmSync(candidate.root, { recursive: true, force: true });
   }
@@ -434,12 +504,43 @@ test('draft retry uploads only missing assets and skips an exact package', async
       basename(uploads[0][4]),
       basename(candidate.input.installerPath),
     );
+    const installerName = basename(candidate.input.installerPath);
+    const installerUploadIndex = remote.calls.findIndex(
+      ([command, group, operation, , path]) =>
+        command === 'gh' &&
+        group === 'release' &&
+        operation === 'upload' &&
+        basename(path) === installerName,
+    );
+    assert.equal(
+      remote.calls.slice(0, installerUploadIndex).some(
+        ([command, group, operation, , flag, name]) =>
+          command === 'gh' &&
+          group === 'release' &&
+          operation === 'download' &&
+          flag === '--pattern' &&
+          name === installerName,
+      ),
+      false,
+    );
+    assert.equal(
+      remote.calls.filter(
+        ([command, group, operation, , flag, name]) =>
+          command === 'gh' &&
+          group === 'release' &&
+          operation === 'download' &&
+          flag === '--pattern' &&
+          name === installerName,
+      ).length,
+      2,
+    );
     assert.equal(
       remote.calls.some(
         ([command, operation]) => command === 'npm' && operation === 'publish',
       ),
       false,
     );
+    assert.equal(remote.state.release, 'public');
   } finally {
     rmSync(candidate.root, { recursive: true, force: true });
   }
@@ -523,6 +624,27 @@ test('draft retries reject extra or duplicate remote asset names before mutation
       );
       assert.deepEqual(mutations(remote.calls), []);
     }
+  } finally {
+    rmSync(candidate.root, { recursive: true, force: true });
+  }
+});
+
+test('draft retries reject an existing asset with different bytes before mutation', async () => {
+  const candidate = createCandidate();
+  try {
+    const remote = createRemote(candidate, {
+      release: 'draft',
+      assets: candidate.assets,
+    });
+    remote.assets.set(runtimeAssetNames[0], Buffer.from('different'));
+
+    await assert.rejects(
+      observe(
+        publishRelease(candidate.input, { runCommand: remote.runCommand }),
+      ),
+      /differs/u,
+    );
+    assert.deepEqual(mutations(remote.calls), []);
   } finally {
     rmSync(candidate.root, { recursive: true, force: true });
   }
@@ -671,7 +793,7 @@ test('model ZIPs are rejected from the local release asset set', async () => {
     writeFileSync(
       join(
         candidate.input.runtimeDirectory,
-        'capture-model-whisper-primary-0.3.6.zip',
+        'capture-model-whisper-primary-0.3.7.zip',
       ),
       'forbidden model archive',
     );
@@ -697,6 +819,17 @@ test('core-only publication accepts only core assets and excludes QA fixtures', 
       publishRelease(candidate.input, { runCommand: remote.runCommand }),
     );
     assert.equal(remote.state.release, 'public');
+    assert.deepEqual(
+      [...remote.assets.keys()].sort(),
+      [
+        ...runtimeAssetNames,
+        engineCatalogName,
+        `${engineCatalogName}.sha256`,
+        runtimeSizeReportName,
+        `${runtimeSizeReportName}.sha256`,
+        basename(candidate.input.installerPath),
+      ].sort(),
+    );
     assert.ok(
       [...remote.assets.keys()].every(
         (name) =>
@@ -851,7 +984,7 @@ test('upload and npm failures leave the release draft', async () => {
   }
 });
 
-test('failed final edit is resumable without replacing matching bytes', async () => {
+test('draft retry byte-compares existing matching assets without replacing bytes', async () => {
   const candidate = createCandidate();
   try {
     const remote = createRemote(candidate, { fail: 'edit' });
@@ -866,6 +999,7 @@ test('failed final edit is resumable without replacing matching bytes', async ()
       ([command, group, operation]) =>
         command === 'gh' && group === 'release' && operation === 'upload',
     ).length;
+    const retryStart = remote.calls.length;
     remote.state.fail = undefined;
     await observe(
       publishRelease(candidate.input, { runCommand: remote.runCommand }),
@@ -877,6 +1011,21 @@ test('failed final edit is resumable without replacing matching bytes', async ()
           command === 'gh' && group === 'release' && operation === 'upload',
       ).length,
       uploadsAfterFailure,
+    );
+    const retryCalls = remote.calls.slice(retryStart);
+    assert.equal(
+      retryCalls.filter(
+        ([command, group, operation]) =>
+          command === 'gh' && group === 'release' && operation === 'download',
+      ).length,
+      candidate.assets.length * 3,
+    );
+    assert.equal(
+      retryCalls.some(
+        ([command, group, operation]) =>
+          command === 'gh' && group === 'release' && operation === 'upload',
+      ),
+      false,
     );
   } finally {
     rmSync(candidate.root, { recursive: true, force: true });

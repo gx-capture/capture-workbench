@@ -110,7 +110,7 @@ jobs:
           $receiptDirectory = Join-Path $env:RUNNER_TEMP 'verified-model-candidate'
           node tools/model-candidate-receipt.ts resolve `
             --repository "$env:GITHUB_REPOSITORY" `
-            --version "0.3.6" `
+            --version "0.3.7" `
             --commit "$env:GITHUB_SHA" `
             --source-lock packages/capture-runtime/model-sources/release-model-source-lock.json `
             --workflow-path ".github/workflows/model-candidate.yml" `
