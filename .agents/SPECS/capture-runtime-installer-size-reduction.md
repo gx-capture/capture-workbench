@@ -81,7 +81,7 @@ LF:
 ```json
 {
   "catalogVersion": "1",
-  "runtimeVersion": "0.3.6",
+  "runtimeVersion": "0.3.7",
   "requirements": [
     {
       "requirementId": "windowsml-ocr",
@@ -89,17 +89,17 @@ LF:
         {
           "role": "worker",
           "requirementId": "windowsml-ocr",
-          "artifactVersion": "0.3.6",
+          "artifactVersion": "0.3.7",
           "workerProtocolVersion": "1",
           "platform": "windows",
           "arch": "x86_64",
-          "fileName": "capture-engine-ocr-0.3.6-windows-x64.zip",
+          "fileName": "capture-engine-ocr-0.3.7-windows-x64.zip",
           "bytes": 1,
           "sha256": "<64 lowercase hex>",
           "extractedBytes": 1,
           "entryPoint": "capture-engine-ocr.exe",
           "filesManifestSha256": "<64 lowercase hex>",
-          "url": "https://github.com/gx-capture/capture-workbench/releases/download/v0.3.6/..."
+          "url": "https://github.com/gx-capture/capture-workbench/releases/download/v0.3.7/..."
         }
       ]
     }
@@ -146,9 +146,9 @@ Each requirement is owned below:
 {
   "stateVersion": "1",
   "requirementId": "windowsml-ocr",
-  "artifactVersion": "0.3.6",
+  "artifactVersion": "0.3.7",
   "workerProtocolVersion": "1",
-  "entryPoint": "versions/0.3.6/worker/capture-engine-ocr.exe",
+  "entryPoint": "versions/0.3.7/worker/capture-engine-ocr.exe",
   "activatedArtifacts": [
     {"role": "worker", "sha256": "<hex>"},
     {"role": "model", "sha256": "<hex>"}
@@ -254,10 +254,12 @@ The NSIS resource allowlist is exactly core executable, runtime manifest, and
 schema. A scan fails if engine workers, model assets, Paddle/ONNX/PDFium/Pillow,
 Whisper/CTranslate2/PyAV/Hugging Face, or Ollama payloads are present.
 
-Publication keeps the candidate draft-only, uploads the exact candidate,
-downloads every asset and re-verifies byte count/hash/manifest/catalog/package,
-then publishes. Existing same-version assets with different bytes fail closed.
-No external release is created by local implementation or verification.
+Publication keeps the candidate draft-only, uploads the exact GitHub Release
+assets, downloads every Release asset and re-verifies byte
+count/hash/manifest/catalog, verifies package integrity through GitHub Packages,
+then publishes. The package tarball is workflow handoff/registry-only and never
+a GitHub Release asset. Existing same-version assets with different bytes fail
+closed. No external release is created by local implementation or verification.
 
 ## Size Baseline and Budgets
 

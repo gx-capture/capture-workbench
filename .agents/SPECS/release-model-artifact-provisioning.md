@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Publish Capture Workbench `0.3.6` safely in one of two canonical modes:
+Publish Capture Workbench `0.3.7` safely in one of two canonical modes:
 core-only while model provenance is unresolved, or model-enabled after every
 existing direct-model trust gate passes. Keep the installer small and preserve
 explicit-consent, checksum-pinned model installation when models are enabled.
@@ -174,10 +174,12 @@ lock/model manifest, unsuccessful runs, and tamper. It does not rebuild, stage,
 upload, hand off, or publish model files/ZIPs.
 
 The core-only release candidate contains core runtime assets, an empty canonical
-catalog, core-only NSIS, size report, and the package tarball. A model-enabled
-candidate additionally contains catalogued worker ZIPs/sidecars and receipt
-evidence. Neither mode contains model files/ZIPs or QA fixtures. Upload uses
-compression level 0 and short retention for this ordinary-sized handoff.
+catalog, core-only NSIS, size report, and the package tarball handoff. A
+model-enabled candidate additionally contains catalogued worker ZIPs/sidecars
+and receipt evidence. Neither mode contains model files/ZIPs or QA fixtures.
+The package tarball is published through GitHub Packages and is never a GitHub
+Release asset. Upload uses compression level 0 and short retention for this
+ordinary-sized handoff.
 
 ## Publisher
 

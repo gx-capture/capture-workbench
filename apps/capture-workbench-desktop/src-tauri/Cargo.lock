@@ -235,7 +235,7 @@ dependencies = [
 
 [[package]]
 name = "capture-workbench-desktop"
-version = "0.3.6"
+version = "0.3.7"
 dependencies = [
  "rand",
  "serde",

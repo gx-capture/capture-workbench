@@ -1,7 +1,7 @@
-# Capture Workbench v0.3.6 Release Checklist
+# Capture Workbench v0.3.7 Release Checklist
 
 This checklist is the active release gate. Check an item only after the exact
-`v0.3.6` candidate or tagged commit has produced the stated evidence.
+`v0.3.7` candidate or tagged commit has produced the stated evidence.
 
 ## Immutable failed-release evidence
 
@@ -46,8 +46,18 @@ This checklist is the active release gate. Check an item only after the exact
   matched. Preflight failed before any GitHub Release, Release asset, or
   `0.3.5` package mutation; the candidate remained only one short-lived
   Actions artifact.
+- The lightweight `v0.3.6` tag remains at
+  `fc9de8ed7feaf60f381bea97348de27f828646a6`. Release run `30576672375`
+  completed `build-candidate`: production runtime, NSIS, installed-size/native
+  uninstall proof, strict budgets, candidate assembly, and upload all passed.
+  Publish created draft Release `362689039`, then failed before its first asset
+  upload because GitHub CLI 2.96.0 returned `no assets to download` for the
+  empty draft and the publisher did not classify that text as missing. The
+  draft remains unpublished with zero assets, and no `0.3.6` package was
+  created.
 - Never delete, move, recreate, or publish around any failed tag. The next
-  candidate is `v0.3.6`.
+  candidate is `v0.3.7`. Preserve the empty `v0.3.6` draft without cleanup or
+  reuse.
 
 ## Proof ownership
 
@@ -90,7 +100,7 @@ This checklist is the active release gate. Check an item only after the exact
 
 ## Candidate identity
 
-- [x] All live first-party version owners are synchronized at `0.3.6`.
+- [x] All live first-party version owners are synchronized at `0.3.7`.
 - [x] Canonical source-lock bytes classify as exactly `core-only`, with empty
       requirements and no model candidate receipt.
 - [ ] Tag commit is reachable from `main`.
@@ -98,32 +108,44 @@ This checklist is the active release gate. Check an item only after the exact
 
 ## Automated candidate evidence
 
+- Final local preflight runs synchronized-version verification, core-only/model
+  classification, then one `corepack pnpm verify`. Aggregate verification owns
+  package QA; direct publisher and desktop-contract tests are iteration-only.
+  Do not run a second local `capture-angular:pack` after verify unless a local
+  publisher consumes its exact tarball. The tag workflow retains its own pack.
 - [x] Focused workflow contract, canonical report identity, publisher, and
       version checks pass.
 - [x] Full `corepack pnpm verify` passes for the exact candidate tree.
 - [x] Production runtime release artifacts are rebuilt without ambient model
       stores.
 - [x] The staged runtime manifest/schema/executable are internally consistent.
-- [x] The exact `0.3.6` NSIS installer passes installed-size and budget checks.
-- [x] The exact `0.3.6` package tarball passes isolated Angular, Vanilla,
+- [x] The exact `0.3.7` NSIS installer passes installed-size and budget checks.
+- [x] The exact `0.3.7` package tarball passes isolated Angular, Vanilla,
       React, and Vue consumer proof.
 - [x] Core-only candidates contain no model, optional-worker, fixture, receipt,
       or model ZIP asset.
+- [ ] The public core-only GitHub Release has exactly nine assets: runtime EXE
+      and SHA-256, runtime manifest, document schema, engine catalog and
+      SHA-256, size report and SHA-256, and
+      `Capture Workbench_0.3.7_x64-setup.exe`. The package tarball is
+      GitHub Packages-only and is not a tenth Release asset.
 - [x] PR #12 run `30542133653` clean-environment dependency failure is repaired
       through the default dev group; isolated locked runtime gates and the core
       boundary pass without optional extras or relaxed type ignores.
 
 ## Git and publication boundary
 
-- [x] Independent review approves the exact candidate tree.
+- [ ] Independent review approves the exact candidate tree.
 - [ ] The reviewed tree is committed and merged to `main`.
-- [ ] Lightweight `v0.3.6` is created exactly once at the reviewed `main`
+- [ ] Lightweight `v0.3.7` is created exactly once at the reviewed `main`
       commit.
 - [ ] Release workflow `build-candidate` and `publish` jobs are terminal
       success for the immutable tag SHA.
 - [ ] Public GitHub Release targets the immutable tag, is neither draft nor
       prerelease, and contains only the canonical assets for the classified
-      mode.
+      mode. Its generated notes must state that this is an unsigned feasibility
+      release, Windows may show Unknown publisher/SmartScreen, SHA-256 must be
+      verified, and the package is GitHub Packages-only.
 - [ ] Published package version/integrity equals the candidate tarball.
 
 ## Follow-up CI latency plan
@@ -136,7 +158,8 @@ Measured baseline:
 - Desktop verification: about 4m45s
 - Optional worker build/verification: about 2m40s
 
-Later work should split and parallelize independent lanes, improve cache and
-artifact reuse, and tier PR/main/release responsibilities. It must not drop
-ancestry, exact-main trust, canonical metadata, model receipt/catalog,
-production rebuild, packaging, integrity, or publication correctness gates.
+Later work may add a core-only release-target split, split and parallelize
+independent lanes, improve cache and artifact reuse, and tier
+PR/main/release responsibilities. It must not drop ancestry, exact-main trust,
+canonical metadata, model receipt/catalog, production rebuild, packaging,
+integrity, or publication correctness gates.
