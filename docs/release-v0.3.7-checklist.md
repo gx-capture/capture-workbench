@@ -1,7 +1,20 @@
-# Capture Workbench v0.3.7 Release Checklist
+# Capture Workbench v0.3.7 Failed Release Record
 
-This checklist is the active release gate. Check an item only after the exact
-`v0.3.7` candidate or tagged commit has produced the stated evidence.
+This is immutable failure evidence, not an active release gate. The active
+recovery checklist is [v0.3.8](release-v0.3.8-checklist.md).
+
+## v0.3.7 terminal failure
+
+- The lightweight `v0.3.7` tag remains at
+  `3453c4717f4feaac1984271d9a5eb7eee6d03d93`. Release run `30599031058`
+  built the candidate successfully, then publish failed before package
+  publication because GitHub normalized the space-bearing installer upload from
+  `Capture Workbench_0.3.7_x64-setup.exe` to
+  `Capture.Workbench_0.3.7_x64-setup.exe`. The publisher's exact inventory
+  comparison rejected that remote asset name.
+- Draft Release `362821773` remains unpublished with exactly nine assets. The
+  `0.3.7` GitHub Packages version does not exist. Never delete, move, recreate,
+  publish, upload around, or reuse this tag or draft.
 
 ## Immutable failed-release evidence
 
@@ -55,9 +68,9 @@ This checklist is the active release gate. Check an item only after the exact
   empty draft and the publisher did not classify that text as missing. The
   draft remains unpublished with zero assets, and no `0.3.6` package was
   created.
-- Never delete, move, recreate, or publish around any failed tag. The next
-  candidate is `v0.3.7`. Preserve the empty `v0.3.6` draft without cleanup or
-  reuse.
+- Never delete, move, recreate, or publish around any failed tag. `v0.3.7`
+  superseded the prior recovery and itself remains immutable failure evidence.
+  Preserve the empty `v0.3.6` draft without cleanup or reuse.
 
 ## Proof ownership
 
@@ -98,7 +111,7 @@ This checklist is the active release gate. Check an item only after the exact
   `runtimeExecutable.fileName` is its basename, and bytes/SHA-256 bind the
   exact candidate asset. The publisher comparison stays strict.
 
-## Candidate identity
+## Historical candidate evidence
 
 - [x] All live first-party version owners are synchronized at `0.3.7`.
 - [x] Canonical source-lock bytes classify as exactly `core-only`, with empty

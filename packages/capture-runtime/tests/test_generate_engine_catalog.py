@@ -47,12 +47,12 @@ def test_direct_source_lock_generates_catalog_without_model_release_assets(
     engine_dir.mkdir()
     ocr_worker, ocr_worker_manifest = archive_pair(
         engine_dir,
-        "capture-engine-ocr-0.3.7-windows-x64.zip",
+        "capture-engine-ocr-0.3.8-windows-x64.zip",
         "capture-engine-ocr.exe",
     )
     whisper_worker, whisper_worker_manifest = archive_pair(
         engine_dir,
-        "capture-engine-whisper-0.3.7-windows-x64.zip",
+        "capture-engine-whisper-0.3.8-windows-x64.zip",
         "capture-engine-whisper.exe",
     )
     source_lock, _content = approved_source_lock()
@@ -122,12 +122,12 @@ def test_empty_source_lock_generates_core_only_catalog_and_release(
     engine_dir.mkdir()
     ocr_worker, ocr_worker_manifest = archive_pair(
         engine_dir,
-        "capture-engine-ocr-0.3.7-windows-x64.zip",
+        "capture-engine-ocr-0.3.8-windows-x64.zip",
         "capture-engine-ocr.exe",
     )
     whisper_worker, whisper_worker_manifest = archive_pair(
         engine_dir,
-        "capture-engine-whisper-0.3.7-windows-x64.zip",
+        "capture-engine-whisper-0.3.8-windows-x64.zip",
         "capture-engine-whisper.exe",
     )
     qa_fixture = engine_dir / "real-ocr-fixture.png"

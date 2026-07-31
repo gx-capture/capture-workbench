@@ -110,7 +110,7 @@ jobs:
           $receiptDirectory = Join-Path $env:RUNNER_TEMP 'verified-model-candidate'
           node tools/model-candidate-receipt.ts resolve `
             --repository "$env:GITHUB_REPOSITORY" `
-            --version "0.3.7" `
+            --version "0.3.8" `
             --commit "$env:GITHUB_SHA" `
             --source-lock packages/capture-runtime/model-sources/release-model-source-lock.json `
             --workflow-path ".github/workflows/model-candidate.yml" `
@@ -201,7 +201,40 @@ jobs:
           if ($installers.Count -ne 1) {
             throw "Expected exactly one Capture Workbench NSIS installer, found $($installers.Count)."
           }
-          Copy-Item $installers[0].FullName -Destination $desktop
+          if ($env:GITHUB_REF_NAME -notmatch '^v(?<version>\d+\.\d+\.\d+)$') {
+            throw "Release tag must be vMAJOR.MINOR.PATCH."
+          }
+          $canonicalInstallerName = "Capture.Workbench_$($Matches.version)_x64-setup.exe"
+          if ($canonicalInstallerName -notmatch '^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$') {
+            throw "Canonical release installer name is not GitHub-stable."
+          }
+          $stagedInstaller = Join-Path $desktop $canonicalInstallerName
+          Copy-Item -LiteralPath $installers[0].FullName -Destination $stagedInstaller
+          $sourceInstaller = Get-Item -LiteralPath $installers[0].FullName
+          $sourceDigest = (Get-FileHash -LiteralPath $sourceInstaller.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          $stagedInstallerInfo = Get-Item -LiteralPath $stagedInstaller
+          $stagedDigest = (Get-FileHash -LiteralPath $stagedInstaller -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($sourceInstaller.Length -ne $stagedInstallerInfo.Length -or $sourceDigest -ne $stagedDigest) {
+            throw "Canonical staged installer bytes differ from the Tauri-generated installer."
+          }
+          $sizeReportPath = Join-Path $runtime 'runtime-size-report.json'
+          $sizeReport = Get-Content -LiteralPath $sizeReportPath -Raw | ConvertFrom-Json
+          if (
+            $sizeReport.nsisInstaller.fileName -ne $sourceInstaller.Name -or
+            $sizeReport.nsisInstaller.bytes -ne $sourceInstaller.Length -or
+            $sizeReport.nsisInstaller.sha256 -ne $sourceDigest
+          ) {
+            throw "Installed-size report does not bind the Tauri-generated installer."
+          }
+          $sizeReport.nsisInstaller = [ordered]@{
+            path = "desktop/$canonicalInstallerName"
+            fileName = $canonicalInstallerName
+            bytes = $stagedInstallerInfo.Length
+            sha256 = $stagedDigest
+          }
+          $sizeReport | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $sizeReportPath -Encoding utf8NoBOM
+          $sizeReportDigest = (Get-FileHash -LiteralPath $sizeReportPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$sizeReportDigest  runtime-size-report.json" | Set-Content -LiteralPath "$sizeReportPath.sha256" -Encoding utf8NoBOM
           "CAPTURE_CANDIDATE_PATH=$candidate" >> $env:GITHUB_ENV
 
       - name: Upload release candidate

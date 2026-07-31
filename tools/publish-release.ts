@@ -48,6 +48,8 @@ const pyinstallerCategoryFields = Object.freeze([
   'whisper',
 ]);
 const pyinstallerFileFields = Object.freeze(['bytes', 'path']);
+const githubStableAssetNamePattern =
+  /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/u;
 
 function feasibilityReleaseNotes(version) {
   return [
@@ -67,6 +69,23 @@ function hasExactFields(value, fields) {
     Object.keys(value).length === fields.length &&
     fields.every((field) => Object.hasOwn(value, field))
   );
+}
+
+function assertGitHubStableAssetNames(names, label) {
+  if (new Set(names).size !== names.length) {
+    throw new Error(`${label} contains duplicate asset basenames.`);
+  }
+  const invalid = names.filter(
+    (name) =>
+      typeof name !== 'string' ||
+      name !== basename(name) ||
+      !githubStableAssetNamePattern.test(name),
+  );
+  if (invalid.length > 0) {
+    throw new Error(
+      `${label} contains GitHub-unstable asset basenames: ${invalid.join(', ')}.`,
+    );
+  }
 }
 
 function isJsonInteger(value, minimum = 0) {
@@ -455,13 +474,20 @@ async function preflightCandidate(input, runCommand) {
       'Runtime size report does not match the exact release candidate.',
     );
   }
+  const assets = [...runtimeAssets, input.installerPath];
+  // GitHub normalizes some asset names. Reject candidates which cannot make an
+  // exact inventory round trip before any release or package mutation.
+  assertGitHubStableAssetNames(
+    assets.map((asset) => basename(asset)),
+    'Local release candidate',
+  );
   const packagePlan = await inspectPackage(
     input.version,
     input.packagePath,
     runCommand,
   );
   return Object.freeze({
-    assets: [...runtimeAssets, input.installerPath],
+    assets,
     packagePlan,
   });
 }
@@ -501,11 +527,14 @@ function remoteAssetNames(tag, runCommand) {
   ) {
     throw new Error('Release returned an invalid remote asset-name set.');
   }
-  return payload.assets.map((asset) => asset.name);
+  const names = payload.assets.map((asset) => asset.name);
+  assertGitHubStableAssetNames(names, 'Release remote inventory');
+  return names;
 }
 
 function assertRemoteAssetNames(tag, assets, runCommand, { allowMissing }) {
   const expected = assets.map((asset) => basename(asset)).sort();
+  assertGitHubStableAssetNames(expected, 'Expected release assets');
   const actual = remoteAssetNames(tag, runCommand);
   if (new Set(actual).size !== actual.length) {
     throw new Error('Release contains duplicate remote asset names.');
