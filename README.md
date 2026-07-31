@@ -1,144 +1,88 @@
 # Capture Workbench
 
-Cross-project PDF/image OCR and audio transcription with a reusable Angular UI,
-an authenticated local runtime, and a Tauri Windows desktop product.
+Capture Workbench is a reusable Angular UI with a local Windows desktop
+feasibility app. Version 0.3.8 is an unsigned, core-only release for verifying
+install, launch, an empty workspace, and core Ollama requirement setup.
 
-## Artifacts
+## Use the Windows app
 
-- `@gx-capture/capture-workbench` — Capture Workbench UI, client, and contracts.
-- `capture-runtime-windows-x64` — versioned local sidecar distributed through a
-  GitHub Release manifest.
-- Capture Workbench Desktop — the Windows 11 x64 local-first application.
+Windows 11 x64 users can download
+[`Capture.Workbench_0.3.8_x64-setup.exe`](https://github.com/gx-capture/capture-workbench/releases/download/v0.3.8/Capture.Workbench_0.3.8_x64-setup.exe)
+from the [v0.3.8 release](https://github.com/gx-capture/capture-workbench/releases/tag/v0.3.8).
 
-Host applications may supply their existing AI provider through the
-`CaptureStructuringProvider` interface. The standalone Workbench uses its own
-isolated Ollama process and model store to prove the complete flow.
+The installer is unsigned. Windows may show an **Unknown publisher** or
+SmartScreen warning. Download only from the release above and verify the
+asset's SHA-256 value on the release page before running it.
 
-Source, releases, and package metadata use the
-[`gx-capture/capture-workbench`](https://github.com/gx-capture/capture-workbench)
-organization repository.
+1. Run the installer and open **Capture Workbench**.
+2. On first launch, choose **Install core requirements** to set up the isolated
+   Ollama prerequisite.
+3. Confirm that the empty workspace opens after setup completes.
+4. The v0.3.8 workspace is intentionally empty; this release does not run
+   document or audio capture.
 
-## Install the exact package
+v0.3.8 does not bundle or enable scanned-image WindowsML OCR or audio/Whisper
+engines. Those flows need a future model-enabled release, or a host-provided
+supported `CaptureClient` and runtime when using the package.
 
-Copy `.npmrc.example` into the consuming workspace or merge its two lines into
-the workspace npm configuration. Supply a token with `read:packages` through
-the environment; never commit it.
+## Use the package
+
+The public package is
+[`@gx-capture/capture-workbench@0.3.8`](https://github.com/orgs/gx-capture/packages/npm/package/capture-workbench).
+In the consuming workspace, configure the GitHub Packages scope without
+committing a token:
+
+```ini
+@gx-capture:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=${GITHUB_PACKAGES_TOKEN}
+```
 
 ```powershell
-$env:GITHUB_PACKAGES_TOKEN = '<read:packages token>'
+$env:GITHUB_PACKAGES_TOKEN = '<GitHub token with read:packages>'
 corepack pnpm add @gx-capture/capture-workbench@0.3.8 --save-exact
 ```
 
-Angular hosts may import `CaptureWorkbenchComponent` and provide a
-`CaptureClient` with `provideCaptureClient()`. Framework-neutral, React, Vue,
-and Angular custom-element hosts import only the public package API, call
-`defineCaptureWorkbenchElement()`, and render `<capture-workbench>`. The
-package owns its Angular Elements implementation and a narrow compiler loader
-for non-Angular bundlers; hosts must not import `@angular/elements` or
-`@angular/compiler` directly.
+An Angular host supplies its own `CaptureClient`, normally backed by its
+server, and renders the public component:
 
-Object dependencies (`client`, `config`, `structuringProvider`, and
-`preprocessor`) are DOM properties, not attributes. Simple declarative
-attributes, the five composed/bubbling custom events, registration behavior,
-and supported CSS variables are documented in the
-[package README](packages/capture-angular/README.md).
+```ts
+import { Component } from '@angular/core';
+import { bootstrapApplication } from '@angular/platform-browser';
+import {
+  CaptureWorkbenchComponent,
+  provideCaptureClient,
+} from '@gx-capture/capture-workbench';
 
-## Runtime and Windows desktop distribution
+@Component({
+  selector: 'app-root',
+  imports: [CaptureWorkbenchComponent],
+  template: '<gx-capture-workbench />',
+})
+export class App {}
 
-The npm package never owns native processes, filesystems, tokens, or model
-lifecycle. Those remain in `capture-runtime` and the Tauri desktop harness.
-Each release candidate binds the canonical runtime assets and one NSIS
-installer. Its exact package tarball is a workflow handoff and GitHub Packages
-publication input, never a GitHub Release asset. The publisher keeps a release
-in draft until every Release asset and the package integrity match; a public
-release retry is read-only.
+bootstrapApplication(App, {
+  providers: [provideCaptureClient(hostCaptureClient)],
+});
+```
 
-Desktop source selection uses the native Tauri dialog and native drag/drop
-paths. Rust validates, bounds, and copies the source into app-owned storage
-before capture. Source paths and sidecar bearer tokens are excluded from IPC
-responses, library summaries, logs, and QA evidence.
+`hostCaptureClient` must call the host backend. Never expose a Capture Runtime
+sidecar bearer token in browser code, URLs, storage, or logs.
 
-## Development
+## Contribute
 
-Requires Node.js 24 or newer and pnpm 11 or newer. Corepack selects the
-repository-pinned pnpm 11.15.1 release, including when another pnpm version is
-installed globally.
+Requires Node.js 24+ and the repository-pinned pnpm. From this repository:
 
 ```powershell
 corepack install
 corepack pnpm install
-corepack pnpm nx show projects
 corepack pnpm dev
 corepack pnpm verify
 ```
 
-`corepack pnpm dev` builds and stages the verified release runtime before
-starting the real desktop product. WindowsML stays a runtime-owned,
-user-consented installation requirement: its descriptor and model archive are
-not bundled into the app and require no desktop environment variables.
-`corepack pnpm dev:deterministic` is test-only and never exercises Ollama.
+`dev` starts the Windows desktop product. Use `corepack pnpm dev:deterministic`
+only for deterministic development fixtures.
 
-Run the opt-in installed Windows deterministic smoke separately because it performs a
-scoped NSIS install and uninstall:
+## Support and security
 
-```powershell
-corepack pnpm nx run capture-workbench-desktop:smoke-installed-deterministic --skipNxCache
-```
-
-That target uses deterministic engines and produces diagnostic evidence only;
-it is not a real-engine or release-readiness gate.
-
-The v1 product lane is Windows 11 x64. OCR uses WindowsML, transcription uses
-Whisper, and every completed result must satisfy the `CaptureDocumentV1`
-contract.
-
-## Local NPM-compatible Registry
-
-Use the checked-in Verdaccio configuration when a host application needs to
-install the package as a normal registry dependency without publishing it to a
-remote registry. The registry listens only on `127.0.0.1:4873`; its package
-storage is ignored by Git.
-
-Start the registry in one terminal:
-
-```powershell
-corepack pnpm run local-registry:start
-```
-
-Publish the current packed package in a second terminal:
-
-```powershell
-corepack pnpm run local-registry:publish
-```
-
-The publish script runs the Nx package target and publishes the package with
-the `local` dist-tag. Re-running it with the same package bytes reuses the
-existing registry version; a same-version integrity mismatch fails closed.
-Bump the package version before publishing a changed revision.
-
-The cert-prep trial uses this registry through an isolated temporary consumer,
-so its normal dependency manifest and lockfile are not changed. Verdaccio
-proxies ordinary dependencies to npmjs; a fully offline run requires those
-dependencies to already be available in the local pnpm store.
-
-## Local release consumer smoke
-
-`capture-runtime` is distributed as a Windows x64 sidecar, not as an npm
-dependency. Build or stage the canonical release directory first, then run the
-consumer smoke:
-
-```powershell
-corepack pnpm nx run capture-runtime:local-release-consumer-smoke
-```
-
-The smoke copies the four release assets into a temporary local HTTP mirror,
-downloads them as a sibling host would, verifies the manifest, byte count,
-checksum, schema digest, and canonical file set, then starts the downloaded
-sidecar with fake providers and checks authenticated readiness. The mirror,
-consumer, process, and bearer token are temporary and never published or
-persisted.
-
-The runtime smoke expects these files under
-`packages/capture-runtime/dist/release`; the release directory is produced by
-`capture-runtime:build-release-artifacts` in the release workflow. It does not
-call GitHub or publish to a remote registry.
+Open a GitHub issue for non-sensitive problems. Do not include source files,
+access tokens, or sidecar bearer tokens in issues or logs.
