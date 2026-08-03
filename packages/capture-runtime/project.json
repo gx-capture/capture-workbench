@@ -286,17 +286,6 @@
         "command": "uv run --no-sync --python 3.12 python scripts/verify_release_model_candidate.py --preflight-whisper --catalog dist/catalog/preflight-capture-engine-catalog.json --output dist/candidate/whisper-preflight-evidence.json"
       }
     },
-    "local-media-probe": {
-      "cache": false,
-      "executor": "nx:run-commands",
-      "metadata": {
-        "description": "Opt-in developer-only probe of explicit local OCR/Whisper assets; never provisions or stages them."
-      },
-      "options": {
-        "cwd": "packages/capture-runtime",
-        "command": "uv run --no-sync --python 3.12 python scripts/local_media_probe.py"
-      }
-    },
     "verify-core-boundary": {
       "cache": false,
       "executor": "nx:run-commands",

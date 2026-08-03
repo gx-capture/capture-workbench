@@ -45,26 +45,6 @@ This downloads the executable, checksum, manifest, and schema into an isolated
 temporary consumer, validates their hashes, and checks authenticated sidecar
 readiness. It does not publish remotely.
 
-When the checked-in release model lock is blocked, an explicit developer may run
-the isolated local probe to exercise the same standalone OCR/Whisper adapters on
-local model directories and real PDF/audio fixtures:
-
-```powershell
-corepack pnpm nx run capture-runtime:local-media-probe -- `
-  --pdf C:\path\to\scan.pdf `
-  --audio C:\path\to\audio.mp3 `
-  --ocr-detection-dir C:\path\to\PP-OCRv6_medium_det_onnx `
-  --ocr-recognition-dir C:\path\to\PP-OCRv6_medium_rec_onnx `
-  --whisper-primary-dir C:\path\to\faster-whisper-large-v3-turbo `
-  --whisper-fallback-dir C:\path\to\faster-whisper-small
-```
-
-The probe hard-links (or, when necessary, copies) explicit model files into a
-temporary directory, deletes that directory on exit, and emits only hashes,
-counts, locators, and provenance. It does not read the release catalog, install
-an engine, mutate app data, stage the desktop, or produce a release/consumer
-receipt. Its `releaseGateSatisfied` and `consumerE2e` fields are always false.
-
 ## Standalone Windows quick start
 
 The public runtime artifact is the Windows x64 executable, checksum, manifest,
