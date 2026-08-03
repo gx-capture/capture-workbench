@@ -73,7 +73,7 @@ def test_installed_size_evidence_requires_exact_installer_and_native_uninstall(
   "evidenceKind": "release-installed-size",
   "installedBytes": 1234,
   "installer": {
-    "fileName": "Capture Workbench_0.3.8_x64-setup.exe",
+    "fileName": "Capture Workbench_0.3.9_x64-setup.exe",
     "bytes": 99,
     "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   },
@@ -86,7 +86,7 @@ def test_installed_size_evidence_requires_exact_installer_and_native_uninstall(
     installed_bytes, blocker = report_bundle_size.installed_bytes_evidence(
         evidence,
         installer={
-            "fileName": "Capture Workbench_0.3.8_x64-setup.exe",
+            "fileName": "Capture Workbench_0.3.9_x64-setup.exe",
             "bytes": 99,
             "sha256": "a" * 64,
         },
@@ -97,7 +97,7 @@ def test_installed_size_evidence_requires_exact_installer_and_native_uninstall(
     installed_bytes, blocker = report_bundle_size.installed_bytes_evidence(
         evidence,
         installer={
-            "fileName": "Capture Workbench_0.3.8_x64-setup.exe",
+            "fileName": "Capture Workbench_0.3.9_x64-setup.exe",
             "bytes": 100,
             "sha256": "a" * 64,
         },
@@ -140,7 +140,7 @@ def test_installed_size_evidence_rejects_a_different_installer_filename(
     installed_bytes, blocker = report_bundle_size.installed_bytes_evidence(
         evidence,
         installer={
-            "fileName": "Capture Workbench_0.3.8_x64-setup.exe",
+            "fileName": "Capture Workbench_0.3.9_x64-setup.exe",
             "bytes": 99,
             "sha256": "a" * 64,
         },
@@ -168,7 +168,7 @@ def test_installed_size_evidence_rejects_boolean_bytes(tmp_path: Path) -> None:
   "evidenceKind": "release-installed-size",
   "installedBytes": true,
   "installer": {
-    "fileName": "Capture Workbench_0.3.8_x64-setup.exe",
+    "fileName": "Capture Workbench_0.3.9_x64-setup.exe",
     "bytes": 99,
     "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   },
@@ -182,7 +182,7 @@ def test_installed_size_evidence_rejects_boolean_bytes(tmp_path: Path) -> None:
     installed_bytes, blocker = report_bundle_size.installed_bytes_evidence(
         evidence,
         installer={
-            "fileName": "Capture Workbench_0.3.8_x64-setup.exe",
+            "fileName": "Capture Workbench_0.3.9_x64-setup.exe",
             "bytes": 99,
             "sha256": "a" * 64,
         },

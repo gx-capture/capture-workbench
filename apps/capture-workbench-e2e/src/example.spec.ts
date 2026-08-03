@@ -15,6 +15,17 @@ test('shows one explicit Traditional Chinese setup wizard for missing core requi
   await expect(page.getByRole('button', { name: '選擇檔案' })).toBeDisabled();
 });
 
+test('does not offer an install action when the runtime catalog marks OCR unavailable', async ({ page }) => {
+  await openDesktop(page, [
+    requirement('windowsml-ocr', 'WindowsML OCR', 'unavailable'),
+  ]);
+
+  await expect(page.locator('[data-testid="runtime-setup"]')).toBeVisible();
+  await expect(page.locator('[data-testid="runtime-requirement"][data-requirement-id="windowsml-ocr"]')).toHaveAttribute('data-status', 'unavailable');
+  await expect(page.locator('[data-testid="runtime-install"]')).toHaveCount(0);
+  await expect(page.locator('[data-testid="source-import"]')).toBeDisabled();
+});
+
 test('renders the Material desktop queue and history filter through the authenticated runtime client', async ({ page }) => {
   await openDesktop(page, []);
 

@@ -20,10 +20,10 @@ Then install an exact synchronized version:
 
 ```powershell
 $env:GITHUB_PACKAGES_TOKEN = '<read:packages token>'
-corepack pnpm add @gx-capture/capture-workbench@0.3.8 --save-exact
+corepack pnpm add @gx-capture/capture-workbench@0.3.9 --save-exact
 ```
 
-## v0.3.8 Angular integration contract
+## v0.3.9 Angular integration contract
 
 All public asynchronous client, provider, preprocessor, and reconciliation
 context methods return cold `Observable<T>` values. Compose them with RxJS and
@@ -63,35 +63,12 @@ raw capture data or an LLM provider in the WebView.
 
 Do not put a sidecar bearer token in a URL, browser log, or `localStorage`.
 
-`HttpCaptureClient` is the default direct sidecar client for the standalone
-Tauri validation app, or for a host that intentionally exposes the loopback
-token to its trusted WebView process:
-
-```ts
-import { invoke } from '@tauri-apps/api/core';
-import { provideHttpCaptureClient } from '@gx-capture/capture-workbench';
-import { from, map } from 'rxjs';
-
-const backendConfig$ = from(
-  invoke<{
-    baseUrl: string;
-    token: string;
-  }>('backend_config'),
-);
-
-bootstrapApplication(App, {
-  providers: [
-    provideHttpCaptureClient({
-      baseUrl: () => backendConfig$.pipe(map(({ baseUrl }) => baseUrl)),
-      bearerToken: () => backendConfig$.pipe(map(({ token }) => token)),
-    }),
-  ],
-});
-```
-
-Keep `backendConfig` in memory only. `HttpCaptureClient` rejects non-HTTP or
-non-loopback origins before resolving the bearer token, and enforces the
-`capture-runtime` service identity during its compatibility handshake.
+`HttpCaptureClient` remains available for framework-neutral transport use, but
+the public consumer contract does not pass a bearer token into Angular or a
+WebView. Use a host-owned `CaptureClient` adapter and keep authentication in
+the host backend. The client rejects non-HTTP or non-loopback origins before
+any credential resolver is evaluated and enforces the `capture-runtime`
+service identity during its compatibility handshake.
 
 ## Structuring ownership
 
@@ -223,10 +200,9 @@ capture.client = hostCaptureClient;
 capture.addEventListener(CAPTURE_WORKBENCH_CUSTOM_EVENTS.completed, onCompleted);
 ```
 
-For normal browser hosts, `hostCaptureClient` should call the host backend.
-Only a trusted Tauri WebView may use a direct loopback `HttpCaptureClient`; a
-sidecar bearer token must never enter a normal browser bundle, URL, storage, or
-log.
+For normal browser and desktop WebView hosts, `hostCaptureClient` should call
+the host backend. A sidecar bearer token must never enter the Web Component,
+Angular state, DOM, URL, storage, log, or error/report payload.
 
 For a direct loopback runtime client, keep the same strict CSP used by the
 Tauri reference host: permit only `http://127.0.0.1:*` in `connect-src`, and

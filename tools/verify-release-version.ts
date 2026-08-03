@@ -29,6 +29,18 @@ const tomlVersion = (relativePath) =>
 const pythonVersion = read(
   'packages/capture-runtime/src/capture_runtime/constants/versions.py',
 ).match(/^RUNTIME_VERSION:\s*Final\s*=\s*"([^"]+)"/m)?.[1];
+const deterministicRuntimeVersion = read(
+  'apps/capture-workbench-desktop/scripts/fixtures/deterministic-runtime/src/contract.rs',
+).match(/^const RUNTIME_VERSION:\s*&str\s*=\s*"([^"]+)"/m)?.[1];
+const deterministicStageVersion = read(
+  'apps/capture-workbench-desktop/scripts/stage-deterministic-runtime.ts',
+).match(/runtimeVersion:\s*'([^']+)'/m)?.[1];
+const sourceLock = JSON.parse(
+  read('packages/capture-runtime/model-sources/release-model-source-lock.json'),
+);
+const engineCatalog = JSON.parse(
+  read('packages/capture-runtime/src/capture_runtime/assets/engine-catalog.json'),
+);
 
 const versions = new Map([
   ['Capture Workbench package', jsonVersion('packages/capture-angular/package.json')],
@@ -38,6 +50,16 @@ const versions = new Map([
   ],
   ['Python runtime constant', pythonVersion],
   [
+    'Deterministic runtime crate',
+    tomlVersion(
+      'apps/capture-workbench-desktop/scripts/fixtures/deterministic-runtime/Cargo.toml',
+    ),
+  ],
+  ['Deterministic runtime constant', deterministicRuntimeVersion],
+  ['Deterministic staging manifest', deterministicStageVersion],
+  ['Direct-model source lock', sourceLock.releaseVersion],
+  ['Embedded engine catalog', engineCatalog.runtimeVersion],
+  [
     'Tauri crate',
     tomlVersion('apps/capture-workbench-desktop/src-tauri/Cargo.toml'),
   ],
@@ -46,6 +68,10 @@ const versions = new Map([
     jsonVersion('apps/capture-workbench-desktop/src-tauri/tauri.conf.json'),
   ],
 ]);
+
+if (sourceLock.lockVersion !== '2') {
+  throw new Error('Direct-model source lock must use lockVersion 2.');
+}
 
 const mismatches = [...versions].filter(
   ([, version]) => version !== releaseVersion,

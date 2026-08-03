@@ -56,7 +56,7 @@ impl LaunchPolicy {
         if cfg!(debug_assertions) {
             origins.push("http://localhost:4200");
         }
-        vec![
+        let mut environment = vec![
             ("CAPTURE_HOST", LOOPBACK_HOST.into()),
             ("CAPTURE_PORT", self.runtime_port.to_string()),
             ("CAPTURE_API_TOKEN", self.token.clone()),
@@ -101,8 +101,28 @@ impl LaunchPolicy {
                 "OLLAMA_MODELS",
                 self.ollama_models_dir().to_string_lossy().into_owned(),
             ),
-        ]
+        ];
+        if let Some(mirror_url) = smoke_worker_mirror_url(
+            std::env::var("CAPTURE_SMOKE_WORKER_MIRROR_OPT_IN").ok(),
+            std::env::var("CAPTURE_SMOKE_WORKER_MIRROR_URL").ok(),
+        ) {
+            environment.push(("CAPTURE_SMOKE_WORKER_MIRROR_OPT_IN", "1".into()));
+            environment.push(("CAPTURE_SMOKE_WORKER_MIRROR_URL", mirror_url));
+        }
+        environment
     }
+}
+
+fn smoke_worker_mirror_url(opt_in: Option<String>, raw_url: Option<String>) -> Option<String> {
+    if opt_in.as_deref().map(str::trim) != Some("1") {
+        return None;
+    }
+    let raw = raw_url?.trim().to_string();
+    let port = raw
+        .strip_prefix("http://127.0.0.1:")
+        .and_then(|value| value.parse::<u16>().ok())
+        .filter(|port| *port != 0)?;
+    Some(format!("http://127.0.0.1:{port}"))
 }
 
 pub(crate) struct LaunchPolicyFactory {
@@ -178,4 +198,33 @@ pub(crate) fn generate_bearer_token() -> Result<String, String> {
             .map_err(|_| "A secure runtime bearer token could not be encoded.".to_string())?;
     }
     Ok(token)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::smoke_worker_mirror_url;
+
+    #[test]
+    fn smoke_worker_mirror_requires_explicit_numeric_loopback_opt_in() {
+        assert_eq!(
+            smoke_worker_mirror_url(Some("1".into()), Some("http://127.0.0.1:43123".into())),
+            Some("http://127.0.0.1:43123".into())
+        );
+        for value in [
+            "http://localhost:43123",
+            "https://127.0.0.1:43123",
+            "http://127.0.0.1:43123/worker",
+            "http://127.0.0.1:43123?x=1",
+            "http://user:pass@127.0.0.1:43123",
+        ] {
+            assert_eq!(
+                smoke_worker_mirror_url(Some("1".into()), Some(value.into())),
+                None
+            );
+        }
+        assert_eq!(
+            smoke_worker_mirror_url(Some("0".into()), Some("http://127.0.0.1:43123".into())),
+            None
+        );
+    }
 }

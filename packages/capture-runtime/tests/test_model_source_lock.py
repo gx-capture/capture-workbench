@@ -27,13 +27,16 @@ def _load_module() -> ModuleType:
 model_source_lock = _load_module()
 
 
-def test_blocked_empty_production_lock_is_canonical_core_only() -> None:
+def test_pending_production_lock_is_canonical_model_enabled() -> None:
     source = (
         Path(__file__).resolve().parents[1] / "model-sources" / "release-model-source-lock.json"
     )
-    lock = model_source_lock.load_source_lock(source)
-    assert lock["requirements"] == []
-    assert model_source_lock.release_mode(lock) == model_source_lock.CORE_ONLY_RELEASE_MODE
+    lock = model_source_lock.load_source_lock(source, require_approved=False)
+    assert [item["requirementId"] for item in lock["requirements"]] == [
+        "windowsml-ocr",
+        "whisper-primary",
+    ]
+    assert model_source_lock.release_mode(lock) == model_source_lock.MODEL_ENABLED_RELEASE_MODE
 
 
 def test_windows_autocrlf_checkout_preserves_canonical_source_lock(
@@ -95,7 +98,7 @@ def test_windows_autocrlf_checkout_preserves_canonical_source_lock(
         ],
         check=True,
     )
-    assert json.loads(classification.read_bytes()) == {"releaseMode": "core-only"}
+    assert json.loads(classification.read_bytes()) == {"releaseMode": "model-enabled"}
 
 
 def test_nonempty_blocked_source_lock_fails_closed() -> None:
@@ -106,7 +109,28 @@ def test_nonempty_blocked_source_lock_fails_closed() -> None:
         "blockers": ["Model sources are not approved."],
         "status": "blocked",
     }
-    with pytest.raises(model_source_lock.ModelSourceLockError, match="source lock is blocked"):
+    with pytest.raises(
+        model_source_lock.ModelSourceLockError,
+        match="only the private Whisper two-run freeze blocker",
+    ):
+        model_source_lock.validate_source_lock(payload)
+
+
+def test_blocked_source_lock_rejects_additional_approval_blockers() -> None:
+    payload, _content = approved_source_lock()
+    payload["approval"] = {
+        "approvedAt": None,
+        "approvedBy": None,
+        "blockers": [
+            model_source_lock.PENDING_WHISPER_FREEZE_BLOCKER,
+            "Unrelated approval blocker.",
+        ],
+        "status": "blocked",
+    }
+    with pytest.raises(
+        model_source_lock.ModelSourceLockError,
+        match="only the private Whisper two-run freeze blocker",
+    ):
         model_source_lock.validate_source_lock(payload)
 
 
@@ -151,16 +175,22 @@ def test_approved_lock_generates_checksum_pinned_manifest_equivalent(
             lambda payload: payload["requirements"][0]["files"][1].update(
                 {"path": "licenses/license.txt"}
             ),
-            "case-insensitively unique",
+            "file paths must be sorted and unique",
         ),
         (
-            lambda payload: payload["requirements"][1]["files"][2]["derivation"].update(
-                {"inputs": ["model/missing.onnx"]}
-            ),
-            "derived inputs",
+            lambda payload: next(
+                item
+                for item in payload["requirements"][0]["files"]
+                if item["path"] == "model/pipeline.json"
+            )["derivation"].update({"inputs": ["model/missing.onnx"]}),
+            "input is not locked",
         ),
         (
-            lambda payload: payload["requirements"][1]["files"][2]["derivation"].update(
+            lambda payload: next(
+                item
+                for item in payload["requirements"][0]["files"]
+                if item["path"] == "model/pipeline.json"
+            )["derivation"].update(
                 {
                     "inputs": [
                         "model/det/inference.onnx",
@@ -177,39 +207,41 @@ def test_approved_lock_generates_checksum_pinned_manifest_equivalent(
         (
             lambda payload: payload["requirements"][0]["files"][0].update(
                 {
-                    "bytes": 512 * 1024 * 1024 + 1,
-                    "path": "model/LICENSE.txt",
+                    "bytes": 2 * 1024 * 1024 * 1024 + 1,
+                    "path": "model/det/inference.onnx",
                 }
             ),
-            "large-model exception",
+            "exceeds 2 GiB single-file limit",
         ),
         (
             lambda payload: payload["requirements"][0]["files"][1].update(
                 {"url": "https://models.example.test/latest/model.bin"}
             ),
-            "immutable revision",
+            "url must contain its revision",
         ),
         (
             lambda payload: payload["fixtures"][0].update({"expectedDevice": "cpu"}),
-            "WindowsML DirectML provenance",
+            "OCR fixture bytes/text/provenance",
         ),
         (
-            lambda payload: payload["fixtures"][1].update({"expectedModel": "primary"}),
-            "approved primary/fallback",
+            lambda payload: payload["fixtures"][1].update({"expectedDevice": "dml"}),
+            "model/device pair",
         ),
         (
-            lambda payload: payload["fixtures"][1].update({"expectedText": "  not normalized"}),
-            "normalized and bounded",
+            lambda payload: payload["fixtures"][1].update(
+                {"expectedNormalizedOutputSha256": "pending"}
+            ),
+            "64 lowercase hexadecimal",
         ),
         (
             lambda payload: payload["fixtures"][0].update({"licenseBytes": 1024 * 1024 + 1}),
-            "licenseBytes",
+            "license/NOTICE bytes drifted",
         ),
         (
             lambda payload: payload["fixtures"][0].update(
                 {"url": "https://fixtures.example.test/latest/ocr.png"}
             ),
-            "immutable revision",
+            "Commit A raw URL",
         ),
         (
             lambda payload: payload["fixtures"][0].update(
@@ -219,11 +251,11 @@ def test_approved_lock_generates_checksum_pinned_manifest_equivalent(
                     "url": "https://fixtures.example.test/main/ocr.png",
                 }
             ),
-            "immutable hex ID",
+            "must bind Commit A",
         ),
         (
             lambda payload: payload["fixtures"][1].update({"id": payload["fixtures"][0]["id"]}),
-            "sorted and unique",
+            "private Whisper fixture identity",
         ),
         (
             lambda payload: payload.pop("requirements"),
@@ -235,7 +267,7 @@ def test_approved_lock_generates_checksum_pinned_manifest_equivalent(
         ),
         (
             lambda payload: payload.update({"requirements": payload["requirements"][:1]}),
-            "exact OCR and Whisper requirements",
+            "requirements must be ordered",
         ),
     ],
 )
@@ -256,3 +288,29 @@ def test_source_lock_requires_canonical_json(tmp_path: Path) -> None:
     source.write_text(json.dumps(payload), encoding="utf-8")
     with pytest.raises(model_source_lock.ModelSourceLockError, match="canonical"):
         model_source_lock.load_source_lock(source)
+
+
+def test_source_lock_rejects_requirement_aggregate_above_two_gib() -> None:
+    payload, _content = approved_source_lock()
+    candidate = deepcopy(payload)
+    model = next(
+        item
+        for item in candidate["requirements"][1]["files"]
+        if item["path"] == "model/primary/model.bin"
+    )
+    model["bytes"] = 2 * 1024 * 1024 * 1024
+    with pytest.raises(model_source_lock.ModelSourceLockError, match="aggregate 2 GiB"):
+        model_source_lock.validate_source_lock(candidate)
+
+
+def test_source_lock_rejects_release_aggregate_above_three_gib() -> None:
+    payload, _content = approved_source_lock()
+    candidate = deepcopy(payload)
+    model = next(
+        item
+        for item in candidate["requirements"][0]["files"]
+        if item["path"] == "model/det/inference.onnx"
+    )
+    model["bytes"] = 1_100_000_000
+    with pytest.raises(model_source_lock.ModelSourceLockError, match="aggregate 3 GiB"):
+        model_source_lock.validate_source_lock(candidate)

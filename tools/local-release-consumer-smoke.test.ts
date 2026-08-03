@@ -11,10 +11,24 @@ import {
   verifyRuntimeRelease,
 } from './local-release-consumer-smoke.ts';
 
-const version = '0.3.8';
+const version = '0.3.9';
 
 function digest(bytes: Buffer): string {
   return createHash('sha256').update(bytes).digest('hex');
+}
+
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (typeof value !== 'object' || value === null) return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => [key, canonicalize(item)]),
+  );
+}
+
+function canonicalJson(value: unknown): Buffer {
+  return Buffer.from(`${JSON.stringify(canonicalize(value), null, 2)}\n`);
 }
 
 async function createFixture(): Promise<string> {
@@ -47,6 +61,73 @@ async function createFixture(): Promise<string> {
   return directory;
 }
 
+async function createModelFixture(): Promise<string> {
+  const directory = await createFixture();
+  const workerAssets = [
+    ['windowsml-ocr', 'capture-engine-ocr-0.3.9-windows-x64.zip'],
+    ['whisper-primary', 'capture-engine-whisper-0.3.9-windows-x64.zip'],
+  ] as const;
+  const pendingWrites: Promise<void>[] = [];
+  const requirements = workerAssets.map(([requirementId, fileName]) => {
+    const archive = Buffer.from(`${requirementId} worker fixture`);
+    const filesManifestName = `${fileName.slice(0, -4)}-files.json`;
+    const filesManifest = Buffer.from(`{"entryPoint":"capture-engine-${requirementId}"}\n`);
+    const artifact = {
+      role: 'worker',
+      requirementId,
+      artifactVersion: version,
+      workerProtocolVersion: '1',
+      platform: 'windows',
+      arch: 'x86_64',
+      fileName,
+      bytes: archive.byteLength,
+      sha256: digest(archive),
+      extractedBytes: archive.byteLength,
+      entryPoint: `capture-engine-${requirementId}`,
+      filesManifestSha256: digest(filesManifest),
+      url: `https://example.test/v${version}/${fileName}`,
+    };
+    pendingWrites.push(writeFile(join(directory, fileName), archive));
+    pendingWrites.push(
+      writeFile(join(directory, `${fileName}.sha256`), `${artifact.sha256}  ${fileName}\n`),
+    );
+    pendingWrites.push(writeFile(join(directory, filesManifestName), filesManifest));
+    pendingWrites.push(
+      writeFile(
+        join(directory, `${filesManifestName}.sha256`),
+        `${artifact.filesManifestSha256}  ${filesManifestName}\n`,
+      ),
+    );
+    return {
+      requirementId,
+      artifacts: [artifact],
+      modelFiles: {
+        artifactVersion: version,
+        entryCount: 1,
+        entryPoint: 'model',
+        extractedBytes: 1,
+        files: [{}],
+        manifestSha256: 'a'.repeat(64),
+        sourceLockSha256: 'b'.repeat(64),
+      },
+      unavailableReason: null,
+    };
+  });
+  await Promise.all(pendingWrites);
+  const catalog = {
+    catalogVersion: '2',
+    runtimeVersion: version,
+    requirements,
+  };
+  const catalogBytes = canonicalJson(catalog);
+  await writeFile(join(directory, 'capture-engine-catalog.json'), catalogBytes);
+  await writeFile(
+    join(directory, 'capture-engine-catalog.json.sha256'),
+    `${digest(catalogBytes)}  capture-engine-catalog.json\n`,
+  );
+  return directory;
+}
+
 async function withFixture(
   callback: (directory: string) => Promise<void>,
 ): Promise<void> {
@@ -64,6 +145,29 @@ test('runtime release verifier accepts the canonical asset set', async () => {
     assert.equal(manifest.runtimeVersion, version);
     assert.equal(manifest.fileName, RUNTIME_ASSET_NAMES[0]);
   });
+});
+
+test('runtime release verifier derives the exact model-enabled worker asset set from the catalog', async () => {
+  const directory = await createModelFixture();
+  try {
+    const manifest = await verifyRuntimeRelease(directory, version);
+    assert.equal(manifest.runtimeVersion, version);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('runtime release verifier rejects model archives or unknown model-enabled assets', async () => {
+  const directory = await createModelFixture();
+  try {
+    await writeFile(join(directory, 'capture-model-whisper-primary.zip'), 'forbidden');
+    await assert.rejects(
+      verifyRuntimeRelease(directory, version),
+      /outside the canonical asset set/u,
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test('runtime release verifier rejects executable tampering', async () => {

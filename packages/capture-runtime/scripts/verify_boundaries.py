@@ -20,7 +20,7 @@ CORE_FORBIDDEN = (
     "capture_runtime.workers",
 )
 OCR_FORBIDDEN = ("faster_whisper", "ctranslate2", "huggingface_hub")
-WHISPER_FORBIDDEN = ("paddleocr", "paddlex", "onnxruntime", "pypdfium2", "cv2", "PIL")
+WHISPER_FORBIDDEN = ("paddleocr", "paddlex", "pypdfium2", "cv2", "PIL")
 OTHER_PLATFORM = ("/linux", "/darwin", "aarch64", "arm64")
 
 

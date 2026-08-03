@@ -1,0 +1,20 @@
+{
+  "algorithm": "capture-workbench-ocr-pipeline-v1",
+  "cpuFallback": "provider-missing-only",
+  "device": "windowsml-dml",
+  "dictionaryRevision": "b03f46425e8ff4442b268ce449e3eef758146cd4",
+  "failClosedOnDmlError": true,
+  "model": "pp-ocrv6-medium-windowsml",
+  "models": {
+    "det": {
+      "revision": "61323801669c338b7891481ec7bac61ce31b576a",
+      "source": "PaddlePaddle/PP-OCRv6_medium_det_onnx"
+    },
+    "rec": {
+      "revision": "50c7eacafc52fa7bcf4194e8cd08e46f8558504b",
+      "source": "PaddlePaddle/PP-OCRv6_medium_rec_onnx"
+    }
+  },
+  "releaseVersion": "0.3.9",
+  "schemaVersion": "1"
+}

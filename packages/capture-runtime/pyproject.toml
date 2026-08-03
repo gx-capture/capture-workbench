@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "capture-runtime"
-version = "0.3.8"
+version = "0.3.9"
 description = "Independent local capture sidecar for Capture Workbench."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
@@ -27,6 +27,7 @@ windowsml = [
   "pypdfium2>=5.0.0,<6.0.0",
 ]
 whisper = [
+  "ctranslate2==4.8.1",
   "faster-whisper==1.2.1",
   "huggingface-hub>=1.18.0,<2.0.0",
 ]

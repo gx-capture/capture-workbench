@@ -6,7 +6,7 @@ from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, co
 root = Path(SPEC).resolve().parents[1]
 hiddenimports = collect_submodules("faster_whisper") + collect_submodules("huggingface_hub")
 datas = collect_data_files("faster_whisper") + collect_data_files("huggingface_hub")
-binaries = collect_dynamic_libs("ctranslate2") + collect_dynamic_libs("av")
+binaries = collect_dynamic_libs("av")
 
 a = Analysis(
     [str(root / "src" / "capture_runtime" / "workers" / "whisper_main.py")],
@@ -18,7 +18,6 @@ a = Analysis(
     excludes=[
         "PIL",
         "cv2",
-        "onnxruntime",
         "paddle",
         "paddleocr",
         "paddlex",

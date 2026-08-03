@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 from PIL import Image
 
+import capture_runtime.engine_adapters as engine_adapters
 import capture_runtime.extractors as extractor_module
 from capture_runtime.clock import SystemClock
 from capture_runtime.config import ExtractionRuntimeConfig, OllamaRuntimeConfig, RuntimeSettings
@@ -34,7 +35,7 @@ def _write_windowsml_models(root: Path) -> None:
         "det/inference.yml",
         "rec/inference.onnx",
         "rec/inference.yml",
-        "rec/ppocr_keys_v1.txt",
+        "rec/ppocrv6_dict.txt",
         "pipeline.json",
     ):
         path = root / relative
@@ -47,6 +48,81 @@ def _write_whisper_model(root: Path, model: str) -> None:
     directory.mkdir(parents=True, exist_ok=True)
     for name in ("config.json", "model.bin", "tokenizer.json", "vocabulary.json"):
         (directory / name).write_bytes(f"{model}:{name}".encode())
+
+
+def test_windows_cuda_count_uses_system_driver_api(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Function:
+        def __init__(self, callback):
+            self.callback = callback
+            self.argtypes = None
+            self.restype = None
+
+        def __call__(self, *args):
+            return self.callback(*args)
+
+    def set_count(pointer) -> int:
+        pointer._obj.value = 2
+        return 0
+
+    driver = SimpleNamespace(
+        cuInit=Function(lambda flags: 0 if flags == 0 else 1),
+        cuDeviceGetCount=Function(set_count),
+    )
+
+    def load_driver(name: str, *, winmode: int):
+        assert name == "nvcuda.dll"
+        assert winmode == engine_adapters.LOAD_LIBRARY_SEARCH_SYSTEM32
+        return driver
+
+    monkeypatch.setattr(engine_adapters.sys, "platform", "win32")
+    monkeypatch.setattr(engine_adapters.ctypes, "WinDLL", load_driver, raising=False)
+
+    assert engine_adapters._windows_cuda_device_count() == 2
+
+
+def test_windows_cuda_count_fails_closed_without_driver(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def missing_driver(*_args, **_kwargs):
+        raise OSError("missing")
+
+    monkeypatch.setattr(engine_adapters.sys, "platform", "win32")
+    monkeypatch.setattr(
+        engine_adapters.ctypes,
+        "WinDLL",
+        missing_driver,
+        raising=False,
+    )
+
+    assert engine_adapters._windows_cuda_device_count() == 0
+
+
+def test_offline_huggingface_stub_blocks_model_downloads() -> None:
+    module_names = (
+        "huggingface_hub",
+        "huggingface_hub.logging",
+        "huggingface_hub.utils",
+    )
+    original = {name: engine_adapters.sys.modules.get(name) for name in module_names}
+    try:
+        for name in module_names:
+            engine_adapters.sys.modules.pop(name, None)
+        engine_adapters._install_offline_huggingface_stubs()
+        package = engine_adapters.sys.modules["huggingface_hub"]
+        utils = engine_adapters.sys.modules["huggingface_hub.utils"]
+
+        package.logging.set_verbosity_error()
+        with pytest.raises(
+            EngineRuntimeUnavailableError,
+            match="only uses checksum-verified local model assets",
+        ):
+            package.snapshot_download("forbidden")
+        assert issubclass(utils.RepositoryNotFoundError, utils.HfHubHTTPError)
+    finally:
+        for name in module_names:
+            engine_adapters.sys.modules.pop(name, None)
+            if original[name] is not None:
+                engine_adapters.sys.modules[name] = original[name]
 
 
 def _config(tmp_path: Path) -> ExtractionRuntimeConfig:
@@ -153,6 +229,33 @@ def test_windowsml_adapter_dml_failure_does_not_create_cpu_only_retry(tmp_path: 
     def factory(**kwargs: object) -> Pipeline:
         configurations.append(kwargs["engine_config"])
         return Pipeline()
+
+    adapter = WindowsMLOcrAdapter(
+        model_dir,
+        pipeline_factory=factory,
+        provider_resolver=lambda: ["DmlExecutionProvider", "CPUExecutionProvider"],
+    )
+
+    with pytest.raises(EngineRuntimeUnavailableError, match="CPU-only pipeline retry is disabled"):
+        adapter.extract_png(b"valid-png-bytes-for-fake-pipeline")
+
+    assert len(configurations) == 1
+    assert configurations[0]["providers"] == [
+        "DmlExecutionProvider",
+        "CPUExecutionProvider",
+    ]
+
+
+def test_windowsml_adapter_dml_initialization_failure_fails_closed_without_cpu_retry(
+    tmp_path: Path,
+) -> None:
+    model_dir = tmp_path / "windowsml"
+    _write_windowsml_models(model_dir)
+    configurations: list[dict[str, object]] = []
+
+    def factory(**kwargs: object) -> object:
+        configurations.append(kwargs["engine_config"])
+        raise RuntimeError("DML session initialization failed")
 
     adapter = WindowsMLOcrAdapter(
         model_dir,

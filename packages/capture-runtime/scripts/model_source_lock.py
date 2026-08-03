@@ -1,3 +1,5 @@
+"""Fail-closed validation for the v0.3.9 direct-model source lock."""
+
 from __future__ import annotations
 
 import argparse
@@ -8,14 +10,27 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import urlsplit
 
-LOCK_VERSION = "1"
-RELEASE_VERSION = "0.3.8"
+LOCK_VERSION = "2"
+RELEASE_VERSION = "0.3.9"
+COMMIT_A_SHA = "31821b241846878d917a60e638a4fce39aba418a"
+FIRST_PARTY_ROOT = (
+    "https://raw.githubusercontent.com/gx-capture/capture-workbench/"
+    f"{COMMIT_A_SHA}/packages/capture-runtime/model-sources/commit-a"
+)
 MAX_ENTRIES = 4096
-MAX_SINGLE_FILE_BYTES = 512 * 1024 * 1024
+# Keep the direct-model lane bounded while admitting the pinned Whisper
+# primary model (~1.62 GiB) and the complete fallback/OCR set.  These limits
+# are shared by the source lock and the runtime installer/catalog validators.
+MAX_SINGLE_FILE_BYTES = 2 * 1024 * 1024 * 1024
 MAX_TOTAL_BYTES = 2 * 1024 * 1024 * 1024
-REQUIREMENT_IDS = ("whisper-primary", "windowsml-ocr")
+MAX_SOURCE_LOCK_TOTAL_BYTES = 3 * 1024 * 1024 * 1024
+REQUIREMENT_IDS = ("windowsml-ocr", "whisper-primary")
 CORE_ONLY_RELEASE_MODE = "core-only"
 MODEL_ENABLED_RELEASE_MODE = "model-enabled"
+PENDING_WHISPER_FREEZE_BLOCKER = (
+    "Freeze private Whisper model/device pair and normalized output digest "
+    "from two identical production runs."
+)
 HEX = frozenset("0123456789abcdef")
 WINDOWS_FORBIDDEN_PATH_CHARACTERS = frozenset('<>:"|?*')
 WINDOWS_RESERVED_DEVICE_BASENAMES = frozenset(
@@ -23,6 +38,12 @@ WINDOWS_RESERVED_DEVICE_BASENAMES = frozenset(
     | {f"COM{index}" for index in range(1, 10)}
     | {f"LPT{index}" for index in range(1, 10)}
 )
+OCR_FIXTURE_SHA256 = "7d61f4835837c4c387a0d46c4f21f7442fe22aab3f14f330b86f6857f5f3bc82"
+OCR_FIXTURE_BYTES = 2157
+OCR_PDF_SHA256 = "5eec85d2b2e98e06577cb5310d1b3037ca26f03d06d85a292ae78b68d4c57f30"
+OCR_PDF_BYTES = 2421
+PRIVATE_WHISPER_FIXTURE_BYTES = 11_005_641
+PRIVATE_WHISPER_FIXTURE_SHA256 = "7f844ad97129470ee0981effcf31f5d69d5556e18c452e9ff27d418bc32d1a5d"
 
 
 class ModelSourceLockError(ValueError):
@@ -46,7 +67,9 @@ def _text(value: object, label: str) -> str:
     return value
 
 
-def _sha256(value: object, label: str) -> str:
+def _sha256(value: object, label: str, *, allow_pending: bool = False) -> str | None:
+    if allow_pending and value is None:
+        return None
     if (
         not isinstance(value, str)
         or len(value) != 64
@@ -93,7 +116,33 @@ def _https_url(value: object, label: str) -> tuple[str, str]:
     return url, parsed.hostname.lower()
 
 
-def _derivation(value: object, label: str) -> None:
+def _first_party_url(value: object, relative: str, label: str) -> str:
+    url, host = _https_url(value, label)
+    expected = f"{FIRST_PARTY_ROOT}/{relative}"
+    if host != "raw.githubusercontent.com" or url != expected:
+        raise ModelSourceLockError(f"{label} must bind the exact Commit A raw URL")
+    return url
+
+
+def _redirect_hosts(value: object, initial_host: str, label: str) -> list[str]:
+    if (
+        not isinstance(value, list)
+        or value != sorted(set(value))
+        or any(
+            not isinstance(host, str)
+            or not host
+            or host != host.lower()
+            or "@" in host
+            or "/" in host
+            for host in value
+        )
+        or initial_host in value
+    ):
+        raise ModelSourceLockError(f"{label} must be sorted unique extra hosts")
+    return value
+
+
+def _derivation(value: object, label: str, *, known_paths: set[str]) -> None:
     payload = _exact(
         value,
         {"algorithm", "generator", "inputs", "sourceCommit", "toolVersions"},
@@ -101,14 +150,15 @@ def _derivation(value: object, label: str) -> None:
     )
     _text(payload["algorithm"], f"{label}.algorithm")
     _text(payload["generator"], f"{label}.generator")
-    commit = _text(payload["sourceCommit"], f"{label}.sourceCommit")
-    if len(commit) != 40 or any(character not in HEX for character in commit):
-        raise ModelSourceLockError(f"{label}.sourceCommit must be a full Git SHA")
+    if payload["sourceCommit"] != COMMIT_A_SHA:
+        raise ModelSourceLockError(f"{label}.sourceCommit must equal Commit A")
     inputs = payload["inputs"]
     if not isinstance(inputs, list) or not inputs:
         raise ModelSourceLockError(f"{label}.inputs must be non-empty")
     for index, item in enumerate(inputs):
-        _safe_path(item, f"{label}.inputs[{index}]")
+        path = _safe_path(item, f"{label}.inputs[{index}]")
+        if path not in known_paths:
+            raise ModelSourceLockError(f"{label} input is not locked: {path}")
     if inputs != sorted(set(inputs)):
         raise ModelSourceLockError(f"{label}.inputs must be sorted and unique")
     versions = payload["toolVersions"]
@@ -123,6 +173,251 @@ def _derivation(value: object, label: str) -> None:
         raise ModelSourceLockError(f"{label}.toolVersions must pin exact versions")
 
 
+def _validate_file(
+    raw_file: object,
+    *,
+    requirement_id: str,
+    index: int,
+    known_paths: set[str],
+) -> dict[str, Any]:
+    item = _exact(
+        raw_file,
+        {
+            "bytes",
+            "derivation",
+            "kind",
+            "licensePath",
+            "noticePath",
+            "owner",
+            "path",
+            "redirectHosts",
+            "revision",
+            "sha256",
+            "spdx",
+            "url",
+        },
+        f"{requirement_id}.files[{index}]",
+    )
+    path = _safe_path(item["path"], f"{requirement_id}.files[{index}].path")
+    kind = item["kind"]
+    if kind not in {"derived", "license", "notice", "provenance", "source"}:
+        raise ModelSourceLockError(f"{requirement_id}.{path}.kind is invalid")
+    size = item["bytes"]
+    if not isinstance(size, int) or isinstance(size, bool) or size < 1:
+        raise ModelSourceLockError(f"{requirement_id}.{path}.bytes must be positive")
+    if size > MAX_SINGLE_FILE_BYTES:
+        raise ModelSourceLockError(f"{requirement_id}.{path} exceeds 2 GiB single-file limit")
+    _sha256(item["sha256"], f"{requirement_id}.{path}.sha256")
+    _text(item["owner"], f"{requirement_id}.{path}.owner")
+    _text(item["spdx"], f"{requirement_id}.{path}.spdx")
+    revision = _text(item["revision"], f"{requirement_id}.{path}.revision")
+    if len(revision) != 40 or any(character not in HEX for character in revision):
+        raise ModelSourceLockError(f"{requirement_id}.{path}.revision must be a full lowercase SHA")
+    url, initial_host = _https_url(item["url"], f"{requirement_id}.{path}.url")
+    if revision not in url:
+        raise ModelSourceLockError(f"{requirement_id}.{path}.url must contain its revision")
+    _redirect_hosts(item["redirectHosts"], initial_host, f"{requirement_id}.{path}.redirectHosts")
+    if kind == "derived":
+        _derivation(
+            item["derivation"], f"{requirement_id}.{path}.derivation", known_paths=known_paths
+        )
+    elif item["derivation"] is not None:
+        raise ModelSourceLockError("only derived entries may define derivation metadata")
+    if kind in {"license", "notice"}:
+        if item["licensePath"] is not None or item["noticePath"] is not None:
+            raise ModelSourceLockError("license/NOTICE entries cannot reference themselves")
+    else:
+        _safe_path(item["licensePath"], f"{requirement_id}.{path}.licensePath")
+        _safe_path(item["noticePath"], f"{requirement_id}.{path}.noticePath")
+    return item
+
+
+def _validate_requirement(raw_requirement: object, index: int) -> dict[str, Any]:
+    requirement = _exact(
+        raw_requirement,
+        {"artifactVersion", "entryPoint", "files", "requirementId"},
+        f"requirement[{index}]",
+    )
+    requirement_id = _text(requirement["requirementId"], f"requirement[{index}].requirementId")
+    if requirement["artifactVersion"] != RELEASE_VERSION:
+        raise ModelSourceLockError(f"{requirement_id} artifactVersion is unsynchronized")
+    if requirement["entryPoint"] != "model":
+        raise ModelSourceLockError(f"{requirement_id} entryPoint must remain model")
+    files = requirement["files"]
+    if not isinstance(files, list) or not files or len(files) > MAX_ENTRIES:
+        raise ModelSourceLockError(f"{requirement_id} files are missing or excessive")
+    previous = ""
+    folded: set[str] = set()
+    total = 0
+    licenses: set[str] = set()
+    notices: set[str] = set()
+    known_paths = {
+        _safe_path(item["path"], f"{requirement_id}.files.path")
+        for item in files
+        if isinstance(item, dict) and "path" in item
+    }
+    validated: list[dict[str, Any]] = []
+    for file_index, raw_file in enumerate(files):
+        item = _validate_file(
+            raw_file,
+            requirement_id=requirement_id,
+            index=file_index,
+            known_paths=known_paths,
+        )
+        path = _safe_path(item["path"], f"{requirement_id}.files[{file_index}].path")
+        if path <= previous or path.casefold() in folded:
+            raise ModelSourceLockError(f"{requirement_id} file paths must be sorted and unique")
+        previous = path
+        folded.add(path.casefold())
+        if item["kind"] == "license":
+            licenses.add(path)
+        elif item["kind"] == "notice":
+            notices.add(path)
+        total += item["bytes"]
+        if total > MAX_TOTAL_BYTES:
+            raise ModelSourceLockError(f"{requirement_id} exceeds aggregate 2 GiB model limit")
+        validated.append(item)
+    if not licenses or not notices:
+        raise ModelSourceLockError(f"{requirement_id} must pin license and NOTICE files")
+    for item in validated:
+        if item["kind"] not in {"license", "notice"} and (
+            item["licensePath"] not in licenses or item["noticePath"] not in notices
+        ):
+            raise ModelSourceLockError(
+                f"{requirement_id} entries must reference license and NOTICE"
+            )
+    if requirement_id == "windowsml-ocr":
+        pipeline = next((item for item in validated if item["path"] == "model/pipeline.json"), None)
+        if pipeline is None or pipeline["kind"] != "derived":
+            raise ModelSourceLockError("OCR requirement needs derived model/pipeline.json")
+        for item in validated:
+            path = item["path"]
+            if path in {"model/pipeline.json", "provenance/commit-a.json"}:
+                _first_party_url(item["url"], path, f"windowsml-ocr.{path}.url")
+    return requirement
+
+
+def _validate_ocr_fixture(value: object) -> dict[str, Any]:
+    fixture = _exact(
+        value,
+        {
+            "bytes",
+            "expectedDevice",
+            "expectedEngine",
+            "expectedModel",
+            "expectedText",
+            "id",
+            "kind",
+            "licenseBytes",
+            "licensePath",
+            "licenseSha256",
+            "licenseUrl",
+            "mediaType",
+            "noticeBytes",
+            "noticePath",
+            "noticeSha256",
+            "noticeUrl",
+            "owner",
+            "pdfBytes",
+            "pdfSha256",
+            "pdfUrl",
+            "redistributable",
+            "revision",
+            "sha256",
+            "spdx",
+            "url",
+        },
+        "ocr fixture",
+    )
+    if fixture["kind"] != "ocr" or fixture["id"] != "ocr-reference":
+        raise ModelSourceLockError("OCR fixture identity is invalid")
+    if (
+        fixture["bytes"] != OCR_FIXTURE_BYTES
+        or fixture["sha256"] != OCR_FIXTURE_SHA256
+        or fixture["mediaType"] != "image/png"
+        or fixture["expectedEngine"] != "windowsml-ocr"
+        or fixture["expectedModel"] != "pp-ocrv6-medium-windowsml"
+        or fixture["expectedDevice"] != "windowsml-dml"
+        or fixture["expectedText"] != "CAPTURE OCR FIXTURE"
+        or fixture["pdfBytes"] != OCR_PDF_BYTES
+        or fixture["pdfSha256"] != OCR_PDF_SHA256
+        or fixture["redistributable"] is not True
+    ):
+        raise ModelSourceLockError("OCR fixture bytes/text/provenance are not the Commit A fixture")
+    revision = fixture["revision"]
+    if revision != COMMIT_A_SHA:
+        raise ModelSourceLockError("OCR fixture must bind Commit A")
+    for key in ("sha256", "licenseSha256", "noticeSha256", "pdfSha256"):
+        _sha256(fixture[key], f"ocr fixture {key}")
+    if fixture["licenseBytes"] != 1087 or fixture["noticeBytes"] != 303:
+        raise ModelSourceLockError("OCR fixture license/NOTICE bytes drifted")
+    _first_party_url(fixture["url"], "fixtures/ocr-reference.png", "OCR fixture url")
+    _first_party_url(fixture["pdfUrl"], "fixtures/ocr-scanned.pdf", "OCR fixture pdfUrl")
+    _first_party_url(fixture["licenseUrl"], "licenses/LICENSE.txt", "OCR fixture licenseUrl")
+    _first_party_url(fixture["noticeUrl"], "licenses/NOTICE.txt", "OCR fixture noticeUrl")
+    if (
+        fixture["licensePath"] != "licenses/LICENSE.txt"
+        or fixture["noticePath"] != "licenses/NOTICE.txt"
+    ):
+        raise ModelSourceLockError("OCR fixture license/NOTICE paths are invalid")
+    return fixture
+
+
+def _validate_private_whisper_fixture(value: object, *, require_approved: bool) -> dict[str, Any]:
+    fixture = _exact(
+        value,
+        {
+            "bytes",
+            "expectedDevice",
+            "expectedEngine",
+            "expectedModel",
+            "expectedNormalizedOutputSha256",
+            "expectedSegmentCount",
+            "id",
+            "kind",
+            "mediaType",
+            "monotonicSegments",
+            "sha256",
+        },
+        "private Whisper fixture",
+    )
+    if fixture["kind"] != "whisper" or fixture["id"] != "whisper-private-reference":
+        raise ModelSourceLockError("private Whisper fixture identity is invalid")
+    if (
+        fixture["bytes"] != PRIVATE_WHISPER_FIXTURE_BYTES
+        or fixture["sha256"] != PRIVATE_WHISPER_FIXTURE_SHA256
+        or fixture["mediaType"] != "audio/mpeg"
+        or fixture["expectedEngine"] != "whisper-primary"
+        or fixture["monotonicSegments"] is not True
+    ):
+        raise ModelSourceLockError("private Whisper fixture bytes/provenance are invalid")
+    expected_model = fixture["expectedModel"]
+    expected_device = fixture["expectedDevice"]
+    if expected_model is None or expected_device is None:
+        if require_approved:
+            raise ModelSourceLockError(
+                "private Whisper model/device pair is pending two-run freeze"
+            )
+        if expected_model is not None or expected_device is not None:
+            raise ModelSourceLockError("private Whisper model/device pair must be frozen together")
+    elif (expected_model, expected_device) not in {
+        ("large-v3-turbo", "cuda"),
+        ("small", "cpu"),
+    }:
+        raise ModelSourceLockError("private Whisper model/device pair is unsupported")
+    count = _exact(fixture["expectedSegmentCount"], {"maximum", "minimum"}, "Whisper segment count")
+    if count["minimum"] != 1 or count["maximum"] != 10_000:
+        raise ModelSourceLockError("private Whisper segment count bounds are invalid")
+    digest = _sha256(
+        fixture["expectedNormalizedOutputSha256"],
+        "private Whisper expectedNormalizedOutputSha256",
+        allow_pending=True,
+    )
+    if require_approved and digest is None:
+        raise ModelSourceLockError("private Whisper output digest is pending two-run freeze")
+    return fixture
+
+
 def validate_source_lock(
     payload: object,
     *,
@@ -130,13 +425,7 @@ def validate_source_lock(
 ) -> dict[str, Any]:
     lock = _exact(
         payload,
-        {
-            "approval",
-            "fixtures",
-            "lockVersion",
-            "releaseVersion",
-            "requirements",
-        },
+        {"approval", "fixtures", "lockVersion", "releaseVersion", "requirements"},
         "model source lock",
     )
     if lock["lockVersion"] != LOCK_VERSION or lock["releaseVersion"] != RELEASE_VERSION:
@@ -161,264 +450,44 @@ def validate_source_lock(
             raise ModelSourceLockError("blocked source lock must identify unresolved blockers")
     else:
         raise ModelSourceLockError("model source lock approval status is invalid")
+
     requirements = lock["requirements"]
     if not isinstance(requirements, list):
         raise ModelSourceLockError("model source lock requirements must be a list")
-    core_only = len(requirements) == 0
-    if require_approved and not core_only and approval["status"] != "approved":
-        raise ModelSourceLockError("model source lock is blocked: " + "; ".join(blockers))
-    if (
-        not core_only
-        and approval["status"] == "approved"
-        and len(requirements) != len(REQUIREMENT_IDS)
-    ):
-        raise ModelSourceLockError("approved source lock needs exact OCR and Whisper requirements")
-    requirement_ids: list[str] = []
-    for requirement_index, raw_requirement in enumerate(requirements):
-        requirement = _exact(
-            raw_requirement,
-            {"artifactVersion", "entryPoint", "files", "requirementId"},
-            f"requirement[{requirement_index}]",
+    core_only = not requirements
+    if core_only:
+        if lock["fixtures"]:
+            raise ModelSourceLockError("core-only source lock cannot contain fixtures")
+        return lock
+    if approval["status"] == "blocked" and approval["blockers"] != [PENDING_WHISPER_FREEZE_BLOCKER]:
+        raise ModelSourceLockError(
+            "blocked model source lock must contain only the private Whisper two-run freeze blocker"
         )
-        requirement_id = _text(
-            requirement["requirementId"], f"requirement[{requirement_index}].requirementId"
-        )
-        requirement_ids.append(requirement_id)
-        if requirement_id not in REQUIREMENT_IDS:
-            raise ModelSourceLockError(f"unknown model requirement: {requirement_id}")
-        if requirement["artifactVersion"] != RELEASE_VERSION:
-            raise ModelSourceLockError(f"{requirement_id} artifactVersion is unsynchronized")
-        entry_point = _safe_path(requirement["entryPoint"], f"{requirement_id}.entryPoint")
-        if entry_point != "model":
-            raise ModelSourceLockError(f"{requirement_id} entryPoint must remain model")
-        files = requirement["files"]
-        if not isinstance(files, list) or not files or len(files) > MAX_ENTRIES:
-            raise ModelSourceLockError(f"{requirement_id} files are missing or excessive")
-        previous = ""
-        folded: set[str] = set()
-        total = 0
-        license_paths: set[str] = set()
-        notice_paths: set[str] = set()
-        for file_index, raw_file in enumerate(files):
-            item = _exact(
-                raw_file,
-                {
-                    "bytes",
-                    "derivation",
-                    "kind",
-                    "licensePath",
-                    "noticePath",
-                    "owner",
-                    "path",
-                    "redirectHosts",
-                    "revision",
-                    "sha256",
-                    "spdx",
-                    "url",
-                },
-                f"{requirement_id}.files[{file_index}]",
-            )
-            path = _safe_path(item["path"], f"{requirement_id}.files[{file_index}].path")
-            if path <= previous or path.casefold() in folded:
-                raise ModelSourceLockError(
-                    f"{requirement_id} file paths must be sorted and case-insensitively unique"
-                )
-            previous = path
-            folded.add(path.casefold())
-            kind = item["kind"]
-            if kind not in {"derived", "license", "notice", "provenance", "source"}:
-                raise ModelSourceLockError(f"{requirement_id} file kind is invalid")
-            size = item["bytes"]
-            if not isinstance(size, int) or isinstance(size, bool) or size < 1:
-                raise ModelSourceLockError(f"{requirement_id} file bytes must be positive")
-            if size > MAX_SINGLE_FILE_BYTES and not (
-                kind in {"source", "derived"} and path.startswith("model/")
-            ):
-                raise ModelSourceLockError(
-                    f"{requirement_id} file is not eligible for the large-model exception"
-                )
-            _sha256(item["sha256"], f"{requirement_id}.{path}.sha256")
-            _text(item["owner"], f"{requirement_id}.{path}.owner")
-            _text(item["spdx"], f"{requirement_id}.{path}.spdx")
-            revision = _text(item["revision"], f"{requirement_id}.{path}.revision")
-            if not 40 <= len(revision) <= 64 or any(character not in HEX for character in revision):
-                raise ModelSourceLockError(
-                    f"{requirement_id}.{path}.revision must be an immutable hex ID"
-                )
-            url, initial_host = _https_url(item["url"], f"{requirement_id}.{path}.url")
-            if revision not in url:
-                raise ModelSourceLockError(
-                    f"{requirement_id}.{path}.url must contain its immutable revision"
-                )
-            redirect_hosts = item["redirectHosts"]
-            if (
-                not isinstance(redirect_hosts, list)
-                or redirect_hosts != sorted(set(redirect_hosts))
-                or any(
-                    not isinstance(host, str)
-                    or not host
-                    or host != host.lower()
-                    or "@" in host
-                    or "/" in host
-                    for host in redirect_hosts
-                )
-                or initial_host in redirect_hosts
-            ):
-                raise ModelSourceLockError(
-                    f"{requirement_id}.{path}.redirectHosts must be sorted unique extra hosts"
-                )
-            if kind == "derived":
-                _derivation(item["derivation"], f"{requirement_id}.{path}.derivation")
-            elif item["derivation"] is not None:
-                raise ModelSourceLockError("only derived entries may define derivation metadata")
-            if kind in {"license", "notice"}:
-                if item["licensePath"] is not None or item["noticePath"] is not None:
-                    raise ModelSourceLockError("license/NOTICE entries cannot reference themselves")
-                if kind == "license":
-                    license_paths.add(path)
-                else:
-                    notice_paths.add(path)
-            else:
-                _safe_path(item["licensePath"], f"{requirement_id}.{path}.licensePath")
-                _safe_path(item["noticePath"], f"{requirement_id}.{path}.noticePath")
-            total += size
-            if total > MAX_TOTAL_BYTES:
-                raise ModelSourceLockError(
-                    f"{requirement_id} exceeds the aggregate 2 GiB model limit"
-                )
-        if not license_paths or not notice_paths:
-            raise ModelSourceLockError(f"{requirement_id} must pin license and NOTICE files")
-        known_paths = {item["path"] for item in files}
-        for item in files:
-            if item["kind"] not in {"license", "notice"} and (
-                item["licensePath"] not in license_paths or item["noticePath"] not in notice_paths
-            ):
-                raise ModelSourceLockError(
-                    f"{requirement_id} entries must reference pinned license and NOTICE files"
-                )
-            if item["kind"] == "derived" and any(
-                source not in known_paths for source in item["derivation"]["inputs"]
-            ):
-                raise ModelSourceLockError(
-                    f"{requirement_id} derived inputs must reference locked files"
-                )
-        if requirement_id == "windowsml-ocr":
-            pipeline = [item for item in files if item["path"] == "model/pipeline.json"]
-            if len(pipeline) != 1 or pipeline[0]["kind"] != "derived":
-                raise ModelSourceLockError("OCR pipeline.json must be first-party derived")
-    if requirement_ids != sorted(requirement_ids) or len(set(requirement_ids)) != len(
-        requirement_ids
+    if [item.get("requirementId") for item in requirements if isinstance(item, dict)] != list(
+        REQUIREMENT_IDS
     ):
-        raise ModelSourceLockError("requirements must be sorted and unique")
-
+        raise ModelSourceLockError(
+            "requirements must be ordered windowsml-ocr then whisper-primary"
+        )
+    validated_requirements: list[dict[str, Any]] = []
+    total_locked_bytes = 0
+    for index, requirement in enumerate(requirements):
+        validated = _validate_requirement(requirement, index)
+        validated_requirements.append(validated)
+        total_locked_bytes += sum(item["bytes"] for item in validated["files"])
+    if total_locked_bytes > MAX_SOURCE_LOCK_TOTAL_BYTES:
+        raise ModelSourceLockError("model source lock exceeds aggregate 3 GiB model limit")
     fixtures = lock["fixtures"]
-    if not isinstance(fixtures, list):
-        raise ModelSourceLockError("fixtures must be a list")
-    if not core_only and approval["status"] == "approved" and len(fixtures) != 2:
-        raise ModelSourceLockError("approved source lock needs real OCR and Whisper fixtures")
-    fixture_ids: list[str] = []
-    fixture_kinds: list[str] = []
-    for index, raw_fixture in enumerate(fixtures):
-        fixture = _exact(
-            raw_fixture,
-            {
-                "bytes",
-                "expectedDevice",
-                "expectedEngine",
-                "expectedModel",
-                "expectedText",
-                "id",
-                "kind",
-                "licenseBytes",
-                "licenseSha256",
-                "licenseUrl",
-                "mediaType",
-                "owner",
-                "preferGpu",
-                "redistributable",
-                "revision",
-                "sha256",
-                "spdx",
-                "url",
-            },
-            f"fixture[{index}]",
+    if not isinstance(fixtures, list) or len(fixtures) != 2:
+        raise ModelSourceLockError(
+            "model-enabled source lock needs OCR and private Whisper fixtures"
         )
-        fixture_ids.append(_text(fixture["id"], f"fixture[{index}].id"))
-        if fixture["kind"] not in {"ocr", "whisper"}:
-            raise ModelSourceLockError(f"fixture[{index}].kind is invalid")
-        fixture_kinds.append(fixture["kind"])
-        expected_engine = _text(fixture["expectedEngine"], f"fixture[{index}].expectedEngine")
-        expected_model = _text(fixture["expectedModel"], f"fixture[{index}].expectedModel")
-        expected_device = _text(fixture["expectedDevice"], f"fixture[{index}].expectedDevice")
-        expected_text = _text(fixture["expectedText"], f"fixture[{index}].expectedText")
-        if expected_text != " ".join(expected_text.split()) or len(expected_text) > 4_000:
-            raise ModelSourceLockError(
-                f"fixture[{index}].expectedText must be normalized and bounded"
-            )
-        prefer_gpu = fixture["preferGpu"]
-        if fixture["kind"] == "ocr":
-            if (
-                expected_engine != "windowsml-ocr"
-                or expected_model != "pp-ocrv6-medium-windowsml"
-                or expected_device != "windowsml-dml"
-                or prefer_gpu is not None
-            ):
-                raise ModelSourceLockError(
-                    "OCR fixture must require the exact WindowsML DirectML provenance"
-                )
-        elif (
-            expected_engine != "whisper-primary"
-            or not isinstance(prefer_gpu, bool)
-            or (prefer_gpu is False and (expected_model != "fallback" or expected_device != "cpu"))
-            or (prefer_gpu is True and (expected_model != "primary" or expected_device != "cuda"))
-        ):
-            raise ModelSourceLockError(
-                "Whisper fixture must pin an approved primary/fallback execution path"
-            )
-        if fixture["redistributable"] is not True:
-            raise ModelSourceLockError(f"fixture[{index}] is not redistributable")
-        if (
-            not isinstance(fixture["bytes"], int)
-            or isinstance(fixture["bytes"], bool)
-            or fixture["bytes"] < 1
-        ):
-            raise ModelSourceLockError(f"fixture[{index}].bytes must be positive")
-        _sha256(fixture["sha256"], f"fixture[{index}].sha256")
-        if (
-            not isinstance(fixture["licenseBytes"], int)
-            or isinstance(fixture["licenseBytes"], bool)
-            or not 1 <= fixture["licenseBytes"] <= 1024 * 1024
-        ):
-            raise ModelSourceLockError(
-                f"fixture[{index}].licenseBytes must be from 1 byte through 1 MiB"
-            )
-        _sha256(fixture["licenseSha256"], f"fixture[{index}].licenseSha256")
-        fixture_url, _fixture_host = _https_url(fixture["url"], f"fixture[{index}].url")
-        license_url, _license_host = _https_url(
-            fixture["licenseUrl"], f"fixture[{index}].licenseUrl"
-        )
-        _text(fixture["owner"], f"fixture[{index}].owner")
-        media_type = _text(fixture["mediaType"], f"fixture[{index}].mediaType")
-        if (
-            fixture["kind"] == "ocr" and media_type not in {"image/jpeg", "image/png", "image/webp"}
-        ) or (fixture["kind"] == "whisper" and not media_type.startswith("audio/")):
-            raise ModelSourceLockError(f"fixture[{index}].mediaType is incompatible")
-        fixture_revision = _text(fixture["revision"], f"fixture[{index}].revision")
-        if not 40 <= len(fixture_revision) <= 64 or any(
-            character not in HEX for character in fixture_revision
-        ):
-            raise ModelSourceLockError(f"fixture[{index}].revision must be an immutable hex ID")
-        if fixture_revision not in fixture_url or fixture_revision not in license_url:
-            raise ModelSourceLockError(f"fixture[{index}] URLs must contain the immutable revision")
-        _text(fixture["spdx"], f"fixture[{index}].spdx")
-    if (
-        not core_only
-        and approval["status"] == "approved"
-        and sorted(fixture_kinds) != ["ocr", "whisper"]
-    ):
-        raise ModelSourceLockError("fixture kinds must be exactly OCR and Whisper")
-    if fixture_ids != sorted(fixture_ids) or len(set(fixture_ids)) != len(fixture_ids):
-        raise ModelSourceLockError("fixture IDs must be sorted and unique")
+    if [item.get("kind") for item in fixtures if isinstance(item, dict)] != ["ocr", "whisper"]:
+        raise ModelSourceLockError("fixtures must be ordered OCR then private Whisper")
+    _validate_ocr_fixture(fixtures[0])
+    _validate_private_whisper_fixture(fixtures[1], require_approved=require_approved)
+    if require_approved and approval["status"] != "approved":
+        raise ModelSourceLockError("model source lock is blocked: " + "; ".join(blockers))
     return lock
 
 
@@ -475,10 +544,9 @@ def main() -> None:
     )
     parser.add_argument("--output", type=Path)
     arguments = parser.parse_args()
-    lock = load_source_lock(arguments.lock)
+    lock = load_source_lock(arguments.lock, require_approved=arguments.operation == "validate")
     if arguments.operation == "classify":
-        payload = {"releaseMode": release_mode(lock)}
-        content = canonical_json_bytes(payload)
+        content = canonical_json_bytes({"releaseMode": release_mode(lock)})
         if arguments.output is None:
             print(content.decode("utf-8"), end="")
         else:

@@ -21,6 +21,13 @@ import {
 import { MAX_INSTALLATIONS_PER_USER_ACTION } from '../../../constants';
 import { CaptureWorkbenchStoreHelpers } from '../capture-workbench-store/capture-workbench-store-helpers';
 
+const INSTALLATION_ORDER = new Map([
+  ['windowsml-ocr', 0],
+  ['whisper-primary', 1],
+  ['ollama-runtime', 2],
+  ['capture-ollama-model', 3],
+]);
+
 @Injectable()
 export class CaptureRuntimeInstallationService {
   private readonly destroyRef = inject(DestroyRef);
@@ -52,7 +59,15 @@ export class CaptureRuntimeInstallationService {
     const installable = () =>
       options
         .requirements()
-        .filter((requirement) => requirement.status === 'installable');
+        .filter((requirement) => requirement.status === 'installable')
+        .slice()
+        .sort(
+          (left, right) =>
+            (INSTALLATION_ORDER.get(left.requirementId) ??
+              Number.MAX_SAFE_INTEGER) -
+            (INSTALLATION_ORDER.get(right.requirementId) ??
+              Number.MAX_SAFE_INTEGER),
+        );
     if (installable().length === 0) return;
 
     this.installSubscription?.unsubscribe();
@@ -109,14 +124,17 @@ export class CaptureRuntimeInstallationService {
             signal,
           )
           .pipe(
-            tap((installation) => this.installation.set(installation)),
+            tap((installation) =>
+              this.installation.set(this.sanitizeInstallation(installation)),
+            ),
             concatMap((installation) =>
               pollInstallation(
                 client,
                 installation,
                 options.pollIntervalMs,
                 signal,
-                (current) => this.installation.set(current),
+                (current) =>
+                  this.installation.set(this.sanitizeInstallation(current)),
               ),
             ),
             concatMap((installation) => {
@@ -153,7 +171,8 @@ export class CaptureRuntimeInstallationService {
     if (!installation || !client) return;
     this.controller?.abort();
     client.cancelInstallation(installation.installationId).subscribe({
-      next: (canceled) => this.installation.set(canceled),
+      next: (canceled) =>
+        this.installation.set(this.sanitizeInstallation(canceled)),
       error: (error: unknown) =>
         this.error.set(
           this.helpers.errorMessage(
@@ -162,6 +181,14 @@ export class CaptureRuntimeInstallationService {
           ),
         ),
     });
+  }
+
+  private sanitizeInstallation(
+    installation: RuntimeInstallationV1,
+  ): RuntimeInstallationV1 {
+    return installation.error
+      ? { ...installation, error: this.helpers.redactFailure(installation.error) }
+      : installation;
   }
 }
 

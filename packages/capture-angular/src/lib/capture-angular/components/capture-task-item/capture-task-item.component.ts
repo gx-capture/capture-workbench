@@ -14,7 +14,7 @@ import { CaptureWorkbenchStore } from '../../services/capture-workbench-store/ca
   selector: 'gx-capture-task-item',
   imports: [ReactiveFormsModule],
   template: `
-    <li [attr.data-task-status]="task().status">
+    <li data-testid="capture-task" [attr.data-task-id]="task().id" [attr.data-task-status]="task().status">
       <div class="task-heading">
         <div>
           <strong>{{ task().fileName }}</strong>
@@ -174,7 +174,24 @@ import { CaptureWorkbenchStore } from '../../services/capture-workbench-store/ca
       }
 
       @if (task().result) {
-        <pre class="result-preview">{{ store.renderedResult(task()) }}</pre>
+        <pre class="result-preview" data-testid="capture-result">{{ store.renderedResult(task()) }}</pre>
+        <dl class="result-provenance" data-testid="capture-provenance">
+          <div
+            data-testid="capture-extraction-provenance"
+            [attr.data-engine]="task().result?.extractionEngine?.engine"
+            [attr.data-model]="task().result?.extractionEngine?.model"
+            [attr.data-device]="task().result?.extractionEngine?.device"
+            [attr.data-digest]="task().result?.extractionEngine?.digest"
+          >
+            <dt>OCR</dt>
+            <dd>
+              {{ task().result?.extractionEngine?.engine }} ·
+              {{ task().result?.extractionEngine?.model }} ·
+              {{ task().result?.extractionEngine?.device }} ·
+              {{ task().result?.extractionEngine?.digest }}
+            </dd>
+          </div>
+        </dl>
         <div class="task-actions">
           <button
             type="button"
@@ -200,7 +217,14 @@ import { CaptureWorkbenchStore } from '../../services/capture-workbench-store/ca
             This data is diagnostic only. It was not emitted as a completed
             capture document.
           </p>
-          <pre>{{ task().raw?.sourceText }}</pre>
+          <pre data-testid="capture-raw">{{ task().raw?.sourceText }}</pre>
+          <ol class="raw-segments" data-testid="capture-raw-segments">
+            @for (segment of task().raw?.segments ?? []; track segment.segmentId) {
+              <li data-testid="capture-raw-segment" [attr.data-segment-id]="segment.segmentId" [attr.data-order]="segment.order" [attr.data-locator-kind]="segment.locator.kind" [attr.data-page]="segment.locator.kind === 'page' ? segment.locator.page : null" [attr.data-start-ms]="segment.locator.kind === 'time' ? segment.locator.startMs : null" [attr.data-end-ms]="segment.locator.kind === 'time' ? segment.locator.endMs : null">
+                {{ segment.text }}
+              </li>
+            }
+          </ol>
           <button
             type="button"
             class="secondary"

@@ -7,6 +7,7 @@ asset instead of substituting deterministic content.
 
 from __future__ import annotations
 
+import ctypes
 import hashlib
 import importlib.metadata
 import importlib.util
@@ -25,7 +26,7 @@ WINDOWSML_REQUIRED_MODEL_FILES = (
     "det/inference.yml",
     "rec/inference.onnx",
     "rec/inference.yml",
-    "rec/ppocr_keys_v1.txt",
+    "rec/ppocrv6_dict.txt",
     "pipeline.json",
 )
 WHISPER_REQUIRED_FILES = (
@@ -33,6 +34,26 @@ WHISPER_REQUIRED_FILES = (
     "model.bin",
     "tokenizer.json",
 )
+LOAD_LIBRARY_SEARCH_SYSTEM32 = 0x00000800
+
+
+def _windows_cuda_device_count() -> int | None:
+    if sys.platform != "win32":
+        return None
+    try:
+        driver = ctypes.WinDLL("nvcuda.dll", winmode=LOAD_LIBRARY_SEARCH_SYSTEM32)
+        driver.cuInit.argtypes = [ctypes.c_uint]
+        driver.cuInit.restype = ctypes.c_int
+        if driver.cuInit(0) != 0:
+            return 0
+        count = ctypes.c_int()
+        driver.cuDeviceGetCount.argtypes = [ctypes.POINTER(ctypes.c_int)]
+        driver.cuDeviceGetCount.restype = ctypes.c_int
+        if driver.cuDeviceGetCount(ctypes.byref(count)) != 0:
+            return 0
+        return max(0, count.value)
+    except (AttributeError, OSError):
+        return 0
 
 
 class EngineRuntimeUnavailableError(RuntimeError):
@@ -137,16 +158,22 @@ class WindowsMLOcrAdapter:
         device_id: int = 0,
         pipeline_factory: Callable[..., Any] | None = None,
         provider_resolver: Callable[[], list[str]] | None = None,
+        stage_reporter: Callable[[str], None] | None = None,
     ) -> None:
         self.model_dir = model_dir
         self.device_id = device_id
         self._pipeline_factory = pipeline_factory
         self._provider_resolver = provider_resolver
+        self._stage_reporter = stage_reporter
         self._pipeline: Any | None = None
         self._device = "windowsml-dml"
         self._warning: str | None = None
         self._model_digest: str | None = None
         self._lock = Lock()
+
+    def _report_stage(self, stage: str) -> None:
+        if self._stage_reporter is not None:
+            self._stage_reporter(stage)
 
     def probe(self) -> EngineProbe:
         missing_modules = [
@@ -207,13 +234,22 @@ class WindowsMLOcrAdapter:
             return self._extract_png_locked(image_png)
 
     def _extract_png_locked(self, image_png: bytes) -> OcrTextResult:
+        self._report_stage("ocr-probe-start")
         probe = self.probe()
         if not probe.ready:
             raise EngineRuntimeUnavailableError(probe.detail)
+        self._report_stage("ocr-probe-complete")
+        failure_stage = "pipeline-create"
         try:
+            self._report_stage("ocr-pipeline-create-start")
             pipeline = self._get_pipeline()
+            self._report_stage("ocr-pipeline-create-complete")
+            failure_stage = "predict"
+            self._report_stage("ocr-predict-start")
             results = self._predict(pipeline, image_png)
+            self._report_stage("ocr-predict-complete")
         except Exception as error:
+            self._report_stage(f"ocr-{failure_stage}-failed-{type(error).__name__.lower()}")
             if self._device == "cpu":
                 raise
             raise EngineRuntimeUnavailableError(
@@ -255,6 +291,7 @@ class WindowsMLOcrAdapter:
         factory = self._pipeline_factory
         if factory is None:
             _install_offline_aistudio_stubs()
+            _install_offline_huggingface_stubs()
             from paddleocr import PaddleOCR
 
             factory = PaddleOCR
@@ -321,6 +358,49 @@ def _install_offline_aistudio_stubs() -> None:
     sys.modules["aistudio_sdk.snapshot_download"] = downloads
 
 
+def _install_offline_huggingface_stubs() -> None:
+    existing = sys.modules.get("huggingface_hub")
+    if getattr(existing, "_capture_workbench_offline_stub", False):
+        return
+    package = ModuleType("huggingface_hub")
+    package.__path__ = []
+    package._capture_workbench_offline_stub = True  # type: ignore[attr-defined]
+    logging = ModuleType("huggingface_hub.logging")
+    utils = ModuleType("huggingface_hub.utils")
+
+    class HfHubHTTPError(Exception):
+        pass
+
+    class RepositoryNotFoundError(HfHubHTTPError):
+        pass
+
+    class EntryNotFoundError(HfHubHTTPError):
+        pass
+
+    class RevisionNotFoundError(HfHubHTTPError):
+        pass
+
+    def set_verbosity_error() -> None:
+        return None
+
+    def snapshot_download(*_args: object, **_kwargs: object) -> None:
+        raise EngineRuntimeUnavailableError(
+            "Capture WindowsML OCR only uses checksum-verified local model assets."
+        )
+
+    logging.set_verbosity_error = set_verbosity_error  # type: ignore[attr-defined]
+    utils.HfHubHTTPError = HfHubHTTPError  # type: ignore[attr-defined]
+    utils.RepositoryNotFoundError = RepositoryNotFoundError  # type: ignore[attr-defined]
+    utils.EntryNotFoundError = EntryNotFoundError  # type: ignore[attr-defined]
+    utils.RevisionNotFoundError = RevisionNotFoundError  # type: ignore[attr-defined]
+    package.logging = logging  # type: ignore[attr-defined]
+    package.snapshot_download = snapshot_download  # type: ignore[attr-defined]
+    package.utils = utils  # type: ignore[attr-defined]
+    sys.modules["huggingface_hub"] = package
+    sys.modules["huggingface_hub.logging"] = logging
+    sys.modules["huggingface_hub.utils"] = utils
+
+
 class FasterWhisperAdapter:
     """Local-only faster-whisper adapter with bounded segments and CPU fallback."""
 
@@ -330,18 +410,32 @@ class FasterWhisperAdapter:
         *,
         primary_model: str,
         fallback_model: str,
+        primary_provenance_model: str | None = None,
+        fallback_provenance_model: str | None = None,
         prefer_gpu: bool,
         max_duration_ms: int,
         model_factory: Callable[..., Any] | None = None,
         cuda_count: Callable[[], int] | None = None,
+        stage_reporter: Callable[[str], None] | None = None,
     ) -> None:
         self.models_dir = models_dir
         self.primary_model = primary_model
         self.fallback_model = fallback_model
+        # Model directory names are intentionally independent from the
+        # lock-visible model identities.  Workers keep the stable
+        # ``primary``/``fallback`` layout while reporting the actual
+        # upstream model names in provenance.
+        self.primary_provenance_model = primary_provenance_model or primary_model
+        self.fallback_provenance_model = fallback_provenance_model or fallback_model
         self.prefer_gpu = prefer_gpu
         self.max_duration_ms = max_duration_ms
         self._model_factory = model_factory
         self._cuda_count = cuda_count
+        self._stage_reporter = stage_reporter
+
+    def _report_stage(self, stage: str) -> None:
+        if self._stage_reporter is not None:
+            self._stage_reporter(stage)
 
     def model_path(self, model: str) -> Path:
         return self.models_dir / model
@@ -382,17 +476,22 @@ class FasterWhisperAdapter:
     def transcribe(
         self, source_path: Path, *, should_cancel: Callable[[], bool]
     ) -> WhisperTranscriptionResult:
+        self._report_stage("assets-probe-start")
         probe = self.probe()
         if not probe.ready:
             raise EngineRuntimeUnavailableError(probe.detail)
+        self._report_stage("assets-probe-complete")
         if should_cancel():
             raise InterruptedError("Whisper transcription was cancelled.")
+        self._report_stage("device-probe-start")
         use_gpu = self.prefer_gpu and self._cuda_devices() > 0
+        self._report_stage("device-probe-complete")
         if use_gpu:
             try:
                 return self._run(
                     source_path,
                     model=self.primary_model,
+                    provenance_model=self.primary_provenance_model,
                     device="cuda",
                     compute_type="float16",
                     should_cancel=should_cancel,
@@ -405,6 +504,7 @@ class FasterWhisperAdapter:
                 return self._run(
                     source_path,
                     model=self.fallback_model,
+                    provenance_model=self.fallback_provenance_model,
                     device="cpu",
                     compute_type="int8",
                     should_cancel=should_cancel,
@@ -413,6 +513,7 @@ class FasterWhisperAdapter:
         return self._run(
             source_path,
             model=self.fallback_model,
+            provenance_model=self.fallback_provenance_model,
             device="cpu",
             compute_type="int8",
             should_cancel=should_cancel,
@@ -421,6 +522,9 @@ class FasterWhisperAdapter:
     def _cuda_devices(self) -> int:
         if self._cuda_count is not None:
             return self._cuda_count()
+        windows_count = _windows_cuda_device_count()
+        if windows_count is not None:
+            return windows_count
         try:
             import ctranslate2
 
@@ -433,6 +537,7 @@ class FasterWhisperAdapter:
         source_path: Path,
         *,
         model: str,
+        provenance_model: str,
         device: str,
         compute_type: str,
         should_cancel: Callable[[], bool],
@@ -444,10 +549,13 @@ class FasterWhisperAdapter:
 
             factory = WhisperModel
         model_root = self.model_path(model)
+        self._report_stage(f"model-load-{device}-start")
         runtime = factory(str(model_root), device=device, compute_type=compute_type)
+        self._report_stage(f"model-load-{device}-complete")
         raw_segments, info = runtime.transcribe(
             str(source_path), beam_size=5, vad_filter=True, word_timestamps=False
         )
+        self._report_stage("transcription-iteration-start")
         duration_ms = max(0, round(float(info.duration) * 1000))
         if duration_ms > self.max_duration_ms:
             raise ValueError("Audio duration exceeds the configured limit.")
@@ -464,11 +572,12 @@ class FasterWhisperAdapter:
             raise InterruptedError("Whisper transcription was cancelled.")
         if not segments:
             raise ValueError("Whisper produced no non-empty segments.")
+        self._report_stage("transcription-complete")
         return WhisperTranscriptionResult(
             segments=tuple(segments),
             duration_ms=duration_ms,
             device=device,
-            model=model,
+            model=provenance_model,
             digest=_directory_digest(model_root),
             warning=warning,
         )

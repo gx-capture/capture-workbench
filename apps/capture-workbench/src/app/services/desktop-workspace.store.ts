@@ -23,7 +23,6 @@ import {
   Subject,
   switchMap,
   take,
-  takeWhile,
   tap,
   throwError,
   timer,
@@ -46,6 +45,7 @@ type WorkspaceState = 'starting' | 'needs-setup' | 'ready' | 'error';
 
 interface ActiveCapture {
   captureId?: string;
+  rawPersisted: boolean;
   cancelRequested: boolean;
   cancelSent: boolean;
   lastStage?: string;
@@ -60,6 +60,13 @@ const CORE_REQUIREMENTS = new Set<CaptureRequirementId>([
   'windowsml-ocr',
   'ollama-runtime',
   'capture-ollama-model',
+]);
+
+const INSTALLATION_ORDER = new Map<CaptureRequirementId, number>([
+  ['windowsml-ocr', 0],
+  ['whisper-primary', 1],
+  ['ollama-runtime', 2],
+  ['capture-ollama-model', 3],
 ]);
 
 @Injectable({ providedIn: 'root' })
@@ -109,6 +116,16 @@ export class DesktopWorkspaceStore {
           || this.requestedRequirements().has(requirement.requirementId))
         && requirement.status !== 'ready',
     ),
+  );
+  readonly installableCoreRequirements = computed(() =>
+    this.coreMissing()
+      .filter((requirement) => requirement.status === 'installable')
+      .slice()
+      .sort(
+        (left, right) =>
+          (INSTALLATION_ORDER.get(left.requirementId) ?? Number.MAX_SAFE_INTEGER)
+          - (INSTALLATION_ORDER.get(right.requirementId) ?? Number.MAX_SAFE_INTEGER),
+      ),
   );
 
   private readonly runtime = inject(DesktopRuntimeClientService);
@@ -201,8 +218,10 @@ export class DesktopWorkspaceStore {
 
   installCoreRequirements(): void {
     if (!this.runtime.ready() || this.installing()) return;
+    const installable = this.installableCoreRequirements();
+    if (installable.length === 0) return;
     this.installing.set(true);
-    from(this.coreMissing()).pipe(
+    from(installable).pipe(
       concatMap((requirement) => this.installRequirement$(requirement)),
       finalize(() => {
         this.installing.set(false);
@@ -362,6 +381,7 @@ export class DesktopWorkspaceStore {
     return defer(() => {
       if (!this.runtime.ready() || this.activeCaptures.has(documentId)) return EMPTY;
       const active: ActiveCapture = {
+        rawPersisted: false,
         cancelRequested: false,
         cancelSent: false,
         cancelWake: new Subject<void>(),
@@ -406,6 +426,7 @@ export class DesktopWorkspaceStore {
       const terminalCommitted = hasCommittedTerminalData(document);
       const active: ActiveCapture = {
         captureId: document.captureId,
+        rawPersisted: false,
         cancelRequested: false,
         cancelSent: false,
         lastStage: document.stage,
@@ -458,6 +479,7 @@ export class DesktopWorkspaceStore {
     active: ActiveCapture,
   ): Observable<CaptureJobV1> {
     return of(initial).pipe(
+      switchMap((job) => this.persistRawDuringExtraction$(documentId, job, active)),
       tap((job) => active.lastStage = job.stage),
       expand((job) => {
         if (!isActiveJob(job)) return EMPTY;
@@ -493,7 +515,39 @@ export class DesktopWorkspaceStore {
           ),
         );
       }),
+      switchMap((next) => this.persistRawDuringExtraction$(documentId, next, active)),
       tap((next) => active.lastStage = next.stage),
+    );
+  }
+
+  private persistRawDuringExtraction$(
+    documentId: string,
+    job: CaptureJobV1,
+    active: ActiveCapture,
+  ): Observable<CaptureJobV1> {
+    if (
+      active.rawPersisted
+      || (job.stage !== 'structuring' && job.stage !== 'awaiting_structuring')
+    ) {
+      return of(job);
+    }
+    return this.runtime.getRaw(job.captureId).pipe(
+      switchMap((raw) => {
+        if (!raw) return of(job);
+        return this.library.updateCapture({
+          documentId,
+          captureId: job.captureId,
+          status: 'processing',
+          stage: job.stage,
+          raw,
+        }).pipe(
+          tap(() => {
+            active.rawPersisted = true;
+            this.reloadDocumentState(documentId);
+          }),
+          map(() => job),
+        );
+      }),
     );
   }
 
@@ -516,7 +570,7 @@ export class DesktopWorkspaceStore {
       status: 'persisting',
       stage: job.stage,
     }).pipe(
-      switchMap(() => this.persistTerminalData$(documentId, job)),
+      switchMap(() => this.persistTerminalData$(documentId, job, active)),
       tap(() => {
         active.terminalCommitted = true;
         active.terminalStatus = terminalLibraryStatus(job);
@@ -527,37 +581,72 @@ export class DesktopWorkspaceStore {
     );
   }
 
-  private persistTerminalData$(documentId: string, job: CaptureJobV1) {
+  private persistTerminalData$(documentId: string, job: CaptureJobV1, active: ActiveCapture) {
     if (job.status === 'completed') {
+      if (active.rawPersisted) {
+        return this.runtime.getResult(job.captureId).pipe(
+          switchMap((result) => this.library.updateCapture({
+            documentId,
+            captureId: job.captureId,
+            status: 'completed' as const,
+            stage: job.stage,
+            result,
+          })),
+        );
+      }
       return this.runtime.getRaw(job.captureId).pipe(
         switchMap((raw) => {
           if (!raw) {
             return throwError(() => new Error('Capture Runtime 未提供已完成工作的原始結果。'));
           }
           return this.runtime.getResult(job.captureId).pipe(
-            switchMap((result) => this.library.updateCapture({
-              documentId,
-              captureId: job.captureId,
-              status: 'completed',
-              stage: job.stage,
-              raw,
-              result,
-            })),
+            switchMap((result) => {
+              const update = {
+                documentId,
+                captureId: job.captureId,
+                status: 'completed' as const,
+                stage: job.stage,
+                result,
+                ...(active.rawPersisted ? {} : { raw }),
+              };
+              return this.library.updateCapture(update).pipe(
+                tap(() => {
+                  if (!active.rawPersisted) active.rawPersisted = true;
+                }),
+              );
+            }),
           );
         }),
       );
     }
     if (job.status === 'failed' || job.status === 'cancelled') {
-      return this.runtime.getRaw(job.captureId).pipe(
-        switchMap((raw) => this.library.updateCapture({
+      if (active.rawPersisted) {
+        return this.library.updateCapture({
           documentId,
           captureId: job.captureId,
           status: terminalLibraryStatus(job),
           stage: job.stage,
-          raw: raw ?? undefined,
           errorCode: job.error?.code,
           errorMessage: job.error?.message,
-        })),
+        });
+      }
+      return this.runtime.getRaw(job.captureId).pipe(
+        switchMap((raw) => {
+          const update = {
+            documentId,
+            captureId: job.captureId,
+            status: terminalLibraryStatus(job),
+            stage: job.stage,
+            errorCode: job.error?.code,
+            errorMessage: job.error?.message,
+            ...(active.rawPersisted || !raw ? {} : { raw }),
+          };
+          return this.library.updateCapture(update).pipe(
+            tap(() => {
+              if (raw) active.rawPersisted = true;
+            }),
+          );
+        }),
       );
     }
     return throwError(() => new Error(`Capture Runtime returned unsupported terminal status: ${job.status}`));
@@ -666,14 +755,16 @@ export class DesktopWorkspaceStore {
           switchMap(() => this.runtime.getInstallation(installation.installationId)),
         );
       }),
-      takeWhile(
-        (installation) => installation.status === 'queued' || installation.status === 'running',
-        true,
-      ),
       tap((installation) => this.activeInstallation.set(installation)),
+      filter(
+        (installation) => installation.status !== 'queued' && installation.status !== 'running',
+      ),
+      take(1),
       map((installation) => {
         if (installation.status !== 'completed') {
-          throw new Error(installation.error?.message ?? `${requirement.requirementId} 安裝失敗。`);
+          throw new Error(errorMessage(
+            installation.error?.message ?? `${requirement.requirementId} 安裝失敗。`,
+          ));
         }
         return installation;
       }),
@@ -738,5 +829,15 @@ function terminalStage(status?: DesktopLibraryStatus): string {
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  const message = error instanceof Error ? error.message : String(error);
+  return redactSensitiveMessage(message);
+}
+
+function redactSensitiveMessage(message: string): string {
+  return message
+    .replace(/Bearer\s+[^\s,;]+/giu, 'Bearer [redacted]')
+    .replace(
+      /(?:authorization|bearerToken|access_token|token)\s*[:=]\s*["']?[^"'\s,;}]+/giu,
+      (match) => `${match.slice(0, match.search(/[:=]/u) + 1)} [redacted]`,
+    );
 }

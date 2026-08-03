@@ -169,7 +169,7 @@ wheels = [
 
 [[package]]
 name = "capture-runtime"
-version = "0.3.8"
+version = "0.3.9"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
@@ -182,6 +182,7 @@ dependencies = [
 
 [package.optional-dependencies]
 whisper = [
+    { name = "ctranslate2" },
     { name = "faster-whisper" },
     { name = "huggingface-hub" },
 ]
@@ -205,6 +206,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "ctranslate2", marker = "extra == 'whisper'", specifier = "==4.8.1" },
     { name = "fastapi", specifier = ">=0.128.0,<1.0.0" },
     { name = "faster-whisper", marker = "extra == 'whisper'", specifier = "==1.2.1" },
     { name = "httpx", specifier = ">=0.28.0,<1.0.0" },

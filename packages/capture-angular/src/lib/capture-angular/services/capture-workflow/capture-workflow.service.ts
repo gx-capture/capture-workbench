@@ -617,11 +617,13 @@ export class CaptureWorkflowService {
           this.failTask(
             taskId,
             task.fileName,
-            job.error ?? {
-              code: 'capture_failed',
-              message: 'Capture failed.',
-              stage: job.stage,
-            },
+            job.error
+              ? this.helpers.redactFailure(job.error)
+              : {
+                  code: 'capture_failed',
+                  message: 'Capture failed.',
+                  stage: job.stage,
+                },
             raw,
           ),
         ),
@@ -791,17 +793,18 @@ export class CaptureWorkflowService {
     raw?: RawCaptureV1,
     stage?: CaptureTaskView['stage'],
   ): void {
+    const safeError = this.helpers.redactFailure(error);
     const failedTask = this.updateTask(taskId, {
       status: 'failed',
       ...(stage ? { stage } : {}),
-      error,
+      error: safeError,
       raw,
     });
     this.emitFailed({
       taskId,
       captureId: failedTask?.captureId,
       fileName,
-      error,
+      error: safeError,
       raw,
     });
   }
@@ -813,7 +816,7 @@ export class CaptureWorkflowService {
   ): void {
     this.updateTask(taskId, {
       status: 'reconciliation_required',
-      error,
+      error: this.helpers.redactFailure(error),
       raw,
     });
   }

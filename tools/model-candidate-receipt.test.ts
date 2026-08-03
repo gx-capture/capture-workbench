@@ -25,10 +25,10 @@ const commitSha = 'a'.repeat(40);
 const sourceLockSha256 = 'b'.repeat(64);
 const workflowPath = '.github/workflows/model-candidate.yml';
 const expected = {
-  artifactName: `capture-model-receipt-v0.3.8-${commitSha}`,
+  artifactName: `capture-model-receipt-v0.3.9-${commitSha}`,
   commitSha,
   sourceLockSha256,
-  version: '0.3.8',
+  version: '0.3.9',
   workflowPath,
 };
 
@@ -421,23 +421,37 @@ test('receipt creation binds exact source-lock fixture expectations', () => {
         kind: 'whisper',
         expectedDevice: 'cpu',
         expectedEngine: 'whisper-primary',
-        expectedModel: 'fallback',
-        expectedText: 'capture whisper fixture',
+        expectedModel: 'small',
+        expectedNormalizedOutputSha256: '3'.repeat(64),
         sha256: '2'.repeat(64),
       },
     ];
-    writeFileSync(sourceLockPath, canonicalJson({ fixtures }));
+    writeFileSync(
+      sourceLockPath,
+      canonicalJson({
+        fixtures,
+        lockVersion: '2',
+        releaseVersion: '0.3.9',
+        requirements: [
+          { requirementId: 'windowsml-ocr' },
+          { requirementId: 'whisper-primary' },
+        ],
+      }),
+    );
     const sourceLockDigest = createHash('sha256')
       .update(readFileSync(sourceLockPath))
       .digest('hex');
     const catalog = {
       catalogVersion: '2',
-      runtimeVersion: '0.3.8',
-      requirements: ['whisper-primary', 'windowsml-ocr'].map(
+      runtimeVersion: '0.3.9',
+      requirements: ['windowsml-ocr', 'whisper-primary'].map(
         (requirementId, index) => ({
           artifacts: [
             {
               bytes: 100 + index,
+              fileName: `capture-engine-${index}.zip`,
+              filesManifestSha256: String(index + 8).repeat(64),
+              role: 'worker',
               sha256: String(index + 6).repeat(64),
             },
           ],
@@ -458,29 +472,29 @@ test('receipt creation binds exact source-lock fixture expectations', () => {
     const requirements = [
       {
         assertionsPassed: true,
-        device: 'cpu',
-        digest: `sha256:${'4'.repeat(64)}`,
-        engine: 'whisper-primary',
-        fixtureSha256: '2'.repeat(64),
-        model: 'fallback',
-        normalizedTextSha256: createHash('sha256')
-          .update('capture whisper fixture')
-          .digest('hex'),
-        requirementId: 'whisper-primary',
-        segmentCount: 1,
-      },
-      {
-        assertionsPassed: true,
         device: 'windowsml-dml',
         digest: `sha256:${'5'.repeat(64)}`,
         engine: 'windowsml-ocr',
         fixtureSha256: '1'.repeat(64),
         model: 'pp-ocrv6-medium-windowsml',
-        normalizedTextSha256: createHash('sha256')
+        normalizedOutputSha256: createHash('sha256')
           .update('CAPTURE OCR FIXTURE')
           .digest('hex'),
         requirementId: 'windowsml-ocr',
         segmentCount: 1,
+        segmentsMonotonic: true,
+      },
+      {
+        assertionsPassed: true,
+        device: 'cpu',
+        digest: `sha256:${'4'.repeat(64)}`,
+        engine: 'whisper-primary',
+        fixtureSha256: '2'.repeat(64),
+        model: 'small',
+        normalizedOutputSha256: '3'.repeat(64),
+        requirementId: 'whisper-primary',
+        segmentCount: 1,
+        segmentsMonotonic: true,
       },
     ];
     const input = {
@@ -490,7 +504,7 @@ test('receipt creation binds exact source-lock fixture expectations', () => {
       output: outputPath,
       runId: '23',
       sourceLock: sourceLockPath,
-      version: '0.3.8',
+      version: '0.3.9',
       workflowId: '17',
       workflowPath,
     };
@@ -528,11 +542,15 @@ test('receipt creation binds exact source-lock fixture expectations', () => {
     const workerDrift = structuredClone(catalog);
     workerDrift.requirements[0].artifacts[0] = {
       bytes: 999,
+      fileName: 'capture-engine-drift.zip',
+      filesManifestSha256: '9'.repeat(64),
+      role: 'worker',
       sha256: '9'.repeat(64),
     };
     writeFileSync(catalogPath, canonicalJson(workerDrift));
-    assert.doesNotThrow(() =>
+    assert.throws(() =>
       assertCatalogMatchesReceipt(outputPath, catalogPath),
+      /model bindings do not match the trusted model candidate/u,
     );
 
     for (const mismatch of [
@@ -572,19 +590,35 @@ test('receipt content cannot override server metadata or source lock', () => {
         entryCount: 1,
         extractedBytes: 1,
         manifestSha256: 'f'.repeat(64),
-        requirementId: 'whisper-primary',
+        requirementId: 'windowsml-ocr',
       },
       {
         entryCount: 1,
         extractedBytes: 1,
         manifestSha256: '1'.repeat(64),
+        requirementId: 'whisper-primary',
+      },
+    ],
+    workerArtifacts: [
+      {
+        bytes: 100,
+        fileName: 'capture-engine-ocr.zip',
+        filesManifestSha256: '2'.repeat(64),
         requirementId: 'windowsml-ocr',
+        sha256: '3'.repeat(64),
+      },
+      {
+        bytes: 101,
+        fileName: 'capture-engine-whisper.zip',
+        filesManifestSha256: '4'.repeat(64),
+        requirementId: 'whisper-primary',
+        sha256: '5'.repeat(64),
       },
     ],
     receiptVersion: '1',
     runId: 23,
     sourceLockSha256,
-    version: '0.3.8',
+    version: '0.3.9',
     workflowId: 17,
     workflowPath,
   };

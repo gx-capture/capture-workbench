@@ -14,8 +14,10 @@ import tempfile
 import unicodedata
 import zipfile
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path, PurePosixPath
 from typing import Protocol
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 import httpx
@@ -32,9 +34,12 @@ from capture_runtime.engine_catalog import (
     canonical_json_bytes,
 )
 from capture_runtime.worker_client import InstalledEngine, WorkerClient, WorkerProbeResult
+from capture_runtime.worker_process import WorkerExecutionError
 
 MAX_ARCHIVE_FILES = 4096
-MAX_SINGLE_EXTRACTED_FILE_BYTES = 512 * 1024 * 1024
+# A pinned Whisper primary model is larger than the worker/archive guard but
+# remains bounded below the direct-model aggregate limit.
+MAX_SINGLE_EXTRACTED_FILE_BYTES = 2 * 1024 * 1024 * 1024
 MAX_TOTAL_EXTRACTED_BYTES = 2 * 1024 * 1024 * 1024
 MAX_COMPRESSION_RATIO = 200
 FILES_MANIFEST_NAME = "files-manifest.json"
@@ -47,6 +52,41 @@ WINDOWS_RESERVED_DEVICE_BASENAMES = frozenset(
     | {f"COM{index}" for index in range(1, 10)}
     | {f"LPT{index}" for index in range(1, 10)}
 )
+
+_SMOKE_WORKER_MIRROR_OPT_IN = "CAPTURE_SMOKE_WORKER_MIRROR_OPT_IN"
+_SMOKE_WORKER_MIRROR_URL = "CAPTURE_SMOKE_WORKER_MIRROR_URL"
+
+
+def _smoke_worker_mirror_url(environ: dict[str, str] | None = None) -> str | None:
+    """Resolve the intentionally narrow pre-release worker mirror override.
+
+    The production catalog remains immutable and model downloads always use the
+    catalog's HTTPS URLs.  This opt-in exists solely so the local packaged smoke
+    can serve the exact worker bytes before the GitHub release is published.
+    """
+
+    source = os.environ if environ is None else environ
+    if source.get(_SMOKE_WORKER_MIRROR_OPT_IN, "").strip() != "1":
+        return None
+    raw = source.get(_SMOKE_WORKER_MIRROR_URL, "").strip()
+    try:
+        parsed = urlsplit(raw)
+        port = parsed.port
+    except ValueError as error:
+        raise EngineInstallationError("smoke worker mirror URL is invalid") from error
+    if (
+        parsed.scheme != "http"
+        or parsed.hostname != "127.0.0.1"
+        or port is None
+        or not 1 <= port <= 65535
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or parsed.path not in {"", "/"}
+    ):
+        raise EngineInstallationError("smoke worker mirror must be a numeric loopback HTTP origin")
+    return f"http://127.0.0.1:{port}"
 
 
 class EngineInstallationError(RuntimeError):
@@ -190,12 +230,8 @@ class HttpModelFileDownloader:
         cancel_event: asyncio.Event,
         progress: Callable[[int], None],
     ) -> None:
-        if descriptor.bytes > MAX_SINGLE_EXTRACTED_FILE_BYTES and not (
-            descriptor.kind in {"source", "derived"} and descriptor.path.startswith("model/")
-        ):
-            raise EngineInstallationError(
-                "only checksum-pinned source/derived model files may exceed 512 MiB"
-            )
+        if descriptor.bytes > MAX_SINGLE_EXTRACTED_FILE_BYTES:
+            raise EngineInstallationError("direct model file exceeds the 2 GiB single-file limit")
         last_error: BaseException | None = None
         for attempt, delay in enumerate(self._retry_delays):
             last_error = None
@@ -264,6 +300,7 @@ class HttpModelFileDownloader:
                         "GET",
                         current,
                         follow_redirects=False,
+                        headers={"Accept-Encoding": "identity"},
                     ) as response:
                         if 300 <= response.status_code < 400:
                             if redirect_count == MAX_DIRECT_MODEL_REDIRECTS:
@@ -598,10 +635,10 @@ def verify_direct_model_files(
             raise EngineInstallationError("installed direct model file is unsafe")
         if path.stat().st_size != item.bytes or sha256_file(path) != item.sha256:
             raise EngineInstallationError("installed direct model file checksum changed")
-        if item.bytes > MAX_SINGLE_EXTRACTED_FILE_BYTES and not (
-            item.kind in {"source", "derived"} and relative.startswith("model/")
-        ):
-            raise EngineInstallationError("installed direct file exceeds role-aware size limit")
+        if item.bytes > MAX_SINGLE_EXTRACTED_FILE_BYTES:
+            raise EngineInstallationError(
+                "installed direct file exceeds the 2 GiB single-file limit"
+            )
         total += item.bytes
         if total > MAX_TOTAL_EXTRACTED_BYTES:
             raise EngineInstallationError("installed direct models exceed aggregate limit")
@@ -669,6 +706,7 @@ class EngineInstallationManager:
         self.worker_client = worker_client
         self.downloader = downloader or HttpArtifactDownloader()
         self.model_downloader = model_downloader or HttpModelFileDownloader()
+        self._smoke_worker_mirror_url = _smoke_worker_mirror_url()
         self._locks: dict[str, asyncio.Lock] = {}
 
     def requirement(self, requirement_id: str) -> EngineRequirementDescriptor:
@@ -776,6 +814,7 @@ class EngineInstallationManager:
         new_version = (
             requirement_root / "versions" / f".{requirement.artifact_version}.{uuid4().hex}"
         )
+        previous_version = requirement_root / f".previous-{uuid4().hex}"
         staging.mkdir(parents=True)
         new_version.parent.mkdir(parents=True, exist_ok=True)
         activated = False
@@ -787,8 +826,19 @@ class EngineInstallationManager:
             def worker_progress(copied: int) -> None:
                 report_progress(0.25 * (copied / worker_descriptor.bytes))
 
+            # Keep the catalog descriptor (and therefore all integrity checks)
+            # untouched. Only the transport URL is mapped for the explicit local
+            # smoke opt-in; model delivery continues to use its locked HTTPS URLs.
+            download_descriptor = (
+                replace(
+                    worker_descriptor,
+                    url=f"{self._smoke_worker_mirror_url}/{worker_descriptor.file_name}",
+                )
+                if self._smoke_worker_mirror_url is not None
+                else worker_descriptor
+            )
             await self.downloader.download(
-                worker_descriptor,
+                download_descriptor,
                 worker_archive,
                 cancel_event=cancel_event,
                 progress=worker_progress,
@@ -807,11 +857,20 @@ class EngineInstallationManager:
                 ),
                 model_dir=new_version / "model" / model_descriptor.entry_point,
             )
-            code_probe = await self.worker_client.probe(
-                probe_engine,
-                include_model=False,
-                options=probe_options,
-            )
+            try:
+                code_probe = await self.worker_client.probe(
+                    probe_engine,
+                    include_model=False,
+                    options=probe_options,
+                )
+            except asyncio.CancelledError:
+                raise
+            except WorkerExecutionError as error:
+                raise EngineInstallationError(
+                    f"engine worker code probe failed: {error}"
+                ) from error
+            except Exception as error:
+                raise EngineInstallationError("engine worker code probe failed") from error
             if not code_probe.code_ready:
                 raise EngineInstallationError(
                     f"engine worker code probe failed: {code_probe.detail}"
@@ -866,9 +925,6 @@ class EngineInstallationManager:
                 raise EngineInstallationError(f"engine post-install probe failed: {probe.detail}")
             if cancel_event.is_set():
                 raise asyncio.CancelledError
-            if version.exists():
-                shutil.rmtree(version)
-            os.replace(new_version, version)
             state = ActiveEngineState(
                 requirement_id=requirement.requirement_id,
                 artifact_version=requirement.artifact_version,
@@ -884,7 +940,18 @@ class EngineInstallationManager:
                     ActivatedArtifact("model", model_descriptor.manifest_sha256),
                 ),
             )
-            _atomic_write_json(requirement_root / "active.json", state.to_dict())
+            if version.exists():
+                os.replace(version, previous_version)
+            try:
+                os.replace(new_version, version)
+                _atomic_write_json(requirement_root / "active.json", state.to_dict())
+            except BaseException:
+                shutil.rmtree(version, ignore_errors=True)
+                if previous_version.exists():
+                    os.replace(previous_version, version)
+                raise
+            if previous_version.exists():
+                shutil.rmtree(previous_version, ignore_errors=True)
             activated = True
             report_progress(1)
             self._remove_inactive_versions(requirement_root, requirement.artifact_version)
@@ -892,6 +959,8 @@ class EngineInstallationManager:
             shutil.rmtree(staging, ignore_errors=True)
             if not activated:
                 shutil.rmtree(new_version, ignore_errors=True)
+                if previous_version.exists() and not version.exists():
+                    os.replace(previous_version, version)
 
     async def shutdown(self) -> None:
         await self.worker_client.shutdown()
@@ -968,6 +1037,9 @@ class EngineInstallationManager:
 
     @classmethod
     def _remove_stale_install_residue(cls, root: Path) -> None:
+        for item in root.glob(".previous-*"):
+            if item.name.startswith(".previous-") and len(item.name) == len(".previous-") + 32:
+                cls._remove_residue_path(item)
         staging = root / ".staging"
         versions = root / "versions"
         for directory, is_owned_name in (

@@ -18,6 +18,7 @@ from capture_runtime.worker_contracts import (
 )
 
 WorkerHandler = Callable[[WorkerRequest, threading.Event], dict[str, Any]]
+WorkerPreparer = Callable[[WorkerRequest], None]
 
 
 def _write(response: WorkerResponse) -> None:
@@ -39,7 +40,7 @@ def _failure(request_id: str, code: str, message: str, *, retryable: bool) -> No
     )
 
 
-def serve(handler: WorkerHandler) -> None:
+def serve(handler: WorkerHandler, *, prepare: WorkerPreparer | None = None) -> None:
     first = sys.stdin.buffer.readline(MAX_WORKER_INPUT_BYTES + 2)
     if not first or len(first) > MAX_WORKER_INPUT_BYTES or not first.endswith(b"\n"):
         _failure(
@@ -75,44 +76,60 @@ def serve(handler: WorkerHandler) -> None:
             )
         return
 
-    def run_and_exit() -> None:
+    if prepare is not None:
         try:
-            result = handler(request, cancellation)
-            _write(WorkerResponse(request.request_id, True, result, None))
-            code = 0
-        except InterruptedError:
-            _failure(
-                request.request_id,
-                "worker_cancelled",
-                "Worker operation was cancelled.",
-                retryable=True,
-            )
-            code = 0
+            prepare(request)
         except Exception:
             _failure(
                 request.request_id,
                 "worker_failed",
-                "Worker operation failed.",
+                "Worker preparation failed.",
                 retryable=True,
             )
-            code = 1
-        os._exit(code)
-
-    thread = threading.Thread(target=run_and_exit, name="capture-worker-run", daemon=False)
-    thread.start()
-    while thread.is_alive():
-        line = sys.stdin.buffer.readline(MAX_WORKER_INPUT_BYTES + 2)
-        if not line:
-            thread.join()
             return
-        try:
-            message = WorkerRequest.from_dict(json.loads(line.decode("utf-8")))
-        except (UnicodeDecodeError, json.JSONDecodeError, WorkerProtocolError):
-            cancellation.set()
-            continue
-        if message.operation == "cancel" and message.payload == {"requestId": request.request_id}:
-            cancellation.set()
-    thread.join()
+
+    def listen_for_cancellation() -> None:
+        while True:
+            line = sys.stdin.buffer.readline(MAX_WORKER_INPUT_BYTES + 2)
+            if not line:
+                return
+            try:
+                message = WorkerRequest.from_dict(json.loads(line.decode("utf-8")))
+            except (UnicodeDecodeError, json.JSONDecodeError, WorkerProtocolError):
+                cancellation.set()
+                continue
+            if message.operation == "cancel" and message.payload == {
+                "requestId": request.request_id
+            }:
+                cancellation.set()
+                return
+
+    threading.Thread(
+        target=listen_for_cancellation,
+        name="capture-worker-cancellation",
+        daemon=True,
+    ).start()
+    try:
+        result = handler(request, cancellation)
+        _write(WorkerResponse(request.request_id, True, result, None))
+        code = 0
+    except InterruptedError:
+        _failure(
+            request.request_id,
+            "worker_cancelled",
+            "Worker operation was cancelled.",
+            retryable=True,
+        )
+        code = 0
+    except Exception:
+        _failure(
+            request.request_id,
+            "worker_failed",
+            "Worker operation failed.",
+            retryable=True,
+        )
+        code = 1
+    os._exit(code)
 
 
 __all__ = ["serve"]

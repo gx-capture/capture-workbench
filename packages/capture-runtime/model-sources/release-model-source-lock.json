@@ -1,17 +1,400 @@
 {
   "approval": {
-    "approvedAt": null,
-    "approvedBy": null,
-    "blockers": [
-      "Approve exact PaddleX/PaddleOCR user-directed upstream download/use terms, canonical owners, and required attribution/NOTICE.",
-      "Approve and commit first-party OCR pipeline.json, license, NOTICE, and real fixture bytes, then bind them from a later source-lock commit to immutable raw gx-capture/capture-workbench URLs at the earlier full commit SHA; the lock cannot self-reference.",
-      "Confirm the redirected Whisper primary owner and approve user-directed upstream download/use plus required attribution/NOTICE for both pinned Whisper snapshots.",
-      "Approve first-party copying/redistribution of checksum-pinned real OCR and Whisper fixture/license bytes with normalized expected text and engine/model/device expectations."
-    ],
-    "status": "blocked"
+    "approvedAt": "2026-08-03T05:54:33Z",
+    "approvedBy": "guanxin",
+    "blockers": [],
+    "status": "approved"
   },
-  "fixtures": [],
-  "lockVersion": "1",
-  "releaseVersion": "0.3.8",
-  "requirements": []
+  "fixtures": [
+    {
+      "bytes": 2157,
+      "expectedDevice": "windowsml-dml",
+      "expectedEngine": "windowsml-ocr",
+      "expectedModel": "pp-ocrv6-medium-windowsml",
+      "expectedText": "CAPTURE OCR FIXTURE",
+      "id": "ocr-reference",
+      "kind": "ocr",
+      "licenseBytes": 1087,
+      "licensePath": "licenses/LICENSE.txt",
+      "licenseSha256": "20d8153042f147e730a2265e35e3862f8d1ad67b5f6804d44fb81e7dfbc5818b",
+      "licenseUrl": "https://raw.githubusercontent.com/gx-capture/capture-workbench/31821b241846878d917a60e638a4fce39aba418a/packages/capture-runtime/model-sources/commit-a/licenses/LICENSE.txt",
+      "mediaType": "image/png",
+      "noticeBytes": 303,
+      "noticePath": "licenses/NOTICE.txt",
+      "noticeSha256": "59b45e1fdb14fce45ba29a4a5200b0d26f97f7db11d42a8b8e2581bfa005d4ed",
+      "noticeUrl": "https://raw.githubusercontent.com/gx-capture/capture-workbench/31821b241846878d917a60e638a4fce39aba418a/packages/capture-runtime/model-sources/commit-a/licenses/NOTICE.txt",
+      "owner": "gx-capture/capture-workbench",
+      "pdfBytes": 2421,
+      "pdfSha256": "5eec85d2b2e98e06577cb5310d1b3037ca26f03d06d85a292ae78b68d4c57f30",
+      "pdfUrl": "https://raw.githubusercontent.com/gx-capture/capture-workbench/31821b241846878d917a60e638a4fce39aba418a/packages/capture-runtime/model-sources/commit-a/fixtures/ocr-scanned.pdf",
+      "redistributable": true,
+      "revision": "31821b241846878d917a60e638a4fce39aba418a",
+      "sha256": "7d61f4835837c4c387a0d46c4f21f7442fe22aab3f14f330b86f6857f5f3bc82",
+      "spdx": "MIT",
+      "url": "https://raw.githubusercontent.com/gx-capture/capture-workbench/31821b241846878d917a60e638a4fce39aba418a/packages/capture-runtime/model-sources/commit-a/fixtures/ocr-reference.png"
+    },
+    {
+      "bytes": 11005641,
+      "expectedDevice": "cpu",
+      "expectedEngine": "whisper-primary",
+      "expectedModel": "small",
+      "expectedNormalizedOutputSha256": "ffe38a0624220f4203cf9821fe50ed4a96581b2a44c9717aaee23db34be0bf45",
+      "expectedSegmentCount": {
+        "maximum": 10000,
+        "minimum": 1
+      },
+      "id": "whisper-private-reference",
+      "kind": "whisper",
+      "mediaType": "audio/mpeg",
+      "monotonicSegments": true,
+      "sha256": "7f844ad97129470ee0981effcf31f5d69d5556e18c452e9ff27d418bc32d1a5d"
+    }
+  ],
+  "lockVersion": "2",
+  "releaseVersion": "0.3.9",
+  "requirements": [
+    {
+      "artifactVersion": "0.3.9",
+      "entryPoint": "model",
+      "files": [
+        {
+          "bytes": 11376,
+          "derivation": null,
+          "kind": "license",
+          "licensePath": null,
+          "noticePath": null,
+          "owner": "PaddlePaddle/PaddleOCR",
+          "path": "licenses/LICENSE-PaddleOCR.txt",
+          "redirectHosts": [],
+          "revision": "b03f46425e8ff4442b268ce449e3eef758146cd4",
+          "sha256": "3840c5c0c61c294264d2dd77b8777be6ddd90121ef4e0e64abcd22edea581d6e",
+          "spdx": "Apache-2.0",
+          "url": "https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/b03f46425e8ff4442b268ce449e3eef758146cd4/LICENSE"
+        },
+        {
+          "bytes": 16089,
+          "derivation": null,
+          "kind": "notice",
+          "licensePath": null,
+          "noticePath": null,
+          "owner": "PaddlePaddle/PP-OCRv6_medium_det_onnx",
+          "path": "licenses/NOTICE-det.md",
+          "redirectHosts": [],
+          "revision": "61323801669c338b7891481ec7bac61ce31b576a",
+          "sha256": "3046e3aab0194a2291bb3941c93b980c2b3a938a24a5be88354968f6d6187ac8",
+          "spdx": "Apache-2.0",
+          "url": "https://huggingface.co/PaddlePaddle/PP-OCRv6_medium_det_onnx/raw/61323801669c338b7891481ec7bac61ce31b576a/README.md"
+        },
+        {
+          "bytes": 16587,
+          "derivation": null,
+          "kind": "notice",
+          "licensePath": null,
+          "noticePath": null,
+          "owner": "PaddlePaddle/PP-OCRv6_medium_rec_onnx",
+          "path": "licenses/NOTICE-rec.md",
+          "redirectHosts": [],
+          "revision": "50c7eacafc52fa7bcf4194e8cd08e46f8558504b",
+          "sha256": "ebce8d28436623ecab4952e24935aed86b3f8ecaf8f8736b92d5544f60fae1e9",
+          "spdx": "Apache-2.0",
+          "url": "https://huggingface.co/PaddlePaddle/PP-OCRv6_medium_rec_onnx/raw/50c7eacafc52fa7bcf4194e8cd08e46f8558504b/README.md"
+        },
+        {
+          "bytes": 62032837,
+          "derivation": null,
+          "kind": "source",
+          "licensePath": "licenses/LICENSE-PaddleOCR.txt",
+          "noticePath": "licenses/NOTICE-det.md",
+          "owner": "PaddlePaddle/PP-OCRv6_medium_det_onnx",
+          "path": "model/det/inference.onnx",
+          "redirectHosts": [
+            "us.aws.cdn.hf.co"
+          ],
+          "revision": "61323801669c338b7891481ec7bac61ce31b576a",
+          "sha256": "eb13b44b25bb36f89528b68720af8a61d9cf381176107f465db1757b65d086e1",
+          "spdx": "Apache-2.0",
+          "url": "https://huggingface.co/PaddlePaddle/PP-OCRv6_medium_det_onnx/resolve/61323801669c338b7891481ec7bac61ce31b576a/inference.onnx"
+        },
+        {
+          "bytes": 886,
+          "derivation": null,
+          "kind": "source",
+          "licensePath": "licenses/LICENSE-PaddleOCR.txt",
+          "noticePath": "licenses/NOTICE-det.md",
+          "owner": "PaddlePaddle/PP-OCRv6_medium_det_onnx",
+          "path": "model/det/inference.yml",
+          "redirectHosts": [],
+          "revision": "61323801669c338b7891481ec7bac61ce31b576a",
+          "sha256": "7298d5ead546584af2504d03355f881ac7a7bc0eb1e282d3e159277c1d0af871",
+          "spdx": "Apache-2.0",
+          "url": "https://huggingface.co/PaddlePaddle/PP-OCRv6_medium_det_onnx/raw/61323801669c338b7891481ec7bac61ce31b576a/inference.yml"
+        },
+        {
+          "bytes": 613,
+          "derivation": {
+            "algorithm": "capture-workbench-ocr-pipeline-v1",
+            "generator": "packages/capture-runtime/scripts/generate_commit_a_fixtures.py",
+            "inputs": [
+              "model/det/inference.onnx",
+              "model/rec/inference.onnx",
+              "model/rec/ppocrv6_dict.txt"
+            ],
+            "sourceCommit": "31821b241846878d917a60e638a4fce39aba418a",
+            "toolVersions": {
+              "generator": "commit-a-v1",
+              "python": "3.12.12"
+            }
+          },
+          "kind": "derived",
+          "licensePath": "licenses/LICENSE-PaddleOCR.txt",
+          "noticePath": "licenses/NOTICE-det.md",
+          "owner": "gx-capture/capture-workbench",
+          "path": "model/pipeline.json",
+          "redirectHosts": [],
+          "revision": "31821b241846878d917a60e638a4fce39aba418a",
+          "sha256": "21ba11c05440b36894262eab74c124d9ce55d64311ddb53497f99acdcc225606",
+          "spdx": "MIT",
+          "url": "https://raw.githubusercontent.com/gx-capture/capture-workbench/31821b241846878d917a60e638a4fce39aba418a/packages/capture-runtime/model-sources/commit-a/model/pipeline.json"
+        },
+        {
+          "bytes": 76554979,
+          "derivation": null,
+          "kind": "source",
+          "licensePath": "licenses/LICENSE-PaddleOCR.txt",
+          "noticePath": "licenses/NOTICE-rec.md",
+          "owner": "PaddlePaddle/PP-OCRv6_medium_rec_onnx",
+          "path": "model/rec/inference.onnx",
+          "redirectHosts": [
+            "us.aws.cdn.hf.co"
+          ],
+          "revision": "50c7eacafc52fa7bcf4194e8cd08e46f8558504b",
+          "sha256": "9c09abf0957f7968c7586464b7397b84ad2387a0497a351af40e9acc71b673ba",
+          "spdx": "Apache-2.0",
+          "url": "https://huggingface.co/PaddlePaddle/PP-OCRv6_medium_rec_onnx/resolve/50c7eacafc52fa7bcf4194e8cd08e46f8558504b/inference.onnx"
+        },
+        {
+          "bytes": 150580,
+          "derivation": null,
+          "kind": "source",
+          "licensePath": "licenses/LICENSE-PaddleOCR.txt",
+          "noticePath": "licenses/NOTICE-rec.md",
+          "owner": "PaddlePaddle/PP-OCRv6_medium_rec_onnx",
+          "path": "model/rec/inference.yml",
+          "redirectHosts": [],
+          "revision": "50c7eacafc52fa7bcf4194e8cd08e46f8558504b",
+          "sha256": "991b700facf5b50a7de193468207d5f4255b538dde0d312ae3b7c7a9b6873129",
+          "spdx": "Apache-2.0",
+          "url": "https://huggingface.co/PaddlePaddle/PP-OCRv6_medium_rec_onnx/raw/50c7eacafc52fa7bcf4194e8cd08e46f8558504b/inference.yml"
+        },
+        {
+          "bytes": 74947,
+          "derivation": null,
+          "kind": "source",
+          "licensePath": "licenses/LICENSE-PaddleOCR.txt",
+          "noticePath": "licenses/NOTICE-rec.md",
+          "owner": "PaddlePaddle/PaddleOCR",
+          "path": "model/rec/ppocrv6_dict.txt",
+          "redirectHosts": [],
+          "revision": "b03f46425e8ff4442b268ce449e3eef758146cd4",
+          "sha256": "b5f2bfe2bdd9448429e3e82b51c789775d9b42f2403d082b00662eb77e401c5d",
+          "spdx": "Apache-2.0",
+          "url": "https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/b03f46425e8ff4442b268ce449e3eef758146cd4/ppocr/utils/dict/ppocrv6_dict.txt"
+        },
+        {
+          "bytes": 2334,
+          "derivation": null,
+          "kind": "provenance",
+          "licensePath": "licenses/LICENSE-PaddleOCR.txt",
+          "noticePath": "licenses/NOTICE-det.md",
+          "owner": "gx-capture/capture-workbench",
+          "path": "provenance/commit-a.json",
+          "redirectHosts": [],
+          "revision": "31821b241846878d917a60e638a4fce39aba418a",
+          "sha256": "e4a152993dc505156f37504b89519492c2ceaadd9a9480f061676fc0df750a9f",
+          "spdx": "MIT",
+          "url": "https://raw.githubusercontent.com/gx-capture/capture-workbench/31821b241846878d917a60e638a4fce39aba418a/packages/capture-runtime/model-sources/commit-a/provenance/commit-a.json"
+        }
+      ],
+      "requirementId": "windowsml-ocr"
+    },
+    {
+      "artifactVersion": "0.3.9",
+      "entryPoint": "model",
+      "files": [
+        {
+          "bytes": 1063,
+          "derivation": null,
+          "kind": "license",
+          "licensePath": null,
+          "noticePath": null,
+          "owner": "openai/whisper",
+          "path": "licenses/LICENSE-Whisper.txt",
+          "redirectHosts": [],
+          "revision": "5f86d1d86363843179951550570367b37c5d6f78",
+          "sha256": "b5d65a59060e68c4ff940e1eddfa6f94b2d68fdf58ed7f4dd57721c997e35e9d",
+          "spdx": "MIT",
+          "url": "https://raw.githubusercontent.com/openai/whisper/5f86d1d86363843179951550570367b37c5d6f78/LICENSE"
+        },
+        {
+          "bytes": 1998,
+          "derivation": null,
+          "kind": "notice",
+          "licensePath": null,
+          "noticePath": null,
+          "owner": "Systran/faster-whisper-small",
+          "path": "licenses/NOTICE-fallback.md",
+          "redirectHosts": [],
+          "revision": "536b0662742c02347bc0e980a01041f333bce120",
+          "sha256": "329373481008c7c38654aff8ecdcf0163c211557cc7ba8e2ef6f2f84b4f75ec8",
+          "spdx": "MIT",
+          "url": "https://huggingface.co/Systran/faster-whisper-small/raw/536b0662742c02347bc0e980a01041f333bce120/README.md"
+        },
+        {
+          "bytes": 1445,
+          "derivation": null,
+          "kind": "notice",
+          "licensePath": null,
+          "noticePath": null,
+          "owner": "dropbox-dash/faster-whisper-large-v3-turbo",
+          "path": "licenses/NOTICE-primary.md",
+          "redirectHosts": [],
+          "revision": "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf",
+          "sha256": "b3068692728faed23580cce5cd569fc47ff76c690c032b2641ffd5554ea64d8f",
+          "spdx": "MIT",
+          "url": "https://huggingface.co/dropbox-dash/faster-whisper-large-v3-turbo/raw/0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf/README.md"
+        },
+        {
+          "bytes": 2370,
+          "derivation": null,
+          "kind": "source",
+          "licensePath": "licenses/LICENSE-Whisper.txt",
+          "noticePath": "licenses/NOTICE-fallback.md",
+          "owner": "Systran/faster-whisper-small",
+          "path": "model/fallback/config.json",
+          "redirectHosts": [],
+          "revision": "536b0662742c02347bc0e980a01041f333bce120",
+          "sha256": "b55496ac7940a7ae47d2c01eab40edfd8701feec1229d9cce3b40014383fb828",
+          "spdx": "MIT",
+          "url": "https://huggingface.co/Systran/faster-whisper-small/raw/536b0662742c02347bc0e980a01041f333bce120/config.json"
+        },
+        {
+          "bytes": 483546902,
+          "derivation": null,
+          "kind": "source",
+          "licensePath": "licenses/LICENSE-Whisper.txt",
+          "noticePath": "licenses/NOTICE-fallback.md",
+          "owner": "Systran/faster-whisper-small",
+          "path": "model/fallback/model.bin",
+          "redirectHosts": [
+            "us.aws.cdn.hf.co"
+          ],
+          "revision": "536b0662742c02347bc0e980a01041f333bce120",
+          "sha256": "3e305921506d8872816023e4c273e75d2419fb89b24da97b4fe7bce14170d671",
+          "spdx": "MIT",
+          "url": "https://huggingface.co/Systran/faster-whisper-small/resolve/536b0662742c02347bc0e980a01041f333bce120/model.bin"
+        },
+        {
+          "bytes": 2203239,
+          "derivation": null,
+          "kind": "source",
+          "licensePath": "licenses/LICENSE-Whisper.txt",
+          "noticePath": "licenses/NOTICE-fallback.md",
+          "owner": "Systran/faster-whisper-small",
+          "path": "model/fallback/tokenizer.json",
+          "redirectHosts": [],
+          "revision": "536b0662742c02347bc0e980a01041f333bce120",
+          "sha256": "fb7b63191e9bb045082c79fd742a3106a12c99513ab30df4a0d47fa6cb6fd0ab",
+          "spdx": "MIT",
+          "url": "https://huggingface.co/Systran/faster-whisper-small/raw/536b0662742c02347bc0e980a01041f333bce120/tokenizer.json"
+        },
+        {
+          "bytes": 459861,
+          "derivation": null,
+          "kind": "source",
+          "licensePath": "licenses/LICENSE-Whisper.txt",
+          "noticePath": "licenses/NOTICE-fallback.md",
+          "owner": "Systran/faster-whisper-small",
+          "path": "model/fallback/vocabulary.txt",
+          "redirectHosts": [],
+          "revision": "536b0662742c02347bc0e980a01041f333bce120",
+          "sha256": "34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913",
+          "spdx": "MIT",
+          "url": "https://huggingface.co/Systran/faster-whisper-small/raw/536b0662742c02347bc0e980a01041f333bce120/vocabulary.txt"
+        },
+        {
+          "bytes": 2263,
+          "derivation": null,
+          "kind": "source",
+          "licensePath": "licenses/LICENSE-Whisper.txt",
+          "noticePath": "licenses/NOTICE-primary.md",
+          "owner": "dropbox-dash/faster-whisper-large-v3-turbo",
+          "path": "model/primary/config.json",
+          "redirectHosts": [],
+          "revision": "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf",
+          "sha256": "b0253ea6c0d3bea6b1e19e91a02acfd3b53f4467362efcb5a3e6b16c9b3a9b7e",
+          "spdx": "MIT",
+          "url": "https://huggingface.co/dropbox-dash/faster-whisper-large-v3-turbo/raw/0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf/config.json"
+        },
+        {
+          "bytes": 1617884929,
+          "derivation": null,
+          "kind": "source",
+          "licensePath": "licenses/LICENSE-Whisper.txt",
+          "noticePath": "licenses/NOTICE-primary.md",
+          "owner": "dropbox-dash/faster-whisper-large-v3-turbo",
+          "path": "model/primary/model.bin",
+          "redirectHosts": [
+            "us.aws.cdn.hf.co"
+          ],
+          "revision": "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf",
+          "sha256": "e76620f83d5f5b69efd3d87e3dc180c1bd21df9fbebacfd4335e5e1efcc018da",
+          "spdx": "MIT",
+          "url": "https://huggingface.co/dropbox-dash/faster-whisper-large-v3-turbo/resolve/0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf/model.bin"
+        },
+        {
+          "bytes": 340,
+          "derivation": null,
+          "kind": "source",
+          "licensePath": "licenses/LICENSE-Whisper.txt",
+          "noticePath": "licenses/NOTICE-primary.md",
+          "owner": "dropbox-dash/faster-whisper-large-v3-turbo",
+          "path": "model/primary/preprocessor_config.json",
+          "redirectHosts": [],
+          "revision": "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf",
+          "sha256": "7ccc62c6f2765af1f3b46c00c9b5894426835a05021c8b9c01eecb6dfb542711",
+          "spdx": "MIT",
+          "url": "https://huggingface.co/dropbox-dash/faster-whisper-large-v3-turbo/raw/0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf/preprocessor_config.json"
+        },
+        {
+          "bytes": 2710337,
+          "derivation": null,
+          "kind": "source",
+          "licensePath": "licenses/LICENSE-Whisper.txt",
+          "noticePath": "licenses/NOTICE-primary.md",
+          "owner": "dropbox-dash/faster-whisper-large-v3-turbo",
+          "path": "model/primary/tokenizer.json",
+          "redirectHosts": [],
+          "revision": "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf",
+          "sha256": "297b13372ac43916285644fb9687add3cc62ee2a1adb60da3dc25cc94c1871fd",
+          "spdx": "MIT",
+          "url": "https://huggingface.co/dropbox-dash/faster-whisper-large-v3-turbo/raw/0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf/tokenizer.json"
+        },
+        {
+          "bytes": 1068114,
+          "derivation": null,
+          "kind": "source",
+          "licensePath": "licenses/LICENSE-Whisper.txt",
+          "noticePath": "licenses/NOTICE-primary.md",
+          "owner": "dropbox-dash/faster-whisper-large-v3-turbo",
+          "path": "model/primary/vocabulary.json",
+          "redirectHosts": [],
+          "revision": "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf",
+          "sha256": "c69260f2ab26d659b7c398f9a2b2b48ed0df16c3b47d7326782fd9cba71690c1",
+          "spdx": "MIT",
+          "url": "https://huggingface.co/dropbox-dash/faster-whisper-large-v3-turbo/raw/0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf/vocabulary.json"
+        }
+      ],
+      "requirementId": "whisper-primary"
+    }
+  ]
 }

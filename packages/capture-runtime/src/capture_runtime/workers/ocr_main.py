@@ -1,21 +1,81 @@
 """Separately packaged WindowsML OCR worker."""
 
+# Imports are deliberately staged below so the packaged worker can report the
+# exact failing import boundary before loading heavyweight model dependencies.
+# ruff: noqa: E402, I001
+
 from __future__ import annotations
 
+import sys
+import importlib
+import re
 import warnings
 from io import BytesIO
 from pathlib import Path
 from threading import Event
 from typing import Any
 
+STAGE_PREFIX = "capture-worker-stage:"
+
+
+def _report_stage(stage: str) -> None:
+    sys.stderr.write(f"{STAGE_PREFIX}{stage}\n")
+    sys.stderr.flush()
+
+
+_report_stage("worker-entry-start")
+
+_report_stage("python-import-pdfium-start")
 import pypdfium2 as pdfium  # type: ignore[import-untyped]
+
+_report_stage("python-import-pdfium-complete")
+
+_report_stage("python-import-pillow-start")
 from PIL import Image, ImageOps, UnidentifiedImageError
 
-from capture_runtime.engine_adapters import WindowsMLOcrAdapter
+_report_stage("python-import-pillow-complete")
+
+_report_stage("python-import-capture-runtime-start")
+from capture_runtime.engine_adapters import (
+    WindowsMLOcrAdapter,
+    _install_offline_aistudio_stubs,
+    _install_offline_huggingface_stubs,
+)
 from capture_runtime.worker_contracts import WorkerRequest
 from capture_runtime.workers.server import serve
 
+_report_stage("python-import-capture-runtime-complete")
+
 MAX_SOURCE_BYTES = 50 * 1024 * 1024
+
+
+def _import_ocr_runtime() -> None:
+    _install_offline_aistudio_stubs()
+    _install_offline_huggingface_stubs()
+    for module, stage in (
+        ("onnxruntime", "python-import-onnxruntime"),
+        ("paddleocr", "python-import-paddleocr"),
+    ):
+        _report_stage(f"{stage}-start")
+        try:
+            importlib.import_module(module)
+        except Exception as error:
+            detail = type(error).__name__.lower()
+            missing_name = getattr(error, "name", None)
+            if isinstance(missing_name, str) and re.fullmatch(r"[A-Za-z0-9_.]+", missing_name):
+                detail += "-missing-" + re.sub(r"[._]+", "-", missing_name.lower())
+            traceback_cursor = error.__traceback__
+            failure_module = None
+            while traceback_cursor is not None:
+                candidate = traceback_cursor.tb_frame.f_globals.get("__name__")
+                if isinstance(candidate, str) and re.fullmatch(r"[A-Za-z0-9_.]+", candidate):
+                    failure_module = candidate
+                traceback_cursor = traceback_cursor.tb_next
+            if failure_module is not None:
+                detail += "-in-" + re.sub(r"[._]+", "-", failure_module.lower())
+            _report_stage(f"{stage}-failed-{detail}")
+            raise
+        _report_stage(f"{stage}-complete")
 
 
 def _payload(request: WorkerRequest, expected: set[str]) -> dict[str, Any]:
@@ -165,6 +225,7 @@ def _run(request: WorkerRequest, cancellation: Event) -> dict[str, Any]:
     adapter = WindowsMLOcrAdapter(
         model_path,
         device_id=int(options.get("deviceId", 0)),
+        stage_reporter=_report_stage,
     )
     images: list[tuple[int, bytes]]
     if media_type == "application/pdf":
@@ -234,5 +295,10 @@ def handle(request: WorkerRequest, cancellation: Event) -> dict[str, Any]:
     raise ValueError("unsupported OCR operation")
 
 
+def prepare(request: WorkerRequest) -> None:
+    if request.operation == "run":
+        _import_ocr_runtime()
+
+
 if __name__ == "__main__":
-    serve(handle)
+    serve(handle, prepare=prepare)

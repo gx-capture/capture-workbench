@@ -82,19 +82,23 @@ export class DesktopLibraryService {
       {
         request: { sourcePath },
       },
-    );
+    ).pipe(map(sanitizeSummary));
   }
 
   list(query = '', status = '', signal?: AbortSignal): Observable<readonly DesktopLibrarySummary[]> {
-    return this.commands.invoke<readonly DesktopLibrarySummary[]>('library_list', {
-      request: { query, status },
-    }, signal);
+    return this.commands
+      .invoke<readonly DesktopLibrarySummary[]>('library_list', {
+        request: { query, status },
+      }, signal)
+      .pipe(map((items) => items.map(sanitizeSummary)));
   }
 
   get(documentId: string, signal?: AbortSignal): Observable<DesktopLibraryDetail> {
-    return this.commands.invoke<DesktopLibraryDetail>('library_get', {
-      request: { documentId },
-    }, signal);
+    return this.commands
+      .invoke<DesktopLibraryDetail>('library_get', {
+        request: { documentId },
+      }, signal)
+      .pipe(map(sanitizeDetail));
   }
 
   updateCapture(input: {
@@ -110,9 +114,11 @@ export class DesktopLibraryService {
     readonly recoveryCode?: string;
     readonly recoveryMessage?: string;
   }): Observable<DesktopLibrarySummary> {
-    return this.commands.invoke<DesktopLibrarySummary>('library_update_capture', {
-      update: input,
-    });
+    return this.commands
+      .invoke<DesktopLibrarySummary>('library_update_capture', {
+        update: input,
+      })
+      .pipe(map(sanitizeSummary));
   }
 
   export(documentId: string, format: 'json' | 'text'): Observable<DesktopLibraryExport> {
@@ -124,4 +130,35 @@ export class DesktopLibraryService {
   delete(documentId: string): Observable<void> {
     return this.commands.invoke<void>('library_delete', { request: { documentId } });
   }
+}
+
+function sanitizeSummary(summary: DesktopLibrarySummary): DesktopLibrarySummary {
+  return {
+    ...summary,
+    ...(summary.errorCode === undefined
+      ? {}
+      : { errorCode: redactSensitiveMessage(summary.errorCode) }),
+    ...(summary.errorMessage === undefined
+      ? {}
+      : { errorMessage: redactSensitiveMessage(summary.errorMessage) }),
+    ...(summary.recoveryCode === undefined
+      ? {}
+      : { recoveryCode: redactSensitiveMessage(summary.recoveryCode) }),
+    ...(summary.recoveryMessage === undefined
+      ? {}
+      : { recoveryMessage: redactSensitiveMessage(summary.recoveryMessage) }),
+  };
+}
+
+function sanitizeDetail(detail: DesktopLibraryDetail): DesktopLibraryDetail {
+  return sanitizeSummary(detail) as DesktopLibraryDetail;
+}
+
+function redactSensitiveMessage(value: string | undefined): string | undefined {
+  return value
+    ?.replace(/Bearer\s+[^\s,;]+/giu, 'Bearer [redacted]')
+    .replace(
+      /(?:authorization|bearerToken|access_token|token)\s*[:=]\s*["']?[^"'\s,;}]+/giu,
+      (match) => `${match.slice(0, match.search(/[:=]/u) + 1)} [redacted]`,
+    );
 }

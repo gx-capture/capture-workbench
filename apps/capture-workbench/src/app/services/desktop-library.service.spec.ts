@@ -38,11 +38,26 @@ describe('DesktopLibraryService native source import', () => {
     expect(imported).not.toHaveProperty('sourcePath');
     expect(imported.fileName).toBe('fixture.pdf');
   });
+
+  it('redacts credential-shaped persisted error fields before the UI sees them', async () => {
+    const { service } = configure({
+      errorMessage: 'Bearer secret-token',
+      recoveryMessage: 'token=secret-token',
+    });
+
+    const imported = await firstValueFrom(
+      service.createSource(String.raw`C:\private\scan.png`),
+    );
+
+    expect(imported.errorMessage).toBe('Bearer [redacted]');
+    expect(imported.recoveryMessage).toBe('token= [redacted]');
+    expect(JSON.stringify(imported)).not.toContain('secret-token');
+  });
 });
 
-function configure() {
+function configure(response: Partial<DesktopLibrarySummary> = {}) {
   const commands = {
-    invoke: vi.fn(() => of(summary)),
+    invoke: vi.fn(() => of({ ...summary, ...response })),
   };
   TestBed.configureTestingModule({
     providers: [

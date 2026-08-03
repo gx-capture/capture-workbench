@@ -1,7 +1,12 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 from pathlib import Path
-from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_submodules
+from PyInstaller.utils.hooks import (
+    collect_data_files,
+    collect_dynamic_libs,
+    collect_submodules,
+    copy_metadata,
+)
 
 root = Path(SPEC).resolve().parents[1]
 
@@ -11,7 +16,20 @@ hiddenimports = (
     + collect_submodules("onnxruntime")
     + ["PIL.BmpImagePlugin", "PIL.JpegImagePlugin", "PIL.PngImagePlugin", "PIL.WebPImagePlugin"]
 )
-datas = collect_data_files("paddleocr") + collect_data_files("paddlex")
+datas = (
+    collect_data_files("paddleocr")
+    + collect_data_files("paddlex")
+    + collect_data_files("pypdfium2")
+)
+for distribution in (
+    "imagesize",
+    "opencv-contrib-python",
+    "pyclipper",
+    "pypdfium2",
+    "python-bidi",
+    "shapely",
+):
+    datas += copy_metadata(distribution)
 binaries = (
     collect_dynamic_libs("onnxruntime")
     + collect_dynamic_libs("pypdfium2")
