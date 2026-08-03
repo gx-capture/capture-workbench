@@ -512,7 +512,6 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
     releaseBuilder,
     executableBuilder,
     ciWorkflow,
-    modelCandidateWorkflow,
     publisher,
     runtimeProject,
   ] = await Promise.all([
@@ -541,10 +540,6 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
       'utf8',
     ),
     readFile(join(workspaceRoot, '.github', 'workflows', 'ci.yml'), 'utf8'),
-    readFile(
-      join(workspaceRoot, '.github', 'workflows', 'model-candidate.yml'),
-      'utf8',
-    ),
     readFile(join(workspaceRoot, 'tools', 'publish-release.ts'), 'utf8'),
     readFile(
       join(workspaceRoot, 'packages', 'capture-runtime', 'project.json'),
@@ -554,7 +549,6 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   const actionReferences = [
     workflow,
     ciWorkflow,
-    modelCandidateWorkflow,
   ].flatMap((source) =>
     [...source.matchAll(/uses:\s*[^@\s]+@([^\s#]+)/gu)].map(
       (match) => match[1],
@@ -589,9 +583,6 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
     workflow.indexOf('Verify tag commit belongs to main') < installPnpmIndex,
   );
   assert.match(workflow, /git merge-base --is-ancestor/u);
-  const resolveReceiptIndex = workflow.indexOf(
-    'Resolve the exact trusted model candidate receipt',
-  );
   const exactMainCiIndex = workflow.indexOf(
     'Verify successful exact-commit main CI',
   );
@@ -602,33 +593,22 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   assert.ok(installNodeIndex < exactMainCiIndex);
   assert.ok(exactMainCiIndex < installUvIndex);
   assert.ok(installUvIndex < classifyModeIndex);
-  assert.ok(classifyModeIndex < resolveReceiptIndex);
+  const buildRuntimeIndex = workflow.indexOf(
+    'Build production runtime artifacts without ambient model stores',
+  );
+  assert.ok(classifyModeIndex < buildRuntimeIndex);
   assert.match(
     workflow,
-    /model-candidate-receipt\.ts verify-main-ci[\s\S]*--workflow-path "\.github\/workflows\/ci\.yml"[\s\S]*--branch "main"/u,
+    /verify-main-ci\.ts[\s\S]*--workflow-path "\.github\/workflows\/ci\.yml"[\s\S]*--branch "main"/u,
   );
   assert.match(
     workflow,
     /Classify canonical release model mode[\s\S]*capture-runtime:classify-release-model-mode[\s\S]*releaseMode[\s\S]*core-only[\s\S]*model-enabled/u,
   );
-  assert.match(
-    workflow,
-    /Resolve the exact trusted model candidate receipt\s*\r?\n\s+if: steps\.release-model-mode\.outputs\.mode == 'model-enabled'/u,
-  );
-  assert.match(workflow, /model-candidate-receipt\.ts resolve/u);
-  assert.match(workflow, /--max-age-hours "168"/u);
-  const buildRuntimeIndex = workflow.indexOf(
-    'Build production runtime artifacts without ambient model stores',
-  );
-  const verifyCatalogIndex = workflow.indexOf(
-    'Verify the rebuilt catalog matches the trusted model candidate',
-  );
   const buildInstallerIndex = workflow.indexOf(
     'Build Capture Workbench Windows installer',
   );
-  assert.ok(buildRuntimeIndex > resolveReceiptIndex);
-  assert.ok(verifyCatalogIndex > buildRuntimeIndex);
-  assert.ok(buildInstallerIndex > verifyCatalogIndex);
+  assert.ok(buildInstallerIndex > buildRuntimeIndex);
   const retainedReleaseStepNames = [
     'Verify tag commit belongs to main',
     'Install pnpm',
@@ -638,9 +618,7 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
     'Install workspace dependencies',
     'Verify synchronized versions',
     'Classify canonical release model mode',
-    'Resolve the exact trusted model candidate receipt',
     'Build production runtime artifacts without ambient model stores',
-    'Verify the rebuilt catalog matches the trusted model candidate',
     'Build Capture Workbench Windows installer with the verified release runtime',
     'Measure exact installed size',
     'Verify exact installed size and packaging budgets',
@@ -662,18 +640,7 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
       `Release step order is invalid around ${retainedReleaseStepNames[index]}`,
     );
   }
-  assert.match(
-    workflow,
-    /Verify the rebuilt catalog matches the trusted model candidate\s*\r?\n\s+if: steps\.release-model-mode\.outputs\.mode == 'model-enabled'/u,
-  );
-  assert.match(
-    workflow,
-    /model-candidate-receipt\.ts verify-catalog[\s\S]*--receipt[\s\S]*--catalog/u,
-  );
-  assert.match(
-    workflow,
-    /\$env:RELEASE_MODEL_MODE -eq 'model-enabled'[\s\S]*model-candidate-receipt\.json[\s\S]*\$env:RELEASE_MODEL_MODE -ne 'core-only'/u,
-  );
+  assert.doesNotMatch(workflow, /model-candidate\.yml|CAPTURE_MODEL_RECEIPT|trusted model candidate/u);
   const releaseRunScripts = workflowRunScripts(workflow);
   assert.doesNotMatch(releaseRunScripts.join('\n'), /\$\{\{/u);
   const normalizedReleaseRunLines = releaseRunScripts.flatMap((script) =>
@@ -733,37 +700,12 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   );
   assert.equal((workflow.match(/contents: write/gu) ?? []).length, 1);
   assert.equal((workflow.match(/packages: write/gu) ?? []).length, 1);
-  assert.match(modelCandidateWorkflow, /workflow_dispatch:/u);
-  assert.doesNotMatch(modelCandidateWorkflow, /\bpush:|\bpull_request:/u);
-  assert.match(
-    modelCandidateWorkflow,
-    /runs-on: \[self-hosted, Windows, X64, capture-directml\]/u,
-  );
-  assert.doesNotMatch(modelCandidateWorkflow, /runs-on: windows-latest/u);
-  assert.match(
-    modelCandidateWorkflow,
-    /permissions:\s*\r?\n\s+actions: read\s*\r?\n\s+contents: read/u,
-  );
-  assert.doesNotMatch(
-    modelCandidateWorkflow,
-    /contents: write|packages: write|capture-model-[^\s'"]*\.zip|download-artifact/u,
-  );
-  assert.match(
-    modelCandidateWorkflow,
-    /capture-runtime:verify-release-model-candidate/u,
-  );
-  assert.match(modelCandidateWorkflow, /model-candidate-receipt\.ts create/u);
-  assert.match(
-    modelCandidateWorkflow,
-    /Upload only the model candidate receipt[\s\S]*model-candidate-receipt\.json/u,
-  );
   assert.match(ciWorkflow, /capture-workbench:test/u);
   assert.match(ciWorkflow, /capture-workbench:production-bundle-check/u);
   assert.match(ciWorkflow, /branches: \[main, develop\]/u);
 
   const ciSteps = workflowNamedSteps(ciWorkflow);
   const releaseSteps = workflowNamedSteps(workflow);
-  const modelCandidateSteps = workflowNamedSteps(modelCandidateWorkflow);
   const installedSizeCommand =
     'node apps/capture-workbench-desktop/scripts/installed-deterministic-smoke.ts --measure-release-size';
   const ciInstallerIndex = ciSteps.findIndex(
@@ -936,7 +878,6 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   for (const [workflowName, steps] of [
     ['CI', ciSteps],
     ['Release', releaseSteps],
-    ['Model Candidate', modelCandidateSteps],
   ] as const) {
     const nativeBlockSteps = steps.filter(
       (step) =>
@@ -960,10 +901,6 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
 
   for (const ancestryStep of [
     requiredWorkflowStep(releaseSteps, 'Verify tag commit belongs to main'),
-    requiredWorkflowStep(
-      modelCandidateSteps,
-      'Verify candidate commit belongs to main',
-    ),
   ]) {
     assertNativeErrorPreferenceWindow(
       ancestryStep.script ?? '',
@@ -972,16 +909,6 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
       'if ($ancestorExitCode -ne 0) {',
     );
   }
-  assertNativeErrorPreferenceWindow(
-    requiredWorkflowStep(
-      modelCandidateSteps,
-      'Create the small commit-bound model candidate receipt',
-    ).script ?? '',
-    /^\$workflowId = gh api "repos\/\$env:GITHUB_REPOSITORY\/actions\/workflows\/model-candidate\.yml" --jq '\.id'$/u,
-    '$workflowLookupExitCode = $LASTEXITCODE',
-    'if ($workflowLookupExitCode -ne 0 -or -not $workflowId) {',
-  );
-
   const project = JSON.parse(runtimeProject);
   const bundleSizeReportCommand =
     project.targets['bundle-size-report'].options.command;

@@ -62,7 +62,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
-          node tools/model-candidate-receipt.ts verify-main-ci `
+          node tools/verify-main-ci.ts `
             --repository "$env:GITHUB_REPOSITORY" `
             --commit "$env:GITHUB_SHA" `
             --workflow-path ".github/workflows/ci.yml" `
@@ -99,40 +99,9 @@ jobs:
           }
           "mode=$($classification.releaseMode)" >> $env:GITHUB_OUTPUT
 
-      - name: Resolve the exact trusted model candidate receipt
-        if: steps.release-model-mode.outputs.mode == 'model-enabled'
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $PSNativeCommandUseErrorActionPreference = $true
-          $receiptDirectory = Join-Path $env:RUNNER_TEMP 'verified-model-candidate'
-          node tools/model-candidate-receipt.ts resolve `
-            --repository "$env:GITHUB_REPOSITORY" `
-            --version "0.3.9" `
-            --commit "$env:GITHUB_SHA" `
-            --source-lock packages/capture-runtime/model-sources/release-model-source-lock.json `
-            --workflow-path ".github/workflows/model-candidate.yml" `
-            --max-age-hours "168" `
-            --output-dir "$receiptDirectory"
-          "CAPTURE_MODEL_RECEIPT_PATH=$receiptDirectory" >> $env:GITHUB_ENV
-
       - name: Build production runtime artifacts without ambient model stores
         shell: pwsh
         run: pnpm nx run capture-runtime:build-release-artifacts
-
-      - name: Verify the rebuilt catalog matches the trusted model candidate
-        if: steps.release-model-mode.outputs.mode == 'model-enabled'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $PSNativeCommandUseErrorActionPreference = $true
-          $receiptPath = Join-Path $env:CAPTURE_MODEL_RECEIPT_PATH 'model-candidate-receipt.json'
-          $catalogPath = 'packages/capture-runtime/dist/release/capture-engine-catalog.json'
-          node tools/model-candidate-receipt.ts verify-catalog `
-            --receipt "$receiptPath" `
-            --catalog "$catalogPath"
 
       - name: Build Capture Workbench Windows installer with the verified release runtime
         shell: pwsh
@@ -180,20 +149,7 @@ jobs:
           $desktop = Join-Path $candidate 'desktop'
           New-Item -ItemType Directory -Path $runtime, $package, $desktop | Out-Null
           Copy-Item packages/capture-runtime/dist/release/* -Destination $runtime
-          if ($env:RELEASE_MODEL_MODE -eq 'model-enabled') {
-            $evidence = Join-Path $candidate 'evidence'
-            New-Item -ItemType Directory -Path $evidence | Out-Null
-            foreach ($receiptName in @(
-              'model-candidate-receipt.json',
-              'verified-model-candidate-receipt.json'
-            )) {
-              $receiptPath = Join-Path $env:CAPTURE_MODEL_RECEIPT_PATH $receiptName
-              if (-not (Test-Path -LiteralPath $receiptPath -PathType Leaf)) {
-                throw "Verified model candidate receipt evidence is incomplete."
-              }
-              Copy-Item -LiteralPath $receiptPath -Destination $evidence
-            }
-          } elseif ($env:RELEASE_MODEL_MODE -ne 'core-only') {
+          if ($env:RELEASE_MODEL_MODE -notin @('core-only', 'model-enabled')) {
             throw "Release model mode classification is invalid."
           }
           Copy-Item $packages[0].FullName -Destination $package

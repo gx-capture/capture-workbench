@@ -221,7 +221,7 @@
       "cache": false,
       "executor": "nx:run-commands",
       "metadata": {
-        "description": "Opt-in Windows Tauri/WebView release gate using the staged OCR and Whisper model catalog with project PDF/image fixtures and a private runner audio fixture."
+        "description": "Opt-in local Windows Tauri/WebView release gate using the staged OCR and Whisper model catalog with project PDF/image fixtures and a private local audio fixture."
       },
       "outputs": [
         "{workspaceRoot}/tmp/capture-workbench-desktop/real-media-model/real-media-model.json"

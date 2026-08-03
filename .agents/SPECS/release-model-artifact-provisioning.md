@@ -1,5 +1,14 @@
 # Tiered Release and Direct Model Delivery Specification
 
+## Superseding local-verification boundary (2026-08-03)
+
+Model-enabled verification is local-only. The operator runs the exact-SHA
+source-lock/model probe and Tauri/WebView media smoke on the Windows machine
+before creating a tag. There is no self-hosted runner, candidate workflow,
+Actions receipt, or remote model-probe rerun. The release workflow only builds
+and publishes the locally verified source tree; local evidence is redacted,
+reviewed, and removed after the run.
+
 ## Purpose
 
 Preserve the published `0.3.8` core-only release as immutable evidence and
@@ -16,8 +25,7 @@ and preserve explicit-consent, checksum-pinned model installation.
   API break, or consumer-owned OCR/Whisper/runtime implementation. Cert Prep
   integration starts only after published v0.3.9 bytes exist and remains
   uncommitted.
-- No tag, release, package mutation, or publication from the candidate
-  workflow.
+- No tag, release, package mutation, or publication from a model-probe command.
 - No mutation, asset upload, retarget, reuse, deletion, or retrofit of
   `v0.3.8`; it remains a core-only release with exactly nine public assets and
   an empty published engine catalog.
@@ -41,9 +49,9 @@ version must be the only runtime release identity used by production code and
 workflow execution. It must agree in the Python package/runtime constants and
 wire contract, Angular package metadata, Tauri/Cargo metadata, source lock,
 worker archive discovery, catalog, staging manifest validation, NSIS size
-report, candidate receipt, and tag workflow. The implementation must add
-regressions that reject a mismatched source lock, worker archive/catalog,
-receipt, staged manifest, or release tag. Historical v0.3.8 test fixtures and
+report, and tag workflow. The implementation must add regressions that reject
+a mismatched source lock, worker archive/catalog, staged manifest, or release
+tag. Historical v0.3.8 test fixtures and
 documentation can retain their literal historical version only when they are
 not candidate inputs.
 
@@ -54,13 +62,12 @@ mode input. It must be canonical sorted-key UTF-8 JSON, have the exact known
 top-level shape, and match the release and lock versions.
 
 - Core-only: `sourceLock.requirements` is exactly an empty array. The generated
-  catalog must also have `requirements: []`. Model-source approval, real
-  fixtures, a self-hosted `capture-directml` runner, and candidate receipt are
-  not required.
+  catalog must also have `requirements: []`. Model-source approval and real
+  fixtures are not required.
 - Model-enabled: `sourceLock.requirements` is non-empty. It must validate as the
   exact approved OCR/Whisper set; the generated catalog must contain the exact
-  two complete bound requirements; and the exact-commit candidate receipt is
-  mandatory.
+  two complete bound requirements; and the exact-SHA local model probe is
+  mandatory before tagging.
 - Invalid: the source lock or catalog is missing, malformed, non-canonical,
   version-drifted, partial, unknown, or internally inconsistent. Invalid input
   stops the release and is never treated as an empty requirements list.
@@ -175,36 +182,24 @@ Nx owns:
 
 Ordinary CI remains lightweight and does not download real weights.
 
-The model candidate workflow runs only on `workflow_dispatch`, on a full SHA
-reachable from `main`, with `contents: read` and `actions: read` only. It
-requires a self-hosted Windows x64 runner carrying the dedicated
-`capture-directml` label; `windows-latest` is forbidden because it cannot prove
-the product DirectML GPU lane. It uses no model cache or user secret, validates
-the approved lock, performs the opt-in real installation/probes, requires
-OCR `windowsml-ocr` / `pp-ocrv6-medium-windowsml` / `windowsml-dml`, requires
-the lock-selected Whisper primary/fallback provenance, compares normalized
-output exactly with each fixture expectation, and uploads a small receipt with
-version, commit, source-lock SHA, model-manifest summaries, and asserted probe
-results.
+The local model verification runs on Windows after the source lock is approved
+and before tagging. It uses the exact checked-out `main` SHA, validates the
+lock, performs checksum-pinned online model installation/probes, requires OCR
+`windowsml-ocr` / `pp-ocrv6-medium-windowsml` / `windowsml-dml`, requires the
+lock-selected Whisper provenance, compares normalized output exactly with each
+fixture expectation, and runs the Tauri/WebView three-media smoke. It writes
+only redacted local evidence and does not upload a receipt or model bytes.
 
-The tag workflow validates and classifies the lock before model receipt work.
-For core-only it skips receipt resolution and receipt evidence assembly. For
-model-enabled it resolves the receipt only through GitHub server metadata. It
-requires the trusted workflow path/ID, dispatch event, success, exact head SHA,
-fresh server timestamps, exactly one non-expired receipt artifact, and matching
-server artifact ID/digest. After rebuilding, it requires exact equality for
-runtime version, source-lock SHA-256, and ordered direct-model manifest
-summaries before the installer or handoff is assembled. The candidate catalog
-SHA remains audit evidence but is not compared across independent worker
-builds, whose PyInstaller/ZIP bytes are not guaranteed deterministic. It
-rejects replay, expiry, ambiguity, wrong workflow/event/SHA/version/source
-lock/model manifest, unsuccessful runs, and tamper. It does not rebuild, stage,
-upload, hand off, or publish model files/ZIPs.
+The tag workflow validates and classifies the lock, verifies exact-head main CI,
+rebuilds the lock-bound catalog/workers, and checks runtime/package/installer
+integrity. It does not resolve a candidate receipt or rerun model probes on a
+GitHub runner. The release candidate contains catalogued worker ZIPs/sidecars,
+but never model files, model ZIPs, or QA fixtures.
 
 The core-only release candidate contains core runtime assets, an empty canonical
 catalog, core-only NSIS, size report, and the package tarball handoff. A
-model-enabled candidate additionally contains catalogued worker ZIPs/sidecars
-and receipt evidence. Neither mode contains model files/ZIPs or QA fixtures.
+  model-enabled candidate additionally contains catalogued worker ZIPs/sidecars.
+  Neither mode contains model files/ZIPs or QA fixtures.
 The package tarball is published through GitHub Packages and is never a GitHub
 Release asset. Upload uses compression level 0 and short retention for this
 ordinary-sized handoff.
@@ -232,22 +227,21 @@ document deletion, and owned-process cleanup. The PDF and image cases require
 release gate. The audio case requires `whisper-primary`, non-empty segments
 with time locators, and the exact source-lock-selected primary/fallback
 model/device expectation. Its fixture paths and tokens must not appear in the
-receipt. This is distinct from the model-candidate worker proof and from the
-current PDF-only desktop smoke.
+  local evidence. This is distinct from the worker probe and from the current
+  PDF-only desktop smoke.
 
-No model-enabled candidate, receipt, desktop stage, or consumer installation
-may be claimed while the source lock remains blocked or the required runner is
-unavailable.
+No model-enabled candidate, desktop stage, or consumer installation may be
+claimed while the source lock remains blocked or the local probe is incomplete.
 
 ## Blocked-State Developer Alternative
 
 The only permitted pre-approval alternative is an opt-in developer-only local
 probe. It may inspect explicitly supplied local model and fixture paths and
 emit redacted SHA-256 observations, but it must be unable to alter the
-production catalog, installed engine state, desktop stage, candidate receipt,
-Release candidate, or consumer requirement status. Its evidence is explicitly
-non-release and non-consumer evidence. It cannot make a blocked source lock
-approved and does not authorize source-byte redistribution. The existing
+production catalog, installed engine state, desktop stage, Release candidate,
+or consumer requirement status. Its evidence is explicitly non-release and
+non-consumer evidence. It cannot make a blocked source lock approved and does
+not authorize source-byte redistribution. The existing
 ambient `CAPTURE_USER_MODEL_DIR` PDF diagnostic is not a production
 provisioning mechanism and must remain outside product/release targets.
 
@@ -272,9 +266,9 @@ all draft/public retries it lists remote asset names and requires:
 - A successor candidate cannot use `v0.3.8`, and one selected unused version
   is verified consistently across every release-execution input listed above.
 - The checked-in canonical empty-requirements lock produces a core-only empty
-  catalog and release without model approval or receipt evidence.
+  catalog and release without model approval or local probe evidence.
 - A non-empty blocked/unapproved lock fails before publication; an approved
-  non-empty lock still requires a fresh exact-commit receipt.
+  non-empty lock still requires a fresh exact-SHA local probe.
 - Missing, malformed, non-canonical, partial, or unknown lock/catalog
   requirements fail closed rather than selecting core-only.
 - Core-only runtime requirements clearly report OCR/Whisper unavailable, the UI
@@ -291,29 +285,23 @@ all draft/public retries it lists remote asset names and requires:
 - The next requirement-scoped install removes only validated hard-crash
   staging/temporary-version residue under the exclusive lock and preserves
   active/final versions and unrecognized paths.
-- Candidate receipt tests cover replay, expiry, ambiguity, wrong workflow/event
-  or SHA, failure conclusion, source-lock drift, artifact tamper, and
-  server-digest mismatch. Receipt ZIP inspection rejects traversal, directories,
-  duplicate/extra entries, non-canonical JSON, and decompressed content above
-  the receipt cap before writing a new output directory.
 - Publisher tests cover unexpected and duplicate draft assets plus unexpected
   public-retry assets; model ZIP names are rejected.
-- The real candidate job cannot run until an authorized self-hosted Windows x64
-  GPU runner is registered with the exact `capture-directml` label.
 - A complete approved next-version lock produces a locally built,
   checksum-pinned model-enabled catalog and candidate. Its real worker proof
   and the three-media Tauri/WebView proof both pass without an ambient model
   override, each recording only redacted evidence.
-- When approval, source bytes, or the runner are unavailable, the developer
-  probe remains isolated and cannot make the core-only product/consumer path
+- When approval, source bytes, or the local probe are unavailable, the release
+  remains blocked and cannot make the core-only product/consumer path
   installable or ready.
 
 ## v0.3.9 Commit A and Model-Enabled Release Acceptance Surface
 
 The v0.3.8 release remains immutable core-only evidence. The selected successor
-is v0.3.9. Commit A is complete and pushed; Commit B, exact-main candidate,
-tag, publication, and the following uncommitted Cert Prep consumer E2E are
-authorized only through the fail-closed sequence in this specification.
+is v0.3.9. Commit A is complete and pushed; Commit B, exact-main main CI,
+local model verification, tag, publication, and the following uncommitted Cert
+Prep consumer E2E are authorized only through the fail-closed sequence in this
+specification.
 
 Commit A's complete allowlist is:
 
@@ -348,7 +336,7 @@ OCR acceptance remains `pp-ocrv6-medium-windowsml` with
 `DmlExecutionProvider` is unavailable; DirectML initialization or inference
 failure fails closed and must not retry with a CPU-only pipeline. The iGPU
   route uses DirectML adapter 0 by default. Audio acceptance is a private
-  runner gate represented in the source lock only by bytes, SHA-256, segment
+  local gate represented in the source lock only by bytes, SHA-256, segment
   conditions, normalized output digest, and actual model/device provenance.
   Two identical production-worker preflights must freeze that expectation
   before final OCR/audio candidate and desktop gates run.

@@ -1,5 +1,16 @@
 # Tiered Release and Direct Model Delivery Decisions
 
+## Superseding Local-Verification Decision (2026-08-03)
+
+The self-hosted `capture-directml` runner and GitHub candidate-receipt gate are
+removed. Model-enabled release verification is performed on the local Windows
+machine before tagging, using the exact checked-out `main` SHA, the canonical
+source lock, checksum-pinned online model downloads, the real OCR/Whisper
+probe, and the Tauri/WebView media smoke. The GitHub release workflow does not
+re-run or attest to those model probes; it only builds and publishes the
+already locally verified source tree. The local evidence remains outside the
+release assets and must be deleted after verification.
+
 ## Scope and Evidence
 
 - Capture Workbench release commits contain only
@@ -14,7 +25,7 @@
   not add background prefetch, implicit installation, or a new endpoint.
 - The user approved the exact pinned OCR/Whisper upstream sources,
   attribution/NOTICE records, project-owned OCR fixture bytes, and private
-  runner audio gate. Commit A records the first-party derivation and
+  local audio gate. Commit A records the first-party derivation and
   redistribution surface. Model-enabled catalog generation remains fail
   closed until two identical production Whisper preflights freeze the private
   output digest and model/device pair in the source lock.
@@ -30,13 +41,11 @@ Release mode is derived only from a canonical checked-in source lock and the
 canonical catalog it generates:
 
 - `requirements: []` is core-only. The lock must still be present, canonical,
-  version-synchronized, and structurally valid, but model-source approval,
-  fixtures, a `capture-directml` runner, and a model-candidate receipt do not
-  gate this mode.
+  version-synchronized, and structurally valid, but model-source approval and
+  fixtures do not gate this mode.
 - A non-empty `requirements` list is model-enabled. It must be the exact
   approved OCR/Whisper set and satisfy every immutable source, license, NOTICE,
-  fixture, DirectML runner, fresh exact-commit receipt, and catalog-binding
-  gate.
+  fixture, local exact-SHA probe, and catalog-binding gate.
 - A missing, malformed, non-canonical, version-drifted, partial, or unknown
   requirements value is invalid. It is never reclassified as core-only.
 
@@ -112,38 +121,21 @@ own not-yet-existing commit.
   children and validated dot-prefixed temporary-version children, does not
   follow symlinks/reparse points, and never removes an active/final version.
 
-## Release and Receipt Trust
+## Release and Local Verification Trust
 
-For model-enabled releases, the pre-tag candidate workflow remains explicit
-`workflow_dispatch`, read-only, and non-publishing. Once the legal/source lock
-is approved, it
-performs the normal consent-equivalent direct downloads on an explicitly
-labeled self-hosted Windows x64 DirectML runner, verifies real OCR and Whisper
-fixtures, and uploads only a small canonical receipt. GitHub-hosted
-`windows-latest` does not prove the product DirectML GPU lane and is forbidden
-for this job.
+Before a model-enabled tag, the local Windows machine must be on the exact
+`main` commit and run the existing source-lock/version gates, checksum-pinned
+online model probe, and Tauri/WebView three-media smoke. The probe evidence is
+reviewed locally, contains only redacted digests/provenance, and is deleted
+after verification. It is not uploaded as an Actions artifact and does not
+enter the GitHub Release.
 
-The tag workflow first derives the release mode from the canonical checked-in
-lock. Core-only releases do not query or copy candidate-receipt evidence.
-Model-enabled releases grant `actions: read` to `build-candidate` and trust
-GitHub server-side metadata, not receipt claims:
-
-- checked-in candidate workflow path and stable workflow ID;
-- `workflow_dispatch`, successful conclusion, exact full head SHA and version;
-- exact source-lock SHA;
-- exactly one fresh, non-expired run and receipt artifact;
-- server run/artifact IDs and GitHub-reported artifact digest; and
-- no caller-provided URL, run ID, artifact ID, timestamp, or hash override.
-
-Replay, expiry, ambiguity, wrong workflow/event/SHA/version/lock, unsuccessful
-run, artifact tamper, or server-digest mismatch fails before candidate work.
-The tag workflow rebuilds workers/runtime, then requires the rebuilt catalog's
-exact runtime version, source-lock SHA, and ordered direct-model manifest
-summaries to equal the receipt. Candidate catalog SHA remains audit evidence;
-it is not a gate because independent PyInstaller/worker ZIP builds are not
-byte-deterministic. The workflow then builds the core-only NSIS/package and
-hands those ordinary release assets to `publish`; model files and model ZIPs
-are absent from the handoff.
+The tag workflow still derives the release mode from the canonical checked-in
+lock, verifies exact-head `main` CI, rebuilds the source-lock-bound catalog and
+workers, and checks package/runtime/installer integrity. It does not query a
+self-hosted runner, resolve a GitHub candidate receipt, or retry the model
+probe on a different machine. A failed local model probe stops the operator
+before the tag is created.
 
 ## Publisher Contract
 
@@ -167,13 +159,12 @@ names are never in the expected release set.
 
 ## Remaining Model-Enabled Blockers
 
-- Run the production Whisper worker twice against the exact runner-local
-  private fixture. Both privacy-safe evidence records must be identical before
-  freezing the normalized output SHA-256 and either
-  `large-v3-turbo`/`cuda` or `small`/`cpu` provenance.
-- Complete the local release gates and Commit B review, merge to `main`, then
-  register an ephemeral self-hosted Windows x64 runner with the exact
-  `capture-directml` label for the exact-main candidate workflow.
+- Run the production Whisper worker twice against the local private fixture.
+  Both privacy-safe evidence records must be identical before freezing the
+  normalized output SHA-256 and either `large-v3-turbo`/`cuda` or `small`/`cpu`
+  provenance.
+- Complete the local exact-SHA worker and Tauri/WebView media gates before
+  creating the v0.3.9 tag. No remote runner registration is required.
 
 These gates prevent tagging or publishing v0.3.9. The release path has no
 best-effort or core-only downgrade after a non-empty model source lock is
@@ -198,7 +189,7 @@ publish, or dispatch that successor.
 
 The successor must carry one coherent version through the package, Runtime
 constants/contracts, Tauri metadata, source lock, worker names, catalog,
-installer/report assertions, workflow receipt name/version, and tests. The
+installer/report assertions, workflow version, and tests. The
 current literal `0.3.8` values in the source-lock validator, Nx commands, and
 model-candidate/release workflows are release-specific evidence, not a basis
 for a successor candidate. Replace execution-path duplication with a verified
@@ -210,10 +201,10 @@ remain explicit historical data.
 The next locally built model-enabled candidate remains the existing direct-file
 delivery design: checksum-pinned worker ZIPs are Release assets, while model
 files are downloaded only after explicit consent from immutable approved source
-lock URLs. The candidate must prove the exact lock-derived catalog, real OCR
-and Whisper fixture output, and the DirectML/Whisper provenance before any tag
-workflow can accept its small receipt. Model bytes, model ZIPs, and real
-fixtures never enter a Release, package tarball, or Actions handoff.
+lock URLs. The local candidate must prove the exact lock-derived catalog, real
+OCR and Whisper fixture output, and the DirectML/Whisper provenance before the
+operator creates a tag. Model bytes, model ZIPs, and real fixtures never enter
+a Release or package tarball.
 
 The published desktop is additionally required to exercise the candidate
 through its Tauri/WebView flow with separate real scanned-PDF, image, and audio
@@ -227,17 +218,17 @@ release gate.
 
 ## Blocked-State Developer and Consumer Alternative
 
-Until the legal/source and runner blockers are resolved, the production and
-consumer answer is deliberately unavailable: the core-only catalog offers no
-install action and cannot begin an OCR/Whisper model download. Do not add a
-consumer URL, local-model environment override, sidecar shim, or automatic
-fallback to change that result.
+Until the legal/source and local verification blockers are resolved, the
+production and consumer answer is deliberately unavailable: the core-only
+catalog offers no install action and cannot begin an OCR/Whisper model
+download. Do not add a consumer URL, local-model environment override, sidecar
+shim, or automatic fallback to change that result.
 
 If local engineering evidence is needed before approval, the smallest safe
 alternative is a developer-only, non-release probe that accepts explicit local
 paths and records local SHA-256 observations. It must be opt-in, write its
 redacted output outside tracked release directories, be unable to generate a
-release catalog/receipt or stage the desktop runtime, and state
+release catalog or stage the desktop runtime, and state
 `developer-only; not an approved source lock or consumer installation` in its
 output. It may not use the production source-lock path, mutate `active.json`,
 or cause the UI to advertise a ready requirement. The existing
@@ -251,7 +242,8 @@ The v0.3.8 tag and its published assets are immutable core-only evidence. They
 are not repaired, retagged, republished, or used as a model-enabled candidate.
 The selected successor is v0.3.9 on
 `release/model-enabled-v0.3.9`. The user authorized the two-commit release,
-push, PR merge, exact-main candidate, tag, Release, package publication, and
+push, PR merge, exact-main main CI, local model verification, tag, Release,
+package publication, and
 subsequent uncommitted Cert Prep consumer verification, subject to every
 fail-closed gate in this decision.
 
@@ -275,7 +267,7 @@ not checked-in model bytes.
 OCR remains DirectML-first on the Cert Prep iGPU route. CPU-only execution is
 selected only when `DmlExecutionProvider` is absent. DirectML initialization or
 inference failure is fail-closed and must not trigger a CPU-only retry. The
-model-enabled audio proof is restricted to an authorized private Windows x64
-  runner and its private fixture; no private audio bytes, text, path, or license
-  URL is copied into this repository or its logs/reports. Cert Prep changes
-  remain uncommitted and are made only after published v0.3.9 bytes exist.
+model-enabled audio proof runs on the local Windows machine with its private
+fixture; no private audio bytes, text, path, or license URL is copied into this
+repository or its logs/reports. Cert Prep changes remain uncommitted and are
+made only after published v0.3.9 bytes exist.

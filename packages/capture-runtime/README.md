@@ -198,17 +198,14 @@ licenses/NOTICE files, bytes, hashes, derivation provenance, and real fixture
 expectations. The catalog embeds the resulting direct-file descriptors; only
 worker ZIPs remain release assets.
 
-An explicit model-candidate workflow runs real probes on an authorized
-self-hosted Windows x64 DirectML runner and uploads only a small commit-bound
-receipt. The tag workflow resolves that receipt through GitHub server-side
-workflow/run/artifact identity and digest metadata, then verifies the rebuilt
-catalog's exact runtime version, source-lock SHA, and ordered direct-model
-manifest bindings (independent worker ZIP bytes may differ), every worker
-archive/sidecar/checksum, core-only NSIS, installed size report, synchronized
-package integrity, and exact remote release asset-name set before publication.
-The package tarball is an Actions handoff and GitHub Packages artifact, never a
-GitHub Release asset. Model files and model ZIPs never enter the Actions
-handoff or GitHub Release.
+Before a model-enabled tag, the local Windows machine runs the exact-SHA real
+OCR/Whisper probes and Tauri/WebView three-media smoke against the canonical
+source lock. The tag workflow then verifies main CI, rebuilds the lock-bound
+catalog and worker archives, checks every checksum, core-only NSIS, installed
+size report, synchronized package integrity, and exact remote release
+asset-name set before publication. The package tarball is a GitHub Packages
+artifact, never a GitHub Release asset. Model files and model ZIPs never enter
+the GitHub Release.
 
 ## Host structuring
 

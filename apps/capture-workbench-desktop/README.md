@@ -69,14 +69,14 @@ and lock-selected Whisper provenance, proves UUID-scoped capture deletion, and
 checks its owned runtime process is gone. Its report always records
 `releaseGateSatisfied=false` and `consumerE2e=false`: it is not the pending
 Tauri/WebView scanned-PDF/image/audio acceptance harness and is not candidate
-receipt input.
+release evidence input.
 
 ## Opt-in real model-enabled Tauri/WebView gate
 
-`smoke-real-media-model` is the release-gated three-media harness. It launches
+`smoke-real-media-model` is the local release-gated three-media harness. It launches
 the packaged Tauri WebView with fresh app-data, performs consented catalog
 installation, imports the project-owned scanned PDF and image plus a private
-runner-provided audio fixture through the UI, and verifies raw/result,
+local audio fixture through the UI, and verifies raw/result,
 provenance, DirectML OCR, lock-selected Whisper segments, UUID-scoped deletion,
 and owned process cleanup. The report is redacted by construction and records
 `releaseGateSatisfied=true` and `consumerE2e=false`.

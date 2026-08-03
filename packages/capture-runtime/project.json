@@ -252,7 +252,7 @@
       "inputs": ["production"],
       "outputs": ["{projectRoot}/dist/candidate/model-probe-evidence.json"],
       "metadata": {
-        "description": "Opt-in release gate that performs checksum-pinned direct model downloads and real OCR/Whisper worker runs."
+        "description": "Opt-in local release gate that performs checksum-pinned direct model downloads and real OCR/Whisper worker runs."
       },
       "options": {
         "cwd": "packages/capture-runtime",

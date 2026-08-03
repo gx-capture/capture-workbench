@@ -20,9 +20,8 @@ published `v0.3.9` bytes and its final integration diff remains uncommitted.
       fixture represented only by its bytes, SHA-256, output/provenance
       conditions, and pending freeze fields.
 - [x] Add source-lock validation, checksum-pinned direct model delivery,
-      atomic activation rollback, version cohesion, real model candidate
-      receipt gates, model-enabled publisher inventory, and provider
-      regressions.
+      atomic activation rollback, version cohesion, model-enabled publisher
+      inventory, and provider regressions.
 - [x] Add the Tauri/WebView scanned-PDF, image, and private-audio smoke plus
       early raw OCR visibility, UUID-scoped deletion, bounded redacted
       evidence, and owned process/listener cleanup checks.
@@ -32,25 +31,28 @@ published `v0.3.9` bytes and its final integration diff remains uncommitted.
 
 ## Active release gates
 
-- [ ] Build the production workers and run the privacy-safe private Whisper
-      preflight twice from the exact pending source lock. Both canonical
-      evidence files must be identical and contain no text, path, token, or
-      license URL. Freeze only the observed `large-v3-turbo`/`cuda` or
+- [ ] On the local Windows machine, build the production workers and run the
+      privacy-safe private Whisper preflight twice from the exact source lock.
+      Both evidence files must be identical and contain no text, path, token,
+      or license URL. Freeze only the observed `large-v3-turbo`/`cuda` or
       `small`/`cpu` pair and normalized output SHA-256.
-- [ ] Approve the source lock with no blockers, then run source-lock,
+- [ ] Approve the source lock with no blockers, then run the local source-lock,
       production-environment, worker-boundary, release-version, package,
-      Cargo, desktop, and real OCR/audio candidate gates. A failed gate stops
-      before commit, tag, or publication.
+      Cargo, desktop, and real OCR/audio gates. A failed gate stops before tag
+      or publication.
 - [ ] Root-review the complete Commit B diff, explicitly stage only reviewed
       Capture Workbench paths, inspect the cached diff/tree, commit, and push
       `release/model-enabled-v0.3.9`.
 - [ ] Merge the reviewed PR to `main` and require the unique successful
       `.github/workflows/ci.yml` push run for the exact merge SHA.
-- [ ] Register one ephemeral Windows x64 runner with the exact
-      `capture-directml` label and runner-local private audio environment,
-      dispatch the exact-main model candidate, and accept only a fresh
-      commit/source-lock/catalog-bound receipt.
-- [ ] Create and push `v0.3.9` only after the candidate receipt and desktop
+- [ ] Confirm the local probe is running from the exact `main` SHA and retain
+      only redacted local evidence for review; no runner registration or
+      Actions receipt is required.
+      Verify: `git fetch origin main`, confirm `git rev-parse HEAD` equals
+      `git rev-parse origin/main`, then run
+      `pnpm nx run capture-runtime:verify-release-model-candidate` and
+      `pnpm nx run capture-workbench-desktop:smoke-real-media-model`.
+- [ ] Create and push `v0.3.9` only after the local worker probe and desktop
       three-media evidence pass. Verify the release publishes the core runtime,
       catalog/checksums, worker archives, NSIS installer, and
       `@gx-capture/capture-workbench@0.3.9`, with no model, model ZIP, fixture,
@@ -58,7 +60,7 @@ published `v0.3.9` bytes and its final integration diff remains uncommitted.
 - [ ] Update Cert Prep to the published package/runtime bytes, run fresh
       packaged scanned-PDF, image, and audio E2E plus v0.3.8 compatibility and
       unavailable-negative gates, and leave all Cert Prep changes uncommitted.
-- [ ] Remove the ephemeral runner, downloaded models, staging/app-data,
-      `.nx`, `dist/out/tmp`, Tauri `target`, Python caches, and generated apps.
-      Preserve existing `.venv` directories and the original private audio;
-      verify no owned Capture Workbench or Cert Prep process/listener remains.
+- [ ] Remove downloaded models, staging/app-data, `.nx`, `dist/out/tmp`,
+      Tauri `target`, Python caches, and generated apps. Preserve existing
+      `.venv` directories and the original private audio; verify no owned
+      Capture Workbench or Cert Prep process/listener remains.
