@@ -49,7 +49,10 @@ def _probe_request(*, options: object) -> WorkerRequest:
     )
 
 
-def test_worker_code_probe_accepts_prefer_gpu_install_option() -> None:
+def test_worker_code_probe_accepts_prefer_gpu_install_option(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(whisper_main.importlib.util, "find_spec", lambda _name: object())
     result = whisper_main._probe(_probe_request(options={"preferGpu": True}))
 
     assert result["ready"] is True
@@ -97,6 +100,7 @@ def _run_with_factory(
             )
 
     monkeypatch.setattr(whisper_main, "FasterWhisperAdapter", TestAdapter)
+    monkeypatch.setattr(whisper_main, "_import_whisper_runtime", lambda: None)
     return whisper_main._run(request, Event()), calls, constructors
 
 
