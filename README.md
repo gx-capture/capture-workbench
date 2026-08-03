@@ -117,9 +117,8 @@ pnpm nx run capture-tools:boundary-doctor -- `
 Add `--project-id`, `--operation-id`, and `--capture-id` together to correlate
 one in-flight import, or run
 `pnpm nx run capture-tools:boundary-doctor --args="--help"` for bounded watch and
-JSON output options. The report contains only
-normalized allowlisted state; it excludes tokens, response bodies, source
-content, and local data paths.
+JSON output options. The report contains only normalized allowlisted state; it
+excludes tokens, response bodies, source content, and local data paths.
 
 ## Support and security
 
