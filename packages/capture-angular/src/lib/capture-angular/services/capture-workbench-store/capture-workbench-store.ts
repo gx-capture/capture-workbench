@@ -251,6 +251,10 @@ export class CaptureWorkbenchStore {
   }
 
   installMissingRequirements(): void {
+    const runtime = this.runtime();
+    if (runtime.status !== 'needs-setup' || runtime.ready?.ready !== true) {
+      return;
+    }
     this.installationService.install({
       client: this.activeClient(),
       requirements: () => this.installableRequirements(),

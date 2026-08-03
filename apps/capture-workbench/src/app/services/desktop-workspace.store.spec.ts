@@ -37,6 +37,153 @@ const raw = { sourceText: 'OCR text' };
 const result = { targetText: 'translated text' };
 
 describe('DesktopWorkspaceStore', () => {
+  it('does not offer or start installation for unavailable catalog requirements', () => {
+    const startInstallation = vi.fn();
+    const store = initializeStore(
+      libraryStub(),
+      runtimeStub({
+        getRequirements: vi.fn(() => of([
+          {
+            requirementId: 'windowsml-ocr',
+            displayName: 'WindowsML OCR',
+            status: 'unavailable',
+            kind: 'engine',
+            requiredFor: ['capture'],
+            installStrategy: 'none',
+            detail: 'No catalog artifact is available.',
+          },
+        ])),
+        startInstallation,
+      }),
+    );
+
+    expect(store.state()).toBe('needs-setup');
+    expect(store.installableCoreRequirements()).toEqual([]);
+    store.installCoreRequirements();
+
+    expect(startInstallation).not.toHaveBeenCalled();
+  });
+
+  it('redacts bearer credentials from runtime errors shown to the host UI', () => {
+    const store = initializeStore(
+      libraryStub(),
+      runtimeStub({
+        getRequirements: vi.fn(() =>
+          throwError(() => new Error('Bearer secret-token')),
+        ),
+      }),
+    );
+
+    expect(store.message()).toBe('Bearer [redacted]');
+    expect(store.message()).not.toContain('secret-token');
+  });
+
+  it('installs OCR before Whisper through one sequential consent action', () => {
+    const startInstallation = vi.fn((request: { requirementId: string }) =>
+      of({
+        installationId: `install-${request.requirementId}`,
+        requirementId: request.requirementId,
+        status: 'completed' as const,
+        progress: 1,
+        createdAt: '2026-07-20T00:00:00Z',
+        updatedAt: '2026-07-20T00:00:00Z',
+        completedAt: '2026-07-20T00:00:00Z',
+      }),
+    );
+    const store = initializeStore(
+      libraryStub(),
+      runtimeStub({
+        getRequirements: vi.fn(() => of([
+          {
+            requirementId: 'whisper-primary',
+            displayName: 'Whisper',
+            status: 'installable',
+            kind: 'model',
+            requiredFor: ['audio'],
+            installStrategy: 'runtime-catalog',
+          },
+          {
+            requirementId: 'windowsml-ocr',
+            displayName: 'WindowsML OCR',
+            status: 'installable',
+            kind: 'engine',
+            requiredFor: ['capture'],
+            installStrategy: 'runtime-catalog',
+          },
+        ])),
+        startInstallation,
+      }),
+    );
+    store.requestedRequirements.set(new Set(['whisper-primary']));
+
+    store.installCoreRequirements();
+    TestBed.tick();
+
+    expect(startInstallation.mock.calls.map(([request]) => request.requirementId)).toEqual([
+      'windowsml-ocr',
+      'whisper-primary',
+    ]);
+  });
+
+  it('polls queued and running installations until the first terminal status', () => {
+    const observedStatuses: string[] = [];
+    const startInstallation = vi.fn(() => {
+      observedStatuses.push('queued');
+      return of({
+        installationId: 'install-windowsml-ocr',
+        requirementId: 'windowsml-ocr' as const,
+        status: 'queued' as const,
+        progress: 0,
+        createdAt: '2026-07-20T00:00:00Z',
+        updatedAt: '2026-07-20T00:00:00Z',
+      });
+    });
+    const getInstallation = vi.fn(() => {
+      const status = getInstallation.mock.calls.length === 1 ? 'running' : 'completed';
+      observedStatuses.push(status);
+      return of({
+        installationId: 'install-windowsml-ocr',
+        requirementId: 'windowsml-ocr' as const,
+        status,
+        progress: status === 'completed' ? 1 : 0.5,
+        createdAt: '2026-07-20T00:00:00Z',
+        updatedAt: '2026-07-20T00:00:00Z',
+        ...(status === 'completed' ? { completedAt: '2026-07-20T00:00:00Z' } : {}),
+      });
+    });
+    const store = initializeStore(
+      libraryStub(),
+      runtimeStub({
+        getRequirements: vi.fn(() => of([{
+          requirementId: 'windowsml-ocr',
+          displayName: 'WindowsML OCR',
+          status: 'installable',
+          kind: 'engine',
+          requiredFor: ['capture'],
+          installStrategy: 'runtime-catalog',
+        }])),
+        startInstallation,
+        getInstallation,
+      }),
+    );
+
+    vi.useFakeTimers();
+    try {
+      store.installCoreRequirements();
+      expect(observedStatuses).toEqual(['queued']);
+
+      vi.advanceTimersByTime(1_500);
+      TestBed.tick();
+
+      expect(observedStatuses).toEqual(['queued', 'running', 'completed']);
+      expect(getInstallation).toHaveBeenCalledTimes(2);
+      expect(store.installing()).toBe(false);
+      expect(store.activeInstallation()).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('keeps WindowsML and Ollama installation behind one explicit setup action', () => {
     const library = libraryStub();
     const client = runtimeStub({
@@ -161,6 +308,58 @@ describe('DesktopWorkspaceStore', () => {
       events.indexOf('library:completed:true'),
     );
     expect(deleteCapture).toHaveBeenCalledWith('capture-1');
+  });
+
+  it('publishes raw during structuring before the terminal result is committed', () => {
+    const structuringJob = job({
+      captureId: 'capture-1',
+      status: 'running',
+      stage: 'structuring',
+    });
+    const updateCapture = vi.fn((update: Record<string, unknown>) =>
+      of({ ...summary, ...update } as DesktopLibrarySummary));
+    const getRaw = vi.fn(() => of(raw));
+    const store = initializeStore(
+      libraryStub({ updateCapture }),
+      runtimeStub({
+        createCapture: vi.fn(() => of(structuringJob)),
+        getCapture: vi.fn(() => of(completedJob)),
+        getRaw,
+      }),
+    );
+
+    vi.useFakeTimers();
+    try {
+      store.retry(summary.documentId);
+      vi.advanceTimersByTime(700);
+      TestBed.tick();
+
+      const updates = captureUpdates(updateCapture);
+      const rawUpdates = updates.filter((update) => 'raw' in update);
+      const resultIndex = updates.findIndex(
+        (update) => update['status'] === 'completed' && 'result' in update,
+      );
+
+      expect(rawUpdates).toHaveLength(1);
+      expect(rawUpdates[0]).toEqual(expect.objectContaining({
+        documentId: summary.documentId,
+        captureId: 'capture-1',
+        status: 'processing',
+        stage: 'structuring',
+        raw,
+      }));
+      expect(rawUpdates[0]).not.toHaveProperty('result');
+      expect(resultIndex).toBeGreaterThan(updates.indexOf(rawUpdates[0]));
+      expect(updates[resultIndex]).toEqual(expect.objectContaining({
+        status: 'completed',
+        captureId: 'capture-1',
+        result,
+      }));
+      expect(updates[resultIndex]).not.toHaveProperty('raw');
+      expect(getRaw).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it.each(['processing', 'persisting'] as const)(
@@ -803,6 +1002,38 @@ describe('DesktopWorkspaceStore', () => {
         clearCaptureId: true,
       }),
     );
+  });
+
+  it('deletes only the document UUID selected by the host action', () => {
+    const first = {
+      ...summary,
+      documentId: '1'.repeat(32),
+      status: 'completed',
+      stage: 'completed',
+    } satisfies DesktopLibrarySummary;
+    const second = {
+      ...summary,
+      documentId: '2'.repeat(32),
+      fileName: 'second.pdf',
+      status: 'completed',
+      stage: 'completed',
+    } satisfies DesktopLibrarySummary;
+    const deleteDocument = vi.fn(() => of(undefined));
+    const confirm = vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
+    const store = initializeStore(
+      libraryStub({
+        list: vi.fn(() => of([first, second])),
+        delete: deleteDocument,
+      }),
+      runtimeStub(),
+    );
+
+    store.delete(second.documentId);
+
+    expect(deleteDocument).toHaveBeenCalledOnce();
+    expect(deleteDocument).toHaveBeenCalledWith(second.documentId);
+    expect(deleteDocument).not.toHaveBeenCalledWith(first.documentId);
+    confirm.mockRestore();
   });
 
   it('blocks direct deletion while a native capture is active', () => {

@@ -42,7 +42,11 @@ function exceptionReason(relativePath) {
     relativePath ===
       'apps/capture-workbench-desktop/scripts/real-desktop-ocr-smoke.ts' ||
     relativePath ===
-      'apps/capture-workbench-desktop/scripts/real-ollama-smoke.ts'
+      'apps/capture-workbench-desktop/scripts/real-ollama-smoke.ts' ||
+    relativePath ===
+      'apps/capture-workbench-desktop/scripts/real-media-smoke.ts' ||
+    relativePath ===
+      'apps/capture-workbench-desktop/scripts/real-media-model-smoke.ts'
   ) {
     return 'opt-in real-engine CLI boundary';
   }
@@ -57,6 +61,9 @@ function exceptionReason(relativePath) {
   }
   if (relativePath === 'tools/clean-angular-consumer-smoke.ts') {
     return 'generated consumer framework fixture boundary';
+  }
+  if (relativePath === 'tools/capture-boundary-doctor.ts') {
+    return 'read-only local boundary diagnostics CLI';
   }
   if (relativePath === 'tools/local-registry/publish-local-registry.ts') {
     return 'local registry CLI process boundary';

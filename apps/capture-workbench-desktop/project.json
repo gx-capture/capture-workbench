@@ -38,6 +38,19 @@
         "command": "corepack pnpm exec tauri build --target x86_64-pc-windows-msvc --no-bundle --ci --config apps/capture-workbench-desktop/src-tauri/tauri.conf.json"
       }
     },
+    "build-model-smoke": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "outputs": [
+        "{projectRoot}/src-tauri/target/x86_64-pc-windows-msvc/release/capture-workbench-desktop.exe"
+      ],
+      "metadata": {
+        "description": "Builds the release desktop with only the compile-time isolated app-data hook used by the model smoke."
+      },
+      "options": {
+        "command": "corepack pnpm exec tauri build --target x86_64-pc-windows-msvc --no-bundle --ci --features model-smoke-app-data --config apps/capture-workbench-desktop/src-tauri/tauri.conf.json"
+      }
+    },
     "build-nsis-deterministic": {
       "cache": false,
       "executor": "nx:run-commands",
@@ -184,6 +197,42 @@
       ],
       "options": {
         "command": "node apps/capture-workbench-desktop/scripts/real-ollama-smoke.ts"
+      }
+    },
+    "smoke-real-media": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "metadata": {
+        "description": "Opt-in Windows staged-runtime PDF/image OCR and audio diagnostic. Requires an approved unused successor catalog plus user-provided media and app-data paths; it is not the Tauri/WebView release gate or consumer E2E."
+      },
+      "outputs": [
+        "{workspaceRoot}/tmp/capture-workbench-desktop/real-media-smoke/real-media-smoke.json"
+      ],
+      "options": {
+        "commands": [
+          "node apps/capture-workbench-desktop/scripts/real-media-smoke.ts --preflight",
+          "corepack pnpm nx run capture-workbench-desktop:stage-product-runtime",
+          "node apps/capture-workbench-desktop/scripts/real-media-smoke.ts"
+        ],
+        "parallel": false
+      }
+    },
+    "smoke-real-media-model": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "metadata": {
+        "description": "Opt-in Windows Tauri/WebView release gate using the staged OCR and Whisper model catalog with project PDF/image fixtures and a private runner audio fixture."
+      },
+      "outputs": [
+        "{workspaceRoot}/tmp/capture-workbench-desktop/real-media-model/real-media-model.json"
+      ],
+      "options": {
+        "commands": [
+          "corepack pnpm nx run capture-workbench-desktop:stage-product-runtime",
+          "corepack pnpm nx run capture-workbench-desktop:build-model-smoke",
+          "node apps/capture-workbench-desktop/scripts/real-media-model-smoke.ts"
+        ],
+        "parallel": false
       }
     },
     "smoke-real-desktop-ocr": {

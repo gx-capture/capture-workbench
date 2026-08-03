@@ -22,12 +22,19 @@ const packageManifest = JSON.parse(
 ) as { name: string; version: string };
 const releaseRoot = join(repoRoot, 'packages/capture-runtime/dist/release');
 
-export const RUNTIME_ASSET_NAMES = Object.freeze([
+export const CORE_RUNTIME_ASSET_NAMES = Object.freeze([
   'capture-runtime-x86_64-pc-windows-msvc.exe',
   'capture-runtime-x86_64-pc-windows-msvc.exe.sha256',
   'capture-runtime-manifest.json',
   'capture-document-v1.schema.json',
 ]);
+// Keep the historical export for callers that only need the core manifest names.
+export const RUNTIME_ASSET_NAMES = CORE_RUNTIME_ASSET_NAMES;
+
+const ENGINE_CATALOG_NAME = 'capture-engine-catalog.json';
+const ENGINE_CATALOG_CHECKSUM_NAME = `${ENGINE_CATALOG_NAME}.sha256`;
+const WORKER_PROTOCOL_VERSION = '1';
+const MODEL_REQUIREMENT_IDS = ['windowsml-ocr', 'whisper-primary'] as const;
 
 export type RuntimeReleaseManifest = {
   readonly manifestVersion: string;
@@ -51,6 +58,184 @@ function assertSha256(value: unknown, label: string): asserts value is string {
   if (typeof value !== 'string' || !/^[0-9a-f]{64}$/u.test(value)) {
     throw new Error(`${label} must be a lowercase SHA-256 digest.`);
   }
+}
+
+function exactKeys(value: Record<string, unknown>, keys: readonly string[], label: string): void {
+  const actual = Object.keys(value).sort();
+  const expected = [...keys].sort();
+  if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) {
+    throw new Error(`${label} fields are not canonical.`);
+  }
+}
+
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map((item) => canonicalize(item));
+  if (!isRecord(value)) return value;
+  return Object.fromEntries(
+    Object.keys(value)
+      .sort()
+      .map((key) => [key, canonicalize(value[key])]),
+  );
+}
+
+function canonicalJson(value: unknown): Buffer {
+  return Buffer.from(`${JSON.stringify(canonicalize(value), null, 2)}\n`, 'utf8');
+}
+
+function assertSafeAssetName(value: unknown, label: string): asserts value is string {
+  if (
+    typeof value !== 'string' ||
+    !value ||
+    value === '.' ||
+    value === '..' ||
+    value.includes('/') ||
+    value.includes('\\')
+  ) {
+    throw new Error(`${label} must be a safe release file name.`);
+  }
+}
+
+type CatalogWorkerDescriptor = {
+  readonly requirementId: string;
+  readonly fileName: string;
+  readonly bytes: number;
+  readonly sha256: string;
+  readonly filesManifestSha256: string;
+};
+
+function catalogWorkers(raw: unknown, expectedVersion: string, catalogBytes: Buffer): CatalogWorkerDescriptor[] {
+  if (!isRecord(raw)) throw new Error('Engine catalog must be an object.');
+  exactKeys(raw, ['catalogVersion', 'requirements', 'runtimeVersion'], 'Engine catalog');
+  if (raw.catalogVersion !== '2' || raw.runtimeVersion !== expectedVersion) {
+    throw new Error('Engine catalog version or runtime version is invalid.');
+  }
+  if (!catalogBytes.equals(canonicalJson(raw))) {
+    throw new Error('Engine catalog must use canonical UTF-8 JSON.');
+  }
+  if (!Array.isArray(raw.requirements)) {
+    throw new Error('Engine catalog requirements are invalid.');
+  }
+  const requirements = raw.requirements;
+  const ids = requirements.map((item) => (isRecord(item) ? item.requirementId : undefined));
+  if (
+    requirements.length !== MODEL_REQUIREMENT_IDS.length ||
+    JSON.stringify([...ids].sort()) !== JSON.stringify([...MODEL_REQUIREMENT_IDS].sort())
+  ) {
+    throw new Error('Engine catalog requirements are invalid.');
+  }
+  const workers: CatalogWorkerDescriptor[] = [];
+  const seenRequirements = new Set<string>();
+  const seenArchives = new Set<string>();
+  for (const item of requirements) {
+    if (!isRecord(item)) throw new Error('Engine catalog requirement is invalid.');
+    exactKeys(item, ['requirementId', 'artifacts', 'modelFiles', 'unavailableReason'], 'Engine catalog requirement');
+    const requirementId = item.requirementId;
+    if (
+      typeof requirementId !== 'string' ||
+      seenRequirements.has(requirementId) ||
+      item.unavailableReason !== null ||
+      !Array.isArray(item.artifacts) ||
+      item.artifacts.length !== 1 ||
+      !isRecord(item.modelFiles)
+    ) {
+      throw new Error(`Engine catalog requirement is invalid: ${String(requirementId)}.`);
+    }
+    seenRequirements.add(requirementId);
+    const artifact = item.artifacts[0];
+    if (!isRecord(artifact)) throw new Error('Engine catalog worker artifact is invalid.');
+    exactKeys(
+      artifact,
+      [
+        'role',
+        'requirementId',
+        'artifactVersion',
+        'workerProtocolVersion',
+        'platform',
+        'arch',
+        'fileName',
+        'bytes',
+        'sha256',
+        'extractedBytes',
+        'entryPoint',
+        'filesManifestSha256',
+        'url',
+      ],
+      'Engine catalog worker artifact',
+    );
+    const artifactBytes = artifact.bytes;
+    const artifactExtractedBytes = artifact.extractedBytes;
+    if (
+      artifact.role !== 'worker' ||
+      artifact.requirementId !== requirementId ||
+      artifact.artifactVersion !== expectedVersion ||
+      artifact.workerProtocolVersion !== WORKER_PROTOCOL_VERSION ||
+      artifact.platform !== 'windows' ||
+      artifact.arch !== 'x86_64' ||
+      typeof artifact.entryPoint !== 'string' ||
+      !artifact.entryPoint ||
+      typeof artifactBytes !== 'number' ||
+      !Number.isSafeInteger(artifactBytes) ||
+      artifactBytes < 1 ||
+      typeof artifactExtractedBytes !== 'number' ||
+      !Number.isSafeInteger(artifactExtractedBytes) ||
+      artifactExtractedBytes < 1 ||
+      typeof artifact.url !== 'string' ||
+      !artifact.url.startsWith('https://')
+    ) {
+      throw new Error('Engine catalog worker artifact is invalid.');
+    }
+    assertSafeAssetName(artifact.fileName, 'Engine catalog worker archive');
+    if (!artifact.fileName.endsWith('.zip') || artifact.fileName.toLowerCase().includes('model')) {
+      throw new Error('Engine catalog may contain only worker archives.');
+    }
+    assertSha256(artifact.sha256, 'Engine catalog worker archive digest');
+    assertSha256(artifact.filesManifestSha256, 'Engine catalog worker manifest digest');
+    if (seenArchives.has(artifact.fileName)) {
+      throw new Error('Engine catalog worker archive names must be unique.');
+    }
+    seenArchives.add(artifact.fileName);
+
+    const modelFiles = item.modelFiles;
+    exactKeys(
+      modelFiles,
+      [
+        'artifactVersion',
+        'entryCount',
+        'entryPoint',
+        'extractedBytes',
+        'files',
+        'manifestSha256',
+        'sourceLockSha256',
+      ],
+      'Engine catalog model delivery',
+    );
+    const modelEntryCount = modelFiles.entryCount;
+    const modelExtractedBytes = modelFiles.extractedBytes;
+    if (
+      modelFiles.artifactVersion !== expectedVersion ||
+      modelFiles.entryPoint !== 'model' ||
+      typeof modelEntryCount !== 'number' ||
+      !Number.isSafeInteger(modelEntryCount) ||
+      modelEntryCount < 1 ||
+      !Array.isArray(modelFiles.files) ||
+      modelFiles.files.length !== modelEntryCount ||
+      typeof modelExtractedBytes !== 'number' ||
+      !Number.isSafeInteger(modelExtractedBytes) ||
+      modelExtractedBytes < 1
+    ) {
+      throw new Error('Engine catalog model delivery is invalid.');
+    }
+    assertSha256(modelFiles.manifestSha256, 'Engine catalog model manifest digest');
+    assertSha256(modelFiles.sourceLockSha256, 'Engine catalog model source-lock digest');
+    workers.push({
+      requirementId,
+      fileName: artifact.fileName,
+      bytes: artifactBytes,
+      sha256: artifact.sha256,
+      filesManifestSha256: artifact.filesManifestSha256,
+    });
+  }
+  return workers;
 }
 
 export function validateRuntimeManifest(
@@ -93,20 +278,76 @@ function sha256(bytes: Buffer): string {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
-export async function verifyRuntimeRelease(
-  directory: string,
-  expectedVersion: string,
-): Promise<RuntimeReleaseManifest> {
-  const entries = await readdir(directory, { withFileTypes: true });
-  const names = entries.map((entry) => entry.name).sort();
-  const expectedNames = [...RUNTIME_ASSET_NAMES].sort();
+function assertExactAssetNames(actual: readonly string[], expected: readonly string[]): void {
+  const actualSorted = [...actual].sort();
+  const expectedSorted = [...expected].sort();
   if (
-    names.length !== expectedNames.length ||
-    names.some((name, index) => name !== expectedNames[index]) ||
-    entries.some((entry) => !entry.isFile())
+    actualSorted.length !== expectedSorted.length ||
+    actualSorted.some((name, index) => name !== expectedSorted[index])
   ) {
     throw new Error('Runtime release contains files outside the canonical asset set.');
   }
+}
+
+async function verifyChecksum(directory: string, name: string, expectedDigest?: string): Promise<string> {
+  const bytes = await readFile(join(directory, name));
+  const digest = sha256(bytes);
+  if (expectedDigest !== undefined && digest !== expectedDigest) {
+    throw new Error(`Release asset digest does not match catalog: ${name}.`);
+  }
+  const checksumName = `${name}.sha256`;
+  const checksum = (await readFile(join(directory, checksumName), 'utf8')).trim();
+  if (checksum !== `${digest}  ${name}`) {
+    throw new Error(`Release checksum does not match ${name}.`);
+  }
+  return digest;
+}
+
+type RuntimeReleaseInspection = {
+  readonly manifest: RuntimeReleaseManifest;
+  readonly assetNames: readonly string[];
+};
+
+async function inspectRuntimeRelease(
+  directory: string,
+  expectedVersion: string,
+): Promise<RuntimeReleaseInspection> {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const names = entries.map((entry) => entry.name).sort();
+  if (entries.some((entry) => !entry.isFile())) {
+    throw new Error('Runtime release contains files outside the canonical asset set.');
+  }
+
+  const hasCatalog = names.includes(ENGINE_CATALOG_NAME);
+  const hasCatalogChecksum = names.includes(ENGINE_CATALOG_CHECKSUM_NAME);
+  if (hasCatalog !== hasCatalogChecksum) {
+    throw new Error('Runtime release catalog and checksum must be published together.');
+  }
+
+  const assetNames: string[] = [...RUNTIME_ASSET_NAMES];
+  const workers: CatalogWorkerDescriptor[] = [];
+  if (hasCatalog) {
+    const catalogBytes = await readFile(join(directory, ENGINE_CATALOG_NAME));
+    let rawCatalog: unknown;
+    try {
+      rawCatalog = JSON.parse(catalogBytes.toString('utf8')) as unknown;
+    } catch {
+      throw new Error('Engine catalog JSON is invalid.');
+    }
+    workers.push(...catalogWorkers(rawCatalog, expectedVersion, catalogBytes));
+    assetNames.push(ENGINE_CATALOG_NAME, ENGINE_CATALOG_CHECKSUM_NAME);
+    for (const worker of workers) {
+      const filesManifestName = `${worker.fileName.slice(0, -'.zip'.length)}-files.json`;
+      assertSafeAssetName(filesManifestName, 'Engine worker files manifest');
+      assetNames.push(
+        worker.fileName,
+        `${worker.fileName}.sha256`,
+        filesManifestName,
+        `${filesManifestName}.sha256`,
+      );
+    }
+  }
+  assertExactAssetNames(names, assetNames);
 
   const manifest = validateRuntimeManifest(
     JSON.parse(await readFile(join(directory, 'capture-runtime-manifest.json'), 'utf8')),
@@ -125,20 +366,40 @@ export async function verifyRuntimeRelease(
     throw new Error('Runtime schema digest does not match the manifest.');
   }
 
-  const checksum = (await readFile(
+  const runtimeChecksum = (await readFile(
     join(directory, 'capture-runtime-x86_64-pc-windows-msvc.exe.sha256'),
     'utf8',
   )).trim();
-  const checksumMatch = checksum.match(/^([0-9a-f]{64})\s+(.+)$/u);
+  const checksumMatch = runtimeChecksum.match(/^([0-9a-f]{64})\s+(.+)$/u);
   if (!checksumMatch || checksumMatch[1] !== manifest.sha256 || checksumMatch[2] !== manifest.fileName) {
     throw new Error('Runtime checksum file does not match the manifest.');
   }
-  return manifest;
+
+  if (hasCatalog) {
+    await verifyChecksum(directory, ENGINE_CATALOG_NAME);
+    for (const worker of workers) {
+      const filesManifestName = `${worker.fileName.slice(0, -'.zip'.length)}-files.json`;
+      await verifyChecksum(directory, worker.fileName, worker.sha256);
+      await verifyChecksum(directory, filesManifestName, worker.filesManifestSha256);
+    }
+  }
+  return { manifest, assetNames: Object.freeze(assetNames) };
 }
 
-async function copyRuntimeRelease(source: string, destination: string): Promise<void> {
+export async function verifyRuntimeRelease(
+  directory: string,
+  expectedVersion: string,
+): Promise<RuntimeReleaseManifest> {
+  return (await inspectRuntimeRelease(directory, expectedVersion)).manifest;
+}
+
+async function copyRuntimeRelease(
+  source: string,
+  destination: string,
+  assetNames: readonly string[],
+): Promise<void> {
   await mkdir(destination, { recursive: true });
-  for (const name of RUNTIME_ASSET_NAMES) {
+  for (const name of assetNames) {
     await copyFile(join(source, name), join(destination, name));
   }
 }
@@ -163,6 +424,7 @@ async function findFreePort(): Promise<number> {
 async function startReleaseMirror(
   directory: string,
   version: string,
+  assetNames: readonly string[],
 ): Promise<{ baseUrl: string; close: () => Promise<void> }> {
   const server = createServer((request, response) => {
     if (request.method !== 'GET' || !request.url) {
@@ -174,7 +436,7 @@ async function startReleaseMirror(
     const name = pathname.startsWith(prefix)
       ? decodeURIComponent(pathname.slice(prefix.length))
       : undefined;
-    if (!name || !RUNTIME_ASSET_NAMES.includes(name)) {
+    if (!name || !assetNames.includes(name)) {
       response.writeHead(404).end();
       return;
     }
@@ -361,19 +623,19 @@ function assertTemporaryRoot(root: string): void {
 
 export async function runLocalReleaseConsumerSmoke(): Promise<void> {
   const expectedVersion = packageManifest.version;
-  await verifyRuntimeRelease(releaseRoot, expectedVersion);
+  const release = await inspectRuntimeRelease(releaseRoot, expectedVersion);
   const temporaryRoot = await mkdtemp(join(tmpdir(), 'capture-runtime-release-consumer-'));
   let mirror: { baseUrl: string; close: () => Promise<void> } | undefined;
   try {
     const mirrorDirectory = join(temporaryRoot, 'mirror');
     const installDirectory = join(temporaryRoot, 'install');
-    await copyRuntimeRelease(releaseRoot, mirrorDirectory);
-    mirror = await startReleaseMirror(mirrorDirectory, expectedVersion);
+    await copyRuntimeRelease(releaseRoot, mirrorDirectory, release.assetNames);
+    mirror = await startReleaseMirror(mirrorDirectory, expectedVersion, release.assetNames);
     await mkdir(installDirectory, { recursive: true });
-    for (const name of RUNTIME_ASSET_NAMES) {
+    for (const name of release.assetNames) {
       await downloadAsset(`${mirror.baseUrl}/${name}`, join(installDirectory, name));
     }
-    const manifest = await verifyRuntimeRelease(installDirectory, expectedVersion);
+    const manifest = (await inspectRuntimeRelease(installDirectory, expectedVersion)).manifest;
     await runRuntimeReadiness(installDirectory, manifest, temporaryRoot);
     process.stdout.write(
       `Local release consumer smoke passed for ${packageManifest.name}@${expectedVersion} and capture-runtime@${manifest.runtimeVersion}.\n`,

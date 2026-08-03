@@ -89,16 +89,39 @@ function modelManifestSummaries(catalog) {
   if (!Array.isArray(catalog?.requirements)) {
     throw new Error('Release catalog requirements are invalid.');
   }
-  return catalog.requirements
-    .map((requirement) => ({
+  return catalog.requirements.map((requirement) => ({
       entryCount: requirement.modelFiles?.entryCount,
       extractedBytes: requirement.modelFiles?.extractedBytes,
       manifestSha256: requirement.modelFiles?.manifestSha256,
       requirementId: requirement.requirementId,
-    }))
-    .sort((left, right) =>
-      left.requirementId.localeCompare(right.requirementId),
-    );
+    }));
+}
+
+function workerArtifactSummaries(catalog) {
+  if (!Array.isArray(catalog?.requirements)) {
+    throw new Error('Release catalog requirements are invalid.');
+  }
+  return catalog.requirements.map((requirement) => {
+    const artifacts = requirement.artifacts;
+    if (!Array.isArray(artifacts) || artifacts.length !== 1) {
+      throw new Error('Release catalog worker artifacts are invalid.');
+    }
+    const artifact = artifacts[0];
+    if (
+      artifact?.role !== 'worker' ||
+      typeof artifact?.fileName !== 'string' ||
+      /[\\/]/u.test(artifact.fileName)
+    ) {
+      throw new Error('Release catalog worker artifacts are invalid.');
+    }
+    return {
+      bytes: artifact.bytes,
+      fileName: artifact.fileName,
+      filesManifestSha256: artifact.filesManifestSha256,
+      requirementId: requirement.requirementId,
+      sha256: artifact.sha256,
+    };
+  });
 }
 
 function assertModelManifestEvidence(modelManifests) {
@@ -119,8 +142,8 @@ function assertModelManifestEvidence(modelManifests) {
     return item.requirementId;
   });
   if (
-    JSON.stringify(identifiers) !==
-      JSON.stringify(['whisper-primary', 'windowsml-ocr']) ||
+      JSON.stringify(identifiers) !==
+      JSON.stringify(['windowsml-ocr', 'whisper-primary']) ||
     modelManifests.some(
       (item) =>
         !/^[a-f0-9]{64}$/u.test(item.manifestSha256) ||
@@ -131,6 +154,36 @@ function assertModelManifestEvidence(modelManifests) {
     )
   ) {
     throw new Error('Candidate receipt model manifest evidence is invalid.');
+  }
+}
+
+function assertWorkerArtifactEvidence(workerArtifacts) {
+  if (!Array.isArray(workerArtifacts) || workerArtifacts.length !== 2) {
+    throw new Error('Candidate receipt worker artifact evidence is invalid.');
+  }
+  const identifiers = workerArtifacts.map((item) => {
+    exactKeys(
+      item,
+      new Set(['bytes', 'fileName', 'filesManifestSha256', 'requirementId', 'sha256']),
+      'Candidate receipt worker artifact',
+    );
+    return item.requirementId;
+  });
+  if (
+    JSON.stringify(identifiers) !==
+      JSON.stringify(['windowsml-ocr', 'whisper-primary']) ||
+    workerArtifacts.some(
+      (item) =>
+        !Number.isSafeInteger(item.bytes) ||
+        item.bytes < 1 ||
+        typeof item.fileName !== 'string' ||
+        item.fileName.length < 1 ||
+        /[\\/]/u.test(item.fileName) ||
+        !/^[a-f0-9]{64}$/u.test(item.sha256) ||
+        !/^[a-f0-9]{64}$/u.test(item.filesManifestSha256),
+    )
+  ) {
+    throw new Error('Candidate receipt worker artifact evidence is invalid.');
   }
 }
 
@@ -294,6 +347,7 @@ export function validateReceipt(receipt, expected, trusted) {
       'commitSha',
       'evidenceSha256',
       'modelManifests',
+      'workerArtifacts',
       'receiptVersion',
       'runId',
       'sourceLockSha256',
@@ -317,6 +371,7 @@ export function validateReceipt(receipt, expected, trusted) {
     throw new Error('Candidate receipt identity or source binding is invalid.');
   }
   assertModelManifestEvidence(receipt.modelManifests);
+  assertWorkerArtifactEvidence(receipt.workerArtifacts);
   return receipt;
 }
 
@@ -331,17 +386,35 @@ export function createReceipt(input) {
   const fixtures = new Map(
     sourceLock?.fixtures?.map((fixture) => [fixture.kind, fixture]) ?? [],
   );
+  const whisperFixture = fixtures.get('whisper');
+  if (
+    !whisperFixture ||
+    Object.keys(whisperFixture).some((key) =>
+      ['expectedText', 'licenseUrl', 'path', 'url'].includes(key),
+    ) ||
+    !/^[a-f0-9]{64}$/u.test(whisperFixture.expectedNormalizedOutputSha256) ||
+    !['large-v3-turbo|cuda', 'small|cpu'].includes(
+      `${whisperFixture.expectedModel}|${whisperFixture.expectedDevice}`,
+    )
+  ) {
+    throw new Error(
+      'Private Whisper fixture approval is pending or contains prohibited fields.',
+    );
+  }
   const evidenceRequirements = evidence?.requirements;
   if (
+    sourceLock?.lockVersion !== '2' ||
+    sourceLock?.releaseVersion !== input.version ||
+    JSON.stringify(sourceLock?.requirements?.map((item) => item.requirementId)) !==
+      JSON.stringify(['windowsml-ocr', 'whisper-primary']) ||
     catalog?.catalogVersion !== '2' ||
     catalog?.runtimeVersion !== input.version ||
     evidence?.evidenceVersion !== '1' ||
     evidence?.sourceLockSha256 !== sourceLockSha256 ||
     evidence?.catalogSha256 !== sha256File(input.catalog) ||
     !Array.isArray(evidenceRequirements) ||
-    JSON.stringify(
-      evidenceRequirements.map((item) => item.requirementId).sort(),
-    ) !== JSON.stringify(['whisper-primary', 'windowsml-ocr']) ||
+    JSON.stringify(evidenceRequirements.map((item) => item.requirementId)) !==
+      JSON.stringify(['windowsml-ocr', 'whisper-primary']) ||
     fixtures.size !== 2
   ) {
     throw new Error(
@@ -358,9 +431,10 @@ export function createReceipt(input) {
         'engine',
         'fixtureSha256',
         'model',
-        'normalizedTextSha256',
+        'normalizedOutputSha256',
         'requirementId',
         'segmentCount',
+        'segmentsMonotonic',
       ]),
       'Real model candidate requirement evidence',
     );
@@ -373,10 +447,13 @@ export function createReceipt(input) {
       item.model !== fixture?.expectedModel ||
       item.device !== fixture?.expectedDevice ||
       item.fixtureSha256 !== fixture?.sha256 ||
-      item.normalizedTextSha256 !==
-        sha256Bytes(Buffer.from(fixture?.expectedText ?? '', 'utf8')) ||
+      item.normalizedOutputSha256 !==
+        (fixture?.kind === 'ocr'
+          ? sha256Bytes(Buffer.from(fixture.expectedText ?? '', 'utf8'))
+          : fixture?.expectedNormalizedOutputSha256) ||
       !Number.isSafeInteger(item.segmentCount) ||
       item.segmentCount < 1 ||
+      item.segmentsMonotonic !== true ||
       !/^sha256:[a-f0-9]{64}$/u.test(item.digest)
     ) {
       throw new Error(
@@ -385,6 +462,7 @@ export function createReceipt(input) {
     }
   }
   const modelManifests = modelManifestSummaries(catalog);
+  const workerArtifacts = workerArtifactSummaries(catalog);
   if (
     catalog.requirements.some(
       (requirement) =>
@@ -404,6 +482,7 @@ export function createReceipt(input) {
     runId: parsePositiveInteger(Number(input.runId), 'runId'),
     sourceLockSha256,
     version: input.version,
+    workerArtifacts,
     workflowId: parsePositiveInteger(Number(input.workflowId), 'workflowId'),
     workflowPath: input.workflowPath,
   };
@@ -439,6 +518,7 @@ export function assertCatalogMatchesReceipt(receiptPath, catalogPath) {
       'commitSha',
       'evidenceSha256',
       'modelManifests',
+      'workerArtifacts',
       'receiptVersion',
       'runId',
       'sourceLockSha256',
@@ -450,11 +530,15 @@ export function assertCatalogMatchesReceipt(receiptPath, catalogPath) {
   );
   const catalog = parseJsonFile(catalogPath);
   assertModelManifestEvidence(receipt.modelManifests);
+  assertWorkerArtifactEvidence(receipt.workerArtifacts);
   const rebuiltModelManifests = modelManifestSummaries(catalog);
+  const rebuiltWorkerArtifacts = workerArtifactSummaries(catalog);
   assertModelManifestEvidence(rebuiltModelManifests);
+  assertWorkerArtifactEvidence(rebuiltWorkerArtifacts);
   if (
     receipt.receiptVersion !== receiptVersion ||
     !/^[a-f0-9]{64}$/u.test(receipt.catalogSha256) ||
+    receipt.catalogSha256 !== sha256File(catalogPath) ||
     !/^[a-f0-9]{64}$/u.test(receipt.sourceLockSha256) ||
     catalog?.catalogVersion !== '2' ||
     catalog?.runtimeVersion !== receipt.version ||
@@ -463,7 +547,9 @@ export function assertCatalogMatchesReceipt(receiptPath, catalogPath) {
         requirement.modelFiles?.sourceLockSha256 !== receipt.sourceLockSha256,
     ) ||
     JSON.stringify(rebuiltModelManifests) !==
-      JSON.stringify(receipt.modelManifests)
+      JSON.stringify(receipt.modelManifests) ||
+    JSON.stringify(rebuiltWorkerArtifacts) !==
+      JSON.stringify(receipt.workerArtifacts)
   ) {
     throw new Error(
       'Rebuilt release catalog model bindings do not match the trusted model candidate.',

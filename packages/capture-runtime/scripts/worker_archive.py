@@ -21,18 +21,31 @@ def canonical_json_bytes(value: object) -> bytes:
 
 
 def build_worker_archive(source: Path, archive: Path, manifest_output: Path) -> None:
-    files = sorted(item for item in source.rglob("*") if item.is_file())
+    files = sorted(
+        (
+            (item.relative_to(source).as_posix(), item)
+            for item in source.rglob("*")
+            if item.is_file()
+        ),
+        key=lambda entry: entry[0],
+    )
     if not files:
         raise ValueError(f"worker directory is empty: {source}")
+    folded_paths: set[str] = set()
+    for relative, _item in files:
+        folded = relative.casefold()
+        if folded in folded_paths:
+            raise ValueError(f"worker directory contains a case-colliding path: {relative}")
+        folded_paths.add(folded)
     manifest = {
         "manifestVersion": "1",
         "files": [
             {
-                "path": item.relative_to(source).as_posix(),
+                "path": relative,
                 "bytes": item.stat().st_size,
                 "sha256": sha256_file(item),
             }
-            for item in files
+            for relative, item in files
         ],
     }
     manifest_bytes = canonical_json_bytes(manifest)
@@ -42,8 +55,7 @@ def build_worker_archive(source: Path, archive: Path, manifest_output: Path) -> 
     with zipfile.ZipFile(
         archive, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9
     ) as destination:
-        for item in files:
-            relative = item.relative_to(source).as_posix()
+        for relative, item in files:
             info = zipfile.ZipInfo(relative, ZIP_TIMESTAMP)
             info.compress_type = zipfile.ZIP_DEFLATED
             info.external_attr = 0o100644 << 16

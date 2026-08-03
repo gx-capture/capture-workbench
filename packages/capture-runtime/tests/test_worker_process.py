@@ -14,6 +14,7 @@ from capture_runtime.worker_process import (
 )
 
 WORKER = Path(__file__).parent / "fixtures" / "deterministic_worker.py"
+SERVER_WORKER = Path(__file__).parent / "fixtures" / "server_worker.py"
 
 
 class RecordingWorkerProcess:
@@ -99,6 +100,130 @@ def test_deterministic_worker_success_and_secret_isolation() -> None:
             "secretInEnvironment": False,
             "secretInArgv": False,
             "secretInStdin": False,
+        }
+        assert owner.active_process_count == 0
+
+    asyncio.run(run())
+
+
+def test_worker_drains_large_stderr_without_pipe_deadlock() -> None:
+    owner = WorkerProcess()
+
+    async def run() -> None:
+        response = await owner.request(
+            WORKER,
+            "probe",
+            {"mode": "stderr-flood"},
+            timeout_seconds=5,
+        )
+        assert response.result == {"value": "ok"}
+        assert owner.active_process_count == 0
+
+    asyncio.run(run())
+
+
+def test_worker_timeout_reports_only_allowlisted_last_stage() -> None:
+    owner = WorkerProcess()
+
+    async def run() -> None:
+        with pytest.raises(
+            WorkerExecutionError,
+            match=r"^worker request timed out at stage model-load-cuda-start$",
+        ):
+            await owner.request(
+                WORKER,
+                "run",
+                {"mode": "staged-timeout"},
+                timeout_seconds=0.1,
+            )
+        assert owner.active_process_count == 0
+
+    asyncio.run(run())
+
+
+def test_worker_no_response_reports_safe_exit_code_and_stage_only(tmp_path: Path) -> None:
+    worker = tmp_path / "no_response_worker.py"
+    worker.write_text(
+        """
+import os
+import sys
+
+sys.stdin.buffer.readline()
+sys.stderr.write("C:\\\\Users\\\\secret-user\\\\private-source.pdf SECRET_STDERR\\n")
+sys.stderr.write("capture-worker-stage:worker-boot\\n")
+sys.stderr.flush()
+os._exit(7)
+""".lstrip(),
+        encoding="utf-8",
+    )
+    owner = WorkerProcess()
+
+    async def run() -> None:
+        with pytest.raises(WorkerExecutionError) as raised:
+            await owner.request(worker, "probe", {}, timeout_seconds=5)
+        assert str(raised.value) == "worker returned no response with code 7 at stage worker-boot"
+        assert "SECRET_STDERR" not in str(raised.value)
+        assert "private-source.pdf" not in str(raised.value)
+        assert owner.active_process_count == 0
+
+    asyncio.run(run())
+
+
+def test_worker_failure_response_wins_exit_and_hides_stderr(tmp_path: Path) -> None:
+    worker = tmp_path / "failure_worker.py"
+    worker.write_text(
+        """
+import json
+import os
+import sys
+
+request = json.loads(sys.stdin.buffer.readline())
+response = {
+    "protocolVersion": "1",
+    "requestId": request["requestId"],
+    "ok": False,
+    "result": None,
+    "error": {
+        "code": "worker_failed",
+        "message": "Worker operation failed.",
+        "retryable": True,
+    },
+}
+sys.stderr.buffer.write(b"C:\\\\Users\\\\secret-user\\\\private-source.pdf SECRET_STDERR\\n")
+sys.stderr.buffer.flush()
+sys.stdout.buffer.write((json.dumps(response, separators=(",", ":")) + "\\n").encode())
+sys.stdout.buffer.flush()
+os._exit(1)
+""".lstrip(),
+        encoding="utf-8",
+    )
+    owner = WorkerProcess()
+
+    async def run() -> None:
+        with pytest.raises(WorkerExecutionError) as raised:
+            await owner.request(worker, "run", {}, timeout_seconds=5)
+        assert str(raised.value) == "worker_failed: Worker operation failed."
+        assert "SECRET_STDERR" not in str(raised.value)
+        assert "private-source.pdf" not in str(raised.value)
+        assert owner.active_process_count == 0
+
+    asyncio.run(run())
+
+
+def test_worker_server_runs_native_handler_on_main_thread() -> None:
+    owner = WorkerProcess()
+
+    async def run() -> None:
+        response = await owner.request(
+            SERVER_WORKER,
+            "run",
+            {},
+            timeout_seconds=5,
+        )
+        assert response.result == {
+            "mainThread": True,
+            "operation": "run",
+            "preparedOnMainThread": True,
         }
         assert owner.active_process_count == 0
 

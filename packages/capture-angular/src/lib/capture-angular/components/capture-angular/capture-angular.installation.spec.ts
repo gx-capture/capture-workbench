@@ -31,7 +31,7 @@ describe('CaptureWorkbenchComponent', () => {
 
   it('starts runtime installation only after explicit user action', async () => {
     const client = fakeClient({
-      getReady: vi.fn(() => of({ ...READY, ready: false })),
+      getReady: vi.fn(() => of({ ...READY, ready: true })),
       getRequirements: vi.fn(
         (): ReturnType<CaptureClient['getRequirements']> =>
           of([
@@ -147,7 +147,57 @@ describe('CaptureWorkbenchComponent', () => {
     expect(
       captureWorkbenchRoot(fixture).querySelector('.runtime-card .primary'),
     ).toBeNull();
+    fixture.componentInstance.store.installMissingRequirements();
+    await fixture.whenStable();
     expect(client.startInstallation).not.toHaveBeenCalled();
+  });
+
+  it('installs OCR before Whisper even when the runtime lists dependencies in reverse order', async () => {
+    const requirements: readonly RuntimeRequirementV1[] = [
+      {
+        requirementId: 'whisper-primary',
+        kind: 'stt',
+        displayName: 'Whisper',
+        status: 'installable',
+        requiredFor: ['audio'],
+        installStrategy: 'runtime-catalog',
+      },
+      {
+        requirementId: 'windowsml-ocr',
+        kind: 'ocr',
+        displayName: 'WindowsML OCR',
+        status: 'installable',
+        requiredFor: ['pdf', 'image'],
+        installStrategy: 'runtime-catalog',
+      },
+    ];
+    const startInstallation = vi.fn(
+      (request: StartRuntimeInstallationRequest) =>
+        of({
+          installationId: `install-${request.requirementId}`,
+          requirementId: request.requirementId,
+          status: 'completed' as const,
+          progress: 1,
+          createdAt: RAW.createdAt,
+          updatedAt: RAW.createdAt,
+          completedAt: RAW.createdAt,
+        }),
+    );
+    const client = fakeClient({
+      getRequirements: vi.fn(() => of(requirements)),
+      startInstallation,
+    });
+    inputSource.client.set(client);
+    inputSource.config.set({ pollIntervalMs: 0 });
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    fixture.componentInstance.store.installMissingRequirements();
+    await fixture.whenStable();
+
+    expect(
+      startInstallation.mock.calls.map(([request]) => request.requirementId),
+    ).toEqual(['windowsml-ocr', 'whisper-primary']);
   });
 
   it('retries an uncertain installation once and installs a newly unlocked model', async () => {

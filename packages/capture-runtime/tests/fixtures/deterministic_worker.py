@@ -25,6 +25,10 @@ mode = request["payload"].get("mode", "normal")
 
 if mode == "timeout":
     time.sleep(60)
+elif mode == "staged-timeout":
+    sys.stderr.write("capture-worker-stage:model-load-cuda-start\n")
+    sys.stderr.flush()
+    time.sleep(60)
 elif mode == "cancel":
     sys.stdin.buffer.readline()
     sys.exit(0)
@@ -38,6 +42,10 @@ elif mode == "multiple":
     encoded = json.dumps(response(request_id, {"value": "first"}))
     sys.stdout.write(encoded + "\n" + encoded + "\n")
     sys.stdout.flush()
+elif mode == "stderr-flood":
+    sys.stderr.write("bounded worker diagnostic\n" * 10_000)
+    sys.stderr.flush()
+    print(json.dumps(response(request_id, {"value": "ok"})), flush=True)
 elif mode == "protocol-mismatch":
     payload = response(request_id, {"value": "wrong"})
     payload["protocolVersion"] = "999"

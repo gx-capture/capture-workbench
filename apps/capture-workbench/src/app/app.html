@@ -46,24 +46,26 @@
     </header>
 
     @if (store.state() === 'needs-setup') {
-      <mat-card class="setup-card" appearance="outlined" aria-labelledby="setup-title">
+      <mat-card class="setup-card" appearance="outlined" aria-labelledby="setup-title" data-testid="runtime-setup">
         <div>
           <p class="eyebrow">首次準備</p>
           <h2 id="setup-title">啟用本機文件處理</h2>
           <p>{{ store.message() }}</p>
           <ul>
             @for (requirement of store.coreMissing(); track requirement.requirementId) {
-              <li>
+              <li data-testid="runtime-requirement" [attr.data-requirement-id]="requirement.requirementId" [attr.data-status]="requirement.status">
                 <span>{{ requirement.displayName }}</span>
                 <small>{{ requirement.status === 'manual_action_required' ? '需要手動修復。' : (requirement.detail ?? '等待安裝。') }}</small>
               </li>
             }
           </ul>
         </div>
-        <button mat-flat-button type="button" [disabled]="store.installing()" (click)="store.installCoreRequirements()">
-          @if (store.installing()) { <mat-spinner diameter="18" /> }
-          {{ store.installing() ? '正在準備…' : '同意並安裝核心需求' }}
-        </button>
+        @if (store.installableCoreRequirements().length > 0) {
+          <button mat-flat-button type="button" data-testid="runtime-install" [disabled]="store.installing()" (click)="store.installCoreRequirements()">
+            @if (store.installing()) { <mat-spinner diameter="18" /> }
+            {{ store.installing() ? '正在準備…' : '同意並安裝核心需求' }}
+          </button>
+        }
       </mat-card>
     } @else if (store.state() === 'error') {
       <mat-card class="error-card" appearance="outlined" role="alert">
@@ -77,7 +79,7 @@
       <p class="eyebrow">匯入文件</p>
       <h2>拖放檔案，或從電腦選擇來源。</h2>
       <p>支援 PDF、PNG、JPEG 與音訊。系統會依序進行 OCR、啟動隔離 Ollama，並儲存可檢閱的結構化結果。</p>
-      <button mat-flat-button type="button" [disabled]="!store.canCapture()" (click)="openFilePicker()">選擇檔案</button>
+      <button mat-flat-button type="button" data-testid="source-import" [disabled]="!store.canCapture()" (click)="openFilePicker()">選擇檔案</button>
       <span class="intake-hint">可一次選取多個檔案，也可直接拖放到視窗。</span>
     </mat-card>
 
@@ -96,7 +98,7 @@
         <ol class="document-list">
           @for (item of store.documents(); track item.documentId) {
             <li>
-              <button type="button" class="document-card" [class.selected]="store.selectedId() === item.documentId" (click)="store.select(item.documentId)">
+              <button type="button" class="document-card" data-testid="document-card" [attr.data-document-id]="item.documentId" [attr.data-status]="item.status" [class.selected]="store.selectedId() === item.documentId" (click)="store.select(item.documentId)">
                 <span class="file-mark">{{ item.mediaType === 'application/pdf' ? 'PDF' : 'FILE' }}</span>
                 <span class="document-copy">
                   <strong>{{ item.fileName }}</strong>
@@ -111,9 +113,9 @@
     </section>
   </section>
 
-  <aside class="detail-pane" aria-label="文件詳情">
+  <aside class="detail-pane" aria-label="文件詳情" data-testid="document-detail" [attr.data-document-id]="store.selected()?.documentId ?? null">
     @if (store.selected(); as item) {
-      <div class="detail-heading">
+      <div class="detail-heading" [attr.data-document-id]="item.documentId">
         <p class="eyebrow">文件詳情</p>
         <h2>{{ item.fileName }}</h2>
         <p>{{ store.formatDate(item.updatedAtMs) }}</p>
@@ -131,14 +133,22 @@
         <div class="detail-error" role="alert"><strong>{{ item.recoveryCode ?? 'recovery_required' }}</strong><p>{{ item.recoveryMessage }}</p></div>
       }
       @if (item.raw) {
-        <section class="review-block"><h3>OCR 原始結果</h3><pre>{{ item.raw.sourceText }}</pre></section>
+        <section class="review-block" data-testid="document-raw"><h3>OCR 原始結果</h3><pre>{{ item.raw.sourceText }}</pre>
+          <ol data-testid="document-raw-segments">
+            @for (segment of item.raw.segments; track segment.segmentId) {
+              <li data-testid="document-raw-segment" [attr.data-segment-id]="segment.segmentId" [attr.data-order]="segment.order" [attr.data-locator-kind]="segment.locator.kind" [attr.data-page]="segment.locator.kind === 'page' ? segment.locator.page : null" [attr.data-start-ms]="segment.locator.kind === 'time' ? segment.locator.startMs : null" [attr.data-end-ms]="segment.locator.kind === 'time' ? segment.locator.endMs : null">
+                <span>{{ segment.text }}</span>
+              </li>
+            }
+          </ol>
+        </section>
       }
       @if (item.result) {
-        <section class="review-block result">
+        <section class="review-block result" data-testid="document-result">
           <h3>結構化結果</h3>
           <pre>{{ item.result.targetText }}</pre>
-          <dl class="provenance">
-            <div><dt>OCR</dt><dd>{{ item.result.extractionEngine.engine }} · {{ item.result.extractionEngine.model }} · {{ item.result.extractionEngine.device }}</dd></div>
+          <dl class="provenance" data-testid="document-provenance">
+            <div data-testid="document-extraction-provenance" [attr.data-engine]="item.result.extractionEngine.engine" [attr.data-model]="item.result.extractionEngine.model" [attr.data-device]="item.result.extractionEngine.device" [attr.data-digest]="item.result.extractionEngine.digest"><dt>OCR</dt><dd>{{ item.result.extractionEngine.engine }} · {{ item.result.extractionEngine.model }} · {{ item.result.extractionEngine.device }} · {{ item.result.extractionEngine.digest }}</dd></div>
             <div><dt>結構化</dt><dd>{{ item.result.structuringEngine.engine }} · {{ item.result.structuringEngine.model }} · {{ item.result.structuringEngine.digest }}</dd></div>
           </dl>
           <small>模型資訊來自已保存的 provenance，可辨識真實 Ollama 結果。</small>
@@ -148,11 +158,11 @@
         @if (store.busyIds().has(item.documentId)) {
           <button mat-stroked-button type="button" class="danger" (click)="store.cancel(item.documentId)">取消處理</button>
         } @else {
-          <button mat-stroked-button type="button" (click)="store.retry(item.documentId)">重新處理</button>
+          <button mat-stroked-button type="button" data-testid="document-retry" [attr.data-document-id]="item.documentId" (click)="store.retry(item.documentId)">重新處理</button>
         }
         <button mat-stroked-button type="button" [disabled]="!item.result" (click)="store.export(item.documentId, 'text')">匯出文字</button>
         <button mat-stroked-button type="button" [disabled]="!item.result" (click)="store.export(item.documentId, 'json')">匯出 JSON</button>
-        <button mat-button type="button" class="danger" [disabled]="store.busyIds().has(item.documentId) || !!item.captureId" (click)="store.delete(item.documentId)">刪除</button>
+        <button mat-button type="button" class="danger" data-testid="document-delete" [attr.data-document-id]="item.documentId" [disabled]="store.busyIds().has(item.documentId) || !!item.captureId" (click)="store.delete(item.documentId)">刪除</button>
         @if (store.busyIds().has(item.documentId)) {
           <small>請先取消處理。</small>
         } @else if (item.captureId) {

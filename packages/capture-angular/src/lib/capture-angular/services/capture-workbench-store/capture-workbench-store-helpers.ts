@@ -63,7 +63,7 @@ export function validateCaptureReview(
 }
 
 export function normalizeHostFailureMessage(message: string): string {
-  const normalized = message.trim();
+  const normalized = redactSensitiveMessage(message).trim();
   return (normalized || 'Host structuring failed.').slice(0, 500);
 }
 
@@ -97,7 +97,9 @@ export function runtimeProgressPercent(progress: number): number {
 }
 
 export function errorMessage(error: unknown, fallback: string): string {
-  return error instanceof Error && error.message ? error.message : fallback;
+  return error instanceof Error && error.message
+    ? redactSensitiveMessage(error.message)
+    : fallback;
 }
 
 export function failureFrom(
@@ -111,11 +113,32 @@ export function failureFrom(
   };
   return {
     code:
-      typeof candidate?.code === 'string' ? candidate.code : 'capture_failed',
+      typeof candidate?.code === 'string'
+        ? redactSensitiveMessage(candidate.code)
+        : 'capture_failed',
     message:
-      typeof candidate?.message === 'string' ? candidate.message : fallback,
+      typeof candidate?.message === 'string'
+        ? redactSensitiveMessage(candidate.message)
+        : fallback,
     stage,
   };
+}
+
+export function redactFailure(error: CaptureFailureV1): CaptureFailureV1 {
+  return {
+    ...error,
+    code: redactSensitiveMessage(error.code),
+    message: redactSensitiveMessage(error.message),
+  };
+}
+
+export function redactSensitiveMessage(message: string): string {
+  return message
+    .replace(/Bearer\s+[^\s,;]+/giu, 'Bearer [redacted]')
+    .replace(
+      /(?:authorization|bearerToken|access_token|token)\s*[:=]\s*["']?[^"'\s,;}]+/giu,
+      (match) => `${match.slice(0, match.search(/[:=]/u) + 1)} [redacted]`,
+    );
 }
 
 export function isAbortError(error: unknown): boolean {
@@ -256,12 +279,20 @@ export class CaptureWorkbenchStoreHelpers {
     return errorMessage(error, fallback);
   }
 
+  redactSensitiveMessage(message: string): string {
+    return redactSensitiveMessage(message);
+  }
+
   failureFrom(
     error: unknown,
     stage: CaptureFailureV1['stage'],
     fallback: string,
   ): CaptureFailureV1 {
     return failureFrom(error, stage, fallback);
+  }
+
+  redactFailure(error: CaptureFailureV1): CaptureFailureV1 {
+    return redactFailure(error);
   }
 
   isAbortError(error: unknown): boolean {

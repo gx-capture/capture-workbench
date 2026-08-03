@@ -355,6 +355,43 @@ progress {
   font-weight: 650;
 }
 
+.result-provenance {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0.7rem 0 0;
+  font-size: 0.75rem;
+}
+
+.result-provenance > div {
+  display: grid;
+  grid-template-columns: 4rem minmax(0, 1fr);
+  gap: 0.5rem;
+}
+
+.result-provenance dt {
+  color: var(--capture-muted);
+}
+
+.result-provenance dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+.raw-segments {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0;
+  margin: 0.7rem 0 0;
+  list-style: none;
+}
+
+.raw-segments li {
+  padding: 0.45rem;
+  border: 1px solid var(--capture-border);
+  border-radius: 0.35rem;
+}
+
 .error {
   margin-top: 0.65rem;
   color: var(--capture-danger);

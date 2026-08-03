@@ -1,68 +1,64 @@
-# Tiered Release and Direct Model Delivery TODO
+# v0.3.9 Model-Enabled Release TODO
 
-- [x] Make the canonical source-lock validator classify only exact empty
-      `requirements` as core-only and require full approval for every non-empty
-      requirements set. Missing, malformed, non-canonical, partial, and unknown
-      input must fail closed.
-      Verify: `pnpm nx run capture-runtime:test --skip-nx-cache`
+`v0.3.8` is immutable core-only evidence. The authorized successor is
+`v0.3.9`. Capture Workbench release changes may be committed, pushed, merged,
+tagged, and published only through the gates below. Cert Prep consumes only
+published `v0.3.9` bytes and its final integration diff remains uncommitted.
 
-- [x] Generate and package a canonical empty engine catalog for core-only
-      releases, excluding optional worker archives, model files/ZIPs, and fixtures.
-      Preserve the complete bound catalog path for approved model-enabled releases.
-      Verify: `pnpm nx run capture-runtime:test --skip-nx-cache`
+## Completed foundations
 
-- [x] Remove the tag workflow's unconditional model-receipt coupling. Resolve,
-      verify, and assemble receipt evidence only for canonical model-enabled mode;
-      require exactly one trusted successful main `push` CI run for the exact tag
-      SHA; keep versions, exact-main ancestry, workspace verification, size,
-      package, runtime, and installer gates unconditional.
-      Verify: `pnpm nx run capture-workbench-desktop:package-qa-test --skip-nx-cache`
+- [x] Freeze the product contract: DirectML-first OCR, CPU only when
+      `DmlExecutionProvider` is absent, and terminal failure on DirectML
+      initialization or inference errors. Audio uses
+      `large-v3-turbo`/CUDA and falls back to `small`/CPU only for resource
+      failures. API `1.0` and CaptureDocument schema `1` remain unchanged.
+- [x] Commit and push the seven-file project-owned OCR fixture checkpoint as
+      Commit A `31821b241846878d917a60e638a4fce39aba418a`. It contains no
+      model weights, private audio, private audio paths, or private audio text.
+- [x] Bind the pending v0.3.9 source lock to immutable Commit A URLs and the
+      approved pinned PaddleOCR/Whisper revisions. Keep the private audio
+      fixture represented only by its bytes, SHA-256, output/provenance
+      conditions, and pending freeze fields.
+- [x] Add source-lock validation, checksum-pinned direct model delivery,
+      atomic activation rollback, version cohesion, real model candidate
+      receipt gates, model-enabled publisher inventory, and provider
+      regressions.
+- [x] Add the Tauri/WebView scanned-PDF, image, and private-audio smoke plus
+      early raw OCR visibility, UUID-scoped deletion, bounded redacted
+      evidence, and owned process/listener cleanup checks.
+- [x] Update `@gx-capture/capture-workbench` and the desktop/runtime release
+      surfaces to candidate version `0.3.9`; retain literal `0.3.8` only in
+      explicitly historical compatibility fixtures and evidence.
 
-- [x] Accept the exact core-only publisher asset set while preserving strict
-      equality, checksums, idempotency, and the ban on model ZIP assets and QA
-      fixtures.
-      Verify: `pnpm nx run capture-workbench-desktop:package-qa-test --skip-nx-cache`
+## Active release gates
 
-- [x] Prove the core-only runtime/UI reports OCR and Whisper as unavailable,
-      offers no install action, and cannot begin a download for an absent catalog
-      requirement.
-      Verify: `pnpm nx run capture-runtime:test --skip-nx-cache` and
-      `pnpm nx run capture-angular:test --skip-nx-cache`
-
-- [x] Run the resolved release-owner targets and full proportionate verification
-      before requesting independent review. Do not tag, publish, or create a
-      Release in this implementation slice.
-      Verify: `pnpm verify`
-
-- [ ] Resolve exact Paddle/Whisper user-directed upstream download/use terms,
-      required attribution/NOTICE, canonical owners/URLs/revisions, first-party
-      `pipeline.json` derivation, and redistribution permission for exact
-      first-party-copied pipeline/license/NOTICE/real-fixture bytes. Pin normalized
-      expected text and engine/model/device provenance.
-
-- [ ] Complete the required two-commit bootstrap in
-      `gx-capture/capture-workbench`: commit approved first-party bytes first, then
-      in a later source-lock commit reference immutable raw URLs at that earlier
-      full commit SHA. The source lock must not self-reference its own commit.
-      Encode the resulting exact bytes/hashes and repository/commit binding.
-      Verify: `pnpm nx run capture-runtime:validate-model-source-lock --skip-nx-cache`.
-
-- [ ] Obtain explicit authorization, register, and secure a self-hosted Windows
-      x64 GPU runner with the exact `capture-directml` label. GitHub-hosted
-      `windows-latest` is not acceptable evidence for the DirectML product lane.
-
-- [ ] After both prerequisites above are satisfied, dispatch the real model
-      candidate workflow for the exact full commit SHA and retain a successful
-      non-expired receipt proving:
-  - OCR engine/model/device exactly
-    `windowsml-ocr` / `pp-ocrv6-medium-windowsml` / `windowsml-dml`;
-  - the lock-approved Whisper primary/fallback engine/model/device path;
-  - exact normalized fixture output; and
-  - exact fixture plus fixture-license bytes/SHA-256.
-
-The unresolved legal/source/fixture/runner items above block only the
-model-enabled lane. The canonical empty-requirements core-only lane remains
-eligible after its unconditional CI, version, package, runtime, installer, and
-integrity gates pass. Commit, tag, release, package publication, runner
-registration, and machine configuration require separate explicit
-authorization.
+- [ ] Build the production workers and run the privacy-safe private Whisper
+      preflight twice from the exact pending source lock. Both canonical
+      evidence files must be identical and contain no text, path, token, or
+      license URL. Freeze only the observed `large-v3-turbo`/`cuda` or
+      `small`/`cpu` pair and normalized output SHA-256.
+- [ ] Approve the source lock with no blockers, then run source-lock,
+      production-environment, worker-boundary, release-version, package,
+      Cargo, desktop, and real OCR/audio candidate gates. A failed gate stops
+      before commit, tag, or publication.
+- [ ] Root-review the complete Commit B diff, explicitly stage only reviewed
+      Capture Workbench paths, inspect the cached diff/tree, commit, and push
+      `release/model-enabled-v0.3.9`.
+- [ ] Merge the reviewed PR to `main` and require the unique successful
+      `.github/workflows/ci.yml` push run for the exact merge SHA.
+- [ ] Register one ephemeral Windows x64 runner with the exact
+      `capture-directml` label and runner-local private audio environment,
+      dispatch the exact-main model candidate, and accept only a fresh
+      commit/source-lock/catalog-bound receipt.
+- [ ] Create and push `v0.3.9` only after the candidate receipt and desktop
+      three-media evidence pass. Verify the release publishes the core runtime,
+      catalog/checksums, worker archives, NSIS installer, and
+      `@gx-capture/capture-workbench@0.3.9`, with no model, model ZIP, fixture,
+      or package tarball in GitHub Release assets.
+- [ ] Update Cert Prep to the published package/runtime bytes, run fresh
+      packaged scanned-PDF, image, and audio E2E plus v0.3.8 compatibility and
+      unavailable-negative gates, and leave all Cert Prep changes uncommitted.
+- [ ] Remove the ephemeral runner, downloaded models, staging/app-data,
+      `.nx`, `dist/out/tmp`, Tauri `target`, Python caches, and generated apps.
+      Preserve existing `.venv` directories and the original private audio;
+      verify no owned Capture Workbench or Cert Prep process/listener remains.

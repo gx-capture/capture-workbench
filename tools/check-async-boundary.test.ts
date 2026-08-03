@@ -14,7 +14,7 @@ function runChecker(checkerPath: string) {
   });
 }
 
-test('async boundary permits only the exact installed desktop CLI path', async () => {
+test('async boundary permits only the exact approved CLI paths', async () => {
   const workspaceRoot = await mkdtemp(
     join(tmpdir(), 'capture-async-boundary-'),
   );
@@ -25,6 +25,18 @@ test('async boundary permits only the exact installed desktop CLI path', async (
     'capture-workbench-desktop',
     'scripts',
     'installed-deterministic-smoke.ts',
+  );
+  const modelMediaCliPath = join(
+    workspaceRoot,
+    'apps',
+    'capture-workbench-desktop',
+    'scripts',
+    'real-media-model-smoke.ts',
+  );
+  const boundaryDoctorPath = join(
+    workspaceRoot,
+    'tools',
+    'capture-boundary-doctor.ts',
   );
   const angularSourcePath = join(
     workspaceRoot,
@@ -39,6 +51,8 @@ test('async boundary permits only the exact installed desktop CLI path', async (
     await Promise.all([
       mkdir(dirname(checkerPath), { recursive: true }),
       mkdir(dirname(installedCliPath), { recursive: true }),
+      mkdir(dirname(modelMediaCliPath), { recursive: true }),
+      mkdir(dirname(boundaryDoctorPath), { recursive: true }),
       mkdir(dirname(angularSourcePath), { recursive: true }),
       mkdir(join(workspaceRoot, 'packages'), { recursive: true }),
     ]);
@@ -46,6 +60,16 @@ test('async boundary permits only the exact installed desktop CLI path', async (
     await writeFile(
       installedCliPath,
       'export async function runInstalledCli() { await Promise.resolve(); }\n',
+      'utf8',
+    );
+    await writeFile(
+      modelMediaCliPath,
+      'export async function runModelMediaCli() { await Promise.resolve(); }\n',
+      'utf8',
+    );
+    await writeFile(
+      boundaryDoctorPath,
+      'export async function runBoundaryDoctor() { await Promise.resolve(); }\n',
       'utf8',
     );
 

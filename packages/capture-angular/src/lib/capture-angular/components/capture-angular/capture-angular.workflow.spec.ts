@@ -61,6 +61,23 @@ describe('CaptureWorkbenchComponent', () => {
       captureWorkbenchRoot(fixture).querySelector('.result-preview')
         ?.textContent,
     ).toContain('page one');
+    expect(
+      captureWorkbenchRoot(fixture).querySelector('[data-testid="capture-result"]')
+        ?.textContent,
+    ).toContain('page one');
+    const extractionProvenance = captureWorkbenchRoot(fixture).querySelector(
+      '[data-testid="capture-extraction-provenance"]',
+    ) as HTMLElement | null;
+    expect(extractionProvenance).not.toBeNull();
+    expect(extractionProvenance?.dataset).toMatchObject({
+      engine: DOCUMENT.extractionEngine.engine,
+      model: DOCUMENT.extractionEngine.model,
+      digest: DOCUMENT.extractionEngine.digest,
+    });
+    expect(extractionProvenance?.textContent).toContain(
+      DOCUMENT.extractionEngine.digest,
+    );
+    expect(extractionProvenance?.textContent).not.toMatch(/Bearer|secret-token|C:\\private/iu);
   });
 
   it('polls queued jobs through rxResource until completion without overlap', async () => {

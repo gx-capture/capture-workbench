@@ -198,7 +198,7 @@ mod tests {
 
     #[test]
     fn incompatible_schema_fails_without_echoing_response_body() {
-        let body = br#"{"ready":true,"runtimeVersion":"0.3.8","apiVersion":"1.0","captureDocumentSchemaVersion":"99","capabilities":{}}"#;
+        let body = br#"{"ready":true,"runtimeVersion":"0.3.9","apiVersion":"1.0","captureDocumentSchemaVersion":"99","capabilities":{}}"#;
         let response = format!(
             "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{}",
             body.len(),

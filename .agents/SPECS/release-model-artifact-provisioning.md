@@ -2,22 +2,50 @@
 
 ## Purpose
 
-Publish Capture Workbench `0.3.8` safely in one of two canonical modes:
-core-only while model provenance is unresolved, or model-enabled after every
-existing direct-model trust gate passes. Keep the installer small and preserve
-explicit-consent, checksum-pinned model installation when models are enabled.
+Preserve the published `0.3.8` core-only release as immutable evidence and
+publish `0.3.9` as the model-enabled successor only after every direct-model,
+source, runtime, UI, and consumer trust gate passes. Keep the installer small
+and preserve explicit-consent, checksum-pinned model installation.
 
 ## Non-Goals
 
 - No model ZIP build, GitHub Release model asset, Actions model handoff, runtime
   cache lookup, sibling-repository input, secret, or mutable upstream ref.
 - No worker archive format change.
-- No implicit/background install, consent change, new API endpoint, token
-  persistence, package API change, or `cert-prep` operation.
+- No implicit/background install, new API endpoint, token persistence, package
+  API break, or consumer-owned OCR/Whisper/runtime implementation. Cert Prep
+  integration starts only after published v0.3.9 bytes exist and remains
+  uncommitted.
 - No tag, release, package mutation, or publication from the candidate
   workflow.
+- No mutation, asset upload, retarget, reuse, deletion, or retrofit of
+  `v0.3.8`; it remains a core-only release with exactly nine public assets and
+  an empty published engine catalog.
+- No Cert Prep OCR/Whisper provider, installer, compatibility shim, or other
+  consumer-side fallback.
 - No second release workflow, caller-selected release mode, bypass flag, or
   best-effort fallback from malformed model metadata to core-only.
+
+## v0.3.8 Evidence and Next-Version Cohesion
+
+The authoritative public `v0.3.8` tag commit is
+`f14958b65b0d786d3d0d8e3ea340a3dd40a79876`. Its source lock is blocked with
+`requirements: []`, and its published engine catalog is canonical core-only
+with `requirements: []`. Its Release has no OCR/Whisper worker, model, model
+ZIP, or real-fixture asset. These are facts to preserve, not missing assets to
+upload.
+
+Before a model-enabled candidate is built, select one unused semantic version
+after read-only remote checks for its tag, Release, and package identity. That
+version must be the only runtime release identity used by production code and
+workflow execution. It must agree in the Python package/runtime constants and
+wire contract, Angular package metadata, Tauri/Cargo metadata, source lock,
+worker archive discovery, catalog, staging manifest validation, NSIS size
+report, candidate receipt, and tag workflow. The implementation must add
+regressions that reject a mismatched source lock, worker archive/catalog,
+receipt, staged manifest, or release tag. Historical v0.3.8 test fixtures and
+documentation can retain their literal historical version only when they are
+not candidate inputs.
 
 ## Release Mode Contract
 
@@ -181,6 +209,48 @@ The package tarball is published through GitHub Packages and is never a GitHub
 Release asset. Upload uses compression level 0 and short retention for this
 ordinary-sized handoff.
 
+## Local Candidate and Real Desktop Evidence
+
+Once, and only once, the non-empty source lock has passed its legal/source
+gates, a local Windows x64 candidate may run:
+
+1. the canonical source-lock validation and version-consistency tests;
+2. production-environment preparation, worker builds, and generation of the
+   complete lock-bound catalog;
+3. checksum-pinned direct model installation plus the existing real OCR and
+   Whisper worker fixture verifier; and
+4. a new opt-in Tauri/WebView smoke that starts from an explicitly prepared
+   host-owned app-data directory, installs engines by the product's consented
+   catalog path, and imports separately supplied scanned-PDF, image, and audio
+   fixtures through the UI.
+
+The desktop smoke must use no ambient model-directory or extraction-provider
+override. It must check the post-install requirement state, non-empty raw and
+structured UI data, exact source-kind/provenance assertions, UUID-scoped
+document deletion, and owned-process cleanup. The PDF and image cases require
+`windowsml-ocr` and `windowsml-dml`; CPU is a failure for this model-enabled
+release gate. The audio case requires `whisper-primary`, non-empty segments
+with time locators, and the exact source-lock-selected primary/fallback
+model/device expectation. Its fixture paths and tokens must not appear in the
+receipt. This is distinct from the model-candidate worker proof and from the
+current PDF-only desktop smoke.
+
+No model-enabled candidate, receipt, desktop stage, or consumer installation
+may be claimed while the source lock remains blocked or the required runner is
+unavailable.
+
+## Blocked-State Developer Alternative
+
+The only permitted pre-approval alternative is an opt-in developer-only local
+probe. It may inspect explicitly supplied local model and fixture paths and
+emit redacted SHA-256 observations, but it must be unable to alter the
+production catalog, installed engine state, desktop stage, candidate receipt,
+Release candidate, or consumer requirement status. Its evidence is explicitly
+non-release and non-consumer evidence. It cannot make a blocked source lock
+approved and does not authorize source-byte redistribution. The existing
+ambient `CAPTURE_USER_MODEL_DIR` PDF diagnostic is not a production
+provisioning mechanism and must remain outside product/release targets.
+
 ## Publisher
 
 The publisher derives the canonical expected release asset names from the
@@ -195,6 +265,12 @@ all draft/public retries it lists remote asset names and requires:
 
 ## Acceptance Criteria
 
+- `v0.3.8` remains unchanged: the remote tag resolves to its existing commit,
+  the Release inventory remains the nine core/runtime assets, and the
+  published catalog remains empty. No implementation command writes remote
+  state.
+- A successor candidate cannot use `v0.3.8`, and one selected unused version
+  is verified consistently across every release-execution input listed above.
 - The checked-in canonical empty-requirements lock produces a core-only empty
   catalog and release without model approval or receipt evidence.
 - A non-empty blocked/unapproved lock fails before publication; an approved
@@ -224,3 +300,71 @@ all draft/public retries it lists remote asset names and requires:
   public-retry assets; model ZIP names are rejected.
 - The real candidate job cannot run until an authorized self-hosted Windows x64
   GPU runner is registered with the exact `capture-directml` label.
+- A complete approved next-version lock produces a locally built,
+  checksum-pinned model-enabled catalog and candidate. Its real worker proof
+  and the three-media Tauri/WebView proof both pass without an ambient model
+  override, each recording only redacted evidence.
+- When approval, source bytes, or the runner are unavailable, the developer
+  probe remains isolated and cannot make the core-only product/consumer path
+  installable or ready.
+
+## v0.3.9 Commit A and Model-Enabled Release Acceptance Surface
+
+The v0.3.8 release remains immutable core-only evidence. The selected successor
+is v0.3.9. Commit A is complete and pushed; Commit B, exact-main candidate,
+tag, publication, and the following uncommitted Cert Prep consumer E2E are
+authorized only through the fail-closed sequence in this specification.
+
+Commit A's complete allowlist is:
+
+- `model-sources/commit-a/fixtures/ocr-reference.png`, a project-owned PNG with
+  the fixed expected OCR text `CAPTURE OCR FIXTURE`;
+- `model-sources/commit-a/fixtures/ocr-scanned.pdf`, a deterministic one-page
+  PDF whose page has an image XObject and no embedded text;
+- `model-sources/commit-a/model/pipeline.json`, derived by the checked-in
+  generator from canonical metadata;
+- `scripts/generate_commit_a_fixtures.py`; and
+- the matching `licenses/LICENSE.txt`, `licenses/NOTICE.txt`, and
+  `provenance/commit-a.json` files.
+
+No model weight, worker archive, private audio, private audio path, or private
+audio text is permitted in the Commit A tree, reports, or logs. Commit A is
+`31821b241846878d917a60e638a4fce39aba418a`. Commit B adds the approved v0.3.9
+source lock with immutable raw URLs bound to that exact SHA; the source lock
+cannot reference Commit B itself.
+
+The provenance records these immutable upstream revisions: PaddleOCR detection
+`61323801669c338b7891481ec7bac61ce31b576a` from
+`PaddlePaddle/PP-OCRv6_medium_det_onnx`, recognition
+`50c7eacafc52fa7bcf4194e8cd08e46f8558504b` from
+`PaddlePaddle/PP-OCRv6_medium_rec_onnx`, dictionary
+`b03f46425e8ff4442b268ce449e3eef758146cd4`, Whisper primary
+`0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf`, and Whisper fallback
+`536b0662742c02347bc0e980a01041f333bce120`. Model weights remain upstream
+inputs and are not copied into Commit A.
+
+OCR acceptance remains `pp-ocrv6-medium-windowsml` with
+`windowsml-dml` provenance. The runtime selects CPU-only OCR only when
+`DmlExecutionProvider` is unavailable; DirectML initialization or inference
+failure fails closed and must not retry with a CPU-only pipeline. The iGPU
+  route uses DirectML adapter 0 by default. Audio acceptance is a private
+  runner gate represented in the source lock only by bytes, SHA-256, segment
+  conditions, normalized output digest, and actual model/device provenance.
+  Two identical production-worker preflights must freeze that expectation
+  before final OCR/audio candidate and desktop gates run.
+
+The deterministic Phase A validator is
+`pnpm nx run capture-runtime:validate-commit-a-fixtures --skip-nx-cache`, and
+the focused regression suite is
+`pnpm nx run capture-runtime:test --skip-nx-cache --testsFile=tests/test_commit_a_fixtures.py`
+(or the equivalent `uv run ... pytest tests/test_commit_a_fixtures.py`).
+The generated bytes currently are:
+
+| path | bytes | SHA-256 |
+| --- | ---: | --- |
+| `fixtures/ocr-reference.png` | 2,157 | `7d61f4835837c4c387a0d46c4f21f7442fe22aab3f14f330b86f6857f5f3bc82` |
+| `fixtures/ocr-scanned.pdf` | 2,421 | `5eec85d2b2e98e06577cb5310d1b3037ca26f03d06d85a292ae78b68d4c57f30` |
+| `licenses/LICENSE.txt` | 1,087 | `20d8153042f147e730a2265e35e3862f8d1ad67b5f6804d44fb81e7dfbc5818b` |
+| `licenses/NOTICE.txt` | 303 | `59b45e1fdb14fce45ba29a4a5200b0d26f97f7db11d42a8b8e2581bfa005d4ed` |
+| `model/pipeline.json` | 613 | `21ba11c05440b36894262eab74c124d9ce55d64311ddb53497f99acdcc225606` |
+| `provenance/commit-a.json` | 2,334 | `e4a152993dc505156f37504b89519492c2ceaadd9a9480f061676fc0df750a9f` |

@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+import capture_runtime.engine_installation as engine_installation_module
 from capture_runtime.clock import SystemClock
 from capture_runtime.config import ExtractionRuntimeConfig
 from capture_runtime.engine_catalog import EngineCatalog, EngineCatalogError
@@ -25,6 +26,7 @@ from capture_runtime.engine_installation import (
 )
 from capture_runtime.ollama import SystemRuntimeInstaller
 from capture_runtime.worker_client import InstalledEngine, WorkerProbeResult
+from capture_runtime.worker_process import WorkerExecutionError
 
 
 def _manifest(files: dict[str, bytes]) -> bytes:
@@ -162,7 +164,7 @@ def _catalog(root: Path, *, version: str = "engine-1") -> tuple[EngineCatalog, d
         EngineCatalog.from_dict(
             {
                 "catalogVersion": "2",
-                "runtimeVersion": "0.3.8",
+                "runtimeVersion": "0.3.9",
                 "requirements": [
                     {
                         "requirementId": "windowsml-ocr",
@@ -272,6 +274,91 @@ class FakeWorkerClient:
         self.shutdown_called = True
 
 
+class CodeProbeFailureWorkerClient(FakeWorkerClient):
+    async def probe(
+        self,
+        engine: InstalledEngine,
+        *,
+        include_model: bool,
+        options: dict[str, object] | None = None,
+        timeout_seconds: float = 30,
+    ) -> WorkerProbeResult:
+        if not include_model:
+            raise RuntimeError("worker path C:\\private\\token=should-not-escape")
+        return await super().probe(
+            engine,
+            include_model=include_model,
+            options=options,
+            timeout_seconds=timeout_seconds,
+        )
+
+
+class StageCodeProbeFailureWorkerClient(FakeWorkerClient):
+    async def probe(
+        self,
+        engine: InstalledEngine,
+        *,
+        include_model: bool,
+        options: dict[str, object] | None = None,
+        timeout_seconds: float = 30,
+    ) -> WorkerProbeResult:
+        if not include_model:
+            raise WorkerExecutionError("worker exited with code 1 at stage load-model")
+        return await super().probe(
+            engine,
+            include_model=include_model,
+            options=options,
+            timeout_seconds=timeout_seconds,
+        )
+
+
+def test_code_probe_worker_stage_is_projected(tmp_path: Path) -> None:
+    catalog, sources = _catalog(tmp_path)
+    manager = EngineInstallationManager(
+        tmp_path / "engines",
+        catalog,
+        worker_client=StageCodeProbeFailureWorkerClient(),  # type: ignore[arg-type]
+        downloader=CopyDownloader(sources),
+        model_downloader=CopyModelDownloader(sources),
+    )
+
+    with pytest.raises(
+        EngineInstallationError,
+        match="^engine worker code probe failed: worker exited with code 1 at stage load-model$",
+    ):
+        asyncio.run(
+            manager.install(
+                "windowsml-ocr",
+                cancel_event=asyncio.Event(),
+                report_progress=lambda _value: None,
+            )
+        )
+
+
+def test_code_probe_failure_is_wrapped_without_worker_details(tmp_path: Path) -> None:
+    catalog, sources = _catalog(tmp_path)
+    manager = EngineInstallationManager(
+        tmp_path / "engines",
+        catalog,
+        worker_client=CodeProbeFailureWorkerClient(),  # type: ignore[arg-type]
+        downloader=CopyDownloader(sources),
+        model_downloader=CopyModelDownloader(sources),
+    )
+
+    with pytest.raises(
+        EngineInstallationError, match="^engine worker code probe failed$"
+    ) as failure:
+        asyncio.run(
+            manager.install(
+                "windowsml-ocr",
+                cancel_event=asyncio.Event(),
+                report_progress=lambda _value: None,
+            )
+        )
+    assert "private" not in str(failure.value)
+    assert "should-not-escape" not in str(failure.value)
+
+
 def test_engine_installation_is_atomic_offline_ready_and_idempotent(
     tmp_path: Path,
 ) -> None:
@@ -358,6 +445,58 @@ def test_failed_upgrade_keeps_previous_active_state(tmp_path: Path) -> None:
     assert (root / "windowsml-ocr" / "active.json").read_bytes() == active_before
     assert manager_v1.active_engine("windowsml-ocr") is not None
     assert not (root / "windowsml-ocr" / "versions" / "engine-2").exists()
+
+
+def test_active_state_write_failure_restores_previous_version_atomically(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "engines"
+    catalog_v1, sources_v1 = _catalog(tmp_path, version="engine-1")
+    manager_v1 = EngineInstallationManager(
+        root,
+        catalog_v1,
+        worker_client=FakeWorkerClient(),  # type: ignore[arg-type]
+        downloader=CopyDownloader(sources_v1),
+        model_downloader=CopyModelDownloader(sources_v1),
+    )
+    asyncio.run(
+        manager_v1.install(
+            "windowsml-ocr",
+            cancel_event=asyncio.Event(),
+            report_progress=lambda _value: None,
+        )
+    )
+    requirement_root = root / "windowsml-ocr"
+    active_before = (requirement_root / "active.json").read_bytes()
+    catalog_v2, sources_v2 = _catalog(tmp_path, version="engine-2")
+    manager_v2 = EngineInstallationManager(
+        root,
+        catalog_v2,
+        worker_client=FakeWorkerClient(),  # type: ignore[arg-type]
+        downloader=CopyDownloader(sources_v2),
+        model_downloader=CopyModelDownloader(sources_v2),
+    )
+    original_atomic_write = engine_installation_module._atomic_write_json
+
+    def fail_active_write(path: Path, payload: object) -> None:
+        if path.name == "active.json":
+            raise OSError("injected active state write failure")
+        original_atomic_write(path, payload)
+
+    monkeypatch.setattr(engine_installation_module, "_atomic_write_json", fail_active_write)
+    with pytest.raises(OSError, match="injected active state write failure"):
+        asyncio.run(
+            manager_v2.install(
+                "windowsml-ocr",
+                cancel_event=asyncio.Event(),
+                report_progress=lambda _value: None,
+            )
+        )
+    assert (requirement_root / "active.json").read_bytes() == active_before
+    assert (requirement_root / "versions" / "engine-1").is_dir()
+    assert not (requirement_root / "versions" / "engine-2").exists()
+    assert not list((requirement_root / ".staging").glob("*"))
+    assert not list(requirement_root.glob(".previous-*"))
 
 
 def test_concurrent_install_observes_single_winning_activation(tmp_path: Path) -> None:
@@ -488,7 +627,7 @@ def test_next_install_removes_only_validated_crash_residue(tmp_path: Path) -> No
     )
     requirement_root = root / "windowsml-ocr"
     staging_residue = requirement_root / ".staging" / ("a" * 32)
-    version_residue = requirement_root / "versions" / f".crashed-0.3.8.{'b' * 32}"
+    version_residue = requirement_root / "versions" / f".crashed-0.3.9.{'b' * 32}"
     invalid_staging = requirement_root / ".staging" / "not-owned"
     invalid_version = requirement_root / "versions" / ".not-owned"
     for path in (
@@ -597,7 +736,7 @@ def test_core_only_catalog_reports_models_unavailable_without_downloading(
     catalog = EngineCatalog.from_dict(
         {
             "catalogVersion": "2",
-            "runtimeVersion": "0.3.8",
+            "runtimeVersion": "0.3.9",
             "requirements": [],
         }
     )
@@ -678,3 +817,60 @@ def test_system_installer_passes_nonzero_directml_device_to_model_probe(tmp_path
         (False, {"deviceId": 7}),
         (True, {"deviceId": 7}),
     ]
+
+
+def test_smoke_worker_mirror_maps_only_worker_transport(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    catalog, sources = _catalog(tmp_path)
+    monkeypatch.setenv("CAPTURE_SMOKE_WORKER_MIRROR_OPT_IN", "1")
+    monkeypatch.setenv("CAPTURE_SMOKE_WORKER_MIRROR_URL", "http://127.0.0.1:43123")
+
+    class RecordingDownloader(CopyDownloader):
+        seen_urls: list[str] = []
+
+        async def download(self, descriptor, destination, *, cancel_event, progress) -> None:
+            self.seen_urls.append(descriptor.url)
+            await super().download(
+                descriptor,
+                destination,
+                cancel_event=cancel_event,
+                progress=progress,
+            )
+
+    class RecordingModelDownloader(CopyModelDownloader):
+        seen_urls: list[str] = []
+
+        async def download(self, descriptor, destination, *, cancel_event, progress) -> None:
+            self.seen_urls.append(descriptor.url)
+            await super().download(
+                descriptor,
+                destination,
+                cancel_event=cancel_event,
+                progress=progress,
+            )
+
+    downloader = RecordingDownloader(sources)
+    model_downloader = RecordingModelDownloader(sources)
+    manager = EngineInstallationManager(
+        tmp_path / "engines",
+        catalog,
+        worker_client=FakeWorkerClient(),  # type: ignore[arg-type]
+        downloader=downloader,
+        model_downloader=model_downloader,
+    )
+    asyncio.run(
+        manager.install(
+            "windowsml-ocr",
+            cancel_event=asyncio.Event(),
+            report_progress=lambda _value: None,
+        )
+    )
+
+    assert downloader.seen_urls == [
+        "http://127.0.0.1:43123/" + catalog.requirement("windowsml-ocr").worker_artifact().file_name
+    ]
+    assert model_downloader.seen_urls == [
+        item.url for item in catalog.requirement("windowsml-ocr").model_delivery().files
+    ]
+    assert all(url.startswith("https://") for url in model_downloader.seen_urls)

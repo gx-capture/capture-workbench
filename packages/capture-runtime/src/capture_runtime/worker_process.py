@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import secrets
 import sys
 from collections.abc import Mapping
@@ -25,6 +26,10 @@ DEFAULT_RUN_TIMEOUT_SECONDS = 15 * 60.0
 WORKER_CANCEL_GRACE_SECONDS = 2.0
 WORKER_TERMINATE_GRACE_SECONDS = 3.0
 MAX_WORKER_STDERR_BYTES = 64 * 1024
+WORKER_STAGE_PATTERN = re.compile(r"(?m)^capture-worker-stage:([a-z0-9]+(?:-[a-z0-9]+)*)$")
+WORKER_BOOTLOADER_PATTERN = re.compile(
+    r"(?im)^\s*(?:\[PYI-[^\r\n]{0,80}|fatal error[^\r\n]{0,160})$"
+)
 
 
 class WorkerExecutionError(RuntimeError):
@@ -100,6 +105,8 @@ class WorkerProcess:
         try:
             assert process.stdin is not None
             assert process.stdout is not None
+            assert process.stderr is not None
+            stderr_task = asyncio.create_task(self._drain_stderr(process.stderr))
             process.stdin.write(_frame(request))
             await process.stdin.drain()
             read_task = asyncio.create_task(process.stdout.readline())
@@ -130,21 +137,44 @@ class WorkerProcess:
                 raise WorkerCancelledError
             if timeout_task in done:
                 await self._stop(process, initial_grace=0)
-                raise WorkerExecutionError("worker request timed out")
+                stderr = await stderr_task
+                raise WorkerExecutionError(f"worker request timed out{_stage_suffix(stderr)}")
             if exit_task in done and not read_task.done():
-                stderr = await self._read_stderr(process)
-                raise WorkerExecutionError(
-                    f"worker exited before a response with code {process.returncode}"
-                    + (f": {stderr}" if stderr else "")
-                )
+                # A worker can write and flush its response immediately before
+                # exiting.  ``Process.wait`` may complete before the stdout
+                # transport delivers that line, so give the already-exited
+                # process a bounded opportunity to finish the read before
+                # declaring that it produced no response.
+                try:
+                    await asyncio.wait_for(
+                        read_task,
+                        timeout=WORKER_TERMINATE_GRACE_SECONDS,
+                    )
+                except TimeoutError as error:
+                    stderr = await stderr_task
+                    raise WorkerExecutionError(
+                        f"worker exited before a response with code {process.returncode}"
+                        f"{_stage_suffix(stderr)}"
+                    ) from error
+                except ValueError as error:
+                    raise WorkerProtocolError(
+                        "worker response exceeds the framing limit"
+                    ) from error
             try:
                 line = await read_task
             except ValueError as error:
                 raise WorkerProtocolError("worker response exceeds the framing limit") from error
             if not line:
-                stderr = await self._read_stderr(process)
+                await self._stop(process, initial_grace=0)
+                stderr = await stderr_task
+                return_code = process.returncode
+                code_suffix = (
+                    f" with code {return_code}"
+                    if isinstance(return_code, int) and not isinstance(return_code, bool)
+                    else ""
+                )
                 raise WorkerExecutionError(
-                    "worker returned no response" + (f": {stderr}" if stderr else "")
+                    f"worker returned no response{code_suffix}{_stage_suffix(stderr)}"
                 )
             if len(line) > MAX_WORKER_OUTPUT_BYTES or not line.endswith(b"\n"):
                 raise WorkerProtocolError("worker response exceeds the framing limit")
@@ -161,18 +191,19 @@ class WorkerProcess:
             except TimeoutError as error:
                 await self._stop(process, initial_grace=0)
                 raise WorkerExecutionError("worker did not exit after its response") from error
-            if process.returncode != 0:
-                stderr = await self._read_stderr(process)
-                raise WorkerExecutionError(
-                    f"worker exited with code {process.returncode}"
-                    + (f": {stderr}" if stderr else "")
-                )
             trailing = await process.stdout.read(1)
             if trailing:
                 raise WorkerProtocolError("worker emitted more than one response line")
+            stderr = await stderr_task
             if not response.ok:
                 assert response.error is not None
-                raise WorkerExecutionError(f"{response.error.code}: {response.error.message}")
+                raise WorkerExecutionError(
+                    f"{response.error.code}: {response.error.message}{_stage_suffix(stderr)}"
+                )
+            if process.returncode != 0:
+                raise WorkerExecutionError(
+                    f"worker exited with code {process.returncode}{_stage_suffix(stderr)}"
+                )
             return response
         finally:
             for task_name in ("read_task", "exit_task", "cancel_task", "timeout_task"):
@@ -183,6 +214,10 @@ class WorkerProcess:
                         await task
             if process.returncode is None:
                 await self._stop(process, initial_grace=0)
+            stderr_drain = locals().get("stderr_task")
+            if isinstance(stderr_drain, asyncio.Task) and not stderr_drain.done():
+                with suppress(Exception):
+                    await stderr_drain
             async with self._lock:
                 self._active.discard(process)
 
@@ -216,18 +251,28 @@ class WorkerProcess:
             await asyncio.wait_for(process.wait(), timeout=WORKER_TERMINATE_GRACE_SECONDS)
 
     @staticmethod
-    async def _read_stderr(process: asyncio.subprocess.Process) -> str:
-        if process.stderr is None:
-            return ""
-        try:
-            data = await asyncio.wait_for(
-                process.stderr.read(MAX_WORKER_STDERR_BYTES + 1), timeout=0.25
-            )
-        except TimeoutError:
-            return ""
-        if len(data) > MAX_WORKER_STDERR_BYTES:
-            data = data[:MAX_WORKER_STDERR_BYTES]
-        return data.decode("utf-8", errors="replace").strip()
+    async def _drain_stderr(stream: asyncio.StreamReader) -> str:
+        captured = bytearray()
+        while chunk := await stream.read(16 * 1024):
+            remaining = MAX_WORKER_STDERR_BYTES - len(captured)
+            if remaining > 0:
+                captured.extend(chunk[:remaining])
+        return captured.decode("utf-8", errors="replace").strip()
+
+
+def _stage_suffix(stderr: str) -> str:
+    """Return only the last allowlisted worker-stage marker, if present."""
+
+    stages = WORKER_STAGE_PATTERN.findall(stderr)
+    if stages:
+        return f" at stage {stages[-1]}"
+    for line in stderr.splitlines():
+        if WORKER_BOOTLOADER_PATTERN.fullmatch(line):
+            # Bootloader failures are useful for diagnosis, but paths and
+            # arbitrary stderr are not part of the runtime error contract.
+            detail = re.sub(r"[A-Za-z]:[\\/][^\r\n]*", "<path>", line.strip())
+            return f" ({detail[:180]})"
+    return ""
 
 
 __all__ = [

@@ -8,6 +8,7 @@ from urllib.parse import quote
 
 from model_source_lock import (
     CORE_ONLY_RELEASE_MODE,
+    PENDING_WHISPER_FREEZE_BLOCKER,
     load_source_lock,
     model_delivery,
     release_mode,
@@ -115,12 +116,45 @@ def main() -> None:
     parser.add_argument("--whisper-worker-archive", type=Path, required=True)
     parser.add_argument("--whisper-worker-manifest", type=Path, required=True)
     parser.add_argument("--model-source-lock", type=Path)
+    parser.add_argument(
+        "--allow-pending-preflight",
+        action="store_true",
+        help="Allow only the blocked private-Whisper preflight lock; never use for release output.",
+    )
     arguments = parser.parse_args()
     source_lock = (
         None
         if arguments.model_source_lock is None
-        else load_source_lock(arguments.model_source_lock)
+        else load_source_lock(
+            arguments.model_source_lock,
+            require_approved=not arguments.allow_pending_preflight,
+        )
     )
+    if arguments.allow_pending_preflight:
+        if source_lock is None:
+            raise SystemExit("Pending preflight requires the blocked model source lock.")
+        approval = source_lock["approval"]
+        if (
+            approval["status"] != "blocked"
+            or approval["blockers"] != [PENDING_WHISPER_FREEZE_BLOCKER]
+            or len(source_lock["requirements"]) != 2
+            or [item["requirementId"] for item in source_lock["requirements"]]
+            != ["windowsml-ocr", "whisper-primary"]
+            or len(source_lock["fixtures"]) != 2
+            or [item["kind"] for item in source_lock["fixtures"]] != ["ocr", "whisper"]
+        ):
+            raise SystemExit(
+                "Pending preflight requires the exact blocked private Whisper two-run freeze lock."
+            )
+        whisper_fixture = next(
+            (item for item in source_lock["fixtures"] if item.get("kind") == "whisper"),
+            None,
+        )
+        if whisper_fixture is None or any(
+            whisper_fixture.get(field) is not None
+            for field in ("expectedModel", "expectedDevice", "expectedNormalizedOutputSha256")
+        ):
+            raise SystemExit("Pending preflight requires an unfrozen private Whisper fixture.")
     if (
         arguments.whisper_worker_archive.parent.resolve()
         != arguments.ocr_worker_archive.parent.resolve()

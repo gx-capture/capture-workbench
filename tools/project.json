@@ -1,0 +1,61 @@
+{
+  "name": "capture-tools",
+  "$schema": "../node_modules/nx/schemas/project-schema.json",
+  "projectType": "application",
+  "sourceRoot": "tools",
+  "tags": ["scope:capture", "type:tool", "platform:node"],
+  "targets": {
+    "lint": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm exec eslint tools/capture-boundary-doctor.ts tools/capture-boundary-doctor.test.ts"
+      }
+    },
+    "test": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "node --test tools/capture-boundary-doctor.test.ts"
+      }
+    },
+    "typecheck": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm exec tsc -p tools/tsconfig.boundary-doctor.json"
+      }
+    },
+    "boundary-doctor": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "metadata": {
+        "description": "Attach to Cert Prep and Capture Runtime and emit a sanitized boundary diagnostic report."
+      },
+      "options": {
+        "command": "node tools/capture-boundary-doctor.ts"
+      }
+    },
+    "boundary-doctor-test": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "node --test tools/capture-boundary-doctor.test.ts"
+      }
+    },
+    "boundary-doctor-typecheck": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm exec tsc -p tools/tsconfig.boundary-doctor.json"
+      }
+    },
+    "boundary-doctor-lint": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm exec eslint tools/capture-boundary-doctor.ts tools/capture-boundary-doctor.test.ts"
+      }
+    }
+  }
+}

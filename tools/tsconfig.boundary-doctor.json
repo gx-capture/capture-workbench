@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "strict": true
+  },
+  "include": [
+    "./capture-boundary-doctor.ts",
+    "./capture-boundary-doctor.test.ts"
+  ]
+}

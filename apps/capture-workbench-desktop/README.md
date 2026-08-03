@@ -48,6 +48,50 @@ corepack pnpm nx run capture-workbench-desktop:smoke-real-ollama
 
 It accepts only that source PDF and records no source path or bearer token in its evidence.
 
+## Opt-in staged-runtime three-media diagnostic
+
+This preliminary diagnostic starts a staged runtime, then installs
+`windowsml-ocr` and `whisper-primary` in host-controlled order and exercises a
+real scanned PDF, image, and audio file through host structuring. It requires a
+complete approved catalog for an unused successor version; immutable v0.3.8
+fails closed before staging because both dependencies are unavailable.
+
+```powershell
+$env:CAPTURE_REAL_MEDIA_PDF = 'C:\path\to\scanned.pdf'
+$env:CAPTURE_REAL_MEDIA_IMAGE = 'C:\path\to\scan.png'
+$env:CAPTURE_REAL_MEDIA_AUDIO = 'C:\path\to\listening.mp3'
+$env:CAPTURE_REAL_MEDIA_APP_DATA = 'C:\prepared\Capture Workbench app-data'
+corepack pnpm nx run capture-workbench-desktop:smoke-real-media
+```
+
+The diagnostic strips ambient provider/model overrides, verifies DirectML OCR
+and lock-selected Whisper provenance, proves UUID-scoped capture deletion, and
+checks its owned runtime process is gone. Its report always records
+`releaseGateSatisfied=false` and `consumerE2e=false`: it is not the pending
+Tauri/WebView scanned-PDF/image/audio acceptance harness and is not candidate
+receipt input.
+
+## Opt-in real model-enabled Tauri/WebView gate
+
+`smoke-real-media-model` is the release-gated three-media harness. It launches
+the packaged Tauri WebView with fresh app-data, performs consented catalog
+installation, imports the project-owned scanned PDF and image plus a private
+runner-provided audio fixture through the UI, and verifies raw/result,
+provenance, DirectML OCR, lock-selected Whisper segments, UUID-scoped deletion,
+and owned process cleanup. The report is redacted by construction and records
+`releaseGateSatisfied=true` and `consumerE2e=false`.
+
+```powershell
+$env:CAPTURE_REAL_MEDIA_MODEL_AUDIO = 'C:\path\to\private-audio.mp3'
+corepack pnpm nx run capture-workbench-desktop:smoke-real-media-model
+```
+
+The PDF and image are the lock-pinned project fixtures; only the packaged
+executable can be overridden for local runs with
+`CAPTURE_REAL_MEDIA_MODEL_EXECUTABLE`. The gate fails closed unless the staged
+generated catalog and source lock are the approved 0.3.9 model-enabled
+contract.
+
 ## Installed deterministic smoke
 
 The installed deterministic smoke is intentionally opt-in because it performs a

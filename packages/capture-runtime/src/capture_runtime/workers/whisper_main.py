@@ -1,16 +1,47 @@
 """Separately packaged faster-whisper worker."""
 
+# Imports are deliberately staged below so the packaged worker can report the
+# exact failing import boundary before loading heavyweight model dependencies.
+# ruff: noqa: E402, I001
+
 from __future__ import annotations
 
+import importlib
+import importlib.util
+import sys
 from pathlib import Path
 from threading import Event
 from typing import Any
 
+STAGE_PREFIX = "capture-worker-stage:"
+
+
+def _report_stage(stage: str) -> None:
+    sys.stderr.write(f"{STAGE_PREFIX}{stage}\n")
+    sys.stderr.flush()
+
+
+_report_stage("worker-entry-start")
+
+_report_stage("python-import-capture-runtime-start")
 from capture_runtime.engine_adapters import FasterWhisperAdapter
 from capture_runtime.worker_contracts import WorkerRequest
 from capture_runtime.workers.server import serve
 
+_report_stage("python-import-capture-runtime-complete")
+
 MAX_SOURCE_BYTES = 50 * 1024 * 1024
+
+
+def _import_whisper_runtime() -> None:
+    for module, stage in (
+        ("ctranslate2", "python-import-ctranslate"),
+        ("av", "python-import-av"),
+        ("faster_whisper", "python-import-faster-whisper"),
+    ):
+        _report_stage(f"{stage}-start")
+        importlib.import_module(module)
+        _report_stage(f"{stage}-complete")
 
 
 def _payload(request: WorkerRequest, expected: set[str]) -> dict[str, Any]:
@@ -20,9 +51,19 @@ def _payload(request: WorkerRequest, expected: set[str]) -> dict[str, Any]:
 
 
 def _probe(request: WorkerRequest) -> dict[str, Any]:
-    payload = _payload(request, {"requirementId", "artifactVersion", "modelPath"})
+    base_fields = {"requirementId", "artifactVersion", "modelPath"}
+    payload_fields = frozenset(request.payload)
+    if payload_fields not in {frozenset(base_fields), frozenset(base_fields | {"options"})}:
+        raise ValueError("Whisper worker payload fields are invalid")
+    payload = request.payload
     if payload["requirementId"] != "whisper-primary":
         raise ValueError("Whisper requirementId is invalid")
+    options = payload.get("options", {})
+    if not isinstance(options, dict) or set(options) - {"preferGpu"}:
+        raise ValueError("Whisper probe options are invalid")
+    prefer_gpu = options.get("preferGpu", True)
+    if not isinstance(prefer_gpu, bool):
+        raise ValueError("Whisper probe preferGpu is invalid")
     model_value = payload["modelPath"]
     if model_value is None:
         import importlib.util
@@ -51,11 +92,14 @@ def _probe(request: WorkerRequest) -> dict[str, Any]:
         model_path,
         primary_model="primary",
         fallback_model="fallback",
-        prefer_gpu=True,
+        primary_provenance_model="large-v3-turbo",
+        fallback_provenance_model="small",
+        prefer_gpu=prefer_gpu,
         max_duration_ms=8 * 60 * 60 * 1000,
+        stage_reporter=_report_stage,
     )
     probe = adapter.probe()
-    device = "cuda" if adapter._cuda_devices() > 0 else "cpu"
+    device = "cuda" if prefer_gpu and adapter._cuda_devices() > 0 else "cpu"
     return {
         "ready": probe.ready,
         "codeReady": probe.code_ready,
@@ -108,9 +152,13 @@ def _run(request: WorkerRequest, cancellation: Event) -> dict[str, Any]:
         model_path,
         primary_model="primary",
         fallback_model="fallback",
+        primary_provenance_model="large-v3-turbo",
+        fallback_provenance_model="small",
         prefer_gpu=prefer_gpu,
         max_duration_ms=max_duration_ms,
+        stage_reporter=_report_stage,
     )
+    _import_whisper_runtime()
     result = adapter.transcribe(source, should_cancel=cancellation.is_set)
     return {
         "segments": [
@@ -141,5 +189,10 @@ def handle(request: WorkerRequest, cancellation: Event) -> dict[str, Any]:
     raise ValueError("unsupported Whisper operation")
 
 
+def prepare(request: WorkerRequest) -> None:
+    if request.operation == "run":
+        _import_whisper_runtime()
+
+
 if __name__ == "__main__":
-    serve(handle)
+    serve(handle, prepare=prepare)

@@ -88,7 +88,7 @@ def _archive(
         {
             "role": "worker",
             "requirementId": "windowsml-ocr",
-            "artifactVersion": "0.3.8",
+            "artifactVersion": "0.3.9",
             "workerProtocolVersion": "1",
             "platform": "windows",
             "arch": "x86_64",
@@ -360,7 +360,7 @@ def test_direct_model_catalog_rejects_case_colliding_paths() -> None:
     with pytest.raises(EngineCatalogError, match="sorted and unique"):
         EngineModelDeliveryDescriptor.from_dict(
             {
-                "artifactVersion": "0.3.8",
+                "artifactVersion": "0.3.9",
                 "entryCount": len(files),
                 "entryPoint": "model",
                 "extractedBytes": sum(item["bytes"] for item in files),
@@ -391,9 +391,11 @@ def test_direct_model_download_validates_allowlisted_signed_redirect_before_stre
         redirect_hosts=["cdn.example.test"],
     )
     requested: list[str] = []
+    encodings: list[str | None] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         requested.append(str(request.url))
+        encodings.append(request.headers.get("accept-encoding"))
         if request.url.host == "models.example.test":
             return httpx.Response(
                 302,
@@ -428,6 +430,7 @@ def test_direct_model_download_validates_allowlisted_signed_redirect_before_stre
         descriptor.url,
         "https://cdn.example.test/signed/model.bin?signature=locked",
     ]
+    assert encodings == ["identity", "identity"]
 
 
 @pytest.mark.parametrize(

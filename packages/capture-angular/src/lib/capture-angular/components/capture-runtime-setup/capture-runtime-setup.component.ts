@@ -4,7 +4,7 @@ import { CaptureWorkbenchStore } from '../../services/capture-workbench-store/ca
 @Component({
   selector: 'gx-capture-runtime-setup',
   template: `
-    <section class="runtime-card" aria-labelledby="capture-runtime-title">
+    <section class="runtime-card" aria-labelledby="capture-runtime-title" data-testid="capture-runtime-setup">
       <div class="runtime-heading">
         <div>
           <p class="eyebrow">Runtime</p>
@@ -36,7 +36,7 @@ import { CaptureWorkbenchStore } from '../../services/capture-workbench-store/ca
       @if (store.requiredRequirements().length > 0) {
         <ul class="requirements" aria-label="Runtime requirements">
           @for (requirement of store.requiredRequirements(); track requirement.requirementId) {
-            <li [attr.data-requirement-id]="requirement.requirementId">
+            <li data-testid="capture-runtime-requirement" [attr.data-requirement-id]="requirement.requirementId" [attr.data-status]="requirement.status">
               <div>
                 <strong>{{ requirement.displayName }}</strong>
                 @if (requirement.detail) {
@@ -80,8 +80,8 @@ import { CaptureWorkbenchStore } from '../../services/capture-workbench-store/ca
             </p>
           }
         </div>
-      } @else if (store.installableRequirements().length > 0 && store.runtime().status !== 'incompatible') {
-        <button type="button" class="primary" (click)="store.installMissingRequirements()">
+      } @else if (store.installableRequirements().length > 0 && store.runtime().status === 'needs-setup' && store.runtime().ready?.ready === true) {
+        <button type="button" class="primary" data-testid="capture-runtime-install" (click)="store.installMissingRequirements()">
           {{ store.config().labels?.installRuntime ?? 'Install missing runtime' }}
         </button>
         <p class="consent-note">Installation starts only after this explicit action.</p>

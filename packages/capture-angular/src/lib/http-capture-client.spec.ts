@@ -175,6 +175,34 @@ describe('HttpCaptureClient', () => {
       }),
     );
   });
+
+  it('redacts credential-shaped error text and details before exposing it', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse(
+        {
+          error: {
+            code: 'runtime_failed',
+            message: 'Bearer secret-token',
+            details: { authorization: 'Bearer secret-token' },
+          },
+        },
+        500,
+      ),
+    );
+    const client = configureClient(fetchMock);
+
+    let error: unknown;
+    client.getReady().subscribe({ error: (value) => (error = value) });
+    await vi.waitFor(() => expect(error).toBeDefined());
+
+    expect(error).toEqual(
+      expect.objectContaining({
+        message: 'Bearer [redacted]',
+        details: { authorization: '[redacted]' },
+      }),
+    );
+    expect(JSON.stringify(error)).not.toContain('secret-token');
+  });
 });
 
 function configureClient(fetchMock: typeof fetch): CaptureClient {

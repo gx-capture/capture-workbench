@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 PYPROJECT = Path(__file__).resolve().parents[1] / "pyproject.toml"
+OCR_SPEC = Path(__file__).resolve().parents[1] / "pyinstaller" / "capture-engine-ocr.spec"
 REQUIREMENT_NAME = re.compile(
     r"^(?P<name>[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)(?=\s*(?:@|\[|[<>=!~;]|$))"
 )
@@ -15,11 +16,17 @@ OCR_TEST_DEPENDENCIES = {
     "pypdfium2": "pypdfium2>=5.0.0,<6.0.0",
 }
 PRODUCTION_ONLY_DEPENDENCIES = {
+    "ctranslate2",
     "faster-whisper",
     "huggingface-hub",
     "onnxruntime-directml",
     "paddleocr",
     "paddlex",
+}
+
+WHISPER_EXACT_DEPENDENCIES = {
+    "ctranslate2": "ctranslate2==4.8.1",
+    "faster-whisper": "faster-whisper==1.2.1",
 }
 
 
@@ -46,6 +53,25 @@ def test_default_dev_dependencies_cover_ocr_typecheck_without_entering_core() ->
         assert _requirements_named(base, name) == []
     for name in PRODUCTION_ONLY_DEPENDENCIES:
         assert _requirements_named(dev, name) == []
+    whisper = project["project"]["optional-dependencies"]["whisper"]
+    for name, exact_requirement in WHISPER_EXACT_DEPENDENCIES.items():
+        assert _requirements_named(whisper, name) == [exact_requirement]
+
+
+def test_ocr_bundle_collects_pypdfium2_runtime_metadata() -> None:
+    spec = OCR_SPEC.read_text(encoding="utf-8")
+
+    assert 'collect_data_files("pypdfium2")' in spec
+    assert "copy_metadata" in spec
+    for distribution in (
+        "imagesize",
+        "opencv-contrib-python",
+        "pyclipper",
+        "pypdfium2",
+        "python-bidi",
+        "shapely",
+    ):
+        assert f'"{distribution}"' in spec
 
 
 def test_exact_dependency_ownership_rejects_duplicate_or_broader_entries() -> None:

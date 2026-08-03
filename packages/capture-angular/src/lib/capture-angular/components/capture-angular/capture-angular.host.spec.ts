@@ -36,7 +36,7 @@ describe('CaptureWorkbenchComponent', () => {
     const structure = vi.fn<CaptureStructuringProvider['structure']>(() =>
       throwError(() => ({
         code: 'NOT VALID!',
-        message: 'provider returned invalid JSON',
+         message: 'Bearer secret-token',
       })),
     );
     const provider: CaptureStructuringProvider = { structure };
@@ -63,7 +63,7 @@ describe('CaptureWorkbenchComponent', () => {
       'capture-1',
       {
         code: 'host_provider_failed',
-        message: 'provider returned invalid JSON',
+         message: 'Bearer [redacted]',
       },
       expect.any(AbortSignal),
     );
@@ -84,6 +84,23 @@ describe('CaptureWorkbenchComponent', () => {
       captureWorkbenchRoot(fixture).querySelector('.raw-diagnostics')
         ?.textContent,
     ).toContain('diagnostic only');
+    expect(
+      captureWorkbenchRoot(fixture).querySelector('[data-testid="capture-raw"]')
+        ?.textContent,
+    ).toContain(RAW.sourceText);
+    expect(captureWorkbenchRoot(fixture).textContent).not.toContain(
+      'secret-token',
+    );
+    expect(
+      captureWorkbenchRoot(fixture).querySelector('[data-testid="capture-raw-segment"]'),
+    ).toMatchObject({
+      dataset: expect.objectContaining({
+        segmentId: 'segment-1',
+        order: '0',
+        locatorKind: 'page',
+        page: '1',
+      }),
+    });
   });
 
   it('isolates saved raw evidence from component-owned provider mutation', async () => {

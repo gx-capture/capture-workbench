@@ -11,6 +11,7 @@ from capture_runtime.contracts import (
     RuntimeInstallationStatus,
     RuntimeInstallationV1,
 )
+from capture_runtime.engine_installation import EngineInstallationError
 from capture_runtime.ollama import ManualActionRequiredError, RuntimeInstaller
 from capture_runtime.storage import InstallationRepository
 
@@ -35,6 +36,11 @@ class InstallationService:
         self._clock = clock
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._cancellations: dict[str, asyncio.Event] = {}
+        # Runtime-owned dependencies are intentionally installed one at a time to
+        # keep memory and IO bounded. The consenting host owns dependency order;
+        # this service serializes accepted jobs but does not reorder independent
+        # client requests or imply consent for a prerequisite the client omitted.
+        self._install_lock = asyncio.Lock()
 
     def create(
         self, *, idempotency_key: str, request_fingerprint: str, requirement_id: str
@@ -118,11 +124,12 @@ class InstallationService:
                     ),
                 )
 
-            await self.installer.install(
-                current.requirement_id,
-                cancel_event=cancellation,
-                report_progress=progress,
-            )
+            async with self._install_lock:
+                await self.installer.install(
+                    current.requirement_id,
+                    cancel_event=cancellation,
+                    report_progress=progress,
+                )
             now = self._clock.now()
             completed = self.get(installation_id).model_copy(
                 update={
@@ -146,6 +153,14 @@ class InstallationService:
                 code="manual_action_required",
                 message="This runtime requirement requires a manual installation action.",
                 retryable=False,
+            )
+        except EngineInstallationError as error:
+            self._fail(
+                installation_id,
+                status=RuntimeInstallationStatus.FAILED,
+                code="installation_failed",
+                message=str(error)[:500],
+                retryable=True,
             )
         except Exception:
             self._fail(
