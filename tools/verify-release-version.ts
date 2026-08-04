@@ -61,6 +61,10 @@ const versions = new Map([
     tomlVersion('packages/capture-structuring-python/pyproject.toml'),
   ],
   [
+    'Capture sidecar launcher crate',
+    tomlVersion('packages/capture-sidecar-launcher/Cargo.toml'),
+  ],
+  [
     'Python runtime package',
     tomlVersion('packages/capture-runtime/pyproject.toml'),
   ],

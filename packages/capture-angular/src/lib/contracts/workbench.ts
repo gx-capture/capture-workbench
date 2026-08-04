@@ -27,6 +27,7 @@ export interface ResolvedCaptureWorkbenchConfig {
   readonly height: string;
   readonly density: 'compact' | 'comfortable';
   readonly compatibleRuntimeMajor: number;
+  readonly compatibleRuntimeMinor: number;
 }
 
 export interface RuntimeViewState {

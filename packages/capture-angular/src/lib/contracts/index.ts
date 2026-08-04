@@ -279,6 +279,11 @@ export interface CaptureWorkbenchConfig {
   readonly theme?: CaptureWorkbenchTheme;
   readonly labels?: CaptureWorkbenchLabels;
   readonly compatibleRuntimeMajor?: number;
+  /**
+   * Expected runtime minor while the client is on 0.x. Override only during
+   * a coordinated rollback or temporary split-minor compatibility window.
+   */
+  readonly compatibleRuntimeMinor?: number;
 }
 
 export interface CaptureTaskView {
