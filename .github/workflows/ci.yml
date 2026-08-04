@@ -60,6 +60,7 @@ jobs:
           pnpm nx run capture-contracts:build
           pnpm nx run capture-contracts:python-build
           pnpm nx run capture-contracts:python-smoke
+          pnpm nx run capture-contracts:python-wheel-smoke
           pnpm nx run capture-angular:lint
           pnpm nx run capture-angular:test
           pnpm nx run capture-angular:build

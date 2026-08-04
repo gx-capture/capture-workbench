@@ -191,3 +191,93 @@ export interface TimeLocatorV1 {
 }
 
 export type CaptureContractName = "CaptureBlockV1" | "CaptureDocumentV1" | "CaptureEngineV1" | "CaptureFailureV1" | "CaptureJobV1" | "CaptureSourceV1" | "ErrorBodyV1" | "ErrorEnvelopeV1" | "PageLocatorV1" | "RawCaptureSegmentV1" | "RawCaptureV1" | "ReportStructuringFailureV1" | "RuntimeArtifactDescriptorV1" | "RuntimeCapabilitiesV1" | "RuntimeInstallationV1" | "RuntimeInstallationsV1" | "RuntimeReadyV1" | "RuntimeRequirementV1" | "RuntimeRequirementsV1" | "StartRuntimeInstallationV1" | "TimeLocatorV1";
+
+export type CaptureContractInvariant = {
+  readonly id: string;
+  readonly models: string;
+  readonly description: string;
+};
+
+export const CAPTURE_CONTRACT_INVARIANTS = [
+  {
+    id: "raw-segment-ids-unique",
+    models: "RawCaptureV1, CaptureDocumentV1",
+    description: "segmentId values are unique within the raw segment list.",
+  },
+  {
+    id: "raw-segment-order-contiguous",
+    models: "RawCaptureV1, CaptureDocumentV1",
+    description: "segment order values are contiguous and match list order.",
+  },
+  {
+    id: "block-source-segment-unique-coverage",
+    models: "CaptureDocumentV1",
+    description: "blocks[].sourceSegmentId values are unique and reference every rawSegments[].segmentId exactly once, in raw order.",
+  },
+  {
+    id: "block-order-contiguous",
+    models: "CaptureDocumentV1",
+    description: "block order values are contiguous and match list order.",
+  },
+  {
+    id: "block-provenance-locator-and-source-text",
+    models: "CaptureDocumentV1",
+    description: "each block locator equals its raw segment locator and each block sourceText equals its raw segment text.",
+  },
+  {
+    id: "source-text-exact-projection",
+    models: "RawCaptureV1, CaptureDocumentV1",
+    description: "sourceText is the exact newline projection of segment texts.",
+  },
+  {
+    id: "target-text-exact-projection",
+    models: "CaptureDocumentV1",
+    description: "targetText is the exact newline projection of block targetText values.",
+  },
+  {
+    id: "completion-after-creation",
+    models: "CaptureDocumentV1",
+    description: "completedAt must not precede createdAt.",
+  },
+  {
+    id: "terminal-jobs-have-completion-time",
+    models: "CaptureJobV1",
+    description: "terminal capture jobs must carry completedAt.",
+  },
+  {
+    id: "time-locator-interval-valid",
+    models: "TimeLocatorV1",
+    description: "endMs must be greater than startMs.",
+  },
+  {
+    id: "timestamps-timezone-aware",
+    models: "RawCaptureV1, CaptureDocumentV1, CaptureJobV1, RuntimeInstallationV1",
+    description: "timestamp fields must include a timezone.",
+  },
+] as const satisfies readonly CaptureContractInvariant[];
+
+export type CaptureContractExtraPolicy = 'allow' | 'forbid';
+
+export const CAPTURE_CONTRACT_EXTRA_POLICIES = {
+  "CaptureBlockV1": "forbid",
+  "CaptureDocumentV1": "forbid",
+  "CaptureEngineV1": "forbid",
+  "CaptureFailureV1": "forbid",
+  "CaptureJobV1": "forbid",
+  "CaptureSourceV1": "forbid",
+  "ErrorBodyV1": "forbid",
+  "ErrorEnvelopeV1": "forbid",
+  "PageLocatorV1": "forbid",
+  "RawCaptureSegmentV1": "forbid",
+  "RawCaptureV1": "forbid",
+  "ReportStructuringFailureV1": "forbid",
+  "RuntimeArtifactDescriptorV1": "forbid",
+  "RuntimeCapabilitiesV1": "forbid",
+  "RuntimeInstallationV1": "forbid",
+  "RuntimeInstallationsV1": "forbid",
+  "RuntimeReadyV1": "forbid",
+  "RuntimeRequirementV1": "forbid",
+  "RuntimeRequirementsV1": "forbid",
+  "StartRuntimeInstallationV1": "forbid",
+  "TimeLocatorV1": "forbid",
+} as const satisfies Readonly<Record<CaptureContractName, CaptureContractExtraPolicy>>;

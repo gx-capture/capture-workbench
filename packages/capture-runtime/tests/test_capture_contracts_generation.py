@@ -73,3 +73,13 @@ def test_raw_capture_segment_ids_remain_unique_runtime_invariant() -> None:
     )
     models = json.loads(manifest.read_text(encoding="utf-8"))["models"]
     assert all(item["extraPolicy"] == "forbid" for item in models)
+
+
+def test_typescript_artifact_exports_manifest_semantics_for_hosts() -> None:
+    source = (
+        ROOT / "packages" / "capture-contracts" / "src" / "generated" / "contracts.ts"
+    ).read_text(encoding="utf-8")
+    assert "export const CAPTURE_CONTRACT_INVARIANTS" in source
+    assert 'id: "raw-segment-ids-unique"' in source
+    assert "export const CAPTURE_CONTRACT_EXTRA_POLICIES" in source
+    assert '"CaptureDocumentV1": "forbid"' in source

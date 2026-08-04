@@ -17,7 +17,19 @@ Build and smoke-test the independently installable artifacts:
 corepack pnpm nx run capture-contracts:build
 corepack pnpm nx run capture-contracts:python-build
 corepack pnpm nx run capture-contracts:python-smoke
+corepack pnpm nx run capture-contracts:python-wheel-smoke
+corepack pnpm nx run capture-contracts:pack
 ```
 
-The package is not yet published. Its version stays synchronized with the
-runtime (currently `0.3.9`).
+The TypeScript declarations are ergonomic structural types, not a replacement
+for JSON Schema or Pydantic validation. Discriminated unions, `boundingBox`
+tuple shape, `allOf` composition, cross-field invariants, and every schema
+constraint are not necessarily encoded in `contracts.ts`; the runtime remains
+the canonical validator. Hosts can use `CAPTURE_CONTRACT_INVARIANTS` and
+`CAPTURE_CONTRACT_EXTRA_POLICIES` as metadata for early client-side checks,
+then submit candidates to the runtime validator.
+
+The package version stays synchronized with the runtime (currently `0.3.9`).
+The release workflow publishes both `@gx-capture/capture-contracts` and
+`@gx-capture/capture-workbench` to GitHub Packages after validating their exact
+tarball identities and integrities.

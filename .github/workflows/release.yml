@@ -139,9 +139,10 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
           pnpm nx run capture-angular:pack
+          pnpm nx run capture-contracts:pack
           $packages = @(Get-ChildItem dist/packs -Filter '*.tgz' -File)
-          if ($packages.Count -ne 1) {
-            throw "Expected exactly one Capture Workbench tarball, found $($packages.Count)."
+          if ($packages.Count -ne 2) {
+            throw "Expected exactly two release package tarballs, found $($packages.Count)."
           }
           $candidate = Join-Path $env:RUNNER_TEMP 'capture-candidate'
           $runtime = Join-Path $candidate 'runtime'
@@ -152,7 +153,9 @@ jobs:
           if ($env:RELEASE_MODEL_MODE -notin @('core-only', 'model-enabled')) {
             throw "Release model mode classification is invalid."
           }
-          Copy-Item $packages[0].FullName -Destination $package
+          foreach ($packageTarball in $packages) {
+            Copy-Item $packageTarball.FullName -Destination $package
+          }
           $installers = @(Get-ChildItem apps/capture-workbench-desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis -Filter '*.exe' -File -Recurse)
           if ($installers.Count -ne 1) {
             throw "Expected exactly one Capture Workbench NSIS installer, found $($installers.Count)."
@@ -241,7 +244,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ github.token }}
         run: pnpm install --frozen-lockfile --ignore-scripts
 
-      - name: Publish runtime first, then the exact Capture Workbench package idempotently
+      - name: Publish runtime first, then the exact release packages idempotently
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -251,15 +254,19 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
           $packages = @(Get-ChildItem publication/package -Filter '*.tgz' -File)
-          if ($packages.Count -ne 1) {
-            throw "Expected exactly one release package tarball, found $($packages.Count)."
+          if ($packages.Count -ne 2) {
+            throw "Expected exactly two release package tarballs, found $($packages.Count)."
           }
           $installers = @(Get-ChildItem publication/desktop -Filter '*.exe' -File)
           if ($installers.Count -ne 1) {
             throw "Expected exactly one Capture Workbench NSIS installer, found $($installers.Count)."
           }
+          $packageArgs = @()
+          foreach ($package in $packages) {
+            $packageArgs += @('--package', $package.FullName)
+          }
           node tools/publish-release.ts `
             --tag "$env:RELEASE_TAG" `
             --runtime-dir publication/runtime `
             --installer $installers[0].FullName `
-            --package $packages[0].FullName
+            @packageArgs

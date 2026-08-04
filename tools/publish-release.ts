@@ -8,6 +8,10 @@ import { pathToFileURL } from 'node:url';
 import { Observable, defer, from, map } from 'rxjs';
 
 const packageName = '@gx-capture/capture-workbench';
+const releasePackageNames = Object.freeze([
+  packageName,
+  '@gx-capture/capture-contracts',
+]);
 const registry = 'https://npm.pkg.github.com';
 const coreRuntimeAssetNames = Object.freeze([
   'capture-runtime-x86_64-pc-windows-msvc.exe',
@@ -52,12 +56,15 @@ const githubStableAssetNamePattern =
   /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/u;
 
 function feasibilityReleaseNotes(version) {
+  const packageSummary = releasePackageNames
+    .map((name) => `\`${name}@${version}\``)
+    .join(' and ');
   return [
     '## Windows installer feasibility notice',
     `This is an unsigned feasibility release for Capture Workbench v${version}.`,
     'The NSIS installer is not Authenticode-signed; Windows may show an Unknown publisher or SmartScreen warning.',
     'Verify the SHA-256 checksum for every downloaded GitHub Release asset before running the installer.',
-    `\`${packageName}@${version}\` is published only to GitHub Packages; its package tarball is a workflow handoff and registry artifact, never a GitHub Release asset.`,
+    `${packageSummary} are published only to GitHub Packages; each package tarball is a workflow handoff and registry artifact, never a GitHub Release asset.`,
   ].join('\n\n');
 }
 
@@ -189,27 +196,28 @@ export function packagePublicationDecision(existingIntegrity, localIntegrity) {
 }
 
 export function parseArguments(args) {
-  const allowed = new Set([
-    '--tag',
-    '--runtime-dir',
-    '--installer',
-    '--package',
-  ]);
+  const required = new Set(['--tag', '--runtime-dir', '--installer']);
+  const allowed = new Set([...required, '--package']);
   const values = new Map();
+  const packagePaths = [];
   for (let index = 0; index < args.length; index += 2) {
     const name = args[index];
     const value = args[index + 1];
     if (!allowed.has(name) || !value) {
       throw new Error(
-        'Use --tag, --runtime-dir, --installer, and --package exactly once.',
+        'Use --tag, --runtime-dir, and --installer exactly once, plus one or more --package arguments.',
       );
     }
-    if (values.has(name)) throw new Error(`Duplicate argument: ${name}`);
-    values.set(name, value);
+    if (name === '--package') {
+      packagePaths.push(value);
+    } else {
+      if (values.has(name)) throw new Error(`Duplicate argument: ${name}`);
+      values.set(name, value);
+    }
   }
-  if (values.size !== allowed.size) {
+  if (values.size !== required.size || packagePaths.length === 0) {
     throw new Error(
-      'Use --tag, --runtime-dir, --installer, and --package exactly once.',
+      'Use --tag, --runtime-dir, and --installer exactly once, plus one or more --package arguments.',
     );
   }
   const tag = values.get('--tag');
@@ -221,7 +229,7 @@ export function parseArguments(args) {
     version: tag.slice(1),
     runtimeDirectory: resolve(values.get('--runtime-dir')),
     installerPath: resolve(values.get('--installer')),
-    packagePath: resolve(values.get('--package')),
+    packagePaths: Object.freeze(packagePaths.map((path) => resolve(path))),
   });
 }
 
@@ -234,11 +242,9 @@ async function assertRegularFile(path, label) {
 }
 
 async function inspectPackage(version, packagePath, runCommand) {
-  await assertRegularFile(packagePath, 'Capture Workbench package');
+  await assertRegularFile(packagePath, 'Release package');
   if (!packagePath.endsWith('.tgz')) {
-    throw new Error(
-      'Capture Workbench publication input must be one .tgz file.',
-    );
+    throw new Error('Release package input must be a .tgz file.');
   }
   const localIntegrity = `sha512-${await hashFile(
     packagePath,
@@ -255,15 +261,20 @@ async function inspectPackage(version, packagePath, runCommand) {
   if (
     !Array.isArray(inspection) ||
     inspection.length !== 1 ||
-    inspection[0].name !== packageName ||
+    !releasePackageNames.includes(inspection[0].name) ||
     inspection[0].version !== version ||
     inspection[0].integrity !== localIntegrity
   ) {
     throw new Error(
-      'Capture Workbench tarball identity/version/integrity does not match the release tag.',
+      'Release package tarball identity/version/integrity does not match the release tag.',
     );
   }
-  return Object.freeze({ localIntegrity, packagePath, version });
+  return Object.freeze({
+    localIntegrity,
+    name: inspection[0].name,
+    packagePath,
+    version,
+  });
 }
 
 async function preflightCandidate(input, runCommand) {
@@ -481,14 +492,28 @@ async function preflightCandidate(input, runCommand) {
     assets.map((asset) => basename(asset)),
     'Local release candidate',
   );
-  const packagePlan = await inspectPackage(
-    input.version,
-    input.packagePath,
-    runCommand,
+  const packagePaths =
+    input.packagePaths ?? (input.packagePath ? [input.packagePath] : []);
+  if (packagePaths.length !== releasePackageNames.length) {
+    throw new Error(
+      `Release candidate must contain exactly one tarball for each of: ${releasePackageNames.join(', ')}.`,
+    );
+  }
+  const packagePlans = await Promise.all(
+    packagePaths.map((path) => inspectPackage(input.version, path, runCommand)),
   );
+  const packagePlanNames = packagePlans.map((plan) => plan.name);
+  if (
+    new Set(packagePlanNames).size !== packagePlanNames.length ||
+    releasePackageNames.some((name) => !packagePlanNames.includes(name))
+  ) {
+    throw new Error(
+      `Release candidate must contain exactly one tarball for each of: ${releasePackageNames.join(', ')}.`,
+    );
+  }
   return Object.freeze({
     assets,
-    packagePlan,
+    packagePlans,
   });
 }
 
@@ -554,12 +579,12 @@ function assertRemoteAssetNames(tag, assets, runCommand, { allowMissing }) {
   return actualSet;
 }
 
-function existingPackageIntegrity(version, runCommand) {
+function existingPackageIntegrity(name, version, runCommand) {
   const result = runCommand(
     'npm',
     [
       'view',
-      `${packageName}@${version}`,
+      `${name}@${version}`,
       'dist.integrity',
       '--json',
       '--registry',
@@ -667,7 +692,11 @@ async function ensureDraftAssets(tag, assets, runCommand) {
 }
 
 function publishPackage(packagePlan, runCommand) {
-  const existing = existingPackageIntegrity(packagePlan.version, runCommand);
+  const existing = existingPackageIntegrity(
+    packagePlan.name,
+    packagePlan.version,
+    runCommand,
+  );
   const decision = packagePublicationDecision(
     existing,
     packagePlan.localIntegrity,
@@ -682,7 +711,11 @@ function publishPackage(packagePlan, runCommand) {
       'public',
     ]);
   }
-  const published = existingPackageIntegrity(packagePlan.version, runCommand);
+  const published = existingPackageIntegrity(
+    packagePlan.name,
+    packagePlan.version,
+    runCommand,
+  );
   if (published === undefined) {
     throw new Error(
       'Package registry did not expose the version after publish.',
@@ -695,24 +728,29 @@ async function publishReleaseAsync(input, runCommand) {
   // No release/package mutations are allowed before every local check succeeds.
   const candidate = await preflightCandidate(input, runCommand);
   let state = releaseState(input.tag, runCommand);
-  const existingIntegrity = existingPackageIntegrity(input.version, runCommand);
+  const packagePublicationPlans = candidate.packagePlans.map((packagePlan) => ({
+    packagePlan,
+    existingIntegrity: existingPackageIntegrity(
+      packagePlan.name,
+      input.version,
+      runCommand,
+    ),
+  }));
   if (state === 'public') {
-    if (existingIntegrity === undefined) {
-      throw new Error(
-        'Public release exists but the synchronized package is missing.',
-      );
+    for (const { packagePlan, existingIntegrity } of packagePublicationPlans) {
+      if (existingIntegrity === undefined) {
+        throw new Error(
+          `Public release exists but synchronized package ${packagePlan.name}@${input.version} is missing.`,
+        );
+      }
+      packagePublicationDecision(existingIntegrity, packagePlan.localIntegrity);
     }
-    packagePublicationDecision(
-      existingIntegrity,
-      candidate.packagePlan.localIntegrity,
-    );
     await verifyAllAssets(input.tag, candidate.assets, runCommand);
     return;
   }
-  packagePublicationDecision(
-    existingIntegrity,
-    candidate.packagePlan.localIntegrity,
-  );
+  for (const { packagePlan, existingIntegrity } of packagePublicationPlans) {
+    packagePublicationDecision(existingIntegrity, packagePlan.localIntegrity);
+  }
   if (state === 'missing') {
     runCommand('gh', [
       'release',
@@ -733,7 +771,9 @@ async function publishReleaseAsync(input, runCommand) {
   assertRemoteAssetNames(input.tag, candidate.assets, runCommand, {
     allowMissing: false,
   });
-  publishPackage(candidate.packagePlan, runCommand);
+  for (const packagePlan of candidate.packagePlans) {
+    publishPackage(packagePlan, runCommand);
+  }
   await verifyAllAssets(input.tag, candidate.assets, runCommand);
   runCommand('gh', [
     'release',

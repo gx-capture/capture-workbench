@@ -25,11 +25,29 @@
       Evidence: `capture-runtime:generate-contracts`,
       `capture-runtime:check-contracts`, `capture-runtime:test` (218 passed,
       1 skipped), and `verify:release-version -- v0.3.9` all pass.
-- [x] Build/pack the producer artifacts without publishing.
-      Evidence: `capture-contracts:build`, `capture-contracts:python-build`,
-      the `0.3.9` npm tarball inventory, and the `capture_contracts-0.3.9`
-      wheel inventory/import smoke all pass. Publication remains gated on the
-      registry/auth decision.
+- [x] Build/pack the producer artifacts and wire the TypeScript package into
+      the release publication path.
+      Evidence: `capture-contracts:build`, `capture-contracts:pack`,
+      `capture-contracts:python-build`, source and wheel smoke tests, and the
+      multi-package `tools/publish-release.ts` preflight/idempotency tests all
+      pass. Release publication is now wired for both npm packages; an actual
+      tagged release remains pending the release workflow and registry/auth
+      gate.
+- [x] Export generated semantic metadata for future host SDK consumers.
+      Evidence: `CAPTURE_CONTRACT_INVARIANTS` and
+      `CAPTURE_CONTRACT_EXTRA_POLICIES` are generated from the same runtime
+      schemas and documented as metadata rather than a second validator.
+- [x] Prove the Python wheel artifact in a fresh virtual environment and remove
+      the smoke test's hard-coded runtime version.
+      Evidence: `capture-contracts:python-wheel-smoke` installs the built wheel
+      into a temporary venv and derives the version assertion from the package
+      manifest.
+- [ ] Retire the legacy Angular `generate_schema.py` /
+      `sync-angular-schema` producer path after the published contract package
+      has a real consumer; keep the byte-equality gate until that migration.
+- [ ] Record and close the remaining TS declaration fidelity gap when the host
+      SDK begins consuming the package (discriminators, `boundingBox`, `allOf`,
+      and full schema constraints remain runtime-validator concerns for now).
 - [ ] Migrate cert-prep only after publication/auth evidence; delete its
       hand-mirrored DTO owner rather than adding a compatibility shim.
       Verify: cert-prep backend focused tests and import scan.
