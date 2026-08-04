@@ -140,9 +140,10 @@ jobs:
           $PSNativeCommandUseErrorActionPreference = $true
           pnpm nx run capture-angular:pack
           pnpm nx run capture-contracts:pack
+          pnpm nx run capture-structuring:pack
           $packages = @(Get-ChildItem dist/packs -Filter '*.tgz' -File)
-          if ($packages.Count -ne 2) {
-            throw "Expected exactly two release package tarballs, found $($packages.Count)."
+          if ($packages.Count -ne 3) {
+            throw "Expected exactly three release package tarballs, found $($packages.Count)."
           }
           $candidate = Join-Path $env:RUNNER_TEMP 'capture-candidate'
           $runtime = Join-Path $candidate 'runtime'
@@ -254,8 +255,8 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
           $packages = @(Get-ChildItem publication/package -Filter '*.tgz' -File)
-          if ($packages.Count -ne 2) {
-            throw "Expected exactly two release package tarballs, found $($packages.Count)."
+          if ($packages.Count -ne 3) {
+            throw "Expected exactly three release package tarballs, found $($packages.Count)."
           }
           $installers = @(Get-ChildItem publication/desktop -Filter '*.exe' -File)
           if ($installers.Count -ne 1) {

@@ -53,6 +53,14 @@ const versions = new Map([
     tomlVersion('packages/capture-contracts/python/pyproject.toml'),
   ],
   [
+    'Capture structuring TypeScript package',
+    jsonVersion('packages/capture-structuring/package.json'),
+  ],
+  [
+    'Capture structuring Python wheel',
+    tomlVersion('packages/capture-structuring-python/pyproject.toml'),
+  ],
+  [
     'Python runtime package',
     tomlVersion('packages/capture-runtime/pyproject.toml'),
   ],

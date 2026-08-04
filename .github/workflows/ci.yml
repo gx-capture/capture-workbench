@@ -61,6 +61,15 @@ jobs:
           pnpm nx run capture-contracts:python-build
           pnpm nx run capture-contracts:python-smoke
           pnpm nx run capture-contracts:python-wheel-smoke
+          pnpm nx run capture-structuring:lint
+          pnpm nx run capture-structuring:typecheck
+          pnpm nx run capture-structuring:test
+          pnpm nx run capture-structuring:build
+          pnpm nx run capture-structuring-python:test
+          pnpm nx run capture-structuring-python:lint
+          pnpm nx run capture-structuring-python:typecheck
+          pnpm nx run capture-structuring-python:build
+          pnpm nx run capture-structuring-python:wheel-smoke
           pnpm nx run capture-angular:lint
           pnpm nx run capture-angular:test
           pnpm nx run capture-angular:build

@@ -27,7 +27,7 @@ from capture_runtime.routes.common import ApiProblem, error_response
 from capture_runtime.routes.runtime import register_runtime_routes
 from capture_runtime.services import InvalidJobStateError, RecordNotFoundError
 from capture_runtime.storage import CaptureRepository, InstallationRepository
-from capture_runtime.structuring import CaptureStructuringProvider
+from capture_runtime.structuring_provider import CaptureStructuringProvider
 
 
 class CandidateBodyLimitMiddleware:

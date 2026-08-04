@@ -16,6 +16,7 @@ interface PackageDescriptor {
 const packageDescriptors: readonly PackageDescriptor[] = [
   'capture-contracts',
   'capture-angular',
+  'capture-structuring',
 ].map((project) => {
   const manifest = JSON.parse(
     readFileSync(join(repoRoot, `packages/${project}/package.json`), 'utf8'),
@@ -128,6 +129,14 @@ async function main(): Promise<void> {
     'nx',
     'run',
     'capture-angular:pack',
+    '--skip-nx-cache',
+  ]);
+  await run(process.execPath, [
+    corepackCli,
+    'pnpm',
+    'nx',
+    'run',
+    'capture-structuring:pack',
     '--skip-nx-cache',
   ]);
 

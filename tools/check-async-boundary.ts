@@ -74,6 +74,9 @@ function exceptionReason(relativePath) {
   if (relativePath === 'tools/publish-release.ts') {
     return 'release publication CLI process boundary';
   }
+  if (relativePath === 'packages/capture-structuring/src/structuring.ts') {
+    return 'host SDK LLM callable boundary';
+  }
   return undefined;
 }
 

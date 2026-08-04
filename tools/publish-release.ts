@@ -11,6 +11,7 @@ const packageName = '@gx-capture/capture-workbench';
 const releasePackageNames = Object.freeze([
   packageName,
   '@gx-capture/capture-contracts',
+  '@gx-capture/capture-structuring',
 ]);
 const registry = 'https://npm.pkg.github.com';
 const coreRuntimeAssetNames = Object.freeze([

@@ -32,6 +32,7 @@ const engineCatalogName = 'capture-engine-catalog.json';
 const runtimeSizeReportName = 'runtime-size-report.json';
 const packageNames = [
   '@gx-capture/capture-contracts',
+  '@gx-capture/capture-structuring',
   '@gx-capture/capture-workbench',
 ];
 
@@ -533,7 +534,7 @@ test('zero-asset draft uploads from inventory before readback, package, and publ
       remote.calls.filter(
         ([command, operation]) => command === 'npm' && operation === 'publish',
       ).length,
-      2,
+      3,
     );
     assert.equal(
       remote.calls
