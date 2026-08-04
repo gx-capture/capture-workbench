@@ -11,6 +11,22 @@
       "options": {
         "command": "corepack pnpm exec playwright test --config apps/capture-workbench-e2e/playwright.config.ts"
       }
+    },
+    "runtime-web-component-e2e": {
+      "executor": "nx:run-commands",
+      "dependsOn": [
+        {
+          "target": "pack",
+          "projects": ["capture-angular"]
+        },
+        {
+          "target": "build-release-artifacts",
+          "projects": ["capture-runtime"]
+        }
+      ],
+      "options": {
+        "command": "node tools/runtime-web-component-e2e.ts"
+      }
     }
   }
 }

@@ -64,6 +64,17 @@
       producer artifacts; the publication gate remains explicit.
       Evidence: `capture-angular:clean-consumer-smoke` passed all four browser
       smokes; `capture-workbench-desktop:contract-consistency` passed.
+- [x] Run an opt-in real loopback packaged Capture Runtime plus packed Web
+      Component browser E2E with an explicit host-managed handshake and a real
+      OCR PDF.
+      Evidence:
+      `capture-workbench-e2e:runtime-web-component-e2e` passed the runtime
+      handshake, consented OCR installation, real PDF upload, capture polling,
+      DirectML OCR provenance, embedded-text conformance for every extractable
+      page, result retrieval, Shadow DOM lifecycle, and composed completion
+      event. A rendered page-1 visual spot check covered the PDF and completed
+      Web Component result view. The target is opt-in so ordinary verification
+      does not download model assets.
 
 ## Phase 2 - host structuring SDK
 
