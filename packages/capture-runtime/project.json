@@ -75,6 +75,32 @@
         "command": "uv run --no-sync --python 3.12 python scripts/generate_schema.py --output dist/schema/capture-document-v1.schema.json"
       }
     },
+    "generate-contracts": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "inputs": ["production"],
+      "outputs": [
+        "{workspaceRoot}/packages/capture-contracts/src/generated",
+        "{workspaceRoot}/packages/capture-contracts/python/src/capture_contracts"
+      ],
+      "options": {
+        "cwd": "packages/capture-runtime",
+        "command": "uv run --python 3.12 python scripts/generate_contracts.py --output ../capture-contracts"
+      }
+    },
+    "check-contracts": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "inputs": [
+        "production",
+        "{workspaceRoot}/packages/capture-contracts/src/generated/**",
+        "{workspaceRoot}/packages/capture-contracts/python/src/capture_contracts/**"
+      ],
+      "options": {
+        "cwd": "packages/capture-runtime",
+        "command": "uv run --python 3.12 python scripts/generate_contracts.py --output ../capture-contracts --check"
+      }
+    },
     "sync-angular-schema": {
       "executor": "nx:run-commands",
       "cache": false,

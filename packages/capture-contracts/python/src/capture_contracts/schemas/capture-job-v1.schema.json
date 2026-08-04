@@ -1,0 +1,188 @@
+{
+  "$defs": {
+    "CaptureFailureV1": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "pattern": "^[a-z][a-z0-9_]{1,63}$",
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Message",
+          "type": "string"
+        },
+        "stage": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Stage"
+        },
+        "retryable": {
+          "default": false,
+          "title": "Retryable",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "CaptureFailureV1",
+      "type": "object"
+    },
+    "CaptureJobStage": {
+      "enum": [
+        "queued",
+        "extracting",
+        "awaiting_structuring",
+        "structuring",
+        "completed",
+        "failed",
+        "cancelled"
+      ],
+      "title": "CaptureJobStage",
+      "type": "string"
+    },
+    "CaptureJobStatus": {
+      "enum": [
+        "queued",
+        "running",
+        "completed",
+        "failed",
+        "cancelled"
+      ],
+      "title": "CaptureJobStatus",
+      "type": "string"
+    },
+    "CaptureSourceV1": {
+      "additionalProperties": false,
+      "properties": {
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "fileName": {
+          "maxLength": 255,
+          "minLength": 1,
+          "title": "Filename",
+          "type": "string"
+        },
+        "mediaType": {
+          "minLength": 1,
+          "title": "Mediatype",
+          "type": "string"
+        },
+        "bytes": {
+          "minimum": 1,
+          "title": "Bytes",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "sha256",
+        "fileName",
+        "mediaType",
+        "bytes"
+      ],
+      "title": "CaptureSourceV1",
+      "type": "object"
+    },
+    "StructuringMode": {
+      "enum": [
+        "runtime",
+        "host"
+      ],
+      "title": "StructuringMode",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "captureId": {
+      "title": "Captureid",
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/CaptureJobStatus"
+    },
+    "stage": {
+      "$ref": "#/$defs/CaptureJobStage"
+    },
+    "structuringMode": {
+      "$ref": "#/$defs/StructuringMode"
+    },
+    "progress": {
+      "maximum": 1,
+      "minimum": 0,
+      "title": "Progress",
+      "type": "number"
+    },
+    "source": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CaptureSourceV1"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "error": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CaptureFailureV1"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "createdAt": {
+      "format": "date-time",
+      "title": "Createdat",
+      "type": "string"
+    },
+    "updatedAt": {
+      "format": "date-time",
+      "title": "Updatedat",
+      "type": "string"
+    },
+    "completedAt": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Completedat"
+    }
+  },
+  "required": [
+    "captureId",
+    "status",
+    "stage",
+    "structuringMode",
+    "progress",
+    "createdAt",
+    "updatedAt"
+  ],
+  "title": "CaptureJobV1",
+  "type": "object"
+}

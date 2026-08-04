@@ -1,0 +1,15 @@
+[build-system]
+requires = ["hatchling>=1.27.0,<2.0.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "capture-contracts"
+version = "0.3.9"
+description = "Generated Capture Workbench wire-contract schemas for host integrations."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = { text = "MIT" }
+dependencies = []
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/capture_contracts"]

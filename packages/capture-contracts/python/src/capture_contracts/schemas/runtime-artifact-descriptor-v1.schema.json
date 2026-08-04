@@ -1,0 +1,34 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "artifactUrl": {
+      "minLength": 1,
+      "title": "Artifacturl",
+      "type": "string"
+    },
+    "artifactFileName": {
+      "minLength": 1,
+      "title": "Artifactfilename",
+      "type": "string"
+    },
+    "bytes": {
+      "maximum": 536870912,
+      "minimum": 1,
+      "title": "Bytes",
+      "type": "integer"
+    },
+    "sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Sha256",
+      "type": "string"
+    }
+  },
+  "required": [
+    "artifactUrl",
+    "artifactFileName",
+    "bytes",
+    "sha256"
+  ],
+  "title": "RuntimeArtifactDescriptorV1",
+  "type": "object"
+}

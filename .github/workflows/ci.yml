@@ -55,6 +55,11 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
+          pnpm nx run capture-contracts:lint
+          pnpm nx run capture-contracts:typecheck
+          pnpm nx run capture-contracts:build
+          pnpm nx run capture-contracts:python-build
+          pnpm nx run capture-contracts:python-smoke
           pnpm nx run capture-angular:lint
           pnpm nx run capture-angular:test
           pnpm nx run capture-angular:build
@@ -76,6 +81,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
           pnpm nx run capture-runtime:python-version-check
+          pnpm nx run capture-runtime:check-contracts
           pnpm nx run capture-runtime:lint
           pnpm nx run capture-runtime:typecheck
           pnpm nx run capture-runtime:test

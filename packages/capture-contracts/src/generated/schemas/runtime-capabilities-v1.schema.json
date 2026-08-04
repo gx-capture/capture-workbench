@@ -1,0 +1,52 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "captureKinds": {
+      "items": {
+        "enum": [
+          "pdf",
+          "image",
+          "audio"
+        ],
+        "type": "string"
+      },
+      "title": "Capturekinds",
+      "type": "array"
+    },
+    "structuringModes": {
+      "items": {
+        "enum": [
+          "runtime",
+          "host"
+        ],
+        "type": "string"
+      },
+      "title": "Structuringmodes",
+      "type": "array"
+    },
+    "supportsCancellation": {
+      "const": true,
+      "default": true,
+      "title": "Supportscancellation",
+      "type": "boolean"
+    },
+    "supportsRawDiagnostics": {
+      "const": true,
+      "default": true,
+      "title": "Supportsrawdiagnostics",
+      "type": "boolean"
+    },
+    "maxUploadBytes": {
+      "exclusiveMinimum": 0,
+      "title": "Maxuploadbytes",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "captureKinds",
+    "structuringModes",
+    "maxUploadBytes"
+  ],
+  "title": "RuntimeCapabilitiesV1",
+  "type": "object"
+}
