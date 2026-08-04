@@ -626,7 +626,7 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
     'Upload release candidate',
     'Download release candidate',
     'Install publication script dependencies',
-    'Publish runtime first, then the exact Capture Workbench package idempotently',
+    'Publish runtime first, then the exact release packages idempotently',
   ];
   const retainedReleaseStepIndexes = retainedReleaseStepNames.map((name) => {
     const index = workflow.indexOf(`- name: ${name}`);
@@ -689,6 +689,7 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   assert.match(workflow, /installed-deterministic-smoke\.ts --measure-release-size/u);
   assert.match(workflow, /capture-runtime:size-regression-check/u);
   assert.match(workflow, /capture-angular:pack/u);
+  assert.match(workflow, /capture-contracts:pack/u);
   assert.match(workflow, /actions\/upload-artifact@[0-9a-f]{40}/u);
   assert.match(workflow, /actions\/download-artifact@[0-9a-f]{40}/u);
   assert.match(workflow, /publish-release\.ts/u);
@@ -780,7 +781,7 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   const releasePublishIndex = releaseSteps.findIndex(
     (step) =>
       step.name ===
-      'Publish runtime first, then the exact Capture Workbench package idempotently',
+      'Publish runtime first, then the exact release packages idempotently',
   );
   requiredWorkflowStep(
     releaseSteps,
@@ -821,6 +822,7 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
     candidateAssemblyScript,
     /Copy-Item packages\/capture-runtime\/dist\/release\/\* -Destination \$runtime/u,
   );
+  assert.match(candidateAssemblyScript, /\$packages\.Count -ne 2/u);
   assert.match(
     candidateAssemblyScript,
     /Capture\.Workbench_\$\(\$Matches\.version\)_x64-setup\.exe/u,
@@ -864,7 +866,7 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   }
   const releasePublishStep = requiredWorkflowStep(
     releaseSteps,
-    'Publish runtime first, then the exact Capture Workbench package idempotently',
+    'Publish runtime first, then the exact release packages idempotently',
   );
   assert.match(
     releasePublishStep.script ?? '',
@@ -874,6 +876,8 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
     releasePublishStep.script ?? '',
     /--installer \$installers\[0\]\.FullName/u,
   );
+  assert.match(releasePublishStep.script ?? '', /@packageArgs/u);
+  assert.match(publisher, /releasePackageNames/u);
 
   for (const [workflowName, steps] of [
     ['CI', ciSteps],
