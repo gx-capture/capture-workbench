@@ -234,18 +234,28 @@ dependencies = [
 ]
 
 [[package]]
-name = "capture-workbench-desktop"
+name = "capture-sidecar-launcher"
 version = "0.3.9"
 dependencies = [
  "rand",
  "serde",
  "serde_json",
  "sha2",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "capture-workbench-desktop"
+version = "0.3.9"
+dependencies = [
+ "capture-sidecar-launcher",
+ "rand",
+ "serde",
+ "serde_json",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
  "tempfile",
- "windows-sys 0.61.2",
 ]
 
 [[package]]

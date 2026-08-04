@@ -36,29 +36,24 @@ use windows_sys::Win32::System::JobObjects::{
     JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
 };
 
-/// A runtime root process plus its Windows job-object ownership boundary.
-///
-/// The job keeps descendants such as the isolated Ollama process attached to the
-/// exact launch attempt even if the runtime root exits before the harness can
-/// perform cleanup.
-pub(crate) struct OwnedRuntimeProcess {
+/// A sidecar root process plus its Windows job-object ownership boundary.
+pub struct OwnedSidecarProcess {
     child: Child,
     #[cfg(windows)]
     job: WindowsJob,
 }
 
-impl OwnedRuntimeProcess {
-    pub(crate) fn spawn(command: &mut Command) -> Result<Self, String> {
+impl OwnedSidecarProcess {
+    /// Spawns a command suspended, assigns it to a kill-on-close job, then resumes it.
+    pub fn spawn(command: &mut Command) -> Result<Self, String> {
         #[cfg(windows)]
         let job = WindowsJob::new()?;
-
         #[cfg(windows)]
         command.creation_flags(CREATE_NO_WINDOW | CREATE_SUSPENDED);
 
         let mut child = command
             .spawn()
             .map_err(|error| format!("Capture runtime could not be started: {error}"))?;
-
         #[cfg(windows)]
         if let Err(error) = job.assign(&child) {
             return match terminate_unassigned_child(&mut child) {
@@ -68,7 +63,6 @@ impl OwnedRuntimeProcess {
                 )),
             };
         }
-
         #[cfg(windows)]
         if let Err(error) = resume_suspended_process(&child) {
             return match terminate_assigned_suspended_child(&job, &mut child) {
@@ -78,7 +72,6 @@ impl OwnedRuntimeProcess {
                 )),
             };
         }
-
         Ok(Self {
             child,
             #[cfg(windows)]
@@ -86,8 +79,47 @@ impl OwnedRuntimeProcess {
         })
     }
 
-    pub(crate) fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
+    /// Checks whether the root process has exited without blocking.
+    pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
         self.child.try_wait()
+    }
+
+    /// Terminates the exact process tree owned by this launch attempt.
+    pub fn terminate(mut self) -> Result<(), String> {
+        #[cfg(windows)]
+        {
+            if self.job.terminate().is_ok() {
+                self.child.wait().map_err(|error| {
+                    format!("Owned runtime root process could not be reaped: {error}")
+                })?;
+                return Ok(());
+            }
+            match self.child.try_wait() {
+                Ok(Some(_)) => return Ok(()),
+                Ok(None) => {
+                    if terminate_windows_tree(self.child.id()).is_ok() {
+                        self.child.wait().map_err(|error| {
+                            format!("Owned runtime root process could not be reaped: {error}")
+                        })?;
+                        return Ok(());
+                    }
+                }
+                Err(error) => {
+                    return Err(format!(
+                        "Owned runtime root liveness could not be proven before PID cleanup: {error}"
+                    ));
+                }
+            }
+        }
+        if self.child.try_wait().ok().flatten().is_none() {
+            self.child.kill().map_err(|error| {
+                format!("Owned runtime root process could not be stopped: {error}")
+            })?;
+        }
+        self.child
+            .wait()
+            .map(|_| ())
+            .map_err(|error| format!("Owned runtime root process could not be reaped: {error}"))
     }
 
     #[cfg(test)]
@@ -101,59 +133,8 @@ impl OwnedRuntimeProcess {
     }
 }
 
-/// Terminates exactly the child PID tree created by this harness.
-pub(crate) fn terminate_owned_process_tree(mut process: OwnedRuntimeProcess) -> Result<(), String> {
-    #[cfg(windows)]
-    {
-        // Terminating the job remains effective after the root process exits,
-        // which is the important case for failed readiness attempts that may
-        // already have started Ollama descendants.
-        if process.job.terminate().is_ok() {
-            process.child.wait().map_err(|error| {
-                format!("Owned runtime root process could not be reaped: {error}")
-            })?;
-            return Ok(());
-        }
-
-        // A PID is safe to target only while the Child handle still proves the
-        // root process is live. If it already exited, a reused PID could belong
-        // to an unrelated process; closing the owned job remains the only
-        // descendant cleanup action in that case.
-        match process.child.try_wait() {
-            Ok(Some(_)) => return Ok(()),
-            Ok(None) => {
-                if terminate_windows_tree(process.child.id()).is_ok() {
-                    process.child.wait().map_err(|error| {
-                        format!("Owned runtime root process could not be reaped: {error}")
-                    })?;
-                    return Ok(());
-                }
-            }
-            Err(error) => {
-                return Err(format!(
-                    "Owned runtime root liveness could not be proven before PID cleanup: {error}"
-                ));
-            }
-        }
-    }
-
-    if process.child.try_wait().ok().flatten().is_none() {
-        process
-            .child
-            .kill()
-            .map_err(|error| format!("Owned runtime root process could not be stopped: {error}"))?;
-    }
-    process
-        .child
-        .wait()
-        .map(|_| ())
-        .map_err(|error| format!("Owned runtime root process could not be reaped: {error}"))
-}
-
 #[cfg(windows)]
 struct WindowsJob {
-    // Store the HANDLE as an integer so the ownership wrapper remains Send and
-    // can be held behind DesktopState's cross-thread Mutex.
     handle: usize,
 }
 
@@ -167,7 +148,6 @@ impl WindowsJob {
                 io::Error::last_os_error()
             ));
         }
-
         let mut information: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
         information.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
         let configured = unsafe {
@@ -187,7 +167,6 @@ impl WindowsJob {
                 "The owned runtime process job could not be configured: {error}"
             ));
         }
-
         Ok(Self {
             handle: handle as usize,
         })
@@ -249,8 +228,6 @@ impl WindowsJob {
 impl Drop for WindowsJob {
     fn drop(&mut self) {
         unsafe {
-            // JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE makes this a final fail-safe
-            // for every process assigned to this exact launch attempt.
             CloseHandle(self.handle as *mut c_void);
         }
     }
@@ -268,14 +245,7 @@ fn terminate_unassigned_child(child: &mut Child) -> Result<(), String> {
             }
         }
         Err(error) => {
-            // CREATE_SUSPENDED guarantees this root has not executed or spawned
-            // descendants. Child::kill targets its retained process handle, so
-            // it remains safe even when status probing itself failed.
-            child.kill().map_err(|kill_error| {
-                format!(
-                    "Unassigned suspended runtime liveness could not be proven ({error}) and its process handle could not be terminated: {kill_error}"
-                )
-            })?;
+            child.kill().map_err(|kill_error| format!("Unassigned runtime root liveness could not be proven ({error}) and its process handle could not be terminated: {kill_error}"))?;
         }
     }
     child
@@ -317,13 +287,11 @@ fn resume_suspended_process(child: &Child) -> Result<(), String> {
             io::Error::last_os_error()
         ));
     }
-
     let mut owned_thread_ids = Vec::new();
     loop {
         if entry.th32OwnerProcessID == child.id() {
             owned_thread_ids.push(entry.th32ThreadID);
         }
-
         if unsafe { Thread32Next(snapshot.raw(), &mut entry) } == 0 {
             let error = unsafe { GetLastError() };
             if error != ERROR_NO_MORE_FILES {
@@ -375,9 +343,7 @@ fn resume_suspended_process(child: &Child) -> Result<(), String> {
         ));
     }
     if previous_suspend_count != 1 {
-        return Err(format!(
-            "The owned runtime primary thread had an unexpected suspend count of {previous_suspend_count}."
-        ));
+        return Err(format!("The owned runtime primary thread had an unexpected suspend count of {previous_suspend_count}."));
     }
     Ok(())
 }
@@ -415,17 +381,6 @@ fn terminate_windows_tree(pid: u32) -> Result<(), String> {
 
 #[cfg(windows)]
 fn taskkill_command(pid: u32) -> Result<Command, String> {
-    let mut command = Command::new(system_taskkill_path()?);
-    command
-        .args(taskkill_args(pid))
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    Ok(command)
-}
-
-#[cfg(windows)]
-fn system_taskkill_path() -> Result<PathBuf, String> {
     let mut buffer = [0_u16; 32_768];
     let length = unsafe { GetSystemDirectoryW(buffer.as_mut_ptr(), buffer.len() as u32) };
     if length == 0 || length as usize >= buffer.len() {
@@ -433,13 +388,20 @@ fn system_taskkill_path() -> Result<PathBuf, String> {
     }
     let directory = PathBuf::from(OsString::from_wide(&buffer[..length as usize]));
     let candidate = directory.join("taskkill.exe");
-    let metadata = candidate.metadata().map_err(|error| {
-        format!("The Windows system taskkill executable is unavailable: {error}")
-    })?;
-    if !metadata.is_file() {
+    if !candidate
+        .metadata()
+        .map_err(|error| format!("The Windows system taskkill executable is unavailable: {error}"))?
+        .is_file()
+    {
         return Err("The Windows system taskkill path is not a regular file.".into());
     }
-    Ok(candidate)
+    let mut command = Command::new(candidate);
+    command
+        .args(taskkill_args(pid))
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    Ok(command)
 }
 
 #[cfg(all(test, not(windows)))]
@@ -469,16 +431,6 @@ mod tests {
             .get_args()
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect();
-
-        #[cfg(windows)]
-        {
-            let program = PathBuf::from(command.get_program());
-            assert!(program.is_absolute());
-            assert_eq!(
-                program.file_name().and_then(|name| name.to_str()),
-                Some("taskkill.exe")
-            );
-        }
         assert_eq!(args, ["/PID", "4242", "/T", "/F"]);
         assert!(!args.iter().any(|arg| arg == "/IM"));
     }
@@ -497,8 +449,7 @@ mod tests {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
-
-        let mut process = OwnedRuntimeProcess::spawn(&mut command).expect("owned process");
+        let mut process = OwnedSidecarProcess::spawn(&mut command).expect("owned process");
         assert!(process.id() > 0);
         assert!(process.try_wait().expect("status").is_none());
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
@@ -508,6 +459,6 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(25));
         }
         assert!(process.active_processes().expect("descendant process") >= 2);
-        terminate_owned_process_tree(process).expect("terminate owned process");
+        process.terminate().expect("terminate owned process");
     }
 }

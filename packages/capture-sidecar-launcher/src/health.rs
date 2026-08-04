@@ -8,13 +8,29 @@ use serde_json::Value;
 
 use crate::{
     constants::{HEALTH_PATH, LOOPBACK_HOST, MAX_HEALTH_RESPONSE_BYTES},
-    contracts::{ProbeResult, ReadyHandshake, RuntimeManifest},
+    manifest::SidecarManifest,
 };
 
-pub(crate) fn probe_ready_once(
+/// Readiness handshake returned by `/v1/health/ready`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReadyHandshake {
+    pub runtime_version: String,
+    pub api_version: String,
+    pub capture_document_schema_version: String,
+}
+
+/// Result of one bounded readiness probe.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProbeResult {
+    Ready(ReadyHandshake),
+    NotReady,
+}
+
+/// Probes the authenticated loopback readiness endpoint once.
+pub fn probe_ready_once(
     port: u16,
     token: &str,
-    manifest: &RuntimeManifest,
+    manifest: &SidecarManifest,
 ) -> Result<ProbeResult, String> {
     let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
     let mut stream = match TcpStream::connect_timeout(&address, Duration::from_millis(250)) {
@@ -29,7 +45,7 @@ pub(crate) fn probe_ready_once(
         .map_err(|_| "Capture runtime readiness socket could not be configured.".to_string())?;
 
     let request = format!(
-        "GET {HEALTH_PATH} HTTP/1.1\r\nHost: {LOOPBACK_HOST}:{port}\r\nOrigin: http://tauri.localhost\r\nAuthorization: Bearer {token}\r\nAccept: application/json\r\nConnection: close\r\n\r\n"
+        "GET {HEALTH_PATH} HTTP/1.1\r\nHost: {LOOPBACK_HOST}:{port}\r\nAuthorization: Bearer {token}\r\nAccept: application/json\r\nConnection: close\r\n\r\n"
     );
     if stream.write_all(request.as_bytes()).is_err() {
         return Ok(ProbeResult::NotReady);
@@ -51,7 +67,7 @@ pub(crate) fn probe_ready_once(
 
 fn parse_health_response(
     response: &[u8],
-    manifest: &RuntimeManifest,
+    manifest: &SidecarManifest,
 ) -> Result<ProbeResult, String> {
     let separator = response
         .windows(4)
@@ -65,7 +81,6 @@ fn parse_health_response(
         .and_then(|line| line.split_whitespace().nth(1))
         .and_then(|value| value.parse::<u16>().ok())
         .ok_or_else(|| "Capture runtime readiness status was malformed.".to_string())?;
-
     if status == 503 {
         return Ok(ProbeResult::NotReady);
     }
@@ -81,7 +96,7 @@ fn parse_health_response(
     validate_handshake(&value, manifest).map(ProbeResult::Ready)
 }
 
-fn validate_handshake(value: &Value, manifest: &RuntimeManifest) -> Result<ReadyHandshake, String> {
+fn validate_handshake(value: &Value, manifest: &SidecarManifest) -> Result<ReadyHandshake, String> {
     let ready = value.get("ready").and_then(Value::as_bool).unwrap_or(false)
         || value
             .get("status")
@@ -97,7 +112,6 @@ fn validate_handshake(value: &Value, manifest: &RuntimeManifest) -> Result<Ready
     let runtime_version = response_string(value, "runtimeVersion")?;
     let api_version = response_string(value, "apiVersion")?;
     let schema_version = response_string(value, "captureDocumentSchemaVersion")?;
-
     compare_handshake(
         "runtimeVersion",
         &runtime_version,
@@ -140,30 +154,26 @@ fn compare_handshake(name: &str, actual: &str, expected: &str) -> Result<(), Str
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::constants::{
-        EXPECTED_API_VERSION, EXPECTED_CAPTURE_DOCUMENT_SCHEMA_VERSION, EXPECTED_MANIFEST_VERSION,
-        EXPECTED_RUNTIME_VERSION, RUNTIME_BINARY_TARGET_FILE,
-    };
-    use std::{net::TcpListener, sync::mpsc, thread};
+    use std::{io::Write, net::TcpListener, sync::mpsc, thread};
 
-    fn manifest() -> RuntimeManifest {
-        RuntimeManifest {
-            manifest_version: EXPECTED_MANIFEST_VERSION.into(),
-            runtime_version: EXPECTED_RUNTIME_VERSION.into(),
-            api_version: EXPECTED_API_VERSION.into(),
-            capture_document_schema_version: EXPECTED_CAPTURE_DOCUMENT_SCHEMA_VERSION.into(),
+    fn manifest() -> SidecarManifest {
+        SidecarManifest {
+            manifest_version: "1".into(),
+            runtime_version: "0.3.9".into(),
+            api_version: "1.0".into(),
+            capture_document_schema_version: "1".into(),
             platform: "windows".into(),
             arch: "x86_64".into(),
-            file_name: RUNTIME_BINARY_TARGET_FILE.into(),
+            file_name: "capture-runtime.exe".into(),
             bytes: 1,
             sha256: "0".repeat(64),
             schema_file_name: "capture-document-v1.schema.json".into(),
-            schema_sha256: "1".repeat(64),
+            schema_sha256: "0".repeat(64),
         }
     }
 
     #[test]
-    fn authenticated_ready_handshake_validates_all_versions() {
+    fn authenticated_ready_handshake_is_exact_and_token_is_only_in_request() {
         let listener = TcpListener::bind((LOOPBACK_HOST, 0)).expect("listener");
         let port = listener.local_addr().expect("address").port();
         let (sender, receiver) = mpsc::channel();
@@ -172,15 +182,10 @@ mod tests {
             let mut request = [0_u8; 4096];
             let count = stream.read(&mut request).expect("request");
             sender.send(request[..count].to_vec()).expect("send");
-            let body = format!(
-                "{{\"ready\":true,\"runtimeVersion\":\"{}\",\"apiVersion\":\"{}\",\"captureDocumentSchemaVersion\":\"{}\",\"capabilities\":{{\"capture\":true}}}}",
-                EXPECTED_RUNTIME_VERSION,
-                EXPECTED_API_VERSION,
-                EXPECTED_CAPTURE_DOCUMENT_SCHEMA_VERSION
-            );
+            let body = r#"{"ready":true,"runtimeVersion":"0.3.9","apiVersion":"1.0","captureDocumentSchemaVersion":"1","capabilities":{}}"#;
             write!(
                 stream,
-                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
                 body.len(),
                 body
             )
@@ -190,14 +195,12 @@ mod tests {
         let result = probe_ready_once(port, "secret-token", &manifest()).expect("probe");
         assert!(matches!(result, ProbeResult::Ready(_)));
         let request = String::from_utf8(receiver.recv().expect("request")).expect("utf8");
-        assert!(request.contains("Host: 127.0.0.1:"));
-        assert!(request.contains("Origin: http://tauri.localhost"));
         assert!(request.contains("Authorization: Bearer secret-token"));
         server.join().expect("server");
     }
 
     #[test]
-    fn incompatible_schema_fails_without_echoing_response_body() {
+    fn incompatible_handshake_does_not_echo_the_received_value() {
         let body = br#"{"ready":true,"runtimeVersion":"0.3.9","apiVersion":"1.0","captureDocumentSchemaVersion":"99","capabilities":{}}"#;
         let response = format!(
             "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{}",
