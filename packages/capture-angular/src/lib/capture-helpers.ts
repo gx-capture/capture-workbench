@@ -233,7 +233,11 @@ function validateStructuringCandidateImpl(
   if (candidate.createdAt !== raw.createdAt) {
     issues.push('createdAt must exactly match raw capture evidence');
   }
-  if (!raw.warnings.every((warning) => candidate.warnings.includes(warning))) {
+  if (
+    !(raw.warnings ?? []).every((warning) =>
+      (candidate.warnings ?? []).includes(warning),
+    )
+  ) {
     issues.push('warnings must preserve every raw capture warning');
   }
   if (!candidate.structuringEngine.engine.trim()) {

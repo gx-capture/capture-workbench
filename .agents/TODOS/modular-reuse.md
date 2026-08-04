@@ -42,15 +42,28 @@
       Evidence: `capture-contracts:python-wheel-smoke` installs the built wheel
       into a temporary venv and derives the version assertion from the package
       manifest.
-- [ ] Retire the legacy Angular `generate_schema.py` /
-      `sync-angular-schema` producer path after the published contract package
-      has a real consumer; keep the byte-equality gate until that migration.
-- [ ] Record and close the remaining TS declaration fidelity gap when the host
-      SDK begins consuming the package (discriminators, `boundingBox`, `allOf`,
-      and full schema constraints remain runtime-validator concerns for now).
 - [ ] Migrate cert-prep only after publication/auth evidence; delete its
       hand-mirrored DTO owner rather than adding a compatibility shim.
       Verify: cert-prep backend focused tests and import scan.
+
+## Phase 1.5 - in-repo consumers first
+
+- [x] Migrate `capture-angular` to `@gx-capture/capture-contracts` via
+      `workspace:*`; delete its hand-maintained wire DTOs, version constants,
+      generated schema copy, and `sync-angular-schema` target. Keep Angular
+      request/DI/config/event API types local.
+- [x] Repair the generated TypeScript fidelity gap needed by the producer
+      consumer: tagged locator `kind` discriminators, tuple `boundingBox`,
+      aliases, and a browser-safe generated document-schema constant now come
+      from the same generator. Remaining `allOf`/cross-field/runtime constraint
+      validation stays canonical in the runtime.
+- [x] Add desktop contract consistency verification for the contracts manifest,
+      Cargo version constants, staged runtime manifest, and schema SHA-256;
+      wire it into the desktop Nx/CI lane.
+- [x] Run packed Angular/Vanilla/React/Vue consumer smoke against both local
+      producer artifacts; the publication gate remains explicit.
+      Evidence: `capture-angular:clean-consumer-smoke` passed all four browser
+      smokes; `capture-workbench-desktop:contract-consistency` passed.
 
 ## Phase 2 - host structuring SDK
 

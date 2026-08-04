@@ -75,3 +75,8 @@
 - Contract generation is pinned to Pydantic `2.13.4`, pydantic-core `2.46.4`,
   and `pydantic.model_json_schema`; the generated manifest records these
   versions and the generator hash.
+- Phase 1.5 keeps the contracts package as the Angular wire/schema owner and
+  uses a local packed contracts artifact for producer consumer smokes until
+  GitHub Packages publication is evidenced. The desktop keeps its Rust-local
+  staged schema because it cannot consume TypeScript, but CI compares its
+  manifest, versions, and schema SHA to the generated contracts manifest.

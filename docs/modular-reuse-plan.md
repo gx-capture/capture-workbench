@@ -81,6 +81,11 @@ documents that exception.
 - **Producer before consumer:** publish each contracts package, structuring
   SDK, and launcher crate before its corresponding cert-prep consumer phase
   starts. Record the package version and install source in the phase evidence.
+- **In-repo consumers before external ones (Phase 1.5):** capture-workbench's
+  own `capture-angular` and desktop must consume `@gx-capture/capture-contracts`
+  before cert-prep/law-prep do. The producer is the first consumer of its own
+  contract — eat your own dog food, retire the parallel in-repo schema path, and
+  surface lossy-codegen friction internally rather than in a consumer PR.
 - **Handshake rollout:** Phase 4.2 is breaking for any 0.3.x/0.3.y split pair.
   Enforce minor alignment only after all in-scope consumers are confirmed to
   be on the same minor; provide a deprecation note and an explicit break-glass
@@ -140,7 +145,7 @@ consumer consistency check and Phase 4.2's cross-minor handshake policy.
 Python package, **generated** from the runtime's Pydantic models /
 `model_json_schema()`. Single source:
 `packages/capture-runtime/src/capture_runtime/contracts/__init__.py` and the
-generator at `packages/capture-runtime/scripts/generate_schema.py` (pinned SHA
+generator at `packages/capture-runtime/scripts/generate_contracts.py` (pinned SHA
 in `packages/capture-runtime/src/capture_runtime/release.py:22-24,111-131`).
 Pin the Pydantic and schema-generator versions used by this process, and record
 the generator toolchain version alongside the pinned release evidence so the
@@ -193,6 +198,59 @@ serve requests.
 The target public inventory is therefore either the standalone runtime
 executable plus checksum, or the desktop installer alone; it is not the
 current nine-file mixture of runtime, metadata, QA evidence, and installer.
+
+---
+
+## Phase 1.5 — Migrate in-repo consumers first (producer; before external consumers)
+
+Phase 1 ships `@gx-capture/capture-contracts`, but today **nothing in-repo consumes
+it** — `capture-angular` still carries hand-written wire types
+(`src/lib/contracts/index.ts`, `src/lib/contracts/versions.ts`) plus its own
+generated schema, and `capture-workbench-desktop` carries its own schema-resource
+copy and Rust version constants (`constants/versions.rs`). There are four
+`capture-document-v1.schema.json` copies in-repo before this phase; the two under
+`capture-contracts/` are generator outputs and the desktop copy remains a staged
+resource verified by CI. The producer therefore has the same duplication the
+package is meant to eliminate. This phase makes capture-workbench
+the **first consumer of its own contract** before cert-prep/law-prep depend on it.
+
+**1.5.1** `capture-angular`: import the wire-model types, version constants, and
+document schema from `@gx-capture/capture-contracts` via `workspace:*` (valid for
+in-repo consumers even though external consumers use the published package). **Keep
+package-API types local** — `CaptureClient` (the DI seam), `CaptureOutputMode`,
+`CaptureDensity`, component-config types, and the custom-event map are
+capture-angular's own surface, not wire types. Retire the Angular-specific
+TypeScript-output path in `generate_schema.py` and the `sync-angular-schema`
+target; retain the runtime `generate-schema` target for release artifacts, while
+Angular no longer owns a schema copy.
+
+**1.5.2** Resolve the lossy-codegen regression before migrating. The generator
+now emits required `kind` discriminators, tuple `boundingBox`, aliases, and a
+browser-safe schema constant.
+Tagged locator unions now carry a required `kind:` discriminator, and
+`PageLocatorV1.boundingBox` is emitted as a four-number tuple.
+The generator now owns the tagged-union output and no Angular overlay is needed.
+It also emits aliases and a browser-safe schema constant; the remaining
+`allOf` and cross-field constraints stay runtime-validator concerns.
+The invariants and `extraPolicy` are exported to TS for capture-angular early
+checks.
+
+**1.5.3** `capture-workbench-desktop` (Rust) cannot import a TS/Python package.
+Add a **build-time consistency check** to CI that verifies the desktop
+schema-resource copy and `constants/versions.rs` (`EXPECTED_*_VERSION`) against the
+`capture-contracts` manifest and schema SHA-256. A shared Rust contracts crate is
+the longer-term end state and is explicitly out of scope here.
+
+**1.5.4** Verify the standalone desktop product and the Angular/Vanilla/React/Vue
+`clean-consumer-smoke` stay green throughout.
+
+**Acceptance:** zero hand-maintained wire-model TS duplicates in `capture-angular`;
+its only document-schema source is `@gx-capture/capture-contracts`; the Rust
+constants/schema are verified against the manifest in CI; the standalone product
+and consumer smokes are unaffected. The clean consumer smoke uses both local
+packed producer artifacts until the GitHub Packages publication gate is closed.
+Once the producer itself is a consumer, cert-prep's
+Phase 1.4 migration de-risks onto a proven artifact instead of an orphan package.
 
 ---
 

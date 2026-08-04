@@ -33,6 +33,20 @@ writeFileSync(
 manifest.module = loaderPath.slice(2);
 manifest.exports['.'].default = loaderPath;
 manifest.sideEffects = [loaderPath];
+
+if (
+  manifest.dependencies?.['@gx-capture/capture-contracts'] === 'workspace:*'
+) {
+  const contractsManifestPath = resolve(
+    packageDirectory,
+    '../capture-contracts/package.json',
+  );
+  const contractsManifest = JSON.parse(
+    readFileSync(contractsManifestPath, 'utf8'),
+  );
+  manifest.dependencies['@gx-capture/capture-contracts'] =
+    contractsManifest.version;
+}
 writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
 process.stdout.write(
   'Finalized package-owned Angular compiler loader before packing.\n',

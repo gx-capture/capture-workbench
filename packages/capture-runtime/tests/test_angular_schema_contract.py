@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 from pathlib import Path
 
 import pytest
@@ -19,30 +18,26 @@ from capture_runtime.release import (
     write_capture_document_schema,
 )
 
-ANGULAR_GENERATED_ROOT = (
-    Path(__file__).resolve().parents[2] / "capture-angular" / "src" / "lib" / "generated"
-)
+ROOT = Path(__file__).resolve().parents[3]
+CONTRACTS_GENERATED_ROOT = ROOT / "packages" / "capture-contracts" / "src" / "generated"
 
 
 def test_angular_package_schema_is_the_runtime_generated_contract(tmp_path: Path) -> None:
-    angular_schema = ANGULAR_GENERATED_ROOT / "capture-document-v1.schema.json"
-    angular_metadata = ANGULAR_GENERATED_ROOT / "capture-document-v1-schema.generated.ts"
-    schema_bytes = angular_schema.read_bytes()
+    contracts_schema = CONTRACTS_GENERATED_ROOT / "schemas" / "capture-document-v1.schema.json"
+    browser_schema = CONTRACTS_GENERATED_ROOT / "capture-document-v1-schema.ts"
+    schema_bytes = contracts_schema.read_bytes()
 
     assert json.loads(schema_bytes) == capture_document_schema()
     assert schema_bytes == capture_document_schema_release_bytes()
-    assert schema_bytes.endswith(b"\r\n")
-    assert b"\n" not in schema_bytes.replace(b"\r\n", b"")
-    assert b"\r" not in schema_bytes.replace(b"\r\n", b"")
     assert json.loads(schema_bytes)["$id"] == CAPTURE_DOCUMENT_SCHEMA_ID
 
     digest = hashlib.sha256(schema_bytes).hexdigest()
     assert digest == capture_document_schema_release_sha256()
     assert digest == CAPTURE_DOCUMENT_SCHEMA_RELEASE_SHA256
 
-    metadata_match = re.search(r"'([0-9a-f]{64})' as const", angular_metadata.read_text())
-    assert metadata_match is not None
-    assert metadata_match.group(1) == digest
+    browser_schema_source = browser_schema.read_text(encoding="utf-8")
+    assert "GENERATED_CAPTURE_DOCUMENT_V1_JSON_SCHEMA" in browser_schema_source
+    assert json.loads(schema_bytes)["$id"] in browser_schema_source
 
     generated = write_capture_document_schema(tmp_path / "capture-document-v1.schema.json")
     assert generated.read_bytes() == schema_bytes
@@ -62,10 +57,8 @@ def test_public_runtime_artifact_descriptor_v1_remains_exactly_compatible() -> N
         "bytes",
         "sha256",
     }
-    angular_contracts = (ANGULAR_GENERATED_ROOT.parent / "contracts" / "index.ts").read_text(
-        encoding="utf-8"
-    )
-    interface = angular_contracts.split("export interface RuntimeArtifactDescriptorV1 {", 1)[
+    generated_contracts = (CONTRACTS_GENERATED_ROOT / "contracts.ts").read_text(encoding="utf-8")
+    interface = generated_contracts.split("export interface RuntimeArtifactDescriptorV1 {", 1)[
         1
     ].split("}", 1)[0]
     for field in ("artifactUrl", "artifactFileName", "bytes", "sha256"):

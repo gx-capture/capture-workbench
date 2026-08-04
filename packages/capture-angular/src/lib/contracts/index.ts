@@ -1,32 +1,87 @@
 import type { Observable } from 'rxjs';
-import { CAPTURE_DOCUMENT_SCHEMA_VERSION } from './versions';
+import { CAPTURE_DOCUMENT_SCHEMA_VERSION } from '@gx-capture/capture-contracts';
+import type {
+  CaptureBlockV1,
+  CaptureDocumentV1,
+  CaptureFailureV1,
+  CaptureJobV1,
+  CaptureJobStage,
+  CaptureSourceKind,
+  PageLocatorV1,
+  RawCaptureV1,
+  RuntimeInstallationV1,
+  RuntimeReadyV1 as GeneratedRuntimeReadyV1,
+  RuntimeRequirementV1,
+  StructuringMode,
+  TimeLocatorV1,
+} from '@gx-capture/capture-contracts';
 
-export type CaptureSourceKind = 'pdf' | 'image' | 'audio';
-export type CaptureStructuringMode = 'runtime' | 'host';
+export {
+  CAPTURE_API_VERSION,
+  CAPTURE_CONTRACT_EXTRA_POLICIES,
+  CAPTURE_CONTRACT_INVARIANTS,
+  CAPTURE_DOCUMENT_SCHEMA_ID,
+  CAPTURE_DOCUMENT_SCHEMA_SHA256,
+  CAPTURE_DOCUMENT_SCHEMA_VERSION,
+  CAPTURE_RUNTIME_VERSION,
+  CONTRACT_MANIFEST_VERSION,
+  RUNTIME_VERSION,
+} from '@gx-capture/capture-contracts';
+export type {
+  CaptureBlockV1,
+  CaptureContractExtraPolicy,
+  CaptureContractInvariant,
+  CaptureContractName,
+  CaptureDocumentV1,
+  CaptureEngineV1,
+  CaptureFailureV1,
+  CaptureJobV1,
+  CaptureJobStage,
+  CaptureJobStatus,
+  CaptureLocatorV1,
+  CaptureSourceKind,
+  ErrorBodyV1,
+  ErrorEnvelopeV1,
+  PageLocatorV1,
+  RawCaptureSegmentV1,
+  RawCaptureV1,
+  ReportStructuringFailureV1,
+  RuntimeArtifactDescriptorV1,
+  RuntimeCapabilitiesV1,
+  RuntimeInstallationStatus,
+  RuntimeInstallationV1,
+  RuntimeInstallationsV1,
+  RuntimeRequirementStatus,
+  RuntimeRequirementV1,
+  RuntimeRequirementsV1,
+  StartRuntimeInstallationV1,
+  StructuringMode,
+  TimeLocatorV1,
+} from '@gx-capture/capture-contracts';
+
+/** Angular's API naming remains stable while the wire owner is generated. */
+export type CaptureStructuringMode = StructuringMode;
+export type CaptureRequirementId = RuntimeRequirementV1['requirementId'];
+export type CapturePageLocatorV1 = PageLocatorV1;
+export type CaptureTimeLocatorV1 = TimeLocatorV1;
+export type CaptureBlockType = CaptureBlockV1['type'];
+export type CaptureStructuringCandidateV1 = CaptureDocumentV1;
+
+/**
+ * A client receives arbitrary handshake versions so it can report incompatibility;
+ * the generated release model intentionally narrows these fields to this release.
+ */
+export type RuntimeReadyV1 = Omit<
+  GeneratedRuntimeReadyV1,
+  'apiVersion' | 'runtimeVersion' | 'captureDocumentSchemaVersion'
+> & {
+  readonly apiVersion: string;
+  readonly runtimeVersion: string;
+  readonly captureDocumentSchemaVersion: string;
+};
+
 export type CaptureOutputMode = 'json' | 'text';
 export type CaptureDensity = 'compact' | 'comfortable';
-
-export type CaptureRequirementId =
-  | 'windowsml-ocr'
-  | 'whisper-primary'
-  | 'ollama-runtime'
-  | 'capture-ollama-model';
-
-export type CaptureJobStatus =
-  | 'queued'
-  | 'running'
-  | 'completed'
-  | 'failed'
-  | 'cancelled';
-
-export type CaptureJobStage =
-  | 'queued'
-  | 'extracting'
-  | 'awaiting_structuring'
-  | 'structuring'
-  | 'completed'
-  | 'failed'
-  | 'cancelled';
 
 export type CaptureTaskStatus =
   | 'queued'
@@ -38,174 +93,6 @@ export type CaptureTaskStatus =
   | 'canceled';
 
 export type CaptureTaskStage = CaptureJobStage | 'uploading' | 'preprocessing';
-
-export interface CapturePageLocatorV1 {
-  readonly kind: 'page';
-  readonly page: number;
-  readonly boundingBox?: readonly [number, number, number, number] | null;
-}
-
-export interface CaptureTimeLocatorV1 {
-  readonly kind: 'time';
-  readonly startMs: number;
-  readonly endMs: number;
-}
-
-export type CaptureLocatorV1 = CapturePageLocatorV1 | CaptureTimeLocatorV1;
-
-export interface CaptureSourceV1 {
-  readonly sha256: string;
-  readonly fileName: string;
-  readonly mediaType: string;
-  readonly bytes: number;
-}
-
-export interface CaptureEngineV1 {
-  readonly engine: string;
-  readonly model: string;
-  readonly digest: string;
-  readonly device?: string | null;
-}
-
-export interface RawCaptureSegmentV1 {
-  readonly segmentId: string;
-  readonly order: number;
-  readonly locator: CaptureLocatorV1;
-  readonly text: string;
-}
-
-/**
- * Raw OCR/STT is diagnostic evidence, not a successful capture result.
- * Consumers must not persist it as a CaptureDocumentV1.
- */
-export interface RawCaptureV1 {
-  readonly schemaVersion: typeof CAPTURE_DOCUMENT_SCHEMA_VERSION;
-  readonly diagnosticOnly: true;
-  readonly source: CaptureSourceV1;
-  readonly segments: readonly RawCaptureSegmentV1[];
-  readonly sourceText: string;
-  readonly extractionEngine: CaptureEngineV1;
-  readonly warnings: readonly string[];
-  readonly createdAt: string;
-}
-
-export type CaptureBlockType =
-  | 'heading'
-  | 'paragraph'
-  | 'list-item'
-  | 'table'
-  | 'quote'
-  | 'transcript';
-
-export interface CaptureBlockV1 {
-  readonly blockId: string;
-  readonly order: number;
-  readonly sourceSegmentId: string;
-  readonly type: CaptureBlockType;
-  readonly locator: CaptureLocatorV1;
-  readonly sourceText: string;
-  readonly targetText: string;
-}
-
-export interface CaptureDocumentV1 {
-  readonly schemaVersion: typeof CAPTURE_DOCUMENT_SCHEMA_VERSION;
-  readonly source: CaptureSourceV1;
-  readonly rawSegments: readonly RawCaptureSegmentV1[];
-  readonly blocks: readonly CaptureBlockV1[];
-  readonly sourceText: string;
-  readonly targetText: string;
-  readonly extractionEngine: CaptureEngineV1;
-  readonly structuringEngine: CaptureEngineV1;
-  readonly warnings: readonly string[];
-  readonly createdAt: string;
-  readonly completedAt: string;
-}
-
-/** Host providers return a full candidate for runtime-side schema/provenance validation. */
-export type CaptureStructuringCandidateV1 = CaptureDocumentV1;
-
-export interface CaptureFailureV1 {
-  readonly code: string;
-  readonly message: string;
-  readonly stage?: CaptureTaskStage | 'runtime' | 'input' | null;
-  readonly retryable?: boolean;
-}
-
-export interface RuntimeReadyV1 {
-  readonly ready: boolean;
-  readonly service: 'capture-runtime';
-  readonly apiVersion: string;
-  readonly runtimeVersion: string;
-  readonly captureDocumentSchemaVersion: string;
-  readonly capabilities: {
-    readonly captureKinds: readonly CaptureSourceKind[];
-    readonly structuringModes: readonly CaptureStructuringMode[];
-    readonly supportsCancellation: boolean;
-    readonly supportsRawDiagnostics: boolean;
-    readonly maxUploadBytes: number;
-  };
-  readonly message?: string | null;
-}
-
-export type RuntimeRequirementStatus =
-  | 'ready'
-  | 'missing'
-  | 'installable'
-  | 'manual_action_required'
-  | 'unavailable';
-
-export interface RuntimeArtifactDescriptorV1 {
-  readonly artifactUrl: string;
-  readonly artifactFileName: string;
-  /** Exact compressed artifact length, from 1 through 536870912 bytes. */
-  readonly bytes: number;
-  readonly sha256: string;
-}
-
-export interface RuntimeRequirementV1 {
-  readonly requirementId: CaptureRequirementId;
-  readonly kind: string;
-  readonly displayName: string;
-  readonly status: RuntimeRequirementStatus;
-  readonly requiredFor: readonly string[];
-  readonly installStrategy: string;
-  readonly detail?: string | null;
-  readonly artifact?: RuntimeArtifactDescriptorV1 | null;
-}
-
-export type RuntimeInstallationStatus =
-  | 'queued'
-  | 'running'
-  | 'completed'
-  | 'failed'
-  | 'cancelled'
-  | 'manual_action_required';
-
-export interface RuntimeInstallationV1 {
-  readonly installationId: string;
-  readonly requirementId: CaptureRequirementId;
-  readonly status: RuntimeInstallationStatus;
-  /** Runtime wire value from 0 through 1. */
-  readonly progress: number;
-  readonly error?: CaptureFailureV1 | null;
-  readonly createdAt: string;
-  readonly updatedAt: string;
-  readonly completedAt?: string | null;
-}
-
-export interface CaptureJobV1 {
-  readonly captureId: string;
-  readonly status: CaptureJobStatus;
-  readonly stage: CaptureJobStage;
-  readonly structuringMode: CaptureStructuringMode;
-  /** Runtime wire value from 0 through 1. */
-  readonly progress: number;
-  readonly source?: CaptureSourceV1 | null;
-  readonly error?: CaptureFailureV1 | null;
-  readonly createdAt: string;
-  readonly updatedAt: string;
-  readonly completedAt?: string | null;
-}
 
 export interface StartRuntimeInstallationRequest {
   readonly clientRequestId: string;
@@ -422,6 +309,5 @@ export interface CaptureFailedEvent {
   readonly raw?: RawCaptureV1;
 }
 
-export * from './versions';
 export * from './injection';
 export * from './workbench';

@@ -27,6 +27,8 @@ export type RuntimeRequirementStatus = "ready" | "missing" | "installable" | "ma
 /** Wire enum. */
 export type StructuringMode = "runtime" | "host";
 
+export type CaptureLocatorV1 = PageLocatorV1 | TimeLocatorV1;
+
 export interface CaptureBlockV1 {
   readonly blockId: string;
   readonly order: number;
@@ -43,7 +45,7 @@ export interface CaptureDocumentV1 {
   readonly createdAt: string;
   readonly extractionEngine: CaptureEngineV1;
   readonly rawSegments: readonly (RawCaptureSegmentV1)[];
-  readonly schemaVersion?: "1";
+  readonly schemaVersion: "1";
   readonly source: CaptureSourceV1;
   readonly sourceText: string;
   readonly structuringEngine: CaptureEngineV1;
@@ -96,9 +98,9 @@ export interface ErrorEnvelopeV1 {
 }
 
 export interface PageLocatorV1 {
-  readonly kind?: "page";
+  readonly kind: "page";
   readonly page: number;
-  readonly boundingBox?: readonly (unknown)[] | null;
+  readonly boundingBox?: readonly [number, number, number, number] | null;
 }
 
 export interface RawCaptureSegmentV1 {
@@ -109,8 +111,8 @@ export interface RawCaptureSegmentV1 {
 }
 
 export interface RawCaptureV1 {
-  readonly schemaVersion?: "1";
-  readonly diagnosticOnly?: true;
+  readonly schemaVersion: "1";
+  readonly diagnosticOnly: true;
   readonly source: CaptureSourceV1;
   readonly segments: readonly (RawCaptureSegmentV1)[];
   readonly sourceText: string;
@@ -134,8 +136,8 @@ export interface RuntimeArtifactDescriptorV1 {
 export interface RuntimeCapabilitiesV1 {
   readonly captureKinds: readonly ("pdf" | "image" | "audio")[];
   readonly structuringModes: readonly ("runtime" | "host")[];
-  readonly supportsCancellation?: true;
-  readonly supportsRawDiagnostics?: true;
+  readonly supportsCancellation: true;
+  readonly supportsRawDiagnostics: true;
   readonly maxUploadBytes: number;
 }
 
@@ -156,10 +158,10 @@ export interface RuntimeInstallationsV1 {
 
 export interface RuntimeReadyV1 {
   readonly ready: boolean;
-  readonly service?: "capture-runtime";
-  readonly apiVersion?: "1.0";
-  readonly runtimeVersion?: "0.3.9";
-  readonly captureDocumentSchemaVersion?: "1";
+  readonly service: "capture-runtime";
+  readonly apiVersion: "1.0";
+  readonly runtimeVersion: "0.3.9";
+  readonly captureDocumentSchemaVersion: "1";
   readonly capabilities: RuntimeCapabilitiesV1;
   readonly message?: string | null;
 }
@@ -185,7 +187,7 @@ export interface StartRuntimeInstallationV1 {
 }
 
 export interface TimeLocatorV1 {
-  readonly kind?: "time";
+  readonly kind: "time";
   readonly startMs: number;
   readonly endMs: number;
 }

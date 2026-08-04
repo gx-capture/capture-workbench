@@ -14,7 +14,12 @@
     "skipLibCheck": true,
     "skipDefaultLibCheck": true,
     "paths": {
-      "@gx-capture/capture-workbench": ["./packages/capture-angular/src/index.ts"]
+      "@gx-capture/capture-workbench": [
+        "./packages/capture-angular/src/index.ts"
+      ],
+      "@gx-capture/capture-contracts": [
+        "./packages/capture-contracts/src/index.ts"
+      ]
     },
     "strict": false,
     "noUncheckedSideEffectImports": false,

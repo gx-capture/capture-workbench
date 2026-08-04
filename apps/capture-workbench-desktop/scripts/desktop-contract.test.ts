@@ -100,7 +100,9 @@ function nativeCommandLines(script: string): string[] {
   return script
     .split(/\r?\n/u)
     .map((line) => line.trim())
-    .filter((line) => /^(?:cargo|gh|git|node|npm|pnpm|rustup|uv)\b/u.test(line));
+    .filter((line) =>
+      /^(?:cargo|gh|git|node|npm|pnpm|rustup|uv)\b/u.test(line),
+    );
 }
 
 function invokesFullWorkspaceVerify(line: string): boolean {
@@ -121,9 +123,7 @@ function assertNativeErrorPreferenceWindow(
     .filter((line) => line.length > 0 && !line.startsWith('#'));
   const disabledIndexes = lines
     .map((line, index) =>
-      line === '$PSNativeCommandUseErrorActionPreference = $false'
-        ? index
-        : -1,
+      line === '$PSNativeCommandUseErrorActionPreference = $false' ? index : -1,
     )
     .filter((index) => index >= 0);
   assert.equal(
@@ -184,7 +184,10 @@ test('workflow run extraction covers compact steps and every valid block scalar 
     ].join('\n');
     assert.deepEqual(
       workflowRunScripts(workflow),
-      [`      echo "${expression}"\n      node tools/check.mjs`, 'echo next-step'],
+      [
+        `      echo "${expression}"\n      node tools/check.mjs`,
+        'echo next-step',
+      ],
       blockIndicator,
     );
     const scalarStep = requiredWorkflowStep(
@@ -264,6 +267,21 @@ test('Nx separates root verification build from release and deterministic NSIS l
     directmlSmoke.options.commands.at(-1),
     /--expected-ocr-device windowsml-dml$/u,
   );
+});
+
+test('desktop CI binds its staged contract resources to generated contracts', async () => {
+  const project = JSON.parse(
+    await readFile(join(appRoot, 'project.json'), 'utf8'),
+  );
+  assert.match(
+    project.targets['contract-consistency'].options.command,
+    /check-desktop-contract-consistency\.ts/u,
+  );
+  const ci = await readFile(
+    join(appRoot, '..', '..', '.github', 'workflows', 'ci.yml'),
+    'utf8',
+  );
+  assert.match(ci, /capture-workbench-desktop:contract-consistency/u);
 });
 
 test('production CSP is strict while allowing only dynamic loopback API ports', async () => {
@@ -546,10 +564,7 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
       'utf8',
     ),
   ]);
-  const actionReferences = [
-    workflow,
-    ciWorkflow,
-  ].flatMap((source) =>
+  const actionReferences = [workflow, ciWorkflow].flatMap((source) =>
     [...source.matchAll(/uses:\s*[^@\s]+@([^\s#]+)/gu)].map(
       (match) => match[1],
     ),
@@ -635,12 +650,14 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   });
   for (let index = 1; index < retainedReleaseStepIndexes.length; index += 1) {
     assert.ok(
-      retainedReleaseStepIndexes[index - 1] <
-        retainedReleaseStepIndexes[index],
+      retainedReleaseStepIndexes[index - 1] < retainedReleaseStepIndexes[index],
       `Release step order is invalid around ${retainedReleaseStepNames[index]}`,
     );
   }
-  assert.doesNotMatch(workflow, /model-candidate\.yml|CAPTURE_MODEL_RECEIPT|trusted model candidate/u);
+  assert.doesNotMatch(
+    workflow,
+    /model-candidate\.yml|CAPTURE_MODEL_RECEIPT|trusted model candidate/u,
+  );
   const releaseRunScripts = workflowRunScripts(workflow);
   assert.doesNotMatch(releaseRunScripts.join('\n'), /\$\{\{/u);
   const normalizedReleaseRunLines = releaseRunScripts.flatMap((script) =>
@@ -686,7 +703,10 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   assert.match(workflow, /compression-level: 0/u);
   assert.match(workflow, /retention-days: 1/u);
   assert.match(workflow, /capture-workbench-desktop:build-nsis/u);
-  assert.match(workflow, /installed-deterministic-smoke\.ts --measure-release-size/u);
+  assert.match(
+    workflow,
+    /installed-deterministic-smoke\.ts --measure-release-size/u,
+  );
   assert.match(workflow, /capture-runtime:size-regression-check/u);
   assert.match(workflow, /capture-angular:pack/u);
   assert.match(workflow, /capture-contracts:pack/u);
@@ -736,7 +756,10 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
     ciSteps.some((step) => step.name === 'Verify measured size budgets'),
     false,
   );
-  assert.doesNotMatch(ciWorkflow, /installed-deterministic-smoke\.ts --measure-release-size/u);
+  assert.doesNotMatch(
+    ciWorkflow,
+    /installed-deterministic-smoke\.ts --measure-release-size/u,
+  );
   assert.doesNotMatch(ciWorkflow, /capture-runtime:size-regression-check/u);
   const ciDiagnosticsStep = requiredWorkflowStep(
     ciSteps,

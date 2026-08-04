@@ -23,11 +23,17 @@ corepack pnpm nx run capture-contracts:pack
 
 The TypeScript declarations are ergonomic structural types, not a replacement
 for JSON Schema or Pydantic validation. Discriminated unions, `boundingBox`
-tuple shape, `allOf` composition, cross-field invariants, and every schema
-constraint are not necessarily encoded in `contracts.ts`; the runtime remains
-the canonical validator. Hosts can use `CAPTURE_CONTRACT_INVARIANTS` and
+tuple shape, and the pinned `CaptureDocumentV1` schema are generated from the
+same runtime source. `allOf` composition, cross-field invariants, and every
+schema constraint are not necessarily encoded in `contracts.ts`; the runtime
+remains the canonical validator. Hosts can use `CAPTURE_CONTRACT_INVARIANTS` and
 `CAPTURE_CONTRACT_EXTRA_POLICIES` as metadata for early client-side checks,
 then submit candidates to the runtime validator.
+
+`CAPTURE_DOCUMENT_V1_JSON_SCHEMA` is a browser-safe generated TypeScript
+constant. The JSON copies under `generated/schemas/` remain release and
+Python-loader artifacts; consumers should import the package constant instead
+of maintaining a schema copy.
 
 The package version stays synchronized with the runtime (currently `0.3.9`).
 The release workflow publishes both `@gx-capture/capture-contracts` and

@@ -43,10 +43,10 @@ def test_shared_contract_artifacts_retain_pinned_document_schema() -> None:
         == (
             ROOT
             / "packages"
-            / "capture-angular"
+            / "capture-contracts"
             / "src"
-            / "lib"
             / "generated"
+            / "schemas"
             / "capture-document-v1.schema.json"
         ).read_bytes()
     )
@@ -83,3 +83,13 @@ def test_typescript_artifact_exports_manifest_semantics_for_hosts() -> None:
     assert 'id: "raw-segment-ids-unique"' in source
     assert "export const CAPTURE_CONTRACT_EXTRA_POLICIES" in source
     assert '"CaptureDocumentV1": "forbid"' in source
+
+
+def test_typescript_artifact_preserves_locator_fidelity_for_in_repo_consumers() -> None:
+    root = ROOT / "packages" / "capture-contracts" / "src" / "generated"
+    source = (root / "contracts.ts").read_text(encoding="utf-8")
+    schema_source = (root / "capture-document-v1-schema.ts").read_text(encoding="utf-8")
+    assert "export type CaptureLocatorV1 = PageLocatorV1 | TimeLocatorV1;" in source
+    assert 'readonly kind: "page";' in source
+    assert "readonly boundingBox?: readonly [number, number, number, number] | null;" in source
+    assert "GENERATED_CAPTURE_DOCUMENT_V1_JSON_SCHEMA" in schema_source

@@ -60,11 +60,15 @@ OCR/Whisper extraction remains in the runtime sidecar.
 1. Phase 0: verify/pin the published `0.3.9` component and inventory consumer
    version drift before consumer alignment.
 2. Phase 1: publish generated contracts and regeneration-diff verification.
-3. Phase 2: publish the host structuring SDK and replace consumer forks.
-4. Phase 3: publish the launcher crate and replace consumer duplication.
-5. Phase 4: enforce 0.x minor alignment only after all in-scope consumers are
+3. Phase 1.5: make capture-workbench's Angular and desktop consumers prove the
+   generated package before external consumer migration. Angular imports the
+   npm package and uses its browser-safe schema constant; desktop retains its
+   staged Rust resource but verifies it against the package manifest and SHA.
+4. Phase 2: publish the host structuring SDK and replace consumer forks.
+5. Phase 3: publish the launcher crate and replace consumer duplication.
+6. Phase 4: enforce 0.x minor alignment only after all in-scope consumers are
    on one minor, with deprecation and break-glass rollback evidence.
-6. Phase 5: law-prep validation only after its platform/brain is concrete.
+7. Phase 5: law-prep validation only after its platform/brain is concrete.
 
 No consumer migration is complete until the producer artifact version and
 install source are recorded, the standalone product remains green, and the
