@@ -4,12 +4,21 @@ on:
   push:
     tags:
       - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Immutable release tag to retry'
+        required: true
+        type: string
 
 permissions:
   contents: read
 
+env:
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+
 concurrency:
-  group: capture-workbench-release-${{ github.ref }}
+  group: capture-workbench-release-${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -24,6 +33,7 @@ jobs:
       - name: Check out source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -34,8 +44,9 @@ jobs:
           $PSNativeCommandUseErrorActionPreference = $true
           git fetch --no-tags origin refs/heads/main:refs/remotes/origin/main
           git rev-parse --verify refs/remotes/origin/main
+          $releaseCommit = (git rev-parse HEAD).Trim()
           $PSNativeCommandUseErrorActionPreference = $false
-          git merge-base --is-ancestor "$env:GITHUB_SHA" refs/remotes/origin/main
+          git merge-base --is-ancestor $releaseCommit refs/remotes/origin/main
           $ancestorExitCode = $LASTEXITCODE
           $PSNativeCommandUseErrorActionPreference = $true
           if ($ancestorExitCode -ne 0) {
@@ -62,9 +73,10 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
+          $releaseCommit = (git rev-parse HEAD).Trim()
           node tools/verify-main-ci.ts `
             --repository "$env:GITHUB_REPOSITORY" `
-            --commit "$env:GITHUB_SHA" `
+            --commit "$releaseCommit" `
             --workflow-path ".github/workflows/ci.yml" `
             --branch "main"
 
@@ -80,8 +92,6 @@ jobs:
 
       - name: Verify synchronized versions
         shell: pwsh
-        env:
-          RELEASE_TAG: ${{ github.ref_name }}
         run: pnpm verify:release-version -- "$env:RELEASE_TAG"
 
       - name: Classify canonical release model mode
@@ -173,10 +183,11 @@ jobs:
           foreach ($pythonArtifact in $pythonArtifacts) {
             Copy-Item $pythonArtifact.FullName -Destination $python
           }
-          if ($env:GITHUB_REF_NAME -notmatch '^v(?<version>\d+\.\d+\.\d+)$') {
+          if ($env:RELEASE_TAG -notmatch '^v\d+\.\d+\.\d+$') {
             throw "Release tag must be vMAJOR.MINOR.PATCH."
           }
-          $crateArtifact = Get-Item "packages/capture-sidecar-launcher/target/package/capture-sidecar-launcher-$($Matches.version).crate"
+          $releaseVersion = $env:RELEASE_TAG.Substring(1)
+          $crateArtifact = Get-Item "packages/capture-sidecar-launcher/target/package/capture-sidecar-launcher-$releaseVersion.crate"
           Copy-Item $crateArtifact.FullName -Destination $crate
           foreach ($artifact in @(Get-ChildItem $package, $python, $crate -File)) {
             $digest = (Get-FileHash -LiteralPath $artifact.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -186,7 +197,7 @@ jobs:
           if ($installers.Count -ne 1) {
             throw "Expected exactly one Capture Workbench NSIS installer, found $($installers.Count)."
           }
-          $canonicalInstallerName = "Capture.Workbench_$($Matches.version)_x64-setup.exe"
+          $canonicalInstallerName = "Capture.Workbench_${releaseVersion}_x64-setup.exe"
           if ($canonicalInstallerName -notmatch '^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$') {
             throw "Canonical release installer name is not GitHub-stable."
           }
@@ -217,13 +228,13 @@ jobs:
           $sizeReport | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $sizeReportPath -Encoding utf8NoBOM
           $sizeReportDigest = (Get-FileHash -LiteralPath $sizeReportPath -Algorithm SHA256).Hash.ToLowerInvariant()
           "$sizeReportDigest  runtime-size-report.json" | Set-Content -LiteralPath "$sizeReportPath.sha256" -Encoding utf8NoBOM
-          node tools/verify-release-candidate.ts --candidate "$candidate" --version "$($Matches.version)"
+          node tools/verify-release-candidate.ts --candidate "$candidate" --version "$releaseVersion"
           "CAPTURE_CANDIDATE_PATH=$candidate" >> $env:GITHUB_ENV
 
       - name: Upload release candidate
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: capture-candidate-${{ github.ref_name }}
+          name: capture-candidate-${{ env.RELEASE_TAG }}
           path: ${{ env.CAPTURE_CANDIDATE_PATH }}
           if-no-files-found: error
           retention-days: 1
@@ -259,7 +270,7 @@ jobs:
       - name: Download release candidate
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: capture-candidate-${{ github.ref_name }}
+          name: capture-candidate-${{ env.RELEASE_TAG }}
           path: publication
 
       - name: Install publication script dependencies
@@ -273,7 +284,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           NODE_AUTH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ env.RELEASE_TAG }}
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
@@ -306,7 +317,7 @@ jobs:
       - name: Upload npm publication ledger
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: capture-release-ledger-npm-${{ github.ref_name }}
+          name: capture-release-ledger-npm-${{ env.RELEASE_TAG }}
           path: publication/release-ledger-npm.json
           if-no-files-found: error
 
@@ -335,7 +346,7 @@ jobs:
       - name: Download release candidate
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: capture-candidate-${{ github.ref_name }}
+          name: capture-candidate-${{ env.RELEASE_TAG }}
           path: publication
 
       - name: Isolate this package's distributions
@@ -357,7 +368,7 @@ jobs:
       - name: Probe this PyPI import from a clean environment
         shell: bash
         env:
-          RELEASE_VERSION: ${{ github.ref_name }}
+          RELEASE_VERSION: ${{ env.RELEASE_TAG }}
           PYPI_PROJECT: ${{ matrix.project }}
           PROBE_MODULE: ${{ matrix.module }}
         run: |
@@ -373,7 +384,7 @@ jobs:
       - name: Verify immutable PyPI artifact digests for this project
         shell: bash
         env:
-          RELEASE_VERSION: ${{ github.ref_name }}
+          RELEASE_VERSION: ${{ env.RELEASE_TAG }}
           PYPI_PROJECT: ${{ matrix.project }}
           ARTIFACT_PREFIX: ${{ matrix.prefix }}
         run: |
@@ -431,7 +442,7 @@ jobs:
       - name: Upload this PyPI publication ledger
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: capture-release-ledger-pypi-${{ matrix.project }}-${{ github.ref_name }}
+          name: capture-release-ledger-pypi-${{ matrix.project }}-${{ env.RELEASE_TAG }}
           path: publication/release-ledger-pypi-${{ matrix.project }}.json
           if-no-files-found: error
 
@@ -450,7 +461,7 @@ jobs:
       - name: Download release candidate
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: capture-candidate-${{ github.ref_name }}
+          name: capture-candidate-${{ env.RELEASE_TAG }}
           path: publication
 
       - name: Install Rust
@@ -470,7 +481,7 @@ jobs:
           set -euo pipefail
           expected_sha256="$(python -c 'import json; print(next(item["sha256"] for item in json.load(open("publication/release-ledger.json"))["artifacts"] if item["registry"] == "crates.io"))')"
           api_response="$RUNNER_TEMP/capture-sidecar-launcher-crates-api.json"
-          api_status="$(curl --silent --show-error --output "$api_response" --write-out '%{http_code}' "https://crates.io/api/v1/crates/capture-sidecar-launcher/${GITHUB_REF_NAME#v}")"
+          api_status="$(curl --silent --show-error --output "$api_response" --write-out '%{http_code}' "https://crates.io/api/v1/crates/capture-sidecar-launcher/${RELEASE_TAG#v}")"
           if [ "$api_status" = '200' ]; then
             remote_sha256="$(python -c 'import json; print(json.load(open("'"$api_response"'"))["version"]["checksum"])')"
             test "$remote_sha256" = "$expected_sha256"
@@ -486,7 +497,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo info "capture-sidecar-launcher@${GITHUB_REF_NAME#v}"
+          cargo info "capture-sidecar-launcher@${RELEASE_TAG#v}"
 
       - name: Record crates.io publication completion
         shell: bash
@@ -504,7 +515,7 @@ jobs:
       - name: Upload crates.io publication ledger
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: capture-release-ledger-crates-io-${{ github.ref_name }}
+          name: capture-release-ledger-crates-io-${{ env.RELEASE_TAG }}
           path: publication/release-ledger-crates-io.json
           if-no-files-found: error
 
@@ -518,13 +529,13 @@ jobs:
       - name: Download release candidate
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: capture-candidate-${{ github.ref_name }}
+          name: capture-candidate-${{ env.RELEASE_TAG }}
           path: publication
 
       - name: Download per-registry publication ledgers
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          pattern: capture-release-ledger-*-${{ github.ref_name }}
+          pattern: capture-release-ledger-*-${{ env.RELEASE_TAG }}
           path: publication/ledgers
           merge-multiple: true
 
@@ -542,4 +553,4 @@ jobs:
           test "$(python -c 'import json; print(json.load(open("publication/ledgers/release-ledger-pypi-capture-contracts.json"))["status"])')" = pypi-capture-contracts-published
           test "$(python -c 'import json; print(json.load(open("publication/ledgers/release-ledger-pypi-capture-structuring.json"))["status"])')" = pypi-capture-structuring-published
           test "$(python -c 'import json; print(json.load(open("publication/ledgers/release-ledger-crates-io.json"))["status"])')" = crates-io-published
-          test -n "${GITHUB_REF_NAME#v}"
+          test -n "${RELEASE_TAG#v}"
