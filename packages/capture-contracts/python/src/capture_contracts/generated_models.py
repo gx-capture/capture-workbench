@@ -20,7 +20,7 @@ from pydantic.alias_generators import to_camel
 
 API_VERSION = '1.0'
 CAPTURE_DOCUMENT_SCHEMA_VERSION = '1'
-RUNTIME_VERSION = '0.3.9'
+RUNTIME_VERSION = '0.3.10'
 
 
 NonEmptyString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
@@ -353,7 +353,7 @@ class RuntimeReadyV1(StrictModel):
     api_version: Literal["1.0"] = API_VERSION
     # This exact Literal is the release handshake and must stay synchronized
     # with RUNTIME_VERSION when the runtime version changes.
-    runtime_version: Literal["0.3.9"] = RUNTIME_VERSION
+    runtime_version: Literal["0.3.10"] = RUNTIME_VERSION
     capture_document_schema_version: Literal["1"] = CAPTURE_DOCUMENT_SCHEMA_VERSION
     capabilities: RuntimeCapabilitiesV1
     message: str | None = None

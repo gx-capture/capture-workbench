@@ -1,4 +1,4 @@
-Capture Workbench v0.3.9 Commit A notice
+Capture Workbench v0.3.10 Commit A notice
 
 These files contain no model weights. The fixed OCR
 phrase is intentionally limited to `CAPTURE OCR FIXTURE`. PaddleOCR

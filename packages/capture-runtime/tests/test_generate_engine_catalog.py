@@ -46,12 +46,12 @@ def test_direct_source_lock_generates_catalog_without_model_release_assets(
     engine_dir.mkdir()
     ocr_worker, ocr_worker_manifest = archive_pair(
         engine_dir,
-        "capture-engine-ocr-0.3.9-windows-x64.zip",
+        "capture-engine-ocr-0.3.10-windows-x64.zip",
         "capture-engine-ocr.exe",
     )
     whisper_worker, whisper_worker_manifest = archive_pair(
         engine_dir,
-        "capture-engine-whisper-0.3.9-windows-x64.zip",
+        "capture-engine-whisper-0.3.10-windows-x64.zip",
         "capture-engine-whisper.exe",
     )
     source_lock, _content = approved_source_lock()
@@ -122,12 +122,12 @@ def test_pending_source_lock_release_generation_fails_closed(
     engine_dir.mkdir()
     ocr_worker, ocr_worker_manifest = archive_pair(
         engine_dir,
-        "capture-engine-ocr-0.3.9-windows-x64.zip",
+        "capture-engine-ocr-0.3.10-windows-x64.zip",
         "capture-engine-ocr.exe",
     )
     whisper_worker, whisper_worker_manifest = archive_pair(
         engine_dir,
-        "capture-engine-whisper-0.3.9-windows-x64.zip",
+        "capture-engine-whisper-0.3.10-windows-x64.zip",
         "capture-engine-whisper.exe",
     )
     source_lock_path = tmp_path / "pending-model-source-lock.json"
@@ -166,12 +166,12 @@ def test_pending_source_lock_generates_only_preflight_catalog_with_explicit_flag
     engine_dir.mkdir()
     ocr_worker, ocr_worker_manifest = archive_pair(
         engine_dir,
-        "capture-engine-ocr-0.3.9-windows-x64.zip",
+        "capture-engine-ocr-0.3.10-windows-x64.zip",
         "capture-engine-ocr.exe",
     )
     whisper_worker, whisper_worker_manifest = archive_pair(
         engine_dir,
-        "capture-engine-whisper-0.3.9-windows-x64.zip",
+        "capture-engine-whisper-0.3.10-windows-x64.zip",
         "capture-engine-whisper.exe",
     )
     source_lock_path = tmp_path / "pending-model-source-lock.json"
@@ -218,12 +218,12 @@ def test_pending_preflight_rejects_unrelated_blockers_and_approved_lock(
     engine_dir.mkdir()
     ocr_worker, ocr_worker_manifest = archive_pair(
         engine_dir,
-        "capture-engine-ocr-0.3.9-windows-x64.zip",
+        "capture-engine-ocr-0.3.10-windows-x64.zip",
         "capture-engine-ocr.exe",
     )
     whisper_worker, whisper_worker_manifest = archive_pair(
         engine_dir,
-        "capture-engine-whisper-0.3.9-windows-x64.zip",
+        "capture-engine-whisper-0.3.10-windows-x64.zip",
         "capture-engine-whisper.exe",
     )
     pending_payload = pending_source_lock()

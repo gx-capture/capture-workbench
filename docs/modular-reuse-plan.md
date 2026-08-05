@@ -6,6 +6,10 @@
 > Owner repos: `capture-workbench` (producer, this repo) and `cert-prep`
 > (consumer, sibling at `C:\software-dev\cert-prep`).
 
+> Version-train note: the original `0.3.9` target is already an immutable
+> runtime release. The successor train implemented by this closeout is
+> `0.3.10`; `0.3.9` must not be overwritten or retagged.
+
 ## Goal
 
 Make `capture-workbench` a genuinely **modular, brain-agnostic** product that
@@ -76,7 +80,7 @@ Phase 2 explicitly imports the contract types directly from the runtime and
 documents that exception.
 
 - **Phase 0.0 prerequisite:** confirm that
-  `@gx-capture/capture-workbench@0.3.9` is published. If it is absent, cut
+  `@gx-capture/capture-workbench@0.3.10` is published. If it is absent, cut
   that producer release before attempting the consumer alignment in 0.1.
 - **Producer before consumer:** publish each contracts package, structuring
   SDK, and launcher crate before its corresponding cert-prep consumer phase
@@ -100,14 +104,14 @@ documents that exception.
 ## Phase 0 — Stop the bleeding (cert-prep; immediate; independent)
 
 cert-prep currently ships an **untested combination**: `@gx-capture/capture-workbench@0.3.8`
-(npm component) + runtime `0.3.9` (Rust/Python/manifest/UI all say 0.3.9). The
+(npm component) + runtime `0.3.10` (Rust/Python/manifest/UI all say 0.3.10). The
 compatibility handshake only checks major `0`, so it cannot catch this.
 
-**0.0** Confirm that `@gx-capture/capture-workbench@0.3.9` is published and
+**0.0** Confirm that `@gx-capture/capture-workbench@0.3.10` is published and
 installable by cert-prep. If it is not published, cut the producer component
 release before changing consumer pins.
 
-**0.1** Pick the canonical target version (`0.3.9`) and align every declaration:
+**0.1** Pick the canonical target version (`0.3.10`) and align every declaration:
 - `apps/cert-prep/package.json` (`@gx-capture/capture-workbench` pin)
 - `pnpm-lock.yaml`, `pnpm-workspace.yaml` (`minimumReleaseAgeExclude`)
 - `apps/cert-prep-desktop/scripts/package-qa/constants.mts` (`CAPTURE_RUNTIME_VERSION`)
@@ -118,7 +122,7 @@ release before changing consumer pins.
 **0.2** Source version strings from ONE place: import
 `CAPTURE_RUNTIME_MAJOR` / `CAPTURE_API_VERSION` / `CAPTURE_DOCUMENT_SCHEMA_VERSION`
 from the package; derive UI copy from the runtime handshake instead of the
-nine hardcoded `0.3.9` literals (`cert-prep-capture-client.ts:432` passes a
+nine hardcoded `0.3.10` literals (`cert-prep-capture-client.ts:432` passes a
 literal `0` instead of `CAPTURE_RUNTIME_MAJOR`; `desktop-runtime.store.ts:282`,
 `capture-workbench-trial.page.ts:160`, `capture-workbench-trial.page.html:7`,
 `desktop-runtime-view.service.ts:42,62,100`).
@@ -367,7 +371,7 @@ SDK with zero capture-workbench brain-coupling.
 - Keep capture-workbench's `clean-consumer-smoke` green (Angular/Vanilla/
   React/Vue hosts) after every phase.
 
-## 0.3.9 closeout status
+## 0.3.10 closeout status
 
 The producer-side generated contracts, Python wheels, TypeScript packages,
 structuring SDK artifacts, launcher crate metadata, release candidate ledger,
