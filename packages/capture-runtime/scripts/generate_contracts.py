@@ -399,7 +399,10 @@ def _manifest(models: dict[str, dict[str, Any]]) -> dict[str, Any]:
             {"name": "CaptureLocatorV1", "type": "PageLocatorV1 | TimeLocatorV1"},
             {
                 "name": "CaptureRequirementId",
-                "type": "'windowsml-ocr' | 'whisper-primary' | 'ollama-runtime' | 'capture-ollama-model'",
+                "type": (
+                    "'windowsml-ocr' | 'whisper-primary' | 'ollama-runtime' "
+                    "| 'capture-ollama-model'"
+                ),
             },
         ],
         "invariants": _invariants(),

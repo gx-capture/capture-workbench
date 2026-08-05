@@ -298,7 +298,7 @@
   ],
   "generator": {
     "script": "packages/capture-runtime/scripts/generate_contracts.py",
-    "generatorSha256": "1e2715758e01c4ce0bc12c2c42beddde00e448610b172370c4057346e9131cbc",
+    "generatorSha256": "48c2c4efc36086629c5ce68247bbb74c687b27bdfe0a1685a980554a6583cd7d",
     "schemaGenerator": "pydantic.model_json_schema",
     "pydanticVersion": "2.13.4",
     "pydanticCoreVersion": "2.46.4"
