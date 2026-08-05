@@ -822,6 +822,10 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
     workflow,
     /recovery-registry-gate:[\s\S]*Probe immutable GitHub Release and npm registry state[\s\S]*Probe clean PyPI installation and generated imports[\s\S]*Probe clean crates\.io installation and immutable checksum/u,
   );
+  assert.match(
+    workflow,
+    /Install uv and Python 3\.12[\s\S]*enable-cache: \$\{\{ inputs\.candidate_run_id == '' \}\}/u,
+  );
   assert.equal((workflow.match(/contents: write/gu) ?? []).length, 1);
   assert.equal((workflow.match(/packages: write/gu) ?? []).length, 1);
   assert.match(ciWorkflow, /capture-workbench:test/u);
