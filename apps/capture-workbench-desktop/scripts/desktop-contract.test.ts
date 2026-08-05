@@ -786,8 +786,12 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   );
   assert.match(
     workflow,
-    /static\.crates\.io\/crates\/capture-sidecar-launcher[\s\S]*sha256sum "\$archive_path"[\s\S]*cargo publish/u,
+    /static\.crates\.io\/crates\/capture-sidecar-launcher/u,
   );
+  assert.match(workflow, /sha256sum "\$archive_path"/u);
+  assert.match(workflow, /cargo publish/u);
+  assert.match(workflow, /Record immutable crates\.io archive digest/u);
+  assert.match(workflow, /candidateSha256/u);
   assert.doesNotMatch(workflow, /crates\.io\/api\/v1\/crates/u);
   assert.match(
     workflow,
