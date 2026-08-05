@@ -4,12 +4,37 @@ on:
   push:
     tags:
       - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Immutable release tag to retry'
+        required: true
+        type: string
+      publication_scope:
+        description: 'Registry publication scope for this run'
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - npm
+          - pypi
+          - crates
+      candidate_run_id:
+        description: 'Prior successful workflow run ID whose verified candidate must be reused for recovery'
+        required: false
+        type: string
 
 permissions:
   contents: read
 
+env:
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+  RELEASE_SCOPE: ${{ github.event_name == 'workflow_dispatch' && inputs.publication_scope || 'all' }}
+  CANDIDATE_RUN_ID: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate_run_id || '' }}
+
 concurrency:
-  group: capture-workbench-release-${{ github.ref }}
+  group: capture-workbench-release-${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -24,6 +49,7 @@ jobs:
       - name: Check out source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -34,12 +60,43 @@ jobs:
           $PSNativeCommandUseErrorActionPreference = $true
           git fetch --no-tags origin refs/heads/main:refs/remotes/origin/main
           git rev-parse --verify refs/remotes/origin/main
+          $releaseCommit = (git rev-parse HEAD).Trim()
           $PSNativeCommandUseErrorActionPreference = $false
-          git merge-base --is-ancestor "$env:GITHUB_SHA" refs/remotes/origin/main
+          git merge-base --is-ancestor $releaseCommit refs/remotes/origin/main
           $ancestorExitCode = $LASTEXITCODE
           $PSNativeCommandUseErrorActionPreference = $true
           if ($ancestorExitCode -ne 0) {
             throw "Release tag commit must be reachable from origin/main."
+          }
+
+      - name: Check out recovery source for the crate-only metadata correction
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate_run_id != '' && inputs.publication_scope == 'crates' }}
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.ref }}
+          path: recovery-source
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify recovery source only changes the launcher metadata
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate_run_id != '' && inputs.publication_scope == 'crates' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          $releaseCommit = (git rev-list -n 1 "$env:RELEASE_TAG").Trim()
+          $recoveryCommit = (git -C recovery-source rev-parse HEAD).Trim()
+          git -C recovery-source merge-base --is-ancestor $releaseCommit $recoveryCommit
+          if ($LASTEXITCODE -ne 0) {
+            throw "Recovery source must descend from the immutable release tag."
+          }
+          $changed = @(git -C recovery-source diff --name-only $releaseCommit -- packages/capture-sidecar-launcher/Cargo.toml)
+          if ($changed.Count -ne 1 -or $changed[0] -ne 'packages/capture-sidecar-launcher/Cargo.toml') {
+            throw "Crate recovery may change only the launcher Cargo metadata."
+          }
+          $cargo = Get-Content recovery-source/packages/capture-sidecar-launcher/Cargo.toml -Raw
+          if ($cargo -notmatch 'categories = \["os"\]') {
+            throw "Recovery source does not contain the supported crates.io category."
           }
 
       - name: Install pnpm
@@ -62,9 +119,10 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
+          $releaseCommit = (git rev-parse HEAD).Trim()
           node tools/verify-main-ci.ts `
             --repository "$env:GITHUB_REPOSITORY" `
-            --commit "$env:GITHUB_SHA" `
+            --commit "$releaseCommit" `
             --workflow-path ".github/workflows/ci.yml" `
             --branch "main"
 
@@ -72,7 +130,7 @@ jobs:
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           python-version: '3.12'
-          enable-cache: true
+          enable-cache: ${{ inputs.candidate_run_id == '' }}
 
       - name: Install workspace dependencies
         shell: pwsh
@@ -80,11 +138,10 @@ jobs:
 
       - name: Verify synchronized versions
         shell: pwsh
-        env:
-          RELEASE_TAG: ${{ github.ref_name }}
         run: pnpm verify:release-version -- "$env:RELEASE_TAG"
 
       - name: Classify canonical release model mode
+        if: ${{ inputs.candidate_run_id == '' }}
         id: release-model-mode
         shell: pwsh
         run: |
@@ -100,10 +157,12 @@ jobs:
           "mode=$($classification.releaseMode)" >> $env:GITHUB_OUTPUT
 
       - name: Build production runtime artifacts without ambient model stores
+        if: ${{ inputs.candidate_run_id == '' }}
         shell: pwsh
         run: pnpm nx run capture-runtime:build-release-artifacts
 
       - name: Build Capture Workbench Windows installer with the verified release runtime
+        if: ${{ inputs.candidate_run_id == '' }}
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -116,10 +175,12 @@ jobs:
           pnpm nx run capture-workbench-desktop:build-nsis
 
       - name: Measure exact installed size
+        if: ${{ inputs.candidate_run_id == '' }}
         shell: pwsh
         run: node apps/capture-workbench-desktop/scripts/installed-deterministic-smoke.ts --measure-release-size
 
       - name: Verify exact installed size and packaging budgets
+        if: ${{ inputs.candidate_run_id == '' }}
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -132,6 +193,7 @@ jobs:
           "$digest  runtime-size-report.json" | Set-Content -LiteralPath "$releasedReport.sha256" -Encoding utf8NoBOM
 
       - name: Assemble release candidate
+        if: ${{ inputs.candidate_run_id == '' }}
         shell: pwsh
         env:
           RELEASE_MODEL_MODE: ${{ steps.release-model-mode.outputs.mode }}
@@ -173,10 +235,11 @@ jobs:
           foreach ($pythonArtifact in $pythonArtifacts) {
             Copy-Item $pythonArtifact.FullName -Destination $python
           }
-          if ($env:GITHUB_REF_NAME -notmatch '^v(?<version>\d+\.\d+\.\d+)$') {
+          if ($env:RELEASE_TAG -notmatch '^v\d+\.\d+\.\d+$') {
             throw "Release tag must be vMAJOR.MINOR.PATCH."
           }
-          $crateArtifact = Get-Item "packages/capture-sidecar-launcher/target/package/capture-sidecar-launcher-$($Matches.version).crate"
+          $releaseVersion = $env:RELEASE_TAG.Substring(1)
+          $crateArtifact = Get-Item "packages/capture-sidecar-launcher/target/package/capture-sidecar-launcher-$releaseVersion.crate"
           Copy-Item $crateArtifact.FullName -Destination $crate
           foreach ($artifact in @(Get-ChildItem $package, $python, $crate -File)) {
             $digest = (Get-FileHash -LiteralPath $artifact.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -186,7 +249,7 @@ jobs:
           if ($installers.Count -ne 1) {
             throw "Expected exactly one Capture Workbench NSIS installer, found $($installers.Count)."
           }
-          $canonicalInstallerName = "Capture.Workbench_$($Matches.version)_x64-setup.exe"
+          $canonicalInstallerName = "Capture.Workbench_${releaseVersion}_x64-setup.exe"
           if ($canonicalInstallerName -notmatch '^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$') {
             throw "Canonical release installer name is not GitHub-stable."
           }
@@ -217,19 +280,57 @@ jobs:
           $sizeReport | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $sizeReportPath -Encoding utf8NoBOM
           $sizeReportDigest = (Get-FileHash -LiteralPath $sizeReportPath -Algorithm SHA256).Hash.ToLowerInvariant()
           "$sizeReportDigest  runtime-size-report.json" | Set-Content -LiteralPath "$sizeReportPath.sha256" -Encoding utf8NoBOM
-          node tools/verify-release-candidate.ts --candidate "$candidate" --version "$($Matches.version)"
+          node tools/verify-release-candidate.ts --candidate "$candidate" --version "$releaseVersion"
+          "CAPTURE_CANDIDATE_PATH=$candidate" >> $env:GITHUB_ENV
+
+      - name: Download immutable candidate from prior successful run
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate_run_id != '' }}
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: capture-candidate-${{ env.RELEASE_TAG }}
+          path: ${{ runner.temp }}/capture-candidate-reused
+          run-id: ${{ inputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Rebuild corrected crate candidate without rebuilding runtime assets
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate_run_id != '' && inputs.publication_scope == 'crates' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          $releaseVersion = $env:RELEASE_TAG.Substring(1)
+          cargo package --manifest-path recovery-source/packages/capture-sidecar-launcher/Cargo.toml --allow-dirty
+          $crateArtifact = Get-Item "recovery-source/packages/capture-sidecar-launcher/target/package/capture-sidecar-launcher-$releaseVersion.crate"
+          $candidateCrate = Join-Path $env:RUNNER_TEMP 'capture-candidate-reused/crate'
+          $candidateChecksums = Join-Path $env:RUNNER_TEMP 'capture-candidate-reused/checksums'
+          Get-ChildItem $candidateCrate -Filter '*.crate' -File | Remove-Item -Force
+          Copy-Item -LiteralPath $crateArtifact.FullName -Destination $candidateCrate
+          $digest = (Get-FileHash -LiteralPath (Join-Path $candidateCrate $crateArtifact.Name) -Algorithm SHA256).Hash.ToLowerInvariant()
+          $checksumPath = Join-Path $candidateChecksums "$($crateArtifact.Name).sha256"
+          Set-Content -LiteralPath $checksumPath -Value "$digest  $($crateArtifact.Name)" -Encoding utf8NoBOM
+
+      - name: Verify reused release candidate
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate_run_id != '' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          $candidate = Join-Path $env:RUNNER_TEMP 'capture-candidate-reused'
+          $releaseVersion = $env:RELEASE_TAG.Substring(1)
+          node tools/verify-release-candidate.ts --candidate "$candidate" --version "$releaseVersion"
           "CAPTURE_CANDIDATE_PATH=$candidate" >> $env:GITHUB_ENV
 
       - name: Upload release candidate
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: capture-candidate-${{ github.ref_name }}
+          name: capture-candidate-${{ env.RELEASE_TAG }}
           path: ${{ env.CAPTURE_CANDIDATE_PATH }}
           if-no-files-found: error
           retention-days: 1
           compression-level: 0
 
   publish-npm:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.publication_scope == 'all' || inputs.publication_scope == 'npm' }}
     needs: build-candidate
     runs-on: windows-latest
     timeout-minutes: 20
@@ -259,7 +360,7 @@ jobs:
       - name: Download release candidate
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: capture-candidate-${{ github.ref_name }}
+          name: capture-candidate-${{ env.RELEASE_TAG }}
           path: publication
 
       - name: Install publication script dependencies
@@ -273,7 +374,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           NODE_AUTH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ env.RELEASE_TAG }}
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
@@ -306,11 +407,12 @@ jobs:
       - name: Upload npm publication ledger
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: capture-release-ledger-npm-${{ github.ref_name }}
+          name: capture-release-ledger-npm-${{ env.RELEASE_TAG }}
           path: publication/release-ledger-npm.json
           if-no-files-found: error
 
   publish-pypi:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.publication_scope == 'all' || inputs.publication_scope == 'pypi' }}
     needs: build-candidate
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -335,7 +437,7 @@ jobs:
       - name: Download release candidate
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: capture-candidate-${{ github.ref_name }}
+          name: capture-candidate-${{ env.RELEASE_TAG }}
           path: publication
 
       - name: Isolate this package's distributions
@@ -349,7 +451,7 @@ jobs:
             -exec cp {} "publication/python/${{ matrix.project }}/" \;
 
       - name: Publish this Python distribution with PyPI Trusted Publishing
-        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63a2034f94d8a5b11f265b73ba33 # release/v1
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
         with:
           packages-dir: publication/python/${{ matrix.project }}
           skip-existing: true
@@ -357,7 +459,7 @@ jobs:
       - name: Probe this PyPI import from a clean environment
         shell: bash
         env:
-          RELEASE_VERSION: ${{ github.ref_name }}
+          RELEASE_VERSION: ${{ env.RELEASE_TAG }}
           PYPI_PROJECT: ${{ matrix.project }}
           PROBE_MODULE: ${{ matrix.module }}
         run: |
@@ -373,7 +475,7 @@ jobs:
       - name: Verify immutable PyPI artifact digests for this project
         shell: bash
         env:
-          RELEASE_VERSION: ${{ github.ref_name }}
+          RELEASE_VERSION: ${{ env.RELEASE_TAG }}
           PYPI_PROJECT: ${{ matrix.project }}
           ARTIFACT_PREFIX: ${{ matrix.prefix }}
         run: |
@@ -431,11 +533,12 @@ jobs:
       - name: Upload this PyPI publication ledger
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: capture-release-ledger-pypi-${{ matrix.project }}-${{ github.ref_name }}
+          name: capture-release-ledger-pypi-${{ matrix.project }}-${{ env.RELEASE_TAG }}
           path: publication/release-ledger-pypi-${{ matrix.project }}.json
           if-no-files-found: error
 
   publish-crates-io:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.publication_scope == 'all' || inputs.publication_scope == 'crates' }}
     needs: build-candidate
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -450,11 +553,13 @@ jobs:
       - name: Download release candidate
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: capture-candidate-${{ github.ref_name }}
+          name: capture-candidate-${{ env.RELEASE_TAG }}
           path: publication
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: stable
 
       - name: Validate the exact crate candidate with Cargo
         shell: bash
@@ -468,25 +573,68 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
           set -euo pipefail
-          expected_sha256="$(python -c 'import json; print(next(item["sha256"] for item in json.load(open("publication/release-ledger.json"))["artifacts"] if item["registry"] == "crates.io"))')"
-          api_response="$RUNNER_TEMP/capture-sidecar-launcher-crates-api.json"
-          api_status="$(curl --silent --show-error --output "$api_response" --write-out '%{http_code}' "https://crates.io/api/v1/crates/capture-sidecar-launcher/${GITHUB_REF_NAME#v}")"
-          if [ "$api_status" = '200' ]; then
-            remote_sha256="$(python -c 'import json; print(json.load(open("'"$api_response"'"))["version"]["checksum"])')"
-            test "$remote_sha256" = "$expected_sha256"
-          elif [ "$api_status" = '404' ]; then
+          version="${RELEASE_TAG#v}"
+          archive_path="$RUNNER_TEMP/capture-sidecar-launcher-${version}.crate"
+          rm -f "$archive_path"
+          archive_status="$(curl --silent --show-error --location --retry 3 --retry-delay 2 --user-agent "gx-capture-release/${RELEASE_TAG} (https://github.com/gx-capture/capture-workbench)" --output "$archive_path" --write-out '%{http_code}' "https://static.crates.io/crates/capture-sidecar-launcher/capture-sidecar-launcher-${version}.crate" || true)"
+          if [ "$archive_status" = '200' ]; then
+            echo "capture-sidecar-launcher ${version} already exists on crates.io; recording its immutable archive digest."
+          elif [ "$archive_status" = '404' ]; then
             test -n "$CARGO_REGISTRY_TOKEN"
             cargo publish --manifest-path packages/capture-sidecar-launcher/Cargo.toml --locked --token "$CARGO_REGISTRY_TOKEN"
           else
-            echo "Unexpected crates.io API status: $api_status" >&2
+            echo "Unexpected crates.io static archive status: $archive_status" >&2
             exit 1
           fi
+
+      - name: Record immutable crates.io archive digest
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          candidate_sha256="$(python -c 'import json; print(next(item["sha256"] for item in json.load(open("publication/release-ledger.json"))["artifacts"] if item["registry"] == "crates.io"))')"
+          archive_path="$RUNNER_TEMP/capture-sidecar-launcher-${version}.crate"
+          for attempt in $(seq 1 12); do
+            rm -f "$archive_path"
+            archive_status="$(curl --silent --show-error --location --retry 3 --retry-delay 2 --user-agent "gx-capture-release/${RELEASE_TAG} (https://github.com/gx-capture/capture-workbench)" --output "$archive_path" --write-out '%{http_code}' "https://static.crates.io/crates/capture-sidecar-launcher/capture-sidecar-launcher-${version}.crate" || true)"
+            if [ "$archive_status" = '200' ]; then
+              registry_sha256="$(sha256sum "$archive_path" | cut -d ' ' -f1)"
+              python - "$candidate_sha256" "$registry_sha256" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          candidate_sha256, registry_sha256 = sys.argv[1:]
+          path = Path('publication/release-ledger.json')
+          ledger = json.loads(path.read_text())
+          crate = next(item for item in ledger['artifacts'] if item['registry'] == 'crates.io')
+          crate['candidateSha256'] = candidate_sha256
+          crate['sha256'] = registry_sha256
+          path.write_text(json.dumps(ledger, indent=2) + '\n', encoding='utf-8')
+          if candidate_sha256 != registry_sha256:
+              print(
+                  'crates.io archive differs from the local Cargo candidate; '
+                  'both candidateSha256 and registry sha256 were recorded.'
+              )
+          PY
+              exit 0
+            fi
+            if [ "$archive_status" != '404' ]; then
+              echo "Unexpected crates.io static archive status: $archive_status" >&2
+              exit 1
+            fi
+            if [ "$attempt" -lt 12 ]; then
+              sleep 5
+            fi
+          done
+          echo "Timed out waiting for the crates.io static archive." >&2
+          exit 1
 
       - name: Probe the published crate index
         shell: bash
         run: |
           set -euo pipefail
-          cargo info "capture-sidecar-launcher@${GITHUB_REF_NAME#v}"
+          cargo info "capture-sidecar-launcher@${RELEASE_TAG#v}"
 
       - name: Record crates.io publication completion
         shell: bash
@@ -504,11 +652,12 @@ jobs:
       - name: Upload crates.io publication ledger
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: capture-release-ledger-crates-io-${{ github.ref_name }}
+          name: capture-release-ledger-crates-io-${{ env.RELEASE_TAG }}
           path: publication/release-ledger-crates-io.json
           if-no-files-found: error
 
   registry-release-gate:
+    if: ${{ always() && (github.event_name != 'workflow_dispatch' || inputs.publication_scope == 'all') && needs.publish-npm.result == 'success' && needs.publish-pypi.result == 'success' && needs.publish-crates-io.result == 'success' }}
     needs: [publish-npm, publish-pypi, publish-crates-io]
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -518,13 +667,13 @@ jobs:
       - name: Download release candidate
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: capture-candidate-${{ github.ref_name }}
+          name: capture-candidate-${{ env.RELEASE_TAG }}
           path: publication
 
       - name: Download per-registry publication ledgers
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          pattern: capture-release-ledger-*-${{ github.ref_name }}
+          pattern: capture-release-ledger-*-${{ env.RELEASE_TAG }}
           path: publication/ledgers
           merge-multiple: true
 
@@ -542,4 +691,166 @@ jobs:
           test "$(python -c 'import json; print(json.load(open("publication/ledgers/release-ledger-pypi-capture-contracts.json"))["status"])')" = pypi-capture-contracts-published
           test "$(python -c 'import json; print(json.load(open("publication/ledgers/release-ledger-pypi-capture-structuring.json"))["status"])')" = pypi-capture-structuring-published
           test "$(python -c 'import json; print(json.load(open("publication/ledgers/release-ledger-crates-io.json"))["status"])')" = crates-io-published
-          test -n "${GITHUB_REF_NAME#v}"
+          test -n "${RELEASE_TAG#v}"
+
+  recovery-registry-gate:
+    if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.publication_scope != 'all' && ((inputs.publication_scope == 'npm' && needs.publish-npm.result == 'success') || (inputs.publication_scope == 'pypi' && needs.publish-pypi.result == 'success') || (inputs.publication_scope == 'crates' && needs.publish-crates-io.result == 'success')) }}
+    needs: [publish-npm, publish-pypi, publish-crates-io]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
+      packages: read
+    steps:
+      - name: Check out immutable release source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.release_tag }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@b0f76dfb45f55f8421693e4803ac7bb65143bd34 # v6
+        with:
+          version: 11.15.1
+          run_install: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+          registry-url: https://npm.pkg.github.com
+          scope: '@gx-capture'
+
+      - name: Install uv and Python 3.12
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: '3.12'
+          enable-cache: true
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: stable
+
+      - name: Download current recovery candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: capture-candidate-${{ env.RELEASE_TAG }}
+          path: publication
+
+      - name: Install publication verification dependencies
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Probe immutable GitHub Release and npm registry state
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NODE_AUTH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          package_args=()
+          while IFS= read -r package; do
+            package_args+=(--package "$package")
+          done < <(find publication/package -maxdepth 1 -type f -name '*.tgz' -print | sort)
+          installer="$(find publication/desktop -maxdepth 1 -type f -name '*.exe' -print -quit)"
+          test -n "$installer"
+          node tools/publish-release.ts \
+            --tag "$RELEASE_TAG" \
+            --runtime-dir publication/runtime \
+            --installer "$installer" \
+            "${package_args[@]}"
+
+      - name: Probe clean PyPI installation and generated imports
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          probe_dir="$RUNNER_TEMP/capture-pypi-recovery-probe"
+          uv venv "$probe_dir"
+          uv pip install --python "$probe_dir/bin/python" --index-url https://pypi.org/simple \
+            "capture-contracts==${version}" "capture-structuring==${version}"
+          "$probe_dir/bin/python" - <<'PY'
+          import capture_contracts
+          import capture_structuring
+          assert capture_contracts.__package__ == 'capture_contracts'
+          assert capture_structuring.__package__ == 'capture_structuring'
+          PY
+
+      - name: Probe clean crates.io installation and immutable checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          candidate_sha256="$(python -c 'import json; print(next(item.get("candidateSha256", item["sha256"]) for item in json.load(open("publication/release-ledger.json"))["artifacts"] if item["registry"] == "crates.io"))')"
+          archive_path="$RUNNER_TEMP/capture-sidecar-launcher-${version}.crate"
+          curl --silent --show-error --fail --location --retry 5 --retry-delay 3 \
+            --user-agent "gx-capture-release/${RELEASE_TAG} (https://github.com/gx-capture/capture-workbench)" \
+            --output "$archive_path" \
+            "https://static.crates.io/crates/capture-sidecar-launcher/capture-sidecar-launcher-${version}.crate"
+          registry_sha256="$(sha256sum "$archive_path" | cut -d ' ' -f1)"
+          python - "$candidate_sha256" "$registry_sha256" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          candidate_sha256, registry_sha256 = sys.argv[1:]
+          path = Path('publication/release-ledger.json')
+          ledger = json.loads(path.read_text())
+          crate = next(item for item in ledger['artifacts'] if item['registry'] == 'crates.io')
+          crate['candidateSha256'] = candidate_sha256
+          crate['sha256'] = registry_sha256
+          path.write_text(json.dumps(ledger, indent=2) + '\n', encoding='utf-8')
+          PY
+          cargo info "capture-sidecar-launcher@${version}"
+          probe_dir="$RUNNER_TEMP/capture-launcher-recovery-probe"
+          cargo init --lib --name capture_launcher_recovery_probe "$probe_dir" >/dev/null
+          python - "$probe_dir/Cargo.toml" "$version" <<'PY'
+          import sys
+          from pathlib import Path
+          path, version = sys.argv[1:]
+          Path(path).write_text(
+              '[package]\nname = "capture_launcher_recovery_probe"\nversion = "0.1.0"\nedition = "2021"\n\n'
+              '[dependencies]\n'
+              f'capture-sidecar-launcher = "={version}"\n',
+              encoding='utf-8',
+          )
+          PY
+          cargo generate-lockfile --manifest-path "$probe_dir/Cargo.toml"
+          cargo check --manifest-path "$probe_dir/Cargo.toml" --locked
+
+      - name: Record complete registry recovery ledger
+        shell: bash
+        env:
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          RELEASE_SCOPE: ${{ inputs.publication_scope }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path('publication/release-ledger.json')
+          ledger = json.loads(path.read_text())
+          ledger['status'] = 'registry-recovery-complete'
+          ledger['recovery'] = {
+              'candidateRunId': os.environ['CANDIDATE_RUN_ID'],
+              'scope': os.environ['RELEASE_SCOPE'],
+              'verifiedRegistries': ['npm', 'pypi', 'crates.io'],
+          }
+          Path('publication/release-ledger-recovery.json').write_text(
+              json.dumps(ledger, indent=2) + '\n', encoding='utf-8'
+          )
+          PY
+
+      - name: Upload complete registry recovery ledger
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: capture-release-ledger-recovery-${{ env.RELEASE_TAG }}
+          path: publication/release-ledger-recovery.json
+          if-no-files-found: error

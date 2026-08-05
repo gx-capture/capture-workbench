@@ -430,7 +430,10 @@ test('native cleanup is PID-scoped and never executable-name scoped', async () =
     join(appRoot, 'scripts', 'installed-process-cleanup.ts'),
     'utf8',
   );
-  assert.match(source, /\['\/PID',\s*String\(child\.pid\),\s*'\/T',\s*'\/F'\]/u);
+  assert.match(
+    source,
+    /\['\/PID',\s*String\(child\.pid\),\s*'\/T',\s*'\/F'\]/u,
+  );
   assert.doesNotMatch(source, /'\/IM'\s*,/u);
 });
 
@@ -449,6 +452,22 @@ test('desktop launcher advertises the bounded 50 MiB upload policy', async () =>
   );
   assert.match(launchPolicy, /"CAPTURE_MAX_UPLOAD_BYTES"/u);
   assert.match(launchPolicy, /DEFAULT_MAX_UPLOAD_BYTES\.to_string\(\)/u);
+});
+
+test('desktop launcher crate metadata uses a crates.io-supported category', async () => {
+  const cargoManifest = await readFile(
+    join(
+      appRoot,
+      '..',
+      '..',
+      'packages',
+      'capture-sidecar-launcher',
+      'Cargo.toml',
+    ),
+    'utf8',
+  );
+  assert.match(cargoManifest, /categories = \["os"\]/u);
+  assert.doesNotMatch(cargoManifest, /process-management/u);
 });
 
 test('WindowsML bundle provenance is runtime-owned without a hard-coded release URL', async () => {
@@ -675,6 +694,9 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
     ),
   ];
   const allowedReleaseExpressions = new Set([
+    '${{ env.RELEASE_TAG }}',
+    "${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}",
+    "${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}",
     '${{ github.ref_name }}',
     '${{ github.token }}',
     '${{ matrix.environment }}',
@@ -711,7 +733,23 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   );
   assert.match(
     workflow,
-    /Verify synchronized versions[\s\S]*env:\s*\r?\n\s+RELEASE_TAG: \$\{\{ github\.ref_name \}\}[\s\S]*run: pnpm verify:release-version -- "\$env:RELEASE_TAG"/u,
+    /env:\s*\r?\n\s+RELEASE_TAG: \$\{\{ github\.event_name == 'workflow_dispatch' && inputs\.release_tag \|\| github\.ref_name \}\}[\s\S]*Verify synchronized versions[\s\S]*run: pnpm verify:release-version -- "\$env:RELEASE_TAG"/u,
+  );
+  assert.match(
+    workflow,
+    /workflow_dispatch:[\s\S]*release_tag:[\s\S]*required: true[\s\S]*type: string/u,
+  );
+  assert.match(
+    workflow,
+    /workflow_dispatch:[\s\S]*publication_scope:[\s\S]*default: all[\s\S]*type: choice[\s\S]*- crates/u,
+  );
+  assert.match(
+    workflow,
+    /workflow_dispatch:[\s\S]*candidate_run_id:[\s\S]*required: false[\s\S]*type: string/u,
+  );
+  assert.match(
+    workflow,
+    /uses: actions\/checkout@[0-9a-f]{40}[\s\S]*ref: \$\{\{ github\.event_name == 'workflow_dispatch' && inputs\.release_tag \|\| github\.ref \}\}/u,
   );
   assert.match(
     workflow,
@@ -719,15 +757,15 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   );
   assert.match(
     workflow,
-    /Publish runtime first[\s\S]*RELEASE_TAG: \$\{\{ github\.ref_name \}\}[\s\S]*--tag "\$env:RELEASE_TAG"/u,
+    /Publish runtime first[\s\S]*RELEASE_TAG: \$\{\{ env\.RELEASE_TAG \}\}[\s\S]*--tag "\$env:RELEASE_TAG"/u,
   );
   assert.equal(
     (
       workflow.match(
-        /name: capture-candidate-\$\{\{ github\.ref_name \}\}/gu,
+        /name: capture-candidate-\$\{\{ env\.RELEASE_TAG \}\}/gu,
       ) ?? []
     ).length,
-    5,
+    7,
   );
   assert.match(workflow, /compression-level: 0/u);
   assert.match(workflow, /retention-days: 1/u);
@@ -742,11 +780,56 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   assert.match(workflow, /actions\/upload-artifact@[0-9a-f]{40}/u);
   assert.match(workflow, /actions\/download-artifact@[0-9a-f]{40}/u);
   assert.match(workflow, /publish-release\.ts/u);
+  assert.match(
+    workflow,
+    /pypa\/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33/u,
+  );
+  assert.match(
+    workflow,
+    /static\.crates\.io\/crates\/capture-sidecar-launcher/u,
+  );
+  assert.match(workflow, /sha256sum "\$archive_path"/u);
+  assert.match(workflow, /cargo publish/u);
+  assert.match(workflow, /Record immutable crates\.io archive digest/u);
+  assert.match(workflow, /candidateSha256/u);
+  assert.doesNotMatch(workflow, /crates\.io\/api\/v1\/crates/u);
+  assert.match(
+    workflow,
+    /dtolnay\/rust-toolchain@[0-9a-f]{40}[\s\S]*with:\s*\r?\n\s+toolchain: stable/u,
+  );
   assert.match(workflow, /--installer \$installers\[0\]\.FullName/u);
   assert.doesNotMatch(workflow, /--clobber|gh release upload/u);
   assert.match(
     workflow,
     /publish-npm:[\s\S]*contents: write[\s\S]*packages: write/u,
+  );
+  assert.match(
+    workflow,
+    /Download immutable candidate from prior successful run[\s\S]*run-id: \$\{\{ inputs\.candidate_run_id \}\}[\s\S]*github-token: \$\{\{ github\.token \}\}/u,
+  );
+  assert.match(
+    workflow,
+    /Check out recovery source for the crate-only metadata correction[\s\S]*ref: \$\{\{ github\.ref \}\}[\s\S]*path: recovery-source/u,
+  );
+  assert.match(
+    workflow,
+    /Rebuild corrected crate candidate without rebuilding runtime assets[\s\S]*cargo package --manifest-path recovery-source\/packages\/capture-sidecar-launcher\/Cargo\.toml[\s\S]*verify-release-candidate\.ts/u,
+  );
+  assert.match(
+    workflow,
+    /static\.crates\.io\/crates\/capture-sidecar-launcher[\s\S]*sha256sum "\$archive_path"/u,
+  );
+  assert.match(
+    workflow,
+    /recovery-registry-gate:[\s\S]*verifiedRegistries[\s\S]*publication\/release-ledger-recovery\.json/u,
+  );
+  assert.match(
+    workflow,
+    /recovery-registry-gate:[\s\S]*Probe immutable GitHub Release and npm registry state[\s\S]*Probe clean PyPI installation and generated imports[\s\S]*Probe clean crates\.io installation and immutable checksum/u,
+  );
+  assert.match(
+    workflow,
+    /Install uv and Python 3\.12[\s\S]*enable-cache: \$\{\{ inputs\.candidate_run_id == '' \}\}/u,
   );
   assert.equal((workflow.match(/contents: write/gu) ?? []).length, 1);
   assert.equal((workflow.match(/packages: write/gu) ?? []).length, 1);
@@ -877,7 +960,7 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   assert.match(candidateAssemblyScript, /\$packages\.Count -ne 3/u);
   assert.match(
     candidateAssemblyScript,
-    /Capture\.Workbench_\$\(\$Matches\.version\)_x64-setup\.exe/u,
+    /Capture\.Workbench_\$\{releaseVersion\}_x64-setup\.exe/u,
   );
   assert.match(
     candidateAssemblyScript,
@@ -913,7 +996,7 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   ]) {
     assert.match(
       candidateTransferStep.source,
-      /name:\s*capture-candidate-\$\{\{ github\.ref_name \}\}/u,
+      /name:\s*capture-candidate-\$\{\{ env\.RELEASE_TAG \}\}/u,
     );
   }
   const releasePublishStep = requiredWorkflowStep(
@@ -960,7 +1043,7 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   ]) {
     assertNativeErrorPreferenceWindow(
       ancestryStep.script ?? '',
-      /^git merge-base --is-ancestor "\$env:GITHUB_SHA" refs\/remotes\/origin\/main$/u,
+      /^git merge-base --is-ancestor \$releaseCommit refs\/remotes\/origin\/main$/u,
       '$ancestorExitCode = $LASTEXITCODE',
       'if ($ancestorExitCode -ne 0) {',
     );
