@@ -385,17 +385,21 @@ the consumer consistency target. Law Prep validates Foundry responses against
 the staged schema and pinned runtime manifest before Jackson mapping; its
 Angular web migration remains deferred.
 
-The following gates remain active until external state changes: publishing the
-three npm/PyPI/crates.io artifact groups, registry-install probes, switching
-consumer lockfiles away from local paths, and the engine-bearing Windows
-OCR/Whisper packaged smoke with cleanup evidence. No unpublished artifact or
-path-based consumer is counted as complete.
-- Add an **end-to-end "real runtime + real published package + real PDF"**
-  smoke to consumer CI (Windows runner); wire `local-release-consumer-smoke`
-  into the producer release-candidate job (it exists but is not CI-wired today).
-  The smoke must verify the reduced public asset inventory while validating the
-  manifest, schema, catalog, and size report from the internal candidate before
-  publication.
+The publication, registry-install, and consumer path-source gates are closed:
+producer CI run `31007970169` and crates-only recovery run `31009720361`
+completed for `0.3.10`; cert-prep PR #1 and law-prep PR #67 passed their
+published-package consistency and integration checks. The recovery ledger
+records schema SHA `2721093496a9f09044d5737cce70d2356d5f71757b1cd23a960e1d003ea014f2`
+and crates.io archive SHA
+`533f497aa550589cec8e608c6b5fee29e69afb638ffe9d8c4cc41c0c4654bd0f`.
+
+One final gate remains active: the engine-bearing Windows OCR/Whisper packaged
+smoke with cleanup evidence. The checked-in OCR fixtures are available, but
+the private lock-selected audio fixture must be supplied by the operator; a
+synthetic substitute would not satisfy this gate. Keep the existing
+end-to-end smoke opt-in and require it to verify the real published runtime,
+real media, provenance, generated output cleanup, app-data cleanup, and owned
+process cleanup before marking the final gate complete.
 - `tools/verify-release-version.ts` must cover every newly published artifact
   (contracts package, structuring SDK, launcher crate) so producer versions
   stay synchronized at the source.

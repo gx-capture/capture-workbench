@@ -2,16 +2,16 @@
 
 ## Phase 0 - stop the bleeding
 
-- [x] Verify `@gx-capture/capture-workbench@0.3.9` through the canonical GitHub
+- [x] Verify `@gx-capture/capture-workbench@0.3.10` through the canonical GitHub
       Packages registry and record the install source.
       Evidence: `gh api /orgs/gx-capture/packages/npm/capture-workbench/versions`
-      returned `0.3.9`; authenticated `npm view` returned the version, tarball,
-      and integrity `sha512-GBt6y4lq3yjv0hSo1q5A5Y/H+bVdEwH+XcbicjCnkYohy1QKpwnoySBsYg7KYXP7pebhQ2Y2mri1tWEBZQSZZg==`.
+      returned `0.3.10`; authenticated registry metadata returned the version,
+      tarball, and integrity `sha512-a7YBguKhNER76WHoEPPht4L5+OxYelcLumDpbuqWzGw4VDWIVX0LnVFHQ6GeguMC/PRKIBN+8dBxxl/wdIcsPQ==`.
 - [x] Inventory cert-prep version declarations and hand-cast seams; keep this
       consumer work blocked until producer availability is evidenced.
       Evidence: cert-prep root package, lockfile, workspace exclusion, runtime
       constants, and `tools/capture-runtime-version-check.mts` are already
-      aligned to `0.3.9`; unrelated sibling dirty governance files remain out
+      aligned to `0.3.10`; unrelated sibling dirty governance files remain out
       of scope.
 
 ## Phase 1 - generated shared contracts
@@ -24,15 +24,14 @@
 - [x] Add regeneration-diff and synchronized-version checks.
       Evidence: `capture-runtime:generate-contracts`,
       `capture-runtime:check-contracts`, `capture-runtime:test` (218 passed,
-      1 skipped), and `verify:release-version -- v0.3.9` all pass.
+      1 skipped), and `verify:release-version -- v0.3.10` all pass.
 - [x] Build/pack the producer artifacts and wire the TypeScript package into
       the release publication path.
       Evidence: `capture-contracts:build`, `capture-contracts:pack`,
       `capture-contracts:python-build`, source and wheel smoke tests, and the
       multi-package `tools/publish-release.ts` preflight/idempotency tests all
-      pass. Release publication is now wired for both npm packages; an actual
-      tagged release remains pending the release workflow and registry/auth
-      gate.
+      pass. The tagged `0.3.10` release workflow and registry publication
+      gates are now complete.
 - [x] Export generated semantic metadata for future host SDK consumers.
       Evidence: `CAPTURE_CONTRACT_INVARIANTS` and
       `CAPTURE_CONTRACT_EXTRA_POLICIES` are generated from the same runtime
@@ -47,11 +46,18 @@
       publication evidence.
       Evidence: backend focused tests and import scan pass; `contracts.py` is
       absent and the generated models serialize with strict extra-field policy.
-- [ ] Publish npm, PyPI, and crates.io `0.3.9` artifacts, run clean registry
+- [x] Publish npm, PyPI, and crates.io `0.3.10` artifacts, run clean registry
       install/import probes, then switch cert-prep and law-prep lockfiles and
       source declarations away from local paths.
-      Verify: release ledgers, registry probes, and strict consumer consistency
-      targets pass in clean checkouts.
+      Evidence: producer CI run `31007970169` passed at commit `a3a7fee`;
+      crates-only recovery run `31009720361` produced the
+      `registry-recovery-complete` ledger with candidate run `30988734322`,
+      schema SHA `2721093496a9f09044d5737cce70d2356d5f71757b1cd23a960e1d003ea014f2`,
+      and crates.io archive SHA
+      `533f497aa550589cec8e608c6b5fee29e69afb638ffe9d8c4cc41c0c4654bd0f`.
+      Cert-prep PR #1 and law-prep PR #67 pass their clean registry install,
+      consumer consistency, backend/Java, and desktop CI gates with no capture
+      package path sources.
 
 ## Phase 1.5 - in-repo consumers first
 
@@ -102,7 +108,8 @@
 - [x] Extract launcher/process/health/launch-policy/manifest mechanics and
       constants into a publishable Rust crate.
       Evidence: `cargo fmt --check`, `cargo check`, crate tests, and
-      `cargo publish --dry-run` pass for `capture-sidecar-launcher@0.3.9`.
+      `cargo publish --dry-run` pass for `capture-sidecar-launcher@0.3.10`;
+      the public crates.io archive is verified by recovery run `31009720361`.
 - [x] Rewire Workbench desktop and then cert-prep desktop; retain each host's
       installer/download and persistence responsibilities.
       Evidence: both desktop manifests consume the launcher crate through the
@@ -127,5 +134,7 @@
       Evidence: Java validator positive/negative tests, staged-runtime tests,
       and law-prep Tauri contract tests pass.
 - [ ] Run the engine-bearing Windows OCR/Whisper packaged smoke only after the
-      published `0.3.9` runtime is available; clean runtime, models, app data,
-      generated output, and owned processes afterward.
+      published `0.3.10` runtime is available; clean runtime, models, app data,
+      generated output, and owned processes afterward. The checked-in OCR PDF
+      and image are available, but the lock-selected private audio fixture is
+      not present on this machine; do not synthesize a replacement.

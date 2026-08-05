@@ -58,7 +58,7 @@ OCR/Whisper extraction remains in the runtime sidecar.
 
 ## Sequencing and gates
 
-1. Phase 0: verify/pin the published `0.3.9` component and inventory consumer
+1. Phase 0: verify/pin the published `0.3.10` component and inventory consumer
    version drift before consumer alignment.
 2. Phase 1: publish generated contracts and regeneration-diff verification.
 3. Phase 1.5: make capture-workbench's Angular and desktop consumers prove the
@@ -94,22 +94,27 @@ consumer's focused tests pass.
 - Cross-repo consumer tests only after the corresponding producer artifact is
   published and the install/auth path is explicitly evidenced.
 
-## 0.3.9 implementation status
+## 0.3.10 implementation status
 
 - `generate_schema.py` remains the runtime release-schema owner. The retired
   surface is only the Angular-specific schema output/target.
 - Generated Python Pydantic wire models now ship beside the generated
   TypeScript models, JSON schemas, manifest, invariants, and extra policies.
 - The release candidate verifies three npm packages, two Python packages in
-  wheel/sdist form, and the launcher crate against version `0.3.9` and the
+  wheel/sdist form, and the launcher crate against version `0.3.10` and the
   canonical schema SHA before any registry write.
 - PyPI publication uses separate OIDC Trusted Publishing matrix identities for
   the two environment names (`pypi` and `pypi-structuring`); crates.io is a separate
   retryable job. Each project/registry writes a ledger and runs an install or
   import probe; publication is not treated as atomic across registries.
-- Consumer cutover stays blocked while public PyPI and crates.io do not contain
-  `0.3.9`. Local path sources are therefore an explicitly active gate, not
-  successful publication evidence.
+- Consumer cutover is complete for `0.3.10`: public PyPI and crates.io
+  publication plus clean install/import probes passed in recovery run
+  `31009720361`. Cert-prep and law-prep lockfiles resolve the published
+  artifacts and their CI consistency checks reject capture package path
+  sources. The recovery ledger records the crates.io registry SHA
+  `533f497aa550589cec8e608c6b5fee29e69afb638ffe9d8c4cc41c0c4654bd0f` and
+  the local candidate SHA separately because Cargo's registry archive bytes
+  are not identical to the local package archive.
 - `pnpm verify:modular-reuse:local` is the runner-independent pre-commit/local
   command for regeneration drift, Python wheel smoke, SDK wheel smoke, and
   launcher publish dry-run. The release workflow remains the actual registry

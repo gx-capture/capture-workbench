@@ -93,15 +93,30 @@
   cover deterministic artifact checks, while actual registry publication and
   staged-file integration remain fail-closed gates.
 
+## 2026-08-05 publication and consumer evidence
+
+- The immutable `0.3.10` release is published. Producer CI run `31007970169`
+  passed at `a3a7fee`; recovery run `31009720361` passed all registry gates.
+- The recovery ledger records canonical schema SHA
+  `2721093496a9f09044d5737cce70d2356d5f71757b1cd23a960e1d003ea014f2` and
+  crates.io archive SHA
+  `533f497aa550589cec8e608c6b5fee29e69afb638ffe9d8c4cc41c0c4654bd0f`.
+  Cargo candidate SHA is retained separately as provenance, not treated as a
+  registry byte identity.
+- Cert-prep PR #1 and law-prep PR #67 passed their published-package,
+  lockfile/source consistency, Java schema, and desktop checks. Their capture
+  dependencies no longer use local path sources. Angular web integration in
+  law-prep remains explicitly deferred.
+
 ## Resolved producer gates
 
-- `@gx-capture/capture-workbench@0.3.9` is installable from the authenticated
+- `@gx-capture/capture-workbench@0.3.10` is installable from the authenticated
   canonical GitHub Packages npm registry; npmjs.org is not the source.
 - Contract generation is pinned to Pydantic `2.13.4`, pydantic-core `2.46.4`,
   and `pydantic.model_json_schema`; the generated manifest records these
   versions and the generator hash.
-- Phase 1.5 keeps the contracts package as the Angular wire/schema owner and
-  uses a local packed contracts artifact for producer consumer smokes until
-  GitHub Packages publication is evidenced. The desktop keeps its Rust-local
-  staged schema because it cannot consume TypeScript, but CI compares its
-  manifest, versions, and schema SHA to the generated contracts manifest.
+- Phase 1.5 keeps the contracts package as the Angular wire/schema owner. The
+  producer release and clean registry probes are evidenced; the desktop keeps
+  its Rust-local staged schema because it cannot consume TypeScript, but CI
+  compares its manifest, versions, and schema SHA to the generated contracts
+  manifest.
