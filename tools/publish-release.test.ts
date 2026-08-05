@@ -15,6 +15,7 @@ import test from 'node:test';
 
 import {
   packagePublicationDecision,
+  parseArguments,
   publishRelease,
   sha512Integrity,
 } from './publish-release.ts';
@@ -29,6 +30,11 @@ const runtimeAssetNames = [
 ];
 const engineCatalogName = 'capture-engine-catalog.json';
 const runtimeSizeReportName = 'runtime-size-report.json';
+const packageNames = [
+  '@gx-capture/capture-contracts',
+  '@gx-capture/capture-structuring',
+  '@gx-capture/capture-workbench',
+];
 
 function hash(bytes, algorithm, encoding = 'hex') {
   return createHash(algorithm).update(bytes).digest(encoding);
@@ -201,10 +207,26 @@ function createCandidate() {
     join(runtimeDirectory, `${runtimeSizeReportName}.sha256`),
     `${hash(sizeReport, 'sha256')}  ${runtimeSizeReportName}\n`,
   );
-  const packagePath = join(root, `gx-capture-capture-workbench-${version}.tgz`);
-  const packageBytes = Buffer.from('package bytes');
-  writeFileSync(packagePath, packageBytes);
-  const packageIntegrity = `sha512-${hash(packageBytes, 'sha512', 'base64')}`;
+  const packageEntries = packageNames.map((name) => {
+    const packageSlug = name.replace('@gx-capture/', '');
+    const packagePath = join(root, `${packageSlug}-${version}.tgz`);
+    const packageBytes = Buffer.from(`${name} package bytes`);
+    writeFileSync(packagePath, packageBytes);
+    return {
+      name,
+      packagePath,
+      packageIntegrity: `sha512-${hash(packageBytes, 'sha512', 'base64')}`,
+    };
+  });
+  const packageIntegrities = Object.fromEntries(
+    packageEntries.map(({ name, packageIntegrity }) => [
+      name,
+      packageIntegrity,
+    ]),
+  );
+  const workbenchPackage = packageEntries.find(
+    ({ name }) => name === '@gx-capture/capture-workbench',
+  );
   return {
     root,
     input: {
@@ -212,7 +234,8 @@ function createCandidate() {
       version,
       runtimeDirectory,
       installerPath,
-      packagePath,
+      packagePaths: packageEntries.map(({ packagePath }) => packagePath),
+      packagePath: workbenchPackage.packagePath,
     },
     assets: [
       ...readdirSync(runtimeDirectory).map((name) =>
@@ -220,7 +243,9 @@ function createCandidate() {
       ),
       installerPath,
     ],
-    packageIntegrity,
+    packageEntries,
+    packageIntegrities,
+    packageIntegrity: workbenchPackage.packageIntegrity,
   };
 }
 
@@ -243,10 +268,7 @@ function writeCandidateSizeReport(candidate, payload) {
     report,
   );
   writeFileSync(
-    join(
-      candidate.input.runtimeDirectory,
-      `${runtimeSizeReportName}.sha256`,
-    ),
+    join(candidate.input.runtimeDirectory, `${runtimeSizeReportName}.sha256`),
     `${hash(report, 'sha256')}  ${runtimeSizeReportName}\n`,
   );
 }
@@ -275,33 +297,63 @@ function createRemote(candidate, initial = {}) {
       Buffer.from(readFileSync(path)),
     ]),
   );
+  const hasInitialPackageIntegrity = Object.hasOwn(initial, 'packageIntegrity');
   const state = {
     release: initial.release ?? 'missing',
-    packageIntegrity: initial.packageIntegrity,
+    packageIntegrities: {
+      ...(hasInitialPackageIntegrity ? candidate.packageIntegrities : {}),
+      ...(hasInitialPackageIntegrity
+        ? { '@gx-capture/capture-workbench': initial.packageIntegrity }
+        : {}),
+      ...(initial.packageIntegrities ?? {}),
+    },
+    packageIntegrity: hasInitialPackageIntegrity
+      ? initial.packageIntegrity
+      : undefined,
     fail: initial.fail,
     reportedAssetNames: initial.reportedAssetNames,
   };
   const runCommand = (command, args) => {
     calls.push([command, ...args]);
     if (command === 'npm' && args[0] === 'pack') {
+      const packagePath = args.at(-1);
+      const packageEntry = candidate.packageEntries.find(
+        ({ packagePath: candidatePackagePath }) =>
+          candidatePackagePath === packagePath,
+      );
+      if (!packageEntry)
+        throw new Error(`Unknown package path: ${packagePath}`);
       return success(
         JSON.stringify([
           {
-            name: '@gx-capture/capture-workbench',
+            name: packageEntry.name,
             version,
-            integrity: candidate.packageIntegrity,
+            integrity: packageEntry.packageIntegrity,
           },
         ]),
       );
     }
     if (command === 'npm' && args[0] === 'view') {
-      return state.packageIntegrity === undefined
+      const packageSpecifier = args[1];
+      const packageName = packageSpecifier.slice(
+        0,
+        packageSpecifier.lastIndexOf('@'),
+      );
+      const packageIntegrity = state.packageIntegrities[packageName];
+      return packageIntegrity === undefined
         ? failure('E404 Not Found')
-        : success(JSON.stringify(state.packageIntegrity));
+        : success(JSON.stringify(packageIntegrity));
     }
     if (command === 'npm' && args[0] === 'publish') {
       if (state.fail === 'publish') throw new Error('simulated npm failure');
-      state.packageIntegrity = candidate.packageIntegrity;
+      const packageEntry = candidate.packageEntries.find(
+        ({ packagePath }) => packagePath === args[1],
+      );
+      if (!packageEntry) throw new Error(`Unknown package path: ${args[1]}`);
+      state.packageIntegrities[packageEntry.name] =
+        packageEntry.packageIntegrity;
+      state.packageIntegrity =
+        state.packageIntegrities['@gx-capture/capture-workbench'];
       return success();
     }
     if (command === 'gh' && args[0] === 'release' && args[1] === 'view') {
@@ -377,6 +429,37 @@ test('package publication is idempotent only for exact integrity', () => {
   );
 });
 
+test('release argument parser accepts the complete package set', () => {
+  const parsed = parseArguments([
+    '--tag',
+    tag,
+    '--runtime-dir',
+    'runtime',
+    '--installer',
+    'installer.exe',
+    '--package',
+    'capture-workbench.tgz',
+    '--package',
+    'capture-contracts.tgz',
+  ]);
+  assert.deepEqual(
+    parsed.packagePaths.map((path) => basename(path)),
+    ['capture-workbench.tgz', 'capture-contracts.tgz'],
+  );
+  assert.throws(
+    () =>
+      parseArguments([
+        '--tag',
+        tag,
+        '--runtime-dir',
+        'runtime',
+        '--installer',
+        'installer.exe',
+      ]),
+    /one or more --package/u,
+  );
+});
+
 test('package integrity uses exact tarball bytes', async () => {
   const root = mkdtempSync(join(tmpdir(), 'capture-integrity-'));
   try {
@@ -404,6 +487,10 @@ test('zero-asset draft uploads from inventory before readback, package, and publ
     );
     assert.equal(remote.state.release, 'public');
     assert.equal(remote.state.packageIntegrity, candidate.packageIntegrity);
+    assert.equal(
+      remote.state.packageIntegrities['@gx-capture/capture-contracts'],
+      candidate.packageIntegrities['@gx-capture/capture-contracts'],
+    );
     assert.deepEqual(
       [...remote.assets.keys()].sort(),
       candidate.assets.map((path) => basename(path)).sort(),
@@ -427,15 +514,14 @@ test('zero-asset draft uploads from inventory before readback, package, and publ
     assert.match(releaseNotes, /SHA-256/u);
     assert.match(
       releaseNotes,
-      /@gx-capture\/capture-workbench@0\.3\.9.*GitHub Packages.*never a GitHub Release asset/us,
+      /@gx-capture\/capture-workbench@0\.3\.9.*GitHub Packages.*never a GitHub Release asset/su,
     );
     const firstUploadIndex = remote.calls.findIndex(
       ([command, group, operation]) =>
         command === 'gh' && group === 'release' && operation === 'upload',
     );
     const packagePublishIndex = remote.calls.findIndex(
-      ([command, operation]) =>
-        command === 'npm' && operation === 'publish',
+      ([command, operation]) => command === 'npm' && operation === 'publish',
     );
     const publicEditIndex = remote.calls.findIndex(
       ([command, group, operation]) =>
@@ -445,13 +531,17 @@ test('zero-asset draft uploads from inventory before readback, package, and publ
     assert.ok(firstUploadIndex < packagePublishIndex);
     assert.ok(packagePublishIndex < publicEditIndex);
     assert.equal(
+      remote.calls.filter(
+        ([command, operation]) => command === 'npm' && operation === 'publish',
+      ).length,
+      3,
+    );
+    assert.equal(
       remote.calls
         .slice(createIndex + 1, firstUploadIndex)
         .some(
           ([command, group, operation]) =>
-            command === 'gh' &&
-            group === 'release' &&
-            operation === 'download',
+            command === 'gh' && group === 'release' && operation === 'download',
         ),
       false,
     );
@@ -513,14 +603,16 @@ test('draft retry uploads only missing assets and skips an exact package', async
         basename(path) === installerName,
     );
     assert.equal(
-      remote.calls.slice(0, installerUploadIndex).some(
-        ([command, group, operation, , flag, name]) =>
-          command === 'gh' &&
-          group === 'release' &&
-          operation === 'download' &&
-          flag === '--pattern' &&
-          name === installerName,
-      ),
+      remote.calls
+        .slice(0, installerUploadIndex)
+        .some(
+          ([command, group, operation, , flag, name]) =>
+            command === 'gh' &&
+            group === 'release' &&
+            operation === 'download' &&
+            flag === '--pattern' &&
+            name === installerName,
+        ),
       false,
     );
     assert.equal(

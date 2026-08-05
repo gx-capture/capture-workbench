@@ -31,7 +31,7 @@ from capture_runtime.ollama import (
 )
 from capture_runtime.services import CaptureService, InstallationService
 from capture_runtime.storage import CaptureRepository, InstallationRepository
-from capture_runtime.structuring import (
+from capture_runtime.structuring_provider import (
     CaptureStructuringProvider,
     FakeCaptureStructuringProvider,
     HostOnlyCaptureStructuringProvider,

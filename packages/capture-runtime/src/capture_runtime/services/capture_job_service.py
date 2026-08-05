@@ -9,6 +9,9 @@ import logging
 from contextlib import suppress
 from pathlib import Path
 
+from capture_structuring import StructuringValidationError, validate_structuring_candidate
+from pydantic import ValidationError
+
 from capture_runtime.clock import Clock
 from capture_runtime.contracts import (
     CaptureDocumentV1,
@@ -33,11 +36,7 @@ from capture_runtime.storage import (
     RecordNotFoundError,
     TransitionRejectedError,
 )
-from capture_runtime.structuring import (
-    CaptureStructuringProvider,
-    StructuringValidationError,
-    validate_structuring_candidate,
-)
+from capture_runtime.structuring_provider import CaptureStructuringProvider
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +45,23 @@ TERMINAL_CAPTURE_STATUSES = {
     CaptureJobStatus.FAILED,
     CaptureJobStatus.CANCELLED,
 }
+
+
+def _validate_runtime_document(candidate: object, raw: RawCaptureV1) -> CaptureDocumentV1:
+    try:
+        return CaptureDocumentV1.model_validate(validate_structuring_candidate(candidate, raw))
+    except ValidationError as error:
+        raise StructuringValidationError(
+            "structuring output does not satisfy CaptureDocumentV1",
+            issues=[
+                {
+                    "location": [str(part) for part in issue["loc"]],
+                    "message": issue["msg"],
+                    "type": issue["type"],
+                }
+                for issue in error.errors()
+            ],
+        ) from error
 
 
 class InvalidJobStateError(ValueError):
@@ -183,7 +199,7 @@ class CaptureService:
         ):
             raise InvalidJobStateError("capture is not awaiting host structuring")
         raw = self.raw(capture_id)
-        validated = validate_structuring_candidate(candidate, raw)
+        validated = _validate_runtime_document(candidate, raw)
         completed_at = self._clock.now()
         committed = CaptureDocumentV1.model_validate(
             {
@@ -279,7 +295,7 @@ class CaptureService:
                 target_language=record.target_language,
                 cancel_event=cancellation,
             )
-            document = validate_structuring_candidate(candidate, raw)
+            document = _validate_runtime_document(candidate, raw)
             expected_engine = self._structurer.engine_identity
             if expected_engine is None or document.structuring_engine != expected_engine:
                 raise StructuringValidationError(

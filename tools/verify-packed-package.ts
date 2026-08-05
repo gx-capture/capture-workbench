@@ -3,7 +3,9 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
-const packageDirectory = resolve(process.argv[2] ?? 'dist/packages/capture-angular');
+const packageDirectory = resolve(
+  process.argv[2] ?? 'dist/packages/capture-angular',
+);
 const archiveDirectory = resolve(process.argv[3] ?? 'dist/packs');
 const manifest = JSON.parse(
   readFileSync(join(packageDirectory, 'package.json'), 'utf8'),
@@ -11,7 +13,10 @@ const manifest = JSON.parse(
 const archiveName = `${manifest.name.replace(/^@/u, '').replace('/', '-')}-${manifest.version}.tgz`;
 const archivePath = join(archiveDirectory, archiveName);
 
-assert(manifest.name === '@gx-capture/capture-workbench', 'Unexpected package name.');
+assert(
+  manifest.name === '@gx-capture/capture-workbench',
+  'Unexpected package name.',
+);
 assert(manifest.version === '0.3.9', 'Unexpected package version.');
 assert(
   manifest.repository?.url ===
@@ -34,6 +39,10 @@ assert(
 assert(
   manifest.dependencies?.['@angular/compiler'] === '22.0.7',
   'The packed package must own its non-Angular-host compiler fallback.',
+);
+assert(
+  manifest.dependencies?.['@gx-capture/capture-contracts'] === '0.3.9',
+  'The packed package must depend on the published capture-contracts version.',
 );
 assert(
   manifest.module === 'loader.mjs' &&
@@ -81,8 +90,14 @@ const integrity = `sha512-${createHash('sha512')
   .update(readFileSync(archivePath))
   .digest('base64')}`;
 assert(packed.name === manifest.name, 'Tarball name identity differs.');
-assert(packed.version === manifest.version, 'Tarball version identity differs.');
-assert(packed.integrity === integrity, 'Tarball integrity differs from its bytes.');
+assert(
+  packed.version === manifest.version,
+  'Tarball version identity differs.',
+);
+assert(
+  packed.integrity === integrity,
+  'Tarball integrity differs from its bytes.',
+);
 
 const files = new Set(
   (packed.files ?? []).map((file: { path?: string }) => file.path),

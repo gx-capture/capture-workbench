@@ -13,6 +13,7 @@ import type { Observable } from 'rxjs';
 export interface RuntimeRequest {
   readonly client: CaptureClient | null;
   readonly compatibleRuntimeMajor: number;
+  readonly compatibleRuntimeMinor: number;
   readonly structuringMode: 'runtime' | 'host';
 }
 

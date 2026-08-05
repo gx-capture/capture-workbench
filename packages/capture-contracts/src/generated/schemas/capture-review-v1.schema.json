@@ -1,0 +1,45 @@
+{
+  "$defs": {
+    "CaptureReviewEditV1": {
+      "additionalProperties": false,
+      "properties": {
+        "segmentId": {
+          "minLength": 1,
+          "title": "Segmentid",
+          "type": "string"
+        },
+        "reviewedText": {
+          "maxLength": 2000000,
+          "minLength": 1,
+          "title": "Reviewedtext",
+          "type": "string"
+        }
+      },
+      "required": [
+        "segmentId",
+        "reviewedText"
+      ],
+      "title": "CaptureReviewEditV1",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "reviewVersion": {
+      "const": 1,
+      "default": 1,
+      "title": "Reviewversion",
+      "type": "integer"
+    },
+    "edits": {
+      "items": {
+        "$ref": "#/$defs/CaptureReviewEditV1"
+      },
+      "maxItems": 10000,
+      "title": "Edits",
+      "type": "array"
+    }
+  },
+  "title": "CaptureReviewV1",
+  "type": "object"
+}

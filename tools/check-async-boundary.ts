@@ -71,8 +71,17 @@ function exceptionReason(relativePath) {
   if (relativePath === 'tools/local-release-consumer-smoke.ts') {
     return 'local release consumer process boundary';
   }
+  if (relativePath === 'tools/runtime-web-component-e2e.ts') {
+    return 'packaged runtime Web Component E2E process boundary';
+  }
   if (relativePath === 'tools/publish-release.ts') {
     return 'release publication CLI process boundary';
+  }
+  if (relativePath === 'tools/verify-release-candidate.ts') {
+    return 'release candidate verification CLI process boundary';
+  }
+  if (relativePath === 'packages/capture-structuring/src/structuring.ts') {
+    return 'host SDK LLM callable boundary';
   }
   return undefined;
 }

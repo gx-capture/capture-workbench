@@ -1,0 +1,126 @@
+{
+  "$defs": {
+    "CaptureFailureV1": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "pattern": "^[a-z][a-z0-9_]{1,63}$",
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Message",
+          "type": "string"
+        },
+        "stage": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Stage"
+        },
+        "retryable": {
+          "default": false,
+          "title": "Retryable",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "CaptureFailureV1",
+      "type": "object"
+    },
+    "RuntimeInstallationStatus": {
+      "enum": [
+        "queued",
+        "running",
+        "completed",
+        "failed",
+        "cancelled",
+        "manual_action_required"
+      ],
+      "title": "RuntimeInstallationStatus",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "installationId": {
+      "title": "Installationid",
+      "type": "string"
+    },
+    "requirementId": {
+      "enum": [
+        "windowsml-ocr",
+        "whisper-primary",
+        "ollama-runtime",
+        "capture-ollama-model"
+      ],
+      "title": "Requirementid",
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/RuntimeInstallationStatus"
+    },
+    "progress": {
+      "maximum": 1,
+      "minimum": 0,
+      "title": "Progress",
+      "type": "number"
+    },
+    "error": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CaptureFailureV1"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "createdAt": {
+      "format": "date-time",
+      "title": "Createdat",
+      "type": "string"
+    },
+    "updatedAt": {
+      "format": "date-time",
+      "title": "Updatedat",
+      "type": "string"
+    },
+    "completedAt": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Completedat"
+    }
+  },
+  "required": [
+    "installationId",
+    "requirementId",
+    "status",
+    "progress",
+    "createdAt",
+    "updatedAt"
+  ],
+  "title": "RuntimeInstallationV1",
+  "type": "object"
+}

@@ -1,17 +1,11 @@
-use std::{collections::HashSet, fmt::Write as _, net::TcpListener, path::PathBuf};
+use std::{collections::HashSet, path::PathBuf};
 
-use rand::{rngs::OsRng, RngCore};
+use capture_sidecar_launcher::{generate_bearer_token, reserve_distinct_loopback_port};
 
 use crate::constants::{
-    CHILD_ENVIRONMENT_ALLOWLIST, DEFAULT_MAX_UPLOAD_BYTES, DEFAULT_RETENTION_HOURS, LOOPBACK_HOST,
-    WORKBENCH_OLLAMA_MODEL, WORKBENCH_OLLAMA_PROFILE,
+    DEFAULT_MAX_UPLOAD_BYTES, DEFAULT_RETENTION_HOURS, LOOPBACK_HOST, WORKBENCH_OLLAMA_MODEL,
+    WORKBENCH_OLLAMA_PROFILE,
 };
-
-pub(crate) fn child_environment_name_is_allowed(name: &str) -> bool {
-    CHILD_ENVIRONMENT_ALLOWLIST
-        .iter()
-        .any(|allowed| allowed.eq_ignore_ascii_case(name))
-}
 
 pub(crate) struct LaunchPolicy {
     pub(crate) runtime_port: u16,
@@ -21,16 +15,6 @@ pub(crate) struct LaunchPolicy {
 }
 
 impl LaunchPolicy {
-    #[cfg(test)]
-    pub(crate) fn deterministic(data_dir: PathBuf, runtime_port: u16, ollama_port: u16) -> Self {
-        Self {
-            runtime_port,
-            ollama_port,
-            token: "test-token".into(),
-            data_dir,
-        }
-    }
-
     pub(crate) fn runtime_data_dir(&self) -> PathBuf {
         self.data_dir.join("runtime")
     }
@@ -45,10 +29,6 @@ impl LaunchPolicy {
 
     pub(crate) fn ollama_pid_file(&self) -> PathBuf {
         self.ollama_data_dir().join("ollama.pid")
-    }
-
-    pub(crate) fn base_url(&self) -> String {
-        format!("http://{LOOPBACK_HOST}:{}", self.runtime_port)
     }
 
     pub(crate) fn environment(&self) -> Vec<(&'static str, String)> {
@@ -167,37 +147,6 @@ impl LaunchPolicyFactory {
         }
         Err("A fresh runtime bearer token could not be generated.".into())
     }
-}
-
-pub(crate) fn reserve_loopback_port() -> Result<u16, String> {
-    TcpListener::bind((LOOPBACK_HOST, 0))
-        .map_err(|error| format!("A loopback runtime port could not be reserved: {error}"))?
-        .local_addr()
-        .map(|address| address.port())
-        .map_err(|error| format!("The reserved loopback port could not be read: {error}"))
-}
-
-pub(crate) fn reserve_distinct_loopback_port(excluded: &HashSet<u16>) -> Result<u16, String> {
-    for _ in 0..32 {
-        let candidate = reserve_loopback_port()?;
-        if !excluded.contains(&candidate) {
-            return Ok(candidate);
-        }
-    }
-    Err("A fresh independent loopback port could not be reserved.".into())
-}
-
-pub(crate) fn generate_bearer_token() -> Result<String, String> {
-    let mut bytes = [0_u8; 32];
-    OsRng
-        .try_fill_bytes(&mut bytes)
-        .map_err(|_| "A secure runtime bearer token could not be generated.".to_string())?;
-    let mut token = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        write!(&mut token, "{byte:02x}")
-            .map_err(|_| "A secure runtime bearer token could not be encoded.".to_string())?;
-    }
-    Ok(token)
 }
 
 #[cfg(test)]

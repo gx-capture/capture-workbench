@@ -170,7 +170,9 @@ export class CaptureWorkflowService {
     );
     if (!original) return;
     const current = task.review ?? { reviewVersion: 1 as const, edits: [] };
-    const edits = current.edits.filter((edit) => edit.segmentId !== segmentId);
+    const edits = (current.edits ?? []).filter(
+      (edit) => edit.segmentId !== segmentId,
+    );
     if (reviewedText !== original.text) {
       edits.push({ segmentId, reviewedText });
     }

@@ -140,6 +140,46 @@ describe('capture helpers', () => {
     ).toThrow('does not support runtime structuring mode');
   });
 
+  it('rejects a different runtime minor while the client is on 0.x', () => {
+    const ready: RuntimeReadyV1 = {
+      ready: true,
+      service: 'capture-runtime',
+      runtimeVersion: '0.2.9',
+      apiVersion: '1.0',
+      captureDocumentSchemaVersion: '1',
+      capabilities: {
+        captureKinds: ['pdf'],
+        structuringModes: ['runtime'],
+        supportsCancellation: true,
+        supportsRawDiagnostics: true,
+        maxUploadBytes: 100,
+      },
+    };
+
+    expect(() => assertCaptureRuntimeCompatible(ready)).toThrow(
+      'incompatible with client runtime minor 3',
+    );
+  });
+
+  it('allows patch updates within the configured 0.x minor', () => {
+    const ready: RuntimeReadyV1 = {
+      ready: true,
+      service: 'capture-runtime',
+      runtimeVersion: '0.3.8',
+      apiVersion: '1.0',
+      captureDocumentSchemaVersion: '1',
+      capabilities: {
+        captureKinds: ['pdf'],
+        structuringModes: ['runtime'],
+        supportsCancellation: true,
+        supportsRawDiagnostics: true,
+        maxUploadBytes: 100,
+      },
+    };
+
+    expect(() => assertCaptureRuntimeCompatible(ready)).not.toThrow();
+  });
+
   it('exports a deeply immutable canonical document schema', () => {
     expect(CAPTURE_DOCUMENT_V1_CONTRACT.schemaVersion).toBe('1');
     expect(CAPTURE_DOCUMENT_V1_CONTRACT.schemaSha256).toBe(

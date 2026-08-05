@@ -45,6 +45,26 @@ const engineCatalog = JSON.parse(
 const versions = new Map([
   ['Capture Workbench package', jsonVersion('packages/capture-angular/package.json')],
   [
+    'Capture contracts TypeScript package',
+    jsonVersion('packages/capture-contracts/package.json'),
+  ],
+  [
+    'Capture contracts Python wheel',
+    tomlVersion('packages/capture-contracts/python/pyproject.toml'),
+  ],
+  [
+    'Capture structuring TypeScript package',
+    jsonVersion('packages/capture-structuring/package.json'),
+  ],
+  [
+    'Capture structuring Python wheel',
+    tomlVersion('packages/capture-structuring-python/pyproject.toml'),
+  ],
+  [
+    'Capture sidecar launcher crate',
+    tomlVersion('packages/capture-sidecar-launcher/Cargo.toml'),
+  ],
+  [
     'Python runtime package',
     tomlVersion('packages/capture-runtime/pyproject.toml'),
   ],

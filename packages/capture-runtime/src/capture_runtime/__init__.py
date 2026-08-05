@@ -2,7 +2,7 @@
 
 from capture_runtime.app import create_app
 from capture_runtime.contracts import CaptureDocumentV1, RawCaptureV1
-from capture_runtime.structuring import CaptureStructuringProvider
+from capture_runtime.structuring_provider import CaptureStructuringProvider
 
 __all__ = [
     "CaptureDocumentV1",

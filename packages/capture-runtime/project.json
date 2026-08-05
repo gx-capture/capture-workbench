@@ -75,13 +75,30 @@
         "command": "uv run --no-sync --python 3.12 python scripts/generate_schema.py --output dist/schema/capture-document-v1.schema.json"
       }
     },
-    "sync-angular-schema": {
+    "generate-contracts": {
+      "cache": true,
       "executor": "nx:run-commands",
-      "cache": false,
-      "outputs": ["{workspaceRoot}/packages/capture-angular/src/lib/generated"],
+      "inputs": ["production"],
+      "outputs": [
+        "{workspaceRoot}/packages/capture-contracts/src/generated",
+        "{workspaceRoot}/packages/capture-contracts/python/src/capture_contracts"
+      ],
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --python 3.12 python scripts/generate_schema.py --output ../capture-angular/src/lib/generated/capture-document-v1.schema.json --typescript-output ../capture-angular/src/lib/generated/capture-document-v1-schema.generated.ts"
+        "command": "uv run --python 3.12 python scripts/generate_contracts.py --output ../capture-contracts"
+      }
+    },
+    "check-contracts": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "inputs": [
+        "production",
+        "{workspaceRoot}/packages/capture-contracts/src/generated/**",
+        "{workspaceRoot}/packages/capture-contracts/python/src/capture_contracts/**"
+      ],
+      "options": {
+        "cwd": "packages/capture-runtime",
+        "command": "uv run --python 3.12 python scripts/generate_contracts.py --output ../capture-contracts --check"
       }
     },
     "build-executable": {
@@ -264,7 +281,9 @@
       "executor": "nx:run-commands",
       "dependsOn": ["build-ocr-worker", "build-whisper-worker"],
       "inputs": ["production"],
-      "outputs": ["{projectRoot}/dist/catalog/preflight-capture-engine-catalog.json"],
+      "outputs": [
+        "{projectRoot}/dist/catalog/preflight-capture-engine-catalog.json"
+      ],
       "metadata": {
         "description": "Generates a complete source-lock-bound catalog only for the blocked private Whisper preflight lock."
       },
@@ -277,7 +296,9 @@
       "cache": false,
       "executor": "nx:run-commands",
       "dependsOn": ["generate-whisper-preflight-catalog"],
-      "outputs": ["{projectRoot}/dist/candidate/whisper-preflight-evidence.json"],
+      "outputs": [
+        "{projectRoot}/dist/candidate/whisper-preflight-evidence.json"
+      ],
       "metadata": {
         "description": "Runs one privacy-safe private Whisper preflight; output never includes audio paths or text."
       },

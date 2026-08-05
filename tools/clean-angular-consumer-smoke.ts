@@ -19,6 +19,19 @@ const sourcePackage = JSON.parse(
 );
 const archiveName = `${sourcePackage.name.replace(/^@/u, '').replace('/', '-')}-${sourcePackage.version}.tgz`;
 const archivePath = join(repoRoot, 'dist', 'packs', archiveName);
+const contractsPackage = JSON.parse(
+  readFileSync(
+    join(repoRoot, 'packages/capture-contracts/package.json'),
+    'utf8',
+  ),
+);
+const contractsArchiveName = `${contractsPackage.name.replace(/^@/u, '').replace('/', '-')}-${contractsPackage.version}.tgz`;
+const contractsArchivePath = join(
+  repoRoot,
+  'dist',
+  'packs',
+  contractsArchiveName,
+);
 // Keep the isolated virtual store path short enough for Windows package paths.
 const fixtureBase = resolve(repoRoot, '..', '.cw-clean');
 mkdirSync(fixtureBase, { recursive: true });
@@ -146,13 +159,7 @@ function stopProcessTree(child) {
 
 async function browserSmoke(name, cwd, outDir, verify) {
   const port = await freePort();
-  const viteCli = join(
-    fixtureRoot,
-    'node_modules',
-    'vite',
-    'bin',
-    'vite.js',
-  );
+  const viteCli = join(fixtureRoot, 'node_modules', 'vite', 'bin', 'vite.js');
   const child = spawn(
     process.execPath,
     [
@@ -222,39 +229,65 @@ async function runBrowserSmokes() {
             ?.querySelector('gx-capture-workbench')?.shadowRoot !== null,
         detail: window.__captureDetail,
       }));
-      if (!state.defined || !state.shadow || state.detail?.document?.sourceText !== 'page one') {
-        throw new Error('Angular packed Web Component lifecycle was not completed.');
+      if (
+        !state.defined ||
+        !state.shadow ||
+        state.detail?.document?.sourceText !== 'page one'
+      ) {
+        throw new Error(
+          'Angular packed Web Component lifecycle was not completed.',
+        );
       }
     },
   );
-  await browserSmoke('Vanilla', join(fixtureRoot, 'vanilla'), undefined, async (page) => {
-    await page.waitForFunction(() => window.__captureReady === true);
-    const state = await page.evaluate(() => window.__captureState);
-    if (
-      !state?.defined ||
-      !state.shadow ||
-      !state.configured ||
-      !state.clientPropertyOnly ||
-      !state.stylesIsolated ||
-      !state.eventBubbles ||
-      !state.eventComposed
-    ) {
-      throw new Error(`Vanilla Web Component state failed: ${JSON.stringify(state)}`);
-    }
-  });
-  for (const framework of ['react', 'vue']) {
-    await browserSmoke(framework, join(fixtureRoot, framework), undefined, async (page) => {
+  await browserSmoke(
+    'Vanilla',
+    join(fixtureRoot, 'vanilla'),
+    undefined,
+    async (page) => {
       await page.waitForFunction(() => window.__captureReady === true);
       const state = await page.evaluate(() => window.__captureState);
-      if (!state?.mounted || !state?.configured || !state?.listenerRemoved || state.defineCount !== 1) {
-        throw new Error(`${framework} Web Component mount state failed: ${JSON.stringify(state)}`);
+      if (
+        !state?.defined ||
+        !state.shadow ||
+        !state.configured ||
+        !state.clientPropertyOnly ||
+        !state.stylesIsolated ||
+        !state.eventBubbles ||
+        !state.eventComposed
+      ) {
+        throw new Error(
+          `Vanilla Web Component state failed: ${JSON.stringify(state)}`,
+        );
       }
-    });
+    },
+  );
+  for (const framework of ['react', 'vue']) {
+    await browserSmoke(
+      framework,
+      join(fixtureRoot, framework),
+      undefined,
+      async (page) => {
+        await page.waitForFunction(() => window.__captureReady === true);
+        const state = await page.evaluate(() => window.__captureState);
+        if (
+          !state?.mounted ||
+          !state?.configured ||
+          !state?.listenerRemoved ||
+          state.defineCount !== 1
+        ) {
+          throw new Error(
+            `${framework} Web Component mount state failed: ${JSON.stringify(state)}`,
+          );
+        }
+      },
+    );
   }
 }
 
 try {
   const archiveSpec = `file:${archivePath.replaceAll('\\', '/')}`;
+  const contractsArchiveSpec = `file:${contractsArchivePath.replaceAll('\\', '/')}`;
   write(
     'package.json',
     `${JSON.stringify(
@@ -272,6 +305,7 @@ try {
           '@angular/forms': '22.0.7',
           '@angular/platform-browser': '22.0.7',
           '@angular/router': '22.0.7',
+          '@gx-capture/capture-contracts': contractsArchiveSpec,
           '@gx-capture/capture-workbench': archiveSpec,
           rxjs: '7.8.2',
           tslib: '2.8.1',
@@ -309,6 +343,8 @@ allowBuilds:
   lmdb: true
   msgpackr-extract: true
   nx: true
+overrides:
+  '@gx-capture/capture-contracts': '${contractsArchiveSpec}'
 `,
   );
   write(

@@ -1,0 +1,306 @@
+{
+  "manifestVersion": "1",
+  "packageVersion": "0.3.9",
+  "runtimeVersion": "0.3.9",
+  "apiVersion": "1.0",
+  "captureDocumentSchemaVersion": "1",
+  "captureDocumentSchemaId": "https://github.com/gx-capture/capture-workbench/schema/capture-document-v1.schema.json",
+  "captureDocumentSchemaSha256": "2721093496a9f09044d5737cce70d2356d5f71757b1cd23a960e1d003ea014f2",
+  "models": [
+    {
+      "name": "CaptureBlockV1",
+      "schemaFile": "capture-block-v1.schema.json",
+      "schemaSha256": "e71ad56896fd26c87cb02f6e331f1fe6f5b0d2b1a7204836a757adf86c51c565",
+      "extraPolicy": "forbid",
+      "strStripWhitespace": true
+    },
+    {
+      "name": "CaptureDocumentV1",
+      "schemaFile": "capture-document-v1.schema.json",
+      "schemaSha256": "2721093496a9f09044d5737cce70d2356d5f71757b1cd23a960e1d003ea014f2",
+      "extraPolicy": "forbid",
+      "strStripWhitespace": true
+    },
+    {
+      "name": "CaptureEngineV1",
+      "schemaFile": "capture-engine-v1.schema.json",
+      "schemaSha256": "c076cb33ca3f1cf40b5791768a5b749612e3d6379cda984ffc7991bcca5999bc",
+      "extraPolicy": "forbid",
+      "strStripWhitespace": true
+    },
+    {
+      "name": "CaptureFailureV1",
+      "schemaFile": "capture-failure-v1.schema.json",
+      "schemaSha256": "44f24e823fb1dc4def352441ca67520727dcae702a23909b43293d8675b76450",
+      "extraPolicy": "forbid",
+      "strStripWhitespace": true
+    },
+    {
+      "name": "CaptureJobV1",
+      "schemaFile": "capture-job-v1.schema.json",
+      "schemaSha256": "b49c618d396dd7273ec61733aa8c57509ba99985f801abee0d8d12d79bedda6b",
+      "extraPolicy": "forbid",
+      "strStripWhitespace": true
+    },
+    {
+      "name": "CaptureReviewEditV1",
+      "schemaFile": "capture-review-edit-v1.schema.json",
+      "schemaSha256": "fe223a91ef69010f768e3a5aa44ef7791a19b43602ab88f5c961aef37bf1c899",
+      "extraPolicy": "forbid",
+      "strStripWhitespace": true
+    },
+    {
+      "name": "CaptureReviewV1",
+      "schemaFile": "capture-review-v1.schema.json",
+      "schemaSha256": "7c4706db70b00a5a074a01a0f51300503b5a41e310de7691247d2c51ebc8f61c",
+      "extraPolicy": "forbid",
+      "strStripWhitespace": true
+    },
+    {
+      "name": "CaptureSourceV1",
+      "schemaFile": "capture-source-v1.schema.json",
+      "schemaSha256": "6cb4c767b7b7543d56767548748d74ff4ccf868f4746ed644ea83ee1264e938a",
+      "extraPolicy": "forbid",
+      "strStripWhitespace": true
+    },
+    {
+      "name": "ErrorBodyV1",
+      "schemaFile": "error-body-v1.schema.json",
+      "schemaSha256": "a78ce09ca535852569388feb6c5ed6f61ee8135ebf6923e03f3d263ac1223b80",
+      "extraPolicy": "forbid",
+      "strStripWhitespace": true
+    },
+    {
+      "name": "ErrorEnvelopeV1",
+      "schemaFile": "error-envelope-v1.schema.json",
+      "schemaSha256": "28e9efaa7e1213543e5dfcdaf1904acff50b46ec5703fa4ecae3770f3b445254",
+      "extraPolicy": "forbid",
+      "strStripWhitespace": true
+    },
+    {
+      "name": "PageLocatorV1",
+      "schemaFile": "page-locator-v1.schema.json",
+      "schemaSha256": "1ddf6c1232b0634f0cfdd46455b91c146f73bc3fce361d5d07e9feec0ff457b8",
+      "extraPolicy": "forbid",
+      "strStripWhitespace": true
+    },
+    {
+      "name": "RawCaptureSegmentV1",
+      "schemaFile": "raw-capture-segment-v1.schema.json",
+      "schemaSha256": "3fc0f8c260f8ce40efbcb2741ec6f450289c90ede59503c6c515c580eff99906",
+      "extraPolicy": "forbid",
+      "strStripWhitespace": true
+    },
+    {
+      "name": "RawCaptureV1",
+      "schemaFile": "raw-capture-v1.schema.json",
+      "schemaSha256": "c71e74f7216856c11cacf9913478a9f7a6fbcbdbd25f569b85f7cf777355ca57",
+      "extraPolicy": "forbid",
+      "strStripWhitespace": true
+    },
+    {
+      "name": "ReportStructuringFailureV1",
+      "schemaFile": "report-structuring-failure-v1.schema.json",
+      "schemaSha256": "99f21e4eccafd7a762c1cccf6fab9d7d276997af0835cda0d5fd9c91c36208cc",
+      "extraPolicy": "forbid",
+      "strStripWhitespace": true
+    },
+    {
+      "name": "RuntimeArtifactDescriptorV1",
+      "schemaFile": "runtime-artifact-descriptor-v1.schema.json",
+      "schemaSha256": "eaf9e393cf0ee0fac8220fad61bf9f455c8b0144f4095bf03e3bbebeffc21344",
+      "extraPolicy": "forbid",
+      "strStripWhitespace": true
+    },
+    {
+      "name": "RuntimeCapabilitiesV1",
+      "schemaFile": "runtime-capabilities-v1.schema.json",
+      "schemaSha256": "7fe5d664335745edb6afbcfc708ae01b9f418a3bbff100be2cae0c1ba7ab081f",
+      "extraPolicy": "forbid",
+      "strStripWhitespace": true
+    },
+    {
+      "name": "RuntimeInstallationV1",
+      "schemaFile": "runtime-installation-v1.schema.json",
+      "schemaSha256": "1698e57bb3fcc01809c31789fc8e8b07981d74ec94e9952ee8cfc50ae59c6f3a",
+      "extraPolicy": "forbid",
+      "strStripWhitespace": true
+    },
+    {
+      "name": "RuntimeInstallationsV1",
+      "schemaFile": "runtime-installations-v1.schema.json",
+      "schemaSha256": "1ecaebd1f52ecee1b11c20cd0ba6eeeb673a4a92097cf26d1b3df8057e5b2cb5",
+      "extraPolicy": "forbid",
+      "strStripWhitespace": true
+    },
+    {
+      "name": "RuntimeReadyV1",
+      "schemaFile": "runtime-ready-v1.schema.json",
+      "schemaSha256": "2af6735eab7aaabd4e1cf6877bc57f7cb08d02c55324acfb4be02d3ad66e952e",
+      "extraPolicy": "forbid",
+      "strStripWhitespace": true
+    },
+    {
+      "name": "RuntimeRequirementV1",
+      "schemaFile": "runtime-requirement-v1.schema.json",
+      "schemaSha256": "a714f2fa901ad912c87869f47ac094e38d02d05aa6071f76d2feaabb5a677e57",
+      "extraPolicy": "forbid",
+      "strStripWhitespace": true
+    },
+    {
+      "name": "RuntimeRequirementsV1",
+      "schemaFile": "runtime-requirements-v1.schema.json",
+      "schemaSha256": "80975f87a7beb52383b7dc069e898341c42d29aaf42a4ee4616295d6263cc4ca",
+      "extraPolicy": "forbid",
+      "strStripWhitespace": true
+    },
+    {
+      "name": "StartRuntimeInstallationV1",
+      "schemaFile": "start-runtime-installation-v1.schema.json",
+      "schemaSha256": "820eea98b4e8cde94dc001bc3227f8f36b5c08886d24e8b76955b6af22c229b9",
+      "extraPolicy": "forbid",
+      "strStripWhitespace": true
+    },
+    {
+      "name": "TimeLocatorV1",
+      "schemaFile": "time-locator-v1.schema.json",
+      "schemaSha256": "8191adf9dbb8b58bc7b91522f43977bddae2d9851f7f7c963f42431598fe2eb0",
+      "extraPolicy": "forbid",
+      "strStripWhitespace": true
+    }
+  ],
+  "enums": [
+    {
+      "name": "CaptureJobStage",
+      "values": [
+        "queued",
+        "extracting",
+        "awaiting_structuring",
+        "structuring",
+        "completed",
+        "failed",
+        "cancelled"
+      ]
+    },
+    {
+      "name": "CaptureJobStatus",
+      "values": [
+        "queued",
+        "running",
+        "completed",
+        "failed",
+        "cancelled"
+      ]
+    },
+    {
+      "name": "CaptureSourceKind",
+      "values": [
+        "pdf",
+        "image",
+        "audio"
+      ]
+    },
+    {
+      "name": "RuntimeInstallationStatus",
+      "values": [
+        "queued",
+        "running",
+        "completed",
+        "failed",
+        "cancelled",
+        "manual_action_required"
+      ]
+    },
+    {
+      "name": "RuntimeRequirementStatus",
+      "values": [
+        "ready",
+        "missing",
+        "installable",
+        "manual_action_required",
+        "unavailable"
+      ]
+    },
+    {
+      "name": "StructuringMode",
+      "values": [
+        "runtime",
+        "host"
+      ]
+    }
+  ],
+  "aliases": [
+    {
+      "name": "CaptureLocatorV1",
+      "type": "PageLocatorV1 | TimeLocatorV1"
+    },
+    {
+      "name": "CaptureRequirementId",
+      "type": "'windowsml-ocr' | 'whisper-primary' | 'ollama-runtime' | 'capture-ollama-model'"
+    }
+  ],
+  "invariants": [
+    {
+      "id": "raw-segment-ids-unique",
+      "models": "RawCaptureV1, CaptureDocumentV1",
+      "description": "segmentId values are unique within the raw segment list."
+    },
+    {
+      "id": "raw-segment-order-contiguous",
+      "models": "RawCaptureV1, CaptureDocumentV1",
+      "description": "segment order values are contiguous and match list order."
+    },
+    {
+      "id": "block-source-segment-unique-coverage",
+      "models": "CaptureDocumentV1",
+      "description": "blocks[].sourceSegmentId values are unique and reference every rawSegments[].segmentId exactly once, in raw order."
+    },
+    {
+      "id": "block-order-contiguous",
+      "models": "CaptureDocumentV1",
+      "description": "block order values are contiguous and match list order."
+    },
+    {
+      "id": "block-provenance-locator-and-source-text",
+      "models": "CaptureDocumentV1",
+      "description": "each block locator equals its raw segment locator and each block sourceText equals its raw segment text."
+    },
+    {
+      "id": "source-text-exact-projection",
+      "models": "RawCaptureV1, CaptureDocumentV1",
+      "description": "sourceText is the exact newline projection of segment texts."
+    },
+    {
+      "id": "target-text-exact-projection",
+      "models": "CaptureDocumentV1",
+      "description": "targetText is the exact newline projection of block targetText values."
+    },
+    {
+      "id": "completion-after-creation",
+      "models": "CaptureDocumentV1",
+      "description": "completedAt must not precede createdAt."
+    },
+    {
+      "id": "terminal-jobs-have-completion-time",
+      "models": "CaptureJobV1",
+      "description": "terminal capture jobs must carry completedAt."
+    },
+    {
+      "id": "time-locator-interval-valid",
+      "models": "TimeLocatorV1",
+      "description": "endMs must be greater than startMs."
+    },
+    {
+      "id": "timestamps-timezone-aware",
+      "models": "RawCaptureV1, CaptureDocumentV1, CaptureJobV1, RuntimeInstallationV1",
+      "description": "timestamp fields must include a timezone."
+    }
+  ],
+  "generator": {
+    "script": "packages/capture-runtime/scripts/generate_contracts.py",
+    "generatorSha256": "48c2c4efc36086629c5ce68247bbb74c687b27bdfe0a1685a980554a6583cd7d",
+    "schemaGenerator": "pydantic.model_json_schema",
+    "pydanticVersion": "2.13.4",
+    "pydanticCoreVersion": "2.46.4"
+  }
+}

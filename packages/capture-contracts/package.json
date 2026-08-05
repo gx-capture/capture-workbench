@@ -1,0 +1,31 @@
+{
+  "name": "@gx-capture/capture-contracts",
+  "version": "0.3.9",
+  "description": "Generated Capture Workbench wire-contract schemas and TypeScript types.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gx-capture/capture-workbench.git",
+    "directory": "packages/capture-contracts"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "public"
+  },
+  "type": "module",
+  "files": [
+    "README.md",
+    "index.js",
+    "index.d.ts",
+    "generated"
+  ],
+  "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.js"
+    },
+    "./generated/*": "./generated/*",
+    "./package.json": "./package.json"
+  }
+}

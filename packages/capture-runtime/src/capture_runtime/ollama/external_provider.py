@@ -7,17 +7,7 @@ import json
 import re
 
 import httpx
-
-from capture_runtime.clock import Clock
-from capture_runtime.config import ExternalOllamaConfig
-from capture_runtime.contracts import (
-    CaptureBlockV1,
-    CaptureEngineV1,
-    RawCaptureSegmentV1,
-    RawCaptureV1,
-)
-from capture_runtime.ollama.lifecycle_impl import RuntimeUnavailableError
-from capture_runtime.structuring import (
+from capture_structuring import (
     DEFAULT_STRUCTURING_NUM_CTX,
     DEFAULT_STRUCTURING_NUM_PREDICT,
     assemble_structuring_document,
@@ -27,6 +17,16 @@ from capture_runtime.structuring import (
     structuring_batch_generation_options,
     validate_structuring_batch,
 )
+
+from capture_runtime.clock import Clock
+from capture_runtime.config import ExternalOllamaConfig
+from capture_runtime.contracts import (
+    CaptureBlockV1,
+    CaptureDocumentV1,
+    CaptureEngineV1,
+    RawCaptureV1,
+)
+from capture_runtime.ollama.lifecycle_impl import RuntimeUnavailableError
 
 
 class ExternalOllamaCaptureStructuringProvider:
@@ -68,6 +68,7 @@ class ExternalOllamaCaptureStructuringProvider:
             target_language=target_language,
             num_ctx=self._num_ctx,
             num_predict=self._num_predict,
+            schema=ollama_structuring_batch_schema(target_language=target_language),
         )
         async with httpx.AsyncClient(
             base_url=self._config.endpoint_url,
@@ -94,23 +95,26 @@ class ExternalOllamaCaptureStructuringProvider:
                     num_predict=num_predict,
                 )
                 blocks.extend(
-                    validate_structuring_batch(
+                    CaptureBlockV1.model_validate(block)
+                    for block in validate_structuring_batch(
                         candidate,
                         plan.segments,
                         target_language=target_language,
                     )
                 )
-        return assemble_structuring_document(
-            raw,
-            blocks,
-            engine_identity=engine_identity,
-            completed_at=self._clock.now(),
+        return CaptureDocumentV1.model_validate(
+            assemble_structuring_document(
+                raw,
+                blocks,
+                engine_identity=engine_identity,
+                completed_at=self._clock.now(),
+            )
         )
 
     async def _generate_batch(
         self,
         client: httpx.AsyncClient,
-        segments: tuple[RawCaptureSegmentV1, ...],
+        segments: tuple[object, ...],
         *,
         target_language: str | None,
         cancel_event: asyncio.Event,

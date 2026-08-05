@@ -11,7 +11,7 @@ import {
   type RawCaptureV1,
   type RuntimeReadyV1,
 } from './contracts';
-import { CAPTURE_RUNTIME_MAJOR } from './constants';
+import { CAPTURE_RUNTIME_MAJOR, CAPTURE_RUNTIME_MINOR } from './constants';
 
 const EXTENSION_KINDS: Readonly<Record<string, CaptureSourceKind>> = {
   pdf: 'pdf',
@@ -91,6 +91,7 @@ export class CaptureHelpersService {
     ready: RuntimeReadyV1,
     compatibleRuntimeMajor = CAPTURE_RUNTIME_MAJOR,
     requiredStructuringMode?: CaptureStructuringMode,
+    compatibleRuntimeMinor = CAPTURE_RUNTIME_MINOR,
   ): void {
     if (ready.service !== 'capture-runtime') {
       throw new CaptureCompatibilityError(
@@ -109,6 +110,14 @@ export class CaptureHelpersService {
     if (runtimeMajor !== compatibleRuntimeMajor) {
       throw new CaptureCompatibilityError(
         `Capture runtime ${ready.runtimeVersion} is incompatible with client runtime major ${compatibleRuntimeMajor}.`,
+      );
+    }
+    if (
+      compatibleRuntimeMajor === 0 &&
+      parseMinor(ready.runtimeVersion) !== compatibleRuntimeMinor
+    ) {
+      throw new CaptureCompatibilityError(
+        `Capture runtime ${ready.runtimeVersion} is incompatible with client runtime minor ${compatibleRuntimeMinor} while the client is on 0.x.`,
       );
     }
 
@@ -168,11 +177,13 @@ export function assertCaptureRuntimeCompatible(
   ready: RuntimeReadyV1,
   compatibleRuntimeMajor = CAPTURE_RUNTIME_MAJOR,
   requiredStructuringMode?: CaptureStructuringMode,
+  compatibleRuntimeMinor = CAPTURE_RUNTIME_MINOR,
 ): void {
   publicCaptureHelpers.assertCaptureRuntimeCompatible(
     ready,
     compatibleRuntimeMajor,
     requiredStructuringMode,
+    compatibleRuntimeMinor,
   );
 }
 
@@ -233,7 +244,11 @@ function validateStructuringCandidateImpl(
   if (candidate.createdAt !== raw.createdAt) {
     issues.push('createdAt must exactly match raw capture evidence');
   }
-  if (!raw.warnings.every((warning) => candidate.warnings.includes(warning))) {
+  if (
+    !(raw.warnings ?? []).every((warning) =>
+      (candidate.warnings ?? []).includes(warning),
+    )
+  ) {
     issues.push('warnings must preserve every raw capture warning');
   }
   if (!candidate.structuringEngine.engine.trim()) {
@@ -319,6 +334,12 @@ function parseMajor(version: string): number {
   const normalized = version.trim().replace(/^v/i, '');
   const major = Number.parseInt(normalized.split('.')[0] ?? '', 10);
   return Number.isFinite(major) ? major : -1;
+}
+
+function parseMinor(version: string): number {
+  const normalized = version.trim().replace(/^v/i, '');
+  const minor = Number.parseInt(normalized.split('.')[1] ?? '', 10);
+  return Number.isFinite(minor) ? minor : -1;
 }
 
 function isValidLocator(locator: CaptureLocatorV1, raw: RawCaptureV1): boolean {

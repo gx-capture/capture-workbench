@@ -1,4 +1,4 @@
-export { CAPTURE_RUNTIME_MAJOR } from './runtime';
+export { CAPTURE_RUNTIME_MAJOR, CAPTURE_RUNTIME_MINOR } from './runtime';
 export { MAX_INSTALLATIONS_PER_USER_ACTION } from './limits';
 export {
   HOST_PROVIDER_FAILURE_CODE,

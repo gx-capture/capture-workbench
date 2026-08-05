@@ -139,26 +139,52 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
           pnpm nx run capture-angular:pack
+          pnpm nx run capture-contracts:pack
+          pnpm nx run capture-structuring:pack
+          pnpm nx run capture-contracts:python-build
+          pnpm nx run capture-structuring-python:build
+          pnpm nx run capture-sidecar-launcher:cargo-package-dry-run
           $packages = @(Get-ChildItem dist/packs -Filter '*.tgz' -File)
-          if ($packages.Count -ne 1) {
-            throw "Expected exactly one Capture Workbench tarball, found $($packages.Count)."
+          if ($packages.Count -ne 3) {
+            throw "Expected exactly three release package tarballs, found $($packages.Count)."
           }
           $candidate = Join-Path $env:RUNNER_TEMP 'capture-candidate'
           $runtime = Join-Path $candidate 'runtime'
           $package = Join-Path $candidate 'package'
+          $python = Join-Path $candidate 'python'
+          $crate = Join-Path $candidate 'crate'
+          $checksums = Join-Path $candidate 'checksums'
           $desktop = Join-Path $candidate 'desktop'
-          New-Item -ItemType Directory -Path $runtime, $package, $desktop | Out-Null
+          New-Item -ItemType Directory -Path $runtime, $package, $python, $crate, $checksums, $desktop | Out-Null
           Copy-Item packages/capture-runtime/dist/release/* -Destination $runtime
           if ($env:RELEASE_MODEL_MODE -notin @('core-only', 'model-enabled')) {
             throw "Release model mode classification is invalid."
           }
-          Copy-Item $packages[0].FullName -Destination $package
-          $installers = @(Get-ChildItem apps/capture-workbench-desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis -Filter '*.exe' -File -Recurse)
-          if ($installers.Count -ne 1) {
-            throw "Expected exactly one Capture Workbench NSIS installer, found $($installers.Count)."
+          foreach ($packageTarball in $packages) {
+            Copy-Item $packageTarball.FullName -Destination $package
+          }
+          $pythonArtifacts = @(
+            Get-ChildItem packages/capture-contracts/python/dist, packages/capture-structuring-python/dist -File |
+              Where-Object { $_.Name -match '^(capture_contracts|capture_structuring)-\d+\.\d+\.\d+(?:-[^/]+)?\.(?:whl|tar\.gz)$' }
+          )
+          if ($pythonArtifacts.Count -ne 4) {
+            throw "Expected exactly four Python distribution artifacts, found $($pythonArtifacts.Count)."
+          }
+          foreach ($pythonArtifact in $pythonArtifacts) {
+            Copy-Item $pythonArtifact.FullName -Destination $python
           }
           if ($env:GITHUB_REF_NAME -notmatch '^v(?<version>\d+\.\d+\.\d+)$') {
             throw "Release tag must be vMAJOR.MINOR.PATCH."
+          }
+          $crateArtifact = Get-Item "packages/capture-sidecar-launcher/target/package/capture-sidecar-launcher-$($Matches.version).crate"
+          Copy-Item $crateArtifact.FullName -Destination $crate
+          foreach ($artifact in @(Get-ChildItem $package, $python, $crate -File)) {
+            $digest = (Get-FileHash -LiteralPath $artifact.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$digest  $($artifact.Name)" | Set-Content -LiteralPath (Join-Path $checksums "$($artifact.Name).sha256") -Encoding utf8NoBOM
+          }
+          $installers = @(Get-ChildItem apps/capture-workbench-desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis -Filter '*.exe' -File -Recurse)
+          if ($installers.Count -ne 1) {
+            throw "Expected exactly one Capture Workbench NSIS installer, found $($installers.Count)."
           }
           $canonicalInstallerName = "Capture.Workbench_$($Matches.version)_x64-setup.exe"
           if ($canonicalInstallerName -notmatch '^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$') {
@@ -191,6 +217,7 @@ jobs:
           $sizeReport | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $sizeReportPath -Encoding utf8NoBOM
           $sizeReportDigest = (Get-FileHash -LiteralPath $sizeReportPath -Algorithm SHA256).Hash.ToLowerInvariant()
           "$sizeReportDigest  runtime-size-report.json" | Set-Content -LiteralPath "$sizeReportPath.sha256" -Encoding utf8NoBOM
+          node tools/verify-release-candidate.ts --candidate "$candidate" --version "$($Matches.version)"
           "CAPTURE_CANDIDATE_PATH=$candidate" >> $env:GITHUB_ENV
 
       - name: Upload release candidate
@@ -202,7 +229,7 @@ jobs:
           retention-days: 1
           compression-level: 0
 
-  publish:
+  publish-npm:
     needs: build-candidate
     runs-on: windows-latest
     timeout-minutes: 20
@@ -241,7 +268,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ github.token }}
         run: pnpm install --frozen-lockfile --ignore-scripts
 
-      - name: Publish runtime first, then the exact Capture Workbench package idempotently
+      - name: Publish runtime first, then the exact release packages idempotently
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -251,15 +278,268 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
           $packages = @(Get-ChildItem publication/package -Filter '*.tgz' -File)
-          if ($packages.Count -ne 1) {
-            throw "Expected exactly one release package tarball, found $($packages.Count)."
+          if ($packages.Count -ne 3) {
+            throw "Expected exactly three release package tarballs, found $($packages.Count)."
           }
           $installers = @(Get-ChildItem publication/desktop -Filter '*.exe' -File)
           if ($installers.Count -ne 1) {
             throw "Expected exactly one Capture Workbench NSIS installer, found $($installers.Count)."
           }
+          $packageArgs = @()
+          foreach ($package in $packages) {
+            $packageArgs += @('--package', $package.FullName)
+          }
           node tools/publish-release.ts `
             --tag "$env:RELEASE_TAG" `
             --runtime-dir publication/runtime `
             --installer $installers[0].FullName `
-            --package $packages[0].FullName
+            @packageArgs
+
+      - name: Record npm publication completion
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ledger = Get-Content publication/release-ledger.json -Raw | ConvertFrom-Json
+          $ledger.status = 'npm-published'
+          $ledger | ConvertTo-Json -Depth 10 | Set-Content publication/release-ledger-npm.json -Encoding utf8NoBOM
+
+      - name: Upload npm publication ledger
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: capture-release-ledger-npm-${{ github.ref_name }}
+          path: publication/release-ledger-npm.json
+          if-no-files-found: error
+
+  publish-pypi:
+    needs: build-candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - project: capture-contracts
+            prefix: capture_contracts
+            module: capture_contracts
+            environment: pypi
+          - project: capture-structuring
+            prefix: capture_structuring
+            module: capture_structuring
+            environment: pypi-structuring
+    environment:
+      name: ${{ matrix.environment }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Download release candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: capture-candidate-${{ github.ref_name }}
+          path: publication
+
+      - name: Isolate this package's distributions
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "publication/python/${{ matrix.project }}"
+          count="$(find publication/python -maxdepth 1 -type f -name '${{ matrix.prefix }}-*' | wc -l)"
+          test "$count" -eq 2
+          find publication/python -maxdepth 1 -type f -name '${{ matrix.prefix }}-*' \
+            -exec cp {} "publication/python/${{ matrix.project }}/" \;
+
+      - name: Publish this Python distribution with PyPI Trusted Publishing
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63a2034f94d8a5b11f265b73ba33 # release/v1
+        with:
+          packages-dir: publication/python/${{ matrix.project }}
+          skip-existing: true
+
+      - name: Probe this PyPI import from a clean environment
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ github.ref_name }}
+          PYPI_PROJECT: ${{ matrix.project }}
+          PROBE_MODULE: ${{ matrix.module }}
+        run: |
+          set -euo pipefail
+          version="${RELEASE_VERSION#v}"
+          probe_dir="$RUNNER_TEMP/${PYPI_PROJECT}-probe"
+          python -m venv "$probe_dir"
+          "$probe_dir/bin/python" -m pip install --disable-pip-version-check --no-cache-dir \
+            "${PYPI_PROJECT}==${version}"
+          "$probe_dir/bin/python" -c \
+            'import importlib, os; module = importlib.import_module(os.environ["PROBE_MODULE"]); assert module.__package__ == os.environ["PROBE_MODULE"]'
+
+      - name: Verify immutable PyPI artifact digests for this project
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ github.ref_name }}
+          PYPI_PROJECT: ${{ matrix.project }}
+          ARTIFACT_PREFIX: ${{ matrix.prefix }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          from urllib.request import urlopen
+
+          version = os.environ['RELEASE_VERSION'].removeprefix('v')
+          project = os.environ['PYPI_PROJECT']
+          prefix = os.environ['ARTIFACT_PREFIX']
+          ledger = json.loads(Path('publication/release-ledger.json').read_text())
+          expected = {
+              item['name']: item['sha256']
+              for item in ledger['artifacts']
+              if item['registry'] == 'pypi' and item['name'].startswith(f'{prefix}-')
+          }
+          if not expected:
+              raise SystemExit(f'No candidate artifacts recorded for {project}.')
+          with urlopen(f'https://pypi.org/pypi/{project}/{version}/json', timeout=30) as response:
+              remote = json.load(response)
+          remote_digests = {
+              item['filename']: item['digests']['sha256']
+              for item in remote['urls']
+              if item['filename'] in expected
+          }
+          if remote_digests != expected:
+              raise SystemExit(
+                  f'PyPI digest mismatch for {project}: expected {expected}, got {remote_digests}'
+              )
+          print(f'PyPI digests verified for {project} {version}.')
+          PY
+
+      - name: Record PyPI publication completion for this project
+        shell: bash
+        env:
+          PYPI_PROJECT: ${{ matrix.project }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          path = Path('publication/release-ledger.json')
+          ledger = json.loads(path.read_text())
+          project = os.environ['PYPI_PROJECT']
+          ledger['status'] = f'pypi-{project}-published'
+          Path(f'publication/release-ledger-pypi-{project}.json').write_text(
+              json.dumps(ledger, indent=2) + '\n'
+          )
+          PY
+
+      - name: Upload this PyPI publication ledger
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: capture-release-ledger-pypi-${{ matrix.project }}-${{ github.ref_name }}
+          path: publication/release-ledger-pypi-${{ matrix.project }}.json
+          if-no-files-found: error
+
+  publish-crates-io:
+    needs: build-candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Download release candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: capture-candidate-${{ github.ref_name }}
+          path: publication
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+
+      - name: Validate the exact crate candidate with Cargo
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo publish --manifest-path packages/capture-sidecar-launcher/Cargo.toml --locked --dry-run
+
+      - name: Publish launcher to crates.io
+        shell: bash
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          set -euo pipefail
+          expected_sha256="$(python -c 'import json; print(next(item["sha256"] for item in json.load(open("publication/release-ledger.json"))["artifacts"] if item["registry"] == "crates.io"))')"
+          api_response="$RUNNER_TEMP/capture-sidecar-launcher-crates-api.json"
+          api_status="$(curl --silent --show-error --output "$api_response" --write-out '%{http_code}' "https://crates.io/api/v1/crates/capture-sidecar-launcher/${GITHUB_REF_NAME#v}")"
+          if [ "$api_status" = '200' ]; then
+            remote_sha256="$(python -c 'import json; print(json.load(open("'"$api_response"'"))["version"]["checksum"])')"
+            test "$remote_sha256" = "$expected_sha256"
+          elif [ "$api_status" = '404' ]; then
+            test -n "$CARGO_REGISTRY_TOKEN"
+            cargo publish --manifest-path packages/capture-sidecar-launcher/Cargo.toml --locked --token "$CARGO_REGISTRY_TOKEN"
+          else
+            echo "Unexpected crates.io API status: $api_status" >&2
+            exit 1
+          fi
+
+      - name: Probe the published crate index
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo info "capture-sidecar-launcher@${GITHUB_REF_NAME#v}"
+
+      - name: Record crates.io publication completion
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path('publication/release-ledger.json')
+          ledger = json.loads(path.read_text())
+          ledger['status'] = 'crates-io-published'
+          Path('publication/release-ledger-crates-io.json').write_text(json.dumps(ledger, indent=2) + '\n')
+          PY
+
+      - name: Upload crates.io publication ledger
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: capture-release-ledger-crates-io-${{ github.ref_name }}
+          path: publication/release-ledger-crates-io.json
+          if-no-files-found: error
+
+  registry-release-gate:
+    needs: [publish-npm, publish-pypi, publish-crates-io]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Download release candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: capture-candidate-${{ github.ref_name }}
+          path: publication
+
+      - name: Download per-registry publication ledgers
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: capture-release-ledger-*-${{ github.ref_name }}
+          path: publication/ledgers
+          merge-multiple: true
+
+      - name: Verify the release ledger and registry probes completed
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f publication/release-ledger.json
+          test "$(python -c 'import json; print(json.load(open("publication/release-ledger.json"))["status"])')" = candidate-verified
+          test -f publication/ledgers/release-ledger-npm.json
+          test -f publication/ledgers/release-ledger-pypi-capture-contracts.json
+          test -f publication/ledgers/release-ledger-pypi-capture-structuring.json
+          test -f publication/ledgers/release-ledger-crates-io.json
+          test "$(python -c 'import json; print(json.load(open("publication/ledgers/release-ledger-npm.json"))["status"])')" = npm-published
+          test "$(python -c 'import json; print(json.load(open("publication/ledgers/release-ledger-pypi-capture-contracts.json"))["status"])')" = pypi-capture-contracts-published
+          test "$(python -c 'import json; print(json.load(open("publication/ledgers/release-ledger-pypi-capture-structuring.json"))["status"])')" = pypi-capture-structuring-published
+          test "$(python -c 'import json; print(json.load(open("publication/ledgers/release-ledger-crates-io.json"))["status"])')" = crates-io-published
+          test -n "${GITHUB_REF_NAME#v}"

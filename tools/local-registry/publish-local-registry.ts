@@ -5,25 +5,37 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
-const packageManifestPath = join(
-  repoRoot,
-  'packages/capture-angular/package.json',
-);
-const packageManifest = JSON.parse(
-  readFileSync(packageManifestPath, 'utf8'),
-) as { name: string; version: string };
+interface PackageDescriptor {
+  readonly project: string;
+  readonly packageDirectory: string;
+  readonly manifest: { name: string; version: string };
+  readonly archivePath: string;
+  readonly builtManifestPath: string;
+}
+
+const packageDescriptors: readonly PackageDescriptor[] = [
+  'capture-contracts',
+  'capture-angular',
+  'capture-structuring',
+].map((project) => {
+  const manifest = JSON.parse(
+    readFileSync(join(repoRoot, `packages/${project}/package.json`), 'utf8'),
+  ) as { name: string; version: string };
+  return {
+    project,
+    packageDirectory: join(repoRoot, `dist/packages/${project}`),
+    manifest,
+    archivePath: join(
+      repoRoot,
+      'dist',
+      'packs',
+      packageArchiveName(manifest.name, manifest.version),
+    ),
+    builtManifestPath: join(repoRoot, `dist/packages/${project}/package.json`),
+  };
+});
 const registry =
   process.env.CAPTURE_WORKBENCH_LOCAL_REGISTRY ?? 'http://127.0.0.1:4873';
-const archivePath = join(
-  repoRoot,
-  'dist',
-  'packs',
-  packageArchiveName(packageManifest.name, packageManifest.version),
-);
-const builtManifestPath = join(
-  repoRoot,
-  'dist/packages/capture-angular/package.json',
-);
 const corepackCli = join(
   dirname(process.execPath),
   'node_modules',
@@ -55,7 +67,9 @@ function sha512Integrity(path: string): string {
   return `sha512-${createHash('sha512').update(readFileSync(path)).digest('base64')}`;
 }
 
-async function publishedPackageIntegrity(): Promise<string | undefined> {
+async function publishedPackageIntegrity(
+  packageManifest: PackageDescriptor['manifest'],
+): Promise<string | undefined> {
   const response = await fetch(
     `${registry}${packageMetadataPath(packageManifest.name)}`,
   );
@@ -68,10 +82,13 @@ async function publishedPackageIntegrity(): Promise<string | undefined> {
   const metadata = (await response.json()) as {
     versions?: Record<string, { dist?: { integrity?: unknown } }>;
   };
-  const integrity = metadata.versions?.[packageManifest.version]?.dist?.integrity;
+  const integrity =
+    metadata.versions?.[packageManifest.version]?.dist?.integrity;
   if (integrity === undefined) return undefined;
   if (typeof integrity !== 'string' || !integrity.startsWith('sha512-')) {
-    throw new Error('Local registry returned an invalid package integrity value.');
+    throw new Error(
+      'Local registry returned an invalid package integrity value.',
+    );
   }
   return integrity;
 }
@@ -114,69 +131,98 @@ async function main(): Promise<void> {
     'capture-angular:pack',
     '--skip-nx-cache',
   ]);
+  await run(process.execPath, [
+    corepackCli,
+    'pnpm',
+    'nx',
+    'run',
+    'capture-structuring:pack',
+    '--skip-nx-cache',
+  ]);
 
-  if (!existsSync(archivePath) || !existsSync(builtManifestPath)) {
-    throw new Error(
-      `Expected package artifacts were not created under ${repoRoot}/dist.`,
-    );
-  }
-
-  const originalBuiltManifest = readFileSync(builtManifestPath, 'utf8');
+  const originalBuiltManifests = new Map<string, string>();
   try {
-    const localBuiltManifest = JSON.parse(originalBuiltManifest) as {
-      publishConfig?: Record<string, unknown>;
-    };
-    localBuiltManifest.publishConfig = {
-      ...(localBuiltManifest.publishConfig ?? {}),
-      registry,
-    };
-    writeFileSync(
-      builtManifestPath,
-      `${JSON.stringify(localBuiltManifest, null, 2)}\n`,
-      'utf8',
-    );
-    rmSync(archivePath, { force: true });
-    await run(
-      process.execPath,
-      [corepackCli, 'pnpm', 'pack', '--pack-destination', '../../packs'],
-      join(repoRoot, 'dist/packages/capture-angular'),
-    );
-
-    if (!existsSync(archivePath)) {
-      throw new Error(
-        `Expected local package archive was not created: ${archivePath}`,
+    for (const descriptor of packageDescriptors) {
+      if (
+        !existsSync(descriptor.archivePath) ||
+        !existsSync(descriptor.builtManifestPath)
+      ) {
+        throw new Error(
+          `Expected ${descriptor.manifest.name} artifacts were not created under ${repoRoot}/dist.`,
+        );
+      }
+      const originalBuiltManifest = readFileSync(
+        descriptor.builtManifestPath,
+        'utf8',
       );
-    }
-
-    const localIntegrity = sha512Integrity(archivePath);
-    const existingIntegrity = await publishedPackageIntegrity();
-    const decision = packagePublicationDecision(existingIntegrity, localIntegrity);
-    if (decision === 'publish') {
-      await run(process.execPath, [
-        corepackCli,
-        'pnpm',
-        'publish',
-        archivePath,
-        '--registry',
+      originalBuiltManifests.set(
+        descriptor.builtManifestPath,
+        originalBuiltManifest,
+      );
+      const localBuiltManifest = JSON.parse(originalBuiltManifest) as {
+        publishConfig?: Record<string, unknown>;
+      };
+      localBuiltManifest.publishConfig = {
+        ...(localBuiltManifest.publishConfig ?? {}),
         registry,
-        '--no-git-checks',
-        '--tag',
-        'local',
-      ]);
-    }
+      };
+      writeFileSync(
+        descriptor.builtManifestPath,
+        `${JSON.stringify(localBuiltManifest, null, 2)}\n`,
+        'utf8',
+      );
+      rmSync(descriptor.archivePath, { force: true });
+      await run(
+        process.execPath,
+        [corepackCli, 'pnpm', 'pack', '--pack-destination', '../../packs'],
+        descriptor.packageDirectory,
+      );
 
-    const publishedIntegrity = await publishedPackageIntegrity();
-    if (publishedIntegrity !== localIntegrity) {
-      throw new Error(
-        'Local registry package integrity did not match the synchronized package.',
+      if (!existsSync(descriptor.archivePath)) {
+        throw new Error(
+          `Expected local package archive was not created: ${descriptor.archivePath}`,
+        );
+      }
+
+      const localIntegrity = sha512Integrity(descriptor.archivePath);
+      const existingIntegrity = await publishedPackageIntegrity(
+        descriptor.manifest,
+      );
+      const decision = packagePublicationDecision(
+        existingIntegrity,
+        localIntegrity,
+      );
+      if (decision === 'publish') {
+        await run(process.execPath, [
+          corepackCli,
+          'pnpm',
+          'publish',
+          descriptor.archivePath,
+          '--registry',
+          registry,
+          '--no-git-checks',
+          '--tag',
+          'local',
+        ]);
+      }
+
+      const publishedIntegrity = await publishedPackageIntegrity(
+        descriptor.manifest,
+      );
+      if (publishedIntegrity !== localIntegrity) {
+        throw new Error(
+          'Local registry package integrity did not match the synchronized package.',
+        );
+      }
+
+      process.stdout.write(
+        `${decision === 'publish' ? 'Published' : 'Reused'} ${descriptor.manifest.name}@${descriptor.manifest.version} at ${registry} with matching integrity.\n`,
       );
     }
-
-    process.stdout.write(
-      `${decision === 'publish' ? 'Published' : 'Reused'} ${packageManifest.name}@${packageManifest.version} at ${registry} with matching integrity.\n`,
-    );
   } finally {
-    writeFileSync(builtManifestPath, originalBuiltManifest, 'utf8');
+    for (const [path, contents] of originalBuiltManifests) {
+      writeFileSync(path, contents, 'utf8');
+    }
   }
 }
 

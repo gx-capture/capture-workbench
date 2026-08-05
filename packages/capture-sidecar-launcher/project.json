@@ -1,0 +1,44 @@
+{
+  "name": "capture-sidecar-launcher",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "packages/capture-sidecar-launcher/src",
+  "projectType": "library",
+  "tags": ["scope:capture", "type:sidecar-launcher", "platform:rust"],
+  "targets": {
+    "cargo-fmt-check": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo fmt --manifest-path packages/capture-sidecar-launcher/Cargo.toml -- --check"
+      }
+    },
+    "cargo-check": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo check --manifest-path packages/capture-sidecar-launcher/Cargo.toml"
+      }
+    },
+    "cargo-test": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo test --manifest-path packages/capture-sidecar-launcher/Cargo.toml"
+      }
+    },
+    "cargo-package-dry-run": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo package --manifest-path packages/capture-sidecar-launcher/Cargo.toml --allow-dirty"
+      }
+    },
+    "cargo-publish-dry-run": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo publish --manifest-path packages/capture-sidecar-launcher/Cargo.toml --allow-dirty --dry-run"
+      }
+    }
+  }
+}

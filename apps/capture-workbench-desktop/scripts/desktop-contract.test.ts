@@ -100,7 +100,9 @@ function nativeCommandLines(script: string): string[] {
   return script
     .split(/\r?\n/u)
     .map((line) => line.trim())
-    .filter((line) => /^(?:cargo|gh|git|node|npm|pnpm|rustup|uv)\b/u.test(line));
+    .filter((line) =>
+      /^(?:cargo|gh|git|node|npm|pnpm|rustup|uv)\b/u.test(line),
+    );
 }
 
 function invokesFullWorkspaceVerify(line: string): boolean {
@@ -121,9 +123,7 @@ function assertNativeErrorPreferenceWindow(
     .filter((line) => line.length > 0 && !line.startsWith('#'));
   const disabledIndexes = lines
     .map((line, index) =>
-      line === '$PSNativeCommandUseErrorActionPreference = $false'
-        ? index
-        : -1,
+      line === '$PSNativeCommandUseErrorActionPreference = $false' ? index : -1,
     )
     .filter((index) => index >= 0);
   assert.equal(
@@ -184,7 +184,10 @@ test('workflow run extraction covers compact steps and every valid block scalar 
     ].join('\n');
     assert.deepEqual(
       workflowRunScripts(workflow),
-      [`      echo "${expression}"\n      node tools/check.mjs`, 'echo next-step'],
+      [
+        `      echo "${expression}"\n      node tools/check.mjs`,
+        'echo next-step',
+      ],
       blockIndicator,
     );
     const scalarStep = requiredWorkflowStep(
@@ -264,6 +267,21 @@ test('Nx separates root verification build from release and deterministic NSIS l
     directmlSmoke.options.commands.at(-1),
     /--expected-ocr-device windowsml-dml$/u,
   );
+});
+
+test('desktop CI binds its staged contract resources to generated contracts', async () => {
+  const project = JSON.parse(
+    await readFile(join(appRoot, 'project.json'), 'utf8'),
+  );
+  assert.match(
+    project.targets['contract-consistency'].options.command,
+    /check-desktop-contract-consistency\.ts/u,
+  );
+  const ci = await readFile(
+    join(appRoot, '..', '..', '.github', 'workflows', 'ci.yml'),
+    'utf8',
+  );
+  assert.match(ci, /capture-workbench-desktop:contract-consistency/u);
 });
 
 test('production CSP is strict while allowing only dynamic loopback API ports', async () => {
@@ -409,12 +427,11 @@ test('native source import keeps renderer IPC path-only and responses path-free'
 
 test('native cleanup is PID-scoped and never executable-name scoped', async () => {
   const source = await readFile(
-    join(appRoot, 'src-tauri', 'src', 'process.rs'),
+    join(appRoot, 'scripts', 'installed-process-cleanup.ts'),
     'utf8',
   );
-  assert.match(source, /"\/PID"/u);
-  assert.match(source, /"\/T"/u);
-  assert.doesNotMatch(source, /"\/IM"\s*,/u);
+  assert.match(source, /\['\/PID',\s*String\(child\.pid\),\s*'\/T',\s*'\/F'\]/u);
+  assert.doesNotMatch(source, /'\/IM'\s*,/u);
 });
 
 test('desktop launcher advertises the bounded 50 MiB upload policy', async () => {
@@ -546,10 +563,7 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
       'utf8',
     ),
   ]);
-  const actionReferences = [
-    workflow,
-    ciWorkflow,
-  ].flatMap((source) =>
+  const actionReferences = [workflow, ciWorkflow].flatMap((source) =>
     [...source.matchAll(/uses:\s*[^@\s]+@([^\s#]+)/gu)].map(
       (match) => match[1],
     ),
@@ -567,7 +581,16 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
     workflow,
     /clean-install|attestation|production-preflight/u,
   );
-  assert.match(workflow, /publish:[\s\S]*needs: build-candidate/u);
+  for (const jobName of ['publish-npm', 'publish-pypi', 'publish-crates-io']) {
+    assert.match(
+      workflow,
+      new RegExp(`${jobName}:[\\s\\S]*needs: build-candidate`, 'u'),
+    );
+  }
+  assert.match(
+    workflow,
+    /registry-release-gate:[\s\S]*needs:\s*\[publish-npm, publish-pypi, publish-crates-io\]/u,
+  );
   assert.match(workflow, /fetch-depth: 0/u);
   const fetchMainIndex = workflow.indexOf(
     'git fetch --no-tags origin refs/heads/main:refs/remotes/origin/main',
@@ -626,7 +649,7 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
     'Upload release candidate',
     'Download release candidate',
     'Install publication script dependencies',
-    'Publish runtime first, then the exact Capture Workbench package idempotently',
+    'Publish runtime first, then the exact release packages idempotently',
   ];
   const retainedReleaseStepIndexes = retainedReleaseStepNames.map((name) => {
     const index = workflow.indexOf(`- name: ${name}`);
@@ -635,14 +658,37 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   });
   for (let index = 1; index < retainedReleaseStepIndexes.length; index += 1) {
     assert.ok(
-      retainedReleaseStepIndexes[index - 1] <
-        retainedReleaseStepIndexes[index],
+      retainedReleaseStepIndexes[index - 1] < retainedReleaseStepIndexes[index],
       `Release step order is invalid around ${retainedReleaseStepNames[index]}`,
     );
   }
-  assert.doesNotMatch(workflow, /model-candidate\.yml|CAPTURE_MODEL_RECEIPT|trusted model candidate/u);
+  assert.doesNotMatch(
+    workflow,
+    /model-candidate\.yml|CAPTURE_MODEL_RECEIPT|trusted model candidate/u,
+  );
   const releaseRunScripts = workflowRunScripts(workflow);
-  assert.doesNotMatch(releaseRunScripts.join('\n'), /\$\{\{/u);
+  const releaseExpressions = [
+    ...new Set(
+      releaseRunScripts.flatMap(
+        (script) => script.match(/\$\{\{[^}]+\}\}/gu) ?? [],
+      ),
+    ),
+  ];
+  const allowedReleaseExpressions = new Set([
+    '${{ github.ref_name }}',
+    '${{ github.token }}',
+    '${{ matrix.environment }}',
+    '${{ matrix.module }}',
+    '${{ matrix.prefix }}',
+    '${{ matrix.project }}',
+    '${{ steps.release-model-mode.outputs.mode }}',
+  ]);
+  assert.ok(
+    releaseExpressions.every((expression) =>
+      allowedReleaseExpressions.has(expression),
+    ),
+    `Unexpected release workflow expressions: ${releaseExpressions.join(', ')}`,
+  );
   const normalizedReleaseRunLines = releaseRunScripts.flatMap((script) =>
     script.split(/\r?\n/u).map((line) => line.trim()),
   );
@@ -681,14 +727,18 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
         /name: capture-candidate-\$\{\{ github\.ref_name \}\}/gu,
       ) ?? []
     ).length,
-    2,
+    5,
   );
   assert.match(workflow, /compression-level: 0/u);
   assert.match(workflow, /retention-days: 1/u);
   assert.match(workflow, /capture-workbench-desktop:build-nsis/u);
-  assert.match(workflow, /installed-deterministic-smoke\.ts --measure-release-size/u);
+  assert.match(
+    workflow,
+    /installed-deterministic-smoke\.ts --measure-release-size/u,
+  );
   assert.match(workflow, /capture-runtime:size-regression-check/u);
   assert.match(workflow, /capture-angular:pack/u);
+  assert.match(workflow, /capture-contracts:pack/u);
   assert.match(workflow, /actions\/upload-artifact@[0-9a-f]{40}/u);
   assert.match(workflow, /actions\/download-artifact@[0-9a-f]{40}/u);
   assert.match(workflow, /publish-release\.ts/u);
@@ -696,7 +746,7 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   assert.doesNotMatch(workflow, /--clobber|gh release upload/u);
   assert.match(
     workflow,
-    /publish:[\s\S]*contents: write[\s\S]*packages: write/u,
+    /publish-npm:[\s\S]*contents: write[\s\S]*packages: write/u,
   );
   assert.equal((workflow.match(/contents: write/gu) ?? []).length, 1);
   assert.equal((workflow.match(/packages: write/gu) ?? []).length, 1);
@@ -735,7 +785,10 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
     ciSteps.some((step) => step.name === 'Verify measured size budgets'),
     false,
   );
-  assert.doesNotMatch(ciWorkflow, /installed-deterministic-smoke\.ts --measure-release-size/u);
+  assert.doesNotMatch(
+    ciWorkflow,
+    /installed-deterministic-smoke\.ts --measure-release-size/u,
+  );
   assert.doesNotMatch(ciWorkflow, /capture-runtime:size-regression-check/u);
   const ciDiagnosticsStep = requiredWorkflowStep(
     ciSteps,
@@ -780,7 +833,7 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   const releasePublishIndex = releaseSteps.findIndex(
     (step) =>
       step.name ===
-      'Publish runtime first, then the exact Capture Workbench package idempotently',
+      'Publish runtime first, then the exact release packages idempotently',
   );
   requiredWorkflowStep(
     releaseSteps,
@@ -821,6 +874,7 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
     candidateAssemblyScript,
     /Copy-Item packages\/capture-runtime\/dist\/release\/\* -Destination \$runtime/u,
   );
+  assert.match(candidateAssemblyScript, /\$packages\.Count -ne 3/u);
   assert.match(
     candidateAssemblyScript,
     /Capture\.Workbench_\$\(\$Matches\.version\)_x64-setup\.exe/u,
@@ -849,13 +903,13 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
     releaseSteps,
     'Upload release candidate',
   );
-  const releaseDownloadStep = requiredWorkflowStep(
-    releaseSteps,
-    'Download release candidate',
+  const releaseDownloadSteps = releaseSteps.filter(
+    (step) => step.name === 'Download release candidate',
   );
+  assert.equal(releaseDownloadSteps.length, 4);
   for (const candidateTransferStep of [
     releaseUploadStep,
-    releaseDownloadStep,
+    ...releaseDownloadSteps,
   ]) {
     assert.match(
       candidateTransferStep.source,
@@ -864,7 +918,7 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   }
   const releasePublishStep = requiredWorkflowStep(
     releaseSteps,
-    'Publish runtime first, then the exact Capture Workbench package idempotently',
+    'Publish runtime first, then the exact release packages idempotently',
   );
   assert.match(
     releasePublishStep.script ?? '',
@@ -874,6 +928,8 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
     releasePublishStep.script ?? '',
     /--installer \$installers\[0\]\.FullName/u,
   );
+  assert.match(releasePublishStep.script ?? '', /@packageArgs/u);
+  assert.match(publisher, /releasePackageNames/u);
 
   for (const [workflowName, steps] of [
     ['CI', ciSteps],

@@ -30,7 +30,13 @@
     },
     "pack": {
       "executor": "nx:run-commands",
-      "dependsOn": ["build"],
+      "dependsOn": [
+        "build",
+        {
+          "target": "pack",
+          "projects": ["capture-contracts"]
+        }
+      ],
       "outputs": ["{workspaceRoot}/dist/packs"],
       "options": {
         "cwd": "dist/packages/capture-angular",

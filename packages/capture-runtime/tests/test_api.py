@@ -21,7 +21,7 @@ from capture_runtime.ollama import (
     IsolatedOllamaLifecycle,
     SystemRuntimeInstaller,
 )
-from capture_runtime.structuring import FakeCaptureStructuringProvider
+from capture_runtime.structuring_provider import FakeCaptureStructuringProvider
 
 
 def test_health_auth_host_origin_and_version_handshake(client: TestClient) -> None:

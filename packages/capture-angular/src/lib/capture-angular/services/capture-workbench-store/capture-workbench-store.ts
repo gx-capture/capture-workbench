@@ -112,6 +112,9 @@ export class CaptureWorkbenchStore {
         compatibleRuntimeMajor:
           config.compatibleRuntimeMajor ??
           DEFAULT_CAPTURE_WORKBENCH_CONFIG.compatibleRuntimeMajor,
+        compatibleRuntimeMinor:
+          config.compatibleRuntimeMinor ??
+          DEFAULT_CAPTURE_WORKBENCH_CONFIG.compatibleRuntimeMinor,
         structuringMode:
           config.structuringMode ??
           DEFAULT_CAPTURE_WORKBENCH_CONFIG.structuringMode,
@@ -124,6 +127,7 @@ export class CaptureWorkbenchStore {
           !!right &&
           left.client === right.client &&
           left.compatibleRuntimeMajor === right.compatibleRuntimeMajor &&
+          left.compatibleRuntimeMinor === right.compatibleRuntimeMinor &&
           left.structuringMode === right.structuringMode),
     },
   );
@@ -145,6 +149,7 @@ export class CaptureWorkbenchStore {
             ready,
             params.compatibleRuntimeMajor,
             params.structuringMode,
+            params.compatibleRuntimeMinor,
           );
           return { ready, requirements };
         }),
@@ -288,13 +293,13 @@ export class CaptureWorkbenchStore {
       task.raw?.segments.find((segment) => segment.segmentId === segmentId)
         ?.text ?? '';
     return (
-      task.review?.edits.find((edit) => edit.segmentId === segmentId)
+      task.review?.edits?.find((edit) => edit.segmentId === segmentId)
         ?.reviewedText ?? original
     );
   }
 
   isReviewed(task: CaptureTaskView, segmentId: string): boolean {
-    return task.review?.edits.some((edit) => edit.segmentId === segmentId) ?? false;
+    return task.review?.edits?.some((edit) => edit.segmentId === segmentId) ?? false;
   }
 
   restoreOriginal(task: CaptureTaskView, segmentId: string): void {

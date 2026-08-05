@@ -7,15 +7,7 @@ from pathlib import Path
 
 import httpx
 import pytest
-
-from capture_runtime.clock import Clock
-from capture_runtime.config import OllamaRuntimeConfig
-from capture_runtime.contracts import CaptureDocumentV1, RawCaptureV1
-from capture_runtime.ollama import (
-    OllamaCaptureStructuringProvider,
-    RuntimeUnavailableError,
-)
-from capture_runtime.structuring import (
+from capture_structuring import (
     CAPTURE_BLOCK_BATCH_SCHEMA,
     CAPTURE_IDENTITY_BLOCK_BATCH_SCHEMA,
     OLLAMA_CAPTURE_BLOCK_BATCH_SCHEMA,
@@ -23,6 +15,14 @@ from capture_runtime.structuring import (
     StructuringValidationError,
     ollama_structuring_batch_schema,
     validate_structuring_candidate,
+)
+
+from capture_runtime.clock import Clock
+from capture_runtime.config import OllamaRuntimeConfig
+from capture_runtime.contracts import CaptureDocumentV1, RawCaptureV1
+from capture_runtime.ollama import (
+    OllamaCaptureStructuringProvider,
+    RuntimeUnavailableError,
 )
 
 NOW = datetime(2026, 7, 20, 8, 0, tzinfo=UTC)
@@ -180,7 +180,9 @@ def test_isolated_ollama_structures_token_bounded_batches(tmp_path: Path) -> Non
     )
 
     assert isinstance(document, CaptureDocumentV1)
-    assert validate_structuring_candidate(document, raw) == document
+    assert (
+        CaptureDocumentV1.model_validate(validate_structuring_candidate(document, raw)) == document
+    )
     assert lifecycle.starts == 1
     assert document.created_at == NOW
     assert document.completed_at == COMPLETED_AT
@@ -224,7 +226,10 @@ def test_isolated_ollama_rebuilds_trusted_identity_target_from_raw_segments(
     )
 
     assert isinstance(document, CaptureDocumentV1)
-    assert validate_structuring_candidate(document, _raw()) == document
+    assert (
+        CaptureDocumentV1.model_validate(validate_structuring_candidate(document, _raw()))
+        == document
+    )
     assert document.blocks[0].block_id == "block-page-1"
     assert document.blocks[0].source_segment_id == "page-1"
     assert document.blocks[0].source_text == _raw().segments[0].text

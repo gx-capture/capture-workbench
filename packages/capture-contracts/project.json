@@ -1,0 +1,86 @@
+{
+  "name": "capture-contracts",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "packages/capture-contracts/src",
+  "projectType": "library",
+  "tags": ["npm:public", "scope:capture", "type:contract"],
+  "targets": {
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm exec tsc --noEmit -p packages/capture-contracts/tsconfig.json"
+      }
+    },
+    "build": {
+      "executor": "@nx/js:tsc",
+      "outputs": ["{workspaceRoot}/dist/{projectRoot}"],
+      "options": {
+        "main": "packages/capture-contracts/src/index.ts",
+        "outputPath": "dist/packages/capture-contracts",
+        "outputFileName": "index.js",
+        "rootDir": "packages/capture-contracts/src",
+        "tsConfig": "packages/capture-contracts/tsconfig.lib.json",
+        "assets": [
+          {
+            "glob": "README.md",
+            "input": "packages/capture-contracts",
+            "output": "."
+          },
+          {
+            "glob": "**/*.json",
+            "input": "packages/capture-contracts/src/generated/schemas",
+            "output": "generated/schemas"
+          },
+          {
+            "glob": "contract-manifest.json",
+            "input": "packages/capture-contracts/src/generated",
+            "output": "generated"
+          }
+        ],
+        "generatePackageJson": true,
+        "generateExportsField": true
+      }
+    },
+    "pack": {
+      "executor": "nx:run-commands",
+      "dependsOn": ["build"],
+      "outputs": ["{workspaceRoot}/dist/packs"],
+      "options": {
+        "cwd": "dist/packages/capture-contracts",
+        "command": "corepack pnpm pack --pack-destination ../../packs"
+      }
+    },
+    "release": {
+      "version": {
+        "manifestRootsToUpdate": ["dist/{projectRoot}"],
+        "currentVersionResolver": "git-tag",
+        "fallbackCurrentVersionResolver": "disk"
+      }
+    },
+    "nx-release-publish": {
+      "options": {
+        "packageRoot": "dist/{projectRoot}"
+      }
+    },
+    "python-build": {
+      "executor": "nx:run-commands",
+      "outputs": ["{projectRoot}/python/dist"],
+      "options": {
+        "command": "uv build --project packages/capture-contracts/python"
+      }
+    },
+    "python-smoke": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "uv run --project packages/capture-contracts/python python -c \"import capture_contracts; assert capture_contracts.CAPTURE_RUNTIME_VERSION == capture_contracts.load_contract_manifest()['runtimeVersion']; assert capture_contracts.load_contract_schema('RawCaptureV1')['title'] == 'RawCaptureV1'; assert capture_contracts.load_contract_manifest()['generator']['schemaGenerator'] == 'pydantic.model_json_schema'\""
+      }
+    },
+    "python-wheel-smoke": {
+      "executor": "nx:run-commands",
+      "dependsOn": ["python-build"],
+      "options": {
+        "command": "uv run tools/smoke-capture-contracts-wheel.py"
+      }
+    }
+  }
+}

@@ -15,7 +15,8 @@
   },
   "dependencies": {
     "@angular/compiler": "22.0.7",
-    "@angular/elements": "22.0.7"
+    "@angular/elements": "22.0.7",
+    "@gx-capture/capture-contracts": "workspace:*"
   },
   "peerDependencies": {
     "@angular/core": "^22.0.0",

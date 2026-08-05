@@ -94,6 +94,19 @@
         "command": "cargo test --manifest-path apps/capture-workbench-desktop/src-tauri/Cargo.toml"
       }
     },
+    "contract-consistency": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "dependsOn": [
+        {
+          "target": "check-contracts",
+          "projects": ["capture-runtime"]
+        }
+      ],
+      "options": {
+        "command": "node tools/check-desktop-contract-consistency.ts"
+      }
+    },
     "stage-deterministic-runtime": {
       "cache": false,
       "executor": "nx:run-commands",

@@ -1,0 +1,40 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "code": {
+      "pattern": "^[a-z][a-z0-9_]{1,63}$",
+      "title": "Code",
+      "type": "string"
+    },
+    "message": {
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Message",
+      "type": "string"
+    },
+    "stage": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Stage"
+    },
+    "retryable": {
+      "default": false,
+      "title": "Retryable",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "code",
+    "message"
+  ],
+  "title": "CaptureFailureV1",
+  "type": "object"
+}

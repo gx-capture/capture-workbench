@@ -1,0 +1,22 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "code": {
+      "pattern": "^[a-z][a-z0-9_]{1,63}$",
+      "title": "Code",
+      "type": "string"
+    },
+    "message": {
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Message",
+      "type": "string"
+    }
+  },
+  "required": [
+    "code",
+    "message"
+  ],
+  "title": "ReportStructuringFailureV1",
+  "type": "object"
+}

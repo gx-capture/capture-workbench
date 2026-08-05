@@ -1,4 +1,4 @@
-import { CAPTURE_RUNTIME_MAJOR } from './runtime';
+import { CAPTURE_RUNTIME_MAJOR, CAPTURE_RUNTIME_MINOR } from './runtime';
 import type { ResolvedCaptureWorkbenchConfig } from '../contracts/workbench';
 
 export const DEFAULT_CAPTURE_WORKBENCH_CONFIG: ResolvedCaptureWorkbenchConfig = {
@@ -18,4 +18,5 @@ export const DEFAULT_CAPTURE_WORKBENCH_CONFIG: ResolvedCaptureWorkbenchConfig = 
   height: 'auto',
   density: 'comfortable',
   compatibleRuntimeMajor: CAPTURE_RUNTIME_MAJOR,
+  compatibleRuntimeMinor: CAPTURE_RUNTIME_MINOR,
 };

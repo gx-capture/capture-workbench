@@ -1,10 +1,12 @@
 use std::path::PathBuf;
 
+use capture_sidecar_launcher::{load_manifest, validate_manifest_contract, ManifestExpectations};
 use tauri::{path::BaseDirectory, App, Manager, Runtime};
 
-use crate::{
-    constants::{RUNTIME_BINARY_FILE, RUNTIME_BINARY_TARGET_FILE, RUNTIME_MANIFEST_FILE},
-    manifest::{load_runtime_manifest, validate_manifest_contract},
+use crate::constants::{
+    EXPECTED_API_VERSION, EXPECTED_CAPTURE_DOCUMENT_SCHEMA_VERSION, EXPECTED_MANIFEST_VERSION,
+    EXPECTED_RUNTIME_VERSION, RUNTIME_BINARY_FILE, RUNTIME_BINARY_TARGET_FILE,
+    RUNTIME_MANIFEST_FILE, SCHEMA_FILE_NAME,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -21,8 +23,20 @@ pub(crate) fn resolve_runtime_assets<R: Runtime>(app: &App<R>) -> Result<Runtime
 
     let manifest_path = first_file(manifest_candidates(app))
         .ok_or_else(|| "Bundled Capture runtime manifest was not found.".to_string())?;
-    let manifest = load_runtime_manifest(&manifest_path)?;
-    validate_manifest_contract(&manifest)?;
+    let manifest = load_manifest(&manifest_path)?;
+    if manifest.manifest_version != EXPECTED_MANIFEST_VERSION {
+        return Err("Bundled Capture runtime manifest version is incompatible.".into());
+    }
+    validate_manifest_contract(
+        &manifest,
+        &ManifestExpectations {
+            runtime_version: EXPECTED_RUNTIME_VERSION.into(),
+            api_version: EXPECTED_API_VERSION.into(),
+            capture_document_schema_version: EXPECTED_CAPTURE_DOCUMENT_SCHEMA_VERSION.into(),
+            file_name: RUNTIME_BINARY_TARGET_FILE.into(),
+            schema_file_name: SCHEMA_FILE_NAME.into(),
+        },
+    )?;
 
     let executable_path = first_file(executable_candidates(app, &manifest.file_name))
         .ok_or_else(|| "Bundled Capture runtime executable was not found.".to_string())?;

@@ -62,6 +62,23 @@ class StructuringMode(StrEnum):
     HOST = "host"
 
 
+class CaptureReviewEditV1(StrictModel):
+    segment_id: NonEmptyString
+    reviewed_text: CaptureText
+
+
+class CaptureReviewV1(StrictModel):
+    review_version: Literal[1] = 1
+    edits: list[CaptureReviewEditV1] = Field(default_factory=list, max_length=10_000)
+
+    @model_validator(mode="after")
+    def validate_unique_segments(self) -> Self:
+        identifiers = [edit.segment_id for edit in self.edits]
+        if len(identifiers) != len(set(identifiers)):
+            raise ValueError("review edits must contain unique segmentId values")
+        return self
+
+
 class CaptureJobStatus(StrEnum):
     QUEUED = "queued"
     RUNNING = "running"
@@ -95,6 +112,14 @@ class RuntimeRequirementStatus(StrEnum):
     INSTALLABLE = "installable"
     MANUAL_ACTION_REQUIRED = "manual_action_required"
     UNAVAILABLE = "unavailable"
+
+
+CaptureRequirementId = Literal[
+    "windowsml-ocr",
+    "whisper-primary",
+    "ollama-runtime",
+    "capture-ollama-model",
+]
 
 
 class PageLocatorV1(StrictModel):
@@ -275,12 +300,7 @@ class RuntimeArtifactDescriptorV1(StrictModel):
 
 
 class RuntimeRequirementV1(StrictModel):
-    requirement_id: Literal[
-        "windowsml-ocr",
-        "whisper-primary",
-        "ollama-runtime",
-        "capture-ollama-model",
-    ]
+    requirement_id: CaptureRequirementId
     kind: NonEmptyString
     display_name: NonEmptyString
     status: RuntimeRequirementStatus
@@ -295,23 +315,13 @@ class RuntimeRequirementsV1(StrictModel):
 
 
 class StartRuntimeInstallationV1(StrictModel):
-    requirement_id: Literal[
-        "windowsml-ocr",
-        "whisper-primary",
-        "ollama-runtime",
-        "capture-ollama-model",
-    ]
+    requirement_id: CaptureRequirementId
     consent: Literal[True]
 
 
 class RuntimeInstallationV1(StrictModel):
     installation_id: str
-    requirement_id: Literal[
-        "windowsml-ocr",
-        "whisper-primary",
-        "ollama-runtime",
-        "capture-ollama-model",
-    ]
+    requirement_id: CaptureRequirementId
     status: RuntimeInstallationStatus
     progress: float = Field(ge=0, le=1)
     error: CaptureFailureV1 | None = None
@@ -329,8 +339,8 @@ class RuntimeInstallationsV1(StrictModel):
 
 
 class RuntimeCapabilitiesV1(StrictModel):
-    capture_kinds: list[Literal["pdf", "image", "audio"]]
-    structuring_modes: list[Literal["runtime", "host"]]
+    capture_kinds: list[CaptureSourceKind]
+    structuring_modes: list[StructuringMode]
     supports_cancellation: Literal[True] = True
     supports_raw_diagnostics: Literal[True] = True
     max_upload_bytes: int = Field(gt=0)
@@ -340,6 +350,8 @@ class RuntimeReadyV1(StrictModel):
     ready: bool
     service: Literal["capture-runtime"] = "capture-runtime"
     api_version: Literal["1.0"] = API_VERSION
+    # This exact Literal is the release handshake and must stay synchronized
+    # with RUNTIME_VERSION when the runtime version changes.
     runtime_version: Literal["0.3.9"] = RUNTIME_VERSION
     capture_document_schema_version: Literal["1"] = CAPTURE_DOCUMENT_SCHEMA_VERSION
     capabilities: RuntimeCapabilitiesV1

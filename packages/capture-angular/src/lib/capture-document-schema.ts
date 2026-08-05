@@ -1,19 +1,16 @@
 import {
+  CAPTURE_DOCUMENT_SCHEMA_SHA256,
   CAPTURE_DOCUMENT_SCHEMA_VERSION,
-  type CaptureDocumentContractV1,
-} from './contracts';
-import {
-  GENERATED_CAPTURE_DOCUMENT_V1_JSON_SCHEMA,
-  GENERATED_CAPTURE_DOCUMENT_V1_SCHEMA_SHA256,
-} from './generated/capture-document-v1-schema.generated';
+  CAPTURE_DOCUMENT_V1_JSON_SCHEMA as CAPTURE_CONTRACT_DOCUMENT_SCHEMA,
+} from '@gx-capture/capture-contracts';
+import type { CaptureDocumentContractV1 } from './contracts';
 
 export const CAPTURE_DOCUMENT_V1_JSON_SCHEMA = deepFreeze(
-  GENERATED_CAPTURE_DOCUMENT_V1_JSON_SCHEMA,
+  CAPTURE_CONTRACT_DOCUMENT_SCHEMA,
 );
 
 /** SHA-256 of the canonical CRLF-terminated Windows release schema bytes. */
-export const CAPTURE_DOCUMENT_V1_SCHEMA_SHA256 =
-  GENERATED_CAPTURE_DOCUMENT_V1_SCHEMA_SHA256;
+export const CAPTURE_DOCUMENT_V1_SCHEMA_SHA256 = CAPTURE_DOCUMENT_SCHEMA_SHA256;
 
 export const CAPTURE_DOCUMENT_V1_CONTRACT: CaptureDocumentContractV1 =
   deepFreeze({

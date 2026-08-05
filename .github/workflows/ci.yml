@@ -55,6 +55,25 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
+          pnpm nx run capture-contracts:lint
+          pnpm nx run capture-contracts:typecheck
+          pnpm nx run capture-contracts:build
+          pnpm nx run capture-contracts:python-build
+          pnpm nx run capture-contracts:python-smoke
+          pnpm nx run capture-contracts:python-wheel-smoke
+          pnpm nx run capture-structuring:lint
+          pnpm nx run capture-structuring:typecheck
+          pnpm nx run capture-structuring:test
+          pnpm nx run capture-structuring:build
+          pnpm nx run capture-structuring-python:test
+          pnpm nx run capture-structuring-python:lint
+          pnpm nx run capture-structuring-python:typecheck
+          pnpm nx run capture-structuring-python:build
+          pnpm nx run capture-structuring-python:wheel-smoke
+          pnpm nx run capture-sidecar-launcher:cargo-fmt-check
+          pnpm nx run capture-sidecar-launcher:cargo-check
+          pnpm nx run capture-sidecar-launcher:cargo-test
+          pnpm nx run capture-sidecar-launcher:cargo-package-dry-run
           pnpm nx run capture-angular:lint
           pnpm nx run capture-angular:test
           pnpm nx run capture-angular:build
@@ -76,6 +95,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
           pnpm nx run capture-runtime:python-version-check
+          pnpm nx run capture-runtime:check-contracts
           pnpm nx run capture-runtime:lint
           pnpm nx run capture-runtime:typecheck
           pnpm nx run capture-runtime:test
@@ -100,6 +120,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
           pnpm nx run capture-workbench-desktop:cargo-fmt-check
+          pnpm nx run capture-workbench-desktop:contract-consistency
           pnpm nx run capture-workbench-desktop:cargo-check
           pnpm nx run capture-workbench-desktop:cargo-test
           pnpm nx run capture-workbench-desktop:package-qa-test
