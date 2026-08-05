@@ -786,8 +786,9 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   );
   assert.match(
     workflow,
-    /crates\.io\/api\/v1\/crates\/capture-sidecar-launcher[\s\S]*--user-agent "gx-capture-release\//u,
+    /static\.crates\.io\/crates\/capture-sidecar-launcher[\s\S]*sha256sum "\$archive_path"[\s\S]*cargo publish/u,
   );
+  assert.doesNotMatch(workflow, /crates\.io\/api\/v1\/crates/u);
   assert.match(
     workflow,
     /dtolnay\/rust-toolchain@[0-9a-f]{40}[\s\S]*with:\s*\r?\n\s+toolchain: stable/u,

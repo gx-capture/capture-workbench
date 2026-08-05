@@ -574,16 +574,17 @@ jobs:
         run: |
           set -euo pipefail
           expected_sha256="$(python -c 'import json; print(next(item["sha256"] for item in json.load(open("publication/release-ledger.json"))["artifacts"] if item["registry"] == "crates.io"))')"
-          api_response="$RUNNER_TEMP/capture-sidecar-launcher-crates-api.json"
-          api_status="$(curl --silent --show-error --retry 3 --retry-delay 2 --user-agent "gx-capture-release/${RELEASE_TAG} (https://github.com/gx-capture/capture-workbench)" --header 'Accept: application/json' --output "$api_response" --write-out '%{http_code}' "https://crates.io/api/v1/crates/capture-sidecar-launcher/${RELEASE_TAG#v}")"
-          if [ "$api_status" = '200' ]; then
-            remote_sha256="$(python -c 'import json; print(json.load(open("'"$api_response"'"))["version"]["checksum"])')"
+          version="${RELEASE_TAG#v}"
+          archive_path="$RUNNER_TEMP/capture-sidecar-launcher-${version}.crate"
+          archive_status="$(curl --silent --show-error --location --retry 3 --retry-delay 2 --user-agent "gx-capture-release/${RELEASE_TAG} (https://github.com/gx-capture/capture-workbench)" --output "$archive_path" --write-out '%{http_code}' "https://static.crates.io/crates/capture-sidecar-launcher/capture-sidecar-launcher-${version}.crate" || true)"
+          if [ "$archive_status" = '200' ]; then
+            remote_sha256="$(sha256sum "$archive_path" | cut -d ' ' -f1)"
             test "$remote_sha256" = "$expected_sha256"
-          elif [ "$api_status" = '404' ]; then
+          elif [ "$archive_status" = '404' ]; then
             test -n "$CARGO_REGISTRY_TOKEN"
             cargo publish --manifest-path packages/capture-sidecar-launcher/Cargo.toml --locked --token "$CARGO_REGISTRY_TOKEN"
           else
-            echo "Unexpected crates.io API status: $api_status" >&2
+            echo "Unexpected crates.io static archive status: $archive_status" >&2
             exit 1
           fi
 
