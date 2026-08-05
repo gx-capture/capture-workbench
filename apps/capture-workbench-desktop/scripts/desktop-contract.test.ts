@@ -430,7 +430,10 @@ test('native cleanup is PID-scoped and never executable-name scoped', async () =
     join(appRoot, 'scripts', 'installed-process-cleanup.ts'),
     'utf8',
   );
-  assert.match(source, /\['\/PID',\s*String\(child\.pid\),\s*'\/T',\s*'\/F'\]/u);
+  assert.match(
+    source,
+    /\['\/PID',\s*String\(child\.pid\),\s*'\/T',\s*'\/F'\]/u,
+  );
   assert.doesNotMatch(source, /'\/IM'\s*,/u);
 });
 
@@ -722,6 +725,14 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   );
   assert.match(
     workflow,
+    /workflow_dispatch:[\s\S]*publication_scope:[\s\S]*default: all[\s\S]*type: choice[\s\S]*- crates/u,
+  );
+  assert.match(
+    workflow,
+    /workflow_dispatch:[\s\S]*candidate_run_id:[\s\S]*required: false[\s\S]*type: string/u,
+  );
+  assert.match(
+    workflow,
     /uses: actions\/checkout@[0-9a-f]{40}[\s\S]*ref: \$\{\{ github\.event_name == 'workflow_dispatch' && inputs\.release_tag \|\| github\.ref \}\}/u,
   );
   assert.match(
@@ -738,7 +749,7 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
         /name: capture-candidate-\$\{\{ env\.RELEASE_TAG \}\}/gu,
       ) ?? []
     ).length,
-    5,
+    7,
   );
   assert.match(workflow, /compression-level: 0/u);
   assert.match(workflow, /retention-days: 1/u);
@@ -759,6 +770,10 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   );
   assert.match(
     workflow,
+    /crates\.io\/api\/v1\/crates\/capture-sidecar-launcher[\s\S]*--user-agent "gx-capture-release\//u,
+  );
+  assert.match(
+    workflow,
     /dtolnay\/rust-toolchain@[0-9a-f]{40}[\s\S]*with:\s*\r?\n\s+toolchain: stable/u,
   );
   assert.match(workflow, /--installer \$installers\[0\]\.FullName/u);
@@ -766,6 +781,18 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   assert.match(
     workflow,
     /publish-npm:[\s\S]*contents: write[\s\S]*packages: write/u,
+  );
+  assert.match(
+    workflow,
+    /Download immutable candidate from prior successful run[\s\S]*run-id: \$\{\{ inputs\.candidate_run_id \}\}[\s\S]*github-token: \$\{\{ github\.token \}\}/u,
+  );
+  assert.match(
+    workflow,
+    /recovery-registry-gate:[\s\S]*verifiedRegistries[\s\S]*publication\/release-ledger-recovery\.json/u,
+  );
+  assert.match(
+    workflow,
+    /recovery-registry-gate:[\s\S]*Probe immutable GitHub Release and npm registry state[\s\S]*Probe clean PyPI installation and generated imports[\s\S]*Probe clean crates\.io installation and immutable checksum/u,
   );
   assert.equal((workflow.match(/contents: write/gu) ?? []).length, 1);
   assert.equal((workflow.match(/packages: write/gu) ?? []).length, 1);
