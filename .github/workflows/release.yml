@@ -360,7 +360,7 @@ jobs:
             -exec cp {} "publication/python/${{ matrix.project }}/" \;
 
       - name: Publish this Python distribution with PyPI Trusted Publishing
-        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63a2034f94d8a5b11f265b73ba33 # release/v1
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
         with:
           packages-dir: publication/python/${{ matrix.project }}
           skip-existing: true
@@ -466,6 +466,8 @@ jobs:
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: stable
 
       - name: Validate the exact crate candidate with Cargo
         shell: bash

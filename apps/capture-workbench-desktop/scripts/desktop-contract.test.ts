@@ -753,6 +753,14 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   assert.match(workflow, /actions\/upload-artifact@[0-9a-f]{40}/u);
   assert.match(workflow, /actions\/download-artifact@[0-9a-f]{40}/u);
   assert.match(workflow, /publish-release\.ts/u);
+  assert.match(
+    workflow,
+    /pypa\/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33/u,
+  );
+  assert.match(
+    workflow,
+    /dtolnay\/rust-toolchain@[0-9a-f]{40}[\s\S]*with:\s*\r?\n\s+toolchain: stable/u,
+  );
   assert.match(workflow, /--installer \$installers\[0\]\.FullName/u);
   assert.doesNotMatch(workflow, /--clobber|gh release upload/u);
   assert.match(
