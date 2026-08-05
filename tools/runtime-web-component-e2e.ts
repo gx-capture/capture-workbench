@@ -57,7 +57,7 @@ const ocrWorkerArchive = join(
   'capture-runtime',
   'dist',
   'release',
-  'capture-engine-ocr-0.3.9-windows-x64.zip',
+  'capture-engine-ocr-0.3.10-windows-x64.zip',
 );
 const defaultPdfPath = join(
   repoRoot,

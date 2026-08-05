@@ -241,7 +241,7 @@
       "outputs": ["{projectRoot}/dist/catalog/capture-engine-catalog.json"],
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --no-sync --python 3.12 python scripts/generate_engine_catalog.py --output dist/catalog/capture-engine-catalog.json --ocr-worker-archive dist/engines/capture-engine-ocr-0.3.9-windows-x64.zip --ocr-worker-manifest dist/engines/capture-engine-ocr-0.3.9-windows-x64-files.json --whisper-worker-archive dist/engines/capture-engine-whisper-0.3.9-windows-x64.zip --whisper-worker-manifest dist/engines/capture-engine-whisper-0.3.9-windows-x64-files.json"
+        "command": "uv run --no-sync --python 3.12 python scripts/generate_engine_catalog.py --output dist/catalog/capture-engine-catalog.json --ocr-worker-archive dist/engines/capture-engine-ocr-0.3.10-windows-x64.zip --ocr-worker-manifest dist/engines/capture-engine-ocr-0.3.10-windows-x64-files.json --whisper-worker-archive dist/engines/capture-engine-whisper-0.3.10-windows-x64.zip --whisper-worker-manifest dist/engines/capture-engine-whisper-0.3.10-windows-x64-files.json"
       }
     },
     "generate-release-engine-catalog": {
@@ -259,7 +259,7 @@
       },
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --no-sync --python 3.12 python scripts/generate_engine_catalog.py --model-source-lock model-sources/release-model-source-lock.json --output dist/catalog/capture-engine-catalog.json --ocr-worker-archive dist/engines/capture-engine-ocr-0.3.9-windows-x64.zip --ocr-worker-manifest dist/engines/capture-engine-ocr-0.3.9-windows-x64-files.json --whisper-worker-archive dist/engines/capture-engine-whisper-0.3.9-windows-x64.zip --whisper-worker-manifest dist/engines/capture-engine-whisper-0.3.9-windows-x64-files.json"
+        "command": "uv run --no-sync --python 3.12 python scripts/generate_engine_catalog.py --model-source-lock model-sources/release-model-source-lock.json --output dist/catalog/capture-engine-catalog.json --ocr-worker-archive dist/engines/capture-engine-ocr-0.3.10-windows-x64.zip --ocr-worker-manifest dist/engines/capture-engine-ocr-0.3.10-windows-x64-files.json --whisper-worker-archive dist/engines/capture-engine-whisper-0.3.10-windows-x64.zip --whisper-worker-manifest dist/engines/capture-engine-whisper-0.3.10-windows-x64-files.json"
       }
     },
     "verify-release-model-candidate": {
@@ -289,7 +289,7 @@
       },
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --no-sync --python 3.12 python scripts/generate_engine_catalog.py --allow-pending-preflight --model-source-lock model-sources/release-model-source-lock.json --output dist/catalog/preflight-capture-engine-catalog.json --ocr-worker-archive dist/engines/capture-engine-ocr-0.3.9-windows-x64.zip --ocr-worker-manifest dist/engines/capture-engine-ocr-0.3.9-windows-x64-files.json --whisper-worker-archive dist/engines/capture-engine-whisper-0.3.9-windows-x64.zip --whisper-worker-manifest dist/engines/capture-engine-whisper-0.3.9-windows-x64-files.json"
+        "command": "uv run --no-sync --python 3.12 python scripts/generate_engine_catalog.py --allow-pending-preflight --model-source-lock model-sources/release-model-source-lock.json --output dist/catalog/preflight-capture-engine-catalog.json --ocr-worker-archive dist/engines/capture-engine-ocr-0.3.10-windows-x64.zip --ocr-worker-manifest dist/engines/capture-engine-ocr-0.3.10-windows-x64-files.json --whisper-worker-archive dist/engines/capture-engine-whisper-0.3.10-windows-x64.zip --whisper-worker-manifest dist/engines/capture-engine-whisper-0.3.10-windows-x64-files.json"
       }
     },
     "verify-whisper-preflight": {
@@ -330,7 +330,7 @@
       ],
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --no-sync --python 3.12 python scripts/verify_boundaries.py --ocr-worker dist/engines/capture-engine-ocr-0.3.9-windows-x64.zip --ocr-inventory dist/ocr-worker-inventory.txt --whisper-worker dist/engines/capture-engine-whisper-0.3.9-windows-x64.zip --whisper-inventory dist/whisper-worker-inventory.txt"
+        "command": "uv run --no-sync --python 3.12 python scripts/verify_boundaries.py --ocr-worker dist/engines/capture-engine-ocr-0.3.10-windows-x64.zip --ocr-inventory dist/ocr-worker-inventory.txt --whisper-worker dist/engines/capture-engine-whisper-0.3.10-windows-x64.zip --whisper-inventory dist/whisper-worker-inventory.txt"
       }
     },
     "bundle-size-report": {
@@ -339,7 +339,7 @@
       "outputs": ["{projectRoot}/dist/size/runtime-size-report.json"],
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --python 3.12 python scripts/report_bundle_size.py --executable dist/release/capture-runtime-x86_64-pc-windows-msvc.exe --installer \"../../apps/capture-workbench-desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/Capture Workbench_0.3.9_x64-setup.exe\" --installed-size-evidence ../../tmp/capture-workbench-desktop/installed-smoke/installed-size.json --pyinstaller-work .build/pyinstaller/core-onefile --output dist/size/runtime-size-report.json"
+        "command": "uv run --python 3.12 python scripts/report_bundle_size.py --executable dist/release/capture-runtime-x86_64-pc-windows-msvc.exe --installer \"../../apps/capture-workbench-desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/Capture Workbench_0.3.10_x64-setup.exe\" --installed-size-evidence ../../tmp/capture-workbench-desktop/installed-smoke/installed-size.json --pyinstaller-work .build/pyinstaller/core-onefile --output dist/size/runtime-size-report.json"
       }
     },
     "size-regression-check": {

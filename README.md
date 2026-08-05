@@ -1,15 +1,15 @@
 # Capture Workbench
 
 Capture Workbench is a reusable Angular UI with a local Windows desktop
-application. Version 0.3.9 is the model-enabled Windows x64 release. It keeps
+application. Version 0.3.10 is the model-enabled Windows x64 release. It keeps
 the core runtime small and installs the OCR and Whisper workers only after an
 explicit user consent, checksum, and probe gate.
 
 ## Use the Windows app
 
 Windows 11 x64 users can download
-[`Capture.Workbench_0.3.9_x64-setup.exe`](https://github.com/gx-capture/capture-workbench/releases/download/v0.3.9/Capture.Workbench_0.3.9_x64-setup.exe)
-from the [v0.3.9 release](https://github.com/gx-capture/capture-workbench/releases/tag/v0.3.9).
+[`Capture.Workbench_0.3.10_x64-setup.exe`](https://github.com/gx-capture/capture-workbench/releases/download/v0.3.10/Capture.Workbench_0.3.10_x64-setup.exe)
+from the [v0.3.10 release](https://github.com/gx-capture/capture-workbench/releases/tag/v0.3.10).
 
 The installer is unsigned. Windows may show an **Unknown publisher** or
 SmartScreen warning. Download only from the release above and verify the
@@ -46,7 +46,7 @@ model-enabled candidate.
 ## Use the package
 
 The public package is
-[`@gx-capture/capture-workbench@0.3.9`](https://github.com/orgs/gx-capture/packages/npm/package/capture-workbench).
+[`@gx-capture/capture-workbench@0.3.10`](https://github.com/orgs/gx-capture/packages/npm/package/capture-workbench).
 In the consuming workspace, configure the GitHub Packages scope without
 committing a token:
 
@@ -57,7 +57,7 @@ committing a token:
 
 ```powershell
 $env:GITHUB_PACKAGES_TOKEN = '<GitHub token with read:packages>'
-corepack pnpm add @gx-capture/capture-workbench@0.3.9 --save-exact
+corepack pnpm add @gx-capture/capture-workbench@0.3.10 --save-exact
 ```
 
 An Angular host supplies its own `CaptureClient`, normally backed by its

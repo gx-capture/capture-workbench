@@ -88,7 +88,7 @@ def _archive(
         {
             "role": "worker",
             "requirementId": "windowsml-ocr",
-            "artifactVersion": "0.3.9",
+            "artifactVersion": "0.3.10",
             "workerProtocolVersion": "1",
             "platform": "windows",
             "arch": "x86_64",
@@ -360,7 +360,7 @@ def test_direct_model_catalog_rejects_case_colliding_paths() -> None:
     with pytest.raises(EngineCatalogError, match="sorted and unique"):
         EngineModelDeliveryDescriptor.from_dict(
             {
-                "artifactVersion": "0.3.9",
+                "artifactVersion": "0.3.10",
                 "entryCount": len(files),
                 "entryPoint": "model",
                 "extractedBytes": sum(item["bytes"] for item in files),

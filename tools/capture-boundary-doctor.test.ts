@@ -19,7 +19,7 @@ const RUNTIME_TOKEN = 'runtime-secret-sentinel';
 const ready = {
   ready: true,
   service: 'capture-runtime',
-  runtimeVersion: '0.3.9',
+  runtimeVersion: '0.3.10',
   apiVersion: '1.0',
   captureDocumentSchemaVersion: '1',
   capabilities: {

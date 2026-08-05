@@ -89,7 +89,7 @@ corepack pnpm nx run capture-workbench-desktop:smoke-real-media-model
 The PDF and image are the lock-pinned project fixtures; only the packaged
 executable can be overridden for local runs with
 `CAPTURE_REAL_MEDIA_MODEL_EXECUTABLE`. The gate fails closed unless the staged
-generated catalog and source lock are the approved 0.3.9 model-enabled
+generated catalog and source lock are the approved 0.3.10 model-enabled
 contract.
 
 ## Installed deterministic smoke

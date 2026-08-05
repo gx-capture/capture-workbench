@@ -9,18 +9,18 @@
       "sha256": "20d8153042f147e730a2265e35e3862f8d1ad67b5f6804d44fb81e7dfbc5818b"
     },
     {
-      "bytes": 303,
+      "bytes": 304,
       "kind": "notice",
       "mediaType": "text/plain",
       "path": "licenses/NOTICE.txt",
-      "sha256": "59b45e1fdb14fce45ba29a4a5200b0d26f97f7db11d42a8b8e2581bfa005d4ed"
+      "sha256": "5a235f6f903fb48dd2b531c9bfffc25da341288cdc7f2fa635b03b4c3e14ac74"
     },
     {
-      "bytes": 613,
+      "bytes": 614,
       "kind": "derived",
       "mediaType": "application/json",
       "path": "model/pipeline.json",
-      "sha256": "21ba11c05440b36894262eab74c124d9ce55d64311ddb53497f99acdcc225606"
+      "sha256": "7dab9b36a85470260454451887222c3f847520acb181b1d789aacbb6a057f915"
     },
     {
       "bytes": 2157,
@@ -57,7 +57,7 @@
   "generator": "packages/capture-runtime/scripts/generate_commit_a_fixtures.py",
   "licensePath": "licenses/LICENSE.txt",
   "noticePath": "licenses/NOTICE.txt",
-  "releaseVersion": "0.3.9",
+  "releaseVersion": "0.3.10",
   "sourceRepositories": {
     "paddleocrDetection": "PaddlePaddle/PP-OCRv6_medium_det_onnx",
     "paddleocrRecognition": "PaddlePaddle/PP-OCRv6_medium_rec_onnx"
