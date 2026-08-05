@@ -427,12 +427,11 @@ test('native source import keeps renderer IPC path-only and responses path-free'
 
 test('native cleanup is PID-scoped and never executable-name scoped', async () => {
   const source = await readFile(
-    join(appRoot, 'src-tauri', 'src', 'process.rs'),
+    join(appRoot, 'scripts', 'installed-process-cleanup.ts'),
     'utf8',
   );
-  assert.match(source, /"\/PID"/u);
-  assert.match(source, /"\/T"/u);
-  assert.doesNotMatch(source, /"\/IM"\s*,/u);
+  assert.match(source, /\['\/PID',\s*String\(child\.pid\),\s*'\/T',\s*'\/F'\]/u);
+  assert.doesNotMatch(source, /'\/IM'\s*,/u);
 });
 
 test('desktop launcher advertises the bounded 50 MiB upload policy', async () => {
@@ -582,7 +581,16 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
     workflow,
     /clean-install|attestation|production-preflight/u,
   );
-  assert.match(workflow, /publish:[\s\S]*needs: build-candidate/u);
+  for (const jobName of ['publish-npm', 'publish-pypi', 'publish-crates-io']) {
+    assert.match(
+      workflow,
+      new RegExp(`${jobName}:[\\s\\S]*needs: build-candidate`, 'u'),
+    );
+  }
+  assert.match(
+    workflow,
+    /registry-release-gate:[\s\S]*needs:\s*\[publish-npm, publish-pypi, publish-crates-io\]/u,
+  );
   assert.match(workflow, /fetch-depth: 0/u);
   const fetchMainIndex = workflow.indexOf(
     'git fetch --no-tags origin refs/heads/main:refs/remotes/origin/main',
@@ -659,7 +667,28 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
     /model-candidate\.yml|CAPTURE_MODEL_RECEIPT|trusted model candidate/u,
   );
   const releaseRunScripts = workflowRunScripts(workflow);
-  assert.doesNotMatch(releaseRunScripts.join('\n'), /\$\{\{/u);
+  const releaseExpressions = [
+    ...new Set(
+      releaseRunScripts.flatMap(
+        (script) => script.match(/\$\{\{[^}]+\}\}/gu) ?? [],
+      ),
+    ),
+  ];
+  const allowedReleaseExpressions = new Set([
+    '${{ github.ref_name }}',
+    '${{ github.token }}',
+    '${{ matrix.environment }}',
+    '${{ matrix.module }}',
+    '${{ matrix.prefix }}',
+    '${{ matrix.project }}',
+    '${{ steps.release-model-mode.outputs.mode }}',
+  ]);
+  assert.ok(
+    releaseExpressions.every((expression) =>
+      allowedReleaseExpressions.has(expression),
+    ),
+    `Unexpected release workflow expressions: ${releaseExpressions.join(', ')}`,
+  );
   const normalizedReleaseRunLines = releaseRunScripts.flatMap((script) =>
     script.split(/\r?\n/u).map((line) => line.trim()),
   );
@@ -698,7 +727,7 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
         /name: capture-candidate-\$\{\{ github\.ref_name \}\}/gu,
       ) ?? []
     ).length,
-    2,
+    5,
   );
   assert.match(workflow, /compression-level: 0/u);
   assert.match(workflow, /retention-days: 1/u);
@@ -717,7 +746,7 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   assert.doesNotMatch(workflow, /--clobber|gh release upload/u);
   assert.match(
     workflow,
-    /publish:[\s\S]*contents: write[\s\S]*packages: write/u,
+    /publish-npm:[\s\S]*contents: write[\s\S]*packages: write/u,
   );
   assert.equal((workflow.match(/contents: write/gu) ?? []).length, 1);
   assert.equal((workflow.match(/packages: write/gu) ?? []).length, 1);
@@ -845,7 +874,7 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
     candidateAssemblyScript,
     /Copy-Item packages\/capture-runtime\/dist\/release\/\* -Destination \$runtime/u,
   );
-  assert.match(candidateAssemblyScript, /\$packages\.Count -ne 2/u);
+  assert.match(candidateAssemblyScript, /\$packages\.Count -ne 3/u);
   assert.match(
     candidateAssemblyScript,
     /Capture\.Workbench_\$\(\$Matches\.version\)_x64-setup\.exe/u,
@@ -874,13 +903,13 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
     releaseSteps,
     'Upload release candidate',
   );
-  const releaseDownloadStep = requiredWorkflowStep(
-    releaseSteps,
-    'Download release candidate',
+  const releaseDownloadSteps = releaseSteps.filter(
+    (step) => step.name === 'Download release candidate',
   );
+  assert.equal(releaseDownloadSteps.length, 4);
   for (const candidateTransferStep of [
     releaseUploadStep,
-    releaseDownloadStep,
+    ...releaseDownloadSteps,
   ]) {
     assert.match(
       candidateTransferStep.source,
