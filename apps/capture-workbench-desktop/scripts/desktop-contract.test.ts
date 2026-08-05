@@ -675,6 +675,9 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
     ),
   ];
   const allowedReleaseExpressions = new Set([
+    '${{ env.RELEASE_TAG }}',
+    "${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}",
+    "${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}",
     '${{ github.ref_name }}',
     '${{ github.token }}',
     '${{ matrix.environment }}',
@@ -711,7 +714,15 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   );
   assert.match(
     workflow,
-    /Verify synchronized versions[\s\S]*env:\s*\r?\n\s+RELEASE_TAG: \$\{\{ github\.ref_name \}\}[\s\S]*run: pnpm verify:release-version -- "\$env:RELEASE_TAG"/u,
+    /env:\s*\r?\n\s+RELEASE_TAG: \$\{\{ github\.event_name == 'workflow_dispatch' && inputs\.release_tag \|\| github\.ref_name \}\}[\s\S]*Verify synchronized versions[\s\S]*run: pnpm verify:release-version -- "\$env:RELEASE_TAG"/u,
+  );
+  assert.match(
+    workflow,
+    /workflow_dispatch:[\s\S]*release_tag:[\s\S]*required: true[\s\S]*type: string/u,
+  );
+  assert.match(
+    workflow,
+    /uses: actions\/checkout@[0-9a-f]{40}[\s\S]*ref: \$\{\{ github\.event_name == 'workflow_dispatch' && inputs\.release_tag \|\| github\.ref \}\}/u,
   );
   assert.match(
     workflow,
@@ -719,12 +730,12 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   );
   assert.match(
     workflow,
-    /Publish runtime first[\s\S]*RELEASE_TAG: \$\{\{ github\.ref_name \}\}[\s\S]*--tag "\$env:RELEASE_TAG"/u,
+    /Publish runtime first[\s\S]*RELEASE_TAG: \$\{\{ env\.RELEASE_TAG \}\}[\s\S]*--tag "\$env:RELEASE_TAG"/u,
   );
   assert.equal(
     (
       workflow.match(
-        /name: capture-candidate-\$\{\{ github\.ref_name \}\}/gu,
+        /name: capture-candidate-\$\{\{ env\.RELEASE_TAG \}\}/gu,
       ) ?? []
     ).length,
     5,
@@ -877,7 +888,7 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   assert.match(candidateAssemblyScript, /\$packages\.Count -ne 3/u);
   assert.match(
     candidateAssemblyScript,
-    /Capture\.Workbench_\$\(\$Matches\.version\)_x64-setup\.exe/u,
+    /Capture\.Workbench_\$\{releaseVersion\}_x64-setup\.exe/u,
   );
   assert.match(
     candidateAssemblyScript,
@@ -913,7 +924,7 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   ]) {
     assert.match(
       candidateTransferStep.source,
-      /name:\s*capture-candidate-\$\{\{ github\.ref_name \}\}/u,
+      /name:\s*capture-candidate-\$\{\{ env\.RELEASE_TAG \}\}/u,
     );
   }
   const releasePublishStep = requiredWorkflowStep(
@@ -960,7 +971,7 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   ]) {
     assertNativeErrorPreferenceWindow(
       ancestryStep.script ?? '',
-      /^git merge-base --is-ancestor "\$env:GITHUB_SHA" refs\/remotes\/origin\/main$/u,
+      /^git merge-base --is-ancestor \$releaseCommit refs\/remotes\/origin\/main$/u,
       '$ancestorExitCode = $LASTEXITCODE',
       'if ($ancestorExitCode -ne 0) {',
     );
