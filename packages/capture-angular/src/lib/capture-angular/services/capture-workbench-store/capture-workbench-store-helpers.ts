@@ -44,7 +44,7 @@ export function validateCaptureReview(
   );
   const seen = new Set<string>();
   const issues: string[] = [];
-  for (const edit of review.edits) {
+  for (const edit of review.edits ?? []) {
     if (seen.has(edit.segmentId)) {
       issues.push(`duplicate segmentId ${edit.segmentId}`);
       continue;

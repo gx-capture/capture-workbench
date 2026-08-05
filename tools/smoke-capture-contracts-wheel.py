@@ -27,10 +27,13 @@ def main() -> None:
         )
         probe = (
             "import capture_contracts; "
+            "from capture_contracts import CaptureDocumentV1, CaptureReviewV1; "
             "manifest = capture_contracts.load_contract_manifest(); "
             "assert capture_contracts.CAPTURE_RUNTIME_VERSION == manifest['runtimeVersion']; "
             "schema = capture_contracts.load_contract_schema('RawCaptureV1'); "
             "assert schema['title'] == 'RawCaptureV1'; "
+            "assert CaptureReviewV1(reviewVersion=1, edits=[]).review_version == 1; "
+            "assert CaptureDocumentV1.model_config['extra'] == 'forbid'; "
             "assert manifest['generator']['schemaGenerator'] == 'pydantic.model_json_schema'"
         )
         subprocess.run([str(python), "-c", probe], cwd=ROOT, check=True)

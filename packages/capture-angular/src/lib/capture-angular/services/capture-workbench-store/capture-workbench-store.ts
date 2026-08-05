@@ -293,13 +293,13 @@ export class CaptureWorkbenchStore {
       task.raw?.segments.find((segment) => segment.segmentId === segmentId)
         ?.text ?? '';
     return (
-      task.review?.edits.find((edit) => edit.segmentId === segmentId)
+      task.review?.edits?.find((edit) => edit.segmentId === segmentId)
         ?.reviewedText ?? original
     );
   }
 
   isReviewed(task: CaptureTaskView, segmentId: string): boolean {
-    return task.review?.edits.some((edit) => edit.segmentId === segmentId) ?? false;
+    return task.review?.edits?.some((edit) => edit.segmentId === segmentId) ?? false;
   }
 
   restoreOriginal(task: CaptureTaskView, segmentId: string): void {

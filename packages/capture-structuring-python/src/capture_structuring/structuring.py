@@ -401,6 +401,7 @@ def validate_structuring_batch(
     segments: Sequence[object],
     *,
     target_language: str | None,
+    order_offset: int = 0,
 ) -> list[WireObject]:
     """Rebuild canonical blocks from only model-owned semantic fields.
 
@@ -408,6 +409,7 @@ def validate_structuring_batch(
         candidate: JSON bytes, JSON text, or decoded semantic batch candidate.
         segments: Raw segments covered by this batch, in source order.
         target_language: Translation language, or ``None`` for identity mode.
+        order_offset: Global block-order offset for this batch.
 
     Returns:
         Blocks with trusted IDs, order, locators, and source text.
@@ -415,6 +417,9 @@ def validate_structuring_batch(
     Raises:
         StructuringValidationError: If semantic fields or ordered coverage fail.
     """
+
+    if order_offset < 0:
+        raise ValueError("structuring batch order offset cannot be negative")
 
     decoded = _decode_candidate(candidate)
     semantic_blocks: Sequence[CaptureIdentitySemanticBlockV1 | CaptureSemanticBlockV1]
@@ -473,7 +478,7 @@ def validate_structuring_batch(
         canonical_blocks.append(
             {
                 "blockId": f"block-{segment_id}",
-                "order": index,
+                "order": order_offset + index,
                 "type": common_semantics.type,
                 "sourceSegmentId": segment_id,
                 "locator": dict(locator),
@@ -569,6 +574,7 @@ async def structure_capture(
         schema=batch_schema,
     )
     blocks: list[WireObject] = []
+    order_offset = 0
     for plan in plans:
         prompt = build_structuring_batch_prompt(plan.segments, target_language=target_language)
         response = llm_generate(prompt, batch_schema)
@@ -577,13 +583,14 @@ async def structure_capture(
             raise StructuringValidationError(
                 "llm_generate must return UTF-8 JSON bytes or JSON text"
             )
-        blocks.extend(
-            validate_structuring_batch(
-                candidate,
-                plan.segments,
-                target_language=target_language,
-            )
+        batch_blocks = validate_structuring_batch(
+            candidate,
+            plan.segments,
+            target_language=target_language,
+            order_offset=order_offset,
         )
+        blocks.extend(batch_blocks)
+        order_offset += len(batch_blocks)
     return assemble_structuring_document(
         raw,
         blocks,

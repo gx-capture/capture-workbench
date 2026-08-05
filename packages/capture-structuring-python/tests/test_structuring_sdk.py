@@ -103,6 +103,62 @@ def test_sdk_rebuilds_provenance_from_minimal_llm_bytes() -> None:
     assert prompts[0]["schema"]["title"] == "CaptureIdentityBlockBatchV1"
 
 
+def test_sdk_preserves_global_block_order_across_batches() -> None:
+    raw = raw_capture()
+    segments = [
+        {
+            "segmentId": f"page-{index + 1}",
+            "order": index,
+            "locator": {"kind": "page", "page": index + 1},
+            "text": f"segment-{index}-" + ("x" * 1_200),
+        }
+        for index in range(5)
+    ]
+    raw["segments"] = segments
+    raw["sourceText"] = "\n".join(str(segment["text"]) for segment in segments)
+    calls = 0
+
+    def generate(prompt: dict[str, object], schema: dict[str, object]) -> str:
+        nonlocal calls
+        calls += 1
+        return json.dumps(
+            {
+                "blocks": [
+                    {
+                        "sourceSegmentId": (
+                            segment["sourceSegmentId"]
+                            if "sourceSegmentId" in segment
+                            else segment["segmentId"]
+                        ),
+                        "type": "paragraph",
+                        "targetText": "translated",
+                    }
+                    for segment in prompt["rawSegments"]  # type: ignore[index]
+                ]
+            }
+        )
+
+    document = asyncio.run(
+        structure_capture(
+            raw,
+            llm_generate=generate,
+            structuring_engine={
+                "engine": "host-test",
+                "model": "test-model",
+                "digest": f"sha256:{'c' * 64}",
+                "device": "host",
+            },
+            completed_at=COMPLETED_AT,
+            target_language="zh-TW",
+            num_ctx=4_096,
+            num_predict=1_536,
+        )
+    )
+
+    assert calls == 3
+    assert [block["order"] for block in document["blocks"]] == list(range(5))
+
+
 def test_sdk_rejects_full_block_echo_at_the_llm_seam() -> None:
     candidate = json.dumps(
         {

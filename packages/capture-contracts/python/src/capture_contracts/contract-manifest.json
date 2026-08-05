@@ -43,6 +43,20 @@
       "strStripWhitespace": true
     },
     {
+      "name": "CaptureReviewEditV1",
+      "schemaFile": "capture-review-edit-v1.schema.json",
+      "schemaSha256": "fe223a91ef69010f768e3a5aa44ef7791a19b43602ab88f5c961aef37bf1c899",
+      "extraPolicy": "forbid",
+      "strStripWhitespace": true
+    },
+    {
+      "name": "CaptureReviewV1",
+      "schemaFile": "capture-review-v1.schema.json",
+      "schemaSha256": "7c4706db70b00a5a074a01a0f51300503b5a41e310de7691247d2c51ebc8f61c",
+      "extraPolicy": "forbid",
+      "strStripWhitespace": true
+    },
+    {
       "name": "CaptureSourceV1",
       "schemaFile": "capture-source-v1.schema.json",
       "schemaSha256": "6cb4c767b7b7543d56767548748d74ff4ccf868f4746ed644ea83ee1264e938a",
@@ -101,7 +115,7 @@
     {
       "name": "RuntimeCapabilitiesV1",
       "schemaFile": "runtime-capabilities-v1.schema.json",
-      "schemaSha256": "258aa0a750ba974d8f302ffd04bcc7bb07c628e33e4951d520836f1d730e169c",
+      "schemaSha256": "7fe5d664335745edb6afbcfc708ae01b9f418a3bbff100be2cae0c1ba7ab081f",
       "extraPolicy": "forbid",
       "strStripWhitespace": true
     },
@@ -122,7 +136,7 @@
     {
       "name": "RuntimeReadyV1",
       "schemaFile": "runtime-ready-v1.schema.json",
-      "schemaSha256": "5da0a1c07b9f78ccbde7abc19efe70a56aebdba1d6f138fa940c4101b95cf921",
+      "schemaSha256": "2af6735eab7aaabd4e1cf6877bc57f7cb08d02c55324acfb4be02d3ad66e952e",
       "extraPolicy": "forbid",
       "strStripWhitespace": true
     },
@@ -219,6 +233,10 @@
     {
       "name": "CaptureLocatorV1",
       "type": "PageLocatorV1 | TimeLocatorV1"
+    },
+    {
+      "name": "CaptureRequirementId",
+      "type": "'windowsml-ocr' | 'whisper-primary' | 'ollama-runtime' | 'capture-ollama-model'"
     }
   ],
   "invariants": [
@@ -280,7 +298,7 @@
   ],
   "generator": {
     "script": "packages/capture-runtime/scripts/generate_contracts.py",
-    "generatorSha256": "55d35e5fdea3b8b25f2db2abbf0e7cc1d8359c29ae55a55a0af96a0810164a84",
+    "generatorSha256": "1e2715758e01c4ce0bc12c2c42beddde00e448610b172370c4057346e9131cbc",
     "schemaGenerator": "pydantic.model_json_schema",
     "pydanticVersion": "2.13.4",
     "pydanticCoreVersion": "2.46.4"

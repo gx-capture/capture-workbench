@@ -171,6 +171,12 @@ wheels = [
 name = "capture-contracts"
 version = "0.3.9"
 source = { directory = "../capture-contracts/python" }
+dependencies = [
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "pydantic", specifier = ">=2.13.4,<3.0.0" }]
 
 [[package]]
 name = "capture-runtime"

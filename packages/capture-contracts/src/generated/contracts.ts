@@ -29,6 +29,8 @@ export type StructuringMode = "runtime" | "host";
 
 export type CaptureLocatorV1 = PageLocatorV1 | TimeLocatorV1;
 
+export type CaptureRequirementId = 'windowsml-ocr' | 'whisper-primary' | 'ollama-runtime' | 'capture-ollama-model';
+
 export interface CaptureBlockV1 {
   readonly blockId: string;
   readonly order: number;
@@ -78,6 +80,16 @@ export interface CaptureJobV1 {
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly completedAt?: string | null;
+}
+
+export interface CaptureReviewEditV1 {
+  readonly segmentId: string;
+  readonly reviewedText: string;
+}
+
+export interface CaptureReviewV1 {
+  readonly reviewVersion: 1;
+  readonly edits?: readonly (CaptureReviewEditV1)[];
 }
 
 export interface CaptureSourceV1 {
@@ -134,8 +146,8 @@ export interface RuntimeArtifactDescriptorV1 {
 }
 
 export interface RuntimeCapabilitiesV1 {
-  readonly captureKinds: readonly ("pdf" | "image" | "audio")[];
-  readonly structuringModes: readonly ("runtime" | "host")[];
+  readonly captureKinds: readonly (CaptureSourceKind)[];
+  readonly structuringModes: readonly (StructuringMode)[];
   readonly supportsCancellation: true;
   readonly supportsRawDiagnostics: true;
   readonly maxUploadBytes: number;
@@ -192,7 +204,7 @@ export interface TimeLocatorV1 {
   readonly endMs: number;
 }
 
-export type CaptureContractName = "CaptureBlockV1" | "CaptureDocumentV1" | "CaptureEngineV1" | "CaptureFailureV1" | "CaptureJobV1" | "CaptureSourceV1" | "ErrorBodyV1" | "ErrorEnvelopeV1" | "PageLocatorV1" | "RawCaptureSegmentV1" | "RawCaptureV1" | "ReportStructuringFailureV1" | "RuntimeArtifactDescriptorV1" | "RuntimeCapabilitiesV1" | "RuntimeInstallationV1" | "RuntimeInstallationsV1" | "RuntimeReadyV1" | "RuntimeRequirementV1" | "RuntimeRequirementsV1" | "StartRuntimeInstallationV1" | "TimeLocatorV1";
+export type CaptureContractName = "CaptureBlockV1" | "CaptureDocumentV1" | "CaptureEngineV1" | "CaptureFailureV1" | "CaptureJobV1" | "CaptureReviewEditV1" | "CaptureReviewV1" | "CaptureSourceV1" | "ErrorBodyV1" | "ErrorEnvelopeV1" | "PageLocatorV1" | "RawCaptureSegmentV1" | "RawCaptureV1" | "ReportStructuringFailureV1" | "RuntimeArtifactDescriptorV1" | "RuntimeCapabilitiesV1" | "RuntimeInstallationV1" | "RuntimeInstallationsV1" | "RuntimeReadyV1" | "RuntimeRequirementV1" | "RuntimeRequirementsV1" | "StartRuntimeInstallationV1" | "TimeLocatorV1";
 
 export type CaptureContractInvariant = {
   readonly id: string;
@@ -266,6 +278,8 @@ export const CAPTURE_CONTRACT_EXTRA_POLICIES = {
   "CaptureEngineV1": "forbid",
   "CaptureFailureV1": "forbid",
   "CaptureJobV1": "forbid",
+  "CaptureReviewEditV1": "forbid",
+  "CaptureReviewV1": "forbid",
   "CaptureSourceV1": "forbid",
   "ErrorBodyV1": "forbid",
   "ErrorEnvelopeV1": "forbid",

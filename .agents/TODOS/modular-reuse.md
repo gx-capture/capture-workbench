@@ -42,9 +42,16 @@
       Evidence: `capture-contracts:python-wheel-smoke` installs the built wheel
       into a temporary venv and derives the version assertion from the package
       manifest.
-- [ ] Migrate cert-prep only after publication/auth evidence; delete its
-      hand-mirrored DTO owner rather than adding a compatibility shim.
-      Verify: cert-prep backend focused tests and import scan.
+- [x] Delete cert-prep's hand-mirrored DTO owner and migrate backend imports to
+      the generated `capture_contracts` API; keep the source cutover gated on
+      publication evidence.
+      Evidence: backend focused tests and import scan pass; `contracts.py` is
+      absent and the generated models serialize with strict extra-field policy.
+- [ ] Publish npm, PyPI, and crates.io `0.3.9` artifacts, run clean registry
+      install/import probes, then switch cert-prep and law-prep lockfiles and
+      source declarations away from local paths.
+      Verify: release ledgers, registry probes, and strict consumer consistency
+      targets pass in clean checkouts.
 
 ## Phase 1.5 - in-repo consumers first
 
@@ -78,29 +85,47 @@
 
 ## Phase 2 - host structuring SDK
 
-- [ ] Extract batching, prompt assembly, minimal semantic block validation, and
+- [x] Extract batching, prompt assembly, minimal semantic block validation, and
       canonical document assembly into the shared SDK.
-      Verify: SDK unit tests and pinned schema/hash validation.
-- [ ] Rewire runtime Ollama/fake providers to the shared implementation.
-      Verify: `corepack pnpm nx run capture-runtime:test` and standalone smoke.
-- [ ] Migrate cert-prep to a thin host LLM adapter; delete full-block echoing.
-      Verify: cert-prep structuring tests and host commit smoke.
+      Evidence: `capture-structuring-python` and TypeScript SDK tests/builds,
+      pinned generated schema/hash validation, and law-prep Foundry Local host
+      integration pass.
+- [x] Rewire runtime Ollama/fake providers to the shared implementation.
+      Evidence: `capture-runtime:test` and standalone producer verification
+      remain green with the shared brain-agnostic implementation.
+- [x] Migrate cert-prep to a thin host LLM adapter; delete full-block echoing.
+      Evidence: cert-prep structuring/backend regression tests and host
+      consumer consistency checks pass.
 
 ## Phase 3 - shared launcher crate
 
-- [ ] Extract launcher/process/health/launch-policy/manifest mechanics and
+- [x] Extract launcher/process/health/launch-policy/manifest mechanics and
       constants into a publishable Rust crate.
-      Verify: `cargo fmt --check`, `cargo check`, and crate tests.
-- [ ] Rewire Workbench desktop and then cert-prep desktop; retain each host's
+      Evidence: `cargo fmt --check`, `cargo check`, crate tests, and
+      `cargo publish --dry-run` pass for `capture-sidecar-launcher@0.3.9`.
+- [x] Rewire Workbench desktop and then cert-prep desktop; retain each host's
       installer/download and persistence responsibilities.
-      Verify: shared probe/handshake contract tests and desktop smoke.
+      Evidence: both desktop manifests consume the launcher crate through the
+      shared package boundary; desktop contract/consumer tests pass. Registry
+      publication remains covered by the active release gate above.
 
 ## Phase 4 - governance and final proof
 
-- [ ] Add changelog, synchronized artifact versions, and 0.x minor alignment
+- [x] Add changelog, synchronized artifact versions, and 0.x minor alignment
       with deprecation/break-glass evidence.
-      Verify: producer and consumer compatibility tests.
-- [ ] Keep Angular/Vanilla/React/Vue clean-consumer smoke green after each
+      Evidence: `CHANGELOG.md`, producer/consumer minor-alignment handshakes,
+      release-version checks, and compatibility tests pass.
+- [x] Keep Angular/Vanilla/React/Vue clean-consumer smoke green after each
       producer phase and record standalone desktop evidence.
-      Verify: `corepack pnpm run verify:package` plus proportional full verify.
-- [ ] Defer law-prep proof until its non-Ollama brain/platform is concrete.
+      Evidence: `capture-angular:clean-consumer-smoke` and proportional
+      standalone desktop verification pass against local packed artifacts.
+- [x] Complete law-prep proof with the non-Ollama brain/platform.
+      Evidence: Foundry Local drives the host structuring path; Java validates
+      the staged producer schema and manifest before Jackson mapping.
+- [x] Add law-prep's runtime JSON Schema plus manifest version/SHA validation
+      before Jackson DTO mapping; keep Angular web migration deferred.
+      Evidence: Java validator positive/negative tests, staged-runtime tests,
+      and law-prep Tauri contract tests pass.
+- [ ] Run the engine-bearing Windows OCR/Whisper packaged smoke only after the
+      published `0.3.9` runtime is available; clean runtime, models, app data,
+      generated output, and owned processes afterward.

@@ -6,6 +6,7 @@ import type {
   CaptureFailureV1,
   CaptureJobV1,
   CaptureJobStage,
+  CaptureReviewV1,
   CaptureSourceKind,
   PageLocatorV1,
   RawCaptureV1,
@@ -38,6 +39,8 @@ export type {
   CaptureJobV1,
   CaptureJobStage,
   CaptureJobStatus,
+  CaptureReviewEditV1,
+  CaptureReviewV1,
   CaptureLocatorV1,
   CaptureSourceKind,
   ErrorBodyV1,
@@ -118,16 +121,6 @@ export interface CommitStructuredResultRequest {
 export interface ReportStructuringFailureRequest {
   readonly code: string;
   readonly message: string;
-}
-
-export interface CaptureReviewEditV1 {
-  readonly segmentId: string;
-  readonly reviewedText: string;
-}
-
-export interface CaptureReviewV1 {
-  readonly reviewVersion: 1;
-  readonly edits: readonly CaptureReviewEditV1[];
 }
 
 export interface ConfirmCaptureRequest {

@@ -14,7 +14,8 @@ OCR/Whisper extraction remains in the runtime sidecar.
 - Do not move OCR/Whisper out of the sidecar.
 - Do not remove runtime `ollama`, `external-ollama`, or `fake` providers.
 - Do not send LLM calls from capture-workbench for host-owned structuring.
-- Do not modify law-prep until its brain/platform decision is concrete.
+- Do not expand law-prep into Angular web integration in this closeout; its
+  Java runtime schema gate and Foundry Local host proof are in scope.
 - Do not expose sidecar bearer tokens to Angular, WebView, persistence, or logs.
 
 ## Current owners and target owners
@@ -92,3 +93,24 @@ consumer's focused tests pass.
 - Rust formatter/check/test plus shared probe/handshake contract tests.
 - Cross-repo consumer tests only after the corresponding producer artifact is
   published and the install/auth path is explicitly evidenced.
+
+## 0.3.9 implementation status
+
+- `generate_schema.py` remains the runtime release-schema owner. The retired
+  surface is only the Angular-specific schema output/target.
+- Generated Python Pydantic wire models now ship beside the generated
+  TypeScript models, JSON schemas, manifest, invariants, and extra policies.
+- The release candidate verifies three npm packages, two Python packages in
+  wheel/sdist form, and the launcher crate against version `0.3.9` and the
+  canonical schema SHA before any registry write.
+- PyPI publication uses separate OIDC Trusted Publishing matrix identities for
+  the two environment names (`pypi` and `pypi-structuring`); crates.io is a separate
+  retryable job. Each project/registry writes a ledger and runs an install or
+  import probe; publication is not treated as atomic across registries.
+- Consumer cutover stays blocked while public PyPI and crates.io do not contain
+  `0.3.9`. Local path sources are therefore an explicitly active gate, not
+  successful publication evidence.
+- `pnpm verify:modular-reuse:local` is the runner-independent pre-commit/local
+  command for regeneration drift, Python wheel smoke, SDK wheel smoke, and
+  launcher publish dry-run. The release workflow remains the actual registry
+  publication owner.

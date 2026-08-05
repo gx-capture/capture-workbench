@@ -5,6 +5,11 @@ description = "Shared authenticated Capture Runtime sidecar launcher for Windows
 edition = "2021"
 rust-version = "1.77.2"
 license = "MIT"
+repository = "https://github.com/gx-capture/capture-workbench"
+homepage = "https://github.com/gx-capture/capture-workbench"
+readme = "README.md"
+keywords = ["capture", "sidecar", "launcher", "windows"]
+categories = ["os", "process-management"]
 
 [dependencies]
 rand = "0.8"

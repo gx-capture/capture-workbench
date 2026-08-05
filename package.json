@@ -19,6 +19,7 @@
     "verify:package": "corepack pnpm nx run capture-angular:clean-consumer-smoke",
     "verify:smoke": "corepack pnpm nx run capture-workbench-desktop:smoke-deterministic && corepack pnpm nx run capture-workbench-e2e:e2e",
     "verify:release-version": "node tools/verify-release-version.ts",
+    "verify:modular-reuse:local": "corepack pnpm nx run capture-runtime:check-contracts && corepack pnpm nx run capture-contracts:build && corepack pnpm nx run capture-structuring:build && corepack pnpm nx run capture-contracts:python-wheel-smoke && corepack pnpm nx run capture-structuring-python:wheel-smoke && corepack pnpm nx run capture-sidecar-launcher:cargo-publish-dry-run",
     "local-registry:start": "corepack pnpm exec verdaccio --config tools/local-registry/verdaccio.yaml",
     "local-registry:publish": "node tools/local-registry/publish-local-registry.ts"
   },

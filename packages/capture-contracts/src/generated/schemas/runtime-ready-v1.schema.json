@@ -1,27 +1,27 @@
 {
   "$defs": {
+    "CaptureSourceKind": {
+      "enum": [
+        "pdf",
+        "image",
+        "audio"
+      ],
+      "title": "CaptureSourceKind",
+      "type": "string"
+    },
     "RuntimeCapabilitiesV1": {
       "additionalProperties": false,
       "properties": {
         "captureKinds": {
           "items": {
-            "enum": [
-              "pdf",
-              "image",
-              "audio"
-            ],
-            "type": "string"
+            "$ref": "#/$defs/CaptureSourceKind"
           },
           "title": "Capturekinds",
           "type": "array"
         },
         "structuringModes": {
           "items": {
-            "enum": [
-              "runtime",
-              "host"
-            ],
-            "type": "string"
+            "$ref": "#/$defs/StructuringMode"
           },
           "title": "Structuringmodes",
           "type": "array"
@@ -51,6 +51,14 @@
       ],
       "title": "RuntimeCapabilitiesV1",
       "type": "object"
+    },
+    "StructuringMode": {
+      "enum": [
+        "runtime",
+        "host"
+      ],
+      "title": "StructuringMode",
+      "type": "string"
     }
   },
   "additionalProperties": false,

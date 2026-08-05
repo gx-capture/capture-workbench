@@ -70,6 +70,10 @@ jobs:
           pnpm nx run capture-structuring-python:typecheck
           pnpm nx run capture-structuring-python:build
           pnpm nx run capture-structuring-python:wheel-smoke
+          pnpm nx run capture-sidecar-launcher:cargo-fmt-check
+          pnpm nx run capture-sidecar-launcher:cargo-check
+          pnpm nx run capture-sidecar-launcher:cargo-test
+          pnpm nx run capture-sidecar-launcher:cargo-package-dry-run
           pnpm nx run capture-angular:lint
           pnpm nx run capture-angular:test
           pnpm nx run capture-angular:build

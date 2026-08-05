@@ -33,11 +33,11 @@
 
 - TypeScript artifacts follow the existing GitHub Packages convention used by
   `@gx-capture/capture-workbench`.
-- The Python wheel should use GitHub Packages' PyPI registry with the existing
-  workflow `packages: write` permission and a short-lived `GITHUB_TOKEN`.
-- This Python registry/auth choice is a publication gate, not proof of current
-  package availability; CI configuration and a consumer install probe must
-  confirm it before Phase 1 consumer migration.
+- The Python wheels use public PyPI with GitHub Actions OIDC Trusted
+  Publishing (`id-token: write`); GitHub Packages is not the wheel registry.
+- This registry/auth choice is a publication gate, not proof of current package
+  availability; CI configuration and a clean import probe must confirm it
+  before consumer source cutover.
 - Package names, versions, and install URLs must be recorded in phase evidence
   before a consumer changes its dependency.
 
@@ -61,12 +61,37 @@
 - Minor-alignment rollout: keep an explicit break-glass path until every
   in-scope consumer is confirmed same-minor.
 
-## Open gates
+## Resolved design gates
 
-- Confirm Python registry package naming, CI publish command, consumer auth, and
-  whether the wheel is public/private for cert-prep and future law-prep.
-- Confirm `sourceSegmentId` is stable and unique in `RawCaptureV1`.
-- Enumerate cross-repo rollback owners before consumer migration.
+- Python package names are `capture-contracts` and `capture-structuring`; CI
+  publishes them to public PyPI through OIDC Trusted Publishing.
+- Consumer cutover is still gated on immutable registry artifacts and clean
+  install/import probes; local path sources remain until that evidence exists.
+- `sourceSegmentId` provenance and cross-repo rollback ownership remain part of
+  the existing contract and release review evidence.
+
+## 2026-08-05 release-boundary decision
+
+- Use public PyPI for `capture-contracts` and `capture-structuring`, with
+  GitHub Actions OIDC Trusted Publishing (`id-token: write`), rather than
+  GitHub Packages as a wheel registry.
+- PyPI pending publishers are project-specific, so the release matrix uses the
+  existing `pypi` environment for `capture-contracts` and a separate
+  `pypi-structuring` environment for `capture-structuring`; each writes its own
+  publication ledger and registry digest probe.
+- Use crates.io for `capture-sidecar-launcher`; its publish job is independent
+  from npm and PyPI and is validated with `cargo publish --dry-run` first.
+- Keep a release ledger per registry and retry only artifacts not recorded as
+  successfully published. Consumer path dependencies remain until all probes
+  pass; there is no assumed cross-registry rollback.
+- Java law-prep uses the staged `capture-document-v1.schema.json` and pinned
+  runtime manifest as the authority for Foundry responses. The hand-written
+  Java DTOs remain mapping targets, not schema sources.
+- `generate_schema.py` is retained because runtime release staging consumes it;
+  only its retired Angular-specific output path is deleted.
+- Runner availability does not weaken validation: local pre-commit commands
+  cover deterministic artifact checks, while actual registry publication and
+  staged-file integration remain fail-closed gates.
 
 ## Resolved producer gates
 

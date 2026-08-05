@@ -1,8 +1,8 @@
-"""Generated Capture Workbench wire-contract schema artifacts.
+"""Generated Capture Workbench wire-contract artifacts.
 
 The runtime owns canonical validation. Hosts may use these schemas and
-invariants to build adapters, but must submit the final candidate to the
-runtime's validation endpoint before persisting it.
+generated Pydantic models, but must submit the final candidate to the runtime's
+validation endpoint before persisting it.
 """
 
 from __future__ import annotations
@@ -10,6 +10,16 @@ from __future__ import annotations
 import json
 from importlib.resources import files
 from typing import Any
+
+try:
+    from .generated_models import *  # noqa: F401,F403
+    from .generated_models import __all__ as _generated_model_names
+except ModuleNotFoundError as error:
+    # The runtime generator imports its own package before the first generated
+    # model file exists. Installed wheels must always include this artifact.
+    if error.name != "capture_contracts.generated_models":
+        raise
+    _generated_model_names = ()
 
 
 def _manifest() -> dict[str, Any]:
@@ -58,6 +68,7 @@ __all__ = [
     "load_contract_constraints",
     "load_contract_manifest",
     "load_contract_schema",
+    *_generated_model_names,
 ]
 
 

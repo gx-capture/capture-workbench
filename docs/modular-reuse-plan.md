@@ -151,11 +151,11 @@ Pin the Pydantic and schema-generator versions used by this process, and record
 the generator toolchain version alongside the pinned release evidence so the
 regeneration diff is deterministic.
 
-**1.2** Publish the TS package to GitHub Packages alongside
-`@gx-capture/capture-workbench`; publish the Python wheel as a package artifact
-without conflating it with the standalone runtime executable asset inventory.
-Before implementation, name the Python registry, install URL, and CI
-authentication mechanism required by cert-prep-backend.
+**1.2** Publish the TS package to the existing GitHub Packages namespace
+alongside `@gx-capture/capture-workbench`; publish the Python wheels to public
+PyPI with GitHub Actions OIDC Trusted Publishing, without conflating them with
+the standalone runtime executable asset inventory. The consumer cutover is
+gated on clean PyPI installation and import probes.
 
 **1.3** Add a **regeneration-diff contract test** to producer CI: regenerate
 contracts from the runtime and diff against the committed package; fail on
@@ -220,8 +220,8 @@ in-repo consumers even though external consumers use the published package). **K
 package-API types local** — `CaptureClient` (the DI seam), `CaptureOutputMode`,
 `CaptureDensity`, component-config types, and the custom-event map are
 capture-angular's own surface, not wire types. Retire the Angular-specific
-TypeScript-output path in `generate_schema.py` and the `sync-angular-schema`
-target; retain the runtime `generate-schema` target for release artifacts, while
+TypeScript-output path and the `sync-angular-schema` target; retain
+`generate_schema.py` because it owns the runtime release schema artifact, while
 Angular no longer owns a schema copy.
 
 **1.5.2** Resolve the lossy-codegen regression before migrating. The generator
@@ -247,8 +247,9 @@ the longer-term end state and is explicitly out of scope here.
 **Acceptance:** zero hand-maintained wire-model TS duplicates in `capture-angular`;
 its only document-schema source is `@gx-capture/capture-contracts`; the Rust
 constants/schema are verified against the manifest in CI; the standalone product
-and consumer smokes are unaffected. The clean consumer smoke uses both local
-packed producer artifacts until the GitHub Packages publication gate is closed.
+and consumer smokes are unaffected. The clean consumer smoke uses local packed
+producer artifacts until the corresponding npm/PyPI publication and
+registry-install gates are closed.
 Once the producer itself is a consumer, cert-prep's
 Phase 1.4 migration de-risks onto a proven artifact instead of an orphan package.
 
@@ -365,6 +366,26 @@ SDK with zero capture-workbench brain-coupling.
 
 - Keep capture-workbench's `clean-consumer-smoke` green (Angular/Vanilla/
   React/Vue hosts) after every phase.
+
+## 0.3.9 closeout status
+
+The producer-side generated contracts, Python wheels, TypeScript packages,
+structuring SDK artifacts, launcher crate metadata, release candidate ledger,
+and registry publication jobs are implemented and locally verified. The
+runtime schema generator remains an active release input at
+`packages/capture-runtime/scripts/generate_schema.py`; it is not dead code.
+
+Cert Prep now imports generated Python contracts, deletes its hand-mirrored
+contract module, uses fail-closed raw/document mappers, and permanently runs
+the consumer consistency target. Law Prep validates Foundry responses against
+the staged schema and pinned runtime manifest before Jackson mapping; its
+Angular web migration remains deferred.
+
+The following gates remain active until external state changes: publishing the
+three npm/PyPI/crates.io artifact groups, registry-install probes, switching
+consumer lockfiles away from local paths, and the engine-bearing Windows
+OCR/Whisper packaged smoke with cleanup evidence. No unpublished artifact or
+path-based consumer is counted as complete.
 - Add an **end-to-end "real runtime + real published package + real PDF"**
   smoke to consumer CI (Windows runner); wire `local-release-consumer-smoke`
   into the producer release-candidate job (it exists but is not CI-wired today).
