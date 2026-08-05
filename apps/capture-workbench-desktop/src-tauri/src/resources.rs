@@ -4,8 +4,9 @@ use capture_sidecar_launcher::{load_manifest, validate_manifest_contract, Manife
 use tauri::{path::BaseDirectory, App, Manager, Runtime};
 
 use crate::constants::{
-    EXPECTED_API_VERSION, EXPECTED_CAPTURE_DOCUMENT_SCHEMA_VERSION, EXPECTED_RUNTIME_VERSION,
-    RUNTIME_BINARY_FILE, RUNTIME_BINARY_TARGET_FILE, RUNTIME_MANIFEST_FILE, SCHEMA_FILE_NAME,
+    EXPECTED_API_VERSION, EXPECTED_CAPTURE_DOCUMENT_SCHEMA_VERSION, EXPECTED_MANIFEST_VERSION,
+    EXPECTED_RUNTIME_VERSION, RUNTIME_BINARY_FILE, RUNTIME_BINARY_TARGET_FILE,
+    RUNTIME_MANIFEST_FILE, SCHEMA_FILE_NAME,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,6 +24,9 @@ pub(crate) fn resolve_runtime_assets<R: Runtime>(app: &App<R>) -> Result<Runtime
     let manifest_path = first_file(manifest_candidates(app))
         .ok_or_else(|| "Bundled Capture runtime manifest was not found.".to_string())?;
     let manifest = load_manifest(&manifest_path)?;
+    if manifest.manifest_version != EXPECTED_MANIFEST_VERSION {
+        return Err("Bundled Capture runtime manifest version is incompatible.".into());
+    }
     validate_manifest_contract(
         &manifest,
         &ManifestExpectations {
