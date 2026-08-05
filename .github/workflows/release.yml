@@ -69,6 +69,36 @@ jobs:
             throw "Release tag commit must be reachable from origin/main."
           }
 
+      - name: Check out recovery source for the crate-only metadata correction
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate_run_id != '' && inputs.publication_scope == 'crates' }}
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.ref }}
+          path: recovery-source
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify recovery source only changes the launcher metadata
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate_run_id != '' && inputs.publication_scope == 'crates' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          $releaseCommit = (git rev-list -n 1 "$env:RELEASE_TAG").Trim()
+          $recoveryCommit = (git -C recovery-source rev-parse HEAD).Trim()
+          git -C recovery-source merge-base --is-ancestor $releaseCommit $recoveryCommit
+          if ($LASTEXITCODE -ne 0) {
+            throw "Recovery source must descend from the immutable release tag."
+          }
+          $changed = @(git -C recovery-source diff --name-only $releaseCommit -- packages/capture-sidecar-launcher/Cargo.toml)
+          if ($changed.Count -ne 1 -or $changed[0] -ne 'packages/capture-sidecar-launcher/Cargo.toml') {
+            throw "Crate recovery may change only the launcher Cargo metadata."
+          }
+          $cargo = Get-Content recovery-source/packages/capture-sidecar-launcher/Cargo.toml -Raw
+          if ($cargo -notmatch 'categories = \["os"\]') {
+            throw "Recovery source does not contain the supported crates.io category."
+          }
+
       - name: Install pnpm
         uses: pnpm/action-setup@b0f76dfb45f55f8421693e4803ac7bb65143bd34 # v6
         with:
@@ -261,6 +291,23 @@ jobs:
           path: ${{ runner.temp }}/capture-candidate-reused
           run-id: ${{ inputs.candidate_run_id }}
           github-token: ${{ github.token }}
+
+      - name: Rebuild corrected crate candidate without rebuilding runtime assets
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate_run_id != '' && inputs.publication_scope == 'crates' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          $releaseVersion = $env:RELEASE_TAG.Substring(1)
+          cargo package --manifest-path recovery-source/packages/capture-sidecar-launcher/Cargo.toml --allow-dirty
+          $crateArtifact = Get-Item "recovery-source/packages/capture-sidecar-launcher/target/package/capture-sidecar-launcher-$releaseVersion.crate"
+          $candidateCrate = Join-Path $env:RUNNER_TEMP 'capture-candidate-reused/crate'
+          $candidateChecksums = Join-Path $env:RUNNER_TEMP 'capture-candidate-reused/checksums'
+          Get-ChildItem $candidateCrate -Filter '*.crate' -File | Remove-Item -Force
+          Copy-Item -LiteralPath $crateArtifact.FullName -Destination $candidateCrate
+          $digest = (Get-FileHash -LiteralPath (Join-Path $candidateCrate $crateArtifact.Name) -Algorithm SHA256).Hash.ToLowerInvariant()
+          $checksumPath = Join-Path $candidateChecksums "$($crateArtifact.Name).sha256"
+          Set-Content -LiteralPath $checksumPath -Value "$digest  $($crateArtifact.Name)" -Encoding utf8NoBOM
 
       - name: Verify reused release candidate
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate_run_id != '' }}
@@ -697,11 +744,14 @@ jobs:
           set -euo pipefail
           version="${RELEASE_TAG#v}"
           expected_sha256="$(python -c 'import json; print(next(item["sha256"] for item in json.load(open("publication/release-ledger.json"))["artifacts"] if item["registry"] == "crates.io"))')"
-          api_response="$RUNNER_TEMP/capture-sidecar-launcher-crates-recovery-api.json"
-          api_status="$(curl --silent --show-error --retry 5 --retry-delay 3 --user-agent "gx-capture-release/${RELEASE_TAG} (https://github.com/gx-capture/capture-workbench)" --header 'Accept: application/json' --output "$api_response" --write-out '%{http_code}' "https://crates.io/api/v1/crates/capture-sidecar-launcher/${version}")"
-          test "$api_status" = '200'
-          remote_sha256="$(python -c 'import json; print(json.load(open("'"$api_response"'"))["version"]["checksum"])')"
+          archive_path="$RUNNER_TEMP/capture-sidecar-launcher-${version}.crate"
+          curl --silent --show-error --fail --location --retry 5 --retry-delay 3 \
+            --user-agent "gx-capture-release/${RELEASE_TAG} (https://github.com/gx-capture/capture-workbench)" \
+            --output "$archive_path" \
+            "https://static.crates.io/crates/capture-sidecar-launcher/capture-sidecar-launcher-${version}.crate"
+          remote_sha256="$(sha256sum "$archive_path" | cut -d ' ' -f1)"
           test "$remote_sha256" = "$expected_sha256"
+          cargo info "capture-sidecar-launcher@${version}"
           probe_dir="$RUNNER_TEMP/capture-launcher-recovery-probe"
           cargo init --lib --name capture_launcher_recovery_probe "$probe_dir" >/dev/null
           python - "$probe_dir/Cargo.toml" "$version" <<'PY'

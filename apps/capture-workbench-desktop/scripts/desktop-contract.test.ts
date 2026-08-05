@@ -804,6 +804,18 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   );
   assert.match(
     workflow,
+    /Check out recovery source for the crate-only metadata correction[\s\S]*ref: \$\{\{ github\.ref \}\}[\s\S]*path: recovery-source/u,
+  );
+  assert.match(
+    workflow,
+    /Rebuild corrected crate candidate without rebuilding runtime assets[\s\S]*cargo package --manifest-path recovery-source\/packages\/capture-sidecar-launcher\/Cargo\.toml[\s\S]*verify-release-candidate\.ts/u,
+  );
+  assert.match(
+    workflow,
+    /static\.crates\.io\/crates\/capture-sidecar-launcher[\s\S]*sha256sum "\$archive_path"/u,
+  );
+  assert.match(
+    workflow,
     /recovery-registry-gate:[\s\S]*verifiedRegistries[\s\S]*publication\/release-ledger-recovery\.json/u,
   );
   assert.match(
