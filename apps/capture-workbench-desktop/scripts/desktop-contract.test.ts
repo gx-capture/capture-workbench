@@ -454,6 +454,22 @@ test('desktop launcher advertises the bounded 50 MiB upload policy', async () =>
   assert.match(launchPolicy, /DEFAULT_MAX_UPLOAD_BYTES\.to_string\(\)/u);
 });
 
+test('desktop launcher crate metadata uses a crates.io-supported category', async () => {
+  const cargoManifest = await readFile(
+    join(
+      appRoot,
+      '..',
+      '..',
+      'packages',
+      'capture-sidecar-launcher',
+      'Cargo.toml',
+    ),
+    'utf8',
+  );
+  assert.match(cargoManifest, /categories = \["os"\]/u);
+  assert.doesNotMatch(cargoManifest, /process-management/u);
+});
+
 test('WindowsML bundle provenance is runtime-owned without a hard-coded release URL', async () => {
   const workspaceRoot = join(appRoot, '..', '..');
   const [launcher, stageRuntime, releaseBuilder, requirements] =

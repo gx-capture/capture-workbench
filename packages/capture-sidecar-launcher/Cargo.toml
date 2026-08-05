@@ -9,7 +9,7 @@ repository = "https://github.com/gx-capture/capture-workbench"
 homepage = "https://github.com/gx-capture/capture-workbench"
 readme = "README.md"
 keywords = ["capture", "sidecar", "launcher", "windows"]
-categories = ["os", "process-management"]
+categories = ["os"]
 
 [dependencies]
 rand = "0.8"
