@@ -92,6 +92,12 @@ function exceptionReason(relativePath) {
   if (relativePath === 'tools/record-candidate-verification.ts') {
     return 'candidate verification report CLI process boundary';
   }
+  if (relativePath === 'tools/consumer-gate.ts') {
+    return 'consumer gate contract verifier boundary';
+  }
+  if (relativePath === 'tools/run-consumer-gates.ts') {
+    return 'consumer gate dispatch and polling CLI process boundary';
+  }
   if (relativePath === 'packages/capture-structuring/src/structuring.ts') {
     return 'host SDK LLM callable boundary';
   }

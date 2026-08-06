@@ -77,6 +77,13 @@
       "options": {
         "command": "node --test tools/contract-impact.test.ts tools/create-contract-snapshot.test.ts"
       }
+    },
+    "consumer-gate-test": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "node --test tools/consumer-gate.test.ts"
+      }
     }
   }
 }

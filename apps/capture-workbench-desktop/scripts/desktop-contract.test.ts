@@ -607,6 +607,45 @@ test('release candidate workflow is dispatch-only, exact-commit, and immutable',
   assert.doesNotMatch(workflow, /git tag|git push/u);
 });
 
+test('consumer gate workflow dispatches exact candidates and records independent results', async () => {
+  const workspaceRoot = join(appRoot, '..', '..');
+  const [configSource, workflow, gateRunner] = await Promise.all([
+    readFile(join(workspaceRoot, '.github', 'consumer-gates.json'), 'utf8'),
+    readFile(
+      join(workspaceRoot, '.github', 'workflows', 'consumer-gates.yml'),
+      'utf8',
+    ),
+    readFile(join(workspaceRoot, 'tools', 'run-consumer-gates.ts'), 'utf8'),
+  ]);
+  assert.deepEqual(JSON.parse(configSource), [
+    {
+      name: 'cert-prep',
+      repository: 'WodenWang820118/cert-prep',
+      workflowPath: '.github/workflows/capture-candidate-gate.yml',
+      ref: 'main',
+      requiredWhen: 'always',
+    },
+    {
+      name: 'gx-law-prep',
+      repository: 'WodenWang820118/gx.law-prep',
+      workflowPath: '.github/workflows/capture-contract-gate.yml',
+      ref: 'main',
+      requiredWhen: 'contract',
+    },
+  ]);
+  assert.match(workflow, /workflow_dispatch:[\s\S]*candidate_run_id:/u);
+  assert.match(workflow, /candidate_run_id:[\s\S]*required: true/u);
+  assert.match(
+    workflow,
+    /actions\/download-artifact@[0-9a-f]{40}[\s\S]*run-id: \$\{\{ inputs\.candidate_run_id \}\}/u,
+  );
+  assert.match(workflow, /node tools\/run-consumer-gates\.ts/u);
+  assert.match(workflow, /CAPTURE_CONSUMER_GATE_TOKEN/u);
+  assert.match(gateRunner, /consumer-gate-result-v1/u);
+  assert.match(workflow, /retention-days: 14/u);
+  assert.doesNotMatch(workflow, /git tag|git push/u);
+});
+
 test('release workflow is SHA-pinned, least-privilege, and runtime-first', async () => {
   const workspaceRoot = join(appRoot, '..', '..');
   const [

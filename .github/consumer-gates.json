@@ -1,0 +1,16 @@
+[
+  {
+    "name": "cert-prep",
+    "repository": "WodenWang820118/cert-prep",
+    "workflowPath": ".github/workflows/capture-candidate-gate.yml",
+    "ref": "main",
+    "requiredWhen": "always"
+  },
+  {
+    "name": "gx-law-prep",
+    "repository": "WodenWang820118/gx.law-prep",
+    "workflowPath": ".github/workflows/capture-contract-gate.yml",
+    "ref": "main",
+    "requiredWhen": "contract"
+  }
+]
