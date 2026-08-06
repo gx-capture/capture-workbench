@@ -8,6 +8,7 @@ import pytest
 
 PYPROJECT = Path(__file__).resolve().parents[1] / "pyproject.toml"
 OCR_SPEC = Path(__file__).resolve().parents[1] / "pyinstaller" / "capture-engine-ocr.spec"
+RUNTIME_SPEC = Path(__file__).resolve().parents[1] / "pyinstaller" / "capture-runtime.spec"
 REQUIREMENT_NAME = re.compile(
     r"^(?P<name>[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)(?=\s*(?:@|\[|[<>=!~;]|$))"
 )
@@ -72,6 +73,12 @@ def test_ocr_bundle_collects_pypdfium2_runtime_metadata() -> None:
         "shapely",
     ):
         assert f'"{distribution}"' in spec
+
+
+def test_core_runtime_collects_capture_contract_package_data() -> None:
+    spec = RUNTIME_SPEC.read_text(encoding="utf-8")
+
+    assert 'collect_data_files("capture_contracts")' in spec
 
 
 def test_exact_dependency_ownership_rejects_duplicate_or_broader_entries() -> None:

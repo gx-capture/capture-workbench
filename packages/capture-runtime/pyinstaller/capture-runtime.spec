@@ -2,6 +2,7 @@
 
 import os
 from pathlib import Path
+from PyInstaller.utils.hooks import collect_data_files
 
 root = Path(SPEC).resolve().parents[1]
 layout = os.environ.get("CAPTURE_PYINSTALLER_LAYOUT", "onefile")
@@ -13,7 +14,7 @@ a = Analysis(
     [str(root / "src" / "capture_runtime" / "__main__.py")],
     pathex=[str(root / "src")],
     binaries=[],
-    datas=[(str(catalog), ".")],
+    datas=[(str(catalog), ".")] + collect_data_files("capture_contracts"),
     hiddenimports=[
         "uvicorn.logging",
         "uvicorn.loops.asyncio",
