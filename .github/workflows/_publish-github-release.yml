@@ -19,6 +19,8 @@ on:
 permissions:
   actions: read
   contents: write
+  id-token: write
+  attestations: write
 
 jobs:
   publish:
@@ -38,12 +40,35 @@ jobs:
           name: promotion-input-${{ inputs.candidate_id }}
           path: promotion-input
 
+      - name: Download the exact registry publication ledgers
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: registry-ledger-*-${{ inputs.candidate_id }}
+          path: registry-ledgers
+          merge-multiple: true
+
       - name: Fetch and verify the tag created after registry publication
         shell: bash
         run: |
           set -euo pipefail
           git fetch --no-tags origin "refs/tags/${{ inputs.tag }}:refs/tags/${{ inputs.tag }}"
           test "$(git rev-list -n 1 '${{ inputs.tag }}^{}')" = '${{ inputs.source_commit }}'
+
+      - name: Create the immutable release manifest and checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          node tools/create-release-manifest.ts \
+            --candidate promotion-input/candidate \
+            --tag '${{ inputs.tag }}' \
+            --promotion-evidence promotion-input/promotion-evidence.json \
+            --consumer-gate-ledger promotion-input/consumer-gate-ledger.json \
+            --registry-directory registry-ledgers \
+            --output promotion-input/candidate/capture-release-manifest-v1.json
+
+      - name: Stage the public contract snapshot asset
+        shell: bash
+        run: cp promotion-input/candidate/contracts/contract-snapshot.json promotion-input/candidate/capture-contract-snapshot.json
 
       - name: Create or verify the public GitHub Release from exact candidate assets
         shell: bash
@@ -57,16 +82,31 @@ jobs:
             --source-commit '${{ inputs.source_commit }}' \
             --output github-release-ledger.json
 
-      - name: Verify an anonymous immutable candidate-manifest download
+      - name: Attest the immutable manifest and primary release assets
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: |
+            promotion-input/candidate/runtime/**
+            promotion-input/candidate/desktop/**
+            promotion-input/candidate/candidate-manifest.json
+            promotion-input/candidate/capture-contract-snapshot.json
+            promotion-input/candidate/capture-release-manifest-v1.json
+            promotion-input/candidate/capture-release-manifest-v1.json.sha256
+
+      - name: Verify anonymous immutable release-manifest download
         shell: bash
         run: |
           set -euo pipefail
           curl --fail --silent --show-error --location \
-            "https://github.com/${{ github.repository }}/releases/download/${{ inputs.tag }}/candidate-manifest.json" \
-            --output "$RUNNER_TEMP/anonymous-candidate-manifest.json"
+            "https://github.com/${{ github.repository }}/releases/download/${{ inputs.tag }}/capture-release-manifest-v1.json" \
+            --output "$RUNNER_TEMP/anonymous-release-manifest.json"
           cmp --silent \
-            promotion-input/candidate/candidate-manifest.json \
-            "$RUNNER_TEMP/anonymous-candidate-manifest.json"
+            promotion-input/candidate/capture-release-manifest-v1.json \
+            "$RUNNER_TEMP/anonymous-release-manifest.json"
+          gh attestation verify \
+            promotion-input/candidate/capture-release-manifest-v1.json \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/_publish-github-release.yml"
 
       - name: Upload GitHub Release ledger
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

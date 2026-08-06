@@ -656,6 +656,7 @@ test('promotion is candidate-only and creates the tag after registry verificatio
     cratesWorkflow,
     releaseWorkflow,
     promotionLedger,
+    supersedeWorkflow,
   ] = await Promise.all([
     readFile(
       join(workspaceRoot, '.github', 'workflows', 'release-promote.yml'),
@@ -695,6 +696,10 @@ test('promotion is candidate-only and creates the tag after registry verificatio
       ),
       'utf8',
     ),
+    readFile(
+      join(workspaceRoot, '.github', 'workflows', 'release-supersede.yml'),
+      'utf8',
+    ),
   ]);
   assert.match(
     promotion,
@@ -727,6 +732,7 @@ test('promotion is candidate-only and creates the tag after registry verificatio
     cratesWorkflow,
     releaseWorkflow,
     promotionLedger,
+    supersedeWorkflow,
   ]) {
     const references = [
       ...workflow.matchAll(/uses:\s*[^@\s]+@([^\s#]+)/gu),
@@ -740,12 +746,52 @@ test('promotion is candidate-only and creates the tag after registry verificatio
   assert.match(pypiWorkflow, /pypa\/gh-action-pypi-publish@/u);
   assert.match(cratesWorkflow, /publish-crate-candidate\.ts/u);
   assert.match(releaseWorkflow, /create-github-release\.ts/u);
+  assert.match(releaseWorkflow, /create-release-manifest\.ts/u);
+  assert.match(releaseWorkflow, /capture-release-manifest-v1\.json/u);
+  assert.match(releaseWorkflow, /capture-contract-snapshot\.json/u);
+  assert.match(releaseWorkflow, /actions\/attest@[0-9a-f]{40}/u);
+  assert.match(releaseWorkflow, /gh attestation verify/u);
+  assert.match(supersedeWorkflow, /update-release-index\.ts/u);
+  assert.match(supersedeWorkflow, /gh attestation verify/u);
+  assert.match(supersedeWorkflow, /supersededBy|supersede/u);
   assert.match(promotion, /promotion-ledger:[\s\S]*publish-github-release/u);
   assert.match(promotionLedger, /create-promotion-ledger\.ts/u);
   assert.doesNotMatch(
     audit,
     /workflow_dispatch|build-candidate|npm publish|cargo publish|git tag|git push/u,
   );
+});
+
+test('stable discovery points only to the immutable release manifest on the protected index branch', async () => {
+  const workspaceRoot = join(appRoot, '..', '..');
+  const [workflow, stable, releases] = await Promise.all([
+    readFile(
+      join(
+        workspaceRoot,
+        '.github',
+        'workflows',
+        '_publish-stable-pointer.yml',
+      ),
+      'utf8',
+    ),
+    readFile(join(workspaceRoot, 'release-index', 'stable.json'), 'utf8'),
+    readFile(join(workspaceRoot, 'release-index', 'releases.json'), 'utf8'),
+  ]);
+  assert.match(workflow, /release-index:[\s\S]*update-release-index\.ts/u);
+  assert.match(workflow, /capture-release-manifest-v1\.json/u);
+  assert.match(workflow, /refs\/heads\/release-index/u);
+  assert.match(workflow, /manifestSha256|MANIFEST_SHA256/u);
+  assert.match(workflow, /gh attestation verify/u);
+  assert.doesNotMatch(workflow, /candidate-manifest\.json/u);
+  assert.deepEqual(JSON.parse(stable), {
+    schemaVersion: '1',
+    channel: 'stable',
+    releaseTag: null,
+    manifestSha256: null,
+    manifestAssetName: 'capture-release-manifest-v1.json',
+    updatedAt: null,
+  });
+  assert.deepEqual(JSON.parse(releases), { schemaVersion: '1', releases: {} });
 });
 
 test('release workflow is SHA-pinned and tag-audit-only', async () => {

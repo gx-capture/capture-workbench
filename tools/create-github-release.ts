@@ -66,9 +66,27 @@ async function assetPaths(candidate: string): Promise<string[]> {
     .filter((name) => name.endsWith('.exe'))
     .map((name) => join(desktop, name));
   const manifest = join(candidate, 'candidate-manifest.json');
+  const contractSnapshot = join(candidate, 'capture-contract-snapshot.json');
+  const releaseManifest = join(candidate, 'capture-release-manifest-v1.json');
+  const releaseManifestSha256 = `${releaseManifest}.sha256`;
   if (desktopFiles.length !== 1)
     throw new Error('Candidate must contain exactly one desktop installer.');
-  return [...runtimeFiles, ...desktopFiles, manifest];
+  const releaseManifestFiles = [];
+  try {
+    await stat(contractSnapshot);
+    await stat(releaseManifest);
+    await stat(releaseManifestSha256);
+    releaseManifestFiles.push(releaseManifest, releaseManifestSha256);
+  } catch {
+    throw new Error('Immutable release manifest and checksum are required.');
+  }
+  return [
+    ...runtimeFiles,
+    ...desktopFiles,
+    manifest,
+    contractSnapshot,
+    ...releaseManifestFiles,
+  ];
 }
 
 async function assertRemoteAssetMatches(

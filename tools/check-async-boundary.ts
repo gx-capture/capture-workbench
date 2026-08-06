@@ -125,6 +125,12 @@ function exceptionReason(relativePath) {
   if (relativePath === 'tools/create-promotion-ledger.ts') {
     return 'promotion ledger CLI process boundary';
   }
+  if (relativePath === 'tools/create-release-manifest.ts') {
+    return 'immutable release manifest CLI process boundary';
+  }
+  if (relativePath === 'tools/update-release-index.ts') {
+    return 'release index transition CLI process boundary';
+  }
   if (relativePath === 'packages/capture-structuring/src/structuring.ts') {
     return 'host SDK LLM callable boundary';
   }

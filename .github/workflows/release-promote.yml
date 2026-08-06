@@ -91,7 +91,6 @@ jobs:
           {
             echo "source_commit=$source_commit"
             echo "release_version=$release_version"
-            echo "contract_classification=$contract_classification"
           } >> "$GITHUB_OUTPUT"
 
       - name: Upload the prepared exact promotion input
@@ -198,6 +197,8 @@ jobs:
     permissions:
       actions: read
       contents: write
+      id-token: write
+      attestations: write
     with:
       candidate_id: ${{ inputs.candidate_id }}
       source_commit: ${{ needs.prepare-candidate.outputs.source_commit }}
@@ -205,8 +206,8 @@ jobs:
       tag: v${{ needs.prepare-candidate.outputs.release_version }}
 
   promotion-ledger:
-    if: ${{ inputs.publication_scope == 'all' && needs.publish-github-release.result == 'success' }}
-    needs: [prepare-candidate, publish-github-release]
+    if: ${{ inputs.publication_scope == 'all' && needs.publish-stable-pointer.result == 'success' }}
+    needs: [prepare-candidate, publish-stable-pointer]
     uses: ./.github/workflows/_publish-promotion-ledger.yml
     permissions:
       actions: read
@@ -214,3 +215,15 @@ jobs:
     with:
       candidate_id: ${{ inputs.candidate_id }}
       source_commit: ${{ needs.prepare-candidate.outputs.source_commit }}
+
+  publish-stable-pointer:
+    if: ${{ inputs.publication_scope == 'all' && needs.publish-github-release.result == 'success' }}
+    needs: [prepare-candidate, publish-github-release]
+    uses: ./.github/workflows/_publish-stable-pointer.yml
+    permissions:
+      actions: read
+      contents: write
+    with:
+      candidate_id: ${{ inputs.candidate_id }}
+      source_commit: ${{ needs.prepare-candidate.outputs.source_commit }}
+      tag: v${{ needs.prepare-candidate.outputs.release_version }}

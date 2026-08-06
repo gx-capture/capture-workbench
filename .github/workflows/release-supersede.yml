@@ -1,0 +1,114 @@
+name: Release Supersession and Rollback
+
+on:
+  workflow_dispatch:
+    inputs:
+      defective_tag:
+        description: 'Released tag whose compatibility status must be changed'
+        required: true
+        type: string
+      replacement_tag:
+        description: 'Known-good released tag to which stable should move'
+        required: true
+        type: string
+      reason:
+        description: 'Operator-approved reason recorded in release history'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: capture-release-index
+  cancel-in-progress: false
+
+jobs:
+  supersede:
+    runs-on: ubuntu-latest
+    environment: capture-release-index
+    steps:
+      - name: Check out the protected release tooling source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: main
+          fetch-depth: 1
+          persist-credentials: true
+
+      - name: Verify both immutable replacement manifests and attestations
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEFECTIVE_TAG: ${{ inputs.defective_tag }}
+          REPLACEMENT_TAG: ${{ inputs.replacement_tag }}
+        run: |
+          set -euo pipefail
+          for tag in "$DEFECTIVE_TAG" "$REPLACEMENT_TAG"; do
+            if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
+              echo "Invalid release tag: $tag" >&2
+              exit 1
+            fi
+            directory="$RUNNER_TEMP/release-$tag"
+            mkdir -p "$directory"
+            gh release download "$tag" \
+              --repo "$GITHUB_REPOSITORY" \
+              --pattern capture-release-manifest-v1.json \
+              --dir "$directory"
+            gh attestation verify \
+              "$directory/capture-release-manifest-v1.json" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/_publish-github-release.yml"
+            test "$(jq -r '.status' "$directory/capture-release-manifest-v1.json")" = 'released'
+            test "$(jq -r '.releaseTag' "$directory/capture-release-manifest-v1.json")" = "$tag"
+          done
+          echo "DEFECTIVE_MANIFEST_SHA256=$(sha256sum "$RUNNER_TEMP/release-$DEFECTIVE_TAG/capture-release-manifest-v1.json" | cut -d ' ' -f1)" >> "$GITHUB_ENV"
+          echo "REPLACEMENT_MANIFEST_SHA256=$(sha256sum "$RUNNER_TEMP/release-$REPLACEMENT_TAG/capture-release-manifest-v1.json" | cut -d ' ' -f1)" >> "$GITHUB_ENV"
+
+      - name: Check out the protected release-index branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp tools/update-release-index.ts "$RUNNER_TEMP/update-release-index.ts"
+          git fetch --no-tags origin refs/heads/release-index:refs/remotes/origin/release-index
+          git checkout -B release-index refs/remotes/origin/release-index
+
+      - name: Apply a tested supersession or rollback transition
+        shell: bash
+        env:
+          DEFECTIVE_TAG: ${{ inputs.defective_tag }}
+          REPLACEMENT_TAG: ${{ inputs.replacement_tag }}
+          SUPERSESSION_REASON: ${{ inputs.reason }}
+        run: |
+          set -euo pipefail
+          node "$RUNNER_TEMP/update-release-index.ts" \
+            --index release-index \
+            --operation supersede \
+            --defective-tag "$DEFECTIVE_TAG" \
+            --replacement-tag "$REPLACEMENT_TAG" \
+            --defective-manifest-sha256 "$DEFECTIVE_MANIFEST_SHA256" \
+            --replacement-manifest-sha256 "$REPLACEMENT_MANIFEST_SHA256" \
+            --reason "$SUPERSESSION_REASON"
+
+      - name: Add a warning to the affected GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEFECTIVE_TAG: ${{ inputs.defective_tag }}
+          REPLACEMENT_TAG: ${{ inputs.replacement_tag }}
+          SUPERSESSION_REASON: ${{ inputs.reason }}
+        run: |
+          set -euo pipefail
+          gh release edit "$DEFECTIVE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --notes-footer "WARNING: superseded by $REPLACEMENT_TAG. Reason: $SUPERSESSION_REASON"
+
+      - name: Push only the promotion-owned release-index transition
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add release-index/stable.json release-index/releases.json
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m "chore(release-index): supersede ${{ inputs.defective_tag }}"
+          git push origin HEAD:refs/heads/release-index

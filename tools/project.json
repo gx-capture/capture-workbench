@@ -105,6 +105,20 @@
       "options": {
         "command": "node --test tools/publish-npm-candidate.test.ts tools/publish-crate-candidate.test.ts tools/verify-registry-ledgers.test.ts"
       }
+    },
+    "release-manifest-test": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "node --test tools/create-release-manifest.test.ts"
+      }
+    },
+    "release-index-test": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "node --test tools/update-release-index.test.ts"
+      }
     }
   }
 }

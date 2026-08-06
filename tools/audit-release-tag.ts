@@ -92,10 +92,15 @@ async function main(): Promise<void> {
   if (release.isDraft !== false || !Array.isArray(release.assets))
     throw new Error('Public GitHub Release audit failed.');
   if (
-    !release.assets.some((asset) => asset.name === 'candidate-manifest.json')
+    !release.assets.some(
+      (asset) => asset.name === 'capture-release-manifest-v1.json',
+    ) ||
+    !release.assets.some(
+      (asset) => asset.name === 'capture-contract-snapshot.json',
+    )
   ) {
     throw new Error(
-      'Public GitHub Release has no immutable candidate manifest.',
+      'Public GitHub Release is missing the immutable manifest or contract snapshot.',
     );
   }
   const temporary = await mkdtemp(join(tmpdir(), 'capture-release-audit-'));
@@ -107,12 +112,24 @@ async function main(): Promise<void> {
       '--repo',
       repository,
       '--pattern',
-      'candidate-manifest.json',
+      'capture-release-manifest-v1.json',
       '--dir',
       temporary,
     ]);
+    run('gh', [
+      'attestation',
+      'verify',
+      join(temporary, 'capture-release-manifest-v1.json'),
+      '--repo',
+      repository,
+      '--signer-workflow',
+      `${repository}/.github/workflows/_publish-github-release.yml`,
+    ]);
     const manifest = JSON.parse(
-      await readFile(join(temporary, 'candidate-manifest.json'), 'utf8'),
+      await readFile(
+        join(temporary, 'capture-release-manifest-v1.json'),
+        'utf8',
+      ),
     ) as {
       candidateId?: unknown;
       sourceCommit?: unknown;
@@ -125,7 +142,7 @@ async function main(): Promise<void> {
       manifest.releaseVersion !== version
     ) {
       throw new Error(
-        'Candidate manifest identity does not match the audited tag.',
+        'Release manifest identity does not match the audited tag.',
       );
     }
   } finally {
