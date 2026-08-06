@@ -157,6 +157,37 @@ jobs:
           $manifest = Get-Content "$candidate/candidate-manifest.json" -Raw | ConvertFrom-Json
           "candidateId=$($manifest.candidateId)" >> $env:GITHUB_OUTPUT
 
+      - name: Generate candidate-bound contract impact classification
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          $candidate = $env:CAPTURE_CANDIDATE_PATH
+          $manifest = Get-Content "$candidate/candidate-manifest.json" -Raw | ConvertFrom-Json
+          $baseline = Join-Path $env:RUNNER_TEMP 'stable-contract-snapshot.json'
+          $baselineArgs = @()
+          try {
+            git fetch --no-tags origin refs/heads/release-index:refs/remotes/origin/release-index
+            $stable = git show refs/remotes/origin/release-index:release-index/stable.json | ConvertFrom-Json
+            if ($stable.releaseTag) {
+              $downloadDirectory = Join-Path $env:RUNNER_TEMP 'stable-release'
+              New-Item -ItemType Directory -Force -Path $downloadDirectory | Out-Null
+              gh release download $stable.releaseTag --repo $env:GITHUB_REPOSITORY --pattern capture-contract-snapshot.json --dir $downloadDirectory
+              Copy-Item (Join-Path $downloadDirectory 'capture-contract-snapshot.json') $baseline
+              $baselineArgs = @('--baseline', $baseline)
+            }
+          } catch {
+            Write-Host "No usable stable contract baseline was available; classification will require manual review."
+          }
+          node tools/classify-release-contract.ts `
+            --candidate $candidate `
+            --candidate-id $manifest.candidateId `
+            @baselineArgs `
+            --output (Join-Path $env:RUNNER_TEMP 'contract-impact.json')
+          Copy-Item (Join-Path $env:RUNNER_TEMP 'contract-impact.json') (Join-Path $candidate 'contract-impact.json')
+
       - name: Upload immutable candidate
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

@@ -23,15 +23,6 @@ on:
         description: 'Candidate release version without v prefix'
         required: true
         type: string
-      contract_classification:
-        description: 'Machine-generated contract impact classification'
-        required: true
-        type: choice
-        options:
-          - no-impact
-          - additive
-          - breaking
-          - manual-review
 
 permissions:
   actions: read
@@ -70,7 +61,6 @@ jobs:
             --candidate-manifest-sha256 "${{ inputs.candidate_manifest_sha256 }}" \
             --source-commit "${{ inputs.source_commit }}" \
             --release-version "${{ inputs.release_version }}" \
-            --contract-classification "${{ inputs.contract_classification }}" \
             --producer-repository "${{ github.repository }}" \
             --producer-run-id "${{ inputs.candidate_run_id }}" \
             --output "$RUNNER_TEMP/consumer-gate-ledger.json"

@@ -11,6 +11,7 @@ import {
   writeConsumerGateLedger,
   type ConsumerGateResult,
 } from './consumer-gate.ts';
+import { verifyContractImpact } from './classify-release-contract.ts';
 
 type GateConfig = {
   readonly name: string;
@@ -237,24 +238,32 @@ async function main(): Promise<void> {
   );
   const sourceCommit = required(values, '--source-commit');
   const releaseVersion = required(values, '--release-version');
-  const contractClassification = required(values, '--contract-classification');
   const producerRepository = required(values, '--producer-repository');
   const producerRunId = Number(required(values, '--producer-run-id'));
   const output = resolve(required(values, '--output'));
   if (!Number.isSafeInteger(producerRunId) || producerRunId < 1)
     throw new Error('Producer run ID is invalid.');
-  if (
-    !['no-impact', 'additive', 'breaking', 'manual-review'].includes(
-      contractClassification,
-    )
-  )
-    throw new Error('Contract classification is invalid.');
   await verifyCandidateManifest(candidate, {
     candidateId,
     candidateManifestSha256,
     sourceCommit,
     releaseVersion,
   });
+  const contractSnapshotPath = join(
+    candidate,
+    'contracts',
+    'contract-snapshot.json',
+  );
+  const contractImpact = verifyContractImpact(
+    JSON.parse(
+      await readFile(join(candidate, 'contract-impact.json'), 'utf8'),
+    ) as unknown,
+    {
+      candidateId,
+      candidateSnapshotSha256: await sha256File(contractSnapshotPath),
+    },
+  );
+  const contractClassification = contractImpact.classification;
   const config = validateConfig(
     JSON.parse(await readFile(configPath, 'utf8')) as unknown,
   );

@@ -42,7 +42,6 @@ jobs:
     outputs:
       source_commit: ${{ steps.evidence.outputs.source_commit }}
       release_version: ${{ steps.evidence.outputs.release_version }}
-      contract_classification: ${{ steps.evidence.outputs.contract_classification }}
     steps:
       - name: Check out promotion tooling
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -84,7 +83,6 @@ jobs:
             --output "$RUNNER_TEMP/promotion-evidence.json"
           source_commit="$(node --input-type=module -e "const m=JSON.parse(await import('node:fs/promises').then(x=>x.readFile(process.argv[1],'utf8'))); process.stdout.write(m.sourceCommit)" "$RUNNER_TEMP/promotion-evidence.json")"
           release_version="$(node --input-type=module -e "const m=JSON.parse(await import('node:fs/promises').then(x=>x.readFile(process.argv[1],'utf8'))); process.stdout.write(m.releaseVersion)" "$RUNNER_TEMP/promotion-evidence.json")"
-          contract_classification="$(node --input-type=module -e "const m=JSON.parse(await import('node:fs/promises').then(x=>x.readFile(process.argv[1],'utf8'))); process.stdout.write(m.contractClassification)" "$RUNNER_TEMP/promotion-evidence.json")"
           candidate_root="$(node --input-type=module -e "const m=JSON.parse(await import('node:fs/promises').then(x=>x.readFile(process.argv[1],'utf8'))); process.stdout.write(m.candidateRoot)" "$RUNNER_TEMP/promotion-evidence.json")"
           mkdir -p "$RUNNER_TEMP/promotion-input/candidate"
           cp -a "$candidate_root/." "$RUNNER_TEMP/promotion-input/candidate/"

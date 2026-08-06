@@ -78,6 +78,13 @@
         "command": "node --test tools/contract-impact.test.ts tools/create-contract-snapshot.test.ts"
       }
     },
+    "release-contract-test": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "node --test tools/classify-release-contract.test.ts"
+      }
+    },
     "consumer-gate-test": {
       "cache": true,
       "executor": "nx:run-commands",

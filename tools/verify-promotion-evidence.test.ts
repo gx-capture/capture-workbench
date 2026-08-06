@@ -5,6 +5,7 @@ import { verifyPromotionEvidence } from './verify-promotion-evidence.ts';
 
 const candidateId = 'a'.repeat(64);
 const manifestSha256 = 'b'.repeat(64);
+const candidateSnapshotSha256 = 'f'.repeat(64);
 const sourceCommit = 'c'.repeat(40);
 const repository = 'WodenWang820118/cert-prep';
 const workflowPath = '.github/workflows/capture-candidate-gate.yml';
@@ -42,6 +43,12 @@ function evidence(overrides: Record<string, unknown> = {}) {
       sourceCommit,
       releaseVersion: '0.3.10',
       releaseMode: 'core-only',
+      artifacts: [
+        {
+          path: 'contracts/contract-snapshot.json',
+          sha256: candidateSnapshotSha256,
+        },
+      ],
     },
     candidateManifestSha256: manifestSha256,
     candidateId,
@@ -61,6 +68,15 @@ function evidence(overrides: Record<string, unknown> = {}) {
       passingReport('runtime-product'),
       passingReport('cross-framework-consumers'),
     ],
+    contractImpact: {
+      schemaVersion: '1',
+      candidateId,
+      candidateSnapshotSha256,
+      classification: 'no-impact',
+      baselineRelease: '0.3.9',
+      changes: [],
+    },
+    candidateSnapshotSha256,
     consumerGateRun: {
       path: '.github/workflows/consumer-gates.yml',
       status: 'completed',
@@ -126,6 +142,10 @@ test('promotion evidence rejects a missing required producer job', () => {
 
 test('contract-affecting classifications require the additional configured gate', () => {
   const value = evidence({
+    contractImpact: {
+      ...evidence().contractImpact,
+      classification: 'additive',
+    },
     consumerGateLedger: {
       ...evidence().consumerGateLedger,
       contractClassification: 'additive',

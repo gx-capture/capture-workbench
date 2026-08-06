@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -8,6 +9,7 @@ import {
   verifyConsumerGateResult,
   type ConsumerGateResult,
 } from './consumer-gate.ts';
+import { verifyContractImpact } from './classify-release-contract.ts';
 
 type ReleaseMode = 'core-only' | 'model-enabled';
 type ContractClassification =
@@ -124,6 +126,25 @@ function verifyCandidateManifestIdentity(
     releaseMode: requireReleaseMode(value.releaseMode),
     contractClassification: 'no-impact',
   };
+}
+
+function verifyCandidateSnapshotBinding(
+  value: unknown,
+  candidateSnapshotSha256: string,
+): void {
+  if (!isRecord(value) || !Array.isArray(value.artifacts)) {
+    throw new Error('Candidate manifest has no artifact inventory.');
+  }
+  const snapshot = value.artifacts.find(
+    (artifact) =>
+      isRecord(artifact) && artifact.path === 'contracts/contract-snapshot.json',
+  );
+  if (
+    !isRecord(snapshot) ||
+    snapshot.sha256 !== candidateSnapshotSha256
+  ) {
+    throw new Error('Contract snapshot is not bound to the candidate manifest.');
+  }
 }
 
 function verifyWorkflowRun(
@@ -258,6 +279,7 @@ function verifyConsumerLedger(
     value.schemaVersion !== '1' ||
     value.candidateId !== expected.candidateId ||
     value.candidateManifestSha256 !== expected.candidateManifestSha256 ||
+    value.contractClassification !== expected.contractClassification ||
     value.verdict !== 'passed' ||
     !Array.isArray(value.gates) ||
     !Array.isArray(value.resultDigests)
@@ -354,6 +376,8 @@ export function verifyPromotionEvidence(input: {
   readonly producerRun: unknown;
   readonly producerJobs: readonly unknown[];
   readonly verificationReports: readonly unknown[];
+  readonly contractImpact: unknown;
+  readonly candidateSnapshotSha256: string;
   readonly consumerGateRun: unknown;
   readonly consumerGateLedger: unknown;
   readonly consumerGateConfig: unknown;
@@ -382,10 +406,18 @@ export function verifyPromotionEvidence(input: {
     manifestMetadata.candidateId,
     manifestMetadata.releaseMode,
   );
+  const contractImpact = verifyContractImpact(input.contractImpact, {
+    candidateId: manifestMetadata.candidateId,
+    candidateSnapshotSha256: input.candidateSnapshotSha256,
+  });
+  verifyCandidateSnapshotBinding(
+    input.candidateManifest,
+    input.candidateSnapshotSha256,
+  );
   const metadata = {
     ...manifestMetadata,
     candidateManifestSha256,
-    contractClassification: 'no-impact' as const,
+    contractClassification: contractImpact.classification,
   };
   const contractClassification = verifyConsumerLedger(
     input.consumerGateLedger,
@@ -500,6 +532,19 @@ async function main(): Promise<void> {
   const reportPaths = (
     await Promise.all(reportNames.map((name) => findFiles(artifactRoot, name)))
   ).flat();
+  const contractImpactPaths = await findFiles(
+    artifactRoot,
+    'contract-impact.json',
+  );
+  if (contractImpactPaths.length !== 1) {
+    throw new Error(
+      `Expected exactly one contract impact record; found ${contractImpactPaths.length}.`,
+    );
+  }
+  const snapshotPath = join(candidateRoot, 'contracts', 'contract-snapshot.json');
+  const candidateSnapshotSha256 = createHash('sha256')
+    .update(await readFile(snapshotPath))
+    .digest('hex');
   const producerRun = ghJson(
     `repos/${producerRepository}/actions/runs/${producerRunId}`,
   );
@@ -519,6 +564,8 @@ async function main(): Promise<void> {
         ? jobsPayload.jobs
         : [],
     verificationReports: await Promise.all(reportPaths.map(readJson)),
+    contractImpact: await readJson(contractImpactPaths[0]),
+    candidateSnapshotSha256,
     consumerGateRun,
     consumerGateLedger: await readJson(consumerGateLedgerPath),
     consumerGateConfig: await readJson(consumerGateConfigPath),

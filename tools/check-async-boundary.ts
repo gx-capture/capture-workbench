@@ -89,6 +89,9 @@ function exceptionReason(relativePath) {
   if (relativePath === 'tools/contract-impact.ts') {
     return 'contract impact classification CLI process boundary';
   }
+  if (relativePath === 'tools/classify-release-contract.ts') {
+    return 'release contract classification CLI process boundary';
+  }
   if (relativePath === 'tools/record-candidate-verification.ts') {
     return 'candidate verification report CLI process boundary';
   }

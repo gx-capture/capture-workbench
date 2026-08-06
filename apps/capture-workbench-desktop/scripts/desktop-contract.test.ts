@@ -602,7 +602,7 @@ test('release candidate workflow is dispatch-only, exact-commit, and immutable',
   assert.match(workflow, /actions\/upload-artifact@[0-9a-f]{40}/u);
   assert.doesNotMatch(
     workflow,
-    /npm publish|cargo publish|pypa\/gh-action-pypi-publish|gh release/u,
+    /npm publish|cargo publish|pypa\/gh-action-pypi-publish|gh release (?:create|upload|edit|delete|publish)/u,
   );
   assert.doesNotMatch(workflow, /git tag|git push/u);
 });
