@@ -200,6 +200,7 @@ async function main(): Promise<void> {
   const packages = join(candidate, 'package');
   const python = join(candidate, 'python');
   const crate = join(candidate, 'crate');
+  const contracts = join(candidate, 'contracts');
   const desktop = join(candidate, 'desktop');
 
   const manifest = JSON.parse(
@@ -320,6 +321,26 @@ async function main(): Promise<void> {
     desktop,
     join(candidate, 'checksums'),
   ];
+  let hasContracts = false;
+  try {
+    const metadata = await stat(contracts);
+    if (!metadata.isDirectory()) {
+      throw new Error('Candidate contracts path must be a directory.');
+    }
+    hasContracts = true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    // Candidates created before Phase 4 remain valid for recovery.
+  }
+  if (hasContracts) {
+    const snapshot = JSON.parse(
+      await readFile(join(contracts, 'contract-snapshot.json'), 'utf8'),
+    ) as { schemaVersion?: unknown };
+    if (snapshot.schemaVersion !== '1') {
+      throw new Error('Candidate contract snapshot schema is unsupported.');
+    }
+    candidateDirectories.push(contracts);
+  }
   const inventory = [];
   for (const directory of candidateDirectories) {
     for (const path of await candidateFiles(directory)) {

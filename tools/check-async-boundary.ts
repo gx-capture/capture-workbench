@@ -83,6 +83,12 @@ function exceptionReason(relativePath) {
   if (relativePath === 'tools/assemble-release-candidate.ts') {
     return 'release candidate assembly CLI process boundary';
   }
+  if (relativePath === 'tools/create-contract-snapshot.ts') {
+    return 'contract snapshot generation CLI process boundary';
+  }
+  if (relativePath === 'tools/contract-impact.ts') {
+    return 'contract impact classification CLI process boundary';
+  }
   if (relativePath === 'tools/record-candidate-verification.ts') {
     return 'candidate verification report CLI process boundary';
   }

@@ -70,6 +70,13 @@
       "options": {
         "command": "node --test tools/verify-release-candidate.test.ts"
       }
+    },
+    "contract-impact-test": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "node --test tools/contract-impact.test.ts tools/create-contract-snapshot.test.ts"
+      }
     }
   }
 }

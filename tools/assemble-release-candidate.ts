@@ -10,6 +10,8 @@ import {
 import { basename, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+import { createContractSnapshot } from './create-contract-snapshot.ts';
+
 type ReleaseMode = 'core-only' | 'model-enabled';
 
 function parseArguments(args: readonly string[]) {
@@ -83,12 +85,13 @@ async function main(): Promise<void> {
   const packages = join(output, 'package');
   const python = join(output, 'python');
   const crate = join(output, 'crate');
+  const contracts = join(output, 'contracts');
   const checksums = join(output, 'checksums');
   const desktop = join(output, 'desktop');
   await mkdir(output, { recursive: false });
   await Promise.all(
-    [runtime, packages, python, crate, checksums, desktop].map((path) =>
-      mkdir(path),
+    [runtime, packages, python, crate, contracts, checksums, desktop].map(
+      (path) => mkdir(path),
     ),
   );
 
@@ -181,6 +184,11 @@ async function main(): Promise<void> {
   await writeFile(
     `${reportPath}.sha256`,
     `${await sha256(reportPath)}  runtime-size-report.json\n`,
+    'utf8',
+  );
+  await writeFile(
+    join(contracts, 'contract-snapshot.json'),
+    `${JSON.stringify(await createContractSnapshot(root), null, 2)}\n`,
     'utf8',
   );
 
