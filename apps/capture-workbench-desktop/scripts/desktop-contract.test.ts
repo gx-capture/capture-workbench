@@ -541,7 +541,260 @@ test('deterministic runtime checks exact Host authority and canonical v1 names',
   assert.match(deterministicSource, /wrongAuthorityPortRejected/u);
 });
 
-test('release workflow is SHA-pinned, least-privilege, and runtime-first', async () => {
+test('release candidate workflow is dispatch-only, exact-commit, and immutable', async () => {
+  const workspaceRoot = join(appRoot, '..', '..');
+  const workflow = await readFile(
+    join(workspaceRoot, '.github', 'workflows', 'release-candidate.yml'),
+    'utf8',
+  );
+  assert.match(workflow, /^name: Release Candidate/mu);
+  assert.match(
+    workflow,
+    /workflow_dispatch:[\s\S]*version:[\s\S]*commit_sha:[\s\S]*release_mode:/u,
+  );
+  assert.match(workflow, /ref: \$\{\{ inputs\.commit_sha \}\}/u);
+  assert.match(workflow, /verify-main-ci\.ts[\s\S]*--commit "\$head"/u);
+  assert.match(
+    workflow,
+    /pnpm verify:release-version -- "v\$env:RELEASE_VERSION"/u,
+  );
+  assert.match(workflow, /candidate-manifest\.json/u);
+  assert.match(workflow, /retention-days: 14/u);
+  for (const job of [
+    'verify-windows-install',
+    'verify-runtime-product',
+    'verify-cross-framework-consumers',
+    'verify-model-enabled-runtime',
+  ]) {
+    assert.match(
+      workflow,
+      new RegExp(`${job}:[\\s\\S]*needs: build-candidate`, 'u'),
+    );
+  }
+  assert.equal(
+    (
+      workflow.match(
+        /name: capture-candidate-\$\{\{ inputs\.version \}\}-\$\{\{ github\.run_id \}\}/gu,
+      ) ?? []
+    ).length,
+    5,
+  );
+  const windowsInstallJob = workflow.slice(
+    workflow.indexOf('  verify-windows-install:'),
+  );
+  assert.match(windowsInstallJob, /installed-deterministic-smoke\.ts\s*$/mu);
+  assert.doesNotMatch(
+    windowsInstallJob,
+    /installed-deterministic-smoke\.ts --measure-release-size/u,
+  );
+  assert.match(workflow, /local-release-consumer-smoke\.ts --runtime-dir/u);
+  assert.match(workflow, /verify-candidate-packages\.ts/u);
+  assert.match(workflow, /clean-angular-consumer-smoke\.ts/u);
+  assert.match(workflow, /record-candidate-verification\.ts/u);
+  assert.equal(
+    (
+      workflow.match(
+        /actions\/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02/gu,
+      ) ?? []
+    ).length,
+    5,
+  );
+  assert.match(workflow, /actions\/upload-artifact@[0-9a-f]{40}/u);
+  assert.doesNotMatch(
+    workflow,
+    /npm publish|cargo publish|pypa\/gh-action-pypi-publish|gh release (?:create|upload|edit|delete|publish)/u,
+  );
+  assert.doesNotMatch(workflow, /git tag|git push/u);
+});
+
+test('consumer gate workflow dispatches exact candidates and records independent results', async () => {
+  const workspaceRoot = join(appRoot, '..', '..');
+  const [configSource, workflow, gateRunner] = await Promise.all([
+    readFile(join(workspaceRoot, '.github', 'consumer-gates.json'), 'utf8'),
+    readFile(
+      join(workspaceRoot, '.github', 'workflows', 'consumer-gates.yml'),
+      'utf8',
+    ),
+    readFile(join(workspaceRoot, 'tools', 'run-consumer-gates.ts'), 'utf8'),
+  ]);
+  assert.deepEqual(JSON.parse(configSource), [
+    {
+      name: 'cert-prep',
+      repository: 'WodenWang820118/cert-prep',
+      workflowPath: '.github/workflows/capture-candidate-gate.yml',
+      ref: 'main',
+      requiredWhen: 'always',
+    },
+    {
+      name: 'gx-law-prep',
+      repository: 'WodenWang820118/gx.law-prep',
+      workflowPath: '.github/workflows/capture-contract-gate.yml',
+      ref: 'main',
+      requiredWhen: 'contract',
+    },
+  ]);
+  assert.match(workflow, /workflow_dispatch:[\s\S]*candidate_run_id:/u);
+  assert.match(workflow, /candidate_run_id:[\s\S]*required: true/u);
+  assert.match(
+    workflow,
+    /actions\/download-artifact@[0-9a-f]{40}[\s\S]*run-id: \$\{\{ inputs\.candidate_run_id \}\}/u,
+  );
+  assert.match(workflow, /node tools\/run-consumer-gates\.ts/u);
+  assert.match(workflow, /CAPTURE_CONSUMER_GATE_TOKEN/u);
+  assert.match(gateRunner, /consumer-gate-result-v1/u);
+  assert.match(workflow, /retention-days: 14/u);
+  assert.doesNotMatch(workflow, /git tag|git push/u);
+});
+
+test('promotion is candidate-only and creates the tag after registry verification', async () => {
+  const workspaceRoot = join(appRoot, '..', '..');
+  const [
+    promotion,
+    audit,
+    npmWorkflow,
+    pypiWorkflow,
+    cratesWorkflow,
+    releaseWorkflow,
+    promotionLedger,
+    supersedeWorkflow,
+  ] = await Promise.all([
+    readFile(
+      join(workspaceRoot, '.github', 'workflows', 'release-promote.yml'),
+      'utf8',
+    ),
+    readFile(
+      join(workspaceRoot, '.github', 'workflows', 'release.yml'),
+      'utf8',
+    ),
+    readFile(
+      join(workspaceRoot, '.github', 'workflows', '_publish-npm.yml'),
+      'utf8',
+    ),
+    readFile(
+      join(workspaceRoot, '.github', 'workflows', '_publish-pypi.yml'),
+      'utf8',
+    ),
+    readFile(
+      join(workspaceRoot, '.github', 'workflows', '_publish-crates.yml'),
+      'utf8',
+    ),
+    readFile(
+      join(
+        workspaceRoot,
+        '.github',
+        'workflows',
+        '_publish-github-release.yml',
+      ),
+      'utf8',
+    ),
+    readFile(
+      join(
+        workspaceRoot,
+        '.github',
+        'workflows',
+        '_publish-promotion-ledger.yml',
+      ),
+      'utf8',
+    ),
+    readFile(
+      join(workspaceRoot, '.github', 'workflows', 'release-supersede.yml'),
+      'utf8',
+    ),
+  ]);
+  assert.match(
+    promotion,
+    /candidate_run_id:[\s\S]*candidate_id:[\s\S]*consumer_gate_run_id:[\s\S]*publication_scope:/u,
+  );
+  assert.match(promotion, /verify-promotion-evidence\.ts/u);
+  assert.match(promotion, /run-id: \$\{\{ inputs\.candidate_run_id \}\}/u);
+  assert.match(
+    promotion,
+    /name: promotion-input-\$\{\{ inputs\.candidate_id \}\}/u,
+  );
+  assert.doesNotMatch(
+    promotion,
+    /pnpm nx|cargo build|cargo publish|npm publish/u,
+  );
+  const registryIndex = promotion.indexOf('verify-registries:');
+  const tagIndex = promotion.indexOf('git tag -a');
+  assert.ok(registryIndex >= 0 && tagIndex > registryIndex);
+  assert.match(
+    promotion,
+    /tag-release:[\s\S]*needs: \[prepare-candidate, verify-registries\]/u,
+  );
+  assert.match(
+    promotion,
+    /publish-github-release:[\s\S]*needs: \[prepare-candidate, tag-release\]/u,
+  );
+  for (const workflow of [
+    npmWorkflow,
+    pypiWorkflow,
+    cratesWorkflow,
+    releaseWorkflow,
+    promotionLedger,
+    supersedeWorkflow,
+  ]) {
+    const references = [
+      ...workflow.matchAll(/uses:\s*[^@\s]+@([^\s#]+)/gu),
+    ].map((match) => match[1]);
+    assert.ok(references.length > 0);
+    assert.ok(
+      references.every((reference) => /^[0-9a-f]{40}$/u.test(reference)),
+    );
+  }
+  assert.match(npmWorkflow, /publish-npm-candidate\.ts/u);
+  assert.match(pypiWorkflow, /pypa\/gh-action-pypi-publish@/u);
+  assert.match(cratesWorkflow, /publish-crate-candidate\.ts/u);
+  assert.match(releaseWorkflow, /create-github-release\.ts/u);
+  assert.match(releaseWorkflow, /create-release-manifest\.ts/u);
+  assert.match(releaseWorkflow, /capture-release-manifest-v1\.json/u);
+  assert.match(releaseWorkflow, /capture-contract-snapshot\.json/u);
+  assert.match(releaseWorkflow, /actions\/attest@[0-9a-f]{40}/u);
+  assert.match(releaseWorkflow, /gh attestation verify/u);
+  assert.match(supersedeWorkflow, /update-release-index\.ts/u);
+  assert.match(supersedeWorkflow, /gh attestation verify/u);
+  assert.match(supersedeWorkflow, /supersededBy|supersede/u);
+  assert.match(promotion, /promotion-ledger:[\s\S]*publish-github-release/u);
+  assert.match(promotionLedger, /create-promotion-ledger\.ts/u);
+  assert.doesNotMatch(
+    audit,
+    /workflow_dispatch|build-candidate|npm publish|cargo publish|git tag|git push/u,
+  );
+});
+
+test('stable discovery points only to the immutable release manifest on the protected index branch', async () => {
+  const workspaceRoot = join(appRoot, '..', '..');
+  const [workflow, stable, releases] = await Promise.all([
+    readFile(
+      join(
+        workspaceRoot,
+        '.github',
+        'workflows',
+        '_publish-stable-pointer.yml',
+      ),
+      'utf8',
+    ),
+    readFile(join(workspaceRoot, 'release-index', 'stable.json'), 'utf8'),
+    readFile(join(workspaceRoot, 'release-index', 'releases.json'), 'utf8'),
+  ]);
+  assert.match(workflow, /release-index:[\s\S]*update-release-index\.ts/u);
+  assert.match(workflow, /capture-release-manifest-v1\.json/u);
+  assert.match(workflow, /refs\/heads\/release-index/u);
+  assert.match(workflow, /manifestSha256|MANIFEST_SHA256/u);
+  assert.match(workflow, /gh attestation verify/u);
+  assert.doesNotMatch(workflow, /candidate-manifest\.json/u);
+  assert.deepEqual(JSON.parse(stable), {
+    schemaVersion: '1',
+    channel: 'stable',
+    releaseTag: null,
+    manifestSha256: null,
+    manifestAssetName: 'capture-release-manifest-v1.json',
+    updatedAt: null,
+  });
+  assert.deepEqual(JSON.parse(releases), { schemaVersion: '1', releases: {} });
+});
+
+test('release workflow is SHA-pinned and tag-audit-only', async () => {
   const workspaceRoot = join(appRoot, '..', '..');
   const [
     workflow,
@@ -582,6 +835,24 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
       'utf8',
     ),
   ]);
+  if (/^name: Release Tag Audit$/mu.test(workflow)) {
+    const actionReferences = [workflow, ciWorkflow].flatMap((source) =>
+      [...source.matchAll(/uses:\s*[^@\s]+@([^\s#]+)/gu)].map(
+        (match) => match[1],
+      ),
+    );
+    assert.ok(actionReferences.length > 0);
+    assert.ok(
+      actionReferences.every((reference) => /^[0-9a-f]{40}$/u.test(reference)),
+    );
+    assert.match(workflow, /push:\s*\r?\n\s+tags:/u);
+    assert.match(workflow, /audit-release-tag\.ts/u);
+    assert.doesNotMatch(
+      workflow,
+      /workflow_dispatch|build-candidate|npm publish|cargo publish|git tag|git push/u,
+    );
+    return;
+  }
   const actionReferences = [workflow, ciWorkflow].flatMap((source) =>
     [...source.matchAll(/uses:\s*[^@\s]+@([^\s#]+)/gu)].map(
       (match) => match[1],
@@ -745,7 +1016,7 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   );
   assert.match(
     workflow,
-    /workflow_dispatch:[\s\S]*candidate_run_id:[\s\S]*required: false[\s\S]*type: string/u,
+    /workflow_dispatch:[\s\S]*candidate_run_id:[\s\S]*required: true[\s\S]*type: string/u,
   );
   assert.match(
     workflow,
@@ -768,7 +1039,7 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
     7,
   );
   assert.match(workflow, /compression-level: 0/u);
-  assert.match(workflow, /retention-days: 1/u);
+  assert.match(workflow, /retention-days: 14/u);
   assert.match(workflow, /capture-workbench-desktop:build-nsis/u);
   assert.match(
     workflow,
@@ -807,14 +1078,7 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
     workflow,
     /Download immutable candidate from prior successful run[\s\S]*run-id: \$\{\{ inputs\.candidate_run_id \}\}[\s\S]*github-token: \$\{\{ github\.token \}\}/u,
   );
-  assert.match(
-    workflow,
-    /Check out recovery source for the crate-only metadata correction[\s\S]*ref: \$\{\{ github\.ref \}\}[\s\S]*path: recovery-source/u,
-  );
-  assert.match(
-    workflow,
-    /Rebuild corrected crate candidate without rebuilding runtime assets[\s\S]*cargo package --manifest-path recovery-source\/packages\/capture-sidecar-launcher\/Cargo\.toml[\s\S]*verify-release-candidate\.ts/u,
-  );
+  assert.doesNotMatch(workflow, /recovery-source|cargo package --allow-dirty/u);
   assert.match(
     workflow,
     /static\.crates\.io\/crates\/capture-sidecar-launcher[\s\S]*sha256sum "\$archive_path"/u,

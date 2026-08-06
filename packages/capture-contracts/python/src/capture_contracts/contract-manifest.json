@@ -1,7 +1,7 @@
 {
   "manifestVersion": "1",
-  "packageVersion": "0.3.10",
-  "runtimeVersion": "0.3.10",
+  "packageVersion": "0.3.11",
+  "runtimeVersion": "0.3.11",
   "apiVersion": "1.0",
   "captureDocumentSchemaVersion": "1",
   "captureDocumentSchemaId": "https://github.com/gx-capture/capture-workbench/schema/capture-document-v1.schema.json",
@@ -136,7 +136,7 @@
     {
       "name": "RuntimeReadyV1",
       "schemaFile": "runtime-ready-v1.schema.json",
-      "schemaSha256": "0ee0b9181b7f89239d17499a5f2914b25d3a2115a33c6a90dddc03acbc1d6b7a",
+      "schemaSha256": "e23eda9ef04d9cb2765c72d7293cab51ab5e27eb265c6639bf1af2acb97ee180",
       "extraPolicy": "forbid",
       "strStripWhitespace": true
     },

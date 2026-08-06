@@ -11,7 +11,7 @@ import {
   verifyRuntimeRelease,
 } from './local-release-consumer-smoke.ts';
 
-const version = '0.3.10';
+const version = '0.3.11';
 
 function digest(bytes: Buffer): string {
   return createHash('sha256').update(bytes).digest('hex');
@@ -64,8 +64,8 @@ async function createFixture(): Promise<string> {
 async function createModelFixture(): Promise<string> {
   const directory = await createFixture();
   const workerAssets = [
-    ['windowsml-ocr', 'capture-engine-ocr-0.3.10-windows-x64.zip'],
-    ['whisper-primary', 'capture-engine-whisper-0.3.10-windows-x64.zip'],
+    ['windowsml-ocr', 'capture-engine-ocr-0.3.11-windows-x64.zip'],
+    ['whisper-primary', 'capture-engine-whisper-0.3.11-windows-x64.zip'],
   ] as const;
   const pendingWrites: Promise<void>[] = [];
   const requirements = workerAssets.map(([requirementId, fileName]) => {

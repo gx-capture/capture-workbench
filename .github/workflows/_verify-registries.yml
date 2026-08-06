@@ -1,0 +1,49 @@
+name: Reusable Capture Registry Verification
+
+on:
+  workflow_call:
+    inputs:
+      candidate_id:
+        required: true
+        type: string
+      source_commit:
+        required: true
+        type: string
+      release_version:
+        required: true
+        type: string
+      publication_scope:
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out verification tooling at the candidate source commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.source_commit }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Download per-registry publication ledgers
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: registry-ledger-*-${{ inputs.candidate_id }}
+          path: registry-ledgers
+          merge-multiple: true
+
+      - name: Verify publication ledger completeness
+        shell: bash
+        run: |
+          set -euo pipefail
+          node tools/verify-registry-ledgers.ts \
+            --directory registry-ledgers \
+            --candidate-id '${{ inputs.candidate_id }}' \
+            --release-version '${{ inputs.release_version }}' \
+            --scope '${{ inputs.publication_scope }}'

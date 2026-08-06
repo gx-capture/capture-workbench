@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "capture-contracts"
-version = "0.3.10"
+version = "0.3.11"
 description = "Generated Capture Workbench wire-contract models and schemas for host integrations."
 readme = "README.md"
 requires-python = ">=3.12,<3.15"

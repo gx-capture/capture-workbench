@@ -24,7 +24,7 @@ def _request(model_root: Path, source: Path, *, prefer_gpu: bool) -> WorkerReque
         operation="run",
         payload={
             "requirementId": "whisper-primary",
-            "artifactVersion": "0.3.10",
+            "artifactVersion": "0.3.11",
             "modelPath": str(model_root),
             "sourcePath": str(source),
             "mediaType": "audio/wav",
@@ -42,7 +42,7 @@ def _probe_request(*, options: object) -> WorkerRequest:
         operation="probe",
         payload={
             "requirementId": "whisper-primary",
-            "artifactVersion": "0.3.10",
+            "artifactVersion": "0.3.11",
             "modelPath": None,
             "options": options,
         },

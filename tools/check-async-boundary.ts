@@ -80,6 +80,57 @@ function exceptionReason(relativePath) {
   if (relativePath === 'tools/verify-release-candidate.ts') {
     return 'release candidate verification CLI process boundary';
   }
+  if (relativePath === 'tools/assemble-release-candidate.ts') {
+    return 'release candidate assembly CLI process boundary';
+  }
+  if (relativePath === 'tools/create-contract-snapshot.ts') {
+    return 'contract snapshot generation CLI process boundary';
+  }
+  if (relativePath === 'tools/contract-impact.ts') {
+    return 'contract impact classification CLI process boundary';
+  }
+  if (relativePath === 'tools/classify-release-contract.ts') {
+    return 'release contract classification CLI process boundary';
+  }
+  if (relativePath === 'tools/record-candidate-verification.ts') {
+    return 'candidate verification report CLI process boundary';
+  }
+  if (relativePath === 'tools/consumer-gate.ts') {
+    return 'consumer gate contract verifier boundary';
+  }
+  if (relativePath === 'tools/run-consumer-gates.ts') {
+    return 'consumer gate dispatch and polling CLI process boundary';
+  }
+  if (relativePath === 'tools/verify-promotion-evidence.ts') {
+    return 'promotion evidence verification CLI process boundary';
+  }
+  if (relativePath === 'tools/publish-npm-candidate.ts') {
+    return 'npm candidate publication CLI process boundary';
+  }
+  if (relativePath === 'tools/publish-crate-candidate.ts') {
+    return 'crates.io candidate publication CLI process boundary';
+  }
+  if (relativePath === 'tools/record-pypi-candidate.ts') {
+    return 'PyPI candidate ledger CLI process boundary';
+  }
+  if (relativePath === 'tools/verify-registry-ledgers.ts') {
+    return 'registry ledger verification CLI process boundary';
+  }
+  if (relativePath === 'tools/create-github-release.ts') {
+    return 'GitHub Release publication CLI process boundary';
+  }
+  if (relativePath === 'tools/audit-release-tag.ts') {
+    return 'release tag audit CLI process boundary';
+  }
+  if (relativePath === 'tools/create-promotion-ledger.ts') {
+    return 'promotion ledger CLI process boundary';
+  }
+  if (relativePath === 'tools/create-release-manifest.ts') {
+    return 'immutable release manifest CLI process boundary';
+  }
+  if (relativePath === 'tools/update-release-index.ts') {
+    return 'release index transition CLI process boundary';
+  }
   if (relativePath === 'packages/capture-structuring/src/structuring.ts') {
     return 'host SDK LLM callable boundary';
   }
@@ -89,7 +140,9 @@ function exceptionReason(relativePath) {
 const violations = [];
 const approved = [];
 for (const sourceRoot of sourceRoots) {
-  for (const file of collectTypescriptFiles(resolve(workspaceRoot, sourceRoot))) {
+  for (const file of collectTypescriptFiles(
+    resolve(workspaceRoot, sourceRoot),
+  )) {
     const relativePath = relative(workspaceRoot, file).replaceAll('\\', '/');
     if (relativePath === 'tools/check-async-boundary.ts') continue;
     const reason = exceptionReason(relativePath);

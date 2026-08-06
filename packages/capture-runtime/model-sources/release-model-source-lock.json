@@ -51,10 +51,10 @@
     }
   ],
   "lockVersion": "2",
-  "releaseVersion": "0.3.10",
+  "releaseVersion": "0.3.11",
   "requirements": [
     {
-      "artifactVersion": "0.3.10",
+      "artifactVersion": "0.3.11",
       "entryPoint": "model",
       "files": [
         {
@@ -218,7 +218,7 @@
       "requirementId": "windowsml-ocr"
     },
     {
-      "artifactVersion": "0.3.10",
+      "artifactVersion": "0.3.11",
       "entryPoint": "model",
       "files": [
         {

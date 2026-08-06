@@ -1,0 +1,90 @@
+name: Reusable Capture Stable Pointer Publication
+
+on:
+  workflow_call:
+    inputs:
+      candidate_id:
+        required: true
+        type: string
+      source_commit:
+        required: true
+        type: string
+      tag:
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    environment: capture-release-index
+    steps:
+      - name: Check out the candidate source commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.source_commit }}
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Download the public immutable release manifest
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release download '${{ inputs.tag }}' \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern capture-release-manifest-v1.json \
+            --dir "$RUNNER_TEMP/release-manifest"
+          test -f "$RUNNER_TEMP/release-manifest/capture-release-manifest-v1.json"
+          test "$(jq -r '.status' "$RUNNER_TEMP/release-manifest/capture-release-manifest-v1.json")" = 'released'
+          test "$(jq -r '.releaseTag' "$RUNNER_TEMP/release-manifest/capture-release-manifest-v1.json")" = '${{ inputs.tag }}'
+          test "$(jq -r '.candidateId' "$RUNNER_TEMP/release-manifest/capture-release-manifest-v1.json")" = '${{ inputs.candidate_id }}'
+          gh attestation verify \
+            "$RUNNER_TEMP/release-manifest/capture-release-manifest-v1.json" \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/_publish-github-release.yml"
+          manifest_sha256="$(sha256sum "$RUNNER_TEMP/release-manifest/capture-release-manifest-v1.json" | cut -d ' ' -f1)"
+          echo "MANIFEST_SHA256=$manifest_sha256" >> "$GITHUB_ENV"
+
+      - name: Preserve the tested release-index updater
+        shell: bash
+        run: cp tools/update-release-index.ts "$RUNNER_TEMP/update-release-index.ts"
+
+      - name: Check out the protected release-index branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin refs/heads/release-index:refs/remotes/origin/release-index
+          git checkout -B release-index refs/remotes/origin/release-index
+
+      - name: Update discovery pointer and release status index
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          CANDIDATE_ID: ${{ inputs.candidate_id }}
+        run: |
+          set -euo pipefail
+          node "$RUNNER_TEMP/update-release-index.ts" \
+            --index release-index \
+            --operation promote \
+            --tag "$RELEASE_TAG" \
+            --candidate-id "$CANDIDATE_ID" \
+            --manifest-sha256 "$MANIFEST_SHA256"
+
+      - name: Push only the promotion-owned release-index update
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add release-index/stable.json release-index/releases.json
+          git diff --cached --check
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m "chore(release-index): point stable at ${{ inputs.tag }}"
+          git push origin HEAD:refs/heads/release-index
