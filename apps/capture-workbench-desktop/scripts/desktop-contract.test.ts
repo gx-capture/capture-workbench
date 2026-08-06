@@ -586,12 +586,24 @@ test('release candidate workflow is dispatch-only, exact-commit, and immutable',
     windowsInstallJob,
     /installed-deterministic-smoke\.ts(?: --release)?\s*$/mu,
   );
+  assert.match(
+    windowsInstallJob,
+    /tauriInstallerName = "Capture Workbench_\$env:RELEASE_VERSION/u,
+  );
+  assert.match(
+    windowsInstallJob,
+    /Copy-Item -LiteralPath \$installer\[0\]\.FullName -Destination \(Join-Path \$nsis \$tauriInstallerName\)/u,
+  );
   assert.doesNotMatch(
     windowsInstallJob,
     /installed-deterministic-smoke\.ts --measure-release-size/u,
   );
   assert.match(workflow, /local-release-consumer-smoke\.ts --runtime-dir/u);
   assert.match(workflow, /verify-candidate-packages\.ts/u);
+  assert.match(
+    workflow,
+    /pnpm exec playwright install chromium[\s\S]*node tools\/clean-angular-consumer-smoke\.ts/u,
+  );
   assert.match(workflow, /clean-angular-consumer-smoke\.ts/u);
   assert.match(workflow, /record-candidate-verification\.ts/u);
   assert.equal(
