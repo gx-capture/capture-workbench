@@ -63,6 +63,13 @@
       "options": {
         "command": "node --test tools/release/version-sources.test.ts"
       }
+    },
+    "release-candidate-test": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "node --test tools/verify-release-candidate.test.ts"
+      }
     }
   }
 }

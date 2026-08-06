@@ -541,6 +541,33 @@ test('deterministic runtime checks exact Host authority and canonical v1 names',
   assert.match(deterministicSource, /wrongAuthorityPortRejected/u);
 });
 
+test('release candidate workflow is dispatch-only, exact-commit, and immutable', async () => {
+  const workspaceRoot = join(appRoot, '..', '..');
+  const workflow = await readFile(
+    join(workspaceRoot, '.github', 'workflows', 'release-candidate.yml'),
+    'utf8',
+  );
+  assert.match(workflow, /^name: Release Candidate/mu);
+  assert.match(
+    workflow,
+    /workflow_dispatch:[\s\S]*version:[\s\S]*commit_sha:[\s\S]*release_mode:/u,
+  );
+  assert.match(workflow, /ref: \$\{\{ inputs\.commit_sha \}\}/u);
+  assert.match(workflow, /verify-main-ci\.ts[\s\S]*--commit "\$head"/u);
+  assert.match(
+    workflow,
+    /pnpm verify:release-version -- "v\$env:RELEASE_VERSION"/u,
+  );
+  assert.match(workflow, /candidate-manifest\.json/u);
+  assert.match(workflow, /retention-days: 14/u);
+  assert.match(workflow, /actions\/upload-artifact@[0-9a-f]{40}/u);
+  assert.doesNotMatch(
+    workflow,
+    /npm publish|cargo publish|pypa\/gh-action-pypi-publish|gh release/u,
+  );
+  assert.doesNotMatch(workflow, /git tag|git push/u);
+});
+
 test('release workflow is SHA-pinned, least-privilege, and runtime-first', async () => {
   const workspaceRoot = join(appRoot, '..', '..');
   const [

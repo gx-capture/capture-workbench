@@ -170,6 +170,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
+          $sourceCommit = (git rev-parse HEAD).Trim()
           pnpm nx run capture-angular:pack
           pnpm nx run capture-contracts:pack
           pnpm nx run capture-structuring:pack
@@ -250,7 +251,11 @@ jobs:
           $sizeReport | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $sizeReportPath -Encoding utf8NoBOM
           $sizeReportDigest = (Get-FileHash -LiteralPath $sizeReportPath -Algorithm SHA256).Hash.ToLowerInvariant()
           "$sizeReportDigest  runtime-size-report.json" | Set-Content -LiteralPath "$sizeReportPath.sha256" -Encoding utf8NoBOM
-          node tools/verify-release-candidate.ts --candidate "$candidate" --version "$releaseVersion"
+          node tools/verify-release-candidate.ts `
+            --candidate "$candidate" `
+            --version "$releaseVersion" `
+            --source-commit "$sourceCommit" `
+            --release-mode "$env:RELEASE_MODEL_MODE"
           "CAPTURE_CANDIDATE_PATH=$candidate" >> $env:GITHUB_ENV
 
       - name: Download immutable candidate from prior successful run
@@ -270,7 +275,11 @@ jobs:
           $PSNativeCommandUseErrorActionPreference = $true
           $candidate = Join-Path $env:RUNNER_TEMP 'capture-candidate-reused'
           $releaseVersion = $env:RELEASE_TAG.Substring(1)
-          node tools/verify-release-candidate.ts --candidate "$candidate" --version "$releaseVersion"
+          $sourceCommit = (git rev-parse HEAD).Trim()
+          node tools/verify-release-candidate.ts `
+            --candidate "$candidate" `
+            --version "$releaseVersion" `
+            --source-commit "$sourceCommit"
           "CAPTURE_CANDIDATE_PATH=$candidate" >> $env:GITHUB_ENV
 
       - name: Upload release candidate

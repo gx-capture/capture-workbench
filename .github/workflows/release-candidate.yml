@@ -1,0 +1,167 @@
+name: Release Candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Intended release SemVer, without the v prefix'
+        required: true
+        type: string
+      commit_sha:
+        description: 'Exact source commit to build'
+        required: true
+        type: string
+      release_mode:
+        description: 'Candidate model mode derived from the checked-in source lock'
+        required: true
+        type: choice
+        options:
+          - core-only
+          - model-enabled
+
+permissions:
+  contents: read
+
+jobs:
+  build-candidate:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    permissions:
+      actions: read
+      contents: read
+      packages: read
+    steps:
+      - name: Check out exact source commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.commit_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify commit reachability and exact CI
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          $head = (git rev-parse HEAD).Trim()
+          if ($head -ne '${{ inputs.commit_sha }}') { throw 'Checked out commit differs from commit_sha.' }
+          git fetch --no-tags origin refs/heads/main:refs/remotes/origin/main
+          git merge-base --is-ancestor $head refs/remotes/origin/main
+          if ($LASTEXITCODE -ne 0) { throw 'Candidate commit must be reachable from main.' }
+          node tools/verify-main-ci.ts `
+            --repository "$env:GITHUB_REPOSITORY" `
+            --commit "$head" `
+            --workflow-path ".github/workflows/ci.yml" `
+            --branch "main"
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@b0f76dfb45f55f8421693e4803ac7bb65143bd34 # v6
+        with:
+          version: 11.15.1
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+          cache: pnpm
+          registry-url: https://npm.pkg.github.com
+          scope: '@gx-capture'
+
+      - name: Install uv and Python 3.12
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: '3.12'
+          enable-cache: true
+
+      - name: Install workspace dependencies
+        shell: pwsh
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify centralized release metadata
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: pnpm verify:release-version -- "v$env:RELEASE_VERSION"
+
+      - name: Verify requested model mode
+        shell: pwsh
+        env:
+          RELEASE_MODE: ${{ inputs.release_mode }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          pnpm nx run capture-runtime:classify-release-model-mode
+          $actual = (Get-Content packages/capture-runtime/dist/metadata/release-model-mode.json -Raw | ConvertFrom-Json).releaseMode
+          if ($actual -ne $env:RELEASE_MODE) { throw "Requested release mode $env:RELEASE_MODE differs from source-lock mode $actual." }
+
+      - name: Build production runtime artifacts
+        shell: pwsh
+        run: pnpm nx run capture-runtime:build-release-artifacts
+
+      - name: Build Windows installer from the verified runtime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          node apps/capture-workbench-desktop/scripts/stage-runtime.ts `
+            --artifact packages/capture-runtime/dist/release/capture-runtime-x86_64-pc-windows-msvc.exe `
+            --manifest packages/capture-runtime/dist/release/capture-runtime-manifest.json `
+            --schema packages/capture-runtime/dist/release/capture-document-v1.schema.json `
+            --source release
+          pnpm nx run capture-workbench-desktop:build-nsis
+
+      - name: Measure exact installed size
+        shell: pwsh
+        run: node apps/capture-workbench-desktop/scripts/installed-deterministic-smoke.ts --measure-release-size
+
+      - name: Verify packaging budget
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          pnpm nx run capture-runtime:size-regression-check
+          Copy-Item packages/capture-runtime/dist/size/runtime-size-report.json packages/capture-runtime/dist/release/runtime-size-report.json
+          $digest = (Get-FileHash packages/capture-runtime/dist/release/runtime-size-report.json -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$digest  runtime-size-report.json" | Set-Content packages/capture-runtime/dist/release/runtime-size-report.json.sha256 -Encoding utf8NoBOM
+
+      - name: Assemble and verify immutable candidate
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_MODE: ${{ inputs.release_mode }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          pnpm nx run capture-angular:pack
+          pnpm nx run capture-contracts:pack
+          pnpm nx run capture-structuring:pack
+          pnpm nx run capture-contracts:python-build
+          pnpm nx run capture-structuring-python:build
+          pnpm nx run capture-sidecar-launcher:cargo-package-dry-run
+          $candidate = Join-Path $env:RUNNER_TEMP "capture-candidate-$env:GITHUB_RUN_ID"
+          node tools/assemble-release-candidate.ts `
+            --output "$candidate" `
+            --version "$env:RELEASE_VERSION" `
+            --release-mode "$env:RELEASE_MODE"
+          $sourceCommit = (git rev-parse HEAD).Trim()
+          node tools/verify-release-candidate.ts `
+            --candidate "$candidate" `
+            --version "$env:RELEASE_VERSION" `
+            --source-commit "$sourceCommit" `
+            --release-mode "$env:RELEASE_MODE"
+          "CAPTURE_CANDIDATE_PATH=$candidate" >> $env:GITHUB_ENV
+          $manifest = Get-Content "$candidate/candidate-manifest.json" -Raw | ConvertFrom-Json
+          "candidateId=$($manifest.candidateId)" >> $env:GITHUB_OUTPUT
+
+      - name: Upload immutable candidate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: capture-candidate-${{ inputs.version }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/capture-candidate-${{ github.run_id }}
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0

@@ -80,6 +80,9 @@ function exceptionReason(relativePath) {
   if (relativePath === 'tools/verify-release-candidate.ts') {
     return 'release candidate verification CLI process boundary';
   }
+  if (relativePath === 'tools/assemble-release-candidate.ts') {
+    return 'release candidate assembly CLI process boundary';
+  }
   if (relativePath === 'packages/capture-structuring/src/structuring.ts') {
     return 'host SDK LLM callable boundary';
   }
@@ -89,7 +92,9 @@ function exceptionReason(relativePath) {
 const violations = [];
 const approved = [];
 for (const sourceRoot of sourceRoots) {
-  for (const file of collectTypescriptFiles(resolve(workspaceRoot, sourceRoot))) {
+  for (const file of collectTypescriptFiles(
+    resolve(workspaceRoot, sourceRoot),
+  )) {
     const relativePath = relative(workspaceRoot, file).replaceAll('\\', '/');
     if (relativePath === 'tools/check-async-boundary.ts') continue;
     const reason = exceptionReason(relativePath);
