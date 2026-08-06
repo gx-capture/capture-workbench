@@ -169,8 +169,15 @@ export function createInstalledProcessCleanup({
     );
     const script = `
 $root = [IO.Path]::GetFullPath($env:CAPTURE_SMOKE_PROCESS_ROOT).TrimEnd('\\') + '\\'
-$escapedRoot = $root.Replace("\\", "\\\\").Replace("'", "\\'")
-$filter = "ExecutablePath LIKE '$escapedRoot%'"
+$names = @(Get-ChildItem -LiteralPath $env:CAPTURE_SMOKE_PROCESS_ROOT -Recurse -File -Filter '*.exe' -ErrorAction Stop | Select-Object -ExpandProperty Name -Unique)
+if ($names.Count -eq 0) {
+  Write-Output '[]'
+  exit 0
+}
+$filter = ($names | ForEach-Object {
+  $escapedName = $_.Replace("'", "\\'")
+  "Name = '$escapedName'"
+}) -join ' OR '
 $items = @(Get-CimInstance -ClassName Win32_Process -Filter $filter -Property ProcessId, ExecutablePath -OperationTimeoutSec 5 -ErrorAction Stop | ForEach-Object {
   if (-not $_.ExecutablePath) {
     throw 'Win32_Process returned a matching process without an executable path.'

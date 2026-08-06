@@ -138,12 +138,12 @@ test('owned process observer uses a bounded Win32 process query and fails closed
     const script = call.arguments.at(-1);
     assert.match(script, /Get-CimInstance/u);
     assert.match(script, /Win32_Process/u);
-    assert.match(script, /ExecutablePath LIKE/u);
+    assert.match(script, /Get-ChildItem[\s\S]*-Recurse[\s\S]*-ErrorAction Stop/u);
+    assert.match(script, /Name =/u);
     assert.match(script, /OperationTimeoutSec 5/u);
     assert.match(script, /ProcessId, ExecutablePath/u);
-    assert.match(script, /Replace\("\\", "\\\\"\)/u);
     assert.match(script, /Replace\("'", "\\'"\)/u);
-    assert.doesNotMatch(script, /Get-ChildItem/u);
+    assert.doesNotMatch(script, /SilentlyContinue/u);
     assert.doesNotMatch(script, /Get-Process/u);
     assert.equal(call.options.timeout, 10_000);
   }
