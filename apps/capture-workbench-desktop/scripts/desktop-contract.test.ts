@@ -768,7 +768,7 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
     7,
   );
   assert.match(workflow, /compression-level: 0/u);
-  assert.match(workflow, /retention-days: 1/u);
+  assert.match(workflow, /retention-days: 14/u);
   assert.match(workflow, /capture-workbench-desktop:build-nsis/u);
   assert.match(
     workflow,
@@ -807,14 +807,7 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
     workflow,
     /Download immutable candidate from prior successful run[\s\S]*run-id: \$\{\{ inputs\.candidate_run_id \}\}[\s\S]*github-token: \$\{\{ github\.token \}\}/u,
   );
-  assert.match(
-    workflow,
-    /Check out recovery source for the crate-only metadata correction[\s\S]*ref: \$\{\{ github\.ref \}\}[\s\S]*path: recovery-source/u,
-  );
-  assert.match(
-    workflow,
-    /Rebuild corrected crate candidate without rebuilding runtime assets[\s\S]*cargo package --manifest-path recovery-source\/packages\/capture-sidecar-launcher\/Cargo\.toml[\s\S]*verify-release-candidate\.ts/u,
-  );
+  assert.doesNotMatch(workflow, /recovery-source|cargo package --allow-dirty/u);
   assert.match(
     workflow,
     /static\.crates\.io\/crates\/capture-sidecar-launcher[\s\S]*sha256sum "\$archive_path"/u,

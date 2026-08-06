@@ -69,36 +69,6 @@ jobs:
             throw "Release tag commit must be reachable from origin/main."
           }
 
-      - name: Check out recovery source for the crate-only metadata correction
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate_run_id != '' && inputs.publication_scope == 'crates' }}
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          ref: ${{ github.ref }}
-          path: recovery-source
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Verify recovery source only changes the launcher metadata
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate_run_id != '' && inputs.publication_scope == 'crates' }}
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $PSNativeCommandUseErrorActionPreference = $true
-          $releaseCommit = (git rev-list -n 1 "$env:RELEASE_TAG").Trim()
-          $recoveryCommit = (git -C recovery-source rev-parse HEAD).Trim()
-          git -C recovery-source merge-base --is-ancestor $releaseCommit $recoveryCommit
-          if ($LASTEXITCODE -ne 0) {
-            throw "Recovery source must descend from the immutable release tag."
-          }
-          $changed = @(git -C recovery-source diff --name-only $releaseCommit -- packages/capture-sidecar-launcher/Cargo.toml)
-          if ($changed.Count -ne 1 -or $changed[0] -ne 'packages/capture-sidecar-launcher/Cargo.toml') {
-            throw "Crate recovery may change only the launcher Cargo metadata."
-          }
-          $cargo = Get-Content recovery-source/packages/capture-sidecar-launcher/Cargo.toml -Raw
-          if ($cargo -notmatch 'categories = \["os"\]') {
-            throw "Recovery source does not contain the supported crates.io category."
-          }
-
       - name: Install pnpm
         uses: pnpm/action-setup@b0f76dfb45f55f8421693e4803ac7bb65143bd34 # v6
         with:
@@ -292,23 +262,6 @@ jobs:
           run-id: ${{ inputs.candidate_run_id }}
           github-token: ${{ github.token }}
 
-      - name: Rebuild corrected crate candidate without rebuilding runtime assets
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate_run_id != '' && inputs.publication_scope == 'crates' }}
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $PSNativeCommandUseErrorActionPreference = $true
-          $releaseVersion = $env:RELEASE_TAG.Substring(1)
-          cargo package --manifest-path recovery-source/packages/capture-sidecar-launcher/Cargo.toml --allow-dirty
-          $crateArtifact = Get-Item "recovery-source/packages/capture-sidecar-launcher/target/package/capture-sidecar-launcher-$releaseVersion.crate"
-          $candidateCrate = Join-Path $env:RUNNER_TEMP 'capture-candidate-reused/crate'
-          $candidateChecksums = Join-Path $env:RUNNER_TEMP 'capture-candidate-reused/checksums'
-          Get-ChildItem $candidateCrate -Filter '*.crate' -File | Remove-Item -Force
-          Copy-Item -LiteralPath $crateArtifact.FullName -Destination $candidateCrate
-          $digest = (Get-FileHash -LiteralPath (Join-Path $candidateCrate $crateArtifact.Name) -Algorithm SHA256).Hash.ToLowerInvariant()
-          $checksumPath = Join-Path $candidateChecksums "$($crateArtifact.Name).sha256"
-          Set-Content -LiteralPath $checksumPath -Value "$digest  $($crateArtifact.Name)" -Encoding utf8NoBOM
-
       - name: Verify reused release candidate
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate_run_id != '' }}
         shell: pwsh
@@ -326,7 +279,7 @@ jobs:
           name: capture-candidate-${{ env.RELEASE_TAG }}
           path: ${{ env.CAPTURE_CANDIDATE_PATH }}
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 14
           compression-level: 0
 
   publish-npm:
