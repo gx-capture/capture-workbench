@@ -98,6 +98,30 @@ function exceptionReason(relativePath) {
   if (relativePath === 'tools/run-consumer-gates.ts') {
     return 'consumer gate dispatch and polling CLI process boundary';
   }
+  if (relativePath === 'tools/verify-promotion-evidence.ts') {
+    return 'promotion evidence verification CLI process boundary';
+  }
+  if (relativePath === 'tools/publish-npm-candidate.ts') {
+    return 'npm candidate publication CLI process boundary';
+  }
+  if (relativePath === 'tools/publish-crate-candidate.ts') {
+    return 'crates.io candidate publication CLI process boundary';
+  }
+  if (relativePath === 'tools/record-pypi-candidate.ts') {
+    return 'PyPI candidate ledger CLI process boundary';
+  }
+  if (relativePath === 'tools/verify-registry-ledgers.ts') {
+    return 'registry ledger verification CLI process boundary';
+  }
+  if (relativePath === 'tools/create-github-release.ts') {
+    return 'GitHub Release publication CLI process boundary';
+  }
+  if (relativePath === 'tools/audit-release-tag.ts') {
+    return 'release tag audit CLI process boundary';
+  }
+  if (relativePath === 'tools/create-promotion-ledger.ts') {
+    return 'promotion ledger CLI process boundary';
+  }
   if (relativePath === 'packages/capture-structuring/src/structuring.ts') {
     return 'host SDK LLM callable boundary';
   }

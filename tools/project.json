@@ -84,6 +84,20 @@
       "options": {
         "command": "node --test tools/consumer-gate.test.ts"
       }
+    },
+    "promotion-evidence-test": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "node --test tools/verify-promotion-evidence.test.ts"
+      }
+    },
+    "promotion-registry-test": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "node --test tools/publish-npm-candidate.test.ts tools/publish-crate-candidate.test.ts tools/verify-registry-ledgers.test.ts"
+      }
     }
   }
 }

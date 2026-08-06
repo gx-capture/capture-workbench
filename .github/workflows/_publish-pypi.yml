@@ -1,0 +1,76 @@
+name: Reusable Capture PyPI Publication
+
+on:
+  workflow_call:
+    inputs:
+      candidate_id:
+        required: true
+        type: string
+      source_commit:
+        required: true
+        type: string
+      release_version:
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: capture-registry-pypi
+    steps:
+      - name: Check out publication tooling at the candidate source commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.source_commit }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install uv and Python 3.12
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: '3.12'
+
+      - name: Download the prepared immutable candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: promotion-input-${{ inputs.candidate_id }}
+          path: promotion-input
+
+      - name: Publish exact Python distributions with Trusted Publishing
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: promotion-input/candidate/python
+          skip-existing: true
+
+      - name: Record the exact PyPI publication ledger
+        shell: bash
+        run: |
+          set -euo pipefail
+          node tools/record-pypi-candidate.ts \
+            --candidate promotion-input/candidate \
+            --version '${{ inputs.release_version }}' \
+            --output registry-ledger-pypi.json
+
+      - name: Verify clean Python installation from PyPI
+        shell: bash
+        run: |
+          set -euo pipefail
+          probe="$RUNNER_TEMP/capture-pypi-probe"
+          uv venv "$probe"
+          uv pip install --python "$probe/bin/python" --index-url https://pypi.org/simple \
+            "capture-contracts==${{ inputs.release_version }}" \
+            "capture-structuring==${{ inputs.release_version }}"
+          "$probe/bin/python" -c 'import capture_contracts, capture_structuring; assert capture_contracts.__package__ == "capture_contracts"; assert capture_structuring.__package__ == "capture_structuring"'
+
+      - name: Upload PyPI publication ledger
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: registry-ledger-pypi-${{ inputs.candidate_id }}
+          path: registry-ledger-pypi.json
+          if-no-files-found: error
+          retention-days: 14

@@ -646,7 +646,109 @@ test('consumer gate workflow dispatches exact candidates and records independent
   assert.doesNotMatch(workflow, /git tag|git push/u);
 });
 
-test('release workflow is SHA-pinned, least-privilege, and runtime-first', async () => {
+test('promotion is candidate-only and creates the tag after registry verification', async () => {
+  const workspaceRoot = join(appRoot, '..', '..');
+  const [
+    promotion,
+    audit,
+    npmWorkflow,
+    pypiWorkflow,
+    cratesWorkflow,
+    releaseWorkflow,
+    promotionLedger,
+  ] = await Promise.all([
+    readFile(
+      join(workspaceRoot, '.github', 'workflows', 'release-promote.yml'),
+      'utf8',
+    ),
+    readFile(
+      join(workspaceRoot, '.github', 'workflows', 'release.yml'),
+      'utf8',
+    ),
+    readFile(
+      join(workspaceRoot, '.github', 'workflows', '_publish-npm.yml'),
+      'utf8',
+    ),
+    readFile(
+      join(workspaceRoot, '.github', 'workflows', '_publish-pypi.yml'),
+      'utf8',
+    ),
+    readFile(
+      join(workspaceRoot, '.github', 'workflows', '_publish-crates.yml'),
+      'utf8',
+    ),
+    readFile(
+      join(
+        workspaceRoot,
+        '.github',
+        'workflows',
+        '_publish-github-release.yml',
+      ),
+      'utf8',
+    ),
+    readFile(
+      join(
+        workspaceRoot,
+        '.github',
+        'workflows',
+        '_publish-promotion-ledger.yml',
+      ),
+      'utf8',
+    ),
+  ]);
+  assert.match(
+    promotion,
+    /candidate_run_id:[\s\S]*candidate_id:[\s\S]*consumer_gate_run_id:[\s\S]*publication_scope:/u,
+  );
+  assert.match(promotion, /verify-promotion-evidence\.ts/u);
+  assert.match(promotion, /run-id: \$\{\{ inputs\.candidate_run_id \}\}/u);
+  assert.match(
+    promotion,
+    /name: promotion-input-\$\{\{ inputs\.candidate_id \}\}/u,
+  );
+  assert.doesNotMatch(
+    promotion,
+    /pnpm nx|cargo build|cargo publish|npm publish/u,
+  );
+  const registryIndex = promotion.indexOf('verify-registries:');
+  const tagIndex = promotion.indexOf('git tag -a');
+  assert.ok(registryIndex >= 0 && tagIndex > registryIndex);
+  assert.match(
+    promotion,
+    /tag-release:[\s\S]*needs: \[prepare-candidate, verify-registries\]/u,
+  );
+  assert.match(
+    promotion,
+    /publish-github-release:[\s\S]*needs: \[prepare-candidate, tag-release\]/u,
+  );
+  for (const workflow of [
+    npmWorkflow,
+    pypiWorkflow,
+    cratesWorkflow,
+    releaseWorkflow,
+    promotionLedger,
+  ]) {
+    const references = [
+      ...workflow.matchAll(/uses:\s*[^@\s]+@([^\s#]+)/gu),
+    ].map((match) => match[1]);
+    assert.ok(references.length > 0);
+    assert.ok(
+      references.every((reference) => /^[0-9a-f]{40}$/u.test(reference)),
+    );
+  }
+  assert.match(npmWorkflow, /publish-npm-candidate\.ts/u);
+  assert.match(pypiWorkflow, /pypa\/gh-action-pypi-publish@/u);
+  assert.match(cratesWorkflow, /publish-crate-candidate\.ts/u);
+  assert.match(releaseWorkflow, /create-github-release\.ts/u);
+  assert.match(promotion, /promotion-ledger:[\s\S]*publish-github-release/u);
+  assert.match(promotionLedger, /create-promotion-ledger\.ts/u);
+  assert.doesNotMatch(
+    audit,
+    /workflow_dispatch|build-candidate|npm publish|cargo publish|git tag|git push/u,
+  );
+});
+
+test('release workflow is SHA-pinned and tag-audit-only', async () => {
   const workspaceRoot = join(appRoot, '..', '..');
   const [
     workflow,
@@ -687,6 +789,24 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
       'utf8',
     ),
   ]);
+  if (/^name: Release Tag Audit$/mu.test(workflow)) {
+    const actionReferences = [workflow, ciWorkflow].flatMap((source) =>
+      [...source.matchAll(/uses:\s*[^@\s]+@([^\s#]+)/gu)].map(
+        (match) => match[1],
+      ),
+    );
+    assert.ok(actionReferences.length > 0);
+    assert.ok(
+      actionReferences.every((reference) => /^[0-9a-f]{40}$/u.test(reference)),
+    );
+    assert.match(workflow, /push:\s*\r?\n\s+tags:/u);
+    assert.match(workflow, /audit-release-tag\.ts/u);
+    assert.doesNotMatch(
+      workflow,
+      /workflow_dispatch|build-candidate|npm publish|cargo publish|git tag|git push/u,
+    );
+    return;
+  }
   const actionReferences = [workflow, ciWorkflow].flatMap((source) =>
     [...source.matchAll(/uses:\s*[^@\s]+@([^\s#]+)/gu)].map(
       (match) => match[1],

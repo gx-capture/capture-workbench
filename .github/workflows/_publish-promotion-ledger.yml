@@ -1,0 +1,63 @@
+name: Reusable Capture Promotion Ledger
+
+on:
+  workflow_call:
+    inputs:
+      candidate_id:
+        required: true
+        type: string
+      source_commit:
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out ledger tooling at the candidate source commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.source_commit }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Download promotion and registry evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: registry-ledger-*-${{ inputs.candidate_id }}
+          path: registry-ledgers
+          merge-multiple: true
+
+      - name: Download prepared promotion evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: promotion-input-${{ inputs.candidate_id }}
+          path: promotion-input
+
+      - name: Download public GitHub Release ledger
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: github-release-ledger-${{ inputs.candidate_id }}
+          path: github-release
+
+      - name: Write the immutable promotion ledger
+        shell: bash
+        run: |
+          set -euo pipefail
+          node tools/create-promotion-ledger.ts \
+            --promotion-evidence promotion-input/promotion-evidence.json \
+            --registry-directory registry-ledgers \
+            --github-release-ledger github-release/github-release-ledger.json \
+            --output promotion-ledger.json
+
+      - name: Upload the promotion ledger
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: promotion-ledger-${{ inputs.candidate_id }}
+          path: promotion-ledger.json
+          if-no-files-found: error
+          retention-days: 14
