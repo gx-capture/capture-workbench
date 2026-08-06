@@ -36,6 +36,18 @@ function observe(observable) {
   });
 }
 
+async function observeUntil(observableFactory, predicate, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs;
+  let value;
+  do {
+    value = await observe(observableFactory());
+    if (predicate(value)) return value;
+    if (Date.now() >= deadline) break;
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
+  } while (Date.now() < deadline);
+  throw new Error('Owned process did not become observable before the test deadline.');
+}
+
 function observerResult(stdout) {
   return {
     error: undefined,
@@ -326,8 +338,10 @@ test(
     });
     await Promise.all([once(ownedChild, 'spawn'), once(outsideChild, 'spawn')]);
 
-    const observed = await observe(
-      cleanup.processesRunningUnder(ownedRoot),
+    const observed = await observeUntil(
+      () => cleanup.processesRunningUnder(ownedRoot),
+      (processes) =>
+        processes.some((process_) => process_.pid === ownedChild.pid),
     );
     assert.equal(
       observed.some((process_) => process_.pid === ownedChild.pid),
