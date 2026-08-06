@@ -1005,16 +1005,20 @@ if (
 ) {
   const measureReleaseSize =
     process.argv.length === 3 && process.argv[2] === '--measure-release-size';
-  if (process.argv.length > (measureReleaseSize ? 3 : 2)) {
+  const releaseSmoke =
+    process.argv.length === 3 && process.argv[2] === '--release';
+  if (process.argv.length > (measureReleaseSize || releaseSmoke ? 3 : 2)) {
     process.stderr.write(
-      'Use no arguments or exactly --measure-release-size.\n',
+      'Use no arguments, --release, or exactly --measure-release-size.\n',
     );
     process.exitCode = 1;
   } else {
     runInstalledDeterministicSmoke(
       measureReleaseSize
         ? { expectedSource: 'release', measureOnly: true }
-        : undefined,
+        : releaseSmoke
+          ? { expectedSource: 'release' }
+          : undefined,
     ).subscribe({
       next: ({ reportPath }) =>
         process.stdout.write(`Installed smoke evidence: ${reportPath}\n`),

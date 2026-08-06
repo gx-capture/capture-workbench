@@ -36,6 +36,10 @@ export const CORE_RUNTIME_ASSET_NAMES = Object.freeze([
 ]);
 // Keep the historical export for callers that only need the core manifest names.
 export const RUNTIME_ASSET_NAMES = CORE_RUNTIME_ASSET_NAMES;
+export const RUNTIME_SIZE_REPORT_NAMES = Object.freeze([
+  'runtime-size-report.json',
+  'runtime-size-report.json.sha256',
+]);
 
 const ENGINE_CATALOG_NAME = 'capture-engine-catalog.json';
 const ENGINE_CATALOG_CHECKSUM_NAME = `${ENGINE_CATALOG_NAME}.sha256`;
@@ -392,7 +396,16 @@ async function inspectRuntimeRelease(
     );
   }
 
+  const hasSizeReport = names.includes(RUNTIME_SIZE_REPORT_NAMES[0]);
+  const hasSizeReportChecksum = names.includes(RUNTIME_SIZE_REPORT_NAMES[1]);
+  if (hasSizeReport !== hasSizeReportChecksum) {
+    throw new Error(
+      'Runtime size report and checksum must be published together.',
+    );
+  }
+
   const assetNames: string[] = [...RUNTIME_ASSET_NAMES];
+  if (hasSizeReport) assetNames.push(...RUNTIME_SIZE_REPORT_NAMES);
   const workers: CatalogWorkerDescriptor[] = [];
   if (hasCatalog) {
     const catalogBytes = await readFile(join(directory, ENGINE_CATALOG_NAME));
@@ -464,6 +477,9 @@ async function inspectRuntimeRelease(
         worker.filesManifestSha256,
       );
     }
+  }
+  if (hasSizeReport) {
+    await verifyChecksum(directory, RUNTIME_SIZE_REPORT_NAMES[0]);
   }
   return { manifest, assetNames: Object.freeze(assetNames) };
 }
