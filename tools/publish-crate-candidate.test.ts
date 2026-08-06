@@ -4,7 +4,7 @@ import test from 'node:test';
 import { uploadBody } from './publish-crate-candidate.ts';
 
 test('crates.io upload body preserves the API length-prefixed metadata and archive', () => {
-  const metadata = { name: 'capture-sidecar-launcher', vers: '0.3.10' };
+  const metadata = { name: 'capture-sidecar-launcher', vers: '0.3.11' };
   const crate = Buffer.from('crate-bytes');
   const body = Buffer.from(uploadBody(metadata, crate));
   const metadataLength = body.readUInt32LE(0);

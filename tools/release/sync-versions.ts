@@ -3,6 +3,7 @@ import { join, relative, resolve } from 'node:path';
 
 import {
   assertRegularTextFile,
+  collectReleaseVersionEntries,
   loadReleaseIntent,
   replaceReleaseVersion,
   verifyGeneratedVersions,
@@ -23,9 +24,14 @@ const TEXT_EXTENSIONS = new Set([
 ]);
 const SKIPPED_SEGMENTS = new Set([
   '.angular',
+  '.build',
   '.git',
+  '.mypy_cache',
   '.nx',
   '.pytest_cache',
+  '.ruff_cache',
+  '.venv',
+  '__pycache__',
   'dist',
   'node_modules',
   'target',
@@ -39,7 +45,7 @@ function filesUnder(root: string, relativeDirectory: string): string[] {
     if (SKIPPED_SEGMENTS.has(entry.name)) continue;
     const path = join(directory, entry.name);
     if (entry.isDirectory()) {
-      files.push(...filesUnder(root, relative(path, root)));
+      files.push(...filesUnder(root, relative(root, path)));
       continue;
     }
     if (
@@ -64,12 +70,28 @@ export function synchronizeReleaseVersion(
       'utf8',
     ),
   ).version as string;
-  if (current === intent.releaseVersion) {
+  const previousVersions = new Set(
+    collectReleaseVersionEntries(root)
+      .map((entry) => entry.value)
+      .filter(
+        (value): value is string =>
+          value !== undefined && value !== intent.releaseVersion,
+      ),
+  );
+  if (previousVersions.size > 1) {
+    throw new Error(
+      `Release-managed files contain multiple previous versions: ${[
+        ...previousVersions,
+      ].join(', ')}`,
+    );
+  }
+  const previous = [...previousVersions][0] ?? current;
+  if (current === intent.releaseVersion && previousVersions.size === 0) {
     verifyGeneratedVersions(root);
     return [];
   }
-  if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(current)) {
-    throw new Error(`Current release version is invalid: ${current}`);
+  if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(previous)) {
+    throw new Error(`Current release version is invalid: ${previous}`);
   }
   const changed: string[] = [];
   for (const path of [
@@ -79,7 +101,7 @@ export function synchronizeReleaseVersion(
   ]) {
     assertRegularTextFile(path);
     const before = readFileSync(path, 'utf8');
-    const after = replaceReleaseVersion(before, current, intent.releaseVersion);
+    const after = replaceReleaseVersion(before, previous, intent.releaseVersion);
     if (before === after) continue;
     changed.push(relative(root, path));
     if (!check) writeFileSync(path, after, 'utf8');

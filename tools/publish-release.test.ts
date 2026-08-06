@@ -20,7 +20,7 @@ import {
   sha512Integrity,
 } from './publish-release.ts';
 
-const version = '0.3.10';
+const version = '0.3.11';
 const tag = `v${version}`;
 const runtimeAssetNames = [
   'capture-runtime-x86_64-pc-windows-msvc.exe',
@@ -920,7 +920,7 @@ test('model ZIPs are rejected from the local release asset set', async () => {
     writeFileSync(
       join(
         candidate.input.runtimeDirectory,
-        'capture-model-whisper-primary-0.3.10.zip',
+        'capture-model-whisper-primary-0.3.11.zip',
       ),
       'forbidden model archive',
     );

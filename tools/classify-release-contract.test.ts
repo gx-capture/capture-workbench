@@ -38,7 +38,7 @@ test('classification is generated from the candidate snapshot and exact candidat
       `${JSON.stringify(snapshot('0.3.11', 'same'))}\n`,
     );
     const baselineBytes = Buffer.from(
-      `${JSON.stringify(snapshot('0.3.10', 'same'))}\n`,
+      `${JSON.stringify(snapshot('0.3.11', 'same'))}\n`,
     );
     const candidatePath = join(contracts, 'contract-snapshot.json');
     const baselinePath = join(root, 'baseline.json');
@@ -65,7 +65,7 @@ test('classification is generated from the candidate snapshot and exact candidat
     assert.equal(impact.candidateId, candidateId);
     assert.equal(impact.candidateSnapshotSha256, digest(candidateBytes));
     assert.equal(impact.classification, 'no-impact');
-    assert.equal(impact.baselineRelease, '0.3.10');
+    assert.equal(impact.baselineRelease, '0.3.11');
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -352,7 +352,7 @@ class RuntimeReadyV1(StrictModel):
     api_version: Literal["1.0"] = API_VERSION
     # This exact Literal is the release handshake and must stay synchronized
     # with RUNTIME_VERSION when the runtime version changes.
-    runtime_version: Literal["0.3.10"] = RUNTIME_VERSION
+    runtime_version: Literal["0.3.11"] = RUNTIME_VERSION
     capture_document_schema_version: Literal["1"] = CAPTURE_DOCUMENT_SCHEMA_VERSION
     capabilities: RuntimeCapabilitiesV1
     message: str | None = None

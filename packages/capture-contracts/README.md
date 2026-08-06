@@ -35,7 +35,7 @@ constant. The JSON copies under `generated/schemas/` remain release and
 Python-loader artifacts; consumers should import the package constant instead
 of maintaining a schema copy.
 
-The package version stays synchronized with the runtime (currently `0.3.10`).
+The package version stays synchronized with the runtime (currently `0.3.11`).
 The release workflow publishes both `@gx-capture/capture-contracts` and
 `@gx-capture/capture-workbench` to GitHub Packages after validating their exact
 tarball identities and integrities.

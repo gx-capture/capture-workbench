@@ -16,7 +16,7 @@ function snapshot(overrides: Record<string, unknown> = {}) {
   };
   return {
     schemaVersion: '1',
-    releaseVersion: '0.3.10',
+    releaseVersion: '0.3.11',
     runtimeApi: {
       apiVersion: '1.0',
       documentSchemaVersion: '1',
@@ -26,8 +26,8 @@ function snapshot(overrides: Record<string, unknown> = {}) {
     },
     contractManifest: {
       manifestVersion: '1',
-      packageVersion: '0.3.10',
-      runtimeVersion: '0.3.10',
+      packageVersion: '0.3.11',
+      runtimeVersion: '0.3.11',
       apiVersion: '1.0',
       captureDocumentSchemaVersion: '1',
       captureDocumentSchemaId:

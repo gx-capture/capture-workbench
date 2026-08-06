@@ -7,7 +7,7 @@ test('candidate identity is deterministic and changes when an artifact digest ch
   const manifest = {
     schemaVersion: '1',
     sourceCommit: 'a'.repeat(40),
-    releaseVersion: '0.3.10',
+    releaseVersion: '0.3.11',
     releaseMode: 'core-only',
     runtimeApiVersion: '1.0',
     documentSchemaVersion: '1',

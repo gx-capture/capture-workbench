@@ -31,7 +31,7 @@ test('release manifest is immutable, candidate-bound, and records registry and g
         schemaVersion: '1',
         candidateId,
         sourceCommit,
-        releaseVersion: '0.3.10',
+        releaseVersion: '0.3.11',
         runtimeApiVersion: '1.0',
         documentSchemaVersion: '1',
       })}\n`,
@@ -41,7 +41,7 @@ test('release manifest is immutable, candidate-bound, and records registry and g
       candidateManifest,
     );
     const snapshot = Buffer.from(
-      `${JSON.stringify({ schemaVersion: '1', releaseVersion: '0.3.10' })}\n`,
+      `${JSON.stringify({ schemaVersion: '1', releaseVersion: '0.3.11' })}\n`,
     );
     await writeFile(
       join(candidate, 'contracts', 'contract-snapshot.json'),
@@ -92,7 +92,7 @@ test('release manifest is immutable, candidate-bound, and records registry and g
         candidateId,
         candidateManifestSha256: digest(candidateManifest),
         sourceCommit,
-        releaseVersion: '0.3.10',
+        releaseVersion: '0.3.11',
         contractClassification: 'no-impact',
       }),
     );
@@ -103,7 +103,7 @@ test('release manifest is immutable, candidate-bound, and records registry and g
         schemaVersion: '1',
         registry: 'npm',
         candidateId,
-        releaseVersion: '0.3.10',
+        releaseVersion: '0.3.11',
         status: 'published',
         packages: [
           { name: '@gx-capture/capture-contracts', integrity: 'sha512-a' },
@@ -116,11 +116,11 @@ test('release manifest is immutable, candidate-bound, and records registry and g
         schemaVersion: '1',
         registry: 'pypi',
         candidateId,
-        releaseVersion: '0.3.10',
+        releaseVersion: '0.3.11',
         status: 'published',
         artifacts: [
           {
-            name: 'capture_contracts-0.3.10-py3-none-any.whl',
+            name: 'capture_contracts-0.3.11-py3-none-any.whl',
             sha256: 'e'.repeat(64),
           },
         ],
@@ -132,11 +132,11 @@ test('release manifest is immutable, candidate-bound, and records registry and g
         schemaVersion: '1',
         registry: 'crates.io',
         candidateId,
-        releaseVersion: '0.3.10',
+        releaseVersion: '0.3.11',
         status: 'published',
         artifacts: [
           {
-            name: 'capture-sidecar-launcher-0.3.10.crate',
+            name: 'capture-sidecar-launcher-0.3.11.crate',
             candidateSha256: 'f'.repeat(64),
             registrySha256: 'f'.repeat(64),
           },
@@ -151,7 +151,7 @@ test('release manifest is immutable, candidate-bound, and records registry and g
         '--candidate',
         candidate,
         '--tag',
-        'v0.3.10',
+        'v0.3.11',
         '--promotion-evidence',
         evidencePath,
         '--consumer-gate-ledger',
@@ -167,7 +167,7 @@ test('release manifest is immutable, candidate-bound, and records registry and g
     const manifest = JSON.parse(await readFile(output, 'utf8'));
     assert.equal(manifest.status, 'released');
     assert.equal(manifest.candidateId, candidateId);
-    assert.equal(manifest.releaseTag, 'v0.3.10');
+    assert.equal(manifest.releaseTag, 'v0.3.11');
     assert.equal(manifest.registryArtifacts.length, 3);
     assert.equal(manifest.consumerGates.gates[0].verdict, 'passed');
     assert.match(
