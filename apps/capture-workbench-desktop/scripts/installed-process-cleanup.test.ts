@@ -102,7 +102,7 @@ function cleanupHarness({ observerResults, taskkillResult, register = true }) {
   };
 }
 
-test('owned process observer retries Get-Process and fails closed with safe diagnostics', async (t) => {
+test('owned process observer uses a bounded Win32 process query and fails closed with safe diagnostics', async (t) => {
   const harness = cleanupHarness({
     observerResults: [timeoutResult(), timeoutResult()],
   });
@@ -114,7 +114,7 @@ test('owned process observer retries Get-Process and fails closed with safe diag
       const messages = nestedErrorMessages(error);
       assert.equal(messages.includes(installedSmokeDiagnosticRedactionMarker), false);
       assert.deepEqual(messages, [
-        'Owned process observer failed (operation=query; observer=get-process; attempt=2/2; timeout=true; code=ETIMEDOUT; status=none; signal=SIGTERM).',
+        'Owned process observer failed (operation=query; observer=win32-process; attempt=2/2; timeout=true; code=ETIMEDOUT; status=none; signal=SIGTERM).',
       ]);
       assert.doesNotMatch(messages[0], /[A-Za-z]:[\\/]/u);
       return true;
@@ -124,8 +124,10 @@ test('owned process observer retries Get-Process and fails closed with safe diag
   assert.equal(harness.calls.length, 2);
   for (const call of harness.calls) {
     const script = call.arguments.at(-1);
-    assert.match(script, /Get-Process/u);
-    assert.doesNotMatch(script, /Get-CimInstance|Win32_Process/u);
+    assert.match(script, /Get-CimInstance/u);
+    assert.match(script, /Win32_Process/u);
+    assert.match(script, /Get-ChildItem[\s\S]*CAPTURE_SMOKE_PROCESS_ROOT/u);
+    assert.doesNotMatch(script, /Get-Process/u);
     assert.equal(call.options.timeout, 10_000);
   }
 });
@@ -138,7 +140,7 @@ test('owned process observer does not treat empty output as an empty process set
 
   await assert.rejects(
     observe(harness.cleanup.processesRunningUnder(harness.ownedRoot)),
-    /operation=validate; observer=get-process; attempt=2\/2; timeout=false; code=EMPTY_OUTPUT/u,
+    /operation=validate; observer=win32-process; attempt=2\/2; timeout=false; code=EMPTY_OUTPUT/u,
   );
 });
 
@@ -168,7 +170,7 @@ test('owned process observer rejects malformed JSON', async (t) => {
 
   await assert.rejects(
     observe(harness.cleanup.processesRunningUnder(harness.ownedRoot)),
-    /operation=parse; observer=get-process; attempt=2\/2; timeout=false; code=INVALID_JSON/u,
+    /operation=parse; observer=win32-process; attempt=2\/2; timeout=false; code=INVALID_JSON/u,
   );
 });
 
@@ -185,7 +187,7 @@ for (const [label, pid] of [
 
     await assert.rejects(
       observe(harness.cleanup.processesRunningUnder(harness.ownedRoot)),
-      /operation=validate; observer=get-process; attempt=2\/2; timeout=false; code=INVALID_OUTPUT/u,
+      /operation=validate; observer=win32-process; attempt=2\/2; timeout=false; code=INVALID_OUTPUT/u,
     );
   });
 }

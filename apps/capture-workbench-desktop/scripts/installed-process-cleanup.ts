@@ -40,7 +40,7 @@ function processObserverError(result, attempt, operation, code) {
   const signal = diagnosticToken(result.signal);
   const timedOut = errorCode === 'ETIMEDOUT';
   return new Error(
-    `Owned process observer failed (operation=${operation}; observer=get-process; attempt=${attempt}/${ownedProcessObserverAttemptLimit}; timeout=${String(timedOut)}; code=${errorCode}; status=${status}; signal=${signal}).`,
+    `Owned process observer failed (operation=${operation}; observer=win32-process; attempt=${attempt}/${ownedProcessObserverAttemptLimit}; timeout=${String(timedOut)}; code=${errorCode}; status=${status}; signal=${signal}).`,
   );
 }
 
@@ -169,17 +169,30 @@ export function createInstalledProcessCleanup({
     );
     const script = `
 $root = [IO.Path]::GetFullPath($env:CAPTURE_SMOKE_PROCESS_ROOT).TrimEnd('\\') + '\\'
-$items = @(Get-Process | ForEach-Object {
+$names = @(Get-ChildItem -LiteralPath $env:CAPTURE_SMOKE_PROCESS_ROOT -File -Filter '*.exe' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name -Unique)
+if ($names.Count -eq 0) {
+  Write-Output '[]'
+  exit 0
+}
+$filter = ($names | ForEach-Object {
+  $escapedName = $_.Replace("'", "''")
+  "Name = '$escapedName'"
+}) -join ' OR '
+$items = @(Get-CimInstance -ClassName Win32_Process -Filter $filter -ErrorAction Stop | ForEach-Object {
   try {
-    if ($_.Path) {
-      $path = [IO.Path]::GetFullPath($_.Path)
+    if ($_.ExecutablePath) {
+      $path = [IO.Path]::GetFullPath($_.ExecutablePath)
       if ($path.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) {
-        [pscustomobject]@{ pid = [int]$_.Id }
+        [pscustomobject]@{ pid = [int]$_.ProcessId }
       }
     }
   } catch {}
 })
-ConvertTo-Json -Compress -InputObject $items
+if ($items.Count -eq 0) {
+  Write-Output '[]'
+} else {
+  ConvertTo-Json -Compress -InputObject @($items)
+}
 `;
     const environment = {
       ...baseChildEnvironment(process.env, smokeRoot, workspaceRoot),
@@ -257,7 +270,7 @@ ConvertTo-Json -Compress -InputObject $items
         () =>
           lastError ??
           new Error(
-            'Owned process observer failed (operation=query; observer=get-process; attempt=none; timeout=false; code=UNKNOWN; status=none; signal=none).',
+            'Owned process observer failed (operation=query; observer=win32-process; attempt=none; timeout=false; code=UNKNOWN; status=none; signal=none).',
           ),
       );
     });
