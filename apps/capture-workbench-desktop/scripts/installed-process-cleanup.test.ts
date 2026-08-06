@@ -126,7 +126,12 @@ test('owned process observer uses a bounded Win32 process query and fails closed
     const script = call.arguments.at(-1);
     assert.match(script, /Get-CimInstance/u);
     assert.match(script, /Win32_Process/u);
-    assert.match(script, /Get-ChildItem[\s\S]*CAPTURE_SMOKE_PROCESS_ROOT/u);
+    assert.match(script, /ExecutablePath LIKE/u);
+    assert.match(script, /OperationTimeoutSec 5/u);
+    assert.match(script, /ProcessId, ExecutablePath/u);
+    assert.match(script, /Replace\("\\", "\\\\"\)/u);
+    assert.match(script, /Replace\("'", "\\'"\)/u);
+    assert.doesNotMatch(script, /Get-ChildItem/u);
     assert.doesNotMatch(script, /Get-Process/u);
     assert.equal(call.options.timeout, 10_000);
   }
@@ -255,6 +260,7 @@ test(
     );
     const smokeRoot = join(fixtureRoot, 'installed-smoke');
     const ownedRoot = join(smokeRoot, 'run', 'install');
+    const nestedOwnedRoot = join(ownedRoot, 'resources', 'binaries');
     const outsideRoot = join(fixtureRoot, 'outside');
     await mkdir(ownedRoot, { recursive: true });
     await mkdir(outsideRoot, { recursive: true });
@@ -273,8 +279,9 @@ test(
     });
     cleanup.registerPrivateProcessRoots([ownedRoot]);
 
-    const ownedExecutable = join(ownedRoot, 'owned-cmd.exe');
-    const outsideExecutable = join(outsideRoot, 'outside-cmd.exe');
+    await mkdir(nestedOwnedRoot, { recursive: true });
+    const ownedExecutable = join(nestedOwnedRoot, 'runtime.exe');
+    const outsideExecutable = join(outsideRoot, 'runtime.exe');
     await copyFile(
       systemExecutable('System32', 'cmd.exe'),
       ownedExecutable,
