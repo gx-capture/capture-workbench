@@ -582,7 +582,10 @@ test('release candidate workflow is dispatch-only, exact-commit, and immutable',
   const windowsInstallJob = workflow.slice(
     workflow.indexOf('  verify-windows-install:'),
   );
-  assert.match(windowsInstallJob, /installed-deterministic-smoke\.ts\s*$/mu);
+  assert.match(
+    windowsInstallJob,
+    /installed-deterministic-smoke\.ts(?: --release)?\s*$/mu,
+  );
   assert.doesNotMatch(
     windowsInstallJob,
     /installed-deterministic-smoke\.ts --measure-release-size/u,

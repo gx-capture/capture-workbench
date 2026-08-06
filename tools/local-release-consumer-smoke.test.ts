@@ -7,6 +7,7 @@ import test from 'node:test';
 
 import {
   RUNTIME_ASSET_NAMES,
+  RUNTIME_SIZE_REPORT_NAMES,
   validateRuntimeManifest,
   verifyRuntimeRelease,
 } from './local-release-consumer-smoke.ts';
@@ -144,6 +145,29 @@ test('runtime release verifier accepts the canonical asset set', async () => {
     const manifest = await verifyRuntimeRelease(directory, version);
     assert.equal(manifest.runtimeVersion, version);
     assert.equal(manifest.fileName, RUNTIME_ASSET_NAMES[0]);
+  });
+});
+
+test('runtime release verifier accepts the immutable size report pair', async () => {
+  await withFixture(async (directory) => {
+    const report = JSON.stringify({ reportVersion: '2' }) + '\n';
+    await writeFile(join(directory, RUNTIME_SIZE_REPORT_NAMES[0]), report);
+    await writeFile(
+      join(directory, RUNTIME_SIZE_REPORT_NAMES[1]),
+      `${digest(Buffer.from(report))}  ${RUNTIME_SIZE_REPORT_NAMES[0]}\n`,
+    );
+    const manifest = await verifyRuntimeRelease(directory, version);
+    assert.equal(manifest.runtimeVersion, version);
+  });
+});
+
+test('runtime release verifier rejects an unpaired size report', async () => {
+  await withFixture(async (directory) => {
+    await writeFile(join(directory, RUNTIME_SIZE_REPORT_NAMES[0]), '{}\n');
+    await assert.rejects(
+      verifyRuntimeRelease(directory, version),
+      /size report and checksum must be published together/u,
+    );
   });
 });
 

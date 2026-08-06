@@ -253,7 +253,7 @@ jobs:
           $installer = Get-ChildItem "$candidate/desktop" -Filter '*.exe' -File
           if ($installer.Count -ne 1) { throw "Expected exactly one candidate installer, found $($installer.Count)." }
           Copy-Item -LiteralPath $installer[0].FullName -Destination (Join-Path $nsis $installer[0].Name)
-          node apps/capture-workbench-desktop/scripts/installed-deterministic-smoke.ts
+          node apps/capture-workbench-desktop/scripts/installed-deterministic-smoke.ts --release
 
       - name: Record candidate verification result
         if: ${{ always() }}
@@ -350,10 +350,18 @@ jobs:
           ref: ${{ inputs.commit_sha }}
           fetch-depth: 1
           persist-credentials: false
+      - name: Install pnpm
+        uses: pnpm/action-setup@b0f76dfb45f55f8421693e4803ac7bb65143bd34 # v6
+        with:
+          version: 11.15.1
       - name: Install Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 24
+          cache: pnpm
+      - name: Install workspace dependencies
+        shell: pwsh
+        run: pnpm install --frozen-lockfile
       - name: Download the exact candidate
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
