@@ -36,6 +36,18 @@ function observe(observable) {
   });
 }
 
+async function observeUntil(observableFactory, predicate, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs;
+  let value;
+  do {
+    value = await observe(observableFactory());
+    if (predicate(value)) return value;
+    if (Date.now() >= deadline) break;
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
+  } while (Date.now() < deadline);
+  throw new Error('Owned process did not become observable before the test deadline.');
+}
+
 function observerResult(stdout) {
   return {
     error: undefined,
@@ -102,7 +114,7 @@ function cleanupHarness({ observerResults, taskkillResult, register = true }) {
   };
 }
 
-test('owned process observer retries Get-Process and fails closed with safe diagnostics', async (t) => {
+test('owned process observer uses a bounded Win32 process query and fails closed with safe diagnostics', async (t) => {
   const harness = cleanupHarness({
     observerResults: [timeoutResult(), timeoutResult()],
   });
@@ -114,7 +126,7 @@ test('owned process observer retries Get-Process and fails closed with safe diag
       const messages = nestedErrorMessages(error);
       assert.equal(messages.includes(installedSmokeDiagnosticRedactionMarker), false);
       assert.deepEqual(messages, [
-        'Owned process observer failed (operation=query; observer=get-process; attempt=2/2; timeout=true; code=ETIMEDOUT; status=none; signal=SIGTERM).',
+        'Owned process observer failed (operation=query; observer=win32-process; attempt=2/2; timeout=true; code=ETIMEDOUT; status=none; signal=SIGTERM).',
       ]);
       assert.doesNotMatch(messages[0], /[A-Za-z]:[\\/]/u);
       return true;
@@ -124,8 +136,17 @@ test('owned process observer retries Get-Process and fails closed with safe diag
   assert.equal(harness.calls.length, 2);
   for (const call of harness.calls) {
     const script = call.arguments.at(-1);
-    assert.match(script, /Get-Process/u);
-    assert.doesNotMatch(script, /Get-CimInstance|Win32_Process/u);
+    assert.match(script, /Get-CimInstance/u);
+    assert.match(script, /Win32_Process/u);
+    assert.match(script, /Get-ChildItem[\s\S]*-Recurse[\s\S]*-ErrorAction Stop/u);
+    assert.match(script, /Name =/u);
+    assert.match(script, /CAPTURE_SMOKE_ALLOW_MISSING_ROOT/u);
+    assert.match(script, /PathType Container/u);
+    assert.match(script, /OperationTimeoutSec 5/u);
+    assert.match(script, /ProcessId, ExecutablePath/u);
+    assert.match(script, /Replace\("'", "\\'"\)/u);
+    assert.doesNotMatch(script, /SilentlyContinue/u);
+    assert.doesNotMatch(script, /Get-Process/u);
     assert.equal(call.options.timeout, 10_000);
   }
 });
@@ -138,7 +159,7 @@ test('owned process observer does not treat empty output as an empty process set
 
   await assert.rejects(
     observe(harness.cleanup.processesRunningUnder(harness.ownedRoot)),
-    /operation=validate; observer=get-process; attempt=2\/2; timeout=false; code=EMPTY_OUTPUT/u,
+    /operation=validate; observer=win32-process; attempt=2\/2; timeout=false; code=EMPTY_OUTPUT/u,
   );
 });
 
@@ -168,7 +189,7 @@ test('owned process observer rejects malformed JSON', async (t) => {
 
   await assert.rejects(
     observe(harness.cleanup.processesRunningUnder(harness.ownedRoot)),
-    /operation=parse; observer=get-process; attempt=2\/2; timeout=false; code=INVALID_JSON/u,
+    /operation=parse; observer=win32-process; attempt=2\/2; timeout=false; code=INVALID_JSON/u,
   );
 });
 
@@ -185,7 +206,7 @@ for (const [label, pid] of [
 
     await assert.rejects(
       observe(harness.cleanup.processesRunningUnder(harness.ownedRoot)),
-      /operation=validate; observer=get-process; attempt=2\/2; timeout=false; code=INVALID_OUTPUT/u,
+      /operation=validate; observer=win32-process; attempt=2\/2; timeout=false; code=INVALID_OUTPUT/u,
     );
   });
 }
@@ -245,6 +266,48 @@ test('owned process cleanup rejects a PID that remains after taskkill', async (t
 });
 
 test(
+  'residual cleanup treats a missing root as empty while registered roots stay strict',
+  { skip: process.platform !== 'win32' },
+  async (t) => {
+    const fixtureRoot = await mkdtemp(
+      join(tmpdir(), 'capture-installed-process-missing-root-'),
+    );
+    const smokeRoot = join(fixtureRoot, 'installed-smoke');
+    const ownedRoot = join(smokeRoot, 'run', 'install');
+    const residualRoot = join(smokeRoot, 'run', 'residual');
+    await mkdir(ownedRoot, { recursive: true });
+
+    const systemRoot =
+      process.env['SYSTEMROOT'] ??
+      process.env['SystemRoot'] ??
+      'C:\\Windows';
+    const systemExecutable = (...segments) => join(systemRoot, ...segments);
+    const cleanup = createInstalledProcessCleanup({
+      smokeRoot,
+      workspaceRoot: fixtureRoot,
+      baseChildEnvironment: (source) => source,
+      windowsSystemExecutable: systemExecutable,
+    });
+    cleanup.registerPrivateProcessRoots([ownedRoot]);
+    t.after(() =>
+      rm(fixtureRoot, {
+        force: true,
+        maxRetries: 5,
+        recursive: true,
+        retryDelay: 100,
+      }),
+    );
+
+    await observe(cleanup.stopAndProveResidualProcessRoots([residualRoot]));
+    await rm(ownedRoot, { force: true, recursive: true });
+    await assert.rejects(
+      observe(cleanup.processesRunningUnder(ownedRoot)),
+      /Owned process observer failed \(operation=query; observer=win32-process;/u,
+    );
+  },
+);
+
+test(
   'Windows path-scoped cleanup terminates an executable under the private root only',
   { skip: process.platform !== 'win32' },
   async (t) => {
@@ -253,6 +316,7 @@ test(
     );
     const smokeRoot = join(fixtureRoot, 'installed-smoke');
     const ownedRoot = join(smokeRoot, 'run', 'install');
+    const nestedOwnedRoot = join(ownedRoot, 'resources', 'binaries');
     const outsideRoot = join(fixtureRoot, 'outside');
     await mkdir(ownedRoot, { recursive: true });
     await mkdir(outsideRoot, { recursive: true });
@@ -271,8 +335,9 @@ test(
     });
     cleanup.registerPrivateProcessRoots([ownedRoot]);
 
-    const ownedExecutable = join(ownedRoot, 'owned-cmd.exe');
-    const outsideExecutable = join(outsideRoot, 'outside-cmd.exe');
+    await mkdir(nestedOwnedRoot, { recursive: true });
+    const ownedExecutable = join(nestedOwnedRoot, 'runtime.exe');
+    const outsideExecutable = join(outsideRoot, 'runtime.exe');
     await copyFile(
       systemExecutable('System32', 'cmd.exe'),
       ownedExecutable,
@@ -317,8 +382,10 @@ test(
     });
     await Promise.all([once(ownedChild, 'spawn'), once(outsideChild, 'spawn')]);
 
-    const observed = await observe(
-      cleanup.processesRunningUnder(ownedRoot),
+    const observed = await observeUntil(
+      () => cleanup.processesRunningUnder(ownedRoot),
+      (processes) =>
+        processes.some((process_) => process_.pid === ownedChild.pid),
     );
     assert.equal(
       observed.some((process_) => process_.pid === ownedChild.pid),

@@ -40,7 +40,7 @@ function processObserverError(result, attempt, operation, code) {
   const signal = diagnosticToken(result.signal);
   const timedOut = errorCode === 'ETIMEDOUT';
   return new Error(
-    `Owned process observer failed (operation=${operation}; observer=get-process; attempt=${attempt}/${ownedProcessObserverAttemptLimit}; timeout=${String(timedOut)}; code=${errorCode}; status=${status}; signal=${signal}).`,
+    `Owned process observer failed (operation=${operation}; observer=win32-process; attempt=${attempt}/${ownedProcessObserverAttemptLimit}; timeout=${String(timedOut)}; code=${errorCode}; status=${status}; signal=${signal}).`,
   );
 }
 
@@ -161,7 +161,7 @@ export function createInstalledProcessCleanup({
     );
   }
 
-  function observeExecutableProcessesUnder(root) {
+  function observeExecutableProcessesUnder(root, allowMissingRoot = false) {
     const safeRoot = assertStrictDescendant(
       smokeRoot,
       root,
@@ -169,21 +169,46 @@ export function createInstalledProcessCleanup({
     );
     const script = `
 $root = [IO.Path]::GetFullPath($env:CAPTURE_SMOKE_PROCESS_ROOT).TrimEnd('\\') + '\\'
-$items = @(Get-Process | ForEach-Object {
-  try {
-    if ($_.Path) {
-      $path = [IO.Path]::GetFullPath($_.Path)
-      if ($path.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) {
-        [pscustomobject]@{ pid = [int]$_.Id }
-      }
-    }
-  } catch {}
+if (-not (Test-Path -LiteralPath $env:CAPTURE_SMOKE_PROCESS_ROOT)) {
+  if ($env:CAPTURE_SMOKE_ALLOW_MISSING_ROOT -eq '1') {
+    Write-Output '[]'
+    exit 0
+  }
+  throw 'Owned process root is missing.'
+}
+if (-not (Test-Path -LiteralPath $env:CAPTURE_SMOKE_PROCESS_ROOT -PathType Container)) {
+  throw 'Owned process root is not a directory.'
+}
+$names = @(Get-ChildItem -LiteralPath $env:CAPTURE_SMOKE_PROCESS_ROOT -Recurse -File -Filter '*.exe' -ErrorAction Stop | Select-Object -ExpandProperty Name -Unique)
+if ($names.Count -eq 0) {
+  Write-Output '[]'
+  exit 0
+}
+$filter = ($names | ForEach-Object {
+  $escapedName = $_.Replace("'", "\\'")
+  "Name = '$escapedName'"
+}) -join ' OR '
+$items = @(Get-CimInstance -ClassName Win32_Process -Filter $filter -Property ProcessId, ExecutablePath -OperationTimeoutSec 5 -ErrorAction Stop | ForEach-Object {
+  if (-not $_.ExecutablePath) {
+    throw 'Win32_Process returned a matching process without an executable path.'
+  }
+  $path = [IO.Path]::GetFullPath($_.ExecutablePath)
+  if ($path.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) {
+    [pscustomobject]@{ pid = [int]$_.ProcessId }
+  }
 })
-ConvertTo-Json -Compress -InputObject $items
+if ($items.Count -eq 0) {
+  Write-Output '[]'
+} else {
+  ConvertTo-Json -Compress -InputObject @($items)
+}
 `;
     const environment = {
       ...baseChildEnvironment(process.env, smokeRoot, workspaceRoot),
       CAPTURE_SMOKE_PROCESS_ROOT: safeRoot,
+      ...(allowMissingRoot
+        ? { CAPTURE_SMOKE_ALLOW_MISSING_ROOT: '1' }
+        : {}),
     };
     return defer(() => {
       let lastError;
@@ -257,7 +282,7 @@ ConvertTo-Json -Compress -InputObject $items
         () =>
           lastError ??
           new Error(
-            'Owned process observer failed (operation=query; observer=get-process; attempt=none; timeout=false; code=UNKNOWN; status=none; signal=none).',
+            'Owned process observer failed (operation=query; observer=win32-process; attempt=none; timeout=false; code=UNKNOWN; status=none; signal=none).',
           ),
       );
     });
@@ -346,7 +371,7 @@ ConvertTo-Json -Compress -InputObject $items
     return stopAndProveProcesses(
       pid,
       residualRoot,
-      observeExecutableProcessesUnder,
+      (root) => observeExecutableProcessesUnder(root, true),
     );
   }
 
