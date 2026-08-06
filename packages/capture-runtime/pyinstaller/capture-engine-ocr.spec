@@ -17,7 +17,8 @@ hiddenimports = (
     + ["PIL.BmpImagePlugin", "PIL.JpegImagePlugin", "PIL.PngImagePlugin", "PIL.WebPImagePlugin"]
 )
 datas = (
-    collect_data_files("paddleocr")
+    collect_data_files("capture_contracts")
+    + collect_data_files("paddleocr")
     + collect_data_files("paddlex")
     + collect_data_files("pypdfium2")
 )
