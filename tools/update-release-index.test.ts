@@ -17,7 +17,7 @@ function stable(releaseTag: string | null = null): StableIndex {
     schemaVersion: '1',
     channel: 'stable',
     releaseTag,
-    manifestSha256: releaseTag === 'v0.3.11' ? firstManifest : null,
+    manifestSha256: releaseTag === 'v0.3.10' ? firstManifest : null,
     manifestAssetName: 'capture-release-manifest-v1.json',
     updatedAt: null,
   };
@@ -45,9 +45,9 @@ test('promotion records an immutable release and stable pointer', () => {
 
 test('supersession moves stable to the replacement and preserves defective history', () => {
   const result = updateReleaseIndex(
-    stable('v0.3.11'),
+    stable('v0.3.10'),
     releases({
-      'v0.3.11': {
+      'v0.3.10': {
         status: 'released',
         manifestSha256: firstManifest,
         candidateId: firstCandidate,
@@ -60,7 +60,7 @@ test('supersession moves stable to the replacement and preserves defective histo
     }),
     {
       operation: 'supersede',
-      defectiveTag: 'v0.3.11',
+      defectiveTag: 'v0.3.10',
       replacementTag: 'v0.3.11',
       defectiveManifestSha256: firstManifest,
       replacementManifestSha256: secondManifest,
@@ -69,7 +69,7 @@ test('supersession moves stable to the replacement and preserves defective histo
     },
   );
   assert.equal(result.stable.releaseTag, 'v0.3.11');
-  assert.deepEqual(result.releases.releases['v0.3.11'], {
+  assert.deepEqual(result.releases.releases['v0.3.10'], {
     status: 'superseded',
     manifestSha256: firstManifest,
     candidateId: firstCandidate,

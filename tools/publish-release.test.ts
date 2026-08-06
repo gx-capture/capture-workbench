@@ -514,7 +514,7 @@ test('zero-asset draft uploads from inventory before readback, package, and publ
     assert.match(releaseNotes, /SHA-256/u);
     assert.match(
       releaseNotes,
-      /@gx-capture\/capture-workbench@0\.3\.10.*GitHub Packages.*never a GitHub Release asset/su,
+      /@gx-capture\/capture-workbench@0\.3\.11.*GitHub Packages.*never a GitHub Release asset/su,
     );
     const firstUploadIndex = remote.calls.findIndex(
       ([command, group, operation]) =>
