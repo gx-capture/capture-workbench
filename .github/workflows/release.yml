@@ -22,7 +22,7 @@ on:
           - crates
       candidate_run_id:
         description: 'Prior successful workflow run ID whose verified candidate must be reused for recovery'
-        required: false
+        required: true
         type: string
 
 permissions:

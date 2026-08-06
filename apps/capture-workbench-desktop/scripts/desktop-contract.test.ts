@@ -745,7 +745,7 @@ test('release workflow is SHA-pinned, least-privilege, and runtime-first', async
   );
   assert.match(
     workflow,
-    /workflow_dispatch:[\s\S]*candidate_run_id:[\s\S]*required: false[\s\S]*type: string/u,
+    /workflow_dispatch:[\s\S]*candidate_run_id:[\s\S]*required: true[\s\S]*type: string/u,
   );
   assert.match(
     workflow,
