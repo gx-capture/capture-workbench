@@ -26,7 +26,8 @@ import {
 } from './contracts/installed.ts';
 
 const ownedProcessObserverAttemptLimit = 2;
-const ownedProcessObserverTimeoutMs = 10_000;
+const ownedProcessObserverTimeoutMs = 30_000;
+const ownedProcessObserverOperationTimeoutSec = 15;
 const safeDiagnosticToken = /^[A-Za-z0-9_-]+$/u;
 
 function diagnosticToken(value, fallback = 'none') {
@@ -188,7 +189,7 @@ $filter = ($names | ForEach-Object {
   $escapedName = $_.Replace("'", "\\'")
   "Name = '$escapedName'"
 }) -join ' OR '
-$items = @(Get-CimInstance -ClassName Win32_Process -Filter $filter -Property ProcessId, ExecutablePath -OperationTimeoutSec 5 -ErrorAction Stop | ForEach-Object {
+$items = @(Get-CimInstance -ClassName Win32_Process -Filter $filter -Property ProcessId, ExecutablePath -OperationTimeoutSec ${ownedProcessObserverOperationTimeoutSec} -ErrorAction Stop | ForEach-Object {
   if (-not $_.ExecutablePath) {
     throw 'Win32_Process returned a matching process without an executable path.'
   }

@@ -142,12 +142,12 @@ test('owned process observer uses a bounded Win32 process query and fails closed
     assert.match(script, /Name =/u);
     assert.match(script, /CAPTURE_SMOKE_ALLOW_MISSING_ROOT/u);
     assert.match(script, /PathType Container/u);
-    assert.match(script, /OperationTimeoutSec 5/u);
+    assert.match(script, /OperationTimeoutSec 15/u);
     assert.match(script, /ProcessId, ExecutablePath/u);
     assert.match(script, /Replace\("'", "\\'"\)/u);
     assert.doesNotMatch(script, /SilentlyContinue/u);
     assert.doesNotMatch(script, /Get-Process/u);
-    assert.equal(call.options.timeout, 10_000);
+    assert.equal(call.options.timeout, 30_000);
   }
 });
 
