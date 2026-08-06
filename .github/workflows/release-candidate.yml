@@ -165,3 +165,270 @@ jobs:
           if-no-files-found: error
           retention-days: 14
           compression-level: 0
+
+  verify-windows-install:
+    needs: build-candidate
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out exact source commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.commit_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install pnpm and Node.js
+        uses: pnpm/action-setup@b0f76dfb45f55f8421693e4803ac7bb65143bd34 # v6
+        with:
+          version: 11.15.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install workspace dependencies
+        shell: pwsh
+        run: pnpm install --frozen-lockfile
+
+      - name: Download and verify the exact candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: capture-candidate-${{ inputs.version }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/capture-candidate
+
+      - name: Stage and install the exact candidate installer
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_MODE: ${{ inputs.release_mode }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          $candidate = Join-Path $env:RUNNER_TEMP 'capture-candidate'
+          $sourceCommit = (git rev-parse HEAD).Trim()
+          node tools/verify-release-candidate.ts `
+            --candidate "$candidate" `
+            --version "$env:RELEASE_VERSION" `
+            --source-commit "$sourceCommit" `
+            --release-mode "$env:RELEASE_MODE"
+          node apps/capture-workbench-desktop/scripts/stage-runtime.ts `
+            --artifact "$candidate/runtime/capture-runtime-x86_64-pc-windows-msvc.exe" `
+            --manifest "$candidate/runtime/capture-runtime-manifest.json" `
+            --schema "$candidate/runtime/capture-document-v1.schema.json" `
+            --source release
+          $nsis = 'apps/capture-workbench-desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis'
+          New-Item -ItemType Directory -Force -Path $nsis | Out-Null
+          $installer = Get-ChildItem "$candidate/desktop" -Filter '*.exe' -File
+          if ($installer.Count -ne 1) { throw "Expected exactly one candidate installer, found $($installer.Count)." }
+          Copy-Item -LiteralPath $installer[0].FullName -Destination (Join-Path $nsis $installer[0].Name)
+          node apps/capture-workbench-desktop/scripts/installed-deterministic-smoke.ts
+
+      - name: Record candidate verification result
+        if: ${{ always() }}
+        shell: pwsh
+        env:
+          VERIFICATION_STATUS: ${{ job.status }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          node tools/record-candidate-verification.ts `
+            --candidate (Join-Path $env:RUNNER_TEMP 'capture-candidate') `
+            --verification windows-install `
+            --status "$env:VERIFICATION_STATUS" `
+            --output (Join-Path $env:RUNNER_TEMP 'windows-install.json')
+
+      - name: Upload candidate verification result
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: capture-candidate-verification-windows-${{ inputs.version }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/windows-install.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  verify-runtime-product:
+    needs: build-candidate
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out exact source commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.commit_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Install pnpm and Node.js
+        uses: pnpm/action-setup@b0f76dfb45f55f8421693e4803ac7bb65143bd34 # v6
+        with:
+          version: 11.15.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install workspace dependencies
+        shell: pwsh
+        run: pnpm install --frozen-lockfile
+      - name: Download the exact candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: capture-candidate-${{ inputs.version }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/capture-candidate
+      - name: Verify runtime readiness and cancellation boundaries
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_MODE: ${{ inputs.release_mode }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          $candidate = Join-Path $env:RUNNER_TEMP 'capture-candidate'
+          $sourceCommit = (git rev-parse HEAD).Trim()
+          node tools/verify-release-candidate.ts --candidate "$candidate" --version "$env:RELEASE_VERSION" --source-commit "$sourceCommit" --release-mode "$env:RELEASE_MODE"
+          node tools/local-release-consumer-smoke.ts --runtime-dir "$candidate/runtime" --version "$env:RELEASE_VERSION"
+
+      - name: Record candidate verification result
+        if: ${{ always() }}
+        shell: pwsh
+        env:
+          VERIFICATION_STATUS: ${{ job.status }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          node tools/record-candidate-verification.ts `
+            --candidate (Join-Path $env:RUNNER_TEMP 'capture-candidate') `
+            --verification runtime-product `
+            --status "$env:VERIFICATION_STATUS" `
+            --output (Join-Path $env:RUNNER_TEMP 'runtime-product.json')
+
+      - name: Upload candidate verification result
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: capture-candidate-verification-runtime-${{ inputs.version }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/runtime-product.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  verify-cross-framework-consumers:
+    needs: build-candidate
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out exact source commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.commit_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+      - name: Download the exact candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: capture-candidate-${{ inputs.version }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/capture-candidate
+      - name: Verify candidate package exports and dependency boundaries
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_MODE: ${{ inputs.release_mode }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          $candidate = Join-Path $env:RUNNER_TEMP 'capture-candidate'
+          $sourceCommit = (git rev-parse HEAD).Trim()
+          node tools/verify-release-candidate.ts --candidate "$candidate" --version "$env:RELEASE_VERSION" --source-commit "$sourceCommit" --release-mode "$env:RELEASE_MODE"
+          New-Item -ItemType Directory -Force -Path 'dist/packs' | Out-Null
+          Copy-Item -Path (Join-Path $candidate 'package/*.tgz') -Destination 'dist/packs' -Force
+          node tools/verify-candidate-packages.ts --candidate "$candidate" --version "$env:RELEASE_VERSION"
+          node tools/clean-angular-consumer-smoke.ts
+
+      - name: Record candidate verification result
+        if: ${{ always() }}
+        shell: pwsh
+        env:
+          VERIFICATION_STATUS: ${{ job.status }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          node tools/record-candidate-verification.ts `
+            --candidate (Join-Path $env:RUNNER_TEMP 'capture-candidate') `
+            --verification cross-framework-consumers `
+            --status "$env:VERIFICATION_STATUS" `
+            --output (Join-Path $env:RUNNER_TEMP 'cross-framework-consumers.json')
+
+      - name: Upload candidate verification result
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: capture-candidate-verification-cross-framework-${{ inputs.version }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/cross-framework-consumers.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  verify-model-enabled-runtime:
+    needs: build-candidate
+    if: ${{ inputs.release_mode == 'model-enabled' }}
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out exact source commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.commit_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+      - name: Install uv and Python 3.12
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: '3.12'
+      - name: Download the exact candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: capture-candidate-${{ inputs.version }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/capture-candidate
+      - name: Verify model catalog provenance without ambient stores
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_MODE: ${{ inputs.release_mode }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          $candidate = Join-Path $env:RUNNER_TEMP 'capture-candidate'
+          $sourceCommit = (git rev-parse HEAD).Trim()
+          node tools/verify-release-candidate.ts --candidate "$candidate" --version "$env:RELEASE_VERSION" --source-commit "$sourceCommit" --release-mode "$env:RELEASE_MODE"
+          $catalog = Get-Content "$candidate/runtime/capture-engine-catalog.json" -Raw | ConvertFrom-Json
+          if ($catalog.runtimeVersion -ne $env:RELEASE_VERSION) { throw 'Candidate model catalog runtime version drifted.' }
+          if ($catalog.requirements.Count -ne 2) { throw 'Model-enabled candidate must contain exactly OCR and Whisper requirements.' }
+          if ((@($catalog.requirements | ForEach-Object requirementId) -join ',') -ne 'windowsml-ocr,whisper-primary') { throw 'Model-enabled candidate requirements are not source-lock ordered.' }
+          uv run --no-project --python 3.12 python packages/capture-runtime/scripts/model_source_lock.py validate
+          node tools/local-release-consumer-smoke.ts --runtime-dir "$candidate/runtime" --version "$env:RELEASE_VERSION"
+          $ambient = Get-ChildItem Env: | Where-Object { $_.Name -match '^(?:CAPTURE_(?:USER_MODEL_DIR|EXTRACTION_PROVIDER|STRUCTURING_PROVIDER|OLLAMA_[A-Z0-9_]+|WINDOWSML_[A-Z0-9_]+|WHISPER_[A-Z0-9_]+)|OLLAMA_(?:MODELS|HOST))$' }
+          if ($ambient) { throw "Ambient model/provider variables must not influence verification: $($ambient.Name -join ', ')." }
+
+      - name: Record candidate verification result
+        if: ${{ always() }}
+        shell: pwsh
+        env:
+          VERIFICATION_STATUS: ${{ job.status }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          node tools/record-candidate-verification.ts `
+            --candidate (Join-Path $env:RUNNER_TEMP 'capture-candidate') `
+            --verification model-enabled-runtime `
+            --status "$env:VERIFICATION_STATUS" `
+            --output (Join-Path $env:RUNNER_TEMP 'model-enabled-runtime.json')
+
+      - name: Upload candidate verification result
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: capture-candidate-verification-model-${{ inputs.version }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/model-enabled-runtime.json
+          if-no-files-found: warn
+          retention-days: 14

@@ -560,6 +560,45 @@ test('release candidate workflow is dispatch-only, exact-commit, and immutable',
   );
   assert.match(workflow, /candidate-manifest\.json/u);
   assert.match(workflow, /retention-days: 14/u);
+  for (const job of [
+    'verify-windows-install',
+    'verify-runtime-product',
+    'verify-cross-framework-consumers',
+    'verify-model-enabled-runtime',
+  ]) {
+    assert.match(
+      workflow,
+      new RegExp(`${job}:[\\s\\S]*needs: build-candidate`, 'u'),
+    );
+  }
+  assert.equal(
+    (
+      workflow.match(
+        /name: capture-candidate-\$\{\{ inputs\.version \}\}-\$\{\{ github\.run_id \}\}/gu,
+      ) ?? []
+    ).length,
+    5,
+  );
+  const windowsInstallJob = workflow.slice(
+    workflow.indexOf('  verify-windows-install:'),
+  );
+  assert.match(windowsInstallJob, /installed-deterministic-smoke\.ts\s*$/mu);
+  assert.doesNotMatch(
+    windowsInstallJob,
+    /installed-deterministic-smoke\.ts --measure-release-size/u,
+  );
+  assert.match(workflow, /local-release-consumer-smoke\.ts --runtime-dir/u);
+  assert.match(workflow, /verify-candidate-packages\.ts/u);
+  assert.match(workflow, /clean-angular-consumer-smoke\.ts/u);
+  assert.match(workflow, /record-candidate-verification\.ts/u);
+  assert.equal(
+    (
+      workflow.match(
+        /actions\/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02/gu,
+      ) ?? []
+    ).length,
+    5,
+  );
   assert.match(workflow, /actions\/upload-artifact@[0-9a-f]{40}/u);
   assert.doesNotMatch(
     workflow,

@@ -18,9 +18,15 @@ import { Readable } from 'node:stream';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const packageManifest = JSON.parse(
-  await readFile(join(repoRoot, 'packages/capture-angular/package.json'), 'utf8'),
+  await readFile(
+    join(repoRoot, 'packages/capture-angular/package.json'),
+    'utf8',
+  ),
 ) as { name: string; version: string };
-const releaseRoot = join(repoRoot, 'packages/capture-runtime/dist/release');
+const defaultReleaseRoot = join(
+  repoRoot,
+  'packages/capture-runtime/dist/release',
+);
 
 export const CORE_RUNTIME_ASSET_NAMES = Object.freeze([
   'capture-runtime-x86_64-pc-windows-msvc.exe',
@@ -60,10 +66,17 @@ function assertSha256(value: unknown, label: string): asserts value is string {
   }
 }
 
-function exactKeys(value: Record<string, unknown>, keys: readonly string[], label: string): void {
+function exactKeys(
+  value: Record<string, unknown>,
+  keys: readonly string[],
+  label: string,
+): void {
   const actual = Object.keys(value).sort();
   const expected = [...keys].sort();
-  if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) {
+  if (
+    actual.length !== expected.length ||
+    actual.some((key, index) => key !== expected[index])
+  ) {
     throw new Error(`${label} fields are not canonical.`);
   }
 }
@@ -79,10 +92,16 @@ function canonicalize(value: unknown): unknown {
 }
 
 function canonicalJson(value: unknown): Buffer {
-  return Buffer.from(`${JSON.stringify(canonicalize(value), null, 2)}\n`, 'utf8');
+  return Buffer.from(
+    `${JSON.stringify(canonicalize(value), null, 2)}\n`,
+    'utf8',
+  );
 }
 
-function assertSafeAssetName(value: unknown, label: string): asserts value is string {
+function assertSafeAssetName(
+  value: unknown,
+  label: string,
+): asserts value is string {
   if (
     typeof value !== 'string' ||
     !value ||
@@ -103,9 +122,17 @@ type CatalogWorkerDescriptor = {
   readonly filesManifestSha256: string;
 };
 
-function catalogWorkers(raw: unknown, expectedVersion: string, catalogBytes: Buffer): CatalogWorkerDescriptor[] {
+function catalogWorkers(
+  raw: unknown,
+  expectedVersion: string,
+  catalogBytes: Buffer,
+): CatalogWorkerDescriptor[] {
   if (!isRecord(raw)) throw new Error('Engine catalog must be an object.');
-  exactKeys(raw, ['catalogVersion', 'requirements', 'runtimeVersion'], 'Engine catalog');
+  exactKeys(
+    raw,
+    ['catalogVersion', 'requirements', 'runtimeVersion'],
+    'Engine catalog',
+  );
   if (raw.catalogVersion !== '2' || raw.runtimeVersion !== expectedVersion) {
     throw new Error('Engine catalog version or runtime version is invalid.');
   }
@@ -116,10 +143,13 @@ function catalogWorkers(raw: unknown, expectedVersion: string, catalogBytes: Buf
     throw new Error('Engine catalog requirements are invalid.');
   }
   const requirements = raw.requirements;
-  const ids = requirements.map((item) => (isRecord(item) ? item.requirementId : undefined));
+  const ids = requirements.map((item) =>
+    isRecord(item) ? item.requirementId : undefined,
+  );
   if (
     requirements.length !== MODEL_REQUIREMENT_IDS.length ||
-    JSON.stringify([...ids].sort()) !== JSON.stringify([...MODEL_REQUIREMENT_IDS].sort())
+    JSON.stringify([...ids].sort()) !==
+      JSON.stringify([...MODEL_REQUIREMENT_IDS].sort())
   ) {
     throw new Error('Engine catalog requirements are invalid.');
   }
@@ -127,8 +157,13 @@ function catalogWorkers(raw: unknown, expectedVersion: string, catalogBytes: Buf
   const seenRequirements = new Set<string>();
   const seenArchives = new Set<string>();
   for (const item of requirements) {
-    if (!isRecord(item)) throw new Error('Engine catalog requirement is invalid.');
-    exactKeys(item, ['requirementId', 'artifacts', 'modelFiles', 'unavailableReason'], 'Engine catalog requirement');
+    if (!isRecord(item))
+      throw new Error('Engine catalog requirement is invalid.');
+    exactKeys(
+      item,
+      ['requirementId', 'artifacts', 'modelFiles', 'unavailableReason'],
+      'Engine catalog requirement',
+    );
     const requirementId = item.requirementId;
     if (
       typeof requirementId !== 'string' ||
@@ -138,11 +173,14 @@ function catalogWorkers(raw: unknown, expectedVersion: string, catalogBytes: Buf
       item.artifacts.length !== 1 ||
       !isRecord(item.modelFiles)
     ) {
-      throw new Error(`Engine catalog requirement is invalid: ${String(requirementId)}.`);
+      throw new Error(
+        `Engine catalog requirement is invalid: ${String(requirementId)}.`,
+      );
     }
     seenRequirements.add(requirementId);
     const artifact = item.artifacts[0];
-    if (!isRecord(artifact)) throw new Error('Engine catalog worker artifact is invalid.');
+    if (!isRecord(artifact))
+      throw new Error('Engine catalog worker artifact is invalid.');
     exactKeys(
       artifact,
       [
@@ -185,11 +223,17 @@ function catalogWorkers(raw: unknown, expectedVersion: string, catalogBytes: Buf
       throw new Error('Engine catalog worker artifact is invalid.');
     }
     assertSafeAssetName(artifact.fileName, 'Engine catalog worker archive');
-    if (!artifact.fileName.endsWith('.zip') || artifact.fileName.toLowerCase().includes('model')) {
+    if (
+      !artifact.fileName.endsWith('.zip') ||
+      artifact.fileName.toLowerCase().includes('model')
+    ) {
       throw new Error('Engine catalog may contain only worker archives.');
     }
     assertSha256(artifact.sha256, 'Engine catalog worker archive digest');
-    assertSha256(artifact.filesManifestSha256, 'Engine catalog worker manifest digest');
+    assertSha256(
+      artifact.filesManifestSha256,
+      'Engine catalog worker manifest digest',
+    );
     if (seenArchives.has(artifact.fileName)) {
       throw new Error('Engine catalog worker archive names must be unique.');
     }
@@ -225,8 +269,14 @@ function catalogWorkers(raw: unknown, expectedVersion: string, catalogBytes: Buf
     ) {
       throw new Error('Engine catalog model delivery is invalid.');
     }
-    assertSha256(modelFiles.manifestSha256, 'Engine catalog model manifest digest');
-    assertSha256(modelFiles.sourceLockSha256, 'Engine catalog model source-lock digest');
+    assertSha256(
+      modelFiles.manifestSha256,
+      'Engine catalog model manifest digest',
+    );
+    assertSha256(
+      modelFiles.sourceLockSha256,
+      'Engine catalog model source-lock digest',
+    );
     workers.push({
       requirementId,
       fileName: artifact.fileName,
@@ -242,7 +292,8 @@ export function validateRuntimeManifest(
   raw: unknown,
   expectedVersion: string,
 ): RuntimeReleaseManifest {
-  if (!isRecord(raw)) throw new Error('Runtime release manifest must be an object.');
+  if (!isRecord(raw))
+    throw new Error('Runtime release manifest must be an object.');
   const manifest = raw as Partial<RuntimeReleaseManifest>;
   if (manifest.manifestVersion !== '1') {
     throw new Error('Runtime release manifest version must be 1.');
@@ -258,7 +309,9 @@ export function validateRuntimeManifest(
     manifest.platform !== 'windows' ||
     manifest.arch !== 'x86_64'
   ) {
-    throw new Error('Runtime release manifest has an unsupported platform or contract version.');
+    throw new Error(
+      'Runtime release manifest has an unsupported platform or contract version.',
+    );
   }
   if (manifest.fileName !== RUNTIME_ASSET_NAMES[0]) {
     throw new Error('Runtime release executable name is not canonical.');
@@ -278,25 +331,36 @@ function sha256(bytes: Buffer): string {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
-function assertExactAssetNames(actual: readonly string[], expected: readonly string[]): void {
+function assertExactAssetNames(
+  actual: readonly string[],
+  expected: readonly string[],
+): void {
   const actualSorted = [...actual].sort();
   const expectedSorted = [...expected].sort();
   if (
     actualSorted.length !== expectedSorted.length ||
     actualSorted.some((name, index) => name !== expectedSorted[index])
   ) {
-    throw new Error('Runtime release contains files outside the canonical asset set.');
+    throw new Error(
+      'Runtime release contains files outside the canonical asset set.',
+    );
   }
 }
 
-async function verifyChecksum(directory: string, name: string, expectedDigest?: string): Promise<string> {
+async function verifyChecksum(
+  directory: string,
+  name: string,
+  expectedDigest?: string,
+): Promise<string> {
   const bytes = await readFile(join(directory, name));
   const digest = sha256(bytes);
   if (expectedDigest !== undefined && digest !== expectedDigest) {
     throw new Error(`Release asset digest does not match catalog: ${name}.`);
   }
   const checksumName = `${name}.sha256`;
-  const checksum = (await readFile(join(directory, checksumName), 'utf8')).trim();
+  const checksum = (
+    await readFile(join(directory, checksumName), 'utf8')
+  ).trim();
   if (checksum !== `${digest}  ${name}`) {
     throw new Error(`Release checksum does not match ${name}.`);
   }
@@ -315,13 +379,17 @@ async function inspectRuntimeRelease(
   const entries = await readdir(directory, { withFileTypes: true });
   const names = entries.map((entry) => entry.name).sort();
   if (entries.some((entry) => !entry.isFile())) {
-    throw new Error('Runtime release contains files outside the canonical asset set.');
+    throw new Error(
+      'Runtime release contains files outside the canonical asset set.',
+    );
   }
 
   const hasCatalog = names.includes(ENGINE_CATALOG_NAME);
   const hasCatalogChecksum = names.includes(ENGINE_CATALOG_CHECKSUM_NAME);
   if (hasCatalog !== hasCatalogChecksum) {
-    throw new Error('Runtime release catalog and checksum must be published together.');
+    throw new Error(
+      'Runtime release catalog and checksum must be published together.',
+    );
   }
 
   const assetNames: string[] = [...RUNTIME_ASSET_NAMES];
@@ -350,12 +418,16 @@ async function inspectRuntimeRelease(
   assertExactAssetNames(names, assetNames);
 
   const manifest = validateRuntimeManifest(
-    JSON.parse(await readFile(join(directory, 'capture-runtime-manifest.json'), 'utf8')),
+    JSON.parse(
+      await readFile(join(directory, 'capture-runtime-manifest.json'), 'utf8'),
+    ),
     expectedVersion,
   );
   const executable = await readFile(join(directory, manifest.fileName));
   if (executable.byteLength !== manifest.bytes) {
-    throw new Error('Runtime executable byte count does not match the manifest.');
+    throw new Error(
+      'Runtime executable byte count does not match the manifest.',
+    );
   }
   if (sha256(executable) !== manifest.sha256) {
     throw new Error('Runtime executable digest does not match the manifest.');
@@ -366,12 +438,18 @@ async function inspectRuntimeRelease(
     throw new Error('Runtime schema digest does not match the manifest.');
   }
 
-  const runtimeChecksum = (await readFile(
-    join(directory, 'capture-runtime-x86_64-pc-windows-msvc.exe.sha256'),
-    'utf8',
-  )).trim();
+  const runtimeChecksum = (
+    await readFile(
+      join(directory, 'capture-runtime-x86_64-pc-windows-msvc.exe.sha256'),
+      'utf8',
+    )
+  ).trim();
   const checksumMatch = runtimeChecksum.match(/^([0-9a-f]{64})\s+(.+)$/u);
-  if (!checksumMatch || checksumMatch[1] !== manifest.sha256 || checksumMatch[2] !== manifest.fileName) {
+  if (
+    !checksumMatch ||
+    checksumMatch[1] !== manifest.sha256 ||
+    checksumMatch[2] !== manifest.fileName
+  ) {
     throw new Error('Runtime checksum file does not match the manifest.');
   }
 
@@ -380,7 +458,11 @@ async function inspectRuntimeRelease(
     for (const worker of workers) {
       const filesManifestName = `${worker.fileName.slice(0, -'.zip'.length)}-files.json`;
       await verifyChecksum(directory, worker.fileName, worker.sha256);
-      await verifyChecksum(directory, filesManifestName, worker.filesManifestSha256);
+      await verifyChecksum(
+        directory,
+        filesManifestName,
+        worker.filesManifestSha256,
+      );
     }
   }
   return { manifest, assetNames: Object.freeze(assetNames) };
@@ -405,7 +487,9 @@ async function copyRuntimeRelease(
 }
 
 function delay(milliseconds: number): Promise<void> {
-  return new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
+  return new Promise((resolvePromise) =>
+    setTimeout(resolvePromise, milliseconds),
+  );
 }
 
 async function findFreePort(): Promise<number> {
@@ -415,8 +499,11 @@ async function findFreePort(): Promise<number> {
     server.listen(0, '127.0.0.1', () => resolvePromise());
   });
   const address = server.address();
-  const port = typeof address === 'object' && address !== null ? address.port : undefined;
-  await new Promise<void>((resolvePromise) => server.close(() => resolvePromise()));
+  const port =
+    typeof address === 'object' && address !== null ? address.port : undefined;
+  await new Promise<void>((resolvePromise) =>
+    server.close(() => resolvePromise()),
+  );
   if (!port) throw new Error('Unable to allocate a loopback port.');
   return port;
 }
@@ -450,15 +537,19 @@ async function startReleaseMirror(
     server.listen(0, '127.0.0.1', () => resolvePromise());
   });
   const address = server.address();
-  const port = typeof address === 'object' && address !== null ? address.port : undefined;
-  if (!port) throw new Error('Local release mirror did not expose a loopback port.');
+  const port =
+    typeof address === 'object' && address !== null ? address.port : undefined;
+  if (!port)
+    throw new Error('Local release mirror did not expose a loopback port.');
   return {
     baseUrl: `http://127.0.0.1:${port}/v${version}`,
     close: async () => {
       server.closeIdleConnections();
       server.closeAllConnections();
       await Promise.race([
-        new Promise<void>((resolvePromise) => server.close(() => resolvePromise())),
+        new Promise<void>((resolvePromise) =>
+          server.close(() => resolvePromise()),
+        ),
         delay(3_000),
       ]);
       server.closeIdleConnections();
@@ -473,7 +564,9 @@ async function downloadAsset(url: string, destination: string): Promise<void> {
     headers: { Connection: 'close' },
   });
   if (!response.ok || !response.body) {
-    throw new Error(`Runtime release download failed with HTTP ${response.status}.`);
+    throw new Error(
+      `Runtime release download failed with HTTP ${response.status}.`,
+    );
   }
   await pipeline(
     Readable.fromWeb(response.body),
@@ -534,10 +627,18 @@ async function stopProcess(
     await Promise.race([exited, delay(2_000)]);
   }
   if (listeningProcessIds(port).length > 0) {
-    throw new Error(`Unable to stop downloaded runtime listener on port ${port}.`);
+    throw new Error(
+      `Unable to stop downloaded runtime listener on port ${port}.`,
+    );
   }
-  if (child.exitCode === null && child.signalCode === null && process.platform !== 'win32') {
-    throw new Error(`Unable to stop downloaded runtime process ${child.pid ?? 'unknown'}.`);
+  if (
+    child.exitCode === null &&
+    child.signalCode === null &&
+    process.platform !== 'win32'
+  ) {
+    throw new Error(
+      `Unable to stop downloaded runtime process ${child.pid ?? 'unknown'}.`,
+    );
   }
 }
 
@@ -580,22 +681,32 @@ async function runRuntimeReadiness(
     const deadline = Date.now() + 30_000;
     while (Date.now() < deadline) {
       if (child.exitCode !== null || child.signalCode !== null) {
-        throw new Error(`Downloaded runtime exited before readiness: ${errorOutput}`);
+        throw new Error(
+          `Downloaded runtime exited before readiness: ${errorOutput}`,
+        );
       }
       try {
-        const response = await fetch(`http://127.0.0.1:${port}/v1/health/ready`, {
-          headers: { Authorization: `Bearer ${token}` },
-          signal: AbortSignal.timeout(1_000),
-        });
+        const response = await fetch(
+          `http://127.0.0.1:${port}/v1/health/ready`,
+          {
+            headers: { Authorization: `Bearer ${token}` },
+            signal: AbortSignal.timeout(1_000),
+          },
+        );
         if (response.ok) {
           const health = (await response.json()) as { service?: unknown };
           if (health.service !== 'capture-runtime') {
-            throw new Error('Downloaded runtime returned an unexpected service identity.');
+            throw new Error(
+              'Downloaded runtime returned an unexpected service identity.',
+            );
           }
           return;
         }
       } catch (error) {
-        if (error instanceof Error && error.message.includes('unexpected service')) {
+        if (
+          error instanceof Error &&
+          error.message.includes('unexpected service')
+        ) {
           throw error;
         }
       }
@@ -617,28 +728,88 @@ function assertTemporaryRoot(root: string): void {
     relativeRoot.startsWith(`..${sep}`) ||
     resolve(resolvedTemp, relativeRoot) !== resolvedRoot
   ) {
-    throw new Error(`Refusing to remove unexpected temporary path: ${resolvedRoot}`);
+    throw new Error(
+      `Refusing to remove unexpected temporary path: ${resolvedRoot}`,
+    );
   }
 }
 
-export async function runLocalReleaseConsumerSmoke(): Promise<void> {
-  const expectedVersion = packageManifest.version;
+function parseArguments(args: readonly string[]): {
+  releaseRoot?: string;
+  expectedVersion?: string;
+} {
+  if (args.length === 0) return {};
+  if (args.length !== 4) {
+    throw new Error(
+      'Use no arguments or --runtime-dir <directory> --version <semver>.',
+    );
+  }
+  const values = new Map<string, string>();
+  for (let index = 0; index < args.length; index += 2) {
+    const name = args[index];
+    const value = args[index + 1];
+    if (
+      !['--runtime-dir', '--version'].includes(name) ||
+      !value ||
+      values.has(name)
+    ) {
+      throw new Error(
+        'Use no arguments or --runtime-dir <directory> --version <semver>.',
+      );
+    }
+    values.set(name, value);
+  }
+  const releaseRoot = values.get('--runtime-dir');
+  const expectedVersion = values.get('--version');
+  if (
+    !releaseRoot ||
+    !expectedVersion ||
+    !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(expectedVersion)
+  ) {
+    throw new Error(
+      'Use no arguments or --runtime-dir <directory> --version <semver>.',
+    );
+  }
+  return { releaseRoot: resolve(releaseRoot), expectedVersion };
+}
+
+export async function runLocalReleaseConsumerSmoke(
+  options: {
+    releaseRoot?: string;
+    expectedVersion?: string;
+    packageName?: string;
+  } = {},
+): Promise<void> {
+  const releaseRoot = options.releaseRoot ?? defaultReleaseRoot;
+  const expectedVersion = options.expectedVersion ?? packageManifest.version;
+  const packageName = options.packageName ?? packageManifest.name;
   const release = await inspectRuntimeRelease(releaseRoot, expectedVersion);
-  const temporaryRoot = await mkdtemp(join(tmpdir(), 'capture-runtime-release-consumer-'));
+  const temporaryRoot = await mkdtemp(
+    join(tmpdir(), 'capture-runtime-release-consumer-'),
+  );
   let mirror: { baseUrl: string; close: () => Promise<void> } | undefined;
   try {
     const mirrorDirectory = join(temporaryRoot, 'mirror');
     const installDirectory = join(temporaryRoot, 'install');
     await copyRuntimeRelease(releaseRoot, mirrorDirectory, release.assetNames);
-    mirror = await startReleaseMirror(mirrorDirectory, expectedVersion, release.assetNames);
+    mirror = await startReleaseMirror(
+      mirrorDirectory,
+      expectedVersion,
+      release.assetNames,
+    );
     await mkdir(installDirectory, { recursive: true });
     for (const name of release.assetNames) {
-      await downloadAsset(`${mirror.baseUrl}/${name}`, join(installDirectory, name));
+      await downloadAsset(
+        `${mirror.baseUrl}/${name}`,
+        join(installDirectory, name),
+      );
     }
-    const manifest = (await inspectRuntimeRelease(installDirectory, expectedVersion)).manifest;
+    const manifest = (
+      await inspectRuntimeRelease(installDirectory, expectedVersion)
+    ).manifest;
     await runRuntimeReadiness(installDirectory, manifest, temporaryRoot);
     process.stdout.write(
-      `Local release consumer smoke passed for ${packageManifest.name}@${expectedVersion} and capture-runtime@${manifest.runtimeVersion}.\n`,
+      `Local release consumer smoke passed for ${packageName}@${expectedVersion} and capture-runtime@${manifest.runtimeVersion}.\n`,
     );
   } finally {
     if (mirror) await mirror.close();
@@ -656,10 +827,12 @@ if (
   process.argv[1] &&
   pathToFileURL(resolve(process.argv[1])).href === import.meta.url
 ) {
-  runLocalReleaseConsumerSmoke().catch((error: unknown) => {
+  try {
+    await runLocalReleaseConsumerSmoke(parseArguments(process.argv.slice(2)));
+  } catch (error: unknown) {
     process.stderr.write(
       `${error instanceof Error ? error.message : String(error)}\n`,
     );
     process.exitCode = 1;
-  });
+  }
 }

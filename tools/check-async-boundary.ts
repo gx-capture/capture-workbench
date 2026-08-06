@@ -83,6 +83,9 @@ function exceptionReason(relativePath) {
   if (relativePath === 'tools/assemble-release-candidate.ts') {
     return 'release candidate assembly CLI process boundary';
   }
+  if (relativePath === 'tools/record-candidate-verification.ts') {
+    return 'candidate verification report CLI process boundary';
+  }
   if (relativePath === 'packages/capture-structuring/src/structuring.ts') {
     return 'host SDK LLM callable boundary';
   }
