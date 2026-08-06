@@ -140,6 +140,8 @@ test('owned process observer uses a bounded Win32 process query and fails closed
     assert.match(script, /Win32_Process/u);
     assert.match(script, /Get-ChildItem[\s\S]*-Recurse[\s\S]*-ErrorAction Stop/u);
     assert.match(script, /Name =/u);
+    assert.match(script, /CAPTURE_SMOKE_ALLOW_MISSING_ROOT/u);
+    assert.match(script, /PathType Container/u);
     assert.match(script, /OperationTimeoutSec 5/u);
     assert.match(script, /ProcessId, ExecutablePath/u);
     assert.match(script, /Replace\("'", "\\'"\)/u);
@@ -262,6 +264,48 @@ test('owned process cleanup rejects a PID that remains after taskkill', async (t
     /status 128 while the PID remained owned/u,
   );
 });
+
+test(
+  'residual cleanup treats a missing root as empty while registered roots stay strict',
+  { skip: process.platform !== 'win32' },
+  async (t) => {
+    const fixtureRoot = await mkdtemp(
+      join(tmpdir(), 'capture-installed-process-missing-root-'),
+    );
+    const smokeRoot = join(fixtureRoot, 'installed-smoke');
+    const ownedRoot = join(smokeRoot, 'run', 'install');
+    const residualRoot = join(smokeRoot, 'run', 'residual');
+    await mkdir(ownedRoot, { recursive: true });
+
+    const systemRoot =
+      process.env['SYSTEMROOT'] ??
+      process.env['SystemRoot'] ??
+      'C:\\Windows';
+    const systemExecutable = (...segments) => join(systemRoot, ...segments);
+    const cleanup = createInstalledProcessCleanup({
+      smokeRoot,
+      workspaceRoot: fixtureRoot,
+      baseChildEnvironment: (source) => source,
+      windowsSystemExecutable: systemExecutable,
+    });
+    cleanup.registerPrivateProcessRoots([ownedRoot]);
+    t.after(() =>
+      rm(fixtureRoot, {
+        force: true,
+        maxRetries: 5,
+        recursive: true,
+        retryDelay: 100,
+      }),
+    );
+
+    await observe(cleanup.stopAndProveResidualProcessRoots([residualRoot]));
+    await rm(ownedRoot, { force: true, recursive: true });
+    await assert.rejects(
+      observe(cleanup.processesRunningUnder(ownedRoot)),
+      /Owned process observer failed \(operation=query; observer=win32-process;/u,
+    );
+  },
+);
 
 test(
   'Windows path-scoped cleanup terminates an executable under the private root only',

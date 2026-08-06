@@ -161,7 +161,7 @@ export function createInstalledProcessCleanup({
     );
   }
 
-  function observeExecutableProcessesUnder(root) {
+  function observeExecutableProcessesUnder(root, allowMissingRoot = false) {
     const safeRoot = assertStrictDescendant(
       smokeRoot,
       root,
@@ -169,6 +169,16 @@ export function createInstalledProcessCleanup({
     );
     const script = `
 $root = [IO.Path]::GetFullPath($env:CAPTURE_SMOKE_PROCESS_ROOT).TrimEnd('\\') + '\\'
+if (-not (Test-Path -LiteralPath $env:CAPTURE_SMOKE_PROCESS_ROOT)) {
+  if ($env:CAPTURE_SMOKE_ALLOW_MISSING_ROOT -eq '1') {
+    Write-Output '[]'
+    exit 0
+  }
+  throw 'Owned process root is missing.'
+}
+if (-not (Test-Path -LiteralPath $env:CAPTURE_SMOKE_PROCESS_ROOT -PathType Container)) {
+  throw 'Owned process root is not a directory.'
+}
 $names = @(Get-ChildItem -LiteralPath $env:CAPTURE_SMOKE_PROCESS_ROOT -Recurse -File -Filter '*.exe' -ErrorAction Stop | Select-Object -ExpandProperty Name -Unique)
 if ($names.Count -eq 0) {
   Write-Output '[]'
@@ -196,6 +206,9 @@ if ($items.Count -eq 0) {
     const environment = {
       ...baseChildEnvironment(process.env, smokeRoot, workspaceRoot),
       CAPTURE_SMOKE_PROCESS_ROOT: safeRoot,
+      ...(allowMissingRoot
+        ? { CAPTURE_SMOKE_ALLOW_MISSING_ROOT: '1' }
+        : {}),
     };
     return defer(() => {
       let lastError;
@@ -358,7 +371,7 @@ if ($items.Count -eq 0) {
     return stopAndProveProcesses(
       pid,
       residualRoot,
-      observeExecutableProcessesUnder,
+      (root) => observeExecutableProcessesUnder(root, true),
     );
   }
 
