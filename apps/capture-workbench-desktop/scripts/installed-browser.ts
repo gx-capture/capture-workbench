@@ -73,7 +73,7 @@ function connectAttempt(endpoint, appProcess, deadline, lastError) {
 }
 
 function captureFixture(page, fixture) {
-  const filePicker = page.getByLabel('選擇檔案');
+  const filePicker = page.getByRole('button', { name: '選擇檔案' });
   return defer(() => from(filePicker.setInputFiles({
     name: fixture.fileName, mimeType: fixture.mimeType, buffer: fixture.buffer,
   }))).pipe(
@@ -101,7 +101,11 @@ function captureFixture(page, fixture) {
 export function exerciseInstalledUi(page) {
   return defer(() => from(page.getByRole('heading', { name: '文件擷取工作台' }).waitFor({ state: 'visible', timeout: 30_000 }))).pipe(
     concatMap(() => prepareFirstRun(page)),
-    concatMap(() => defer(() => from(page.getByLabel('選擇檔案').isEnabled()))),
+    concatMap(() =>
+      defer(() =>
+        from(page.getByRole('button', { name: '選擇檔案' }).isEnabled()),
+      ),
+    ),
     switchMap((enabled) => {
       if (!enabled) return throwError(() => new Error('Installed desktop workbench did not finish first-run requirements.'));
       return defer(() => from(page.locator('.model-chip').textContent())).pipe(
@@ -122,7 +126,7 @@ export function exerciseInstalledUi(page) {
 }
 
 function prepareFirstRun(page) {
-  const intake = page.getByLabel('選擇檔案');
+  const intake = page.getByRole('button', { name: '選擇檔案' });
   const install = page.getByRole('button', { name: '同意並安裝核心需求' });
   return waitUntil(
     () => forkJoin({
