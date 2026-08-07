@@ -134,6 +134,34 @@
       "strStripWhitespace": true
     },
     {
+      "name": "RuntimeModelInstallationV1",
+      "schemaFile": "runtime-model-installation-v1.schema.json",
+      "schemaSha256": "32c914150d36d1885a58a672bb7888b8112c1009ac4857336a62285cbb54c4fe",
+      "extraPolicy": "forbid",
+      "strStripWhitespace": true
+    },
+    {
+      "name": "RuntimeModelInstallationsV1",
+      "schemaFile": "runtime-model-installations-v1.schema.json",
+      "schemaSha256": "0cb4afa0ea874cf2f7d32ca2fa40e912a555b1968f3b94d0a72f7d650d04246d",
+      "extraPolicy": "forbid",
+      "strStripWhitespace": true
+    },
+    {
+      "name": "RuntimeModelOptionV1",
+      "schemaFile": "runtime-model-option-v1.schema.json",
+      "schemaSha256": "2cd56a3679ea2f6668405033de1e3b1b47d75652f2b7789722a6e93478fb742a",
+      "extraPolicy": "forbid",
+      "strStripWhitespace": true
+    },
+    {
+      "name": "RuntimeModelOptionsV1",
+      "schemaFile": "runtime-model-options-v1.schema.json",
+      "schemaSha256": "5e9c913e31570267ca8fe1479bc95ff19a923a5cba536b632a71ffb02db753b1",
+      "extraPolicy": "forbid",
+      "strStripWhitespace": true
+    },
+    {
       "name": "RuntimeReadyV1",
       "schemaFile": "runtime-ready-v1.schema.json",
       "schemaSha256": "e23eda9ef04d9cb2765c72d7293cab51ab5e27eb265c6639bf1af2acb97ee180",
@@ -158,6 +186,13 @@
       "name": "StartRuntimeInstallationV1",
       "schemaFile": "start-runtime-installation-v1.schema.json",
       "schemaSha256": "820eea98b4e8cde94dc001bc3227f8f36b5c08886d24e8b76955b6af22c229b9",
+      "extraPolicy": "forbid",
+      "strStripWhitespace": true
+    },
+    {
+      "name": "StartRuntimeModelInstallationV1",
+      "schemaFile": "start-runtime-model-installation-v1.schema.json",
+      "schemaSha256": "7b8a039547a29859745e98cf46b1725282dd19eec73afd8fa404eb65bd5e17e3",
       "extraPolicy": "forbid",
       "strStripWhitespace": true
     },
@@ -209,6 +244,14 @@
         "failed",
         "cancelled",
         "manual_action_required"
+      ]
+    },
+    {
+      "name": "RuntimeModelOptionStatus",
+      "values": [
+        "not-installed",
+        "installed",
+        "active"
       ]
     },
     {

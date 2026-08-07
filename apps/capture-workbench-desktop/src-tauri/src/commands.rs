@@ -6,7 +6,7 @@ use crate::{
         LibraryCaptureUpdate, LibraryDocumentDetail, LibraryDocumentRequest,
         LibraryDocumentSummary, LibraryExportPayload, LibraryExportRequest,
         LibraryImportSourceRequest, LibraryListRequest, RuntimeCreateCaptureInput, RuntimeIdInput,
-        RuntimeInstallationStartInput,
+        RuntimeInstallationStartInput, RuntimeModelInstallationStartInput,
     },
     library::LibraryStore,
     runtime_client,
@@ -107,6 +107,32 @@ pub async fn runtime_get_installation(
 ) -> Result<serde_json::Value, String> {
     let state = state.inner().clone();
     run_blocking(move || runtime_client::installation(&state, input)).await
+}
+
+#[tauri::command]
+pub async fn runtime_model_options(
+    state: tauri::State<'_, DesktopState>,
+) -> Result<serde_json::Value, String> {
+    let state = state.inner().clone();
+    run_blocking(move || runtime_client::model_options(&state)).await
+}
+
+#[tauri::command]
+pub async fn runtime_start_model_installation(
+    state: tauri::State<'_, DesktopState>,
+    input: RuntimeModelInstallationStartInput,
+) -> Result<serde_json::Value, String> {
+    let state = state.inner().clone();
+    run_blocking(move || runtime_client::start_model_installation(&state, input)).await
+}
+
+#[tauri::command]
+pub async fn runtime_get_model_installation(
+    state: tauri::State<'_, DesktopState>,
+    input: RuntimeIdInput,
+) -> Result<serde_json::Value, String> {
+    let state = state.inner().clone();
+    run_blocking(move || runtime_client::model_installation(&state, input)).await
 }
 
 #[tauri::command]

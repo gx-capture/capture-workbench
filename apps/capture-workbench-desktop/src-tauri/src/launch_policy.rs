@@ -2,10 +2,7 @@ use std::{collections::HashSet, path::PathBuf};
 
 use capture_sidecar_launcher::{generate_bearer_token, reserve_distinct_loopback_port};
 
-use crate::constants::{
-    DEFAULT_MAX_UPLOAD_BYTES, DEFAULT_RETENTION_HOURS, LOOPBACK_HOST, WORKBENCH_OLLAMA_MODEL,
-    WORKBENCH_OLLAMA_PROFILE,
-};
+use crate::constants::{DEFAULT_MAX_UPLOAD_BYTES, DEFAULT_RETENTION_HOURS, LOOPBACK_HOST};
 
 pub(crate) struct LaunchPolicy {
     pub(crate) runtime_port: u16,
@@ -71,8 +68,6 @@ impl LaunchPolicy {
                 "CAPTURE_OLLAMA_PID_FILE",
                 self.ollama_pid_file().to_string_lossy().into_owned(),
             ),
-            ("CAPTURE_OLLAMA_MODEL", WORKBENCH_OLLAMA_MODEL.into()),
-            ("CAPTURE_OLLAMA_PROFILE_ID", WORKBENCH_OLLAMA_PROFILE.into()),
             (
                 "OLLAMA_HOST",
                 format!("{LOOPBACK_HOST}:{}", self.ollama_port),

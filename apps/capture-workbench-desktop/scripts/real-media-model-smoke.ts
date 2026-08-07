@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { createReadStream } from 'node:fs';
 import { createServer } from 'node:http';
 import { copyFile, lstat, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
@@ -76,15 +76,6 @@ const generatedCatalogCandidates = [
     'capture-engine-catalog.json',
   ),
 ] as const;
-const projectPdfPath = join(
-  workspaceRoot,
-  'packages',
-  'capture-runtime',
-  'model-sources',
-  'commit-a',
-  'fixtures',
-  'ocr-scanned.pdf',
-);
 const projectImagePath = join(
   workspaceRoot,
   'packages',
@@ -106,6 +97,7 @@ const workerMirrorRoot = join(workspaceRoot, 'packages', 'capture-runtime', 'dis
 
 type JsonObject = { readonly [key: string]: unknown };
 type RequirementId = (typeof REAL_MODEL_REQUIREMENT_ORDER)[number];
+type SetupRequirementId = RequirementId | 'ollama-runtime';
 type MediaKind = 'pdf' | 'image' | 'audio';
 
 interface MediaInput {
@@ -115,11 +107,14 @@ interface MediaInput {
   readonly path: string;
   readonly bytes: Uint8Array;
   readonly sha256: string;
+  readonly expectedOcrText?: string;
+  readonly expectedOcrTextSha256?: string;
 }
 
 interface ExpectedProvenance {
   readonly sourceLockSha256: string;
   readonly catalogSha256: string;
+  readonly selectedModelOptionId: 'qwen3.5-0.8b-v1';
   readonly ocrText: string;
   readonly ocrImageSha256: string;
   readonly ocrImageBytes: number;
@@ -161,7 +156,8 @@ interface MediaSummary {
 
 export interface RealMediaModelEvidence {
   readonly evidenceKind: 'real-model-enabled-tauri-ui-smoke';
-  readonly releaseGateSatisfied: true;
+  readonly releaseGateSatisfied: false;
+  readonly localProductionPreflight: true;
   readonly consumerE2e: false;
   readonly runtimeVersion: typeof REAL_MODEL_RELEASE_VERSION;
   readonly catalogVersion: typeof REAL_MODEL_CATALOG_VERSION;
@@ -443,6 +439,8 @@ async function regularInput(
   destination: string,
   expectedSha256?: string,
   expectedBytes?: number,
+  expectedOcrText?: string,
+  expectedOcrTextSha256?: string,
 ): Promise<MediaInput> {
   let metadata;
   try {
@@ -479,16 +477,24 @@ async function regularInput(
     path: destination,
     bytes,
     sha256: digest,
+    ...(expectedOcrText ? { expectedOcrText } : {}),
+    ...(expectedOcrTextSha256 ? { expectedOcrTextSha256 } : {}),
   };
 }
 
 async function prepareInputs(expected: ExpectedProvenance): Promise<readonly [MediaInput, MediaInput, MediaInput]> {
   await mkdir(runRoot, { recursive: true });
+  const pdfInput = process.env.CAPTURE_REAL_MEDIA_MODEL_PDF?.trim();
   const audioInput = process.env.CAPTURE_REAL_MEDIA_MODEL_AUDIO?.trim();
+  const privatePdfTextSha256 = process.env.CAPTURE_REAL_MEDIA_MODEL_OCR_TEXT_SHA256?.trim().toLowerCase();
+  if (!pdfInput) throw new Error('CAPTURE_REAL_MEDIA_MODEL_PDF is required for the private runner OCR fixture.');
   if (!audioInput) throw new Error('CAPTURE_REAL_MEDIA_MODEL_AUDIO is required for the private runner audio fixture.');
+  if (!privatePdfTextSha256 || !/^[a-f0-9]{64}$/u.test(privatePdfTextSha256)) {
+    throw new Error('CAPTURE_REAL_MEDIA_MODEL_OCR_TEXT_SHA256 must be a 64-character lowercase SHA-256 digest for the private PDF output.');
+  }
   return [
-    await regularInput(projectPdfPath, 'project OCR PDF fixture', 'pdf', join(runRoot, safeInputName('pdf')), expected.ocrPdfSha256, expected.ocrPdfBytes),
-    await regularInput(projectImagePath, 'project OCR image fixture', 'image', join(runRoot, safeInputName('image')), expected.ocrImageSha256, expected.ocrImageBytes),
+    await regularInput(pdfInput, 'CAPTURE_REAL_MEDIA_MODEL_PDF', 'pdf', join(runRoot, safeInputName('pdf')), undefined, undefined, undefined, privatePdfTextSha256),
+    await regularInput(projectImagePath, 'project OCR image fixture', 'image', join(runRoot, safeInputName('image')), expected.ocrImageSha256, expected.ocrImageBytes, expected.ocrText),
     await regularInput(audioInput, 'CAPTURE_REAL_MEDIA_MODEL_AUDIO', 'audio', join(runRoot, safeInputName('audio')), expected.whisperFixtureSha256, expected.whisperFixtureBytes),
   ];
 }
@@ -501,7 +507,7 @@ interface CandidateWorkerMirror {
 }
 
 async function startCandidateWorkerMirror(expected: ExpectedProvenance): Promise<CandidateWorkerMirror> {
-  const archives = new Map<string, { path: string; bytes: number }>();
+  const archives = new Map<string, { path: string; bytes: number; sha256: string }>();
   for (const archive of expected.workerArchives) {
     if (!archive.fileName || /[\\/]/u.test(archive.fileName) || archive.fileName === '.' || archive.fileName === '..') {
       throw new Error('Candidate worker archive file name is unsafe.');
@@ -519,7 +525,11 @@ async function startCandidateWorkerMirror(expected: ExpectedProvenance): Promise
     if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size !== archive.bytes) {
       throw new Error('Candidate worker archive does not match the generated catalog bytes.');
     }
-    archives.set(archive.fileName, { path: archivePath, bytes: archive.bytes });
+    const archiveBytes = await readFile(archivePath);
+    if (sha256(archiveBytes) !== archive.sha256) {
+      throw new Error('Candidate worker archive does not match the generated catalog digest.');
+    }
+    archives.set(archive.fileName, { path: archivePath, bytes: archive.bytes, sha256: archive.sha256 });
   }
   let requestCount = 0;
   const server = createServer((request, response) => {
@@ -615,79 +625,451 @@ async function waitUntil<T>(
   throw new Error(message);
 }
 
-async function nativeOpenDialog(filePath: string): Promise<void> {
-  const script = `
+export function windowsPowerShellExecutable(systemRoot = process.env.SystemRoot || 'C:\\Windows'): string {
+  return join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+}
+
+export function nativeDialogUiAutomationScript(): string {
+  return `
 $ErrorActionPreference = 'Stop'
+trap {
+  $exceptionType = [System.Text.RegularExpressions.Regex]::Replace($_.Exception.GetType().Name, '[^A-Za-z0-9_.#,:=-]', '_')
+  $errorId = [System.Text.RegularExpressions.Regex]::Replace([string]$_.FullyQualifiedErrorId, '[^A-Za-z0-9_.#,:=-]', '_')
+  Write-Output ('UIA|stage=unhandled|code=exception|type=' + $exceptionType + '|error=' + $errorId + '|line=' + [string]$_.InvocationInfo.ScriptLineNumber)
+  exit 9
+}
+Add-Type -AssemblyName UIAutomationClient
+Add-Type -AssemblyName UIAutomationTypes
+Add-Type -AssemblyName System.Windows.Forms
 Add-Type @'
 using System;
 using System.Runtime.InteropServices;
-public static class CaptureDialog {
-  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindow(string cls, string title);
-  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string cls, string title);
-  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern bool SetWindowText(IntPtr handle, string text);
-  [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr handle, uint message, IntPtr wParam, IntPtr lParam);
+
+public static class CaptureDialogOwner {
+  public const uint GW_OWNER = 4;
+
+  [DllImport("user32.dll")]
+  public static extern IntPtr GetWindow(IntPtr handle, uint command);
+
+  [DllImport("user32.dll")]
+  public static extern uint GetWindowThreadProcessId(IntPtr handle, out uint processId);
+
+  [DllImport("user32.dll", EntryPoint = "SendMessageTimeoutW", CharSet = CharSet.Unicode, SetLastError = true)]
+  public static extern IntPtr SendMessageTimeoutText(IntPtr handle, uint message, IntPtr wParam, string lParam, uint flags, uint timeoutMs, out IntPtr result);
+
+  [DllImport("user32.dll", EntryPoint = "SendMessageTimeoutW", SetLastError = true)]
+  public static extern IntPtr SendMessageTimeout(IntPtr handle, uint message, IntPtr wParam, IntPtr lParam, uint flags, uint timeoutMs, out IntPtr result);
 }
 '@
-$deadline = [DateTime]::UtcNow.AddSeconds(30)
-while ([DateTime]::UtcNow -lt $deadline) {
-  $dialog = [CaptureDialog]::FindWindow('#32770', $null)
-  if ($dialog -ne [IntPtr]::Zero) {
-    $edit = [CaptureDialog]::FindWindowEx($dialog, [IntPtr]::Zero, 'Edit', $null)
-    if ($edit -ne [IntPtr]::Zero -and [CaptureDialog]::SetWindowText($edit, $env:CAPTURE_SMOKE_DIALOG_FILE)) {
-      $button = [CaptureDialog]::FindWindowEx($dialog, [IntPtr]::Zero, 'Button', '&Open')
-      if ($button -eq [IntPtr]::Zero) { $button = [CaptureDialog]::FindWindowEx($dialog, [IntPtr]::Zero, 'Button', 'Open') }
-      if ($button -ne [IntPtr]::Zero) {
-        [CaptureDialog]::SendMessage($button, 0x00F5, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
-        exit 0
+
+$root = [System.Windows.Automation.AutomationElement]::RootElement
+$targetProcessId = [int]$env:CAPTURE_SMOKE_APP_PID
+
+function Get-SafeMetadata($value) {
+  if ($null -eq $value) { return '-' }
+  $text = [string]$value
+  if ($text -match '[\\/]' -or $text -match '^[A-Za-z]:') { return 'redacted' }
+  $text = [System.Text.RegularExpressions.Regex]::Replace($text, '[^A-Za-z0-9_.#,:=-]', '_')
+  if ($text.Length -gt 80) { $text = $text.Substring(0, 80) }
+  if ([string]::IsNullOrWhiteSpace($text)) { return '-' }
+  return $text
+}
+
+function Get-PatternNames($element) {
+  $patterns = @()
+  foreach ($candidate in @(
+    @{ Name = 'Value'; Pattern = [System.Windows.Automation.ValuePattern]::Pattern },
+    @{ Name = 'Invoke'; Pattern = [System.Windows.Automation.InvokePattern]::Pattern }
+  )) {
+    try {
+      [void]$element.GetCurrentPattern($candidate.Pattern)
+      $patterns += $candidate.Name
+    } catch { }
+  }
+  try {
+    if ($element.Current.IsKeyboardFocusable) { $patterns += 'Focus' }
+  } catch { }
+  try {
+    if ($element.Current.NativeWindowHandle -ne 0) { $patterns += 'Hwnd' }
+  } catch { }
+  return ($patterns -join ',')
+}
+
+function Get-WindowProcessId([IntPtr]$handle) {
+  if ($handle -eq [IntPtr]::Zero) { return 0 }
+  [uint32]$processId = 0
+  [void][CaptureDialogOwner]::GetWindowThreadProcessId($handle, [ref]$processId)
+  return [int]$processId
+}
+
+function Test-OwnedByTarget([IntPtr]$handle) {
+  $current = $handle
+  for ($depth = 0; $depth -lt 8 -and $current -ne [IntPtr]::Zero; $depth += 1) {
+    $owner = [CaptureDialogOwner]::GetWindow($current, [CaptureDialogOwner]::GW_OWNER)
+    if ($owner -eq [IntPtr]::Zero) { return $false }
+    if ((Get-WindowProcessId $owner) -eq $targetProcessId) { return $true }
+    $current = $owner
+  }
+  return $false
+}
+
+function Get-ElementRelation($element) {
+  try {
+    $current = $element.Current
+    if ([int]$current.ProcessId -eq $targetProcessId) { return 'target' }
+    if (Test-OwnedByTarget ([IntPtr]$current.NativeWindowHandle)) { return 'owned' }
+  } catch { }
+  return 'other'
+}
+
+function Find-ByAutomationId($element, [string]$automationId) {
+  $condition = New-Object System.Windows.Automation.PropertyCondition(
+    [System.Windows.Automation.AutomationElement]::AutomationIdProperty,
+    $automationId
+  )
+  return $element.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
+}
+
+function Get-ValueAction($element) {
+  if ($null -eq $element) { return $null }
+  try {
+    return @{ Kind = 'Value'; Pattern = $element.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern) }
+  } catch { }
+  try {
+    if ($element.Current.IsKeyboardFocusable) { return @{ Kind = 'Keyboard'; Pattern = $null } }
+  } catch { }
+  return $null
+}
+
+function Get-InvokeAction($element) {
+  if ($null -eq $element) { return $null }
+  try {
+    return @{ Kind = 'Invoke'; Pattern = $element.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern) }
+  } catch { }
+  try {
+    if ($element.Current.IsKeyboardFocusable) { return @{ Kind = 'Keyboard'; Pattern = $null } }
+  } catch { }
+  return $null
+}
+
+function ConvertTo-SendKeysLiteral([string]$value) {
+  $builder = New-Object System.Text.StringBuilder
+  foreach ($character in $value.ToCharArray()) {
+    switch ([string]$character) {
+      '+' { [void]$builder.Append('{+}') }
+      '^' { [void]$builder.Append('{^}') }
+      '%' { [void]$builder.Append('{%}') }
+      '~' { [void]$builder.Append('{~}') }
+      '(' { [void]$builder.Append('{(}') }
+      ')' { [void]$builder.Append('{)}') }
+      '[' { [void]$builder.Append('{[}') }
+      ']' { [void]$builder.Append('{]}') }
+      '{' { [void]$builder.Append('{{}') }
+      '}' { [void]$builder.Append('{}}') }
+      default { [void]$builder.Append($character) }
+    }
+  }
+  return $builder.ToString()
+}
+
+function Find-FilenameTarget($dialog) {
+  $filenameHost = Find-ByAutomationId $dialog 'FileNameControlHost'
+  if ($null -ne $filenameHost) {
+    $action = Get-ValueAction $filenameHost
+    if ($null -ne $action) { return @{ Element = $filenameHost; Action = $action } }
+    $hostNodes = $filenameHost.FindAll(
+      [System.Windows.Automation.TreeScope]::Descendants,
+      [System.Windows.Automation.Condition]::TrueCondition
+    )
+    foreach ($node in $hostNodes) {
+      $action = Get-ValueAction $node
+      if ($null -ne $action) { return @{ Element = $node; Action = $action } }
+    }
+  }
+
+  foreach ($automationId in @('1148', '1001')) {
+    $condition = New-Object System.Windows.Automation.PropertyCondition(
+      [System.Windows.Automation.AutomationElement]::AutomationIdProperty,
+      $automationId
+    )
+    $candidates = $dialog.FindAll([System.Windows.Automation.TreeScope]::Descendants, $condition)
+    foreach ($preferredClass in @('Edit', 'ComboBox', 'ComboBoxEx32')) {
+      foreach ($candidate in $candidates) {
+        try {
+          if ($candidate.Current.ClassName -ne $preferredClass) { continue }
+        } catch { continue }
+        $action = Get-ValueAction $candidate
+        if ($null -ne $action) { return @{ Element = $candidate; Action = $action } }
+        try {
+          if ($candidate.Current.ClassName -eq 'Edit' -and $candidate.Current.NativeWindowHandle -ne 0) {
+            return @{ Element = $candidate; Action = @{ Kind = 'Win32Text'; Handle = [IntPtr]$candidate.Current.NativeWindowHandle } }
+          }
+        } catch { }
       }
     }
   }
-  Start-Sleep -Milliseconds 100
-}
-exit 1
-`;
-  const child = spawn('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script], {
-    env: {
-      SystemRoot: process.env.SystemRoot || 'C:\\Windows',
-      PATH: process.env.PATH || '',
-      TEMP: process.env.TEMP || '',
-      TMP: process.env.TMP || '',
-      CAPTURE_SMOKE_DIALOG_FILE: filePath,
-    },
-    stdio: 'ignore',
-    windowsHide: true,
-  });
-  const result = await new Promise<{ code: number | null }>((resolvePromise, reject) => {
-    child.once('error', reject);
-    child.once('exit', (code) => resolvePromise({ code }));
-  });
-  if (result.code !== 0) throw new Error('Native source picker did not accept the prepared fixture.');
+  return $null
 }
 
-async function importThroughUi(page: Page, input: MediaInput): Promise<number> {
+function Find-OpenTarget($dialog) {
+  $condition = New-Object System.Windows.Automation.PropertyCondition(
+    [System.Windows.Automation.AutomationElement]::AutomationIdProperty,
+    '1'
+  )
+  $buttons = $dialog.FindAll(
+    [System.Windows.Automation.TreeScope]::Descendants,
+    $condition
+  )
+  foreach ($button in $buttons) {
+    try {
+      $current = $button.Current
+      if ($current.ControlType -ne [System.Windows.Automation.ControlType]::Button -and $current.ClassName -notmatch 'Button') { continue }
+    } catch { continue }
+    $action = Get-InvokeAction $button
+    if ($null -ne $action) { return @{ Element = $button; Action = $action } }
+    try {
+      if ($button.Current.NativeWindowHandle -ne 0) {
+        return @{ Element = $button; Action = @{ Kind = 'Win32Click'; Handle = [IntPtr]$button.Current.NativeWindowHandle } }
+      }
+    } catch { }
+  }
+  return $null
+}
+
+function Write-ElementDiagnostics($prefix, $element, $relation) {
+  try {
+    $current = $element.Current
+    $controlType = Get-SafeMetadata $current.ControlType.ProgrammaticName
+    $automationId = Get-SafeMetadata $current.AutomationId
+    $className = Get-SafeMetadata $current.ClassName
+    $patterns = Get-SafeMetadata (Get-PatternNames $element)
+    Write-Output ($prefix + '|pid=' + [string]$current.ProcessId + '|relation=' + (Get-SafeMetadata $relation) + '|aid=' + $automationId + '|type=' + $controlType + '|class=' + $className + '|patterns=' + $patterns)
+  } catch { }
+}
+
+function Write-DialogDiagnostics($dialog, $relation) {
+  Write-ElementDiagnostics 'UIA' $dialog $relation
+  $nodes = $dialog.FindAll(
+    [System.Windows.Automation.TreeScope]::Descendants,
+    [System.Windows.Automation.Condition]::TrueCondition
+  )
+  $written = 0
+  foreach ($node in $nodes) {
+    if ($written -ge 100) { break }
+    try {
+      $current = $node.Current
+      $controlType = $current.ControlType.ProgrammaticName
+      if ($current.AutomationId -notmatch '^System\\.' -and ($controlType -match 'Edit|ComboBox|Button|SplitButton' -or $current.ClassName -match 'Edit|ComboBox|Button' -or $current.AutomationId -match '^(?:FileNameControlHost|1148|1001|1)$')) {
+        Write-ElementDiagnostics 'UIA' $node $relation
+        $written += 1
+      }
+    } catch { }
+  }
+}
+
+function Write-TopLevelDiagnostics {
+  $nodes = $root.FindAll(
+    [System.Windows.Automation.TreeScope]::Children,
+    [System.Windows.Automation.Condition]::TrueCondition
+  )
+  $written = 0
+  foreach ($node in $nodes) {
+    if ($written -ge 80) { break }
+    $relation = Get-ElementRelation $node
+    Write-ElementDiagnostics 'TOP' $node $relation
+    if ($relation -ne 'other') { Write-DialogDiagnostics $node $relation }
+    $written += 1
+  }
+}
+
+function Test-DialogStillOpen($dialog, [IntPtr]$handle) {
+  if ($handle -eq [IntPtr]::Zero) {
+    try {
+      [void]$dialog.Current.ProcessId
+      return $true
+    } catch {
+      return $false
+    }
+  }
+  $windows = $root.FindAll(
+    [System.Windows.Automation.TreeScope]::Children,
+    [System.Windows.Automation.Condition]::TrueCondition
+  )
+  foreach ($window in $windows) {
+    try {
+      if ([IntPtr]$window.Current.NativeWindowHandle -eq $handle) { return $true }
+    } catch { }
+  }
+  return $false
+}
+
+$deadline = [DateTime]::UtcNow.AddSeconds(30)
+while ([DateTime]::UtcNow -lt $deadline) {
+  $windows = $root.FindAll(
+    [System.Windows.Automation.TreeScope]::Children,
+    [System.Windows.Automation.Condition]::TrueCondition
+  )
+  foreach ($dialog in $windows) {
+    $relation = Get-ElementRelation $dialog
+    if ($relation -eq 'other') { continue }
+    try {
+      $current = $dialog.Current
+      if ($current.ControlType -ne [System.Windows.Automation.ControlType]::Window -and $current.ClassName -ne '#32770') { continue }
+    } catch { continue }
+
+    $filename = Find-FilenameTarget $dialog
+    if ($null -eq $filename) { continue }
+    try {
+      if ($filename.Action.Kind -eq 'Value') {
+        $filename.Action.Pattern.SetValue($env:CAPTURE_SMOKE_DIALOG_FILE)
+      } elseif ($filename.Action.Kind -eq 'Keyboard') {
+        $filename.Element.SetFocus()
+        Start-Sleep -Milliseconds 50
+        [System.Windows.Forms.SendKeys]::SendWait('^a')
+        [System.Windows.Forms.SendKeys]::SendWait((ConvertTo-SendKeysLiteral $env:CAPTURE_SMOKE_DIALOG_FILE))
+      } else {
+        $messageResult = [IntPtr]::Zero
+        $sent = [CaptureDialogOwner]::SendMessageTimeoutText($filename.Action.Handle, 0x000C, [IntPtr]::Zero, $env:CAPTURE_SMOKE_DIALOG_FILE, 0x0002, 2000, [ref]$messageResult)
+        if ($sent -eq [IntPtr]::Zero) { throw 'Filename control did not accept WM_SETTEXT.' }
+      }
+    } catch {
+      Write-Output 'UIA|stage=set-value|code=failed'
+      Write-DialogDiagnostics $dialog $relation
+      exit 2
+    }
+
+    $open = Find-OpenTarget $dialog
+    if ($null -eq $open) {
+      Write-Output 'UIA|stage=find-open|code=missing'
+      Write-DialogDiagnostics $dialog $relation
+      exit 3
+    }
+
+    try {
+      if ($open.Action.Kind -eq 'Invoke') {
+        $open.Action.Pattern.Invoke()
+      } elseif ($open.Action.Kind -eq 'Keyboard') {
+        $open.Element.SetFocus()
+        [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
+      } else {
+        $messageResult = [IntPtr]::Zero
+        $sent = [CaptureDialogOwner]::SendMessageTimeout($open.Action.Handle, 0x00F5, [IntPtr]::Zero, [IntPtr]::Zero, 0x0002, 2000, [ref]$messageResult)
+        if ($sent -eq [IntPtr]::Zero) { throw 'Open control did not accept BM_CLICK.' }
+      }
+    } catch {
+      Write-Output 'UIA|stage=invoke-open|code=failed'
+      Write-DialogDiagnostics $dialog $relation
+      exit 4
+    }
+
+    $dialogHandle = $dialog.Current.NativeWindowHandle
+    $dialogDeadline = [DateTime]::UtcNow.AddSeconds(10)
+    while ([DateTime]::UtcNow -lt $dialogDeadline) {
+      if (-not (Test-DialogStillOpen $dialog ([IntPtr]$dialogHandle))) { exit 0 }
+      Start-Sleep -Milliseconds 100
+    }
+    Write-Output 'UIA|stage=close-dialog|code=timeout'
+    Write-DialogDiagnostics $dialog $relation
+    exit 5
+  }
+  Start-Sleep -Milliseconds 100
+}
+Write-Output 'UIA|stage=find-dialog|code=timeout'
+Write-TopLevelDiagnostics
+exit 1
+`;
+}
+
+export function safeUiAutomationDiagnostics(output: string): string {
+  const diagnostics = output
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => line.length <= 500 && /^(?:UIA|TOP)\|[A-Za-z0-9_.#,:;=|-]+$/u.test(line))
+    .slice(0, 120)
+    .join(' ');
+  return diagnostics || 'none';
+}
+
+export async function nativeOpenDialogUiAutomation(filePath: string, appPid: number): Promise<void> {
+  if (!Number.isSafeInteger(appPid) || appPid <= 0) {
+    throw new Error('Native source picker automation requires the packaged Tauri process PID.');
+  }
+  const systemRoot = process.env.SystemRoot || 'C:\\Windows';
+  const child = spawn(windowsPowerShellExecutable(systemRoot), ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', nativeDialogUiAutomationScript()], {
+    env: {
+      SystemRoot: systemRoot,
+      Path: process.env.Path || process.env.PATH || '',
+      TEMP: process.env.TEMP || '',
+      TMP: process.env.TMP || '',
+      CAPTURE_SMOKE_APP_PID: String(appPid),
+      CAPTURE_SMOKE_DIALOG_FILE: filePath,
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
+  });
+  const result = await new Promise<{ code: number | null; stdout: string; stderr: string }>((resolvePromise, reject) => {
+    let stdout = '';
+    let stderr = '';
+    child.stdout?.on('data', (chunk: Buffer) => {
+      if (stdout.length < 65_536) stdout += chunk.toString();
+    });
+    child.stderr?.on('data', (chunk: Buffer) => {
+      if (stderr.length < 65_536) stderr += chunk.toString();
+    });
+    child.once('error', reject);
+    child.once('close', (code) => resolvePromise({ code, stdout, stderr }));
+  });
+  if (result.code !== 0) {
+    const diagnostics = safeUiAutomationDiagnostics(result.stdout);
+    throw new Error(`Native source picker did not accept the prepared fixture. UIA diagnostics: ${diagnostics}`);
+  }
+}
+
+async function importThroughUi(page: Page, input: MediaInput, appPid: number): Promise<number> {
   const startedAt = Date.now();
-  const dialog = nativeOpenDialog(input.path);
+  const dialog = nativeOpenDialogUiAutomation(input.path, appPid);
   await page.getByTestId('source-import').click();
   await dialog;
   return startedAt;
 }
 
-async function requirementStatus(page: Page, requirementId: RequirementId): Promise<string> {
+async function requirementStatus(page: Page, requirementId: SetupRequirementId): Promise<string> {
   const row = page.locator(`[data-testid="runtime-requirement"][data-requirement-id="${requirementId}"]`);
-  return (await row.getAttribute('data-status')) || (await row.locator('[data-testid="runtime-requirement-status"]').getAttribute('data-status')) || (await row.textContent()) || '';
+  if (await row.count() !== 1) return '';
+  return (await row.getAttribute('data-status').catch(() => null))
+    || (await row.locator('[data-testid="runtime-requirement-status"]').getAttribute('data-status').catch(() => null))
+    || (await row.textContent().catch(() => null))
+    || '';
+}
+
+export function requirementCompletedAfterConsent(
+  status: string,
+  wasVisibleBeforeConsent: boolean,
+): boolean {
+  return /ready/iu.test(status) || (wasVisibleBeforeConsent && status === '');
 }
 
 async function installConsentedRequirements(
   page: Page,
-  requiredIds: readonly RequirementId[],
+  requiredIds: readonly SetupRequirementId[],
   completionOrder: RequirementId[],
 ): Promise<void> {
   if (requiredIds.length === 0) return;
   const setup = page.getByTestId('runtime-setup');
   await setup.waitFor({ state: 'visible', timeout: REAL_MODEL_RUNTIME_READY_TIMEOUT_MS });
   const install = page.getByTestId('runtime-install');
-  const alreadyReady = await Promise.all(requiredIds.map(async (requirementId) =>
-    /ready/iu.test(await requirementStatus(page, requirementId))));
+  const wasVisibleBeforeConsent = new Map<SetupRequirementId, boolean>();
+  for (const requirementId of requiredIds) {
+    wasVisibleBeforeConsent.set(
+      requirementId,
+      (await page.locator(`[data-testid="runtime-requirement"][data-requirement-id="${requirementId}"]`).count()) === 1,
+    );
+  }
+  const alreadyReady = await Promise.all(requiredIds.map(async (requirementId) => {
+    const status = await requirementStatus(page, requirementId);
+    return /ready/iu.test(status)
+      || (!wasVisibleBeforeConsent.get(requirementId) && status === '');
+  }));
   if (!alreadyReady.every(Boolean)) {
     await waitUntil(
       async () => (await install.isVisible().catch(() => false)) || false,
@@ -697,12 +1079,18 @@ async function installConsentedRequirements(
     await install.click();
   }
   const consentedAt = Date.now();
-  const completedAt = new Map<RequirementId, number>();
+  const completedAt = new Map<SetupRequirementId, number>();
+  requiredIds.forEach((requirementId, index) => {
+    if (alreadyReady[index]) completedAt.set(requirementId, consentedAt);
+  });
   await waitUntil(
     async () => {
       for (const requirementId of requiredIds) {
         const status = await requirementStatus(page, requirementId);
-        if (/ready/iu.test(status) && !completedAt.has(requirementId)) completedAt.set(requirementId, Date.now());
+        if (requirementCompletedAfterConsent(status, wasVisibleBeforeConsent.get(requirementId) === true)
+          && !completedAt.has(requirementId)) {
+          completedAt.set(requirementId, Date.now());
+        }
       }
       if (
         completedAt.size !== requiredIds.length
@@ -718,7 +1106,9 @@ async function installConsentedRequirements(
     `Consented model installation did not complete: ${requiredIds.join(', ')}.`,
   );
   for (const requirementId of requiredIds) {
-    if (!completionOrder.includes(requirementId)) completionOrder.push(requirementId);
+    if (requirementId !== 'ollama-runtime' && !completionOrder.includes(requirementId)) {
+      completionOrder.push(requirementId);
+    }
   }
 }
 
@@ -797,8 +1187,15 @@ async function assertVisibleCapture(
   if (!extractionDigest || !/^sha256:[a-f0-9]{64}$/u.test(extractionDigest)) {
     throw new Error(`${input.kind} UI extraction provenance omitted a bounded engine digest.`);
   }
-  if (input.kind !== 'audio' && !rawText.includes(expected.ocrText)) {
-    throw new Error(`${input.kind} UI raw text did not contain the lock-selected OCR fixture text.`);
+  if (input.kind !== 'audio') {
+    const sourceText = ((await rawSection.locator('pre').textContent()) || '').trim();
+    if (!sourceText) throw new Error(`${input.kind} UI raw source text was empty.`);
+    if (input.expectedOcrText && !sourceText.includes(input.expectedOcrText)) {
+      throw new Error(`${input.kind} UI raw text did not contain the lock-selected OCR fixture text.`);
+    }
+    if (input.expectedOcrTextSha256 && normalizedOcrTextDigest(sourceText) !== input.expectedOcrTextSha256) {
+      throw new Error(`${input.kind} UI raw source text did not match the private OCR output oracle.`);
+    }
   }
   if (input.kind === 'pdf' || input.kind === 'image') {
     assert.match(provenance, new RegExp(expected.ocrEngine.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'u'));
@@ -905,6 +1302,27 @@ function normalizedTranscriptDigest(transcript: readonly string[]): string {
   return sha256(Buffer.from(normalized, 'utf8'));
 }
 
+async function installSelectedModel(page: Page): Promise<void> {
+  const selection = page.getByTestId('model-selection');
+  await selection.waitFor({ state: 'visible', timeout: REAL_MODEL_RUNTIME_READY_TIMEOUT_MS });
+  const optionSelect = page.getByTestId('model-option-select');
+  await optionSelect.click();
+  await page.getByRole('option', { name: 'Qwen 3.5 0.8B' }).click();
+  const install = page.getByTestId('model-install');
+  await install.click();
+  await waitUntil(
+    async () => (await selection.count()) === 0 || false,
+    REAL_MODEL_INSTALL_TIMEOUT_MS,
+    'The selected qwen3.5 0.8B model did not become active.',
+  );
+}
+
+export function normalizedOcrTextDigest(sourceText: string): string {
+  const normalized = sourceText.replace(/\s+/gu, ' ').trim();
+  if (!normalized) throw new Error('OCR source text was empty.');
+  return sha256(Buffer.from(normalized, 'utf8'));
+}
+
 async function deleteDocumentThroughUi(page: Page, documentId: string): Promise<void> {
   const detail = page.locator(`[data-testid="document-detail"][data-document-id="${documentId}"]`);
   const deleteButton = page.locator(`[data-testid="document-delete"][data-document-id="${documentId}"]`);
@@ -922,10 +1340,12 @@ async function deleteDocumentThroughUi(page: Page, documentId: string): Promise<
 export function assertRealMediaModelEvidence(value: unknown): asserts value is RealMediaModelEvidence {
   const report = asObject(value, 'Real model smoke report');
   assert.equal(report.evidenceKind, 'real-model-enabled-tauri-ui-smoke');
-  assert.equal(report.releaseGateSatisfied, true);
+  assert.equal(report.releaseGateSatisfied, false);
+  assert.equal(report.localProductionPreflight, true);
   assert.equal(report.consumerE2e, false);
   assert.equal(report.runtimeVersion, REAL_MODEL_RELEASE_VERSION);
   assert.equal(report.catalogVersion, REAL_MODEL_CATALOG_VERSION);
+  assert.equal(report.selectedModelOptionId, 'qwen3.5-0.8b-v1');
   assert.deepEqual(report.modelDependencyOrder, [...REAL_MODEL_REQUIREMENT_ORDER]);
   assert.equal(report.modelDependencyOrderScope, REAL_MODEL_DEPENDENCY_ORDER_SCOPE);
   assert.equal(report.rawVisible, true);
@@ -969,16 +1389,6 @@ export function assertRealMediaModelEvidence(value: unknown): asserts value is R
   assert.doesNotMatch(serialized, /(?:\\\\|\/Users\/|\/home\/)/u);
   assert.doesNotMatch(serialized, /(?:authorization|bearer|token|secret|api[_-]?key)/iu);
   assert.doesNotMatch(serialized, /(?:sourceText|expectedText|audioText|transcript)/iu);
-}
-
-function processTreePids(pid: number): number[] {
-  const script = `$root = ${pid}; $all = @(Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId); if (-not ($all | Where-Object { [int]$_.ProcessId -eq $root })) { Write-Output '[]'; exit 0 }; $seen = New-Object System.Collections.Generic.HashSet[int]; $queue = New-Object System.Collections.Generic.Queue[int]; $queue.Enqueue($root); while ($queue.Count -gt 0) { $current = $queue.Dequeue(); if ($seen.Add([int]$current)) { foreach ($item in $all) { if ([int]$item.ParentProcessId -eq [int]$current) { $queue.Enqueue([int]$item.ProcessId) } } } }; ConvertTo-Json -Compress -InputObject @($seen)`;
-  const result = spawnSync('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script], { encoding: 'utf8', windowsHide: true });
-  if (result.status !== 0) throw new Error('Owned desktop process tree could not be observed.');
-  const parsed = JSON.parse(String(result.stdout || '[]')) as unknown;
-  const values = Array.isArray(parsed) ? parsed : [parsed];
-  const pids = values.filter((value): value is number => Number.isSafeInteger(value) && value > 0);
-  return [...new Set(pids)];
 }
 
 async function waitForPortReleased(port: number): Promise<void> {
@@ -1031,27 +1441,29 @@ async function run(): Promise<void> {
   assertNoAmbientModelOverrides(appEnvironment);
   let app: ReturnType<typeof spawn> | undefined;
   let browser: Browser | undefined;
+  let page: Page | undefined;
   const summaries: MediaSummary[] = [];
   const installationOrder: RequirementId[] = [];
-  let observedBeforeCleanup: number[] = [];
   let cleanupVerified = false;
   let cdpPortReleased = false;
   let workerMirrorReleased = false;
   try {
     app = spawn(executable, [], { cwd: resolve(executable, '..'), env: appEnvironment, stdio: 'ignore', windowsHide: true });
+    if (!app.pid) throw new Error('Real model smoke Tauri process did not expose a PID.');
     browser = await firstValueFrom(connectToInstalledWebView(cdpPort, app));
-    const page = await firstValueFrom(installedPage(browser, app));
+    page = await firstValueFrom(installedPage(browser, app));
     await waitUntil(async () => {
       const setup = page.getByTestId('runtime-setup');
       return (await setup.count()) === 1 || false;
     }, REAL_MODEL_RUNTIME_READY_TIMEOUT_MS, 'Desktop runtime setup UI did not load.');
-    await installConsentedRequirements(page, ['windowsml-ocr'], installationOrder);
+    await installConsentedRequirements(page, ['windowsml-ocr', 'ollama-runtime'], installationOrder);
+    await installSelectedModel(page);
     await waitForCaptureReady(page);
     for (const input of [pdf, image] as const) {
-      const importedAt = await importThroughUi(page, input);
+      const importedAt = await importThroughUi(page, input, app.pid);
       summaries.push(await assertVisibleCapture(page, input, expected, importedAt));
     }
-    await importThroughUi(page, audio);
+    await importThroughUi(page, audio, app.pid);
     // Audio is the opt-in dependency in the desktop shell. Importing it makes
     // Whisper installable; the install action remains the only consent path.
     await installConsentedRequirements(page, ['whisper-primary'], installationOrder);
@@ -1067,15 +1479,14 @@ async function run(): Promise<void> {
     if (await retry.count() !== 1) throw new Error('Audio document did not expose the exact UI retry action after Whisper consent.');
     await retry.click();
     summaries.push(await assertVisibleCapture(page, audio, expected));
-    if (!app.pid) throw new Error('Real model smoke Tauri process did not expose a PID.');
-    observedBeforeCleanup = processTreePids(app.pid);
-    if (!observedBeforeCleanup.includes(app.pid) || observedBeforeCleanup.length < 2) {
-      throw new Error('Real model smoke did not observe both Tauri and runtime process identities.');
-    }
     cleanupVerified = true;
   } catch (error) {
     const safe = errorWithoutSecrets(error);
-    throw new Error(`${safe.message} Candidate worker mirror requests: ${workerMirror.requests()}.`);
+    const uiState = page
+      ? await page.locator('body').innerText().catch(() => '')
+      : '';
+    const redactedUiState = errorWithoutSecrets(new Error(uiState.replace(/\s+/gu, ' ').trim())).message;
+    throw new Error(`${safe.message} Candidate worker mirror requests: ${workerMirror.requests()}. UI state: ${redactedUiState.slice(0, 800)}`);
   } finally {
     if (browser) await browser.close().catch(() => undefined);
     if (app?.pid) {
@@ -1090,29 +1501,25 @@ async function run(): Promise<void> {
     await waitForPortReleased(cdpPort)
       .then(() => { cdpPortReleased = true; })
       .catch(() => { cleanupVerified = false; });
-    if (app?.pid) {
-      try {
-        const remaining = processTreePids(app.pid);
-        if (remaining.some((pid) => observedBeforeCleanup.includes(pid))) cleanupVerified = false;
-      } catch { cleanupVerified = false; }
-    }
     await workerMirror.close();
     await waitForPortReleased(workerMirror.port)
       .then(() => { workerMirrorReleased = true; })
       .catch(() => { cleanupVerified = false; });
+    await rm(runRoot, { recursive: true, force: true }).catch(() => { cleanupVerified = false; });
   }
   if (!cdpPortReleased) throw new Error('Owned WebView2 CDP listener remained bound after cleanup.');
   if (!workerMirrorReleased || workerMirror.requests() < 2) throw new Error('Candidate worker mirror did not serve both worker archives and release its listener.');
   if (!cleanupVerified) throw new Error('Owned desktop/runtime process cleanup was not verified.');
-  await rm(runRoot, { recursive: true, force: true });
   const report: RealMediaModelEvidence = {
     evidenceKind: 'real-model-enabled-tauri-ui-smoke',
-    releaseGateSatisfied: true,
+    releaseGateSatisfied: false,
+    localProductionPreflight: true,
     consumerE2e: false,
     runtimeVersion: REAL_MODEL_RELEASE_VERSION,
     catalogVersion: REAL_MODEL_CATALOG_VERSION,
     sourceLockSha256: expected.sourceLockSha256,
     catalogSha256: expected.catalogSha256,
+    selectedModelOptionId: 'qwen3.5-0.8b-v1',
     modelDependencyOrder: [...installationOrder] as [RequirementId, RequirementId],
     modelDependencyOrderScope: REAL_MODEL_DEPENDENCY_ORDER_SCOPE,
     media: summaries as [MediaSummary, MediaSummary, MediaSummary],

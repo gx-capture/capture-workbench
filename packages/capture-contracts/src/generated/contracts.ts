@@ -22,6 +22,9 @@ export type CaptureSourceKind = "pdf" | "image" | "audio";
 export type RuntimeInstallationStatus = "queued" | "running" | "completed" | "failed" | "cancelled" | "manual_action_required";
 
 /** Wire enum. */
+export type RuntimeModelOptionStatus = "not-installed" | "installed" | "active";
+
+/** Wire enum. */
 export type RuntimeRequirementStatus = "ready" | "missing" | "installable" | "manual_action_required" | "unavailable";
 
 /** Wire enum. */
@@ -168,6 +171,37 @@ export interface RuntimeInstallationsV1 {
   readonly items: readonly (RuntimeInstallationV1)[];
 }
 
+export interface RuntimeModelInstallationV1 {
+  readonly installationId: string;
+  readonly optionId: string;
+  readonly status: RuntimeInstallationStatus;
+  readonly progress: number;
+  readonly error?: CaptureFailureV1 | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly completedAt?: string | null;
+}
+
+export interface RuntimeModelInstallationsV1 {
+  readonly items: readonly (RuntimeModelInstallationV1)[];
+}
+
+export interface RuntimeModelOptionV1 {
+  readonly optionId: string;
+  readonly displayName: string;
+  readonly modelReference: string;
+  readonly expectedDigest?: string | null;
+  readonly expectedBytes?: number | null;
+  readonly profileId: string;
+  readonly profileSpecSha256: string;
+  readonly status: RuntimeModelOptionStatus;
+}
+
+export interface RuntimeModelOptionsV1 {
+  readonly catalogSha256: string;
+  readonly items: readonly (RuntimeModelOptionV1)[];
+}
+
 export interface RuntimeReadyV1 {
   readonly ready: boolean;
   readonly service: "capture-runtime";
@@ -198,13 +232,18 @@ export interface StartRuntimeInstallationV1 {
   readonly consent: true;
 }
 
+export interface StartRuntimeModelInstallationV1 {
+  readonly optionId: string;
+  readonly consent: true;
+}
+
 export interface TimeLocatorV1 {
   readonly kind: "time";
   readonly startMs: number;
   readonly endMs: number;
 }
 
-export type CaptureContractName = "CaptureBlockV1" | "CaptureDocumentV1" | "CaptureEngineV1" | "CaptureFailureV1" | "CaptureJobV1" | "CaptureReviewEditV1" | "CaptureReviewV1" | "CaptureSourceV1" | "ErrorBodyV1" | "ErrorEnvelopeV1" | "PageLocatorV1" | "RawCaptureSegmentV1" | "RawCaptureV1" | "ReportStructuringFailureV1" | "RuntimeArtifactDescriptorV1" | "RuntimeCapabilitiesV1" | "RuntimeInstallationV1" | "RuntimeInstallationsV1" | "RuntimeReadyV1" | "RuntimeRequirementV1" | "RuntimeRequirementsV1" | "StartRuntimeInstallationV1" | "TimeLocatorV1";
+export type CaptureContractName = "CaptureBlockV1" | "CaptureDocumentV1" | "CaptureEngineV1" | "CaptureFailureV1" | "CaptureJobV1" | "CaptureReviewEditV1" | "CaptureReviewV1" | "CaptureSourceV1" | "ErrorBodyV1" | "ErrorEnvelopeV1" | "PageLocatorV1" | "RawCaptureSegmentV1" | "RawCaptureV1" | "ReportStructuringFailureV1" | "RuntimeArtifactDescriptorV1" | "RuntimeCapabilitiesV1" | "RuntimeInstallationV1" | "RuntimeInstallationsV1" | "RuntimeModelInstallationV1" | "RuntimeModelInstallationsV1" | "RuntimeModelOptionV1" | "RuntimeModelOptionsV1" | "RuntimeReadyV1" | "RuntimeRequirementV1" | "RuntimeRequirementsV1" | "StartRuntimeInstallationV1" | "StartRuntimeModelInstallationV1" | "TimeLocatorV1";
 
 export type CaptureContractInvariant = {
   readonly id: string;
@@ -291,9 +330,14 @@ export const CAPTURE_CONTRACT_EXTRA_POLICIES = {
   "RuntimeCapabilitiesV1": "forbid",
   "RuntimeInstallationV1": "forbid",
   "RuntimeInstallationsV1": "forbid",
+  "RuntimeModelInstallationV1": "forbid",
+  "RuntimeModelInstallationsV1": "forbid",
+  "RuntimeModelOptionV1": "forbid",
+  "RuntimeModelOptionsV1": "forbid",
   "RuntimeReadyV1": "forbid",
   "RuntimeRequirementV1": "forbid",
   "RuntimeRequirementsV1": "forbid",
   "StartRuntimeInstallationV1": "forbid",
+  "StartRuntimeModelInstallationV1": "forbid",
   "TimeLocatorV1": "forbid",
 } as const satisfies Readonly<Record<CaptureContractName, CaptureContractExtraPolicy>>;

@@ -28,11 +28,18 @@ from capture_runtime.constants import (
 )
 from capture_runtime.contracts import (
     RuntimeArtifactDescriptorV1,
+    RuntimeModelOptionV1,
     RuntimeRequirementStatus,
     RuntimeRequirementV1,
 )
 from capture_runtime.engine_catalog import EngineCatalogError
 from capture_runtime.engine_installation import EngineInstallationManager, sha256_file
+from capture_runtime.model_catalog import (
+    MODEL_OPTIONS,
+    ActiveModelSelectionStore,
+    RuntimeModelOption,
+    model_option,
+)
 from capture_runtime.ollama.installer_runtime import (
     AsyncSubprocessCommandRunner,
     CommandRunner,
@@ -79,6 +86,7 @@ class SystemRuntimeInstaller:
         self._resolve_winget = winget_resolver or (lambda: shutil.which("winget"))
         self._clock = clock
         self._markers = lifecycle.config.app_data_dir / "requirements"
+        self._model_selection = ActiveModelSelectionStore(lifecycle.config.app_data_dir)
         self._enabled_requirement_ids = (
             None if enabled_requirement_ids is None else frozenset(enabled_requirement_ids)
         )
@@ -189,14 +197,16 @@ class SystemRuntimeInstaller:
                     status=(
                         RuntimeRequirementStatus.READY
                         if model_ready
-                        else RuntimeRequirementStatus.INSTALLABLE
+                        else RuntimeRequirementStatus.MANUAL_ACTION_REQUIRED
                         if ollama_available
                         else RuntimeRequirementStatus.MISSING
                     ),
                     required_for=["runtime-structuring"],
                     install_strategy="ollama",
                     detail=(
-                        None if model_ready else f"Requires {self._lifecycle.config.base_model}."
+                        None
+                        if model_ready
+                        else "Select a structuring model after the Ollama runtime is ready."
                     ),
                 )
             )
@@ -227,9 +237,147 @@ class SystemRuntimeInstaller:
             await self._install_ollama(cancel_event, report_progress)
             return
         if requirement_id == OLLAMA_MODEL_REQUIREMENT_ID:
-            await self._install_model(cancel_event, report_progress)
+            raise ManualActionRequiredError(
+                "Select a model option through the model-installation API."
+            )
             return
         raise ValueError(f"unknown requirementId: {requirement_id}")
+
+    def model_options(self) -> list[RuntimeModelOptionV1]:
+        """Return the immutable allowlist with the local active status."""
+
+        from capture_runtime.contracts import RuntimeModelOptionStatus
+
+        active = self._model_selection.load()
+        active_option_id = active.get("optionId") if active is not None else None
+        return [
+            RuntimeModelOptionV1(
+                option_id=option.option_id,
+                display_name=option.display_name,
+                model_reference=option.model_reference,
+                expected_digest=option.expected_digest,
+                expected_bytes=option.expected_bytes,
+                profile_id=option.profile_id,
+                profile_spec_sha256=option.profile_spec_sha256,
+                status=(
+                    RuntimeModelOptionStatus.ACTIVE
+                    if option.option_id == active_option_id
+                    else RuntimeModelOptionStatus.NOT_INSTALLED
+                ),
+            )
+            for option in MODEL_OPTIONS
+        ]
+
+    async def install_model_option(
+        self,
+        option_id: str,
+        *,
+        cancel_event: asyncio.Event,
+        report_progress: Callable[[float], None],
+    ) -> None:
+        option = model_option(option_id)
+        executable = self._lifecycle.executable()
+        if executable is None:
+            raise ManualActionRequiredError("Install the Ollama application first")
+        self._lifecycle.start()
+        await self._wait_for_ollama_server(cancel_event)
+        environment = self._lifecycle.config.process_environment()
+        report_progress(0.1)
+        pull = await self._runner.run(
+            [executable, "pull", option.model_reference],
+            environment=environment,
+            cwd=self._lifecycle.config.app_data_dir,
+            cancel_event=cancel_event,
+            timeout_seconds=3600,
+        )
+        if pull.return_code != 0:
+            raise RuntimeError(f"Ollama model pull failed ({pull.return_code})")
+        observed_digest, observed_bytes = self._verify_pulled_model(option)
+        report_progress(0.75)
+        modelfile = self._lifecycle.config.app_data_dir / "Capture.Modelfile"
+        modelfile_bytes = option.profile_spec_bytes
+        if hashlib.sha256(modelfile_bytes).hexdigest() != option.profile_spec_sha256:
+            raise RuntimeError("Ollama profile specification digest is invalid")
+        modelfile.write_bytes(modelfile_bytes)
+        create = await self._runner.run(
+            [
+                executable,
+                "create",
+                option.profile_id,
+                "-f",
+                str(modelfile),
+            ],
+            environment=environment,
+            cwd=self._lifecycle.config.app_data_dir,
+            cancel_event=cancel_event,
+            timeout_seconds=600,
+        )
+        if create.return_code != 0:
+            raise RuntimeError(f"Ollama capture profile creation failed ({create.return_code})")
+        _atomic_json(
+            self._marker(OLLAMA_MODEL_REQUIREMENT_ID),
+            {
+                "profileId": option.profile_id,
+                "baseModel": option.model_reference,
+                "modelfileSha256": hashlib.sha256(modelfile_bytes).hexdigest(),
+                "installedAt": self._clock.now().isoformat(),
+            },
+        )
+        self._model_selection.save(
+            option,
+            observed_digest=observed_digest,
+            observed_bytes=observed_bytes,
+        )
+        report_progress(1)
+
+    async def _wait_for_ollama_server(self, cancel_event: asyncio.Event) -> None:
+        deadline = asyncio.get_running_loop().time() + 30
+        while asyncio.get_running_loop().time() < deadline:
+            if cancel_event.is_set():
+                raise asyncio.CancelledError
+            if not self._lifecycle.owns_running_process():
+                raise RuntimeError("Capture Ollama process exited before readiness")
+            try:
+                response = await asyncio.to_thread(
+                    httpx.get,
+                    f"{self._lifecycle.config.host_url}/api/tags",
+                    timeout=2,
+                    follow_redirects=False,
+                )
+                if response.status_code == 200:
+                    return
+            except httpx.HTTPError:
+                pass
+            await asyncio.sleep(0.2)
+        raise RuntimeError("Capture Ollama server did not become ready")
+
+    def _verify_pulled_model(self, option: RuntimeModelOption) -> tuple[str, int]:
+        try:
+            response = httpx.get(
+                f"{self._lifecycle.config.host_url}/api/tags",
+                timeout=5,
+                follow_redirects=False,
+            )
+            response.raise_for_status()
+            models = response.json().get("models", [])
+        except (httpx.HTTPError, AttributeError, TypeError, ValueError) as error:
+            raise RuntimeError("Ollama model list could not be verified") from error
+        for model in models if isinstance(models, list) else []:
+            if not isinstance(model, dict):
+                continue
+            name = str(model.get("name") or model.get("model") or "")
+            if name not in {option.model_reference, f"{option.model_reference}:latest"}:
+                continue
+            digest = str(model.get("digest") or "").removeprefix("sha256:")
+            size = model.get("size")
+            if not re.fullmatch(r"[0-9a-f]{64}", digest) or not isinstance(size, int) or size <= 0:
+                raise RuntimeError("Ollama model verification returned invalid digest or size")
+            if option.expected_digest is not None and digest != option.expected_digest:
+                raise RuntimeError("Ollama model digest does not match the release catalog")
+            if option.expected_bytes is not None and size != option.expected_bytes:
+                raise RuntimeError("Ollama model size does not match the release catalog")
+            return digest, size
+        raise RuntimeError("Ollama did not report the selected model after pull")
 
     async def _install_ollama(
         self,
@@ -317,7 +465,15 @@ class SystemRuntimeInstaller:
         report_progress(1)
 
     def _active_model_profile_ready(self) -> bool:
-        if not self._recorded_model_profile_matches() or self._lifecycle.executable() is None:
+        selection = self._model_selection.load()
+        profile_id = (
+            str(selection["profileId"])
+            if selection is not None
+            else self._lifecycle.config.profile_id
+            if self._legacy_model_marker_matches()
+            else None
+        )
+        if profile_id is None or self._lifecycle.executable() is None:
             return False
         try:
             self._lifecycle.start()
@@ -329,8 +485,8 @@ class SystemRuntimeInstaller:
         ):
             return False
         expected_names = {
-            self._lifecycle.config.profile_id,
-            f"{self._lifecycle.config.profile_id}:latest",
+            profile_id,
+            f"{profile_id}:latest",
         }
         deadline = time.monotonic() + self._model_readiness_timeout_seconds
         while True:
@@ -379,6 +535,9 @@ class SystemRuntimeInstaller:
             )
         except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError):
             return False
+
+    def _legacy_model_marker_matches(self) -> bool:
+        return self._recorded_model_profile_matches()
 
     def _marker(self, requirement_id: str) -> Path:
         return self._markers / f"{requirement_id}.ready.json"

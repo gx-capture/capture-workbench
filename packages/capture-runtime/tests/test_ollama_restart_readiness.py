@@ -215,7 +215,7 @@ def test_marker_alone_does_not_make_a_missing_profile_ready(
         ),
     )
 
-    assert _model_status(installer) is RuntimeRequirementStatus.INSTALLABLE
+    assert _model_status(installer) is RuntimeRequirementStatus.MANUAL_ACTION_REQUIRED
     assert controller.spawned == [["C:/Program Files/Ollama/ollama.exe", "serve"]]
 
 
@@ -241,7 +241,7 @@ def test_model_probe_rejects_a_foreign_response_after_owned_exit(
         ),
     )
 
-    assert _model_status(installer) is RuntimeRequirementStatus.INSTALLABLE
+    assert _model_status(installer) is RuntimeRequirementStatus.MANUAL_ACTION_REQUIRED
 
 
 def test_missing_install_record_does_not_start_ollama(
@@ -256,7 +256,7 @@ def test_missing_install_record_does_not_start_ollama(
 
     monkeypatch.setattr(httpx, "get", reject_probe)
 
-    assert _model_status(installer) is RuntimeRequirementStatus.INSTALLABLE
+    assert _model_status(installer) is RuntimeRequirementStatus.MANUAL_ACTION_REQUIRED
     assert controller.spawned == []
 
 
@@ -285,6 +285,56 @@ def test_profile_marker_hashes_the_exact_windows_modelfile_bytes(tmp_path: Path)
     assert marker["modelfileSha256"] == hashlib.sha256(modelfile.read_bytes()).hexdigest()
 
 
+def test_model_install_waits_for_owned_ollama_server_before_pull(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class SuccessfulRunner:
+        calls: list[list[str]] = []
+
+        async def run(self, arguments: list[str], **_kwargs: object) -> CommandResult:
+            self.calls.append(arguments)
+            return CommandResult(0, "ok")
+
+    controller = FakeProcessController()
+    installer, lifecycle = _installer(tmp_path, controller)
+    runner = SuccessfulRunner()
+    installer._runner = runner  # noqa: SLF001
+    responses = iter([_tags_response(lifecycle.config, [])])
+    attempts = 0
+
+    def get_with_startup_race(*_args: object, **_kwargs: object) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise httpx.ConnectError("starting")
+        return next(responses)
+
+    monkeypatch.setattr(httpx, "get", get_with_startup_race)
+    monkeypatch.setattr(
+        installer,
+        "_verify_pulled_model",
+        lambda _option: ("a" * 64, 123),
+    )
+
+    asyncio.run(
+        installer.install_model_option(
+            "qwen3.5-0.8b-v1",
+            cancel_event=asyncio.Event(),
+            report_progress=lambda _progress: None,
+        )
+    )
+
+    assert runner.calls[0][1:] == ["pull", "qwen3.5:0.8b"]
+    assert runner.calls[1][1:] == [
+        "create",
+        "capture-workbench-qwen3.5-0.8b-structure-v1",
+        "-f",
+        str(lifecycle.config.app_data_dir / "Capture.Modelfile"),
+    ]
+    assert attempts == 2
+
+
 def test_ownership_failure_never_probes_or_touches_foreign_process(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -299,7 +349,7 @@ def test_ownership_failure_never_probes_or_touches_foreign_process(
 
     monkeypatch.setattr(httpx, "get", reject_probe)
 
-    assert _model_status(installer) is RuntimeRequirementStatus.INSTALLABLE
+    assert _model_status(installer) is RuntimeRequirementStatus.MANUAL_ACTION_REQUIRED
     lifecycle.stop()
     assert controller.spawned == []
     assert controller.stopped == []

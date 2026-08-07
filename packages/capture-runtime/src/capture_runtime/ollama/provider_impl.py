@@ -60,8 +60,9 @@ class OllamaCaptureStructuringProvider:
         target_language: str | None,
         cancel_event: asyncio.Event,
     ) -> object:
+        profile_id = self._selected_profile_id()
         self._lifecycle.start()
-        engine_identity = await self._wait_until_ready(cancel_event)
+        engine_identity = await self._wait_until_ready(cancel_event, profile_id)
         self._engine_identity = engine_identity
         plans = plan_structuring_batches(
             raw.segments,
@@ -92,6 +93,7 @@ class OllamaCaptureStructuringProvider:
                     cancel_event=cancel_event,
                     num_ctx=num_ctx,
                     num_predict=num_predict,
+                    profile_id=profile_id,
                 )
                 blocks.extend(
                     CaptureBlockV1.model_validate(block)
@@ -119,6 +121,7 @@ class OllamaCaptureStructuringProvider:
         cancel_event: asyncio.Event,
         num_ctx: int,
         num_predict: int,
+        profile_id: str,
     ) -> str:
         self._require_owned_process()
         prompt = build_structuring_batch_prompt(segments, target_language=target_language)
@@ -126,7 +129,7 @@ class OllamaCaptureStructuringProvider:
             client.post(
                 "/api/generate",
                 json={
-                    "model": self._lifecycle.config.profile_id,
+                    "model": profile_id,
                     "stream": False,
                     "think": False,
                     "format": ollama_structuring_batch_schema(target_language=target_language),
@@ -159,7 +162,9 @@ class OllamaCaptureStructuringProvider:
                 request.cancel()
                 await asyncio.gather(request, return_exceptions=True)
 
-    async def _wait_until_ready(self, cancel_event: asyncio.Event) -> CaptureEngineV1:
+    async def _wait_until_ready(
+        self, cancel_event: asyncio.Event, profile_id: str
+    ) -> CaptureEngineV1:
         deadline = asyncio.get_running_loop().time() + 30
         async with httpx.AsyncClient(
             base_url=self._lifecycle.config.host_url,
@@ -179,8 +184,8 @@ class OllamaCaptureStructuringProvider:
                         for model in models:
                             name = str(model.get("name") or model.get("model") or "")
                             if name not in {
-                                self._lifecycle.config.profile_id,
-                                f"{self._lifecycle.config.profile_id}:latest",
+                                profile_id,
+                                f"{profile_id}:latest",
                             }:
                                 continue
                             digest = str(model.get("digest") or "")
@@ -192,7 +197,7 @@ class OllamaCaptureStructuringProvider:
                                 )
                             return CaptureEngineV1(
                                 engine="ollama",
-                                model=self._lifecycle.config.profile_id,
+                                model=profile_id,
                                 digest=digest,
                                 device="local",
                             )
@@ -200,6 +205,22 @@ class OllamaCaptureStructuringProvider:
                     pass
                 await asyncio.sleep(0.2)
         raise RuntimeUnavailableError("isolated Ollama profile did not become ready")
+
+    def _selected_profile_id(self) -> str:
+        selection_reader = getattr(self._lifecycle, "active_model_selection", None)
+        if not callable(selection_reader):
+            return self._lifecycle.config.profile_id
+        selection = selection_reader()
+        if selection is not None:
+            profile_id = selection.get("profileId")
+            if isinstance(profile_id, str) and profile_id:
+                return profile_id
+        legacy_marker = (
+            self._lifecycle.config.app_data_dir / "requirements" / "capture-ollama-model.ready.json"
+        )
+        if legacy_marker.is_file():
+            return self._lifecycle.config.profile_id
+        raise RuntimeUnavailableError("model_selection_required")
 
     def _require_owned_process(self) -> None:
         if not self._lifecycle.owns_running_process():

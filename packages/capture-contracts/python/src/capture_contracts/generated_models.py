@@ -107,6 +107,12 @@ class RuntimeInstallationStatus(StrEnum):
     MANUAL_ACTION_REQUIRED = "manual_action_required"
 
 
+class RuntimeModelOptionStatus(StrEnum):
+    NOT_INSTALLED = "not-installed"
+    INSTALLED = "installed"
+    ACTIVE = "active"
+
+
 class RuntimeRequirementStatus(StrEnum):
     READY = "ready"
     MISSING = "missing"
@@ -320,6 +326,46 @@ class StartRuntimeInstallationV1(StrictModel):
     consent: Literal[True]
 
 
+class RuntimeModelOptionV1(StrictModel):
+    option_id: NonEmptyString
+    display_name: NonEmptyString
+    model_reference: NonEmptyString
+    expected_digest: Sha256Hex | None = None
+    expected_bytes: int | None = Field(default=None, ge=1)
+    profile_id: NonEmptyString
+    profile_spec_sha256: Sha256Hex
+    status: RuntimeModelOptionStatus
+
+
+class RuntimeModelOptionsV1(StrictModel):
+    catalog_sha256: Sha256Hex
+    items: list[RuntimeModelOptionV1]
+
+
+class StartRuntimeModelInstallationV1(StrictModel):
+    option_id: NonEmptyString
+    consent: Literal[True]
+
+
+class RuntimeModelInstallationV1(StrictModel):
+    installation_id: str
+    option_id: NonEmptyString
+    status: RuntimeInstallationStatus
+    progress: float = Field(ge=0, le=1)
+    error: CaptureFailureV1 | None = None
+    created_at: datetime
+    updated_at: datetime
+    completed_at: datetime | None = None
+
+    _aware_times = field_validator("created_at", "updated_at", "completed_at")(
+        lambda value: None if value is None else _require_aware(value)
+    )
+
+
+class RuntimeModelInstallationsV1(StrictModel):
+    items: list[RuntimeModelInstallationV1]
+
+
 class RuntimeInstallationV1(StrictModel):
     installation_id: str
     requirement_id: CaptureRequirementId
@@ -402,6 +448,11 @@ __all__ = [
     'RuntimeRequirementV1',
     'RuntimeRequirementsV1',
     'StartRuntimeInstallationV1',
+    'RuntimeModelOptionV1',
+    'RuntimeModelOptionsV1',
+    'StartRuntimeModelInstallationV1',
+    'RuntimeModelInstallationV1',
+    'RuntimeModelInstallationsV1',
     'RuntimeInstallationV1',
     'RuntimeInstallationsV1',
     'RuntimeCapabilitiesV1',
@@ -414,5 +465,6 @@ __all__ = [
     'CaptureJobStatus',
     'CaptureJobStage',
     'RuntimeInstallationStatus',
+    'RuntimeModelOptionStatus',
     'RuntimeRequirementStatus',
 ]

@@ -11,11 +11,13 @@ from capture_runtime.services.capture_job_service import (
     ResultUnavailableError,
 )
 from capture_runtime.services.installation_service import InstallationService
+from capture_runtime.services.model_installation_service import ModelInstallationService
 
 __all__ = [
     "CaptureService",
     "IdempotencyConflictError",
     "InstallationService",
+    "ModelInstallationService",
     "InvalidJobStateError",
     "RawUnavailableError",
     "RecordNotFoundError",

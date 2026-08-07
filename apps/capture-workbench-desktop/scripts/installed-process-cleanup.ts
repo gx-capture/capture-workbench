@@ -28,6 +28,16 @@ import {
 const ownedProcessObserverAttemptLimit = 2;
 const ownedProcessObserverTimeoutMs = 30_000;
 const safeDiagnosticToken = /^[A-Za-z0-9_-]+$/u;
+const defaultOwnedProcessExecutableNames = [
+  'capture-workbench-desktop.exe',
+  'capture-runtime-x86_64-pc-windows-msvc.exe',
+  'capture-runtime.exe',
+  'capture-engine-ocr.exe',
+  'capture-engine-whisper.exe',
+  'ollama.exe',
+  'runtime.exe',
+  'cmd.exe',
+];
 
 function diagnosticToken(value, fallback = 'none') {
   const candidate = value === undefined || value === null ? fallback : String(value);
@@ -97,6 +107,7 @@ export function createInstalledProcessCleanup({
   spawnSyncProcess = spawnSync,
 }) {
   const privateProcessRoots = new Set();
+  const ownedProcessExecutableNames = new Set(defaultOwnedProcessExecutableNames);
   const terminateTrackedProcessTree = createTrackedProcessTreeTerminator({
     smokeRoot,
     workspaceRoot,
@@ -112,7 +123,7 @@ export function createInstalledProcessCleanup({
       : resolvedRoot;
   }
 
-  function registerPrivateProcessRoots(roots) {
+  function registerPrivateProcessRoots(roots, processExecutableNames = []) {
     const safeRoots = roots.map((root) =>
       assertStrictDescendant(smokeRoot, root, 'Private process root'),
     );
@@ -129,6 +140,12 @@ export function createInstalledProcessCleanup({
           'A current-run private process root must be a real empty directory.',
         );
       }
+    }
+    for (const name of processExecutableNames) {
+      if (typeof name !== 'string' || !/^[A-Za-z0-9._-]+\.exe$/iu.test(name)) {
+        throw new Error('Owned process executable names must be bare Windows executable names.');
+      }
+      ownedProcessExecutableNames.add(name);
     }
     for (const safeRoot of safeRoots) {
       privateProcessRoots.add(rootKey(safeRoot));
@@ -161,40 +178,19 @@ export function createInstalledProcessCleanup({
     );
   }
 
-  function executableNamesUnder(root) {
-    const names = new Set();
-    const pending = [root];
-    while (pending.length > 0) {
-      const current = pending.pop();
-      for (const entry of readdirSync(current, { withFileTypes: true })) {
-        const candidate = resolve(current, entry.name);
-        if (entry.isSymbolicLink()) continue;
-        if (entry.isDirectory()) {
-          pending.push(candidate);
-        } else if (entry.isFile() && /\.exe$/iu.test(entry.name)) {
-          names.add(entry.name);
-        }
-      }
-    }
-    return [...names];
-  }
-
   function observeExecutableProcessesUnder(root, allowMissingRoot = false) {
     const safeRoot = assertStrictDescendant(
       smokeRoot,
       root,
       'Executable process root',
     );
-    let names;
-    try {
-      names = allowMissingRoot && !existsSync(safeRoot)
-        ? []
-        : executableNamesUnder(safeRoot);
-    } catch {
+    if (!existsSync(safeRoot)) {
+      if (allowMissingRoot) return of([]);
       return throwError(
         () => new Error('Owned process executable inventory could not be read.'),
       );
     }
+    const names = [...ownedProcessExecutableNames];
     const script = `
 $root = [IO.Path]::GetFullPath($env:CAPTURE_SMOKE_PROCESS_ROOT).TrimEnd('\\') + '\\'
 if (-not (Test-Path -LiteralPath $env:CAPTURE_SMOKE_PROCESS_ROOT)) {
@@ -207,7 +203,12 @@ if (-not (Test-Path -LiteralPath $env:CAPTURE_SMOKE_PROCESS_ROOT)) {
 if (-not (Test-Path -LiteralPath $env:CAPTURE_SMOKE_PROCESS_ROOT -PathType Container)) {
   throw 'Owned process root is not a directory.'
 }
-$names = @($env:CAPTURE_SMOKE_PROCESS_NAMES | ConvertFrom-Json)
+$decodedNames = ConvertFrom-Json -InputObject $env:CAPTURE_SMOKE_PROCESS_NAMES
+$names = if ($decodedNames -is [System.Array]) {
+  @($decodedNames | ForEach-Object { [string]$_ })
+} else {
+  @([string]$decodedNames)
+}
 if ($names.Count -eq 0) {
   Write-Output '[]'
   exit 0

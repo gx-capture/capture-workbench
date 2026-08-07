@@ -14,6 +14,7 @@ from typing import BinaryIO, Protocol
 
 from capture_runtime.clock import Clock
 from capture_runtime.config import OllamaRuntimeConfig
+from capture_runtime.model_catalog import ActiveModelSelectionStore
 
 
 class OllamaOwnershipError(RuntimeError):
@@ -156,6 +157,9 @@ class IsolatedOllamaLifecycle:
 
         with self._lock:
             return self._owned is not None and self._owned.poll() is None
+
+    def active_model_selection(self) -> dict[str, object] | None:
+        return ActiveModelSelectionStore(self.config.app_data_dir).load()
 
     def start(self) -> int:
         with self._lock:

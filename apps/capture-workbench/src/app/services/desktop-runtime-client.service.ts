@@ -6,6 +6,8 @@ import {
   type CaptureRequirementId,
   type RawCaptureV1,
   type RuntimeInstallationV1,
+  type RuntimeModelInstallationV1,
+  type RuntimeModelOptionV1,
   type RuntimeRequirementV1,
 } from '@gx-capture/capture-workbench';
 import {
@@ -64,6 +66,29 @@ export class DesktopRuntimeClientService {
 
   getInstallation(installationId: string, signal?: AbortSignal): Observable<RuntimeInstallationV1> {
     return this.commands.invoke('runtime_get_installation', { input: { id: installationId } }, signal);
+  }
+
+  getModelOptions(signal?: AbortSignal): Observable<readonly RuntimeModelOptionV1[]> {
+    return this.commands
+      .invoke<{ readonly items: readonly RuntimeModelOptionV1[] }>('runtime_model_options', {}, signal)
+      .pipe(map((response) => response.items));
+  }
+
+  startModelInstallation(input: {
+    readonly clientRequestId: string;
+    readonly optionId: string;
+    readonly consent: true;
+  }, signal?: AbortSignal): Observable<RuntimeModelInstallationV1> {
+    return this.commands.invoke('runtime_start_model_installation', {
+      input: { clientRequestId: input.clientRequestId, optionId: input.optionId },
+    }, signal);
+  }
+
+  getModelInstallation(
+    installationId: string,
+    signal?: AbortSignal,
+  ): Observable<RuntimeModelInstallationV1> {
+    return this.commands.invoke('runtime_get_model_installation', { input: { id: installationId } }, signal);
   }
 
   createCapture(documentId: string, clientRequestId: string, signal?: AbortSignal): Observable<CaptureJobV1> {

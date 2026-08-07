@@ -9,7 +9,10 @@ use serde_json::{json, Value};
 
 use crate::{
     config::BackendConfig,
-    contracts::{RuntimeCreateCaptureInput, RuntimeIdInput, RuntimeInstallationStartInput},
+    contracts::{
+        RuntimeCreateCaptureInput, RuntimeIdInput, RuntimeInstallationStartInput,
+        RuntimeModelInstallationStartInput,
+    },
     library::LibraryStore,
     state::DesktopState,
 };
@@ -55,6 +58,47 @@ pub(crate) fn installation(state: &DesktopState, input: RuntimeIdInput) -> Resul
         state,
         "GET",
         &format!("/v1/runtime/installations/{}", input.id),
+        None,
+        None,
+    )
+}
+
+pub(crate) fn model_options(state: &DesktopState) -> Result<Value, String> {
+    request_json(state, "GET", "/v1/runtime/model-options", None, None)
+}
+
+pub(crate) fn start_model_installation(
+    state: &DesktopState,
+    input: RuntimeModelInstallationStartInput,
+) -> Result<Value, String> {
+    validate_client_request_id(&input.client_request_id)?;
+    validate_model_option_id(&input.option_id)?;
+    let body = serde_json::to_vec(&json!({
+        "optionId": input.option_id,
+        "consent": true,
+    }))
+    .map_err(|_| "Capture Runtime model installation request cannot be encoded.".to_string())?;
+    request_json(
+        state,
+        "POST",
+        "/v1/runtime/model-installations",
+        Some(RequestBody {
+            bytes: body,
+            content_type: "application/json".into(),
+        }),
+        Some(&input.client_request_id),
+    )
+}
+
+pub(crate) fn model_installation(
+    state: &DesktopState,
+    input: RuntimeIdInput,
+) -> Result<Value, String> {
+    validate_opaque_id(&input.id)?;
+    request_json(
+        state,
+        "GET",
+        &format!("/v1/runtime/model-installations/{}", input.id),
         None,
         None,
     )
@@ -327,6 +371,13 @@ fn validate_requirement_id(value: &str) -> Result<(), String> {
         "windowsml-ocr" | "whisper-primary" | "ollama-runtime" | "capture-ollama-model"
     ) {
         return Err("Capture Runtime requirement identifier is invalid.".into());
+    }
+    Ok(())
+}
+
+fn validate_model_option_id(value: &str) -> Result<(), String> {
+    if !matches!(value, "qwen3.5-0.8b-v1" | "qwen3.5-2b-v1" | "qwen3.5-4b-v1") {
+        return Err("Capture Runtime model option identifier is invalid.".into());
     }
     Ok(())
 }

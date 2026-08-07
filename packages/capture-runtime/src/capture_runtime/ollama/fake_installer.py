@@ -86,3 +86,16 @@ class FakeRuntimeInstaller:
             raise asyncio.CancelledError
         self.ready.add(requirement_id)
         report_progress(1)
+
+    async def install_model_option(
+        self,
+        option_id: str,
+        *,
+        cancel_event: asyncio.Event,
+        report_progress: Callable[[float], None],
+    ) -> None:
+        report_progress(0.1)
+        if cancel_event.is_set():
+            raise asyncio.CancelledError
+        self.ready.add(f"model-option:{option_id}")
+        report_progress(1)

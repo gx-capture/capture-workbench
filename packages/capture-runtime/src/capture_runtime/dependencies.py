@@ -29,8 +29,12 @@ from capture_runtime.ollama import (
     RuntimeInstaller,
     SystemRuntimeInstaller,
 )
-from capture_runtime.services import CaptureService, InstallationService
-from capture_runtime.storage import CaptureRepository, InstallationRepository
+from capture_runtime.services import CaptureService, InstallationService, ModelInstallationService
+from capture_runtime.storage import (
+    CaptureRepository,
+    InstallationRepository,
+    ModelInstallationRepository,
+)
 from capture_runtime.structuring_provider import (
     CaptureStructuringProvider,
     FakeCaptureStructuringProvider,
@@ -54,6 +58,8 @@ class RuntimeDependencies:
     installation_repository: InstallationRepository
     capture_service: CaptureService
     installation_service: InstallationService
+    model_installation_repository: ModelInstallationRepository
+    model_installation_service: ModelInstallationService
     engine_manager: EngineInstallationManager
     staging_root: Path
     supported_structuring_modes: list[StructuringMode]
@@ -71,6 +77,7 @@ def build_runtime_dependencies(
     process_controller: ProcessController | None = None,
     capture_repository: CaptureRepository | None = None,
     installation_repository: InstallationRepository | None = None,
+    model_installation_repository: ModelInstallationRepository | None = None,
 ) -> RuntimeDependencies:
     """Build one isolated dependency graph for a runtime application."""
 
@@ -149,6 +156,14 @@ def build_runtime_dependencies(
         clock=runtime_clock,
         retention_hours=settings.retention_hours,
     )
+    active_model_installation_repository = (
+        model_installation_repository
+        or ModelInstallationRepository(
+            settings.app_data_dir / "jobs" / "model-installations",
+            clock=runtime_clock,
+            retention_hours=settings.retention_hours,
+        )
+    )
     staging_root = settings.app_data_dir / "jobs" / "staging"
     capture_service = CaptureService(
         active_capture_repository,
@@ -158,6 +173,11 @@ def build_runtime_dependencies(
     )
     installation_service = InstallationService(
         active_installation_repository,
+        installer=active_installer,
+        clock=runtime_clock,
+    )
+    model_installation_service = ModelInstallationService(
+        active_model_installation_repository,
         installer=active_installer,
         clock=runtime_clock,
     )
@@ -172,6 +192,8 @@ def build_runtime_dependencies(
         installation_repository=active_installation_repository,
         capture_service=capture_service,
         installation_service=installation_service,
+        model_installation_repository=active_model_installation_repository,
+        model_installation_service=model_installation_service,
         engine_manager=engine_manager,
         staging_root=staging_root,
         supported_structuring_modes=supported_structuring_modes,

@@ -140,8 +140,10 @@ environment and Authorization header; they are never accepted in URLs.
 - `CAPTURE_OLLAMA_HOST`, `CAPTURE_OLLAMA_APP_DATA`, `CAPTURE_OLLAMA_PID_FILE`
 - `CAPTURE_OLLAMA_ENDPOINT`, `CAPTURE_OLLAMA_API_KEY` (external-ollama only)
 - `OLLAMA_HOST`, `OLLAMA_MODELS`
-- `CAPTURE_OLLAMA_MODEL=qwen3.5:4b`
-- `CAPTURE_OLLAMA_PROFILE_ID=capture-workbench-qwen3.5-4b-structure-v1`
+- `CAPTURE_OLLAMA_MODEL` and `CAPTURE_OLLAMA_PROFILE_ID` are legacy/external
+  compatibility settings only. A standalone Workbench launch does not set
+  either value; it uses the additive model-options API so the user selects an
+  allowlisted model and downloads it after consent.
 
 Run with `capture-runtime serve`. Production binds only `127.0.0.1` and disables API docs
 unless explicitly enabled for development.

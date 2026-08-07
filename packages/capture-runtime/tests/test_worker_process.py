@@ -11,6 +11,7 @@ from capture_runtime.worker_process import (
     WorkerCancelledError,
     WorkerExecutionError,
     WorkerProcess,
+    _subprocess_path,
 )
 
 WORKER = Path(__file__).parent / "fixtures" / "deterministic_worker.py"
@@ -77,6 +78,17 @@ def test_worker_client_carries_ocr_probe_options_without_changing_whisper(
     asyncio.run(probe())
     assert process.payloads[0]["options"] == {"deviceId": 7}
     assert "options" not in process.payloads[1]
+
+
+def test_worker_subprocess_path_removes_windows_extended_prefix_on_windows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("capture_runtime.worker_process.os.name", "nt")
+
+    assert _subprocess_path(Path(r"\\?\C:\capture\worker.exe")) == r"C:\capture\worker.exe"
+    assert (
+        _subprocess_path(Path(r"\\?\UNC\server\share\worker.exe")) == r"\\server\share\worker.exe"
+    )
 
 
 def test_deterministic_worker_success_and_secret_isolation() -> None:
@@ -165,6 +177,29 @@ os._exit(7)
         assert "SECRET_STDERR" not in str(raised.value)
         assert "private-source.pdf" not in str(raised.value)
         assert owner.active_process_count == 0
+
+    asyncio.run(run())
+
+
+def test_worker_stage_diagnostics_accept_windows_crlf(tmp_path: Path) -> None:
+    worker = tmp_path / "crlf_worker.py"
+    worker.write_text(
+        """
+import os
+import sys
+
+sys.stdin.buffer.readline()
+sys.stderr.buffer.write(b"capture-worker-stage:worker-crlf\\r\\n")
+sys.stderr.buffer.flush()
+os._exit(7)
+""".lstrip(),
+        encoding="utf-8",
+    )
+    owner = WorkerProcess()
+
+    async def run() -> None:
+        with pytest.raises(WorkerExecutionError, match=r"at stage worker-crlf$"):
+            await owner.request(worker, "probe", {}, timeout_seconds=5)
 
     asyncio.run(run())
 

@@ -31,6 +31,8 @@ import {
   type CaptureJobV1,
   type CaptureRequirementId,
   type RuntimeInstallationV1,
+  type RuntimeModelInstallationV1,
+  type RuntimeModelOptionV1,
   type RuntimeRequirementV1,
 } from '@gx-capture/capture-workbench';
 import type {
@@ -59,14 +61,12 @@ interface ActiveCapture {
 const CORE_REQUIREMENTS = new Set<CaptureRequirementId>([
   'windowsml-ocr',
   'ollama-runtime',
-  'capture-ollama-model',
 ]);
 
 const INSTALLATION_ORDER = new Map<CaptureRequirementId, number>([
   ['windowsml-ocr', 0],
   ['whisper-primary', 1],
   ['ollama-runtime', 2],
-  ['capture-ollama-model', 3],
 ]);
 
 @Injectable({ providedIn: 'root' })
@@ -77,6 +77,23 @@ export class DesktopWorkspaceStore {
   readonly statusFilter = signal('');
   readonly installing = signal(false);
   readonly activeInstallation = signal<RuntimeInstallationV1 | null>(null);
+  readonly activeModelInstallation = signal<RuntimeModelInstallationV1 | null>(null);
+  readonly modelInstallationPercent = computed(() => {
+    const progress = this.activeModelInstallation()?.progress ?? 0;
+    return Math.round(Math.min(Math.max(progress, 0), 1) * 100);
+  });
+  readonly modelInstallationPhase = computed(() => {
+    const installation = this.activeModelInstallation();
+    if (!installation) return '';
+    if (installation.status === 'queued') return '等待開始';
+    if (installation.status === 'failed') return '模型下載失敗';
+    if (installation.status === 'cancelled') return '模型下載已取消';
+    if (installation.status === 'completed') return '模型已準備完成';
+    if (installation.progress < 0.1) return '啟動模型服務';
+    if (installation.progress < 0.75) return '下載與驗證模型';
+    return '建立 Workbench profile';
+  });
+  readonly selectedModelOptionId = signal<string | null>(null);
   readonly busyIds = signal<ReadonlySet<string>>(new Set());
   readonly requestedRequirements = signal<ReadonlySet<CaptureRequirementId>>(new Set());
 
@@ -96,16 +113,21 @@ export class DesktopWorkspaceStore {
     if (
       this.runtime.error()
       || this.requirementsResource.error()
+      || this.modelOptionsResource.error()
       || this.documentsResource.error()
     ) {
       return 'error';
     }
     if (!this.runtime.ready()) return 'starting';
     const requirementsStatus = this.requirementsResource.status();
-    if (requirementsStatus === 'idle' || requirementsStatus === 'loading' || requirementsStatus === 'reloading') {
+    const modelStatus = this.modelOptionsResource.status();
+    if (
+      requirementsStatus === 'idle' || requirementsStatus === 'loading' || requirementsStatus === 'reloading'
+      || modelStatus === 'idle' || modelStatus === 'loading' || modelStatus === 'reloading'
+    ) {
       return 'starting';
     }
-    return this.coreMissing().length === 0 ? 'ready' : 'needs-setup';
+    return this.coreMissing().length === 0 && !this.modelSelectionRequired() ? 'ready' : 'needs-setup';
   });
 
   readonly canCapture = computed(() => this.state() === 'ready' && !this.installing());
@@ -127,6 +149,12 @@ export class DesktopWorkspaceStore {
           - (INSTALLATION_ORDER.get(right.requirementId) ?? Number.MAX_SAFE_INTEGER),
       ),
   );
+  readonly modelSelectionRequired = computed(
+    () => this.modelOptions().length > 0 && !this.modelOptions().some((option) => option.status === 'active'),
+  );
+  readonly activeModelOption = computed(
+    () => this.modelOptions().find((option) => option.status === 'active') ?? null,
+  );
 
   private readonly runtime = inject(DesktopRuntimeClientService);
   private readonly library = inject(DesktopLibraryService);
@@ -141,6 +169,15 @@ export class DesktopWorkspaceStore {
     defaultValue: [],
     params: () => this.runtime.ready() ? { ready: true } : undefined,
     stream: ({ abortSignal }) => this.runtime.getRequirements(abortSignal),
+  });
+
+  private readonly modelOptionsResource = rxResource<
+    readonly RuntimeModelOptionV1[],
+    { readonly ready: true } | undefined
+  >({
+    defaultValue: [],
+    params: () => this.runtime.ready() ? { ready: true } : undefined,
+    stream: ({ abortSignal }) => this.runtime.getModelOptions(abortSignal),
   });
 
   private readonly documentsResource = rxResource<
@@ -169,6 +206,7 @@ export class DesktopWorkspaceStore {
   private readonly resourceErrorEffect = effect(() => {
     const error = this.runtime.error()
       ?? this.requirementsResource.error()
+      ?? this.modelOptionsResource.error()
       ?? this.documentsResource.error()
       ?? this.selectedResource.error();
     if (error) this.message.set(errorMessage(error));
@@ -196,6 +234,7 @@ export class DesktopWorkspaceStore {
     }
     this.runtime.reload();
     this.requirementsResource.reload();
+    this.modelOptionsResource.reload();
     this.documentsResource.reload();
   }
 
@@ -235,6 +274,48 @@ export class DesktopWorkspaceStore {
       error: (error: unknown) => {
         this.message.set(errorMessage(error));
       },
+    });
+  }
+
+  get modelOptions() {
+    return this.modelOptionsResource.value;
+  }
+
+  selectModelOption(optionId: string): void {
+    this.selectedModelOptionId.set(optionId);
+  }
+
+  installSelectedModel(): void {
+    const optionId = this.selectedModelOptionId();
+    if (!this.runtime.ready() || this.installing() || !optionId) return;
+    this.installing.set(true);
+    this.runtime.startModelInstallation({
+      clientRequestId: crypto.randomUUID(),
+      optionId,
+      consent: true,
+    }).pipe(
+      expand((installation) => {
+        if (installation.status !== 'queued' && installation.status !== 'running') return EMPTY;
+        return timer(750).pipe(
+          switchMap(() => this.runtime.getModelInstallation(installation.installationId)),
+        );
+      }),
+      tap((installation) => this.activeModelInstallation.set(installation)),
+      filter((installation) => installation.status !== 'queued' && installation.status !== 'running'),
+      take(1),
+      switchMap((installation) => installation.status === 'completed'
+        ? of(installation)
+        : throwError(() => new Error(
+          `Runtime model installation ended ${installation.status}${installation.error?.code ? ` (${installation.error.code})` : ''}.`,
+        ))),
+      finalize(() => {
+        this.installing.set(false);
+        this.activeModelInstallation.set(null);
+        this.modelOptionsResource.reload();
+        this.requirementsResource.reload();
+      }),
+    ).subscribe({
+      error: (error: unknown) => this.message.set(errorMessage(error)),
     });
   }
 

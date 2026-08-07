@@ -357,6 +357,9 @@ test('blocking native I/O is isolated behind async Tauri commands', async () => 
     'runtime_requirements',
     'runtime_start_installation',
     'runtime_get_installation',
+    'runtime_model_options',
+    'runtime_start_model_installation',
+    'runtime_get_model_installation',
     'runtime_create_capture',
     'runtime_get_capture',
     'runtime_cancel_capture',
@@ -452,6 +455,7 @@ test('desktop launcher advertises the bounded 50 MiB upload policy', async () =>
   );
   assert.match(launchPolicy, /"CAPTURE_MAX_UPLOAD_BYTES"/u);
   assert.match(launchPolicy, /DEFAULT_MAX_UPLOAD_BYTES\.to_string\(\)/u);
+  assert.doesNotMatch(launchPolicy, /CAPTURE_OLLAMA_MODEL|CAPTURE_OLLAMA_PROFILE_ID/u);
 });
 
 test('desktop launcher crate metadata uses a crates.io-supported category', async () => {
@@ -514,7 +518,9 @@ test('real Ollama smoke uses the capture contract and validates profile provenan
     'utf8',
   );
   assert.match(source, /form\.set\('sourceKind', 'pdf'\)/u);
-  assert.match(source, /capture-workbench-qwen3\.5-4b-structure-v1/u);
+  assert.match(source, /runtime\/model-options/u);
+  assert.match(source, /qwen3\.5-0\.8b-v1/u);
+  assert.match(source, /capture-workbench-qwen3\.5-0\.8b-structure-v1/u);
   assert.match(source, /\^sha256:\[a-f0-9\]\{64\}/u);
   assert.doesNotMatch(source, /CAPTURE_WINDOWSML_BUNDLE/u);
 });

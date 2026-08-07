@@ -8,4 +8,7 @@ pub use library::{
     LibraryExportFormat, LibraryExportPayload, LibraryExportRequest, LibraryImportSourceRequest,
     LibraryListRequest, LibrarySourceInput, LibrarySourcePayload,
 };
-pub use runtime::{RuntimeCreateCaptureInput, RuntimeIdInput, RuntimeInstallationStartInput};
+pub use runtime::{
+    RuntimeCreateCaptureInput, RuntimeIdInput, RuntimeInstallationStartInput,
+    RuntimeModelInstallationStartInput,
+};

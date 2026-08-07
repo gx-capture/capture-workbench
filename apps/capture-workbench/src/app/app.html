@@ -42,7 +42,7 @@
         <p class="eyebrow">LOCAL DOCUMENT INTELLIGENCE</p>
         <h1 id="workspace-title">文件擷取工作台</h1>
       </div>
-      <span class="model-chip"><span aria-hidden="true"></span>Ollama · qwen3.5:4b</span>
+      <span class="model-chip"><span aria-hidden="true"></span>Ollama · {{ store.activeModelOption()?.displayName ?? '未選擇模型' }}</span>
     </header>
 
     @if (store.state() === 'needs-setup') {
@@ -50,7 +50,7 @@
         <div>
           <p class="eyebrow">首次準備</p>
           <h2 id="setup-title">啟用本機文件處理</h2>
-          <p>{{ store.message() }}</p>
+          <p class="setup-status" aria-live="polite">{{ store.message() }}</p>
           <ul>
             @for (requirement of store.coreMissing(); track requirement.requirementId) {
               <li data-testid="runtime-requirement" [attr.data-requirement-id]="requirement.requirementId" [attr.data-status]="requirement.status">
@@ -66,6 +66,42 @@
             {{ store.installing() ? '正在準備…' : '同意並安裝核心需求' }}
           </button>
         }
+        @if (store.modelSelectionRequired()) {
+          <div class="model-selection" data-testid="model-selection">
+            <mat-form-field appearance="outline" subscriptSizing="dynamic">
+              <mat-label>模型</mat-label>
+              <mat-select
+                [value]="store.selectedModelOptionId()"
+                (selectionChange)="store.selectModelOption($event.value)"
+                data-testid="model-option-select"
+              >
+                @for (option of store.modelOptions(); track option.optionId) {
+                  <mat-option [value]="option.optionId">{{ option.displayName }}</mat-option>
+                }
+              </mat-select>
+            </mat-form-field>
+            <button
+              mat-stroked-button
+              type="button"
+              data-testid="model-install"
+              [disabled]="store.installing() || !store.selectedModelOptionId()"
+              (click)="store.installSelectedModel()"
+            >
+              {{ store.installing() ? '下載模型中…' : '同意並下載模型' }}
+            </button>
+            <small>安裝包不含模型，首次使用時下載。</small>
+            @if (store.activeModelInstallation(); as installation) {
+              <div class="model-install-progress" data-testid="model-install-progress" aria-live="polite">
+                <div class="model-install-progress-heading">
+                  <strong>{{ store.modelInstallationPhase() }}</strong>
+                  <span>{{ store.modelInstallationPercent() }}%</span>
+                </div>
+                <progress max="100" [value]="store.modelInstallationPercent()" aria-label="模型下載進度"></progress>
+                <small>正在下載 {{ installation.optionId }}。</small>
+              </div>
+            }
+          </div>
+        }
       </mat-card>
     } @else if (store.state() === 'error') {
       <mat-card class="error-card" appearance="outlined" role="alert">
@@ -78,9 +114,8 @@
     <mat-card class="intake" appearance="outlined" [class.is-disabled]="!store.canCapture()">
       <p class="eyebrow">匯入文件</p>
       <h2>拖放檔案，或從電腦選擇來源。</h2>
-      <p>支援 PDF、PNG、JPEG 與音訊。系統會依序進行 OCR、啟動隔離 Ollama，並儲存可檢閱的結構化結果。</p>
       <button mat-flat-button type="button" data-testid="source-import" [disabled]="!store.canCapture()" (click)="openFilePicker()">選擇檔案</button>
-      <span class="intake-hint">可一次選取多個檔案，也可直接拖放到視窗。</span>
+      <span class="intake-hint">PDF、圖片與音訊皆可匯入。</span>
     </mat-card>
 
     <section class="queue-section" aria-labelledby="queue-title">
@@ -173,7 +208,7 @@
       <div class="detail-empty">
         <span aria-hidden="true">↗</span>
         <h2>選擇一份文件</h2>
-        <p>在這裡檢閱 OCR、Ollama 結果、模型 provenance，並匯出或刪除已保存的資料。</p>
+        <p>選擇文件查看結果。</p>
       </div>
     }
   </aside>

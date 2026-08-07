@@ -71,24 +71,29 @@ checks its owned runtime process is gone. Its report always records
 Tauri/WebView scanned-PDF/image/audio acceptance harness and is not candidate
 release evidence input.
 
-## Opt-in real model-enabled Tauri/WebView gate
+## Opt-in real model-enabled Tauri/WebView preflight
 
-`smoke-real-media-model` is the local release-gated three-media harness. It launches
+`smoke-real-media-model` is the local production three-media preflight. It launches
 the packaged Tauri WebView with fresh app-data, performs consented catalog
-installation, imports the project-owned scanned PDF and image plus a private
-local audio fixture through the UI, and verifies raw/result,
+installation, imports a private cert-prep PDF, the project-owned image, and a
+private cert-prep audio fixture through the UI, and verifies raw/result,
 provenance, DirectML OCR, lock-selected Whisper segments, UUID-scoped deletion,
-and owned process cleanup. The report is redacted by construction and records
-`releaseGateSatisfied=true` and `consumerE2e=false`.
+and owned process cleanup. The preflight selects `qwen3.5-0.8b-v1` through the
+runtime model-options API; the release installer contains no Qwen model bytes.
+The report is redacted by construction and records
+`releaseGateSatisfied=false`, `localProductionPreflight=true`, and
+`consumerE2e=false`; it is not exact-candidate release evidence.
 
 ```powershell
-$env:CAPTURE_REAL_MEDIA_MODEL_AUDIO = 'C:\path\to\private-audio.mp3'
+$env:CAPTURE_REAL_MEDIA_MODEL_PDF = 'C:\software-dev\cert-prep\pdfs\private-exam.pdf'
+$env:CAPTURE_REAL_MEDIA_MODEL_AUDIO = 'C:\software-dev\cert-prep\audio\private-listening.mp3'
 corepack pnpm nx run capture-workbench-desktop:smoke-real-media-model
 ```
 
-The PDF and image are the lock-pinned project fixtures; only the packaged
-executable can be overridden for local runs with
-`CAPTURE_REAL_MEDIA_MODEL_EXECUTABLE`. The gate fails closed unless the staged
+The cert-prep PDF and audio are copied only into the owned temporary run and
+must not be committed or uploaded. The image remains a lock-pinned project
+fixture. Only the packaged executable can be overridden for local runs with
+`CAPTURE_REAL_MEDIA_MODEL_EXECUTABLE`. The preflight fails closed unless the staged
 generated catalog and source lock are the approved 0.3.11 model-enabled
 contract.
 

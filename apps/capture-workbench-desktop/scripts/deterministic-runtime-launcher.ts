@@ -94,9 +94,6 @@ function launchAttempt() {
             CAPTURE_OLLAMA_HOST: `http://127.0.0.1:${ollamaPort}`,
             CAPTURE_OLLAMA_APP_DATA: join(runtimeData, 'ollama'),
             CAPTURE_OLLAMA_PID_FILE: join(runtimeData, 'ollama', 'ollama.pid'),
-            CAPTURE_OLLAMA_MODEL: 'qwen3.5:4b',
-            CAPTURE_OLLAMA_PROFILE_ID:
-              'capture-workbench-qwen3.5-4b-structure-v1',
             OLLAMA_HOST: `http://127.0.0.1:${ollamaPort}`,
             OLLAMA_MODELS: join(runtimeData, 'ollama', 'models'),
           },

@@ -26,7 +26,7 @@ DEFAULT_RUN_TIMEOUT_SECONDS = 15 * 60.0
 WORKER_CANCEL_GRACE_SECONDS = 2.0
 WORKER_TERMINATE_GRACE_SECONDS = 3.0
 MAX_WORKER_STDERR_BYTES = 64 * 1024
-WORKER_STAGE_PATTERN = re.compile(r"(?m)^capture-worker-stage:([a-z0-9]+(?:-[a-z0-9]+)*)$")
+WORKER_STAGE_PATTERN = re.compile(r"(?m)^capture-worker-stage:([a-z0-9]+(?:-[a-z0-9]+)*)\r?$")
 WORKER_BOOTLOADER_PATTERN = re.compile(
     r"(?im)^\s*(?:\[PYI-[^\r\n]{0,80}|fatal error[^\r\n]{0,160})$"
 )
@@ -51,6 +51,19 @@ def _frame(request: WorkerRequest) -> bytes:
     if len(encoded) > MAX_WORKER_INPUT_BYTES:
         raise WorkerProtocolError("worker request exceeds the framing limit")
     return encoded
+
+
+def _subprocess_path(path: Path) -> str:
+    """Pass Win32 paths to native children, while keeping extended paths for checks."""
+
+    value = os.fspath(path)
+    if os.name != "nt":
+        return value
+    if value.startswith("\\\\?\\UNC\\"):
+        return "\\\\" + value[8:]
+    if value.startswith("\\\\?\\"):
+        return value[4:]
+    return value
 
 
 class WorkerProcess:
@@ -83,10 +96,11 @@ class WorkerProcess:
         if timeout_seconds <= 0:
             raise ValueError("worker timeout must be positive")
         request = WorkerRequest(_request_id(), operation, payload)  # type: ignore[arg-type]
+        executable_path = _subprocess_path(executable)
         command = (
-            [sys.executable, str(executable)]
+            [sys.executable, executable_path]
             if executable.suffix.casefold() in {".py", ".pyw"}
-            else [str(executable)]
+            else [executable_path]
         )
         process = await asyncio.create_subprocess_exec(
             *command,
@@ -94,7 +108,7 @@ class WorkerProcess:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=dict(self._base_environment),
-            cwd=str(executable.parent),
+            cwd=_subprocess_path(executable.parent),
             limit=MAX_WORKER_OUTPUT_BYTES + 2,
             creationflags=(
                 getattr(__import__("subprocess"), "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0

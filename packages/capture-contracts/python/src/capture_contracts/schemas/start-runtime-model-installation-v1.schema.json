@@ -1,0 +1,21 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "optionId": {
+      "minLength": 1,
+      "title": "Optionid",
+      "type": "string"
+    },
+    "consent": {
+      "const": true,
+      "title": "Consent",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "optionId",
+    "consent"
+  ],
+  "title": "StartRuntimeModelInstallationV1",
+  "type": "object"
+}
