@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { lstatSync, readdirSync, realpathSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, realpathSync } from 'node:fs';
 import net from 'node:net';
 import { resolve } from 'node:path';
 
@@ -27,7 +27,6 @@ import {
 
 const ownedProcessObserverAttemptLimit = 2;
 const ownedProcessObserverTimeoutMs = 30_000;
-const ownedProcessObserverOperationTimeoutSec = 15;
 const safeDiagnosticToken = /^[A-Za-z0-9_-]+$/u;
 
 function diagnosticToken(value, fallback = 'none') {
@@ -41,7 +40,7 @@ function processObserverError(result, attempt, operation, code) {
   const signal = diagnosticToken(result.signal);
   const timedOut = errorCode === 'ETIMEDOUT';
   return new Error(
-    `Owned process observer failed (operation=${operation}; observer=win32-process; attempt=${attempt}/${ownedProcessObserverAttemptLimit}; timeout=${String(timedOut)}; code=${errorCode}; status=${status}; signal=${signal}).`,
+    `Owned process observer failed (operation=${operation}; observer=dotnet-process; attempt=${attempt}/${ownedProcessObserverAttemptLimit}; timeout=${String(timedOut)}; code=${errorCode}; status=${status}; signal=${signal}).`,
   );
 }
 
@@ -162,12 +161,40 @@ export function createInstalledProcessCleanup({
     );
   }
 
+  function executableNamesUnder(root) {
+    const names = new Set();
+    const pending = [root];
+    while (pending.length > 0) {
+      const current = pending.pop();
+      for (const entry of readdirSync(current, { withFileTypes: true })) {
+        const candidate = resolve(current, entry.name);
+        if (entry.isSymbolicLink()) continue;
+        if (entry.isDirectory()) {
+          pending.push(candidate);
+        } else if (entry.isFile() && /\.exe$/iu.test(entry.name)) {
+          names.add(entry.name);
+        }
+      }
+    }
+    return [...names];
+  }
+
   function observeExecutableProcessesUnder(root, allowMissingRoot = false) {
     const safeRoot = assertStrictDescendant(
       smokeRoot,
       root,
       'Executable process root',
     );
+    let names;
+    try {
+      names = allowMissingRoot && !existsSync(safeRoot)
+        ? []
+        : executableNamesUnder(safeRoot);
+    } catch {
+      return throwError(
+        () => new Error('Owned process executable inventory could not be read.'),
+      );
+    }
     const script = `
 $root = [IO.Path]::GetFullPath($env:CAPTURE_SMOKE_PROCESS_ROOT).TrimEnd('\\') + '\\'
 if (-not (Test-Path -LiteralPath $env:CAPTURE_SMOKE_PROCESS_ROOT)) {
@@ -180,28 +207,38 @@ if (-not (Test-Path -LiteralPath $env:CAPTURE_SMOKE_PROCESS_ROOT)) {
 if (-not (Test-Path -LiteralPath $env:CAPTURE_SMOKE_PROCESS_ROOT -PathType Container)) {
   throw 'Owned process root is not a directory.'
 }
-$names = @(Get-ChildItem -LiteralPath $env:CAPTURE_SMOKE_PROCESS_ROOT -Recurse -File -Filter '*.exe' -ErrorAction Stop | Select-Object -ExpandProperty Name -Unique)
+$names = @($env:CAPTURE_SMOKE_PROCESS_NAMES | ConvertFrom-Json)
 if ($names.Count -eq 0) {
   Write-Output '[]'
   exit 0
 }
-$filter = ($names | ForEach-Object {
-  $escapedName = $_.Replace("'", "\\'")
-  "Name = '$escapedName'"
-}) -join ' OR '
-$items = @(Get-CimInstance -ClassName Win32_Process -Filter $filter -Property ProcessId, ExecutablePath -OperationTimeoutSec ${ownedProcessObserverOperationTimeoutSec} -ErrorAction Stop | ForEach-Object {
-  if (-not $_.ExecutablePath) {
-    throw 'Win32_Process returned a matching process without an executable path.'
+$items = New-Object 'System.Collections.Generic.List[object]'
+foreach ($name in $names) {
+  $processName = [IO.Path]::GetFileNameWithoutExtension([string]$name)
+  foreach ($process in [Diagnostics.Process]::GetProcessesByName($processName)) {
+    try {
+      if ($process.HasExited) { continue }
+      $path = $process.MainModule.FileName
+      if ([string]::IsNullOrWhiteSpace($path)) {
+        throw 'Owned process did not expose an executable path.'
+      }
+      $fullPath = [IO.Path]::GetFullPath($path)
+      if ($fullPath.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) {
+        [void]$items.Add([pscustomobject]@{ pid = [int]$process.Id })
+      }
+    } catch [ComponentModel.Win32Exception] {
+      if (-not $process.HasExited) { throw }
+    } catch [InvalidOperationException] {
+      if (-not $process.HasExited) { throw }
+    } finally {
+      $process.Dispose()
+    }
   }
-  $path = [IO.Path]::GetFullPath($_.ExecutablePath)
-  if ($path.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) {
-    [pscustomobject]@{ pid = [int]$_.ProcessId }
-  }
-})
+}
 if ($items.Count -eq 0) {
   Write-Output '[]'
 } else {
-  ConvertTo-Json -Compress -InputObject @($items)
+  ConvertTo-Json -Compress -InputObject @($items.ToArray())
 }
 `;
     const environment = {
@@ -210,6 +247,7 @@ if ($items.Count -eq 0) {
       ...(allowMissingRoot
         ? { CAPTURE_SMOKE_ALLOW_MISSING_ROOT: '1' }
         : {}),
+      CAPTURE_SMOKE_PROCESS_NAMES: JSON.stringify(names),
     };
     return defer(() => {
       let lastError;
@@ -283,7 +321,7 @@ if ($items.Count -eq 0) {
         () =>
           lastError ??
           new Error(
-            'Owned process observer failed (operation=query; observer=win32-process; attempt=none; timeout=false; code=UNKNOWN; status=none; signal=none).',
+            'Owned process observer failed (operation=query; observer=dotnet-process; attempt=none; timeout=false; code=UNKNOWN; status=none; signal=none).',
           ),
       );
     });
