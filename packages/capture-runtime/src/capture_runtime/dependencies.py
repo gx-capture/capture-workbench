@@ -93,6 +93,9 @@ def build_runtime_dependencies(
         settings.app_data_dir / "engines",
         load_engine_catalog(),
         worker_client=worker_client,
+        active_engine_resolution_timeout_seconds=(
+            settings.extraction.engine_resolution_timeout_seconds
+        ),
     )
     standalone_extractor = StandaloneRuntimeCaptureExtractor(
         runtime_clock,

@@ -47,6 +47,7 @@ FILES_MANIFEST_NAME = "files-manifest.json"
 MAX_FILES_MANIFEST_BYTES = 1024 * 1024
 DOWNLOAD_CHUNK_BYTES = 1024 * 1024
 MAX_DIRECT_MODEL_REDIRECTS = 5
+DEFAULT_ACTIVE_ENGINE_RESOLUTION_TIMEOUT_SECONDS = 60.0
 WINDOWS_FORBIDDEN_PATH_CHARACTERS = frozenset('<>:"|?*')
 WINDOWS_RESERVED_DEVICE_BASENAMES = frozenset(
     {"CON", "PRN", "AUX", "NUL"}
@@ -96,6 +97,10 @@ class EngineInstallationError(RuntimeError):
 
 class EngineInstallBusyError(EngineInstallationError):
     """Raised when another process owns the same requirement install lock."""
+
+
+class EngineResolutionTimeoutError(TimeoutError):
+    """Raised when active-engine verification does not finish within its deadline."""
 
 
 class ArtifactDownloader(Protocol):
@@ -743,7 +748,12 @@ class EngineInstallationManager:
         worker_client: WorkerClient,
         downloader: ArtifactDownloader | None = None,
         model_downloader: ModelFileDownloader | None = None,
+        active_engine_resolution_timeout_seconds: float = (
+            DEFAULT_ACTIVE_ENGINE_RESOLUTION_TIMEOUT_SECONDS
+        ),
     ) -> None:
+        if not 0 < active_engine_resolution_timeout_seconds <= 300:
+            raise ValueError("active engine resolution timeout must be between 0 and 300 seconds")
         self.root = root
         self.catalog = catalog
         self.worker_client = worker_client
@@ -753,6 +763,7 @@ class EngineInstallationManager:
         self._locks: dict[str, asyncio.Lock] = {}
         self._verified_active_engines: dict[str, _VerifiedActiveEngine] = {}
         self._verified_active_engines_lock = Lock()
+        self._active_engine_resolution_timeout_seconds = active_engine_resolution_timeout_seconds
 
     def requirement(self, requirement_id: str) -> EngineRequirementDescriptor:
         return self.catalog.requirement(requirement_id)
@@ -825,7 +836,13 @@ class EngineInstallationManager:
     async def resolve_active_engine(self, requirement_id: str) -> InstalledEngine | None:
         """Resolve and cold-verify an engine without blocking the runtime event loop."""
 
-        return await asyncio.to_thread(self.active_engine, requirement_id)
+        try:
+            async with asyncio.timeout(self._active_engine_resolution_timeout_seconds):
+                return await asyncio.to_thread(self.active_engine, requirement_id)
+        except TimeoutError as error:
+            raise EngineResolutionTimeoutError(
+                f"active engine resolution timed out for requirement {requirement_id}"
+            ) from error
 
     async def probe(
         self,
@@ -1158,6 +1175,7 @@ __all__ = [
     "EngineInstallBusyError",
     "EngineInstallationError",
     "EngineInstallationManager",
+    "EngineResolutionTimeoutError",
     "HttpArtifactDownloader",
     "safe_extract_artifact",
     "sha256_file",

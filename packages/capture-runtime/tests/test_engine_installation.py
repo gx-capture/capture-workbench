@@ -506,6 +506,35 @@ def test_cold_active_engine_verification_does_not_block_the_event_loop(
     asyncio.run(run())
 
 
+def test_active_engine_resolution_times_out_when_verification_never_returns(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    catalog, _sources = _catalog(tmp_path)
+    manager = EngineInstallationManager(
+        tmp_path / "engines",
+        catalog,
+        worker_client=FakeWorkerClient(),  # type: ignore[arg-type]
+        active_engine_resolution_timeout_seconds=0.01,
+    )
+    release = threading.Event()
+
+    def blocked_active_engine(_requirement_id: str) -> InstalledEngine | None:
+        assert release.wait(timeout=5)
+        return None
+
+    monkeypatch.setattr(manager, "active_engine", blocked_active_engine)
+
+    async def run() -> None:
+        try:
+            with pytest.raises(TimeoutError):
+                await manager.resolve_active_engine("windowsml-ocr")
+        finally:
+            release.set()
+
+    asyncio.run(run())
+
+
 def test_failed_upgrade_keeps_previous_active_state(tmp_path: Path) -> None:
     catalog_v1, sources_v1 = _catalog(tmp_path, version="engine-1")
     root = tmp_path / "engines"

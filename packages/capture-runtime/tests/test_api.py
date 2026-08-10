@@ -58,6 +58,32 @@ class ValidationFailingCaptureExtractor(DeterministicCaptureExtractor):
         raise ValueError("PRIVATE_EXTRACTION_DETAIL")
 
 
+class UnexpectedlyCancelledCaptureExtractor(DeterministicCaptureExtractor):
+    async def extract(
+        self,
+        content: bytes,
+        source: CaptureSourceV1,
+        cancel_event: asyncio.Event,
+    ) -> RawCaptureV1:
+        del content, source, cancel_event
+        raise asyncio.CancelledError
+
+
+class CaptureTaskAbort(BaseException):
+    pass
+
+
+class AbortingCaptureExtractor(DeterministicCaptureExtractor):
+    async def extract(
+        self,
+        content: bytes,
+        source: CaptureSourceV1,
+        cancel_event: asyncio.Event,
+    ) -> RawCaptureV1:
+        del content, source, cancel_event
+        raise CaptureTaskAbort
+
+
 def test_health_auth_host_origin_and_version_handshake(client: TestClient) -> None:
     unauthorized = client.get("/v1/health/ready", headers={"Authorization": ""})
     assert unauthorized.status_code == 401
@@ -511,6 +537,81 @@ def test_runtime_extraction_validation_failure_has_safe_classification(
         assert failed["error"]["code"] == "extraction_failed"
         assert failed["error"]["message"] == "Source extraction failed validation."
         assert "PRIVATE_EXTRACTION_DETAIL" not in failed["error"]["message"]
+
+
+def test_runtime_unexpected_extraction_cancellation_becomes_terminal(
+    settings_factory: Callable[..., RuntimeSettings],
+) -> None:
+    settings = settings_factory()
+    clock = SystemClock()
+    app = create_app(
+        settings,
+        clock=clock,
+        extractor=UnexpectedlyCancelledCaptureExtractor(clock),
+        structurer=FakeCaptureStructuringProvider(clock),
+        installer=FakeRuntimeInstaller(),
+    )
+    with TestClient(
+        app,
+        base_url=f"http://127.0.0.1:{settings.port}",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+    ) as test_client:
+        response = test_client.post(
+            "/v1/captures",
+            headers=idempotency_headers(),
+            files={"file": ("interrupted.png", b"\x89PNG\r\n\x1a\n", "image/png")},
+            data={"sourceKind": "image", "structuringMode": "runtime"},
+        )
+        failed = poll_capture(
+            test_client,
+            response.json()["captureId"],
+            lambda value: value["status"] == "failed",
+        )
+
+        assert failed["stage"] == "failed"
+        assert failed["error"] == {
+            "code": "runtime_interrupted",
+            "message": "Capture processing was interrupted before completion.",
+            "stage": "extraction",
+            "retryable": True,
+        }
+
+
+def test_runtime_background_task_abort_becomes_terminal(
+    settings_factory: Callable[..., RuntimeSettings],
+) -> None:
+    settings = settings_factory()
+    clock = SystemClock()
+    app = create_app(
+        settings,
+        clock=clock,
+        extractor=AbortingCaptureExtractor(clock),
+        structurer=FakeCaptureStructuringProvider(clock),
+        installer=FakeRuntimeInstaller(),
+    )
+    with TestClient(
+        app,
+        base_url=f"http://127.0.0.1:{settings.port}",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+    ) as test_client:
+        response = test_client.post(
+            "/v1/captures",
+            headers=idempotency_headers(),
+            files={"file": ("interrupted.png", b"\x89PNG\r\n\x1a\n", "image/png")},
+            data={"sourceKind": "image", "structuringMode": "runtime"},
+        )
+        failed = poll_capture(
+            test_client,
+            response.json()["captureId"],
+            lambda value: value["status"] == "failed",
+        )
+
+        assert failed["error"] == {
+            "code": "runtime_interrupted",
+            "message": "Capture processing was interrupted before completion.",
+            "stage": "extraction",
+            "retryable": True,
+        }
 
 
 def test_runtime_provider_identity_digest_is_strict(

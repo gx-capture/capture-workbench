@@ -118,6 +118,7 @@ class CaptureService:
         self._clock = clock
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._cancellations: dict[str, asyncio.Event] = {}
+        self._shutting_down = False
 
     def create(
         self,
@@ -274,6 +275,7 @@ class CaptureService:
         )
 
     async def shutdown(self) -> None:
+        self._shutting_down = True
         tasks = list(self._tasks.values())
         for task in tasks:
             task.cancel()
@@ -286,6 +288,34 @@ class CaptureService:
         capture_id = task.get_name().removeprefix("capture-")
         self._tasks.pop(capture_id, None)
         self._cancellations.pop(capture_id, None)
+        if self._shutting_down:
+            if not task.cancelled():
+                task.exception()
+            return
+        failed_unexpectedly = task.cancelled()
+        if not failed_unexpectedly:
+            failed_unexpectedly = task.exception() is not None
+        if not failed_unexpectedly:
+            return
+        try:
+            current = self.get(capture_id)
+        except RecordNotFoundError:
+            return
+        if current.status in TERMINAL_CAPTURE_STATUSES:
+            return
+        logger.error("Capture task terminated before reaching a terminal state: %s", capture_id)
+        self._fail_capture(
+            capture_id,
+            code="runtime_interrupted",
+            message="Capture processing was interrupted before completion.",
+            stage=(
+                "structuring"
+                if current.stage
+                in {CaptureJobStage.STRUCTURING, CaptureJobStage.AWAITING_STRUCTURING}
+                else "extraction"
+            ),
+            retryable=True,
+        )
 
     async def _process(self, capture_id: str, cancellation: asyncio.Event) -> None:
         raw_written = False
@@ -348,6 +378,15 @@ class CaptureService:
                 if current.status not in TERMINAL_CAPTURE_STATUSES:
                     self.repository.update_job(capture_id, self._cancelled_job(current))
                     self.repository.delete_upload(capture_id)
+            elif not self._shutting_down:
+                self._fail_capture(
+                    capture_id,
+                    code="runtime_interrupted",
+                    message="Capture processing was interrupted before completion.",
+                    stage="structuring" if raw_written else "extraction",
+                    retryable=True,
+                )
+                return
             raise
         except StructuringValidationError:
             self._fail_capture(

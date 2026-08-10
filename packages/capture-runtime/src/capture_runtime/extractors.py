@@ -269,7 +269,14 @@ class StandaloneRuntimeCaptureExtractor:
         cancel_event: asyncio.Event,
     ) -> WorkerRunResult:
         assert self.engine_manager is not None
-        engine = await self.engine_manager.resolve_active_engine(requirement_id)
+        try:
+            async with asyncio.timeout(self.config.engine_resolution_timeout_seconds):
+                engine = await self.engine_manager.resolve_active_engine(requirement_id)
+        except TimeoutError as error:
+            raise ExtractionRuntimeUnavailableError(
+                f"Runtime requirement {requirement_id} could not be resolved "
+                "within the bounded timeout."
+            ) from error
         if engine is None:
             raise ExtractionRuntimeUnavailableError(
                 f"Runtime requirement {requirement_id} is not installed and ready."

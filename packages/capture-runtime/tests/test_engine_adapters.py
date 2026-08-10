@@ -24,7 +24,10 @@ from capture_runtime.engine_adapters import (
     WhisperTranscriptionResult,
     WindowsMLOcrAdapter,
 )
-from capture_runtime.extractors import StandaloneRuntimeCaptureExtractor
+from capture_runtime.extractors import (
+    ExtractionRuntimeUnavailableError,
+    StandaloneRuntimeCaptureExtractor,
+)
 from capture_runtime.ollama import (
     IsolatedOllamaLifecycle,
 )
@@ -768,6 +771,36 @@ def test_worker_backed_audio_forwards_strict_cuda_fallback_policy(tmp_path: Path
         "preferGpu": True,
         "allowCpuFallback": False,
     }
+
+
+def test_worker_backed_audio_engine_resolution_timeout_is_bounded(tmp_path: Path) -> None:
+    class NeverResolvingEngineManager:
+        async def resolve_active_engine(self, _requirement_id: str) -> InstalledEngine:
+            await asyncio.Event().wait()
+            raise AssertionError("unreachable")
+
+    manager = NeverResolvingEngineManager()
+    manager.worker_client = object()  # type: ignore[attr-defined]
+    extractor = StandaloneRuntimeCaptureExtractor(
+        SystemClock(),
+        replace(_config(tmp_path), engine_resolution_timeout_seconds=0.01),
+        engine_manager=manager,  # type: ignore[arg-type]
+    )
+    audio_content = b"RIFF\x00\x00\x00\x00WAVEpayload"
+
+    with pytest.raises(
+        ExtractionRuntimeUnavailableError,
+        match="could not be resolved within the bounded timeout",
+    ):
+        asyncio.run(
+            extractor.extract(
+                audio_content,
+                _source(audio_content, "source.wav", "audio/wav"),
+                asyncio.Event(),
+            )
+        )
+
+    assert not extractor.config.temp_dir.exists()
 
 
 def test_pdf_embedded_and_scanned_pages_preserve_page_provenance(
