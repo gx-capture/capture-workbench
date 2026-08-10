@@ -35,7 +35,14 @@ export const REAL_MODEL_RUNTIME_READY_TIMEOUT_MS = 3 * 60_000;
 export const REAL_MODEL_INSTALL_TIMEOUT_MS = 90 * 60_000;
 export const REAL_MODEL_CAPTURE_TIMEOUT_MS = 5 * 60_000;
 export const REAL_MODEL_CAPTURE_START_TIMEOUT_MS = 30_000;
-export const REAL_MODEL_AUDIO_CAPTURE_TIMEOUT_MS = 60 * 60_000;
+export const REAL_MODEL_AUDIO_CAPTURE_TIMEOUT_MS = 10 * 60_000;
+
+export function assertAudioDeviceMatchesSourceLock(
+  actualDevice: string | null,
+  expectedDevice: string,
+): void {
+  assert.equal(actualDevice, expectedDevice);
+}
 export const REAL_MODEL_RESULT_TIMEOUT_MS = 60 * 60_000;
 export const NATIVE_SOURCE_DIALOG_CLASSES = ['#32770'] as const;
 export const NATIVE_SOURCE_BROKER_DIALOG_CLASSES = ['CabinetWClass'] as const;
@@ -2056,7 +2063,7 @@ async function assertVisibleCapture(
   assert.equal(await extractionProvenance.getAttribute('data-engine'), expectedEngine);
   assert.equal(await extractionProvenance.getAttribute('data-model'), expectedModel);
   if (input.kind === 'audio' && expected.whisperPreferGpu) {
-    assert.ok(actualDevice === 'cuda' || actualDevice === 'cpu');
+    assertAudioDeviceMatchesSourceLock(actualDevice, expectedDevice);
   } else {
     assert.equal(actualDevice, expectedDevice);
   }

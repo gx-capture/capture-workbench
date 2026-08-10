@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import {
+  assertAudioDeviceMatchesSourceLock,
   assertCudaPathRetainedForAppLaunch,
   assertNoAmbientModelOverrides,
   assertRealMediaModelEvidence,
@@ -16,6 +17,7 @@ import {
   nativeOpenDialogUiAutomation,
   REAL_MODEL_CATALOG_VERSION,
   REAL_MODEL_DEPENDENCY_ORDER_SCOPE,
+  REAL_MODEL_AUDIO_CAPTURE_TIMEOUT_MS,
   REAL_MODEL_RELEASE_VERSION,
   REAL_MODEL_SOURCE_IMPORT_MODE,
   modelSmokeInjectedDocumentId,
@@ -34,6 +36,15 @@ import {
 } from './real-media-model-smoke.ts';
 
 const digest = 'a'.repeat(64);
+
+test('audio smoke uses the ten-minute watchdog', () => {
+  assert.equal(REAL_MODEL_AUDIO_CAPTURE_TIMEOUT_MS, 10 * 60_000);
+});
+
+test('Tauri audio smoke rejects CPU fallback when source lock requires CUDA', () => {
+  assert.doesNotThrow(() => assertAudioDeviceMatchesSourceLock('cuda', 'cuda'));
+  assert.throws(() => assertAudioDeviceMatchesSourceLock('cpu', 'cuda'));
+});
 
 test('audio-only smoke still declares every owned fixture required by the Tauri registry', () => {
   assert.deepEqual(
