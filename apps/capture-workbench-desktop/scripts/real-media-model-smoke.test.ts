@@ -7,10 +7,12 @@ import test from 'node:test';
 
 import {
   assertAudioDeviceMatchesSourceLock,
+  audioCheckpointSatisfied,
   assertCudaPathRetainedForAppLaunch,
   assertNoAmbientModelOverrides,
   assertRealMediaModelEvidence,
   canonicalJson,
+  desktopRuntimeReady,
   NATIVE_SOURCE_BROKER_DIALOG_CLASSES,
   NATIVE_SOURCE_DIALOG_CLASSES,
   nativeDialogUiAutomationScript,
@@ -18,6 +20,7 @@ import {
   REAL_MODEL_CATALOG_VERSION,
   REAL_MODEL_DEPENDENCY_ORDER_SCOPE,
   REAL_MODEL_AUDIO_CAPTURE_TIMEOUT_MS,
+  PROGRESSIVE_AUDIO_CHECKPOINT_MS,
   REAL_MODEL_RELEASE_VERSION,
   REAL_MODEL_SOURCE_IMPORT_MODE,
   modelSmokeInjectedDocumentId,
@@ -32,14 +35,43 @@ import {
   safeTerminalModelInstallationFailure,
   safeUiAutomationDiagnostics,
   sha256,
+  shouldUseBackendReuseReadiness,
   whisperCpuFallbackAllowedForSourceLock,
   windowsPowerShellExecutable,
 } from './real-media-model-smoke.ts';
+import {
+  assertProgressiveAudioOracleEvidence,
+  assertProgressiveAudioSampleMatchesOracle,
+  assertProgressiveAudioSampleEvidence,
+  deriveProgressiveAudioOracleEvidence,
+  deriveProgressiveAudioSampleEvidence,
+  PROGRESSIVE_AUDIO_SAMPLE_INTERVAL_MS,
+} from './progressive-audio-evidence.ts';
 
 const digest = 'a'.repeat(64);
 
 test('audio smoke keeps its independent ten-minute upper-bound watchdog', () => {
   assert.equal(REAL_MODEL_AUDIO_CAPTURE_TIMEOUT_MS, 10 * 60_000);
+});
+
+test('audio checkpoint uses final text for short samples and the five-minute gate for long samples', () => {
+  assert.equal(audioCheckpointSatisfied(120, 120_000, 1, 'sample'), true);
+  assert.equal(audioCheckpointSatisfied(120, 0, 1, 'sample'), false);
+  assert.equal(audioCheckpointSatisfied(undefined, PROGRESSIVE_AUDIO_CHECKPOINT_MS - 1, 1, 'sample'), false);
+  assert.equal(audioCheckpointSatisfied(undefined, PROGRESSIVE_AUDIO_CHECKPOINT_MS, 1, 'sample'), true);
+});
+
+test('audio v2 smoke keeps bounded runtime failure codes visible', () => {
+  assert.equal(
+    safeTerminalDocumentFailure(
+      'failed',
+      'failed',
+      'progressive_stall',
+      'Progressive audio extraction stopped producing observable progress.',
+      'audio',
+    ),
+    'Desktop capture terminated. status=failed; stage=failed; errorCode=progressive_stall; mediaKind=audio.',
+  );
 });
 
 test('Tauri audio smoke rejects CPU fallback when source lock requires CUDA', () => {
@@ -58,6 +90,19 @@ test('audio-only smoke still declares every owned fixture required by the Tauri 
       CAPTURE_SMOKE_FIXTURE_AUDIO: 'owned-audio',
     },
   );
+});
+
+test('reused audio-only production smoke uses backend readiness instead of setup UI', () => {
+  assert.equal(shouldUseBackendReuseReadiness(true, true), true);
+  assert.equal(shouldUseBackendReuseReadiness(true, false), false);
+  assert.equal(shouldUseBackendReuseReadiness(false, true), false);
+});
+
+test('backend reuse readiness waits for the Tauri sidecar before querying requirements', () => {
+  assert.equal(desktopRuntimeReady({ status: 'ready' }), true);
+  assert.equal(desktopRuntimeReady({ status: 'starting' }), false);
+  assert.equal(desktopRuntimeReady({ status: 'failed' }), false);
+  assert.equal(desktopRuntimeReady(null), false);
 });
 
 function validEvidence() {
@@ -185,6 +230,103 @@ test('canonical JSON hashing is deterministic for release contract binding', () 
   const right = canonicalJson({ a: { x: false, y: true }, z: 1 });
   assert.deepEqual(left, right);
   assert.match(sha256(left), /^[a-f0-9]{64}$/u);
+});
+
+test('progressive audio sample evidence is digest-only and bound to the five-minute gate', () => {
+  const evidence = deriveProgressiveAudioSampleEvidence({
+    sourceSha256: digest,
+    sourceBytes: 2_000_000,
+    coveredUntilMs: PROGRESSIVE_AUDIO_SAMPLE_INTERVAL_MS,
+    partialRevision: 2,
+    segments: [
+      { order: 0, startMs: 0, endMs: 1_000, text: '  sample  one ' },
+      { order: 1, startMs: 1_000, endMs: 2_000, text: 'sample\n two' },
+    ],
+    extraction: {
+      engine: 'whisper-primary',
+      model: 'large-v3-turbo',
+      device: 'cuda',
+      digest: `sha256:${digest}`,
+    },
+  });
+  assertProgressiveAudioSampleEvidence(evidence);
+  assert.equal(evidence.sampleIntervalMs, 5 * 60_000);
+  assert.equal(evidence.firstCheckpoint.segmentCount, 2);
+  assert.match(evidence.expectedOutput.normalizedSha256, /^[a-f0-9]{64}$/u);
+  assert.doesNotMatch(JSON.stringify(evidence), /sample\s+one|sample\s+two/u);
+  assert.doesNotMatch(JSON.stringify(evidence), /(?:sourceText|transcript|token|secret)/iu);
+});
+
+test('progressive audio sample evidence rejects incomplete or unsafe samples', () => {
+  assert.throws(() => deriveProgressiveAudioSampleEvidence({
+    sourceSha256: digest,
+    sourceBytes: 2_000_000,
+    coveredUntilMs: PROGRESSIVE_AUDIO_SAMPLE_INTERVAL_MS - 1,
+    partialRevision: 1,
+    segments: [{ order: 0, startMs: 0, endMs: 1_000, text: 'sample' }],
+    extraction: {
+      engine: 'whisper-primary',
+      model: 'large-v3-turbo',
+      device: 'cuda',
+      digest: `sha256:${digest}`,
+    },
+  }));
+  const safe = deriveProgressiveAudioSampleEvidence({
+    sourceSha256: digest,
+    sourceBytes: 2_000_000,
+    coveredUntilMs: PROGRESSIVE_AUDIO_SAMPLE_INTERVAL_MS,
+    partialRevision: 1,
+    segments: [{ order: 0, startMs: 0, endMs: 1_000, text: 'C:\\private\\audio' }],
+    extraction: {
+      engine: 'whisper-primary',
+      model: 'large-v3-turbo',
+      device: 'cuda',
+      digest: `sha256:${digest}`,
+    },
+  });
+  assertProgressiveAudioSampleEvidence(safe);
+  assert.doesNotMatch(JSON.stringify(safe), /C:\\\\private\\\\audio/u);
+});
+
+test('progressive audio oracle compares an independent worker result without persisting text', () => {
+  const oracle = deriveProgressiveAudioOracleEvidence({
+    sourceSha256: digest,
+    sourceBytes: 2_000_000,
+    coveredUntilMs: PROGRESSIVE_AUDIO_SAMPLE_INTERVAL_MS,
+    partialRevision: 3,
+    segments: [
+      { order: 0, startMs: 0, endMs: 1_000, text: 'oracle one' },
+      { order: 1, startMs: 1_000, endMs: 2_000, text: 'oracle two' },
+    ],
+    extraction: {
+      engine: 'whisper-primary',
+      model: 'large-v3-turbo',
+      device: 'cuda',
+      digest: `sha256:${digest}`,
+    },
+  });
+  assertProgressiveAudioOracleEvidence(oracle);
+  assertProgressiveAudioSampleMatchesOracle(oracle, {
+    sourceSha256: digest,
+    sourceBytes: 2_000_000,
+    coveredUntilMs: PROGRESSIVE_AUDIO_SAMPLE_INTERVAL_MS,
+    partialRevision: 4,
+    segments: [
+      { order: 0, startMs: 0, endMs: 1_000, text: 'oracle one' },
+      { order: 1, startMs: 1_000, endMs: 2_000, text: 'oracle two' },
+    ],
+    extraction: oracle.extraction,
+  });
+  assert.equal(oracle.oracle, 'non-tauri-production-worker');
+  assert.doesNotMatch(JSON.stringify(oracle), /oracle one|oracle two|transcript/u);
+  assert.throws(() => assertProgressiveAudioSampleMatchesOracle(oracle, {
+    sourceSha256: digest,
+    sourceBytes: 2_000_000,
+    coveredUntilMs: PROGRESSIVE_AUDIO_SAMPLE_INTERVAL_MS,
+    partialRevision: 4,
+    segments: [{ order: 0, startMs: 0, endMs: 1_000, text: 'different' }],
+    extraction: oracle.extraction,
+  }));
 });
 
 test('model smoke fixture injection returns only a bounded document ID', () => {
@@ -820,6 +962,8 @@ test('desktop model smoke uses generated release catalog and WebView selectors',
   assert.doesNotMatch(source, /Get-CimInstance|Win32_Process/u);
   assert.match(source, /audio\/mpeg/u);
   assert.match(source, /REAL_MODEL_AUDIO_CAPTURE_TIMEOUT_MS/u);
+  assert.match(source, /data-covered-until-ms/u);
+  assert.match(source, /progressive checkpoint/u);
   assert.match(source, /extractionDurationMs/u);
   assert.match(source, /normalizedTranscriptDigest/u);
   assert.ok(

@@ -198,7 +198,7 @@
         </section>
       }
       @if (partialFor(item.documentId); as partial) {
-        <section class="review-block streaming-partial" data-testid="streaming-partial" aria-live="polite">
+        <section class="review-block streaming-partial" data-testid="streaming-partial" [attr.data-covered-until-ms]="partial.coveredUntilMs" [attr.data-partial-revision]="partial.revision" aria-live="polite">
           <div class="streaming-partial-heading">
             <h3>Live transcript</h3>
             <small>Covered {{ partial.coveredUntilMs }} ms</small>

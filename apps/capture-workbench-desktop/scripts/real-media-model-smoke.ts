@@ -22,6 +22,12 @@ import {
   createTrackedProcessTreeTerminator,
 } from './installed-process-cleanup.ts';
 import { appRoot } from './stage-runtime.ts';
+import {
+  assertProgressiveAudioOracleEvidence,
+  assertProgressiveAudioSampleMatchesOracle,
+  type ProgressiveAudioObservedOutput,
+  type ProgressiveAudioOracleEvidence,
+} from './progressive-audio-evidence.ts';
 
 export const REAL_MODEL_RELEASE_VERSION = '0.3.11';
 export const REAL_MODEL_CATALOG_VERSION = '2';
@@ -36,7 +42,26 @@ export const REAL_MODEL_INSTALL_TIMEOUT_MS = 90 * 60_000;
 export const REAL_MODEL_CAPTURE_TIMEOUT_MS = 5 * 60_000;
 export const REAL_MODEL_CAPTURE_START_TIMEOUT_MS = 30_000;
 export const REAL_MODEL_AUDIO_CAPTURE_TIMEOUT_MS = 10 * 60_000;
-export const REAL_MODEL_AUDIO_SAMPLE_SECONDS = 10 * 60;
+// Both the non-Tauri oracle and the Tauri completion lane use the same exact
+// 310-second sample. This guarantees that the real five-minute checkpoint is
+// exercised before the terminal completion assertions.
+export const REAL_MODEL_AUDIO_SAMPLE_SECONDS = 5 * 60 + 10;
+export const PROGRESSIVE_AUDIO_CHECKPOINT_MS = 5 * 60_000;
+
+export function audioCheckpointSatisfied(
+  sampleSeconds: number | undefined,
+  coveredUntilMs: number,
+  revision: number,
+  text: string,
+): boolean {
+  if (!Number.isSafeInteger(coveredUntilMs) || coveredUntilMs <= 0
+    || !Number.isSafeInteger(revision) || revision <= 0 || text.trim().length === 0) {
+    return false;
+  }
+  return sampleSeconds !== undefined && sampleSeconds < PROGRESSIVE_AUDIO_CHECKPOINT_MS / 1000
+    ? coveredUntilMs > 0
+    : coveredUntilMs >= PROGRESSIVE_AUDIO_CHECKPOINT_MS;
+}
 
 export function assertAudioDeviceMatchesSourceLock(
   actualDevice: string | null,
@@ -48,6 +73,14 @@ export function assertAudioDeviceMatchesSourceLock(
 export function whisperCpuFallbackAllowedForSourceLock(expectedDevice: string): boolean {
   return expectedDevice !== 'cuda';
 }
+
+export function shouldUseBackendReuseReadiness(
+  reuseRunData: boolean,
+  audioOnly: boolean,
+): boolean {
+  return reuseRunData && audioOnly;
+}
+
 export const REAL_MODEL_RESULT_TIMEOUT_MS = 60 * 60_000;
 export const NATIVE_SOURCE_DIALOG_CLASSES = ['#32770'] as const;
 export const NATIVE_SOURCE_BROKER_DIALOG_CLASSES = ['CabinetWClass'] as const;
@@ -102,13 +135,32 @@ const SAFE_TERMINAL_DOCUMENT_ERROR_CODES = new Set([
   'capture_cancelled',
   'extraction_failed',
   'requirement_unavailable',
+  'progressive_failed',
+  'progressive_no_text_at_sample',
+  'progressive_stall',
+  'progressive_worker_exit',
+  'progressive_decode_failed',
+  'progressive_engine_resolution_failed',
+  'progressive_decoder_init_failed',
+  'progressive_decoder_process_failed',
+  'progressive_decoder_finish_failed',
+  'progressive_worker_start_failed',
+  'progressive_worker_input_failed',
+  'progressive_worker_finish_failed',
+  'progressive_worker_event_invalid',
+  'progressive_event_persist_failed',
+  'progressive_partial_invalid',
+  'progressive_output_invalid',
+  'progressive_session_failed',
+  'session_failed',
+  'session_cancelled',
   'structuring_failed',
   'structuring_invalid_output',
 ]);
 const SAFE_WORKER_STAGE_TOKEN = '(?:worker-entry(?:-[a-z0-9-]+)?|python-import-[a-z0-9-]+|ocr-[a-z0-9-]+|whisper-[a-z0-9-]+|worker-process-[a-z0-9-]+|worker-stage-sequence-truncated)';
 const SAFE_WORKER_STAGE_SEQUENCE = `${SAFE_WORKER_STAGE_TOKEN}(?:>${SAFE_WORKER_STAGE_TOKEN})*`;
 const SAFE_TERMINAL_DOCUMENT_FAILURE = new RegExp(
-  `^Desktop capture terminated\\. status=(?:failed|canceled); stage=(?:queued|extracting|awaiting_structuring|structuring|persisting|completed|failed|cancelled|unknown); errorCode=(?:capture_cancelled|extraction_failed|requirement_unavailable|structuring_failed|structuring_invalid_output|unknown)(?:; mediaKind=(?:pdf|image|audio))?(?:; (?:workerStage=${SAFE_WORKER_STAGE_SEQUENCE}|failureReason=(?:no-non-empty-output|validation-failed|runtime-boundary|worker-boundary)))?\\.$`,
+  `^Desktop capture terminated\\. status=(?:failed|canceled); stage=(?:queued|extracting|awaiting_structuring|structuring|persisting|completed|failed|cancelled|unknown); errorCode=(?:capture_cancelled|extraction_failed|requirement_unavailable|progressive_failed|progressive_no_text_at_sample|progressive_stall|progressive_worker_exit|progressive_decode_failed|progressive_engine_resolution_failed|progressive_decoder_init_failed|progressive_decoder_process_failed|progressive_decoder_finish_failed|progressive_worker_start_failed|progressive_worker_input_failed|progressive_worker_finish_failed|progressive_worker_event_invalid|progressive_event_persist_failed|progressive_partial_invalid|progressive_output_invalid|progressive_session_failed|session_failed|session_cancelled|structuring_failed|structuring_invalid_output|unknown)(?:; mediaKind=(?:pdf|image|audio))?(?:; (?:workerStage=${SAFE_WORKER_STAGE_SEQUENCE}|failureReason=(?:no-non-empty-output|validation-failed|runtime-boundary|worker-boundary)))?\\.$`,
   'u',
 );
 const SAFE_WORKER_FAILURE_MESSAGE = new RegExp(
@@ -225,6 +277,7 @@ interface MediaInput {
   readonly expectedOcrText?: string;
   readonly expectedOcrTextSha256?: string;
   readonly exactWhisperOutput?: boolean;
+  readonly sampleSeconds?: number;
 }
 
 interface ExpectedProvenance {
@@ -491,6 +544,7 @@ function validateSourceLockAndCatalog(
   return {
     sourceLockSha256: sourceLockHash,
     catalogSha256: sha256(catalogBytes),
+    selectedModelOptionId: 'qwen3.5-0.8b-v1',
     ocrText: ocrFixture.expectedText,
     ocrImageSha256: requiredString(ocrFixture.sha256, 'OCR image fixture SHA-256'),
     ocrImageBytes: Number(ocrFixture.bytes),
@@ -620,17 +674,22 @@ async function prepareAudioInput(expected: ExpectedProvenance): Promise<MediaInp
 async function prepareAudioSampleInput(): Promise<MediaInput> {
   await mkdir(runRoot, { recursive: true });
   const audioInput = process.env.CAPTURE_REAL_MEDIA_MODEL_AUDIO?.trim();
-  if (!audioInput) throw new Error('CAPTURE_REAL_MEDIA_MODEL_AUDIO is required for the private runner audio fixture.');
-  const sampleSource = join(runRoot, 'model-private-audio-sample-source.mp3');
-  await createAudioSample(audioInput, sampleSource);
+  const preparedSample = process.env.CAPTURE_REAL_MEDIA_MODEL_AUDIO_SAMPLE?.trim();
+  if (!audioInput && !preparedSample) throw new Error('CAPTURE_REAL_MEDIA_MODEL_AUDIO or CAPTURE_REAL_MEDIA_MODEL_AUDIO_SAMPLE is required for the private runner audio fixture.');
+  const sampleSource = preparedSample || join(runRoot, 'model-private-audio-sample-source.wav');
+  if (!preparedSample && audioInput) await createAudioSample(audioInput, sampleSource);
+  const staged = await regularInput(
+    sampleSource,
+    preparedSample ? 'CAPTURE_REAL_MEDIA_MODEL_AUDIO_SAMPLE' : 'private audio sample',
+    'audio',
+    join(runRoot, 'model-private-audio.wav'),
+  );
   return {
-    ...(await regularInput(
-      sampleSource,
-      'private audio sample',
-      'audio',
-      join(runRoot, safeInputName('audio')),
-    )),
+    ...staged,
+    fileName: 'model-private-audio.wav',
+    mediaType: 'audio/wav',
     exactWhisperOutput: false,
+    sampleSeconds: REAL_MODEL_AUDIO_SAMPLE_SECONDS,
   };
 }
 
@@ -644,14 +703,21 @@ source = Path(os.environ["CAPTURE_AUDIO_SAMPLE_INPUT"])
 destination = Path(os.environ["CAPTURE_AUDIO_SAMPLE_OUTPUT"])
 with av.open(str(source)) as input_container:
     input_stream = next(iter(input_container.streams.audio))
-    with av.open(str(destination), "w", format="mp3") as output_container:
-        output_stream = output_container.add_stream("libmp3lame", rate=input_stream.rate)
-        output_stream.layout = input_stream.layout
+    with av.open(str(destination), "w", format="wav") as output_container:
+        output_stream = output_container.add_stream("pcm_s16le", rate=16000)
+        output_stream.layout = "mono"
+        resampler = av.audio.resampler.AudioResampler(format="s16", layout="mono", rate=16000)
         for frame in input_container.decode(input_stream.index):
             if frame.time is not None and frame.time >= ${String(REAL_MODEL_AUDIO_SAMPLE_SECONDS)}:
                 break
-            for packet in output_stream.encode(frame):
-                output_container.mux(packet)
+            decoded = resampler.resample(frame)
+            if decoded is None:
+                continue
+            if not isinstance(decoded, (list, tuple)):
+                decoded = [decoded]
+            for item in decoded:
+                for packet in output_stream.encode(item):
+                    output_container.mux(packet)
         for packet in output_stream.encode():
             output_container.mux(packet)
 `;
@@ -1900,6 +1966,13 @@ export function runtimeRequirementsReady(value: unknown, requiredIds: readonly S
   }));
 }
 
+export function desktopRuntimeReady(value: unknown): boolean {
+  return value !== null
+    && typeof value === 'object'
+    && !Array.isArray(value)
+    && (value as JsonObject).status === 'ready';
+}
+
 export function runtimeModelOptionActive(value: unknown, optionId: string): boolean {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
   const items = (value as JsonObject).items;
@@ -1941,6 +2014,27 @@ async function waitForRuntimeRequirementsReady(
     ),
     REAL_MODEL_RUNTIME_READY_TIMEOUT_MS,
     `Runtime requirements did not become ready: ${requiredIds.join(', ')}.`,
+  );
+}
+
+async function waitForDesktopRuntimeReady(page: Page): Promise<void> {
+  await waitUntil(
+    async () => desktopRuntimeReady(
+      await invokeTauriCommand(page, 'desktop_runtime_status', {}).catch(() => undefined),
+    ),
+    REAL_MODEL_RUNTIME_READY_TIMEOUT_MS,
+    'Desktop runtime did not become ready.',
+  );
+}
+
+async function waitForRuntimeModelOptionActive(page: Page, optionId: string): Promise<void> {
+  await waitUntil(
+    async () => runtimeModelOptionActive(
+      await invokeTauriCommand(page, 'runtime_model_options', {}),
+      optionId,
+    ),
+    REAL_MODEL_RUNTIME_READY_TIMEOUT_MS,
+    `Runtime model option did not become active: ${optionId}.`,
   );
 }
 
@@ -2157,6 +2251,34 @@ async function assertVisibleCapture(
   const provenanceSection = detail.getByTestId('document-provenance');
   const rawTimeout = input.kind === 'audio' ? REAL_MODEL_AUDIO_CAPTURE_TIMEOUT_MS : REAL_MODEL_CAPTURE_TIMEOUT_MS;
   if (input.kind === 'audio') {
+    const oracle = await loadProgressiveAudioOracle();
+    if (!oracle) throw new Error('The progressive audio oracle is required for the production Tauri audio gate.');
+    let observed: ProgressiveAudioObservedOutput | undefined;
+    let activeCaptureId: string | undefined;
+    await waitUntil(
+      async () => {
+        await throwIfTerminalDocumentFailure(document, detail, input.kind);
+        activeCaptureId ??= await libraryCaptureId(page, document.id);
+        const partial = detail.getByTestId('streaming-partial');
+        if (await partial.count() !== 1 || !await partial.isVisible().catch(() => false)) return false;
+        const coveredUntilMs = Number(await partial.getAttribute('data-covered-until-ms'));
+        const revision = Number(await partial.getAttribute('data-partial-revision'));
+        const text = (await partial.locator('pre').textContent())?.trim() || '';
+        const satisfied = audioCheckpointSatisfied(input.sampleSeconds, coveredUntilMs, revision, text);
+        if (satisfied && oracle && activeCaptureId) {
+          const value = await invokeTauriCommand(page, 'runtime_get_streaming_partial', {
+            input: { id: activeCaptureId },
+          }).catch(() => undefined);
+          const candidate = parseProgressiveAudioObservedOutput(value);
+          if (candidate) observed = candidate;
+        }
+        return satisfied;
+      },
+      REAL_MODEL_AUDIO_CAPTURE_TIMEOUT_MS,
+      'Desktop v2 audio partial did not expose non-empty text by its progressive checkpoint.',
+    );
+    if (!observed) throw new Error('The progressive audio oracle could not observe the Tauri partial.');
+    assertProgressiveAudioSampleMatchesOracle(oracle, observed);
     await waitUntil(
       async () => {
         await throwIfTerminalDocumentFailure(document, detail, input.kind);
@@ -2275,7 +2397,7 @@ async function assertAudioRawSegments(
   const segments = parsed?.segments;
   if (Array.isArray(segments)) {
     let previousOrder = -1;
-    let previousEnd = -1;
+    let previousStart = -1;
     const transcript: string[] = [];
     for (const segment of segments) {
       const object = asObject(segment, 'Audio segment');
@@ -2285,12 +2407,12 @@ async function assertAudioRawSegments(
       const endMs = locator.endMs;
       if (typeof object.text !== 'string' || object.text.trim() === ''
         || !Number.isSafeInteger(order) || !Number.isSafeInteger(startMs) || !Number.isSafeInteger(endMs)
-        || order !== previousOrder + 1 || startMs < previousEnd || endMs <= startMs) {
+        || order !== previousOrder + 1 || startMs < previousStart || endMs <= startMs) {
         throw new Error('Audio UI raw segments were not contiguous and monotonic.');
       }
       transcript.push(object.text);
       previousOrder = order;
-      previousEnd = endMs;
+      previousStart = startMs;
     }
     if (exactOutput && (segments.length < expected.whisperSegmentMinimum || segments.length > expected.whisperSegmentMaximum)) {
       throw new Error('Audio UI raw segment count drifted from the lock-selected fixture bounds.');
@@ -2332,6 +2454,89 @@ function normalizedTranscriptDigest(transcript: readonly string[]): string {
     .join(' ');
   if (!normalized) throw new Error('Audio UI raw transcript was empty.');
   return sha256(Buffer.from(normalized, 'utf8'));
+}
+
+async function libraryCaptureId(page: Page, documentId: string): Promise<string | undefined> {
+  const documents = await invokeTauriCommand(page, 'library_list', {
+    request: { query: '', status: '' },
+  }).catch(() => undefined);
+  if (!Array.isArray(documents)) return undefined;
+  const document = documents.find((item) => (
+    item !== null
+      && typeof item === 'object'
+      && !Array.isArray(item)
+      && (item as Record<string, unknown>).documentId === documentId
+  ));
+  const captureId = document !== undefined && typeof document === 'object' && document !== null
+    ? (document as Record<string, unknown>).captureId
+    : undefined;
+  return typeof captureId === 'string' && /^[a-f0-9-]{36}$/u.test(captureId) ? captureId : undefined;
+}
+
+async function loadProgressiveAudioOracle(): Promise<ProgressiveAudioOracleEvidence | undefined> {
+  const path = process.env.CAPTURE_REAL_MEDIA_MODEL_AUDIO_ORACLE?.trim();
+  if (!path) return undefined;
+  let value: unknown;
+  try {
+    value = JSON.parse((await readFile(path)).toString('utf8'));
+  } catch {
+    throw new Error('The progressive audio oracle is unavailable or malformed.');
+  }
+  assertProgressiveAudioOracleEvidence(value);
+  return value;
+}
+
+function parseProgressiveAudioObservedOutput(value: unknown): ProgressiveAudioObservedOutput | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const candidate = value as Record<string, unknown>;
+  const source = candidate.source;
+  const extraction = candidate.extractionEngine;
+  const segments = candidate.segments;
+  if (source === null || typeof source !== 'object' || Array.isArray(source)
+    || extraction === null || typeof extraction !== 'object' || Array.isArray(extraction)
+    || !Array.isArray(segments)) return undefined;
+  const sourceRecord = source as Record<string, unknown>;
+  const extractionRecord = extraction as Record<string, unknown>;
+  if (typeof sourceRecord.sha256 !== 'string' || !Number.isSafeInteger(sourceRecord.bytes)
+    || typeof extractionRecord.engine !== 'string' || typeof extractionRecord.model !== 'string'
+    || typeof extractionRecord.digest !== 'string'
+    || !/^(?:cuda|cpu)$/u.test(String(extractionRecord.device))) return undefined;
+  const parsedSegments = segments.map((segment, index) => {
+    if (segment === null || typeof segment !== 'object' || Array.isArray(segment)) return undefined;
+    const item = segment as Record<string, unknown>;
+    const locator = item.locator;
+    if (locator === null || typeof locator !== 'object' || Array.isArray(locator)) return undefined;
+    const location = locator as Record<string, unknown>;
+    return {
+      order: item.order,
+      startMs: location.startMs,
+      endMs: location.endMs,
+      text: item.text,
+      index,
+    };
+  });
+  const completeSegments = parsedSegments.filter(
+    (segment): segment is NonNullable<typeof segment> => segment !== undefined,
+  );
+  if (completeSegments.length !== parsedSegments.length) return undefined;
+  return {
+    sourceSha256: sourceRecord.sha256 as string,
+    sourceBytes: sourceRecord.bytes as number,
+    coveredUntilMs: Number(candidate.coveredUntilMs),
+    partialRevision: Number(candidate.revision),
+    segments: completeSegments.map((segment) => ({
+      order: Number(segment.order),
+      startMs: Number(segment.startMs),
+      endMs: Number(segment.endMs),
+      text: String(segment.text),
+    })),
+    extraction: {
+      engine: extractionRecord.engine as string,
+      model: extractionRecord.model as string,
+      device: extractionRecord.device as 'cuda' | 'cpu',
+      digest: extractionRecord.digest as string,
+    },
+  };
 }
 
 async function installSelectedModel(page: Page): Promise<void> {
@@ -2504,11 +2709,13 @@ async function run(): Promise<void> {
   if (process.platform !== 'win32') throw new Error('Real model-enabled desktop smoke requires Windows x64.');
   const installationOnly = process.argv.includes('--install-whisper-only');
   const audioOnly = process.argv.includes('--audio-only');
+  const keepRunDataOnFailure = process.argv.includes('--keep-run-data-on-failure');
+  const reuseRunData = process.argv.includes('--reuse-run-data');
   assertNoAmbientModelOverrides(process.env as Record<string, string>);
   const expected = await loadReleaseModelContract();
   await firstValueFrom(assertStagedRuntime('release'));
   await rm(smokeRoot, { recursive: true, force: true });
-  await rm(runRoot, { recursive: true, force: true });
+  if (!reuseRunData) await rm(runRoot, { recursive: true, force: true });
   await mkdir(runRoot, { recursive: true });
   let inputs: readonly [MediaInput, MediaInput, MediaInput] | undefined;
   let audio: MediaInput | undefined;
@@ -2563,6 +2770,7 @@ async function run(): Promise<void> {
   let workerMirrorReleased = false;
   let workerMirror: CandidateWorkerMirror | undefined;
   let activeDocumentId: string | undefined;
+  let runFailed = false;
   try {
     workerMirror = await startCandidateWorkerMirror(expected);
     appEnvironment.CAPTURE_SMOKE_WORKER_MIRROR_OPT_IN = '1';
@@ -2572,10 +2780,25 @@ async function run(): Promise<void> {
     if (!app.pid) throw new Error('Real model smoke Tauri process did not expose a PID.');
     browser = await firstValueFrom(connectToInstalledWebView(cdpPort, app));
     page = await firstValueFrom(installedPage(browser, app));
-    await waitUntil(async () => {
-      const setup = page.getByTestId('runtime-setup');
-      return (await setup.count()) === 1 || false;
-    }, REAL_MODEL_RUNTIME_READY_TIMEOUT_MS, 'Desktop runtime setup UI did not load.');
+    const useBackendReuseReadiness = shouldUseBackendReuseReadiness(reuseRunData, audioOnly);
+    if (useBackendReuseReadiness) {
+      // A reused production app-data root is intentionally already provisioned.
+      // The setup card is rendered only for needs-setup, so readiness must be
+      // observed through the backend rather than through a UI that should be absent.
+      await waitForDesktopRuntimeReady(page);
+      await waitForRuntimeRequirementsReady(page, [
+        'windowsml-ocr',
+        'ollama-runtime',
+        'capture-ollama-model',
+        'whisper-primary',
+      ]);
+      await waitForRuntimeModelOptionActive(page, expected.selectedModelOptionId);
+    } else {
+      await waitUntil(async () => {
+        const setup = page.getByTestId('runtime-setup');
+        return (await setup.count()) === 1 || false;
+      }, REAL_MODEL_RUNTIME_READY_TIMEOUT_MS, 'Desktop runtime setup UI did not load.');
+    }
     if (installationOnly) {
       await installConsentedRequirementThroughTauri(page, 'whisper-primary', {
         waitForVisibleRequirement: false,
@@ -2584,8 +2807,10 @@ async function run(): Promise<void> {
     } else {
       if (!audioOnly) {
         assert(inputs && pdf && image);
-        await installConsentedRequirements(page, ['windowsml-ocr', 'ollama-runtime'], installationOrder);
-        await installSelectedModel(page);
+        if (!useBackendReuseReadiness) {
+          await installConsentedRequirements(page, ['windowsml-ocr', 'ollama-runtime'], installationOrder);
+          await installSelectedModel(page);
+        }
         await waitForCaptureReady(page);
         for (const input of [pdf, image] as const) {
           const injected = await injectModelSmokeFixture(page, input.kind);
@@ -2602,8 +2827,10 @@ async function run(): Promise<void> {
         // Audio-only skips OCR capture, but the packaged Workbench keeps the
         // source-import surface locked until its OCR runtime prerequisite is
         // installed. Install that prerequisite without exercising its engine.
-        await installConsentedRequirements(page, ['windowsml-ocr', 'ollama-runtime'], installationOrder);
-        await installSelectedModel(page);
+        if (!useBackendReuseReadiness) {
+          await installConsentedRequirements(page, ['windowsml-ocr', 'ollama-runtime'], installationOrder);
+          await installSelectedModel(page);
+        }
       }
       const injectedAudio = await injectModelSmokeFixture(
         page,
@@ -2614,9 +2841,11 @@ async function run(): Promise<void> {
       // The keyed import bypasses only the native picker, so it cannot exercise
       // the renderer callback that reveals the optional Whisper setup row. Keep
       // consent on the existing authenticated Tauri/runtime installation path.
-      await installConsentedRequirementThroughTauri(page, 'whisper-primary', {
-        waitForVisibleRequirement: !audioOnly,
-      });
+      if (!useBackendReuseReadiness) {
+        await installConsentedRequirementThroughTauri(page, 'whisper-primary', {
+          waitForVisibleRequirement: !audioOnly,
+        });
+      }
       if (audioOnly) {
         // Audio-only bypasses the optional setup row, but the first runtime
         // requirements read also warms the installed engine verification
@@ -2642,13 +2871,19 @@ async function run(): Promise<void> {
     }
     cleanupVerified = true;
   } catch (error) {
+    runFailed = true;
     const backendCaptureState = page
       ? await collectSafeBackendCaptureState(page, activeDocumentId).catch(() => undefined)
       : undefined;
     const uiStateRecords = page
       ? await collectSafeUiState(page).catch(() => [])
       : [];
-    throw new Error(safeSmokeFailureMessage(error, workerMirror?.requests() ?? 0, uiStateRecords, backendCaptureState));
+    throw new Error(safeSmokeFailureMessage(
+      error,
+      workerMirror?.requests() ?? 0,
+      uiStateRecords,
+      backendCaptureState,
+    ));
   } finally {
     if (browser) await browser.close().catch(() => undefined);
     if (app?.pid) {
@@ -2669,10 +2904,20 @@ async function run(): Promise<void> {
         .then(() => { workerMirrorReleased = true; })
         .catch(() => { cleanupVerified = false; });
     }
-    await rm(runRoot, { recursive: true, force: true }).catch(() => { cleanupVerified = false; });
+    if (!(runFailed && keepRunDataOnFailure)) {
+      await rm(runRoot, { recursive: true, force: true }).catch(() => { cleanupVerified = false; });
+    }
   }
   if (!cdpPortReleased) throw new Error('Owned WebView2 CDP listener remained bound after cleanup.');
-  const minimumWorkerMirrorRequests = installationOnly || audioOnly ? 1 : 2;
+  // A reused production run may already contain a checksum-verified worker
+  // and model. In that case the runtime correctly skips the mirror download;
+  // a fresh run still requires the candidate mirror request as evidence that
+  // the consented installation path was exercised.
+  const minimumWorkerMirrorRequests = reuseRunData
+    ? 0
+    : installationOnly || audioOnly
+      ? 1
+      : 2;
   if (!workerMirrorReleased || !workerMirror || workerMirror.requests() < minimumWorkerMirrorRequests) {
     throw new Error('Candidate worker mirror did not serve the required worker archive requests and release its listener.');
   }
