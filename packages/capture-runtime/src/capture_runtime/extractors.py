@@ -152,6 +152,7 @@ class StandaloneRuntimeCaptureExtractor:
                     {
                         "maxDurationMs": self.config.max_audio_duration_ms,
                         "preferGpu": self.config.whisper_prefer_gpu,
+                        "allowCpuFallback": self.config.whisper_allow_cpu_fallback,
                     },
                     cancel_event,
                 )

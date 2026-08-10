@@ -33,6 +33,11 @@ impl LaunchPolicy {
         if cfg!(debug_assertions) {
             origins.push("http://localhost:4200");
         }
+        let smoke_worker_mirror_opt_in = std::env::var("CAPTURE_SMOKE_WORKER_MIRROR_OPT_IN").ok();
+        let whisper_cpu_fallback = whisper_cpu_fallback_enabled(
+            smoke_worker_mirror_opt_in.clone(),
+            std::env::var("CAPTURE_WHISPER_ALLOW_CPU_FALLBACK").ok(),
+        );
         let mut environment = vec![
             ("CAPTURE_HOST", LOOPBACK_HOST.into()),
             ("CAPTURE_PORT", self.runtime_port.to_string()),
@@ -49,6 +54,10 @@ impl LaunchPolicy {
             ),
             ("CAPTURE_STRUCTURING_PROVIDER", "ollama".into()),
             ("CAPTURE_WHISPER_PREFER_GPU", "true".into()),
+            (
+                "CAPTURE_WHISPER_ALLOW_CPU_FALLBACK",
+                whisper_cpu_fallback.to_string(),
+            ),
             (
                 "CAPTURE_RETENTION_HOURS",
                 DEFAULT_RETENTION_HOURS.to_string(),
@@ -82,7 +91,7 @@ impl LaunchPolicy {
             environment.push(("CUDA_PATH", cuda_path));
         }
         if let Some(mirror_url) = smoke_worker_mirror_url(
-            std::env::var("CAPTURE_SMOKE_WORKER_MIRROR_OPT_IN").ok(),
+            smoke_worker_mirror_opt_in,
             std::env::var("CAPTURE_SMOKE_WORKER_MIRROR_URL").ok(),
         ) {
             environment.push(("CAPTURE_SMOKE_WORKER_MIRROR_OPT_IN", "1".into()));
@@ -96,6 +105,16 @@ fn configured_cuda_path(value: Option<String>) -> Option<String> {
     value
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
+}
+
+fn whisper_cpu_fallback_enabled(
+    smoke_worker_mirror_opt_in: Option<String>,
+    value: Option<String>,
+) -> bool {
+    if smoke_worker_mirror_opt_in.as_deref().map(str::trim) != Some("1") {
+        return true;
+    }
+    value.as_deref().map(str::trim) == Some("true")
 }
 
 fn smoke_worker_mirror_url(opt_in: Option<String>, raw_url: Option<String>) -> Option<String> {
@@ -158,7 +177,9 @@ impl LaunchPolicyFactory {
 mod tests {
     use std::path::PathBuf;
 
-    use super::{configured_cuda_path, smoke_worker_mirror_url, LaunchPolicy};
+    use super::{
+        configured_cuda_path, smoke_worker_mirror_url, whisper_cpu_fallback_enabled, LaunchPolicy,
+    };
 
     #[test]
     fn runtime_environment_explicitly_prefers_whisper_gpu() {
@@ -183,6 +204,20 @@ mod tests {
             configured_cuda_path(Some("  C:\\CUDA  ".into())),
             Some("C:\\CUDA".into())
         );
+    }
+
+    #[test]
+    fn source_lock_model_smoke_can_disable_whisper_cpu_fallback() {
+        assert!(!whisper_cpu_fallback_enabled(
+            Some("1".into()),
+            Some("false".into())
+        ));
+        assert!(whisper_cpu_fallback_enabled(
+            Some("1".into()),
+            Some("true".into())
+        ));
+        assert!(!whisper_cpu_fallback_enabled(Some("1".into()), None));
+        assert!(whisper_cpu_fallback_enabled(None, Some("false".into())));
     }
 
     #[test]

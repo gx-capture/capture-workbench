@@ -18,7 +18,19 @@ def _model_tree(root: Path, name: str) -> None:
         (model / filename).write_bytes(f"{name}:{filename}".encode())
 
 
-def _request(model_root: Path, source: Path, *, prefer_gpu: bool) -> WorkerRequest:
+def _request(
+    model_root: Path,
+    source: Path,
+    *,
+    prefer_gpu: bool,
+    allow_cpu_fallback: bool | None = None,
+) -> WorkerRequest:
+    options: dict[str, object] = {
+        "maxDurationMs": 60_000,
+        "preferGpu": prefer_gpu,
+    }
+    if allow_cpu_fallback is not None:
+        options["allowCpuFallback"] = allow_cpu_fallback
     return WorkerRequest(
         request_id="whisper-worker-test",
         operation="run",
@@ -28,10 +40,7 @@ def _request(model_root: Path, source: Path, *, prefer_gpu: bool) -> WorkerReque
             "modelPath": str(model_root),
             "sourcePath": str(source),
             "mediaType": "audio/wav",
-            "options": {
-                "maxDurationMs": 60_000,
-                "preferGpu": prefer_gpu,
-            },
+            "options": options,
         },
     )
 
@@ -151,3 +160,25 @@ def test_worker_reports_actual_cpu_model_name_after_gpu_fallback(
     assert result["provenance"]["model"] == "small"
     assert result["provenance"]["device"] == "cpu"
     assert result["warnings"] == ["Whisper GPU fallback: RuntimeError"]
+
+
+def test_worker_strict_cuda_failure_does_not_run_cpu_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    model_root = tmp_path / "models"
+    _model_tree(model_root, "primary")
+    _model_tree(model_root, "fallback")
+    source = tmp_path / "fixture.wav"
+    source.write_bytes(b"RIFF" + b"\x00" * 8 + b"WAVE")
+
+    with pytest.raises(RuntimeError, match="CUDA out of memory"):
+        _run_with_factory(
+            monkeypatch,
+            _request(
+                model_root,
+                source,
+                prefer_gpu=True,
+                allow_cpu_fallback=False,
+            ),
+            fail_cuda=True,
+        )

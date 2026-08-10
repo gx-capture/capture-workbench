@@ -43,6 +43,10 @@ export function assertAudioDeviceMatchesSourceLock(
 ): void {
   assert.equal(actualDevice, expectedDevice);
 }
+
+export function whisperCpuFallbackAllowedForSourceLock(expectedDevice: string): boolean {
+  return expectedDevice !== 'cuda';
+}
 export const REAL_MODEL_RESULT_TIMEOUT_MS = 60 * 60_000;
 export const NATIVE_SOURCE_DIALOG_CLASSES = ['#32770'] as const;
 export const NATIVE_SOURCE_BROKER_DIALOG_CLASSES = ['CabinetWClass'] as const;
@@ -2403,6 +2407,9 @@ async function run(): Promise<void> {
   }));
   assertNoAmbientModelOverrides(appEnvironment);
   appEnvironment.CAPTURE_WHISPER_PREFER_GPU = String(expected.whisperPreferGpu);
+  appEnvironment.CAPTURE_WHISPER_ALLOW_CPU_FALLBACK = String(
+    whisperCpuFallbackAllowedForSourceLock(expected.whisperDevice),
+  );
   if (appEnvironment.CAPTURE_WHISPER_PREFER_GPU !== String(expected.whisperPreferGpu)) {
     throw new Error('Lock-derived Whisper GPU preference drifted before app launch.');
   }

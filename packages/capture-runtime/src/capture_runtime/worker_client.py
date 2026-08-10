@@ -216,6 +216,7 @@ class WorkerClient:
             if (
                 engine.requirement_id != "whisper-primary"
                 or options.get("preferGpu") is not True
+                or options.get("allowCpuFallback", True) is not True
                 or cancel_event.is_set()
                 or WHISPER_CPU_MODEL_LOAD_FAILURE.search(str(error)) is None
             ):

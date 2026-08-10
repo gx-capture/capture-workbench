@@ -32,6 +32,14 @@ WHISPER_CANDIDATE_MAX_DURATION_MS = 60 * 60 * 1000
 WHISPER_CANDIDATE_TIMEOUT_SECONDS = 60 * 60
 
 
+def _whisper_run_options(fixture: dict[str, Any]) -> dict[str, object]:
+    return {
+        "maxDurationMs": WHISPER_CANDIDATE_MAX_DURATION_MS,
+        "preferGpu": fixture["preferGpu"],
+        "allowCpuFallback": fixture["expectedDevice"] != "cuda",
+    }
+
+
 def _normalized_text(segments) -> str:
     return " ".join(text for segment in segments if (text := " ".join(segment.text.split())))
 
@@ -374,10 +382,7 @@ async def verify_candidate(
                     options=(
                         {"deviceId": 0, "maxImagePixels": 100_000_000}
                         if fixture_kind == "ocr"
-                        else {
-                            "maxDurationMs": WHISPER_CANDIDATE_MAX_DURATION_MS,
-                            "preferGpu": True,
-                        }
+                        else _whisper_run_options(fixture)
                     ),
                     cancel_event=asyncio.Event(),
                     timeout_seconds=(

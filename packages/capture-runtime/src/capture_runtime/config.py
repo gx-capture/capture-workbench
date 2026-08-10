@@ -125,6 +125,7 @@ class ExtractionRuntimeConfig:
     whisper_primary_model: str
     whisper_fallback_model: str
     whisper_prefer_gpu: bool
+    whisper_allow_cpu_fallback: bool = True
 
 
 def _external_ollama_endpoint(value: str) -> str:
@@ -268,9 +269,10 @@ class RuntimeSettings:
             whisper_primary_model=env.get("CAPTURE_WHISPER_PRIMARY_MODEL", "large-v3-turbo"),
             whisper_fallback_model=env.get("CAPTURE_WHISPER_FALLBACK_MODEL", "small"),
             # Prefer Nvidia CUDA when the bundled ctranslate2 runtime can
-            # initialize it; FasterWhisperAdapter owns the bounded CPU
-            # fallback for machines without a usable CUDA provider.
+            # initialize it. Diagnostics retain the bounded CPU fallback;
+            # source-lock production verification can explicitly fail closed.
             whisper_prefer_gpu=_bool(env.get("CAPTURE_WHISPER_PREFER_GPU"), True),
+            whisper_allow_cpu_fallback=_bool(env.get("CAPTURE_WHISPER_ALLOW_CPU_FALLBACK"), True),
         )
         supported_whisper_models = {"large-v3-turbo", "small"}
         if {

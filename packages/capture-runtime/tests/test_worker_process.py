@@ -163,6 +163,45 @@ def test_worker_client_does_not_retry_whisper_when_gpu_is_already_disabled(
     assert process.options == [{"maxDurationMs": 60_000, "preferGpu": False}]
 
 
+def test_worker_client_does_not_retry_strict_cuda_with_cpu_fallback(
+    tmp_path: Path,
+) -> None:
+    process = FreshWhisperRetryProcess()
+    client = WorkerClient(process=process)  # type: ignore[arg-type]
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+    source = tmp_path / "audio.mp3"
+    source.write_bytes(b"audio")
+
+    async def run() -> None:
+        with pytest.raises(WorkerExecutionError):
+            await client.run(
+                InstalledEngine(
+                    requirement_id="whisper-primary",
+                    artifact_version="engine-1",
+                    executable=tmp_path / "whisper.exe",
+                    model_dir=model_dir,
+                ),
+                source_path=source,
+                media_type="audio/mpeg",
+                options={
+                    "maxDurationMs": 60_000,
+                    "preferGpu": True,
+                    "allowCpuFallback": False,
+                },
+                cancel_event=asyncio.Event(),
+            )
+
+    asyncio.run(run())
+    assert process.options == [
+        {
+            "maxDurationMs": 60_000,
+            "preferGpu": True,
+            "allowCpuFallback": False,
+        }
+    ]
+
+
 def test_worker_client_does_not_retry_after_cpu_model_load_started(
     tmp_path: Path,
 ) -> None:

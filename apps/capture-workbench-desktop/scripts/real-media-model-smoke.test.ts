@@ -32,6 +32,7 @@ import {
   safeTerminalModelInstallationFailure,
   safeUiAutomationDiagnostics,
   sha256,
+  whisperCpuFallbackAllowedForSourceLock,
   windowsPowerShellExecutable,
 } from './real-media-model-smoke.ts';
 
@@ -44,6 +45,8 @@ test('audio smoke uses the ten-minute watchdog', () => {
 test('Tauri audio smoke rejects CPU fallback when source lock requires CUDA', () => {
   assert.doesNotThrow(() => assertAudioDeviceMatchesSourceLock('cuda', 'cuda'));
   assert.throws(() => assertAudioDeviceMatchesSourceLock('cpu', 'cuda'));
+  assert.equal(whisperCpuFallbackAllowedForSourceLock('cuda'), false);
+  assert.equal(whisperCpuFallbackAllowedForSourceLock('cpu'), true);
 });
 
 test('audio-only smoke still declares every owned fixture required by the Tauri registry', () => {

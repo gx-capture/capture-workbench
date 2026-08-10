@@ -141,11 +141,14 @@ def _run(request: WorkerRequest, cancellation: Event) -> dict[str, Any]:
         raise ValueError("Whisper run paths/options are invalid")
     max_duration_ms = options.get("maxDurationMs")
     prefer_gpu = options.get("preferGpu")
+    allow_cpu_fallback = options.get("allowCpuFallback", True)
     if (
-        not isinstance(max_duration_ms, int)
+        set(options) - {"maxDurationMs", "preferGpu", "allowCpuFallback"}
+        or not isinstance(max_duration_ms, int)
         or isinstance(max_duration_ms, bool)
         or max_duration_ms <= 0
         or not isinstance(prefer_gpu, bool)
+        or not isinstance(allow_cpu_fallback, bool)
     ):
         raise ValueError("Whisper run options are invalid")
     adapter = FasterWhisperAdapter(
@@ -156,6 +159,7 @@ def _run(request: WorkerRequest, cancellation: Event) -> dict[str, Any]:
         fallback_provenance_model="small",
         prefer_gpu=prefer_gpu,
         max_duration_ms=max_duration_ms,
+        allow_cpu_fallback=allow_cpu_fallback,
         stage_reporter=_report_stage,
     )
     _import_whisper_runtime()

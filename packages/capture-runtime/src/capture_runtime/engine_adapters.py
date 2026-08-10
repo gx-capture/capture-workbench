@@ -418,7 +418,7 @@ def _install_offline_huggingface_stubs() -> None:
 
 
 class FasterWhisperAdapter:
-    """Local-only faster-whisper adapter with bounded segments and CPU fallback."""
+    """Local-only faster-whisper adapter with explicit, bounded CPU fallback."""
 
     def __init__(
         self,
@@ -430,6 +430,7 @@ class FasterWhisperAdapter:
         fallback_provenance_model: str | None = None,
         prefer_gpu: bool,
         max_duration_ms: int,
+        allow_cpu_fallback: bool = True,
         model_factory: Callable[..., Any] | None = None,
         cuda_count: Callable[[], int] | None = None,
         stage_reporter: Callable[[str], None] | None = None,
@@ -444,6 +445,7 @@ class FasterWhisperAdapter:
         self.primary_provenance_model = primary_provenance_model or primary_model
         self.fallback_provenance_model = fallback_provenance_model or fallback_model
         self.prefer_gpu = prefer_gpu
+        self.allow_cpu_fallback = allow_cpu_fallback
         self.max_duration_ms = max_duration_ms
         self._model_factory = model_factory
         self._cuda_count = cuda_count
@@ -500,8 +502,11 @@ class FasterWhisperAdapter:
         if should_cancel():
             raise InterruptedError("Whisper transcription was cancelled.")
         self._report_stage("device-probe-start")
-        use_gpu = self.prefer_gpu and self._cuda_devices() > 0
+        cuda_devices = self._cuda_devices()
+        use_gpu = self.prefer_gpu and cuda_devices > 0
         self._report_stage("device-probe-complete")
+        if self.prefer_gpu and not self.allow_cpu_fallback and cuda_devices <= 0:
+            raise EngineRuntimeUnavailableError("Whisper CUDA device is unavailable.")
         if use_gpu:
             try:
                 return self._run(
@@ -515,6 +520,8 @@ class FasterWhisperAdapter:
             except InterruptedError:
                 raise
             except Exception as error:
+                if not self.allow_cpu_fallback:
+                    raise
                 # A CUDA-capable driver is not proof that the bundled
                 # ctranslate2 build can initialize a CUDA model.  Keep the
                 # desktop product usable on machines that advertise CUDA but
