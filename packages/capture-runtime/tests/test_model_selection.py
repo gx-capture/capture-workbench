@@ -109,6 +109,23 @@ def test_active_model_selection_is_runtime_owned_and_catalog_bound(tmp_path: Pat
     assert store.load() is None
 
 
+def test_active_model_selection_rejects_invalid_observed_digest_or_size(tmp_path: Path) -> None:
+    store = ActiveModelSelectionStore(tmp_path)
+    option = MODEL_OPTIONS[0]
+    store.save(option, observed_digest="a" * 64, observed_bytes=123)
+
+    payload = json.loads(store.path.read_text(encoding="utf-8"))
+    payload["observedModelDigest"] = "not-a-digest"
+    store.path.write_text(json.dumps(payload), encoding="utf-8")
+    assert store.load() is None
+
+    store.save(option, observed_digest="a" * 64, observed_bytes=123)
+    payload = json.loads(store.path.read_text(encoding="utf-8"))
+    payload["observedModelBytes"] = 0
+    store.path.write_text(json.dumps(payload), encoding="utf-8")
+    assert store.load() is None
+
+
 def test_host_runtime_cannot_expose_model_selection(settings_factory) -> None:
     settings = settings_factory(CAPTURE_STRUCTURING_PROVIDER="host")
     with TestClient(

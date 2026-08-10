@@ -38,6 +38,7 @@ class FakeLifecycle:
     def __init__(self, config: OllamaRuntimeConfig) -> None:
         self.config = config
         self.starts = 0
+        self.stops = 0
         self.running = False
 
     def start(self) -> int:
@@ -47,6 +48,10 @@ class FakeLifecycle:
 
     def owns_running_process(self) -> bool:
         return self.running
+
+    def stop(self) -> None:
+        self.stops += 1
+        self.running = False
 
 
 def _config(tmp_path: Path) -> OllamaRuntimeConfig:
@@ -155,7 +160,9 @@ def test_identity_generation_schema_excludes_source_text_projection() -> None:
     )
 
 
-def test_isolated_ollama_structures_token_bounded_batches(tmp_path: Path) -> None:
+def test_isolated_ollama_structures_token_bounded_batches_and_releases_process(
+    tmp_path: Path,
+) -> None:
     config = _config(tmp_path)
     lifecycle = FakeLifecycle(config)
     generate_calls: list[dict[str, object]] = []
@@ -184,6 +191,8 @@ def test_isolated_ollama_structures_token_bounded_batches(tmp_path: Path) -> Non
         CaptureDocumentV1.model_validate(validate_structuring_candidate(document, raw)) == document
     )
     assert lifecycle.starts == 1
+    assert lifecycle.stops == 1
+    assert lifecycle.running is False
     assert document.created_at == NOW
     assert document.completed_at == COMPLETED_AT
     assert len(generate_calls) == 1
@@ -193,6 +202,7 @@ def test_isolated_ollama_structures_token_bounded_batches(tmp_path: Path) -> Non
         supplied_ids.extend(segment["segmentId"] for segment in prompt["rawSegments"])
         assert call["format"]["title"] == "CaptureBlockBatchV1"
         assert call["think"] is False
+        assert call["keep_alive"] == 0
         assert 0 < call["options"]["num_ctx"] <= 8_192
         assert 0 < call["options"]["num_predict"] <= 4_096
     assert supplied_ids == [segment.segment_id for segment in raw.segments]
@@ -200,6 +210,44 @@ def test_isolated_ollama_structures_token_bounded_batches(tmp_path: Path) -> Non
     assert [block.block_id for block in document.blocks] == [
         f"block-{segment.segment_id}" for segment in raw.segments
     ]
+
+
+def test_isolated_ollama_serializes_owned_process_leases(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        config = _config(tmp_path)
+        lifecycle = FakeLifecycle(config)
+        active_generations = 0
+        maximum_active_generations = 0
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal active_generations, maximum_active_generations
+            if request.url.path == "/api/tags":
+                return _tags(config)
+            payload = json.loads(request.content)
+            active_generations += 1
+            maximum_active_generations = max(maximum_active_generations, active_generations)
+            await asyncio.sleep(0.01)
+            active_generations -= 1
+            return httpx.Response(200, json={"response": _valid_candidate(payload)})
+
+        provider = OllamaCaptureStructuringProvider(
+            lifecycle,  # type: ignore[arg-type]
+            clock=FixedClock(),
+            transport=httpx.MockTransport(handler),
+        )
+        first, second = await asyncio.gather(
+            provider.structure(_raw(), target_language=None, cancel_event=asyncio.Event()),
+            provider.structure(_raw(), target_language=None, cancel_event=asyncio.Event()),
+        )
+
+        assert isinstance(first, CaptureDocumentV1)
+        assert isinstance(second, CaptureDocumentV1)
+        assert maximum_active_generations == 1
+        assert lifecycle.starts == 2
+        assert lifecycle.stops == 2
+        assert lifecycle.running is False
+
+    asyncio.run(scenario())
 
 
 def test_isolated_ollama_rebuilds_trusted_identity_target_from_raw_segments(
@@ -240,6 +288,70 @@ def test_isolated_ollama_rebuilds_trusted_identity_target_from_raw_segments(
     assert identity_prompt["rawSegments"] == [
         {"sourceSegmentId": "page-1", "textPreview": _raw().segments[0].text}
     ]
+
+
+def test_qwen_0_8b_structures_large_identity_capture_as_exact_single_segment_batches(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    lifecycle = FakeLifecycle(config)
+    lifecycle.active_model_selection = lambda: {
+        "profileId": "capture-workbench-qwen3.5-0.8b-structure-v1"
+    }
+    generate_calls: list[dict[str, object]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/tags":
+            return httpx.Response(
+                200,
+                json={
+                    "models": [
+                        {
+                            "name": "capture-workbench-qwen3.5-0.8b-structure-v1",
+                            "digest": "c" * 64,
+                        }
+                    ]
+                },
+            )
+        payload = json.loads(request.content)
+        generate_calls.append(payload)
+        prompt = json.loads(payload["prompt"])
+        segment = prompt["rawSegments"][0]
+        return httpx.Response(
+            200,
+            json={
+                "response": json.dumps(
+                    {
+                        "blocks": [
+                            {
+                                "sourceSegmentId": segment["sourceSegmentId"],
+                                "type": "paragraph",
+                            }
+                        ]
+                    }
+                )
+            },
+        )
+
+    provider = OllamaCaptureStructuringProvider(
+        lifecycle,  # type: ignore[arg-type]
+        clock=FixedClock(),
+        transport=httpx.MockTransport(handler),
+    )
+    document = asyncio.run(
+        provider.structure(_raw(count=44), target_language=None, cancel_event=asyncio.Event())
+    )
+
+    assert len(generate_calls) == 44
+    assert [block.order for block in document.blocks] == list(range(44))
+    for call, segment in zip(generate_calls, _raw(count=44).segments, strict=True):
+        prompt = json.loads(call["prompt"])
+        assert len(prompt["rawSegments"]) == 1
+        blocks_schema = call["format"]["properties"]["blocks"]
+        assert blocks_schema["minItems"] == 1
+        assert blocks_schema["maxItems"] == 1
+        identity_schema = call["format"]["$defs"]["CaptureIdentitySemanticBlockV1"]
+        assert identity_schema["properties"]["sourceSegmentId"]["enum"] == [segment.segment_id]
 
 
 @pytest.mark.parametrize("mutation", ["count", "sourceSegmentId", "type", "targetText"])

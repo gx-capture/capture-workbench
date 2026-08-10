@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -113,6 +114,18 @@ class ActiveModelSelectionStore:
         except KeyError:
             return None
         if payload.get("catalogSha256") != catalog_sha256():
+            return None
+        if payload.get("modelReference") != option.model_reference:
+            return None
+        observed_digest = str(payload.get("observedModelDigest") or "").removeprefix("sha256:")
+        observed_bytes = payload.get("observedModelBytes")
+        if not re.fullmatch(r"[0-9a-f]{64}", observed_digest):
+            return None
+        if (
+            not isinstance(observed_bytes, int)
+            or isinstance(observed_bytes, bool)
+            or observed_bytes <= 0
+        ):
             return None
         if payload.get("profileId") != option.profile_id:
             return None

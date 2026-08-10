@@ -11,8 +11,6 @@ import hashlib
 import json
 import re
 import shutil
-import subprocess
-import time
 from collections.abc import Callable, Collection
 from pathlib import Path
 
@@ -48,8 +46,6 @@ from capture_runtime.ollama.installer_runtime import (
 from capture_runtime.ollama.lifecycle_impl import (
     IsolatedOllamaLifecycle,
     ManualActionRequiredError,
-    OllamaOwnershipError,
-    RuntimeUnavailableError,
 )
 
 
@@ -188,7 +184,11 @@ class SystemRuntimeInstaller:
                 )
             )
         if ollama_model_enabled:
-            model_ready = self._active_model_profile_ready()
+            # Requirements discovery is a pure projection of persisted state.
+            # Starting/probing Ollama here competes with OCR and Whisper for
+            # the machine's model memory; structuring acquires the live lease
+            # when it actually needs the process.
+            model_ready = self._recorded_model_profile_matches()
             requirements.append(
                 RuntimeRequirementV1(
                     requirement_id=OLLAMA_MODEL_REQUIREMENT_ID,
@@ -280,55 +280,62 @@ class SystemRuntimeInstaller:
         if executable is None:
             raise ManualActionRequiredError("Install the Ollama application first")
         self._lifecycle.start()
-        await self._wait_for_ollama_server(cancel_event)
-        environment = self._lifecycle.config.process_environment()
-        report_progress(0.1)
-        pull = await self._runner.run(
-            [executable, "pull", option.model_reference],
-            environment=environment,
-            cwd=self._lifecycle.config.app_data_dir,
-            cancel_event=cancel_event,
-            timeout_seconds=3600,
-        )
-        if pull.return_code != 0:
-            raise RuntimeError(f"Ollama model pull failed ({pull.return_code})")
-        observed_digest, observed_bytes = self._verify_pulled_model(option)
-        report_progress(0.75)
-        modelfile = self._lifecycle.config.app_data_dir / "Capture.Modelfile"
-        modelfile_bytes = option.profile_spec_bytes
-        if hashlib.sha256(modelfile_bytes).hexdigest() != option.profile_spec_sha256:
-            raise RuntimeError("Ollama profile specification digest is invalid")
-        modelfile.write_bytes(modelfile_bytes)
-        create = await self._runner.run(
-            [
-                executable,
-                "create",
-                option.profile_id,
-                "-f",
-                str(modelfile),
-            ],
-            environment=environment,
-            cwd=self._lifecycle.config.app_data_dir,
-            cancel_event=cancel_event,
-            timeout_seconds=600,
-        )
-        if create.return_code != 0:
-            raise RuntimeError(f"Ollama capture profile creation failed ({create.return_code})")
-        _atomic_json(
-            self._marker(OLLAMA_MODEL_REQUIREMENT_ID),
-            {
-                "profileId": option.profile_id,
-                "baseModel": option.model_reference,
-                "modelfileSha256": hashlib.sha256(modelfile_bytes).hexdigest(),
-                "installedAt": self._clock.now().isoformat(),
-            },
-        )
-        self._model_selection.save(
-            option,
-            observed_digest=observed_digest,
-            observed_bytes=observed_bytes,
-        )
-        report_progress(1)
+        try:
+            await self._wait_for_ollama_server(cancel_event)
+            environment = self._lifecycle.config.process_environment()
+            report_progress(0.1)
+            pull = await self._runner.run(
+                [executable, "pull", option.model_reference],
+                environment=environment,
+                cwd=self._lifecycle.config.app_data_dir,
+                cancel_event=cancel_event,
+                timeout_seconds=3600,
+            )
+            if pull.return_code != 0:
+                raise RuntimeError(f"Ollama model pull failed ({pull.return_code})")
+            observed_digest, observed_bytes = self._verify_pulled_model(option)
+            report_progress(0.75)
+            modelfile = self._lifecycle.config.app_data_dir / "Capture.Modelfile"
+            modelfile_bytes = option.profile_spec_bytes
+            if hashlib.sha256(modelfile_bytes).hexdigest() != option.profile_spec_sha256:
+                raise RuntimeError("Ollama profile specification digest is invalid")
+            modelfile.write_bytes(modelfile_bytes)
+            create = await self._runner.run(
+                [
+                    executable,
+                    "create",
+                    option.profile_id,
+                    "-f",
+                    str(modelfile),
+                ],
+                environment=environment,
+                cwd=self._lifecycle.config.app_data_dir,
+                cancel_event=cancel_event,
+                timeout_seconds=600,
+            )
+            if create.return_code != 0:
+                raise RuntimeError(f"Ollama capture profile creation failed ({create.return_code})")
+            _atomic_json(
+                self._marker(OLLAMA_MODEL_REQUIREMENT_ID),
+                {
+                    "profileId": option.profile_id,
+                    "baseModel": option.model_reference,
+                    "modelfileSha256": hashlib.sha256(modelfile_bytes).hexdigest(),
+                    "installedAt": self._clock.now().isoformat(),
+                },
+            )
+            self._model_selection.save(
+                option,
+                observed_digest=observed_digest,
+                observed_bytes=observed_bytes,
+            )
+            report_progress(1)
+        finally:
+            # Model installation only needs a short Ollama lease. Release the
+            # native process on success, failure, or cancellation before OCR/
+            # Whisper can claim the machine's model memory; later structuring
+            # starts a fresh owned lease.
+            self._lifecycle.stop()
 
     async def _wait_for_ollama_server(self, cancel_event: asyncio.Event) -> None:
         deadline = asyncio.get_running_loop().time() + 30
@@ -464,80 +471,29 @@ class SystemRuntimeInstaller:
         )
         report_progress(1)
 
-    def _active_model_profile_ready(self) -> bool:
-        selection = self._model_selection.load()
-        profile_id = (
-            str(selection["profileId"])
-            if selection is not None
-            else self._lifecycle.config.profile_id
-            if self._legacy_model_marker_matches()
-            else None
-        )
-        if profile_id is None or self._lifecycle.executable() is None:
-            return False
-        try:
-            self._lifecycle.start()
-        except (
-            OllamaOwnershipError,
-            RuntimeUnavailableError,
-            OSError,
-            subprocess.SubprocessError,
-        ):
-            return False
-        expected_names = {
-            profile_id,
-            f"{profile_id}:latest",
-        }
-        deadline = time.monotonic() + self._model_readiness_timeout_seconds
-        while True:
-            if not self._lifecycle.owns_running_process():
-                return False
-            remaining = max(0.0, deadline - time.monotonic())
-            try:
-                response = httpx.get(
-                    f"{self._lifecycle.config.host_url}/api/tags",
-                    timeout=max(0.05, min(0.5, remaining)),
-                    follow_redirects=False,
-                )
-                response.raise_for_status()
-            except httpx.HTTPError:
-                if remaining <= 0:
-                    return False
-                time.sleep(min(self._model_readiness_poll_interval_seconds, remaining))
-                continue
-            if not self._lifecycle.owns_running_process():
-                return False
-            try:
-                models = response.json().get("models", [])
-            except (AttributeError, TypeError, ValueError):
-                return False
-            if not isinstance(models, list):
-                return False
-            return any(
-                str(model.get("name") or model.get("model") or "") in expected_names
-                and bool(re.fullmatch(r"(?:sha256:)?[0-9a-f]{64}", str(model.get("digest") or "")))
-                for model in models
-                if isinstance(model, dict)
-            )
-
     def _recorded_model_profile_matches(self) -> bool:
+        selection = self._model_selection.load()
+        if selection is None:
+            return False
         try:
+            option = model_option(str(selection["optionId"]))
             payload = json.loads(
                 self._marker(OLLAMA_MODEL_REQUIREMENT_ID).read_text(encoding="utf-8")
             )
             modelfile_digest = str(payload["modelfileSha256"])
             modelfile = self._lifecycle.config.app_data_dir / "Capture.Modelfile"
             return (
-                payload["profileId"] == self._lifecycle.config.profile_id
-                and payload["baseModel"] == self._lifecycle.config.base_model
+                selection["profileId"] == option.profile_id
+                and selection["modelReference"] == option.model_reference
+                and selection["profileSpecSha256"] == option.profile_spec_sha256
+                and payload["profileId"] == option.profile_id
+                and payload["baseModel"] == option.model_reference
                 and bool(re.fullmatch(r"[0-9a-f]{64}", modelfile_digest))
-                and sha256_file(modelfile) == modelfile_digest
+                and modelfile_digest == option.profile_spec_sha256
+                and sha256_file(modelfile) == option.profile_spec_sha256
             )
         except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError):
             return False
-
-    def _legacy_model_marker_matches(self) -> bool:
-        return self._recorded_model_profile_matches()
 
     def _marker(self, requirement_id: str) -> Path:
         return self._markers / f"{requirement_id}.ready.json"
