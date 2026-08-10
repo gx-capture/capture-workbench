@@ -105,6 +105,13 @@ pub(crate) struct LibraryStore {
     index: Mutex<LibraryIndex>,
 }
 
+pub(crate) struct RuntimeSourceFile {
+    pub(crate) file_name: String,
+    pub(crate) media_type: String,
+    pub(crate) path: PathBuf,
+    pub(crate) bytes: u64,
+}
+
 impl LibraryStore {
     pub(crate) fn open(app_data_dir: &Path) -> Result<Self, String> {
         let root = app_data_dir.join("library");
@@ -356,6 +363,30 @@ impl LibraryStore {
     pub(crate) fn runtime_source(&self, document_id: &str) -> Result<LibrarySourcePayload, String> {
         self.load_source(LibraryDocumentRequest {
             document_id: document_id.into(),
+        })
+    }
+
+    pub(crate) fn runtime_source_file(
+        &self,
+        document_id: &str,
+    ) -> Result<RuntimeSourceFile, String> {
+        let document = self.find_document(document_id)?;
+        let path = self
+            .document_directory(&document.document_id)?
+            .join(SOURCE_FILE_NAME);
+        let metadata = fs::symlink_metadata(&path)
+            .map_err(|_| "Capture library source cannot be inspected.".to_string())?;
+        if metadata.file_type().is_symlink() || !metadata.file_type().is_file() {
+            return Err("Capture library source is not a regular file.".into());
+        }
+        if metadata.len() != document.byte_length || metadata.len() == 0 {
+            return Err("Capture library source changed after import.".into());
+        }
+        Ok(RuntimeSourceFile {
+            file_name: document.file_name,
+            media_type: document.media_type,
+            path,
+            bytes: metadata.len(),
         })
     }
 

@@ -197,6 +197,15 @@
           </ol>
         </section>
       }
+      @if (partialFor(item.documentId); as partial) {
+        <section class="review-block streaming-partial" data-testid="streaming-partial" aria-live="polite">
+          <div class="streaming-partial-heading">
+            <h3>Live transcript</h3>
+            <small>Covered {{ partial.coveredUntilMs }} ms</small>
+          </div>
+          <pre>{{ partial.sourceText }}</pre>
+        </section>
+      }
       @if (item.result) {
         <section class="review-block result" data-testid="document-result">
           <h3>結構化結果</h3>

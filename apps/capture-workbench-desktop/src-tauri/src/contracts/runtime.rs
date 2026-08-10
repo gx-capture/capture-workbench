@@ -23,6 +23,21 @@ pub struct RuntimeCreateCaptureInput {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct RuntimeStreamingCaptureInput {
+    pub document_id: String,
+    pub client_request_id: String,
+    pub structuring_mode: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeStreamingEventsInput {
+    pub id: String,
+    pub last_event_id: Option<u64>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RuntimeIdInput {
     pub id: String,
 }

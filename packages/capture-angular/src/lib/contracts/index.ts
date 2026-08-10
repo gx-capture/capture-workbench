@@ -2,13 +2,16 @@ import type { Observable } from 'rxjs';
 import { CAPTURE_DOCUMENT_SCHEMA_VERSION } from '@gx-capture/capture-contracts';
 import type {
   CaptureBlockV1,
+  CaptureEventV2,
   CaptureDocumentV1,
   CaptureFailureV1,
   CaptureJobV1,
+  CaptureOperationV2,
   CaptureJobStage,
   CaptureReviewV1,
   CaptureSourceKind,
   PageLocatorV1,
+  PartialCaptureV2,
   RawCaptureV1,
   RuntimeInstallationV1,
   RuntimeModelInstallationV1,
@@ -32,6 +35,7 @@ export {
 } from '@gx-capture/capture-contracts';
 export type {
   CaptureBlockV1,
+  CaptureEventV2,
   CaptureContractExtraPolicy,
   CaptureContractInvariant,
   CaptureContractName,
@@ -41,6 +45,7 @@ export type {
   CaptureJobV1,
   CaptureJobStage,
   CaptureJobStatus,
+  CaptureOperationV2,
   CaptureReviewEditV1,
   CaptureReviewV1,
   CaptureLocatorV1,
@@ -48,6 +53,7 @@ export type {
   ErrorBodyV1,
   ErrorEnvelopeV1,
   PageLocatorV1,
+  PartialCaptureV2,
   RawCaptureSegmentV1,
   RawCaptureV1,
   ReportStructuringFailureV1,
