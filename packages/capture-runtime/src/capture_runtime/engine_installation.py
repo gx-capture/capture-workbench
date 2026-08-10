@@ -267,6 +267,11 @@ class HttpModelFileDownloader:
                 ) from error
             except httpx.TransportError as error:
                 last_error = error
+            except OSError as error:
+                # Windows HTTP/file IO can surface a connection abort as a bare
+                # OSError. Treat it like the other bounded transport failures;
+                # integrity checks still run after a complete retry succeeds.
+                last_error = error
             except BaseException:
                 destination.unlink(missing_ok=True)
                 raise
