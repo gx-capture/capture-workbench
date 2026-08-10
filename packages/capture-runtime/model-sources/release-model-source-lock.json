@@ -37,10 +37,10 @@
     },
     {
       "bytes": 11005641,
-      "expectedDevice": "cuda",
+      "expectedDevice": null,
       "expectedEngine": "whisper-primary",
-      "expectedModel": "large-v3-turbo",
-      "expectedNormalizedOutputSha256": "77cc1a23ba36156e417229fbe53a8e023f2e5c1c56643ed6b1169749fbe32a07",
+      "expectedModel": null,
+      "expectedNormalizedOutputSha256": null,
       "expectedSegmentCount": {
         "maximum": 10000,
         "minimum": 1

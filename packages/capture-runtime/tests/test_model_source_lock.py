@@ -34,6 +34,10 @@ def test_pending_production_lock_is_canonical_model_enabled() -> None:
     lock = model_source_lock.load_source_lock(source, require_approved=False)
     assert lock["approval"]["status"] == "blocked"
     assert lock["approval"]["blockers"] == [model_source_lock.PENDING_WHISPER_FREEZE_BLOCKER]
+    whisper = lock["fixtures"][1]
+    assert whisper["expectedModel"] is None
+    assert whisper["expectedDevice"] is None
+    assert whisper["expectedNormalizedOutputSha256"] is None
     assert [item["requirementId"] for item in lock["requirements"]] == [
         "windowsml-ocr",
         "whisper-primary",
