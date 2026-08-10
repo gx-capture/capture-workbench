@@ -1,11 +1,9 @@
 {
   "approval": {
-    "approvedAt": null,
-    "approvedBy": null,
-    "blockers": [
-      "Freeze private Whisper model/device pair and normalized output digest from two identical production runs."
-    ],
-    "status": "blocked"
+    "approvedAt": "2026-08-10T03:00:42.327Z",
+    "approvedBy": "MSI\\guanxin",
+    "blockers": [],
+    "status": "approved"
   },
   "fixtures": [
     {
@@ -37,10 +35,10 @@
     },
     {
       "bytes": 11005641,
-      "expectedDevice": null,
+      "expectedDevice": "cuda",
       "expectedEngine": "whisper-primary",
-      "expectedModel": null,
-      "expectedNormalizedOutputSha256": null,
+      "expectedModel": "large-v3-turbo",
+      "expectedNormalizedOutputSha256": "77cc1a23ba36156e417229fbe53a8e023f2e5c1c56643ed6b1169749fbe32a07",
       "expectedSegmentCount": {
         "maximum": 10000,
         "minimum": 1
