@@ -34,6 +34,11 @@ const STARTING_STATUS: DesktopRuntimeStatus = {
   status: 'starting',
   detail: 'Runtime 正在啟動…',
 };
+export interface StreamingTerminalResultV2 {
+  readonly operation: CaptureOperationV2;
+  readonly raw: RawCaptureV1;
+  readonly result: CaptureDocumentV1;
+}
 export const DESKTOP_RUNTIME_READY_TIMEOUT_MS = 3 * 60_000;
 
 @Injectable({ providedIn: 'root' })
@@ -124,6 +129,20 @@ export class DesktopRuntimeClientService {
 
   getStreamingPartial(captureId: string, signal?: AbortSignal): Observable<PartialCaptureV2 | null> {
     return this.commands.invoke('runtime_get_streaming_partial', { input: { id: captureId } }, signal);
+  }
+
+  getStreamingResult(
+    captureId: string,
+    signal?: AbortSignal,
+  ): Observable<StreamingTerminalResultV2> {
+    return this.commands.invoke('runtime_get_streaming_result', { input: { id: captureId } }, signal);
+  }
+
+  structureStreamingCapture(
+    captureId: string,
+    signal?: AbortSignal,
+  ): Observable<CaptureDocumentV1> {
+    return this.commands.invoke('runtime_structure_streaming_capture', { input: { id: captureId } }, signal);
   }
 
   cancelStreamingCapture(captureId: string, signal?: AbortSignal): Observable<CaptureOperationV2> {

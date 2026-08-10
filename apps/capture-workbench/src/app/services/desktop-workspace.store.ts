@@ -44,7 +44,10 @@ import type {
   DesktopLibrarySummary,
 } from '../contracts';
 import { DesktopLibraryService } from './desktop-library.service';
-import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
+import {
+  DesktopRuntimeClientService,
+  type StreamingTerminalResultV2,
+} from './desktop-runtime-client.service';
 
 type WorkspaceState = 'starting' | 'needs-setup' | 'ready' | 'error';
 
@@ -611,20 +614,29 @@ export class DesktopWorkspaceStore {
     operation: CaptureOperationV2,
     active: ActiveCapture,
   ): Observable<void> {
-    active.terminalCommitted = true;
     active.terminalStatus = operation.status === 'completed' ? 'completed'
       : operation.status === 'cancelled' ? 'canceled' : 'failed';
     active.terminalErrorCode = operation.error?.code;
     active.terminalErrorMessage = operation.error?.message;
-    return this.library.updateCapture({
-      documentId,
-      captureId: operation.captureId,
-      status: active.terminalStatus,
-      stage: operation.status,
-      errorCode: operation.error?.code,
-      errorMessage: operation.error?.message,
-    }).pipe(
-      tap(() => this.reloadDocumentState(documentId)),
+    const terminalData$: Observable<StreamingTerminalResultV2 | null> = operation.status === 'completed'
+      ? this.runtime.getStreamingResult(operation.captureId)
+      : of(null);
+    return terminalData$.pipe(
+      switchMap((terminalData) => this.library.updateCapture({
+        documentId,
+        captureId: operation.captureId,
+        status: active.terminalStatus ?? 'failed',
+        stage: operation.status,
+        errorCode: operation.error?.code,
+        errorMessage: operation.error?.message,
+        ...(terminalData
+          ? { raw: terminalData.raw, result: terminalData.result }
+          : {}),
+      })),
+      tap(() => {
+        active.terminalCommitted = true;
+        this.reloadDocumentState(documentId);
+      }),
       switchMap(() => this.runtime.deleteStreamingCapture(operation.captureId)),
       switchMap(() => this.library.updateCapture({
         documentId,

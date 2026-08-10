@@ -217,6 +217,24 @@ pub async fn runtime_get_streaming_partial(
 }
 
 #[tauri::command]
+pub async fn runtime_get_streaming_result(
+    state: tauri::State<'_, DesktopState>,
+    input: RuntimeIdInput,
+) -> Result<serde_json::Value, String> {
+    let state = state.inner().clone();
+    run_blocking(move || runtime_client::streaming_result(&state, input)).await
+}
+
+#[tauri::command]
+pub async fn runtime_structure_streaming_capture(
+    state: tauri::State<'_, DesktopState>,
+    input: RuntimeIdInput,
+) -> Result<serde_json::Value, String> {
+    let state = state.inner().clone();
+    run_blocking(move || runtime_client::streaming_structure(&state, input)).await
+}
+
+#[tauri::command]
 pub async fn runtime_cancel_capture(
     state: tauri::State<'_, DesktopState>,
     input: RuntimeIdInput,

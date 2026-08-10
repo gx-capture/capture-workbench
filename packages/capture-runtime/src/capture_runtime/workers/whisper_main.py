@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+import os
 import sys
 from pathlib import Path
 from threading import Event
@@ -198,5 +199,52 @@ def prepare(request: WorkerRequest) -> None:
         _import_whisper_runtime()
 
 
+def _session() -> None:
+    from capture_runtime.clock import SystemClock
+    from capture_runtime.contracts import CaptureSourceV1
+    from capture_runtime.progressive_audio import ProgressiveAudioSession
+    from capture_runtime.progressive_whisper import (
+        DirectWindowDecoder,
+        FasterWhisperWindowTranscriber,
+        ProgressiveWhisperWorkerBackend,
+    )
+    from capture_runtime.workers.session_server import serve_session
+
+    model_path = Path(os.environ.get("CAPTURE_SESSION_MODEL_PATH", ""))
+    temp_dir = Path(os.environ.get("CAPTURE_SESSION_TEMP_DIR", ""))
+    if not model_path.is_absolute() or not model_path.is_dir() or not temp_dir.is_absolute():
+        raise ValueError("Whisper session paths are invalid")
+    source = CaptureSourceV1(
+        sha256=os.environ["CAPTURE_SESSION_SOURCE_SHA256"],
+        file_name=os.environ["CAPTURE_SESSION_FILE_NAME"],
+        media_type=os.environ["CAPTURE_SESSION_MEDIA_TYPE"],
+        bytes=int(os.environ["CAPTURE_SESSION_SOURCE_BYTES"]),
+    )
+    adapter = FasterWhisperAdapter(
+        model_path,
+        primary_model="primary",
+        fallback_model="fallback",
+        primary_provenance_model="large-v3-turbo",
+        fallback_provenance_model="small",
+        prefer_gpu=os.environ.get("CAPTURE_SESSION_PREFER_GPU", "1") == "1",
+        allow_cpu_fallback=os.environ.get("CAPTURE_SESSION_ALLOW_CPU_FALLBACK", "1") == "1",
+        max_duration_ms=8 * 60 * 60 * 1000,
+        stage_reporter=_report_stage,
+    )
+    _import_whisper_runtime()
+    decoder = DirectWindowDecoder()
+    session = ProgressiveAudioSession(
+        source,
+        capture_id=os.environ["CAPTURE_SESSION_ID"],
+        decoder=decoder,
+        transcriber=FasterWhisperWindowTranscriber(adapter, temp_dir=temp_dir),
+        clock=SystemClock(),
+    )
+    serve_session(ProgressiveWhisperWorkerBackend(session))
+
+
 if __name__ == "__main__":
-    serve(handle, prepare=prepare)
+    if len(sys.argv) == 2 and sys.argv[1] == "session":
+        _session()
+    else:
+        serve(handle, prepare=prepare)

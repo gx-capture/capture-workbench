@@ -11,6 +11,7 @@ from fastapi import APIRouter, Header, Path, Request, Response, status
 from fastapi.responses import StreamingResponse
 
 from capture_runtime.contracts import (
+    CaptureDocumentV1,
     CaptureOperationV2,
     FinalizeIngestionV2,
     IngestionV2,
@@ -20,6 +21,7 @@ from capture_runtime.contracts import (
     StartCaptureV2,
 )
 from capture_runtime.dependencies import RuntimeDependencies
+from capture_runtime.progressive_audio import DEFAULT_CHECKPOINT_MS
 from capture_runtime.routes.common import ApiProblem
 from capture_runtime.storage import (
     StreamingIdempotencyConflictError,
@@ -39,7 +41,7 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
     async def streaming_ready() -> RuntimeStreamingCapabilitiesV2:
         return RuntimeStreamingCapabilitiesV2(
             max_chunk_bytes=service.max_chunk_bytes,
-            checkpoint_interval_ms=600_000,
+            checkpoint_interval_ms=DEFAULT_CHECKPOINT_MS,
             heartbeat_interval_ms=5_000,
             stall_timeout_ms=90_000,
         )
@@ -142,6 +144,16 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
                 _safe_message(str(error)),
             ) from error
 
+    @router.delete("/ingestions/{ingestion_id}", status_code=status.HTTP_204_NO_CONTENT)
+    async def delete_ingestion(ingestion_id: str) -> Response:
+        try:
+            service.delete_ingestion(ingestion_id)
+        except StreamingRecordNotFoundError as error:
+            raise ApiProblem(404, "ingestion_not_found", "Ingestion was not found.") from error
+        except StreamingTransitionError as error:
+            raise ApiProblem(409, "ingestion_delete_rejected", _safe_message(str(error))) from error
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
     @router.post(
         "/captures",
         response_model=CaptureOperationV2,
@@ -217,6 +229,34 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
     async def cancel_capture(capture_id: str) -> CaptureOperationV2:
         try:
             return service.cancel_capture(capture_id)
+        except StreamingRecordNotFoundError as error:
+            raise ApiProblem(
+                404, "capture_not_found", "Streaming capture was not found."
+            ) from error
+
+    @router.post("/captures/{capture_id}/structure", response_model=CaptureDocumentV1)
+    async def structure_capture(capture_id: str) -> CaptureDocumentV1:
+        try:
+            return await service.structure(capture_id)
+        except StreamingTransitionError as error:
+            raise ApiProblem(409, "invalid_capture_state", _safe_message(str(error))) from error
+        except StreamingPartialNotFoundError as error:
+            raise ApiProblem(
+                409, "raw_unavailable", "Raw progressive capture is not available."
+            ) from error
+        except StreamingRecordNotFoundError as error:
+            raise ApiProblem(
+                404, "capture_not_found", "Streaming capture was not found."
+            ) from error
+
+    @router.get("/captures/{capture_id}/result")
+    async def capture_result(capture_id: str) -> dict[str, object]:
+        try:
+            return service.terminal_result(capture_id)
+        except StreamingPartialNotFoundError as error:
+            raise ApiProblem(
+                409, "result_unavailable", "Structured progressive result is not available."
+            ) from error
         except StreamingRecordNotFoundError as error:
             raise ApiProblem(
                 404, "capture_not_found", "Streaming capture was not found."

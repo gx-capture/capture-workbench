@@ -91,7 +91,7 @@ def test_progressive_session_merges_overlap_and_emits_checkpoint() -> None:
             330_000: WhisperWindowResult((), _engine()),
             450_000: WhisperWindowResult((), _engine()),
             510_000: WhisperWindowResult(
-                (WhisperWindowSegment(90_000, 110_000, "ten minute words"),), _engine()
+                (WhisperWindowSegment(90_000, 110_000, "five minute words"),), _engine()
             ),
         }
     )
@@ -110,17 +110,18 @@ def test_progressive_session_merges_overlap_and_emits_checkpoint() -> None:
     assert [event.event_type for event in events] == [
         StreamingEventType.SEGMENT,
         StreamingEventType.SEGMENT,
+        StreamingEventType.CHECKPOINT,
         StreamingEventType.SEGMENT,
         StreamingEventType.CHECKPOINT,
     ]
-    assert session.partial.source_text == "same words\nlater words\nten minute words"
+    assert session.partial.source_text == "same words\nlater words\nfive minute words"
     assert session.partial.revision == 3
     assert session.partial.covered_until_ms == 630_000
 
 
-def test_progressive_session_fails_first_ten_minute_sample_without_text() -> None:
+def test_progressive_session_fails_first_five_minute_sample_without_text() -> None:
     clock = MutableClock()
-    windows = [DecodedAudioWindow(0, 600_000, b"silence")]
+    windows = [DecodedAudioWindow(0, 300_000, b"silence")]
     transcriber = FakeTranscriber({0: WhisperWindowResult((), _engine())})
     session = ProgressiveAudioSession(
         _source(),

@@ -18,6 +18,7 @@ from pydantic import ValidationError
 
 from capture_runtime.clock import Clock
 from capture_runtime.contracts import (
+    CaptureDocumentV1,
     CaptureEventV2,
     CaptureFailureV2,
     CaptureOperationV2,
@@ -25,6 +26,7 @@ from capture_runtime.contracts import (
     IngestionV2,
     OpenIngestionV2,
     PartialCaptureV2,
+    RawCaptureV1,
     StartCaptureV2,
     StreamingCaptureStatus,
     StreamingEventType,
@@ -49,6 +51,7 @@ class StreamingPartialNotFoundError(StreamingRecordNotFoundError):
 
 
 _SAFE_ID = re.compile(r"^[0-9a-f-]{36}$")
+_MAX_EVENT_REPLAY = 1_024
 
 
 def _identifier(value: str) -> str:
@@ -258,6 +261,10 @@ class StreamingRepository:
         with self._lock:
             return self._get_capture(capture_id).operation
 
+    def capture_request(self, capture_id: str) -> StartCaptureV2:
+        with self._lock:
+            return self._get_capture(capture_id).request
+
     def capture_ids_for_ingestion(self, ingestion_id: str) -> list[str]:
         with self._lock:
             self._get_ingestion(ingestion_id)
@@ -340,7 +347,7 @@ class StreamingRepository:
 
     def read_events(self, capture_id: str, *, after_sequence: int) -> list[CaptureEventV2]:
         with self._lock:
-            self._get_capture(capture_id)
+            record = self._get_capture(capture_id)
             if after_sequence < -1:
                 raise ValueError("event cursor must not be less than -1")
             path = self._capture_directory(capture_id) / "events.jsonl"
@@ -354,7 +361,20 @@ class StreamingRepository:
                     raise RuntimeError("streaming event log is corrupted") from error
                 if event.sequence > after_sequence:
                     events.append(event)
-            return events
+            if len(events) <= _MAX_EVENT_REPLAY:
+                return events
+            latest_sequence = record.operation.last_event_sequence
+            return [
+                CaptureEventV2(
+                    event_id=f"{capture_id}/resync/{latest_sequence}",
+                    sequence=latest_sequence,
+                    capture_id=capture_id,
+                    event_type=StreamingEventType.RESYNC_REQUIRED,
+                    stage="resync",
+                    partial_revision=record.operation.partial_revision,
+                    created_at=self._clock.now(),
+                )
+            ]
 
     def write_partial(self, partial: PartialCaptureV2) -> None:
         with self._lock:
@@ -372,6 +392,140 @@ class StreamingRepository:
                 }
             )
             self._persist_capture(record)
+
+    def write_raw(self, capture_id: str, raw: RawCaptureV1) -> None:
+        with self._lock:
+            self._get_capture(capture_id)
+            _atomic_json(
+                self._capture_directory(capture_id) / "raw.json",
+                raw.model_dump(mode="json", by_alias=True),
+            )
+
+    def read_raw(self, capture_id: str) -> RawCaptureV1:
+        with self._lock:
+            self._get_capture(capture_id)
+            try:
+                return RawCaptureV1.model_validate_json(
+                    (self._capture_directory(capture_id) / "raw.json").read_text(encoding="utf-8")
+                )
+            except (OSError, ValidationError) as error:
+                raise StreamingPartialNotFoundError(capture_id) from error
+
+    def write_result(self, capture_id: str, result: CaptureDocumentV1) -> None:
+        with self._lock:
+            self._get_capture(capture_id)
+            _atomic_json(
+                self._capture_directory(capture_id) / "result.json",
+                result.model_dump(mode="json", by_alias=True),
+            )
+
+    def read_result(self, capture_id: str) -> CaptureDocumentV1:
+        with self._lock:
+            self._get_capture(capture_id)
+            try:
+                return CaptureDocumentV1.model_validate_json(
+                    (self._capture_directory(capture_id) / "result.json").read_text(
+                        encoding="utf-8"
+                    )
+                )
+            except (OSError, ValidationError) as error:
+                raise StreamingPartialNotFoundError(capture_id) from error
+
+    def mark_awaiting_structuring(self, capture_id: str) -> CaptureOperationV2:
+        with self._lock:
+            record = self._get_capture(capture_id)
+            if record.operation.status in {
+                StreamingCaptureStatus.COMPLETED,
+                StreamingCaptureStatus.FAILED,
+                StreamingCaptureStatus.CANCELLED,
+            }:
+                return record.operation
+            now = self._clock.now()
+            record.operation = record.operation.model_copy(
+                update={
+                    "status": StreamingCaptureStatus.AWAITING_STRUCTURING,
+                    "progress": 0.9,
+                    "updated_at": now,
+                }
+            )
+            self._persist_capture(record)
+            self.append_event(
+                capture_id,
+                event_type=StreamingEventType.CHECKPOINT,
+                stage="awaiting_structuring",
+                partial_revision=record.operation.partial_revision,
+            )
+            return record.operation
+
+    def mark_structuring(self, capture_id: str) -> CaptureOperationV2:
+        with self._lock:
+            record = self._get_capture(capture_id)
+            if record.operation.status is StreamingCaptureStatus.STRUCTURING:
+                return record.operation
+            if record.operation.status is not StreamingCaptureStatus.AWAITING_STRUCTURING:
+                raise StreamingTransitionError("capture is not awaiting structuring")
+            now = self._clock.now()
+            record.operation = record.operation.model_copy(
+                update={
+                    "status": StreamingCaptureStatus.STRUCTURING,
+                    "progress": 0.95,
+                    "updated_at": now,
+                }
+            )
+            self._persist_capture(record)
+            return record.operation
+
+    def complete_capture(self, capture_id: str) -> CaptureOperationV2:
+        with self._lock:
+            record = self._get_capture(capture_id)
+            if record.operation.status is StreamingCaptureStatus.COMPLETED:
+                return record.operation
+            if record.operation.status is StreamingCaptureStatus.CANCELLED:
+                return record.operation
+            now = self._clock.now()
+            record.operation = record.operation.model_copy(
+                update={
+                    "status": StreamingCaptureStatus.COMPLETED,
+                    "progress": 1.0,
+                    "updated_at": now,
+                    "completed_at": now,
+                }
+            )
+            self._persist_capture(record)
+            self.append_event(
+                capture_id,
+                event_type=StreamingEventType.COMPLETED,
+                stage="completed",
+            )
+            return record.operation
+
+    def fail_capture(self, capture_id: str, failure: CaptureFailureV2) -> CaptureOperationV2:
+        with self._lock:
+            record = self._get_capture(capture_id)
+            if record.operation.status in {
+                StreamingCaptureStatus.COMPLETED,
+                StreamingCaptureStatus.FAILED,
+                StreamingCaptureStatus.CANCELLED,
+            }:
+                return record.operation
+            now = self._clock.now()
+            record.operation = record.operation.model_copy(
+                update={
+                    "status": StreamingCaptureStatus.FAILED,
+                    "progress": record.operation.progress,
+                    "error": failure,
+                    "updated_at": now,
+                    "completed_at": now,
+                }
+            )
+            self._persist_capture(record)
+            self.append_event(
+                capture_id,
+                event_type=StreamingEventType.FAILED,
+                stage=failure.stage or "failed",
+                error=failure,
+            )
+            return record.operation
 
     def read_partial(self, capture_id: str) -> PartialCaptureV2:
         with self._lock:

@@ -35,7 +35,7 @@ def test_streaming_capability_is_strictly_advertised(client: TestClient) -> None
         "protocolVersion": "2",
         "supportsProgressiveAudio": True,
         "maxChunkBytes": 4 * 1024 * 1024,
-        "checkpointIntervalMs": 600_000,
+        "checkpointIntervalMs": 300_000,
         "heartbeatIntervalMs": 5_000,
         "stallTimeoutMs": 90_000,
     }
@@ -198,3 +198,12 @@ def test_streaming_api_rejects_gap_checksum_and_invalid_cursor(client: TestClien
         )["protocolVersion"]
         == "2"
     )
+
+
+def test_streaming_api_allows_ingestion_cleanup(client: TestClient) -> None:
+    ingestion_id, _ = _open(client)
+
+    deleted = client.delete(f"/v2/ingestions/{ingestion_id}")
+
+    assert deleted.status_code == 204
+    assert client.get(f"/v2/ingestions/{ingestion_id}").status_code == 404

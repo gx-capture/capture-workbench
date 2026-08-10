@@ -82,13 +82,28 @@ class ProgressiveWhisperWorkerBackend:
         return None
 
     def input(self, window: DecodedAudioWindow) -> Iterable[ProgressiveSessionEvent]:
-        return self.session.consume_window(window)
+        return tuple(self._with_provenance(self.session.consume_window(window)))
 
     def finish(self) -> Iterable[ProgressiveSessionEvent]:
-        return self.session.finish()
+        return tuple(self._with_provenance(self.session.finish()))
 
     def cancel(self) -> None:
         self.session.cancel()
+
+    def _with_provenance(
+        self,
+        events: Iterable[ProgressiveSessionEvent],
+    ) -> Iterable[ProgressiveSessionEvent]:
+        for event in events:
+            yield ProgressiveSessionEvent(
+                event_type=event.event_type,
+                stage=event.stage,
+                partial_revision=event.partial_revision,
+                covered_until_ms=event.covered_until_ms,
+                segments=event.segments,
+                error=event.error,
+                extraction_engine=self.session.extraction_engine,
+            )
 
 
 def _engine_from_result(result: WhisperTranscriptionResult) -> CaptureEngineV1:

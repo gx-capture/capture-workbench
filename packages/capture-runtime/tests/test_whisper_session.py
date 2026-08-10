@@ -63,7 +63,8 @@ def test_session_protocol_requires_credit_and_accepts_fragmented_binary_input() 
         for frame in decoder.feed(bytes([byte])):
             outputs.extend(protocol.handle(frame))
 
-    assert outputs == []
+    assert len(outputs) == 1
+    assert outputs[0][0] == ord(SessionFrameType.HEARTBEAT.value)
     assert backend.started is not None
     assert backend.windows == [DecodedAudioWindow(0, 1_000, b"pcm")]
 

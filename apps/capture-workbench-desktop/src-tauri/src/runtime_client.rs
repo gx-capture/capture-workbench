@@ -172,37 +172,50 @@ pub(crate) fn start_streaming_capture(
         .get("ingestionId")
         .and_then(Value::as_str)
         .ok_or_else(|| "Progressive ingestion response is invalid.".to_string())?;
-    upload_source_chunks(&config, &source, ingestion_id, &input.client_request_id)?;
-    request_json(
-        state,
-        "POST",
-        &format!("/v2/ingestions/{ingestion_id}/finalize"),
-        Some(RequestBody {
-            bytes: serde_json::to_vec(&json!({
-                "totalBytes": source.bytes,
-                "sha256": source_sha256(&source)?,
-            }))
-            .map_err(|_| "Progressive finalize request cannot be encoded.".to_string())?,
-            content_type: "application/json".into(),
-        }),
-        None,
-    )?;
-    request_json(
-        state,
-        "POST",
-        "/v2/captures",
-        Some(RequestBody {
-            bytes: serde_json::to_vec(&json!({
-                "clientRequestId": input.client_request_id,
-                "ingestionId": ingestion_id,
-                "structuringMode": input.structuring_mode,
-                "startPolicy": "eager",
-            }))
-            .map_err(|_| "Progressive capture request cannot be encoded.".to_string())?,
-            content_type: "application/json".into(),
-        }),
-        None,
-    )
+    let result = (|| {
+        upload_source_chunks(&config, &source, ingestion_id, &input.client_request_id)?;
+        let source_digest = source_sha256(&source)?;
+        request_json(
+            state,
+            "POST",
+            &format!("/v2/ingestions/{ingestion_id}/finalize"),
+            Some(RequestBody {
+                bytes: serde_json::to_vec(&json!({
+                    "totalBytes": source.bytes,
+                    "sha256": source_digest,
+                }))
+                .map_err(|_| "Progressive finalize request cannot be encoded.".to_string())?,
+                content_type: "application/json".into(),
+            }),
+            None,
+        )?;
+        request_json(
+            state,
+            "POST",
+            "/v2/captures",
+            Some(RequestBody {
+                bytes: serde_json::to_vec(&json!({
+                    "clientRequestId": input.client_request_id,
+                    "ingestionId": ingestion_id,
+                    "structuringMode": input.structuring_mode,
+                    "startPolicy": "eager",
+                }))
+                .map_err(|_| "Progressive capture request cannot be encoded.".to_string())?,
+                content_type: "application/json".into(),
+            }),
+            None,
+        )
+    })();
+    if result.is_err() {
+        let _ = request_json(
+            state,
+            "DELETE",
+            &format!("/v2/ingestions/{ingestion_id}"),
+            None,
+            None,
+        );
+    }
+    result
 }
 
 pub(crate) fn streaming_capture(
@@ -220,6 +233,20 @@ pub(crate) fn streaming_partial(
         streaming_value(state, "GET", &input.id, "/partial", None, None),
         409,
     )
+}
+
+pub(crate) fn streaming_result(
+    state: &DesktopState,
+    input: RuntimeIdInput,
+) -> Result<Value, String> {
+    streaming_value(state, "GET", &input.id, "/result", None, None)
+}
+
+pub(crate) fn streaming_structure(
+    state: &DesktopState,
+    input: RuntimeIdInput,
+) -> Result<Value, String> {
+    streaming_value(state, "POST", &input.id, "/structure", None, None)
 }
 
 pub(crate) fn streaming_events(

@@ -130,7 +130,10 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         runtime_dependencies.staging_root.mkdir(parents=True, exist_ok=True)
-        for abandoned_upload in runtime_dependencies.staging_root.glob("*.upload"):
+        for abandoned_upload in (
+            *runtime_dependencies.staging_root.glob("*.upload"),
+            *runtime_dependencies.staging_root.glob("*.spool"),
+        ):
             abandoned_upload.unlink(missing_ok=True)
         runtime_dependencies.capture_repository.initialize()
         runtime_dependencies.streaming_repository.initialize()
@@ -141,6 +144,7 @@ def create_app(
         finally:
             await runtime_dependencies.installation_service.shutdown()
             await runtime_dependencies.model_installation_service.shutdown()
+            await runtime_dependencies.streaming_capture_service.shutdown()
             await runtime_dependencies.capture_service.shutdown()
             await runtime_dependencies.engine_manager.shutdown()
             runtime_dependencies.lifecycle.stop()

@@ -9,6 +9,7 @@ from capture_runtime.contracts import (
     OpenIngestionV2,
     StartCaptureV2,
     StreamingCaptureStatus,
+    StreamingEventType,
     StreamingIngestionStatus,
     StructuringMode,
 )
@@ -113,3 +114,40 @@ def test_streaming_repository_prunes_expired_terminal_capture_and_ingestion(
 
     assert not (tmp_path / "streaming" / "captures" / capture.capture_id).exists()
     assert not (tmp_path / "streaming" / "ingestions" / ingestion_id).exists()
+
+
+def test_streaming_repository_returns_resync_when_replay_is_too_large(tmp_path: Path) -> None:
+    clock = MutableClock()
+    repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+    repository.initialize()
+    source = b"audio"
+    ingestion_id, source_sha256 = _open(repository, source)
+    repository.append_chunk(
+        ingestion_id,
+        chunk_index=0,
+        byte_offset=0,
+        data=source,
+        sha256=hashlib.sha256(source).hexdigest(),
+        max_chunk_bytes=4 * 1024 * 1024,
+        declared_total_bytes=len(source),
+    )
+    repository.finalize_ingestion(ingestion_id, total_bytes=len(source), sha256=source_sha256)
+    capture = repository.create_capture(
+        StartCaptureV2(
+            client_request_id="repository-capture-resync",
+            ingestion_id=ingestion_id,
+            structuring_mode=StructuringMode.HOST,
+        )
+    )
+    for _ in range(1_024):
+        repository.append_event(
+            capture.capture_id,
+            event_type=StreamingEventType.HEARTBEAT,
+            stage="extracting",
+        )
+
+    events = repository.read_events(capture.capture_id, after_sequence=-1)
+
+    assert len(events) == 1
+    assert events[0].event_type is StreamingEventType.RESYNC_REQUIRED
+    assert events[0].sequence == repository.get_capture(capture.capture_id).last_event_sequence

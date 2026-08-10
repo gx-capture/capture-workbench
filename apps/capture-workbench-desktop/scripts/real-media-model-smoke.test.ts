@@ -38,7 +38,7 @@ import {
 
 const digest = 'a'.repeat(64);
 
-test('audio smoke uses the ten-minute watchdog', () => {
+test('audio smoke keeps its independent ten-minute upper-bound watchdog', () => {
   assert.equal(REAL_MODEL_AUDIO_CAPTURE_TIMEOUT_MS, 10 * 60_000);
 });
 

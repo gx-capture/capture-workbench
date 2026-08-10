@@ -29,6 +29,7 @@ from capture_runtime.ollama import (
     RuntimeInstaller,
     SystemRuntimeInstaller,
 )
+from capture_runtime.progressive_capture import ProgressiveCaptureProcessor
 from capture_runtime.services import (
     CaptureService,
     InstallationService,
@@ -181,6 +182,16 @@ def build_runtime_dependencies(
         retention_hours=settings.retention_hours,
     )
     staging_root = settings.app_data_dir / "jobs" / "staging"
+    progressive_processor = (
+        None
+        if settings.extraction_provider == "fake"
+        else ProgressiveCaptureProcessor(
+            clock=runtime_clock,
+            config=settings.extraction,
+            engine_manager=engine_manager,
+            staging_root=staging_root,
+        )
+    )
     capture_service = CaptureService(
         active_capture_repository,
         extractor=active_extractor,
@@ -190,6 +201,8 @@ def build_runtime_dependencies(
     streaming_capture_service = StreamingCaptureService(
         streaming_repository,
         clock=runtime_clock,
+        processor=progressive_processor,
+        structurer=active_structurer,
     )
     installation_service = InstallationService(
         active_installation_repository,

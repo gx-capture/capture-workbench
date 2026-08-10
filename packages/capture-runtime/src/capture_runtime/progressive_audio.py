@@ -22,7 +22,7 @@ from capture_runtime.contracts import (
 MAX_PROGRESSIVE_WINDOW_BYTES = 4 * 1024 * 1024
 DEFAULT_WINDOW_MS = 120_000
 DEFAULT_OVERLAP_MS = 30_000
-DEFAULT_CHECKPOINT_MS = 600_000
+DEFAULT_CHECKPOINT_MS = 300_000
 DEFAULT_HEARTBEAT_MS = 5_000
 DEFAULT_STALL_TIMEOUT_MS = 90_000
 
@@ -86,6 +86,7 @@ class ProgressiveSessionEvent:
     covered_until_ms: int | None = None
     segments: tuple[RawCaptureSegmentV1, ...] = ()
     error: CaptureFailureV2 | None = None
+    extraction_engine: CaptureEngineV1 | None = None
 
 
 class ProgressiveAudioSession:
@@ -139,6 +140,18 @@ class ProgressiveAudioSession:
     @property
     def terminal(self) -> bool:
         return self._terminal
+
+    @property
+    def completed(self) -> bool:
+        return self._terminal and self._finished and bool(self._segments)
+
+    @property
+    def partial_available(self) -> bool:
+        return self._engine is not None and bool(self._segments)
+
+    @property
+    def extraction_engine(self) -> CaptureEngineV1 | None:
+        return self._engine
 
     @property
     def covered_until_ms(self) -> int:
@@ -197,8 +210,19 @@ class ProgressiveAudioSession:
         """Consume an already decoded bounded window from the worker seam."""
 
         self._ensure_open()
-        self._consume(window)
+        result = self.transcriber.transcribe(window)
+        self.consume_window_result(window, result)
         return self.drain_events()
+
+    def consume_window_result(
+        self,
+        window: DecodedAudioWindow,
+        result: WhisperWindowResult,
+    ) -> None:
+        """Merge a bounded worker result without exposing session internals."""
+
+        self._ensure_open()
+        self._consume_result(window, result)
 
     def finish(self) -> list[ProgressiveSessionEvent]:
         self._ensure_open()
@@ -242,6 +266,9 @@ class ProgressiveAudioSession:
         if window.start_ms > self._covered_until_ms + self.overlap_ms:
             raise ProgressiveAudioError("decoded audio windows have a gap")
         result = self.transcriber.transcribe(window)
+        self._consume_result(window, result)
+
+    def _consume_result(self, window: DecodedAudioWindow, result: WhisperWindowResult) -> None:
         self._engine = result.extraction_engine
         for warning in result.warnings:
             if warning not in self._warnings:
@@ -307,7 +334,7 @@ class ProgressiveAudioSession:
             if not self._segments:
                 self._fail(
                     code="progressive_no_text_at_sample",
-                    message="No non-empty text was produced at the 10 minute audio sample.",
+                    message="No non-empty text was produced at the 5 minute audio sample.",
                     retryable=True,
                     stage="checkpoint",
                 )

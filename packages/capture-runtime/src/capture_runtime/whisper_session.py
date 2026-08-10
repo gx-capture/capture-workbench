@@ -224,7 +224,9 @@ class WhisperSessionProtocol:
         start_ms, end_ms = _AUDIO_HEADER.unpack(payload[: _AUDIO_HEADER.size])
         window = DecodedAudioWindow(start_ms, end_ms, payload[_AUDIO_HEADER.size :])
         self._credits -= 1
-        return self._event_frames(self.backend.input(window))
+        output = self._event_frames(self.backend.input(window))
+        output.append(_frame(SessionFrameType.HEARTBEAT, _json_bytes({"stage": "input_ack"})))
+        return output
 
     def _finish(self) -> list[bytes]:
         output = self._event_frames(self.backend.finish())
@@ -302,13 +304,17 @@ def _event_frame(event: ProgressiveSessionEvent) -> bytes:
     if event.event_type is StreamingEventType.HEARTBEAT:
         return _frame(SessionFrameType.HEARTBEAT, _json_bytes({"stage": event.stage}))
     if event.event_type is StreamingEventType.SEGMENT:
-        payload = {
+        payload: dict[str, Any] = {
             "partialRevision": event.partial_revision,
             "coveredUntilMs": event.covered_until_ms,
             "segments": [
                 segment.model_dump(mode="json", by_alias=True) for segment in event.segments
             ],
         }
+        if event.extraction_engine is not None:
+            payload["extractionEngine"] = event.extraction_engine.model_dump(
+                mode="json", by_alias=True
+            )
         return _frame(SessionFrameType.SEALED_SEGMENT, _json_bytes(payload))
     if event.event_type is StreamingEventType.CHECKPOINT:
         return _frame(
