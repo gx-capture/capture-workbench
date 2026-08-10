@@ -380,12 +380,14 @@ test('smoke failure output excludes OCR, audio, and document-name content', () =
         transcript: privateAudio,
       },
     ],
+    '{"status":"failed","stage":"failed","progressBand":"unknown","errorCode":"capture_failed"}',
   );
   assert.doesNotMatch(message, new RegExp(`${privateOcr}|${privateAudio}|${privateDocumentName}`, 'u'));
   assert.match(message, /failure=unexpected/u);
   assert.match(message, /windowsml-ocr/u);
   assert.match(message, /windowsml-dml/u);
   assert.match(message, /document-raw/u);
+  assert.match(message, /Backend capture state: \{"status":"failed","stage":"failed","progressBand":"unknown","errorCode":"capture_failed"\}/u);
 });
 
 test('terminal document failure is immediate, allowlisted, and content-free', () => {

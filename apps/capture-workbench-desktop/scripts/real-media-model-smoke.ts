@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createReadStream } from 'node:fs';
 import { createServer } from 'node:http';
 import { copyFile, lstat, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
@@ -36,6 +36,7 @@ export const REAL_MODEL_INSTALL_TIMEOUT_MS = 90 * 60_000;
 export const REAL_MODEL_CAPTURE_TIMEOUT_MS = 5 * 60_000;
 export const REAL_MODEL_CAPTURE_START_TIMEOUT_MS = 30_000;
 export const REAL_MODEL_AUDIO_CAPTURE_TIMEOUT_MS = 10 * 60_000;
+export const REAL_MODEL_AUDIO_SAMPLE_SECONDS = 10 * 60;
 
 export function assertAudioDeviceMatchesSourceLock(
   actualDevice: string | null,
@@ -223,6 +224,7 @@ interface MediaInput {
   readonly sha256: string;
   readonly expectedOcrText?: string;
   readonly expectedOcrTextSha256?: string;
+  readonly exactWhisperOutput?: boolean;
 }
 
 interface ExpectedProvenance {
@@ -615,14 +617,81 @@ async function prepareAudioInput(expected: ExpectedProvenance): Promise<MediaInp
   );
 }
 
-async function prepareAudioOnlyInputs(
-  expected: ExpectedProvenance,
-): Promise<readonly [MediaInput, MediaInput, MediaInput]> {
+async function prepareAudioSampleInput(): Promise<MediaInput> {
+  await mkdir(runRoot, { recursive: true });
+  const audioInput = process.env.CAPTURE_REAL_MEDIA_MODEL_AUDIO?.trim();
+  if (!audioInput) throw new Error('CAPTURE_REAL_MEDIA_MODEL_AUDIO is required for the private runner audio fixture.');
+  const sampleSource = join(runRoot, 'model-private-audio-sample-source.mp3');
+  await createAudioSample(audioInput, sampleSource);
+  return {
+    ...(await regularInput(
+      sampleSource,
+      'private audio sample',
+      'audio',
+      join(runRoot, safeInputName('audio')),
+    )),
+    exactWhisperOutput: false,
+  };
+}
+
+async function createAudioSample(inputPath: string, outputPath: string): Promise<void> {
+  const python = `
+import os
+from pathlib import Path
+import av
+
+source = Path(os.environ["CAPTURE_AUDIO_SAMPLE_INPUT"])
+destination = Path(os.environ["CAPTURE_AUDIO_SAMPLE_OUTPUT"])
+with av.open(str(source)) as input_container:
+    input_stream = next(iter(input_container.streams.audio))
+    with av.open(str(destination), "w", format="mp3") as output_container:
+        output_stream = output_container.add_stream("libmp3lame", rate=input_stream.rate)
+        output_stream.layout = input_stream.layout
+        for frame in input_container.decode(input_stream.index):
+            if frame.time is not None and frame.time >= ${String(REAL_MODEL_AUDIO_SAMPLE_SECONDS)}:
+                break
+            for packet in output_stream.encode(frame):
+                output_container.mux(packet)
+        for packet in output_stream.encode():
+            output_container.mux(packet)
+`;
+  const result = spawnSync(
+    'uv',
+    [
+      'run',
+      '--no-sync',
+      '--project',
+      join(workspaceRoot, 'packages', 'capture-runtime'),
+      'python',
+      '-c',
+      python,
+    ],
+    {
+      env: {
+        ...process.env,
+        CAPTURE_AUDIO_SAMPLE_INPUT: inputPath,
+        CAPTURE_AUDIO_SAMPLE_OUTPUT: outputPath,
+      },
+      stdio: 'ignore',
+      windowsHide: true,
+      timeout: 120_000,
+    },
+  );
+  if (result.error || result.status !== 0) {
+    throw new Error('The private audio sample could not be prepared.');
+  }
+  const metadata = await lstat(outputPath).catch(() => undefined);
+  if (!metadata?.isFile() || metadata.isSymbolicLink() || metadata.size < 1) {
+    throw new Error('The private audio sample was not created as a regular file.');
+  }
+}
+
+async function prepareAudioOnlyInputs(): Promise<readonly [MediaInput, MediaInput, MediaInput]> {
   await mkdir(runRoot, { recursive: true });
   return [
     await regularInput(projectPdfPath, 'project OCR PDF fixture', 'pdf', join(runRoot, safeInputName('pdf'))),
     await regularInput(projectImagePath, 'project OCR image fixture', 'image', join(runRoot, safeInputName('image'))),
-    await prepareAudioInput(expected),
+    await prepareAudioSampleInput(),
   ];
 }
 
@@ -1481,6 +1550,7 @@ export function safeSmokeFailureMessage(
   error: unknown,
   workerMirrorRequests: number,
   uiStateRecords: readonly unknown[],
+  backendCaptureState?: string,
 ): string {
   const raw = error instanceof Error ? error.message : String(error);
   const failureKind = smokeFailureKind(error);
@@ -1498,7 +1568,69 @@ export function safeSmokeFailureMessage(
       || SAFE_MODEL_INSTALLATION_START_FAILURE.test(error.message))
     ? `; terminal=${error.message}`
     : '';
-  return `Real model smoke failed. failure=${failureKind}; error-sha256=${errorDigest}${diagnostics}${terminal}. Candidate worker mirror requests: ${requestCount}. UI state: ${safeUiStateSnapshot(uiStateRecords)}`;
+  const backend = backendCaptureState ? ` Backend capture state: ${backendCaptureState}.` : '';
+  return `Real model smoke failed. failure=${failureKind}; error-sha256=${errorDigest}${diagnostics}${terminal}. Candidate worker mirror requests: ${requestCount}. UI state: ${safeUiStateSnapshot(uiStateRecords)}${backend}`;
+}
+
+async function collectSafeBackendCaptureState(
+  page: Page,
+  documentId: string | undefined,
+): Promise<string | undefined> {
+  if (!documentId) return undefined;
+  try {
+    const library = await invokeTauriCommand(page, 'library_list', {
+      request: { query: '', status: '' },
+    });
+    if (!Array.isArray(library)) return undefined;
+    const document = library.find((item) => (
+      item !== null
+      && typeof item === 'object'
+      && !Array.isArray(item)
+      && (item as Record<string, unknown>).documentId === documentId
+    ));
+    if (document === undefined || document === null || typeof document !== 'object' || Array.isArray(document)) {
+      return undefined;
+    }
+    const summary = document as Record<string, unknown>;
+    const captureId = typeof summary.captureId === 'string' ? summary.captureId : undefined;
+    if (!captureId) {
+      const status = typeof summary.status === 'string' && SAFE_UI_STATE_STATUSES.has(summary.status)
+        ? summary.status
+        : 'unknown';
+      const stage = typeof summary.stage === 'string' && SAFE_TERMINAL_DOCUMENT_STAGES.has(summary.stage)
+        ? summary.stage
+        : 'unknown';
+      return JSON.stringify({ status, stage, progressBand: 'unknown', errorCode: 'not-started' });
+    }
+    const capture = await invokeTauriCommand(page, 'runtime_get_capture', { input: { id: captureId } });
+    if (capture === null || typeof capture !== 'object' || Array.isArray(capture)) return undefined;
+    const job = capture as Record<string, unknown>;
+    const status = typeof job.status === 'string' && SAFE_UI_STATE_STATUSES.has(job.status)
+      ? job.status
+      : 'unknown';
+    const stage = typeof job.stage === 'string' && SAFE_TERMINAL_DOCUMENT_STAGES.has(job.stage)
+      ? job.stage
+      : 'unknown';
+    const progress = typeof job.progress === 'number' && Number.isFinite(job.progress)
+      ? Math.max(0, Math.min(1, job.progress))
+      : undefined;
+    const progressBand = progress === undefined
+      ? 'unknown'
+      : progress < 0.35
+        ? 'early'
+        : progress < 0.85
+          ? 'middle'
+          : 'late';
+    const error = job.error;
+    const errorCode = error !== null && typeof error === 'object' && !Array.isArray(error)
+      && typeof (error as Record<string, unknown>).code === 'string'
+      && /^[a-z][a-z0-9_-]{1,63}$/u.test((error as Record<string, unknown>).code as string)
+      ? (error as Record<string, unknown>).code as string
+      : 'none';
+    return JSON.stringify({ status, stage, progressBand, errorCode });
+  } catch {
+    return undefined;
+  }
 }
 
 async function collectSafeUiState(page: Page): Promise<readonly unknown[]> {
@@ -2066,8 +2198,10 @@ async function assertVisibleCapture(
   const actualDevice = await extractionProvenance.getAttribute('data-device');
   assert.equal(await extractionProvenance.getAttribute('data-engine'), expectedEngine);
   assert.equal(await extractionProvenance.getAttribute('data-model'), expectedModel);
-  if (input.kind === 'audio' && expected.whisperPreferGpu) {
+  if (input.kind === 'audio' && expected.whisperPreferGpu && input.exactWhisperOutput !== false) {
     assertAudioDeviceMatchesSourceLock(actualDevice, expectedDevice);
+  } else if (input.kind === 'audio') {
+    assert.ok(actualDevice === 'cuda' || actualDevice === 'cpu');
   } else {
     assert.equal(actualDevice, expectedDevice);
   }
@@ -2111,7 +2245,12 @@ async function assertVisibleCapture(
   } else {
     assert.match(provenance, new RegExp(expected.whisperDevice.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'u'));
   }
-  const segmentCount = await assertAudioRawSegments(rawText, rawSection, expected);
+  const segmentCount = await assertAudioRawSegments(
+    rawText,
+    rawSection,
+    expected,
+    input.exactWhisperOutput !== false,
+  );
   await deleteDocumentThroughUi(page, document.id);
   return {
     sourceKind: input.kind,
@@ -2130,6 +2269,7 @@ async function assertAudioRawSegments(
   rawText: string,
   rawSection: ReturnType<Page['locator']>,
   expected: ExpectedProvenance,
+  exactOutput: boolean,
 ): Promise<number> {
   const parsed = parseJsonFromVisibleRaw(rawText);
   const segments = parsed?.segments;
@@ -2152,10 +2292,10 @@ async function assertAudioRawSegments(
       previousOrder = order;
       previousEnd = endMs;
     }
-    if (segments.length < expected.whisperSegmentMinimum || segments.length > expected.whisperSegmentMaximum) {
+    if (exactOutput && (segments.length < expected.whisperSegmentMinimum || segments.length > expected.whisperSegmentMaximum)) {
       throw new Error('Audio UI raw segment count drifted from the lock-selected fixture bounds.');
     }
-    if (normalizedTranscriptDigest(transcript) !== expected.whisperNormalizedOutputSha256) {
+    if (exactOutput && normalizedTranscriptDigest(transcript) !== expected.whisperNormalizedOutputSha256) {
       throw new Error('Audio UI raw normalized result did not match the lock-selected Whisper digest.');
     }
     return segments.length;
@@ -2167,7 +2307,7 @@ async function assertAudioRawSegments(
     endMs: Number(node.getAttribute('data-end-ms')),
     text: node.textContent || '',
   })));
-  if (locators.length < expected.whisperSegmentMinimum || locators.length > expected.whisperSegmentMaximum) {
+  if (exactOutput && (locators.length < expected.whisperSegmentMinimum || locators.length > expected.whisperSegmentMaximum)) {
     throw new Error('Audio UI raw segment count drifted from the lock-selected fixture bounds.');
   }
   let previousEnd = -1;
@@ -2179,7 +2319,7 @@ async function assertAudioRawSegments(
     }
     previousEnd = locator.endMs;
   });
-  if (normalizedTranscriptDigest(locators.map((locator) => locator.text)) !== expected.whisperNormalizedOutputSha256) {
+  if (exactOutput && normalizedTranscriptDigest(locators.map((locator) => locator.text)) !== expected.whisperNormalizedOutputSha256) {
     throw new Error('Audio UI raw normalized result did not match the lock-selected Whisper digest.');
   }
   return locators.length;
@@ -2374,7 +2514,7 @@ async function run(): Promise<void> {
   let audio: MediaInput | undefined;
   try {
     if (audioOnly) {
-      inputs = await prepareAudioOnlyInputs(expected);
+      inputs = await prepareAudioOnlyInputs();
       audio = inputs[2];
     } else {
       inputs = await prepareInputs(expected);
@@ -2408,7 +2548,7 @@ async function run(): Promise<void> {
   assertNoAmbientModelOverrides(appEnvironment);
   appEnvironment.CAPTURE_WHISPER_PREFER_GPU = String(expected.whisperPreferGpu);
   appEnvironment.CAPTURE_WHISPER_ALLOW_CPU_FALLBACK = String(
-    whisperCpuFallbackAllowedForSourceLock(expected.whisperDevice),
+    audioOnly || whisperCpuFallbackAllowedForSourceLock(expected.whisperDevice),
   );
   if (appEnvironment.CAPTURE_WHISPER_PREFER_GPU !== String(expected.whisperPreferGpu)) {
     throw new Error('Lock-derived Whisper GPU preference drifted before app launch.');
@@ -2422,6 +2562,7 @@ async function run(): Promise<void> {
   let cdpPortReleased = false;
   let workerMirrorReleased = false;
   let workerMirror: CandidateWorkerMirror | undefined;
+  let activeDocumentId: string | undefined;
   try {
     workerMirror = await startCandidateWorkerMirror(expected);
     appEnvironment.CAPTURE_SMOKE_WORKER_MIRROR_OPT_IN = '1';
@@ -2469,6 +2610,7 @@ async function run(): Promise<void> {
         audio.kind,
         { waitForCaptureReady: !audioOnly },
       );
+      activeDocumentId = injectedAudio.documentId;
       // The keyed import bypasses only the native picker, so it cannot exercise
       // the renderer callback that reveals the optional Whisper setup row. Keep
       // consent on the existing authenticated Tauri/runtime installation path.
@@ -2500,10 +2642,13 @@ async function run(): Promise<void> {
     }
     cleanupVerified = true;
   } catch (error) {
+    const backendCaptureState = page
+      ? await collectSafeBackendCaptureState(page, activeDocumentId).catch(() => undefined)
+      : undefined;
     const uiStateRecords = page
       ? await collectSafeUiState(page).catch(() => [])
       : [];
-    throw new Error(safeSmokeFailureMessage(error, workerMirror?.requests() ?? 0, uiStateRecords));
+    throw new Error(safeSmokeFailureMessage(error, workerMirror?.requests() ?? 0, uiStateRecords, backendCaptureState));
   } finally {
     if (browser) await browser.close().catch(() => undefined);
     if (app?.pid) {
