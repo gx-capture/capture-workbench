@@ -48,6 +48,7 @@ impl LaunchPolicy {
                 self.runtime_data_dir().to_string_lossy().into_owned(),
             ),
             ("CAPTURE_STRUCTURING_PROVIDER", "ollama".into()),
+            ("CAPTURE_WHISPER_PREFER_GPU", "true".into()),
             (
                 "CAPTURE_RETENTION_HOURS",
                 DEFAULT_RETENTION_HOURS.to_string(),
@@ -77,6 +78,9 @@ impl LaunchPolicy {
                 self.ollama_models_dir().to_string_lossy().into_owned(),
             ),
         ];
+        if let Some(cuda_path) = configured_cuda_path(std::env::var("CUDA_PATH").ok()) {
+            environment.push(("CUDA_PATH", cuda_path));
+        }
         if let Some(mirror_url) = smoke_worker_mirror_url(
             std::env::var("CAPTURE_SMOKE_WORKER_MIRROR_OPT_IN").ok(),
             std::env::var("CAPTURE_SMOKE_WORKER_MIRROR_URL").ok(),
@@ -86,6 +90,12 @@ impl LaunchPolicy {
         }
         environment
     }
+}
+
+fn configured_cuda_path(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
 }
 
 fn smoke_worker_mirror_url(opt_in: Option<String>, raw_url: Option<String>) -> Option<String> {
@@ -146,7 +156,34 @@ impl LaunchPolicyFactory {
 
 #[cfg(test)]
 mod tests {
-    use super::smoke_worker_mirror_url;
+    use std::path::PathBuf;
+
+    use super::{configured_cuda_path, smoke_worker_mirror_url, LaunchPolicy};
+
+    #[test]
+    fn runtime_environment_explicitly_prefers_whisper_gpu() {
+        let environment = LaunchPolicy {
+            runtime_port: 43123,
+            ollama_port: 43124,
+            token: "a".repeat(64),
+            data_dir: PathBuf::from("C:\\capture-workbench"),
+        }
+        .environment();
+
+        assert!(environment
+            .iter()
+            .any(|(name, value)| { *name == "CAPTURE_WHISPER_PREFER_GPU" && value == "true" }));
+    }
+
+    #[test]
+    fn configured_cuda_path_ignores_missing_or_blank_values() {
+        assert_eq!(configured_cuda_path(None), None);
+        assert_eq!(configured_cuda_path(Some("   ".into())), None);
+        assert_eq!(
+            configured_cuda_path(Some("  C:\\CUDA  ".into())),
+            Some("C:\\CUDA".into())
+        );
+    }
 
     #[test]
     fn smoke_worker_mirror_requires_explicit_numeric_loopback_opt_in() {

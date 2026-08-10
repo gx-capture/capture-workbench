@@ -377,6 +377,7 @@ def _validate_private_whisper_fixture(value: object, *, require_approved: bool) 
             "kind",
             "mediaType",
             "monotonicSegments",
+            "preferGpu",
             "sha256",
         },
         "private Whisper fixture",
@@ -391,6 +392,8 @@ def _validate_private_whisper_fixture(value: object, *, require_approved: bool) 
         or fixture["monotonicSegments"] is not True
     ):
         raise ModelSourceLockError("private Whisper fixture bytes/provenance are invalid")
+    if not isinstance(fixture["preferGpu"], bool):
+        raise ModelSourceLockError("private Whisper GPU preference is invalid")
     expected_model = fixture["expectedModel"]
     expected_device = fixture["expectedDevice"]
     if expected_model is None or expected_device is None:

@@ -7,11 +7,14 @@ import {
   concatMap,
   defer,
   from,
+  fromEvent,
   forkJoin,
   map,
   Observable,
   of,
+  race,
   switchMap,
+  take,
   throwError,
   timer,
   toArray,
@@ -42,7 +45,18 @@ export function reserveLoopbackPort() {
 }
 
 export function connectToInstalledWebView(port, appProcess) {
-  return connectAttempt(`http://127.0.0.1:${port}`, appProcess, Date.now() + 60_000, undefined);
+  const endpoint = `http://127.0.0.1:${port}`;
+  const processTerminated = race(
+    fromEvent(appProcess, 'error'),
+    fromEvent(appProcess, 'exit'),
+  ).pipe(
+    take(1),
+    switchMap(() => throwError(() => new Error('Installed Tauri app terminated before WebView2 CDP readiness.'))),
+  );
+  return race(
+    connectAttempt(endpoint, appProcess, Date.now() + 60_000, undefined),
+    processTerminated,
+  );
 }
 
 export function installedPage(browser, appProcess) {

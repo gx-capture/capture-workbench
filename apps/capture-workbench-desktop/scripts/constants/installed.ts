@@ -22,6 +22,7 @@ export const CAPTURE_BLOCK_TYPES = new Set([
 ]);
 export const CHILD_ENVIRONMENT_ALLOWLIST = [
   'COMSPEC',
+  'CUDA_PATH',
   'NUMBER_OF_PROCESSORS',
   'OS',
   'PATH',

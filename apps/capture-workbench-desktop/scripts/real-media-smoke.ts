@@ -547,7 +547,11 @@ async function captureAndVerify(
   } else {
     assert.equal(raw.extractionEngine.engine, 'whisper-primary');
     assert.equal(raw.extractionEngine.model, expectedProvenance.whisperModel);
-    assert.equal(raw.extractionEngine.device, expectedProvenance.whisperDevice);
+    if (expectedProvenance.whisperPreferGpu) {
+      assert.ok(['cuda', 'cpu'].includes(raw.extractionEngine.device));
+    } else {
+      assert.equal(raw.extractionEngine.device, expectedProvenance.whisperDevice);
+    }
     assert.ok(raw.segments.some((segment) => segment.locator.kind === 'time'));
   }
   assert.match(raw.extractionEngine.digest, /^sha256:[a-f0-9]{64}$/u);

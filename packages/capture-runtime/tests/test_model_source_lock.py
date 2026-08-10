@@ -32,6 +32,8 @@ def test_pending_production_lock_is_canonical_model_enabled() -> None:
         Path(__file__).resolve().parents[1] / "model-sources" / "release-model-source-lock.json"
     )
     lock = model_source_lock.load_source_lock(source, require_approved=False)
+    assert lock["approval"]["status"] == "blocked"
+    assert lock["approval"]["blockers"] == [model_source_lock.PENDING_WHISPER_FREEZE_BLOCKER]
     assert [item["requirementId"] for item in lock["requirements"]] == [
         "windowsml-ocr",
         "whisper-primary",
@@ -226,6 +228,10 @@ def test_approved_lock_generates_checksum_pinned_manifest_equivalent(
         (
             lambda payload: payload["fixtures"][1].update({"expectedDevice": "dml"}),
             "model/device pair",
+        ),
+        (
+            lambda payload: payload["fixtures"][1].update({"preferGpu": "true"}),
+            "private Whisper GPU preference is invalid",
         ),
         (
             lambda payload: payload["fixtures"][1].update(
