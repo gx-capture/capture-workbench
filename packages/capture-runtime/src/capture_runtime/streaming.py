@@ -1,8 +1,8 @@
 """Small streaming-ingestion seam used by runtime adapters and tests.
 
 The port deliberately owns only input ordering and final source integrity.  It
-does not expose storage paths or worker details to callers; the file-backed
-runtime implementation will sit behind the same interface in the next phase.
+does not expose storage paths or worker details to callers; both the in-memory
+test adapter and the file-backed runtime implementation sit behind this seam.
 """
 
 from __future__ import annotations

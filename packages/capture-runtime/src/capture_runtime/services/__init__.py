@@ -12,6 +12,7 @@ from capture_runtime.services.capture_job_service import (
 )
 from capture_runtime.services.installation_service import InstallationService
 from capture_runtime.services.model_installation_service import ModelInstallationService
+from capture_runtime.services.streaming_capture_service import StreamingCaptureService
 
 __all__ = [
     "CaptureService",
@@ -22,5 +23,6 @@ __all__ = [
     "RawUnavailableError",
     "RecordNotFoundError",
     "ResultUnavailableError",
+    "StreamingCaptureService",
     "StructuringValidationError",
 ]

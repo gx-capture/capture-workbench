@@ -160,6 +160,12 @@ export interface ErrorEnvelopeV1 {
   readonly error: ErrorBodyV1;
 }
 
+export interface FinalizeIngestionV2 {
+  readonly protocolVersion: "2";
+  readonly totalBytes: number;
+  readonly sha256: string;
+}
+
 export interface IngestionV2 {
   readonly protocolVersion: "2";
   readonly ingestionId: string;
@@ -325,6 +331,7 @@ export interface RuntimeStreamingCapabilitiesV2 {
 
 export interface StartCaptureV2 {
   readonly protocolVersion: "2";
+  readonly clientRequestId: string;
   readonly ingestionId: string;
   readonly structuringMode: StructuringMode;
   readonly targetLanguage?: string | null;
@@ -347,7 +354,7 @@ export interface TimeLocatorV1 {
   readonly endMs: number;
 }
 
-export type CaptureContractName = "CaptureBlockV1" | "CaptureDocumentV1" | "CaptureEngineV1" | "CaptureEventV2" | "CaptureFailureV1" | "CaptureFailureV2" | "CaptureJobV1" | "CaptureOperationV2" | "CaptureReviewEditV1" | "CaptureReviewV1" | "CaptureSourceV1" | "ErrorBodyV1" | "ErrorEnvelopeV1" | "IngestionV2" | "OpenIngestionV2" | "PageLocatorV1" | "PartialCaptureV2" | "RawCaptureSegmentV1" | "RawCaptureV1" | "ReportStructuringFailureV1" | "RuntimeArtifactDescriptorV1" | "RuntimeCapabilitiesV1" | "RuntimeInstallationV1" | "RuntimeInstallationsV1" | "RuntimeModelInstallationV1" | "RuntimeModelInstallationsV1" | "RuntimeModelOptionV1" | "RuntimeModelOptionsV1" | "RuntimeReadyV1" | "RuntimeRequirementV1" | "RuntimeRequirementsV1" | "RuntimeStreamingCapabilitiesV2" | "StartCaptureV2" | "StartRuntimeInstallationV1" | "StartRuntimeModelInstallationV1" | "TimeLocatorV1";
+export type CaptureContractName = "CaptureBlockV1" | "CaptureDocumentV1" | "CaptureEngineV1" | "CaptureEventV2" | "CaptureFailureV1" | "CaptureFailureV2" | "CaptureJobV1" | "CaptureOperationV2" | "CaptureReviewEditV1" | "CaptureReviewV1" | "CaptureSourceV1" | "ErrorBodyV1" | "ErrorEnvelopeV1" | "FinalizeIngestionV2" | "IngestionV2" | "OpenIngestionV2" | "PageLocatorV1" | "PartialCaptureV2" | "RawCaptureSegmentV1" | "RawCaptureV1" | "ReportStructuringFailureV1" | "RuntimeArtifactDescriptorV1" | "RuntimeCapabilitiesV1" | "RuntimeInstallationV1" | "RuntimeInstallationsV1" | "RuntimeModelInstallationV1" | "RuntimeModelInstallationsV1" | "RuntimeModelOptionV1" | "RuntimeModelOptionsV1" | "RuntimeReadyV1" | "RuntimeRequirementV1" | "RuntimeRequirementsV1" | "RuntimeStreamingCapabilitiesV2" | "StartCaptureV2" | "StartRuntimeInstallationV1" | "StartRuntimeModelInstallationV1" | "TimeLocatorV1";
 
 export type CaptureContractInvariant = {
   readonly id: string;
@@ -429,6 +436,7 @@ export const CAPTURE_CONTRACT_EXTRA_POLICIES = {
   "CaptureSourceV1": "forbid",
   "ErrorBodyV1": "forbid",
   "ErrorEnvelopeV1": "forbid",
+  "FinalizeIngestionV2": "forbid",
   "IngestionV2": "forbid",
   "OpenIngestionV2": "forbid",
   "PageLocatorV1": "forbid",

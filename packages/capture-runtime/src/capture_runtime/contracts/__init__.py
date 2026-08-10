@@ -468,6 +468,7 @@ class IngestionV2(StrictModel):
 
 class StartCaptureV2(StrictModel):
     protocol_version: Literal["2"] = "2"
+    client_request_id: NonEmptyString
     ingestion_id: NonEmptyString
     structuring_mode: StructuringMode
     target_language: str | None = None
@@ -479,6 +480,12 @@ class StartCaptureV2(StrictModel):
         if value is not None and not 1 <= len(value) <= 64:
             raise ValueError("targetLanguage must be 1 to 64 characters")
         return value
+
+
+class FinalizeIngestionV2(StrictModel):
+    protocol_version: Literal["2"] = "2"
+    total_bytes: int = Field(gt=0)
+    sha256: Sha256Hex
 
 
 class CaptureFailureV2(StrictModel):

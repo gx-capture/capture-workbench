@@ -17,6 +17,11 @@
       "title": "Protocolversion",
       "type": "string"
     },
+    "clientRequestId": {
+      "minLength": 1,
+      "title": "Clientrequestid",
+      "type": "string"
+    },
     "ingestionId": {
       "minLength": 1,
       "title": "Ingestionid",
@@ -45,6 +50,7 @@
     }
   },
   "required": [
+    "clientRequestId",
     "ingestionId",
     "structuringMode"
   ],

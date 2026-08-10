@@ -99,6 +99,13 @@
       "strStripWhitespace": true
     },
     {
+      "name": "FinalizeIngestionV2",
+      "schemaFile": "finalize-ingestion-v2.schema.json",
+      "schemaSha256": "f6d9aa7427687b9aa7669cf4a1e2bb9f244af442a392d016e465d685132d364b",
+      "extraPolicy": "forbid",
+      "strStripWhitespace": true
+    },
+    {
       "name": "IngestionV2",
       "schemaFile": "ingestion-v2.schema.json",
       "schemaSha256": "a3922afe5e7769fd7283bbe8d71af2a59827f829119a2503d54e373feb386195",
@@ -234,7 +241,7 @@
     {
       "name": "StartCaptureV2",
       "schemaFile": "start-capture-v2.schema.json",
-      "schemaSha256": "3a3a8bc10cf86cf8c603d51708a7217d13866a28c1f08d073678c95c1238c18e",
+      "schemaSha256": "9aa0b1bdecc033e326caa2168a39754896cd7bbc7346e6ff53d1a06e7784b5ad",
       "extraPolicy": "forbid",
       "strStripWhitespace": true
     },

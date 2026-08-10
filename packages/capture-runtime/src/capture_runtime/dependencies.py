@@ -29,11 +29,17 @@ from capture_runtime.ollama import (
     RuntimeInstaller,
     SystemRuntimeInstaller,
 )
-from capture_runtime.services import CaptureService, InstallationService, ModelInstallationService
+from capture_runtime.services import (
+    CaptureService,
+    InstallationService,
+    ModelInstallationService,
+    StreamingCaptureService,
+)
 from capture_runtime.storage import (
     CaptureRepository,
     InstallationRepository,
     ModelInstallationRepository,
+    StreamingRepository,
 )
 from capture_runtime.structuring_provider import (
     CaptureStructuringProvider,
@@ -57,6 +63,8 @@ class RuntimeDependencies:
     capture_repository: CaptureRepository
     installation_repository: InstallationRepository
     capture_service: CaptureService
+    streaming_repository: StreamingRepository
+    streaming_capture_service: StreamingCaptureService
     installation_service: InstallationService
     model_installation_repository: ModelInstallationRepository
     model_installation_service: ModelInstallationService
@@ -167,11 +175,20 @@ def build_runtime_dependencies(
             retention_hours=settings.retention_hours,
         )
     )
+    streaming_repository = StreamingRepository(
+        settings.app_data_dir / "jobs" / "streaming",
+        clock=runtime_clock,
+        retention_hours=settings.retention_hours,
+    )
     staging_root = settings.app_data_dir / "jobs" / "staging"
     capture_service = CaptureService(
         active_capture_repository,
         extractor=active_extractor,
         structurer=active_structurer,
+        clock=runtime_clock,
+    )
+    streaming_capture_service = StreamingCaptureService(
+        streaming_repository,
         clock=runtime_clock,
     )
     installation_service = InstallationService(
@@ -194,6 +211,8 @@ def build_runtime_dependencies(
         capture_repository=active_capture_repository,
         installation_repository=active_installation_repository,
         capture_service=capture_service,
+        streaming_repository=streaming_repository,
+        streaming_capture_service=streaming_capture_service,
         installation_service=installation_service,
         model_installation_repository=active_model_installation_repository,
         model_installation_service=model_installation_service,
