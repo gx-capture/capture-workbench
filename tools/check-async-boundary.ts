@@ -46,7 +46,9 @@ function exceptionReason(relativePath) {
     relativePath ===
       'apps/capture-workbench-desktop/scripts/real-media-smoke.ts' ||
     relativePath ===
-      'apps/capture-workbench-desktop/scripts/real-media-model-smoke.ts'
+      'apps/capture-workbench-desktop/scripts/real-media-model-smoke.ts' ||
+    relativePath ===
+      'apps/capture-workbench-desktop/scripts/progressive-audio-oracle.ts'
   ) {
     return 'opt-in real-engine CLI boundary';
   }
