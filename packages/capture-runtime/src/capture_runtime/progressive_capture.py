@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import struct
 import subprocess
 import sys
@@ -26,6 +27,7 @@ from capture_runtime.contracts import (
     RawCaptureSegmentV1,
     RawCaptureV1,
     StreamingEventType,
+    TimeLocatorV1,
     project_source_text,
 )
 from capture_runtime.engine_installation import EngineInstallationManager
@@ -38,7 +40,7 @@ from capture_runtime.progressive_audio import (
     DecodedAudioWindow,
     ProgressiveSessionEvent,
 )
-from capture_runtime.progressive_decoder import PyAVIncrementalDecoder
+from capture_runtime.progressive_decoder import ProgressiveDecoderError, PyAVIncrementalDecoder
 from capture_runtime.whisper_session import (
     SessionFrameType,
     encode_audio_input,
@@ -46,8 +48,11 @@ from capture_runtime.whisper_session import (
     encode_credit,
 )
 from capture_runtime.worker_client import InstalledEngine
+from capture_runtime.worker_process import _subprocess_path
 
 STREAM_READ_BYTES = 1024 * 1024
+_WORKER_STAGE_PATTERN = re.compile(r"(?m)^capture-worker-stage:([a-z0-9]+(?:-[a-z0-9]+)*)\r?$")
+_MAX_WORKER_DIAGNOSTIC_STAGES = 16
 
 
 class ProgressiveCaptureError(RuntimeError):
@@ -109,7 +114,15 @@ class _ProgressiveState:
             self.segments.extend(
                 segment for segment in event.segments if segment.segment_id not in known
             )
-            self.segments.sort(key=lambda segment: segment.order)
+            self.segments.sort(
+                key=lambda segment: (
+                    _state_segment_start(segment),
+                    _state_segment_end(segment),
+                    segment.segment_id,
+                )
+            )
+            for order, segment in enumerate(self.segments):
+                segment.order = order
 
     def raw(self) -> RawCaptureV1:
         partial = self.partial
@@ -128,6 +141,20 @@ class _ProgressiveState:
             warnings=[],
             created_at=partial.updated_at,
         )
+
+
+def _state_segment_start(segment: RawCaptureSegmentV1) -> int:
+    locator = segment.locator
+    if not isinstance(locator, TimeLocatorV1):
+        raise ProgressiveCaptureError("progressive audio segment locator is not time-based")
+    return locator.start_ms
+
+
+def _state_segment_end(segment: RawCaptureSegmentV1) -> int:
+    locator = segment.locator
+    if not isinstance(locator, TimeLocatorV1):
+        raise ProgressiveCaptureError("progressive audio segment locator is not time-based")
+    return locator.end_ms
 
 
 class ProgressiveCaptureProcessor:
@@ -155,43 +182,136 @@ class ProgressiveCaptureProcessor:
         cancellation: asyncio.Event,
         sink: EventSink,
     ) -> RawCaptureV1:
-        engine = await self._resolve_engine()
+        try:
+            engine = await self._resolve_engine()
+        except (ExtractionRuntimeUnavailableError, TimeoutError):
+            raise
+        except Exception as error:
+            raise ProgressiveCaptureError(
+                "Progressive Whisper engine could not be prepared.",
+                code="progressive_engine_resolution_failed",
+            ) from error
         spool_path = self.staging_root / f"progressive-{capture_id}.spool"
-        decoder = PyAVIncrementalDecoder(
-            spool_path,
-            sample_rate=16_000,
-            window_ms=DEFAULT_WINDOW_MS,
-            overlap_ms=DEFAULT_OVERLAP_MS,
-            max_spool_bytes=source.bytes,
-        )
+        try:
+            decoder = PyAVIncrementalDecoder(
+                spool_path,
+                sample_rate=16_000,
+                window_ms=DEFAULT_WINDOW_MS,
+                overlap_ms=DEFAULT_OVERLAP_MS,
+                max_spool_bytes=source.bytes,
+            )
+        except (ProgressiveDecoderError, ValueError) as error:
+            raise ProgressiveCaptureError(
+                "Progressive audio decoder could not be prepared.",
+                code="progressive_decoder_init_failed",
+            ) from error
         state = _ProgressiveState(source, capture_id, self.clock)
         events: list[ProgressiveSessionEvent] = []
-        worker = await _SessionWorker.start(
-            engine=engine,
-            source=source,
-            capture_id=capture_id,
-            config=self.config,
-        )
+
+        async def emit_event(event: ProgressiveSessionEvent) -> None:
+            state.apply(event)
+            try:
+                partial = (
+                    state.partial
+                    if event.event_type
+                    in {StreamingEventType.SEGMENT, StreamingEventType.CHECKPOINT}
+                    else None
+                )
+            except Exception as error:
+                raise ProgressiveCaptureError(
+                    "Progressive partial output failed strict schema validation.",
+                    code="progressive_partial_invalid",
+                ) from error
+            try:
+                await sink((event,), partial)
+            except ProgressiveCaptureError:
+                raise
+            except Exception as error:
+                raise ProgressiveCaptureError(
+                    "Progressive event could not be persisted.",
+                    code="progressive_event_persist_failed",
+                ) from error
+
         try:
-            with source_path.open("rb") as source_file:
+            worker = await _SessionWorker.start(
+                engine=engine,
+                source=source,
+                capture_id=capture_id,
+                config=self.config,
+            )
+        except ProgressiveCaptureError:
+            raise
+        except Exception as error:
+            raise ProgressiveCaptureError(
+                "Progressive Whisper worker could not be started.",
+                code="progressive_worker_start_failed",
+            ) from error
+        try:
+            try:
+                source_file = source_path.open("rb")
+            except OSError as error:
+                raise ProgressiveCaptureError(
+                    "Progressive audio source could not be opened.",
+                    code="progressive_source_open_failed",
+                ) from error
+            with source_file:
                 while chunk := source_file.read(STREAM_READ_BYTES):
                     self._check_cancel(cancellation)
-                    for window in decoder.push(chunk):
-                        events = await worker.input(window, cancellation)
-                        await self._emit(events, state, sink)
+                    try:
+                        windows = decoder.push(chunk)
+                    except (ProgressiveCaptureError, ProgressiveDecoderError):
+                        raise
+                    except Exception as error:
+                        raise ProgressiveCaptureError(
+                            "Progressive audio decoder failed while reading the source.",
+                            code="progressive_decoder_process_failed",
+                        ) from error
+                    for window in windows:
+                        try:
+                            events = await worker.input(window, cancellation, emit_event)
+                        except ProgressiveCaptureError:
+                            raise
+                        except Exception as error:
+                            raise ProgressiveCaptureError(
+                                "Progressive Whisper worker failed while processing a window.",
+                                code="progressive_worker_input_failed",
+                            ) from error
                         if _terminal_event(events):
                             break
                     if _terminal_event(events):
                         break
             if not _terminal_event(events):
-                for window in decoder.finish():
-                    events = await worker.input(window, cancellation)
-                    await self._emit(events, state, sink)
+                try:
+                    final_windows = decoder.finish()
+                except (ProgressiveCaptureError, ProgressiveDecoderError):
+                    raise
+                except Exception as error:
+                    raise ProgressiveCaptureError(
+                        "Progressive audio decoder failed while finalizing the source.",
+                        code="progressive_decoder_finish_failed",
+                    ) from error
+                for window in final_windows:
+                    try:
+                        events = await worker.input(window, cancellation, emit_event)
+                    except ProgressiveCaptureError:
+                        raise
+                    except Exception as error:
+                        raise ProgressiveCaptureError(
+                            "Progressive Whisper worker failed while processing the final window.",
+                            code="progressive_worker_input_failed",
+                        ) from error
                     if _terminal_event(events):
                         break
             if not _terminal_event(events):
-                events = await worker.finish(cancellation)
-                await self._emit(events, state, sink)
+                try:
+                    events = await worker.finish(cancellation, emit_event)
+                except ProgressiveCaptureError:
+                    raise
+                except Exception as error:
+                    raise ProgressiveCaptureError(
+                        "Progressive Whisper worker failed while finishing the session.",
+                        code="progressive_worker_finish_failed",
+                    ) from error
             failure = next(
                 (event.error for event in events if event.error),
                 None,
@@ -223,23 +343,24 @@ class ProgressiveCaptureProcessor:
         if cancellation.is_set():
             raise asyncio.CancelledError
 
-    @staticmethod
-    async def _emit(
-        events: list[ProgressiveSessionEvent],
-        state: _ProgressiveState,
-        sink: EventSink,
-    ) -> None:
-        for event in events:
-            state.apply(event)
-        if events:
-            await sink(tuple(events), state.partial)
+
+def _session_worker_launch(executable: Path) -> tuple[list[str], str]:
+    """Build a native-child command from a Windows-safe canonical path."""
+
+    subprocess_executable = _subprocess_path(executable)
+    command = (
+        [sys.executable, subprocess_executable, "session"]
+        if executable.suffix.casefold() in {".py", ".pyw"}
+        else [subprocess_executable, "session"]
+    )
+    return command, _subprocess_path(executable.parent)
 
 
 class _SessionWorker:
     def __init__(
         self,
         process: asyncio.subprocess.Process,
-        stderr_task: asyncio.Task[None],
+        stderr_task: asyncio.Task[str],
     ) -> None:
         self.process = process
         assert process.stdin is not None
@@ -258,17 +379,13 @@ class _SessionWorker:
         config: ExtractionRuntimeConfig,
     ) -> _SessionWorker:
         executable = engine.executable
-        command = (
-            [sys.executable, str(executable), "session"]
-            if executable.suffix.casefold() in {".py", ".pyw"}
-            else [str(executable), "session"]
-        )
+        command, cwd = _session_worker_launch(executable)
         environment = dict(sanitized_child_environment())
         environment.update(
             {
                 "CAPTURE_SESSION_ID": capture_id,
-                "CAPTURE_SESSION_MODEL_PATH": str(engine.model_dir),
-                "CAPTURE_SESSION_TEMP_DIR": str(config.temp_dir),
+                "CAPTURE_SESSION_MODEL_PATH": _subprocess_path(engine.model_dir),
+                "CAPTURE_SESSION_TEMP_DIR": _subprocess_path(config.temp_dir),
                 "CAPTURE_SESSION_SOURCE_SHA256": source.sha256,
                 "CAPTURE_SESSION_FILE_NAME": source.file_name,
                 "CAPTURE_SESSION_MEDIA_TYPE": source.media_type,
@@ -285,7 +402,7 @@ class _SessionWorker:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=environment,
-            cwd=str(executable.parent),
+            cwd=cwd,
             limit=4 * 1024 * 1024 + 5,
             creationflags=(subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0),
         )
@@ -314,69 +431,142 @@ class _SessionWorker:
         self,
         window: DecodedAudioWindow,
         cancellation: asyncio.Event,
+        on_event: Callable[[ProgressiveSessionEvent], Awaitable[None]],
     ) -> list[ProgressiveSessionEvent]:
         await self._send(encode_credit(1))
         await self._send(encode_audio_input(window))
-        return await self._read_batch(cancellation, until_ack=True)
+        return await self._read_batch(cancellation, until_ack=True, on_event=on_event)
 
     async def finish(
         self,
         cancellation: asyncio.Event,
+        on_event: Callable[[ProgressiveSessionEvent], Awaitable[None]],
     ) -> list[ProgressiveSessionEvent]:
         await self._send(encode_control(SessionFrameType.FINISH))
-        return await self._read_batch(cancellation, until_ack=False)
+        return await self._read_batch(cancellation, until_ack=False, on_event=on_event)
 
     async def _read_batch(
         self,
         cancellation: asyncio.Event,
         *,
         until_ack: bool,
+        on_event: Callable[[ProgressiveSessionEvent], Awaitable[None]],
     ) -> list[ProgressiveSessionEvent]:
         events: list[ProgressiveSessionEvent] = []
         last_observable = time.monotonic()
-        while True:
-            if cancellation.is_set():
-                await self._send(encode_control(SessionFrameType.CANCEL))
-                raise asyncio.CancelledError
-            try:
-                frame_type, payload = await asyncio.wait_for(
-                    self._read_frame(), timeout=DEFAULT_HEARTBEAT_MS / 1000
-                )
-            except TimeoutError as error:
-                if time.monotonic() - last_observable >= DEFAULT_STALL_TIMEOUT_MS / 1000:
+        read_task = asyncio.create_task(self._read_frame())
+        try:
+            while True:
+                if cancellation.is_set():
+                    await self._send(encode_control(SessionFrameType.CANCEL))
+                    raise asyncio.CancelledError
+                done, _ = await asyncio.wait({read_task}, timeout=DEFAULT_HEARTBEAT_MS / 1000)
+                if not done:
+                    if time.monotonic() - last_observable >= DEFAULT_STALL_TIMEOUT_MS / 1000:
+                        raise ProgressiveCaptureError(
+                            "Progressive audio extraction stopped producing observable progress.",
+                            code="progressive_stall",
+                            stage="watchdog",
+                        )
+                    heartbeat = ProgressiveSessionEvent(StreamingEventType.HEARTBEAT, "extracting")
+                    events.append(heartbeat)
+                    await on_event(heartbeat)
+                    continue
+                try:
+                    frame_type, payload = read_task.result()
+                except asyncio.IncompleteReadError as error:
                     raise ProgressiveCaptureError(
-                        "Progressive audio extraction stopped producing observable progress.",
-                        code="progressive_stall",
-                        stage="watchdog",
+                        "Progressive audio worker exited before completing the session.",
+                        code="progressive_worker_exit",
+                        stage="extraction",
                     ) from error
-                events.append(ProgressiveSessionEvent(StreamingEventType.HEARTBEAT, "extracting"))
-                continue
-            except asyncio.IncompleteReadError as error:
-                raise ProgressiveCaptureError(
-                    "Progressive audio worker exited before completing the session.",
-                    code="progressive_worker_exit",
-                    stage="extraction",
-                ) from error
-            if frame_type is SessionFrameType.HEARTBEAT:
-                payload_object = _json_object(payload)
-                if until_ack and payload_object.get("stage") == "input_ack":
+                except ProgressiveCaptureError:
+                    raise
+                except Exception as error:
+                    raise ProgressiveCaptureError(
+                        "Progressive audio worker frame could not be read.",
+                        code="progressive_worker_frame_read_failed",
+                        stage="extraction",
+                    ) from error
+                read_task = asyncio.create_task(self._read_frame())
+                if frame_type is SessionFrameType.HEARTBEAT:
+                    last_observable = time.monotonic()
+                    payload_object = _json_object(payload)
+                    if until_ack and payload_object.get("stage") == "input_ack":
+                        return events
+                    heartbeat = ProgressiveSessionEvent(
+                        StreamingEventType.HEARTBEAT,
+                        str(payload_object.get("stage") or "extracting"),
+                    )
+                    events.append(heartbeat)
+                    await on_event(heartbeat)
+                    continue
+                last_observable = time.monotonic()
+                if frame_type is SessionFrameType.SEALED_SEGMENT:
+                    try:
+                        event = _segment_event(payload)
+                    except ProgressiveCaptureError:
+                        raise
+                    except Exception as error:
+                        raise ProgressiveCaptureError(
+                            "Progressive worker returned an invalid segment event.",
+                            code="progressive_worker_event_invalid",
+                        ) from error
+                    events.append(event)
+                    await on_event(event)
+                    continue
+                if frame_type is SessionFrameType.CHECKPOINT:
+                    try:
+                        event = _checkpoint_event(payload)
+                    except ProgressiveCaptureError:
+                        raise
+                    except Exception as error:
+                        raise ProgressiveCaptureError(
+                            "Progressive worker returned an invalid checkpoint event.",
+                            code="progressive_worker_event_invalid",
+                        ) from error
+                    events.append(event)
+                    await on_event(event)
+                    continue
+                if frame_type is SessionFrameType.ERROR:
+                    try:
+                        event = _failure_event(payload)
+                        if event.error is not None and event.error.code == "session_failed":
+                            stage_sequence = await self._worker_stage_sequence()
+                            if stage_sequence:
+                                event = ProgressiveSessionEvent(
+                                    event.event_type,
+                                    event.stage,
+                                    error=event.error.model_copy(
+                                        update={
+                                            "message": (
+                                                "Whisper session failed at stages "
+                                                f"{stage_sequence}."
+                                            )
+                                        }
+                                    ),
+                                )
+                    except ProgressiveCaptureError:
+                        raise
+                    except Exception as error:
+                        raise ProgressiveCaptureError(
+                            "Progressive worker returned an invalid failure event.",
+                            code="progressive_worker_event_invalid",
+                        ) from error
+                    events.append(event)
+                    await on_event(event)
                     return events
-                events.append(ProgressiveSessionEvent(StreamingEventType.HEARTBEAT, "extracting"))
-                continue
-            last_observable = time.monotonic()
-            if frame_type is SessionFrameType.SEALED_SEGMENT:
-                events.append(_segment_event(payload))
-                continue
-            if frame_type is SessionFrameType.CHECKPOINT:
-                events.append(_checkpoint_event(payload))
-                continue
-            if frame_type is SessionFrameType.ERROR:
-                events.append(_failure_event(payload))
-                return events
-            if frame_type is SessionFrameType.COMPLETED:
-                events.append(ProgressiveSessionEvent(StreamingEventType.COMPLETED, "completed"))
-                return events
-            raise ProgressiveCaptureError("Progressive worker returned an invalid frame.")
+                if frame_type is SessionFrameType.COMPLETED:
+                    event = ProgressiveSessionEvent(StreamingEventType.COMPLETED, "completed")
+                    events.append(event)
+                    await on_event(event)
+                    return events
+                raise ProgressiveCaptureError("Progressive worker returned an invalid frame.")
+        finally:
+            if not read_task.done():
+                read_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await read_task
 
     async def _read_frame(self) -> tuple[SessionFrameType, bytes]:
         header = await self.stdout.readexactly(5)
@@ -390,8 +580,31 @@ class _SessionWorker:
             raise ProgressiveCaptureError("Progressive worker frame type was invalid.") from error
 
     async def _send(self, payload: bytes) -> None:
-        self.stdin.write(payload)
-        await self.stdin.drain()
+        try:
+            self.stdin.write(payload)
+            await self.stdin.drain()
+        except (BrokenPipeError, ConnectionError, OSError) as error:
+            stage_sequence = await self._worker_stage_sequence()
+            message = (
+                "Source extraction worker failed."
+                if not stage_sequence
+                else f"Source extraction worker failed at stages {stage_sequence}."
+            )
+            raise ProgressiveCaptureError(
+                message,
+                code="progressive_worker_exit",
+                stage="extraction",
+            ) from error
+
+    async def _worker_stage_sequence(self) -> str:
+        if not self._stderr_task.done():
+            with suppress(asyncio.TimeoutError, asyncio.CancelledError):
+                await asyncio.wait_for(asyncio.shield(self._stderr_task), timeout=0.2)
+        if not self._stderr_task.done() or self._stderr_task.cancelled():
+            return ""
+        with suppress(Exception):
+            return self._stderr_task.result()
+        return ""
 
     async def close(self) -> None:
         if self.process.returncode is None:
@@ -410,9 +623,14 @@ class _SessionWorker:
             await self._stderr_task
 
 
-async def _drain_stderr(stream: asyncio.StreamReader) -> None:
-    while await stream.read(16 * 1024):
-        pass
+async def _drain_stderr(stream: asyncio.StreamReader) -> str:
+    captured = bytearray()
+    while chunk := await stream.read(16 * 1024):
+        captured.extend(chunk)
+        if len(captured) > 64 * 1024:
+            del captured[: -64 * 1024]
+    stages = _WORKER_STAGE_PATTERN.findall(captured.decode("utf-8", errors="replace"))
+    return ">".join(stages[-_MAX_WORKER_DIAGNOSTIC_STAGES:])
 
 
 def _segment_event(payload: bytes) -> ProgressiveSessionEvent:

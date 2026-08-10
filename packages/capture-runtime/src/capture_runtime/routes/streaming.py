@@ -22,6 +22,7 @@ from capture_runtime.contracts import (
 )
 from capture_runtime.dependencies import RuntimeDependencies
 from capture_runtime.progressive_audio import DEFAULT_CHECKPOINT_MS
+from capture_runtime.progressive_decoder import progressive_decoder_ready
 from capture_runtime.routes.common import ApiProblem
 from capture_runtime.storage import (
     StreamingIdempotencyConflictError,
@@ -39,6 +40,12 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
 
     @router.get("/health/ready", response_model=RuntimeStreamingCapabilitiesV2)
     async def streaming_ready() -> RuntimeStreamingCapabilitiesV2:
+        if not progressive_decoder_ready():
+            raise ApiProblem(
+                503,
+                "progressive_audio_unavailable",
+                "Progressive audio decoding is unavailable in this runtime.",
+            )
         return RuntimeStreamingCapabilitiesV2(
             max_chunk_bytes=service.max_chunk_bytes,
             checkpoint_interval_ms=DEFAULT_CHECKPOINT_MS,

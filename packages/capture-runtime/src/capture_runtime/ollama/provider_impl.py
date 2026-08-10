@@ -211,11 +211,13 @@ class OllamaCaptureStructuringProvider:
                     "model": profile_id,
                     "stream": False,
                     "think": False,
-                    # The structuring model is a bounded per-document job.
-                    # Release it as soon as the response completes so a
-                    # subsequent Whisper CPU fallback is not competing with
-                    # a resident Ollama model for memory.
-                    "keep_alive": 0,
+                    # Keep the selected model resident for the bounded
+                    # document lease. Qwen 0.8B uses one request per raw
+                    # segment; unloading between requests turns a normal
+                    # progressive capture into an unusably slow sequence of
+                    # cold starts. The lifecycle stop in the outer finally
+                    # still releases the owned process after the document.
+                    "keep_alive": -1,
                     "format": generation_schema,
                     "prompt": json.dumps(prompt, ensure_ascii=False, separators=(",", ":")),
                     "options": {"num_ctx": num_ctx, "num_predict": num_predict},

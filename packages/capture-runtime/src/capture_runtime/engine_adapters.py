@@ -110,7 +110,11 @@ class WhisperAdapter(Protocol):
     def probe(self) -> EngineProbe: ...
 
     def transcribe(
-        self, source_path: Path, *, should_cancel: Callable[[], bool]
+        self,
+        source_path: Path,
+        *,
+        should_cancel: Callable[[], bool],
+        allow_empty_output: bool = False,
     ) -> WhisperTranscriptionResult: ...
 
 
@@ -450,6 +454,8 @@ class FasterWhisperAdapter:
         self._model_factory = model_factory
         self._cuda_count = cuda_count
         self._stage_reporter = stage_reporter
+        self._runtime_cache: dict[tuple[str, str, str], Any] = {}
+        self._digest_cache: dict[str, str] = {}
 
     def _report_stage(self, stage: str) -> None:
         if self._stage_reporter is not None:
@@ -492,7 +498,11 @@ class FasterWhisperAdapter:
         )
 
     def transcribe(
-        self, source_path: Path, *, should_cancel: Callable[[], bool]
+        self,
+        source_path: Path,
+        *,
+        should_cancel: Callable[[], bool],
+        allow_empty_output: bool = False,
     ) -> WhisperTranscriptionResult:
         self._report_stage("assets-probe-start")
         probe = self.probe()
@@ -516,12 +526,14 @@ class FasterWhisperAdapter:
                     device="cuda",
                     compute_type="float16",
                     should_cancel=should_cancel,
+                    allow_empty_output=allow_empty_output,
                 )
             except InterruptedError:
                 raise
             except Exception as error:
                 if not self.allow_cpu_fallback:
                     raise
+                self._runtime_cache.pop((self.primary_model, "cuda", "float16"), None)
                 # A CUDA-capable driver is not proof that the bundled
                 # ctranslate2 build can initialize a CUDA model.  Keep the
                 # desktop product usable on machines that advertise CUDA but
@@ -534,10 +546,12 @@ class FasterWhisperAdapter:
                     source_path,
                     should_cancel=should_cancel,
                     warning=f"Whisper GPU fallback: {type(error).__name__}",
+                    allow_empty_output=allow_empty_output,
                 )
         return self._run_cpu(
             source_path,
             should_cancel=should_cancel,
+            allow_empty_output=allow_empty_output,
         )
 
     def _run_cpu(
@@ -546,6 +560,7 @@ class FasterWhisperAdapter:
         *,
         should_cancel: Callable[[], bool],
         warning: str | None = None,
+        allow_empty_output: bool = False,
     ) -> WhisperTranscriptionResult:
         try:
             return self._run(
@@ -560,6 +575,7 @@ class FasterWhisperAdapter:
                 compute_type="int8_float32",
                 should_cancel=should_cancel,
                 warning=warning,
+                allow_empty_output=allow_empty_output,
             )
         except _WhisperModelLoadError:
             self._report_stage("model-load-cpu-fallback-float32")
@@ -571,6 +587,7 @@ class FasterWhisperAdapter:
                 compute_type="float32",
                 should_cancel=should_cancel,
                 warning=warning or "Whisper CPU int8_float32 compatibility fallback: RuntimeError",
+                allow_empty_output=allow_empty_output,
             )
 
     def _cuda_devices(self) -> int:
@@ -596,6 +613,7 @@ class FasterWhisperAdapter:
         compute_type: str,
         should_cancel: Callable[[], bool],
         warning: str | None = None,
+        allow_empty_output: bool = False,
     ) -> WhisperTranscriptionResult:
         factory = self._model_factory
         if factory is None:
@@ -603,15 +621,21 @@ class FasterWhisperAdapter:
 
             factory = WhisperModel
         model_root = self.model_path(model)
-        self._report_stage(f"model-load-{device}-start")
-        try:
-            runtime = factory(str(model_root), device=device, compute_type=compute_type)
-        except Exception as error:
-            self._report_stage(f"model-load-{device}-failed-{type(error).__name__.lower()}")
-            if device == "cpu" and isinstance(error, RuntimeError):
-                raise _WhisperModelLoadError from error
-            raise
-        self._report_stage(f"model-load-{device}-complete")
+        cache_key = (model, device, compute_type)
+        runtime = self._runtime_cache.get(cache_key)
+        if runtime is None:
+            self._report_stage(f"model-load-{device}-start")
+            try:
+                runtime = factory(str(model_root), device=device, compute_type=compute_type)
+            except Exception as error:
+                self._report_stage(f"model-load-{device}-failed-{type(error).__name__.lower()}")
+                if device == "cpu" and isinstance(error, RuntimeError):
+                    raise _WhisperModelLoadError from error
+                raise
+            self._runtime_cache[cache_key] = runtime
+            self._report_stage(f"model-load-{device}-complete")
+        else:
+            self._report_stage(f"model-load-{device}-reused")
         self._report_stage("transcription-call-start")
         raw_segments, info = runtime.transcribe(
             str(source_path), beam_size=5, vad_filter=True, word_timestamps=False
@@ -632,16 +656,20 @@ class FasterWhisperAdapter:
                 segments.append(WhisperTextSegment(start_ms, end_ms, text))
         if should_cancel():
             raise InterruptedError("Whisper transcription was cancelled.")
-        if not segments:
+        if not segments and not allow_empty_output:
             self._report_stage("output-empty")
             raise ValueError("Whisper produced no non-empty segments.")
-        self._report_stage("transcription-complete")
+        self._report_stage("output-empty-window" if not segments else "transcription-complete")
+        digest = self._digest_cache.get(model)
+        if digest is None:
+            digest = _directory_digest(model_root)
+            self._digest_cache[model] = digest
         return WhisperTranscriptionResult(
             segments=tuple(segments),
             duration_ms=duration_ms,
             device=device,
             model=provenance_model,
-            digest=_directory_digest(model_root),
+            digest=digest,
             warning=warning,
         )
 

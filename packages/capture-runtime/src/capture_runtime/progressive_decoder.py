@@ -16,6 +16,19 @@ class ProgressiveDecoderError(RuntimeError):
     pass
 
 
+def progressive_decoder_ready() -> bool:
+    """Return whether the packaged PyAV decoder can be imported safely."""
+
+    try:
+        import av
+        import av.audio.resampler
+        import av.container
+
+        return av is not None
+    except Exception:
+        return False
+
+
 class PyAVIncrementalDecoder:
     """Decode a growing source file while retaining only one overlap window in memory."""
 
@@ -137,4 +150,4 @@ def _resample(resampler: Any, frame: Any) -> list[Any]:
     return list(result) if isinstance(result, list | tuple) else [result]
 
 
-__all__ = ["ProgressiveDecoderError", "PyAVIncrementalDecoder"]
+__all__ = ["ProgressiveDecoderError", "PyAVIncrementalDecoder", "progressive_decoder_ready"]

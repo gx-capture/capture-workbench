@@ -317,6 +317,7 @@ class ProgressiveAudioSession:
             )
             self._segments.append(sealed)
             newly_sealed.append(sealed)
+        self._canonicalize_segments()
         if newly_sealed:
             self._partial_revision += 1
             self._pending_events.append(
@@ -325,9 +326,22 @@ class ProgressiveAudioSession:
                     "extracting",
                     partial_revision=self._partial_revision,
                     covered_until_ms=self._covered_until_ms,
-                    segments=tuple(newly_sealed),
+                    segments=tuple(sorted(newly_sealed, key=lambda segment: segment.order)),
                 )
             )
+
+    def _canonicalize_segments(self) -> None:
+        """Keep durable raw segments ordered when overlap windows arrive out of order."""
+
+        self._segments.sort(
+            key=lambda segment: (
+                _segment_start(segment),
+                _segment_end(segment),
+                segment.segment_id,
+            )
+        )
+        for order, segment in enumerate(self._segments):
+            segment.order = order
 
     def _emit_due_checkpoints(self) -> None:
         while self._covered_until_ms >= self._next_checkpoint_ms:
@@ -391,6 +405,20 @@ def _segment_overlaps(segment: RawCaptureSegmentV1, start_ms: int, end_ms: int) 
     return isinstance(locator, TimeLocatorV1) and _overlaps(
         locator.start_ms, locator.end_ms, start_ms, end_ms
     )
+
+
+def _segment_start(segment: RawCaptureSegmentV1) -> int:
+    locator = segment.locator
+    if not isinstance(locator, TimeLocatorV1):
+        raise ProgressiveAudioError("progressive audio segment locator is not time-based")
+    return locator.start_ms
+
+
+def _segment_end(segment: RawCaptureSegmentV1) -> int:
+    locator = segment.locator
+    if not isinstance(locator, TimeLocatorV1):
+        raise ProgressiveAudioError("progressive audio segment locator is not time-based")
+    return locator.end_ms
 
 
 __all__ = [

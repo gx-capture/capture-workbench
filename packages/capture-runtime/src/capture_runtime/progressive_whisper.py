@@ -49,7 +49,11 @@ class FasterWhisperWindowTranscriber:
                 audio.setsampwidth(2)
                 audio.setframerate(self.sample_rate)
                 audio.writeframes(window.payload)
-            result = self.adapter.transcribe(path, should_cancel=lambda: False)
+            result = self.adapter.transcribe(
+                path,
+                should_cancel=lambda: False,
+                allow_empty_output=True,
+            )
             return WhisperWindowResult(
                 segments=tuple(
                     WhisperWindowSegment(item.start_ms, item.end_ms, item.text)

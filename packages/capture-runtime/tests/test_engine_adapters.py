@@ -380,6 +380,77 @@ def test_faster_whisper_uses_local_paths_gpu_fallback_and_bounded_segments(
         adapter.transcribe(source, should_cancel=lambda: True)
 
 
+def test_faster_whisper_progressive_windows_allow_empty_text_with_provenance(
+    tmp_path: Path,
+) -> None:
+    models = tmp_path / "whisper"
+    _write_whisper_model(models, "large-v3-turbo")
+    _write_whisper_model(models, "small")
+
+    class SilentModel:
+        def transcribe(self, _path: str, **_kwargs: object):
+            return [], SimpleNamespace(duration=120.0)
+
+    source = tmp_path / "silent.wav"
+    source.write_bytes(b"RIFF\x00\x00\x00\x00WAVE")
+    adapter = FasterWhisperAdapter(
+        models,
+        primary_model="large-v3-turbo",
+        fallback_model="small",
+        prefer_gpu=False,
+        max_duration_ms=60_000 * 8,
+        model_factory=lambda _path, **_kwargs: SilentModel(),
+        cuda_count=lambda: 0,
+    )
+
+    result = adapter.transcribe(
+        source,
+        should_cancel=lambda: False,
+        allow_empty_output=True,
+    )
+
+    assert result.segments == ()
+    assert result.model == "small"
+    assert result.device == "cpu"
+    assert result.digest.startswith("sha256:")
+
+
+def test_faster_whisper_reuses_a_loaded_model_for_progressive_windows(
+    tmp_path: Path,
+) -> None:
+    models = tmp_path / "whisper"
+    _write_whisper_model(models, "large-v3-turbo")
+    _write_whisper_model(models, "small")
+    source = tmp_path / "sample.wav"
+    source.write_bytes(b"RIFF\x00\x00\x00\x00WAVE")
+    calls: list[tuple[str, str, str]] = []
+
+    class Model:
+        def transcribe(self, _path: str, **_kwargs: object):
+            return [SimpleNamespace(start=0.0, end=1.0, text="words")], SimpleNamespace(
+                duration=1.0
+            )
+
+    def factory(path: str, *, device: str, compute_type: str) -> Model:
+        calls.append((Path(path).name, device, compute_type))
+        return Model()
+
+    adapter = FasterWhisperAdapter(
+        models,
+        primary_model="large-v3-turbo",
+        fallback_model="small",
+        prefer_gpu=False,
+        max_duration_ms=60_000,
+        model_factory=factory,
+        cuda_count=lambda: 0,
+    )
+
+    adapter.transcribe(source, should_cancel=lambda: False)
+    adapter.transcribe(source, should_cancel=lambda: False)
+
+    assert calls == [("small", "cpu", "int8_float32")]
+
+
 def test_faster_whisper_falls_back_when_cuda_model_initialization_has_no_cuda_text(
     tmp_path: Path,
 ) -> None:

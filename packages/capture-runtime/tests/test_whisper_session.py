@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import struct
 from typing import Any
 
@@ -87,6 +88,30 @@ def test_session_protocol_finish_and_cancel_are_terminal() -> None:
     assert finished[-1][0] == ord(SessionFrameType.COMPLETED.value)
     closed = protocol.handle(next(iter(decoder.feed(encode_control(SessionFrameType.CANCEL)))))
     assert closed[0][0] == ord(SessionFrameType.ERROR.value)
+
+
+def test_session_protocol_adds_only_allowlisted_failure_context() -> None:
+    class FailingBackend(FakeBackend):
+        def input(self, _window: DecodedAudioWindow) -> list[ProgressiveSessionEvent]:
+            raise ValueError("private backend detail")
+
+    protocol = WhisperSessionProtocol(
+        FailingBackend(),
+        failure_context=lambda: "whisper-transcription-call-complete",
+    )
+    decoder = SessionFrameDecoder()
+    for frame in decoder.feed(_start() + encode_credit(1)):
+        protocol.handle(frame)
+
+    output = protocol.handle(
+        next(iter(decoder.feed(encode_audio_input(DecodedAudioWindow(0, 1, b"x")))))
+    )
+    payload = json.loads(output[0][5:].decode("utf-8"))
+    assert payload["code"] == "session_failed"
+    assert payload["message"] == (
+        "Whisper session failed at ValueError after stage whisper-transcription-call-complete."
+    )
+    assert "private backend detail" not in payload["message"]
 
 
 def test_session_protocol_rejects_oversized_declared_frame_before_buffering() -> None:

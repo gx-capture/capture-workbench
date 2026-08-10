@@ -59,7 +59,7 @@ class FakeWhisper:
     def __init__(self) -> None:
         self.paths: list[Path] = []
 
-    def transcribe(self, source_path: Path, *, should_cancel):
+    def transcribe(self, source_path: Path, *, should_cancel, **_kwargs):
         self.paths.append(source_path)
         assert source_path.is_file()
         return WhisperTranscriptionResult(

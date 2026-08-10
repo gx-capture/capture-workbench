@@ -202,7 +202,7 @@ def test_isolated_ollama_structures_token_bounded_batches_and_releases_process(
         supplied_ids.extend(segment["segmentId"] for segment in prompt["rawSegments"])
         assert call["format"]["title"] == "CaptureBlockBatchV1"
         assert call["think"] is False
-        assert call["keep_alive"] == 0
+        assert call["keep_alive"] == -1
         assert 0 < call["options"]["num_ctx"] <= 8_192
         assert 0 < call["options"]["num_predict"] <= 4_096
     assert supplied_ids == [segment.segment_id for segment in raw.segments]

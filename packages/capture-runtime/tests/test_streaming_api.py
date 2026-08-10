@@ -41,6 +41,17 @@ def test_streaming_capability_is_strictly_advertised(client: TestClient) -> None
     }
 
 
+def test_streaming_capability_fails_closed_without_progressive_decoder(
+    client: TestClient, monkeypatch
+) -> None:
+    monkeypatch.setattr("capture_runtime.routes.streaming.progressive_decoder_ready", lambda: False)
+
+    response = client.get("/v2/health/ready")
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "progressive_audio_unavailable"
+
+
 def test_streaming_api_accepts_ordered_chunks_replays_sse_and_rejects_partial_before_worker(
     client: TestClient,
 ) -> None:

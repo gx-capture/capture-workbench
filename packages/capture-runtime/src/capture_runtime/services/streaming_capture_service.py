@@ -25,11 +25,13 @@ from capture_runtime.contracts import (
     StructuringMode,
 )
 from capture_runtime.extractors import ExtractionRuntimeUnavailableError
-from capture_runtime.progressive_audio import ProgressiveSessionEvent
+from capture_runtime.ollama.lifecycle_impl import RuntimeUnavailableError
+from capture_runtime.progressive_audio import ProgressiveAudioError, ProgressiveSessionEvent
 from capture_runtime.progressive_capture import (
     ProgressiveCaptureError,
     ProgressiveCaptureProcessor,
 )
+from capture_runtime.progressive_decoder import ProgressiveDecoderError
 from capture_runtime.storage import (
     StreamingPartialNotFoundError,
     StreamingRecordNotFoundError,
@@ -210,6 +212,7 @@ class StreamingCaptureService:
         task.add_done_callback(lambda _completed: self._tasks.pop(capture_id, None))
 
     async def _process(self, capture_id: str, cancellation: asyncio.Event) -> None:
+        raw_written = False
         try:
             operation = self.repository.get_capture(capture_id)
             if operation.status is StreamingCaptureStatus.CANCELLED:
@@ -228,6 +231,7 @@ class StreamingCaptureService:
                 sink=lambda events, session: self._persist_events(capture_id, events, session),
             )
             self.repository.write_raw(capture_id, raw)
+            raw_written = True
             if cancellation.is_set():
                 return
             request = self.repository.capture_request(capture_id)
@@ -251,12 +255,67 @@ class StreamingCaptureService:
                 stage=error.stage,
                 retryable=error.retryable,
             )
-        except ExtractionRuntimeUnavailableError as error:
-            self._fail(capture_id, "requirement_unavailable", _safe_failure_message(error))
-        except (StreamingTransitionError, ValidationError) as error:
-            self._fail(capture_id, "progressive_failed", _safe_failure_message(error))
+        except StructuringValidationError:
+            self._fail(
+                capture_id,
+                "structuring_invalid_output" if raw_written else "progressive_failed",
+                (
+                    "Structuring output failed strict schema or provenance validation."
+                    if raw_written
+                    else "Progressive audio processing failed."
+                ),
+                stage="structuring" if raw_written else "extraction",
+            )
+        except (RuntimeUnavailableError, ExtractionRuntimeUnavailableError) as error:
+            self._fail(
+                capture_id,
+                "requirement_unavailable",
+                _safe_failure_message(error),
+                stage="structuring" if raw_written else "extraction",
+            )
+        except ProgressiveDecoderError as error:
+            self._fail(
+                capture_id,
+                "progressive_decode_failed",
+                _safe_failure_message(error),
+                stage="extraction",
+            )
+        except ValidationError:
+            self._fail(
+                capture_id,
+                "structuring_invalid_output" if raw_written else "progressive_output_invalid",
+                (
+                    "Structuring output failed strict schema or provenance validation."
+                    if raw_written
+                    else "Progressive audio output failed strict schema validation."
+                ),
+                stage="structuring" if raw_written else "extraction",
+            )
+        except ProgressiveAudioError as error:
+            self._fail(
+                capture_id,
+                "progressive_session_failed",
+                _safe_failure_message(error),
+                stage="extraction",
+            )
+        except StreamingTransitionError as error:
+            self._fail(
+                capture_id,
+                "structuring_failed" if raw_written else "progressive_failed",
+                _safe_failure_message(error),
+                stage="structuring" if raw_written else "extraction",
+            )
         except Exception:
-            self._fail(capture_id, "progressive_failed", "Progressive audio processing failed.")
+            self._fail(
+                capture_id,
+                "structuring_failed" if raw_written else "progressive_failed",
+                (
+                    "Capture structuring failed."
+                    if raw_written
+                    else "Progressive audio processing failed."
+                ),
+                stage="structuring" if raw_written else "extraction",
+            )
 
     async def _persist_events(
         self,

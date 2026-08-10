@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
+import re
 import struct
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Protocol
@@ -111,9 +112,11 @@ class WhisperSessionProtocol:
         backend: WhisperSessionBackend,
         *,
         max_credits: int = MAX_SESSION_CREDITS,
+        failure_context: Callable[[], str] | None = None,
     ) -> None:
         self.backend = backend
         self.max_credits = max_credits
+        self.failure_context = failure_context
         self._started = False
         self._terminal = False
         self._credits = 0
@@ -154,10 +157,12 @@ class WhisperSessionProtocol:
             return [self._error(error.code, str(error), retryable=error.retryable)]
         except Exception as error:
             self._terminal = True
+            context = self.failure_context() if self.failure_context is not None else ""
+            detail = f" after stage {context}" if _safe_stage(context) else ""
             return [
                 self._error(
                     "session_failed",
-                    f"Whisper session failed at {type(error).__name__}.",
+                    f"Whisper session failed at {type(error).__name__}{detail}.",
                     retryable=True,
                 )
             ]
@@ -276,6 +281,10 @@ def encode_error(code: str, message: str, *, retryable: bool = False) -> bytes:
     )
 
 
+def encode_heartbeat(stage: str = "processing") -> bytes:
+    return _frame(SessionFrameType.HEARTBEAT, _json_bytes({"stage": stage}))
+
+
 def _frame(frame_type: SessionFrameType, payload: bytes) -> bytes:
     if len(payload) > MAX_SESSION_FRAME_PAYLOAD:
         raise ValueError("session frame payload exceeds the bounded limit")
@@ -298,6 +307,10 @@ def _json_object(payload: bytes) -> dict[str, Any]:
             "session_json_invalid", "Session control payload must be an object."
         )
     return value
+
+
+def _safe_stage(value: str) -> bool:
+    return bool(re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", value))
 
 
 def _event_frame(event: ProgressiveSessionEvent) -> bytes:
@@ -352,4 +365,5 @@ __all__ = [
     "encode_control",
     "encode_credit",
     "encode_error",
+    "encode_heartbeat",
 ]

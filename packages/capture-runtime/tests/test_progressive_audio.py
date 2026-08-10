@@ -119,6 +119,38 @@ def test_progressive_session_merges_overlap_and_emits_checkpoint() -> None:
     assert session.partial.covered_until_ms == 630_000
 
 
+def test_progressive_session_canonicalizes_segments_after_overlap_reordering() -> None:
+    clock = MutableClock()
+    windows = [
+        DecodedAudioWindow(0, 120_000, b"first"),
+        DecodedAudioWindow(90_000, 210_000, b"second"),
+    ]
+    transcriber = FakeTranscriber(
+        {
+            0: WhisperWindowResult(
+                (WhisperWindowSegment(110_000, 120_000, "later"),), _engine()
+            ),
+            90_000: WhisperWindowResult(
+                (WhisperWindowSegment(0, 10_000, "earlier"),), _engine()
+            ),
+        }
+    )
+    session = ProgressiveAudioSession(
+        _source(),
+        capture_id="capture-reordered",
+        decoder=ScheduledDecoder(windows),
+        transcriber=transcriber,
+        clock=clock,
+    )
+
+    session.feed(b"first")
+    session.feed(b"second")
+
+    assert [segment.order for segment in session.partial.segments] == [0, 1]
+    assert [segment.text for segment in session.partial.segments] == ["earlier", "later"]
+    assert [segment.locator.start_ms for segment in session.partial.segments] == [90_000, 110_000]
+
+
 def test_progressive_session_fails_first_five_minute_sample_without_text() -> None:
     clock = MutableClock()
     windows = [DecodedAudioWindow(0, 300_000, b"silence")]

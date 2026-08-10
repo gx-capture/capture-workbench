@@ -27,7 +27,6 @@ a = Analysis(
     hookspath=[str(root / "pyinstaller" / "hooks")],
     excludes=[
         "PIL",
-        "av",
         "ctranslate2",
         "cv2",
         "faster_whisper",

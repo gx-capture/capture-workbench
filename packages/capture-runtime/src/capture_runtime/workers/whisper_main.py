@@ -9,26 +9,99 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import os
+import re
 import sys
 from pathlib import Path
 from threading import Event
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from capture_runtime.worker_contracts import WorkerRequest as WorkerRequestModel
 
 STAGE_PREFIX = "capture-worker-stage:"
+_WORKER_STAGES: list[str] = []
 
 
 def _report_stage(stage: str) -> None:
-    sys.stderr.write(f"{STAGE_PREFIX}{stage}\n")
+    normalized = re.sub(r"[^a-z0-9]+", "-", stage.casefold()).strip("-")[:120]
+    if not normalized:
+        normalized = "worker-stage-invalid"
+    _WORKER_STAGES.append(normalized)
+    del _WORKER_STAGES[:-16]
+    sys.stderr.write(f"{STAGE_PREFIX}{normalized}\n")
     sys.stderr.flush()
+
+
+def _last_worker_stage() -> str:
+    return _WORKER_STAGES[-1] if _WORKER_STAGES else ""
+
+
+def _report_import_os_failure(stage: str, error: OSError) -> None:
+    winerror = getattr(error, "winerror", None)
+    if isinstance(winerror, int) and 0 <= winerror <= 65_535:
+        _report_stage(f"{stage}-winerror-{winerror}")
+    else:
+        _report_stage(stage)
 
 
 _report_stage("worker-entry-start")
 
-_report_stage("python-import-capture-runtime-start")
-from capture_runtime.engine_adapters import FasterWhisperAdapter
-from capture_runtime.worker_contracts import WorkerRequest
-from capture_runtime.workers.server import serve
 
+def _import_capture_runtime() -> tuple[Any, Any, Any]:
+    _report_stage("python-import-engine-adapters-start")
+    try:
+        from capture_runtime.engine_adapters import FasterWhisperAdapter
+    except ModuleNotFoundError:
+        _report_stage("python-import-engine-adapters-module-missing")
+        raise
+    except ImportError:
+        _report_stage("python-import-engine-adapters-dependency-failed")
+        raise
+    except OSError as error:
+        _report_import_os_failure("python-import-engine-adapters-os-failed", error)
+        raise
+    except BaseException:
+        _report_stage("python-import-engine-adapters-failed")
+        raise
+    _report_stage("python-import-engine-adapters-complete")
+
+    _report_stage("python-import-worker-contracts-start")
+    try:
+        from capture_runtime.worker_contracts import WorkerRequest
+    except ModuleNotFoundError:
+        _report_stage("python-import-worker-contracts-module-missing")
+        raise
+    except ImportError:
+        _report_stage("python-import-worker-contracts-dependency-failed")
+        raise
+    except OSError as error:
+        _report_import_os_failure("python-import-worker-contracts-os-failed", error)
+        raise
+    except BaseException:
+        _report_stage("python-import-worker-contracts-failed")
+        raise
+    _report_stage("python-import-worker-contracts-complete")
+
+    _report_stage("python-import-worker-server-start")
+    try:
+        from capture_runtime.workers.server import serve
+    except ModuleNotFoundError:
+        _report_stage("python-import-worker-server-module-missing")
+        raise
+    except ImportError:
+        _report_stage("python-import-worker-server-dependency-failed")
+        raise
+    except OSError as error:
+        _report_import_os_failure("python-import-worker-server-os-failed", error)
+        raise
+    except BaseException:
+        _report_stage("python-import-worker-server-failed")
+        raise
+    _report_stage("python-import-worker-server-complete")
+    return FasterWhisperAdapter, WorkerRequest, serve
+
+
+FasterWhisperAdapter, WorkerRequest, serve = _import_capture_runtime()
 _report_stage("python-import-capture-runtime-complete")
 
 MAX_SOURCE_BYTES = 50 * 1024 * 1024
@@ -45,13 +118,13 @@ def _import_whisper_runtime() -> None:
         _report_stage(f"{stage}-complete")
 
 
-def _payload(request: WorkerRequest, expected: set[str]) -> dict[str, Any]:
+def _payload(request: WorkerRequestModel, expected: set[str]) -> dict[str, Any]:
     if set(request.payload) != expected:
         raise ValueError("Whisper worker payload fields are invalid")
     return request.payload
 
 
-def _probe(request: WorkerRequest) -> dict[str, Any]:
+def _probe(request: WorkerRequestModel) -> dict[str, Any]:
     base_fields = {"requirementId", "artifactVersion", "modelPath"}
     payload_fields = frozenset(request.payload)
     if payload_fields not in {frozenset(base_fields), frozenset(base_fields | {"options"})}:
@@ -110,7 +183,7 @@ def _probe(request: WorkerRequest) -> dict[str, Any]:
     }
 
 
-def _run(request: WorkerRequest, cancellation: Event) -> dict[str, Any]:
+def _run(request: WorkerRequestModel, cancellation: Event) -> dict[str, Any]:
     payload = _payload(
         request,
         {
@@ -186,7 +259,7 @@ def _run(request: WorkerRequest, cancellation: Event) -> dict[str, Any]:
     }
 
 
-def handle(request: WorkerRequest, cancellation: Event) -> dict[str, Any]:
+def handle(request: WorkerRequestModel, cancellation: Event) -> dict[str, Any]:
     if request.operation == "probe":
         return _probe(request)
     if request.operation == "run":
@@ -194,7 +267,7 @@ def handle(request: WorkerRequest, cancellation: Event) -> dict[str, Any]:
     raise ValueError("unsupported Whisper operation")
 
 
-def prepare(request: WorkerRequest) -> None:
+def prepare(request: WorkerRequestModel) -> None:
     if request.operation == "run":
         _import_whisper_runtime()
 
@@ -240,7 +313,10 @@ def _session() -> None:
         transcriber=FasterWhisperWindowTranscriber(adapter, temp_dir=temp_dir),
         clock=SystemClock(),
     )
-    serve_session(ProgressiveWhisperWorkerBackend(session))
+    serve_session(
+        ProgressiveWhisperWorkerBackend(session),
+        failure_context=_last_worker_stage,
+    )
 
 
 if __name__ == "__main__":
