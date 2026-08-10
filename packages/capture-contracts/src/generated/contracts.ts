@@ -28,6 +28,18 @@ export type RuntimeModelOptionStatus = "not-installed" | "installed" | "active";
 export type RuntimeRequirementStatus = "ready" | "missing" | "installable" | "manual_action_required" | "unavailable";
 
 /** Wire enum. */
+export type StreamingCaptureStatus = "created" | "waiting_input" | "extracting" | "awaiting_structuring" | "structuring" | "completed" | "failed" | "cancelled";
+
+/** Wire enum. */
+export type StreamingEventType = "accepted" | "input_checkpoint" | "heartbeat" | "segment" | "checkpoint" | "resync_required" | "completed" | "failed" | "cancelled";
+
+/** Wire enum. */
+export type StreamingIngestionMode = "file";
+
+/** Wire enum. */
+export type StreamingIngestionStatus = "open" | "finalizing" | "ready" | "cancelled" | "failed" | "expired";
+
+/** Wire enum. */
 export type StructuringMode = "runtime" | "host";
 
 export type CaptureLocatorV1 = PageLocatorV1 | TimeLocatorV1;
@@ -65,7 +77,28 @@ export interface CaptureEngineV1 {
   readonly device?: string | null;
 }
 
+export interface CaptureEventV2 {
+  readonly protocolVersion: "2";
+  readonly eventId: string;
+  readonly sequence: number;
+  readonly captureId: string;
+  readonly eventType: StreamingEventType;
+  readonly stage: string;
+  readonly partialRevision?: number | null;
+  readonly coveredUntilMs?: number | null;
+  readonly segments?: readonly (RawCaptureSegmentV1)[];
+  readonly error?: CaptureFailureV2 | null;
+  readonly createdAt: string;
+}
+
 export interface CaptureFailureV1 {
+  readonly code: string;
+  readonly message: string;
+  readonly stage?: string | null;
+  readonly retryable?: boolean;
+}
+
+export interface CaptureFailureV2 {
   readonly code: string;
   readonly message: string;
   readonly stage?: string | null;
@@ -80,6 +113,21 @@ export interface CaptureJobV1 {
   readonly progress: number;
   readonly source?: CaptureSourceV1 | null;
   readonly error?: CaptureFailureV1 | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly completedAt?: string | null;
+}
+
+export interface CaptureOperationV2 {
+  readonly protocolVersion: "2";
+  readonly captureId: string;
+  readonly ingestionId: string;
+  readonly status: StreamingCaptureStatus;
+  readonly progress?: number | null;
+  readonly partialRevision: number;
+  readonly lastEventSequence: number;
+  readonly source?: CaptureSourceV1 | null;
+  readonly error?: CaptureFailureV2 | null;
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly completedAt?: string | null;
@@ -112,10 +160,49 @@ export interface ErrorEnvelopeV1 {
   readonly error: ErrorBodyV1;
 }
 
+export interface IngestionV2 {
+  readonly protocolVersion: "2";
+  readonly ingestionId: string;
+  readonly status: StreamingIngestionStatus;
+  readonly fileName: string;
+  readonly mediaType: string;
+  readonly totalBytes: number;
+  readonly receivedBytes: number;
+  readonly contiguousBytes: number;
+  readonly nextChunkIndex: number;
+  readonly nextOffset: number;
+  readonly sourceSha256?: string | null;
+  readonly finalizedSha256?: string | null;
+  readonly expiresAt: string;
+}
+
+export interface OpenIngestionV2 {
+  readonly protocolVersion: "2";
+  readonly kind: "audio";
+  readonly mode?: StreamingIngestionMode;
+  readonly clientRequestId: string;
+  readonly fileName: string;
+  readonly mediaType: string;
+  readonly totalBytes: number;
+  readonly sourceSha256?: string | null;
+}
+
 export interface PageLocatorV1 {
   readonly kind: "page";
   readonly page: number;
   readonly boundingBox?: readonly [number, number, number, number] | null;
+}
+
+export interface PartialCaptureV2 {
+  readonly protocolVersion: "2";
+  readonly captureId: string;
+  readonly source: CaptureSourceV1;
+  readonly revision: number;
+  readonly coveredUntilMs: number;
+  readonly segments?: readonly (RawCaptureSegmentV1)[];
+  readonly sourceText?: string;
+  readonly extractionEngine?: CaptureEngineV1 | null;
+  readonly updatedAt: string;
 }
 
 export interface RawCaptureSegmentV1 {
@@ -227,6 +314,23 @@ export interface RuntimeRequirementsV1 {
   readonly items: readonly (RuntimeRequirementV1)[];
 }
 
+export interface RuntimeStreamingCapabilitiesV2 {
+  readonly protocolVersion: "2";
+  readonly supportsProgressiveAudio: true;
+  readonly maxChunkBytes: number;
+  readonly checkpointIntervalMs: number;
+  readonly heartbeatIntervalMs: number;
+  readonly stallTimeoutMs: number;
+}
+
+export interface StartCaptureV2 {
+  readonly protocolVersion: "2";
+  readonly ingestionId: string;
+  readonly structuringMode: StructuringMode;
+  readonly targetLanguage?: string | null;
+  readonly startPolicy: "eager";
+}
+
 export interface StartRuntimeInstallationV1 {
   readonly requirementId: "windowsml-ocr" | "whisper-primary" | "ollama-runtime" | "capture-ollama-model";
   readonly consent: true;
@@ -243,7 +347,7 @@ export interface TimeLocatorV1 {
   readonly endMs: number;
 }
 
-export type CaptureContractName = "CaptureBlockV1" | "CaptureDocumentV1" | "CaptureEngineV1" | "CaptureFailureV1" | "CaptureJobV1" | "CaptureReviewEditV1" | "CaptureReviewV1" | "CaptureSourceV1" | "ErrorBodyV1" | "ErrorEnvelopeV1" | "PageLocatorV1" | "RawCaptureSegmentV1" | "RawCaptureV1" | "ReportStructuringFailureV1" | "RuntimeArtifactDescriptorV1" | "RuntimeCapabilitiesV1" | "RuntimeInstallationV1" | "RuntimeInstallationsV1" | "RuntimeModelInstallationV1" | "RuntimeModelInstallationsV1" | "RuntimeModelOptionV1" | "RuntimeModelOptionsV1" | "RuntimeReadyV1" | "RuntimeRequirementV1" | "RuntimeRequirementsV1" | "StartRuntimeInstallationV1" | "StartRuntimeModelInstallationV1" | "TimeLocatorV1";
+export type CaptureContractName = "CaptureBlockV1" | "CaptureDocumentV1" | "CaptureEngineV1" | "CaptureEventV2" | "CaptureFailureV1" | "CaptureFailureV2" | "CaptureJobV1" | "CaptureOperationV2" | "CaptureReviewEditV1" | "CaptureReviewV1" | "CaptureSourceV1" | "ErrorBodyV1" | "ErrorEnvelopeV1" | "IngestionV2" | "OpenIngestionV2" | "PageLocatorV1" | "PartialCaptureV2" | "RawCaptureSegmentV1" | "RawCaptureV1" | "ReportStructuringFailureV1" | "RuntimeArtifactDescriptorV1" | "RuntimeCapabilitiesV1" | "RuntimeInstallationV1" | "RuntimeInstallationsV1" | "RuntimeModelInstallationV1" | "RuntimeModelInstallationsV1" | "RuntimeModelOptionV1" | "RuntimeModelOptionsV1" | "RuntimeReadyV1" | "RuntimeRequirementV1" | "RuntimeRequirementsV1" | "RuntimeStreamingCapabilitiesV2" | "StartCaptureV2" | "StartRuntimeInstallationV1" | "StartRuntimeModelInstallationV1" | "TimeLocatorV1";
 
 export type CaptureContractInvariant = {
   readonly id: string;
@@ -315,14 +419,20 @@ export const CAPTURE_CONTRACT_EXTRA_POLICIES = {
   "CaptureBlockV1": "forbid",
   "CaptureDocumentV1": "forbid",
   "CaptureEngineV1": "forbid",
+  "CaptureEventV2": "forbid",
   "CaptureFailureV1": "forbid",
+  "CaptureFailureV2": "forbid",
   "CaptureJobV1": "forbid",
+  "CaptureOperationV2": "forbid",
   "CaptureReviewEditV1": "forbid",
   "CaptureReviewV1": "forbid",
   "CaptureSourceV1": "forbid",
   "ErrorBodyV1": "forbid",
   "ErrorEnvelopeV1": "forbid",
+  "IngestionV2": "forbid",
+  "OpenIngestionV2": "forbid",
   "PageLocatorV1": "forbid",
+  "PartialCaptureV2": "forbid",
   "RawCaptureSegmentV1": "forbid",
   "RawCaptureV1": "forbid",
   "ReportStructuringFailureV1": "forbid",
@@ -337,6 +447,8 @@ export const CAPTURE_CONTRACT_EXTRA_POLICIES = {
   "RuntimeReadyV1": "forbid",
   "RuntimeRequirementV1": "forbid",
   "RuntimeRequirementsV1": "forbid",
+  "RuntimeStreamingCapabilitiesV2": "forbid",
+  "StartCaptureV2": "forbid",
   "StartRuntimeInstallationV1": "forbid",
   "StartRuntimeModelInstallationV1": "forbid",
   "TimeLocatorV1": "forbid",

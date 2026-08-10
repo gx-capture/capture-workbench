@@ -29,6 +29,13 @@
       "strStripWhitespace": true
     },
     {
+      "name": "CaptureEventV2",
+      "schemaFile": "capture-event-v2.schema.json",
+      "schemaSha256": "056f6eb607802bd7741956e9e42cf86b067edfd477385ab8154eab79524e0ec0",
+      "extraPolicy": "forbid",
+      "strStripWhitespace": true
+    },
+    {
       "name": "CaptureFailureV1",
       "schemaFile": "capture-failure-v1.schema.json",
       "schemaSha256": "44f24e823fb1dc4def352441ca67520727dcae702a23909b43293d8675b76450",
@@ -36,9 +43,23 @@
       "strStripWhitespace": true
     },
     {
+      "name": "CaptureFailureV2",
+      "schemaFile": "capture-failure-v2.schema.json",
+      "schemaSha256": "04e0baddc5e8e9ea8ba62215bbbd16b3b6bc0e4d63ebc260ea05d5645bfb7704",
+      "extraPolicy": "forbid",
+      "strStripWhitespace": true
+    },
+    {
       "name": "CaptureJobV1",
       "schemaFile": "capture-job-v1.schema.json",
       "schemaSha256": "b49c618d396dd7273ec61733aa8c57509ba99985f801abee0d8d12d79bedda6b",
+      "extraPolicy": "forbid",
+      "strStripWhitespace": true
+    },
+    {
+      "name": "CaptureOperationV2",
+      "schemaFile": "capture-operation-v2.schema.json",
+      "schemaSha256": "a3096f60f588594fe4c850c344d9f3cc34a5cafc7e1e280ca4e073eaa0422d57",
       "extraPolicy": "forbid",
       "strStripWhitespace": true
     },
@@ -78,9 +99,30 @@
       "strStripWhitespace": true
     },
     {
+      "name": "IngestionV2",
+      "schemaFile": "ingestion-v2.schema.json",
+      "schemaSha256": "a3922afe5e7769fd7283bbe8d71af2a59827f829119a2503d54e373feb386195",
+      "extraPolicy": "forbid",
+      "strStripWhitespace": true
+    },
+    {
+      "name": "OpenIngestionV2",
+      "schemaFile": "open-ingestion-v2.schema.json",
+      "schemaSha256": "2ab1d3f1469c4675cea0fd73899a444303e330023411c5cd00cd68f3ed8891e9",
+      "extraPolicy": "forbid",
+      "strStripWhitespace": true
+    },
+    {
       "name": "PageLocatorV1",
       "schemaFile": "page-locator-v1.schema.json",
       "schemaSha256": "1ddf6c1232b0634f0cfdd46455b91c146f73bc3fce361d5d07e9feec0ff457b8",
+      "extraPolicy": "forbid",
+      "strStripWhitespace": true
+    },
+    {
+      "name": "PartialCaptureV2",
+      "schemaFile": "partial-capture-v2.schema.json",
+      "schemaSha256": "d0bdf50a5d5f976041f4fa6cccb44c12cba710622defdebfcacfd06d6812f282",
       "extraPolicy": "forbid",
       "strStripWhitespace": true
     },
@@ -183,6 +225,20 @@
       "strStripWhitespace": true
     },
     {
+      "name": "RuntimeStreamingCapabilitiesV2",
+      "schemaFile": "runtime-streaming-capabilities-v2.schema.json",
+      "schemaSha256": "ea69b1c895aebb35b9da294237c3eaf3da8944b07e3982ed316078050c7ff3bd",
+      "extraPolicy": "forbid",
+      "strStripWhitespace": true
+    },
+    {
+      "name": "StartCaptureV2",
+      "schemaFile": "start-capture-v2.schema.json",
+      "schemaSha256": "3a3a8bc10cf86cf8c603d51708a7217d13866a28c1f08d073678c95c1238c18e",
+      "extraPolicy": "forbid",
+      "strStripWhitespace": true
+    },
+    {
       "name": "StartRuntimeInstallationV1",
       "schemaFile": "start-runtime-installation-v1.schema.json",
       "schemaSha256": "820eea98b4e8cde94dc001bc3227f8f36b5c08886d24e8b76955b6af22c229b9",
@@ -262,6 +318,50 @@
         "installable",
         "manual_action_required",
         "unavailable"
+      ]
+    },
+    {
+      "name": "StreamingCaptureStatus",
+      "values": [
+        "created",
+        "waiting_input",
+        "extracting",
+        "awaiting_structuring",
+        "structuring",
+        "completed",
+        "failed",
+        "cancelled"
+      ]
+    },
+    {
+      "name": "StreamingEventType",
+      "values": [
+        "accepted",
+        "input_checkpoint",
+        "heartbeat",
+        "segment",
+        "checkpoint",
+        "resync_required",
+        "completed",
+        "failed",
+        "cancelled"
+      ]
+    },
+    {
+      "name": "StreamingIngestionMode",
+      "values": [
+        "file"
+      ]
+    },
+    {
+      "name": "StreamingIngestionStatus",
+      "values": [
+        "open",
+        "finalizing",
+        "ready",
+        "cancelled",
+        "failed",
+        "expired"
       ]
     },
     {

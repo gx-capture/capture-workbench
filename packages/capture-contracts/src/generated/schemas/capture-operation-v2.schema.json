@@ -1,0 +1,194 @@
+{
+  "$defs": {
+    "CaptureFailureV2": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "pattern": "^[a-z][a-z0-9_]{1,63}$",
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Message",
+          "type": "string"
+        },
+        "stage": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Stage"
+        },
+        "retryable": {
+          "default": false,
+          "title": "Retryable",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "CaptureFailureV2",
+      "type": "object"
+    },
+    "CaptureSourceV1": {
+      "additionalProperties": false,
+      "properties": {
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "fileName": {
+          "maxLength": 255,
+          "minLength": 1,
+          "title": "Filename",
+          "type": "string"
+        },
+        "mediaType": {
+          "minLength": 1,
+          "title": "Mediatype",
+          "type": "string"
+        },
+        "bytes": {
+          "minimum": 1,
+          "title": "Bytes",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "sha256",
+        "fileName",
+        "mediaType",
+        "bytes"
+      ],
+      "title": "CaptureSourceV1",
+      "type": "object"
+    },
+    "StreamingCaptureStatus": {
+      "enum": [
+        "created",
+        "waiting_input",
+        "extracting",
+        "awaiting_structuring",
+        "structuring",
+        "completed",
+        "failed",
+        "cancelled"
+      ],
+      "title": "StreamingCaptureStatus",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "protocolVersion": {
+      "const": "2",
+      "default": "2",
+      "title": "Protocolversion",
+      "type": "string"
+    },
+    "captureId": {
+      "minLength": 1,
+      "title": "Captureid",
+      "type": "string"
+    },
+    "ingestionId": {
+      "minLength": 1,
+      "title": "Ingestionid",
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/StreamingCaptureStatus"
+    },
+    "progress": {
+      "anyOf": [
+        {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Progress"
+    },
+    "partialRevision": {
+      "minimum": 0,
+      "title": "Partialrevision",
+      "type": "integer"
+    },
+    "lastEventSequence": {
+      "minimum": 0,
+      "title": "Lasteventsequence",
+      "type": "integer"
+    },
+    "source": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CaptureSourceV1"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "error": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CaptureFailureV2"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "createdAt": {
+      "format": "date-time",
+      "title": "Createdat",
+      "type": "string"
+    },
+    "updatedAt": {
+      "format": "date-time",
+      "title": "Updatedat",
+      "type": "string"
+    },
+    "completedAt": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Completedat"
+    }
+  },
+  "required": [
+    "captureId",
+    "ingestionId",
+    "status",
+    "partialRevision",
+    "lastEventSequence",
+    "createdAt",
+    "updatedAt"
+  ],
+  "title": "CaptureOperationV2",
+  "type": "object"
+}
