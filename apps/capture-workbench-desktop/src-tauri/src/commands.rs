@@ -13,6 +13,9 @@ use crate::{
     state::DesktopState,
 };
 
+#[cfg(feature = "model-smoke-app-data")]
+use crate::model_smoke_fixtures::{ModelSmokeFixtureRegistry, ModelSmokeImportFixtureRequest};
+
 /// Returns redacted launcher state for runtime setup and diagnostics UI.
 #[tauri::command]
 pub fn desktop_runtime_status(state: tauri::State<'_, DesktopState>) -> DesktopRuntimeStatus {
@@ -36,6 +39,24 @@ pub async fn library_import_source(
 ) -> Result<LibraryDocumentSummary, String> {
     let library = Arc::clone(library.inner());
     run_blocking(move || library.import_source(request)).await
+}
+
+#[cfg(feature = "model-smoke-app-data")]
+#[tauri::command]
+pub async fn model_smoke_import_fixture(
+    library: tauri::State<'_, Arc<LibraryStore>>,
+    fixtures: tauri::State<'_, ModelSmokeFixtureRegistry>,
+    request: ModelSmokeImportFixtureRequest,
+) -> Result<LibraryDocumentSummary, String> {
+    let library = Arc::clone(library.inner());
+    let fixtures = fixtures.inner().clone();
+    run_blocking(move || {
+        let source = fixtures.resolve(&request.fixture_key)?;
+        library.import_source(LibraryImportSourceRequest {
+            source_path: source.to_string_lossy().into_owned(),
+        })
+    })
+    .await
 }
 
 #[tauri::command]

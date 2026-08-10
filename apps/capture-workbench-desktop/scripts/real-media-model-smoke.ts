@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { createReadStream } from 'node:fs';
 import { createServer } from 'node:http';
@@ -26,15 +26,109 @@ import { appRoot } from './stage-runtime.ts';
 export const REAL_MODEL_RELEASE_VERSION = '0.3.11';
 export const REAL_MODEL_CATALOG_VERSION = '2';
 export const REAL_MODEL_DEPENDENCY_ORDER_SCOPE = 'source-lock-model-requirements-only';
+export const REAL_MODEL_SOURCE_IMPORT_MODE = 'deterministic-feature-gated-picker-bypass';
 export const REAL_MODEL_REQUIREMENT_ORDER = [
   'windowsml-ocr',
   'whisper-primary',
 ] as const;
 export const REAL_MODEL_RUNTIME_READY_TIMEOUT_MS = 3 * 60_000;
 export const REAL_MODEL_INSTALL_TIMEOUT_MS = 90 * 60_000;
-export const REAL_MODEL_CAPTURE_TIMEOUT_MS = 30_000;
+export const REAL_MODEL_CAPTURE_TIMEOUT_MS = 5 * 60_000;
+export const REAL_MODEL_CAPTURE_START_TIMEOUT_MS = 30_000;
 export const REAL_MODEL_AUDIO_CAPTURE_TIMEOUT_MS = 60 * 60_000;
 export const REAL_MODEL_RESULT_TIMEOUT_MS = 60 * 60_000;
+export const NATIVE_SOURCE_DIALOG_CLASSES = ['#32770'] as const;
+export const NATIVE_SOURCE_BROKER_DIALOG_CLASSES = ['CabinetWClass'] as const;
+
+const SAFE_UI_STATE_TEST_IDS = [
+  'runtime-setup',
+  'runtime-requirement',
+  'runtime-install',
+  'model-selection',
+  'model-install',
+  'model-install-progress',
+  'source-import',
+  'document-card',
+  'document-detail',
+  'document-raw',
+  'document-result',
+  'document-provenance',
+  'document-extraction-provenance',
+  'document-retry',
+  'document-delete',
+] as const;
+const SAFE_UI_STATE_STATUSES = new Set([
+  'active',
+  'blocked',
+  'completed',
+  'downloading',
+  'extracting',
+  'failed',
+  'idle',
+  'installable',
+  'installing',
+  'queued',
+  'ready',
+  'unavailable',
+]);
+const SAFE_UI_STATE_REQUIREMENTS = new Set(['windowsml-ocr', 'whisper-primary', 'ollama-runtime']);
+const SAFE_UI_STATE_SOURCE_KINDS = new Set(['pdf', 'image', 'audio']);
+const SAFE_UI_STATE_ENGINES = new Set(['windowsml-ocr', 'whisper-primary']);
+const SAFE_UI_STATE_DEVICES = new Set(['windowsml-dml', 'cpu']);
+const SAFE_TERMINAL_DOCUMENT_STATUSES = new Set(['failed', 'canceled']);
+const SAFE_TERMINAL_DOCUMENT_STAGES = new Set([
+  'queued',
+  'extracting',
+  'awaiting_structuring',
+  'structuring',
+  'persisting',
+  'completed',
+  'failed',
+  'cancelled',
+]);
+const SAFE_TERMINAL_DOCUMENT_ERROR_CODES = new Set([
+  'capture_cancelled',
+  'extraction_failed',
+  'requirement_unavailable',
+  'structuring_failed',
+  'structuring_invalid_output',
+]);
+const SAFE_WORKER_STAGE_TOKEN = '(?:worker-entry(?:-[a-z0-9-]+)?|python-import-[a-z0-9-]+|ocr-[a-z0-9-]+|whisper-[a-z0-9-]+|worker-process-[a-z0-9-]+|worker-stage-sequence-truncated)';
+const SAFE_WORKER_STAGE_SEQUENCE = `${SAFE_WORKER_STAGE_TOKEN}(?:>${SAFE_WORKER_STAGE_TOKEN})*`;
+const SAFE_TERMINAL_DOCUMENT_FAILURE = new RegExp(
+  `^Desktop capture terminated\\. status=(?:failed|canceled); stage=(?:queued|extracting|awaiting_structuring|structuring|persisting|completed|failed|cancelled|unknown); errorCode=(?:capture_cancelled|extraction_failed|requirement_unavailable|structuring_failed|structuring_invalid_output|unknown)(?:; mediaKind=(?:pdf|image|audio))?(?:; (?:workerStage=${SAFE_WORKER_STAGE_SEQUENCE}|failureReason=(?:no-non-empty-output|validation-failed|runtime-boundary|worker-boundary)))?\\.$`,
+  'u',
+);
+const SAFE_WORKER_FAILURE_MESSAGE = new RegExp(
+  `^Source extraction worker failed at (?:(?:stage|stages) )?(${SAFE_WORKER_STAGE_SEQUENCE})\\.$`,
+  'u',
+);
+const SAFE_EXTRACTION_FAILURE_REASONS = new Map<string, string>([
+  ['Source extraction produced no non-empty content.', 'no-non-empty-output'],
+  ['Source extraction failed validation.', 'validation-failed'],
+  ['Source extraction failed at the runtime boundary.', 'runtime-boundary'],
+  ['Source extraction worker failed.', 'worker-boundary'],
+]);
+const SAFE_INSTALLATION_STATUSES = new Set(['failed', 'cancelled', 'manual_action_required']);
+const SAFE_INSTALLATION_STAGES = new Set([
+  'queued',
+  'running',
+  'preparing',
+  'downloading',
+  'verifying',
+  'installing',
+  'probing',
+  'activating',
+  'failed',
+  'cancelled',
+  'manual_action_required',
+]);
+const SAFE_TERMINAL_INSTALLATION_FAILURE = new RegExp(
+  `^Desktop runtime installation terminated\\. requirement=whisper-primary; status=(?:failed|cancelled|manual_action_required); stage=(?:queued|running|preparing|downloading|verifying|installing|probing|activating|failed|cancelled|manual_action_required|unknown); errorCode=[a-z][a-z0-9_-]{1,63}; progressBand=(?:early|download|late|unknown)(?:; workerStage=worker-process-[a-z0-9-]+(?:>worker-process-[a-z0-9-]+)*)?(?:; failureReason=(?:direct-model-retries-exhausted|direct-model-http-nonretryable|direct-model-content-length|direct-model-byte-count|direct-model-checksum|direct-model-redirect|runtime-install-unexpected))?\\.$`,
+  'u',
+);
+const SAFE_TERMINAL_MODEL_INSTALLATION_FAILURE = /^Desktop model installation terminated\. status=(?:failed|cancelled|manual_action_required); errorCode=[a-z][a-z0-9_-]{1,63}; progressBand=(?:early|download|late|unknown)\.$/u;
+const SAFE_MODEL_INSTALLATION_START_FAILURE = /^Desktop model installation did not start\.$/u;
 
 const workspaceRoot = resolve(appRoot, '..', '..');
 const smokeRoot = join(
@@ -85,6 +179,15 @@ const projectImagePath = join(
   'fixtures',
   'ocr-reference.png',
 );
+const projectPdfPath = join(
+  workspaceRoot,
+  'packages',
+  'capture-runtime',
+  'model-sources',
+  'commit-a',
+  'fixtures',
+  'ocr-scanned.pdf',
+);
 const defaultDesktopExecutable = join(
   appRoot,
   'src-tauri',
@@ -97,7 +200,7 @@ const workerMirrorRoot = join(workspaceRoot, 'packages', 'capture-runtime', 'dis
 
 type JsonObject = { readonly [key: string]: unknown };
 type RequirementId = (typeof REAL_MODEL_REQUIREMENT_ORDER)[number];
-type SetupRequirementId = RequirementId | 'ollama-runtime';
+type SetupRequirementId = RequirementId | 'ollama-runtime' | 'capture-ollama-model';
 type MediaKind = 'pdf' | 'image' | 'audio';
 
 interface MediaInput {
@@ -126,6 +229,7 @@ interface ExpectedProvenance {
   readonly whisperEngine: 'whisper-primary';
   readonly whisperModel: string;
   readonly whisperDevice: string;
+  readonly whisperPreferGpu: boolean;
   readonly whisperNormalizedOutputSha256: string;
   readonly whisperSegmentMinimum: number;
   readonly whisperSegmentMaximum: number;
@@ -156,6 +260,8 @@ interface MediaSummary {
 
 export interface RealMediaModelEvidence {
   readonly evidenceKind: 'real-model-enabled-tauri-ui-smoke';
+  readonly sourceImportMode: typeof REAL_MODEL_SOURCE_IMPORT_MODE;
+  readonly nativePickerExercised: false;
   readonly releaseGateSatisfied: false;
   readonly localProductionPreflight: true;
   readonly consumerE2e: false;
@@ -352,6 +458,7 @@ function validateSourceLockAndCatalog(
     whisperFixture.expectedEngine !== 'whisper-primary' ||
     typeof whisperFixture.expectedModel !== 'string' ||
     typeof whisperFixture.expectedDevice !== 'string' ||
+    typeof whisperFixture.preferGpu !== 'boolean' ||
     typeof whisperFixture.expectedNormalizedOutputSha256 !== 'string' ||
     !/^[a-f0-9]{64}$/u.test(whisperFixture.expectedNormalizedOutputSha256)
     || typeof whisperFixture.sha256 !== 'string'
@@ -382,6 +489,7 @@ function validateSourceLockAndCatalog(
     whisperEngine: 'whisper-primary',
     whisperModel: whisperFixture.expectedModel,
     whisperDevice: whisperFixture.expectedDevice,
+    whisperPreferGpu: whisperFixture.preferGpu,
     whisperNormalizedOutputSha256: whisperFixture.expectedNormalizedOutputSha256,
     whisperSegmentMinimum: Number(expectedSegmentCount.minimum),
     whisperSegmentMaximum: Number(expectedSegmentCount.maximum),
@@ -482,20 +590,43 @@ async function regularInput(
   };
 }
 
+async function prepareAudioInput(expected: ExpectedProvenance): Promise<MediaInput> {
+  await mkdir(runRoot, { recursive: true });
+  const audioInput = process.env.CAPTURE_REAL_MEDIA_MODEL_AUDIO?.trim();
+  if (!audioInput) throw new Error('CAPTURE_REAL_MEDIA_MODEL_AUDIO is required for the private runner audio fixture.');
+  return regularInput(
+    audioInput,
+    'CAPTURE_REAL_MEDIA_MODEL_AUDIO',
+    'audio',
+    join(runRoot, safeInputName('audio')),
+    expected.whisperFixtureSha256,
+    expected.whisperFixtureBytes,
+  );
+}
+
+async function prepareAudioOnlyInputs(
+  expected: ExpectedProvenance,
+): Promise<readonly [MediaInput, MediaInput, MediaInput]> {
+  await mkdir(runRoot, { recursive: true });
+  return [
+    await regularInput(projectPdfPath, 'project OCR PDF fixture', 'pdf', join(runRoot, safeInputName('pdf'))),
+    await regularInput(projectImagePath, 'project OCR image fixture', 'image', join(runRoot, safeInputName('image'))),
+    await prepareAudioInput(expected),
+  ];
+}
+
 async function prepareInputs(expected: ExpectedProvenance): Promise<readonly [MediaInput, MediaInput, MediaInput]> {
   await mkdir(runRoot, { recursive: true });
   const pdfInput = process.env.CAPTURE_REAL_MEDIA_MODEL_PDF?.trim();
-  const audioInput = process.env.CAPTURE_REAL_MEDIA_MODEL_AUDIO?.trim();
   const privatePdfTextSha256 = process.env.CAPTURE_REAL_MEDIA_MODEL_OCR_TEXT_SHA256?.trim().toLowerCase();
   if (!pdfInput) throw new Error('CAPTURE_REAL_MEDIA_MODEL_PDF is required for the private runner OCR fixture.');
-  if (!audioInput) throw new Error('CAPTURE_REAL_MEDIA_MODEL_AUDIO is required for the private runner audio fixture.');
   if (!privatePdfTextSha256 || !/^[a-f0-9]{64}$/u.test(privatePdfTextSha256)) {
     throw new Error('CAPTURE_REAL_MEDIA_MODEL_OCR_TEXT_SHA256 must be a 64-character lowercase SHA-256 digest for the private PDF output.');
   }
   return [
     await regularInput(pdfInput, 'CAPTURE_REAL_MEDIA_MODEL_PDF', 'pdf', join(runRoot, safeInputName('pdf')), undefined, undefined, undefined, privatePdfTextSha256),
     await regularInput(projectImagePath, 'project OCR image fixture', 'image', join(runRoot, safeInputName('image')), expected.ocrImageSha256, expected.ocrImageBytes, expected.ocrText),
-    await regularInput(audioInput, 'CAPTURE_REAL_MEDIA_MODEL_AUDIO', 'audio', join(runRoot, safeInputName('audio')), expected.whisperFixtureSha256, expected.whisperFixtureBytes),
+    await prepareAudioInput(expected),
   ];
 }
 
@@ -532,6 +663,7 @@ async function startCandidateWorkerMirror(expected: ExpectedProvenance): Promise
     archives.set(archive.fileName, { path: archivePath, bytes: archive.bytes, sha256: archive.sha256 });
   }
   let requestCount = 0;
+  const sockets = new Set<net.Socket>();
   const server = createServer((request, response) => {
     if (request.method !== 'GET' || !request.url) {
       response.writeHead(405).end();
@@ -564,6 +696,10 @@ async function startCandidateWorkerMirror(expected: ExpectedProvenance): Promise
     stream.once('error', () => response.destroy());
     stream.pipe(response);
   });
+  server.on('connection', (socket) => {
+    sockets.add(socket);
+    socket.once('close', () => sockets.delete(socket));
+  });
   await new Promise<void>((resolvePromise, reject) => {
     server.once('error', reject);
     server.listen(0, '127.0.0.1', () => resolvePromise());
@@ -579,6 +715,7 @@ async function startCandidateWorkerMirror(expected: ExpectedProvenance): Promise
     port,
     requests: () => requestCount,
     close: async () => {
+      for (const socket of sockets) socket.destroy();
       server.closeIdleConnections();
       server.closeAllConnections();
       await Promise.race([
@@ -596,6 +733,24 @@ export function assertNoAmbientModelOverrides(environment: Record<string, string
     /^(?:CAPTURE_(?:USER_MODEL_DIR|EXTRACTION_PROVIDER|STRUCTURING_PROVIDER|OLLAMA_[A-Z0-9_]+|WINDOWSML_[A-Z0-9_]+|WHISPER_[A-Z0-9_]+)|OLLAMA_(?:MODELS|HOST))$/u.test(name),
   );
   if (forbidden.length > 0) throw new Error('Real model smoke environment contains ambient model/provider overrides.');
+}
+
+export function assertCudaPathRetainedForAppLaunch(
+  source: NodeJS.ProcessEnv,
+  appEnvironment: NodeJS.ProcessEnv,
+): void {
+  const sourceCudaPath = Object.entries(source).find(
+    ([name, value]) =>
+      name.toUpperCase() === 'CUDA_PATH' &&
+      typeof value === 'string' &&
+      value.length > 0,
+  )?.[1];
+  if (
+    sourceCudaPath !== undefined &&
+    appEnvironment.CUDA_PATH !== sourceCudaPath
+  ) {
+    throw new Error('Real model smoke did not retain CUDA_PATH for app launch.');
+  }
 }
 
 function errorWithoutSecrets(error: unknown): Error {
@@ -629,7 +784,21 @@ export function windowsPowerShellExecutable(systemRoot = process.env.SystemRoot 
   return join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
 }
 
+export function modelSmokeFixtureEnvironment(paths: {
+  readonly pdf: string;
+  readonly image: string;
+  readonly audio: string;
+}): Record<string, string> {
+  return {
+    CAPTURE_SMOKE_FIXTURE_PDF: paths.pdf,
+    CAPTURE_SMOKE_FIXTURE_IMAGE: paths.image,
+    CAPTURE_SMOKE_FIXTURE_AUDIO: paths.audio,
+  };
+}
+
 export function nativeDialogUiAutomationScript(): string {
+  const commonDialogClasses = NATIVE_SOURCE_DIALOG_CLASSES.map((value) => `'${value}'`).join(', ');
+  const brokerDialogClasses = NATIVE_SOURCE_BROKER_DIALOG_CLASSES.map((value) => `'${value}'`).join(', ');
   return `
 $ErrorActionPreference = 'Stop'
 trap {
@@ -643,10 +812,18 @@ Add-Type -AssemblyName UIAutomationTypes
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type @'
 using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
+using System.Text;
 
 public static class CaptureDialogOwner {
   public const uint GW_OWNER = 4;
+  private const int SW_RESTORE = 9;
+  private delegate bool EnumWindowsProc(IntPtr handle, IntPtr parameter);
+
+  [DllImport("user32.dll")]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  private static extern bool EnumWindows(EnumWindowsProc callback, IntPtr parameter);
 
   [DllImport("user32.dll")]
   public static extern IntPtr GetWindow(IntPtr handle, uint command);
@@ -654,16 +831,128 @@ public static class CaptureDialogOwner {
   [DllImport("user32.dll")]
   public static extern uint GetWindowThreadProcessId(IntPtr handle, out uint processId);
 
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+  private static extern int GetClassName(IntPtr handle, StringBuilder className, int maximumCount);
+
+  [DllImport("user32.dll")]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  private static extern bool IsWindow(IntPtr handle);
+
+  [DllImport("user32.dll")]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  private static extern bool IsWindowVisible(IntPtr handle);
+
+  [DllImport("user32.dll")]
+  public static extern IntPtr GetForegroundWindow();
+
+  [DllImport("user32.dll")]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  public static extern bool IsWindowEnabled(IntPtr handle);
+
+  [DllImport("user32.dll")]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  private static extern bool IsIconic(IntPtr handle);
+
+  [DllImport("user32.dll")]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  private static extern bool ShowWindowAsync(IntPtr handle, int command);
+
+  [DllImport("user32.dll")]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  private static extern bool BringWindowToTop(IntPtr handle);
+
+  [DllImport("user32.dll")]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  private static extern bool SetForegroundWindow(IntPtr handle);
+
+  [DllImport("user32.dll")]
+  private static extern IntPtr SetActiveWindow(IntPtr handle);
+
+  [DllImport("user32.dll")]
+  private static extern IntPtr SetFocus(IntPtr handle);
+
+  [DllImport("user32.dll")]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  private static extern bool AttachThreadInput(uint firstThreadId, uint secondThreadId, bool attach);
+
+  [DllImport("kernel32.dll")]
+  private static extern uint GetCurrentThreadId();
+
   [DllImport("user32.dll", EntryPoint = "SendMessageTimeoutW", CharSet = CharSet.Unicode, SetLastError = true)]
   public static extern IntPtr SendMessageTimeoutText(IntPtr handle, uint message, IntPtr wParam, string lParam, uint flags, uint timeoutMs, out IntPtr result);
 
   [DllImport("user32.dll", EntryPoint = "SendMessageTimeoutW", SetLastError = true)]
   public static extern IntPtr SendMessageTimeout(IntPtr handle, uint message, IntPtr wParam, IntPtr lParam, uint flags, uint timeoutMs, out IntPtr result);
+
+  public static long[] SnapshotTopLevelWindowHandles() {
+    var handles = new List<long>();
+    EnumWindows((handle, _) => {
+      if (handle != IntPtr.Zero) handles.Add(handle.ToInt64());
+      return true;
+    }, IntPtr.Zero);
+    return handles.ToArray();
+  }
+
+  public static long[] FindExactTopLevelWindows(uint processId, string expectedClass) {
+    var handles = new List<long>();
+    EnumWindows((handle, _) => {
+      if (HasExactIdentity(handle, processId, expectedClass, true)) handles.Add(handle.ToInt64());
+      return true;
+    }, IntPtr.Zero);
+    return handles.ToArray();
+  }
+
+  public static bool ActivateExactWindow(IntPtr handle, uint processId, string expectedClass) {
+    if (!HasExactIdentity(handle, processId, expectedClass, true)) return false;
+    if (GetForegroundWindow() == handle) return true;
+    if (IsIconic(handle)) ShowWindowAsync(handle, SW_RESTORE);
+
+    uint verifiedProcessId;
+    var targetThreadId = GetWindowThreadProcessId(handle, out verifiedProcessId);
+    if (targetThreadId == 0 || verifiedProcessId != processId) return false;
+    var currentThreadId = GetCurrentThreadId();
+    var foregroundHandle = GetForegroundWindow();
+    uint foregroundProcessId;
+    var foregroundThreadId = foregroundHandle == IntPtr.Zero
+      ? 0
+      : GetWindowThreadProcessId(foregroundHandle, out foregroundProcessId);
+    var attachedTarget = false;
+    var attachedForeground = false;
+    try {
+      if (targetThreadId != currentThreadId) {
+        attachedTarget = AttachThreadInput(currentThreadId, targetThreadId, true);
+      }
+      if (foregroundThreadId != 0 && foregroundThreadId != currentThreadId && foregroundThreadId != targetThreadId) {
+        attachedForeground = AttachThreadInput(currentThreadId, foregroundThreadId, true);
+      }
+      BringWindowToTop(handle);
+      SetForegroundWindow(handle);
+      SetActiveWindow(handle);
+      SetFocus(handle);
+    } finally {
+      if (attachedForeground) AttachThreadInput(currentThreadId, foregroundThreadId, false);
+      if (attachedTarget) AttachThreadInput(currentThreadId, targetThreadId, false);
+    }
+    return HasExactIdentity(handle, processId, expectedClass, true) && GetForegroundWindow() == handle;
+  }
+
+  private static bool HasExactIdentity(IntPtr handle, uint processId, string expectedClass, bool requireUsable) {
+    if (handle == IntPtr.Zero || !IsWindow(handle)) return false;
+    uint actualProcessId;
+    GetWindowThreadProcessId(handle, out actualProcessId);
+    if (actualProcessId != processId || GetWindow(handle, GW_OWNER) != IntPtr.Zero) return false;
+    if (requireUsable && (!IsWindowVisible(handle) || !IsWindowEnabled(handle))) return false;
+    var className = new StringBuilder(256);
+    return GetClassName(handle, className, className.Capacity) > 0 &&
+      string.Equals(className.ToString(), expectedClass, StringComparison.Ordinal);
+  }
 }
 '@
 
 $root = [System.Windows.Automation.AutomationElement]::RootElement
 $targetProcessId = [int]$env:CAPTURE_SMOKE_APP_PID
+$commonDialogClasses = @(${commonDialogClasses})
+$brokerDialogClasses = @(${brokerDialogClasses})
 
 function Get-SafeMetadata($value) {
   if ($null -eq $value) { return '-' }
@@ -720,6 +1009,68 @@ function Get-ElementRelation($element) {
     if (Test-OwnedByTarget ([IntPtr]$current.NativeWindowHandle)) { return 'owned' }
   } catch { }
   return 'other'
+}
+
+function Get-BrokerCandidateFacts($element) {
+  $facts = @{
+    ClassAllowed = $false
+    DifferentProcess = $false
+    ExplorerProcess = $false
+    Foreground = $false
+    Modal = $false
+    NewWindow = $false
+    SingleTarget = $false
+    TargetStillOwned = $false
+    TargetWasEnabled = $false
+    TargetDisabled = $false
+    Eligible = $false
+  }
+  try {
+    $current = $element.Current
+    if ($current.ControlType -ne [System.Windows.Automation.ControlType]::Window) { return $facts }
+    $facts.ClassAllowed = $brokerDialogClasses -contains [string]$current.ClassName
+    $facts.DifferentProcess = [int]$current.ProcessId -ne $targetProcessId
+    $handle = [IntPtr]$current.NativeWindowHandle
+    if ($handle -eq [IntPtr]::Zero) { return $facts }
+    $facts.NewWindow = -not $baselineWindowHandles.Contains([long]$handle.ToInt64())
+    $facts.Foreground = [CaptureDialogOwner]::GetForegroundWindow() -eq $handle
+    $facts.SingleTarget = $targetMainWindowHandles.Count -eq 1
+    $facts.TargetWasEnabled = $targetMainWindowWasEnabled
+    if ($facts.SingleTarget) {
+      $targetHandle = [IntPtr]$targetMainWindowHandles[0]
+      $facts.TargetStillOwned = (Get-WindowProcessId $targetHandle) -eq $targetProcessId
+      if ($facts.TargetStillOwned) {
+        $facts.TargetDisabled = -not [CaptureDialogOwner]::IsWindowEnabled($targetHandle)
+      }
+    }
+    try {
+      if ([System.Diagnostics.Process]::GetProcessById([int]$current.ProcessId).ProcessName -cne 'explorer') {
+        $facts.ExplorerProcess = $false
+      } else {
+        $facts.ExplorerProcess = $true
+      }
+    } catch { }
+    try {
+      $windowPattern = $element.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern)
+      $facts.Modal = [bool]$windowPattern.Current.IsModal
+    } catch { }
+    $facts.Eligible = $facts.ClassAllowed -and
+      $facts.DifferentProcess -and
+      $facts.ExplorerProcess -and
+      $facts.Foreground -and
+      $facts.Modal -and
+      $facts.NewWindow -and
+      $facts.SingleTarget -and
+      $facts.TargetStillOwned -and
+      $facts.TargetWasEnabled -and
+      $facts.TargetDisabled
+  } catch { }
+  return $facts
+}
+
+function Test-BrokeredDialog($element) {
+  $facts = Get-BrokerCandidateFacts $element
+  return [bool]$facts.Eligible
 }
 
 function Find-ByAutomationId($element, [string]$automationId) {
@@ -847,6 +1198,26 @@ function Write-ElementDiagnostics($prefix, $element, $relation) {
   } catch { }
 }
 
+function Get-BoolMetadata([bool]$value) {
+  if ($value) { return 'true' }
+  return 'false'
+}
+
+function Write-BrokerCandidateDiagnostics($element) {
+  $facts = Get-BrokerCandidateFacts $element
+  Write-Output ('UIA|stage=broker-candidate|class-allowed=' + (Get-BoolMetadata $facts.ClassAllowed) +
+    '|different-process=' + (Get-BoolMetadata $facts.DifferentProcess) +
+    '|explorer-process=' + (Get-BoolMetadata $facts.ExplorerProcess) +
+    '|foreground=' + (Get-BoolMetadata $facts.Foreground) +
+    '|modal=' + (Get-BoolMetadata $facts.Modal) +
+    '|new-window=' + (Get-BoolMetadata $facts.NewWindow) +
+    '|single-target=' + (Get-BoolMetadata $facts.SingleTarget) +
+    '|target-still-owned=' + (Get-BoolMetadata $facts.TargetStillOwned) +
+    '|target-was-enabled=' + (Get-BoolMetadata $facts.TargetWasEnabled) +
+    '|target-disabled=' + (Get-BoolMetadata $facts.TargetDisabled) +
+    '|eligible=' + (Get-BoolMetadata $facts.Eligible))
+}
+
 function Write-DialogDiagnostics($dialog, $relation) {
   Write-ElementDiagnostics 'UIA' $dialog $relation
   $nodes = $dialog.FindAll(
@@ -877,7 +1248,14 @@ function Write-TopLevelDiagnostics {
     if ($written -ge 80) { break }
     $relation = Get-ElementRelation $node
     Write-ElementDiagnostics 'TOP' $node $relation
-    if ($relation -ne 'other') { Write-DialogDiagnostics $node $relation }
+    try {
+      if ($relation -ne 'other' -and $commonDialogClasses -contains [string]$node.Current.ClassName) {
+        Write-DialogDiagnostics $node $relation
+      } elseif ($brokerDialogClasses -contains [string]$node.Current.ClassName) {
+        Write-BrokerCandidateDiagnostics $node
+        if (Test-BrokeredDialog $node) { Write-DialogDiagnostics $node 'brokered' }
+      }
+    } catch { }
     $written += 1
   }
 }
@@ -903,6 +1281,40 @@ function Test-DialogStillOpen($dialog, [IntPtr]$handle) {
   return $false
 }
 
+$targetMainWindowHandles = @([CaptureDialogOwner]::FindExactTopLevelWindows(
+  [uint32]$targetProcessId,
+  'Tauri_Window'
+))
+if ($targetMainWindowHandles.Count -ne 1) {
+  Write-Output ('UIA|stage=target-window|code=count-invalid|count=' + [string]$targetMainWindowHandles.Count)
+  exit 6
+}
+$targetHandle = [IntPtr][long]$targetMainWindowHandles[0]
+$activationDeadline = [DateTime]::UtcNow.AddSeconds(3)
+$targetActivated = $false
+while ([DateTime]::UtcNow -lt $activationDeadline) {
+  try {
+    $targetElement = [System.Windows.Automation.AutomationElement]::FromHandle($targetHandle)
+    $targetElement.SetFocus()
+  } catch { }
+  if ([CaptureDialogOwner]::ActivateExactWindow($targetHandle, [uint32]$targetProcessId, 'Tauri_Window')) {
+    $targetActivated = $true
+    break
+  }
+  Start-Sleep -Milliseconds 100
+}
+if (-not $targetActivated) {
+  Write-Output 'UIA|stage=target-activation|code=failed|count=1'
+  exit 7
+}
+
+$baselineWindowHandles = New-Object 'System.Collections.Generic.HashSet[long]'
+foreach ($handle in [CaptureDialogOwner]::SnapshotTopLevelWindowHandles()) {
+  [void]$baselineWindowHandles.Add([long]$handle)
+}
+$targetMainWindowWasEnabled = [CaptureDialogOwner]::IsWindowEnabled($targetHandle)
+Write-Output 'UIA|stage=ready|code=activated'
+
 $deadline = [DateTime]::UtcNow.AddSeconds(30)
 while ([DateTime]::UtcNow -lt $deadline) {
   $windows = $root.FindAll(
@@ -911,11 +1323,18 @@ while ([DateTime]::UtcNow -lt $deadline) {
   )
   foreach ($dialog in $windows) {
     $relation = Get-ElementRelation $dialog
-    if ($relation -eq 'other') { continue }
+    $dialogKind = ''
     try {
       $current = $dialog.Current
-      if ($current.ControlType -ne [System.Windows.Automation.ControlType]::Window -and $current.ClassName -ne '#32770') { continue }
+      if ($current.ControlType -ne [System.Windows.Automation.ControlType]::Window) { continue }
+      if ($relation -ne 'other' -and $commonDialogClasses -contains [string]$current.ClassName) {
+        $dialogKind = 'common'
+      } elseif (Test-BrokeredDialog $dialog) {
+        $dialogKind = 'brokered'
+        $relation = 'brokered'
+      }
     } catch { continue }
+    if ([string]::IsNullOrEmpty($dialogKind)) { continue }
 
     $filename = Find-FilenameTarget $dialog
     if ($null -eq $filename) { continue }
@@ -990,7 +1409,110 @@ export function safeUiAutomationDiagnostics(output: string): string {
   return diagnostics || 'none';
 }
 
-export async function nativeOpenDialogUiAutomation(filePath: string, appPid: number): Promise<void> {
+class NativePickerAutomationError extends Error {
+  readonly diagnostics: string;
+
+  constructor(diagnostics: string) {
+    super('Native source picker automation failed.');
+    this.name = 'NativePickerAutomationError';
+    this.diagnostics = diagnostics;
+  }
+}
+
+function allowedStringList(value: unknown, allowed: ReadonlySet<string>): readonly string[] {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.filter((item): item is string => typeof item === 'string' && allowed.has(item)))].slice(0, 8);
+}
+
+export function safeUiStateSnapshot(records: readonly unknown[]): string {
+  const allowedTestIds = new Set<string>(SAFE_UI_STATE_TEST_IDS);
+  const safeRecords = records.slice(0, SAFE_UI_STATE_TEST_IDS.length * 2).flatMap((value) => {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) return [];
+    const candidate = value as Record<string, unknown>;
+    if (typeof candidate.testId !== 'string' || !allowedTestIds.has(candidate.testId)) return [];
+    const count = Number.isSafeInteger(candidate.count) && Number(candidate.count) >= 0
+      ? Math.min(Number(candidate.count), 32)
+      : 0;
+    const record: Record<string, unknown> = { testId: candidate.testId, count };
+    const statuses = allowedStringList(candidate.statuses, SAFE_UI_STATE_STATUSES);
+    const requirementIds = allowedStringList(candidate.requirementIds, SAFE_UI_STATE_REQUIREMENTS);
+    const sourceKinds = allowedStringList(candidate.sourceKinds, SAFE_UI_STATE_SOURCE_KINDS);
+    const engines = allowedStringList(candidate.engines, SAFE_UI_STATE_ENGINES);
+    const devices = allowedStringList(candidate.devices, SAFE_UI_STATE_DEVICES);
+    if (statuses.length) record.statuses = statuses;
+    if (requirementIds.length) record.requirementIds = requirementIds;
+    if (sourceKinds.length) record.sourceKinds = sourceKinds;
+    if (engines.length) record.engines = engines;
+    if (devices.length) record.devices = devices;
+    return [record];
+  });
+  return JSON.stringify(safeRecords);
+}
+
+function smokeFailureKind(error: unknown): string {
+  if (error instanceof NativePickerAutomationError) return 'native-source-picker';
+  if (error instanceof Error && SAFE_TERMINAL_DOCUMENT_FAILURE.test(error.message)) {
+    return 'terminal-document';
+  }
+  if (error instanceof Error && SAFE_TERMINAL_INSTALLATION_FAILURE.test(error.message)) {
+    return 'terminal-installation';
+  }
+  if (error instanceof Error && SAFE_TERMINAL_MODEL_INSTALLATION_FAILURE.test(error.message)) {
+    return 'terminal-model-installation';
+  }
+  if (error instanceof Error && SAFE_MODEL_INSTALLATION_START_FAILURE.test(error.message)) {
+    return 'model-installation-start';
+  }
+  return 'unexpected';
+}
+
+export function safeSmokeFailureMessage(
+  error: unknown,
+  workerMirrorRequests: number,
+  uiStateRecords: readonly unknown[],
+): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  const failureKind = smokeFailureKind(error);
+  const errorDigest = sha256(Buffer.from(raw, 'utf8'));
+  const requestCount = Number.isSafeInteger(workerMirrorRequests) && workerMirrorRequests >= 0
+    ? Math.min(workerMirrorRequests, 1_000_000)
+    : 0;
+  const diagnostics = error instanceof NativePickerAutomationError
+    ? `; diagnostics=${error.diagnostics}`
+    : '';
+  const terminal = error instanceof Error
+    && (SAFE_TERMINAL_DOCUMENT_FAILURE.test(error.message)
+      || SAFE_TERMINAL_INSTALLATION_FAILURE.test(error.message)
+      || SAFE_TERMINAL_MODEL_INSTALLATION_FAILURE.test(error.message)
+      || SAFE_MODEL_INSTALLATION_START_FAILURE.test(error.message))
+    ? `; terminal=${error.message}`
+    : '';
+  return `Real model smoke failed. failure=${failureKind}; error-sha256=${errorDigest}${diagnostics}${terminal}. Candidate worker mirror requests: ${requestCount}. UI state: ${safeUiStateSnapshot(uiStateRecords)}`;
+}
+
+async function collectSafeUiState(page: Page): Promise<readonly unknown[]> {
+  return page.evaluate((testIds) => testIds.map((testId) => {
+    const nodes = Array.from(document.querySelectorAll(`[data-testid="${testId}"]`)).slice(0, 32);
+    const attributeValues = (attribute: string) => nodes
+      .map((node) => node.getAttribute(attribute))
+      .filter((value): value is string => value !== null);
+    return {
+      testId,
+      count: nodes.length,
+      statuses: attributeValues('data-status'),
+      requirementIds: attributeValues('data-requirement-id'),
+      sourceKinds: attributeValues('data-source-kind'),
+      engines: attributeValues('data-engine'),
+      devices: attributeValues('data-device'),
+    };
+  }), SAFE_UI_STATE_TEST_IDS);
+}
+
+export async function nativeOpenDialogUiAutomation(
+  filePath: string,
+  appPid: number,
+  onReady?: () => void | Promise<void>,
+): Promise<void> {
   if (!Number.isSafeInteger(appPid) || appPid <= 0) {
     throw new Error('Native source picker automation requires the packaged Tauri process PID.');
   }
@@ -1007,30 +1529,205 @@ export async function nativeOpenDialogUiAutomation(filePath: string, appPid: num
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   });
-  const result = await new Promise<{ code: number | null; stdout: string; stderr: string }>((resolvePromise, reject) => {
-    let stdout = '';
-    let stderr = '';
+  const readyMarker = 'UIA|stage=ready|code=activated';
+  let stdout = '';
+  let stderr = '';
+  let readySettled = false;
+  let resolveReady!: () => void;
+  let rejectReady!: (error: Error) => void;
+  const ready = new Promise<void>((resolvePromise, rejectPromise) => {
+    resolveReady = resolvePromise;
+    rejectReady = rejectPromise;
+  });
+  const settleReady = (): void => {
+    if (readySettled) return;
+    readySettled = true;
+    resolveReady();
+  };
+  const failReady = (): void => {
+    if (readySettled) return;
+    readySettled = true;
+    rejectReady(new NativePickerAutomationError(safeUiAutomationDiagnostics(stdout)));
+  };
+  const result = new Promise<{ code: number | null; stdout: string; stderr: string }>((resolvePromise) => {
     child.stdout?.on('data', (chunk: Buffer) => {
-      if (stdout.length < 65_536) stdout += chunk.toString();
+      if (stdout.length < 65_536) stdout += chunk.toString().slice(0, 65_536 - stdout.length);
+      if (stdout.includes(readyMarker)) settleReady();
     });
     child.stderr?.on('data', (chunk: Buffer) => {
-      if (stderr.length < 65_536) stderr += chunk.toString();
+      if (stderr.length < 65_536) stderr += chunk.toString().slice(0, 65_536 - stderr.length);
     });
-    child.once('error', reject);
-    child.once('close', (code) => resolvePromise({ code, stdout, stderr }));
+    child.once('error', () => {
+      failReady();
+      resolvePromise({ code: null, stdout, stderr });
+    });
+    child.once('close', (code) => {
+      failReady();
+      resolvePromise({ code, stdout, stderr });
+    });
   });
-  if (result.code !== 0) {
-    const diagnostics = safeUiAutomationDiagnostics(result.stdout);
-    throw new Error(`Native source picker did not accept the prepared fixture. UIA diagnostics: ${diagnostics}`);
+  const readyTimeout = setTimeout(failReady, 15_000);
+  try {
+    await ready;
+  } catch (error) {
+    child.kill();
+    await result;
+    throw error;
+  } finally {
+    clearTimeout(readyTimeout);
+  }
+  try {
+    await onReady?.();
+  } catch (error) {
+    child.kill();
+    await result;
+    throw error;
+  }
+  const completed = await result;
+  if (completed.code !== 0) {
+    const diagnostics = safeUiAutomationDiagnostics(completed.stdout);
+    throw new NativePickerAutomationError(diagnostics);
   }
 }
 
-async function importThroughUi(page: Page, input: MediaInput, appPid: number): Promise<number> {
+interface InjectedFixtureDocument {
+  readonly documentId: string;
+  readonly startedAt: number;
+}
+
+async function invokeTauriCommand(
+  page: Page,
+  command: string,
+  args: Readonly<Record<string, unknown>>,
+): Promise<unknown> {
+  return page.evaluate(async ({ commandName, commandArgs }) => {
+    const internals = (globalThis as typeof globalThis & {
+      __TAURI_INTERNALS__?: {
+        invoke?: (name: string, args?: Record<string, unknown>) => Promise<unknown>;
+      };
+    }).__TAURI_INTERNALS__;
+    if (typeof internals?.invoke !== 'function') {
+      throw new Error('Packaged Tauri command bridge is unavailable.');
+    }
+    return internals.invoke(commandName, commandArgs);
+  }, { commandName: command, commandArgs: args });
+}
+
+export function modelSmokeInjectedDocumentId(value: unknown): string {
+  const document = asObject(value, 'Injected fixture document');
+  const documentId = requiredString(document.documentId, 'Injected fixture document ID');
+  if (!/^[a-f0-9]{32}$/u.test(documentId)) {
+    throw new Error('Injected fixture document ID is invalid.');
+  }
+  return documentId;
+}
+
+async function injectModelSmokeFixture(
+  page: Page,
+  fixtureKey: MediaKind,
+  options: { readonly waitForCaptureReady?: boolean } = {},
+): Promise<InjectedFixtureDocument> {
   const startedAt = Date.now();
-  const dialog = nativeOpenDialogUiAutomation(input.path, appPid);
-  await page.getByTestId('source-import').click();
-  await dialog;
-  return startedAt;
+  const result = await invokeTauriCommand(page, 'model_smoke_import_fixture', {
+    request: { fixtureKey },
+  });
+  const documentId = modelSmokeInjectedDocumentId(result);
+  await waitForImportedDocumentInLibrary(page, documentId);
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  if (options.waitForCaptureReady !== false) await waitForCaptureReady(page);
+  try {
+    await waitForDocumentById(page, documentId);
+  } catch {
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    if (options.waitForCaptureReady !== false) await waitForCaptureReady(page);
+    await waitForDocumentById(page, documentId);
+  }
+  return { documentId, startedAt };
+}
+
+async function installConsentedRequirementThroughTauri(
+  page: Page,
+  requirementId: RequirementId,
+  options: { readonly waitForVisibleRequirement?: boolean } = {},
+): Promise<void> {
+  const start = asObject(await invokeTauriCommand(page, 'runtime_start_installation', {
+    input: {
+      clientRequestId: randomUUID(),
+      requirementId,
+    },
+  }), 'Runtime installation');
+  const installationId = requiredString(start.installationId, 'Runtime installation ID');
+  if (!/^[A-Za-z0-9_-]{1,128}$/u.test(installationId)) {
+    throw new Error('Runtime installation ID is invalid.');
+  }
+  await waitUntil(async () => {
+    const installation = asObject(await invokeTauriCommand(page, 'runtime_get_installation', {
+      input: { id: installationId },
+    }), 'Runtime installation');
+    const status = requiredString(installation.status, 'Runtime installation status');
+    if (status === 'completed') return true;
+    if (status !== 'queued' && status !== 'running') {
+      const installationError = installation.error !== null
+        && typeof installation.error === 'object'
+        && !Array.isArray(installation.error)
+        ? installation.error as Record<string, unknown>
+        : undefined;
+      const failure = safeTerminalInstallationFailure(
+        requirementId,
+        status,
+        typeof installation.stage === 'string' ? installation.stage : null,
+        typeof installationError?.code === 'string' ? installationError.code : null,
+        typeof installation.progress === 'number' ? installation.progress : null,
+        typeof installationError?.message === 'string' ? installationError.message : null,
+      );
+      throw new Error(failure ?? 'Consented runtime installation did not complete.');
+    }
+    return false;
+  }, REAL_MODEL_INSTALL_TIMEOUT_MS, 'Consented runtime installation timed out.');
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  if (options.waitForVisibleRequirement !== false) {
+    await waitForCaptureReady(page);
+    await waitForRuntimeRequirementsReady(page, [requirementId]);
+  }
+}
+
+export function safeTerminalInstallationFailure(
+  requirementId: string,
+  status: string | null,
+  stage: string | null,
+  errorCode: string | null,
+  progress: number | null,
+  errorMessage: string | null = null,
+): string | undefined {
+  if (requirementId !== 'whisper-primary' || status === null || !SAFE_INSTALLATION_STATUSES.has(status)) {
+    return undefined;
+  }
+  const safeStage = stage !== null && SAFE_INSTALLATION_STAGES.has(stage) ? stage : 'unknown';
+  const safeErrorCode = errorCode !== null && /^[a-z][a-z0-9_-]{1,63}$/u.test(errorCode)
+    ? errorCode
+    : 'unknown';
+  const progressBand = progress === null || !Number.isFinite(progress) || progress < 0
+    ? 'unknown'
+    : progress < 0.35
+      ? 'early'
+      : progress < 0.85
+        ? 'download'
+        : 'late';
+  const workerStage = errorMessage?.match(/\bat (?:stage|stages) (worker-process-[a-z0-9-]+(?:>worker-process-[a-z0-9-]+)*)\b/u)?.[1];
+  const failureReason = errorMessage?.includes('direct model download exhausted bounded retries')
+    ? 'direct-model-retries-exhausted'
+    : errorMessage?.includes('direct model source returned a non-retryable response')
+      ? 'direct-model-http-nonretryable'
+      : errorMessage?.includes('Content-Length')
+        ? 'direct-model-content-length'
+        : errorMessage?.includes('byte count') || errorMessage?.includes('exceeded catalog')
+          ? 'direct-model-byte-count'
+          : errorMessage?.includes('checksum')
+            ? 'direct-model-checksum'
+            : errorMessage?.includes('redirect')
+              ? 'direct-model-redirect'
+              : 'runtime-install-unexpected';
+  return `Desktop runtime installation terminated. requirement=whisper-primary; status=${status}; stage=${safeStage}; errorCode=${safeErrorCode}; progressBand=${progressBand}${workerStage ? `; workerStage=${workerStage}` : ''}; failureReason=${failureReason}.`;
 }
 
 async function requirementStatus(page: Page, requirementId: SetupRequirementId): Promise<string> {
@@ -1047,6 +1744,61 @@ export function requirementCompletedAfterConsent(
   wasVisibleBeforeConsent: boolean,
 ): boolean {
   return /ready/iu.test(status) || (wasVisibleBeforeConsent && status === '');
+}
+
+export function runtimeRequirementsReady(value: unknown, requiredIds: readonly SetupRequirementId[]): boolean {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const items = (value as JsonObject).items;
+  if (!Array.isArray(items)) return false;
+  return requiredIds.every((requiredId) => items.some((item) => {
+    if (item === null || typeof item !== 'object' || Array.isArray(item)) return false;
+    const candidate = item as JsonObject;
+    return candidate.requirementId === requiredId && candidate.status === 'ready';
+  }));
+}
+
+export function runtimeModelOptionActive(value: unknown, optionId: string): boolean {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const items = (value as JsonObject).items;
+  if (!Array.isArray(items)) return false;
+  return items.some((item) => {
+    if (item === null || typeof item !== 'object' || Array.isArray(item)) return false;
+    const candidate = item as JsonObject;
+    return candidate.optionId === optionId && candidate.status === 'active';
+  });
+}
+
+export function safeTerminalModelInstallationFailure(
+  status: string | null,
+  errorCode: string | null,
+  progress: number | null,
+): string | undefined {
+  if (status === null || !SAFE_INSTALLATION_STATUSES.has(status)) return undefined;
+  const safeErrorCode = errorCode !== null && /^[a-z][a-z0-9_-]{1,63}$/u.test(errorCode)
+    ? errorCode
+    : 'unknown';
+  const progressBand = progress === null || !Number.isFinite(progress) || progress < 0
+    ? 'unknown'
+    : progress < 0.35
+      ? 'early'
+      : progress < 0.85
+        ? 'download'
+        : 'late';
+  return `Desktop model installation terminated. status=${status}; errorCode=${safeErrorCode}; progressBand=${progressBand}.`;
+}
+
+async function waitForRuntimeRequirementsReady(
+  page: Page,
+  requiredIds: readonly SetupRequirementId[],
+): Promise<void> {
+  await waitUntil(
+    async () => runtimeRequirementsReady(
+      await invokeTauriCommand(page, 'runtime_requirements', {}),
+      requiredIds,
+    ),
+    REAL_MODEL_RUNTIME_READY_TIMEOUT_MS,
+    `Runtime requirements did not become ready: ${requiredIds.join(', ')}.`,
+  );
 }
 
 async function installConsentedRequirements(
@@ -1085,20 +1837,23 @@ async function installConsentedRequirements(
   });
   await waitUntil(
     async () => {
+      const backendReady = runtimeRequirementsReady(
+        await invokeTauriCommand(page, 'runtime_requirements', {}),
+        requiredIds,
+      );
+      if (backendReady) {
+        const completedAtTimestamp = Date.now();
+        requiredIds.forEach((requirementId) => {
+          if (!completedAt.has(requirementId)) completedAt.set(requirementId, completedAtTimestamp);
+        });
+        return true;
+      }
       for (const requirementId of requiredIds) {
         const status = await requirementStatus(page, requirementId);
         if (requirementCompletedAfterConsent(status, wasVisibleBeforeConsent.get(requirementId) === true)
           && !completedAt.has(requirementId)) {
           completedAt.set(requirementId, Date.now());
         }
-      }
-      if (
-        completedAt.size !== requiredIds.length
-        && Date.now() - consentedAt >= 2_000
-        && await install.isVisible().catch(() => false)
-        && await install.isEnabled().catch(() => false)
-      ) {
-        throw new Error('Consented model installation returned to the installable state.');
       }
       return completedAt.size === requiredIds.length || false;
     },
@@ -1110,6 +1865,8 @@ async function installConsentedRequirements(
       completionOrder.push(requirementId);
     }
   }
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await waitForRuntimeRequirementsReady(page, requiredIds);
 }
 
 async function waitForCaptureReady(page: Page): Promise<void> {
@@ -1121,12 +1878,115 @@ async function waitForCaptureReady(page: Page): Promise<void> {
   );
 }
 
-async function waitForDocument(page: Page, fileName: string): Promise<{ id: string; card: ReturnType<Page['locator']> }> {
-  const card = page.getByTestId('document-card').filter({ hasText: fileName });
+async function waitForDocumentById(
+  page: Page,
+  documentId: string,
+): Promise<{ id: string; card: ReturnType<Page['locator']> }> {
+  if (!/^[a-f0-9]{32}$/u.test(documentId)) {
+    throw new Error('Desktop smoke document ID is invalid.');
+  }
+  const card = page.locator(`[data-testid="document-card"][data-document-id="${documentId}"]`);
   await card.waitFor({ state: 'visible', timeout: 30_000 });
-  const ids = await card.evaluateAll((nodes) => nodes.map((node) => node.getAttribute('data-document-id')).filter((id): id is string => !!id));
-  if (ids.length !== 1 || !/^[a-f0-9]{32}$/u.test(ids[0])) throw new Error('Desktop smoke document card did not expose one UUID.');
-  return { id: ids[0], card };
+  if (await card.count() !== 1) {
+    throw new Error('Desktop smoke document ID did not resolve to one card.');
+  }
+  return { id: documentId, card };
+}
+
+async function waitForImportedDocumentInLibrary(page: Page, documentId: string): Promise<void> {
+  await waitUntil(
+    async () => {
+      const value = await invokeTauriCommand(page, 'library_list', {
+        request: { query: '', status: '' },
+      }).catch(() => undefined);
+      if (!Array.isArray(value)) return false;
+      return value.some((item) => (
+        item !== null
+        && typeof item === 'object'
+        && !Array.isArray(item)
+        && (item as Record<string, unknown>).documentId === documentId
+      )) || false;
+    },
+    30_000,
+    'Imported smoke document did not persist in the desktop library.',
+  );
+}
+
+async function startInjectedCapture(page: Page, documentId: string): Promise<void> {
+  const document = await waitForDocumentById(page, documentId);
+  await document.card.click();
+  const detail = page.locator(`[data-testid="document-detail"][data-document-id="${documentId}"]`);
+  await detail.waitFor({ state: 'visible', timeout: 30_000 });
+  const retry = detail.locator(`[data-testid="document-retry"][data-document-id="${documentId}"]`);
+  await retry.waitFor({ state: 'visible', timeout: 30_000 });
+  if (await retry.count() !== 1) {
+    throw new Error('Injected document did not expose the exact UI processing action.');
+  }
+  await waitForCaptureReady(page);
+  await retry.click();
+  await waitUntil(
+    async () => {
+      const documents = await invokeTauriCommand(page, 'library_list', {
+        request: { query: '', status: '' },
+      }).catch(() => undefined);
+      if (!Array.isArray(documents)) return false;
+      const current = documents.find((item) => (
+        item !== null
+        && typeof item === 'object'
+        && !Array.isArray(item)
+        && (item as Record<string, unknown>).documentId === documentId
+      ));
+      if (current === undefined || current === null || typeof current !== 'object' || Array.isArray(current)) {
+        return false;
+      }
+      const record = current as Record<string, unknown>;
+      return record.status === 'processing'
+        || (typeof record.captureId === 'string' && record.captureId.length > 0);
+    },
+    REAL_MODEL_CAPTURE_START_TIMEOUT_MS,
+    'Desktop capture start was not accepted.',
+  );
+}
+
+export function safeTerminalDocumentFailure(
+  status: string | null,
+  stage: string | null,
+  errorCode: string | null,
+  errorMessage: string | null = null,
+  mediaKind: MediaKind | null = null,
+): string | undefined {
+  if (status === null || !SAFE_TERMINAL_DOCUMENT_STATUSES.has(status)) return undefined;
+  const safeStage = stage !== null && SAFE_TERMINAL_DOCUMENT_STAGES.has(stage) ? stage : 'unknown';
+  const safeErrorCode = errorCode !== null && SAFE_TERMINAL_DOCUMENT_ERROR_CODES.has(errorCode)
+    ? errorCode
+    : 'unknown';
+  const workerStage = errorMessage?.match(SAFE_WORKER_FAILURE_MESSAGE)?.[1];
+  const failureReason = errorMessage === null
+    ? null
+    : SAFE_EXTRACTION_FAILURE_REASONS.get(errorMessage) ?? null;
+  const detail = workerStage
+    ? `; workerStage=${workerStage}`
+    : failureReason
+      ? `; failureReason=${failureReason}`
+      : '';
+  const safeMediaKind = mediaKind !== null && ['pdf', 'image', 'audio'].includes(mediaKind)
+    ? `; mediaKind=${mediaKind}`
+    : '';
+  return `Desktop capture terminated. status=${status}; stage=${safeStage}; errorCode=${safeErrorCode}${safeMediaKind}${detail}.`;
+}
+
+async function throwIfTerminalDocumentFailure(
+  document: { readonly card: ReturnType<Page['locator']> },
+  detail: ReturnType<Page['locator']>,
+  mediaKind: MediaKind | null = null,
+): Promise<void> {
+  const status = await document.card.getAttribute('data-status');
+  if (status === null || !SAFE_TERMINAL_DOCUMENT_STATUSES.has(status)) return;
+  const stage = await detail.locator('[data-stage]').first().getAttribute('data-stage').catch(() => null);
+  const errorCode = (await detail.locator('[role="alert"] strong').first().textContent().catch(() => null))?.trim() ?? null;
+  const errorMessage = (await detail.locator('[role="alert"] p').first().textContent().catch(() => null))?.trim() ?? null;
+  const failure = safeTerminalDocumentFailure(status, stage, errorCode, errorMessage, mediaKind);
+  if (failure !== undefined) throw new Error(failure);
 }
 
 function parseJsonFromVisibleRaw(value: string): JsonObject | undefined {
@@ -1142,9 +2002,10 @@ async function assertVisibleCapture(
   page: Page,
   input: MediaInput,
   expected: ExpectedProvenance,
+  documentId: string,
   importedAt = Date.now(),
 ): Promise<MediaSummary> {
-  const document = await waitForDocument(page, input.fileName);
+  const document = await waitForDocumentById(page, documentId);
   await document.card.click();
   const detail = page.locator(`[data-testid="document-detail"][data-document-id="${document.id}"]`);
   await detail.waitFor({ state: 'visible', timeout: 30_000 });
@@ -1154,13 +2015,17 @@ async function assertVisibleCapture(
   const rawTimeout = input.kind === 'audio' ? REAL_MODEL_AUDIO_CAPTURE_TIMEOUT_MS : REAL_MODEL_CAPTURE_TIMEOUT_MS;
   if (input.kind === 'audio') {
     await waitUntil(
-      async () => (await document.card.getAttribute('data-status')) === 'completed' || false,
+      async () => {
+        await throwIfTerminalDocumentFailure(document, detail, input.kind);
+        return (await document.card.getAttribute('data-status')) === 'completed' || false;
+      },
       REAL_MODEL_AUDIO_CAPTURE_TIMEOUT_MS,
       `Desktop ${input.fileName} capture did not complete.`,
     );
   }
   await waitUntil(
     async () => {
+      await throwIfTerminalDocumentFailure(document, detail, input.kind);
       if (await rawSection.count() !== 1) return false;
       return ((await rawSection.textContent())?.trim() || '') || false;
     },
@@ -1169,8 +2034,15 @@ async function assertVisibleCapture(
   );
   const extractionDurationMs = Date.now() - importedAt;
   const resultTimeout = REAL_MODEL_RESULT_TIMEOUT_MS;
-  await resultSection.waitFor({ state: 'visible', timeout: resultTimeout });
-  await provenanceSection.waitFor({ state: 'visible', timeout: resultTimeout });
+  await waitUntil(
+    async () => {
+      await throwIfTerminalDocumentFailure(document, detail, input.kind);
+      return (await resultSection.isVisible().catch(() => false))
+        && (await provenanceSection.isVisible().catch(() => false));
+    },
+    resultTimeout,
+    `${input.kind} UI result and provenance did not become visible within its bounded timeout.`,
+  );
   const rawText = (await rawSection.textContent())?.trim() || '';
   const resultText = (await resultSection.textContent())?.trim() || '';
   const provenance = (await provenanceSection.textContent())?.trim() || '';
@@ -1180,9 +2052,14 @@ async function assertVisibleCapture(
   const expectedEngine = input.kind === 'audio' ? expected.whisperEngine : expected.ocrEngine;
   const expectedModel = input.kind === 'audio' ? expected.whisperModel : expected.ocrModel;
   const expectedDevice = input.kind === 'audio' ? expected.whisperDevice : expected.ocrDevice;
+  const actualDevice = await extractionProvenance.getAttribute('data-device');
   assert.equal(await extractionProvenance.getAttribute('data-engine'), expectedEngine);
   assert.equal(await extractionProvenance.getAttribute('data-model'), expectedModel);
-  assert.equal(await extractionProvenance.getAttribute('data-device'), expectedDevice);
+  if (input.kind === 'audio' && expected.whisperPreferGpu) {
+    assert.ok(actualDevice === 'cuda' || actualDevice === 'cpu');
+  } else {
+    assert.equal(actualDevice, expectedDevice);
+  }
   const extractionDigest = await extractionProvenance.getAttribute('data-digest');
   if (!extractionDigest || !/^sha256:[a-f0-9]{64}$/u.test(extractionDigest)) {
     throw new Error(`${input.kind} UI extraction provenance omitted a bounded engine digest.`);
@@ -1218,7 +2095,11 @@ async function assertVisibleCapture(
   }
   assert.match(provenance, /whisper-primary/iu);
   assert.match(provenance, new RegExp(expected.whisperModel.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'u'));
-  assert.match(provenance, new RegExp(expected.whisperDevice.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'u'));
+  if (expected.whisperPreferGpu) {
+    assert.match(provenance, /(?:cuda|cpu)/iu);
+  } else {
+    assert.match(provenance, new RegExp(expected.whisperDevice.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'u'));
+  }
   const segmentCount = await assertAudioRawSegments(rawText, rawSection, expected);
   await deleteDocumentThroughUi(page, document.id);
   return {
@@ -1226,7 +2107,7 @@ async function assertVisibleCapture(
     sourceSha256: input.sha256,
     extractionEngine: expected.whisperEngine,
     model: expected.whisperModel,
-    device: expected.whisperDevice,
+    device: actualDevice || expected.whisperDevice,
     engineDigest: extractionDigest,
     segmentCount,
     timeLocators: segmentCount,
@@ -1303,18 +2184,78 @@ function normalizedTranscriptDigest(transcript: readonly string[]): string {
 }
 
 async function installSelectedModel(page: Page): Promise<void> {
-  const selection = page.getByTestId('model-selection');
-  await selection.waitFor({ state: 'visible', timeout: REAL_MODEL_RUNTIME_READY_TIMEOUT_MS });
-  const optionSelect = page.getByTestId('model-option-select');
-  await optionSelect.click();
-  await page.getByRole('option', { name: 'Qwen 3.5 0.8B' }).click();
-  const install = page.getByTestId('model-install');
-  await install.click();
-  await waitUntil(
-    async () => (await selection.count()) === 0 || false,
-    REAL_MODEL_INSTALL_TIMEOUT_MS,
-    'The selected qwen3.5 0.8B model did not become active.',
+  const optionId = 'qwen3.5-0.8b-v1';
+  await page.getByTestId('model-selection').waitFor({
+    state: 'visible',
+    timeout: REAL_MODEL_RUNTIME_READY_TIMEOUT_MS,
+  });
+  const option = page.locator(
+    `[data-testid="model-option"][data-model-option-id="${optionId}"]`,
   );
+  await option.check();
+  if (!await option.isChecked()) {
+    throw new Error('The selected structuring model was not retained by the setup UI.');
+  }
+  const install = page.getByTestId('model-install');
+  await waitUntil(
+    async () => install.isEnabled().catch(() => false),
+    30_000,
+    'The selected structuring model did not enable its install action.',
+  );
+  await install.click();
+
+  const progress = page.getByTestId('model-install-progress');
+  try {
+    await progress.waitFor({ state: 'visible', timeout: 30_000 });
+  } catch {
+    throw new Error('Desktop model installation did not start.');
+  }
+  const installationId = await progress.getAttribute('data-installation-id');
+  const startedOptionId = await progress.getAttribute('data-option-id');
+  if (installationId === null || !/^[A-Za-z0-9_-]{1,128}$/u.test(installationId)) {
+    throw new Error('The model install action did not expose a valid installation identity.');
+  }
+  if (startedOptionId !== optionId) {
+    throw new Error('The model install action started a different allowlisted option.');
+  }
+
+  await waitUntil(
+    async () => {
+      const installation = asObject(await invokeTauriCommand(page, 'runtime_get_model_installation', {
+        input: { id: installationId },
+      }), 'Runtime model installation');
+      if (requiredString(installation.installationId, 'Runtime model installation ID') !== installationId
+        || requiredString(installation.optionId, 'Runtime model installation option ID') !== optionId) {
+        throw new Error('Runtime model installation identity changed while polling.');
+      }
+      const status = requiredString(installation.status, 'Runtime model installation status');
+      if (status === 'completed') return true;
+      if (status === 'queued' || status === 'running') return false;
+      const installationError = installation.error !== null
+        && typeof installation.error === 'object'
+        && !Array.isArray(installation.error)
+        ? installation.error as JsonObject
+        : undefined;
+      const failure = safeTerminalModelInstallationFailure(
+        status,
+        typeof installationError?.code === 'string' ? installationError.code : null,
+        typeof installation.progress === 'number' ? installation.progress : null,
+      );
+      throw new Error(failure ?? 'Runtime model installation did not complete.');
+    },
+    REAL_MODEL_INSTALL_TIMEOUT_MS,
+    'The selected qwen3.5 0.8B model installation timed out.',
+  );
+  await waitUntil(
+    async () => runtimeModelOptionActive(
+      await invokeTauriCommand(page, 'runtime_model_options', {}),
+      optionId,
+    ),
+    REAL_MODEL_RUNTIME_READY_TIMEOUT_MS,
+    'The completed qwen3.5 0.8B installation did not become active.',
+  );
+  await waitForRuntimeRequirementsReady(page, ['capture-ollama-model']);
+  await page.reload({ waitUntil: 'domcontentloaded' });
 }
 
 export function normalizedOcrTextDigest(sourceText: string): string {
@@ -1340,6 +2281,8 @@ async function deleteDocumentThroughUi(page: Page, documentId: string): Promise<
 export function assertRealMediaModelEvidence(value: unknown): asserts value is RealMediaModelEvidence {
   const report = asObject(value, 'Real model smoke report');
   assert.equal(report.evidenceKind, 'real-model-enabled-tauri-ui-smoke');
+  assert.equal(report.sourceImportMode, REAL_MODEL_SOURCE_IMPORT_MODE);
+  assert.equal(report.nativePickerExercised, false);
   assert.equal(report.releaseGateSatisfied, false);
   assert.equal(report.localProductionPreflight, true);
   assert.equal(report.consumerE2e, false);
@@ -1408,25 +2351,33 @@ async function waitForPortReleased(port: number): Promise<void> {
 
 async function run(): Promise<void> {
   if (process.platform !== 'win32') throw new Error('Real model-enabled desktop smoke requires Windows x64.');
+  const installationOnly = process.argv.includes('--install-whisper-only');
+  const audioOnly = process.argv.includes('--audio-only');
   assertNoAmbientModelOverrides(process.env as Record<string, string>);
   const expected = await loadReleaseModelContract();
   await firstValueFrom(assertStagedRuntime('release'));
   await rm(smokeRoot, { recursive: true, force: true });
   await rm(runRoot, { recursive: true, force: true });
   await mkdir(runRoot, { recursive: true });
-  let inputs: readonly [MediaInput, MediaInput, MediaInput];
+  let inputs: readonly [MediaInput, MediaInput, MediaInput] | undefined;
+  let audio: MediaInput | undefined;
   try {
-    inputs = await prepareInputs(expected);
+    if (audioOnly) {
+      inputs = await prepareAudioOnlyInputs(expected);
+      audio = inputs[2];
+    } else {
+      inputs = await prepareInputs(expected);
+      audio = inputs[2];
+    }
   } catch (error) {
     throw errorWithoutSecrets(error);
   }
-  const [pdf, image, audio] = inputs;
+  const [pdf, image] = inputs ?? [];
   const executable = resolve(process.env.CAPTURE_REAL_MEDIA_MODEL_EXECUTABLE?.trim() || defaultDesktopExecutable);
   let metadata;
   try { metadata = await lstat(executable); } catch { throw new Error('CAPTURE_REAL_MEDIA_MODEL_EXECUTABLE must be a regular packaged Tauri executable.'); }
   if (!metadata.isFile() || metadata.isSymbolicLink()) throw new Error('CAPTURE_REAL_MEDIA_MODEL_EXECUTABLE must be a regular packaged Tauri executable.');
   const cdpPort = await firstValueFrom(reserveLoopbackPort());
-  const workerMirror = await startCandidateWorkerMirror(expected);
   await mkdir(appDataRoot, { recursive: true });
   const appEnvironment = buildInstalledAppEnvironment(process.env, {
     root: runRoot,
@@ -1435,10 +2386,19 @@ async function run(): Promise<void> {
     temporary: temporaryRoot,
     webViewData: webViewDataRoot,
   }, cdpPort);
-  appEnvironment.CAPTURE_SMOKE_WORKER_MIRROR_OPT_IN = '1';
-  appEnvironment.CAPTURE_SMOKE_WORKER_MIRROR_URL = workerMirror.baseUrl;
   appEnvironment.CAPTURE_SMOKE_APP_DATA_ROOT = appDataRoot;
+  appEnvironment.CAPTURE_SMOKE_FIXTURE_ROOT = runRoot;
+  assert(inputs && pdf && image && audio);
+  Object.assign(appEnvironment, modelSmokeFixtureEnvironment({
+    pdf: pdf.path,
+    image: image.path,
+    audio: audio.path,
+  }));
   assertNoAmbientModelOverrides(appEnvironment);
+  appEnvironment.CAPTURE_WHISPER_PREFER_GPU = String(expected.whisperPreferGpu);
+  if (appEnvironment.CAPTURE_WHISPER_PREFER_GPU !== String(expected.whisperPreferGpu)) {
+    throw new Error('Lock-derived Whisper GPU preference drifted before app launch.');
+  }
   let app: ReturnType<typeof spawn> | undefined;
   let browser: Browser | undefined;
   let page: Page | undefined;
@@ -1447,7 +2407,12 @@ async function run(): Promise<void> {
   let cleanupVerified = false;
   let cdpPortReleased = false;
   let workerMirrorReleased = false;
+  let workerMirror: CandidateWorkerMirror | undefined;
   try {
+    workerMirror = await startCandidateWorkerMirror(expected);
+    appEnvironment.CAPTURE_SMOKE_WORKER_MIRROR_OPT_IN = '1';
+    appEnvironment.CAPTURE_SMOKE_WORKER_MIRROR_URL = workerMirror.baseUrl;
+    assertCudaPathRetainedForAppLaunch(process.env, appEnvironment);
     app = spawn(executable, [], { cwd: resolve(executable, '..'), env: appEnvironment, stdio: 'ignore', windowsHide: true });
     if (!app.pid) throw new Error('Real model smoke Tauri process did not expose a PID.');
     browser = await firstValueFrom(connectToInstalledWebView(cdpPort, app));
@@ -1456,37 +2421,75 @@ async function run(): Promise<void> {
       const setup = page.getByTestId('runtime-setup');
       return (await setup.count()) === 1 || false;
     }, REAL_MODEL_RUNTIME_READY_TIMEOUT_MS, 'Desktop runtime setup UI did not load.');
-    await installConsentedRequirements(page, ['windowsml-ocr', 'ollama-runtime'], installationOrder);
-    await installSelectedModel(page);
-    await waitForCaptureReady(page);
-    for (const input of [pdf, image] as const) {
-      const importedAt = await importThroughUi(page, input, app.pid);
-      summaries.push(await assertVisibleCapture(page, input, expected, importedAt));
+    if (installationOnly) {
+      await installConsentedRequirementThroughTauri(page, 'whisper-primary', {
+        waitForVisibleRequirement: false,
+      });
+      installationOrder.push('whisper-primary');
+    } else {
+      if (!audioOnly) {
+        assert(inputs && pdf && image);
+        await installConsentedRequirements(page, ['windowsml-ocr', 'ollama-runtime'], installationOrder);
+        await installSelectedModel(page);
+        await waitForCaptureReady(page);
+        for (const input of [pdf, image] as const) {
+          const injected = await injectModelSmokeFixture(page, input.kind);
+          await startInjectedCapture(page, injected.documentId);
+          summaries.push(await assertVisibleCapture(
+            page,
+            input,
+            expected,
+            injected.documentId,
+            injected.startedAt,
+          ));
+        }
+      } else {
+        // Audio-only skips OCR capture, but the packaged Workbench keeps the
+        // source-import surface locked until its OCR runtime prerequisite is
+        // installed. Install that prerequisite without exercising its engine.
+        await installConsentedRequirements(page, ['windowsml-ocr', 'ollama-runtime'], installationOrder);
+        await installSelectedModel(page);
+      }
+      const injectedAudio = await injectModelSmokeFixture(
+        page,
+        audio.kind,
+        { waitForCaptureReady: !audioOnly },
+      );
+      // The keyed import bypasses only the native picker, so it cannot exercise
+      // the renderer callback that reveals the optional Whisper setup row. Keep
+      // consent on the existing authenticated Tauri/runtime installation path.
+      await installConsentedRequirementThroughTauri(page, 'whisper-primary', {
+        waitForVisibleRequirement: !audioOnly,
+      });
+      if (audioOnly) {
+        // Audio-only bypasses the optional setup row, but the first runtime
+        // requirements read also warms the installed engine verification
+        // cache before capture starts. Without this bounded readiness wait,
+        // the first capture performs the multi-gigabyte cold verification
+        // while remaining indistinguishable from a stuck extraction.
+        await waitForRuntimeRequirementsReady(page, ['whisper-primary']);
+      }
+      installationOrder.push('whisper-primary');
+      if (!audioOnly && (installationOrder.indexOf('windowsml-ocr') < 0
+        || installationOrder.indexOf('whisper-primary') < 0
+        || installationOrder.indexOf('windowsml-ocr') > installationOrder.indexOf('whisper-primary'))) {
+        throw new Error('Consented model installation did not complete OCR before Whisper.');
+      }
+      await startInjectedCapture(page, injectedAudio.documentId);
+      summaries.push(await assertVisibleCapture(
+        page,
+        audio,
+        expected,
+        injectedAudio.documentId,
+        injectedAudio.startedAt,
+      ));
     }
-    await importThroughUi(page, audio, app.pid);
-    // Audio is the opt-in dependency in the desktop shell. Importing it makes
-    // Whisper installable; the install action remains the only consent path.
-    await installConsentedRequirements(page, ['whisper-primary'], installationOrder);
-    await waitForCaptureReady(page);
-    if (installationOrder.indexOf('windowsml-ocr') < 0
-      || installationOrder.indexOf('whisper-primary') < 0
-      || installationOrder.indexOf('windowsml-ocr') > installationOrder.indexOf('whisper-primary')) {
-      throw new Error('Consented model installation did not complete OCR before Whisper.');
-    }
-    const audioCard = await waitForDocument(page, audio.fileName);
-    await audioCard.card.click();
-    const retry = page.locator(`[data-testid="document-retry"][data-document-id="${audioCard.id}"]`);
-    if (await retry.count() !== 1) throw new Error('Audio document did not expose the exact UI retry action after Whisper consent.');
-    await retry.click();
-    summaries.push(await assertVisibleCapture(page, audio, expected));
     cleanupVerified = true;
   } catch (error) {
-    const safe = errorWithoutSecrets(error);
-    const uiState = page
-      ? await page.locator('body').innerText().catch(() => '')
-      : '';
-    const redactedUiState = errorWithoutSecrets(new Error(uiState.replace(/\s+/gu, ' ').trim())).message;
-    throw new Error(`${safe.message} Candidate worker mirror requests: ${workerMirror.requests()}. UI state: ${redactedUiState.slice(0, 800)}`);
+    const uiStateRecords = page
+      ? await collectSafeUiState(page).catch(() => [])
+      : [];
+    throw new Error(safeSmokeFailureMessage(error, workerMirror?.requests() ?? 0, uiStateRecords));
   } finally {
     if (browser) await browser.close().catch(() => undefined);
     if (app?.pid) {
@@ -1501,17 +2504,36 @@ async function run(): Promise<void> {
     await waitForPortReleased(cdpPort)
       .then(() => { cdpPortReleased = true; })
       .catch(() => { cleanupVerified = false; });
-    await workerMirror.close();
-    await waitForPortReleased(workerMirror.port)
-      .then(() => { workerMirrorReleased = true; })
-      .catch(() => { cleanupVerified = false; });
+    if (workerMirror) {
+      await workerMirror.close();
+      await waitForPortReleased(workerMirror.port)
+        .then(() => { workerMirrorReleased = true; })
+        .catch(() => { cleanupVerified = false; });
+    }
     await rm(runRoot, { recursive: true, force: true }).catch(() => { cleanupVerified = false; });
   }
   if (!cdpPortReleased) throw new Error('Owned WebView2 CDP listener remained bound after cleanup.');
-  if (!workerMirrorReleased || workerMirror.requests() < 2) throw new Error('Candidate worker mirror did not serve both worker archives and release its listener.');
+  const minimumWorkerMirrorRequests = installationOnly || audioOnly ? 1 : 2;
+  if (!workerMirrorReleased || !workerMirror || workerMirror.requests() < minimumWorkerMirrorRequests) {
+    throw new Error('Candidate worker mirror did not serve the required worker archive requests and release its listener.');
+  }
   if (!cleanupVerified) throw new Error('Owned desktop/runtime process cleanup was not verified.');
+  if (installationOnly) {
+    process.stdout.write('Whisper installation-only Tauri probe completed with owned cleanup.\n');
+    return;
+  }
+  if (audioOnly) {
+    const audioSummary = summaries[0];
+    if (!audioSummary || audioSummary.sourceKind !== 'audio') {
+      throw new Error('Audio-only smoke did not produce an audio summary.');
+    }
+    process.stdout.write(`Real model-enabled Tauri Audio smoke completed: device=${audioSummary.device}; cleanup=verified.\n`);
+    return;
+  }
   const report: RealMediaModelEvidence = {
     evidenceKind: 'real-model-enabled-tauri-ui-smoke',
+    sourceImportMode: REAL_MODEL_SOURCE_IMPORT_MODE,
+    nativePickerExercised: false,
     releaseGateSatisfied: false,
     localProductionPreflight: true,
     consumerE2e: false,

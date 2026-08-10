@@ -1,21 +1,33 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
 import {
+  assertCudaPathRetainedForAppLaunch,
   assertNoAmbientModelOverrides,
   assertRealMediaModelEvidence,
   canonicalJson,
+  NATIVE_SOURCE_BROKER_DIALOG_CLASSES,
+  NATIVE_SOURCE_DIALOG_CLASSES,
   nativeDialogUiAutomationScript,
   nativeOpenDialogUiAutomation,
   REAL_MODEL_CATALOG_VERSION,
   REAL_MODEL_DEPENDENCY_ORDER_SCOPE,
   REAL_MODEL_RELEASE_VERSION,
+  REAL_MODEL_SOURCE_IMPORT_MODE,
+  modelSmokeInjectedDocumentId,
+  modelSmokeFixtureEnvironment,
   normalizedOcrTextDigest,
   requirementCompletedAfterConsent,
+  runtimeModelOptionActive,
+  runtimeRequirementsReady,
+  safeSmokeFailureMessage,
+  safeTerminalDocumentFailure,
+  safeTerminalInstallationFailure,
+  safeTerminalModelInstallationFailure,
   safeUiAutomationDiagnostics,
   sha256,
   windowsPowerShellExecutable,
@@ -23,9 +35,22 @@ import {
 
 const digest = 'a'.repeat(64);
 
+test('audio-only smoke still declares every owned fixture required by the Tauri registry', () => {
+  assert.deepEqual(
+    modelSmokeFixtureEnvironment({ pdf: 'owned-pdf', image: 'owned-image', audio: 'owned-audio' }),
+    {
+      CAPTURE_SMOKE_FIXTURE_PDF: 'owned-pdf',
+      CAPTURE_SMOKE_FIXTURE_IMAGE: 'owned-image',
+      CAPTURE_SMOKE_FIXTURE_AUDIO: 'owned-audio',
+    },
+  );
+});
+
 function validEvidence() {
   return {
     evidenceKind: 'real-model-enabled-tauri-ui-smoke',
+    sourceImportMode: REAL_MODEL_SOURCE_IMPORT_MODE,
+    nativePickerExercised: false,
     releaseGateSatisfied: false,
     localProductionPreflight: true,
     consumerE2e: false,
@@ -121,11 +146,63 @@ test('ambient provider/model overrides are rejected before launching the app', (
   );
 });
 
+test('CUDA toolkit locator is retained without weakening provider override isolation', () => {
+  assert.doesNotThrow(() =>
+    assertCudaPathRetainedForAppLaunch(
+      { Cuda_Path: 'fake-cuda-toolkit-root' },
+      { CUDA_PATH: 'fake-cuda-toolkit-root' },
+    ),
+  );
+  assert.throws(
+    () =>
+      assertCudaPathRetainedForAppLaunch(
+        { CUDA_PATH: 'fake-cuda-toolkit-root' },
+        {},
+      ),
+    /did not retain CUDA_PATH for app launch/u,
+  );
+  assert.doesNotThrow(() =>
+    assertCudaPathRetainedForAppLaunch({ PATH: 'safe-path' }, { PATH: 'safe-path' }),
+  );
+});
+
 test('canonical JSON hashing is deterministic for release contract binding', () => {
   const left = canonicalJson({ z: 1, a: { y: true, x: false } });
   const right = canonicalJson({ a: { x: false, y: true }, z: 1 });
   assert.deepEqual(left, right);
   assert.match(sha256(left), /^[a-f0-9]{64}$/u);
+});
+
+test('model smoke fixture injection returns only a bounded document ID', () => {
+  const documentId = 'a'.repeat(32);
+  assert.equal(modelSmokeInjectedDocumentId({
+    documentId,
+    fileName: 'prepared.pdf',
+    sourcePath: 'C:\\private\\fixture.pdf',
+  }), documentId);
+  assert.throws(
+    () => modelSmokeInjectedDocumentId({ documentId: 'C:\\private\\fixture.pdf' }),
+    (error: unknown) => error instanceof Error
+      && !error.message.includes('private')
+      && !error.message.includes('fixture.pdf'),
+  );
+});
+
+test('model smoke waits for the exact retry action after selecting an injected document', async () => {
+  const source = await readFile(new URL('./real-media-model-smoke.ts', import.meta.url), 'utf8');
+  const cardClick = source.indexOf('await document.card.click();');
+  const detailWait = source.indexOf("await detail.waitFor({ state: 'visible', timeout: 30_000 });", cardClick);
+  const retryWait = source.indexOf("await retry.waitFor({ state: 'visible', timeout: 30_000 });");
+  const retryCount = source.indexOf('if (await retry.count() !== 1)', retryWait);
+  const captureReadyWait = source.indexOf('await waitForCaptureReady(page);', retryCount);
+  const retryClick = source.indexOf('await retry.click();', retryCount);
+  assert.ok(cardClick >= 0);
+  assert.ok(detailWait > cardClick);
+  assert.ok(retryWait > cardClick);
+  assert.ok(retryCount > retryWait);
+  assert.ok(captureReadyWait > retryCount);
+  assert.ok(retryClick > retryCount);
+  assert.ok(retryClick > captureReadyWait);
 });
 
 test('private OCR oracle hashes normalized source text without exposing its contents', () => {
@@ -143,6 +220,59 @@ test('setup accepts a ready requirement row disappearing after consent', () => {
   assert.equal(requirementCompletedAfterConsent('installable', true), false);
 });
 
+test('runtime readiness requires backend-reported ready states', () => {
+  assert.equal(
+    runtimeRequirementsReady({
+      items: [
+        { requirementId: 'windowsml-ocr', status: 'ready' },
+        { requirementId: 'ollama-runtime', status: 'ready' },
+      ],
+    }, ['windowsml-ocr', 'ollama-runtime']),
+    true,
+  );
+  assert.equal(
+    runtimeRequirementsReady({
+      items: [{ requirementId: 'windowsml-ocr', status: 'installable' }],
+    }, ['windowsml-ocr']),
+    false,
+  );
+  assert.equal(runtimeRequirementsReady({ items: [] }, ['windowsml-ocr']), false);
+  assert.equal(runtimeRequirementsReady({}, ['windowsml-ocr']), false);
+});
+
+test('model readiness requires the exact backend option to be active', () => {
+  assert.equal(runtimeModelOptionActive({
+    items: [
+      { optionId: 'qwen3.5-0.8b-v1', status: 'active' },
+      { optionId: 'qwen3.5-4b-v1', status: 'not-installed' },
+    ],
+  }, 'qwen3.5-0.8b-v1'), true);
+  assert.equal(runtimeModelOptionActive({
+    items: [{ optionId: 'qwen3.5-0.8b-v1', status: 'not-installed' }],
+  }, 'qwen3.5-0.8b-v1'), false);
+  assert.equal(runtimeModelOptionActive({}, 'qwen3.5-0.8b-v1'), false);
+});
+
+test('terminal model installation failure is bounded and content-free', () => {
+  const failure = safeTerminalModelInstallationFailure(
+    'failed',
+    'installation_failed',
+    0.1,
+  );
+  assert.equal(
+    failure,
+    'Desktop model installation terminated. status=failed; errorCode=installation_failed; progressBand=early.',
+  );
+  const message = safeSmokeFailureMessage(new Error(failure ?? ''), 0, []);
+  assert.match(message, /failure=terminal-model-installation/u);
+  assert.doesNotMatch(message, /PRIVATE|C:\\/u);
+  assert.equal(safeTerminalModelInstallationFailure('running', null, 0.1), undefined);
+  assert.match(
+    safeSmokeFailureMessage(new Error('Desktop model installation did not start.'), 0, []),
+    /failure=model-installation-start/u,
+  );
+});
+
 test('native dialog helper resolves PowerShell without relying on PATH', () => {
   assert.equal(
     windowsPowerShellExecutable('C:\\Windows'),
@@ -152,16 +282,54 @@ test('native dialog helper resolves PowerShell without relying on PATH', () => {
 
 test('native dialog UIA script is process-owned, localization-independent, and metadata-only', () => {
   const script = nativeDialogUiAutomationScript();
+  assert.deepEqual(NATIVE_SOURCE_DIALOG_CLASSES, ['#32770']);
+  assert.deepEqual(NATIVE_SOURCE_BROKER_DIALOG_CLASSES, ['CabinetWClass']);
   assert.match(script, /UIAutomationClient/u);
   assert.match(script, /GetWindowThreadProcessId/u);
+  assert.match(script, /EnumWindows/u);
+  assert.match(script, /GetClassName/u);
   assert.match(script, /GW_OWNER/u);
+  assert.match(script, /GetForegroundWindow/u);
+  assert.match(script, /IsWindowEnabled/u);
+  assert.match(script, /AttachThreadInput/u);
+  assert.match(script, /BringWindowToTop/u);
+  assert.match(script, /SetForegroundWindow/u);
+  assert.match(script, /WindowPattern/u);
+  assert.match(script, /IsModal/u);
+  assert.match(script, /GetProcessById/u);
+  assert.match(script, /ProcessName -cne 'explorer'/u);
+  assert.match(script, /UIA\|stage=ready\|code=activated/u);
+  assert.match(script, /UIA\|stage=target-window\|code=count-invalid/u);
+  assert.match(script, /UIA\|stage=target-activation\|code=failed/u);
+  assert.match(script, /baselineWindowHandles/u);
+  assert.match(script, /targetMainWindowHandles/u);
+  assert.match(script, /Tauri_Window/u);
   assert.match(script, /FileNameControlHost/u);
   assert.match(script, /(?:'1001'|'1148')/u);
   assert.match(script, /ValuePattern/u);
   assert.match(script, /InvokePattern/u);
   assert.match(script, /SendMessageTimeoutText/u);
   assert.match(script, /Write-ElementDiagnostics 'TOP'/u);
+  assert.match(script, /commonDialogClasses -contains/u);
+  assert.match(script, /brokerDialogClasses -contains/u);
+  assert.match(script, /Test-BrokeredDialog/u);
+  const eligibility = script.match(/\$facts\.Eligible =(?<criteria>[\s\S]*?)\n {2}\} catch/u)?.groups?.criteria || '';
+  for (const criterion of [
+    'ClassAllowed',
+    'DifferentProcess',
+    'ExplorerProcess',
+    'Foreground',
+    'Modal',
+    'NewWindow',
+    'SingleTarget',
+    'TargetStillOwned',
+    'TargetWasEnabled',
+    'TargetDisabled',
+  ]) {
+    assert.match(eligibility, new RegExp(`\\$facts\\.${criterion}`, 'u'));
+  }
   assert.doesNotMatch(script, /Current\.Name|NameProperty/u);
+  assert.doesNotMatch(script, /GetWindowText/u);
   assert.doesNotMatch(script, /(?:Open|\u958b\u555f|\u6253\u5f00|\u958b\u304f).*Button/iu);
 });
 
@@ -173,6 +341,140 @@ test('native dialog diagnostics reject values and private paths', () => {
     'none',
   );
   assert.equal(safeUiAutomationDiagnostics('PowerShell error containing private data'), 'none');
+});
+
+test('smoke failure output excludes OCR, audio, and document-name content', () => {
+  const privateOcr = 'PRIVATE_CERT_OCR_SENTINEL';
+  const privateAudio = 'PRIVATE_AUDIO_TRANSCRIPT_SENTINEL';
+  const privateDocumentName = 'private-certificate-name.pdf';
+  const message = safeSmokeFailureMessage(
+    new Error(`${privateOcr} ${privateAudio}`),
+    2,
+    [
+      {
+        testId: 'document-raw',
+        count: 1,
+        statuses: ['completed'],
+        rawText: privateOcr,
+        documentNames: [privateDocumentName],
+      },
+      {
+        testId: 'document-extraction-provenance',
+        count: 1,
+        engines: ['windowsml-ocr', privateOcr],
+        devices: ['windowsml-dml'],
+        transcript: privateAudio,
+      },
+    ],
+  );
+  assert.doesNotMatch(message, new RegExp(`${privateOcr}|${privateAudio}|${privateDocumentName}`, 'u'));
+  assert.match(message, /failure=unexpected/u);
+  assert.match(message, /windowsml-ocr/u);
+  assert.match(message, /windowsml-dml/u);
+  assert.match(message, /document-raw/u);
+});
+
+test('terminal document failure is immediate, allowlisted, and content-free', () => {
+  const terminalFailure = safeTerminalDocumentFailure(
+    'failed',
+    'failed',
+    'structuring_invalid_output',
+  );
+  assert.equal(
+    terminalFailure,
+    'Desktop capture terminated. status=failed; stage=failed; errorCode=structuring_invalid_output.',
+  );
+  const thrownMessage = safeSmokeFailureMessage(new Error(terminalFailure), 0, []);
+  assert.match(thrownMessage, /failure=terminal-document/u);
+  assert.match(
+    thrownMessage,
+    /terminal=Desktop capture terminated\. status=failed; stage=failed; errorCode=structuring_invalid_output\./u,
+  );
+  assert.equal(safeTerminalDocumentFailure('processing', 'structuring', null), undefined);
+  assert.equal(
+    safeTerminalDocumentFailure(
+      'failed',
+      'failed',
+      'extraction_failed',
+      'Source extraction worker failed at ocr-probe-assets-missing-5.',
+    ),
+    'Desktop capture terminated. status=failed; stage=failed; errorCode=extraction_failed; workerStage=ocr-probe-assets-missing-5.',
+  );
+  assert.equal(
+    safeTerminalDocumentFailure(
+      'failed',
+      'failed',
+      'extraction_failed',
+      'Source extraction worker failed at stages whisper-model-load-cuda-failed-runtimeerror>whisper-gpu-fallback>whisper-model-load-cpu-failed-runtimeerror.',
+      'audio',
+    ),
+    'Desktop capture terminated. status=failed; stage=failed; errorCode=extraction_failed; mediaKind=audio; workerStage=whisper-model-load-cuda-failed-runtimeerror>whisper-gpu-fallback>whisper-model-load-cpu-failed-runtimeerror.',
+  );
+  assert.equal(
+    safeTerminalDocumentFailure(
+      'failed',
+      'failed',
+      'extraction_failed',
+      'Source extraction worker failed at stages worker-entry-start>python-import-capture-runtime-start>python-import-capture-runtime-failed.',
+    ),
+    'Desktop capture terminated. status=failed; stage=failed; errorCode=extraction_failed; workerStage=worker-entry-start>python-import-capture-runtime-start>python-import-capture-runtime-failed.',
+  );
+  assert.equal(
+    safeTerminalDocumentFailure(
+      'failed',
+      'failed',
+      'extraction_failed',
+      'Source extraction failed validation.',
+    ),
+    'Desktop capture terminated. status=failed; stage=failed; errorCode=extraction_failed; failureReason=validation-failed.',
+  );
+  assert.equal(
+    safeTerminalDocumentFailure(
+      'failed',
+      'failed',
+      'extraction_failed',
+      'Source extraction failed at the runtime boundary.',
+      'image',
+    ),
+    'Desktop capture terminated. status=failed; stage=failed; errorCode=extraction_failed; mediaKind=image; failureReason=runtime-boundary.',
+  );
+  const privateValue = 'PRIVATE_OCR_OR_PATH_SENTINEL';
+  const redacted = safeTerminalDocumentFailure('failed', privateValue, privateValue);
+  assert.equal(
+    redacted,
+    'Desktop capture terminated. status=failed; stage=unknown; errorCode=unknown.',
+  );
+  assert.doesNotMatch(redacted ?? '', new RegExp(privateValue, 'u'));
+});
+
+test('terminal Whisper installation failure is bounded and content-free', () => {
+  const failure = safeTerminalInstallationFailure(
+    'whisper-primary',
+    'failed',
+    'probing',
+    'worker_failed',
+    0.92,
+    'worker failed at stage worker-process-response-error-bootloader',
+  );
+  assert.equal(
+    failure,
+    'Desktop runtime installation terminated. requirement=whisper-primary; status=failed; stage=probing; errorCode=worker_failed; progressBand=late; workerStage=worker-process-response-error-bootloader; failureReason=runtime-install-unexpected.',
+  );
+  const message = safeSmokeFailureMessage(new Error(failure), 0, []);
+  assert.match(message, /failure=terminal-installation/u);
+  assert.doesNotMatch(message, /PRIVATE|C:\\|worker failed/u);
+  assert.equal(safeTerminalInstallationFailure('windowsml-ocr', 'failed', 'probing', 'x', 0.9), undefined);
+  assert.equal(
+    safeTerminalInstallationFailure(
+      'whisper-primary',
+      'failed',
+      null,
+      'installation_failed',
+      0.7,
+      'direct model download exhausted bounded retries',
+    ),
+    'Desktop runtime installation terminated. requirement=whisper-primary; status=failed; stage=unknown; errorCode=installation_failed; progressBand=download; failureReason=direct-model-retries-exhausted.',
+  );
 });
 
 test('native dialog UIA script parses in Windows PowerShell', { skip: process.platform !== 'win32' }, () => {
@@ -219,14 +521,164 @@ test('native dialog UIA helper selects a benign file through the Windows common 
   const systemRoot = process.env.SystemRoot || 'C:\\Windows';
   const temporary = await mkdtemp(join(tmpdir(), 'capture-picker-uia-'));
   const fixture = join(temporary, 'picker-probe.txt');
+  const readySignal = join(temporary, 'open-dialog.signal');
+  const activatedSignal = join(temporary, 'target-activated.signal');
   await writeFile(fixture, 'picker probe\n', 'utf8');
   const hostScript = `
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
+Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+using System.Threading;
+
+public static class CaptureSmokeNativeTarget {
+  private const uint WM_DESTROY = 0x0002;
+  private const uint WM_CLOSE = 0x0010;
+  private const int SW_SHOWNOACTIVATE = 4;
+  private const uint WS_OVERLAPPEDWINDOW = 0x00CF0000;
+  private static readonly ManualResetEventSlim Ready = new ManualResetEventSlim(false);
+  private static readonly WndProc WindowProcedure = HandleMessage;
+  private static IntPtr windowHandle = IntPtr.Zero;
+
+  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+  private struct WNDCLASSEX {
+    public uint cbSize;
+    public uint style;
+    public WndProc lpfnWndProc;
+    public int cbClsExtra;
+    public int cbWndExtra;
+    public IntPtr hInstance;
+    public IntPtr hIcon;
+    public IntPtr hCursor;
+    public IntPtr hbrBackground;
+    public string lpszMenuName;
+    public string lpszClassName;
+    public IntPtr hIconSm;
+  }
+
+  [StructLayout(LayoutKind.Sequential)]
+  private struct MSG {
+    public IntPtr hwnd;
+    public uint message;
+    public UIntPtr wParam;
+    public IntPtr lParam;
+    public uint time;
+    public int x;
+    public int y;
+  }
+
+  private delegate IntPtr WndProc(IntPtr hwnd, uint message, UIntPtr wParam, IntPtr lParam);
+
+  [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+  private static extern IntPtr GetModuleHandle(string moduleName);
+
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+  private static extern ushort RegisterClassEx(ref WNDCLASSEX windowClass);
+
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+  private static extern IntPtr CreateWindowEx(uint extendedStyle, string className, string windowName, uint style,
+    int x, int y, int width, int height, IntPtr parent, IntPtr menu, IntPtr instance, IntPtr parameter);
+
+  [DllImport("user32.dll")]
+  private static extern bool ShowWindow(IntPtr hwnd, int command);
+
+  [DllImport("user32.dll")]
+  private static extern int GetMessage(out MSG message, IntPtr hwnd, uint minimum, uint maximum);
+
+  [DllImport("user32.dll")]
+  private static extern bool TranslateMessage(ref MSG message);
+
+  [DllImport("user32.dll")]
+  private static extern IntPtr DispatchMessage(ref MSG message);
+
+  [DllImport("user32.dll")]
+  private static extern IntPtr DefWindowProc(IntPtr hwnd, uint message, UIntPtr wParam, IntPtr lParam);
+
+  [DllImport("user32.dll")]
+  private static extern void PostQuitMessage(int exitCode);
+
+  [DllImport("user32.dll")]
+  private static extern bool PostMessage(IntPtr hwnd, uint message, UIntPtr wParam, IntPtr lParam);
+
+  [DllImport("user32.dll")]
+  private static extern IntPtr GetForegroundWindow();
+
+  public static IntPtr Start() {
+    var thread = new Thread(RunWindowLoop) { IsBackground = true };
+    thread.SetApartmentState(ApartmentState.STA);
+    thread.Start();
+    if (!Ready.Wait(5000) || windowHandle == IntPtr.Zero) {
+      throw new InvalidOperationException("Native target window did not start.");
+    }
+    return windowHandle;
+  }
+
+  public static bool IsForeground(IntPtr expectedHandle) {
+    return expectedHandle != IntPtr.Zero && GetForegroundWindow() == expectedHandle;
+  }
+
+  public static void Stop(IntPtr expectedHandle) {
+    if (expectedHandle != IntPtr.Zero) {
+      PostMessage(expectedHandle, WM_CLOSE, UIntPtr.Zero, IntPtr.Zero);
+    }
+  }
+
+  private static void RunWindowLoop() {
+    var instance = GetModuleHandle(null);
+    var windowClass = new WNDCLASSEX {
+      cbSize = (uint)Marshal.SizeOf(typeof(WNDCLASSEX)),
+      lpfnWndProc = WindowProcedure,
+      hInstance = instance,
+      lpszClassName = "Tauri_Window"
+    };
+    if (RegisterClassEx(ref windowClass) == 0) {
+      Ready.Set();
+      return;
+    }
+    windowHandle = CreateWindowEx(0, "Tauri_Window", string.Empty, WS_OVERLAPPEDWINDOW,
+      20, 20, 320, 200, IntPtr.Zero, IntPtr.Zero, instance, IntPtr.Zero);
+    if (windowHandle == IntPtr.Zero) {
+      Ready.Set();
+      return;
+    }
+    ShowWindow(windowHandle, SW_SHOWNOACTIVATE);
+    Ready.Set();
+    MSG message;
+    while (GetMessage(out message, IntPtr.Zero, 0, 0) > 0) {
+      TranslateMessage(ref message);
+      DispatchMessage(ref message);
+    }
+  }
+
+  private static IntPtr HandleMessage(IntPtr hwnd, uint message, UIntPtr wParam, IntPtr lParam) {
+    if (message == WM_DESTROY) {
+      PostQuitMessage(0);
+      return IntPtr.Zero;
+    }
+    return DefWindowProc(hwnd, message, wParam, lParam);
+  }
+}
+'@
+$targetWindow = [CaptureSmokeNativeTarget]::Start()
+$deadline = [DateTime]::UtcNow.AddSeconds(10)
+while (-not (Test-Path -LiteralPath $env:CAPTURE_SMOKE_DIALOG_SIGNAL)) {
+  if ([DateTime]::UtcNow -ge $deadline) { exit 4 }
+  Start-Sleep -Milliseconds 25
+}
+if (-not [CaptureSmokeNativeTarget]::IsForeground($targetWindow)) { exit 5 }
+Set-Content -LiteralPath $env:CAPTURE_SMOKE_ACTIVATED_SIGNAL -Value 'activated'
 $dialog = New-Object System.Windows.Forms.OpenFileDialog
 $dialog.CheckFileExists = $true
 $dialog.Multiselect = $false
-$result = $dialog.ShowDialog()
+$owner = New-Object System.Windows.Forms.NativeWindow
+$owner.AssignHandle($targetWindow)
+try {
+  $result = $dialog.ShowDialog($owner)
+} finally {
+  $owner.ReleaseHandle()
+  [CaptureSmokeNativeTarget]::Stop($targetWindow)
+}
 if ($result -ne [System.Windows.Forms.DialogResult]::OK) { exit 2 }
 if ($dialog.FileName -cne $env:CAPTURE_SMOKE_DIALOG_FILE) { exit 3 }
 exit 0
@@ -241,19 +693,33 @@ exit 0
         TEMP: process.env.TEMP || '',
         TMP: process.env.TMP || '',
         CAPTURE_SMOKE_DIALOG_FILE: fixture,
+        CAPTURE_SMOKE_DIALOG_SIGNAL: readySignal,
+        CAPTURE_SMOKE_ACTIVATED_SIGNAL: activatedSignal,
       },
       stdio: 'ignore',
       windowsHide: true,
     },
   );
+  const hostExit = new Promise<number | null>((resolvePromise, reject) => {
+    host.once('error', reject);
+    host.once('close', resolvePromise);
+  });
   try {
     assert.ok(host.pid, 'The Windows common-dialog test host must expose a PID.');
-    await nativeOpenDialogUiAutomation(fixture, host.pid);
-    const exitCode = host.exitCode ?? await new Promise<number | null>((resolvePromise, reject) => {
-      host.once('error', reject);
-      host.once('close', resolvePromise);
+    await nativeOpenDialogUiAutomation(fixture, host.pid, async () => {
+      await writeFile(readySignal, 'ready\n', 'utf8');
+      const deadline = Date.now() + 5_000;
+      while (Date.now() < deadline) {
+        try {
+          await access(activatedSignal);
+          return;
+        } catch {
+          await new Promise((resolvePromise) => setTimeout(resolvePromise, 25));
+        }
+      }
+      assert.fail('The helper must foreground the exact PID-scoped target before the dialog opens.');
     });
-    assert.equal(exitCode, 0, 'The common dialog must return the exact benign fixture selected by UIA.');
+    assert.equal(await hostExit, 0, 'The common dialog must return the exact benign fixture selected by UIA.');
   } finally {
     if (host.exitCode === null) host.kill();
     await rm(temporary, { recursive: true, force: true });
@@ -294,8 +760,9 @@ test('desktop model smoke uses generated release catalog and WebView selectors',
     'runtime-requirement',
     'runtime-install',
     'model-selection',
-    'model-option-select',
+    'model-option',
     'model-install',
+    'model-install-progress',
     'source-import',
     'document-card',
     'document-detail',
@@ -312,9 +779,25 @@ test('desktop model smoke uses generated release catalog and WebView selectors',
   assert.match(source, /ValuePattern/u);
   assert.match(source, /InvokePattern/u);
   assert.match(source, /CAPTURE_SMOKE_APP_PID/u);
+  assert.match(source, /CAPTURE_WHISPER_PREFER_GPU/u);
   assert.doesNotMatch(source, /FindWindow\('#32770'/u);
   assert.doesNotMatch(source, /async function nativeOpenDialog\(/u);
   assert.doesNotMatch(source, /SetWindowText|FindWindow\(|SendMessage\(/u);
+  assert.doesNotMatch(source, /locator\('body'\)\.innerText/u);
+  assert.doesNotMatch(source, /function importThroughUi/u);
+  assert.doesNotMatch(source, /selection\.count\(\)/u);
+  assert.match(source, /invokeTauriCommand\(page, 'runtime_get_model_installation'/u);
+  assert.match(source, /invokeTauriCommand\(page, 'runtime_model_options'/u);
+  assert.match(source, /invokeTauriCommand\(page, 'model_smoke_import_fixture', \{\s*request: \{ fixtureKey \}/u);
+  assert.match(source, /CAPTURE_SMOKE_FIXTURE_ROOT = runRoot/u);
+  assert.match(source, /modelSmokeFixtureEnvironment\(\{/u);
+  assert.match(source, /CAPTURE_SMOKE_FIXTURE_PDF: paths\.pdf/u);
+  assert.match(source, /CAPTURE_SMOKE_FIXTURE_IMAGE: paths\.image/u);
+  assert.match(source, /CAPTURE_SMOKE_FIXTURE_AUDIO: paths\.audio/u);
+  assert.match(source, /sourceImportMode: REAL_MODEL_SOURCE_IMPORT_MODE/u);
+  assert.match(source, /nativePickerExercised: false/u);
+  assert.match(source, /await retry\.waitFor\(\{ state: 'visible', timeout: 30_000 \}\)/u);
+  assert.match(source, /throwIfTerminalDocumentFailure/u);
   assert.match(source, /model-private-audio\.mp3/u);
   assert.match(source, /CAPTURE_REAL_MEDIA_MODEL_OCR_TEXT_SHA256/u);
   assert.match(source, /private OCR output oracle/u);
@@ -325,7 +808,7 @@ test('desktop model smoke uses generated release catalog and WebView selectors',
   assert.match(source, /normalizedTranscriptDigest/u);
   assert.ok(
     source.indexOf('UI raw extraction did not become visible')
-      < source.indexOf('resultSection.waitFor'),
+      < source.indexOf('UI result and provenance did not become visible'),
     'The bounded extraction assertion must observe raw before waiting for the terminal result.',
   );
   assert.doesNotMatch(source, /sha256\(Buffer\.from\(rawText/u);
