@@ -25,5 +25,12 @@ nav { display: grid; gap: .35rem; } nav span { display: flex; justify-content: s
 .setup-status { margin: .45rem 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .model-selection { display: grid; grid-template-columns: minmax(14rem, 1fr) auto; gap: .55rem .75rem; align-items: end; flex: 1 1 100%; }
 .model-selection > small, .model-install-progress { grid-column: 1 / -1; }
-.model-selection mat-form-field { min-width: 0; }
+.model-option-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: .45rem; min-width: 0; margin: 0; padding: 0; border: 0; }
+.model-option-list legend { margin-bottom: .4rem; color: #536159; font-size: .75rem; font-weight: 700; }
+.model-option-choice { display: grid; grid-template-columns: auto 1fr; gap: .5rem; align-items: center; padding: .65rem .7rem; background: #f7f6ef; border: 1px solid #c8c5b9; border-radius: .4rem; cursor: pointer; }
+.model-option-choice:hover,.model-option-choice:focus-within,.model-option-choice.is-selected { background: #f0f2e8; border-color: #315d4c; outline: 2px solid #d8ea71; outline-offset: 1px; }
+.model-option-choice input { margin: 0; accent-color: #23865e; }
+.model-option-choice span { display: grid; gap: .12rem; min-width: 0; }
+.model-option-choice strong { font-size: .78rem; }
+.model-option-choice small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: .62rem ui-monospace, Consolas, monospace; }
 @media (max-width: 700px) { .model-selection { grid-template-columns: 1fr; width: 100%; } }

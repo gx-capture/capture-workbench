@@ -68,18 +68,30 @@
         }
         @if (store.modelSelectionRequired()) {
           <div class="model-selection" data-testid="model-selection">
-            <mat-form-field appearance="outline" subscriptSizing="dynamic">
-              <mat-label>模型</mat-label>
-              <mat-select
-                [value]="store.selectedModelOptionId()"
-                (selectionChange)="store.selectModelOption($event.value)"
-                data-testid="model-option-select"
-              >
-                @for (option of store.modelOptions(); track option.optionId) {
-                  <mat-option [value]="option.optionId">{{ option.displayName }}</mat-option>
-                }
-              </mat-select>
-            </mat-form-field>
+            <fieldset class="model-option-list" data-testid="model-option-select">
+              <legend>模型</legend>
+              @for (option of store.modelOptions(); track option.optionId) {
+                <label
+                  class="model-option-choice"
+                  [class.is-selected]="store.selectedModelOptionId() === option.optionId"
+                >
+                  <input
+                    type="radio"
+                    name="model-option"
+                    value="{{ option.optionId }}"
+                    data-testid="model-option"
+                    [attr.data-model-option-id]="option.optionId"
+                    [checked]="store.selectedModelOptionId() === option.optionId"
+                    [disabled]="store.installing()"
+                    (change)="store.selectModelOption(option.optionId)"
+                  />
+                  <span>
+                    <strong>{{ option.displayName }}</strong>
+                    <small>{{ option.modelReference }}</small>
+                  </span>
+                </label>
+              }
+            </fieldset>
             <button
               mat-stroked-button
               type="button"
@@ -91,7 +103,14 @@
             </button>
             <small>安裝包不含模型，首次使用時下載。</small>
             @if (store.activeModelInstallation(); as installation) {
-              <div class="model-install-progress" data-testid="model-install-progress" aria-live="polite">
+              <div
+                class="model-install-progress"
+                data-testid="model-install-progress"
+                [attr.data-installation-id]="installation.installationId"
+                [attr.data-option-id]="installation.optionId"
+                [attr.data-status]="installation.status"
+                aria-live="polite"
+              >
                 <div class="model-install-progress-heading">
                   <strong>{{ store.modelInstallationPhase() }}</strong>
                   <span>{{ store.modelInstallationPercent() }}%</span>

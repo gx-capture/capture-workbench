@@ -282,12 +282,15 @@ export class DesktopWorkspaceStore {
   }
 
   selectModelOption(optionId: string): void {
+    if (this.installing()) return;
     this.selectedModelOptionId.set(optionId);
+    this.activeModelInstallation.set(null);
   }
 
   installSelectedModel(): void {
     const optionId = this.selectedModelOptionId();
     if (!this.runtime.ready() || this.installing() || !optionId) return;
+    this.activeModelInstallation.set(null);
     this.installing.set(true);
     this.runtime.startModelInstallation({
       clientRequestId: crypto.randomUUID(),
@@ -310,7 +313,6 @@ export class DesktopWorkspaceStore {
         ))),
       finalize(() => {
         this.installing.set(false);
-        this.activeModelInstallation.set(null);
         this.modelOptionsResource.reload();
         this.requirementsResource.reload();
       }),
@@ -476,6 +478,7 @@ export class DesktopWorkspaceStore {
         stage: 'uploading',
         clearCaptureId: true,
       }).pipe(
+        tap(() => this.reloadDocumentState(documentId)),
         switchMap(() => this.runtime.createCapture(documentId, crypto.randomUUID())),
         switchMap((job) => {
           active.captureId = job.captureId;
@@ -485,7 +488,10 @@ export class DesktopWorkspaceStore {
             captureId: job.captureId,
             status: 'processing',
             stage: job.stage,
-          }).pipe(map(() => job));
+          }).pipe(
+            tap(() => this.reloadDocumentState(documentId)),
+            map(() => job),
+          );
         }),
         switchMap((job) => this.waitForTerminal$(documentId, job, active)),
         switchMap((job) => this.persistTerminal$(documentId, job, active)),

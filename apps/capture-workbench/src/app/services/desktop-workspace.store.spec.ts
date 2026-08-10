@@ -37,6 +37,41 @@ const raw = { sourceText: 'OCR text' };
 const result = { targetText: 'translated text' };
 
 describe('DesktopWorkspaceStore', () => {
+  it('retains a terminal model installation identity for UI and Tauri diagnostics', () => {
+    const failedInstallation = {
+      installationId: 'model-installation-1',
+      optionId: 'qwen3.5-0.8b-v1',
+      status: 'failed' as const,
+      progress: 0.1,
+      error: {
+        code: 'installation_failed',
+        message: 'Runtime model installation failed.',
+        stage: 'runtime',
+      },
+      createdAt: '2026-07-20T00:00:00Z',
+      updatedAt: '2026-07-20T00:00:01Z',
+      completedAt: '2026-07-20T00:00:01Z',
+    };
+    const startModelInstallation = vi.fn(() => of(failedInstallation));
+    const store = initializeStore(
+      libraryStub(),
+      runtimeStub({ startModelInstallation }),
+    );
+    store.selectModelOption('qwen3.5-0.8b-v1');
+
+    store.installSelectedModel();
+    TestBed.tick();
+
+    expect(startModelInstallation).toHaveBeenCalledWith({
+      clientRequestId: expect.any(String),
+      optionId: 'qwen3.5-0.8b-v1',
+      consent: true,
+    });
+    expect(store.activeModelInstallation()).toEqual(failedInstallation);
+    expect(store.installing()).toBe(false);
+    expect(store.message()).toContain('installation_failed');
+  });
+
   it('does not offer or start installation for unavailable catalog requirements', () => {
     const startInstallation = vi.fn();
     const store = initializeStore(
@@ -1057,6 +1092,24 @@ describe('DesktopWorkspaceStore', () => {
     expect(confirm).not.toHaveBeenCalled();
     pendingCapture.complete();
     confirm.mockRestore();
+  });
+
+  it('refreshes the selected document after processing and runtime ID updates', () => {
+    const pendingCapture = new Subject<CaptureJobV1>();
+    const list = vi.fn(() => of<readonly DesktopLibrarySummary[]>([summary]));
+    const store = initializeStore(
+      libraryStub({ list }),
+      runtimeStub({ createCapture: vi.fn(() => pendingCapture) }),
+    );
+    store.select(summary.documentId);
+    TestBed.tick();
+    const beforeCapture = list.mock.calls.length;
+
+    store.retry(summary.documentId);
+    TestBed.tick();
+
+    expect(list.mock.calls.length).toBeGreaterThan(beforeCapture);
+    pendingCapture.complete();
   });
 
   it('blocks direct deletion while a durable runtime capture id is retained', () => {

@@ -1,7 +1,10 @@
 import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { provideNoopAnimations } from '@angular/platform-browser/animations';
-import type { RuntimeModelInstallationV1 } from '@gx-capture/capture-workbench';
+import type {
+  RuntimeModelInstallationV1,
+  RuntimeModelOptionV1,
+} from '@gx-capture/capture-workbench';
 import { App } from './app';
 import { DesktopWorkspaceStore } from './services/desktop-workspace.store';
 
@@ -114,6 +117,53 @@ describe('App', () => {
     expect(fixture.nativeElement.querySelector('progress')?.getAttribute('value')).toBe('42');
     expect(fixture.nativeElement.textContent).toContain('下載與驗證模型');
   });
+
+  it('starts the exact model selected through the setup UI', async () => {
+    const store = workspaceStub();
+    store.state.set('needs-setup');
+    store.modelSelectionRequired.set(true);
+    store.modelOptions.set([{
+      optionId: 'qwen3.5-0.8b-v1',
+      displayName: 'Qwen 3.5 0.8B',
+      modelReference: 'qwen3.5:0.8b',
+      expectedDigest: null,
+      expectedBytes: null,
+      profileId: 'capture-workbench-qwen3.5-0.8b-structure-v1',
+      profileSpecSha256: 'a'.repeat(64),
+      status: 'not-installed',
+    }]);
+    store.selectModelOption.mockImplementation((optionId: string) => {
+      store.selectedModelOptionId.set(optionId);
+    });
+    await TestBed.configureTestingModule({
+      imports: [App],
+      providers: [
+        provideNoopAnimations(),
+        {
+          provide: DesktopWorkspaceStore,
+          useValue: store,
+        },
+      ],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(App);
+    fixture.detectChanges();
+
+    const option = fixture.nativeElement.querySelector(
+      '[data-testid="model-option"][value="qwen3.5-0.8b-v1"]',
+    ) as HTMLInputElement | null;
+    expect(option).not.toBeNull();
+    option?.click();
+    fixture.detectChanges();
+
+    const install = fixture.nativeElement.querySelector(
+      '[data-testid="model-install"]',
+    ) as HTMLButtonElement;
+    expect(option?.checked).toBe(true);
+    expect(install.disabled).toBe(false);
+    install.click();
+    expect(store.selectModelOption).toHaveBeenCalledWith('qwen3.5-0.8b-v1');
+    expect(store.installSelectedModel).toHaveBeenCalledOnce();
+  });
 });
 
 function workspaceStub(selected: unknown = null, modelInstallation: RuntimeModelInstallationV1 | null = null) {
@@ -132,7 +182,7 @@ function workspaceStub(selected: unknown = null, modelInstallation: RuntimeModel
     modelInstallationPercent: signal(0),
     activeModelOption: signal(null),
     modelSelectionRequired: signal(false),
-    modelOptions: signal([]),
+    modelOptions: signal<readonly RuntimeModelOptionV1[]>([]),
     selectedModelOptionId: signal<string | null>(null),
     busyIds: signal(new Set<string>()),
     canCapture: signal(true),
