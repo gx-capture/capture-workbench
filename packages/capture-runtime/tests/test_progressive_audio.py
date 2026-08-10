@@ -127,12 +127,8 @@ def test_progressive_session_canonicalizes_segments_after_overlap_reordering() -
     ]
     transcriber = FakeTranscriber(
         {
-            0: WhisperWindowResult(
-                (WhisperWindowSegment(110_000, 120_000, "later"),), _engine()
-            ),
-            90_000: WhisperWindowResult(
-                (WhisperWindowSegment(0, 10_000, "earlier"),), _engine()
-            ),
+            0: WhisperWindowResult((WhisperWindowSegment(110_000, 120_000, "later"),), _engine()),
+            90_000: WhisperWindowResult((WhisperWindowSegment(0, 10_000, "earlier"),), _engine()),
         }
     )
     session = ProgressiveAudioSession(
