@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -406,6 +407,103 @@ def test_engine_installation_is_atomic_offline_ready_and_idempotent(
     )
     assert downloader.calls == first_calls
     assert asyncio.run(manager.probe("windowsml-ocr")).ready is True  # type: ignore[union-attr]
+
+
+def test_successful_activation_does_not_rehash_the_model_before_worker_launch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    catalog, sources = _catalog(tmp_path)
+    verification_calls = 0
+    verify_model = engine_installation_module.verify_direct_model_files
+
+    def record_verification(root: Path, descriptor: object) -> None:
+        nonlocal verification_calls
+        verification_calls += 1
+        verify_model(root, descriptor)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(
+        engine_installation_module,
+        "verify_direct_model_files",
+        record_verification,
+    )
+    manager = EngineInstallationManager(
+        tmp_path / "engines",
+        catalog,
+        worker_client=FakeWorkerClient(),  # type: ignore[arg-type]
+        downloader=CopyDownloader(sources),
+        model_downloader=CopyModelDownloader(sources),
+    )
+
+    asyncio.run(
+        manager.install(
+            "windowsml-ocr",
+            cancel_event=asyncio.Event(),
+            report_progress=lambda _value: None,
+        )
+    )
+    assert verification_calls == 1
+
+    assert manager.active_engine("windowsml-ocr") is not None
+    assert verification_calls == 1
+
+
+def test_active_engine_cache_is_invalidated_when_installed_files_change(tmp_path: Path) -> None:
+    catalog, sources = _catalog(tmp_path)
+    manager = EngineInstallationManager(
+        tmp_path / "engines",
+        catalog,
+        worker_client=FakeWorkerClient(),  # type: ignore[arg-type]
+        downloader=CopyDownloader(sources),
+        model_downloader=CopyModelDownloader(sources),
+    )
+    asyncio.run(
+        manager.install(
+            "windowsml-ocr",
+            cancel_event=asyncio.Event(),
+            report_progress=lambda _value: None,
+        )
+    )
+    engine = manager.active_engine("windowsml-ocr")
+    assert engine is not None
+
+    model = engine.model_dir / "model.bin"
+    model.write_bytes(b"wrong-engine-1")
+
+    assert manager.active_engine("windowsml-ocr") is None
+
+
+def test_cold_active_engine_verification_does_not_block_the_event_loop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    catalog, _sources = _catalog(tmp_path)
+    manager = EngineInstallationManager(
+        tmp_path / "engines",
+        catalog,
+        worker_client=FakeWorkerClient(),  # type: ignore[arg-type]
+    )
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_active_engine(_requirement_id: str) -> InstalledEngine | None:
+        started.set()
+        assert release.wait(timeout=5)
+        return None
+
+    monkeypatch.setattr(manager, "active_engine", slow_active_engine)
+
+    async def run() -> None:
+        resolution = asyncio.create_task(manager.resolve_active_engine("windowsml-ocr"))
+        while not started.is_set():
+            await asyncio.sleep(0)
+        heartbeat = asyncio.create_task(asyncio.sleep(0))
+        await heartbeat
+        assert not resolution.done()
+        release.set()
+        assert await resolution is None
+
+    asyncio.run(run())
 
 
 def test_failed_upgrade_keeps_previous_active_state(tmp_path: Path) -> None:

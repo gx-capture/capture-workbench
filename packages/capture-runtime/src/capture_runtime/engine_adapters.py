@@ -60,6 +60,10 @@ class EngineRuntimeUnavailableError(RuntimeError):
     """Raised when installed code or local model assets cannot serve extraction."""
 
 
+class _WhisperModelLoadError(RuntimeError):
+    """Marks a CPU model-constructor failure for a bounded compatibility retry."""
+
+
 @dataclass(frozen=True, slots=True)
 class EngineProbe:
     ready: bool
@@ -176,17 +180,28 @@ class WindowsMLOcrAdapter:
             self._stage_reporter(stage)
 
     def probe(self) -> EngineProbe:
+        self._report_stage("ocr-probe-modules-start")
         missing_modules = [
             module
             for module in ("onnxruntime", "paddleocr")
             if importlib.util.find_spec(module) is None
             and not (self._pipeline_factory is not None and self._provider_resolver is not None)
         ]
+        self._report_stage(
+            f"ocr-probe-modules-missing-{len(missing_modules)}"
+            if missing_modules
+            else "ocr-probe-modules-ready"
+        )
         missing_files = [
             relative
             for relative in WINDOWSML_REQUIRED_MODEL_FILES
             if not (self.model_dir / relative).is_file()
         ]
+        self._report_stage(
+            f"ocr-probe-assets-missing-{len(missing_files)}"
+            if missing_files
+            else "ocr-probe-assets-ready"
+        )
         code_ready = not missing_modules
         assets_ready = not missing_files
         code_detail = (
@@ -207,7 +222,13 @@ class WindowsMLOcrAdapter:
             try:
                 providers = self._providers()
             except Exception as error:
+                self._report_stage("ocr-probe-providers-error")
                 return EngineProbe(False, True, True, f"Provider probe failed: {error}")
+            self._report_stage(
+                "ocr-probe-providers-"
+                f"{len(providers)}-cpu-{'yes' if 'CPUExecutionProvider' in providers else 'no'}-"
+                f"dml-{'yes' if 'DmlExecutionProvider' in providers else 'no'}"
+            )
             if "CPUExecutionProvider" not in providers:
                 return EngineProbe(
                     False,
@@ -326,11 +347,6 @@ class WindowsMLOcrAdapter:
             path.unlink(missing_ok=True)
 
 
-def _resource_failure(error: BaseException) -> bool:
-    message = str(error).lower()
-    return any(token in message for token in ("out of memory", "cuda", "cudnn", "cublas", "driver"))
-
-
 def _install_offline_aistudio_stubs() -> None:
     existing = sys.modules.get("aistudio_sdk")
     if getattr(existing, "_capture_workbench_offline_stub", False):
@@ -435,7 +451,7 @@ class FasterWhisperAdapter:
 
     def _report_stage(self, stage: str) -> None:
         if self._stage_reporter is not None:
-            self._stage_reporter(stage)
+            self._stage_reporter(f"whisper-{stage}")
 
     def model_path(self, model: str) -> Path:
         return self.models_dir / model
@@ -499,25 +515,56 @@ class FasterWhisperAdapter:
             except InterruptedError:
                 raise
             except Exception as error:
-                if not _resource_failure(error):
-                    raise
-                return self._run(
+                # A CUDA-capable driver is not proof that the bundled
+                # ctranslate2 build can initialize a CUDA model.  Keep the
+                # desktop product usable on machines that advertise CUDA but
+                # fail during model construction or the first transcription;
+                # the CPU model is the supported fallback for Whisper.  The
+                # warning is deliberately type-only so a model path or raw
+                # backend diagnostic cannot cross the worker boundary.
+                self._report_stage("gpu-fallback")
+                return self._run_cpu(
                     source_path,
-                    model=self.fallback_model,
-                    provenance_model=self.fallback_provenance_model,
-                    device="cpu",
-                    compute_type="int8",
                     should_cancel=should_cancel,
-                    warning=f"Whisper GPU fallback: {error}"[:500],
+                    warning=f"Whisper GPU fallback: {type(error).__name__}",
                 )
-        return self._run(
+        return self._run_cpu(
             source_path,
-            model=self.fallback_model,
-            provenance_model=self.fallback_provenance_model,
-            device="cpu",
-            compute_type="int8",
             should_cancel=should_cancel,
         )
+
+    def _run_cpu(
+        self,
+        source_path: Path,
+        *,
+        should_cancel: Callable[[], bool],
+        warning: str | None = None,
+    ) -> WhisperTranscriptionResult:
+        try:
+            return self._run(
+                source_path,
+                model=self.fallback_model,
+                provenance_model=self.fallback_provenance_model,
+                device="cpu",
+                # Use mixed int8 weights/float32 activations as the CPU
+                # default. It is supported by the bundled CTranslate2
+                # build while avoiding the pure-int8 constructor path that
+                # can fail on otherwise supported Windows CPUs.
+                compute_type="int8_float32",
+                should_cancel=should_cancel,
+                warning=warning,
+            )
+        except _WhisperModelLoadError:
+            self._report_stage("model-load-cpu-fallback-float32")
+            return self._run(
+                source_path,
+                model=self.fallback_model,
+                provenance_model=self.fallback_provenance_model,
+                device="cpu",
+                compute_type="float32",
+                should_cancel=should_cancel,
+                warning=warning or "Whisper CPU int8_float32 compatibility fallback: RuntimeError",
+            )
 
     def _cuda_devices(self) -> int:
         if self._cuda_count is not None:
@@ -550,11 +597,19 @@ class FasterWhisperAdapter:
             factory = WhisperModel
         model_root = self.model_path(model)
         self._report_stage(f"model-load-{device}-start")
-        runtime = factory(str(model_root), device=device, compute_type=compute_type)
+        try:
+            runtime = factory(str(model_root), device=device, compute_type=compute_type)
+        except Exception as error:
+            self._report_stage(f"model-load-{device}-failed-{type(error).__name__.lower()}")
+            if device == "cpu" and isinstance(error, RuntimeError):
+                raise _WhisperModelLoadError from error
+            raise
         self._report_stage(f"model-load-{device}-complete")
+        self._report_stage("transcription-call-start")
         raw_segments, info = runtime.transcribe(
             str(source_path), beam_size=5, vad_filter=True, word_timestamps=False
         )
+        self._report_stage("transcription-call-complete")
         self._report_stage("transcription-iteration-start")
         duration_ms = max(0, round(float(info.duration) * 1000))
         if duration_ms > self.max_duration_ms:
@@ -571,6 +626,7 @@ class FasterWhisperAdapter:
         if should_cancel():
             raise InterruptedError("Whisper transcription was cancelled.")
         if not segments:
+            self._report_stage("output-empty")
             raise ValueError("Whisper produced no non-empty segments.")
         self._report_stage("transcription-complete")
         return WhisperTranscriptionResult(

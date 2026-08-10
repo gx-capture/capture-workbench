@@ -150,4 +150,4 @@ def test_worker_reports_actual_cpu_model_name_after_gpu_fallback(
     assert calls == [("primary", "cuda"), ("fallback", "cpu")]
     assert result["provenance"]["model"] == "small"
     assert result["provenance"]["device"] == "cpu"
-    assert result["warnings"] == ["Whisper GPU fallback: CUDA out of memory"]
+    assert result["warnings"] == ["Whisper GPU fallback: RuntimeError"]

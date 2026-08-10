@@ -17,6 +17,10 @@ _CHILD_PROCESS_ENVIRONMENT_ALLOWLIST = frozenset(
     {
         "APPDATA",
         "COMSPEC",
+        # CTranslate2 uses CUDA_PATH to locate the host CUDA toolkit's
+        # cuBLAS runtime. Keep this single, non-secret locator while
+        # continuing to exclude provider overrides and ambient credentials.
+        "CUDA_PATH",
         "LOCALAPPDATA",
         "NUMBER_OF_PROCESSORS",
         "OS",
@@ -263,6 +267,9 @@ class RuntimeSettings:
             max_audio_duration_ms=max_audio_duration_ms,
             whisper_primary_model=env.get("CAPTURE_WHISPER_PRIMARY_MODEL", "large-v3-turbo"),
             whisper_fallback_model=env.get("CAPTURE_WHISPER_FALLBACK_MODEL", "small"),
+            # Prefer Nvidia CUDA when the bundled ctranslate2 runtime can
+            # initialize it; FasterWhisperAdapter owns the bounded CPU
+            # fallback for machines without a usable CUDA provider.
             whisper_prefer_gpu=_bool(env.get("CAPTURE_WHISPER_PREFER_GPU"), True),
         )
         supported_whisper_models = {"large-v3-turbo", "small"}

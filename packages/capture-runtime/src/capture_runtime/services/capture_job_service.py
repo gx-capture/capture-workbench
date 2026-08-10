@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import re
 from contextlib import suppress
 from pathlib import Path
 
@@ -37,6 +38,7 @@ from capture_runtime.storage import (
     TransitionRejectedError,
 )
 from capture_runtime.structuring_provider import CaptureStructuringProvider
+from capture_runtime.worker_process import WorkerExecutionError
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +47,31 @@ TERMINAL_CAPTURE_STATUSES = {
     CaptureJobStatus.FAILED,
     CaptureJobStatus.CANCELLED,
 }
+
+_SAFE_WORKER_STAGE = re.compile(
+    r"\bat (?:stage|stages) ((?:worker-entry(?:-[a-z0-9-]+)?|python-import-[a-z0-9-]+|"
+    r"ocr-[a-z0-9-]+|whisper-[a-z0-9-]+|worker-process-[a-z0-9-]+|"
+    r"worker-stage-sequence-truncated)(?:>(?:worker-entry(?:-[a-z0-9-]+)?|python-import-[a-z0-9-]+|"
+    r"ocr-[a-z0-9-]+|whisper-[a-z0-9-]+|worker-process-[a-z0-9-]+|"
+    r"worker-stage-sequence-truncated))*)(?![a-z0-9-])"
+)
+
+
+def _safe_worker_failure_message(error: WorkerExecutionError) -> str:
+    match = _SAFE_WORKER_STAGE.search(str(error))
+    if match is None:
+        return "Source extraction worker failed."
+    stages = match.group(1)
+    label = "stages " if ">" in stages else ""
+    return f"Source extraction worker failed at {label}{stages}."
+
+
+def _safe_extraction_failure_message(error: BaseException) -> str:
+    if str(error) == "Extraction produced no non-empty content.":
+        return "Source extraction produced no non-empty content."
+    if isinstance(error, ValueError):
+        return "Source extraction failed validation."
+    return "Source extraction failed at the runtime boundary."
 
 
 def _validate_runtime_document(candidate: object, raw: RawCaptureV1) -> CaptureDocumentV1:
@@ -330,6 +357,19 @@ class CaptureService:
                 stage="structuring",
                 retryable=True,
             )
+        except WorkerExecutionError as error:
+            worker_error = error
+            self._fail_capture(
+                capture_id,
+                code="extraction_failed" if not raw_written else "structuring_failed",
+                message=(
+                    _safe_worker_failure_message(worker_error)
+                    if not raw_written
+                    else "Capture structuring failed."
+                ),
+                stage="extraction" if not raw_written else "structuring",
+                retryable=True,
+            )
         except (RuntimeUnavailableError, ExtractionRuntimeUnavailableError):
             self._fail_capture(
                 capture_id,
@@ -340,13 +380,15 @@ class CaptureService:
             )
         except TransitionRejectedError:
             return
-        except Exception:
+        except Exception as error:
             logger.exception("Capture job failed during runtime processing: %s", capture_id)
             self._fail_capture(
                 capture_id,
                 code="structuring_failed" if raw_written else "extraction_failed",
                 message=(
-                    "Capture structuring failed." if raw_written else "Source extraction failed."
+                    "Capture structuring failed."
+                    if raw_written
+                    else _safe_extraction_failure_message(error)
                 ),
                 stage="structuring" if raw_written else "extraction",
                 retryable=True,

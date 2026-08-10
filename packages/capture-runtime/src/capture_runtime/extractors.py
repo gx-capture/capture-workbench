@@ -28,7 +28,7 @@ from capture_runtime.contracts import (
 )
 from capture_runtime.engine_installation import EngineInstallationManager
 from capture_runtime.worker_client import WorkerRunResult
-from capture_runtime.worker_process import WorkerCancelledError, WorkerExecutionError
+from capture_runtime.worker_process import WorkerCancelledError
 
 if TYPE_CHECKING:
     from PIL import Image
@@ -160,8 +160,6 @@ class StandaloneRuntimeCaptureExtractor:
                 warnings = list(result.warnings)
         except WorkerCancelledError as error:
             raise asyncio.CancelledError from error
-        except WorkerExecutionError as error:
-            raise ExtractionRuntimeUnavailableError(str(error)) from error
         self._checkpoint(cancel_event)
         if not segments:
             raise ValueError("Extraction produced no non-empty content.")
@@ -270,7 +268,7 @@ class StandaloneRuntimeCaptureExtractor:
         cancel_event: asyncio.Event,
     ) -> WorkerRunResult:
         assert self.engine_manager is not None
-        engine = self.engine_manager.active_engine(requirement_id)
+        engine = await self.engine_manager.resolve_active_engine(requirement_id)
         if engine is None:
             raise ExtractionRuntimeUnavailableError(
                 f"Runtime requirement {requirement_id} is not installed and ready."

@@ -276,22 +276,42 @@ def test_windowsml_adapter_dml_initialization_failure_fails_closed_without_cpu_r
 def test_windowsml_adapter_is_unavailable_without_dml_or_cpu(tmp_path: Path) -> None:
     model_dir = tmp_path / "windowsml"
     _write_windowsml_models(model_dir)
+    stages: list[str] = []
     adapter = WindowsMLOcrAdapter(
         model_dir,
         pipeline_factory=lambda **_kwargs: object(),
         provider_resolver=lambda: [],
+        stage_reporter=stages.append,
     )
 
     probe = adapter.probe()
 
     assert probe.ready is False
     assert "CPUExecutionProvider is required" in probe.detail
+    assert stages == [
+        "ocr-probe-modules-start",
+        "ocr-probe-modules-ready",
+        "ocr-probe-assets-ready",
+        "ocr-probe-providers-0-cpu-no-dml-no",
+    ]
 
 
-def test_runtime_settings_defaults_to_cert_prep_i_gpu_adapter() -> None:
+def test_runtime_settings_defaults_to_nvidia_whisper_gpu_preference() -> None:
     settings = RuntimeSettings.from_env({"CAPTURE_API_TOKEN": "a" * 32})
 
     assert settings.extraction.windowsml_device_id == 0
+    assert settings.extraction.whisper_prefer_gpu is True
+
+
+def test_runtime_settings_allows_explicit_whisper_gpu_opt_in() -> None:
+    settings = RuntimeSettings.from_env(
+        {
+            "CAPTURE_API_TOKEN": "a" * 32,
+            "CAPTURE_WHISPER_PREFER_GPU": "true",
+        }
+    )
+
+    assert settings.extraction.whisper_prefer_gpu is True
 
 
 def test_faster_whisper_uses_local_paths_gpu_fallback_and_bounded_segments(
@@ -330,7 +350,7 @@ def test_faster_whisper_uses_local_paths_gpu_fallback_and_bounded_segments(
     result = adapter.transcribe(source, should_cancel=lambda: False)
     assert calls == [
         ("large-v3-turbo", "cuda", "float16"),
-        ("small", "cpu", "int8"),
+        ("small", "cpu", "int8_float32"),
     ]
     assert [(item.start_ms, item.end_ms, item.text) for item in result.segments] == [
         (0, 1250, "Alpha"),
@@ -341,6 +361,208 @@ def test_faster_whisper_uses_local_paths_gpu_fallback_and_bounded_segments(
 
     with pytest.raises(InterruptedError):
         adapter.transcribe(source, should_cancel=lambda: True)
+
+
+def test_faster_whisper_falls_back_when_cuda_model_initialization_has_no_cuda_text(
+    tmp_path: Path,
+) -> None:
+    models = tmp_path / "whisper"
+    _write_whisper_model(models, "large-v3-turbo")
+    _write_whisper_model(models, "small")
+    source = tmp_path / "sample.wav"
+    source.write_bytes(b"RIFF\x00\x00\x00\x00WAVE")
+    calls: list[tuple[str, str, str]] = []
+    stages: list[str] = []
+
+    class Model:
+        def transcribe(self, _path: str, **_kwargs: object):
+            return [SimpleNamespace(start=0.0, end=1.0, text="words")], SimpleNamespace(
+                duration=1.0
+            )
+
+    def factory(path: str, *, device: str, compute_type: str) -> Model:
+        calls.append((Path(path).name, device, compute_type))
+        if device == "cuda":
+            raise RuntimeError("backend initialization failed")
+        return Model()
+
+    adapter = FasterWhisperAdapter(
+        models,
+        primary_model="large-v3-turbo",
+        fallback_model="small",
+        prefer_gpu=True,
+        max_duration_ms=60_000,
+        model_factory=factory,
+        cuda_count=lambda: 1,
+        stage_reporter=stages.append,
+    )
+
+    result = adapter.transcribe(source, should_cancel=lambda: False)
+
+    assert calls == [
+        ("large-v3-turbo", "cuda", "float16"),
+        ("small", "cpu", "int8_float32"),
+    ]
+    assert result.device == "cpu"
+    assert result.warning == "Whisper GPU fallback: RuntimeError"
+    assert "whisper-gpu-fallback" in stages
+
+
+def test_faster_whisper_reports_only_constructor_exception_type(
+    tmp_path: Path,
+) -> None:
+    models = tmp_path / "whisper"
+    _write_whisper_model(models, "large-v3-turbo")
+    _write_whisper_model(models, "small")
+    source = tmp_path / "sample.wav"
+    source.write_bytes(b"RIFF\x00\x00\x00\x00WAVE")
+    stages: list[str] = []
+
+    def factory(_path: str, *, device: str, compute_type: str) -> object:
+        del device, compute_type
+        raise PermissionError("private model path must not cross diagnostics")
+
+    adapter = FasterWhisperAdapter(
+        models,
+        primary_model="large-v3-turbo",
+        fallback_model="small",
+        prefer_gpu=False,
+        max_duration_ms=60_000,
+        model_factory=factory,
+        cuda_count=lambda: 0,
+        stage_reporter=stages.append,
+    )
+
+    with pytest.raises(PermissionError):
+        adapter.transcribe(source, should_cancel=lambda: False)
+
+    assert stages[-1] == "whisper-model-load-cpu-failed-permissionerror"
+
+
+def test_faster_whisper_cpu_prefers_int8_float32_constructor(
+    tmp_path: Path,
+) -> None:
+    models = tmp_path / "whisper"
+    _write_whisper_model(models, "small")
+    source = tmp_path / "sample.wav"
+    source.write_bytes(b"RIFF\x00\x00\x00\x00WAVE")
+    calls: list[str] = []
+    stages: list[str] = []
+
+    class Model:
+        def transcribe(self, _path: str, **_kwargs: object):
+            return [SimpleNamespace(start=0.0, end=1.0, text="words")], SimpleNamespace(
+                duration=1.0
+            )
+
+    def factory(_path: str, *, device: str, compute_type: str) -> Model:
+        assert device == "cpu"
+        calls.append(compute_type)
+        return Model()
+
+    adapter = FasterWhisperAdapter(
+        models,
+        primary_model="small",
+        fallback_model="small",
+        prefer_gpu=False,
+        max_duration_ms=60_000,
+        model_factory=factory,
+        cuda_count=lambda: 0,
+        stage_reporter=stages.append,
+    )
+
+    result = adapter.transcribe(source, should_cancel=lambda: False)
+
+    assert calls == ["int8_float32"]
+    assert result.device == "cpu"
+    assert result.model == "small"
+    assert result.warning is None
+    assert "whisper-model-load-cpu-fallback-float32" not in stages
+
+
+def test_faster_whisper_cpu_int8_float32_runtimeerror_retries_with_float32_constructor(
+    tmp_path: Path,
+) -> None:
+    models = tmp_path / "whisper"
+    _write_whisper_model(models, "small")
+    source = tmp_path / "sample.wav"
+    source.write_bytes(b"RIFF\x00\x00\x00\x00WAVE")
+    calls: list[str] = []
+    stages: list[str] = []
+
+    class Model:
+        def transcribe(self, _path: str, **_kwargs: object):
+            return [SimpleNamespace(start=0.0, end=1.0, text="words")], SimpleNamespace(
+                duration=1.0
+            )
+
+    def factory(_path: str, *, device: str, compute_type: str) -> Model:
+        assert device == "cpu"
+        calls.append(compute_type)
+        if compute_type == "int8_float32":
+            raise RuntimeError("CPU int8_float32 constructor is unavailable")
+        return Model()
+
+    adapter = FasterWhisperAdapter(
+        models,
+        primary_model="small",
+        fallback_model="small",
+        prefer_gpu=False,
+        max_duration_ms=60_000,
+        model_factory=factory,
+        cuda_count=lambda: 0,
+        stage_reporter=stages.append,
+    )
+
+    result = adapter.transcribe(source, should_cancel=lambda: False)
+
+    assert calls == ["int8_float32", "float32"]
+    assert result.device == "cpu"
+    assert result.model == "small"
+    assert result.warning == "Whisper CPU int8_float32 compatibility fallback: RuntimeError"
+    assert "whisper-model-load-cpu-fallback-float32" in stages
+
+
+def test_faster_whisper_stage_markers_are_namespaced_and_cover_transcription_call(
+    tmp_path: Path,
+) -> None:
+    models = tmp_path / "whisper"
+    _write_whisper_model(models, "large-v3-turbo")
+    _write_whisper_model(models, "small")
+    source = tmp_path / "sample.wav"
+    source.write_bytes(b"RIFF\x00\x00\x00\x00WAVE")
+    stages: list[str] = []
+
+    class Model:
+        def transcribe(self, _path: str, **_kwargs: object):
+            return [SimpleNamespace(start=0.0, end=1.0, text="words")], SimpleNamespace(
+                duration=1.0
+            )
+
+    adapter = FasterWhisperAdapter(
+        models,
+        primary_model="large-v3-turbo",
+        fallback_model="small",
+        prefer_gpu=False,
+        max_duration_ms=60_000,
+        model_factory=lambda *_args, **_kwargs: Model(),
+        cuda_count=lambda: 0,
+        stage_reporter=stages.append,
+    )
+    adapter.transcribe(source, should_cancel=lambda: False)
+
+    assert stages == [
+        "whisper-assets-probe-start",
+        "whisper-assets-probe-complete",
+        "whisper-device-probe-start",
+        "whisper-device-probe-complete",
+        "whisper-model-load-cpu-start",
+        "whisper-model-load-cpu-complete",
+        "whisper-transcription-call-start",
+        "whisper-transcription-call-complete",
+        "whisper-transcription-iteration-start",
+        "whisper-transcription-complete",
+    ]
 
 
 class FakeOcrAdapter:

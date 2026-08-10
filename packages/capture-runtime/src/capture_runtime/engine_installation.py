@@ -14,8 +14,9 @@ import tempfile
 import unicodedata
 import zipfile
 from collections.abc import Callable
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
+from threading import Lock
 from typing import Protocol
 from urllib.parse import urlsplit
 from uuid import uuid4
@@ -651,6 +652,43 @@ def verify_direct_model_files(
         raise EngineInstallationError("installed direct model bytes do not match catalog")
 
 
+_InstalledFileSnapshot = tuple[tuple[str, int, int, int], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _VerifiedActiveEngine:
+    state: ActiveEngineState
+    engine: InstalledEngine
+    files: _InstalledFileSnapshot
+
+
+def _installed_engine_snapshot(
+    worker_root: Path, model_root: Path
+) -> _InstalledFileSnapshot | None:
+    files: list[tuple[str, int, int, int]] = []
+    try:
+        for role, root in (("worker", worker_root), ("model", model_root)):
+            if not root.is_dir() or root.is_symlink():
+                return None
+            for path in root.rglob("*"):
+                if path.is_symlink():
+                    return None
+                if not path.is_file():
+                    continue
+                metadata = path.stat()
+                files.append(
+                    (
+                        f"{role}/{path.relative_to(root).as_posix()}",
+                        metadata.st_size,
+                        metadata.st_mtime_ns,
+                        metadata.st_ctime_ns,
+                    )
+                )
+    except (OSError, RuntimeError):
+        return None
+    return tuple(sorted(files))
+
+
 def _atomic_write_json(path: Path, payload: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
@@ -713,6 +751,8 @@ class EngineInstallationManager:
         self.model_downloader = model_downloader or HttpModelFileDownloader()
         self._smoke_worker_mirror_url = _smoke_worker_mirror_url()
         self._locks: dict[str, asyncio.Lock] = {}
+        self._verified_active_engines: dict[str, _VerifiedActiveEngine] = {}
+        self._verified_active_engines_lock = Lock()
 
     def requirement(self, requirement_id: str) -> EngineRequirementDescriptor:
         return self.catalog.requirement(requirement_id)
@@ -742,21 +782,50 @@ class EngineInstallationManager:
         version_root = self._requirement_root(requirement_id) / "versions" / state.artifact_version
         worker_root = version_root / "worker"
         model_root = version_root / "model"
+        files_before_verification = _installed_engine_snapshot(worker_root, model_root)
+        with self._verified_active_engines_lock:
+            cached = self._verified_active_engines.get(requirement_id)
+        if (
+            cached is not None
+            and cached.state == state
+            and cached.files == files_before_verification
+            and cached.engine.executable.is_file()
+            and cached.engine.model_dir.is_dir()
+        ):
+            return cached.engine
         try:
             verify_extracted_artifact(worker_root, worker_descriptor)
             verify_direct_model_files(model_root, model_descriptor)
         except EngineInstallationError:
             return None
+        files_after_verification = _installed_engine_snapshot(worker_root, model_root)
+        if (
+            files_before_verification is None
+            or files_after_verification != files_before_verification
+        ):
+            return None
         executable = self._resolved_child(self._requirement_root(requirement_id), state.entry_point)
         model_dir = self._resolved_child(model_root, model_descriptor.entry_point)
         if not executable.is_file() or not model_dir.is_dir():
             return None
-        return InstalledEngine(
+        engine = InstalledEngine(
             requirement_id=requirement_id,
             artifact_version=state.artifact_version,
             executable=executable,
             model_dir=model_dir,
         )
+        with self._verified_active_engines_lock:
+            self._verified_active_engines[requirement_id] = _VerifiedActiveEngine(
+                state=state,
+                engine=engine,
+                files=files_after_verification,
+            )
+        return engine
+
+    async def resolve_active_engine(self, requirement_id: str) -> InstalledEngine | None:
+        """Resolve and cold-verify an engine without blocking the runtime event loop."""
+
+        return await asyncio.to_thread(self.active_engine, requirement_id)
 
     async def probe(
         self,
@@ -958,6 +1027,22 @@ class EngineInstallationManager:
             if previous_version.exists():
                 shutil.rmtree(previous_version, ignore_errors=True)
             activated = True
+            active_engine = InstalledEngine(
+                requirement_id=requirement.requirement_id,
+                artifact_version=requirement.artifact_version,
+                executable=self._resolved_child(version / "worker", worker_descriptor.entry_point),
+                model_dir=self._resolved_child(version / "model", model_descriptor.entry_point),
+            )
+            installed_files = _installed_engine_snapshot(version / "worker", version / "model")
+            if installed_files is not None:
+                with self._verified_active_engines_lock:
+                    self._verified_active_engines[requirement.requirement_id] = (
+                        _VerifiedActiveEngine(
+                            state=state,
+                            engine=active_engine,
+                            files=installed_files,
+                        )
+                    )
             report_progress(1)
             self._remove_inactive_versions(requirement_root, requirement.artifact_version)
         finally:

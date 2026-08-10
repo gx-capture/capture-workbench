@@ -13,6 +13,7 @@ import warnings
 from io import BytesIO
 from pathlib import Path
 from threading import Event
+from collections.abc import Iterable, Iterator
 from typing import Any
 
 STAGE_PREFIX = "capture-worker-stage:"
@@ -227,7 +228,7 @@ def _run(request: WorkerRequest, cancellation: Event) -> dict[str, Any]:
         device_id=int(options.get("deviceId", 0)),
         stage_reporter=_report_stage,
     )
-    images: list[tuple[int, bytes]]
+    images: Iterable[tuple[int, bytes]]
     if media_type == "application/pdf":
         pages = options.get("pages")
         scale = options.get("renderScale")
@@ -244,7 +245,17 @@ def _run(request: WorkerRequest, cancellation: Event) -> dict[str, Any]:
             or not 0.5 <= float(scale) <= 8
         ):
             raise ValueError("OCR PDF options are invalid")
-        images = [(page, _render_page(source, page - 1, float(scale))) for page in pages]
+
+        def render_pages() -> Iterator[tuple[int, bytes]]:
+            for page in pages:
+                if cancellation.is_set():
+                    raise InterruptedError
+                _report_stage("ocr-pdf-render-start")
+                image = _render_page(source, page - 1, float(scale))
+                _report_stage("ocr-pdf-render-complete")
+                yield page, image
+
+        images = render_pages()
     elif media_type in {"image/png", "image/jpeg", "image/webp"}:
         max_pixels = options.get("maxImagePixels")
         if not isinstance(max_pixels, int) or isinstance(max_pixels, bool) or max_pixels < 1:
@@ -274,6 +285,9 @@ def _run(request: WorkerRequest, cancellation: Event) -> dict[str, Any]:
             warning_values.append(result.warning)
     if not results:
         raise ValueError("OCR produced no results")
+    if not segments:
+        _report_stage("ocr-output-empty")
+        raise ValueError("OCR produced no non-empty segments")
     provenance = results[0]
     return {
         "segments": segments,
