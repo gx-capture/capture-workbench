@@ -465,9 +465,9 @@ async function main(): Promise<void> {
           method: 'DELETE',
         }).catch(() => undefined);
       }
-      await request<void>(runtimePort, token, `/v2/ingestions/${lane.ingestionId}`, {
-        method: 'DELETE',
-      }).catch(() => undefined);
+      await deleteIfPresent(runtimePort, token, `/v2/ingestions/${lane.ingestionId}`).catch(
+        () => undefined,
+      );
     }
     await terminateOwnedTree(child);
   }
@@ -875,9 +875,7 @@ async function deleteCapturesAndVerify(
         `Capture ${lane.captureId} remained readable after UUID-scoped deletion (HTTP ${response.status}).`,
       );
     }
-    await request<void>(port, token, `/v2/ingestions/${lane.ingestionId}`, {
-      method: 'DELETE',
-    });
+    await deleteIfPresent(port, token, `/v2/ingestions/${lane.ingestionId}`);
     captureLanes.splice(captureLanes.indexOf(lane), 1);
   }
 }
@@ -1056,6 +1054,24 @@ async function request<T>(
     );
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
+}
+
+async function deleteIfPresent(
+  port: number,
+  token: string,
+  path: string,
+): Promise<void> {
+  const response = await fetch(`http://127.0.0.1:${port}${path}`, {
+    method: 'DELETE',
+    headers: {
+      authorization: `Bearer ${token}`,
+      origin: 'http://tauri.localhost',
+    },
+  });
+  if (response.status === 404) return;
+  if (!response.ok) {
+    throw new Error(`Core request ${path} failed with HTTP ${response.status}.`);
+  }
 }
 
 function requiredPath(name: string): string {

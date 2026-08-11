@@ -118,6 +118,138 @@ def test_streaming_repository_prunes_expired_terminal_capture_and_ingestion(
     assert not (tmp_path / "streaming" / "ingestions" / ingestion_id).exists()
 
 
+def test_streaming_repository_deletes_unreferenced_ingestion_after_terminal_capture(
+    tmp_path: Path,
+) -> None:
+    clock = MutableClock()
+    source = b"audio"
+    repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+    repository.initialize()
+    ingestion_id, source_sha256 = _open(repository, source)
+    repository.append_chunk(
+        ingestion_id,
+        chunk_index=0,
+        byte_offset=0,
+        data=source,
+        sha256=source_sha256,
+        max_chunk_bytes=4 * 1024 * 1024,
+        declared_total_bytes=len(source),
+    )
+    repository.finalize_ingestion(ingestion_id, total_bytes=len(source), sha256=source_sha256)
+    capture = repository.create_capture(
+        StartCaptureV2(
+            client_request_id="repository-cascade-delete",
+            ingestion_id=ingestion_id,
+            structuring_mode=StructuringMode.HOST,
+        )
+    )
+    repository.cancel_capture(capture.capture_id)
+
+    repository.delete_capture(capture.capture_id)
+
+    with pytest.raises(KeyError):
+        repository.get_capture(capture.capture_id)
+    with pytest.raises(KeyError):
+        repository.get_ingestion(ingestion_id)
+    assert not (tmp_path / "streaming" / "captures" / capture.capture_id).exists()
+    assert not (tmp_path / "streaming" / "ingestions" / ingestion_id).exists()
+
+
+def test_streaming_repository_preserves_shared_ingestion_until_last_capture_is_deleted(
+    tmp_path: Path,
+) -> None:
+    clock = MutableClock()
+    source = b"audio"
+    repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+    repository.initialize()
+    ingestion_id, source_sha256 = _open(repository, source)
+    repository.append_chunk(
+        ingestion_id,
+        chunk_index=0,
+        byte_offset=0,
+        data=source,
+        sha256=source_sha256,
+        max_chunk_bytes=4 * 1024 * 1024,
+        declared_total_bytes=len(source),
+    )
+    repository.finalize_ingestion(ingestion_id, total_bytes=len(source), sha256=source_sha256)
+    first = repository.create_capture(
+        StartCaptureV2(
+            client_request_id="repository-shared-capture-1",
+            ingestion_id=ingestion_id,
+            structuring_mode=StructuringMode.HOST,
+        )
+    )
+    second = repository.create_capture(
+        StartCaptureV2(
+            client_request_id="repository-shared-capture-2",
+            ingestion_id=ingestion_id,
+            structuring_mode=StructuringMode.HOST,
+        )
+    )
+    repository.cancel_capture(first.capture_id)
+
+    repository.delete_capture(first.capture_id)
+
+    assert repository.get_ingestion(ingestion_id).status is StreamingIngestionStatus.READY
+    assert repository.source_path(ingestion_id).read_bytes() == source
+    with pytest.raises(StreamingTransitionError, match="active"):
+        repository.delete_capture(second.capture_id)
+    repository.cancel_capture(second.capture_id)
+    repository.delete_capture(second.capture_id)
+    with pytest.raises(KeyError):
+        repository.get_ingestion(ingestion_id)
+
+
+def test_streaming_repository_retains_capture_state_when_filesystem_delete_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = MutableClock()
+    source = b"audio"
+    repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+    repository.initialize()
+    ingestion_id, source_sha256 = _open(repository, source)
+    repository.append_chunk(
+        ingestion_id,
+        chunk_index=0,
+        byte_offset=0,
+        data=source,
+        sha256=source_sha256,
+        max_chunk_bytes=4 * 1024 * 1024,
+        declared_total_bytes=len(source),
+    )
+    repository.finalize_ingestion(ingestion_id, total_bytes=len(source), sha256=source_sha256)
+    capture = repository.create_capture(
+        StartCaptureV2(
+            client_request_id="repository-filesystem-delete-failure",
+            ingestion_id=ingestion_id,
+            structuring_mode=StructuringMode.HOST,
+        )
+    )
+    repository.cancel_capture(capture.capture_id)
+    subscription = repository.subscribe_events(capture.capture_id, after_sequence=-1)
+
+    def fail_delete(_directory: Path) -> None:
+        raise OSError("capture directory is unavailable")
+
+    monkeypatch.setattr(
+        "capture_runtime.storage.streaming_repository.shutil.rmtree",
+        fail_delete,
+    )
+    with pytest.raises(OSError, match="unavailable"):
+        repository.delete_capture(capture.capture_id)
+
+    assert repository.get_capture(capture.capture_id).capture_id == capture.capture_id
+    repository.append_event(
+        capture.capture_id,
+        event_type=StreamingEventType.HEARTBEAT,
+        stage="completed",
+    )
+    assert subscription.get(timeout=0.1).event_type is StreamingEventType.HEARTBEAT
+    subscription.close()
+
+
 def test_streaming_repository_rejects_active_capture_delete_without_detaching_subscriber(
     tmp_path: Path,
 ) -> None:
@@ -149,6 +281,7 @@ def test_streaming_repository_rejects_active_capture_delete_without_detaching_su
         repository.delete_capture(capture.capture_id)
 
     assert repository.get_capture(capture.capture_id).capture_id == capture.capture_id
+    assert repository.get_ingestion(ingestion_id).status is StreamingIngestionStatus.READY
     repository.append_event(
         capture.capture_id,
         event_type=StreamingEventType.HEARTBEAT,

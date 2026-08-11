@@ -244,12 +244,14 @@ export class CaptureReconciliationService {
     message: string,
     signal: AbortSignal,
   ): Observable<CaptureOperationV2> {
-    return defer(() =>
-      client.reportStreamingStructuringFailure(
-        captureId,
-        { code: HOST_PROVIDER_FAILURE_CODE, message },
-        signal,
-      ),
+    const request = {
+      clientRequestId: crypto.randomUUID(),
+      code: HOST_PROVIDER_FAILURE_CODE,
+      message,
+    } as const;
+    return this.helpers.retryUncertainResponse(
+      () => client.reportStreamingStructuringFailure(captureId, request, signal),
+      signal,
     ).pipe(
       catchError((error: unknown) => {
         if (this.helpers.isAbortError(error)) return throwError(() => error);

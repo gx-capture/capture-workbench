@@ -148,6 +148,8 @@ export interface CommitStreamingStructuredResultRequest {
 }
 
 export interface ReportStreamingStructuringFailureRequest {
+  /** Stable key reused when the host reconciles an uncertain response. */
+  readonly clientRequestId?: string;
   readonly code: string;
   readonly message: string;
 }

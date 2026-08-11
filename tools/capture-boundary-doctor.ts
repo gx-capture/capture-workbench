@@ -19,17 +19,14 @@ const OPERATION_PHASES = new Set([
   'completed',
   'failed',
 ]);
-const CAPTURE_ACTIVE = new Set(['queued', 'running']);
-const CAPTURE_TERMINAL = new Set(['completed', 'failed', 'cancelled']);
-const CAPTURE_STAGES = new Set([
-  'queued',
+const CAPTURE_ACTIVE = new Set([
+  'created',
+  'waiting_input',
   'extracting',
   'awaiting_structuring',
   'structuring',
-  'completed',
-  'failed',
-  'cancelled',
 ]);
+const CAPTURE_TERMINAL = new Set(['completed', 'failed', 'cancelled']);
 const REQUIREMENT_STATUSES = new Set([
   'ready',
   'missing',
@@ -114,7 +111,7 @@ interface OperationSummary {
 
 interface CaptureSummary {
   status: string;
-  stage: string;
+  phase: string;
   errorCode?: string;
   retryable?: boolean;
 }
@@ -625,8 +622,6 @@ function parseCapture(value: unknown): CaptureSummary {
   if (!CAPTURE_ACTIVE.has(status) && !CAPTURE_TERMINAL.has(status)) {
     throw new InvalidShapeError();
   }
-  const stage = textField(capture, 'stage');
-  if (!CAPTURE_STAGES.has(stage)) throw new InvalidShapeError();
   const error = capture.error === null || capture.error === undefined
     ? undefined
     : record(capture.error);
@@ -640,7 +635,7 @@ function parseCapture(value: unknown): CaptureSummary {
   }
   return {
     status,
-    stage,
+    phase: status,
     ...(errorCode === undefined ? {} : { errorCode }),
     ...(retryable === undefined ? {} : { retryable }),
   };

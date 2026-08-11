@@ -186,6 +186,18 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
                 "Capture request id was already used with different metadata.",
             ) from error
 
+    @router.get(
+        "/captures/by-client-request/{client_request_id}",
+        response_model=CaptureOperationV2,
+    )
+    async def get_capture_by_client_request_id(client_request_id: str) -> CaptureOperationV2:
+        try:
+            return service.get_capture_by_client_request_id(client_request_id)
+        except StreamingRecordNotFoundError as error:
+            raise ApiProblem(
+                404, "capture_not_found", "Streaming capture was not found."
+            ) from error
+
     @router.get("/captures/{capture_id}", response_model=CaptureOperationV2)
     async def get_capture(capture_id: str) -> CaptureOperationV2:
         try:

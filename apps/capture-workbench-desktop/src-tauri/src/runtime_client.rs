@@ -212,7 +212,22 @@ fn request_capture_with_recovery(
             &[],
         )
     };
-    send().or_else(|_| send())
+    let first_error = match send() {
+        Ok(value) => return Ok(value),
+        Err(error) => error,
+    };
+    match send() {
+        Ok(value) => Ok(value),
+        Err(_) => request_with_headers(
+            config,
+            "GET",
+            &format!("/v2/captures/by-client-request/{client_request_id}"),
+            None,
+            None,
+            &[],
+        )
+        .map_err(|_| first_error),
+    }
 }
 
 pub(crate) fn streaming_capture(
@@ -504,18 +519,96 @@ fn request_sse(
     if !has_event_stream_content_type(headers) {
         return Err("Capture Runtime SSE response Content-Type was not text/event-stream.".into());
     }
-    let events = response[separator + 4..]
-        .split(|byte| *byte == b'\n')
-        .filter_map(|line| line.strip_prefix(b"data: "))
-        .filter(|line| !line.is_empty())
-        .map(|line| {
-            let mut value: Value = serde_json::from_slice(line)
-                .map_err(|_| "Capture Runtime SSE event was not valid JSON.".to_string())?;
-            redact_token(&mut value, &config.token);
-            Ok(value)
+    parse_sse_events(&response[separator + 4..], last_event_id, &config.token)
+}
+
+#[derive(Default)]
+struct SseFrame {
+    id: Option<String>,
+    event: Option<String>,
+    data: Vec<String>,
+}
+
+fn parse_sse_events(body: &[u8], cursor: Option<&str>, token: &str) -> Result<Value, String> {
+    let text = std::str::from_utf8(body)
+        .map_err(|_| "Capture Runtime SSE response was not valid UTF-8.".to_string())?;
+    let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+    let cursor_sequence = cursor
+        .map(|value| {
+            value
+                .parse::<u64>()
+                .map_err(|_| "Capture Runtime SSE cursor was invalid.".to_string())
         })
-        .collect::<Result<Vec<_>, String>>()?;
+        .transpose()?;
+    let mut frame = SseFrame::default();
+    let mut events = Vec::new();
+    let mut previous_sequence = cursor_sequence;
+
+    for line in normalized.split('\n') {
+        if line.is_empty() {
+            dispatch_sse_frame(&mut frame, &mut events, &mut previous_sequence, token)?;
+            continue;
+        }
+        if line.starts_with(':') {
+            continue;
+        }
+        let (field, raw_value) = line
+            .split_once(':')
+            .map_or((line, ""), |(field, value)| (field, value));
+        let value = raw_value.strip_prefix(' ').unwrap_or(raw_value);
+        match field {
+            "data" => frame.data.push(value.to_string()),
+            "id" => frame.id = Some(value.to_string()),
+            "event" => frame.event = Some(value.to_string()),
+            _ => {}
+        }
+    }
+    dispatch_sse_frame(&mut frame, &mut events, &mut previous_sequence, token)?;
     Ok(Value::Array(events))
+}
+
+fn dispatch_sse_frame(
+    frame: &mut SseFrame,
+    events: &mut Vec<Value>,
+    previous_sequence: &mut Option<u64>,
+    token: &str,
+) -> Result<(), String> {
+    if frame.data.is_empty() {
+        frame.id = None;
+        frame.event = None;
+        return Ok(());
+    }
+    let mut value: Value = serde_json::from_str(&frame.data.join("\n"))
+        .map_err(|_| "Capture Runtime SSE event was not valid JSON.".to_string())?;
+    let sequence = value
+        .get("sequence")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "Capture Runtime SSE event sequence was invalid.".to_string())?;
+    let event_type = value
+        .get("eventType")
+        .and_then(Value::as_str)
+        .filter(|event_type| !event_type.is_empty())
+        .ok_or_else(|| "Capture Runtime SSE event type was invalid.".to_string())?;
+    if let Some(id) = frame.id.as_deref() {
+        if id != sequence.to_string() {
+            return Err("Capture Runtime SSE event id did not match its sequence.".to_string());
+        }
+    }
+    if let Some(event) = frame.event.as_deref() {
+        if event != event_type {
+            return Err("Capture Runtime SSE event name did not match its payload.".to_string());
+        }
+    }
+    if previous_sequence.is_some_and(|previous| sequence <= previous) {
+        return Err("Capture Runtime SSE event sequence was not strictly increasing.".to_string());
+    }
+    *previous_sequence = Some(sequence);
+    redact_token(&mut value, token);
+    events.push(value);
+    frame.id = None;
+    frame.event = None;
+    frame.data.clear();
+    Ok(())
 }
 
 fn has_event_stream_content_type(headers: &str) -> bool {
@@ -725,7 +818,7 @@ mod tests {
             let body = concat!(
                 "id: 8\r\n",
                 "event: checkpoint\r\n",
-                "data: {\"sequence\":8,\"message\":\"secret-token\"}\r\n\r\n",
+                "data: {\"sequence\":8,\"eventType\":\"checkpoint\",\"message\":\"secret-token\"}\r\n\r\n",
             );
             write!(
                 stream,
@@ -750,6 +843,48 @@ mod tests {
         assert_eq!(events[0]["sequence"], 8);
         assert_eq!(events[0]["message"], "[REDACTED]");
         server.join().expect("server");
+    }
+
+    #[test]
+    fn streaming_sse_implements_framing_metadata_and_strict_cursor_ordering() {
+        let first = r#"{"sequence":8,"eventType":"checkpoint","message":"secret-token"}"#;
+        let second = r#"{"sequence":9,"eventType":"completed"}"#;
+        let body = format!(
+            ": keep-alive\r\n\r\n\r\nid: 8\r\nevent: checkpoint\r\ndata:{}\r\ndata: {}\r\n\r\nid: 9\nevent: completed\ndata:{}\n\n",
+            &first[..first.find(",\"message\"").expect("split") + 1],
+            &first[first.find(",\"message\"").expect("split") + 1..],
+            second,
+        );
+
+        let events =
+            parse_sse_events(body.as_bytes(), Some("7"), "secret-token").expect("framed events");
+
+        assert_eq!(events[0]["sequence"], 8);
+        assert_eq!(events[0]["message"], "[REDACTED]");
+        assert_eq!(events[1]["eventType"], "completed");
+    }
+
+    #[test]
+    fn streaming_sse_rejects_metadata_mismatch_and_non_increasing_sequences() {
+        let payload = r#"{"sequence":8,"eventType":"checkpoint"}"#;
+        let id_mismatch = format!("id: 7\nevent: checkpoint\ndata: {payload}\n\n");
+        let event_mismatch = format!("id: 8\nevent: completed\ndata: {payload}\n\n");
+        let duplicate = format!("data: {payload}\n\ndata: {payload}\n\n",);
+
+        assert!(parse_sse_events(id_mismatch.as_bytes(), None, "token")
+            .expect_err("id mismatch")
+            .contains("id"));
+        assert!(parse_sse_events(event_mismatch.as_bytes(), None, "token")
+            .expect_err("event mismatch")
+            .contains("name"));
+        assert!(parse_sse_events(duplicate.as_bytes(), None, "token")
+            .expect_err("duplicate sequence")
+            .contains("strictly increasing"));
+        assert!(
+            parse_sse_events(payload.as_bytes(), Some("not-a-number"), "token")
+                .expect_err("invalid cursor")
+                .contains("cursor")
+        );
     }
 
     #[test]
@@ -829,6 +964,52 @@ mod tests {
         .expect("idempotent recovery");
 
         assert_eq!(value["captureId"], "capture-1");
+        server.join().expect("server");
+    }
+
+    #[test]
+    fn capture_creation_recovers_by_client_request_id_after_two_lost_responses() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("listener");
+        let port = listener.local_addr().expect("address").port();
+        let server = thread::spawn(move || {
+            for attempt in 0..3 {
+                let (mut stream, _) = listener.accept().expect("accept");
+                let request = read_http_request(&mut stream);
+                if attempt < 2 {
+                    assert!(request.starts_with("POST /v2/captures HTTP/1.1"));
+                    assert!(request.contains("X-Idempotency-Key: capture-request-2"));
+                    continue;
+                }
+                assert!(request
+                    .starts_with("GET /v2/captures/by-client-request/capture-request-2 HTTP/1.1",));
+                let body = r#"{"captureId":"capture-recovered"}"#;
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                )
+                .expect("response");
+            }
+        });
+
+        let value = request_capture_with_recovery(
+            &BackendConfig {
+                base_url: format!("http://127.0.0.1:{port}"),
+                token: "token".into(),
+                runtime_version: "0.3.11".into(),
+                api_version: "1.0".into(),
+                capture_document_schema_version: "1".into(),
+            },
+            RequestBody {
+                bytes: br#"{"clientRequestId":"capture-request-2"}"#.to_vec(),
+                content_type: "application/json".into(),
+            },
+            "capture-request-2",
+        )
+        .expect("lookup recovery");
+
+        assert_eq!(value["captureId"], "capture-recovered");
         server.join().expect("server");
     }
 

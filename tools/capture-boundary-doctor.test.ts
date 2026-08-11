@@ -266,7 +266,6 @@ test('runtime failure still active in Cert Prep is a host reconciliation fault',
     { status: 'running', phase: 'processing', cancellable: true },
     {
       status: 'failed',
-      stage: 'failed',
       error: {
         code: 'ocr_failed',
         message: 'private source path must not leak',
@@ -290,7 +289,6 @@ test('matching propagated runtime failure assigns the underlying failure to Capt
     { status: 'failed', phase: 'failed', cancellable: false, error: {} },
     {
       status: 'failed',
-      stage: 'failed',
       error: { code: 'ocr_failed', stage: 'ocr', retryable: false },
     },
   );
@@ -309,7 +307,7 @@ test('matching completion is healthy and a terminal host with active runtime nee
     makeDependencies(
       correlatedRoutes(
         { status: 'succeeded', phase: 'completed', cancellable: false },
-        { status: 'completed', stage: 'completed' },
+        { status: 'completed' },
       ),
     ).dependencies,
   );
@@ -321,12 +319,34 @@ test('matching completion is healthy and a terminal host with active runtime nee
     makeDependencies(
       correlatedRoutes(
         { status: 'failed', phase: 'failed', cancellable: false },
-        { status: 'running', stage: 'extracting' },
+        { status: 'extracting' },
       ),
     ).dependencies,
   );
   assert.equal(cleanupReport.verdict.owner, 'cert-prep');
   assert.equal(cleanupReport.verdict.code, 'operation_terminal_runtime_active');
+});
+
+test('accepts every v2 capture active status without legacy stage metadata', async () => {
+  for (const status of [
+    'created',
+    'waiting_input',
+    'extracting',
+    'awaiting_structuring',
+    'structuring',
+  ]) {
+    const report = await runBoundaryDoctor(
+      correlatedOptions(),
+      makeDependencies(
+        correlatedRoutes(
+          { status: 'running', phase: 'processing', cancellable: true },
+          { status },
+        ),
+      ).dependencies,
+    );
+
+    assert.equal(report.verdict.code, 'correlated_work_in_progress');
+  }
 });
 
 test('watch mode judges only the final sample and stops when both jobs become terminal', async () => {
@@ -336,8 +356,8 @@ test('watch mode judges only the final sample and stops when both jobs become te
       { status: 'succeeded', phase: 'completed', cancellable: false },
     ],
     [
-      { status: 'running', stage: 'extracting' },
-      { status: 'completed', stage: 'completed' },
+      { status: 'extracting' },
+      { status: 'completed' },
     ],
   );
   duplicateBaseRoutes(routes, 2);

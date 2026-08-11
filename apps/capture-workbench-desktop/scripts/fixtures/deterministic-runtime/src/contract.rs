@@ -636,17 +636,13 @@ impl FixtureState {
             "capture-{}",
             self.next_capture.fetch_add(1, Ordering::Relaxed)
         );
-        let partial_revision = if ingestion.kind == "audio" { 1 } else { 0 };
-        let partial = if ingestion.kind == "audio" {
-            Some(build_partial(
-                &raw,
-                &capture_id,
-                &ingestion.kind,
-                partial_revision,
-            ))
-        } else {
-            None
-        };
+        let partial_revision = 1;
+        let partial = Some(build_partial(
+            &raw,
+            &capture_id,
+            &ingestion.kind,
+            partial_revision,
+        ));
         let audio_covered_until_ms = if ingestion.kind == "audio" {
             raw["segments"]
                 .as_array()
@@ -717,6 +713,13 @@ impl FixtureState {
 
     fn route_capture(&self, request: &Request) -> Response {
         let relative = request.path.trim_start_matches("/v2/captures/");
+        if let Some(client_request_id) = relative.strip_prefix("by-client-request/") {
+            return if request.method == "GET" {
+                self.capture_by_client_request_id(client_request_id)
+            } else {
+                api_error(404, "not_found", "Resource was not found.")
+            };
+        }
         if let Some(capture_id) = relative.strip_suffix("/structure/commit") {
             return if request.method == "POST" {
                 self.commit_structure(capture_id, request)
@@ -788,13 +791,40 @@ impl FixtureState {
         }
     }
 
+    fn capture_by_client_request_id(&self, client_request_id: &str) -> Response {
+        let capture_id = self
+            .capture_idempotency
+            .lock()
+            .ok()
+            .and_then(|items| items.get(client_request_id).map(|item| item.resource_id.clone()));
+        match capture_id {
+            Some(capture_id) => self.operation_response(&capture_id, 200),
+            None => api_error(404, "capture_not_found", "Capture job was not found."),
+        }
+    }
+
     fn events_response(&self, capture_id: &str, request: &Request) -> Response {
-        let has_cursor = request.headers.contains_key("last-event-id");
-        let after_sequence = request
-            .headers
-            .get("last-event-id")
-            .and_then(|value| value.parse::<u64>().ok())
-            .unwrap_or(0);
+        let (has_cursor, after_sequence) = match request.headers.get("last-event-id") {
+            None => (false, 0),
+            Some(value) if value.is_empty() => (true, 0),
+            Some(value) => match value.parse::<i64>() {
+                Ok(value) if value >= -1 => (true, value.max(0) as u64),
+                Ok(_) => {
+                    return api_error(
+                        422,
+                        "invalid_event_cursor",
+                        "Last-Event-ID must not be negative.",
+                    )
+                }
+                Err(_) => {
+                    return api_error(
+                        422,
+                        "invalid_event_cursor",
+                        "Last-Event-ID must be an integer.",
+                    )
+                }
+            },
+        };
         let record = self
             .captures
             .lock()
@@ -940,16 +970,36 @@ impl FixtureState {
     }
 
     fn delete_capture(&self, capture_id: &str) -> Response {
-        let removed = self
-            .captures
-            .lock()
-            .ok()
-            .and_then(|mut captures| captures.remove(capture_id));
-        if removed.is_some() {
-            Response::empty(204)
-        } else {
-            api_error(404, "capture_not_found", "Capture job was not found.")
+        let Ok(mut captures) = self.captures.lock() else {
+            return api_error(500, "runtime_unavailable", "Capture state is unavailable.");
+        };
+        let Some(record) = captures.get(capture_id).cloned() else {
+            return api_error(404, "capture_not_found", "Capture job was not found.");
+        };
+        if !matches!(record.status.as_str(), "completed" | "failed" | "cancelled") {
+            return api_error(
+                409,
+                "capture_delete_rejected",
+                "Capture cannot be deleted while active.",
+            );
         }
+        captures.remove(capture_id);
+        let ingestion_still_referenced = captures
+            .values()
+            .any(|capture| capture.ingestion_id == record.ingestion_id);
+        drop(captures);
+        if let Ok(mut items) = self.capture_idempotency.lock() {
+            items.retain(|_, item| item.resource_id != capture_id);
+        }
+        if !ingestion_still_referenced {
+            if let Ok(mut ingestions) = self.ingestions.lock() {
+                ingestions.remove(&record.ingestion_id);
+            }
+            if let Ok(mut items) = self.ingestion_idempotency.lock() {
+                items.retain(|_, item| item.resource_id != record.ingestion_id);
+            }
+        }
+        Response::empty(204)
     }
 
     fn commit_structure(&self, capture_id: &str, request: &Request) -> Response {
@@ -1032,10 +1082,11 @@ impl FixtureState {
             Ok(payload) => payload,
             Err(_) => return validation_error("Request body must be valid JSON."),
         };
-        let code = payload.get("code").and_then(Value::as_str);
-        let message = payload.get("message").and_then(Value::as_str);
-        if code.is_none_or(|value| !valid_error_code(value))
-            || message.is_none_or(|value| value.trim().is_empty() || value.len() > 500)
+        let supplied_code = payload.get("code").and_then(Value::as_str);
+        let supplied_message = payload.get("message").and_then(Value::as_str);
+        if supplied_code.is_none_or(|value| !valid_error_code(value))
+            || supplied_message
+                .is_none_or(|value| value.trim().is_empty() || value.len() > 500)
         {
             return validation_error("Structuring failure payload is invalid.");
         }
@@ -1055,8 +1106,8 @@ impl FixtureState {
         record.status = "failed".into();
         record.stage = "failed".into();
         record.error = Some(json!({
-            "code": code,
-            "message": message,
+            "code": "host_provider_failed",
+            "message": "Host structuring failed.",
             "stage": "structuring",
             "retryable": false,
         }));

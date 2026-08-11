@@ -31,7 +31,7 @@ from capture_runtime.progressive_capture import (
 )
 from capture_runtime.progressive_decoder import ProgressiveDecoderError
 from capture_runtime.services import StreamingCaptureService
-from capture_runtime.storage import StreamingRepository
+from capture_runtime.storage import StreamingRepository, StreamingTransitionError
 from capture_runtime.structuring_provider import FakeCaptureStructuringProvider
 from capture_runtime.whisper_session import SessionFrameType
 
@@ -238,6 +238,44 @@ def test_progressive_runtime_materializes_partial_raw_result_and_terminal_events
         await service.shutdown()
 
     asyncio.run(scenario())
+
+
+def test_streaming_service_does_not_detach_active_capture_before_delete_rejection(
+    tmp_path: Path,
+) -> None:
+    class PendingTask:
+        def __init__(self) -> None:
+            self.cancelled = False
+
+        def done(self) -> bool:
+            return False
+
+        def cancel(self) -> None:
+            self.cancelled = True
+
+    clock = FixedClock()
+    repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+    repository.initialize()
+    ingestion_id, _ = _open(repository)
+    service = StreamingCaptureService(repository, clock=clock)
+    operation = service.start_capture(
+        StartCaptureV2(
+            client_request_id="service-active-delete",
+            ingestion_id=ingestion_id,
+            structuring_mode=StructuringMode.RUNTIME,
+        )
+    )
+    task = PendingTask()
+    cancellation = asyncio.Event()
+    service._tasks[operation.capture_id] = task  # type: ignore[assignment]
+    service._cancellations[operation.capture_id] = cancellation
+
+    with pytest.raises(StreamingTransitionError, match="active"):
+        service.delete_capture(operation.capture_id)
+
+    assert service._tasks[operation.capture_id] is task
+    assert service._cancellations[operation.capture_id] is cancellation
+    assert not task.cancelled
 
 
 def test_progressive_runtime_preserves_structuring_phase_failure_after_raw_materialization(

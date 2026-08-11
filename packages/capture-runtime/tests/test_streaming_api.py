@@ -184,6 +184,58 @@ def test_streaming_api_rejects_deleting_an_active_capture(client: TestClient) ->
     assert deleted.status_code == 409
     assert deleted.json()["error"]["code"] == "capture_delete_rejected"
     assert client.get(f"/v2/captures/{capture_id}").status_code == 200
+    assert client.get(f"/v2/ingestions/{ingestion_id}").status_code == 200
+
+
+def test_streaming_api_finds_capture_by_client_request_id_for_lost_response_recovery(
+    client: TestClient,
+) -> None:
+    ingestion_id, _ = _open(client)
+    client_request_id = "api-stream-recovery-lookup"
+    started = client.post(
+        "/v2/captures",
+        json={
+            "clientRequestId": client_request_id,
+            "ingestionId": ingestion_id,
+            "structuringMode": "host",
+            "startPolicy": "eager",
+        },
+    )
+    assert started.status_code == 202, started.text
+    capture_id = started.json()["captureId"]
+
+    recovered = client.get(
+        "/v2/captures/by-client-request/" + client_request_id,
+    )
+
+    assert recovered.status_code == 200, recovered.text
+    assert recovered.json()["captureId"] == capture_id
+    assert client.get("/v2/captures/by-client-request/missing-request").status_code == 404
+
+
+def test_streaming_api_cascades_terminal_capture_cleanup_to_unreferenced_ingestion(
+    client: TestClient,
+) -> None:
+    ingestion_id, _ = _open(client)
+    started = client.post(
+        "/v2/captures",
+        json={
+            "clientRequestId": "api-stream-cascade-delete",
+            "ingestionId": ingestion_id,
+            "structuringMode": "host",
+            "startPolicy": "eager",
+        },
+    )
+    assert started.status_code == 202, started.text
+    capture_id = started.json()["captureId"]
+    cancelled = client.post(f"/v2/captures/{capture_id}/cancel")
+    assert cancelled.status_code == 200, cancelled.text
+
+    deleted = client.delete(f"/v2/captures/{capture_id}")
+
+    assert deleted.status_code == 204
+    assert client.get(f"/v2/captures/{capture_id}").status_code == 404
+    assert client.get(f"/v2/ingestions/{ingestion_id}").status_code == 404
 
 
 def test_streaming_api_closes_replay_after_event_window_resync(

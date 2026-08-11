@@ -356,6 +356,20 @@ export class CaptureWorkflowService {
         return of(undefined);
       });
     }
+    if (
+      config.reviewBeforeCommit &&
+      config.structuringMode === 'host' &&
+      config.hostStructuringOwner === 'client'
+    ) {
+      return defer(() => {
+        this.failTask(taskId, task.fileName, {
+          code: 'review_requires_component_structuring',
+          message: 'Review confirmation requires component-owned host structuring.',
+          stage: 'structuring',
+        });
+        return of(undefined);
+      });
+    }
     return this.processStreamingTask(
       streamingClient,
       internal,
@@ -457,14 +471,6 @@ export class CaptureWorkflowService {
             config,
             signal,
             taskId,
-          );
-        }
-        if (config.reviewBeforeCommit) {
-          return throwError(
-            () =>
-              new Error(
-                'Review confirmation is not supported by the v2 streaming contract.',
-              ),
           );
         }
         return of(operation);

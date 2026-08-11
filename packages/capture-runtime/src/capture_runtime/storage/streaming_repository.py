@@ -78,6 +78,11 @@ _SAFE_ID = re.compile(r"^[0-9a-f-]{36}$")
 _MAX_EVENT_REPLAY = 1_024
 _SAFE_HOST_FAILURE_CODE = "host_provider_failed"
 _SAFE_HOST_FAILURE_MESSAGE = "Host structuring failed."
+_TERMINAL_CAPTURE_STATUSES = {
+    StreamingCaptureStatus.COMPLETED,
+    StreamingCaptureStatus.FAILED,
+    StreamingCaptureStatus.CANCELLED,
+}
 
 
 def _sanitize_host_failure(failure: CaptureFailureV2) -> CaptureFailureV2:
@@ -110,6 +115,14 @@ def _atomic_json(path: Path, payload: object) -> None:
         encoding="utf-8",
     )
     os.replace(temporary, path)
+
+
+def _remove_directory(directory: Path) -> None:
+    try:
+        shutil.rmtree(directory)
+    except FileNotFoundError:
+        if directory.exists() or directory.is_symlink():
+            raise
 
 
 @dataclass(slots=True)
@@ -308,6 +321,13 @@ class StreamingRepository:
 
     def get_capture(self, capture_id: str) -> CaptureOperationV2:
         with self._lock:
+            return self._get_capture(capture_id).operation
+
+    def get_capture_by_client_request_id(self, client_request_id: str) -> CaptureOperationV2:
+        with self._lock:
+            capture_id = self._capture_idempotency.get(client_request_id)
+            if capture_id is None:
+                raise StreamingRecordNotFoundError(client_request_id)
             return self._get_capture(capture_id).operation
 
     def capture_request(self, capture_id: str) -> StartCaptureV2:
@@ -756,18 +776,16 @@ class StreamingRepository:
     def delete_capture(self, capture_id: str) -> None:
         with self._lock:
             record = self._get_capture(capture_id)
-            if record.operation.status not in {
-                StreamingCaptureStatus.COMPLETED,
-                StreamingCaptureStatus.FAILED,
-                StreamingCaptureStatus.CANCELLED,
-            }:
+            if record.operation.status not in _TERMINAL_CAPTURE_STATUSES:
                 raise StreamingTransitionError("capture is active")
-            self._captures.pop(capture_id, None)
-            self._capture_idempotency.pop(record.request.client_request_id, None)
             directory = self._capture_directory(capture_id)
             if directory.parent.resolve() != (self.root / "captures").resolve():
                 raise RuntimeError("capture directory escaped repository root")
-            shutil.rmtree(directory, ignore_errors=True)
+            _remove_directory(directory)
+            self._captures.pop(capture_id, None)
+            self._capture_idempotency.pop(record.request.client_request_id, None)
+            self._subscribers.pop(capture_id, None)
+            self._delete_unreferenced_ingestion(record.operation.ingestion_id)
 
     def prune_expired(self) -> None:
         with self._lock:
@@ -805,21 +823,33 @@ class StreamingRepository:
             record = self._get_ingestion(normalized)
             if any(
                 operation.ingestion_id == normalized
-                and operation.status
-                not in {
-                    StreamingCaptureStatus.COMPLETED,
-                    StreamingCaptureStatus.FAILED,
-                    StreamingCaptureStatus.CANCELLED,
-                }
+                and operation.status not in _TERMINAL_CAPTURE_STATUSES
                 for operation in (capture.operation for capture in self._captures.values())
             ):
                 raise StreamingTransitionError("ingestion has an active capture")
-            self._ingestions.pop(normalized, None)
-            self._ingestion_idempotency.pop(record.request.client_request_id, None)
             directory = self._ingestion_directory(normalized)
             if directory.parent.resolve() != (self.root / "ingestions").resolve():
                 raise RuntimeError("ingestion directory escaped repository root")
-            shutil.rmtree(directory, ignore_errors=True)
+            _remove_directory(directory)
+            self._ingestions.pop(normalized, None)
+            self._ingestion_idempotency.pop(record.request.client_request_id, None)
+
+    def _delete_unreferenced_ingestion(self, ingestion_id: str) -> None:
+        if any(
+            operation.ingestion_id == ingestion_id
+            for operation in (capture.operation for capture in self._captures.values())
+        ):
+            return
+        try:
+            record = self._get_ingestion(ingestion_id)
+        except StreamingRecordNotFoundError:
+            return
+        directory = self._ingestion_directory(ingestion_id)
+        if directory.parent.resolve() != (self.root / "ingestions").resolve():
+            raise RuntimeError("ingestion directory escaped repository root")
+        _remove_directory(directory)
+        self._ingestions.pop(record.ingestion_id, None)
+        self._ingestion_idempotency.pop(record.request.client_request_id, None)
 
     def source_path(self, ingestion_id: str) -> Path:
         with self._lock:

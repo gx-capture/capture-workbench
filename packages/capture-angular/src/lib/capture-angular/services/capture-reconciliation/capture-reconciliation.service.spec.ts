@@ -322,6 +322,38 @@ describe('CaptureReconciliationService', () => {
     expect(client.cancelStreamingCapture).not.toHaveBeenCalled();
   });
 
+  it('retries an uncertain v2 failure report with the same idempotency request', async () => {
+    const failed = {
+      ...streamingOperation('failed'),
+      error: {
+        code: 'host_provider_failed',
+        message: 'Provider failed.',
+        stage: 'structuring' as const,
+      },
+    };
+    const reportStreamingStructuringFailure = vi
+      .fn<NonNullable<CaptureClient['reportStreamingStructuringFailure']>>()
+      .mockReturnValueOnce(throwError(() => new TypeError('connection reset')))
+      .mockReturnValueOnce(of(failed));
+    const client = fakeClient({ reportStreamingStructuringFailure });
+    configure(client);
+
+    const operation = await firstValueFrom(
+      service.reportHostFailureAndReconcile(
+        client,
+        'capture-1',
+        'Provider failed.',
+        new AbortController().signal,
+      ),
+    );
+
+    expect(operation.status).toBe('failed');
+    expect(reportStreamingStructuringFailure).toHaveBeenCalledTimes(2);
+    expect(reportStreamingStructuringFailure.mock.calls[1]?.[1]).toBe(
+      reportStreamingStructuringFailure.mock.calls[0]?.[1],
+    );
+  });
+
   it('retries an unresolved v2 commit with the same idempotency key', async () => {
     const commitStreamingStructuredResult = vi
       .fn<NonNullable<CaptureClient['commitStreamingStructuredResult']>>()

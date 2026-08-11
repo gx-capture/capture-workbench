@@ -382,4 +382,30 @@ describe('CaptureWorkbenchComponent', () => {
     );
     expect(client.commitStreamingStructuredResult).toHaveBeenCalledOnce();
   });
+
+  it('rejects client-owned review before starting a v2 capture', async () => {
+    const startStreamingCapture = vi.fn<
+      NonNullable<CaptureClient['startStreamingCapture']>
+    >(() => of(streamingOperation('completed')));
+    const client = fakeClient({ startStreamingCapture });
+    inputSource.client.set(client);
+    inputSource.config.set({
+      showRuntimeSetup: false,
+      structuringMode: 'host',
+      hostStructuringOwner: 'client',
+      reviewBeforeCommit: true,
+    });
+    fixture.detectChanges();
+
+    selectFiles(fixture, [new File(['test'], 'client-review.pdf')]);
+    await fixture.whenStable();
+
+    expect(startStreamingCapture).not.toHaveBeenCalled();
+    expect(fixture.componentInstance.tasks()[0]).toMatchObject({
+      status: 'failed',
+      error: {
+        code: 'review_requires_component_structuring',
+      },
+    });
+  });
 });

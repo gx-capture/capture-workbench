@@ -135,6 +135,9 @@ class StreamingCaptureService:
     def get_capture(self, capture_id: str) -> CaptureOperationV2:
         return self.repository.get_capture(capture_id)
 
+    def get_capture_by_client_request_id(self, client_request_id: str) -> CaptureOperationV2:
+        return self.repository.get_capture_by_client_request_id(client_request_id)
+
     def events(self, capture_id: str, *, after_sequence: int) -> list[CaptureEventV2]:
         return self.repository.read_events(capture_id, after_sequence=after_sequence)
 
@@ -246,11 +249,18 @@ class StreamingCaptureService:
         return self.repository.cancel_capture(capture_id)
 
     def delete_capture(self, capture_id: str) -> None:
+        operation = self.repository.get_capture(capture_id)
+        if operation.status not in {
+            StreamingCaptureStatus.COMPLETED,
+            StreamingCaptureStatus.FAILED,
+            StreamingCaptureStatus.CANCELLED,
+        }:
+            raise StreamingTransitionError("capture is active")
+        self.repository.delete_capture(capture_id)
         task = self._tasks.pop(capture_id, None)
         if task is not None and not task.done():
             task.cancel()
         self._cancellations.pop(capture_id, None)
-        self.repository.delete_capture(capture_id)
 
     async def shutdown(self) -> None:
         self._shutting_down = True

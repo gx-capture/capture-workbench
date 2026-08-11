@@ -1,4 +1,5 @@
 import { TestBed } from '@angular/core/testing';
+import { firstValueFrom } from 'rxjs';
 import {
   CAPTURE_CLIENT,
   type CaptureClient,
@@ -350,6 +351,40 @@ describe('HttpCaptureClient', () => {
       ['http://127.0.0.1:43119/v2/captures/capture-1/structure/failure', 'POST'],
       ['http://127.0.0.1:43119/v2/captures/capture-1', 'DELETE'],
     ]);
+  });
+
+  it('uses the supplied failure request id as the idempotency key without sending it in the body', async () => {
+    const operation = {
+      protocolVersion: '2',
+      captureId: 'capture-1',
+      ingestionId: 'ingestion-1',
+      status: 'failed',
+      partialRevision: 1,
+      lastEventSequence: 3,
+      createdAt: '2026-08-11T00:00:00Z',
+      updatedAt: '2026-08-11T00:00:01Z',
+      completedAt: '2026-08-11T00:00:01Z',
+    };
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(operation, 200));
+    const client = configureClient(fetchMock) as HttpCaptureClient;
+
+    await firstValueFrom(client.reportStreamingStructuringFailure(
+      'capture-1',
+      {
+        clientRequestId: 'failure-request-1',
+        code: 'host_provider_failed',
+        message: 'Host structuring failed.',
+      },
+    ));
+
+    const request = fetchMock.mock.calls[0]?.[1];
+    expect((request?.headers as Headers).get('X-Idempotency-Key')).toBe(
+      'failure-request-1',
+    );
+    expect(JSON.parse(String(request?.body))).toEqual({
+      code: 'host_provider_failed',
+      message: 'Host structuring failed.',
+    });
   });
 
   it('is cold and aborts each subscription fetch on unsubscribe', async () => {

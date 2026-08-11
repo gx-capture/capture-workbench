@@ -65,7 +65,11 @@ describe('CaptureWorkbenchComponent', () => {
 
     expect(client.reportStreamingStructuringFailure).toHaveBeenCalledWith(
       'capture-1',
-      { code: 'host_provider_failed', message: 'Bearer [redacted]' },
+      expect.objectContaining({
+        clientRequestId: expect.any(String),
+        code: 'host_provider_failed',
+        message: 'Bearer [redacted]',
+      }),
       expect.any(AbortSignal),
     );
     expect(structure).toHaveBeenCalledWith(

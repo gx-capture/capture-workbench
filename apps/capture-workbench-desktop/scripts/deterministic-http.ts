@@ -177,6 +177,16 @@ export function verifyRuntimeCapture(context, fixture) {
               requestJson({
                 ...context,
                 path: `/v2/captures/${captureId}/events`,
+                headers: { 'Last-Event-ID': 'not-a-number' },
+              }),
+            ),
+            tap((invalidCursor) =>
+              assertApiError(invalidCursor, 422, 'invalid_event_cursor'),
+            ),
+            concatMap(() =>
+              requestJson({
+                ...context,
+                path: `/v2/captures/${captureId}/events`,
                 headers: { 'Last-Event-ID': '1' },
               }),
             ),
@@ -195,13 +205,7 @@ export function verifyRuntimeCapture(context, fixture) {
             concatMap((terminal) => {
               validateTerminal(terminal, fixture, 'zh-TW');
               return requestJson({ ...context, path: `/v2/captures/${captureId}/partial` }).pipe(
-                tap((partial) => {
-                  if (fixture.locatorKind === 'time') {
-                    validatePartial(partial, fixture, captureId);
-                  } else {
-                    assertApiError(partial, 409, 'partial_unavailable');
-                  }
-                }),
+                tap((partial) => validatePartial(partial, fixture, captureId)),
                 map(() => ({
                   fileName: fixture.fileName,
                   captureId,
@@ -226,7 +230,9 @@ export function verifyRuntimeCapture(context, fixture) {
                     path: `/v2/ingestions/${ingestionId}`,
                   }),
                 ),
-                tap((deletedIngestion) => assert.equal(deletedIngestion.status, 204)),
+                tap((deletedIngestion) =>
+                  assert.ok([204, 404].includes(deletedIngestion.status)),
+                ),
                 map(() => summary),
               ),
             ),
@@ -244,6 +250,16 @@ export function verifyHostStructuring(context, fixture) {
       const ingestionId = awaiting.body.ingestionId;
       return requestJson({ ...context, path: `/v2/captures/${captureId}/result` }).pipe(
         tap((unavailable) => assertApiError(unavailable, 409, 'result_unavailable')),
+        concatMap(() =>
+          requestJson({
+            ...context,
+            method: 'DELETE',
+            path: `/v2/captures/${captureId}`,
+          }),
+        ),
+        tap((activeDelete) =>
+          assertApiError(activeDelete, 409, 'capture_delete_rejected'),
+        ),
         concatMap(() =>
           requestJson({
             ...context,
@@ -282,16 +298,20 @@ export function verifyHostStructuring(context, fixture) {
                   'content-type': 'application/json',
                   'x-idempotency-key': randomUUID(),
                 },
-                body: JSON.stringify({ code: 'invalid_provider_json', message: 'Provider returned invalid JSON.' }),
+                body: JSON.stringify({
+                  code: 'access_token_deterministic_secret',
+                  message: 'Bearer deterministic-secret',
+                }),
               }).pipe(
                 tap((failed) => {
                   validateOperation(failed, 200, { status: 'failed' });
                   assert.deepEqual(failed.body.error, {
-                    code: 'invalid_provider_json',
-                    message: 'Provider returned invalid JSON.',
+                    code: 'host_provider_failed',
+                    message: 'Host structuring failed.',
                     stage: 'structuring',
                     retryable: false,
                   });
+                  assert.doesNotMatch(JSON.stringify(failed.body), /deterministic-secret/u);
                 }),
                 concatMap(() => requestJson({ ...context, path: `/v2/captures/${failedId}/result` })),
                 tap((failedResult) => assertApiError(failedResult, 409, 'result_unavailable')),
@@ -514,7 +534,10 @@ function validatePartial(response, fixture, captureId) {
   assert.equal(response.body.source.bytes, fixture.content.length);
   assert.equal(response.body.source.sha256, sha256(fixture.content));
   assert.equal(response.body.segments.length, fixture.expectedSegments);
-  assert.equal(response.body.coveredUntilMs, fixture.expectedSegments * 1000);
+  assert.equal(
+    response.body.coveredUntilMs,
+    fixture.locatorKind === 'time' ? fixture.expectedSegments * 1000 : 0,
+  );
   assert.equal(
     response.body.sourceText,
     response.body.segments.map((segment) => segment.text).join('\n'),
@@ -794,7 +817,9 @@ function cleanupCapture(context, captureId, ingestionId) {
         path: `/v2/ingestions/${ingestionId}`,
       }),
     ),
-    tap((deletedIngestion) => assert.equal(deletedIngestion.status, 204)),
+    tap((deletedIngestion) =>
+      assert.ok([204, 404].includes(deletedIngestion.status)),
+    ),
   );
 }
 

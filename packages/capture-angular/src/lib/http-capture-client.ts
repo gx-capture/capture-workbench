@@ -263,10 +263,11 @@ export class HttpCaptureClient implements CaptureClient {
     request: ReportStreamingStructuringFailureRequest,
     signal?: AbortSignal,
   ): Observable<CaptureOperationV2> {
+    const { clientRequestId, ...failure } = request;
     return this.request<CaptureOperationV2>(`/v2/captures/${encodeURIComponent(id)}/structure/failure`, {
       method: 'POST',
-      idempotencyKey: crypto.randomUUID(),
-      json: request,
+      idempotencyKey: clientRequestId ?? crypto.randomUUID(),
+      json: failure,
       signal,
     });
   }
