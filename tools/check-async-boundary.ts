@@ -103,6 +103,9 @@ function exceptionReason(relativePath) {
   if (relativePath === 'tools/create-runtime-github-release.ts') {
     return 'runtime GitHub Release publication CLI process boundary';
   }
+  if (relativePath === 'tools/verify-runtime-candidate-binding.ts') {
+    return 'runtime candidate binding verification CLI process boundary';
+  }
   if (relativePath === 'tools/create-contract-snapshot.ts') {
     return 'contract snapshot generation CLI process boundary';
   }
