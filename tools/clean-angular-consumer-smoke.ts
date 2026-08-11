@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { createServer } from 'node:net';
 import { chromium } from '@playwright/test';
 import { Observable, concatMap, defer, finalize, from, map, of } from 'rxjs';
+import { resolveNode24Corepack } from './node24-corepack.ts';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const sourcePackage = JSON.parse(
@@ -36,13 +37,7 @@ const contractsArchivePath = join(
 const fixtureBase = resolve(repoRoot, '..', '.cw-clean');
 mkdirSync(fixtureBase, { recursive: true });
 const fixtureRoot = mkdtempSync(join(fixtureBase, 'c-'));
-const corepackCli = join(
-  dirname(process.execPath),
-  'node_modules',
-  'corepack',
-  'dist',
-  'corepack.js',
-);
+const corepackCli = resolveNode24Corepack();
 function write(relativePath, contents) {
   const target = join(fixtureRoot, relativePath);
   mkdirSync(dirname(target), { recursive: true });
@@ -80,7 +75,7 @@ function run(command, args, cwd = fixtureRoot) {
 
 function runPnpm(args, relativeCwd = '') {
   return defer(() => {
-    if (!existsSync(corepackCli)) {
+    if (!corepackCli) {
       throw new Error(
         'Node 24 Corepack is required to run the pnpm 11 fixture.',
       );

@@ -27,6 +27,7 @@ import {
 } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium, expect } from '@playwright/test';
+import { resolveNode24Corepack } from './node24-corepack.ts';
 
 declare global {
   interface Window {
@@ -98,13 +99,7 @@ const contractsArchive = join(
   `${archiveName(contractsManifest.name)}-${contractsManifest.version}.tgz`,
 );
 const fixtureBase = resolve(repoRoot, '..', '.cw-phase15');
-const corepackCli = join(
-  dirname(process.execPath),
-  'node_modules',
-  'corepack',
-  'dist',
-  'corepack.js',
-);
+const corepackCli = resolveNode24Corepack();
 
 function archiveName(packageName: string): string {
   return packageName.replace(/^@/u, '').replace('/', '-');
@@ -575,7 +570,7 @@ async function main(): Promise<void> {
       'Packed Capture Workbench and Capture Contracts archives are required. Run capture-angular:pack first.',
     );
   }
-  if (!existsSync(corepackCli)) {
+  if (!corepackCli) {
     throw new Error(
       'Node Corepack is required to install the isolated E2E consumer.',
     );
