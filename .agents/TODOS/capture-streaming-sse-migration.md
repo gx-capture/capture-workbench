@@ -14,7 +14,7 @@ decision record, and phase commits.
   Verify: the sibling-repo scan is clean, or an explicitly approved breaking
       release is recorded outside this repository.
 
-- [ ] Run the final verification floor and independent review of all phase
+- [x] Run the final verification floor and independent review of all phase
       commits, with explicit cached-path inspection before any final commit.
   Verify: Nx runtime/Angular/desktop targets, `git diff --check`, and residual
       scans pass without staging unrelated dirty changes.

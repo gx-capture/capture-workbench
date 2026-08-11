@@ -123,13 +123,16 @@ compatibility release before this producer can delete the public type.
 1. **P0 contract/spec**: completed in `a93d294` and `5c36463`.
 2. **P1 Python runtime**: completed in `78b2bab`; v2 is generalized, live,
    replayable, authenticated SSE for all supported media.
-3. **P2 Angular transport**: completed in `529f3f1`; Angular remains
-   Observable/RxJS and the fetch-stream parser aborts on unsubscribe.
-4. **P3 desktop cutover**: completed in `8a0811f` plus the v2-only bridge/store
-   follow-up; production desktop capture uses v2 for every media kind.
-5. **P4/P5 local removal**: completed in `ac44030` plus the desktop bridge
-   cleanup; `/v1/captures`, its service/repository, and native commands are
-   gone. External contract/consumer migration remains a separate gate.
+3. **P2 Angular transport**: completed in `529f3f1` and
+   `812d54e`; Angular remains Observable/RxJS and the fetch-stream parser
+   aborts on unsubscribe.
+4. **P3 desktop cutover**: completed in `8a0811f` and `37f023b`; production
+   desktop capture uses v2 for every media kind, including deterministic and
+   opt-in real smoke harnesses.
+5. **P4/P5 local removal**: completed in `ac44030`, `779d06b`, and
+   `84f71f6`; `/v1/captures`, its service/repository, and native commands are
+   gone, with resync/token hardening added. External contract/consumer
+   migration remains a separate gate.
 
 Each phase must have an explicit path list, its own review, and its own
 verification result. Revert consumers before reverting the runtime cutover;
