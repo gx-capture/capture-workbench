@@ -1,8 +1,6 @@
 """Public repository facade for capture and installation persistence."""
 
-from capture_runtime.storage.capture_repository import (
-    CaptureRecord,
-    CaptureRepository,
+from capture_runtime.storage.common import (
     IdempotencyConflictError,
     RecordNotFoundError,
     TransitionRejectedError,
@@ -26,8 +24,6 @@ from capture_runtime.storage.streaming_repository import (
 )
 
 __all__ = [
-    "CaptureRecord",
-    "CaptureRepository",
     "IdempotencyConflictError",
     "InstallationRecord",
     "InstallationRepository",

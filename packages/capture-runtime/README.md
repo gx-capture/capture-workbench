@@ -1,8 +1,8 @@
 # capture-runtime
 
 Independent Python 3.12 FastAPI sidecar for Capture Workbench. It accepts one PDF, image,
-or audio file per asynchronous capture job and emits provenance-bearing `RawCaptureV1` and
-strictly validated `CaptureDocumentV1` JSON.
+or audio file through the v2 chunked ingestion and authenticated SSE capture lifecycle,
+then emits provenance-bearing `RawCaptureV1` and strictly validated `CaptureDocumentV1` JSON.
 
 ## Development
 
@@ -49,8 +49,9 @@ readiness. It does not publish remotely.
 
 The public runtime artifact is the Windows x64 executable, checksum, manifest,
 and `CaptureDocumentV1` schema published on the matching GitHub Release. The
-executable binds only to loopback and every `/v1` request requires a Bearer
-token.
+executable binds only to loopback and every API request requires a Bearer token.
+`/v1/health/ready` and `/v1/runtime/*` remain for readiness and installation control;
+capture lifecycle traffic is v2 only.
 
 For a host that already runs Ollama, configure the explicit external provider:
 
@@ -78,37 +79,20 @@ Invoke-RestMethod `
   -Headers $headers
 ```
 
-Submit one source file and poll its asynchronous job:
+Submit one source file through `/v2/ingestions`, upload ordered checksum-verified chunks,
+finalize the ingestion, and POST `/v2/captures`. Subscribe to
+`/v2/captures/{captureId}/events` with `Accept: text/event-stream` and the Bearer
+Authorization header; reconnect with `Last-Event-ID`. The Angular client and Tauri bridge
+perform this sequence for applications. See
+`packages/capture-angular/src/lib/http-capture-client.ts` for the browser-safe RxJS sequence.
 
-```powershell
-$job = curl.exe `
-  -sS `
-  -H "Authorization: Bearer $env:CAPTURE_API_TOKEN" `
-  -H "X-Idempotency-Key: $([guid]::NewGuid())" `
-  -F 'file=@sample.pdf' `
-  -F 'sourceKind=pdf' `
-  -F 'structuringMode=runtime' `
-  http://127.0.0.1:8766/v1/captures | ConvertFrom-Json
-
-do {
-  Start-Sleep -Milliseconds 500
-  $status = Invoke-RestMethod `
-    -Uri "http://127.0.0.1:8766/v1/captures/$($job.captureId)" `
-    -Headers $headers
-} while ($status.status -in @('queued', 'running'))
-
-$result = Invoke-RestMethod `
-  -Uri "http://127.0.0.1:8766/v1/captures/$($job.captureId)/result" `
-  -Headers $headers
-```
-
-The runtime core still owns embedded PDF text extraction, job lifecycle,
+The runtime core still owns embedded PDF text extraction, the v2 job lifecycle,
 upload limits, retention, provenance validation, and final schema validation.
 Installed runtime-owned workers handle scanned PDF/image OCR and audio
 transcription. External Ollama only changes who owns structured generation. A
 host that owns all structuring instead should use
-`CAPTURE_STRUCTURING_PROVIDER=host` and the `/raw` plus `/structure` protocol
-described below.
+`CAPTURE_STRUCTURING_PROVIDER=host` and the v2 partial plus structure commit/failure
+protocol described below.
 
 ## Runtime configuration
 
@@ -162,12 +146,11 @@ configuration, not that every operator ran on the GPU. Whisper retains its
 separate CUDA-resource CPU fallback. Missing workers or model assets produce
 `requirement_unavailable`, never fake content or a runtime package download.
 
-Capture creation requires multipart fields `file`, `sourceKind=pdf|image|audio`, and optional
-`structuringMode` / `targetLanguage`, plus a UUID `X-Idempotency-Key`. The runtime sniffs the
-content and returns `422 source_kind_mismatch` when the declared kind disagrees. Uploads are
-copied in bounded chunks to an app-data staging file and atomically moved into the new job;
-terminal jobs delete the source bytes. Metadata and raw/result JSON expire after 24 hours by
-default and are pruned on startup and during requests.
+Capture creation requires an `OpenIngestionV2` JSON request, bounded ordered chunks with
+`Content-Range` and `Digest`, a `FinalizeIngestionV2` request, and a `StartCaptureV2` JSON
+request. The runtime sniffs the content and returns `422 source_kind_mismatch` when the
+declared kind disagrees. Terminal jobs delete source bytes. Metadata and raw/result JSON
+expire after 24 hours by default and are pruned on startup and during requests.
 
 `GET /v1/runtime/requirements` uses stable requirement IDs. OCR and Whisper
 descriptors come only from the core-embedded, checksum-pinned engine catalog;
@@ -214,15 +197,14 @@ the GitHub Release.
 Run the process with `CAPTURE_STRUCTURING_PROVIDER=host` when it is embedded by
 a product that already owns an Ollama or another structured-output provider.
 In this mode `/v1/health/ready` advertises only `structuringModes: ["host"]`
-and `POST /v1/captures` rejects `structuringMode=runtime`; the sidecar therefore
+and `POST /v2/captures` rejects `structuringMode=runtime`; the sidecar therefore
 cannot start its isolated Ollama through an accidental client request.
 
-Create a capture with multipart field `structuringMode=host`. Poll until its stage is
-`awaiting_structuring`, retrieve `/raw`, and submit a full candidate to `/structure`. Invalid
-candidates return `422 invalid_structure` and terminate at `failed/structuring` while retaining
-diagnostic raw. If the host provider fails before commit, post `{code, message}` to
-`/structuring-failure`. Commit, failure, and cancel use one atomic terminal-state transition, so
-concurrent requests cannot overwrite the winning result.
+Create a v2 capture with `structuringMode=host`. Subscribe until the operation reaches
+`awaiting_structuring`, retrieve `/partial`, and submit a full candidate to
+`/structure/commit`. Invalid candidates return `422` and the host handoff publishes a
+sanitized terminal failure through `/structure/failure`. Commit, failure, and cancel use one
+atomic terminal-state transition, so concurrent requests cannot overwrite the winning result.
 
 Provider implementations must honor their context and output budgets. Large
 documents are handled as strictly validated ordered block batches and then

@@ -53,21 +53,6 @@ def idempotency_headers() -> dict[str, str]:
     return {"X-Idempotency-Key": str(uuid4())}
 
 
-def poll_capture(
-    client: TestClient, capture_id: str, predicate: Callable[[dict[str, Any]], bool]
-) -> dict[str, Any]:
-    deadline = time.monotonic() + 3
-    last: dict[str, Any] = {}
-    while time.monotonic() < deadline:
-        response = client.get(f"/v1/captures/{capture_id}")
-        assert response.status_code == 200, response.text
-        last = response.json()
-        if predicate(last):
-            return last
-        time.sleep(0.01)
-    raise AssertionError(f"capture did not reach expected state: {last}")
-
-
 def poll_installation(
     client: TestClient,
     installation_id: str,

@@ -52,7 +52,7 @@
     {
       "name": "CaptureJobV1",
       "schemaFile": "capture-job-v1.schema.json",
-      "schemaSha256": "b49c618d396dd7273ec61733aa8c57509ba99985f801abee0d8d12d79bedda6b",
+      "schemaSha256": "6047742d8d2fb563435032a2480db43f3c9922191bca9e00a7b6d16e26e1bc07",
       "extraPolicy": "forbid",
       "strStripWhitespace": true
     },

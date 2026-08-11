@@ -1,6 +1,7 @@
 # @gx-capture/capture-contracts
 
-Generated wire-contract artifacts for the Capture Runtime API v1. The canonical
+Generated wire-contract artifacts for the Capture Runtime API v2 streaming lifecycle
+and retained v1 runtime/installation compatibility types. The canonical
 source is `packages/capture-runtime/src/capture_runtime/contracts/__init__.py`;
 do not edit anything under `src/generated/` by hand.
 

@@ -19,12 +19,12 @@ from capture_runtime.contracts import (
     RuntimeInstallationStatus,
     RuntimeInstallationV1,
 )
-from capture_runtime.storage.capture_repository import (
+from capture_runtime.storage.common import (
     IdempotencyConflictError,
     RecordNotFoundError,
-    _atomic_json,
-    _dump_model,
-    _identifier,
+    atomic_json,
+    dump_model,
+    identifier,
 )
 
 
@@ -36,7 +36,7 @@ class InstallationRecord:
 
     def dump(self) -> dict[str, object]:
         return {
-            "job": _dump_model(self.job),
+            "job": dump_model(self.job),
             "idempotencyKey": self.idempotency_key,
             "requestFingerprint": self.request_fingerprint,
         }
@@ -71,7 +71,7 @@ class InstallationRepository:
                 try:
                     payload = json.loads(metadata.read_text(encoding="utf-8"))
                     record = InstallationRecord.load(payload)
-                    installation_id = _identifier(record.job.installation_id)
+                    installation_id = identifier(record.job.installation_id)
                 except (
                     OSError,
                     KeyError,
@@ -117,7 +117,7 @@ class InstallationRepository:
             return record, True
 
     def get(self, installation_id: str) -> InstallationRecord:
-        normalized = _identifier(installation_id)
+        normalized = identifier(installation_id)
         with self._lock:
             try:
                 return self._records[normalized]
@@ -186,10 +186,10 @@ class InstallationRepository:
                 shutil.rmtree(directory, ignore_errors=True)
 
     def _directory(self, installation_id: str) -> Path:
-        return self.root / _identifier(installation_id)
+        return self.root / identifier(installation_id)
 
     def _persist(self, record: InstallationRecord) -> None:
-        _atomic_json(self._directory(record.job.installation_id) / "metadata.json", record.dump())
+        atomic_json(self._directory(record.job.installation_id) / "metadata.json", record.dump())
 
 
 __all__ = ["InstallationRecord", "InstallationRepository"]

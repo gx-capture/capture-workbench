@@ -81,6 +81,8 @@ class CaptureReviewV1(StrictModel):
 
 
 class CaptureJobStatus(StrEnum):
+    """Deprecated compatibility type; the v1 capture engine is removed."""
+
     QUEUED = "queued"
     RUNNING = "running"
     COMPLETED = "completed"
@@ -89,6 +91,8 @@ class CaptureJobStatus(StrEnum):
 
 
 class CaptureJobStage(StrEnum):
+    """Deprecated compatibility type; the v1 capture engine is removed."""
+
     QUEUED = "queued"
     EXTRACTING = "extracting"
     AWAITING_STRUCTURING = "awaiting_structuring"
@@ -272,6 +276,8 @@ class CaptureFailureV1(StrictModel):
 
 
 class CaptureJobV1(StrictModel):
+    """Deprecated wire type retained only for external migration tooling."""
+
     capture_id: str
     status: CaptureJobStatus
     stage: CaptureJobStage

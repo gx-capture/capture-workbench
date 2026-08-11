@@ -22,13 +22,10 @@ from capture_runtime.constants import RUNTIME_VERSION
 from capture_runtime.dependencies import RuntimeDependencies, build_runtime_dependencies
 from capture_runtime.extractors import CaptureExtractor
 from capture_runtime.ollama import ProcessController, RuntimeInstaller
-from capture_runtime.routes.capture import register_capture_routes
 from capture_runtime.routes.common import ApiProblem, error_response
 from capture_runtime.routes.runtime import register_runtime_routes
 from capture_runtime.routes.streaming import register_streaming_routes
-from capture_runtime.services import InvalidJobStateError, RecordNotFoundError
 from capture_runtime.storage import (
-    CaptureRepository,
     InstallationRepository,
     ModelInstallationRepository,
 )
@@ -43,7 +40,10 @@ class CandidateBodyLimitMiddleware:
         self.max_bytes = max_bytes
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http" or not str(scope.get("path", "")).endswith("/structure"):
+        path = str(scope.get("path", ""))
+        if scope["type"] != "http" or not (
+            path.endswith("/structure") or path.endswith("/structure/commit")
+        ):
             await self.app(scope, receive, send)
             return
         received = 0
@@ -102,7 +102,6 @@ def create_app(
     installer: RuntimeInstaller | None = None,
     process_controller: ProcessController | None = None,
     dependencies: RuntimeDependencies | None = None,
-    capture_repository: CaptureRepository | None = None,
     installation_repository: InstallationRepository | None = None,
     model_installation_repository: ModelInstallationRepository | None = None,
 ) -> FastAPI:
@@ -121,7 +120,6 @@ def create_app(
         structurer=structurer,
         installer=installer,
         process_controller=process_controller,
-        capture_repository=capture_repository,
         installation_repository=installation_repository,
         model_installation_repository=model_installation_repository,
     )
@@ -135,7 +133,6 @@ def create_app(
             *runtime_dependencies.staging_root.glob("*.spool"),
         ):
             abandoned_upload.unlink(missing_ok=True)
-        runtime_dependencies.capture_repository.initialize()
         runtime_dependencies.streaming_repository.initialize()
         runtime_dependencies.installation_repository.initialize()
         runtime_dependencies.model_installation_repository.initialize()
@@ -145,7 +142,6 @@ def create_app(
             await runtime_dependencies.installation_service.shutdown()
             await runtime_dependencies.model_installation_service.shutdown()
             await runtime_dependencies.streaming_capture_service.shutdown()
-            await runtime_dependencies.capture_service.shutdown()
             await runtime_dependencies.engine_manager.shutdown()
             runtime_dependencies.lifecycle.stop()
 
@@ -163,9 +159,7 @@ def create_app(
     app.state.dependencies = runtime_dependencies
     # Keep these named state attributes for existing host integrations.
     app.state.settings = runtime_settings
-    app.state.capture_repository = runtime_dependencies.capture_repository
     app.state.installation_repository = runtime_dependencies.installation_repository
-    app.state.capture_service = runtime_dependencies.capture_service
     app.state.streaming_repository = runtime_dependencies.streaming_repository
     app.state.streaming_capture_service = runtime_dependencies.streaming_capture_service
     app.state.installation_service = runtime_dependencies.installation_service
@@ -222,7 +216,6 @@ def create_app(
                 return error_response(
                     413, "candidate_too_large", "Structured candidate exceeds the size limit."
                 )
-        runtime_dependencies.capture_repository.prune_expired()
         runtime_dependencies.streaming_repository.prune_expired()
         runtime_dependencies.installation_repository.prune_expired()
         runtime_dependencies.model_installation_repository.prune_expired()
@@ -253,24 +246,6 @@ def create_app(
             }
             for issue in error.errors()
         ]
-        capture_id = _request.path_params.get("capture_id")
-        invalid_structure = (
-            isinstance(capture_id, str)
-            and _request.url.path.endswith("/structure")
-            and any(issue["loc"] and issue["loc"][0] == "body" for issue in error.errors())
-        )
-        if invalid_structure:
-            assert isinstance(capture_id, str)
-            try:
-                runtime_dependencies.capture_service.fail_invalid_host_structure(capture_id)
-            except (RecordNotFoundError, InvalidJobStateError):
-                pass
-            return error_response(
-                422,
-                "invalid_structure",
-                "Candidate failed strict schema or provenance validation.",
-                details={"issues": issues},
-            )
         return error_response(
             422,
             "validation_error",
@@ -299,7 +274,6 @@ def create_app(
 
     router = APIRouter(prefix="/v1", dependencies=[Depends(authenticate)])
     register_runtime_routes(router, runtime_dependencies)
-    register_capture_routes(router, runtime_dependencies)
     app.include_router(router)
     streaming_router = APIRouter(prefix="/v2", dependencies=[Depends(authenticate)])
     register_streaming_routes(streaming_router, runtime_dependencies)

@@ -41,6 +41,7 @@
       "type": "object"
     },
     "CaptureJobStage": {
+      "description": "Deprecated compatibility type; the v1 capture engine is removed.",
       "enum": [
         "queued",
         "extracting",
@@ -54,6 +55,7 @@
       "type": "string"
     },
     "CaptureJobStatus": {
+      "description": "Deprecated compatibility type; the v1 capture engine is removed.",
       "enum": [
         "queued",
         "running",
@@ -108,6 +110,7 @@
     }
   },
   "additionalProperties": false,
+  "description": "Deprecated wire type retained only for external migration tooling.",
   "properties": {
     "captureId": {
       "title": "Captureid",
