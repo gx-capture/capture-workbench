@@ -20,12 +20,17 @@ function parseArguments(args: readonly string[]) {
     const name = args[index];
     const value = args[index + 1];
     if (
-      !['--output', '--version', '--release-mode'].includes(name) ||
+      ![
+        '--output',
+        '--version',
+        '--release-mode',
+        '--package-candidate',
+      ].includes(name) ||
       !value ||
       values.has(name)
     ) {
       throw new Error(
-        'Use --output <directory> --version <semver> --release-mode <mode>.',
+        'Use --output <directory> --version <semver> --release-mode <mode> [--package-candidate <directory>].',
       );
     }
     values.set(name, value);
@@ -41,13 +46,14 @@ function parseArguments(args: readonly string[]) {
     !['core-only', 'model-enabled'].includes(releaseMode)
   ) {
     throw new Error(
-      'Use --output <directory> --version <semver> --release-mode <mode>.',
+      'Use --output <directory> --version <semver> --release-mode <mode> [--package-candidate <directory>].',
     );
   }
   return {
     output: resolve(output),
     version,
     releaseMode: releaseMode as ReleaseMode,
+    packageCandidate: values.get('--package-candidate'),
   };
 }
 
@@ -77,7 +83,7 @@ async function copyMatching(
 }
 
 async function main(): Promise<void> {
-  const { output, version, releaseMode } = parseArguments(
+  const { output, version, releaseMode, packageCandidate } = parseArguments(
     process.argv.slice(2),
   );
   const root = resolve(import.meta.dirname, '..');
@@ -99,7 +105,9 @@ async function main(): Promise<void> {
     recursive: true,
   });
   const packageNames = await copyMatching(
-    resolve(root, 'dist/packs'),
+    packageCandidate
+      ? join(resolve(packageCandidate), 'package')
+      : resolve(root, 'dist/packs'),
     packages,
     /^(?:gx-capture-capture-workbench|gx-capture-capture-contracts|gx-capture-capture-structuring)-\d+\.\d+\.\d+(?:-[^/]+)?\.tgz$/u,
     3,

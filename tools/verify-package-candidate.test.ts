@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
 
 import { verifyPackageCandidate } from './verify-package-candidate.ts';
+import { verifyPackageCandidateBinding } from './verify-package-candidate-binding.ts';
 
 const version = '0.3.11';
 const sourceCommit = 'a'.repeat(40);
@@ -161,5 +162,43 @@ test('package candidate evidence is required for promotion', async () => {
     );
   } finally {
     await rm(candidate.root, { recursive: true, force: true });
+  }
+});
+
+test('desktop candidate binding requires the exact Package Candidate bytes', async () => {
+  const candidate = await makeCandidate();
+  const desktop = await mkdtemp(join(tmpdir(), 'capture-desktop-candidate-'));
+  try {
+    await mkdir(join(desktop, 'package'));
+    await cp(join(candidate.root, 'package'), join(desktop, 'package'), {
+      recursive: true,
+    });
+    const packageManifest = JSON.parse(
+      await readFile(join(candidate.root, 'candidate-manifest.json'), 'utf8'),
+    ) as {
+      sourceCommit: string;
+      releaseVersion: string;
+      candidateId: string;
+      artifacts: unknown[];
+    };
+    await writeFile(
+      join(desktop, 'candidate-manifest.json'),
+      `${JSON.stringify({
+        sourceCommit: packageManifest.sourceCommit,
+        releaseVersion: packageManifest.releaseVersion,
+        packageCandidateId: packageManifest.candidateId,
+        artifacts: packageManifest.artifacts,
+      })}\n`,
+    );
+    await assert.doesNotReject(() =>
+      verifyPackageCandidateBinding({
+        desktopCandidate: desktop,
+        packageCandidate: candidate.root,
+        candidateId: candidate.candidateId,
+      }),
+    );
+  } finally {
+    await rm(candidate.root, { recursive: true, force: true });
+    await rm(desktop, { recursive: true, force: true });
   }
 });

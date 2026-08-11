@@ -10,6 +10,22 @@ on:
         description: 'Successful release-candidate workflow run containing the immutable candidate'
         required: true
         type: string
+      package_candidate_run_id:
+        description: 'Successful Release Package Candidate workflow run for the same source commit'
+        required: true
+        type: string
+      package_candidate_id:
+        description: 'Immutable Package Candidate ID'
+        required: true
+        type: string
+      package_candidate_manifest_sha256:
+        description: 'SHA-256 of the Package Candidate candidate-manifest.json'
+        required: true
+        type: string
+      package_candidate_version:
+        description: 'Package Candidate version without v prefix'
+        required: true
+        type: string
       candidate_id:
         description: 'Expected candidate identity'
         required: true
@@ -59,6 +75,14 @@ jobs:
           github-token: ${{ github.token }}
           path: ${{ runner.temp }}/candidate-artifacts
 
+      - name: Download the exact Package Candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: capture-package-candidate-${{ inputs.package_candidate_version }}-${{ inputs.package_candidate_run_id }}
+          run-id: ${{ inputs.package_candidate_run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/package-candidate
+
       - name: Download the exact consumer gate ledger
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -66,6 +90,27 @@ jobs:
           run-id: ${{ inputs.consumer_gate_run_id }}
           github-token: ${{ github.token }}
           path: ${{ runner.temp }}/consumer-gate
+
+      - name: Verify the Package Candidate and desktop package binding
+        shell: bash
+        run: |
+          set -euo pipefail
+          candidate_root="$(find "$RUNNER_TEMP/candidate-artifacts" -name candidate-manifest.json -type f -print -quit | xargs dirname)"
+          source_commit="$(node --input-type=module -e "const m=JSON.parse(await import('node:fs/promises').then(x=>x.readFile(process.argv[1],'utf8'))); process.stdout.write(m.sourceCommit)" "$candidate_root/candidate-manifest.json")"
+          release_version="$(node --input-type=module -e "const m=JSON.parse(await import('node:fs/promises').then(x=>x.readFile(process.argv[1],'utf8'))); process.stdout.write(m.releaseVersion)" "$candidate_root/candidate-manifest.json")"
+          test "$release_version" = '${{ inputs.package_candidate_version }}'
+          node tools/verify-package-candidate.ts \
+            --candidate "$RUNNER_TEMP/package-candidate" \
+            --version "$release_version" \
+            --source-commit "$source_commit" \
+            --producer-run-id '${{ inputs.package_candidate_run_id }}' \
+            --candidate-id '${{ inputs.package_candidate_id }}' \
+            --candidate-manifest-sha256 '${{ inputs.package_candidate_manifest_sha256 }}' \
+            --require-evidence
+          node tools/verify-package-candidate-binding.ts \
+            --desktop-candidate "$candidate_root" \
+            --package-candidate "$RUNNER_TEMP/package-candidate" \
+            --candidate-id '${{ inputs.package_candidate_id }}'
 
       - name: Verify immutable promotion evidence without building
         id: evidence
@@ -114,7 +159,10 @@ jobs:
       contents: read
       packages: write
     with:
-      candidate_id: ${{ inputs.candidate_id }}
+      candidate_kind: package
+      candidate_id: ${{ inputs.package_candidate_id }}
+      candidate_run_id: ${{ inputs.package_candidate_run_id }}
+      candidate_manifest_sha256: ${{ inputs.package_candidate_manifest_sha256 }}
       source_commit: ${{ needs.prepare-candidate.outputs.source_commit }}
       release_version: ${{ needs.prepare-candidate.outputs.release_version }}
     secrets: inherit

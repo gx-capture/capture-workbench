@@ -16,6 +16,7 @@ function parseArguments(args: readonly string[]): {
   version: string;
   sourceCommit?: string;
   releaseMode?: 'core-only' | 'model-enabled';
+  packageCandidateId?: string;
 } {
   const values = new Map<string, string>();
   for (let index = 0; index < args.length; index += 2) {
@@ -27,6 +28,7 @@ function parseArguments(args: readonly string[]): {
         '--version',
         '--source-commit',
         '--release-mode',
+        '--package-candidate-id',
       ].includes(name) ||
       !value ||
       values.has(name)
@@ -40,6 +42,7 @@ function parseArguments(args: readonly string[]): {
   const version = values.get('--version');
   const sourceCommit = values.get('--source-commit');
   const releaseMode = values.get('--release-mode');
+  const packageCandidateId = values.get('--package-candidate-id');
   if (
     !values.has('--candidate') ||
     !version ||
@@ -47,7 +50,9 @@ function parseArguments(args: readonly string[]): {
     (sourceCommit !== undefined &&
       !/^(?:local|[0-9a-f]{40})$/iu.test(sourceCommit)) ||
     (releaseMode !== undefined &&
-      !['core-only', 'model-enabled'].includes(releaseMode))
+      !['core-only', 'model-enabled'].includes(releaseMode)) ||
+    (packageCandidateId !== undefined &&
+      !/^[0-9a-f]{64}$/iu.test(packageCandidateId))
   ) {
     throw new Error(
       'Use --candidate <directory> --version <semver> [--source-commit <sha>] [--release-mode <mode>].',
@@ -58,6 +63,7 @@ function parseArguments(args: readonly string[]): {
     version,
     sourceCommit,
     releaseMode: releaseMode as 'core-only' | 'model-enabled' | undefined,
+    packageCandidateId,
   };
 }
 
@@ -93,10 +99,11 @@ function candidateManifestBase(
   version: string,
   sourceCommit: string,
   releaseMode: 'core-only' | 'model-enabled',
+  packageCandidateId: string | null,
   artifacts: Array<{ path: string; bytes: number; sha256: string }>,
   toolchains: Record<string, string>,
 ) {
-  return {
+  const base = {
     schemaVersion: '1',
     sourceCommit,
     releaseVersion: version,
@@ -109,6 +116,7 @@ function candidateManifestBase(
     toolchains,
     contractImpact: null,
   } as const;
+  return packageCandidateId === null ? base : { ...base, packageCandidateId };
 }
 
 async function inferReleaseMode(
@@ -302,6 +310,11 @@ async function main(): Promise<void> {
     (typeof existingManifest?.releaseMode === 'string'
       ? (existingManifest.releaseMode as 'core-only' | 'model-enabled')
       : await inferReleaseMode(runtime));
+  const packageCandidateId =
+    parsed.packageCandidateId ??
+    (typeof existingManifest?.packageCandidateId === 'string'
+      ? existingManifest.packageCandidateId
+      : null);
   if (!/^(?:local|[0-9a-f]{40})$/iu.test(sourceCommit)) {
     throw new Error(
       'Candidate sourceCommit must be a 40-character commit SHA.',
@@ -311,6 +324,12 @@ async function main(): Promise<void> {
     throw new Error(
       'Candidate releaseMode must be core-only or model-enabled.',
     );
+  }
+  if (
+    packageCandidateId !== null &&
+    !/^[0-9a-f]{64}$/iu.test(packageCandidateId)
+  ) {
+    throw new Error('Candidate package identity is invalid.');
   }
 
   const candidateDirectories = [
@@ -363,6 +382,7 @@ async function main(): Promise<void> {
     version,
     sourceCommit,
     releaseMode,
+    packageCandidateId,
     inventory,
     toolchains,
   );

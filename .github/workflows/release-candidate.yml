@@ -14,6 +14,18 @@ on:
         description: 'Exact source commit to build'
         required: true
         type: string
+      package_candidate_run_id:
+        description: 'Successful Release Package Candidate workflow run for the same source commit'
+        required: true
+        type: string
+      package_candidate_id:
+        description: 'Immutable Package Candidate ID'
+        required: true
+        type: string
+      package_candidate_manifest_sha256:
+        description: 'SHA-256 of the Package Candidate candidate-manifest.json'
+        required: true
+        type: string
       release_mode:
         description: 'Candidate model mode derived from the checked-in source lock'
         required: true
@@ -84,6 +96,29 @@ jobs:
           NODE_AUTH_TOKEN: ${{ github.token }}
         run: pnpm install --frozen-lockfile
 
+      - name: Download and verify the exact Package Candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: capture-package-candidate-${{ inputs.version }}-${{ inputs.package_candidate_run_id }}
+          run-id: ${{ inputs.package_candidate_run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/package-candidate
+
+      - name: Verify Package Candidate identity before desktop assembly
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $candidate = Join-Path $env:RUNNER_TEMP 'package-candidate'
+          node tools/verify-package-candidate.ts `
+            --candidate "$candidate" `
+            --version '${{ inputs.version }}' `
+            --source-commit '${{ inputs.commit_sha }}' `
+            --producer-run-id '${{ inputs.package_candidate_run_id }}' `
+            --candidate-id '${{ inputs.package_candidate_id }}' `
+            --candidate-manifest-sha256 '${{ inputs.package_candidate_manifest_sha256 }}' `
+            --require-evidence
+          "PACKAGE_CANDIDATE_PATH=$candidate" >> $env:GITHUB_ENV
+
       - name: Verify centralized release metadata
         shell: pwsh
         env:
@@ -139,9 +174,6 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
-          pnpm nx run capture-angular:pack
-          pnpm nx run capture-contracts:pack
-          pnpm nx run capture-structuring:pack
           pnpm nx run capture-contracts:python-build
           pnpm nx run capture-structuring-python:build
           pnpm nx run capture-sidecar-launcher:cargo-package-dry-run
@@ -149,13 +181,15 @@ jobs:
           node tools/assemble-release-candidate.ts `
             --output "$candidate" `
             --version "$env:RELEASE_VERSION" `
-            --release-mode "$env:RELEASE_MODE"
+            --release-mode "$env:RELEASE_MODE" `
+            --package-candidate "$env:PACKAGE_CANDIDATE_PATH"
           $sourceCommit = (git rev-parse HEAD).Trim()
           node tools/verify-release-candidate.ts `
             --candidate "$candidate" `
             --version "$env:RELEASE_VERSION" `
             --source-commit "$sourceCommit" `
-            --release-mode "$env:RELEASE_MODE"
+            --release-mode "$env:RELEASE_MODE" `
+            --package-candidate-id '${{ inputs.package_candidate_id }}'
           "CAPTURE_CANDIDATE_PATH=$candidate" >> $env:GITHUB_ENV
           $manifest = Get-Content "$candidate/candidate-manifest.json" -Raw | ConvertFrom-Json
           "candidateId=$($manifest.candidateId)" >> $env:GITHUB_OUTPUT
