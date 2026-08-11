@@ -1,12 +1,24 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import time
+from datetime import UTC, datetime
+from types import SimpleNamespace
 
 import pytest
 from conftest import TOKEN
+from fastapi import APIRouter
 from fastapi.testclient import TestClient
+
+from capture_runtime.contracts import (
+    CaptureOperationV2,
+    CaptureSourceKind,
+    StreamingCaptureStatus,
+)
+from capture_runtime.routes.streaming import register_streaming_routes
+from capture_runtime.storage import StreamingEventOverflow
 
 
 def _source() -> bytes:
@@ -184,6 +196,60 @@ def test_streaming_api_closes_replay_after_event_window_resync(
     assert replay.text.endswith("\n\n")
     assert "event: resync_required" in replay.text
     assert "event: accepted" not in replay.text
+
+
+def test_streaming_api_marks_a_live_subscriber_overflow_as_reconnectable_resync() -> None:
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    operation = CaptureOperationV2(
+        capture_id="capture-overflow",
+        ingestion_id="ingestion-overflow",
+        kind=CaptureSourceKind.IMAGE,
+        status=StreamingCaptureStatus.EXTRACTING,
+        progress=0.5,
+        partial_revision=2,
+        last_event_sequence=7,
+        created_at=now,
+        updated_at=now,
+    )
+
+    class OverflowSubscription:
+        replay = []
+        closed = False
+
+        def get(self, _timeout: float) -> StreamingEventOverflow:
+            return StreamingEventOverflow()
+
+        def close(self) -> None:
+            self.closed = True
+
+    subscription = OverflowSubscription()
+    service = SimpleNamespace(
+        subscribe_events=lambda _capture_id, *, after_sequence: subscription,
+        get_capture=lambda _capture_id: operation,
+        events=lambda *_args, **_kwargs: pytest.fail(
+            "queue overflow must not replay an ambiguous active event suffix"
+        ),
+    )
+    router = APIRouter()
+    register_streaming_routes(
+        router,
+        SimpleNamespace(streaming_capture_service=service),
+    )
+    endpoint = next(
+        route.endpoint for route in router.routes if route.path == "/captures/{capture_id}/events"
+    )
+
+    async def collect() -> str:
+        response = await endpoint("capture-overflow", None)
+        return "".join([chunk async for chunk in response.body_iterator])
+
+    body = asyncio.run(collect())
+
+    assert "id: 7" in body
+    assert "event: resync_required" in body
+    assert "event: checkpoint" not in body
+    assert body.endswith("\n\n")
+    assert subscription.closed
 
 
 @pytest.mark.parametrize(

@@ -176,6 +176,75 @@ describe('CaptureReconciliationService', () => {
     expect(currentTask.status).toBe('completed');
   });
 
+  it('reloads the snapshot and reconnects after a nonterminal SSE completion', async () => {
+    const firstEvents = new Subject<ReturnType<typeof streamingEvent>>();
+    const secondEvents = new Subject<ReturnType<typeof streamingEvent>>();
+    let streamIndex = 0;
+    const captureEvents = vi.fn<NonNullable<CaptureClient['captureEvents']>>(() =>
+      (streamIndex++ === 0 ? firstEvents : secondEvents).asObservable(),
+    );
+    const recoveredOperation = {
+      ...streamingOperation('extracting', 0.4),
+      lastEventSequence: 7,
+    };
+    const getStreamingCapture = vi
+      .fn<NonNullable<CaptureClient['getStreamingCapture']>>()
+      .mockReturnValueOnce(of(streamingOperation('extracting', 0.3)))
+      .mockReturnValueOnce(of(recoveredOperation))
+      .mockReturnValueOnce(of(streamingOperation('completed')));
+    const client = fakeClient({ captureEvents, getStreamingCapture });
+    configure(client);
+
+    const settled = firstValueFrom(service.reconcile('task-1'));
+    await vi.waitFor(() => expect(captureEvents).toHaveBeenCalledOnce());
+
+    firstEvents.next(streamingEvent('checkpoint', 'extracting', 0.4));
+    firstEvents.complete();
+    await vi.waitFor(() => expect(captureEvents).toHaveBeenCalledTimes(2));
+
+    expect(captureEvents).toHaveBeenNthCalledWith(
+      2,
+      'capture-1',
+      expect.objectContaining({ lastEventId: 7 }),
+    );
+    secondEvents.next(streamingEvent('completed', 'completed', 1));
+    await settled;
+
+    expect(currentTask.status).toBe('completed');
+  });
+
+  it('reloads the snapshot and reconnects after a recoverable SSE error', async () => {
+    const secondEvents = new Subject<ReturnType<typeof streamingEvent>>();
+    const captureEvents = vi
+      .fn<NonNullable<CaptureClient['captureEvents']>>()
+      .mockReturnValueOnce(throwError(() => new Error('stream reset')))
+      .mockReturnValueOnce(secondEvents.asObservable());
+    const recoveredOperation = {
+      ...streamingOperation('extracting', 0.4),
+      lastEventSequence: 7,
+    };
+    const getStreamingCapture = vi
+      .fn<NonNullable<CaptureClient['getStreamingCapture']>>()
+      .mockReturnValueOnce(of(streamingOperation('extracting', 0.3)))
+      .mockReturnValueOnce(of(recoveredOperation))
+      .mockReturnValueOnce(of(streamingOperation('completed')));
+    const client = fakeClient({ captureEvents, getStreamingCapture });
+    configure(client);
+
+    const settled = firstValueFrom(service.reconcile('task-1'));
+    await vi.waitFor(() => expect(captureEvents).toHaveBeenCalledTimes(2));
+
+    expect(captureEvents).toHaveBeenNthCalledWith(
+      2,
+      'capture-1',
+      expect.objectContaining({ lastEventId: 7 }),
+    );
+    secondEvents.next(streamingEvent('completed', 'completed', 1));
+    await settled;
+
+    expect(currentTask.status).toBe('completed');
+  });
+
   it('confirms a lost v2 commit response through the v2 snapshot', async () => {
     const client = fakeClient({
       commitStreamingStructuredResult: vi.fn(() =>

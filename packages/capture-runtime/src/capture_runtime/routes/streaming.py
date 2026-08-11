@@ -24,6 +24,7 @@ from capture_runtime.contracts import (
     ReportStructuringFailureV1,
     RuntimeStreamingCapabilitiesV2,
     StartCaptureV2,
+    StreamingEventType,
 )
 from capture_runtime.dependencies import RuntimeDependencies
 from capture_runtime.progressive_audio import DEFAULT_CHECKPOINT_MS
@@ -224,12 +225,7 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
                         yield ": keep-alive\n\n"
                         continue
                     if isinstance(item, StreamingEventOverflow):
-                        resync = service.events(capture_id, after_sequence=last_sequence)
-                        for event in resync:
-                            if event.sequence <= last_sequence:
-                                continue
-                            yield _event_frame(event)
-                            last_sequence = event.sequence
+                        yield _event_frame(_resync_event(service.get_capture(capture_id)))
                         return
                     if item.sequence <= last_sequence:
                         continue
@@ -408,6 +404,20 @@ def _event_frame(event: CaptureEventV2) -> str:
         separators=(",", ":"),
     )
     return f"id: {event.sequence}\nevent: {event.event_type.value}\ndata: {payload}\n\n"
+
+
+def _resync_event(operation: CaptureOperationV2) -> CaptureEventV2:
+    return CaptureEventV2(
+        event_id=f"{operation.capture_id}/resync/{operation.last_event_sequence}",
+        sequence=operation.last_event_sequence,
+        capture_id=operation.capture_id,
+        kind=operation.kind,
+        event_type=StreamingEventType.RESYNC_REQUIRED,
+        stage="resync",
+        progress=operation.progress,
+        partial_revision=operation.partial_revision,
+        created_at=operation.updated_at,
+    )
 
 
 def _is_terminal_event(event: CaptureEventV2) -> bool:

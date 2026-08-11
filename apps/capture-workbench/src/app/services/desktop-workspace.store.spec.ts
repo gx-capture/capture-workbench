@@ -440,6 +440,112 @@ describe('DesktopWorkspaceStore', () => {
     expect(getStreamingEvents).toHaveBeenCalledTimes(2);
   });
 
+  it('reloads the snapshot and reconnects after a nonterminal desktop SSE completion', () => {
+    const firstEvents = new Subject<readonly CaptureEventV2[]>();
+    const secondEvents = new Subject<readonly CaptureEventV2[]>();
+    const getStreamingEvents = vi
+      .fn()
+      .mockReturnValueOnce(firstEvents)
+      .mockReturnValueOnce(secondEvents);
+    const recoveredOperation = {
+      ...runningOperation,
+      progress: 0.7,
+      lastEventSequence: 7,
+    };
+    const getStreamingCapture = vi
+      .fn()
+      .mockReturnValueOnce(of(recoveredOperation))
+      .mockReturnValueOnce(of(completedOperation));
+    const checkpointEvent: CaptureEventV2 = {
+      protocolVersion: '2',
+      eventId: 'capture-1/checkpoint/6',
+      sequence: 6,
+      captureId: 'capture-1',
+      kind: 'pdf',
+      eventType: 'checkpoint',
+      stage: 'extracting',
+      progress: 0.6,
+      partialRevision: 1,
+      createdAt: '2026-07-20T00:00:01Z',
+    };
+    const completedEvent: CaptureEventV2 = {
+      ...checkpointEvent,
+      eventId: 'capture-1/completed/8',
+      sequence: 8,
+      eventType: 'completed',
+      stage: 'completed',
+      progress: 1,
+    };
+    const store = initializeStore(
+      libraryStub(),
+      runtimeStub({
+        startStreamingCapture: vi.fn(() => of(runningOperation)),
+        getStreamingEvents,
+        getStreamingCapture,
+      }),
+    );
+
+    store.retry(summary.documentId);
+    TestBed.tick();
+    firstEvents.next([checkpointEvent]);
+    firstEvents.complete();
+    TestBed.tick();
+
+    expect(getStreamingEvents).toHaveBeenNthCalledWith(2, 'capture-1', 7);
+    secondEvents.next([completedEvent]);
+    TestBed.tick();
+
+    expect(getStreamingCapture).toHaveBeenCalledTimes(2);
+    expect(getStreamingEvents).toHaveBeenCalledTimes(2);
+  });
+
+  it('reloads the snapshot and reconnects after a recoverable desktop SSE error', () => {
+    const secondEvents = new Subject<readonly CaptureEventV2[]>();
+    const getStreamingEvents = vi
+      .fn()
+      .mockReturnValueOnce(throwError(() => new Error('stream reset')))
+      .mockReturnValueOnce(secondEvents);
+    const recoveredOperation = {
+      ...runningOperation,
+      progress: 0.7,
+      lastEventSequence: 7,
+    };
+    const getStreamingCapture = vi
+      .fn()
+      .mockReturnValueOnce(of(recoveredOperation))
+      .mockReturnValueOnce(of(completedOperation));
+    const completedEvent: CaptureEventV2 = {
+      protocolVersion: '2',
+      eventId: 'capture-1/completed/8',
+      sequence: 8,
+      captureId: 'capture-1',
+      kind: 'pdf',
+      eventType: 'completed',
+      stage: 'completed',
+      progress: 1,
+      partialRevision: 1,
+      createdAt: '2026-07-20T00:00:01Z',
+    };
+    const store = initializeStore(
+      libraryStub(),
+      runtimeStub({
+        startStreamingCapture: vi.fn(() => of(runningOperation)),
+        getStreamingEvents,
+        getStreamingCapture,
+      }),
+    );
+
+    store.retry(summary.documentId);
+    TestBed.tick();
+    expect(getStreamingEvents).toHaveBeenCalledWith('capture-1', 0);
+
+    secondEvents.next([completedEvent]);
+    TestBed.tick();
+
+    expect(getStreamingEvents).toHaveBeenCalledTimes(2);
+    expect(getStreamingCapture).toHaveBeenCalledTimes(2);
+  });
+
   it('keeps the v2 partial available while the terminal result is committed', () => {
     const structuringOperation: CaptureOperationV2 = {
       ...runningOperation,
@@ -897,16 +1003,30 @@ describe('DesktopWorkspaceStore', () => {
       recoveryCode: 'capture_recovery_required',
     } satisfies DesktopLibrarySummary;
     const startStreamingCapture = vi.fn(() => of(completedOperation));
-    const getStreamingCapture = vi.fn(() => of({
+    const recoveredOperation = {
+      ...runningOperation,
+      captureId: 'capture-recovery',
+      lastEventSequence: 7,
+    } satisfies CaptureOperationV2;
+    const getStreamingCapture = vi
+      .fn()
+      .mockReturnValueOnce(of(recoveredOperation))
+      .mockReturnValueOnce(of({
       ...completedOperation,
       captureId: 'capture-recovery',
-    } satisfies CaptureOperationV2));
+      } satisfies CaptureOperationV2));
+    const getStreamingEvents = vi.fn(() => of([]));
     const deleteStreamingCapture = vi.fn(() => of(undefined));
     const library = libraryStub({
       list: vi.fn(() => of([recovery])),
       get: vi.fn(() => of(recovery as DesktopLibraryDetail)),
     });
-    const client = runtimeStub({ startStreamingCapture, getStreamingCapture, deleteStreamingCapture });
+    const client = runtimeStub({
+      startStreamingCapture,
+      getStreamingCapture,
+      getStreamingEvents,
+      deleteStreamingCapture,
+    });
     const store = initializeStore(library, client);
 
     store.retry(recovery.documentId);
@@ -914,6 +1034,7 @@ describe('DesktopWorkspaceStore', () => {
 
     expect(startStreamingCapture).not.toHaveBeenCalled();
     expect(getStreamingCapture).toHaveBeenCalledWith('capture-recovery');
+    expect(getStreamingEvents).toHaveBeenCalledWith('capture-recovery', 7);
     expect(deleteStreamingCapture).toHaveBeenCalledWith('capture-recovery');
   });
 

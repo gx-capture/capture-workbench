@@ -627,7 +627,11 @@ export class DesktopWorkspaceStore {
     const captureId = active.captureId;
     if (!captureId) return throwError(() => new Error('Streaming capture id is missing.'));
     return this.runtime.getStreamingEvents(captureId, active.lastEventSequence).pipe(
-      tap((events) => events.forEach((event) => this.applyStreamingEvent(documentId, active, event))),
+      catchError((error: unknown) => {
+        if (isAbortError(error)) return throwError(() => error);
+        return of(null);
+      }),
+      tap((events) => events?.forEach((event) => this.applyStreamingEvent(documentId, active, event))),
       switchMap(() => this.runtime.getStreamingPartial(captureId)),
       tap((partial) => {
         if (partial) {
@@ -726,7 +730,7 @@ export class DesktopWorkspaceStore {
       const work$ = terminalCommitted
         ? this.retryRuntimeCleanup$(document)
         : this.runtime.getStreamingCapture(document.captureId).pipe(
-          tap((operation) => active.lastStage = operation.status),
+          tap((operation) => this.applyStreamingOperation(active, operation)),
           switchMap((operation) => this.waitForStreamingTerminal$(
             document.documentId,
             operation,
@@ -927,6 +931,12 @@ function terminalStage(status?: DesktopLibraryStatus): string {
 function errorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   return redactSensitiveMessage(message);
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException
+    ? error.name === 'AbortError'
+    : error instanceof Error && error.name === 'AbortError';
 }
 
 function redactSensitiveMessage(message: string): string {

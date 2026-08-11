@@ -595,12 +595,17 @@ export class CaptureWorkflowService {
       return of(initial);
     }
     let resyncRequired = false;
+    let streamInterrupted = false;
+    let terminalObserved = false;
+    let aborted = false;
     return client.captureEvents(initial.captureId, {
       signal,
       lastEventId: initial.lastEventSequence,
     }).pipe(
       tap((event) => {
         resyncRequired = isResyncRequiredEvent(event);
+        terminalObserved = terminalObserved || this.helpers.isTerminalStreamingEvent(event)
+          || (stopForHost && event.stage === 'awaiting_structuring');
         if (!resyncRequired) this.applyStreamingEvent(taskId, event);
       }),
       takeWhile(
@@ -609,6 +614,19 @@ export class CaptureWorkflowService {
           && !(stopForHost && event.stage === 'awaiting_structuring'),
         true,
       ),
+      catchError((error: unknown) => {
+        if (this.helpers.isAbortError(error) || signal.aborted) {
+          aborted = true;
+          return throwError(() => error);
+        }
+        streamInterrupted = true;
+        return EMPTY;
+      }),
+      finalize(() => {
+        if (!aborted && !signal.aborted && !terminalObserved && !resyncRequired) {
+          streamInterrupted = true;
+        }
+      }),
       ignoreElements(),
       endWith(undefined),
       concatMap(() => this.reloadStreamingSnapshot$(
@@ -616,7 +634,7 @@ export class CaptureWorkflowService {
         initial.captureId,
         signal,
         taskId,
-        resyncRequired,
+        resyncRequired || streamInterrupted,
       )),
       concatMap((snapshot) => {
         if (
@@ -625,7 +643,7 @@ export class CaptureWorkflowService {
         ) {
           return of(snapshot);
         }
-        if (!resyncRequired) return of(snapshot);
+        if (!resyncRequired && !streamInterrupted) return of(snapshot);
         if (reconnectAttempt >= MAX_STREAMING_RESYNC_RECONNECTS) {
           return throwError(
             () => new Error('Capture event stream exceeded the resync recovery limit.'),
