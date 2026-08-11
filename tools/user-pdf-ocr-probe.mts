@@ -479,26 +479,53 @@ function parseProbeSseBlock(block: string): ProbeSseFrame | undefined {
 }
 
 class ProbeSseParser {
-  private buffer = '';
+  private line = '';
+  private block: string[] = [];
+  private pendingCarriageReturn = false;
 
   push(chunk: string): readonly ProbeSseFrame[] {
-    this.buffer += chunk.replace(/\r\n?/gu, '\n');
     const frames: ProbeSseFrame[] = [];
-    let separator = this.buffer.indexOf('\n\n');
-    while (separator !== -1) {
-      const frame = parseProbeSseBlock(this.buffer.slice(0, separator));
-      if (frame) frames.push(frame);
-      this.buffer = this.buffer.slice(separator + 2);
-      separator = this.buffer.indexOf('\n\n');
+    let index = 0;
+    if (this.pendingCarriageReturn) {
+      this.pendingCarriageReturn = false;
+      if (chunk[index] === '\n') index += 1;
+      this.emitLine(frames);
+    }
+    while (index < chunk.length) {
+      const character = chunk[index];
+      index += 1;
+      if (character === '\r') {
+        if (index === chunk.length) {
+          this.pendingCarriageReturn = true;
+        } else {
+          if (chunk[index] === '\n') index += 1;
+          this.emitLine(frames);
+        }
+      } else if (character === '\n') {
+        this.emitLine(frames);
+      } else {
+        this.line += character;
+      }
     }
     return frames;
   }
 
   finish(): readonly ProbeSseFrame[] {
-    if (!this.buffer) return [];
-    const frame = parseProbeSseBlock(this.buffer);
-    this.buffer = '';
-    return frame ? [frame] : [];
+    this.line = '';
+    this.block = [];
+    this.pendingCarriageReturn = false;
+    return [];
+  }
+
+  private emitLine(frames: ProbeSseFrame[]): void {
+    if (this.line === '') {
+      const frame = parseProbeSseBlock(this.block.join('\n'));
+      if (frame) frames.push(frame);
+      this.block = [];
+    } else {
+      this.block.push(this.line);
+    }
+    this.line = '';
   }
 }
 

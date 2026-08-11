@@ -64,7 +64,7 @@ describe('captureEventStream', () => {
         'id: 2',
         'event: completed',
         'data: {"protocolVersion":"2","eventId":"capture-1/2","sequence":2,"captureId":"capture-1","kind":"pdf","eventType":"completed","stage":"completed","createdAt":"2026-08-11T00:00:01Z"}',
-      ].join('\n'),
+      ].join('\n') + '\n\n',
     );
 
     expect(frames).toHaveLength(2);
@@ -82,13 +82,27 @@ describe('captureEventStream', () => {
     expect(frames[0]).toMatchObject({ id: '1', event: 'accepted' });
   });
 
-  it('flushes a final frame that has no trailing blank line', () => {
+  it('preserves a CRLF delimiter when the CR and LF arrive in different chunks', async () => {
+    const frame = sseFrame(captureEvent(2, 'completed')).replace(/\n/gu, '\r\n');
+    const split = frame.indexOf('\r\n') + 1;
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(sseResponse([frame.slice(0, split), frame.slice(split)]));
+
+    const events = await lastValueFrom(
+      captureEventStream(fetchMock, EVENT_URL).pipe(toArray()),
+    );
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ sequence: 2, eventType: 'completed' });
+  });
+
+  it('ignores a final frame that has no trailing blank line', () => {
     const frames = parseSseText(
       `id: 2\nevent: completed\ndata: ${JSON.stringify(captureEvent(2, 'completed'))}`,
     );
 
-    expect(frames).toHaveLength(1);
-    expect(decodeCaptureEventFrame(frames[0])).toMatchObject({ sequence: 2 });
+    expect(frames).toHaveLength(0);
   });
 
   it('rejects a missing protocolVersion instead of guessing the wire contract', () => {

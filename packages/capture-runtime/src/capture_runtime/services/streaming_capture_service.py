@@ -421,10 +421,19 @@ class StreamingCaptureService:
         if partial is not None:
             self.repository.write_partial(partial)
         for event in events:
+            event_type = (
+                StreamingEventType.CHECKPOINT
+                if event.event_type is StreamingEventType.COMPLETED
+                else event.event_type
+            )
             self.repository.append_event(
                 capture_id,
-                event_type=event.event_type,
-                stage=event.stage,
+                event_type=event_type,
+                stage=(
+                    "extracting"
+                    if event.event_type is StreamingEventType.COMPLETED
+                    else event.stage
+                ),
                 partial_revision=event.partial_revision,
                 covered_until_ms=event.covered_until_ms,
                 segments=list(event.segments),

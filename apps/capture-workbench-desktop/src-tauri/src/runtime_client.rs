@@ -28,6 +28,7 @@ const MAX_RUNTIME_RESPONSE_BYTES: u64 = 60 * 1024 * 1024;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 const STREAM_CHUNK_BYTES: usize = 1024 * 1024;
 
+#[derive(Clone)]
 struct RequestBody {
     bytes: Vec<u8>,
     content_type: String,
@@ -163,6 +164,8 @@ pub(crate) fn start_streaming_capture(
         .and_then(Value::as_str)
         .ok_or_else(|| "Progressive ingestion response is invalid.".to_string())?
         .to_string();
+    validate_opaque_id(&ingestion_id)
+        .map_err(|_| "Progressive ingestion response identity is invalid.".to_string())?;
     persist_capture_recovery(
         library,
         &input.document_id,
@@ -175,6 +178,18 @@ pub(crate) fn start_streaming_capture(
         Some(&ingestion_id),
     )?;
     let client_request_id = input.client_request_id.clone();
+    let capture_body = RequestBody {
+        bytes: serde_json::to_vec(&json!({
+            "clientRequestId": client_request_id.clone(),
+            "ingestionId": ingestion_id,
+            "structuringMode": input.structuring_mode,
+            "startPolicy": "eager",
+        }))
+        .map_err(|_| "Progressive capture request cannot be encoded.".to_string())?,
+        content_type: "application/json".into(),
+    };
+    let mut capture_request_attempted = false;
+    let mut capture_response_accepted = false;
     let result = (|| {
         upload_source_chunks(&config, &source, &ingestion_id, &client_request_id)?;
         let source_digest = source_sha256(&source)?;
@@ -192,25 +207,17 @@ pub(crate) fn start_streaming_capture(
             }),
             None,
         )?;
-        request_capture_with_recovery(
-            &config,
-            RequestBody {
-                bytes: serde_json::to_vec(&json!({
-                    "clientRequestId": client_request_id.clone(),
-                    "ingestionId": ingestion_id,
-                    "structuringMode": input.structuring_mode,
-                    "startPolicy": "eager",
-                }))
-                .map_err(|_| "Progressive capture request cannot be encoded.".to_string())?,
-                content_type: "application/json".into(),
-            },
-            &client_request_id,
-        )
-        .and_then(|value| {
+        capture_request_attempted = true;
+        let capture =
+            request_capture_with_recovery(&config, capture_body.clone(), &client_request_id)?;
+        capture_response_accepted = true;
+        Ok::<Value, String>(capture).and_then(|value| {
             let capture_id = value
                 .get("captureId")
                 .and_then(Value::as_str)
                 .ok_or_else(|| "Progressive capture response is invalid.".to_string())?;
+            validate_opaque_id(capture_id)
+                .map_err(|_| "Progressive capture response identity is invalid.".to_string())?;
             let stage = value
                 .get("status")
                 .and_then(Value::as_str)
@@ -231,16 +238,103 @@ pub(crate) fn start_streaming_capture(
     })();
     match result {
         Ok(value) => Ok(value),
-        Err(error) => match request_json(
-            state,
-            "DELETE",
-            &format!("/v2/ingestions/{ingestion_id}"),
-            None,
-            None,
-        ) {
-            Ok(_) => Err(error),
-            Err(cleanup_error) => Err(format!("{error} Ingestion cleanup failed: {cleanup_error}")),
+        Err(error)
+            if capture_response_accepted
+                || (capture_request_attempted && is_uncertain_capture_create_error(&error)) =>
+        {
+            match reconcile_capture_by_client_request(&config, &capture_body, &client_request_id) {
+                CaptureReconciliation::Committed(value)
+                    if is_uncertain_capture_create_error(&error) =>
+                {
+                    let capture_id = value
+                        .get("captureId")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| "Progressive capture response is invalid.".to_string())?;
+                    let stage = value
+                        .get("status")
+                        .and_then(Value::as_str)
+                        .unwrap_or("created");
+                    persist_capture_recovery(
+                        library,
+                        &input.document_id,
+                        "processing",
+                        stage,
+                        Some(capture_id),
+                        None,
+                        None,
+                        None,
+                        None,
+                    )?;
+                    Ok(value)
+                }
+                CaptureReconciliation::ConfirmedAbsent => {
+                    Err(cleanup_uncommitted_ingestion(&config, &ingestion_id, error))
+                }
+                CaptureReconciliation::Committed(_) | CaptureReconciliation::Unknown => {
+                    persist_capture_recovery(
+                        library,
+                        &input.document_id,
+                        "recovery_required",
+                        "capture",
+                        None,
+                        Some("capture_pending"),
+                        Some("Capture request could not be safely reconciled; retry is required."),
+                        Some(&client_request_id),
+                        Some(&ingestion_id),
+                    )?;
+                    Err(error)
+                }
+            }
+        }
+        Err(error) => Err(cleanup_uncommitted_ingestion(&config, &ingestion_id, error)),
+    }
+}
+
+enum CaptureReconciliation {
+    Committed(Value),
+    ConfirmedAbsent,
+    Unknown,
+}
+
+fn reconcile_capture_by_client_request(
+    config: &BackendConfig,
+    body: &RequestBody,
+    client_request_id: &str,
+) -> CaptureReconciliation {
+    let response = request_with_headers(
+        config,
+        "GET",
+        &format!("/v2/captures/by-client-request/{client_request_id}"),
+        None,
+        None,
+        &[],
+    );
+    match response {
+        Ok(value) => match validate_recovered_capture(value, body) {
+            Ok(value) => CaptureReconciliation::Committed(value),
+            Err(_) => CaptureReconciliation::Unknown,
         },
+        Err(error) if is_http_rejection(&error, 404) => CaptureReconciliation::ConfirmedAbsent,
+        Err(_) => CaptureReconciliation::Unknown,
+    }
+}
+
+fn cleanup_uncommitted_ingestion(
+    config: &BackendConfig,
+    ingestion_id: &str,
+    original_error: String,
+) -> String {
+    match request_with_headers(
+        config,
+        "DELETE",
+        &format!("/v2/ingestions/{ingestion_id}"),
+        None,
+        None,
+        &[],
+    ) {
+        Ok(_) => original_error,
+        Err(cleanup_error) if is_http_rejection(&cleanup_error, 404) => original_error,
+        Err(cleanup_error) => format!("{original_error} Ingestion cleanup failed: {cleanup_error}"),
     }
 }
 
@@ -279,6 +373,7 @@ fn request_capture_with_recovery(
     body: RequestBody,
     client_request_id: &str,
 ) -> Result<Value, String> {
+    validate_client_request_id(client_request_id)?;
     let send = || {
         request_with_headers(
             config,
@@ -328,6 +423,8 @@ fn validate_recovered_capture(value: Value, body: &RequestBody) -> Result<Value,
         .ok_or_else(|| {
             "Capture recovery request was missing its ingestion identity.".to_string()
         })?;
+    validate_opaque_id(expected_ingestion_id)
+        .map_err(|_| "Capture recovery request had an invalid ingestion identity.".to_string())?;
     let recovered_ingestion_id = value
         .get("ingestionId")
         .and_then(Value::as_str)
@@ -335,11 +432,14 @@ fn validate_recovered_capture(value: Value, body: &RequestBody) -> Result<Value,
         .ok_or_else(|| {
             "Capture recovery response was missing its ingestion identity.".to_string()
         })?;
-    if recovered_ingestion_id != expected_ingestion_id
-        || value
-            .get("captureId")
-            .and_then(Value::as_str)
-            .is_none_or(str::is_empty)
+    let recovered_capture_id = value
+        .get("captureId")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "Capture recovery response was missing its capture identity.".to_string())?;
+    if validate_opaque_id(recovered_ingestion_id).is_err()
+        || validate_opaque_id(recovered_capture_id).is_err()
+        || recovered_ingestion_id != expected_ingestion_id
     {
         return Err("Capture Runtime recovered a conflicting capture.".to_string());
     }
@@ -354,6 +454,8 @@ fn is_uncertain_capture_create_error(error: &str) -> bool {
             | "Capture Runtime response could not be read."
             | "Capture Runtime response was malformed."
             | "Capture Runtime response was not valid JSON."
+            | "Capture Runtime response identifier is invalid."
+            | "Capture Runtime recovered a conflicting capture."
     ) {
         return true;
     }
@@ -847,26 +949,31 @@ impl<'a> SseParser<'a> {
         F: FnMut(Value) -> Result<(), String>,
     {
         self.pending.extend_from_slice(bytes);
-        while let Some(index) = self.pending.iter().position(|byte| *byte == b'\n') {
+        while let Some(index) = self
+            .pending
+            .iter()
+            .position(|byte| *byte == b'\n' || *byte == b'\r')
+        {
+            if self.pending[index] == b'\r' && index + 1 == self.pending.len() {
+                break;
+            }
             let mut line = self.pending.drain(..=index).collect::<Vec<_>>();
-            line.pop();
-            if line.last() == Some(&b'\r') {
-                line.pop();
+            let terminator = line.pop();
+            if terminator == Some(b'\r') && self.pending.first() == Some(&b'\n') {
+                self.pending.remove(0);
             }
             self.process_line(&line, on_event)?;
         }
         Ok(())
     }
 
-    fn finish<F>(&mut self, on_event: &mut F) -> Result<(), String>
+    fn finish<F>(&mut self, _on_event: &mut F) -> Result<(), String>
     where
         F: FnMut(Value) -> Result<(), String>,
     {
-        if !self.pending.is_empty() {
-            let line = std::mem::take(&mut self.pending);
-            self.process_line(&line, on_event)?;
-        }
-        self.dispatch(on_event)
+        self.pending.clear();
+        self.frame = SseFrame::default();
+        Ok(())
     }
 
     fn process_line<F>(&mut self, line: &[u8], on_event: &mut F) -> Result<(), String>
@@ -1001,6 +1108,8 @@ fn validate_capture_event(
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| "Capture Runtime SSE event capture identity was invalid.".to_string())?;
+    validate_opaque_id(capture_id)
+        .map_err(|_| "Capture Runtime SSE event capture identity was invalid.".to_string())?;
     if expected_capture_id.is_some_and(|expected| expected != capture_id) {
         return Err(
             "Capture Runtime SSE event capture identity did not match the request.".to_string(),
@@ -1337,8 +1446,37 @@ fn parse_response(response: &[u8], token: &str) -> Result<Value, String> {
     }
     let mut value: Value = serde_json::from_slice(&response[separator + 4..])
         .map_err(|_| "Capture Runtime response was not valid JSON.".to_string())?;
+    validate_runtime_response_identities(&value)?;
     redact_token(&mut value, token);
     Ok(value)
+}
+
+fn validate_runtime_response_identities(value: &Value) -> Result<(), String> {
+    match value {
+        Value::Array(values) => {
+            for item in values {
+                validate_runtime_response_identities(item)?;
+            }
+        }
+        Value::Object(values) => {
+            for (key, item) in values {
+                if matches!(key.as_str(), "captureId" | "ingestionId") {
+                    let identifier =
+                        item.as_str()
+                            .filter(|value| !value.is_empty())
+                            .ok_or_else(|| {
+                                "Capture Runtime response identifier is invalid.".to_string()
+                            })?;
+                    validate_opaque_id(identifier).map_err(|_| {
+                        "Capture Runtime response identifier is invalid.".to_string()
+                    })?;
+                }
+                validate_runtime_response_identities(item)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 fn is_http_rejection(error: &str, status: u16) -> bool {
@@ -1474,6 +1612,115 @@ mod tests {
     }
 
     #[test]
+    fn native_runtime_responses_reject_malformed_capture_and_ingestion_ids() {
+        let malformed_capture_response =
+            br#"HTTP/1.1 200 OK\r\nContent-Length: 56\r\nConnection: close\r\n\r\n{"captureId":"../capture","ingestionId":"ingestion-1"}"#;
+        assert!(parse_response(malformed_capture_response, "token").is_err());
+        let malformed_ingestion_response =
+            br#"HTTP/1.1 200 OK\r\nContent-Length: 78\r\nConnection: close\r\n\r\n{"operation":{"captureId":"capture-1","ingestionId":"C:\\source.bin"}}"#;
+        assert!(parse_response(malformed_ingestion_response, "token").is_err());
+        assert!(validate_runtime_response_identities(&serde_json::json!(
+            {"captureId": "../capture", "ingestionId": "ingestion-1"}
+        ))
+        .is_err());
+        assert!(validate_runtime_response_identities(&serde_json::json!(
+            {"operation": {"captureId": "capture-1", "ingestionId": "C:\\source.bin"}}
+        ))
+        .is_err());
+        assert!(validate_runtime_response_identities(&serde_json::json!(
+            {"captureId": "capture-1", "ingestionId": "ingestion-1"}
+        ))
+        .is_ok());
+    }
+
+    #[test]
+    fn capture_failure_cleanup_requires_a_client_request_absence_confirmation() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("listener");
+        let port = listener.local_addr().expect("address").port();
+        let server = thread::spawn(move || {
+            let (mut lookup, _) = listener.accept().expect("lookup connection");
+            let lookup_request = read_http_request(&mut lookup);
+            assert!(lookup_request.starts_with(
+                "GET /v2/captures/by-client-request/capture-request-cleanup HTTP/1.1"
+            ));
+            write!(
+                lookup,
+                "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            )
+            .expect("absent response");
+            drop(lookup);
+
+            let (mut cleanup, _) = listener.accept().expect("cleanup connection");
+            let cleanup_request = read_http_request(&mut cleanup);
+            assert!(cleanup_request.starts_with("DELETE /v2/ingestions/ingestion-1 HTTP/1.1"));
+            write!(
+                cleanup,
+                "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            )
+            .expect("cleanup response");
+        });
+        let config = BackendConfig {
+            base_url: format!("http://127.0.0.1:{port}"),
+            token: "token".into(),
+            runtime_version: "0.3.11".into(),
+            api_version: "1.0".into(),
+            capture_document_schema_version: "1".into(),
+        };
+        let body = RequestBody {
+            bytes: br#"{"clientRequestId":"capture-request-cleanup","ingestionId":"ingestion-1"}"#
+                .to_vec(),
+            content_type: "application/json".into(),
+        };
+        assert!(matches!(
+            reconcile_capture_by_client_request(&config, &body, "capture-request-cleanup"),
+            CaptureReconciliation::ConfirmedAbsent
+        ));
+        assert_eq!(
+            cleanup_uncommitted_ingestion(&config, "ingestion-1", "capture failed".into()),
+            "capture failed"
+        );
+        server.join().expect("server");
+    }
+
+    #[test]
+    fn capture_failure_cleanup_does_not_delete_after_a_conflicting_lookup() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("listener");
+        let port = listener.local_addr().expect("address").port();
+        let server = thread::spawn(move || {
+            let (mut lookup, _) = listener.accept().expect("lookup connection");
+            let lookup_request = read_http_request(&mut lookup);
+            assert!(lookup_request.starts_with(
+                "GET /v2/captures/by-client-request/capture-request-conflict HTTP/1.1"
+            ));
+            let body = r#"{"captureId":"capture-other","ingestionId":"ingestion-other"}"#;
+            write!(
+                lookup,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .expect("conflicting response");
+        });
+        let config = BackendConfig {
+            base_url: format!("http://127.0.0.1:{port}"),
+            token: "token".into(),
+            runtime_version: "0.3.11".into(),
+            api_version: "1.0".into(),
+            capture_document_schema_version: "1".into(),
+        };
+        let body = RequestBody {
+            bytes: br#"{"clientRequestId":"capture-request-conflict","ingestionId":"ingestion-1"}"#
+                .to_vec(),
+            content_type: "application/json".into(),
+        };
+        assert!(matches!(
+            reconcile_capture_by_client_request(&config, &body, "capture-request-conflict"),
+            CaptureReconciliation::Unknown
+        ));
+        server.join().expect("server");
+    }
+
+    #[test]
     fn private_http_status_mapping_is_exact_and_idempotent() {
         let not_found = Err("Capture Runtime request was rejected with HTTP 404.".into());
         assert_eq!(
@@ -1585,6 +1832,44 @@ mod tests {
             parser.finish(&mut collect).expect("stream finish");
         }
         assert_eq!(events.len(), 2);
+    }
+
+    #[test]
+    fn streaming_sse_preserves_split_crlf_and_ignores_unterminated_eof_frames() {
+        let payload = r#"{"protocolVersion":"2","eventId":"capture-1/8","sequence":8,"captureId":"capture-1","kind":"audio","eventType":"checkpoint","stage":"extracting","progress":0.5,"partialRevision":1,"createdAt":"2026-01-01T00:00:00Z"}"#;
+        let body = format!("id: 8\r\nevent: checkpoint\r\ndata: {payload}\r\n\r\n");
+        let split = body.find("\r\n").expect("line ending") + 1;
+        let mut parser = SseParser::new(None, "token", Some("capture-1")).expect("parser");
+        let mut events = Vec::new();
+        let mut collect = |event| {
+            events.push(event);
+            Ok(())
+        };
+        parser
+            .feed(body[..split].as_bytes(), &mut collect)
+            .expect("partial CRLF");
+        parser
+            .feed(body[split..].as_bytes(), &mut collect)
+            .expect("remaining frame");
+        parser.finish(&mut collect).expect("finish");
+        assert_eq!(events.len(), 1);
+
+        let mut truncated = SseParser::new(None, "token", Some("capture-1")).expect("parser");
+        let mut truncated_events = Vec::new();
+        let mut collect_truncated = |event| {
+            truncated_events.push(event);
+            Ok(())
+        };
+        truncated
+            .feed(
+                format!("id: 8\nevent: checkpoint\ndata: {payload}").as_bytes(),
+                &mut collect_truncated,
+            )
+            .expect("truncated frame");
+        truncated
+            .finish(&mut collect_truncated)
+            .expect("truncated finish");
+        assert!(truncated_events.is_empty());
     }
 
     #[test]

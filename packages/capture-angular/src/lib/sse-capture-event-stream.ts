@@ -207,27 +207,53 @@ function eventStreamFromBody(
 }
 
 class SseCaptureEventParser {
-  private buffer = '';
+  private line = '';
+  private block: string[] = [];
+  private pendingCarriageReturn = false;
 
   push(chunk: string): readonly SseEventFrame[] {
-    this.buffer += chunk.replace(/\r\n?/gu, '\n');
     const frames: SseEventFrame[] = [];
-    let separator = this.buffer.indexOf('\n\n');
-    while (separator !== -1) {
-      const block = this.buffer.slice(0, separator);
-      this.buffer = this.buffer.slice(separator + 2);
-      const frame = parseSseBlock(block);
-      if (frame) frames.push(frame);
-      separator = this.buffer.indexOf('\n\n');
+    let index = 0;
+    if (this.pendingCarriageReturn) {
+      this.pendingCarriageReturn = false;
+      if (chunk[index] === '\n') index += 1;
+      this.emitLine(frames);
+    }
+    while (index < chunk.length) {
+      const character = chunk[index];
+      index += 1;
+      if (character === '\r') {
+        if (index === chunk.length) {
+          this.pendingCarriageReturn = true;
+        } else {
+          if (chunk[index] === '\n') index += 1;
+          this.emitLine(frames);
+        }
+      } else if (character === '\n') {
+        this.emitLine(frames);
+      } else {
+        this.line += character;
+      }
     }
     return frames;
   }
 
   finish(): readonly SseEventFrame[] {
-    if (!this.buffer) return [];
-    const frame = parseSseBlock(this.buffer);
-    this.buffer = '';
-    return frame ? [frame] : [];
+    this.line = '';
+    this.block = [];
+    this.pendingCarriageReturn = false;
+    return [];
+  }
+
+  private emitLine(frames: SseEventFrame[]): void {
+    if (this.line === '') {
+      const frame = parseSseBlock(this.block.join('\n'));
+      if (frame) frames.push(frame);
+      this.block = [];
+    } else {
+      this.block.push(this.line);
+    }
+    this.line = '';
   }
 }
 

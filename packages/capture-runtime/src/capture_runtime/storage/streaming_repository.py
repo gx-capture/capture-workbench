@@ -142,6 +142,30 @@ def _atomic_json(path: Path, payload: object) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def _atomic_bytes(path: Path, payload: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    try:
+        with temporary.open("wb") as output:
+            output.write(payload)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, path)
+        try:
+            directory_fd = os.open(path.parent, os.O_RDONLY)
+        except OSError:
+            directory_fd = None
+        if directory_fd is not None:
+            try:
+                os.fsync(directory_fd)
+            except OSError:
+                pass
+            finally:
+                os.close(directory_fd)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def _remove_directory(directory: Path) -> None:
     try:
         shutil.rmtree(directory)
@@ -412,6 +436,8 @@ class StreamingRepository:
     ) -> CaptureEventV2:
         with self._lock:
             record = self._get_capture(capture_id)
+            if record.operation.status in _TERMINAL_CAPTURE_STATUSES:
+                raise StreamingTransitionError("capture is terminal")
             sequence = record.operation.last_event_sequence + 1
             event = CaptureEventV2(
                 event_id=f"{capture_id}/{sequence}",
@@ -448,6 +474,17 @@ class StreamingRepository:
                     "updated_at": now,
                 }
             )
+            terminal_status = _terminal_status_for_event(event_type)
+            if terminal_status is not None:
+                record.operation = record.operation.model_copy(
+                    update={
+                        "status": terminal_status,
+                        "completed_at": event.created_at,
+                        "error": (
+                            error if terminal_status is StreamingCaptureStatus.FAILED else None
+                        ),
+                    }
+                )
             self._persist_capture(record)
             for subscriber in self._subscribers.get(capture_id, set()).copy():
                 try:
@@ -568,6 +605,8 @@ class StreamingRepository:
     def write_partial(self, partial: PartialCaptureV2) -> None:
         with self._lock:
             record = self._get_capture(partial.capture_id)
+            if record.operation.status in _TERMINAL_CAPTURE_STATUSES:
+                raise StreamingTransitionError("capture is terminal")
             if partial.revision < record.operation.partial_revision:
                 raise StreamingTransitionError("partial revision regressed")
             _atomic_json(
@@ -584,7 +623,9 @@ class StreamingRepository:
 
     def write_raw(self, capture_id: str, raw: RawCaptureV1) -> None:
         with self._lock:
-            self._get_capture(capture_id)
+            record = self._get_capture(capture_id)
+            if record.operation.status in _TERMINAL_CAPTURE_STATUSES:
+                raise StreamingTransitionError("capture is terminal")
             _atomic_json(
                 self._capture_directory(capture_id) / "raw.json",
                 raw.model_dump(mode="json", by_alias=True),
@@ -602,7 +643,9 @@ class StreamingRepository:
 
     def write_result(self, capture_id: str, result: CaptureDocumentV1) -> None:
         with self._lock:
-            self._get_capture(capture_id)
+            record = self._get_capture(capture_id)
+            if record.operation.status in _TERMINAL_CAPTURE_STATUSES:
+                raise StreamingTransitionError("capture is terminal")
             _atomic_json(
                 self._capture_directory(capture_id) / "result.json",
                 result.model_dump(mode="json", by_alias=True),
@@ -1012,7 +1055,9 @@ class StreamingRepository:
         )
 
     def _load_ingestions(self) -> None:
-        for directory in (self.root / "ingestions").iterdir():
+        for directory in sorted((self.root / "ingestions").iterdir()):
+            if not directory.is_dir():
+                continue
             try:
                 payload = json.loads((directory / "metadata.json").read_text(encoding="utf-8"))
                 request = OpenIngestionV2.model_validate(payload["request"])
@@ -1037,12 +1082,15 @@ class StreamingRepository:
                 ValidationError,
                 json.JSONDecodeError,
             ):
+                self._quarantine_directory(directory, "ingestions")
                 continue
             self._ingestions[record.ingestion_id] = record
             self._ingestion_idempotency[record.request.client_request_id] = record.ingestion_id
 
     def _load_captures(self) -> None:
-        for directory in (self.root / "captures").iterdir():
+        for directory in sorted((self.root / "captures").iterdir()):
+            if not directory.is_dir():
+                continue
             try:
                 payload = json.loads((directory / "metadata.json").read_text(encoding="utf-8"))
                 request = StartCaptureV2.model_validate(payload["request"])
@@ -1063,10 +1111,32 @@ class StreamingRepository:
                 ValidationError,
                 json.JSONDecodeError,
             ):
+                self._quarantine_directory(directory, "captures")
                 continue
             self._captures[operation.capture_id] = record
             self._capture_idempotency[request.client_request_id] = operation.capture_id
-            self._reconcile_loaded_capture(record)
+            try:
+                self._reconcile_loaded_capture(record)
+            except (OSError, RuntimeError, UnicodeError, ValidationError):
+                self._captures.pop(operation.capture_id, None)
+                self._capture_idempotency.pop(request.client_request_id, None)
+                self._quarantine_directory(directory, "captures")
+
+    def _quarantine_directory(self, directory: Path, category: str) -> None:
+        quarantine_root = self.root / "quarantine" / category
+        try:
+            quarantine_root.mkdir(parents=True, exist_ok=True)
+            destination = quarantine_root / directory.name
+            suffix = 1
+            while destination.exists():
+                destination = quarantine_root / f"{directory.name}.{suffix}"
+                suffix += 1
+            os.replace(directory, destination)
+        except OSError:
+            # Startup must remain available even if the platform cannot move a
+            # damaged record. The original directory remains as evidence and
+            # will be reconsidered deterministically on the next initialize.
+            return
 
     def _reconcile_loaded_capture(self, record: _CaptureRecord) -> None:
         """Make the event log and operation metadata agree after a crash.
@@ -1157,19 +1227,40 @@ class StreamingRepository:
 
     def _latest_persisted_event(self, capture_id: str) -> CaptureEventV2 | None:
         path = self._capture_directory(capture_id) / "events.jsonl"
+        if not path.exists():
+            _atomic_bytes(path, b"")
+            return None
         latest: CaptureEventV2 | None = None
-        with path.open("r", encoding="utf-8") as event_log:
-            for line in event_log:
-                line = line.rstrip("\r\n")
-                if not line:
-                    continue
-                try:
-                    event = CaptureEventV2.model_validate_json(line)
-                except ValidationError as error:
-                    raise RuntimeError("streaming event log is corrupted") from error
-                if latest is not None and event.sequence <= latest.sequence:
-                    raise RuntimeError("streaming event log sequence is not increasing")
-                latest = event
+        valid_lines: list[bytes] = []
+        corrupted_suffix: bytes | None = None
+        with path.open("rb") as event_log:
+            lines = event_log.readlines()
+        for index, raw_line in enumerate(lines):
+            line = raw_line.rstrip(b"\r\n")
+            if not line:
+                valid_lines.append(raw_line)
+                continue
+            try:
+                text_line = line.decode("utf-8")
+                event = CaptureEventV2.model_validate_json(text_line)
+            except (UnicodeDecodeError, ValidationError, ValueError):
+                corrupted_suffix = b"".join(lines[index:])
+                break
+            if (
+                event.capture_id != capture_id
+                or event.event_id != f"{capture_id}/{event.sequence}"
+                or (latest is not None and event.sequence <= latest.sequence)
+            ):
+                corrupted_suffix = b"".join(lines[index:])
+                break
+            valid_lines.append(raw_line)
+            latest = event
+        if corrupted_suffix is not None:
+            digest = hashlib.sha256(corrupted_suffix).hexdigest()[:16]
+            evidence = path.with_name(f"{path.name}.corrupt.{digest}")
+            if not evidence.exists():
+                _atomic_bytes(evidence, corrupted_suffix)
+            _atomic_bytes(path, b"".join(valid_lines))
         return latest
 
 

@@ -140,6 +140,119 @@ def test_streaming_repository_repairs_terminal_metadata_without_a_terminal_event
     assert len(restarted_again.read_events(capture.capture_id, after_sequence=-1)) == 2
 
 
+def test_streaming_repository_recreates_missing_event_log_during_startup(
+    tmp_path: Path,
+) -> None:
+    clock = MutableClock()
+    repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+    repository.initialize()
+    ingestion_id, _ = _open(repository, b"audio")
+    capture = repository.create_capture(
+        StartCaptureV2(
+            client_request_id="repository-missing-events",
+            ingestion_id=ingestion_id,
+            structuring_mode=StructuringMode.HOST,
+        )
+    )
+    events_path = repository.root / "captures" / capture.capture_id / "events.jsonl"
+    events_path.unlink()
+
+    restarted = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+    restarted.initialize()
+
+    assert events_path.is_file()
+    recovered = restarted.get_capture(capture.capture_id)
+    assert recovered.status is StreamingCaptureStatus.FAILED
+    assert recovered.error is not None
+    assert recovered.error.code == "runtime_restarted"
+    assert [
+        event.event_type for event in restarted.read_events(capture.capture_id, after_sequence=-1)
+    ] == [StreamingEventType.FAILED]
+
+
+def test_streaming_repository_quarantines_a_torn_final_event_line(
+    tmp_path: Path,
+) -> None:
+    clock = MutableClock()
+    repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+    repository.initialize()
+    ingestion_id, _ = _open(repository, b"audio")
+    capture = repository.create_capture(
+        StartCaptureV2(
+            client_request_id="repository-torn-events",
+            ingestion_id=ingestion_id,
+            structuring_mode=StructuringMode.HOST,
+        )
+    )
+    repository.append_event(
+        capture.capture_id,
+        event_type=StreamingEventType.HEARTBEAT,
+        stage="extracting",
+    )
+    events_path = repository.root / "captures" / capture.capture_id / "events.jsonl"
+    with events_path.open("a", encoding="utf-8") as event_log:
+        event_log.write('{"protocolVersion":"2","sequence":')
+
+    restarted = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+    restarted.initialize()
+
+    assert list(events_path.parent.glob("events.jsonl.corrupt.*"))
+    assert [
+        event.event_type for event in restarted.read_events(capture.capture_id, after_sequence=-1)
+    ] == [
+        StreamingEventType.ACCEPTED,
+        StreamingEventType.HEARTBEAT,
+        StreamingEventType.FAILED,
+    ]
+
+
+def test_streaming_repository_quarantines_invalid_capture_metadata(
+    tmp_path: Path,
+) -> None:
+    clock = MutableClock()
+    repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+    repository.initialize()
+    ingestion_id, _ = _open(repository, b"audio")
+    capture = repository.create_capture(
+        StartCaptureV2(
+            client_request_id="repository-invalid-capture-metadata",
+            ingestion_id=ingestion_id,
+            structuring_mode=StructuringMode.HOST,
+        )
+    )
+    metadata_path = repository.root / "captures" / capture.capture_id / "metadata.json"
+    metadata_path.write_text("{not-json", encoding="utf-8")
+
+    restarted = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+    restarted.initialize()
+
+    with pytest.raises(KeyError):
+        restarted.get_capture(capture.capture_id)
+    assert (
+        repository.root / "quarantine" / "captures" / capture.capture_id / "metadata.json"
+    ).is_file()
+
+
+def test_streaming_repository_quarantines_invalid_ingestion_metadata(
+    tmp_path: Path,
+) -> None:
+    clock = MutableClock()
+    repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+    repository.initialize()
+    ingestion_id, _ = _open(repository, b"audio")
+    metadata_path = repository.root / "ingestions" / ingestion_id / "metadata.json"
+    metadata_path.write_text("{not-json", encoding="utf-8")
+
+    restarted = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+    restarted.initialize()
+
+    with pytest.raises(KeyError):
+        restarted.get_ingestion(ingestion_id)
+    assert (
+        repository.root / "quarantine" / "ingestions" / ingestion_id / "metadata.json"
+    ).is_file()
+
+
 def test_streaming_repository_reconciles_terminal_event_when_metadata_is_stale(
     tmp_path: Path,
 ) -> None:
@@ -164,6 +277,7 @@ def test_streaming_repository_reconciles_terminal_event_when_metadata_is_stale(
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     metadata["operation"]["status"] = "waiting_input"
     metadata["operation"]["lastEventSequence"] = 1
+    metadata["operation"]["completedAt"] = None
     metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
 
     restarted = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
@@ -176,6 +290,41 @@ def test_streaming_repository_reconciles_terminal_event_when_metadata_is_stale(
     assert [
         persisted.event_type
         for persisted in restarted.read_events(capture.capture_id, after_sequence=-1)
+    ] == [StreamingEventType.ACCEPTED, StreamingEventType.COMPLETED]
+
+
+def test_streaming_repository_rejects_events_after_terminal_event(
+    tmp_path: Path,
+) -> None:
+    clock = MutableClock()
+    repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+    repository.initialize()
+    ingestion_id, _ = _open(repository, b"audio")
+    capture = repository.create_capture(
+        StartCaptureV2(
+            client_request_id="repository-terminal-event-fence",
+            ingestion_id=ingestion_id,
+            structuring_mode=StructuringMode.HOST,
+        )
+    )
+
+    repository.append_event(
+        capture.capture_id,
+        event_type=StreamingEventType.COMPLETED,
+        stage="completed",
+        progress=1,
+    )
+
+    with pytest.raises(StreamingTransitionError, match="terminal"):
+        repository.append_event(
+            capture.capture_id,
+            event_type=StreamingEventType.HEARTBEAT,
+            stage="extracting",
+        )
+
+    assert repository.get_capture(capture.capture_id).status is StreamingCaptureStatus.COMPLETED
+    assert [
+        event.event_type for event in repository.read_events(capture.capture_id, after_sequence=-1)
     ] == [StreamingEventType.ACCEPTED, StreamingEventType.COMPLETED]
 
 
@@ -383,12 +532,12 @@ def test_streaming_repository_retains_capture_state_when_filesystem_delete_fails
         repository.delete_capture(capture.capture_id)
 
     assert repository.get_capture(capture.capture_id).capture_id == capture.capture_id
-    repository.append_event(
-        capture.capture_id,
-        event_type=StreamingEventType.HEARTBEAT,
-        stage="completed",
-    )
-    assert subscription.get(timeout=0.1).event_type is StreamingEventType.HEARTBEAT
+    with pytest.raises(StreamingTransitionError, match="terminal"):
+        repository.append_event(
+            capture.capture_id,
+            event_type=StreamingEventType.HEARTBEAT,
+            stage="completed",
+        )
     subscription.close()
 
 

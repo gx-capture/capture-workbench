@@ -42,6 +42,18 @@ function sseResponse(body: string): Response {
   });
 }
 
+function chunkedSseResponse(chunks: readonly string[]): Response {
+  return new Response(
+    new ReadableStream({
+      start(controller) {
+        for (const chunk of chunks) controller.enqueue(new TextEncoder().encode(chunk));
+        controller.close();
+      },
+    }),
+    { status: 200, headers: { 'content-type': 'text/event-stream; charset=utf-8' } },
+  );
+}
+
 function snapshotResponse(
   status: string,
   lastEventSequence: number,
@@ -112,7 +124,11 @@ test('probe reconnects after a closed stream and sends the last event cursor', a
       eventRequests.push(init ?? {});
       eventRequestCount += 1;
       return eventRequestCount === 1
-        ? sseResponse(eventFrame(1, 'checkpoint', 'extracting', { multiline: true }))
+        ? (() => {
+          const frame = eventFrame(1, 'checkpoint', 'extracting', { multiline: true });
+          const split = frame.indexOf('\r\n') + 1;
+          return chunkedSseResponse([frame.slice(0, split), frame.slice(split)]);
+        })()
         : sseResponse(eventFrame(2, 'checkpoint', 'awaiting_structuring'));
     }
     if (url.endsWith(`/v2/captures/${CAPTURE_ID}`)) {
@@ -133,6 +149,32 @@ test('probe reconnects after a closed stream and sends the last event cursor', a
   assert.equal(eventRequests.length, 2);
   assert.equal(new Headers(eventRequests[0]?.headers).get('Last-Event-ID'), null);
   assert.equal(new Headers(eventRequests[1]?.headers).get('Last-Event-ID'), '1');
+});
+
+test('probe ignores an unterminated final SSE frame at normal EOF', async () => {
+  let snapshotRequests = 0;
+  const fetchImplementation = async (input: Parameters<typeof globalThis.fetch>[0]) => {
+    const url = String(input);
+    if (url.endsWith('/events')) {
+      return sseResponse(eventFrame(1, 'checkpoint', 'extracting').replace(/\r\n\r\n$/u, ''));
+    }
+    if (url.endsWith(`/v2/captures/${CAPTURE_ID}`)) {
+      snapshotRequests += 1;
+      return snapshotResponse('completed', 1);
+    }
+    throw new Error(`Unexpected probe URL: ${url}`);
+  };
+
+  const result = await waitForExtraction(
+    'http://runtime.test',
+    CAPTURE_ID,
+    SECRET,
+    5_000,
+    fetchImplementation,
+  );
+
+  assert.equal(result['status'], 'completed');
+  assert.equal(snapshotRequests, 1);
 });
 
 test('probe reconciles resync overflow before reconnecting', async () => {
