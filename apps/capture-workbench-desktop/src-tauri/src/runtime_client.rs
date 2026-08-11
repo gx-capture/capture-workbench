@@ -117,8 +117,8 @@ pub(crate) fn create_capture(
     let source = library.runtime_source(&input.document_id)?;
     let source_kind = match source.media_type.as_str() {
         "application/pdf" => "pdf",
-        "image/png" | "image/jpeg" => "image",
-        "audio/wav" | "audio/mpeg" | "audio/mp4" => "audio",
+        media_type if media_type.starts_with("image/") => "image",
+        media_type if media_type.starts_with("audio/") => "audio",
         _ => return Err("Capture source media type is unsupported.".into()),
     };
     let body = multipart_capture_body(
@@ -145,9 +145,12 @@ pub(crate) fn start_streaming_capture(
     validate_client_request_id(&input.client_request_id)?;
     validate_structuring_mode(&input.structuring_mode)?;
     let source = library.runtime_source_file(&input.document_id)?;
-    if !source.media_type.starts_with("audio/") {
-        return Err("Progressive capture is available only for audio sources.".into());
-    }
+    let source_kind = match source.media_type.as_str() {
+        "application/pdf" => "pdf",
+        media_type if media_type.starts_with("image/") => "image",
+        media_type if media_type.starts_with("audio/") => "audio",
+        _ => return Err("Streaming capture source media type is unsupported.".into()),
+    };
     let config = state.backend_config()?;
     let ingestion = request_with_headers(
         &config,
@@ -156,7 +159,7 @@ pub(crate) fn start_streaming_capture(
         Some(RequestBody {
             bytes: serde_json::to_vec(&json!({
                 "clientRequestId": format!("{}-ingestion", input.client_request_id),
-                "kind": "audio",
+                "kind": source_kind,
                 "mode": "file",
                 "fileName": source.file_name.clone(),
                 "mediaType": source.media_type.clone(),

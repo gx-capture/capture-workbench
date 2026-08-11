@@ -450,12 +450,6 @@ export class DesktopWorkspaceStore {
     } as Record<DesktopLibrarySummary['status'], string>)[status];
   }
 
-  private isAudioDocument(documentId: string): boolean {
-    const document = this.documents().find((item) => item.documentId === documentId)
-      ?? (this.selected()?.documentId === documentId ? this.selected() : undefined);
-    return document?.mediaType.startsWith('audio/') ?? false;
-  }
-
   private applyStreamingEvent(
     _documentId: string,
     active: ActiveCapture,
@@ -491,8 +485,9 @@ export class DesktopWorkspaceStore {
   private captureExisting$(documentId: string): Observable<void> {
     return defer(() => {
       if (!this.runtime.ready() || this.activeCaptures.has(documentId)) return EMPTY;
+      const streaming = typeof this.runtime.startStreamingCapture === 'function';
       const active: ActiveCapture = {
-        streaming: this.isAudioDocument(documentId),
+        streaming,
         lastEventSequence: 0,
         rawPersisted: false,
         cancelRequested: false,
@@ -509,7 +504,7 @@ export class DesktopWorkspaceStore {
         clearCaptureId: true,
       }).pipe(
         tap(() => this.reloadDocumentState(documentId)),
-        switchMap(() => active.streaming
+        switchMap(() => streaming
           ? this.captureStreaming$(documentId, active)
           : this.captureOneShot$(documentId, active)),
       );
@@ -568,11 +563,20 @@ export class DesktopWorkspaceStore {
     initial: CaptureOperationV2,
     active: ActiveCapture,
   ): Observable<CaptureOperationV2> {
-    return of(initial).pipe(
-      switchMap((operation) => this.advanceStreaming$(documentId, operation, active)),
-      expand((operation) => isActiveStreaming(operation)
-        ? timer(500).pipe(switchMap(() => this.advanceStreaming$(documentId, operation, active)))
-        : EMPTY),
+    const stream$ = defer(() => this.advanceStreaming$(documentId, initial, active));
+    const cancel$ = active.cancelWake.pipe(
+      take(1),
+      switchMap(() => {
+        const captureId = active.captureId;
+        if (active.cancelSent || !captureId) return EMPTY;
+        active.cancelSent = true;
+        return this.runtime.cancelStreamingCapture(captureId).pipe(
+          switchMap(() => this.consumeStreamingEvents$(documentId, active)),
+          switchMap(() => this.runtime.getStreamingCapture(captureId)),
+        );
+      }),
+    );
+    return race(stream$, cancel$).pipe(
       filter((operation) => !isActiveStreaming(operation)),
       take(1),
     );
@@ -583,12 +587,26 @@ export class DesktopWorkspaceStore {
     operation: CaptureOperationV2,
     active: ActiveCapture,
   ): Observable<CaptureOperationV2> {
-    const events$ = this.runtime.getStreamingEvents(
-      operation.captureId,
-      active.lastEventSequence,
-    ).pipe(
+    const events$ = this.consumeStreamingEvents$(documentId, active);
+    if (!active.cancelRequested || active.cancelSent) {
+      return events$.pipe(switchMap(() => this.runtime.getStreamingCapture(operation.captureId)));
+    }
+    active.cancelSent = true;
+    return this.runtime.cancelStreamingCapture(operation.captureId).pipe(
+      switchMap(() => events$),
+      switchMap(() => this.runtime.getStreamingCapture(operation.captureId)),
+    );
+  }
+
+  private consumeStreamingEvents$(
+    documentId: string,
+    active: ActiveCapture,
+  ): Observable<void> {
+    const captureId = active.captureId;
+    if (!captureId) return throwError(() => new Error('Streaming capture id is missing.'));
+    return this.runtime.getStreamingEvents(captureId, active.lastEventSequence).pipe(
       tap((events) => events.forEach((event) => this.applyStreamingEvent(documentId, active, event))),
-      switchMap(() => this.runtime.getStreamingPartial(operation.captureId)),
+      switchMap(() => this.runtime.getStreamingPartial(captureId)),
       tap((partial) => {
         if (partial) {
           this.streamingPartials.update((current) => {
@@ -598,14 +616,7 @@ export class DesktopWorkspaceStore {
           });
         }
       }),
-    );
-    if (!active.cancelRequested || active.cancelSent) {
-      return events$.pipe(switchMap(() => this.runtime.getStreamingCapture(operation.captureId)));
-    }
-    active.cancelSent = true;
-    return this.runtime.cancelStreamingCapture(operation.captureId).pipe(
-      switchMap(() => events$),
-      switchMap(() => this.runtime.getStreamingCapture(operation.captureId)),
+      map(() => undefined),
     );
   }
 
@@ -661,9 +672,10 @@ export class DesktopWorkspaceStore {
         return EMPTY;
       }
       const terminalCommitted = hasCommittedTerminalData(document);
+      const streaming = typeof this.runtime.startStreamingCapture === 'function';
       const active: ActiveCapture = {
         captureId: document.captureId,
-        streaming: document.mediaType.startsWith('audio/'),
+        streaming,
         lastEventSequence: 0,
         rawPersisted: false,
         cancelRequested: false,
@@ -680,25 +692,25 @@ export class DesktopWorkspaceStore {
 
       const work$ = terminalCommitted
         ? this.retryRuntimeCleanup$(document)
-        : active.streaming
-          ? this.runtime.getStreamingCapture(document.captureId).pipe(
-            tap((operation) => active.lastStage = operation.status),
-            switchMap((operation) => this.waitForStreamingTerminal$(
-              document.documentId,
-              operation,
-              active,
-            )),
-            switchMap((operation) => this.persistStreamingTerminal$(
-              document.documentId,
-              operation,
-              active,
-            )),
-          )
-          : this.runtime.getCapture(document.captureId).pipe(
-            tap((job) => active.lastStage = job.stage),
-            switchMap((job) => this.waitForTerminal$(document.documentId, job, active)),
-            switchMap((job) => this.persistTerminal$(document.documentId, job, active)),
-          );
+        : streaming
+        ? this.runtime.getStreamingCapture(document.captureId).pipe(
+          tap((operation) => active.lastStage = operation.status),
+          switchMap((operation) => this.waitForStreamingTerminal$(
+            document.documentId,
+            operation,
+            active,
+          )),
+          switchMap((operation) => this.persistStreamingTerminal$(
+            document.documentId,
+            operation,
+            active,
+          )),
+        )
+        : this.runtime.getCapture(document.captureId).pipe(
+          tap((job) => active.lastStage = job.stage),
+          switchMap((job) => this.waitForTerminal$(document.documentId, job, active)),
+          switchMap((job) => this.persistTerminal$(document.documentId, job, active)),
+        );
       return this.trackCaptureLifecycle$(document.documentId, active, work$);
     });
   }
