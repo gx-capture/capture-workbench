@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 from contextlib import suppress
+from pathlib import Path
 
 from capture_structuring import StructuringValidationError, validate_structuring_candidate
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from capture_runtime.clock import Clock
 from capture_runtime.contracts import (
@@ -14,6 +17,8 @@ from capture_runtime.contracts import (
     CaptureEventV2,
     CaptureFailureV2,
     CaptureOperationV2,
+    CaptureSourceKind,
+    CaptureSourceV1,
     FinalizeIngestionV2,
     IngestionV2,
     OpenIngestionV2,
@@ -24,7 +29,7 @@ from capture_runtime.contracts import (
     StreamingEventType,
     StructuringMode,
 )
-from capture_runtime.extractors import ExtractionRuntimeUnavailableError
+from capture_runtime.extractors import CaptureExtractor, ExtractionRuntimeUnavailableError
 from capture_runtime.ollama.lifecycle_impl import RuntimeUnavailableError
 from capture_runtime.progressive_audio import ProgressiveAudioError, ProgressiveSessionEvent
 from capture_runtime.progressive_capture import (
@@ -33,6 +38,7 @@ from capture_runtime.progressive_capture import (
 )
 from capture_runtime.progressive_decoder import ProgressiveDecoderError
 from capture_runtime.storage import (
+    StreamingEventSubscription,
     StreamingPartialNotFoundError,
     StreamingRecordNotFoundError,
     StreamingRepository,
@@ -48,12 +54,14 @@ class StreamingCaptureService:
         repository: StreamingRepository,
         *,
         clock: Clock,
+        extractor: CaptureExtractor | None = None,
         processor: ProgressiveCaptureProcessor | None = None,
         structurer: CaptureStructuringProvider | None = None,
         max_chunk_bytes: int = MAX_STREAM_CHUNK_BYTES,
     ) -> None:
         self.repository = repository
         self._clock = clock
+        self._extractor = extractor
         self.max_chunk_bytes = max_chunk_bytes
         self._processor = processor
         self._structurer = structurer
@@ -130,6 +138,11 @@ class StreamingCaptureService:
     def events(self, capture_id: str, *, after_sequence: int) -> list[CaptureEventV2]:
         return self.repository.read_events(capture_id, after_sequence=after_sequence)
 
+    def subscribe_events(
+        self, capture_id: str, *, after_sequence: int
+    ) -> StreamingEventSubscription:
+        return self.repository.subscribe_events(capture_id, after_sequence=after_sequence)
+
     def partial(self, capture_id: str) -> PartialCaptureV2:
         return self.repository.read_partial(capture_id)
 
@@ -144,6 +157,56 @@ class StreamingCaptureService:
                 mode="json", by_alias=True
             ),
         }
+
+    def commit_host_result(
+        self,
+        capture_id: str,
+        candidate: CaptureDocumentV1,
+        *,
+        idempotency_key: str,
+    ) -> CaptureOperationV2:
+        request = self.repository.capture_request(capture_id)
+        if request.structuring_mode is not StructuringMode.HOST:
+            raise StreamingTransitionError("capture is not configured for host structuring")
+        raw = self.repository.read_raw(capture_id)
+        validated = _validate_runtime_document(candidate, raw)
+        fingerprint = _model_fingerprint(validated)
+        committed = CaptureDocumentV1.model_validate(
+            {
+                **validated.model_dump(mode="json", by_alias=True),
+                "completedAt": self._clock.now().isoformat(),
+            }
+        )
+        return self.repository.commit_host_result(
+            capture_id,
+            idempotency_key=idempotency_key,
+            fingerprint=fingerprint,
+            result=committed,
+        )
+
+    def report_host_failure(
+        self,
+        capture_id: str,
+        *,
+        idempotency_key: str,
+        code: str,
+        message: str,
+    ) -> CaptureOperationV2:
+        request = self.repository.capture_request(capture_id)
+        if request.structuring_mode is not StructuringMode.HOST:
+            raise StreamingTransitionError("capture is not configured for host structuring")
+        failure = CaptureFailureV2(
+            code=code,
+            message=message,
+            stage="structuring",
+            retryable=False,
+        )
+        return self.repository.fail_host_structure(
+            capture_id,
+            idempotency_key=idempotency_key,
+            fingerprint=_model_fingerprint(failure),
+            failure=failure,
+        )
 
     async def structure(self, capture_id: str) -> CaptureDocumentV1:
         operation = self.repository.get_capture(capture_id)
@@ -201,7 +264,11 @@ class StreamingCaptureService:
         self._cancellations.clear()
 
     def _schedule(self, capture_id: str) -> None:
-        if self._processor is None or capture_id in self._tasks or self._shutting_down:
+        if (
+            (self._processor is None and self._extractor is None)
+            or capture_id in self._tasks
+            or self._shutting_down
+        ):
             return
         cancellation = self._cancellations.setdefault(capture_id, asyncio.Event())
         task = asyncio.create_task(
@@ -221,20 +288,28 @@ class StreamingCaptureService:
                 raise ProgressiveCaptureError("finalized streaming source is unavailable")
             source_path = self.repository.source_path(operation.ingestion_id)
             processor = self._processor
-            if processor is None:
+            if processor is None and self._extractor is None:
                 return
-            raw = await processor.process(
-                capture_id=capture_id,
-                source=operation.source,
-                source_path=source_path,
-                cancellation=cancellation,
-                sink=lambda events, session: self._persist_events(capture_id, events, session),
-            )
+            request = self.repository.capture_request(capture_id)
+            if operation.kind is CaptureSourceKind.AUDIO and processor is not None:
+                raw = await processor.process(
+                    capture_id=capture_id,
+                    source=operation.source,
+                    source_path=source_path,
+                    cancellation=cancellation,
+                    sink=lambda events, session: self._persist_events(capture_id, events, session),
+                )
+            else:
+                raw = await self._process_with_extractor(
+                    capture_id,
+                    source=operation.source,
+                    source_path=source_path,
+                    cancellation=cancellation,
+                )
             self.repository.write_raw(capture_id, raw)
             raw_written = True
             if cancellation.is_set():
                 return
-            request = self.repository.capture_request(capture_id)
             if request.structuring_mode is StructuringMode.RUNTIME:
                 self.repository.mark_awaiting_structuring(capture_id)
                 await self.structure(capture_id)
@@ -279,6 +354,16 @@ class StreamingCaptureService:
                 "progressive_decode_failed",
                 _safe_failure_message(error),
                 stage="extraction",
+            )
+        except ValueError:
+            self._fail(
+                capture_id,
+                "extraction_failed" if not raw_written else "structuring_failed",
+                "Source extraction failed validation."
+                if not raw_written
+                else "Capture structuring failed.",
+                stage="extraction" if not raw_written else "structuring",
+                retryable=False,
             )
         except ValidationError:
             self._fail(
@@ -336,6 +421,48 @@ class StreamingCaptureService:
                 error=event.error,
             )
 
+    async def _process_with_extractor(
+        self,
+        capture_id: str,
+        *,
+        source: CaptureSourceV1,
+        source_path: Path,
+        cancellation: asyncio.Event,
+    ) -> RawCaptureV1:
+        if self._extractor is None:
+            raise ExtractionRuntimeUnavailableError("capture extractor is unavailable")
+        if cancellation.is_set():
+            raise asyncio.CancelledError
+        content = await asyncio.to_thread(source_path.read_bytes)
+        raw = await self._extractor.extract(content, source, cancellation)
+        if cancellation.is_set():
+            raise asyncio.CancelledError
+        covered_until_ms = 0
+        for segment in raw.segments:
+            if hasattr(segment.locator, "end_ms"):
+                covered_until_ms = max(covered_until_ms, segment.locator.end_ms)
+        partial = PartialCaptureV2(
+            capture_id=capture_id,
+            source=raw.source,
+            revision=1,
+            covered_until_ms=covered_until_ms,
+            segments=list(raw.segments),
+            source_text=raw.source_text,
+            extraction_engine=raw.extraction_engine,
+            updated_at=self._clock.now(),
+        )
+        self.repository.write_partial(partial)
+        self.repository.append_event(
+            capture_id,
+            event_type=StreamingEventType.SEGMENT,
+            stage="extracting",
+            progress=0.75,
+            partial_revision=partial.revision,
+            covered_until_ms=partial.covered_until_ms,
+            segments=list(partial.segments),
+        )
+        return raw
+
     def _fail(
         self,
         capture_id: str,
@@ -384,6 +511,13 @@ def _safe_failure_message(error: BaseException) -> str:
     if isinstance(error, ProgressiveCaptureError):
         return str(error)[:500] or "Progressive audio processing failed."
     return "Progressive audio processing failed at a bounded runtime boundary."
+
+
+def _model_fingerprint(model: BaseModel) -> str:
+    payload = model.model_dump(mode="json", by_alias=True)
+    return hashlib.sha256(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
 
 
 __all__ = ["StreamingCaptureService", "StreamingTransitionError"]

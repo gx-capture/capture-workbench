@@ -201,6 +201,7 @@ def build_runtime_dependencies(
     streaming_capture_service = StreamingCaptureService(
         streaming_repository,
         clock=runtime_clock,
+        extractor=active_extractor,
         processor=progressive_processor,
         structurer=active_structurer,
     )

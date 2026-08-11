@@ -11,6 +11,7 @@ import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
+from queue import Empty, Full, Queue
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -22,6 +23,7 @@ from capture_runtime.contracts import (
     CaptureEventV2,
     CaptureFailureV2,
     CaptureOperationV2,
+    CaptureSourceKind,
     CaptureSourceV1,
     IngestionV2,
     OpenIngestionV2,
@@ -31,6 +33,7 @@ from capture_runtime.contracts import (
     StreamingCaptureStatus,
     StreamingEventType,
     StreamingIngestionStatus,
+    StructuringMode,
 )
 
 
@@ -48,6 +51,27 @@ class StreamingTransitionError(ValueError):
 
 class StreamingPartialNotFoundError(StreamingRecordNotFoundError):
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class StreamingEventOverflow:
+    """Marker returned when a live subscriber exceeded its bounded queue."""
+
+
+@dataclass(slots=True)
+class StreamingEventSubscription:
+    replay: list[CaptureEventV2]
+    _queue: Queue[CaptureEventV2 | StreamingEventOverflow]
+    _close: Any
+    closed: bool = False
+
+    def get(self, timeout: float) -> CaptureEventV2 | StreamingEventOverflow:
+        return self._queue.get(timeout=timeout)
+
+    def close(self) -> None:
+        if not self.closed:
+            self.closed = True
+            self._close(self._queue)
 
 
 _SAFE_ID = re.compile(r"^[0-9a-f-]{36}$")
@@ -91,6 +115,10 @@ class _IngestionRecord:
 class _CaptureRecord:
     operation: CaptureOperationV2
     request: StartCaptureV2
+    structure_idempotency_key: str | None = None
+    structure_fingerprint: str | None = None
+    failure_idempotency_key: str | None = None
+    failure_fingerprint: str | None = None
 
 
 class StreamingRepository:
@@ -104,6 +132,7 @@ class StreamingRepository:
         self._ingestion_idempotency: dict[str, str] = {}
         self._captures: dict[str, _CaptureRecord] = {}
         self._capture_idempotency: dict[str, str] = {}
+        self._subscribers: dict[str, set[Queue[CaptureEventV2 | StreamingEventOverflow]]] = {}
         self._lock = threading.RLock()
 
     def initialize(self) -> None:
@@ -115,6 +144,7 @@ class StreamingRepository:
             self._ingestion_idempotency.clear()
             self._captures.clear()
             self._capture_idempotency.clear()
+            self._subscribers.clear()
             self._load_ingestions()
             self._load_captures()
             self.prune_expired()
@@ -235,6 +265,7 @@ class StreamingRepository:
             operation = CaptureOperationV2(
                 capture_id=capture_id,
                 ingestion_id=request.ingestion_id,
+                kind=ingestion.request.kind,
                 status=(
                     StreamingCaptureStatus.EXTRACTING
                     if source is not None
@@ -254,7 +285,12 @@ class StreamingRepository:
             self._captures[capture_id] = record
             self._capture_idempotency[request.client_request_id] = capture_id
             self._persist_capture(record)
-            self.append_event(capture_id, event_type=StreamingEventType.ACCEPTED, stage="queued")
+            self.append_event(
+                capture_id,
+                event_type=StreamingEventType.ACCEPTED,
+                stage="queued",
+                progress=0,
+            )
             return self._captures[capture_id].operation
 
     def get_capture(self, capture_id: str) -> CaptureOperationV2:
@@ -287,6 +323,7 @@ class StreamingRepository:
                 record.operation = record.operation.model_copy(
                     update={
                         "status": StreamingCaptureStatus.EXTRACTING,
+                        "kind": ingestion.request.kind,
                         "source": self._source_for(ingestion),
                         "updated_at": now,
                     }
@@ -296,6 +333,7 @@ class StreamingRepository:
                     record.operation.capture_id,
                     event_type=StreamingEventType.INPUT_CHECKPOINT,
                     stage="extracting",
+                    progress=0.1,
                 )
                 changed.append(record.operation)
             return changed
@@ -306,6 +344,8 @@ class StreamingRepository:
         *,
         event_type: StreamingEventType,
         stage: str,
+        kind: CaptureSourceKind | None = None,
+        progress: float | None = None,
         partial_revision: int | None = None,
         covered_until_ms: int | None = None,
         segments: list[Any] | None = None,
@@ -318,8 +358,10 @@ class StreamingRepository:
                 event_id=f"{capture_id}/{sequence}",
                 sequence=sequence,
                 capture_id=capture_id,
+                kind=kind or record.operation.kind,
                 event_type=event_type,
                 stage=stage,
+                progress=progress,
                 partial_revision=partial_revision,
                 covered_until_ms=covered_until_ms,
                 segments=segments or [],
@@ -339,42 +381,91 @@ class StreamingRepository:
                     "partial_revision": max(
                         record.operation.partial_revision, partial_revision or 0
                     ),
+                    "progress": (
+                        record.operation.progress
+                        if progress is None
+                        else max(record.operation.progress or 0, progress)
+                    ),
                     "updated_at": now,
                 }
             )
             self._persist_capture(record)
+            for subscriber in self._subscribers.get(capture_id, set()).copy():
+                try:
+                    subscriber.put_nowait(event)
+                except Full:
+                    while True:
+                        try:
+                            subscriber.get_nowait()
+                        except Empty:
+                            break
+                    try:
+                        subscriber.put_nowait(StreamingEventOverflow())
+                    except Full:
+                        pass
             return event
+
+    def subscribe_events(
+        self, capture_id: str, *, after_sequence: int
+    ) -> StreamingEventSubscription:
+        with self._lock:
+            self._get_capture(capture_id)
+            if after_sequence < -1:
+                raise ValueError("event cursor must not be less than -1")
+            subscriber: Queue[CaptureEventV2 | StreamingEventOverflow] = Queue(maxsize=256)
+            self._subscribers.setdefault(capture_id, set()).add(subscriber)
+            replay = self._read_events_locked(capture_id, after_sequence=after_sequence)
+            return StreamingEventSubscription(
+                replay=replay,
+                _queue=subscriber,
+                _close=lambda value: self.unsubscribe_events(capture_id, value),
+            )
+
+    def unsubscribe_events(
+        self,
+        capture_id: str,
+        subscriber: Queue[CaptureEventV2 | StreamingEventOverflow],
+    ) -> None:
+        with self._lock:
+            subscribers = self._subscribers.get(capture_id)
+            if subscribers is None:
+                return
+            subscribers.discard(subscriber)
+            if not subscribers:
+                self._subscribers.pop(capture_id, None)
 
     def read_events(self, capture_id: str, *, after_sequence: int) -> list[CaptureEventV2]:
         with self._lock:
-            record = self._get_capture(capture_id)
-            if after_sequence < -1:
-                raise ValueError("event cursor must not be less than -1")
-            path = self._capture_directory(capture_id) / "events.jsonl"
-            events: list[CaptureEventV2] = []
-            for line in path.read_text(encoding="utf-8").splitlines():
-                if not line:
-                    continue
-                try:
-                    event = CaptureEventV2.model_validate_json(line)
-                except ValidationError as error:
-                    raise RuntimeError("streaming event log is corrupted") from error
-                if event.sequence > after_sequence:
-                    events.append(event)
-            if len(events) <= _MAX_EVENT_REPLAY:
-                return events
-            latest_sequence = record.operation.last_event_sequence
-            return [
-                CaptureEventV2(
-                    event_id=f"{capture_id}/resync/{latest_sequence}",
-                    sequence=latest_sequence,
-                    capture_id=capture_id,
-                    event_type=StreamingEventType.RESYNC_REQUIRED,
-                    stage="resync",
-                    partial_revision=record.operation.partial_revision,
-                    created_at=self._clock.now(),
-                )
-            ]
+            return self._read_events_locked(capture_id, after_sequence=after_sequence)
+
+    def _read_events_locked(self, capture_id: str, *, after_sequence: int) -> list[CaptureEventV2]:
+        record = self._get_capture(capture_id)
+        path = self._capture_directory(capture_id) / "events.jsonl"
+        events: list[CaptureEventV2] = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line:
+                continue
+            try:
+                event = CaptureEventV2.model_validate_json(line)
+            except ValidationError as error:
+                raise RuntimeError("streaming event log is corrupted") from error
+            if event.sequence > after_sequence:
+                events.append(event)
+        if len(events) <= _MAX_EVENT_REPLAY:
+            return events
+        latest_sequence = record.operation.last_event_sequence
+        return [
+            CaptureEventV2(
+                event_id=f"{capture_id}/resync/{latest_sequence}",
+                sequence=latest_sequence,
+                capture_id=capture_id,
+                kind=record.operation.kind,
+                event_type=StreamingEventType.RESYNC_REQUIRED,
+                stage="resync",
+                partial_revision=record.operation.partial_revision,
+                created_at=self._clock.now(),
+            )
+        ]
 
     def write_partial(self, partial: PartialCaptureV2) -> None:
         with self._lock:
@@ -453,6 +544,7 @@ class StreamingRepository:
                 capture_id,
                 event_type=StreamingEventType.CHECKPOINT,
                 stage="awaiting_structuring",
+                progress=0.9,
                 partial_revision=record.operation.partial_revision,
             )
             return record.operation
@@ -473,6 +565,12 @@ class StreamingRepository:
                 }
             )
             self._persist_capture(record)
+            self.append_event(
+                capture_id,
+                event_type=StreamingEventType.CHECKPOINT,
+                stage="structuring",
+                progress=0.95,
+            )
             return record.operation
 
     def complete_capture(self, capture_id: str) -> CaptureOperationV2:
@@ -496,8 +594,82 @@ class StreamingRepository:
                 capture_id,
                 event_type=StreamingEventType.COMPLETED,
                 stage="completed",
+                progress=1.0,
             )
             return record.operation
+
+    def commit_host_result(
+        self,
+        capture_id: str,
+        *,
+        idempotency_key: str,
+        fingerprint: str,
+        result: CaptureDocumentV1,
+    ) -> CaptureOperationV2:
+        with self._lock:
+            record = self._get_capture(capture_id)
+            if record.operation.status is StreamingCaptureStatus.COMPLETED:
+                if (
+                    record.structure_idempotency_key == idempotency_key
+                    and record.structure_fingerprint == fingerprint
+                ):
+                    return record.operation
+                raise StreamingIdempotencyConflictError(idempotency_key)
+            if (
+                record.request.structuring_mode is not StructuringMode.HOST
+                or record.operation.status is not StreamingCaptureStatus.AWAITING_STRUCTURING
+            ):
+                raise StreamingTransitionError("capture is not awaiting host structuring")
+            _atomic_json(
+                self._capture_directory(capture_id) / "result.json",
+                result.model_dump(mode="json", by_alias=True),
+            )
+            record.structure_idempotency_key = idempotency_key
+            record.structure_fingerprint = fingerprint
+            now = result.completed_at
+            record.operation = record.operation.model_copy(
+                update={
+                    "status": StreamingCaptureStatus.COMPLETED,
+                    "progress": 1.0,
+                    "updated_at": now,
+                    "completed_at": now,
+                }
+            )
+            self._persist_capture(record)
+            self.append_event(
+                capture_id,
+                event_type=StreamingEventType.COMPLETED,
+                stage="completed",
+                progress=1.0,
+            )
+            return record.operation
+
+    def fail_host_structure(
+        self,
+        capture_id: str,
+        *,
+        idempotency_key: str,
+        fingerprint: str,
+        failure: CaptureFailureV2,
+    ) -> CaptureOperationV2:
+        with self._lock:
+            record = self._get_capture(capture_id)
+            if record.operation.status is StreamingCaptureStatus.FAILED:
+                if (
+                    record.failure_idempotency_key == idempotency_key
+                    and record.failure_fingerprint == fingerprint
+                ):
+                    return record.operation
+                raise StreamingIdempotencyConflictError(idempotency_key)
+            if (
+                record.request.structuring_mode is not StructuringMode.HOST
+                or record.operation.status is not StreamingCaptureStatus.AWAITING_STRUCTURING
+            ):
+                raise StreamingTransitionError("capture is not awaiting host structuring")
+            record.failure_idempotency_key = idempotency_key
+            record.failure_fingerprint = fingerprint
+            self._persist_capture(record)
+            return self.fail_capture(capture_id, failure)
 
     def fail_capture(self, capture_id: str, failure: CaptureFailureV2) -> CaptureOperationV2:
         with self._lock:
@@ -523,6 +695,7 @@ class StreamingRepository:
                 capture_id,
                 event_type=StreamingEventType.FAILED,
                 stage=failure.stage or "failed",
+                progress=record.operation.progress,
                 error=failure,
             )
             return record.operation
@@ -562,6 +735,7 @@ class StreamingRepository:
                 capture_id,
                 event_type=StreamingEventType.CANCELLED,
                 stage="cancelled",
+                progress=record.operation.progress,
             )
             return record.operation
 
@@ -666,6 +840,7 @@ class StreamingRepository:
     def _ingestion_snapshot(record: _IngestionRecord) -> IngestionV2:
         return IngestionV2(
             ingestion_id=record.ingestion_id,
+            kind=record.request.kind,
             status=record.status,
             file_name=record.request.file_name,
             media_type=record.request.media_type,
@@ -702,6 +877,10 @@ class StreamingRepository:
             {
                 "request": record.request.model_dump(mode="json", by_alias=True),
                 "operation": record.operation.model_dump(mode="json", by_alias=True),
+                "structureIdempotencyKey": record.structure_idempotency_key,
+                "structureFingerprint": record.structure_fingerprint,
+                "failureIdempotencyKey": record.failure_idempotency_key,
+                "failureFingerprint": record.failure_fingerprint,
             },
         )
 
@@ -741,7 +920,14 @@ class StreamingRepository:
                 payload = json.loads((directory / "metadata.json").read_text(encoding="utf-8"))
                 request = StartCaptureV2.model_validate(payload["request"])
                 operation = CaptureOperationV2.model_validate(payload["operation"])
-                record = _CaptureRecord(operation=operation, request=request)
+                record = _CaptureRecord(
+                    operation=operation,
+                    request=request,
+                    structure_idempotency_key=payload.get("structureIdempotencyKey"),
+                    structure_fingerprint=payload.get("structureFingerprint"),
+                    failure_idempotency_key=payload.get("failureIdempotencyKey"),
+                    failure_fingerprint=payload.get("failureFingerprint"),
+                )
             except (
                 OSError,
                 KeyError,

@@ -16,6 +16,8 @@ from capture_runtime.storage.model_installation_repository import (
     ModelInstallationRepository,
 )
 from capture_runtime.storage.streaming_repository import (
+    StreamingEventOverflow,
+    StreamingEventSubscription,
     StreamingIdempotencyConflictError,
     StreamingPartialNotFoundError,
     StreamingRecordNotFoundError,
@@ -33,6 +35,8 @@ __all__ = [
     "ModelInstallationRepository",
     "RecordNotFoundError",
     "StreamingIdempotencyConflictError",
+    "StreamingEventOverflow",
+    "StreamingEventSubscription",
     "StreamingPartialNotFoundError",
     "StreamingRecordNotFoundError",
     "StreamingRepository",

@@ -1,10 +1,12 @@
-"""Authenticated HTTP and SSE adapters for streaming audio v2."""
+"""Authenticated HTTP and SSE adapters for the v2 capture lifecycle."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from collections.abc import AsyncIterator
+from queue import Empty
 from typing import Annotated
 
 from fastapi import APIRouter, Header, Path, Request, Response, status
@@ -12,11 +14,14 @@ from fastapi.responses import StreamingResponse
 
 from capture_runtime.contracts import (
     CaptureDocumentV1,
+    CaptureEventV2,
     CaptureOperationV2,
+    CaptureSourceKind,
     FinalizeIngestionV2,
     IngestionV2,
     OpenIngestionV2,
     PartialCaptureV2,
+    ReportStructuringFailureV1,
     RuntimeStreamingCapabilitiesV2,
     StartCaptureV2,
 )
@@ -25,6 +30,7 @@ from capture_runtime.progressive_audio import DEFAULT_CHECKPOINT_MS
 from capture_runtime.progressive_decoder import progressive_decoder_ready
 from capture_runtime.routes.common import ApiProblem
 from capture_runtime.storage import (
+    StreamingEventOverflow,
     StreamingIdempotencyConflictError,
     StreamingPartialNotFoundError,
     StreamingRecordNotFoundError,
@@ -40,13 +46,14 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
 
     @router.get("/health/ready", response_model=RuntimeStreamingCapabilitiesV2)
     async def streaming_ready() -> RuntimeStreamingCapabilitiesV2:
-        if not progressive_decoder_ready():
-            raise ApiProblem(
-                503,
-                "progressive_audio_unavailable",
-                "Progressive audio decoding is unavailable in this runtime.",
-            )
+        audio_ready = progressive_decoder_ready()
         return RuntimeStreamingCapabilitiesV2(
+            capture_kinds=[
+                CaptureSourceKind.PDF,
+                CaptureSourceKind.IMAGE,
+                *([CaptureSourceKind.AUDIO] if audio_ready else []),
+            ],
+            supports_progressive_audio=audio_ready,
             max_chunk_bytes=service.max_chunk_bytes,
             checkpoint_interval_ms=DEFAULT_CHECKPOINT_MS,
             heartbeat_interval_ms=5_000,
@@ -194,22 +201,44 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
     ) -> StreamingResponse:
         after_sequence = _event_cursor(last_event_id)
         try:
-            events = service.events(capture_id, after_sequence=after_sequence)
+            subscription = service.subscribe_events(capture_id, after_sequence=after_sequence)
         except StreamingRecordNotFoundError as error:
             raise ApiProblem(
                 404, "capture_not_found", "Streaming capture was not found."
             ) from error
 
         async def stream() -> AsyncIterator[str]:
-            for event in events:
-                payload = json.dumps(
-                    event.model_dump(mode="json", by_alias=True),
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                )
-                yield (
-                    f"id: {event.sequence}\nevent: {event.event_type.value}\ndata: {payload}\n\n"
-                )
+            last_sequence = after_sequence
+            try:
+                for event in subscription.replay:
+                    if event.sequence <= last_sequence:
+                        continue
+                    yield _event_frame(event)
+                    last_sequence = event.sequence
+                    if _is_terminal_event(event):
+                        return
+                while True:
+                    try:
+                        item = await asyncio.to_thread(subscription.get, 5.0)
+                    except Empty:
+                        yield ": keep-alive\n\n"
+                        continue
+                    if isinstance(item, StreamingEventOverflow):
+                        resync = service.events(capture_id, after_sequence=last_sequence)
+                        for event in resync:
+                            if event.sequence <= last_sequence:
+                                continue
+                            yield _event_frame(event)
+                            last_sequence = event.sequence
+                        return
+                    if item.sequence <= last_sequence:
+                        continue
+                    yield _event_frame(item)
+                    last_sequence = item.sequence
+                    if _is_terminal_event(item):
+                        return
+            finally:
+                subscription.close()
 
         return StreamingResponse(
             stream(),
@@ -251,6 +280,55 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
             raise ApiProblem(
                 409, "raw_unavailable", "Raw progressive capture is not available."
             ) from error
+        except StreamingRecordNotFoundError as error:
+            raise ApiProblem(
+                404, "capture_not_found", "Streaming capture was not found."
+            ) from error
+
+    @router.post("/captures/{capture_id}/structure/commit", response_model=CaptureOperationV2)
+    async def commit_structure(
+        capture_id: str,
+        candidate: CaptureDocumentV1,
+        idempotency_key: Annotated[str, Header(alias="X-Idempotency-Key")],
+    ) -> CaptureOperationV2:
+        try:
+            return service.commit_host_result(
+                capture_id, candidate, idempotency_key=idempotency_key
+            )
+        except StreamingIdempotencyConflictError as error:
+            raise ApiProblem(
+                409,
+                "idempotency_conflict",
+                "Structuring request id was already used with a different candidate.",
+            ) from error
+        except (StreamingTransitionError, StreamingPartialNotFoundError) as error:
+            raise ApiProblem(409, "invalid_capture_state", _safe_message(str(error))) from error
+        except StreamingRecordNotFoundError as error:
+            raise ApiProblem(
+                404, "capture_not_found", "Streaming capture was not found."
+            ) from error
+
+    @router.post("/captures/{capture_id}/structure/failure", response_model=CaptureOperationV2)
+    async def report_structure_failure(
+        capture_id: str,
+        failure: ReportStructuringFailureV1,
+        idempotency_key: Annotated[str, Header(alias="X-Idempotency-Key")],
+    ) -> CaptureOperationV2:
+        try:
+            return service.report_host_failure(
+                capture_id,
+                idempotency_key=idempotency_key,
+                code=failure.code,
+                message=failure.message,
+            )
+        except StreamingIdempotencyConflictError as error:
+            raise ApiProblem(
+                409,
+                "idempotency_conflict",
+                "Structuring failure request id was already used with different metadata.",
+            ) from error
+        except StreamingTransitionError as error:
+            raise ApiProblem(409, "invalid_capture_state", _safe_message(str(error))) from error
         except StreamingRecordNotFoundError as error:
             raise ApiProblem(
                 404, "capture_not_found", "Streaming capture was not found."
@@ -321,3 +399,16 @@ def _safe_message(message: str) -> str:
 
 
 __all__ = ["register_streaming_routes"]
+
+
+def _event_frame(event: CaptureEventV2) -> str:
+    payload = json.dumps(
+        event.model_dump(mode="json", by_alias=True),
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return f"id: {event.sequence}\nevent: {event.event_type.value}\ndata: {payload}\n\n"
+
+
+def _is_terminal_event(event: CaptureEventV2) -> bool:
+    return event.event_type.value in {"completed", "failed", "cancelled"}
