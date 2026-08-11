@@ -103,7 +103,7 @@
       "cache": true,
       "executor": "nx:run-commands",
       "options": {
-        "command": "node --test tools/publish-npm-candidate.test.ts tools/publish-crate-candidate.test.ts tools/verify-registry-ledgers.test.ts"
+        "command": "node --test tools/package-candidate-workflow.test.ts tools/publish-npm-candidate.test.ts tools/publish-crate-candidate.test.ts tools/verify-package-candidate.test.ts tools/verify-registry-ledgers.test.ts"
       }
     },
     "release-manifest-test": {

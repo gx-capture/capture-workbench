@@ -6,8 +6,21 @@ env:
 on:
   workflow_call:
     inputs:
+      candidate_kind:
+        description: 'desktop for the full release candidate, or package for an npm-only candidate'
+        required: false
+        default: desktop
+        type: string
       candidate_id:
         required: true
+        type: string
+      candidate_run_id:
+        description: 'Producer run ID when candidate_kind is package'
+        required: false
+        type: string
+      candidate_manifest_sha256:
+        description: 'Candidate manifest SHA-256 when candidate_kind is package'
+        required: false
         type: string
       source_commit:
         required: true
@@ -42,9 +55,40 @@ jobs:
 
       - name: Download the prepared immutable candidate
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: ${{ inputs.candidate_kind != 'package' }}
         with:
           name: promotion-input-${{ inputs.candidate_id }}
           path: promotion-input
+
+      - name: Download the exact immutable Package Candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: ${{ inputs.candidate_kind == 'package' }}
+        with:
+          name: capture-package-candidate-${{ inputs.release_version }}-${{ inputs.candidate_run_id }}
+          run-id: ${{ inputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+          path: promotion-input/candidate
+
+      - name: Verify the package-scoped producer run and evidence
+        if: ${{ inputs.candidate_kind == 'package' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test '${{ inputs.candidate_kind }}' = package
+          test -n '${{ inputs.candidate_run_id }}'
+          test -n '${{ inputs.candidate_manifest_sha256 }}'
+          run_json="$(gh run view '${{ inputs.candidate_run_id }}' --repo '${{ github.repository }}' --json status,conclusion,workflowName,headSha)"
+          node --input-type=module -e "const r=JSON.parse(process.argv[1]); if(r.status!=='completed'||r.conclusion!=='success'||r.workflowName!=='Release Package Candidate'||r.headSha!=='${{ inputs.source_commit }}') throw new Error('Package producer run is not a successful exact-source package candidate.');" "$run_json"
+          node tools/verify-package-candidate.ts \
+            --candidate promotion-input/candidate \
+            --version '${{ inputs.release_version }}' \
+            --source-commit '${{ inputs.source_commit }}' \
+            --producer-run-id '${{ inputs.candidate_run_id }}' \
+            --candidate-id '${{ inputs.candidate_id }}' \
+            --candidate-manifest-sha256 '${{ inputs.candidate_manifest_sha256 }}' \
+            --require-evidence
 
       - name: Publish or verify exact npm package bytes
         shell: bash
