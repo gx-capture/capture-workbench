@@ -76,6 +76,19 @@ class StreamingEventSubscription:
 
 _SAFE_ID = re.compile(r"^[0-9a-f-]{36}$")
 _MAX_EVENT_REPLAY = 1_024
+_SAFE_HOST_FAILURE_CODE = "host_provider_failed"
+_SAFE_HOST_FAILURE_MESSAGE = "Host structuring failed."
+
+
+def _sanitize_host_failure(failure: CaptureFailureV2) -> CaptureFailureV2:
+    if failure.code == _SAFE_HOST_FAILURE_CODE and failure.message == _SAFE_HOST_FAILURE_MESSAGE:
+        return failure.model_copy(update={"stage": "structuring", "retryable": False})
+    return CaptureFailureV2(
+        code=_SAFE_HOST_FAILURE_CODE,
+        message=_SAFE_HOST_FAILURE_MESSAGE,
+        stage="structuring",
+        retryable=False,
+    )
 
 
 def _identifier(value: str) -> str:
@@ -653,6 +666,7 @@ class StreamingRepository:
         failure: CaptureFailureV2,
     ) -> CaptureOperationV2:
         with self._lock:
+            safe_failure = _sanitize_host_failure(failure)
             record = self._get_capture(capture_id)
             if record.operation.status is StreamingCaptureStatus.FAILED:
                 if (
@@ -669,7 +683,7 @@ class StreamingRepository:
             record.failure_idempotency_key = idempotency_key
             record.failure_fingerprint = fingerprint
             self._persist_capture(record)
-            return self.fail_capture(capture_id, failure)
+            return self.fail_capture(capture_id, safe_failure)
 
     def fail_capture(self, capture_id: str, failure: CaptureFailureV2) -> CaptureOperationV2:
         with self._lock:

@@ -411,4 +411,9 @@ def _event_frame(event: CaptureEventV2) -> str:
 
 
 def _is_terminal_event(event: CaptureEventV2) -> bool:
-    return event.event_type.value in {"completed", "failed", "cancelled"}
+    return event.event_type.value in {
+        "resync_required",
+        "completed",
+        "failed",
+        "cancelled",
+    }

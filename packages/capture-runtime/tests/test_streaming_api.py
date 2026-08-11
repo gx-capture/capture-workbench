@@ -153,6 +153,39 @@ def test_streaming_api_accepts_ordered_chunks_replays_sse_and_rejects_partial_be
     assert replay_ids == ids[2:]
 
 
+def test_streaming_api_closes_replay_after_event_window_resync(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "capture_runtime.storage.streaming_repository._MAX_EVENT_REPLAY",
+        1,
+    )
+    ingestion_id, _ = _open(client)
+    started = client.post(
+        "/v2/captures",
+        json={
+            "clientRequestId": "api-stream-resync-capture",
+            "ingestionId": ingestion_id,
+            "structuringMode": "host",
+            "startPolicy": "eager",
+        },
+    )
+    assert started.status_code == 202, started.text
+    capture_id = started.json()["captureId"]
+    cancelled = client.post(f"/v2/captures/{capture_id}/cancel")
+    assert cancelled.status_code == 200, cancelled.text
+
+    replay = client.get(
+        f"/v2/captures/{capture_id}/events",
+        headers={"Last-Event-ID": "0"},
+    )
+
+    assert replay.status_code == 200
+    assert replay.text.endswith("\n\n")
+    assert "event: resync_required" in replay.text
+    assert "event: accepted" not in replay.text
+
+
 @pytest.mark.parametrize(
     "kind,media_type,file_name",
     [("pdf", "application/pdf", "sample.pdf"), ("image", "image/png", "sample.png")],
@@ -345,6 +378,86 @@ def test_streaming_api_commits_host_structuring_idempotently(client: TestClient)
 
     events = client.get(f"/v2/captures/{capture_id}/events")
     assert "event: completed" in events.text
+
+
+def test_streaming_api_sanitizes_host_failure_before_persistence_and_sse(
+    client: TestClient,
+) -> None:
+    source = b"\x89PNG\r\n\x1a\nCAPTURE_TEXT:host failure"
+    digest = hashlib.sha256(source).hexdigest()
+    opened = client.post(
+        "/v2/ingestions",
+        json={
+            "clientRequestId": "api-stream-host-failure-open",
+            "kind": "image",
+            "fileName": "host-failure.png",
+            "mediaType": "image/png",
+            "totalBytes": len(source),
+            "sourceSha256": digest,
+        },
+    )
+    assert opened.status_code == 201, opened.text
+    ingestion_id = opened.json()["ingestionId"]
+    uploaded = client.put(
+        f"/v2/ingestions/{ingestion_id}/chunks/0",
+        content=source,
+        headers={
+            "Content-Range": f"bytes 0-{len(source) - 1}/{len(source)}",
+            "Digest": f"sha-256={digest}",
+            "X-Idempotency-Key": "api-stream-host-failure-chunk",
+        },
+    )
+    assert uploaded.status_code == 200, uploaded.text
+    finalized = client.post(
+        f"/v2/ingestions/{ingestion_id}/finalize",
+        json={"totalBytes": len(source), "sha256": digest},
+    )
+    assert finalized.status_code == 200, finalized.text
+    started = client.post(
+        "/v2/captures",
+        json={
+            "clientRequestId": "api-stream-host-failure-capture",
+            "ingestionId": ingestion_id,
+            "structuringMode": "host",
+            "startPolicy": "eager",
+        },
+    )
+    assert started.status_code == 202, started.text
+    capture_id = started.json()["captureId"]
+    for _ in range(100):
+        partial = client.get(f"/v2/captures/{capture_id}/partial")
+        if partial.status_code == 200:
+            break
+        time.sleep(0.01)
+    else:
+        raise AssertionError("host capture did not reach awaiting structuring")
+
+    secret = "captured_secret"
+    failed = client.post(
+        f"/v2/captures/{capture_id}/structure/failure",
+        json={
+            "code": f"access_token_{secret}",
+            "message": f"Bearer {secret}",
+        },
+        headers={"X-Idempotency-Key": "api-stream-host-failure"},
+    )
+    assert failed.status_code == 200, failed.text
+    assert failed.json()["error"] == {
+        "code": "host_provider_failed",
+        "message": "Host structuring failed.",
+        "stage": "structuring",
+        "retryable": False,
+    }
+    assert secret not in failed.text
+
+    persisted = client.get(f"/v2/captures/{capture_id}")
+    assert persisted.status_code == 200
+    assert persisted.json()["error"] == failed.json()["error"]
+    events = client.get(f"/v2/captures/{capture_id}/events")
+    assert events.status_code == 200
+    assert secret not in events.text
+    assert '"code":"host_provider_failed"' in events.text
+    assert '"message":"Host structuring failed."' in events.text
 
 
 def test_streaming_api_rejects_gap_checksum_and_invalid_cursor(client: TestClient) -> None:
