@@ -455,7 +455,10 @@ test('desktop launcher advertises the bounded 50 MiB upload policy', async () =>
   );
   assert.match(launchPolicy, /"CAPTURE_MAX_UPLOAD_BYTES"/u);
   assert.match(launchPolicy, /DEFAULT_MAX_UPLOAD_BYTES\.to_string\(\)/u);
-  assert.doesNotMatch(launchPolicy, /CAPTURE_OLLAMA_MODEL|CAPTURE_OLLAMA_PROFILE_ID/u);
+  assert.doesNotMatch(
+    launchPolicy,
+    /CAPTURE_OLLAMA_MODEL|CAPTURE_OLLAMA_PROFILE_ID/u,
+  );
 });
 
 test('desktop launcher crate metadata uses a crates.io-supported category', async () => {
@@ -1067,8 +1070,10 @@ test('release workflow is SHA-pinned and tag-audit-only', async () => {
     /installed-deterministic-smoke\.ts --measure-release-size/u,
   );
   assert.match(workflow, /capture-runtime:size-regression-check/u);
-  assert.match(workflow, /capture-angular:pack/u);
-  assert.match(workflow, /capture-contracts:pack/u);
+  assert.match(workflow, /runtime_candidate_run_id/u);
+  assert.match(workflow, /verify-runtime-candidate\.ts/u);
+  assert.match(workflow, /--runtime-candidate "\$env:RUNTIME_CANDIDATE_PATH"/u);
+  assert.doesNotMatch(workflow, /capture-runtime:build-release-artifacts/u);
   assert.match(workflow, /actions\/upload-artifact@[0-9a-f]{40}/u);
   assert.match(workflow, /actions\/download-artifact@[0-9a-f]{40}/u);
   assert.match(workflow, /publish-release\.ts/u);
