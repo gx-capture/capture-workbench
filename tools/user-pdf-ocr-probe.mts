@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises';
 import { basename, dirname, join, resolve, sep } from 'node:path';
@@ -102,32 +102,127 @@ async function waitForExtraction(
   timeoutMilliseconds = 300_000,
 ): Promise<Record<string, unknown>> {
   const deadline = Date.now() + timeoutMilliseconds;
-  let lastState = '';
-  let job = await getJson(
-    `${baseUrl}/v1/captures/${encodeURIComponent(captureId)}`,
-    token,
+  const response = await fetch(
+    `${baseUrl}/v2/captures/${encodeURIComponent(captureId)}/events`,
+    { headers: { Authorization: `Bearer ${token}` } },
   );
-
-  while (Date.now() < deadline) {
-    const state = `${String(job.status)}:${String(job.stage)}:${String(job.progress)}`;
-    if (state !== lastState) {
-      console.log(`[capture-runtime] poll ${state}`);
-      lastState = state;
-    }
-    if (job.stage === 'awaiting_structuring') return job;
-    if (job.stage === 'failed' || job.stage === 'cancelled') {
-      throw new Error(`Capture extraction failed: ${JSON.stringify(job)}`);
-    }
-    await delay(500);
-    job = await getJson(
-      `${baseUrl}/v1/captures/${encodeURIComponent(captureId)}`,
-      token,
-    );
+  if (!response.ok || !response.body) {
+    throw new Error(`Capture SSE failed with HTTP ${response.status}.`);
   }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let eventData: string[] = [];
+  while (Date.now() < deadline) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+    const result = await Promise.race([
+      reader.read(),
+      delay(remaining).then(() => ({ done: true, value: undefined })),
+    ]);
+    if (result.done) break;
+    buffer += decoder.decode(result.value, { stream: true });
+    const frames = buffer.split(/\r?\n\r?\n/u);
+    buffer = frames.pop() ?? '';
+    for (const frame of frames) {
+      eventData = frame
+        .split(/\r?\n/u)
+        .filter((line) => line.startsWith('data:'))
+        .map((line) => line.slice(5).trimStart());
+      if (eventData.length === 0) continue;
+      const event = JSON.parse(eventData.join('\n')) as Record<string, unknown>;
+      const stage = String(event.stage ?? '');
+      console.log(`[capture-runtime] sse ${String(event.eventType)}:${stage}:${String(event.progress ?? '')}`);
+      if (stage === 'awaiting_structuring') {
+        await reader.cancel();
+        return event;
+      }
+      if (event.eventType === 'failed' || event.eventType === 'cancelled') {
+        throw new Error(`Capture extraction failed: ${JSON.stringify(event)}`);
+      }
+    }
+  }
+  await reader.cancel();
+  throw new Error(`Capture extraction timed out after ${timeoutMilliseconds} ms.`);
+}
 
-  throw new Error(
-    `Capture extraction timed out after ${timeoutMilliseconds} ms: ${JSON.stringify(job)}`,
-  );
+async function startStreamingCapture(
+  baseUrl: string,
+  pdf: Buffer,
+  fileName: string,
+  token: string,
+): Promise<Record<string, unknown>> {
+  const requestId = randomUUID();
+  const ingestionResponse = await fetch(`${baseUrl}/v2/ingestions`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      'X-Idempotency-Key': `${requestId}-ingestion`,
+    },
+    body: JSON.stringify({
+      protocolVersion: '2',
+      clientRequestId: `${requestId}-ingestion`,
+      kind: 'pdf',
+      mode: 'file',
+      fileName,
+      mediaType: 'application/pdf',
+      totalBytes: pdf.byteLength,
+    }),
+  });
+  const ingestion = (await ingestionResponse.json()) as Record<string, unknown>;
+  if (!ingestionResponse.ok) throw new Error(`Ingestion open failed: ${JSON.stringify(ingestion)}`);
+  const ingestionId = String(ingestion.ingestionId);
+  const chunkSize = 1024 * 1024;
+  for (let offset = 0, index = 0; offset < pdf.byteLength; offset += chunkSize, index += 1) {
+    const chunk = pdf.subarray(offset, Math.min(offset + chunkSize, pdf.byteLength));
+    const digest = createHash('sha256').update(chunk).digest('hex');
+    const end = offset + chunk.byteLength - 1;
+    const response = await fetch(
+      `${baseUrl}/v2/ingestions/${encodeURIComponent(ingestionId)}/chunks/${index}`,
+      {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/octet-stream',
+          'Content-Range': `bytes ${offset}-${end}/${pdf.byteLength}`,
+          Digest: `sha-256=${digest}`,
+          'X-Idempotency-Key': `${requestId}-chunk-${index}`,
+        },
+        body: chunk,
+      },
+    );
+    if (!response.ok) throw new Error(`Ingestion chunk ${index} failed with HTTP ${response.status}.`);
+  }
+  const digest = createHash('sha256').update(pdf).digest('hex');
+  const finalize = await fetch(`${baseUrl}/v2/ingestions/${encodeURIComponent(ingestionId)}/finalize`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      'X-Idempotency-Key': `${requestId}-finalize`,
+    },
+    body: JSON.stringify({ protocolVersion: '2', totalBytes: pdf.byteLength, sha256: digest }),
+  });
+  if (!finalize.ok) throw new Error(`Ingestion finalize failed with HTTP ${finalize.status}.`);
+  const captureResponse = await fetch(`${baseUrl}/v2/captures`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      'X-Idempotency-Key': requestId,
+    },
+    body: JSON.stringify({
+      protocolVersion: '2',
+      clientRequestId: requestId,
+      ingestionId,
+      structuringMode: 'host',
+      startPolicy: 'eager',
+    }),
+  });
+  const capture = (await captureResponse.json()) as Record<string, unknown>;
+  if (!captureResponse.ok) throw new Error(`Capture start failed: ${JSON.stringify(capture)}`);
+  return capture;
 }
 
 async function main(): Promise<void> {
@@ -183,29 +278,11 @@ async function main(): Promise<void> {
     runtime = startRuntime(temporaryRoot, modelDir, dataDir, port, token);
     await waitForReady(baseUrl, token);
 
-    const form = new FormData();
-    form.append(
-      'file',
-      new Blob([pdf], { type: 'application/pdf' }),
-      basename(pdfPath),
-    );
-    form.append('sourceKind', 'pdf');
-    form.append('structuringMode', 'host');
-    const createResponse = await fetch(`${baseUrl}/v1/captures`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'X-Idempotency-Key': randomUUID(),
-      },
-      body: form,
-    });
-    const created = (await createResponse.json()) as Record<string, unknown>;
-    if (!createResponse.ok)
-      throw new Error(`Capture upload failed: ${JSON.stringify(created)}`);
+    const created = await startStreamingCapture(baseUrl, pdf, basename(pdfPath), token);
     const captureId = String(created.captureId);
-    const job = await waitForExtraction(baseUrl, captureId, token);
+    const event = await waitForExtraction(baseUrl, captureId, token);
     const raw = await getJson(
-      `${baseUrl}/v1/captures/${encodeURIComponent(captureId)}/raw`,
+      `${baseUrl}/v2/captures/${encodeURIComponent(captureId)}/partial`,
       token,
     );
     const segments = Array.isArray(raw.segments) ? raw.segments : [];
@@ -216,7 +293,7 @@ async function main(): Promise<void> {
           pdf: pdfPath,
           bytes: pdf.byteLength,
           captureId,
-          stage: job.stage,
+          stage: event.stage,
           extractionEngine: raw.extractionEngine,
           segments: segments.length,
           textCharacters: sourceText.length,

@@ -895,13 +895,19 @@ window.__captureE2eReady = true;
     const expectedPaths = [
       '/v1/health/ready',
       '/v1/runtime/requirements',
-      '/v1/captures',
+      '/v2/ingestions',
+      '/v2/captures',
     ];
     if (
       !expectedPaths.every((path) => requestPaths.includes(path)) ||
-      !requestPaths.some((path) => /^\/v1\/captures\/[^/]+$/u.test(path)) ||
       !requestPaths.some((path) =>
-        /^\/v1\/captures\/[^/]+\/result$/u.test(path),
+        /^\/v2\/ingestions\/[^/]+\/chunks\/\d+$/u.test(path),
+      ) ||
+      !requestPaths.some((path) =>
+        /^\/v2\/captures\/[^/]+\/events$/u.test(path),
+      ) ||
+      !requestPaths.some((path) =>
+        /^\/v2\/captures\/[^/]+\/result$/u.test(path),
       )
     ) {
       throw new Error(

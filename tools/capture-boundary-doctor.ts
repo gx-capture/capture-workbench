@@ -414,7 +414,7 @@ export async function collectBoundarySample(
     ? `${certPrep}/projects/${encodeURIComponent(options.correlation.projectId)}/document-operations/${encodeURIComponent(options.correlation.operationId)}`
     : undefined;
   const captureUrl = options.correlation
-    ? `${runtime}/v1/captures/${encodeURIComponent(options.correlation.captureId)}`
+    ? `${runtime}/v2/captures/${encodeURIComponent(options.correlation.captureId)}`
     : undefined;
 
   const [
