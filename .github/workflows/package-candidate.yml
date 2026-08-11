@@ -64,6 +64,10 @@ jobs:
           pnpm nx run capture-angular:pack --skip-nx-cache
           pnpm nx run capture-structuring:pack --skip-nx-cache
 
+      - name: Install Playwright Chromium for consumer evidence
+        shell: bash
+        run: pnpm exec playwright install chromium
+
       - name: Assemble the immutable Package Candidate
         shell: bash
         env:
