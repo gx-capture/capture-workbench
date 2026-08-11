@@ -17,6 +17,7 @@ function parseArguments(args: readonly string[]): {
   sourceCommit?: string;
   releaseMode?: 'core-only' | 'model-enabled';
   packageCandidateId?: string;
+  runtimeCandidateId?: string;
 } {
   const values = new Map<string, string>();
   for (let index = 0; index < args.length; index += 2) {
@@ -29,12 +30,13 @@ function parseArguments(args: readonly string[]): {
         '--source-commit',
         '--release-mode',
         '--package-candidate-id',
+        '--runtime-candidate-id',
       ].includes(name) ||
       !value ||
       values.has(name)
     ) {
       throw new Error(
-        'Use --candidate <directory> --version <semver> [--source-commit <sha>] [--release-mode <mode>].',
+        'Use --candidate <directory> --version <semver> [--source-commit <sha>] [--release-mode <mode>] [--package-candidate-id <sha>] [--runtime-candidate-id <sha>].',
       );
     }
     values.set(name, value);
@@ -43,6 +45,7 @@ function parseArguments(args: readonly string[]): {
   const sourceCommit = values.get('--source-commit');
   const releaseMode = values.get('--release-mode');
   const packageCandidateId = values.get('--package-candidate-id');
+  const runtimeCandidateId = values.get('--runtime-candidate-id');
   if (
     !values.has('--candidate') ||
     !version ||
@@ -52,10 +55,12 @@ function parseArguments(args: readonly string[]): {
     (releaseMode !== undefined &&
       !['core-only', 'model-enabled'].includes(releaseMode)) ||
     (packageCandidateId !== undefined &&
-      !/^[0-9a-f]{64}$/iu.test(packageCandidateId))
+      !/^[0-9a-f]{64}$/iu.test(packageCandidateId)) ||
+    (runtimeCandidateId !== undefined &&
+      !/^[0-9a-f]{64}$/iu.test(runtimeCandidateId))
   ) {
     throw new Error(
-      'Use --candidate <directory> --version <semver> [--source-commit <sha>] [--release-mode <mode>].',
+      'Use --candidate <directory> --version <semver> [--source-commit <sha>] [--release-mode <mode>] [--package-candidate-id <sha>] [--runtime-candidate-id <sha>].',
     );
   }
   return {
@@ -64,6 +69,7 @@ function parseArguments(args: readonly string[]): {
     sourceCommit,
     releaseMode: releaseMode as 'core-only' | 'model-enabled' | undefined,
     packageCandidateId,
+    runtimeCandidateId,
   };
 }
 
@@ -100,6 +106,7 @@ function candidateManifestBase(
   sourceCommit: string,
   releaseMode: 'core-only' | 'model-enabled',
   packageCandidateId: string | null,
+  runtimeCandidateId: string | null,
   artifacts: Array<{ path: string; bytes: number; sha256: string }>,
   toolchains: Record<string, string>,
 ) {
@@ -116,7 +123,11 @@ function candidateManifestBase(
     toolchains,
     contractImpact: null,
   } as const;
-  return packageCandidateId === null ? base : { ...base, packageCandidateId };
+  const withPackage =
+    packageCandidateId === null ? base : { ...base, packageCandidateId };
+  return runtimeCandidateId === null
+    ? withPackage
+    : { ...withPackage, runtimeCandidateId };
 }
 
 async function inferReleaseMode(
@@ -315,6 +326,11 @@ async function main(): Promise<void> {
     (typeof existingManifest?.packageCandidateId === 'string'
       ? existingManifest.packageCandidateId
       : null);
+  const runtimeCandidateId =
+    parsed.runtimeCandidateId ??
+    (typeof existingManifest?.runtimeCandidateId === 'string'
+      ? existingManifest.runtimeCandidateId
+      : null);
   if (!/^(?:local|[0-9a-f]{40})$/iu.test(sourceCommit)) {
     throw new Error(
       'Candidate sourceCommit must be a 40-character commit SHA.',
@@ -330,6 +346,12 @@ async function main(): Promise<void> {
     !/^[0-9a-f]{64}$/iu.test(packageCandidateId)
   ) {
     throw new Error('Candidate package identity is invalid.');
+  }
+  if (
+    runtimeCandidateId !== null &&
+    !/^[0-9a-f]{64}$/iu.test(runtimeCandidateId)
+  ) {
+    throw new Error('Candidate runtime identity is invalid.');
   }
 
   const candidateDirectories = [
@@ -383,6 +405,7 @@ async function main(): Promise<void> {
     sourceCommit,
     releaseMode,
     packageCandidateId,
+    runtimeCandidateId,
     inventory,
     toolchains,
   );

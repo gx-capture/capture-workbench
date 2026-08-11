@@ -81,3 +81,28 @@ test('runtime promotion requires npm evidence before publishing runtime registri
   assert.match(releaseWorkflow, /create-runtime-github-release\.ts/u);
   assert.match(releaseWorkflow, /promotion-input-/u);
 });
+
+test('desktop candidate consumes an exact Runtime Candidate', async () => {
+  const candidateWorkflow = await readFile(
+    join(root, '.github/workflows/release-candidate.yml'),
+    'utf8',
+  );
+  const promoteWorkflow = await readFile(
+    join(root, '.github/workflows/release-promote.yml'),
+    'utf8',
+  );
+  assert.match(candidateWorkflow, /runtime_candidate_run_id/u);
+  assert.match(candidateWorkflow, /capture-runtime-candidate-/u);
+  assert.match(candidateWorkflow, /verify-runtime-candidate\.ts/u);
+  assert.match(candidateWorkflow, /--runtime-candidate-id/u);
+  assert.match(
+    candidateWorkflow,
+    /--runtime-candidate "\$env:RUNTIME_CANDIDATE_PATH"/u,
+  );
+  assert.doesNotMatch(
+    candidateWorkflow,
+    /capture-runtime:build-release-artifacts/u,
+  );
+  assert.match(promoteWorkflow, /runtime_candidate_manifest_sha256/u);
+  assert.match(promoteWorkflow, /verify-runtime-candidate-binding\.ts/u);
+});
