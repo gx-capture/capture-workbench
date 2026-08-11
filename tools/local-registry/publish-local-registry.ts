@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { resolveNode24Corepack } from '../node24-corepack.ts';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 interface PackageDescriptor {
@@ -36,13 +37,7 @@ const packageDescriptors: readonly PackageDescriptor[] = [
 });
 const registry =
   process.env.CAPTURE_WORKBENCH_LOCAL_REGISTRY ?? 'http://127.0.0.1:4873';
-const corepackCli = join(
-  dirname(process.execPath),
-  'node_modules',
-  'corepack',
-  'dist',
-  'corepack.js',
-);
+const corepackCli = resolveNode24Corepack();
 
 export function packageArchiveName(name: string, version: string): string {
   return `${name.replace(/^@/u, '').replace('/', '-')}-${version}.tgz`;
@@ -117,7 +112,7 @@ function run(command: string, args: string[], cwd = repoRoot): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  if (!existsSync(corepackCli)) {
+  if (!corepackCli) {
     throw new Error(
       'Node 24 Corepack is required to run the pnpm 11 workflow.',
     );
