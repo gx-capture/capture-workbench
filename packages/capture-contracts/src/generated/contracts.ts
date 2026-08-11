@@ -82,8 +82,10 @@ export interface CaptureEventV2 {
   readonly eventId: string;
   readonly sequence: number;
   readonly captureId: string;
+  readonly kind?: CaptureSourceKind;
   readonly eventType: StreamingEventType;
   readonly stage: string;
+  readonly progress?: number | null;
   readonly partialRevision?: number | null;
   readonly coveredUntilMs?: number | null;
   readonly segments?: readonly (RawCaptureSegmentV1)[];
@@ -122,6 +124,7 @@ export interface CaptureOperationV2 {
   readonly protocolVersion: "2";
   readonly captureId: string;
   readonly ingestionId: string;
+  readonly kind?: CaptureSourceKind;
   readonly status: StreamingCaptureStatus;
   readonly progress?: number | null;
   readonly partialRevision: number;
@@ -168,6 +171,7 @@ export interface FinalizeIngestionV2 {
 
 export interface IngestionV2 {
   readonly protocolVersion: "2";
+  readonly kind?: CaptureSourceKind;
   readonly ingestionId: string;
   readonly status: StreamingIngestionStatus;
   readonly fileName: string;
@@ -184,7 +188,7 @@ export interface IngestionV2 {
 
 export interface OpenIngestionV2 {
   readonly protocolVersion: "2";
-  readonly kind: "audio";
+  readonly kind?: CaptureSourceKind;
   readonly mode?: StreamingIngestionMode;
   readonly clientRequestId: string;
   readonly fileName: string;
@@ -322,7 +326,8 @@ export interface RuntimeRequirementsV1 {
 
 export interface RuntimeStreamingCapabilitiesV2 {
   readonly protocolVersion: "2";
-  readonly supportsProgressiveAudio: true;
+  readonly captureKinds?: readonly (CaptureSourceKind)[];
+  readonly supportsProgressiveAudio?: boolean;
   readonly maxChunkBytes: number;
   readonly checkpointIntervalMs: number;
   readonly heartbeatIntervalMs: number;

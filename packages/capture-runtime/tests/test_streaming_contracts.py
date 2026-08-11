@@ -9,6 +9,7 @@ import pytest
 from capture_runtime.contracts import (
     CaptureEngineV1,
     CaptureEventV2,
+    CaptureSourceKind,
     CaptureSourceV1,
     OpenIngestionV2,
     PartialCaptureV2,
@@ -29,9 +30,10 @@ SOURCE = CaptureSourceV1(
 NOW = datetime(2026, 1, 1, tzinfo=UTC)
 
 
-def _request() -> OpenIngestionV2:
+def _request(kind: CaptureSourceKind = CaptureSourceKind.AUDIO) -> OpenIngestionV2:
     return OpenIngestionV2(
         client_request_id="stream-request-1",
+        kind=kind,
         file_name=SOURCE.file_name,
         media_type=SOURCE.media_type,
         total_bytes=SOURCE.bytes,
@@ -65,6 +67,7 @@ def test_v2_contracts_use_camel_case_and_preserve_sealed_segment_projection() ->
         event_id="capture-1/1",
         sequence=1,
         capture_id="capture-1",
+        kind=CaptureSourceKind.AUDIO,
         event_type=StreamingEventType.SEGMENT,
         stage="extracting",
         partial_revision=1,
@@ -76,6 +79,14 @@ def test_v2_contracts_use_camel_case_and_preserve_sealed_segment_projection() ->
     assert partial.model_dump(by_alias=True)["coveredUntilMs"] == 600_000
     assert event.model_dump(by_alias=True)["eventType"] == "segment"
     assert event.model_dump(by_alias=True)["segments"][0]["locator"]["startMs"] == 0
+
+
+@pytest.mark.parametrize("kind", list(CaptureSourceKind))
+def test_v2_ingestion_contract_carries_every_capture_kind(kind: CaptureSourceKind) -> None:
+    request = _request(kind)
+
+    assert request.kind is kind
+    assert request.model_dump(by_alias=True)["kind"] == kind.value
 
 
 def test_partial_capture_rejects_non_projection_text() -> None:

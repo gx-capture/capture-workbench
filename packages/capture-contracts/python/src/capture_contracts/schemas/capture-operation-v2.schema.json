@@ -40,6 +40,15 @@
       "title": "CaptureFailureV2",
       "type": "object"
     },
+    "CaptureSourceKind": {
+      "enum": [
+        "pdf",
+        "image",
+        "audio"
+      ],
+      "title": "CaptureSourceKind",
+      "type": "string"
+    },
     "CaptureSourceV1": {
       "additionalProperties": false,
       "properties": {
@@ -106,6 +115,10 @@
       "minLength": 1,
       "title": "Ingestionid",
       "type": "string"
+    },
+    "kind": {
+      "$ref": "#/$defs/CaptureSourceKind",
+      "default": "audio"
     },
     "status": {
       "$ref": "#/$defs/StreamingCaptureStatus"

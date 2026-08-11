@@ -1,5 +1,14 @@
 {
   "$defs": {
+    "CaptureSourceKind": {
+      "enum": [
+        "pdf",
+        "image",
+        "audio"
+      ],
+      "title": "CaptureSourceKind",
+      "type": "string"
+    },
     "StreamingIngestionStatus": {
       "enum": [
         "open",
@@ -20,6 +29,10 @@
       "default": "2",
       "title": "Protocolversion",
       "type": "string"
+    },
+    "kind": {
+      "$ref": "#/$defs/CaptureSourceKind",
+      "default": "audio"
     },
     "ingestionId": {
       "minLength": 1,

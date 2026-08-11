@@ -1,5 +1,14 @@
 {
   "$defs": {
+    "CaptureSourceKind": {
+      "enum": [
+        "pdf",
+        "image",
+        "audio"
+      ],
+      "title": "CaptureSourceKind",
+      "type": "string"
+    },
     "StreamingIngestionMode": {
       "enum": [
         "file"
@@ -17,10 +26,8 @@
       "type": "string"
     },
     "kind": {
-      "const": "audio",
-      "default": "audio",
-      "title": "Kind",
-      "type": "string"
+      "$ref": "#/$defs/CaptureSourceKind",
+      "default": "audio"
     },
     "mode": {
       "$ref": "#/$defs/StreamingIngestionMode",
