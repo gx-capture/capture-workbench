@@ -85,6 +85,15 @@ function exceptionReason(relativePath) {
   if (relativePath === 'tools/assemble-release-candidate.ts') {
     return 'release candidate assembly CLI process boundary';
   }
+  if (relativePath === 'tools/assemble-package-candidate.ts') {
+    return 'package candidate assembly CLI process boundary';
+  }
+  if (relativePath === 'tools/verify-package-candidate.ts') {
+    return 'package candidate verification CLI process boundary';
+  }
+  if (relativePath === 'tools/verify-package-candidate-binding.ts') {
+    return 'package candidate binding verification CLI process boundary';
+  }
   if (relativePath === 'tools/create-contract-snapshot.ts') {
     return 'contract snapshot generation CLI process boundary';
   }
