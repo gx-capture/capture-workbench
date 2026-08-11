@@ -76,20 +76,135 @@ async function jsonRequest<T>(baseUrl: string, path: string, init: RequestInit =
   return await response.json() as T;
 }
 
-function parseSseEvents(value: string): { readonly sequence: number; readonly eventType: string }[] {
-  const events: { sequence: number; eventType: string }[] = [];
-  let sequence: number | undefined;
-  let eventType: string | undefined;
-  for (const line of value.split(/\r?\n/u)) {
-    if (line.startsWith('id: ')) sequence = Number(line.slice(4));
-    if (line.startsWith('event: ')) eventType = line.slice(7);
-    if (line === '' && sequence !== undefined && eventType !== undefined) {
-      if (Number.isSafeInteger(sequence) && sequence > 0) events.push({ sequence, eventType });
-      sequence = undefined;
-      eventType = undefined;
+export interface ProgressiveAudioSseEvent {
+  readonly sequence: number;
+  readonly eventType: string;
+  readonly captureId: string;
+  readonly stage: string;
+  readonly progress?: number;
+  readonly coveredUntilMs?: number;
+  readonly partialRevision?: number;
+}
+
+interface SseFrame {
+  id?: string;
+  event?: string;
+  data: string[];
+}
+
+const ACTIVE_CAPTURE_STATUSES = new Set([
+  'created',
+  'waiting_input',
+  'extracting',
+  'awaiting_structuring',
+  'structuring',
+]);
+
+export async function consumeSseEvents(
+  response: Response,
+  expectedCaptureId: string,
+  onEvent: (event: ProgressiveAudioSseEvent) => boolean | void | Promise<boolean | void>,
+): Promise<void> {
+  if (!response.body) throw new Error('Progressive audio oracle SSE response had no body.');
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let pending = '';
+  let frame: SseFrame = { data: [] };
+  let previousSequence = 0;
+  let stopped = false;
+
+  const dispatch = async (): Promise<void> => {
+    if (frame.data.length === 0) {
+      frame = { data: [] };
+      return;
     }
+    const value = asRecord(JSON.parse(frame.data.join('\n')));
+    const protocolVersion = value.protocolVersion;
+    const captureId = requiredString(value.captureId);
+    const eventId = requiredString(value.eventId);
+    const sequence = Number(value.sequence);
+    const eventType = requiredString(value.eventType);
+    const stage = requiredString(value.stage);
+    const createdAt = requiredString(value.createdAt);
+    if (protocolVersion !== '2' || captureId !== expectedCaptureId) {
+      throw new Error('Progressive audio oracle SSE event identity was invalid.');
+    }
+    if (!eventId.startsWith(captureId + '/') || !Number.isSafeInteger(sequence) || sequence <= previousSequence) {
+      throw new Error('Progressive audio oracle SSE event cursor was invalid.');
+    }
+    if (!Number.isFinite(Date.parse(createdAt)) || !/T.*(?:Z|[+-]\d{2}:\d{2})$/u.test(createdAt)) {
+      throw new Error('Progressive audio oracle SSE event timestamp was invalid.');
+    }
+    if (frame.id !== undefined && frame.id !== String(sequence)) {
+      throw new Error('Progressive audio oracle SSE event id did not match its sequence.');
+    }
+    if (frame.event !== undefined && frame.event !== eventType) {
+      throw new Error('Progressive audio oracle SSE event name did not match its payload.');
+    }
+    const progress = value.progress === undefined ? undefined : Number(value.progress);
+    const coveredUntilMs = value.coveredUntilMs === undefined ? undefined : Number(value.coveredUntilMs);
+    const partialRevision = value.partialRevision === undefined ? undefined : Number(value.partialRevision);
+    if (
+      (progress !== undefined && (!Number.isFinite(progress) || progress < 0 || progress > 1))
+      || (coveredUntilMs !== undefined && (!Number.isSafeInteger(coveredUntilMs) || coveredUntilMs < 0))
+      || (partialRevision !== undefined && (!Number.isSafeInteger(partialRevision) || partialRevision < 0))
+    ) {
+      throw new Error('Progressive audio oracle SSE event payload was invalid.');
+    }
+    previousSequence = sequence;
+    const stop = await onEvent({
+      sequence,
+      eventType,
+      captureId,
+      stage,
+      ...(progress === undefined ? {} : { progress }),
+      ...(coveredUntilMs === undefined ? {} : { coveredUntilMs }),
+      ...(partialRevision === undefined ? {} : { partialRevision }),
+    });
+    frame = { data: [] };
+    stopped = stop === true;
+  };
+
+  const processLine = async (line: string): Promise<void> => {
+    if (line === '') {
+      await dispatch();
+      return;
+    }
+    if (line.startsWith(':')) return;
+    const separator = line.indexOf(':');
+    const field = separator < 0 ? line : line.slice(0, separator);
+    const rawValue = separator < 0 ? '' : line.slice(separator + 1);
+    const value = rawValue.startsWith(' ') ? rawValue.slice(1) : rawValue;
+    if (field === 'data') frame.data.push(value);
+    else if (field === 'id') frame.id = value;
+    else if (field === 'event') frame.event = value;
+  };
+
+  try {
+    while (!stopped) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      pending += decoder.decode(chunk.value, { stream: true });
+      let newline = pending.indexOf('\n');
+      while (newline >= 0 && !stopped) {
+        let line = pending.slice(0, newline);
+        pending = pending.slice(newline + 1);
+        if (line.endsWith('\r')) line = line.slice(0, -1);
+        await processLine(line);
+        newline = pending.indexOf('\n');
+      }
+    }
+    if (!stopped) {
+      pending += decoder.decode();
+      if (pending.length > 0) {
+        await processLine(pending.endsWith('\r') ? pending.slice(0, -1) : pending);
+      }
+      await dispatch();
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
   }
-  return events;
 }
 
 function asRecord(value: unknown): JsonRecord {
@@ -266,7 +381,6 @@ async function run(): Promise<void> {
   });
   let ingestionId: string | undefined;
   let captureId: string | undefined;
-  let terminalStatus: string | undefined;
   let workerMirror: Server | undefined;
   try {
     workerMirror = await startWorkerMirror(workerMirrorPort);
@@ -314,25 +428,62 @@ async function run(): Promise<void> {
       }),
     });
     captureId = capture.captureId;
-    let lastEventId = 0;
     let checkpointSeen = false;
-    const deadline = Date.now() + 20 * 60_000;
+    let activeCheckpointSeen = false;
     let partial: unknown;
-    while (Date.now() < deadline) {
-      const current = await jsonRequest<CaptureState>(baseUrl, `/v2/captures/${captureId}`);
-      terminalStatus = current.status;
+    const eventAbort = new AbortController();
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      eventAbort.abort();
+    }, 20 * 60_000);
+    try {
       const eventResponse = await request(baseUrl, `/v2/captures/${captureId}/events`, {
-        headers: lastEventId > 0 ? { 'Last-Event-ID': String(lastEventId) } : {},
+        signal: eventAbort.signal,
       });
-      if (eventResponse.ok) {
-        for (const event of parseSseEvents(await eventResponse.text())) {
-          lastEventId = Math.max(lastEventId, event.sequence);
-          if (event.eventType === 'checkpoint') checkpointSeen = true;
-        }
+      if (!eventResponse.ok) {
+        throw new Error(`Progressive audio oracle SSE request failed: status=${eventResponse.status}.`);
       }
-      const partialResponse = await request(baseUrl, `/v2/captures/${captureId}/partial`);
-      if (partialResponse.ok) partial = await partialResponse.json();
-      if (current.status === 'awaiting_structuring' || current.status === 'completed') break;
+      await consumeSseEvents(eventResponse, captureId, async (event) => {
+        if (event.eventType !== 'checkpoint') return;
+        const current = await jsonRequest<CaptureState>(baseUrl, `/v2/captures/${captureId}`, {
+          signal: eventAbort.signal,
+        });
+        if (current.status === 'failed' || current.status === 'cancelled') {
+          const errorCode = current.error && typeof current.error.code === 'string'
+            ? current.error.code
+            : 'unknown';
+          const errorStage = current.error && typeof current.error.stage === 'string'
+            ? current.error.stage
+            : 'unknown';
+          throw new Error(`Progressive audio oracle capture failed: code=${errorCode}; stage=${errorStage}.`);
+        }
+        if (
+          !ACTIVE_CAPTURE_STATUSES.has(current.status ?? '')
+          || event.stage !== 'extracting'
+          || event.progress === undefined
+          || event.progress >= 1
+        ) return;
+        const partialResponse = await request(baseUrl, `/v2/captures/${captureId}/partial`, {
+          signal: eventAbort.signal,
+        });
+        if (!partialResponse.ok) return;
+        partial = await partialResponse.json();
+        const parsed = parsePartial(partial, sourceSha256, source.byteLength);
+        if (parsed.coveredUntilMs < PROGRESSIVE_AUDIO_CHECKPOINT_MS) return;
+        checkpointSeen = true;
+        activeCheckpointSeen = true;
+        return true;
+      });
+    } catch (error) {
+      if (timedOut) throw new Error('Progressive audio oracle capture SSE timed out.');
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+      eventAbort.abort();
+    }
+    if (!activeCheckpointSeen) {
+      const current = await jsonRequest<CaptureState>(baseUrl, `/v2/captures/${captureId}`);
       if (current.status === 'failed' || current.status === 'cancelled') {
         const errorCode = current.error && typeof current.error.code === 'string'
           ? current.error.code
@@ -342,10 +493,7 @@ async function run(): Promise<void> {
           : 'unknown';
         throw new Error(`Progressive audio oracle capture failed: code=${errorCode}; stage=${errorStage}.`);
       }
-      await new Promise((resolvePromise) => setTimeout(resolvePromise, 500));
-    }
-    if (terminalStatus !== 'awaiting_structuring' && terminalStatus !== 'completed') {
-      throw new Error('Progressive audio oracle capture timed out.');
+      throw new Error('Progressive audio oracle did not observe an active five-minute checkpoint.');
     }
     if (!checkpointSeen) throw new Error('Progressive audio oracle did not observe the five-minute checkpoint.');
     const evidence = deriveProgressiveAudioOracleEvidence(

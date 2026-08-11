@@ -30,6 +30,8 @@ pub struct LibraryCaptureUpdate {
     pub error_message: Option<String>,
     pub recovery_code: Option<String>,
     pub recovery_message: Option<String>,
+    pub recovery_client_request_id: Option<String>,
+    pub recovery_ingestion_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -75,6 +77,8 @@ pub struct LibraryDocumentSummary {
     pub error_message: Option<String>,
     pub recovery_code: Option<String>,
     pub recovery_message: Option<String>,
+    pub recovery_client_request_id: Option<String>,
+    pub recovery_ingestion_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]

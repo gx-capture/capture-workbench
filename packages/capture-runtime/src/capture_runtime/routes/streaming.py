@@ -24,6 +24,7 @@ from capture_runtime.contracts import (
     ReportStructuringFailureV1,
     RuntimeStreamingCapabilitiesV2,
     StartCaptureV2,
+    StreamingCaptureStatus,
     StreamingEventType,
 )
 from capture_runtime.dependencies import RuntimeDependencies
@@ -214,6 +215,7 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
     ) -> StreamingResponse:
         after_sequence = _event_cursor(last_event_id)
         try:
+            operation = service.get_capture(capture_id)
             subscription = service.subscribe_events(capture_id, after_sequence=after_sequence)
         except StreamingRecordNotFoundError as error:
             raise ApiProblem(
@@ -230,6 +232,12 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
                     last_sequence = event.sequence
                     if _is_terminal_event(event):
                         return
+                if operation.status in {
+                    StreamingCaptureStatus.COMPLETED,
+                    StreamingCaptureStatus.FAILED,
+                    StreamingCaptureStatus.CANCELLED,
+                }:
+                    return
                 while True:
                     try:
                         item = await asyncio.to_thread(subscription.get, 5.0)

@@ -35,4 +35,41 @@ describe('DesktopRuntimeClientService', () => {
     expect(requirements).toEqual([]);
     expect(commands.invoke).toHaveBeenCalledWith('runtime_requirements', {}, undefined);
   });
+
+  it('delivers native SSE channel messages as incremental RxJS events', () => {
+    const event = {
+      protocolVersion: '2',
+      eventId: 'capture-1/2',
+      sequence: 2,
+      captureId: 'capture-1',
+      kind: 'pdf',
+      eventType: 'checkpoint',
+      stage: 'extracting',
+      createdAt: '2026-07-20T00:00:00Z',
+    } as const;
+    const commands = {
+      invoke: vi.fn((command: string) => command === 'desktop_runtime_status'
+        ? of({ status: 'ready', detail: 'Runtime ready' })
+        : of({ items: [] })),
+      invokeChannel: vi.fn(() => of(event)),
+    };
+    TestBed.configureTestingModule({
+      providers: [
+        { provide: DesktopTauriCommandService, useValue: commands },
+        DesktopRuntimeClientService,
+      ],
+    });
+
+    const service = TestBed.inject(DesktopRuntimeClientService);
+    TestBed.tick();
+    const received: Array<readonly unknown[]> = [];
+    service.getStreamingEvents('capture-1', 1).subscribe((value) => received.push(value));
+
+    expect(received).toEqual([[event]]);
+    expect(commands.invokeChannel).toHaveBeenCalledWith(
+      'runtime_stream_streaming_events',
+      { input: { id: 'capture-1', lastEventId: 1 } },
+      undefined,
+    );
+  });
 });

@@ -58,8 +58,9 @@ bootstrapApplication(App, {
 
 When that backend also invokes the host's existing LLM provider, configure
 `structuringMode: 'host'` and `hostStructuringOwner: 'client'`. The component
-then polls the injected client through `awaiting_structuring` and never requests
-raw capture data or an LLM provider in the WebView.
+then follows the authenticated v2 `CaptureEventV2` SSE stream and uses the
+host-owned status/reconciliation methods only as a recovery fallback. It never
+requests raw capture data or an LLM provider in the WebView.
 
 Do not put a sidecar bearer token in a URL, browser log, or `localStorage`.
 

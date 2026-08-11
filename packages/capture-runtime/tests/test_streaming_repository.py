@@ -79,9 +79,20 @@ def test_streaming_repository_recovers_ordered_upload_and_event_log(tmp_path: Pa
 
     assert restarted.get_ingestion(ingestion_id).status is StreamingIngestionStatus.READY
     recovered = restarted.get_capture(capture.capture_id)
-    assert recovered.last_event_sequence == 1
-    assert len(restarted.read_events(capture.capture_id, after_sequence=-1)) == 1
+    assert recovered.status is StreamingCaptureStatus.FAILED
+    assert recovered.error is not None
+    assert recovered.error.code == "runtime_restarted"
+    assert recovered.last_event_sequence == 2
+    assert [
+        event.event_type for event in restarted.read_events(capture.capture_id, after_sequence=-1)
+    ] == [StreamingEventType.ACCEPTED, StreamingEventType.FAILED]
     assert restarted.source_path(ingestion_id).read_bytes() == source
+
+    restarted_again = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+    restarted_again.initialize()
+
+    assert restarted_again.get_capture(capture.capture_id).last_event_sequence == 2
+    assert len(restarted_again.read_events(capture.capture_id, after_sequence=-1)) == 2
 
 
 def test_streaming_repository_prunes_expired_terminal_capture_and_ingestion(
@@ -320,6 +331,10 @@ def test_streaming_repository_returns_resync_when_replay_is_too_large(tmp_path: 
             event_type=StreamingEventType.HEARTBEAT,
             stage="extracting",
         )
+    with (repository.root / "captures" / capture.capture_id / "events.jsonl").open(
+        "a", encoding="utf-8"
+    ) as event_log:
+        event_log.write("corrupt tail is outside the replay cap\n")
 
     events = repository.read_events(capture.capture_id, after_sequence=-1)
 

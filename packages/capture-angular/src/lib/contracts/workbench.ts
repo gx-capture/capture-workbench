@@ -17,6 +17,7 @@ export interface ResolvedCaptureWorkbenchConfig {
   readonly multiple: boolean;
   readonly targetLanguage?: string;
   readonly concurrency: number;
+  /** Installation polling interval in milliseconds; v2 capture progress uses CaptureEventV2 SSE. */
   readonly pollIntervalMs: number;
   readonly showRuntimeSetup: boolean;
   readonly hostStructuringOwner: 'component' | 'client';

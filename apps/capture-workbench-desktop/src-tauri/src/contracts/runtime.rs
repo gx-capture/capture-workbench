@@ -31,6 +31,12 @@ pub struct RuntimeStreamingEventsInput {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct RuntimeClientRequestIdInput {
+    pub client_request_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RuntimeIdInput {
     pub id: String,
 }

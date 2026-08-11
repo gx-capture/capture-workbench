@@ -5,8 +5,8 @@ use crate::{
     contracts::{
         LibraryCaptureUpdate, LibraryDocumentDetail, LibraryDocumentRequest,
         LibraryDocumentSummary, LibraryExportPayload, LibraryExportRequest,
-        LibraryImportSourceRequest, LibraryListRequest, RuntimeIdInput,
-        RuntimeInstallationStartInput, RuntimeModelInstallationStartInput,
+        LibraryImportSourceRequest, LibraryListRequest, RuntimeClientRequestIdInput,
+        RuntimeIdInput, RuntimeInstallationStartInput, RuntimeModelInstallationStartInput,
         RuntimeStreamingCaptureInput, RuntimeStreamingEventsInput,
     },
     library::LibraryStore,
@@ -179,12 +179,31 @@ pub async fn runtime_get_streaming_capture(
 }
 
 #[tauri::command]
+pub async fn runtime_get_streaming_capture_by_client_request(
+    state: tauri::State<'_, DesktopState>,
+    input: RuntimeClientRequestIdInput,
+) -> Result<serde_json::Value, String> {
+    let state = state.inner().clone();
+    run_blocking(move || runtime_client::streaming_capture_by_client_request(&state, input)).await
+}
+
+#[tauri::command]
 pub async fn runtime_get_streaming_events(
     state: tauri::State<'_, DesktopState>,
     input: RuntimeStreamingEventsInput,
 ) -> Result<serde_json::Value, String> {
     let state = state.inner().clone();
     run_blocking(move || runtime_client::streaming_events(&state, input)).await
+}
+
+#[tauri::command]
+pub async fn runtime_stream_streaming_events(
+    state: tauri::State<'_, DesktopState>,
+    input: RuntimeStreamingEventsInput,
+    channel: tauri::ipc::Channel<serde_json::Value>,
+) -> Result<(), String> {
+    let state = state.inner().clone();
+    run_blocking(move || runtime_client::stream_streaming_events(&state, input, channel)).await
 }
 
 #[tauri::command]
@@ -230,4 +249,13 @@ pub async fn runtime_delete_streaming_capture(
 ) -> Result<serde_json::Value, String> {
     let state = state.inner().clone();
     run_blocking(move || runtime_client::delete_streaming_capture(&state, input)).await
+}
+
+#[tauri::command]
+pub async fn runtime_delete_streaming_ingestion(
+    state: tauri::State<'_, DesktopState>,
+    input: RuntimeIdInput,
+) -> Result<serde_json::Value, String> {
+    let state = state.inner().clone();
+    run_blocking(move || runtime_client::delete_streaming_ingestion(&state, input)).await
 }

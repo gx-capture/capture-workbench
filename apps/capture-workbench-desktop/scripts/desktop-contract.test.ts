@@ -339,6 +339,8 @@ test('renderer IPC never receives the sidecar bearer token', async () => {
   assert.doesNotMatch(desktopHost, /backend_config|bearerToken|Authorization/u);
   assert.match(commands, /runtime_start_streaming_capture/u);
   assert.match(desktopHost, /runtime_start_streaming_capture/u);
+  assert.match(commands, /runtime_stream_streaming_events/u);
+  assert.match(desktopHost, /runtime_stream_streaming_events/u);
   assert.match(commands, /runtime_delete_streaming_capture/u);
   assert.match(desktopHost, /runtime_delete_streaming_capture/u);
 });
@@ -364,12 +366,15 @@ test('blocking native I/O is isolated behind async Tauri commands', async () => 
     'runtime_get_model_installation',
     'runtime_start_streaming_capture',
     'runtime_get_streaming_capture',
+    'runtime_get_streaming_capture_by_client_request',
     'runtime_get_streaming_events',
+    'runtime_stream_streaming_events',
     'runtime_get_streaming_partial',
     'runtime_get_streaming_result',
     'runtime_structure_streaming_capture',
     'runtime_cancel_streaming_capture',
     'runtime_delete_streaming_capture',
+    'runtime_delete_streaming_ingestion',
   ]) {
     assert.match(commands, new RegExp(`pub async fn ${command}`, 'u'));
   }
@@ -388,12 +393,15 @@ test('desktop bridge capture lifecycle is v2-only', async () => {
   for (const command of [
     'runtime_start_streaming_capture',
     'runtime_get_streaming_capture',
+    'runtime_get_streaming_capture_by_client_request',
     'runtime_get_streaming_events',
+    'runtime_stream_streaming_events',
     'runtime_get_streaming_partial',
     'runtime_get_streaming_result',
     'runtime_structure_streaming_capture',
     'runtime_cancel_streaming_capture',
     'runtime_delete_streaming_capture',
+    'runtime_delete_streaming_ingestion',
   ]) {
     assert.match(commands, new RegExp(`pub async fn ${command}`, 'u'));
     assert.match(host, new RegExp(`commands::${command}`, 'u'));

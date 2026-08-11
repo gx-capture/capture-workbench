@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import threading
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -173,6 +174,7 @@ class StreamingRepository:
             self._subscribers.clear()
             self._load_ingestions()
             self._load_captures()
+            self.recover_interrupted()
             self.prune_expired()
 
     def create_ingestion(self, request: OpenIngestionV2) -> IngestionV2:
@@ -474,31 +476,70 @@ class StreamingRepository:
     def _read_events_locked(self, capture_id: str, *, after_sequence: int) -> list[CaptureEventV2]:
         record = self._get_capture(capture_id)
         path = self._capture_directory(capture_id) / "events.jsonl"
-        events: list[CaptureEventV2] = []
-        for line in path.read_text(encoding="utf-8").splitlines():
-            if not line:
-                continue
-            try:
-                event = CaptureEventV2.model_validate_json(line)
-            except ValidationError as error:
-                raise RuntimeError("streaming event log is corrupted") from error
-            if event.sequence > after_sequence:
-                events.append(event)
-        if len(events) <= _MAX_EVENT_REPLAY:
-            return events
-        latest_sequence = record.operation.last_event_sequence
-        return [
-            CaptureEventV2(
-                event_id=f"{capture_id}/resync/{latest_sequence}",
-                sequence=latest_sequence,
-                capture_id=capture_id,
-                kind=record.operation.kind,
-                event_type=StreamingEventType.RESYNC_REQUIRED,
-                stage="resync",
-                partial_revision=record.operation.partial_revision,
-                created_at=self._clock.now(),
-            )
-        ]
+        events: deque[CaptureEventV2] = deque(maxlen=_MAX_EVENT_REPLAY)
+        replay_count = 0
+        with path.open("r", encoding="utf-8") as event_log:
+            for line in event_log:
+                line = line.rstrip("\r\n")
+                if not line:
+                    continue
+                try:
+                    event = CaptureEventV2.model_validate_json(line)
+                except ValidationError as error:
+                    raise RuntimeError("streaming event log is corrupted") from error
+                if event.sequence > after_sequence:
+                    replay_count += 1
+                    if replay_count > _MAX_EVENT_REPLAY:
+                        latest_sequence = record.operation.last_event_sequence
+                        return [
+                            CaptureEventV2(
+                                event_id=f"{capture_id}/resync/{latest_sequence}",
+                                sequence=latest_sequence,
+                                capture_id=capture_id,
+                                kind=record.operation.kind,
+                                event_type=StreamingEventType.RESYNC_REQUIRED,
+                                stage="resync",
+                                partial_revision=record.operation.partial_revision,
+                                created_at=self._clock.now(),
+                            )
+                        ]
+                    events.append(event)
+        return list(events)
+
+    def recover_interrupted(self) -> None:
+        """Fail active captures left behind by a runtime process restart.
+
+        Worker tasks are intentionally not reconstructed from persisted state:
+        replaying a partially processed source could duplicate extraction or
+        append an ambiguous event suffix. A persisted terminal failure gives
+        hosts a deterministic, idempotent recovery point instead.
+        """
+        with self._lock:
+            interrupted = [
+                record.operation.capture_id
+                for record in self._captures.values()
+                if record.operation.status not in _TERMINAL_CAPTURE_STATUSES
+            ]
+            for capture_id in interrupted:
+                operation = self._get_capture(capture_id).operation
+                stage = (
+                    "structuring"
+                    if operation.status
+                    in {
+                        StreamingCaptureStatus.AWAITING_STRUCTURING,
+                        StreamingCaptureStatus.STRUCTURING,
+                    }
+                    else "extraction"
+                )
+                self.fail_capture(
+                    capture_id,
+                    CaptureFailureV2(
+                        code="runtime_restarted",
+                        message="Capture Runtime restarted before capture completed.",
+                        stage=stage,
+                        retryable=True,
+                    ),
+                )
 
     def write_partial(self, partial: PartialCaptureV2) -> None:
         with self._lock:

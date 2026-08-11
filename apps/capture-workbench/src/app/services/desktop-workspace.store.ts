@@ -53,6 +53,8 @@ type WorkspaceState = 'starting' | 'needs-setup' | 'ready' | 'error';
 
 interface ActiveCapture {
   captureId?: string;
+  clientRequestId?: string;
+  ingestionId?: string;
   lastEventSequence: number;
   cancelRequested: boolean;
   cancelSent: boolean;
@@ -358,7 +360,9 @@ export class DesktopWorkspaceStore {
       ?? (this.selected()?.documentId === documentId ? this.selected() : undefined);
     const operation = document?.captureId
       ? this.recoverCapture$(document)
-      : this.captureExisting$(documentId);
+      : document?.recoveryClientRequestId
+        ? this.recoverPendingCapture$(document)
+        : this.captureExisting$(documentId);
     operation.subscribe({
       error: (error: unknown) => this.message.set(errorMessage(error)),
     });
@@ -487,7 +491,9 @@ export class DesktopWorkspaceStore {
   private captureExisting$(documentId: string): Observable<void> {
     return defer(() => {
       if (!this.runtime.ready() || this.activeCaptures.has(documentId)) return EMPTY;
+      const clientRequestId = crypto.randomUUID();
       const active: ActiveCapture = {
+        clientRequestId,
         lastEventSequence: 0,
         cancelRequested: false,
         cancelSent: false,
@@ -501,6 +507,8 @@ export class DesktopWorkspaceStore {
         status: 'processing',
         stage: 'uploading',
         clearCaptureId: true,
+        recoveryCode: 'capture_pending',
+        recoveryClientRequestId: clientRequestId,
       }).pipe(
         tap(() => this.reloadDocumentState(documentId)),
         switchMap(() => this.captureStreaming$(documentId, active)),
@@ -513,17 +521,22 @@ export class DesktopWorkspaceStore {
   private captureStreaming$(documentId: string, active: ActiveCapture): Observable<void> {
     return this.runtime.startStreamingCapture({
       documentId,
-      clientRequestId: crypto.randomUUID(),
+      clientRequestId: active.clientRequestId ?? crypto.randomUUID(),
       structuringMode: 'runtime',
     }).pipe(
       switchMap((operation) => {
         active.captureId = operation.captureId;
+        active.ingestionId = operation.ingestionId;
         this.applyStreamingOperation(active, operation);
         return this.library.updateCapture({
           documentId,
           captureId: operation.captureId,
           status: 'processing',
           stage: operation.status,
+          recoveryCode: undefined,
+          recoveryMessage: undefined,
+          recoveryClientRequestId: undefined,
+          recoveryIngestionId: undefined,
         }).pipe(
           tap(() => this.reloadDocumentState(documentId)),
           map(() => operation),
@@ -714,6 +727,8 @@ export class DesktopWorkspaceStore {
       const terminalCommitted = hasCommittedTerminalData(document);
       const active: ActiveCapture = {
         captureId: document.captureId,
+        clientRequestId: document.recoveryClientRequestId,
+        ingestionId: document.recoveryIngestionId,
         lastEventSequence: 0,
         cancelRequested: false,
         cancelSent: false,
@@ -743,6 +758,83 @@ export class DesktopWorkspaceStore {
           )),
         );
       return this.trackCaptureLifecycle$(document.documentId, active, work$);
+    });
+  }
+
+  private recoverPendingCapture$(document: DesktopLibrarySummary): Observable<void> {
+    return defer(() => {
+      if (
+        !this.runtime.ready()
+        || !document.recoveryClientRequestId
+        || this.activeCaptures.has(document.documentId)
+      ) {
+        return EMPTY;
+      }
+      const clientRequestId = document.recoveryClientRequestId;
+      return this.runtime.getStreamingCaptureByClientRequest(clientRequestId).pipe(
+        switchMap((operation) => {
+          if (operation) {
+            const recovered = {
+              ...document,
+              captureId: operation.captureId,
+              status: 'processing' as const,
+              stage: operation.status,
+              recoveryCode: undefined,
+              recoveryMessage: undefined,
+            } satisfies DesktopLibrarySummary;
+            return this.library.updateCapture({
+              documentId: document.documentId,
+              captureId: operation.captureId,
+              status: 'processing',
+              stage: operation.status,
+              recoveryCode: undefined,
+              recoveryMessage: undefined,
+              recoveryClientRequestId: undefined,
+              recoveryIngestionId: undefined,
+            }).pipe(
+              switchMap(() => this.recoverCapture$(recovered)),
+            );
+          }
+          if (!document.recoveryIngestionId) {
+            return this.library.updateCapture({
+              documentId: document.documentId,
+              status: 'failed',
+              stage: 'failed',
+              clearCaptureId: true,
+              errorCode: 'capture_failed',
+              errorMessage: 'Capture request was not committed.',
+              recoveryCode: undefined,
+              recoveryMessage: undefined,
+              recoveryClientRequestId: undefined,
+              recoveryIngestionId: undefined,
+            }).pipe(map(() => undefined));
+          }
+          return this.runtime.deleteStreamingIngestion(document.recoveryIngestionId).pipe(
+            switchMap(() => this.library.updateCapture({
+              documentId: document.documentId,
+              status: 'failed',
+              stage: 'failed',
+              clearCaptureId: true,
+              errorCode: 'capture_failed',
+              errorMessage: 'Capture request was not committed.',
+              recoveryCode: undefined,
+              recoveryMessage: undefined,
+              recoveryClientRequestId: undefined,
+              recoveryIngestionId: undefined,
+            })),
+            map(() => undefined),
+          );
+        }),
+        catchError((error: unknown) => this.library.updateCapture({
+          documentId: document.documentId,
+          status: 'recovery_required',
+          stage: document.stage ?? 'recovery_required',
+          recoveryCode: 'capture_recovery_required',
+          recoveryMessage: errorMessage(error),
+          recoveryClientRequestId: clientRequestId,
+          recoveryIngestionId: document.recoveryIngestionId,
+        }).pipe(map(() => undefined))),
+      );
     });
   }
 
@@ -823,11 +915,20 @@ export class DesktopWorkspaceStore {
     }
     return this.library.updateCapture({
       documentId,
-      status: 'failed',
-      stage: 'failed',
-      clearCaptureId: true,
-      errorCode: 'capture_failed',
-      errorMessage: errorMessage(error),
+      status: active.clientRequestId ? 'recovery_required' : 'failed',
+      stage: active.clientRequestId ? (active.lastStage ?? 'recovery_required') : 'failed',
+      clearCaptureId: !active.clientRequestId,
+      ...(active.clientRequestId
+        ? {
+          recoveryCode: 'capture_recovery_required',
+          recoveryMessage: errorMessage(error),
+          recoveryClientRequestId: active.clientRequestId,
+          recoveryIngestionId: active.ingestionId,
+        }
+        : {
+          errorCode: 'capture_failed',
+          errorMessage: errorMessage(error),
+        }),
     });
   }
 

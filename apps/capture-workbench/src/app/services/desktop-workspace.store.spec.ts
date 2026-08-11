@@ -702,6 +702,110 @@ describe('DesktopWorkspaceStore', () => {
     expect(getStreamingCapture).toHaveBeenCalled();
   });
 
+  it('persists one client request identity before create and retains it after transport failure', () => {
+    const updateCapture = vi.fn((update: Record<string, unknown>) =>
+      of({ ...summary, ...update } as DesktopLibrarySummary));
+    const startStreamingCapture = vi.fn(() =>
+      throwError(() => new Error('create response was lost after commit')));
+    const store = initializeStore(
+      libraryStub({ updateCapture }),
+      runtimeStub({ startStreamingCapture }),
+    );
+
+    store.retry(summary.documentId);
+    TestBed.tick();
+
+    const updates = captureUpdates(updateCapture);
+    const pending = updates.find((update) => update['status'] === 'processing');
+    const recovery = updates.find((update) => update['status'] === 'recovery_required');
+    expect(startStreamingCapture).toHaveBeenCalledOnce();
+    expect(pending?.['recoveryCode']).toBe('capture_pending');
+    expect(typeof pending?.['recoveryClientRequestId']).toBe('string');
+    expect(recovery).toEqual(expect.objectContaining({
+      status: 'recovery_required',
+      clearCaptureId: false,
+      recoveryCode: 'capture_recovery_required',
+      recoveryClientRequestId: pending?.['recoveryClientRequestId'],
+    }));
+  });
+
+  it('reconciles a pending create by request identity before deleting its private ingestion', () => {
+    const pending = {
+      ...summary,
+      status: 'recovery_required' as const,
+      stage: 'uploading',
+      recoveryClientRequestId: 'capture-request-pending',
+      recoveryIngestionId: 'ingestion-private',
+    };
+    const updateCapture = vi.fn((update: Record<string, unknown>) =>
+      of({ ...pending, ...update } as DesktopLibrarySummary));
+    const getStreamingCaptureByClientRequest = vi.fn(() => of(null));
+    const deleteStreamingIngestion = vi.fn(() => of(undefined));
+    const startStreamingCapture = vi.fn();
+    const store = initializeStore(
+      libraryStub({
+        list: vi.fn(() => of([pending])),
+        get: vi.fn(() => of(pending as DesktopLibraryDetail)),
+        updateCapture,
+      }),
+      runtimeStub({
+        startStreamingCapture,
+        getStreamingCaptureByClientRequest,
+        deleteStreamingIngestion,
+      }),
+    );
+
+    store.retry(pending.documentId);
+    TestBed.tick();
+
+    expect(startStreamingCapture).not.toHaveBeenCalled();
+    expect(getStreamingCaptureByClientRequest).toHaveBeenCalledWith(
+      'capture-request-pending',
+    );
+    expect(deleteStreamingIngestion).toHaveBeenCalledWith('ingestion-private');
+    expect(captureUpdates(updateCapture)).toContainEqual(expect.objectContaining({
+      status: 'failed',
+      clearCaptureId: true,
+      errorCode: 'capture_failed',
+      recoveryClientRequestId: undefined,
+      recoveryIngestionId: undefined,
+    }));
+  });
+
+  it('retains pending create recovery when lookup or active-ingestion cleanup is uncertain', () => {
+    const pending = {
+      ...summary,
+      status: 'recovery_required' as const,
+      stage: 'uploading',
+      recoveryClientRequestId: 'capture-request-uncertain',
+      recoveryIngestionId: 'ingestion-private',
+    };
+    const updateCapture = vi.fn((update: Record<string, unknown>) =>
+      of({ ...pending, ...update } as DesktopLibrarySummary));
+    const store = initializeStore(
+      libraryStub({
+        list: vi.fn(() => of([pending])),
+        get: vi.fn(() => of(pending as DesktopLibraryDetail)),
+        updateCapture,
+      }),
+      runtimeStub({
+        getStreamingCaptureByClientRequest: vi.fn(() => of(null)),
+        deleteStreamingIngestion: vi.fn(() =>
+          throwError(() => new Error('HTTP 409 active ingestion'))),
+      }),
+    );
+
+    store.retry(pending.documentId);
+    TestBed.tick();
+
+    expect(captureUpdates(updateCapture)).toContainEqual(expect.objectContaining({
+      status: 'recovery_required',
+      recoveryCode: 'capture_recovery_required',
+      recoveryClientRequestId: 'capture-request-uncertain',
+      recoveryIngestionId: 'ingestion-private',
+    }));
+  });
+
   it('interrupts an in-flight poll and sends cancellation immediately', () => {
     const polled = new Subject<CaptureOperationV2>();
     const cancelStreamingCapture = vi.fn(() => of(cancelledOperation));
@@ -1214,12 +1318,14 @@ function runtimeStub(overrides: Record<string, unknown> = {}) {
     getModelInstallation: vi.fn(),
     startStreamingCapture: vi.fn(() => of(completedOperation)),
     getStreamingCapture: defaultGetStreamingCapture,
+    getStreamingCaptureByClientRequest: vi.fn(() => of(null)),
     getStreamingEvents: vi.fn(() => of([])),
     getStreamingPartial: vi.fn(() => of(partial)),
     getStreamingResult: vi.fn(() => of(terminalResult)),
     structureStreamingCapture: vi.fn(() => of(result)),
     cancelStreamingCapture: vi.fn(() => of(cancelledOperation)),
     deleteStreamingCapture: vi.fn(() => of(undefined)),
+    deleteStreamingIngestion: vi.fn(() => of(undefined)),
   };
   return Object.assign(client, overrides);
 }

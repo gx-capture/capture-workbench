@@ -110,14 +110,23 @@ export class DesktopRuntimeClientService {
     return this.commands.invoke('runtime_get_streaming_capture', { input: { id: captureId } }, signal);
   }
 
+  getStreamingCaptureByClientRequest(
+    clientRequestId: string,
+    signal?: AbortSignal,
+  ): Observable<CaptureOperationV2 | null> {
+    return this.commands.invoke('runtime_get_streaming_capture_by_client_request', {
+      input: { clientRequestId },
+    }, signal);
+  }
+
   getStreamingEvents(
     captureId: string,
     lastEventId?: number,
     signal?: AbortSignal,
   ): Observable<readonly CaptureEventV2[]> {
-    return this.commands.invoke('runtime_get_streaming_events', {
+    return this.commands.invokeChannel<CaptureEventV2>('runtime_stream_streaming_events', {
       input: { id: captureId, lastEventId: lastEventId ?? null },
-    }, signal);
+    }, signal).pipe(map((event) => [event]));
   }
 
   getStreamingPartial(captureId: string, signal?: AbortSignal): Observable<PartialCaptureV2 | null> {
@@ -145,6 +154,12 @@ export class DesktopRuntimeClientService {
   deleteStreamingCapture(captureId: string, signal?: AbortSignal): Observable<void> {
     return this.commands
       .invoke<null>('runtime_delete_streaming_capture', { input: { id: captureId } }, signal)
+      .pipe(map(() => undefined));
+  }
+
+  deleteStreamingIngestion(ingestionId: string, signal?: AbortSignal): Observable<void> {
+    return this.commands
+      .invoke<null>('runtime_delete_streaming_ingestion', { input: { id: ingestionId } }, signal)
       .pipe(map(() => undefined));
   }
 

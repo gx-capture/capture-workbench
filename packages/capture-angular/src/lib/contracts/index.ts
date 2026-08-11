@@ -321,11 +321,13 @@ export interface CaptureWorkbenchConfig {
   readonly multiple?: boolean;
   readonly targetLanguage?: string;
   readonly concurrency?: number;
+  /** Installation polling interval in milliseconds; v2 capture progress uses CaptureEventV2 SSE. */
   readonly pollIntervalMs?: number;
   readonly showRuntimeSetup?: boolean;
   /**
    * `component` invokes the injected CaptureStructuringProvider after raw extraction.
-   * `client` means the host backend owns provider invocation and the component only polls.
+   * `client` means the host backend owns provider invocation while capture progress
+   * remains on the v2 SSE stream and reconciliation methods are recovery-only.
    */
   readonly hostStructuringOwner?: 'component' | 'client';
   /**

@@ -12,7 +12,8 @@ use sha2::{Digest, Sha256};
 use crate::{
     config::BackendConfig,
     contracts::{
-        RuntimeIdInput, RuntimeInstallationStartInput, RuntimeModelInstallationStartInput,
+        LibraryCaptureUpdate, RuntimeClientRequestIdInput, RuntimeIdInput,
+        RuntimeInstallationStartInput, RuntimeModelInstallationStartInput,
         RuntimeStreamingCaptureInput, RuntimeStreamingEventsInput,
     },
     library::{LibraryStore, RuntimeSourceFile},
@@ -122,6 +123,17 @@ pub(crate) fn start_streaming_capture(
         media_type if media_type.starts_with("audio/") => "audio",
         _ => return Err("Streaming capture source media type is unsupported.".into()),
     };
+    persist_capture_recovery(
+        library,
+        &input.document_id,
+        "processing",
+        "uploading",
+        None,
+        Some("capture_pending"),
+        Some("Capture request is pending runtime reconciliation."),
+        Some(&input.client_request_id),
+        None,
+    )?;
     let config = state.backend_config()?;
     let ingestion = request_with_headers(
         &config,
@@ -145,10 +157,22 @@ pub(crate) fn start_streaming_capture(
     let ingestion_id = ingestion
         .get("ingestionId")
         .and_then(Value::as_str)
-        .ok_or_else(|| "Progressive ingestion response is invalid.".to_string())?;
+        .ok_or_else(|| "Progressive ingestion response is invalid.".to_string())?
+        .to_string();
+    persist_capture_recovery(
+        library,
+        &input.document_id,
+        "processing",
+        "uploading",
+        None,
+        Some("capture_pending"),
+        Some("Capture request is pending runtime reconciliation."),
+        Some(&input.client_request_id),
+        Some(&ingestion_id),
+    )?;
     let client_request_id = input.client_request_id.clone();
     let result = (|| {
-        upload_source_chunks(&config, &source, ingestion_id, &client_request_id)?;
+        upload_source_chunks(&config, &source, &ingestion_id, &client_request_id)?;
         let source_digest = source_sha256(&source)?;
         request_json(
             state,
@@ -178,6 +202,28 @@ pub(crate) fn start_streaming_capture(
             },
             &client_request_id,
         )
+        .and_then(|value| {
+            let capture_id = value
+                .get("captureId")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "Progressive capture response is invalid.".to_string())?;
+            let stage = value
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("created");
+            persist_capture_recovery(
+                library,
+                &input.document_id,
+                "processing",
+                stage,
+                Some(capture_id),
+                None,
+                None,
+                None,
+                None,
+            )?;
+            Ok(value)
+        })
     })();
     match result {
         Ok(value) => Ok(value),
@@ -192,6 +238,36 @@ pub(crate) fn start_streaming_capture(
             Err(cleanup_error) => Err(format!("{error} Ingestion cleanup failed: {cleanup_error}")),
         },
     }
+}
+
+fn persist_capture_recovery(
+    library: &LibraryStore,
+    document_id: &str,
+    status: &str,
+    stage: &str,
+    capture_id: Option<&str>,
+    recovery_code: Option<&str>,
+    recovery_message: Option<&str>,
+    client_request_id: Option<&str>,
+    ingestion_id: Option<&str>,
+) -> Result<(), String> {
+    library
+        .update_capture(LibraryCaptureUpdate {
+            document_id: document_id.to_string(),
+            capture_id: capture_id.map(str::to_string),
+            clear_capture_id: false,
+            status: status.to_string(),
+            stage: Some(stage.to_string()),
+            raw: None,
+            result: None,
+            error_code: None,
+            error_message: None,
+            recovery_code: recovery_code.map(str::to_string),
+            recovery_message: recovery_message.map(str::to_string),
+            recovery_client_request_id: client_request_id.map(str::to_string),
+            recovery_ingestion_id: ingestion_id.map(str::to_string),
+        })
+        .map(|_| ())
 }
 
 fn request_capture_with_recovery(
@@ -237,6 +313,25 @@ pub(crate) fn streaming_capture(
     streaming_value(state, "GET", &input.id, "", None, None)
 }
 
+pub(crate) fn streaming_capture_by_client_request(
+    state: &DesktopState,
+    input: RuntimeClientRequestIdInput,
+) -> Result<Value, String> {
+    validate_client_request_id(&input.client_request_id)?;
+    let config = state.backend_config()?;
+    null_for_http_rejection(
+        request_with_headers(
+            &config,
+            "GET",
+            &format!("/v2/captures/by-client-request/{}", input.client_request_id),
+            None,
+            None,
+            &[],
+        ),
+        404,
+    )
+}
+
 pub(crate) fn streaming_partial(
     state: &DesktopState,
     input: RuntimeIdInput,
@@ -276,6 +371,27 @@ pub(crate) fn streaming_events(
     )
 }
 
+pub(crate) fn stream_streaming_events(
+    state: &DesktopState,
+    input: RuntimeStreamingEventsInput,
+    channel: tauri::ipc::Channel<Value>,
+) -> Result<(), String> {
+    validate_opaque_id(&input.id)?;
+    let config = state.backend_config()?;
+    let last_event_id = input.last_event_id.map(|value| value.to_string());
+    request_sse_stream(
+        &config,
+        &format!("/v2/captures/{}/events", input.id),
+        last_event_id.as_deref(),
+        Some(&input.id),
+        |event| {
+            channel
+                .send(event)
+                .map_err(|_| "Capture Runtime SSE channel closed.".to_string())
+        },
+    )
+}
+
 pub(crate) fn cancel_streaming_capture(
     state: &DesktopState,
     input: RuntimeIdInput,
@@ -289,6 +405,25 @@ pub(crate) fn delete_streaming_capture(
 ) -> Result<Value, String> {
     null_for_http_rejection(
         streaming_value(state, "DELETE", &input.id, "", None, None),
+        404,
+    )
+}
+
+pub(crate) fn delete_streaming_ingestion(
+    state: &DesktopState,
+    input: RuntimeIdInput,
+) -> Result<Value, String> {
+    validate_opaque_id(&input.id)?;
+    let config = state.backend_config()?;
+    null_for_http_rejection(
+        request_with_headers(
+            &config,
+            "DELETE",
+            &format!("/v2/ingestions/{}", input.id),
+            None,
+            None,
+            &[],
+        ),
         404,
     )
 }
@@ -470,6 +605,30 @@ fn request_sse(
     path: &str,
     last_event_id: Option<&str>,
 ) -> Result<Value, String> {
+    let mut events = Vec::new();
+    request_sse_stream(
+        config,
+        path,
+        last_event_id,
+        capture_id_from_events_path(path),
+        |event| {
+            events.push(event);
+            Ok(())
+        },
+    )?;
+    Ok(Value::Array(events))
+}
+
+fn request_sse_stream<F>(
+    config: &BackendConfig,
+    path: &str,
+    last_event_id: Option<&str>,
+    expected_capture_id: Option<&str>,
+    mut on_event: F,
+) -> Result<(), String>
+where
+    F: FnMut(Value) -> Result<(), String>,
+{
     let port = loopback_port(&config.base_url)?;
     let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
     let mut stream = TcpStream::connect_timeout(&address, REQUEST_TIMEOUT)
@@ -491,19 +650,34 @@ fn request_sse(
     stream
         .write_all(headers.as_bytes())
         .map_err(|_| "Capture Runtime request could not be sent.".to_string())?;
-    let mut response = Vec::new();
-    stream
-        .take(MAX_RUNTIME_RESPONSE_BYTES + 1)
-        .read_to_end(&mut response)
-        .map_err(|_| "Capture Runtime response could not be read.".to_string())?;
-    if response.len() as u64 > MAX_RUNTIME_RESPONSE_BYTES {
-        return Err("Capture Runtime response exceeded the desktop safety limit.".into());
-    }
-    let separator = response
-        .windows(4)
-        .position(|window| window == b"\r\n\r\n")
-        .ok_or_else(|| "Capture Runtime response was malformed.".to_string())?;
-    let headers = std::str::from_utf8(&response[..separator])
+    let mut response_prefix = Vec::new();
+    let mut body_prefix = Vec::new();
+    let mut total_bytes = 0_u64;
+    let separator = loop {
+        let mut chunk = [0_u8; 8192];
+        let count = stream
+            .read(&mut chunk)
+            .map_err(|_| "Capture Runtime response could not be read.".to_string())?;
+        if count == 0 {
+            return Err("Capture Runtime response was malformed.".to_string());
+        }
+        total_bytes = total_bytes.saturating_add(count as u64);
+        if total_bytes > MAX_RUNTIME_RESPONSE_BYTES {
+            return Err("Capture Runtime response exceeded the desktop safety limit.".into());
+        }
+        response_prefix.extend_from_slice(&chunk[..count]);
+        if let Some(index) = response_prefix
+            .windows(4)
+            .position(|window| window == b"\r\n\r\n")
+        {
+            body_prefix.extend_from_slice(&response_prefix[index + 4..]);
+            break index;
+        }
+        if response_prefix.len() > 64 * 1024 {
+            return Err("Capture Runtime response headers were too large.".to_string());
+        }
+    };
+    let headers = std::str::from_utf8(&response_prefix[..separator])
         .map_err(|_| "Capture Runtime response headers were invalid.".to_string())?;
     let status = headers
         .lines()
@@ -519,7 +693,24 @@ fn request_sse(
     if !has_event_stream_content_type(headers) {
         return Err("Capture Runtime SSE response Content-Type was not text/event-stream.".into());
     }
-    parse_sse_events(&response[separator + 4..], last_event_id, &config.token)
+
+    let mut parser = SseParser::new(last_event_id, &config.token, expected_capture_id)?;
+    parser.feed(&body_prefix, &mut on_event)?;
+    loop {
+        let mut chunk = [0_u8; 8192];
+        let count = stream
+            .read(&mut chunk)
+            .map_err(|_| "Capture Runtime response could not be read.".to_string())?;
+        if count == 0 {
+            break;
+        }
+        total_bytes = total_bytes.saturating_add(count as u64);
+        if total_bytes > MAX_RUNTIME_RESPONSE_BYTES {
+            return Err("Capture Runtime response exceeded the desktop safety limit.".into());
+        }
+        parser.feed(&chunk[..count], &mut on_event)?;
+    }
+    parser.finish(&mut on_event)
 }
 
 #[derive(Default)]
@@ -529,86 +720,491 @@ struct SseFrame {
     data: Vec<String>,
 }
 
-fn parse_sse_events(body: &[u8], cursor: Option<&str>, token: &str) -> Result<Value, String> {
-    let text = std::str::from_utf8(body)
-        .map_err(|_| "Capture Runtime SSE response was not valid UTF-8.".to_string())?;
-    let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
-    let cursor_sequence = cursor
-        .map(|value| {
-            value
-                .parse::<u64>()
-                .map_err(|_| "Capture Runtime SSE cursor was invalid.".to_string())
-        })
-        .transpose()?;
-    let mut frame = SseFrame::default();
-    let mut events = Vec::new();
-    let mut previous_sequence = cursor_sequence;
+struct SseParser<'a> {
+    frame: SseFrame,
+    pending: Vec<u8>,
+    previous_sequence: Option<u64>,
+    token: &'a str,
+    expected_capture_id: Option<&'a str>,
+}
 
-    for line in normalized.split('\n') {
+impl<'a> SseParser<'a> {
+    fn new(
+        cursor: Option<&str>,
+        token: &'a str,
+        expected_capture_id: Option<&'a str>,
+    ) -> Result<Self, String> {
+        let previous_sequence = cursor
+            .map(|value| {
+                value
+                    .parse::<u64>()
+                    .map_err(|_| "Capture Runtime SSE cursor was invalid.".to_string())
+            })
+            .transpose()?;
+        Ok(Self {
+            frame: SseFrame::default(),
+            pending: Vec::new(),
+            previous_sequence,
+            token,
+            expected_capture_id,
+        })
+    }
+
+    fn feed<F>(&mut self, bytes: &[u8], on_event: &mut F) -> Result<(), String>
+    where
+        F: FnMut(Value) -> Result<(), String>,
+    {
+        self.pending.extend_from_slice(bytes);
+        while let Some(index) = self.pending.iter().position(|byte| *byte == b'\n') {
+            let mut line = self.pending.drain(..=index).collect::<Vec<_>>();
+            line.pop();
+            if line.last() == Some(&b'\r') {
+                line.pop();
+            }
+            self.process_line(&line, on_event)?;
+        }
+        Ok(())
+    }
+
+    fn finish<F>(&mut self, on_event: &mut F) -> Result<(), String>
+    where
+        F: FnMut(Value) -> Result<(), String>,
+    {
+        if !self.pending.is_empty() {
+            let line = std::mem::take(&mut self.pending);
+            self.process_line(&line, on_event)?;
+        }
+        self.dispatch(on_event)
+    }
+
+    fn process_line<F>(&mut self, line: &[u8], on_event: &mut F) -> Result<(), String>
+    where
+        F: FnMut(Value) -> Result<(), String>,
+    {
+        let line = std::str::from_utf8(line)
+            .map_err(|_| "Capture Runtime SSE response was not valid UTF-8.".to_string())?;
         if line.is_empty() {
-            dispatch_sse_frame(&mut frame, &mut events, &mut previous_sequence, token)?;
-            continue;
+            return self.dispatch(on_event);
         }
         if line.starts_with(':') {
-            continue;
+            return Ok(());
         }
         let (field, raw_value) = line
             .split_once(':')
             .map_or((line, ""), |(field, value)| (field, value));
         let value = raw_value.strip_prefix(' ').unwrap_or(raw_value);
         match field {
-            "data" => frame.data.push(value.to_string()),
-            "id" => frame.id = Some(value.to_string()),
-            "event" => frame.event = Some(value.to_string()),
+            "data" => self.frame.data.push(value.to_string()),
+            "id" => self.frame.id = Some(value.to_string()),
+            "event" => self.frame.event = Some(value.to_string()),
             _ => {}
         }
+        Ok(())
     }
-    dispatch_sse_frame(&mut frame, &mut events, &mut previous_sequence, token)?;
+
+    fn dispatch<F>(&mut self, on_event: &mut F) -> Result<(), String>
+    where
+        F: FnMut(Value) -> Result<(), String>,
+    {
+        if self.frame.data.is_empty() {
+            self.frame = SseFrame::default();
+            return Ok(());
+        }
+        let mut value: Value = serde_json::from_str(&self.frame.data.join("\n"))
+            .map_err(|_| "Capture Runtime SSE event was not valid JSON.".to_string())?;
+        let (sequence, event_type) = validate_capture_event(&value, self.expected_capture_id)?;
+        if let Some(id) = self.frame.id.as_deref() {
+            if id != sequence.to_string() {
+                return Err("Capture Runtime SSE event id did not match its sequence.".to_string());
+            }
+        }
+        if let Some(event) = self.frame.event.as_deref() {
+            if event != event_type {
+                return Err("Capture Runtime SSE event name did not match its payload.".to_string());
+            }
+        }
+        if self
+            .previous_sequence
+            .is_some_and(|previous| sequence <= previous)
+        {
+            return Err(
+                "Capture Runtime SSE event sequence was not strictly increasing.".to_string(),
+            );
+        }
+        self.previous_sequence = Some(sequence);
+        redact_token(&mut value, self.token);
+        on_event(value)?;
+        self.frame = SseFrame::default();
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+fn parse_sse_events(body: &[u8], cursor: Option<&str>, token: &str) -> Result<Value, String> {
+    parse_sse_events_for_capture(body, cursor, token, None)
+}
+
+#[cfg(test)]
+fn parse_sse_events_for_capture(
+    body: &[u8],
+    cursor: Option<&str>,
+    token: &str,
+    expected_capture_id: Option<&str>,
+) -> Result<Value, String> {
+    let mut events = Vec::new();
+    let mut parser = SseParser::new(cursor, token, expected_capture_id)?;
+    parser.feed(body, &mut |event| {
+        events.push(event);
+        Ok(())
+    })?;
+    parser.finish(&mut |event| {
+        events.push(event);
+        Ok(())
+    })?;
     Ok(Value::Array(events))
 }
 
-fn dispatch_sse_frame(
-    frame: &mut SseFrame,
-    events: &mut Vec<Value>,
-    previous_sequence: &mut Option<u64>,
-    token: &str,
-) -> Result<(), String> {
-    if frame.data.is_empty() {
-        frame.id = None;
-        frame.event = None;
-        return Ok(());
+fn capture_id_from_events_path(path: &str) -> Option<&str> {
+    path.strip_prefix("/v2/captures/")?.strip_suffix("/events")
+}
+
+fn validate_capture_event(
+    value: &Value,
+    expected_capture_id: Option<&str>,
+) -> Result<(u64, String), String> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| "Capture Runtime SSE event was not an object.".to_string())?;
+    const EVENT_FIELDS: &[&str] = &[
+        "protocolVersion",
+        "eventId",
+        "sequence",
+        "captureId",
+        "kind",
+        "eventType",
+        "stage",
+        "progress",
+        "partialRevision",
+        "coveredUntilMs",
+        "segments",
+        "error",
+        "createdAt",
+    ];
+    if object
+        .keys()
+        .any(|key| !EVENT_FIELDS.contains(&key.as_str()))
+    {
+        return Err("Capture Runtime SSE event contained an unexpected field.".to_string());
     }
-    let mut value: Value = serde_json::from_str(&frame.data.join("\n"))
-        .map_err(|_| "Capture Runtime SSE event was not valid JSON.".to_string())?;
-    let sequence = value
+    if object.get("protocolVersion").and_then(Value::as_str) != Some("2") {
+        return Err("Capture Runtime SSE event protocol version was invalid.".to_string());
+    }
+    let event_id = object
+        .get("eventId")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "Capture Runtime SSE event identity was invalid.".to_string())?;
+    let capture_id = object
+        .get("captureId")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "Capture Runtime SSE event capture identity was invalid.".to_string())?;
+    if expected_capture_id.is_some_and(|expected| expected != capture_id) {
+        return Err(
+            "Capture Runtime SSE event capture identity did not match the request.".to_string(),
+        );
+    }
+    if !event_id.starts_with(&format!("{capture_id}/")) {
+        return Err("Capture Runtime SSE event id did not match its capture identity.".to_string());
+    }
+    if !matches!(
+        object.get("kind").and_then(Value::as_str),
+        Some("pdf" | "image" | "audio")
+    ) {
+        return Err("Capture Runtime SSE event kind was invalid.".to_string());
+    }
+    let sequence = object
         .get("sequence")
         .and_then(Value::as_u64)
         .ok_or_else(|| "Capture Runtime SSE event sequence was invalid.".to_string())?;
-    let event_type = value
+    let event_type = object
         .get("eventType")
         .and_then(Value::as_str)
-        .filter(|event_type| !event_type.is_empty())
-        .ok_or_else(|| "Capture Runtime SSE event type was invalid.".to_string())?;
-    if let Some(id) = frame.id.as_deref() {
-        if id != sequence.to_string() {
-            return Err("Capture Runtime SSE event id did not match its sequence.".to_string());
+        .filter(|event_type| {
+            matches!(
+                *event_type,
+                "accepted"
+                    | "input_checkpoint"
+                    | "heartbeat"
+                    | "segment"
+                    | "checkpoint"
+                    | "resync_required"
+                    | "completed"
+                    | "failed"
+                    | "cancelled"
+            )
+        })
+        .ok_or_else(|| "Capture Runtime SSE event type was invalid.".to_string())?
+        .to_string();
+    if object
+        .get("stage")
+        .and_then(Value::as_str)
+        .is_none_or(str::is_empty)
+    {
+        return Err("Capture Runtime SSE event stage was invalid.".to_string());
+    }
+    if let Some(progress) = object.get("progress") {
+        if !progress.is_null()
+            && !progress
+                .as_f64()
+                .is_some_and(|value| value.is_finite() && (0.0..=1.0).contains(&value))
+        {
+            return Err("Capture Runtime SSE event progress was invalid.".to_string());
         }
     }
-    if let Some(event) = frame.event.as_deref() {
-        if event != event_type {
-            return Err("Capture Runtime SSE event name did not match its payload.".to_string());
+    for field in ["partialRevision", "coveredUntilMs"] {
+        if object
+            .get(field)
+            .is_some_and(|value| !value.is_null() && value.as_u64().is_none())
+        {
+            return Err(format!("Capture Runtime SSE event {field} was invalid."));
         }
     }
-    if previous_sequence.is_some_and(|previous| sequence <= previous) {
-        return Err("Capture Runtime SSE event sequence was not strictly increasing.".to_string());
+    let segments = object.get("segments");
+    if event_type == "segment"
+        && !segments.is_some_and(|value| value.as_array().is_some_and(|items| !items.is_empty()))
+    {
+        return Err("Capture Runtime SSE segment event payload was invalid.".to_string());
     }
-    *previous_sequence = Some(sequence);
-    redact_token(&mut value, token);
-    events.push(value);
-    frame.id = None;
-    frame.event = None;
-    frame.data.clear();
+    if segments.is_some_and(|value| !value.is_null() && value.as_array().is_none()) {
+        return Err("Capture Runtime SSE event segments payload was invalid.".to_string());
+    }
+    if let Some(segments) = segments.filter(|value| !value.is_null()) {
+        validate_capture_segments(segments)?;
+    }
+    let error = object.get("error");
+    if event_type == "failed" {
+        let error = error
+            .and_then(Value::as_object)
+            .ok_or_else(|| "Capture Runtime SSE failed event payload was invalid.".to_string())?;
+        validate_capture_failure(error)?;
+    } else if error.is_some_and(|value| !value.is_null()) {
+        return Err("Capture Runtime SSE non-failed event contained an error.".to_string());
+    }
+    let created_at = object
+        .get("createdAt")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "Capture Runtime SSE event timestamp was invalid.".to_string())?;
+    if !valid_rfc3339_timestamp(created_at) {
+        return Err("Capture Runtime SSE event timestamp was invalid.".to_string());
+    }
+    Ok((sequence, event_type))
+}
+
+fn validate_capture_segments(value: &Value) -> Result<(), String> {
+    let items = value
+        .as_array()
+        .ok_or_else(|| "Capture Runtime SSE event segments payload was invalid.".to_string())?;
+    for segment in items {
+        let segment = segment
+            .as_object()
+            .ok_or_else(|| "Capture Runtime SSE segment payload was invalid.".to_string())?;
+        if segment
+            .keys()
+            .any(|key| !["segmentId", "order", "locator", "text"].contains(&key.as_str()))
+            || segment
+                .get("segmentId")
+                .and_then(Value::as_str)
+                .is_none_or(str::is_empty)
+            || segment.get("order").and_then(Value::as_u64).is_none()
+            || segment
+                .get("text")
+                .and_then(Value::as_str)
+                .is_none_or(|text| text.is_empty() || text.chars().count() > 2_000_000)
+        {
+            return Err("Capture Runtime SSE segment payload was invalid.".to_string());
+        }
+        validate_capture_locator(
+            segment
+                .get("locator")
+                .ok_or_else(|| "Capture Runtime SSE segment locator was invalid.".to_string())?,
+        )?;
+    }
     Ok(())
+}
+
+fn validate_capture_locator(value: &Value) -> Result<(), String> {
+    let locator = value
+        .as_object()
+        .ok_or_else(|| "Capture Runtime SSE segment locator was invalid.".to_string())?;
+    let kind = locator
+        .get("kind")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "Capture Runtime SSE segment locator was invalid.".to_string())?;
+    match kind {
+        "page" => {
+            if locator
+                .keys()
+                .any(|key| !["kind", "page", "boundingBox"].contains(&key.as_str()))
+                || locator
+                    .get("page")
+                    .and_then(Value::as_u64)
+                    .is_none_or(|page| page == 0)
+            {
+                return Err("Capture Runtime SSE segment locator was invalid.".to_string());
+            }
+            if let Some(bounding_box) = locator.get("boundingBox") {
+                if !bounding_box.is_null()
+                    && !bounding_box.as_array().is_some_and(|items| {
+                        items.len() == 4
+                            && items
+                                .iter()
+                                .all(|item| item.as_f64().is_some_and(|value| value.is_finite()))
+                    })
+                {
+                    return Err("Capture Runtime SSE segment locator was invalid.".to_string());
+                }
+            }
+        }
+        "time" => {
+            if locator
+                .keys()
+                .any(|key| !["kind", "startMs", "endMs"].contains(&key.as_str()))
+                || locator.get("startMs").and_then(Value::as_u64).is_none()
+                || locator
+                    .get("endMs")
+                    .and_then(Value::as_u64)
+                    .is_none_or(|end| end == 0)
+                || locator
+                    .get("startMs")
+                    .and_then(Value::as_u64)
+                    .zip(locator.get("endMs").and_then(Value::as_u64))
+                    .is_some_and(|(start, end)| end <= start)
+            {
+                return Err("Capture Runtime SSE segment locator was invalid.".to_string());
+            }
+        }
+        _ => return Err("Capture Runtime SSE segment locator was invalid.".to_string()),
+    }
+    Ok(())
+}
+
+fn validate_capture_failure(error: &serde_json::Map<String, Value>) -> Result<(), String> {
+    if error
+        .keys()
+        .any(|key| !["code", "message", "stage", "retryable"].contains(&key.as_str()))
+        || error
+            .get("code")
+            .and_then(Value::as_str)
+            .is_none_or(|code| {
+                !(2..=64).contains(&code.len())
+                    || !code.bytes().enumerate().all(|(index, byte)| {
+                        (index == 0 && byte.is_ascii_lowercase())
+                            || (index > 0
+                                && (byte.is_ascii_lowercase()
+                                    || byte.is_ascii_digit()
+                                    || byte == b'_'))
+                    })
+            })
+        || error
+            .get("message")
+            .and_then(Value::as_str)
+            .is_none_or(|message| message.is_empty() || message.chars().count() > 500)
+        || error
+            .get("stage")
+            .is_some_and(|stage| !stage.is_null() && stage.as_str().is_none_or(str::is_empty))
+        || error
+            .get("retryable")
+            .is_some_and(|retryable| retryable.as_bool().is_none())
+    {
+        return Err("Capture Runtime SSE failed event payload was invalid.".to_string());
+    }
+    Ok(())
+}
+
+fn valid_rfc3339_timestamp(value: &str) -> bool {
+    let Some((date, time_and_zone)) = value.split_once('T') else {
+        return false;
+    };
+    let date_bytes = date.as_bytes();
+    if date_bytes.len() != 10
+        || date_bytes[4] != b'-'
+        || date_bytes[7] != b'-'
+        || !date_bytes
+            .iter()
+            .enumerate()
+            .all(|(index, byte)| matches!(index, 4 | 7) || byte.is_ascii_digit())
+    {
+        return false;
+    }
+    let year = date[0..4].parse::<u16>().ok();
+    let month = date[5..7].parse::<u8>().ok();
+    let day = date[8..10].parse::<u8>().ok();
+    if !year.is_some_and(|value| (1..=9999).contains(&value))
+        || !month.is_some_and(|value| (1..=12).contains(&value))
+        || !day.is_some_and(|value| {
+            let month = month.expect("validated month");
+            value >= 1 && value <= days_in_month(year.expect("validated year"), month)
+        })
+    {
+        return false;
+    }
+    if let Some(clock) = time_and_zone.strip_suffix('Z') {
+        return valid_rfc3339_clock(clock);
+    }
+    let (clock, offset) = if let Some((clock, offset)) = time_and_zone.rsplit_once('+') {
+        (clock, offset)
+    } else if let Some((clock, offset)) = time_and_zone.rsplit_once('-') {
+        (clock, offset)
+    } else {
+        return false;
+    };
+    valid_rfc3339_clock(clock)
+        && offset.len() == 5
+        && offset.as_bytes()[2] == b':'
+        && offset
+            .as_bytes()
+            .iter()
+            .enumerate()
+            .all(|(index, byte)| index == 2 || byte.is_ascii_digit())
+        && offset[0..2].parse::<u8>().is_ok_and(|hours| hours <= 23)
+        && offset[3..5]
+            .parse::<u8>()
+            .is_ok_and(|minutes| minutes <= 59)
+}
+
+fn days_in_month(year: u16, month: u8) -> u8 {
+    match month {
+        2 if year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400)) => {
+            29
+        }
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
+    }
+}
+
+fn valid_rfc3339_clock(value: &str) -> bool {
+    let Some((whole, fraction)) = value.split_once('.') else {
+        return valid_rfc3339_whole_clock(value);
+    };
+    !fraction.is_empty()
+        && fraction.bytes().all(|byte| byte.is_ascii_digit())
+        && valid_rfc3339_whole_clock(whole)
+}
+
+fn valid_rfc3339_whole_clock(value: &str) -> bool {
+    value.len() == 8
+        && value.as_bytes()[2] == b':'
+        && value.as_bytes()[5] == b':'
+        && value
+            .as_bytes()
+            .iter()
+            .enumerate()
+            .all(|(index, byte)| matches!(index, 2 | 5) || byte.is_ascii_digit())
+        && value[0..2].parse::<u8>().is_ok_and(|hours| hours <= 23)
+        && value[3..5].parse::<u8>().is_ok_and(|minutes| minutes <= 59)
+        && value[6..8].parse::<u8>().is_ok_and(|seconds| seconds <= 60)
 }
 
 fn has_event_stream_content_type(headers: &str) -> bool {
@@ -818,7 +1414,7 @@ mod tests {
             let body = concat!(
                 "id: 8\r\n",
                 "event: checkpoint\r\n",
-                "data: {\"sequence\":8,\"eventType\":\"checkpoint\",\"message\":\"secret-token\"}\r\n\r\n",
+                "data: {\"protocolVersion\":\"2\",\"eventId\":\"capture-1/8\",\"sequence\":8,\"captureId\":\"capture-1\",\"kind\":\"audio\",\"eventType\":\"checkpoint\",\"stage\":\"extracting-secret-token\",\"progress\":0.5,\"partialRevision\":1,\"createdAt\":\"2026-01-01T00:00:00Z\"}\r\n\r\n",
             );
             write!(
                 stream,
@@ -841,18 +1437,18 @@ mod tests {
         )
         .expect("events");
         assert_eq!(events[0]["sequence"], 8);
-        assert_eq!(events[0]["message"], "[REDACTED]");
+        assert_eq!(events[0]["stage"], "extracting-[REDACTED]");
         server.join().expect("server");
     }
 
     #[test]
     fn streaming_sse_implements_framing_metadata_and_strict_cursor_ordering() {
-        let first = r#"{"sequence":8,"eventType":"checkpoint","message":"secret-token"}"#;
-        let second = r#"{"sequence":9,"eventType":"completed"}"#;
+        let first = r#"{"protocolVersion":"2","eventId":"capture-1/8","sequence":8,"captureId":"capture-1","kind":"audio","eventType":"checkpoint","stage":"extracting-secret-token","progress":0.5,"partialRevision":1,"createdAt":"2026-01-01T00:00:00Z"}"#;
+        let second = r#"{"protocolVersion":"2","eventId":"capture-1/9","sequence":9,"captureId":"capture-1","kind":"audio","eventType":"completed","stage":"completed","progress":1,"partialRevision":1,"createdAt":"2026-01-01T00:00:01Z"}"#;
         let body = format!(
             ": keep-alive\r\n\r\n\r\nid: 8\r\nevent: checkpoint\r\ndata:{}\r\ndata: {}\r\n\r\nid: 9\nevent: completed\ndata:{}\n\n",
-            &first[..first.find(",\"message\"").expect("split") + 1],
-            &first[first.find(",\"message\"").expect("split") + 1..],
+            &first[..first.find(",\"stage\"").expect("split") + 1],
+            &first[first.find(",\"stage\"").expect("split") + 1..],
             second,
         );
 
@@ -860,13 +1456,48 @@ mod tests {
             parse_sse_events(body.as_bytes(), Some("7"), "secret-token").expect("framed events");
 
         assert_eq!(events[0]["sequence"], 8);
-        assert_eq!(events[0]["message"], "[REDACTED]");
+        assert_eq!(events[0]["stage"], "extracting-[REDACTED]");
         assert_eq!(events[1]["eventType"], "completed");
     }
 
     #[test]
+    fn streaming_sse_dispatches_each_frame_before_the_body_finishes() {
+        let first = r#"{"protocolVersion":"2","eventId":"capture-1/8","sequence":8,"captureId":"capture-1","kind":"audio","eventType":"checkpoint","stage":"extracting","progress":0.5,"partialRevision":1,"createdAt":"2026-01-01T00:00:00Z"}"#;
+        let second = r#"{"protocolVersion":"2","eventId":"capture-1/9","sequence":9,"captureId":"capture-1","kind":"audio","eventType":"completed","stage":"completed","progress":1,"partialRevision":1,"createdAt":"2026-01-01T00:00:01Z"}"#;
+        let mut parser = SseParser::new(None, "token", Some("capture-1")).expect("parser");
+        let mut events = Vec::new();
+        {
+            let mut collect = |event| {
+                events.push(event);
+                Ok(())
+            };
+            parser
+                .feed(
+                    format!("id: 8\nevent: checkpoint\ndata: {first}\n\n").as_bytes(),
+                    &mut collect,
+                )
+                .expect("first event");
+        }
+        assert_eq!(events.len(), 1);
+        {
+            let mut collect = |event| {
+                events.push(event);
+                Ok(())
+            };
+            parser
+                .feed(
+                    format!("id: 9\nevent: completed\ndata: {second}\n\n").as_bytes(),
+                    &mut collect,
+                )
+                .expect("second event");
+            parser.finish(&mut collect).expect("stream finish");
+        }
+        assert_eq!(events.len(), 2);
+    }
+
+    #[test]
     fn streaming_sse_rejects_metadata_mismatch_and_non_increasing_sequences() {
-        let payload = r#"{"sequence":8,"eventType":"checkpoint"}"#;
+        let payload = r#"{"protocolVersion":"2","eventId":"capture-1/8","sequence":8,"captureId":"capture-1","kind":"audio","eventType":"checkpoint","stage":"extracting","progress":0.5,"partialRevision":1,"createdAt":"2026-01-01T00:00:00Z"}"#;
         let id_mismatch = format!("id: 7\nevent: checkpoint\ndata: {payload}\n\n");
         let event_mismatch = format!("id: 8\nevent: completed\ndata: {payload}\n\n");
         let duplicate = format!("data: {payload}\n\ndata: {payload}\n\n",);
@@ -885,6 +1516,62 @@ mod tests {
                 .expect_err("invalid cursor")
                 .contains("cursor")
         );
+    }
+
+    #[test]
+    fn streaming_sse_rejects_capture_event_boundary_invariant_violations() {
+        let base = serde_json::json!({
+            "protocolVersion": "2",
+            "eventId": "capture-1/8",
+            "sequence": 8,
+            "captureId": "capture-1",
+            "kind": "audio",
+            "eventType": "checkpoint",
+            "stage": "extracting",
+            "progress": 0.5,
+            "partialRevision": 1,
+            "createdAt": "2026-01-01T00:00:00Z"
+        });
+        let mut identity = base.clone();
+        identity["captureId"] = serde_json::json!("capture-2");
+        let mut timestamp = base.clone();
+        timestamp["createdAt"] = serde_json::json!("2026-01-01T00:00:00");
+        let mut segment = base.clone();
+        segment["eventType"] = serde_json::json!("segment");
+        segment["segments"] = serde_json::json!([]);
+        let mut failure = base.clone();
+        failure["eventType"] = serde_json::json!("failed");
+        let mut malformed_segment = base.clone();
+        malformed_segment["eventType"] = serde_json::json!("segment");
+        malformed_segment["segments"] = serde_json::json!([{
+            "segmentId": "segment-1",
+            "order": 0,
+            "locator": {"kind": "time", "startMs": 100, "endMs": 100},
+            "text": "segment"
+        }]);
+        let mut invalid_calendar = base.clone();
+        invalid_calendar["createdAt"] = serde_json::json!("2026-02-30T00:00:00Z");
+        let cases = [
+            ("identity", identity, "capture identity"),
+            ("timestamp", timestamp, "timestamp"),
+            ("segment", segment, "segment event payload"),
+            ("failure", failure, "failed event payload"),
+            ("segment locator", malformed_segment, "segment locator"),
+            ("calendar", invalid_calendar, "timestamp"),
+        ];
+        for (_name, value, expected) in cases {
+            let body = format!(
+                "id: 8\nevent: {}\ndata: {}\n\n",
+                value["eventType"],
+                serde_json::to_string(&value).expect("payload"),
+            );
+            assert!(
+                parse_sse_events_for_capture(body.as_bytes(), None, "token", Some("capture-1"))
+                    .expect_err("malformed event")
+                    .contains(expected),
+                "expected {expected} rejection",
+            );
+        }
     }
 
     #[test]
@@ -1010,6 +1697,55 @@ mod tests {
         .expect("lookup recovery");
 
         assert_eq!(value["captureId"], "capture-recovered");
+        server.join().expect("server");
+    }
+
+    #[test]
+    fn capture_creation_keeps_transport_failure_recoverable_when_lookup_also_fails() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("listener");
+        let port = listener.local_addr().expect("address").port();
+        let server = thread::spawn(move || {
+            for attempt in 0..3 {
+                let (mut stream, _) = listener.accept().expect("accept");
+                let request = read_http_request(&mut stream);
+                if attempt < 2 {
+                    assert!(request.starts_with("POST /v2/captures HTTP/1.1"));
+                    assert!(request.contains("X-Idempotency-Key: capture-request-3"));
+                    write!(
+                        stream,
+                        "HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                    )
+                    .expect("lost create response");
+                } else {
+                    assert!(request.starts_with(
+                        "GET /v2/captures/by-client-request/capture-request-3 HTTP/1.1"
+                    ));
+                    write!(
+                        stream,
+                        "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                    )
+                    .expect("failed lookup response");
+                }
+            }
+        });
+
+        let error = request_capture_with_recovery(
+            &BackendConfig {
+                base_url: format!("http://127.0.0.1:{port}"),
+                token: "token".into(),
+                runtime_version: "0.3.11".into(),
+                api_version: "1.0".into(),
+                capture_document_schema_version: "1".into(),
+            },
+            RequestBody {
+                bytes: br#"{"clientRequestId":"capture-request-3"}"#.to_vec(),
+                content_type: "application/json".into(),
+            },
+            "capture-request-3",
+        )
+        .expect_err("both create responses and lookup must fail closed");
+
+        assert_eq!(error, "Capture Runtime response was not valid JSON.");
         server.join().expect("server");
     }
 

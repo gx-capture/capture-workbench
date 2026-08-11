@@ -9,6 +9,6 @@ pub use library::{
     LibraryListRequest, LibrarySourceInput,
 };
 pub use runtime::{
-    RuntimeIdInput, RuntimeInstallationStartInput, RuntimeModelInstallationStartInput,
-    RuntimeStreamingCaptureInput, RuntimeStreamingEventsInput,
+    RuntimeClientRequestIdInput, RuntimeIdInput, RuntimeInstallationStartInput,
+    RuntimeModelInstallationStartInput, RuntimeStreamingCaptureInput, RuntimeStreamingEventsInput,
 };

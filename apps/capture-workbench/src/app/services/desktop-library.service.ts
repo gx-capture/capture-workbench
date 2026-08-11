@@ -113,6 +113,8 @@ export class DesktopLibraryService {
     readonly errorMessage?: string;
     readonly recoveryCode?: string;
     readonly recoveryMessage?: string;
+    readonly recoveryClientRequestId?: string;
+    readonly recoveryIngestionId?: string;
   }): Observable<DesktopLibrarySummary> {
     return this.commands
       .invoke<DesktopLibrarySummary>('library_update_capture', {

@@ -271,6 +271,53 @@ def test_streaming_api_closes_replay_after_event_window_resync(
     assert "event: accepted" not in replay.text
 
 
+def test_streaming_api_closes_when_terminal_cursor_has_no_replay() -> None:
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    operation = CaptureOperationV2(
+        capture_id="capture-terminal-cursor",
+        ingestion_id="ingestion-terminal-cursor",
+        kind=CaptureSourceKind.IMAGE,
+        status=StreamingCaptureStatus.CANCELLED,
+        progress=0.5,
+        partial_revision=0,
+        last_event_sequence=3,
+        created_at=now,
+        updated_at=now,
+        completed_at=now,
+    )
+
+    class EmptyTerminalSubscription:
+        replay = []
+        closed = False
+
+        def get(self, _timeout: float) -> StreamingEventOverflow:
+            raise AssertionError("terminal replay must not enter the heartbeat loop")
+
+        def close(self) -> None:
+            self.closed = True
+
+    subscription = EmptyTerminalSubscription()
+    service = SimpleNamespace(
+        get_capture=lambda _capture_id: operation,
+        subscribe_events=lambda _capture_id, *, after_sequence: subscription,
+    )
+    router = APIRouter()
+    register_streaming_routes(
+        router,
+        SimpleNamespace(streaming_capture_service=service),
+    )
+    endpoint = next(
+        route.endpoint for route in router.routes if route.path == "/captures/{capture_id}/events"
+    )
+
+    async def collect() -> str:
+        response = await endpoint("capture-terminal-cursor", "3")
+        return "".join([chunk async for chunk in response.body_iterator])
+
+    assert asyncio.run(collect()) == ""
+    assert subscription.closed
+
+
 def test_streaming_api_marks_a_live_subscriber_overflow_as_reconnectable_resync() -> None:
     now = datetime(2026, 1, 1, tzinfo=UTC)
     operation = CaptureOperationV2(

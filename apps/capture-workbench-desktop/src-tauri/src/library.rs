@@ -76,6 +76,10 @@ struct StoredDocument {
     recovery_code: Option<String>,
     #[serde(default)]
     recovery_message: Option<String>,
+    #[serde(default)]
+    recovery_client_request_id: Option<String>,
+    #[serde(default)]
+    recovery_ingestion_id: Option<String>,
 }
 
 impl StoredDocument {
@@ -94,6 +98,8 @@ impl StoredDocument {
             error_message: self.error_message.clone(),
             recovery_code: self.recovery_code.clone(),
             recovery_message: self.recovery_message.clone(),
+            recovery_client_request_id: self.recovery_client_request_id.clone(),
+            recovery_ingestion_id: self.recovery_ingestion_id.clone(),
         }
     }
 }
@@ -169,6 +175,8 @@ impl LibraryStore {
             error_message: None,
             recovery_code: None,
             recovery_message: None,
+            recovery_client_request_id: None,
+            recovery_ingestion_id: None,
         };
         let summary = document.summary();
         let mut index = self.lock_index()?;
@@ -256,8 +264,23 @@ impl LibraryStore {
         document.stage = update.stage;
         document.error_code = update.error_code;
         document.error_message = update.error_message;
+        let has_recovery_update = update.recovery_code.is_some()
+            || update.recovery_message.is_some()
+            || update.recovery_client_request_id.is_some()
+            || update.recovery_ingestion_id.is_some();
         document.recovery_code = update.recovery_code;
         document.recovery_message = update.recovery_message;
+        if has_recovery_update {
+            if update.recovery_client_request_id.is_some() {
+                document.recovery_client_request_id = update.recovery_client_request_id;
+            }
+            if update.recovery_ingestion_id.is_some() {
+                document.recovery_ingestion_id = update.recovery_ingestion_id;
+            }
+        } else {
+            document.recovery_client_request_id = None;
+            document.recovery_ingestion_id = None;
+        }
         document.updated_at_ms = now_ms()?;
         let summary = document.summary();
 
@@ -862,6 +885,8 @@ mod tests {
             error_message: None,
             recovery_code: None,
             recovery_message: None,
+            recovery_client_request_id: None,
+            recovery_ingestion_id: None,
         }
     }
 
@@ -964,6 +989,8 @@ mod tests {
                 error_message: None,
                 recovery_code: None,
                 recovery_message: None,
+                recovery_client_request_id: None,
+                recovery_ingestion_id: None,
             })
             .expect("update");
         let detail = library
@@ -1256,6 +1283,8 @@ mod tests {
                 error_message: Some("test".into()),
                 recovery_code: None,
                 recovery_message: None,
+                recovery_client_request_id: None,
+                recovery_ingestion_id: None,
             })
             .expect("write backup");
         fs::write(
@@ -1295,11 +1324,18 @@ mod tests {
                 result: None,
                 error_code: None,
                 error_message: None,
-                recovery_code: None,
+                recovery_code: Some("capture_pending".into()),
                 recovery_message: None,
+                recovery_client_request_id: Some("capture-request-1".into()),
+                recovery_ingestion_id: Some("ingestion-1".into()),
             })
             .expect("link capture");
         assert_eq!(linked.capture_id.as_deref(), Some("capture-1"));
+        assert_eq!(
+            linked.recovery_client_request_id.as_deref(),
+            Some("capture-request-1")
+        );
+        assert_eq!(linked.recovery_ingestion_id.as_deref(), Some("ingestion-1"));
 
         let preserved = library
             .update_capture(LibraryCaptureUpdate {
@@ -1314,6 +1350,8 @@ mod tests {
                 error_message: Some("terminal evidence".into()),
                 recovery_code: Some("runtime_cleanup_failed".into()),
                 recovery_message: Some("retry cleanup".into()),
+                recovery_client_request_id: None,
+                recovery_ingestion_id: None,
             })
             .expect("preserve capture");
         assert_eq!(preserved.capture_id.as_deref(), Some("capture-1"));
@@ -1324,6 +1362,14 @@ mod tests {
         assert_eq!(
             preserved.recovery_code.as_deref(),
             Some("runtime_cleanup_failed")
+        );
+        assert_eq!(
+            preserved.recovery_client_request_id.as_deref(),
+            Some("capture-request-1")
+        );
+        assert_eq!(
+            preserved.recovery_ingestion_id.as_deref(),
+            Some("ingestion-1")
         );
 
         let cleared = library
@@ -1339,6 +1385,8 @@ mod tests {
                 error_message: Some("terminal evidence".into()),
                 recovery_code: None,
                 recovery_message: None,
+                recovery_client_request_id: None,
+                recovery_ingestion_id: None,
             })
             .expect("clear capture");
         assert_eq!(cleared.capture_id, None);
@@ -1347,6 +1395,8 @@ mod tests {
             Some("runtime_terminal_failed")
         );
         assert_eq!(cleared.recovery_code, None);
+        assert_eq!(cleared.recovery_client_request_id, None);
+        assert_eq!(cleared.recovery_ingestion_id, None);
 
         assert!(library
             .update_capture(LibraryCaptureUpdate {
@@ -1361,6 +1411,8 @@ mod tests {
                 error_message: None,
                 recovery_code: None,
                 recovery_message: None,
+                recovery_client_request_id: None,
+                recovery_ingestion_id: None,
             })
             .is_err());
     }
