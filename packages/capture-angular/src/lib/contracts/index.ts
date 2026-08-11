@@ -42,10 +42,14 @@ export type {
   CaptureDocumentV1,
   CaptureEngineV1,
   CaptureFailureV1,
+  CaptureFailureV2,
   CaptureJobV1,
   CaptureJobStage,
   CaptureJobStatus,
   CaptureOperationV2,
+  FinalizeIngestionV2,
+  IngestionV2,
+  OpenIngestionV2,
   CaptureReviewEditV1,
   CaptureReviewV1,
   CaptureLocatorV1,
@@ -125,6 +129,41 @@ export interface CreateCaptureRequest {
   readonly signal?: AbortSignal;
 }
 
+/** The v2 upload-and-start operation used by the streaming runtime. */
+export interface StartStreamingCaptureRequest {
+  readonly clientRequestId: string;
+  readonly file: File;
+  readonly sourceKind: CaptureSourceKind;
+  readonly structuringMode: CaptureStructuringMode;
+  readonly targetLanguage?: string;
+  readonly signal?: AbortSignal;
+}
+
+export interface CaptureStreamingResult {
+  readonly operation: CaptureOperationV2;
+  readonly raw: RawCaptureV1;
+  readonly result: CaptureDocumentV1;
+}
+
+export interface CommitStreamingStructuredResultRequest {
+  readonly clientRequestId: string;
+  readonly candidate: CaptureStructuringCandidateV1;
+}
+
+export interface ReportStreamingStructuringFailureRequest {
+  readonly code: string;
+  readonly message: string;
+}
+
+export interface CaptureEventStreamOptions {
+  readonly signal?: AbortSignal;
+  /**
+   * Last received SSE event id/sequence. Replayed events resume after this id
+   * and the runtime suppresses already-delivered events.
+   */
+  readonly lastEventId?: string | number;
+}
+
 export interface CommitStructuredResultRequest {
   readonly clientRequestId: string;
   readonly candidate: CaptureStructuringCandidateV1;
@@ -165,6 +204,49 @@ export interface CaptureClient {
   cancelCapture(id: string, signal?: AbortSignal): Observable<CaptureJobV1>;
   getRaw(id: string, signal?: AbortSignal): Observable<RawCaptureV1>;
   getResult(id: string, signal?: AbortSignal): Observable<CaptureDocumentV1>;
+  /**
+   * Opens the authenticated v2 capture event stream as a cold Observable.
+   * Each subscription performs a fresh fetch and unsubscribing aborts it.
+   * Native EventSource must not be used because the runtime requires an
+   * Authorization header.
+   */
+  captureEvents?(
+    id: string,
+    options?: CaptureEventStreamOptions,
+  ): Observable<CaptureEventV2>;
+  startStreamingCapture?(
+    request: StartStreamingCaptureRequest,
+  ): Observable<CaptureOperationV2>;
+  getStreamingCapture?(
+    id: string,
+    signal?: AbortSignal,
+  ): Observable<CaptureOperationV2>;
+  cancelStreamingCapture?(
+    id: string,
+    signal?: AbortSignal,
+  ): Observable<CaptureOperationV2>;
+  getStreamingPartial?(
+    id: string,
+    signal?: AbortSignal,
+  ): Observable<PartialCaptureV2>;
+  getStreamingResult?(
+    id: string,
+    signal?: AbortSignal,
+  ): Observable<CaptureStreamingResult>;
+  commitStreamingStructuredResult?(
+    id: string,
+    request: CommitStreamingStructuredResultRequest,
+    signal?: AbortSignal,
+  ): Observable<CaptureOperationV2>;
+  reportStreamingStructuringFailure?(
+    id: string,
+    request: ReportStreamingStructuringFailureRequest,
+    signal?: AbortSignal,
+  ): Observable<CaptureOperationV2>;
+  deleteStreamingCapture?(
+    id: string,
+    signal?: AbortSignal,
+  ): Observable<void>;
   /** Host clients use this after an explicit review confirmation. */
   confirmCapture?(
     id: string,

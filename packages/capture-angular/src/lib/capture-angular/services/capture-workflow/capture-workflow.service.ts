@@ -7,24 +7,33 @@ import {
   catchError,
   concatMap,
   defer,
+  endWith,
   finalize,
+  ignoreElements,
   map,
   of,
   take,
+  takeWhile,
   tap,
   throwError,
 } from 'rxjs';
 import {
   type CaptureClient,
   type CaptureCompletedEvent,
+  type CaptureEventV2,
   type CaptureFailedEvent,
   type CaptureFailureV1,
   type CaptureJobV1,
+  type CaptureOperationV2,
+  type CommitStreamingStructuredResultRequest,
   type CapturePreprocessor,
+  type PartialCaptureV2,
   type CaptureReviewV1,
+  type ReportStreamingStructuringFailureRequest,
   type CaptureStructuringProvider,
   type CaptureTaskView,
   type RawCaptureV1,
+  type StartStreamingCaptureRequest,
 } from '../../../contracts';
 import type { ResolvedCaptureWorkbenchConfig } from '../../../contracts/workbench';
 import type {
@@ -149,7 +158,12 @@ export class CaptureWorkflowService {
     const captureId = this.captureIds.get(taskId);
     const client = this.activeClient();
     if (captureId && client) {
-      client.cancelCapture(captureId).subscribe({ error: () => undefined });
+      const streamingClient = asStreamingClient(client);
+      defer(() =>
+        streamingClient
+          ? streamingClient.cancelStreamingCapture(captureId)
+          : client.cancelCapture(captureId),
+      ).subscribe({ error: () => undefined });
     }
     const canceledTask = this.updateTask(taskId, {
       status: 'canceled',
@@ -218,7 +232,12 @@ export class CaptureWorkflowService {
     if (!task || !this.helpers.isTerminalTask(task)) return;
     const client = this.activeClient();
     if (task.captureId && client) {
-      defer(() => client.deleteCapture(task.captureId as string))
+      const streamingClient = asStreamingClient(client);
+      defer(() =>
+        streamingClient
+          ? streamingClient.deleteStreamingCapture(task.captureId as string)
+          : client.deleteCapture(task.captureId as string),
+      )
         .pipe(
           catchError((error: unknown) => {
             this.updateTask(taskId, {
@@ -341,6 +360,23 @@ export class CaptureWorkflowService {
     }
 
     const signal = internal.controller.signal;
+    const streamingClient = asStreamingClient(client);
+    if (streamingClient) {
+      return this.processStreamingTask(
+        streamingClient,
+        internal,
+        task,
+        config,
+        provider,
+        componentOwnsHostStructuring,
+        signal,
+        taskId,
+      ).pipe(
+        catchError((error: unknown) =>
+          this.handleProcessError(error, client, task, signal, taskId),
+        ),
+      );
+    }
     const process$ = this.preprocess(
       internal.file,
       task.sourceKind,
@@ -640,7 +676,6 @@ export class CaptureWorkflowService {
           ),
       );
     }
-
     return client.getResult(job.captureId, signal).pipe(
       tap((result) => {
         this.helpers.throwIfAborted(signal);
@@ -660,6 +695,264 @@ export class CaptureWorkflowService {
       }),
       map(() => undefined),
     );
+  }
+
+  private processStreamingTask(
+    client: StreamingClient,
+    internal: InternalCaptureTask,
+    task: CaptureTaskView,
+    config: ResolvedCaptureWorkbenchConfig,
+    provider: CaptureStructuringProvider | null,
+    componentOwnsHostStructuring: boolean,
+    signal: AbortSignal,
+    taskId: string,
+  ): Observable<void> {
+    return this.preprocess(internal.file, task.sourceKind, signal).pipe(
+      tap(() => this.helpers.throwIfAborted(signal)),
+      concatMap((file) => {
+        this.updateTask(taskId, { stage: 'uploading', progress: 5 });
+        const request: StartStreamingCaptureRequest = {
+          clientRequestId: internal.clientRequestId,
+          file,
+          sourceKind: task.sourceKind,
+          structuringMode: config.structuringMode,
+          targetLanguage: config.targetLanguage,
+          signal,
+        };
+        return this.helpers.retryUncertainResponse(
+          () => client.startStreamingCapture(request),
+          signal,
+        );
+      }),
+      tap((operation) => {
+        this.captureIds.set(taskId, operation.captureId);
+        this.applyStreamingOperation(taskId, operation);
+      }),
+      concatMap((operation) => {
+        if (componentOwnsHostStructuring) {
+          if (!provider) {
+            return throwError(
+              () => new Error('Host structuring provider is not configured.'),
+            );
+          }
+          return this.processStreamingHostStructuring(
+            client,
+            provider,
+            operation,
+            config,
+            signal,
+            taskId,
+          );
+        }
+        if (config.reviewBeforeCommit) {
+          return throwError(
+            () =>
+              new Error(
+                'Review confirmation is not supported by the v2 streaming contract.',
+              ),
+          );
+        }
+        return of(operation);
+      }),
+      concatMap((operation) =>
+        this.waitForStreamingOperation(client, operation, signal, false, taskId),
+      ),
+      concatMap((operation) =>
+        this.settleStreaming(client, task, operation, signal, taskId),
+      ),
+    );
+  }
+
+  private processStreamingHostStructuring(
+    client: StreamingClient,
+    provider: CaptureStructuringProvider,
+    initial: CaptureOperationV2,
+    config: ResolvedCaptureWorkbenchConfig,
+    signal: AbortSignal,
+    taskId: string,
+  ): Observable<CaptureOperationV2> {
+    return this.waitForStreamingOperation(client, initial, signal, true, taskId).pipe(
+      concatMap((operation) => {
+        if (operation.status !== 'awaiting_structuring') return of(operation);
+        return client.getStreamingPartial(operation.captureId, signal).pipe(
+          map((partial) => partialToRaw(partial)),
+          concatMap((raw) =>
+            this.awaitReview(taskId, raw, config, operation.progress ?? 0).pipe(
+              concatMap((review) =>
+                defer(() =>
+                  provider.structure({
+                    raw: this.helpers.deepFreeze(structuredClone(raw)),
+                    review,
+                    documentContract: CAPTURE_DOCUMENT_V1_CONTRACT,
+                    targetLanguage: config.targetLanguage,
+                    signal,
+                    reportProgress: (progress) =>
+                      this.updateTask(taskId, {
+                        progress: 70 + this.helpers.clampProgress(progress) * 0.2,
+                      }),
+                  }),
+                ).pipe(
+                  map((candidate) => {
+                    const issues = this.captureHelpers.validateStructuringCandidate(
+                      candidate,
+                      raw,
+                    );
+                    if (issues.length > 0) {
+                      throw new Error(`Invalid structured capture: ${issues.join('; ')}`);
+                    }
+                    return { candidate } as const;
+                  }),
+                  catchError((error: unknown) => {
+                    if (this.helpers.isAbortError(error)) return throwError(() => error);
+                    const failure = this.helpers.failureFrom(
+                      error,
+                      'structuring',
+                      'Host structuring failed.',
+                    );
+                    return client
+                      .reportStreamingStructuringFailure(
+                        operation.captureId,
+                        streamingFailure(failure),
+                        signal,
+                      )
+                      .pipe(map((reported) => ({ operation: reported } as const)));
+                  }),
+                ),
+              ),
+            ),
+          ),
+          concatMap((outcome) => {
+            if ('operation' in outcome) return of(outcome.operation);
+            const request: CommitStreamingStructuredResultRequest = {
+              clientRequestId: crypto.randomUUID(),
+              candidate: outcome.candidate,
+            };
+            return client.commitStreamingStructuredResult(
+              operation.captureId,
+              request,
+              signal,
+            );
+          }),
+        );
+      }),
+    );
+  }
+
+  private waitForStreamingOperation(
+    client: StreamingClient,
+    initial: CaptureOperationV2,
+    signal: AbortSignal,
+    stopForHost: boolean,
+    taskId: string,
+  ): Observable<CaptureOperationV2> {
+    if (
+      isTerminalStreamingOperation(initial) ||
+      (stopForHost && initial.status === 'awaiting_structuring')
+    ) {
+      return of(initial);
+    }
+    return client.captureEvents(initial.captureId, {
+      signal,
+      lastEventId: initial.lastEventSequence,
+    }).pipe(
+      tap((event) => this.applyStreamingEvent(taskId, event)),
+      takeWhile(
+        (event) => !(stopForHost && event.stage === 'awaiting_structuring'),
+        true,
+      ),
+      ignoreElements(),
+      endWith(undefined),
+      concatMap(() => client.getStreamingCapture(initial.captureId, signal)),
+    );
+  }
+
+  private settleStreaming(
+    client: StreamingClient,
+    task: CaptureTaskView,
+    operation: CaptureOperationV2,
+    signal: AbortSignal,
+    taskId: string,
+  ): Observable<void> {
+    if (operation.status === 'cancelled') {
+      return defer(() => {
+        const canceledTask = this.updateTask(taskId, {
+          status: 'canceled',
+          stage: 'cancelled',
+        });
+        if (canceledTask) this.emitCanceled(canceledTask);
+        return of(undefined);
+      });
+    }
+    if (operation.status === 'failed') {
+      return this.tryGetRaw(client, operation.captureId, signal).pipe(
+        tap((raw) =>
+          this.failTask(
+            taskId,
+            task.fileName,
+            operation.error
+              ? {
+                  code: operation.error.code,
+                  message: operation.error.message,
+                  stage: operation.error.stage ?? undefined,
+                  retryable: operation.error.retryable ?? undefined,
+                }
+              : {
+                  code: 'capture_failed',
+                  message: 'Capture failed.',
+                  stage: 'runtime',
+                },
+            raw,
+          ),
+        ),
+        map(() => undefined),
+      );
+    }
+    if (operation.status !== 'completed') {
+      return throwError(
+        () => new Error(`Capture ended in unexpected state: ${operation.status}`),
+      );
+    }
+    return client.getStreamingResult(operation.captureId, signal).pipe(
+      tap((result) => {
+        const completedTask = this.updateTask(taskId, {
+          status: 'completed',
+          stage: 'completed',
+          progress: 100,
+          raw: result.raw,
+          result: result.result,
+        });
+        if (completedTask) {
+          this.emitCompleted({
+            taskId,
+            document: result.result,
+            review: completedTask.review,
+          });
+        }
+      }),
+      map(() => undefined),
+    );
+  }
+
+  private applyStreamingEvent(taskId: string, event: CaptureEventV2): void {
+    const progress =
+      event.progress === undefined || event.progress === null
+        ? undefined
+        : this.helpers.runtimeProgressPercent(event.progress);
+    const patch: Partial<CaptureTaskView> = progress === undefined
+      ? { stage: streamingStage(event.stage) }
+      : { stage: streamingStage(event.stage), progress };
+    this.updateTask(taskId, patch);
+  }
+
+  private applyStreamingOperation(taskId: string, operation: CaptureOperationV2): void {
+    this.updateTask(taskId, {
+      captureId: operation.captureId,
+      stage: streamingStage(operation.status),
+      progress:
+        operation.progress === undefined || operation.progress === null
+          ? 0
+          : this.helpers.runtimeProgressPercent(operation.progress),
+    });
   }
 
   private handleProcessError(
@@ -752,6 +1045,13 @@ export class CaptureWorkflowService {
     captureId: string,
     signal?: AbortSignal,
   ): Observable<RawCaptureV1 | undefined> {
+    const streamingClient = asStreamingClient(client);
+    if (streamingClient) {
+      return defer(() => streamingClient.getStreamingPartial(captureId, signal)).pipe(
+        map((partial) => partialToRaw(partial)),
+        catchError(() => of(undefined)),
+      );
+    }
     return defer(() => client.getRaw(captureId, signal)).pipe(
       catchError(() => of(undefined)),
     );
@@ -854,4 +1154,81 @@ export class CaptureWorkflowService {
   private emitTaskChanged(task: CaptureTaskView): void {
     this.events.next({ type: 'task-changed', task });
   }
+}
+
+type StreamingClient = CaptureClient &
+  Required<
+    Pick<
+      CaptureClient,
+      | 'captureEvents'
+      | 'startStreamingCapture'
+      | 'getStreamingCapture'
+      | 'cancelStreamingCapture'
+      | 'getStreamingPartial'
+      | 'getStreamingResult'
+      | 'commitStreamingStructuredResult'
+      | 'reportStreamingStructuringFailure'
+      | 'deleteStreamingCapture'
+    >
+  >;
+
+function asStreamingClient(client: CaptureClient): StreamingClient | undefined {
+  return typeof client.captureEvents === 'function' &&
+    typeof client.startStreamingCapture === 'function' &&
+    typeof client.getStreamingCapture === 'function' &&
+    typeof client.cancelStreamingCapture === 'function' &&
+    typeof client.getStreamingPartial === 'function' &&
+    typeof client.getStreamingResult === 'function' &&
+    typeof client.commitStreamingStructuredResult === 'function' &&
+    typeof client.reportStreamingStructuringFailure === 'function' &&
+    typeof client.deleteStreamingCapture === 'function'
+    ? client as StreamingClient
+    : undefined;
+}
+
+function isTerminalStreamingOperation(operation: CaptureOperationV2): boolean {
+  return (
+    operation.status === 'completed' ||
+    operation.status === 'failed' ||
+    operation.status === 'cancelled'
+  );
+}
+
+function streamingStage(stage: string): CaptureTaskView['stage'] {
+  switch (stage) {
+    case 'queued':
+    case 'extracting':
+    case 'awaiting_structuring':
+    case 'structuring':
+    case 'completed':
+    case 'failed':
+    case 'cancelled':
+      return stage;
+    default:
+      return 'preprocessing';
+  }
+}
+
+function partialToRaw(partial: PartialCaptureV2): RawCaptureV1 {
+  if (!partial.segments || !partial.sourceText || !partial.extractionEngine) {
+    throw new Error('Streaming partial capture is not complete enough to structure.');
+  }
+  return {
+    schemaVersion: '1',
+    diagnosticOnly: true,
+    source: partial.source,
+    segments: partial.segments,
+    sourceText: partial.sourceText,
+    extractionEngine: partial.extractionEngine,
+    createdAt: partial.updatedAt,
+  };
+}
+
+function streamingFailure(
+  failure: CaptureFailureV1,
+): ReportStreamingStructuringFailureRequest {
+  return {
+    code: failure.code,
+    message: failure.message,
+  };
 }

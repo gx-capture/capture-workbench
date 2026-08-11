@@ -70,6 +70,30 @@ the host backend. The client rejects non-HTTP or non-loopback origins before
 any credential resolver is evaluated and enforces the `capture-runtime`
 service identity during its compatibility handshake.
 
+## v2 capture event streaming (SSE)
+
+`CaptureClient.captureEvents(captureId, options?)` opens a cold, authenticated
+SSE stream for a v2 capture:
+
+```ts
+client.captureEvents(captureId, { lastEventId }).subscribe({
+  next: (event) => updateProgress(event),
+});
+```
+
+`HttpCaptureClient` implements it with `fetch` plus `ReadableStream` parsing
+against `/v2/captures/{captureId}/events`. Native `EventSource` is not used
+because the stream requires an `Authorization` header, and bearer tokens are
+never placed in URLs. Every subscription starts a fresh request and
+unsubscribing aborts it. Pass `lastEventId` (an SSE sequence) to resume replay
+after a reconnect; the runtime suppresses already-delivered events. Terminal
+`completed`, `failed`, and `cancelled` events close the stream, and
+`resync_required` tells consumers to reload the capture snapshot.
+
+Host adapters that proxy the v2 endpoint may implement `captureEvents`; the
+method is optional on `CaptureClient` so existing v1-only host adapters keep
+compiling during the migration window.
+
 ## Structuring ownership
 
 The default `runtime` mode uses Capture Runtime's isolated Ollama process and

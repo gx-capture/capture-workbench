@@ -6,31 +6,51 @@ import {
 } from '@angular/core';
 import {
   catchError,
+  concatMap,
   defer,
   finalize,
   from,
+  last,
   map,
   mergeMap,
   of,
+  range,
   switchMap,
+  tap,
   throwError,
   type Observable,
 } from 'rxjs';
 import {
+  CaptureHttpError,
+  createAbortError,
+  readJson,
+  type ErrorEnvelope,
+} from './capture-http-error';
+import {
   CAPTURE_CLIENT,
   type CaptureClient,
+  type CaptureEventStreamOptions,
+  type CaptureEventV2,
   type CaptureDocumentV1,
-  type CaptureFailureV1,
+  type CaptureOperationV2,
+  type CaptureStreamingResult,
   type CaptureJobV1,
+  type CommitStreamingStructuredResultRequest,
   type CommitStructuredResultRequest,
   type CreateCaptureRequest,
+  type PartialCaptureV2,
   type RawCaptureV1,
+  type ReportStreamingStructuringFailureRequest,
   type ReportStructuringFailureRequest,
   type RuntimeInstallationV1,
   type RuntimeReadyV1,
   type RuntimeRequirementV1,
+  type StartStreamingCaptureRequest,
   type StartRuntimeInstallationRequest,
 } from './contracts';
+import { captureEventStream } from './sse-capture-event-stream';
+
+export { CaptureHttpError } from './capture-http-error';
 
 type ResolvableString =
   | string
@@ -43,40 +63,15 @@ export interface CaptureHttpClientOptions {
   readonly fetch?: typeof globalThis.fetch;
 }
 
-interface ErrorEnvelope {
-  readonly error?: {
-    readonly code?: string;
-    readonly message?: string;
-    readonly details?: unknown;
-  };
-}
-
 interface ReadyWireV1 extends Omit<RuntimeReadyV1, 'service'> {
   readonly service: string;
-}
-
-export class CaptureHttpError extends Error {
-  constructor(
-    readonly status: number,
-    readonly code: string,
-    message: string,
-    details?: unknown,
-  ) {
-    super(redactSensitiveMessage(message));
-    this.name = 'CaptureHttpError';
-    this.details = redactSensitiveValue(details);
-  }
-
-  readonly details?: unknown;
-
-  asFailure(stage?: CaptureFailureV1['stage']): CaptureFailureV1 {
-    return { code: this.code, message: this.message, stage };
-  }
 }
 
 const CAPTURE_HTTP_CLIENT_OPTIONS = new InjectionToken<CaptureHttpClientOptions>(
   'CAPTURE_HTTP_CLIENT_OPTIONS',
 );
+
+const STREAMING_CHUNK_BYTES = 1024 * 1024;
 
 export class HttpCaptureClient implements CaptureClient {
   constructor(private readonly options: CaptureHttpClientOptions) {}
@@ -202,29 +197,224 @@ export class HttpCaptureClient implements CaptureClient {
     }).pipe(map(() => undefined));
   }
 
+  captureEvents(
+    id: string,
+    options: CaptureEventStreamOptions = {},
+  ): Observable<CaptureEventV2> {
+    return this.resolveTarget().pipe(
+      switchMap(({ baseUrl, bearerToken }) => {
+        const headers = new Headers({ Accept: 'text/event-stream' });
+        if (bearerToken) headers.set('Authorization', `Bearer ${bearerToken}`);
+        return captureEventStream(
+          this.options.fetch ?? globalThis.fetch,
+          `${baseUrl}/v2/captures/${encodeURIComponent(id)}/events`,
+          {
+            method: 'GET',
+            headers,
+            credentials: 'omit',
+            redirect: 'error',
+            signal: options.signal,
+            lastEventId: options.lastEventId,
+          },
+        );
+      }),
+    );
+  }
+
+  startStreamingCapture(
+    request: StartStreamingCaptureRequest,
+  ): Observable<CaptureOperationV2> {
+    let ingestionId: string | undefined;
+    const ingestionRequest = {
+      protocolVersion: '2' as const,
+      kind: request.sourceKind,
+      mode: 'file' as const,
+      clientRequestId: `${request.clientRequestId}-ingestion`,
+      fileName: request.file.name,
+      mediaType: request.file.type || mediaTypeFor(request.sourceKind),
+      totalBytes: request.file.size,
+    };
+    const pipeline$ = this.request<{ readonly ingestionId: string }>(
+      '/v2/ingestions',
+      {
+        method: 'POST',
+        idempotencyKey: ingestionRequest.clientRequestId,
+        json: ingestionRequest,
+        signal: request.signal,
+      },
+    ).pipe(
+      tap((ingestion) => {
+        ingestionId = ingestion.ingestionId;
+      }),
+      concatMap((ingestion) =>
+        this.uploadStreamingChunks(ingestion.ingestionId, request.file, request.signal),
+      ),
+      last(),
+      concatMap(() => this.hashFile(request.file, request.signal)),
+      concatMap((sha256) =>
+        this.request('/v2/ingestions/' + encodeURIComponent(ingestionId as string) + '/finalize', {
+          method: 'POST',
+          json: { protocolVersion: '2', totalBytes: request.file.size, sha256 },
+          signal: request.signal,
+        }),
+      ),
+      concatMap(() =>
+        this.request<CaptureOperationV2>('/v2/captures', {
+          method: 'POST',
+          idempotencyKey: request.clientRequestId,
+          json: {
+            protocolVersion: '2',
+            clientRequestId: request.clientRequestId,
+            ingestionId,
+            structuringMode: request.structuringMode,
+            ...(request.targetLanguage ? { targetLanguage: request.targetLanguage } : {}),
+            startPolicy: 'eager',
+          },
+          signal: request.signal,
+        }),
+      ),
+    );
+    return pipeline$.pipe(
+      catchError((error: unknown) => {
+        if (!ingestionId) return throwError(() => error);
+        return this.deleteStreamingIngestion(ingestionId).pipe(
+          catchError(() => of(undefined)),
+          mergeMap(() => throwError(() => error)),
+        );
+      }),
+    );
+  }
+
+  getStreamingCapture(
+    id: string,
+    signal?: AbortSignal,
+  ): Observable<CaptureOperationV2> {
+    return this.request<CaptureOperationV2>(`/v2/captures/${encodeURIComponent(id)}`, { signal });
+  }
+
+  cancelStreamingCapture(
+    id: string,
+    signal?: AbortSignal,
+  ): Observable<CaptureOperationV2> {
+    return this.request<CaptureOperationV2>(`/v2/captures/${encodeURIComponent(id)}/cancel`, {
+      method: 'POST',
+      signal,
+    });
+  }
+
+  getStreamingPartial(
+    id: string,
+    signal?: AbortSignal,
+  ): Observable<PartialCaptureV2> {
+    return this.request<PartialCaptureV2>(`/v2/captures/${encodeURIComponent(id)}/partial`, { signal });
+  }
+
+  getStreamingResult(
+    id: string,
+    signal?: AbortSignal,
+  ): Observable<CaptureStreamingResult> {
+    return this.request<CaptureStreamingResult>(`/v2/captures/${encodeURIComponent(id)}/result`, { signal });
+  }
+
+  commitStreamingStructuredResult(
+    id: string,
+    request: CommitStreamingStructuredResultRequest,
+    signal?: AbortSignal,
+  ): Observable<CaptureOperationV2> {
+    return this.request<CaptureOperationV2>(`/v2/captures/${encodeURIComponent(id)}/structure/commit`, {
+      method: 'POST',
+      idempotencyKey: request.clientRequestId,
+      json: request.candidate,
+      signal,
+    });
+  }
+
+  reportStreamingStructuringFailure(
+    id: string,
+    request: ReportStreamingStructuringFailureRequest,
+    signal?: AbortSignal,
+  ): Observable<CaptureOperationV2> {
+    return this.request<CaptureOperationV2>(`/v2/captures/${encodeURIComponent(id)}/structure/failure`, {
+      method: 'POST',
+      idempotencyKey: crypto.randomUUID(),
+      json: request,
+      signal,
+    });
+  }
+
+  deleteStreamingCapture(id: string, signal?: AbortSignal): Observable<void> {
+    return this.request<void>(`/v2/captures/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      signal,
+    }).pipe(map(() => undefined));
+  }
+
+  private uploadStreamingChunks(
+    ingestionId: string,
+    file: File,
+    signal?: AbortSignal,
+  ): Observable<unknown> {
+    const count = Math.ceil(file.size / STREAMING_CHUNK_BYTES);
+    return readFileBytes(file).pipe(
+      concatMap((fileBytes) =>
+        range(0, count).pipe(
+          concatMap((chunkIndex) => {
+            const offset = chunkIndex * STREAMING_CHUNK_BYTES;
+            const end = Math.min(file.size, offset + STREAMING_CHUNK_BYTES);
+            const chunkBytes = new Uint8Array(fileBytes, offset, end - offset);
+            return this.digest(chunkBytes).pipe(
+              concatMap((sha256) =>
+                this.request(`/v2/ingestions/${encodeURIComponent(ingestionId)}/chunks/${chunkIndex}`, {
+                  method: 'PUT',
+                  idempotencyKey: `${ingestionId}-chunk-${chunkIndex}`,
+                  headers: {
+                    'Content-Range': `bytes ${offset}-${end - 1}/${file.size}`,
+                    Digest: `sha-256=${sha256}`,
+                  },
+                  body: new Blob([chunkBytes]),
+                  signal,
+                }),
+              ),
+            );
+          }),
+        ),
+      ),
+    );
+  }
+
+  private hashFile(file: File, signal?: AbortSignal): Observable<string> {
+    if (signal?.aborted) return throwError(() => createAbortError());
+    return readFileBytes(file).pipe(
+      concatMap((bytes) => this.digest(bytes)),
+    );
+  }
+
+  private digest(bytes: BufferSource): Observable<string> {
+    return from(globalThis.crypto.subtle.digest('SHA-256', bytes)).pipe(
+      map((digest) => toHex(new Uint8Array(digest))),
+    );
+  }
+
+  private deleteStreamingIngestion(ingestionId: string): Observable<void> {
+    return this.request<void>(`/v2/ingestions/${encodeURIComponent(ingestionId)}`, {
+      method: 'DELETE',
+    }).pipe(map(() => undefined));
+  }
+
   private request<T>(
     path: string,
     options: {
-      readonly method?: 'GET' | 'POST' | 'DELETE';
+      readonly method?: 'GET' | 'POST' | 'DELETE' | 'PUT';
       readonly json?: unknown;
       readonly body?: BodyInit;
+      readonly headers?: HeadersInit;
       readonly idempotencyKey?: string;
       readonly signal?: AbortSignal;
     } = {},
   ): Observable<T> {
-    return resolveString(this.options.baseUrl).pipe(
-      map((baseUrl) => assertLoopbackHttpBaseUrl(baseUrl)),
-      switchMap((baseUrl) => {
-        // Resolve the credential only after the destination is proven safe.
-        const bearerToken: Observable<string | undefined> = this.options.bearerToken
-          ? resolveString(this.options.bearerToken)
-          : of(undefined);
-        return bearerToken.pipe(
-          map((token) => ({ baseUrl, bearerToken: token })),
-        );
-      }),
+    return this.resolveTarget().pipe(
       switchMap(({ baseUrl, bearerToken }) => {
-        const headers = new Headers({ Accept: 'application/json' });
+        const headers = new Headers({ Accept: 'application/json', ...options.headers });
         if (bearerToken) headers.set('Authorization', `Bearer ${bearerToken}`);
         if (options.idempotencyKey) headers.set('X-Idempotency-Key', options.idempotencyKey);
         if (options.json !== undefined) headers.set('Content-Type', 'application/json');
@@ -269,6 +459,25 @@ export class HttpCaptureClient implements CaptureClient {
                 )
               : of(value),
           ),
+        );
+      }),
+    );
+  }
+
+  private resolveTarget(): Observable<{
+    readonly baseUrl: string;
+    readonly bearerToken?: string;
+  }> {
+    return resolveString(this.options.baseUrl).pipe(
+      map((baseUrl) => assertLoopbackHttpBaseUrl(baseUrl)),
+      switchMap((baseUrl) => {
+        // Resolve the credential only after the destination is proven safe.
+        const bearerToken: Observable<string | undefined> =
+          this.options.bearerToken
+            ? resolveString(this.options.bearerToken)
+            : of(undefined);
+        return bearerToken.pipe(
+          map((token) => ({ baseUrl, bearerToken: token })),
         );
       }),
     );
@@ -324,13 +533,6 @@ export function assertLoopbackHttpBaseUrl(value: string): string {
   return url.origin;
 }
 
-function readJson<T>(response: Response): Observable<T | undefined> {
-  return from(response.json()).pipe(
-    map((value) => value as T),
-    catchError(() => of(undefined)),
-  );
-}
-
 function abortableFetch(
   fetchImplementation: typeof globalThis.fetch,
   input: RequestInfo | URL,
@@ -362,33 +564,14 @@ function isObservableValue(value: unknown): value is Observable<string> {
   return !!value && typeof value === 'object' && 'subscribe' in value;
 }
 
-function redactSensitiveMessage(message: string): string {
-  return message
-    .replace(/Bearer\s+[^\s,;]+/giu, 'Bearer [redacted]')
-    .replace(
-      /(?:authorization|bearerToken|access_token|token)\s*[:=]\s*["']?[^"'\s,;}]+/giu,
-      (match) => `${match.slice(0, match.search(/[:=]/u) + 1)} [redacted]`,
-    );
+function mediaTypeFor(kind: StartStreamingCaptureRequest['sourceKind']): string {
+  return kind === 'pdf' ? 'application/pdf' : kind === 'image' ? 'image/*' : 'audio/*';
 }
 
-function redactSensitiveValue(value: unknown, depth = 0): unknown {
-  if (depth > 4 || value === null || value === undefined) return value;
-  if (typeof value === 'string') return redactSensitiveMessage(value);
-  if (Array.isArray(value)) {
-    return value.map((entry) => redactSensitiveValue(entry, depth + 1));
-  }
-  if (typeof value !== 'object') return value;
-  const result: Record<string, unknown> = {};
-  for (const [key, entry] of Object.entries(value)) {
-    if (/(?:token|authorization|credential|secret|password)/iu.test(key)) {
-      result[key] = '[redacted]';
-    } else {
-      result[key] = redactSensitiveValue(entry, depth + 1);
-    }
-  }
-  return result;
+function toHex(bytes: Uint8Array): string {
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
-function createAbortError(): DOMException {
-  return new DOMException('The operation was aborted.', 'AbortError');
+function readFileBytes(file: File): Observable<ArrayBuffer> {
+  return from(new Response(file).arrayBuffer());
 }
