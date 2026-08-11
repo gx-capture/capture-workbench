@@ -1,7 +1,7 @@
 {
   "approval": {
-    "approvedAt": "2026-08-03T05:54:33Z",
-    "approvedBy": "guanxin",
+    "approvedAt": "2026-08-10T03:00:42.327Z",
+    "approvedBy": "MSI\\guanxin",
     "blockers": [],
     "status": "approved"
   },
@@ -35,10 +35,10 @@
     },
     {
       "bytes": 11005641,
-      "expectedDevice": "cpu",
+      "expectedDevice": "cuda",
       "expectedEngine": "whisper-primary",
-      "expectedModel": "small",
-      "expectedNormalizedOutputSha256": "ffe38a0624220f4203cf9821fe50ed4a96581b2a44c9717aaee23db34be0bf45",
+      "expectedModel": "large-v3-turbo",
+      "expectedNormalizedOutputSha256": "77cc1a23ba36156e417229fbe53a8e023f2e5c1c56643ed6b1169749fbe32a07",
       "expectedSegmentCount": {
         "maximum": 10000,
         "minimum": 1
@@ -47,6 +47,7 @@
       "kind": "whisper",
       "mediaType": "audio/mpeg",
       "monotonicSegments": true,
+      "preferGpu": true,
       "sha256": "7f844ad97129470ee0981effcf31f5d69d5556e18c452e9ff27d418bc32d1a5d"
     }
   ],

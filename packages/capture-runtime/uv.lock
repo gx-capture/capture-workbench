@@ -183,6 +183,7 @@ name = "capture-runtime"
 version = "0.3.11"
 source = { editable = "." }
 dependencies = [
+    { name = "av" },
     { name = "capture-structuring" },
     { name = "fastapi" },
     { name = "httpx" },
@@ -218,6 +219,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "av", specifier = ">=18.0.0,<19.0.0" },
     { name = "capture-structuring", directory = "../capture-structuring-python" },
     { name = "ctranslate2", marker = "extra == 'whisper'", specifier = "==4.8.1" },
     { name = "fastapi", specifier = ">=0.128.0,<1.0.0" },

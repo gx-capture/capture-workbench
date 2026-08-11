@@ -8,7 +8,6 @@ from pathlib import Path
 
 CORE_FORBIDDEN = (
     "PIL",
-    "av",
     "ctranslate2",
     "cv2",
     "faster_whisper",
@@ -18,6 +17,15 @@ CORE_FORBIDDEN = (
     "paddlex",
     "pypdfium2",
     "capture_runtime.workers",
+)
+CORE_REQUIRED = (
+    "av/_core.pyd",
+    "av/audio/",
+    "av/container/",
+    "av.libs/avcodec-",
+    "av.libs/avformat-",
+    "av.libs/avutil-",
+    "av.libs/swresample-",
 )
 OCR_FORBIDDEN = ("faster_whisper", "ctranslate2", "huggingface_hub")
 WHISPER_FORBIDDEN = ("paddleocr", "paddlex", "pypdfium2", "cv2", "PIL")
@@ -95,6 +103,13 @@ def reject(inventory: str, forbidden: tuple[str, ...], label: str) -> None:
         )
 
 
+def require(inventory: str, required: tuple[str, ...], label: str) -> None:
+    lowered = inventory.casefold().replace("\\", "/")
+    missing = [token for token in required if token.casefold() not in lowered]
+    if missing:
+        raise SystemExit(f"{label} artifact incomplete; missing={missing}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--core", type=Path)
@@ -108,6 +123,7 @@ def main() -> None:
     if arguments.core:
         recursive_inventory = executable_inventory(arguments.core)
         reject(recursive_inventory, CORE_FORBIDDEN, "core")
+        require(recursive_inventory, CORE_REQUIRED, "core")
         write_inventory(arguments.core_recursive_inventory, recursive_inventory)
         if arguments.core_inventory is not None:
             write_inventory(

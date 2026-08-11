@@ -14,7 +14,6 @@ const maxInstallationWaitMs = 75 * 60_000;
 const coreRequirementIds = [
   'windowsml-ocr',
   'ollama-runtime',
-  'capture-ollama-model',
 ] as const;
 
 interface CaptureJob {
@@ -33,6 +32,13 @@ interface RuntimeRequirement {
 interface RuntimeInstallation {
   readonly installationId: string;
   readonly requirementId: string;
+  readonly status: string;
+  readonly error?: { readonly message?: string } | null;
+}
+
+interface RuntimeModelInstallation {
+  readonly installationId: string;
+  readonly optionId: string;
   readonly status: string;
   readonly error?: { readonly message?: string } | null;
 }
@@ -69,6 +75,7 @@ async function main(): Promise<void> {
   try {
     await waitForReady(runtimePort, host, origin, token, child);
     await prepareCoreRequirements(runtimePort, host, origin, token);
+    await prepareSelectedModel(runtimePort, host, origin, token);
     const form = new FormData();
     form.set('sourceKind', 'pdf');
     form.set('structuringMode', 'runtime');
@@ -89,7 +96,7 @@ async function main(): Promise<void> {
     if (
       !structuring ||
       structuring['engine'] !== 'ollama' ||
-      structuring['model'] !== 'capture-workbench-qwen3.5-4b-structure-v1' ||
+      structuring['model'] !== 'capture-workbench-qwen3.5-0.8b-structure-v1' ||
       typeof structuring['digest'] !== 'string' ||
       !/^sha256:[a-f0-9]{64}$/u.test(structuring['digest'])
     ) {
@@ -168,6 +175,36 @@ async function prepareCoreRequirements(
   }
 }
 
+async function prepareSelectedModel(
+  port: number,
+  host: string,
+  origin: string,
+  token: string,
+): Promise<void> {
+  const options = await request<{
+    readonly items: readonly { readonly optionId: string; readonly status: string }[];
+  }>(port, host, origin, token, '/v1/runtime/model-options');
+  const option = options.items.find((item) => item.optionId === 'qwen3.5-0.8b-v1');
+  if (!option) throw new Error('Real runtime did not expose the qwen3.5 0.8B model option.');
+  if (option.status === 'active') return;
+  const installation = await request<RuntimeModelInstallation>(
+    port,
+    host,
+    origin,
+    token,
+    '/v1/runtime/model-installations',
+    {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-idempotency-key': randomUUID(),
+      },
+      body: JSON.stringify({ optionId: option.optionId, consent: true }),
+    },
+  );
+  await waitForModelInstallation(port, host, origin, token, installation);
+}
+
 function realRuntimeEnvironment(input: { appData: string; runtimePort: number; ollamaPort: number; token: string }): NodeJS.ProcessEnv {
   const environment: NodeJS.ProcessEnv = {};
   for (const name of ['COMSPEC', 'NUMBER_OF_PROCESSORS', 'OS', 'PATH', 'PATHEXT', 'PROCESSOR_ARCHITECTURE', 'PROCESSOR_IDENTIFIER', 'PROCESSOR_LEVEL', 'PROCESSOR_REVISION', 'PROGRAMDATA', 'SYSTEMDRIVE', 'SYSTEMROOT', 'USERPROFILE', 'WINDIR']) {
@@ -180,8 +217,7 @@ function realRuntimeEnvironment(input: { appData: string; runtimePort: number; o
     CAPTURE_ENABLE_API_DOCS: 'false', CAPTURE_APP_DATA_DIR: join(input.appData, 'runtime'),
     CAPTURE_STRUCTURING_PROVIDER: 'ollama', CAPTURE_RETENTION_HOURS: '24', CAPTURE_MAX_UPLOAD_BYTES: String(50 * 1024 * 1024),
     CAPTURE_OLLAMA_HOST: `http://127.0.0.1:${input.ollamaPort}`, CAPTURE_OLLAMA_APP_DATA: join(input.appData, 'ollama'),
-    CAPTURE_OLLAMA_PID_FILE: join(input.appData, 'ollama', 'ollama.pid'), CAPTURE_OLLAMA_MODEL: 'qwen3.5:4b',
-    CAPTURE_OLLAMA_PROFILE_ID: 'capture-workbench-qwen3.5-4b-structure-v1', OLLAMA_HOST: `127.0.0.1:${input.ollamaPort}`,
+    CAPTURE_OLLAMA_PID_FILE: join(input.appData, 'ollama', 'ollama.pid'), OLLAMA_HOST: `127.0.0.1:${input.ollamaPort}`,
     OLLAMA_MODELS: join(input.appData, 'ollama', 'models'),
   };
 }
@@ -244,6 +280,33 @@ async function waitForInstallation(
     await delay(1_000);
   }
   throw new Error(`Real ${installation.requirementId} installation timed out.`);
+}
+
+async function waitForModelInstallation(
+  port: number,
+  host: string,
+  origin: string,
+  token: string,
+  installation: RuntimeModelInstallation,
+): Promise<void> {
+  const deadline = Date.now() + maxInstallationWaitMs;
+  while (Date.now() < deadline) {
+    const current = await request<RuntimeModelInstallation>(
+      port,
+      host,
+      origin,
+      token,
+      `/v1/runtime/model-installations/${installation.installationId}`,
+    );
+    if (current.status === 'completed') return;
+    if (!['queued', 'running'].includes(current.status)) {
+      throw new Error(
+        `Real ${current.optionId} model installation ended as ${current.status}: ${current.error?.message ?? 'no detail'}.`,
+      );
+    }
+    await delay(1_000);
+  }
+  throw new Error(`Real ${installation.optionId} model installation timed out.`);
 }
 
 function requiredPath(name: string): string {

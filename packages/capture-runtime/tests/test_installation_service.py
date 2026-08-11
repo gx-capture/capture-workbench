@@ -9,8 +9,10 @@ from capture_runtime.engine_installation import EngineInstallationError
 from capture_runtime.services.installation_service import (
     TERMINAL_INSTALLATION_STATUSES,
     InstallationService,
+    installation_failure_code,
 )
 from capture_runtime.storage import InstallationRepository
+from capture_runtime.worker_process import WorkerExecutionError
 
 
 class RecordingInstaller:
@@ -86,8 +88,37 @@ async def _test_engine_installation_failure_preserves_safe_runtime_message(tmp_p
 
     assert failed.status.value == "failed"
     assert failed.error is not None
-    assert failed.error.code == "installation_failed"
+    assert failed.error.code == "worker_archive_integrity"
     assert failed.error.message == "engine archive checksum does not match catalog"
+
+
+def test_installation_failure_code_is_finite_and_path_free() -> None:
+    assert (
+        installation_failure_code(
+            EngineInstallationError("direct model download exhausted bounded retries")
+        )
+        == "direct_model_retries_exhausted"
+    )
+    assert (
+        installation_failure_code(
+            EngineInstallationError("direct model file checksum does not match catalog")
+        )
+        == "direct_model_checksum"
+    )
+    assert (
+        installation_failure_code(
+            EngineInstallationError("engine post-install probe failed: private detail")
+        )
+        == "engine_probe_failed"
+    )
+    assert installation_failure_code(RuntimeError("C:\\private\\path")) == "installation_unexpected"
+    assert (
+        installation_failure_code(WorkerExecutionError("private worker detail"))
+        == "engine_probe_failed"
+    )
+    assert (
+        installation_failure_code(OSError("private filesystem detail")) == "installation_filesystem"
+    )
 
 
 def test_dependency_installations_are_serialized_in_submission_order(tmp_path: Path) -> None:

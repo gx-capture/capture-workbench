@@ -20,12 +20,18 @@ function parseArguments(args: readonly string[]) {
     const name = args[index];
     const value = args[index + 1];
     if (
-      !['--output', '--version', '--release-mode'].includes(name) ||
+      ![
+        '--output',
+        '--version',
+        '--release-mode',
+        '--package-candidate',
+        '--runtime-candidate',
+      ].includes(name) ||
       !value ||
       values.has(name)
     ) {
       throw new Error(
-        'Use --output <directory> --version <semver> --release-mode <mode>.',
+        'Use --output <directory> --version <semver> --release-mode <mode> [--package-candidate <directory>] [--runtime-candidate <directory>].',
       );
     }
     values.set(name, value);
@@ -41,13 +47,15 @@ function parseArguments(args: readonly string[]) {
     !['core-only', 'model-enabled'].includes(releaseMode)
   ) {
     throw new Error(
-      'Use --output <directory> --version <semver> --release-mode <mode>.',
+      'Use --output <directory> --version <semver> --release-mode <mode> [--package-candidate <directory>] [--runtime-candidate <directory>].',
     );
   }
   return {
     output: resolve(output),
     version,
     releaseMode: releaseMode as ReleaseMode,
+    packageCandidate: values.get('--package-candidate'),
+    runtimeCandidate: values.get('--runtime-candidate'),
   };
 }
 
@@ -77,9 +85,8 @@ async function copyMatching(
 }
 
 async function main(): Promise<void> {
-  const { output, version, releaseMode } = parseArguments(
-    process.argv.slice(2),
-  );
+  const { output, version, releaseMode, packageCandidate, runtimeCandidate } =
+    parseArguments(process.argv.slice(2));
   const root = resolve(import.meta.dirname, '..');
   const runtime = join(output, 'runtime');
   const packages = join(output, 'package');
@@ -95,18 +102,34 @@ async function main(): Promise<void> {
     ),
   );
 
-  await cp(resolve(root, 'packages/capture-runtime/dist/release'), runtime, {
-    recursive: true,
-  });
+  const runtimeSource = runtimeCandidate
+    ? join(resolve(runtimeCandidate), 'runtime')
+    : resolve(root, 'packages/capture-runtime/dist/release');
+  await cp(runtimeSource, runtime, { recursive: true });
+  if (runtimeCandidate) {
+    const sizeReport = resolve(
+      root,
+      'packages/capture-runtime/dist/release/runtime-size-report.json',
+    );
+    await cp(sizeReport, join(runtime, 'runtime-size-report.json'));
+    await cp(
+      `${sizeReport}.sha256`,
+      join(runtime, 'runtime-size-report.json.sha256'),
+    );
+  }
   const packageNames = await copyMatching(
-    resolve(root, 'dist/packs'),
+    packageCandidate
+      ? join(resolve(packageCandidate), 'package')
+      : resolve(root, 'dist/packs'),
     packages,
     /^(?:gx-capture-capture-workbench|gx-capture-capture-contracts|gx-capture-capture-structuring)-\d+\.\d+\.\d+(?:-[^/]+)?\.tgz$/u,
     3,
   );
   const pythonNames = [
     ...(await copyMatching(
-      resolve(root, 'packages/capture-contracts/python/dist'),
+      runtimeCandidate
+        ? join(resolve(runtimeCandidate), 'python')
+        : resolve(root, 'packages/capture-contracts/python/dist'),
       python,
       new RegExp(
         `^capture_contracts-${version.replaceAll('.', '\\.')}(?:-[^/]+)?\\.(?:whl|tar\\.gz)$`,
@@ -115,7 +138,9 @@ async function main(): Promise<void> {
       2,
     )),
     ...(await copyMatching(
-      resolve(root, 'packages/capture-structuring-python/dist'),
+      runtimeCandidate
+        ? join(resolve(runtimeCandidate), 'python')
+        : resolve(root, 'packages/capture-structuring-python/dist'),
       python,
       new RegExp(
         `^capture_structuring-${version.replaceAll('.', '\\.')}(?:-[^/]+)?\\.(?:whl|tar\\.gz)$`,
@@ -126,12 +151,15 @@ async function main(): Promise<void> {
   ];
   const crateName = `capture-sidecar-launcher-${version}.crate`;
   await cp(
-    resolve(
-      root,
-      `packages/capture-sidecar-launcher/target/package/${crateName}`,
-    ),
+    runtimeCandidate
+      ? join(resolve(runtimeCandidate), 'crate', crateName)
+      : resolve(
+          root,
+          `packages/capture-sidecar-launcher/target/package/${crateName}`,
+        ),
     join(crate, crateName),
   );
+  const installerName = `Capture Workbench_${version}_x64-setup.exe`;
   const installers = (
     await readdir(
       resolve(
@@ -139,21 +167,21 @@ async function main(): Promise<void> {
         'apps/capture-workbench-desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis',
       ),
     )
-  ).filter((name) => name.endsWith('.exe'));
+  ).filter((name) => name === installerName);
   if (installers.length !== 1)
     throw new Error(`Expected one NSIS installer; found ${installers.length}.`);
   const sourceInstaller = resolve(
     root,
     `apps/capture-workbench-desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/${installers[0]}`,
   );
-  const installerName = `Capture.Workbench_${version}_x64-setup.exe`;
-  await cp(sourceInstaller, join(desktop, installerName));
+  const candidateInstallerName = `Capture.Workbench_${version}_x64-setup.exe`;
+  await cp(sourceInstaller, join(desktop, candidateInstallerName));
   const sourceMetadata = await stat(sourceInstaller);
   const sourceDigest = await sha256(sourceInstaller);
-  const stagedMetadata = await stat(join(desktop, installerName));
+  const stagedMetadata = await stat(join(desktop, candidateInstallerName));
   if (
     sourceMetadata.size !== stagedMetadata.size ||
-    sourceDigest !== (await sha256(join(desktop, installerName)))
+    sourceDigest !== (await sha256(join(desktop, candidateInstallerName)))
   ) {
     throw new Error(
       'Staged installer bytes differ from the Tauri-generated installer.',
@@ -175,8 +203,8 @@ async function main(): Promise<void> {
     );
   }
   report.nsisInstaller = {
-    path: `desktop/${installerName}`,
-    fileName: installerName,
+    path: `desktop/${candidateInstallerName}`,
+    fileName: candidateInstallerName,
     bytes: stagedMetadata.size,
     sha256: sourceDigest,
   };

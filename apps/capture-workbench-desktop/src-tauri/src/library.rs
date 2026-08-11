@@ -20,7 +20,7 @@ const INDEX_FILE_NAME: &str = "library-index-v1.json";
 const INDEX_BACKUP_FILE_NAME: &str = "library-index-v1.backup.json";
 const TRANSACTION_FILE_NAME: &str = "library-transaction-v1.json";
 const INDEX_VERSION: u8 = 1;
-const MAX_SOURCE_BYTES: usize = 50 * 1024 * 1024;
+pub(crate) const MAX_SOURCE_BYTES: usize = 50 * 1024 * 1024;
 const SOURCE_FILE_NAME: &str = "source.bin";
 const RAW_FILE_NAME: &str = "raw.json";
 const RESULT_FILE_NAME: &str = "result.json";
@@ -103,6 +103,13 @@ impl StoredDocument {
 pub(crate) struct LibraryStore {
     root: PathBuf,
     index: Mutex<LibraryIndex>,
+}
+
+pub(crate) struct RuntimeSourceFile {
+    pub(crate) file_name: String,
+    pub(crate) media_type: String,
+    pub(crate) path: PathBuf,
+    pub(crate) bytes: u64,
 }
 
 impl LibraryStore {
@@ -356,6 +363,30 @@ impl LibraryStore {
     pub(crate) fn runtime_source(&self, document_id: &str) -> Result<LibrarySourcePayload, String> {
         self.load_source(LibraryDocumentRequest {
             document_id: document_id.into(),
+        })
+    }
+
+    pub(crate) fn runtime_source_file(
+        &self,
+        document_id: &str,
+    ) -> Result<RuntimeSourceFile, String> {
+        let document = self.find_document(document_id)?;
+        let path = self
+            .document_directory(&document.document_id)?
+            .join(SOURCE_FILE_NAME);
+        let metadata = fs::symlink_metadata(&path)
+            .map_err(|_| "Capture library source cannot be inspected.".to_string())?;
+        if metadata.file_type().is_symlink() || !metadata.file_type().is_file() {
+            return Err("Capture library source is not a regular file.".into());
+        }
+        if metadata.len() != document.byte_length || metadata.len() == 0 {
+            return Err("Capture library source changed after import.".into());
+        }
+        Ok(RuntimeSourceFile {
+            file_name: document.file_name,
+            media_type: document.media_type,
+            path,
+            bytes: metadata.len(),
         })
     }
 

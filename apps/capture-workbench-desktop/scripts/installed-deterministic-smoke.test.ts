@@ -114,8 +114,10 @@ test('installed app environment is process-scoped, isolated, and drops ambient s
     {
       PATH: 'safe-path',
       SystemRoot: 'C:\\Windows',
+      Cuda_Path: 'cuda-toolkit-root',
       GITHUB_TOKEN: 'must-not-propagate',
       CAPTURE_API_TOKEN: 'must-not-propagate',
+      CAPTURE_EXTRACTION_PROVIDER: 'must-not-propagate',
       WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: '--persisted-unsafe-value',
     },
     {
@@ -130,8 +132,10 @@ test('installed app environment is process-scoped, isolated, and drops ambient s
 
   assert.equal(environment.PATH, 'safe-path');
   assert.equal(environment.SYSTEMROOT, 'C:\\Windows');
+  assert.equal(environment.CUDA_PATH, 'cuda-toolkit-root');
   assert.equal(environment.GITHUB_TOKEN, undefined);
   assert.equal(environment.CAPTURE_API_TOKEN, undefined);
+  assert.equal(environment.CAPTURE_EXTRACTION_PROVIDER, undefined);
   assert.equal(
     environment.WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS,
     '--remote-debugging-address=127.0.0.1 --remote-debugging-port=43219 --remote-allow-origins=*',

@@ -2,10 +2,15 @@ import { computed, Injectable, inject } from '@angular/core';
 import { rxResource } from '@angular/core/rxjs-interop';
 import {
   type CaptureDocumentV1,
+  type CaptureEventV2,
   type CaptureJobV1,
+  type CaptureOperationV2,
+  type PartialCaptureV2,
   type CaptureRequirementId,
   type RawCaptureV1,
   type RuntimeInstallationV1,
+  type RuntimeModelInstallationV1,
+  type RuntimeModelOptionV1,
   type RuntimeRequirementV1,
 } from '@gx-capture/capture-workbench';
 import {
@@ -29,6 +34,11 @@ const STARTING_STATUS: DesktopRuntimeStatus = {
   status: 'starting',
   detail: 'Runtime 正在啟動…',
 };
+export interface StreamingTerminalResultV2 {
+  readonly operation: CaptureOperationV2;
+  readonly raw: RawCaptureV1;
+  readonly result: CaptureDocumentV1;
+}
 export const DESKTOP_RUNTIME_READY_TIMEOUT_MS = 3 * 60_000;
 
 @Injectable({ providedIn: 'root' })
@@ -66,10 +76,83 @@ export class DesktopRuntimeClientService {
     return this.commands.invoke('runtime_get_installation', { input: { id: installationId } }, signal);
   }
 
+  getModelOptions(signal?: AbortSignal): Observable<readonly RuntimeModelOptionV1[]> {
+    return this.commands
+      .invoke<{ readonly items: readonly RuntimeModelOptionV1[] }>('runtime_model_options', {}, signal)
+      .pipe(map((response) => response.items));
+  }
+
+  startModelInstallation(input: {
+    readonly clientRequestId: string;
+    readonly optionId: string;
+    readonly consent: true;
+  }, signal?: AbortSignal): Observable<RuntimeModelInstallationV1> {
+    return this.commands.invoke('runtime_start_model_installation', {
+      input: { clientRequestId: input.clientRequestId, optionId: input.optionId },
+    }, signal);
+  }
+
+  getModelInstallation(
+    installationId: string,
+    signal?: AbortSignal,
+  ): Observable<RuntimeModelInstallationV1> {
+    return this.commands.invoke('runtime_get_model_installation', { input: { id: installationId } }, signal);
+  }
+
   createCapture(documentId: string, clientRequestId: string, signal?: AbortSignal): Observable<CaptureJobV1> {
     return this.commands.invoke('runtime_create_capture', {
       input: { documentId, clientRequestId },
     }, signal);
+  }
+
+  startStreamingCapture(input: {
+    readonly documentId: string;
+    readonly clientRequestId: string;
+    readonly structuringMode: 'runtime' | 'host';
+  }, signal?: AbortSignal): Observable<CaptureOperationV2> {
+    return this.commands.invoke('runtime_start_streaming_capture', { input }, signal);
+  }
+
+  getStreamingCapture(captureId: string, signal?: AbortSignal): Observable<CaptureOperationV2> {
+    return this.commands.invoke('runtime_get_streaming_capture', { input: { id: captureId } }, signal);
+  }
+
+  getStreamingEvents(
+    captureId: string,
+    lastEventId?: number,
+    signal?: AbortSignal,
+  ): Observable<readonly CaptureEventV2[]> {
+    return this.commands.invoke('runtime_get_streaming_events', {
+      input: { id: captureId, lastEventId: lastEventId ?? null },
+    }, signal);
+  }
+
+  getStreamingPartial(captureId: string, signal?: AbortSignal): Observable<PartialCaptureV2 | null> {
+    return this.commands.invoke('runtime_get_streaming_partial', { input: { id: captureId } }, signal);
+  }
+
+  getStreamingResult(
+    captureId: string,
+    signal?: AbortSignal,
+  ): Observable<StreamingTerminalResultV2> {
+    return this.commands.invoke('runtime_get_streaming_result', { input: { id: captureId } }, signal);
+  }
+
+  structureStreamingCapture(
+    captureId: string,
+    signal?: AbortSignal,
+  ): Observable<CaptureDocumentV1> {
+    return this.commands.invoke('runtime_structure_streaming_capture', { input: { id: captureId } }, signal);
+  }
+
+  cancelStreamingCapture(captureId: string, signal?: AbortSignal): Observable<CaptureOperationV2> {
+    return this.commands.invoke('runtime_cancel_streaming_capture', { input: { id: captureId } }, signal);
+  }
+
+  deleteStreamingCapture(captureId: string, signal?: AbortSignal): Observable<void> {
+    return this.commands
+      .invoke<null>('runtime_delete_streaming_capture', { input: { id: captureId } }, signal)
+      .pipe(map(() => undefined));
   }
 
   getCapture(captureId: string, signal?: AbortSignal): Observable<CaptureJobV1> {

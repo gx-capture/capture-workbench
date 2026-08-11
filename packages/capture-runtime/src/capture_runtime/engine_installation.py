@@ -14,8 +14,9 @@ import tempfile
 import unicodedata
 import zipfile
 from collections.abc import Callable
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
+from threading import Lock
 from typing import Protocol
 from urllib.parse import urlsplit
 from uuid import uuid4
@@ -46,6 +47,7 @@ FILES_MANIFEST_NAME = "files-manifest.json"
 MAX_FILES_MANIFEST_BYTES = 1024 * 1024
 DOWNLOAD_CHUNK_BYTES = 1024 * 1024
 MAX_DIRECT_MODEL_REDIRECTS = 5
+DEFAULT_ACTIVE_ENGINE_RESOLUTION_TIMEOUT_SECONDS = 60.0
 WINDOWS_FORBIDDEN_PATH_CHARACTERS = frozenset('<>:"|?*')
 WINDOWS_RESERVED_DEVICE_BASENAMES = frozenset(
     {"CON", "PRN", "AUX", "NUL"}
@@ -95,6 +97,10 @@ class EngineInstallationError(RuntimeError):
 
 class EngineInstallBusyError(EngineInstallationError):
     """Raised when another process owns the same requirement install lock."""
+
+
+class EngineResolutionTimeoutError(TimeoutError):
+    """Raised when active-engine verification does not finish within its deadline."""
 
 
 class ArtifactDownloader(Protocol):
@@ -266,6 +272,11 @@ class HttpModelFileDownloader:
                     "direct model redirect Location is invalid"
                 ) from error
             except httpx.TransportError as error:
+                last_error = error
+            except OSError as error:
+                # Windows HTTP/file IO can surface a connection abort as a bare
+                # OSError. Treat it like the other bounded transport failures;
+                # integrity checks still run after a complete retry succeeds.
                 last_error = error
             except BaseException:
                 destination.unlink(missing_ok=True)
@@ -646,6 +657,43 @@ def verify_direct_model_files(
         raise EngineInstallationError("installed direct model bytes do not match catalog")
 
 
+_InstalledFileSnapshot = tuple[tuple[str, int, int, int], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _VerifiedActiveEngine:
+    state: ActiveEngineState
+    engine: InstalledEngine
+    files: _InstalledFileSnapshot
+
+
+def _installed_engine_snapshot(
+    worker_root: Path, model_root: Path
+) -> _InstalledFileSnapshot | None:
+    files: list[tuple[str, int, int, int]] = []
+    try:
+        for role, root in (("worker", worker_root), ("model", model_root)):
+            if not root.is_dir() or root.is_symlink():
+                return None
+            for path in root.rglob("*"):
+                if path.is_symlink():
+                    return None
+                if not path.is_file():
+                    continue
+                metadata = path.stat()
+                files.append(
+                    (
+                        f"{role}/{path.relative_to(root).as_posix()}",
+                        metadata.st_size,
+                        metadata.st_mtime_ns,
+                        metadata.st_ctime_ns,
+                    )
+                )
+    except (OSError, RuntimeError):
+        return None
+    return tuple(sorted(files))
+
+
 def _atomic_write_json(path: Path, payload: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
@@ -700,7 +748,12 @@ class EngineInstallationManager:
         worker_client: WorkerClient,
         downloader: ArtifactDownloader | None = None,
         model_downloader: ModelFileDownloader | None = None,
+        active_engine_resolution_timeout_seconds: float = (
+            DEFAULT_ACTIVE_ENGINE_RESOLUTION_TIMEOUT_SECONDS
+        ),
     ) -> None:
+        if not 0 < active_engine_resolution_timeout_seconds <= 300:
+            raise ValueError("active engine resolution timeout must be between 0 and 300 seconds")
         self.root = root
         self.catalog = catalog
         self.worker_client = worker_client
@@ -708,6 +761,9 @@ class EngineInstallationManager:
         self.model_downloader = model_downloader or HttpModelFileDownloader()
         self._smoke_worker_mirror_url = _smoke_worker_mirror_url()
         self._locks: dict[str, asyncio.Lock] = {}
+        self._verified_active_engines: dict[str, _VerifiedActiveEngine] = {}
+        self._verified_active_engines_lock = Lock()
+        self._active_engine_resolution_timeout_seconds = active_engine_resolution_timeout_seconds
 
     def requirement(self, requirement_id: str) -> EngineRequirementDescriptor:
         return self.catalog.requirement(requirement_id)
@@ -737,21 +793,56 @@ class EngineInstallationManager:
         version_root = self._requirement_root(requirement_id) / "versions" / state.artifact_version
         worker_root = version_root / "worker"
         model_root = version_root / "model"
+        files_before_verification = _installed_engine_snapshot(worker_root, model_root)
+        with self._verified_active_engines_lock:
+            cached = self._verified_active_engines.get(requirement_id)
+        if (
+            cached is not None
+            and cached.state == state
+            and cached.files == files_before_verification
+            and cached.engine.executable.is_file()
+            and cached.engine.model_dir.is_dir()
+        ):
+            return cached.engine
         try:
             verify_extracted_artifact(worker_root, worker_descriptor)
             verify_direct_model_files(model_root, model_descriptor)
         except EngineInstallationError:
             return None
+        files_after_verification = _installed_engine_snapshot(worker_root, model_root)
+        if (
+            files_before_verification is None
+            or files_after_verification != files_before_verification
+        ):
+            return None
         executable = self._resolved_child(self._requirement_root(requirement_id), state.entry_point)
         model_dir = self._resolved_child(model_root, model_descriptor.entry_point)
         if not executable.is_file() or not model_dir.is_dir():
             return None
-        return InstalledEngine(
+        engine = InstalledEngine(
             requirement_id=requirement_id,
             artifact_version=state.artifact_version,
             executable=executable,
             model_dir=model_dir,
         )
+        with self._verified_active_engines_lock:
+            self._verified_active_engines[requirement_id] = _VerifiedActiveEngine(
+                state=state,
+                engine=engine,
+                files=files_after_verification,
+            )
+        return engine
+
+    async def resolve_active_engine(self, requirement_id: str) -> InstalledEngine | None:
+        """Resolve and cold-verify an engine without blocking the runtime event loop."""
+
+        try:
+            async with asyncio.timeout(self._active_engine_resolution_timeout_seconds):
+                return await asyncio.to_thread(self.active_engine, requirement_id)
+        except TimeoutError as error:
+            raise EngineResolutionTimeoutError(
+                f"active engine resolution timed out for requirement {requirement_id}"
+            ) from error
 
     async def probe(
         self,
@@ -953,6 +1044,22 @@ class EngineInstallationManager:
             if previous_version.exists():
                 shutil.rmtree(previous_version, ignore_errors=True)
             activated = True
+            active_engine = InstalledEngine(
+                requirement_id=requirement.requirement_id,
+                artifact_version=requirement.artifact_version,
+                executable=self._resolved_child(version / "worker", worker_descriptor.entry_point),
+                model_dir=self._resolved_child(version / "model", model_descriptor.entry_point),
+            )
+            installed_files = _installed_engine_snapshot(version / "worker", version / "model")
+            if installed_files is not None:
+                with self._verified_active_engines_lock:
+                    self._verified_active_engines[requirement.requirement_id] = (
+                        _VerifiedActiveEngine(
+                            state=state,
+                            engine=active_engine,
+                            files=installed_files,
+                        )
+                    )
             report_progress(1)
             self._remove_inactive_versions(requirement_root, requirement.artifact_version)
         finally:
@@ -1068,6 +1175,7 @@ __all__ = [
     "EngineInstallBusyError",
     "EngineInstallationError",
     "EngineInstallationManager",
+    "EngineResolutionTimeoutError",
     "HttpArtifactDownloader",
     "safe_extract_artifact",
     "sha256_file",

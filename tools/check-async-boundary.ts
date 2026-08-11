@@ -46,7 +46,9 @@ function exceptionReason(relativePath) {
     relativePath ===
       'apps/capture-workbench-desktop/scripts/real-media-smoke.ts' ||
     relativePath ===
-      'apps/capture-workbench-desktop/scripts/real-media-model-smoke.ts'
+      'apps/capture-workbench-desktop/scripts/real-media-model-smoke.ts' ||
+    relativePath ===
+      'apps/capture-workbench-desktop/scripts/progressive-audio-oracle.ts'
   ) {
     return 'opt-in real-engine CLI boundary';
   }
@@ -82,6 +84,27 @@ function exceptionReason(relativePath) {
   }
   if (relativePath === 'tools/assemble-release-candidate.ts') {
     return 'release candidate assembly CLI process boundary';
+  }
+  if (relativePath === 'tools/assemble-package-candidate.ts') {
+    return 'package candidate assembly CLI process boundary';
+  }
+  if (relativePath === 'tools/verify-package-candidate.ts') {
+    return 'package candidate verification CLI process boundary';
+  }
+  if (relativePath === 'tools/verify-package-candidate-binding.ts') {
+    return 'package candidate binding verification CLI process boundary';
+  }
+  if (relativePath === 'tools/assemble-runtime-candidate.ts') {
+    return 'runtime candidate assembly CLI process boundary';
+  }
+  if (relativePath === 'tools/verify-runtime-candidate.ts') {
+    return 'runtime candidate verification CLI process boundary';
+  }
+  if (relativePath === 'tools/create-runtime-github-release.ts') {
+    return 'runtime GitHub Release publication CLI process boundary';
+  }
+  if (relativePath === 'tools/verify-runtime-candidate-binding.ts') {
+    return 'runtime candidate binding verification CLI process boundary';
   }
   if (relativePath === 'tools/create-contract-snapshot.ts') {
     return 'contract snapshot generation CLI process boundary';

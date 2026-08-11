@@ -4,7 +4,7 @@ test('shows one explicit Traditional Chinese setup wizard for missing core requi
   await openDesktop(page, [
     requirement('windowsml-ocr', 'WindowsML OCR', 'installable'),
     requirement('ollama-runtime', '隔離 Ollama', 'missing'),
-    requirement('capture-ollama-model', 'qwen3.5:4b 結構化模型', 'missing'),
+    requirement('capture-ollama-model', 'qwen3.5:0.8b 結構化模型', 'missing'),
   ]);
 
   await expect(page.getByRole('heading', { name: '文件擷取工作台' })).toBeVisible();
@@ -31,7 +31,7 @@ test('renders the Material desktop queue and history filter through the authenti
 
   await expect(page.getByText('Capture Runtime 已準備完成，可以開始處理文件。')).toBeVisible();
   await expect(page.getByText('history.pdf')).toBeVisible();
-  await expect(page.getByText('Ollama · qwen3.5:4b')).toBeVisible();
+  await expect(page.getByText('Ollama · qwen3.5:0.8b')).toBeVisible();
   await expect(page.locator('.mat-mdc-form-field')).toHaveCount(2);
   await expect(page.locator('.mat-mdc-button-base').first()).toBeVisible();
   await page.getByLabel('搜尋文件').fill('history');
@@ -74,6 +74,21 @@ async function openDesktop(page: Page, requirements: readonly Record<string, unk
         }
         if (command === 'runtime_requirements') {
           return Promise.resolve({ items: runtimeRequirements });
+        }
+        if (command === 'runtime_model_options') {
+          return Promise.resolve({
+            catalogSha256: 'a'.repeat(64),
+            items: [{
+              optionId: 'qwen3.5-0.8b-v1',
+              displayName: 'Ollama · qwen3.5:0.8b',
+              modelReference: 'qwen3.5:0.8b',
+              expectedDigest: null,
+              expectedBytes: null,
+              profileId: 'capture-workbench-qwen3.5-0.8b-structure-v1',
+              profileSpecSha256: 'b'.repeat(64),
+              status: 'active',
+            }],
+          });
         }
         if (command === 'library_list') {
           return Promise.resolve([{

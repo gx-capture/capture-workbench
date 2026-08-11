@@ -42,6 +42,15 @@ class ChunkStream(httpx.AsyncByteStream):
         return None
 
 
+class BareOSErrorStream(httpx.AsyncByteStream):
+    async def __aiter__(self):
+        raise OSError("injected Windows transport abort")
+        yield b""
+
+    async def aclose(self) -> None:
+        return None
+
+
 def _manifest(files: dict[str, bytes]) -> bytes:
     return (
         json.dumps(
@@ -516,6 +525,42 @@ def test_direct_model_rejects_tamper_and_partial_download(
             )
         )
     assert not destination.exists()
+
+
+def test_direct_model_retries_bare_oserror_from_windows_transport(
+    tmp_path: Path,
+) -> None:
+    content = b"recovered model"
+    descriptor = _direct_model_file(content)
+    attempts = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            return httpx.Response(200, stream=BareOSErrorStream(), request=request)
+        return httpx.Response(
+            200,
+            headers={"content-length": str(len(content))},
+            content=content,
+            request=request,
+        )
+
+    downloader = HttpModelFileDownloader(
+        lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        retry_delays=(0, 0, 0),
+    )
+    destination = tmp_path / "recovered.bin"
+    asyncio.run(
+        downloader.download(
+            descriptor,
+            destination,
+            cancel_event=asyncio.Event(),
+            progress=lambda _copied: None,
+        )
+    )
+    assert attempts == 3
+    assert destination.read_bytes() == content
 
 
 def test_direct_model_cancellation_removes_partial_file(tmp_path: Path) -> None:

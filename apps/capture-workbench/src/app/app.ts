@@ -39,4 +39,8 @@ export class App {
   protected openFilePicker(): void {
     this.store.chooseSources();
   }
+
+  protected partialFor(documentId: string) {
+    return this.store.partialFor?.(documentId) ?? null;
+  }
 }

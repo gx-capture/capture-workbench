@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import re
 from contextlib import suppress
 from pathlib import Path
 
@@ -37,6 +38,7 @@ from capture_runtime.storage import (
     TransitionRejectedError,
 )
 from capture_runtime.structuring_provider import CaptureStructuringProvider
+from capture_runtime.worker_process import WorkerExecutionError
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +47,31 @@ TERMINAL_CAPTURE_STATUSES = {
     CaptureJobStatus.FAILED,
     CaptureJobStatus.CANCELLED,
 }
+
+_SAFE_WORKER_STAGE = re.compile(
+    r"\bat (?:stage|stages) ((?:worker-entry(?:-[a-z0-9-]+)?|python-import-[a-z0-9-]+|"
+    r"ocr-[a-z0-9-]+|whisper-[a-z0-9-]+|worker-process-[a-z0-9-]+|"
+    r"worker-stage-sequence-truncated)(?:>(?:worker-entry(?:-[a-z0-9-]+)?|python-import-[a-z0-9-]+|"
+    r"ocr-[a-z0-9-]+|whisper-[a-z0-9-]+|worker-process-[a-z0-9-]+|"
+    r"worker-stage-sequence-truncated))*)(?![a-z0-9-])"
+)
+
+
+def _safe_worker_failure_message(error: WorkerExecutionError) -> str:
+    match = _SAFE_WORKER_STAGE.search(str(error))
+    if match is None:
+        return "Source extraction worker failed."
+    stages = match.group(1)
+    label = "stages " if ">" in stages else ""
+    return f"Source extraction worker failed at {label}{stages}."
+
+
+def _safe_extraction_failure_message(error: BaseException) -> str:
+    if str(error) == "Extraction produced no non-empty content.":
+        return "Source extraction produced no non-empty content."
+    if isinstance(error, ValueError):
+        return "Source extraction failed validation."
+    return "Source extraction failed at the runtime boundary."
 
 
 def _validate_runtime_document(candidate: object, raw: RawCaptureV1) -> CaptureDocumentV1:
@@ -91,6 +118,7 @@ class CaptureService:
         self._clock = clock
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._cancellations: dict[str, asyncio.Event] = {}
+        self._shutting_down = False
 
     def create(
         self,
@@ -247,6 +275,7 @@ class CaptureService:
         )
 
     async def shutdown(self) -> None:
+        self._shutting_down = True
         tasks = list(self._tasks.values())
         for task in tasks:
             task.cancel()
@@ -259,6 +288,34 @@ class CaptureService:
         capture_id = task.get_name().removeprefix("capture-")
         self._tasks.pop(capture_id, None)
         self._cancellations.pop(capture_id, None)
+        if self._shutting_down:
+            if not task.cancelled():
+                task.exception()
+            return
+        failed_unexpectedly = task.cancelled()
+        if not failed_unexpectedly:
+            failed_unexpectedly = task.exception() is not None
+        if not failed_unexpectedly:
+            return
+        try:
+            current = self.get(capture_id)
+        except RecordNotFoundError:
+            return
+        if current.status in TERMINAL_CAPTURE_STATUSES:
+            return
+        logger.error("Capture task terminated before reaching a terminal state: %s", capture_id)
+        self._fail_capture(
+            capture_id,
+            code="runtime_interrupted",
+            message="Capture processing was interrupted before completion.",
+            stage=(
+                "structuring"
+                if current.stage
+                in {CaptureJobStage.STRUCTURING, CaptureJobStage.AWAITING_STRUCTURING}
+                else "extraction"
+            ),
+            retryable=True,
+        )
 
     async def _process(self, capture_id: str, cancellation: asyncio.Event) -> None:
         raw_written = False
@@ -321,6 +378,15 @@ class CaptureService:
                 if current.status not in TERMINAL_CAPTURE_STATUSES:
                     self.repository.update_job(capture_id, self._cancelled_job(current))
                     self.repository.delete_upload(capture_id)
+            elif not self._shutting_down:
+                self._fail_capture(
+                    capture_id,
+                    code="runtime_interrupted",
+                    message="Capture processing was interrupted before completion.",
+                    stage="structuring" if raw_written else "extraction",
+                    retryable=True,
+                )
+                return
             raise
         except StructuringValidationError:
             self._fail_capture(
@@ -328,6 +394,19 @@ class CaptureService:
                 code="structuring_invalid_output",
                 message="Structuring output failed strict schema or provenance validation.",
                 stage="structuring",
+                retryable=True,
+            )
+        except WorkerExecutionError as error:
+            worker_error = error
+            self._fail_capture(
+                capture_id,
+                code="extraction_failed" if not raw_written else "structuring_failed",
+                message=(
+                    _safe_worker_failure_message(worker_error)
+                    if not raw_written
+                    else "Capture structuring failed."
+                ),
+                stage="extraction" if not raw_written else "structuring",
                 retryable=True,
             )
         except (RuntimeUnavailableError, ExtractionRuntimeUnavailableError):
@@ -340,13 +419,15 @@ class CaptureService:
             )
         except TransitionRejectedError:
             return
-        except Exception:
+        except Exception as error:
             logger.exception("Capture job failed during runtime processing: %s", capture_id)
             self._fail_capture(
                 capture_id,
                 code="structuring_failed" if raw_written else "extraction_failed",
                 message=(
-                    "Capture structuring failed." if raw_written else "Source extraction failed."
+                    "Capture structuring failed."
+                    if raw_written
+                    else _safe_extraction_failure_message(error)
                 ),
                 stage="structuring" if raw_written else "extraction",
                 retryable=True,

@@ -1,0 +1,48 @@
+name: Package Promotion
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_run_id:
+        description: 'Successful Release Package Candidate workflow run'
+        required: true
+        type: string
+      candidate_id:
+        description: 'Expected immutable Package Candidate ID'
+        required: true
+        type: string
+      candidate_manifest_sha256:
+        description: 'SHA-256 of candidate-manifest.json'
+        required: true
+        type: string
+      source_commit:
+        description: 'Exact producer source commit'
+        required: true
+        type: string
+      release_version:
+        description: 'Package release version without v prefix'
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  publish-npm:
+    uses: ./.github/workflows/_publish-npm.yml
+    permissions:
+      actions: read
+      contents: read
+      packages: write
+    with:
+      candidate_kind: package
+      candidate_id: ${{ inputs.candidate_id }}
+      candidate_run_id: ${{ inputs.candidate_run_id }}
+      candidate_manifest_sha256: ${{ inputs.candidate_manifest_sha256 }}
+      source_commit: ${{ inputs.source_commit }}
+      release_version: ${{ inputs.release_version }}
+    secrets: inherit

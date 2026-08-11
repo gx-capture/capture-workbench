@@ -28,9 +28,14 @@ import {
   timer,
 } from 'rxjs';
 import {
+  type CaptureEventV2,
   type CaptureJobV1,
+  type CaptureOperationV2,
+  type PartialCaptureV2,
   type CaptureRequirementId,
   type RuntimeInstallationV1,
+  type RuntimeModelInstallationV1,
+  type RuntimeModelOptionV1,
   type RuntimeRequirementV1,
 } from '@gx-capture/capture-workbench';
 import type {
@@ -39,12 +44,17 @@ import type {
   DesktopLibrarySummary,
 } from '../contracts';
 import { DesktopLibraryService } from './desktop-library.service';
-import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
+import {
+  DesktopRuntimeClientService,
+  type StreamingTerminalResultV2,
+} from './desktop-runtime-client.service';
 
 type WorkspaceState = 'starting' | 'needs-setup' | 'ready' | 'error';
 
 interface ActiveCapture {
   captureId?: string;
+  streaming: boolean;
+  lastEventSequence: number;
   rawPersisted: boolean;
   cancelRequested: boolean;
   cancelSent: boolean;
@@ -59,14 +69,12 @@ interface ActiveCapture {
 const CORE_REQUIREMENTS = new Set<CaptureRequirementId>([
   'windowsml-ocr',
   'ollama-runtime',
-  'capture-ollama-model',
 ]);
 
 const INSTALLATION_ORDER = new Map<CaptureRequirementId, number>([
   ['windowsml-ocr', 0],
   ['whisper-primary', 1],
   ['ollama-runtime', 2],
-  ['capture-ollama-model', 3],
 ]);
 
 @Injectable({ providedIn: 'root' })
@@ -77,8 +85,30 @@ export class DesktopWorkspaceStore {
   readonly statusFilter = signal('');
   readonly installing = signal(false);
   readonly activeInstallation = signal<RuntimeInstallationV1 | null>(null);
+  readonly activeModelInstallation = signal<RuntimeModelInstallationV1 | null>(null);
+  readonly modelInstallationPercent = computed(() => {
+    const progress = this.activeModelInstallation()?.progress ?? 0;
+    return Math.round(Math.min(Math.max(progress, 0), 1) * 100);
+  });
+  readonly modelInstallationPhase = computed(() => {
+    const installation = this.activeModelInstallation();
+    if (!installation) return '';
+    if (installation.status === 'queued') return '等待開始';
+    if (installation.status === 'failed') return '模型下載失敗';
+    if (installation.status === 'cancelled') return '模型下載已取消';
+    if (installation.status === 'completed') return '模型已準備完成';
+    if (installation.progress < 0.1) return '啟動模型服務';
+    if (installation.progress < 0.75) return '下載與驗證模型';
+    return '建立 Workbench profile';
+  });
+  readonly selectedModelOptionId = signal<string | null>(null);
   readonly busyIds = signal<ReadonlySet<string>>(new Set());
   readonly requestedRequirements = signal<ReadonlySet<CaptureRequirementId>>(new Set());
+  readonly streamingPartials = signal<ReadonlyMap<string, PartialCaptureV2>>(new Map());
+
+  partialFor(documentId: string): PartialCaptureV2 | null {
+    return this.streamingPartials().get(documentId) ?? null;
+  }
 
   get requirements() {
     return this.requirementsResource.value;
@@ -96,16 +126,21 @@ export class DesktopWorkspaceStore {
     if (
       this.runtime.error()
       || this.requirementsResource.error()
+      || this.modelOptionsResource.error()
       || this.documentsResource.error()
     ) {
       return 'error';
     }
     if (!this.runtime.ready()) return 'starting';
     const requirementsStatus = this.requirementsResource.status();
-    if (requirementsStatus === 'idle' || requirementsStatus === 'loading' || requirementsStatus === 'reloading') {
+    const modelStatus = this.modelOptionsResource.status();
+    if (
+      requirementsStatus === 'idle' || requirementsStatus === 'loading' || requirementsStatus === 'reloading'
+      || modelStatus === 'idle' || modelStatus === 'loading' || modelStatus === 'reloading'
+    ) {
       return 'starting';
     }
-    return this.coreMissing().length === 0 ? 'ready' : 'needs-setup';
+    return this.coreMissing().length === 0 && !this.modelSelectionRequired() ? 'ready' : 'needs-setup';
   });
 
   readonly canCapture = computed(() => this.state() === 'ready' && !this.installing());
@@ -127,6 +162,12 @@ export class DesktopWorkspaceStore {
           - (INSTALLATION_ORDER.get(right.requirementId) ?? Number.MAX_SAFE_INTEGER),
       ),
   );
+  readonly modelSelectionRequired = computed(
+    () => this.modelOptions().length > 0 && !this.modelOptions().some((option) => option.status === 'active'),
+  );
+  readonly activeModelOption = computed(
+    () => this.modelOptions().find((option) => option.status === 'active') ?? null,
+  );
 
   private readonly runtime = inject(DesktopRuntimeClientService);
   private readonly library = inject(DesktopLibraryService);
@@ -141,6 +182,15 @@ export class DesktopWorkspaceStore {
     defaultValue: [],
     params: () => this.runtime.ready() ? { ready: true } : undefined,
     stream: ({ abortSignal }) => this.runtime.getRequirements(abortSignal),
+  });
+
+  private readonly modelOptionsResource = rxResource<
+    readonly RuntimeModelOptionV1[],
+    { readonly ready: true } | undefined
+  >({
+    defaultValue: [],
+    params: () => this.runtime.ready() ? { ready: true } : undefined,
+    stream: ({ abortSignal }) => this.runtime.getModelOptions(abortSignal),
   });
 
   private readonly documentsResource = rxResource<
@@ -169,6 +219,7 @@ export class DesktopWorkspaceStore {
   private readonly resourceErrorEffect = effect(() => {
     const error = this.runtime.error()
       ?? this.requirementsResource.error()
+      ?? this.modelOptionsResource.error()
       ?? this.documentsResource.error()
       ?? this.selectedResource.error();
     if (error) this.message.set(errorMessage(error));
@@ -196,6 +247,7 @@ export class DesktopWorkspaceStore {
     }
     this.runtime.reload();
     this.requirementsResource.reload();
+    this.modelOptionsResource.reload();
     this.documentsResource.reload();
   }
 
@@ -235,6 +287,50 @@ export class DesktopWorkspaceStore {
       error: (error: unknown) => {
         this.message.set(errorMessage(error));
       },
+    });
+  }
+
+  get modelOptions() {
+    return this.modelOptionsResource.value;
+  }
+
+  selectModelOption(optionId: string): void {
+    if (this.installing()) return;
+    this.selectedModelOptionId.set(optionId);
+    this.activeModelInstallation.set(null);
+  }
+
+  installSelectedModel(): void {
+    const optionId = this.selectedModelOptionId();
+    if (!this.runtime.ready() || this.installing() || !optionId) return;
+    this.activeModelInstallation.set(null);
+    this.installing.set(true);
+    this.runtime.startModelInstallation({
+      clientRequestId: crypto.randomUUID(),
+      optionId,
+      consent: true,
+    }).pipe(
+      expand((installation) => {
+        if (installation.status !== 'queued' && installation.status !== 'running') return EMPTY;
+        return timer(750).pipe(
+          switchMap(() => this.runtime.getModelInstallation(installation.installationId)),
+        );
+      }),
+      tap((installation) => this.activeModelInstallation.set(installation)),
+      filter((installation) => installation.status !== 'queued' && installation.status !== 'running'),
+      take(1),
+      switchMap((installation) => installation.status === 'completed'
+        ? of(installation)
+        : throwError(() => new Error(
+          `Runtime model installation ended ${installation.status}${installation.error?.code ? ` (${installation.error.code})` : ''}.`,
+        ))),
+      finalize(() => {
+        this.installing.set(false);
+        this.modelOptionsResource.reload();
+        this.requirementsResource.reload();
+      }),
+    ).subscribe({
+      error: (error: unknown) => this.message.set(errorMessage(error)),
     });
   }
 
@@ -354,6 +450,21 @@ export class DesktopWorkspaceStore {
     } as Record<DesktopLibrarySummary['status'], string>)[status];
   }
 
+  private isAudioDocument(documentId: string): boolean {
+    const document = this.documents().find((item) => item.documentId === documentId)
+      ?? (this.selected()?.documentId === documentId ? this.selected() : undefined);
+    return document?.mediaType.startsWith('audio/') ?? false;
+  }
+
+  private applyStreamingEvent(
+    _documentId: string,
+    active: ActiveCapture,
+    event: CaptureEventV2,
+  ): void {
+    active.lastEventSequence = Math.max(active.lastEventSequence, event.sequence);
+    active.lastStage = event.stage;
+  }
+
   private captureNewSource$(sourcePath: string): Observable<void> {
     return this.library.createSource(sourcePath).pipe(
       tap((document) => {
@@ -381,6 +492,8 @@ export class DesktopWorkspaceStore {
     return defer(() => {
       if (!this.runtime.ready() || this.activeCaptures.has(documentId)) return EMPTY;
       const active: ActiveCapture = {
+        streaming: this.isAudioDocument(documentId),
+        lastEventSequence: 0,
         rawPersisted: false,
         cancelRequested: false,
         cancelSent: false,
@@ -395,23 +508,147 @@ export class DesktopWorkspaceStore {
         stage: 'uploading',
         clearCaptureId: true,
       }).pipe(
-        switchMap(() => this.runtime.createCapture(documentId, crypto.randomUUID())),
-        switchMap((job) => {
-          active.captureId = job.captureId;
-          active.lastStage = job.stage;
-          return this.library.updateCapture({
-            documentId,
-            captureId: job.captureId,
-            status: 'processing',
-            stage: job.stage,
-          }).pipe(map(() => job));
-        }),
-        switchMap((job) => this.waitForTerminal$(documentId, job, active)),
-        switchMap((job) => this.persistTerminal$(documentId, job, active)),
+        tap(() => this.reloadDocumentState(documentId)),
+        switchMap(() => active.streaming
+          ? this.captureStreaming$(documentId, active)
+          : this.captureOneShot$(documentId, active)),
       );
 
       return this.trackCaptureLifecycle$(documentId, active, work$);
     });
+  }
+
+  private captureOneShot$(documentId: string, active: ActiveCapture): Observable<void> {
+    return this.runtime.createCapture(documentId, crypto.randomUUID()).pipe(
+      switchMap((job) => {
+        active.captureId = job.captureId;
+        active.lastStage = job.stage;
+        return this.library.updateCapture({
+          documentId,
+          captureId: job.captureId,
+          status: 'processing',
+          stage: job.stage,
+        }).pipe(
+          tap(() => this.reloadDocumentState(documentId)),
+          map(() => job),
+        );
+      }),
+      switchMap((job) => this.waitForTerminal$(documentId, job, active)),
+      switchMap((job) => this.persistTerminal$(documentId, job, active)),
+      map(() => undefined),
+    );
+  }
+
+  private captureStreaming$(documentId: string, active: ActiveCapture): Observable<void> {
+    return this.runtime.startStreamingCapture({
+      documentId,
+      clientRequestId: crypto.randomUUID(),
+      structuringMode: 'runtime',
+    }).pipe(
+      switchMap((operation) => {
+        active.captureId = operation.captureId;
+        active.lastStage = operation.status;
+        return this.library.updateCapture({
+          documentId,
+          captureId: operation.captureId,
+          status: 'processing',
+          stage: operation.status,
+        }).pipe(
+          tap(() => this.reloadDocumentState(documentId)),
+          map(() => operation),
+        );
+      }),
+      switchMap((operation) => this.waitForStreamingTerminal$(documentId, operation, active)),
+      switchMap((operation) => this.persistStreamingTerminal$(documentId, operation, active)),
+    );
+  }
+
+  private waitForStreamingTerminal$(
+    documentId: string,
+    initial: CaptureOperationV2,
+    active: ActiveCapture,
+  ): Observable<CaptureOperationV2> {
+    return of(initial).pipe(
+      switchMap((operation) => this.advanceStreaming$(documentId, operation, active)),
+      expand((operation) => isActiveStreaming(operation)
+        ? timer(500).pipe(switchMap(() => this.advanceStreaming$(documentId, operation, active)))
+        : EMPTY),
+      filter((operation) => !isActiveStreaming(operation)),
+      take(1),
+    );
+  }
+
+  private advanceStreaming$(
+    documentId: string,
+    operation: CaptureOperationV2,
+    active: ActiveCapture,
+  ): Observable<CaptureOperationV2> {
+    const events$ = this.runtime.getStreamingEvents(
+      operation.captureId,
+      active.lastEventSequence,
+    ).pipe(
+      tap((events) => events.forEach((event) => this.applyStreamingEvent(documentId, active, event))),
+      switchMap(() => this.runtime.getStreamingPartial(operation.captureId)),
+      tap((partial) => {
+        if (partial) {
+          this.streamingPartials.update((current) => {
+            const next = new Map(current);
+            next.set(documentId, partial);
+            return next;
+          });
+        }
+      }),
+    );
+    if (!active.cancelRequested || active.cancelSent) {
+      return events$.pipe(switchMap(() => this.runtime.getStreamingCapture(operation.captureId)));
+    }
+    active.cancelSent = true;
+    return this.runtime.cancelStreamingCapture(operation.captureId).pipe(
+      switchMap(() => events$),
+      switchMap(() => this.runtime.getStreamingCapture(operation.captureId)),
+    );
+  }
+
+  private persistStreamingTerminal$(
+    documentId: string,
+    operation: CaptureOperationV2,
+    active: ActiveCapture,
+  ): Observable<void> {
+    active.terminalStatus = operation.status === 'completed' ? 'completed'
+      : operation.status === 'cancelled' ? 'canceled' : 'failed';
+    active.terminalErrorCode = operation.error?.code;
+    active.terminalErrorMessage = operation.error?.message;
+    const terminalData$: Observable<StreamingTerminalResultV2 | null> = operation.status === 'completed'
+      ? this.runtime.getStreamingResult(operation.captureId)
+      : of(null);
+    return terminalData$.pipe(
+      switchMap((terminalData) => this.library.updateCapture({
+        documentId,
+        captureId: operation.captureId,
+        status: active.terminalStatus ?? 'failed',
+        stage: operation.status,
+        errorCode: operation.error?.code,
+        errorMessage: operation.error?.message,
+        ...(terminalData
+          ? { raw: terminalData.raw, result: terminalData.result }
+          : {}),
+      })),
+      tap(() => {
+        active.terminalCommitted = true;
+        this.reloadDocumentState(documentId);
+      }),
+      switchMap(() => this.runtime.deleteStreamingCapture(operation.captureId)),
+      switchMap(() => this.library.updateCapture({
+        documentId,
+        status: active.terminalStatus ?? 'failed',
+        stage: operation.status,
+        clearCaptureId: true,
+        errorCode: operation.error?.code,
+        errorMessage: operation.error?.message,
+      })),
+      tap(() => this.clearStreamingPartial(documentId)),
+      map(() => undefined),
+    );
   }
 
   private recoverCapture$(document: DesktopLibrarySummary): Observable<void> {
@@ -426,6 +663,8 @@ export class DesktopWorkspaceStore {
       const terminalCommitted = hasCommittedTerminalData(document);
       const active: ActiveCapture = {
         captureId: document.captureId,
+        streaming: document.mediaType.startsWith('audio/'),
+        lastEventSequence: 0,
         rawPersisted: false,
         cancelRequested: false,
         cancelSent: false,
@@ -441,11 +680,25 @@ export class DesktopWorkspaceStore {
 
       const work$ = terminalCommitted
         ? this.retryRuntimeCleanup$(document)
-        : this.runtime.getCapture(document.captureId).pipe(
-          tap((job) => active.lastStage = job.stage),
-          switchMap((job) => this.waitForTerminal$(document.documentId, job, active)),
-          switchMap((job) => this.persistTerminal$(document.documentId, job, active)),
-        );
+        : active.streaming
+          ? this.runtime.getStreamingCapture(document.captureId).pipe(
+            tap((operation) => active.lastStage = operation.status),
+            switchMap((operation) => this.waitForStreamingTerminal$(
+              document.documentId,
+              operation,
+              active,
+            )),
+            switchMap((operation) => this.persistStreamingTerminal$(
+              document.documentId,
+              operation,
+              active,
+            )),
+          )
+          : this.runtime.getCapture(document.captureId).pipe(
+            tap((job) => active.lastStage = job.stage),
+            switchMap((job) => this.waitForTerminal$(document.documentId, job, active)),
+            switchMap((job) => this.persistTerminal$(document.documentId, job, active)),
+          );
       return this.trackCaptureLifecycle$(document.documentId, active, work$);
     });
   }
@@ -679,7 +932,10 @@ export class DesktopWorkspaceStore {
   private retryRuntimeCleanup$(document: DesktopLibrarySummary) {
     const captureId = document.captureId;
     if (!captureId) return EMPTY;
-    return this.runtime.deleteCapture(captureId).pipe(
+    const delete$ = document.mediaType.startsWith('audio/')
+      ? this.runtime.deleteStreamingCapture(captureId)
+      : this.runtime.deleteCapture(captureId);
+    return delete$.pipe(
       switchMap(() => this.library.updateCapture({
         documentId: document.documentId,
         status: committedTerminalStatus(document),
@@ -789,10 +1045,27 @@ export class DesktopWorkspaceStore {
       return next;
     });
   }
+
+  private clearStreamingPartial(documentId: string): void {
+    this.streamingPartials.update((current) => {
+      if (!current.has(documentId)) return current;
+      const next = new Map(current);
+      next.delete(documentId);
+      return next;
+    });
+  }
 }
 
 function isActiveJob(job: CaptureJobV1): boolean {
   return job.status === 'queued' || job.status === 'running';
+}
+
+function isActiveStreaming(operation: CaptureOperationV2): boolean {
+  return operation.status === 'created'
+    || operation.status === 'waiting_input'
+    || operation.status === 'extracting'
+    || operation.status === 'awaiting_structuring'
+    || operation.status === 'structuring';
 }
 
 function terminalLibraryStatus(job: CaptureJobV1): DesktopLibraryStatus {

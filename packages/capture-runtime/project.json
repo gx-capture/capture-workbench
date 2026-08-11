@@ -320,6 +320,22 @@
         "command": "uv run --python 3.12 python scripts/verify_boundaries.py --core dist/executable/capture-runtime.exe --core-inventory dist/core-inventory.txt --core-recursive-inventory dist/core-inventory-recursive.txt"
       }
     },
+    "verify-production-core-boundary": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "dependsOn": ["build-production-executable"],
+      "outputs": [
+        "{projectRoot}/dist/production-core-inventory.txt",
+        "{projectRoot}/dist/production-core-inventory-recursive.txt"
+      ],
+      "metadata": {
+        "description": "Requires the production core artifact to contain the packaged PyAV decoder and FFmpeg libraries."
+      },
+      "options": {
+        "cwd": "packages/capture-runtime",
+        "command": "uv run --no-sync --python 3.12 python scripts/verify_boundaries.py --core dist/executable/capture-runtime.exe --core-inventory dist/production-core-inventory.txt --core-recursive-inventory dist/production-core-inventory-recursive.txt"
+      }
+    },
     "verify-worker-boundaries": {
       "cache": false,
       "executor": "nx:run-commands",
@@ -357,7 +373,8 @@
       "dependsOn": [
         "build-production-executable",
         "generate-production-schema",
-        "verify-worker-boundaries"
+        "verify-worker-boundaries",
+        "verify-production-core-boundary"
       ],
       "inputs": ["production"],
       "outputs": ["{projectRoot}/dist/release"],

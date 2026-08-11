@@ -1,4 +1,4 @@
-"""Pydantic wire contracts for Capture Runtime API v1."""
+"""Pydantic wire contracts for Capture Runtime API v1 and streaming v2."""
 
 from __future__ import annotations
 
@@ -104,6 +104,12 @@ class RuntimeInstallationStatus(StrEnum):
     FAILED = "failed"
     CANCELLED = "cancelled"
     MANUAL_ACTION_REQUIRED = "manual_action_required"
+
+
+class RuntimeModelOptionStatus(StrEnum):
+    NOT_INSTALLED = "not-installed"
+    INSTALLED = "installed"
+    ACTIVE = "active"
 
 
 class RuntimeRequirementStatus(StrEnum):
@@ -319,6 +325,46 @@ class StartRuntimeInstallationV1(StrictModel):
     consent: Literal[True]
 
 
+class RuntimeModelOptionV1(StrictModel):
+    option_id: NonEmptyString
+    display_name: NonEmptyString
+    model_reference: NonEmptyString
+    expected_digest: Sha256Hex | None = None
+    expected_bytes: int | None = Field(default=None, ge=1)
+    profile_id: NonEmptyString
+    profile_spec_sha256: Sha256Hex
+    status: RuntimeModelOptionStatus
+
+
+class RuntimeModelOptionsV1(StrictModel):
+    catalog_sha256: Sha256Hex
+    items: list[RuntimeModelOptionV1]
+
+
+class StartRuntimeModelInstallationV1(StrictModel):
+    option_id: NonEmptyString
+    consent: Literal[True]
+
+
+class RuntimeModelInstallationV1(StrictModel):
+    installation_id: str
+    option_id: NonEmptyString
+    status: RuntimeInstallationStatus
+    progress: float = Field(ge=0, le=1)
+    error: CaptureFailureV1 | None = None
+    created_at: datetime
+    updated_at: datetime
+    completed_at: datetime | None = None
+
+    _aware_times = field_validator("created_at", "updated_at", "completed_at")(
+        lambda value: None if value is None else _require_aware(value)
+    )
+
+
+class RuntimeModelInstallationsV1(StrictModel):
+    items: list[RuntimeModelInstallationV1]
+
+
 class RuntimeInstallationV1(StrictModel):
     installation_id: str
     requirement_id: CaptureRequirementId
@@ -336,6 +382,205 @@ class RuntimeInstallationV1(StrictModel):
 
 class RuntimeInstallationsV1(StrictModel):
     items: list[RuntimeInstallationV1]
+
+
+class StreamingIngestionMode(StrEnum):
+    FILE = "file"
+
+
+class StreamingIngestionStatus(StrEnum):
+    OPEN = "open"
+    FINALIZING = "finalizing"
+    READY = "ready"
+    CANCELLED = "cancelled"
+    FAILED = "failed"
+    EXPIRED = "expired"
+
+
+class StreamingCaptureStatus(StrEnum):
+    CREATED = "created"
+    WAITING_INPUT = "waiting_input"
+    EXTRACTING = "extracting"
+    AWAITING_STRUCTURING = "awaiting_structuring"
+    STRUCTURING = "structuring"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class StreamingEventType(StrEnum):
+    ACCEPTED = "accepted"
+    INPUT_CHECKPOINT = "input_checkpoint"
+    HEARTBEAT = "heartbeat"
+    SEGMENT = "segment"
+    CHECKPOINT = "checkpoint"
+    RESYNC_REQUIRED = "resync_required"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class OpenIngestionV2(StrictModel):
+    protocol_version: Literal["2"] = "2"
+    kind: Literal["audio"] = "audio"
+    mode: StreamingIngestionMode = StreamingIngestionMode.FILE
+    client_request_id: NonEmptyString
+    file_name: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)
+    ]
+    media_type: NonEmptyString
+    total_bytes: int = Field(gt=0)
+    source_sha256: Sha256Hex | None = None
+
+
+class IngestionV2(StrictModel):
+    protocol_version: Literal["2"] = "2"
+    ingestion_id: NonEmptyString
+    status: StreamingIngestionStatus
+    file_name: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)
+    ]
+    media_type: NonEmptyString
+    total_bytes: int = Field(gt=0)
+    received_bytes: int = Field(ge=0)
+    contiguous_bytes: int = Field(ge=0)
+    next_chunk_index: int = Field(ge=0)
+    next_offset: int = Field(ge=0)
+    source_sha256: Sha256Hex | None = None
+    finalized_sha256: Sha256Hex | None = None
+    expires_at: datetime
+
+    _aware_expires_at = field_validator("expires_at")(_require_aware)
+
+    @model_validator(mode="after")
+    def validate_progress(self) -> Self:
+        if self.received_bytes > self.total_bytes:
+            raise ValueError("receivedBytes must not exceed totalBytes")
+        if self.contiguous_bytes > self.received_bytes:
+            raise ValueError("contiguousBytes must not exceed receivedBytes")
+        if self.next_offset != self.contiguous_bytes:
+            raise ValueError("nextOffset must equal contiguousBytes")
+        if self.status is StreamingIngestionStatus.READY:
+            if self.received_bytes != self.total_bytes or self.finalized_sha256 is None:
+                raise ValueError("ready ingestion must be complete and checksummed")
+        return self
+
+
+class StartCaptureV2(StrictModel):
+    protocol_version: Literal["2"] = "2"
+    client_request_id: NonEmptyString
+    ingestion_id: NonEmptyString
+    structuring_mode: StructuringMode
+    target_language: str | None = None
+    start_policy: Literal["eager"] = "eager"
+
+    @field_validator("target_language")
+    @classmethod
+    def validate_target_language(cls, value: str | None) -> str | None:
+        if value is not None and not 1 <= len(value) <= 64:
+            raise ValueError("targetLanguage must be 1 to 64 characters")
+        return value
+
+
+class FinalizeIngestionV2(StrictModel):
+    protocol_version: Literal["2"] = "2"
+    total_bytes: int = Field(gt=0)
+    sha256: Sha256Hex
+
+
+class CaptureFailureV2(StrictModel):
+    code: Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_]{1,63}$")]
+    message: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
+    stage: NonEmptyString | None = None
+    retryable: bool = False
+
+
+class CaptureOperationV2(StrictModel):
+    protocol_version: Literal["2"] = "2"
+    capture_id: NonEmptyString
+    ingestion_id: NonEmptyString
+    status: StreamingCaptureStatus
+    progress: float | None = Field(default=None, ge=0, le=1)
+    partial_revision: int = Field(ge=0)
+    last_event_sequence: int = Field(ge=0)
+    source: CaptureSourceV1 | None = None
+    error: CaptureFailureV2 | None = None
+    created_at: datetime
+    updated_at: datetime
+    completed_at: datetime | None = None
+
+    _aware_times = field_validator("created_at", "updated_at", "completed_at")(
+        lambda value: None if value is None else _require_aware(value)
+    )
+
+    @model_validator(mode="after")
+    def validate_state(self) -> Self:
+        terminal = {
+            StreamingCaptureStatus.COMPLETED,
+            StreamingCaptureStatus.FAILED,
+            StreamingCaptureStatus.CANCELLED,
+        }
+        if (self.status in terminal) != (self.completed_at is not None):
+            raise ValueError("terminal streaming captures must have completedAt")
+        return self
+
+
+class PartialCaptureV2(StrictModel):
+    protocol_version: Literal["2"] = "2"
+    capture_id: NonEmptyString
+    source: CaptureSourceV1
+    revision: int = Field(ge=0)
+    covered_until_ms: int = Field(ge=0)
+    segments: list[RawCaptureSegmentV1] = Field(default_factory=list, max_length=10_000)
+    source_text: Annotated[str, StringConstraints(max_length=8_000_000)] = ""
+    extraction_engine: CaptureEngineV1 | None = None
+    updated_at: datetime
+
+    _aware_updated_at = field_validator("updated_at")(_require_aware)
+
+    @model_validator(mode="after")
+    def validate_projection(self) -> Self:
+        if [segment.order for segment in self.segments] != list(range(len(self.segments))):
+            raise ValueError("partial segment order must be contiguous")
+        expected_text = project_source_text(self.segments) if self.segments else ""
+        if self.source_text != expected_text:
+            raise ValueError("sourceText must be the exact partial segment projection")
+        return self
+
+
+class CaptureEventV2(StrictModel):
+    protocol_version: Literal["2"] = "2"
+    event_id: NonEmptyString
+    sequence: int = Field(ge=0)
+    capture_id: NonEmptyString
+    event_type: StreamingEventType
+    stage: NonEmptyString
+    partial_revision: int | None = Field(default=None, ge=0)
+    covered_until_ms: int | None = Field(default=None, ge=0)
+    segments: list[RawCaptureSegmentV1] = Field(default_factory=list, max_length=1_000)
+    error: CaptureFailureV2 | None = None
+    created_at: datetime
+
+    _aware_created_at = field_validator("created_at")(_require_aware)
+
+    @model_validator(mode="after")
+    def validate_event_payload(self) -> Self:
+        if self.event_type is StreamingEventType.SEGMENT and not self.segments:
+            raise ValueError("segment events must contain at least one segment")
+        if self.event_type is StreamingEventType.FAILED and self.error is None:
+            raise ValueError("failed events must contain an error")
+        if self.event_type is not StreamingEventType.FAILED and self.error is not None:
+            raise ValueError("only failed events may contain an error")
+        return self
+
+
+class RuntimeStreamingCapabilitiesV2(StrictModel):
+    protocol_version: Literal["2"] = "2"
+    supports_progressive_audio: Literal[True] = True
+    max_chunk_bytes: int = Field(gt=0, le=4 * 1024 * 1024)
+    checkpoint_interval_ms: int = Field(gt=0)
+    heartbeat_interval_ms: int = Field(gt=0)
+    stall_timeout_ms: int = Field(gt=0)
 
 
 class RuntimeCapabilitiesV1(StrictModel):

@@ -2,10 +2,7 @@ use std::{collections::HashSet, path::PathBuf};
 
 use capture_sidecar_launcher::{generate_bearer_token, reserve_distinct_loopback_port};
 
-use crate::constants::{
-    DEFAULT_MAX_UPLOAD_BYTES, DEFAULT_RETENTION_HOURS, LOOPBACK_HOST, WORKBENCH_OLLAMA_MODEL,
-    WORKBENCH_OLLAMA_PROFILE,
-};
+use crate::constants::{DEFAULT_MAX_UPLOAD_BYTES, DEFAULT_RETENTION_HOURS, LOOPBACK_HOST};
 
 pub(crate) struct LaunchPolicy {
     pub(crate) runtime_port: u16,
@@ -36,6 +33,11 @@ impl LaunchPolicy {
         if cfg!(debug_assertions) {
             origins.push("http://localhost:4200");
         }
+        let smoke_worker_mirror_opt_in = std::env::var("CAPTURE_SMOKE_WORKER_MIRROR_OPT_IN").ok();
+        let whisper_cpu_fallback = whisper_cpu_fallback_enabled(
+            smoke_worker_mirror_opt_in.clone(),
+            std::env::var("CAPTURE_WHISPER_ALLOW_CPU_FALLBACK").ok(),
+        );
         let mut environment = vec![
             ("CAPTURE_HOST", LOOPBACK_HOST.into()),
             ("CAPTURE_PORT", self.runtime_port.to_string()),
@@ -51,6 +53,11 @@ impl LaunchPolicy {
                 self.runtime_data_dir().to_string_lossy().into_owned(),
             ),
             ("CAPTURE_STRUCTURING_PROVIDER", "ollama".into()),
+            ("CAPTURE_WHISPER_PREFER_GPU", "true".into()),
+            (
+                "CAPTURE_WHISPER_ALLOW_CPU_FALLBACK",
+                whisper_cpu_fallback.to_string(),
+            ),
             (
                 "CAPTURE_RETENTION_HOURS",
                 DEFAULT_RETENTION_HOURS.to_string(),
@@ -71,8 +78,6 @@ impl LaunchPolicy {
                 "CAPTURE_OLLAMA_PID_FILE",
                 self.ollama_pid_file().to_string_lossy().into_owned(),
             ),
-            ("CAPTURE_OLLAMA_MODEL", WORKBENCH_OLLAMA_MODEL.into()),
-            ("CAPTURE_OLLAMA_PROFILE_ID", WORKBENCH_OLLAMA_PROFILE.into()),
             (
                 "OLLAMA_HOST",
                 format!("{LOOPBACK_HOST}:{}", self.ollama_port),
@@ -82,8 +87,11 @@ impl LaunchPolicy {
                 self.ollama_models_dir().to_string_lossy().into_owned(),
             ),
         ];
+        if let Some(cuda_path) = configured_cuda_path(std::env::var("CUDA_PATH").ok()) {
+            environment.push(("CUDA_PATH", cuda_path));
+        }
         if let Some(mirror_url) = smoke_worker_mirror_url(
-            std::env::var("CAPTURE_SMOKE_WORKER_MIRROR_OPT_IN").ok(),
+            smoke_worker_mirror_opt_in,
             std::env::var("CAPTURE_SMOKE_WORKER_MIRROR_URL").ok(),
         ) {
             environment.push(("CAPTURE_SMOKE_WORKER_MIRROR_OPT_IN", "1".into()));
@@ -91,6 +99,22 @@ impl LaunchPolicy {
         }
         environment
     }
+}
+
+fn configured_cuda_path(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+}
+
+fn whisper_cpu_fallback_enabled(
+    smoke_worker_mirror_opt_in: Option<String>,
+    value: Option<String>,
+) -> bool {
+    if smoke_worker_mirror_opt_in.as_deref().map(str::trim) != Some("1") {
+        return true;
+    }
+    value.as_deref().map(str::trim) == Some("true")
 }
 
 fn smoke_worker_mirror_url(opt_in: Option<String>, raw_url: Option<String>) -> Option<String> {
@@ -151,7 +175,50 @@ impl LaunchPolicyFactory {
 
 #[cfg(test)]
 mod tests {
-    use super::smoke_worker_mirror_url;
+    use std::path::PathBuf;
+
+    use super::{
+        configured_cuda_path, smoke_worker_mirror_url, whisper_cpu_fallback_enabled, LaunchPolicy,
+    };
+
+    #[test]
+    fn runtime_environment_explicitly_prefers_whisper_gpu() {
+        let environment = LaunchPolicy {
+            runtime_port: 43123,
+            ollama_port: 43124,
+            token: "a".repeat(64),
+            data_dir: PathBuf::from("C:\\capture-workbench"),
+        }
+        .environment();
+
+        assert!(environment
+            .iter()
+            .any(|(name, value)| { *name == "CAPTURE_WHISPER_PREFER_GPU" && value == "true" }));
+    }
+
+    #[test]
+    fn configured_cuda_path_ignores_missing_or_blank_values() {
+        assert_eq!(configured_cuda_path(None), None);
+        assert_eq!(configured_cuda_path(Some("   ".into())), None);
+        assert_eq!(
+            configured_cuda_path(Some("  C:\\CUDA  ".into())),
+            Some("C:\\CUDA".into())
+        );
+    }
+
+    #[test]
+    fn source_lock_model_smoke_can_disable_whisper_cpu_fallback() {
+        assert!(!whisper_cpu_fallback_enabled(
+            Some("1".into()),
+            Some("false".into())
+        ));
+        assert!(whisper_cpu_fallback_enabled(
+            Some("1".into()),
+            Some("true".into())
+        ));
+        assert!(!whisper_cpu_fallback_enabled(Some("1".into()), None));
+        assert!(whisper_cpu_fallback_enabled(None, Some("false".into())));
+    }
 
     #[test]
     fn smoke_worker_mirror_requires_explicit_numeric_loopback_opt_in() {

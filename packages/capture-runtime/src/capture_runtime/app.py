@@ -25,8 +25,13 @@ from capture_runtime.ollama import ProcessController, RuntimeInstaller
 from capture_runtime.routes.capture import register_capture_routes
 from capture_runtime.routes.common import ApiProblem, error_response
 from capture_runtime.routes.runtime import register_runtime_routes
+from capture_runtime.routes.streaming import register_streaming_routes
 from capture_runtime.services import InvalidJobStateError, RecordNotFoundError
-from capture_runtime.storage import CaptureRepository, InstallationRepository
+from capture_runtime.storage import (
+    CaptureRepository,
+    InstallationRepository,
+    ModelInstallationRepository,
+)
 from capture_runtime.structuring_provider import CaptureStructuringProvider
 
 
@@ -99,6 +104,7 @@ def create_app(
     dependencies: RuntimeDependencies | None = None,
     capture_repository: CaptureRepository | None = None,
     installation_repository: InstallationRepository | None = None,
+    model_installation_repository: ModelInstallationRepository | None = None,
 ) -> FastAPI:
     """Create one isolated runtime app and its dependency graph.
 
@@ -117,20 +123,28 @@ def create_app(
         process_controller=process_controller,
         capture_repository=capture_repository,
         installation_repository=installation_repository,
+        model_installation_repository=model_installation_repository,
     )
     runtime_settings = runtime_dependencies.settings
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         runtime_dependencies.staging_root.mkdir(parents=True, exist_ok=True)
-        for abandoned_upload in runtime_dependencies.staging_root.glob("*.upload"):
+        for abandoned_upload in (
+            *runtime_dependencies.staging_root.glob("*.upload"),
+            *runtime_dependencies.staging_root.glob("*.spool"),
+        ):
             abandoned_upload.unlink(missing_ok=True)
         runtime_dependencies.capture_repository.initialize()
+        runtime_dependencies.streaming_repository.initialize()
         runtime_dependencies.installation_repository.initialize()
+        runtime_dependencies.model_installation_repository.initialize()
         try:
             yield
         finally:
             await runtime_dependencies.installation_service.shutdown()
+            await runtime_dependencies.model_installation_service.shutdown()
+            await runtime_dependencies.streaming_capture_service.shutdown()
             await runtime_dependencies.capture_service.shutdown()
             await runtime_dependencies.engine_manager.shutdown()
             runtime_dependencies.lifecycle.stop()
@@ -152,7 +166,11 @@ def create_app(
     app.state.capture_repository = runtime_dependencies.capture_repository
     app.state.installation_repository = runtime_dependencies.installation_repository
     app.state.capture_service = runtime_dependencies.capture_service
+    app.state.streaming_repository = runtime_dependencies.streaming_repository
+    app.state.streaming_capture_service = runtime_dependencies.streaming_capture_service
     app.state.installation_service = runtime_dependencies.installation_service
+    app.state.model_installation_repository = runtime_dependencies.model_installation_repository
+    app.state.model_installation_service = runtime_dependencies.model_installation_service
     app.state.ollama_lifecycle = runtime_dependencies.lifecycle
     app.state.staging_root = runtime_dependencies.staging_root
 
@@ -161,8 +179,16 @@ def create_app(
             CORSMiddleware,
             allow_origins=list(runtime_settings.allowed_origins),
             allow_credentials=False,
-            allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
-            allow_headers=["Accept", "Authorization", "Content-Type", "X-Idempotency-Key"],
+            allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+            allow_headers=[
+                "Accept",
+                "Authorization",
+                "Content-Type",
+                "Content-Range",
+                "Digest",
+                "Last-Event-ID",
+                "X-Idempotency-Key",
+            ],
         )
     app.add_middleware(
         CandidateBodyLimitMiddleware,
@@ -197,7 +223,9 @@ def create_app(
                     413, "candidate_too_large", "Structured candidate exceeds the size limit."
                 )
         runtime_dependencies.capture_repository.prune_expired()
+        runtime_dependencies.streaming_repository.prune_expired()
         runtime_dependencies.installation_repository.prune_expired()
+        runtime_dependencies.model_installation_repository.prune_expired()
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Cache-Control"] = "no-store"
@@ -273,6 +301,9 @@ def create_app(
     register_runtime_routes(router, runtime_dependencies)
     register_capture_routes(router, runtime_dependencies)
     app.include_router(router)
+    streaming_router = APIRouter(prefix="/v2", dependencies=[Depends(authenticate)])
+    register_streaming_routes(streaming_router, runtime_dependencies)
+    app.include_router(streaming_router)
     return app
 
 

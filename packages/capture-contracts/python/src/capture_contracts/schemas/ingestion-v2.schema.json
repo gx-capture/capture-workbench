@@ -1,0 +1,114 @@
+{
+  "$defs": {
+    "StreamingIngestionStatus": {
+      "enum": [
+        "open",
+        "finalizing",
+        "ready",
+        "cancelled",
+        "failed",
+        "expired"
+      ],
+      "title": "StreamingIngestionStatus",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "protocolVersion": {
+      "const": "2",
+      "default": "2",
+      "title": "Protocolversion",
+      "type": "string"
+    },
+    "ingestionId": {
+      "minLength": 1,
+      "title": "Ingestionid",
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/StreamingIngestionStatus"
+    },
+    "fileName": {
+      "maxLength": 255,
+      "minLength": 1,
+      "title": "Filename",
+      "type": "string"
+    },
+    "mediaType": {
+      "minLength": 1,
+      "title": "Mediatype",
+      "type": "string"
+    },
+    "totalBytes": {
+      "exclusiveMinimum": 0,
+      "title": "Totalbytes",
+      "type": "integer"
+    },
+    "receivedBytes": {
+      "minimum": 0,
+      "title": "Receivedbytes",
+      "type": "integer"
+    },
+    "contiguousBytes": {
+      "minimum": 0,
+      "title": "Contiguousbytes",
+      "type": "integer"
+    },
+    "nextChunkIndex": {
+      "minimum": 0,
+      "title": "Nextchunkindex",
+      "type": "integer"
+    },
+    "nextOffset": {
+      "minimum": 0,
+      "title": "Nextoffset",
+      "type": "integer"
+    },
+    "sourceSha256": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Sourcesha256"
+    },
+    "finalizedSha256": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Finalizedsha256"
+    },
+    "expiresAt": {
+      "format": "date-time",
+      "title": "Expiresat",
+      "type": "string"
+    }
+  },
+  "required": [
+    "ingestionId",
+    "status",
+    "fileName",
+    "mediaType",
+    "totalBytes",
+    "receivedBytes",
+    "contiguousBytes",
+    "nextChunkIndex",
+    "nextOffset",
+    "expiresAt"
+  ],
+  "title": "IngestionV2",
+  "type": "object"
+}

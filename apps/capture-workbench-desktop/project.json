@@ -45,7 +45,7 @@
         "{projectRoot}/src-tauri/target/x86_64-pc-windows-msvc/release/capture-workbench-desktop.exe"
       ],
       "metadata": {
-        "description": "Builds the release desktop with only the compile-time isolated app-data hook used by the model smoke."
+        "description": "Builds the release desktop with compile-time isolated app-data and keyed fixture-injection hooks used only by the deterministic model smoke."
       },
       "options": {
         "command": "corepack pnpm exec tauri build --target x86_64-pc-windows-msvc --no-bundle --ci --features model-smoke-app-data --config apps/capture-workbench-desktop/src-tauri/tauri.conf.json"
@@ -234,7 +234,7 @@
       "cache": false,
       "executor": "nx:run-commands",
       "metadata": {
-        "description": "Opt-in local Windows Tauri/WebView release gate using the staged OCR and Whisper model catalog with project PDF/image fixtures and a private local audio fixture."
+        "description": "Opt-in local Windows production preflight using a feature-gated deterministic picker bypass for prepared PDF/image/audio fixtures; private inputs are never uploaded and this is not native-picker or candidate-release evidence."
       },
       "outputs": [
         "{workspaceRoot}/tmp/capture-workbench-desktop/real-media-model/real-media-model.json"

@@ -10,8 +10,10 @@ runtime-owned isolated Ollama structuring.
 ## Product boundary
 
 - Windows 11 x64 only.
-- The desktop host uses `CAPTURE_STRUCTURING_PROVIDER=ollama` and the existing
-  isolated `qwen3.5:4b` profile; external Ollama is not a product setting.
+- The desktop host uses `CAPTURE_STRUCTURING_PROVIDER=ollama` with a
+  runtime-owned, user-selected allowlisted model profile; the release does not
+  force or bundle a fixed Qwen model, and external Ollama is not a product
+  setting.
 - `@gx-capture/capture-workbench`, `/v1`, and `CaptureDocumentV1` remain
   compatible public contracts.
 - The app owns saved source copies, raw diagnostics, structured results, and

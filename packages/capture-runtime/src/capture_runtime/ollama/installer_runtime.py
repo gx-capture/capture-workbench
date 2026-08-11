@@ -195,3 +195,11 @@ class RuntimeInstaller(Protocol):
         cancel_event: asyncio.Event,
         report_progress: Callable[[float], None],
     ) -> None: ...
+
+    async def install_model_option(
+        self,
+        option_id: str,
+        *,
+        cancel_event: asyncio.Event,
+        report_progress: Callable[[float], None],
+    ) -> None: ...

@@ -1,0 +1,72 @@
+{
+  "$defs": {
+    "StreamingIngestionMode": {
+      "enum": [
+        "file"
+      ],
+      "title": "StreamingIngestionMode",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "protocolVersion": {
+      "const": "2",
+      "default": "2",
+      "title": "Protocolversion",
+      "type": "string"
+    },
+    "kind": {
+      "const": "audio",
+      "default": "audio",
+      "title": "Kind",
+      "type": "string"
+    },
+    "mode": {
+      "$ref": "#/$defs/StreamingIngestionMode",
+      "default": "file"
+    },
+    "clientRequestId": {
+      "minLength": 1,
+      "title": "Clientrequestid",
+      "type": "string"
+    },
+    "fileName": {
+      "maxLength": 255,
+      "minLength": 1,
+      "title": "Filename",
+      "type": "string"
+    },
+    "mediaType": {
+      "minLength": 1,
+      "title": "Mediatype",
+      "type": "string"
+    },
+    "totalBytes": {
+      "exclusiveMinimum": 0,
+      "title": "Totalbytes",
+      "type": "integer"
+    },
+    "sourceSha256": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Sourcesha256"
+    }
+  },
+  "required": [
+    "clientRequestId",
+    "fileName",
+    "mediaType",
+    "totalBytes"
+  ],
+  "title": "OpenIngestionV2",
+  "type": "object"
+}

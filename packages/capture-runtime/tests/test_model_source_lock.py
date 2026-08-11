@@ -27,11 +27,18 @@ def _load_module() -> ModuleType:
 model_source_lock = _load_module()
 
 
-def test_pending_production_lock_is_canonical_model_enabled() -> None:
+def test_approved_production_lock_is_canonical_model_enabled() -> None:
     source = (
         Path(__file__).resolve().parents[1] / "model-sources" / "release-model-source-lock.json"
     )
     lock = model_source_lock.load_source_lock(source, require_approved=False)
+    assert lock["approval"]["status"] == "approved"
+    assert lock["approval"]["blockers"] == []
+    whisper = lock["fixtures"][1]
+    assert whisper["expectedEngine"] == "whisper-primary"
+    assert whisper["expectedModel"] == "large-v3-turbo"
+    assert whisper["expectedDevice"] == "cuda"
+    assert len(whisper["expectedNormalizedOutputSha256"]) == 64
     assert [item["requirementId"] for item in lock["requirements"]] == [
         "windowsml-ocr",
         "whisper-primary",
@@ -226,6 +233,10 @@ def test_approved_lock_generates_checksum_pinned_manifest_equivalent(
         (
             lambda payload: payload["fixtures"][1].update({"expectedDevice": "dml"}),
             "model/device pair",
+        ),
+        (
+            lambda payload: payload["fixtures"][1].update({"preferGpu": "true"}),
+            "private Whisper GPU preference is invalid",
         ),
         (
             lambda payload: payload["fixtures"][1].update(

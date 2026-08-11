@@ -111,7 +111,7 @@ test('real-media runtime environment removes ambient provider and model override
       ocrModel: 'pp-ocrv6-medium-windowsml',
       whisperModel: 'small',
       whisperDevice: 'cpu',
-      whisperPreferGpu: false,
+      whisperPreferGpu: true,
     },
     {
       PATH: 'C:\\Windows\\System32',
@@ -129,7 +129,7 @@ test('real-media runtime environment removes ambient provider and model override
   assert.equal(environment.CAPTURE_WHISPER_MODELS_DIR, undefined);
   assert.equal(environment.CAPTURE_REAL_MEDIA_PDF, undefined);
   assert.equal(environment.OLLAMA_MODELS, undefined);
-  assert.equal(environment.CAPTURE_WHISPER_PREFER_GPU, 'false');
+  assert.equal(environment.CAPTURE_WHISPER_PREFER_GPU, 'true');
 });
 
 test('source-lock Whisper role is the production worker model provenance', () => {
@@ -146,14 +146,14 @@ test('source-lock Whisper role is the production worker model provenance', () =>
         expectedEngine: 'whisper-primary',
         expectedModel: 'fallback',
         expectedDevice: 'cpu',
-        preferGpu: false,
+        preferGpu: true,
       },
     ],
   });
 
   assert.equal(expected.whisperModel, 'fallback');
   assert.equal(expected.whisperDevice, 'cpu');
-  assert.equal(expected.whisperPreferGpu, false);
+  assert.equal(expected.whisperPreferGpu, true);
 });
 
 test('owned runtime evidence keeps descendant and listener identities bounded', () => {

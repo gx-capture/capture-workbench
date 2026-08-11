@@ -18,6 +18,7 @@ from capture_runtime.clock import SystemClock
 from capture_runtime.config import ExtractionRuntimeConfig, OllamaRuntimeConfig, RuntimeSettings
 from capture_runtime.contracts import RuntimeRequirementStatus
 from capture_runtime.engine_adapters import EngineProbe
+from capture_runtime.model_catalog import ActiveModelSelectionStore, model_option
 from capture_runtime.ollama import (
     CommandResult,
     FakeRuntimeInstaller,
@@ -80,22 +81,31 @@ def _ollama_config(tmp_path: Path) -> OllamaRuntimeConfig:
     )
 
 
-def _record_installed_profile(config: OllamaRuntimeConfig) -> None:
+def _record_installed_profile(
+    config: OllamaRuntimeConfig,
+    option_id: str = "qwen3.5-4b-v1",
+) -> None:
+    option = model_option(option_id)
     modelfile = config.app_data_dir / "Capture.Modelfile"
     modelfile.parent.mkdir(parents=True, exist_ok=True)
-    modelfile.write_text(f"FROM {config.base_model}\n", encoding="utf-8")
+    modelfile.write_bytes(option.profile_spec_bytes)
     marker = config.app_data_dir / "requirements" / "capture-ollama-model.ready.json"
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.write_text(
         json.dumps(
             {
-                "profileId": config.profile_id,
-                "baseModel": config.base_model,
+                "profileId": option.profile_id,
+                "baseModel": option.model_reference,
                 "modelfileSha256": hashlib.sha256(modelfile.read_bytes()).hexdigest(),
                 "installedAt": "2026-07-22T00:00:00+00:00",
             }
         ),
         encoding="utf-8",
+    )
+    ActiveModelSelectionStore(config.app_data_dir).save(
+        option,
+        observed_digest="a" * 64,
+        observed_bytes=123,
     )
 
 
@@ -167,36 +177,41 @@ def test_lifecycle_start_is_idempotent_and_uses_only_isolated_state(tmp_path: Pa
     assert controller.environments[0]["OLLAMA_MODELS"] == str(config.models_dir)
 
 
-def test_installer_lazily_starts_once_and_recovers_stored_profile(
+def test_requirements_reads_stored_profile_without_starting_or_probing_ollama(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     controller = FakeProcessController()
     installer, lifecycle = _installer(tmp_path, controller)
     _record_installed_profile(lifecycle.config)
-    calls = 0
 
-    def get_tags(*_args: object, **_kwargs: object) -> httpx.Response:
-        nonlocal calls
-        calls += 1
-        if calls == 1:
-            raise httpx.ConnectError("isolated Ollama is still starting")
-        return _tags_response(
-            lifecycle.config,
-            [
-                {
-                    "name": f"{lifecycle.config.profile_id}:latest",
-                    "digest": "a" * 64,
-                }
-            ],
-        )
+    def reject_probe(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("requirements discovery must not probe Ollama")
 
-    monkeypatch.setattr(httpx, "get", get_tags)
+    monkeypatch.setattr(httpx, "get", reject_probe)
 
     assert _model_status(installer) is RuntimeRequirementStatus.READY
     assert _model_status(installer) is RuntimeRequirementStatus.READY
-    assert controller.spawned == [["C:/Program Files/Ollama/ollama.exe", "serve"]]
-    assert calls == 3
+    assert controller.spawned == []
+    assert controller.stopped == []
+
+
+def test_requirements_accepts_a_stored_non_default_model_without_starting_ollama(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller = FakeProcessController()
+    installer, lifecycle = _installer(tmp_path, controller)
+    _record_installed_profile(lifecycle.config, "qwen3.5-0.8b-v1")
+
+    def reject_probe(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("requirements discovery must not probe Ollama")
+
+    monkeypatch.setattr(httpx, "get", reject_probe)
+
+    assert _model_status(installer) is RuntimeRequirementStatus.READY
+    assert controller.spawned == []
+    assert controller.stopped == []
 
 
 def test_marker_alone_does_not_make_a_missing_profile_ready(
@@ -206,6 +221,7 @@ def test_marker_alone_does_not_make_a_missing_profile_ready(
     controller = FakeProcessController()
     installer, lifecycle = _installer(tmp_path, controller)
     _record_installed_profile(lifecycle.config)
+    ActiveModelSelectionStore(lifecycle.config.app_data_dir).path.unlink()
     monkeypatch.setattr(
         httpx,
         "get",
@@ -215,33 +231,32 @@ def test_marker_alone_does_not_make_a_missing_profile_ready(
         ),
     )
 
-    assert _model_status(installer) is RuntimeRequirementStatus.INSTALLABLE
-    assert controller.spawned == [["C:/Program Files/Ollama/ollama.exe", "serve"]]
+    assert _model_status(installer) is RuntimeRequirementStatus.MANUAL_ACTION_REQUIRED
+    assert controller.spawned == []
 
 
-def test_model_probe_rejects_a_foreign_response_after_owned_exit(
+def test_requirements_rejects_a_malformed_recorded_model_selection(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     controller = FakeProcessController()
     installer, lifecycle = _installer(tmp_path, controller)
     _record_installed_profile(lifecycle.config)
-    ownership_checks = iter((True, False))
-    monkeypatch.setattr(
-        lifecycle,
-        "owns_running_process",
-        lambda: next(ownership_checks, False),
+    selection = json.loads(
+        ActiveModelSelectionStore(lifecycle.config.app_data_dir).path.read_text(encoding="utf-8")
     )
-    monkeypatch.setattr(
-        httpx,
-        "get",
-        lambda *_args, **_kwargs: _tags_response(
-            lifecycle.config,
-            [{"name": lifecycle.config.profile_id, "digest": "d" * 64}],
-        ),
+    selection["observedModelBytes"] = 0
+    ActiveModelSelectionStore(lifecycle.config.app_data_dir).path.write_text(
+        json.dumps(selection), encoding="utf-8"
     )
 
-    assert _model_status(installer) is RuntimeRequirementStatus.INSTALLABLE
+    def reject_probe(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("invalid recorded state must not probe Ollama")
+
+    monkeypatch.setattr(httpx, "get", reject_probe)
+
+    assert _model_status(installer) is RuntimeRequirementStatus.MANUAL_ACTION_REQUIRED
+    assert controller.spawned == []
 
 
 def test_missing_install_record_does_not_start_ollama(
@@ -256,7 +271,7 @@ def test_missing_install_record_does_not_start_ollama(
 
     monkeypatch.setattr(httpx, "get", reject_probe)
 
-    assert _model_status(installer) is RuntimeRequirementStatus.INSTALLABLE
+    assert _model_status(installer) is RuntimeRequirementStatus.MANUAL_ACTION_REQUIRED
     assert controller.spawned == []
 
 
@@ -285,7 +300,87 @@ def test_profile_marker_hashes_the_exact_windows_modelfile_bytes(tmp_path: Path)
     assert marker["modelfileSha256"] == hashlib.sha256(modelfile.read_bytes()).hexdigest()
 
 
-def test_ownership_failure_never_probes_or_touches_foreign_process(
+def test_model_install_waits_for_owned_ollama_server_before_pull(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class SuccessfulRunner:
+        calls: list[list[str]] = []
+
+        async def run(self, arguments: list[str], **_kwargs: object) -> CommandResult:
+            self.calls.append(arguments)
+            return CommandResult(0, "ok")
+
+    controller = FakeProcessController()
+    installer, lifecycle = _installer(tmp_path, controller)
+    runner = SuccessfulRunner()
+    installer._runner = runner  # noqa: SLF001
+    responses = iter([_tags_response(lifecycle.config, [])])
+    attempts = 0
+
+    def get_with_startup_race(*_args: object, **_kwargs: object) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise httpx.ConnectError("starting")
+        return next(responses)
+
+    monkeypatch.setattr(httpx, "get", get_with_startup_race)
+    monkeypatch.setattr(
+        installer,
+        "_verify_pulled_model",
+        lambda _option: ("a" * 64, 123),
+    )
+
+    asyncio.run(
+        installer.install_model_option(
+            "qwen3.5-0.8b-v1",
+            cancel_event=asyncio.Event(),
+            report_progress=lambda _progress: None,
+        )
+    )
+
+    assert runner.calls[0][1:] == ["pull", "qwen3.5:0.8b"]
+    assert runner.calls[1][1:] == [
+        "create",
+        "capture-workbench-qwen3.5-0.8b-structure-v1",
+        "-f",
+        str(lifecycle.config.app_data_dir / "Capture.Modelfile"),
+    ]
+    assert attempts == 2
+    assert controller.stopped == [4242]
+
+
+def test_model_install_releases_owned_ollama_server_when_pull_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FailingRunner:
+        async def run(self, *_args: object, **_kwargs: object) -> CommandResult:
+            return CommandResult(1, "failed")
+
+    controller = FakeProcessController()
+    installer, lifecycle = _installer(tmp_path, controller)
+    installer._runner = FailingRunner()  # noqa: SLF001
+    monkeypatch.setattr(
+        httpx,
+        "get",
+        lambda *_args, **_kwargs: _tags_response(lifecycle.config, []),
+    )
+
+    with pytest.raises(RuntimeError, match="Ollama model pull failed"):
+        asyncio.run(
+            installer.install_model_option(
+                "qwen3.5-0.8b-v1",
+                cancel_event=asyncio.Event(),
+                report_progress=lambda _progress: None,
+            )
+        )
+
+    assert controller.stopped == [4242]
+
+
+def test_recorded_model_requirements_do_not_touch_a_foreign_process(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -295,11 +390,11 @@ def test_ownership_failure_never_probes_or_touches_foreign_process(
     lifecycle.config.pid_file.write_text('{"pid":7331}', encoding="utf-8")
 
     def reject_probe(*_args: object, **_kwargs: object) -> None:
-        raise AssertionError("ownership failure must not probe the occupied endpoint")
+        raise AssertionError("requirements discovery must not probe the occupied endpoint")
 
     monkeypatch.setattr(httpx, "get", reject_probe)
 
-    assert _model_status(installer) is RuntimeRequirementStatus.INSTALLABLE
+    assert _model_status(installer) is RuntimeRequirementStatus.READY
     lifecycle.stop()
     assert controller.spawned == []
     assert controller.stopped == []
@@ -318,14 +413,11 @@ def test_requirements_api_recovers_installed_profile_after_process_restart(
         "capture_runtime.ollama.shutil.which",
         lambda executable: "C:/Program Files/Ollama/ollama.exe" if executable == "ollama" else None,
     )
-    monkeypatch.setattr(
-        httpx,
-        "get",
-        lambda *_args, **_kwargs: _tags_response(
-            settings.ollama,
-            [{"name": settings.ollama.profile_id, "digest": "c" * 64}],
-        ),
-    )
+
+    def reject_probe(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("requirements discovery must not probe Ollama")
+
+    monkeypatch.setattr(httpx, "get", reject_probe)
     headers = {"Authorization": f"Bearer {TOKEN}"}
 
     controllers = [FakeProcessController(), FakeProcessController()]
@@ -344,11 +436,8 @@ def test_requirements_api_recovers_installed_profile_after_process_restart(
             )
             assert model["status"] == "ready"
 
-    assert [controller.spawned for controller in controllers] == [
-        [["C:/Program Files/Ollama/ollama.exe", "serve"]],
-        [["C:/Program Files/Ollama/ollama.exe", "serve"]],
-    ]
-    assert [controller.stopped for controller in controllers] == [[4242], [4242]]
+    assert [controller.spawned for controller in controllers] == [[], []]
+    assert [controller.stopped for controller in controllers] == [[], []]
 
 
 def test_requirements_api_runs_sync_installer_off_the_event_loop(

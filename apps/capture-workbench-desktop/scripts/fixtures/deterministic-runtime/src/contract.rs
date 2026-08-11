@@ -80,6 +80,27 @@ struct InstallationRecord {
     requirement_id: String,
 }
 
+#[derive(Clone)]
+struct ModelInstallationRecord {
+    installation_id: String,
+    option_id: String,
+}
+
+impl ModelInstallationRecord {
+    fn wire(&self) -> Value {
+        json!({
+            "installationId": self.installation_id,
+            "optionId": self.option_id,
+            "status": "completed",
+            "progress": 1,
+            "error": null,
+            "createdAt": CREATED_AT,
+            "updatedAt": COMPLETED_AT,
+            "completedAt": COMPLETED_AT,
+        })
+    }
+}
+
 impl InstallationRecord {
     fn wire(&self) -> Value {
         json!({
@@ -105,11 +126,14 @@ pub struct FixtureState {
     settings: FixtureSettings,
     next_capture: AtomicUsize,
     next_installation: AtomicUsize,
+    next_model_installation: AtomicUsize,
     captures: Mutex<HashMap<String, CaptureRecord>>,
     capture_idempotency: Mutex<HashMap<String, IdempotencyRecord>>,
     commit_idempotency: Mutex<HashMap<String, IdempotencyRecord>>,
     installations: Mutex<HashMap<String, InstallationRecord>>,
     installation_idempotency: Mutex<HashMap<String, IdempotencyRecord>>,
+    model_installations: Mutex<HashMap<String, ModelInstallationRecord>>,
+    model_installation_idempotency: Mutex<HashMap<String, IdempotencyRecord>>,
 }
 
 impl FixtureState {
@@ -118,11 +142,14 @@ impl FixtureState {
             settings,
             next_capture: AtomicUsize::new(1),
             next_installation: AtomicUsize::new(1),
+            next_model_installation: AtomicUsize::new(1),
             captures: Mutex::new(HashMap::new()),
             capture_idempotency: Mutex::new(HashMap::new()),
             commit_idempotency: Mutex::new(HashMap::new()),
             installations: Mutex::new(HashMap::new()),
             installation_idempotency: Mutex::new(HashMap::new()),
+            model_installations: Mutex::new(HashMap::new()),
+            model_installation_idempotency: Mutex::new(HashMap::new()),
         }
     }
 
@@ -130,11 +157,16 @@ impl FixtureState {
         match (request.method.as_str(), request.path.as_str()) {
             ("GET", "/v1/health/ready") => self.ready(),
             ("GET", "/v1/runtime/requirements") => self.requirements(),
+            ("GET", "/v1/runtime/model-options") => self.model_options(),
             ("GET", "/v1/runtime/installations") => self.list_installations(),
             ("POST", "/v1/runtime/installations") => self.create_installation(&request),
+            ("POST", "/v1/runtime/model-installations") => self.create_model_installation(&request),
             ("POST", "/v1/captures") => self.create_capture(&request),
             _ if request.path.starts_with("/v1/runtime/installations/") => {
                 self.route_installation(&request)
+            }
+            _ if request.path.starts_with("/v1/runtime/model-installations/") => {
+                self.route_model_installation(&request)
             }
             _ if request.path.starts_with("/v1/captures/") => self.route_capture(&request),
             _ => api_error(404, "not_found", "Resource was not found."),
@@ -177,6 +209,20 @@ impl FixtureState {
                         &["structuring"],
                     ),
                 ]
+            }),
+        )
+    }
+
+    fn model_options(&self) -> Response {
+        Response::json(
+            200,
+            json!({
+                "catalogSha256": "a".repeat(64),
+                "items": [
+                    model_option("qwen3.5-0.8b-v1", "Qwen 3.5 0.8B", "qwen3.5:0.8b", "active"),
+                    model_option("qwen3.5-2b-v1", "Qwen 3.5 2B", "qwen3.5:2b", "not-installed"),
+                    model_option("qwen3.5-4b-v1", "Qwen 3.5 4B", "qwen3.5:4b", "not-installed"),
+                ],
             }),
         )
     }
@@ -577,6 +623,60 @@ impl FixtureState {
         Response::json(202, record.wire())
     }
 
+    fn create_model_installation(&self, request: &Request) -> Response {
+        let key = match required_idempotency_key(request) {
+            Ok(key) => key,
+            Err(response) => return response,
+        };
+        let payload: Value = match serde_json::from_slice(&request.body) {
+            Ok(payload) => payload,
+            Err(_) => return validation_error("Request body must be valid JSON."),
+        };
+        let option_id = payload.get("optionId").and_then(Value::as_str);
+        if !option_id.is_some_and(valid_model_option_id)
+            || payload.get("consent").and_then(Value::as_bool) != Some(true)
+        {
+            return validation_error("Runtime model installation payload is invalid.");
+        }
+        let fingerprint = sha256_hex(&request.body);
+        if let Some(existing) = self
+            .model_installation_idempotency
+            .lock()
+            .ok()
+            .and_then(|items| items.get(&key).cloned())
+        {
+            if existing.fingerprint != fingerprint {
+                return api_error(
+                    409,
+                    "idempotency_conflict",
+                    "Idempotency key was already used with a different request.",
+                );
+            }
+            return self.model_installation_response(&existing.resource_id, 202);
+        }
+        let installation_id = format!(
+            "model-installation-{}",
+            self.next_model_installation.fetch_add(1, Ordering::Relaxed)
+        );
+        let record = ModelInstallationRecord {
+            installation_id: installation_id.clone(),
+            option_id: option_id.unwrap_or_default().to_owned(),
+        };
+        if let Ok(mut installations) = self.model_installations.lock() {
+            installations.insert(installation_id.clone(), record.clone());
+        }
+        if let Ok(mut items) = self.model_installation_idempotency.lock() {
+            items.insert(
+                key,
+                IdempotencyRecord {
+                    fingerprint,
+                    resource_id: installation_id,
+                },
+            );
+        }
+        Response::json(202, record.wire())
+    }
+
     fn list_installations(&self) -> Response {
         let mut items = self
             .installations
@@ -612,6 +712,32 @@ impl FixtureState {
             return self.installation_response(relative, 200);
         }
         api_error(404, "not_found", "Resource was not found.")
+    }
+
+    fn route_model_installation(&self, request: &Request) -> Response {
+        let installation_id = request
+            .path
+            .trim_start_matches("/v1/runtime/model-installations/");
+        if request.method == "GET" && !installation_id.contains('/') {
+            return self.model_installation_response(installation_id, 200);
+        }
+        api_error(404, "not_found", "Resource was not found.")
+    }
+
+    fn model_installation_response(&self, installation_id: &str, status: u16) -> Response {
+        let record = self
+            .model_installations
+            .lock()
+            .ok()
+            .and_then(|items| items.get(installation_id).cloned());
+        match record {
+            Some(record) => Response::json(status, record.wire()),
+            None => api_error(
+                404,
+                "installation_not_found",
+                "Model installation job was not found.",
+            ),
+        }
     }
 
     fn installation_response(&self, installation_id: &str, status: u16) -> Response {
@@ -996,6 +1122,23 @@ fn valid_requirement_id(value: &str) -> bool {
         value,
         "windowsml-ocr" | "whisper-primary" | "ollama-runtime" | "capture-ollama-model"
     )
+}
+
+fn valid_model_option_id(value: &str) -> bool {
+    matches!(value, "qwen3.5-0.8b-v1" | "qwen3.5-2b-v1" | "qwen3.5-4b-v1")
+}
+
+fn model_option(option_id: &str, display_name: &str, model_reference: &str, status: &str) -> Value {
+    json!({
+        "optionId": option_id,
+        "displayName": display_name,
+        "modelReference": model_reference,
+        "expectedDigest": null,
+        "expectedBytes": null,
+        "profileId": format!("capture-workbench-{option_id}-structure-v1"),
+        "profileSpecSha256": "b".repeat(64),
+        "status": status,
+    })
 }
 
 fn requirement(

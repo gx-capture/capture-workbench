@@ -17,6 +17,10 @@ _CHILD_PROCESS_ENVIRONMENT_ALLOWLIST = frozenset(
     {
         "APPDATA",
         "COMSPEC",
+        # CTranslate2 uses CUDA_PATH to locate the host CUDA toolkit's
+        # cuBLAS runtime. Keep this single, non-secret locator while
+        # continuing to exclude provider overrides and ambient credentials.
+        "CUDA_PATH",
         "LOCALAPPDATA",
         "NUMBER_OF_PROCESSORS",
         "OS",
@@ -121,6 +125,8 @@ class ExtractionRuntimeConfig:
     whisper_primary_model: str
     whisper_fallback_model: str
     whisper_prefer_gpu: bool
+    whisper_allow_cpu_fallback: bool = True
+    engine_resolution_timeout_seconds: float = 60.0
 
 
 def _external_ollama_endpoint(value: str) -> str:
@@ -242,8 +248,13 @@ class RuntimeSettings:
         max_image_pixels = int(env.get("CAPTURE_MAX_IMAGE_PIXELS", "50000000"))
         ocr_render_scale = float(env.get("CAPTURE_OCR_RENDER_SCALE", "2"))
         max_audio_duration_ms = int(env.get("CAPTURE_MAX_AUDIO_DURATION_MS", "5400000"))
+        engine_resolution_timeout_seconds = float(
+            env.get("CAPTURE_ENGINE_RESOLUTION_TIMEOUT_SECONDS", "60")
+        )
         if max_pdf_pages <= 0 or max_image_pixels <= 0 or max_audio_duration_ms <= 0:
             raise ValueError("Capture extraction limits must be positive")
+        if not 0 < engine_resolution_timeout_seconds <= 300:
+            raise ValueError("CAPTURE_ENGINE_RESOLUTION_TIMEOUT_SECONDS must be between 0 and 300")
         if not 1 <= ocr_render_scale <= 4:
             raise ValueError("CAPTURE_OCR_RENDER_SCALE must be between 1 and 4")
 
@@ -263,7 +274,12 @@ class RuntimeSettings:
             max_audio_duration_ms=max_audio_duration_ms,
             whisper_primary_model=env.get("CAPTURE_WHISPER_PRIMARY_MODEL", "large-v3-turbo"),
             whisper_fallback_model=env.get("CAPTURE_WHISPER_FALLBACK_MODEL", "small"),
+            # Prefer Nvidia CUDA when the bundled ctranslate2 runtime can
+            # initialize it. Diagnostics retain the bounded CPU fallback;
+            # source-lock production verification can explicitly fail closed.
             whisper_prefer_gpu=_bool(env.get("CAPTURE_WHISPER_PREFER_GPU"), True),
+            whisper_allow_cpu_fallback=_bool(env.get("CAPTURE_WHISPER_ALLOW_CPU_FALLBACK"), True),
+            engine_resolution_timeout_seconds=engine_resolution_timeout_seconds,
         )
         supported_whisper_models = {"large-v3-turbo", "small"}
         if {

@@ -6,15 +6,20 @@ import asyncio
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from time import monotonic
 from typing import Any
 
 from capture_runtime.worker_process import (
     DEFAULT_PROBE_TIMEOUT_SECONDS,
     DEFAULT_RUN_TIMEOUT_SECONDS,
+    WorkerExecutionError,
     WorkerProcess,
 )
 
 SHA256_PROVENANCE = re.compile(r"^sha256:[a-f0-9]{64}$")
+WHISPER_CPU_MODEL_LOAD_FAILURE = re.compile(
+    r"(?:at stage |>)whisper-model-load-cpu-failed-[a-z0-9-]+$"
+)
 
 
 class WorkerResultError(ValueError):
@@ -185,20 +190,48 @@ class WorkerClient:
     ) -> WorkerRunResult:
         if not source_path.is_file() or not source_path.is_absolute():
             raise ValueError("worker source path must be an existing absolute file")
-        response = await self.process.request(
-            engine.executable,
-            "run",
-            {
-                "requirementId": engine.requirement_id,
-                "artifactVersion": engine.artifact_version,
-                "modelPath": str(engine.model_dir),
-                "sourcePath": str(source_path),
-                "mediaType": media_type,
-                "options": options,
-            },
-            cancel_event=cancel_event,
-            timeout_seconds=timeout_seconds,
-        )
+        started_at = monotonic()
+        payload: dict[str, object] = {
+            "requirementId": engine.requirement_id,
+            "artifactVersion": engine.artifact_version,
+            "modelPath": str(engine.model_dir),
+            "sourcePath": str(source_path),
+            "mediaType": media_type,
+            "options": options,
+        }
+        try:
+            response = await self.process.request(
+                engine.executable,
+                "run",
+                payload,
+                cancel_event=cancel_event,
+                timeout_seconds=timeout_seconds,
+            )
+        except WorkerExecutionError as error:
+            # A failed CUDA constructor can poison the native ctranslate2
+            # process before its in-process CPU fallback is attempted. Start
+            # a clean worker for that narrow Whisper boundary instead of
+            # retrying inside the contaminated process. The stage is already
+            # allowlisted and contains no source path or backend detail.
+            if (
+                engine.requirement_id != "whisper-primary"
+                or options.get("preferGpu") is not True
+                or options.get("allowCpuFallback", True) is not True
+                or cancel_event.is_set()
+                or WHISPER_CPU_MODEL_LOAD_FAILURE.search(str(error)) is None
+            ):
+                raise
+            remaining_seconds = timeout_seconds - max(0.0, monotonic() - started_at)
+            if remaining_seconds <= 0:
+                raise
+            cpu_options = {**options, "preferGpu": False}
+            response = await self.process.request(
+                engine.executable,
+                "run",
+                {**payload, "options": cpu_options},
+                cancel_event=cancel_event,
+                timeout_seconds=remaining_seconds,
+            )
         assert response.result is not None
         return parse_run_result(response.result)
 

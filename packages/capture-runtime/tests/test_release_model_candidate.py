@@ -79,3 +79,11 @@ def test_candidate_fixture_download_requests_identity_encoding(
 def test_whisper_candidate_uses_bounded_one_hour_audio_budget() -> None:
     assert candidate.WHISPER_CANDIDATE_MAX_DURATION_MS == 3_600_000
     assert candidate.WHISPER_CANDIDATE_TIMEOUT_SECONDS == 3_600
+
+
+def test_cuda_source_lock_candidate_disables_cpu_fallback() -> None:
+    assert candidate._whisper_run_options({"preferGpu": True, "expectedDevice": "cuda"}) == {
+        "maxDurationMs": candidate.WHISPER_CANDIDATE_MAX_DURATION_MS,
+        "preferGpu": True,
+        "allowCpuFallback": False,
+    }

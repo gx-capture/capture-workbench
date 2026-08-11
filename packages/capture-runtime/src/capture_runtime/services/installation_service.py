@@ -14,6 +14,7 @@ from capture_runtime.contracts import (
 from capture_runtime.engine_installation import EngineInstallationError
 from capture_runtime.ollama import ManualActionRequiredError, RuntimeInstaller
 from capture_runtime.storage import InstallationRepository
+from capture_runtime.worker_process import WorkerExecutionError
 
 TERMINAL_INSTALLATION_STATUSES = {
     RuntimeInstallationStatus.COMPLETED,
@@ -21,6 +22,35 @@ TERMINAL_INSTALLATION_STATUSES = {
     RuntimeInstallationStatus.CANCELLED,
     RuntimeInstallationStatus.MANUAL_ACTION_REQUIRED,
 }
+
+
+def installation_failure_code(error: BaseException) -> str:
+    """Classify installation failures without crossing the public error boundary.
+
+    Installer exception messages are deliberately safe, but an unexpected
+    exception used to be collapsed into the same generic code as a checksum,
+    transport, or probe failure. Keep the classifier finite and message-free so
+    paths, URLs, and backend diagnostics cannot leak through the API.
+    """
+
+    if isinstance(error, WorkerExecutionError):
+        return "engine_probe_failed"
+    if isinstance(error, (TimeoutError, OSError)):
+        return "installation_filesystem"
+    if not isinstance(error, EngineInstallationError):
+        return "installation_unexpected"
+    message = str(error).casefold()
+    if "direct model download exhausted bounded retries" in message:
+        return "direct_model_retries_exhausted"
+    if "direct model" in message and "checksum" in message:
+        return "direct_model_checksum"
+    if ("engine artifact" in message or "engine archive" in message) and (
+        "checksum" in message or "byte count" in message or "content-length" in message
+    ):
+        return "worker_archive_integrity"
+    if "probe" in message and "failed" in message:
+        return "engine_probe_failed"
+    return "installation_failed"
 
 
 class InstallationService:
@@ -158,15 +188,15 @@ class InstallationService:
             self._fail(
                 installation_id,
                 status=RuntimeInstallationStatus.FAILED,
-                code="installation_failed",
+                code=installation_failure_code(error),
                 message=str(error)[:500],
                 retryable=True,
             )
-        except Exception:
+        except Exception as error:
             self._fail(
                 installation_id,
                 status=RuntimeInstallationStatus.FAILED,
-                code="installation_failed",
+                code=installation_failure_code(error),
                 message="Runtime requirement installation failed.",
                 retryable=True,
             )

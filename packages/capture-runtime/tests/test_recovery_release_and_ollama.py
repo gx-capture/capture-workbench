@@ -3,6 +3,10 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
+import subprocess
+import sys
+import time
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -25,6 +29,7 @@ from capture_runtime.ollama import (
     IsolatedOllamaLifecycle,
     OllamaOwnershipError,
     OwnedProcess,
+    SubprocessController,
 )
 from capture_runtime.release import (
     build_release_artifacts,
@@ -146,6 +151,27 @@ class FakePopen:
         return None
 
 
+class WaitingFakePopen:
+    def __init__(self, pid: int) -> None:
+        self.pid = pid
+        self.wait_timeouts: list[float] = []
+
+    def poll(self) -> int | None:
+        return None
+
+    def wait(self, timeout: float) -> int:
+        self.wait_timeouts.append(timeout)
+        return 1
+
+    def kill(self) -> None:
+        raise AssertionError("taskkill should release the owned process")
+
+
+class ExitedFakePopen(WaitingFakePopen):
+    def poll(self) -> int | None:
+        return 1
+
+
 class FakeProcessController:
     def __init__(self, *, live_pids: set[int] | None = None) -> None:
         self.live_pids = set(live_pids or ())
@@ -185,10 +211,12 @@ def _ollama_config(tmp_path: Path) -> OllamaRuntimeConfig:
 def test_capture_child_environment_strips_provider_overrides_and_secrets(
     tmp_path: Path,
 ) -> None:
+    cuda_path = tmp_path / "cuda"
     poisoned = {
         "SystemRoot": r"C:\Windows",
         "PATH": r"C:\Windows\System32",
         "TEMP": str(tmp_path),
+        "CUDA_PATH": str(cuda_path),
         "CAPTURE_STRUCTURING_PROVIDER": "fake",
         "CAPTURE_EXTRACTION_PROVIDER": "fake",
         "CAPTURE_OLLAMA_MODEL": "attacker/model",
@@ -203,6 +231,7 @@ def test_capture_child_environment_strips_provider_overrides_and_secrets(
         "SystemRoot": r"C:\Windows",
         "PATH": r"C:\Windows\System32",
         "TEMP": str(tmp_path),
+        "CUDA_PATH": str(cuda_path),
     }
     environment = _ollama_config(tmp_path).process_environment(poisoned)
     assert environment["OLLAMA_HOST"] == "127.0.0.1:11555"
@@ -302,6 +331,132 @@ def test_ollama_lifecycle_stops_only_its_owned_process(tmp_path: Path) -> None:
     lifecycle.stop()
     assert controller.stopped == [4242]
     assert not lifecycle.config.pid_file.exists()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows process-tree release boundary")
+def test_windows_process_controller_waits_for_owned_process_exit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    popen = WaitingFakePopen(4242)
+    output = io.BytesIO()
+    commands: list[list[str]] = []
+
+    def run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(subprocess, "run", run)
+
+    SubprocessController().stop_tree(
+        OwnedProcess(process=popen, output=output)  # type: ignore[arg-type]
+    )
+
+    assert commands == [["taskkill", "/PID", "4242", "/T", "/F"]]
+    assert popen.wait_timeouts == [15]
+    assert output.closed
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows process-tree release boundary")
+def test_windows_process_controller_still_releases_tree_after_parent_exits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    popen = ExitedFakePopen(4242)
+    output = io.BytesIO()
+    commands: list[list[str]] = []
+
+    def run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(subprocess, "run", run)
+
+    SubprocessController().stop_tree(
+        OwnedProcess(process=popen, output=output)  # type: ignore[arg-type]
+    )
+
+    assert commands == [["taskkill", "/PID", "4242", "/T", "/F"]]
+    assert popen.wait_timeouts == [15]
+    assert output.closed
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows process-tree release boundary")
+def test_windows_process_controller_releases_real_descendant_after_parent_exits(
+    tmp_path: Path,
+) -> None:
+    child_code = "import time; time.sleep(60)"
+    parent_code = (
+        "import subprocess,sys,time\n"
+        "from pathlib import Path\n"
+        "gate=Path(sys.argv[2])\n"
+        "pid_file=Path(sys.argv[3])\n"
+        "while not gate.exists():\n"
+        "    time.sleep(0.01)\n"
+        "child=subprocess.Popen([sys.executable,'-c',sys.argv[1]], "
+        "stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, "
+        "stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW); "
+        "pid_file.write_text(str(child.pid), encoding='ascii')"
+    )
+    gate = tmp_path / "start-child"
+    pid_file = tmp_path / "child.pid"
+    controller = SubprocessController()
+    owned = controller.spawn(
+        sys.executable,
+        ["-c", parent_code, child_code, str(gate), str(pid_file)],
+        environment=sanitized_child_environment(),
+        cwd=tmp_path,
+        output_path=tmp_path / "parent.log",
+    )
+    gate.write_text("go", encoding="ascii")
+    deadline = time.monotonic() + 5
+    child_pid: int | None = None
+    while time.monotonic() < deadline:
+        if pid_file.is_file():
+            raw_pid = pid_file.read_text(encoding="ascii").strip()
+            if raw_pid:
+                child_pid = int(raw_pid)
+                break
+        time.sleep(0.01)
+    assert child_pid is not None
+    owned.process.wait(timeout=5)
+
+    try:
+        assert controller.is_pid_running(child_pid)
+        assert _windows_pid_is_live(child_pid)
+        controller.stop_tree(owned)
+        assert not _windows_pid_is_live(child_pid)
+    finally:
+        if _windows_pid_is_live(child_pid):
+            subprocess.run(
+                ["taskkill", "/PID", str(child_pid), "/T", "/F"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                shell=False,
+                check=False,
+                timeout=15,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+
+
+def _windows_pid_is_live(pid: int) -> bool:
+    import ctypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = [ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong]
+    kernel32.OpenProcess.restype = ctypes.c_void_p
+    kernel32.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+    kernel32.WaitForSingleObject.restype = ctypes.c_ulong
+    kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+    kernel32.CloseHandle.restype = ctypes.c_int
+    synchronize = 0x00100000
+    wait_timeout = 0x00000102
+    handle = kernel32.OpenProcess(synchronize, False, pid)
+    if not handle:
+        return False
+    try:
+        return kernel32.WaitForSingleObject(handle, 0) == wait_timeout
+    finally:
+        kernel32.CloseHandle(handle)
 
 
 def test_ollama_lifecycle_refuses_unowned_live_pid(tmp_path: Path) -> None:

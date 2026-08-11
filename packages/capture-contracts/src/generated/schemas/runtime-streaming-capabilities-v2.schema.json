@@ -1,0 +1,46 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "protocolVersion": {
+      "const": "2",
+      "default": "2",
+      "title": "Protocolversion",
+      "type": "string"
+    },
+    "supportsProgressiveAudio": {
+      "const": true,
+      "default": true,
+      "title": "Supportsprogressiveaudio",
+      "type": "boolean"
+    },
+    "maxChunkBytes": {
+      "exclusiveMinimum": 0,
+      "maximum": 4194304,
+      "title": "Maxchunkbytes",
+      "type": "integer"
+    },
+    "checkpointIntervalMs": {
+      "exclusiveMinimum": 0,
+      "title": "Checkpointintervalms",
+      "type": "integer"
+    },
+    "heartbeatIntervalMs": {
+      "exclusiveMinimum": 0,
+      "title": "Heartbeatintervalms",
+      "type": "integer"
+    },
+    "stallTimeoutMs": {
+      "exclusiveMinimum": 0,
+      "title": "Stalltimeoutms",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "maxChunkBytes",
+    "checkpointIntervalMs",
+    "heartbeatIntervalMs",
+    "stallTimeoutMs"
+  ],
+  "title": "RuntimeStreamingCapabilitiesV2",
+  "type": "object"
+}

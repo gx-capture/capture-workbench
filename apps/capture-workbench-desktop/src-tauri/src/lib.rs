@@ -5,6 +5,8 @@ mod contracts;
 mod launch_policy;
 mod launcher;
 mod library;
+#[cfg(feature = "model-smoke-app-data")]
+mod model_smoke_fixtures;
 mod resources;
 mod runtime_client;
 mod state;
@@ -19,12 +21,53 @@ use tauri::Manager;
 pub use config::{BackendConfig, DesktopRuntimeStatus};
 pub use state::DesktopState;
 
+macro_rules! desktop_invoke_handler {
+    ($($extra:path),* $(,)?) => {
+        tauri::generate_handler![
+            commands::desktop_runtime_status,
+            commands::library_import_source,
+            commands::library_update_capture,
+            commands::library_list,
+            commands::library_get,
+            commands::library_export,
+            commands::library_delete,
+            commands::runtime_requirements,
+            commands::runtime_start_installation,
+            commands::runtime_get_installation,
+            commands::runtime_model_options,
+            commands::runtime_start_model_installation,
+            commands::runtime_get_model_installation,
+            commands::runtime_create_capture,
+            commands::runtime_start_streaming_capture,
+            commands::runtime_get_capture,
+            commands::runtime_get_streaming_capture,
+            commands::runtime_get_streaming_events,
+            commands::runtime_get_streaming_partial,
+            commands::runtime_get_streaming_result,
+            commands::runtime_structure_streaming_capture,
+            commands::runtime_cancel_capture,
+            commands::runtime_cancel_streaming_capture,
+            commands::runtime_get_raw,
+            commands::runtime_get_result,
+            commands::runtime_delete_capture,
+            commands::runtime_delete_streaming_capture
+            $(, $extra)*
+        ]
+    };
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let data_dir = app_data_dir(app)?;
+            #[cfg(feature = "model-smoke-app-data")]
+            let model_smoke_fixtures =
+                model_smoke_fixtures::ModelSmokeFixtureRegistry::from_environment(
+                    &data_dir,
+                    &std::env::temp_dir(),
+                )?;
             fs::create_dir_all(&data_dir).map_err(|error| {
                 format!("Capture Workbench app data cannot be created: {error}")
             })?;
@@ -33,6 +76,8 @@ pub fn run() {
             let state = DesktopState::new(data_dir);
             app.manage(Arc::new(library));
             app.manage(state.clone());
+            #[cfg(feature = "model-smoke-app-data")]
+            app.manage(model_smoke_fixtures);
             match resources::resolve_runtime_assets(app) {
                 Ok(assets) => state.start(assets),
                 Err(error) => state.fail(error),
@@ -48,25 +93,16 @@ pub fn run() {
                     state.shutdown();
                 }
             }
-        })
-        .invoke_handler(tauri::generate_handler![
-            commands::desktop_runtime_status,
-            commands::library_import_source,
-            commands::library_update_capture,
-            commands::library_list,
-            commands::library_get,
-            commands::library_export,
-            commands::library_delete,
-            commands::runtime_requirements,
-            commands::runtime_start_installation,
-            commands::runtime_get_installation,
-            commands::runtime_create_capture,
-            commands::runtime_get_capture,
-            commands::runtime_cancel_capture,
-            commands::runtime_get_raw,
-            commands::runtime_get_result,
-            commands::runtime_delete_capture
-        ])
+        });
+
+    #[cfg(feature = "model-smoke-app-data")]
+    let builder = builder.invoke_handler(desktop_invoke_handler!(
+        commands::model_smoke_import_fixture
+    ));
+    #[cfg(not(feature = "model-smoke-app-data"))]
+    let builder = builder.invoke_handler(desktop_invoke_handler!());
+
+    builder
         .run(tauri::generate_context!())
         .expect("failed to run Capture Workbench desktop application");
 }
