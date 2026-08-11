@@ -86,6 +86,16 @@ _TERMINAL_CAPTURE_STATUSES = {
 }
 
 
+def _terminal_status_for_event(
+    event_type: StreamingEventType,
+) -> StreamingCaptureStatus | None:
+    return {
+        StreamingEventType.COMPLETED: StreamingCaptureStatus.COMPLETED,
+        StreamingEventType.FAILED: StreamingCaptureStatus.FAILED,
+        StreamingEventType.CANCELLED: StreamingCaptureStatus.CANCELLED,
+    }.get(event_type)
+
+
 def _sanitize_host_failure(failure: CaptureFailureV2) -> CaptureFailureV2:
     if failure.code == _SAFE_HOST_FAILURE_CODE and failure.message == _SAFE_HOST_FAILURE_MESSAGE:
         return failure.model_copy(update={"stage": "structuring", "retryable": False})
@@ -111,11 +121,25 @@ def _identifier(value: str) -> str:
 def _atomic_json(path: Path, payload: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
-    temporary.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-    os.replace(temporary, path)
+    try:
+        with temporary.open("w", encoding="utf-8") as output:
+            output.write(json.dumps(payload, ensure_ascii=False, indent=2))
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, path)
+        try:
+            directory_fd = os.open(path.parent, os.O_RDONLY)
+        except OSError:
+            directory_fd = None
+        if directory_fd is not None:
+            try:
+                os.fsync(directory_fd)
+            except OSError:
+                pass
+            finally:
+                os.close(directory_fd)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _remove_directory(directory: Path) -> None:
@@ -606,6 +630,13 @@ class StreamingRepository:
             }:
                 return record.operation
             now = self._clock.now()
+            self.append_event(
+                capture_id,
+                event_type=StreamingEventType.CHECKPOINT,
+                stage="awaiting_structuring",
+                progress=0.9,
+                partial_revision=record.operation.partial_revision,
+            )
             record.operation = record.operation.model_copy(
                 update={
                     "status": StreamingCaptureStatus.AWAITING_STRUCTURING,
@@ -614,13 +645,6 @@ class StreamingRepository:
                 }
             )
             self._persist_capture(record)
-            self.append_event(
-                capture_id,
-                event_type=StreamingEventType.CHECKPOINT,
-                stage="awaiting_structuring",
-                progress=0.9,
-                partial_revision=record.operation.partial_revision,
-            )
             return record.operation
 
     def mark_structuring(self, capture_id: str) -> CaptureOperationV2:
@@ -631,6 +655,12 @@ class StreamingRepository:
             if record.operation.status is not StreamingCaptureStatus.AWAITING_STRUCTURING:
                 raise StreamingTransitionError("capture is not awaiting structuring")
             now = self._clock.now()
+            self.append_event(
+                capture_id,
+                event_type=StreamingEventType.CHECKPOINT,
+                stage="structuring",
+                progress=0.95,
+            )
             record.operation = record.operation.model_copy(
                 update={
                     "status": StreamingCaptureStatus.STRUCTURING,
@@ -639,12 +669,6 @@ class StreamingRepository:
                 }
             )
             self._persist_capture(record)
-            self.append_event(
-                capture_id,
-                event_type=StreamingEventType.CHECKPOINT,
-                stage="structuring",
-                progress=0.95,
-            )
             return record.operation
 
     def complete_capture(self, capture_id: str) -> CaptureOperationV2:
@@ -655,6 +679,12 @@ class StreamingRepository:
             if record.operation.status is StreamingCaptureStatus.CANCELLED:
                 return record.operation
             now = self._clock.now()
+            self.append_event(
+                capture_id,
+                event_type=StreamingEventType.COMPLETED,
+                stage="completed",
+                progress=1.0,
+            )
             record.operation = record.operation.model_copy(
                 update={
                     "status": StreamingCaptureStatus.COMPLETED,
@@ -664,12 +694,6 @@ class StreamingRepository:
                 }
             )
             self._persist_capture(record)
-            self.append_event(
-                capture_id,
-                event_type=StreamingEventType.COMPLETED,
-                stage="completed",
-                progress=1.0,
-            )
             return record.operation
 
     def commit_host_result(
@@ -701,6 +725,12 @@ class StreamingRepository:
             record.structure_idempotency_key = idempotency_key
             record.structure_fingerprint = fingerprint
             now = result.completed_at
+            self.append_event(
+                capture_id,
+                event_type=StreamingEventType.COMPLETED,
+                stage="completed",
+                progress=1.0,
+            )
             record.operation = record.operation.model_copy(
                 update={
                     "status": StreamingCaptureStatus.COMPLETED,
@@ -710,12 +740,6 @@ class StreamingRepository:
                 }
             )
             self._persist_capture(record)
-            self.append_event(
-                capture_id,
-                event_type=StreamingEventType.COMPLETED,
-                stage="completed",
-                progress=1.0,
-            )
             return record.operation
 
     def fail_host_structure(
@@ -756,6 +780,13 @@ class StreamingRepository:
             }:
                 return record.operation
             now = self._clock.now()
+            self.append_event(
+                capture_id,
+                event_type=StreamingEventType.FAILED,
+                stage=failure.stage or "failed",
+                progress=record.operation.progress,
+                error=failure,
+            )
             record.operation = record.operation.model_copy(
                 update={
                     "status": StreamingCaptureStatus.FAILED,
@@ -766,13 +797,6 @@ class StreamingRepository:
                 }
             )
             self._persist_capture(record)
-            self.append_event(
-                capture_id,
-                event_type=StreamingEventType.FAILED,
-                stage=failure.stage or "failed",
-                progress=record.operation.progress,
-                error=failure,
-            )
             return record.operation
 
     def read_partial(self, capture_id: str) -> PartialCaptureV2:
@@ -798,6 +822,12 @@ class StreamingRepository:
             if record.operation.status in terminal:
                 return record.operation
             now = self._clock.now()
+            self.append_event(
+                capture_id,
+                event_type=StreamingEventType.CANCELLED,
+                stage="cancelled",
+                progress=record.operation.progress,
+            )
             record.operation = record.operation.model_copy(
                 update={
                     "status": StreamingCaptureStatus.CANCELLED,
@@ -806,12 +836,6 @@ class StreamingRepository:
                 }
             )
             self._persist_capture(record)
-            self.append_event(
-                capture_id,
-                event_type=StreamingEventType.CANCELLED,
-                stage="cancelled",
-                progress=record.operation.progress,
-            )
             return record.operation
 
     def delete_capture(self, capture_id: str) -> None:
@@ -822,11 +846,17 @@ class StreamingRepository:
             directory = self._capture_directory(capture_id)
             if directory.parent.resolve() != (self.root / "captures").resolve():
                 raise RuntimeError("capture directory escaped repository root")
+            # Keep the capture record and directory as the durable recovery
+            # anchor until a private ingestion has been removed successfully.
+            # A failed ingestion delete must leave the capture retryable.
+            self._delete_unreferenced_ingestion(
+                record.operation.ingestion_id,
+                excluding_capture_id=capture_id,
+            )
             _remove_directory(directory)
             self._captures.pop(capture_id, None)
             self._capture_idempotency.pop(record.request.client_request_id, None)
             self._subscribers.pop(capture_id, None)
-            self._delete_unreferenced_ingestion(record.operation.ingestion_id)
 
     def prune_expired(self) -> None:
         with self._lock:
@@ -875,9 +905,15 @@ class StreamingRepository:
             self._ingestions.pop(normalized, None)
             self._ingestion_idempotency.pop(record.request.client_request_id, None)
 
-    def _delete_unreferenced_ingestion(self, ingestion_id: str) -> None:
+    def _delete_unreferenced_ingestion(
+        self,
+        ingestion_id: str,
+        *,
+        excluding_capture_id: str | None = None,
+    ) -> None:
+        excluded = _identifier(excluding_capture_id) if excluding_capture_id else None
         if any(
-            operation.ingestion_id == ingestion_id
+            operation.ingestion_id == ingestion_id and operation.capture_id != excluded
             for operation in (capture.operation for capture in self._captures.values())
         ):
             return
@@ -1030,6 +1066,111 @@ class StreamingRepository:
                 continue
             self._captures[operation.capture_id] = record
             self._capture_idempotency[request.client_request_id] = operation.capture_id
+            self._reconcile_loaded_capture(record)
+
+    def _reconcile_loaded_capture(self, record: _CaptureRecord) -> None:
+        """Make the event log and operation metadata agree after a crash.
+
+        Events are the append-only source of truth for sequence and terminal
+        state.  A transition writes its event before terminal metadata, while
+        this repair handles records written by older versions or a crash in
+        the opposite order.  The repair is idempotent: a second initialize
+        observes the repaired terminal event and does not append another one.
+        """
+        latest = self._latest_persisted_event(record.operation.capture_id)
+        operation = record.operation
+        if latest is None:
+            if operation.status in _TERMINAL_CAPTURE_STATUSES:
+                self._repair_terminal_without_event(record)
+                return
+            if operation.last_event_sequence != 0:
+                record.operation = operation.model_copy(update={"last_event_sequence": 0})
+                self._persist_capture(record)
+            return
+
+        terminal_status = _terminal_status_for_event(latest.event_type)
+        if terminal_status is None and operation.status in _TERMINAL_CAPTURE_STATUSES:
+            self._repair_terminal_without_event(record)
+            return
+
+        updates: dict[str, object] = {}
+        if operation.last_event_sequence != latest.sequence:
+            updates["last_event_sequence"] = latest.sequence
+        if (
+            latest.partial_revision is not None
+            and latest.partial_revision > operation.partial_revision
+        ):
+            updates["partial_revision"] = latest.partial_revision
+        if latest.progress is not None and (
+            operation.progress is None or latest.progress > operation.progress
+        ):
+            updates["progress"] = latest.progress
+        if latest.created_at > operation.updated_at:
+            updates["updated_at"] = latest.created_at
+        if terminal_status is not None:
+            updates.update(
+                {
+                    "status": terminal_status,
+                    "completed_at": latest.created_at,
+                    "error": (
+                        latest.error if terminal_status is StreamingCaptureStatus.FAILED else None
+                    ),
+                }
+            )
+        if updates:
+            record.operation = operation.model_copy(update=updates)
+            self._persist_capture(record)
+
+    def _repair_terminal_without_event(self, record: _CaptureRecord) -> None:
+        """Turn metadata-only terminal state into an explicit failed event."""
+        now = self._clock.now()
+        failure = CaptureFailureV2(
+            code="runtime_state_recovered",
+            message="Capture Runtime recovered terminal metadata without its terminal event.",
+            stage="extraction",
+            retryable=True,
+        )
+        record.operation = record.operation.model_copy(
+            update={
+                "status": StreamingCaptureStatus.EXTRACTING,
+                "error": None,
+                "completed_at": None,
+                "updated_at": now,
+            }
+        )
+        self.append_event(
+            record.operation.capture_id,
+            event_type=StreamingEventType.FAILED,
+            stage="extraction",
+            progress=record.operation.progress,
+            error=failure,
+        )
+        record.operation = record.operation.model_copy(
+            update={
+                "status": StreamingCaptureStatus.FAILED,
+                "error": failure,
+                "updated_at": now,
+                "completed_at": now,
+            }
+        )
+        self._persist_capture(record)
+
+    def _latest_persisted_event(self, capture_id: str) -> CaptureEventV2 | None:
+        path = self._capture_directory(capture_id) / "events.jsonl"
+        latest: CaptureEventV2 | None = None
+        with path.open("r", encoding="utf-8") as event_log:
+            for line in event_log:
+                line = line.rstrip("\r\n")
+                if not line:
+                    continue
+                try:
+                    event = CaptureEventV2.model_validate_json(line)
+                except ValidationError as error:
+                    raise RuntimeError("streaming event log is corrupted") from error
+                if latest is not None and event.sequence <= latest.sequence:
+                    raise RuntimeError("streaming event log sequence is not increasing")
+                latest = event
+        return latest
 
 
 def _file_sha256(path: Path) -> str:

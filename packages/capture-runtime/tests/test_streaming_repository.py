@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -93,6 +94,136 @@ def test_streaming_repository_recovers_ordered_upload_and_event_log(tmp_path: Pa
 
     assert restarted_again.get_capture(capture.capture_id).last_event_sequence == 2
     assert len(restarted_again.read_events(capture.capture_id, after_sequence=-1)) == 2
+
+
+def test_streaming_repository_repairs_terminal_metadata_without_a_terminal_event(
+    tmp_path: Path,
+) -> None:
+    clock = MutableClock()
+    repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+    repository.initialize()
+    ingestion_id, _ = _open(repository, b"audio")
+    capture = repository.create_capture(
+        StartCaptureV2(
+            client_request_id="repository-terminal-metadata-only",
+            ingestion_id=ingestion_id,
+            structuring_mode=StructuringMode.HOST,
+        )
+    )
+
+    metadata_path = repository.root / "captures" / capture.capture_id / "metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["operation"].update(
+        {
+            "status": "completed",
+            "progress": 1,
+            "completedAt": clock.now().isoformat(),
+        }
+    )
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+
+    restarted = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+    restarted.initialize()
+
+    recovered = restarted.get_capture(capture.capture_id)
+    assert recovered.status is StreamingCaptureStatus.FAILED
+    assert recovered.error is not None
+    assert recovered.error.code == "runtime_state_recovered"
+    assert recovered.last_event_sequence == 2
+    assert [
+        event.event_type for event in restarted.read_events(capture.capture_id, after_sequence=-1)
+    ] == [StreamingEventType.ACCEPTED, StreamingEventType.FAILED]
+
+    restarted_again = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+    restarted_again.initialize()
+    assert restarted_again.get_capture(capture.capture_id).last_event_sequence == 2
+    assert len(restarted_again.read_events(capture.capture_id, after_sequence=-1)) == 2
+
+
+def test_streaming_repository_reconciles_terminal_event_when_metadata_is_stale(
+    tmp_path: Path,
+) -> None:
+    clock = MutableClock()
+    repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+    repository.initialize()
+    ingestion_id, _ = _open(repository, b"audio")
+    capture = repository.create_capture(
+        StartCaptureV2(
+            client_request_id="repository-terminal-event-ahead",
+            ingestion_id=ingestion_id,
+            structuring_mode=StructuringMode.HOST,
+        )
+    )
+    event = repository.append_event(
+        capture.capture_id,
+        event_type=StreamingEventType.COMPLETED,
+        stage="completed",
+        progress=1,
+    )
+    metadata_path = repository.root / "captures" / capture.capture_id / "metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["operation"]["status"] = "waiting_input"
+    metadata["operation"]["lastEventSequence"] = 1
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+
+    restarted = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+    restarted.initialize()
+
+    recovered = restarted.get_capture(capture.capture_id)
+    assert recovered.status is StreamingCaptureStatus.COMPLETED
+    assert recovered.last_event_sequence == event.sequence
+    assert recovered.completed_at == event.created_at
+    assert [
+        persisted.event_type
+        for persisted in restarted.read_events(capture.capture_id, after_sequence=-1)
+    ] == [StreamingEventType.ACCEPTED, StreamingEventType.COMPLETED]
+
+
+def test_streaming_repository_keeps_capture_retryable_when_ingestion_delete_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = MutableClock()
+    repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+    repository.initialize()
+    ingestion_id, _ = _open(repository, b"audio")
+    capture = repository.create_capture(
+        StartCaptureV2(
+            client_request_id="repository-ingestion-delete-failure",
+            ingestion_id=ingestion_id,
+            structuring_mode=StructuringMode.HOST,
+        )
+    )
+    repository.cancel_capture(capture.capture_id)
+
+    original_remove = __import__("shutil").rmtree
+
+    def fail_ingestion_once(directory: Path) -> None:
+        if directory.name == ingestion_id:
+            raise OSError("ingestion directory is unavailable")
+        original_remove(directory)
+
+    monkeypatch.setattr(
+        "capture_runtime.storage.streaming_repository.shutil.rmtree",
+        fail_ingestion_once,
+    )
+    with pytest.raises(OSError, match="ingestion directory"):
+        repository.delete_capture(capture.capture_id)
+
+    assert repository.get_capture(capture.capture_id).capture_id == capture.capture_id
+    assert repository.get_ingestion(ingestion_id).ingestion_id == ingestion_id
+    assert (repository.root / "captures" / capture.capture_id).exists()
+    assert (repository.root / "ingestions" / ingestion_id).exists()
+
+    monkeypatch.setattr(
+        "capture_runtime.storage.streaming_repository.shutil.rmtree",
+        original_remove,
+    )
+    repository.delete_capture(capture.capture_id)
+    with pytest.raises(KeyError):
+        repository.get_capture(capture.capture_id)
+    with pytest.raises(KeyError):
+        repository.get_ingestion(ingestion_id)
 
 
 def test_streaming_repository_prunes_expired_terminal_capture_and_ingestion(

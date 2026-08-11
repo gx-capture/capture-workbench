@@ -27,6 +27,14 @@ pub struct RuntimeStreamingCaptureInput {
 pub struct RuntimeStreamingEventsInput {
     pub id: String,
     pub last_event_id: Option<u64>,
+    #[serde(default)]
+    pub stream_request_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeStreamRequestIdInput {
+    pub stream_request_id: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]

@@ -427,6 +427,7 @@ describe('DesktopWorkspaceStore', () => {
     expect(getStreamingEvents).toHaveBeenCalledWith('capture-1', 0);
 
     firstEvents.next([resyncEvent]);
+    firstEvents.complete();
     TestBed.tick();
 
     expect(getStreamingCapture).toHaveBeenCalledTimes(1);
@@ -434,6 +435,7 @@ describe('DesktopWorkspaceStore', () => {
     expect(getStreamingEvents).toHaveBeenNthCalledWith(2, 'capture-1', 7);
 
     secondEvents.next([completedEvent]);
+    secondEvents.complete();
     TestBed.tick();
 
     expect(getStreamingCapture).toHaveBeenCalledTimes(2);
@@ -488,11 +490,16 @@ describe('DesktopWorkspaceStore', () => {
     store.retry(summary.documentId);
     TestBed.tick();
     firstEvents.next([checkpointEvent]);
+    TestBed.tick();
+    expect(getStreamingCapture).not.toHaveBeenCalled();
+    expect(getStreamingEvents).toHaveBeenCalledTimes(1);
+    expect(store.streamingProgressFor(summary.documentId)).toBe(0.6);
     firstEvents.complete();
     TestBed.tick();
 
     expect(getStreamingEvents).toHaveBeenNthCalledWith(2, 'capture-1', 7);
     secondEvents.next([completedEvent]);
+    secondEvents.complete();
     TestBed.tick();
 
     expect(getStreamingCapture).toHaveBeenCalledTimes(2);
@@ -540,6 +547,7 @@ describe('DesktopWorkspaceStore', () => {
     expect(getStreamingEvents).toHaveBeenCalledWith('capture-1', 0);
 
     secondEvents.next([completedEvent]);
+    secondEvents.complete();
     TestBed.tick();
 
     expect(getStreamingEvents).toHaveBeenCalledTimes(2);

@@ -42,6 +42,7 @@ macro_rules! desktop_invoke_handler {
             commands::runtime_get_streaming_capture_by_client_request,
             commands::runtime_get_streaming_events,
             commands::runtime_stream_streaming_events,
+            commands::runtime_cancel_streaming_events,
             commands::runtime_get_streaming_partial,
             commands::runtime_get_streaming_result,
             commands::runtime_structure_streaming_capture,

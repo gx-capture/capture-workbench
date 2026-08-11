@@ -144,6 +144,7 @@ export class HttpCaptureClient implements CaptureClient {
             redirect: 'error',
             signal: options.signal,
             lastEventId: options.lastEventId,
+            expectedCaptureId: id,
           },
         );
       }),

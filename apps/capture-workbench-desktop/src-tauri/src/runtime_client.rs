@@ -1,6 +1,10 @@
 use std::{
     io::{Read, Write},
     net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     time::Duration,
 };
 
@@ -292,18 +296,75 @@ fn request_capture_with_recovery(
         Ok(value) => return Ok(value),
         Err(error) => error,
     };
+    if !is_uncertain_capture_create_error(&first_error) {
+        return Err(first_error);
+    }
     match send() {
         Ok(value) => Ok(value),
-        Err(_) => request_with_headers(
-            config,
-            "GET",
-            &format!("/v2/captures/by-client-request/{client_request_id}"),
-            None,
-            None,
-            &[],
-        )
-        .map_err(|_| first_error),
+        Err(second_error) if is_uncertain_capture_create_error(&second_error) => {
+            let recovered = request_with_headers(
+                config,
+                "GET",
+                &format!("/v2/captures/by-client-request/{client_request_id}"),
+                None,
+                None,
+                &[],
+            )
+            .map_err(|_| first_error)?;
+            validate_recovered_capture(recovered, &body)
+                .map_err(|_| "Capture Runtime recovered a conflicting capture.".to_string())
+        }
+        Err(second_error) => Err(second_error),
     }
+}
+
+fn validate_recovered_capture(value: Value, body: &RequestBody) -> Result<Value, String> {
+    let request: Value = serde_json::from_slice(&body.bytes)
+        .map_err(|_| "Capture recovery request was invalid.".to_string())?;
+    let expected_ingestion_id = request
+        .get("ingestionId")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            "Capture recovery request was missing its ingestion identity.".to_string()
+        })?;
+    let recovered_ingestion_id = value
+        .get("ingestionId")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            "Capture recovery response was missing its ingestion identity.".to_string()
+        })?;
+    if recovered_ingestion_id != expected_ingestion_id
+        || value
+            .get("captureId")
+            .and_then(Value::as_str)
+            .is_none_or(str::is_empty)
+    {
+        return Err("Capture Runtime recovered a conflicting capture.".to_string());
+    }
+    Ok(value)
+}
+
+fn is_uncertain_capture_create_error(error: &str) -> bool {
+    if matches!(
+        error,
+        "Capture Runtime is unavailable."
+            | "Capture Runtime request could not be sent."
+            | "Capture Runtime response could not be read."
+            | "Capture Runtime response was malformed."
+            | "Capture Runtime response was not valid JSON."
+    ) {
+        return true;
+    }
+    let Some(status) = error
+        .strip_prefix("Capture Runtime request was rejected with HTTP ")
+        .and_then(|value| value.strip_suffix('.'))
+        .and_then(|value| value.parse::<u16>().ok())
+    else {
+        return false;
+    };
+    (500..=599).contains(&status)
 }
 
 pub(crate) fn streaming_capture(
@@ -375,6 +436,7 @@ pub(crate) fn stream_streaming_events(
     state: &DesktopState,
     input: RuntimeStreamingEventsInput,
     channel: tauri::ipc::Channel<Value>,
+    cancellation: Option<&Arc<AtomicBool>>,
 ) -> Result<(), String> {
     validate_opaque_id(&input.id)?;
     let config = state.backend_config()?;
@@ -384,6 +446,7 @@ pub(crate) fn stream_streaming_events(
         &format!("/v2/captures/{}/events", input.id),
         last_event_id.as_deref(),
         Some(&input.id),
+        cancellation.map(Arc::as_ref),
         |event| {
             channel
                 .send(event)
@@ -611,6 +674,7 @@ fn request_sse(
         path,
         last_event_id,
         capture_id_from_events_path(path),
+        None,
         |event| {
             events.push(event);
             Ok(())
@@ -624,6 +688,7 @@ fn request_sse_stream<F>(
     path: &str,
     last_event_id: Option<&str>,
     expected_capture_id: Option<&str>,
+    cancellation: Option<&AtomicBool>,
     mut on_event: F,
 ) -> Result<(), String>
 where
@@ -634,7 +699,9 @@ where
     let mut stream = TcpStream::connect_timeout(&address, REQUEST_TIMEOUT)
         .map_err(|_| "Capture Runtime is unavailable.".to_string())?;
     stream
-        .set_read_timeout(Some(REQUEST_TIMEOUT))
+        .set_read_timeout(Some(
+            cancellation.map_or(REQUEST_TIMEOUT, |_| Duration::from_millis(250)),
+        ))
         .map_err(|_| "Capture Runtime connection cannot be configured.".to_string())?;
     stream
         .set_write_timeout(Some(REQUEST_TIMEOUT))
@@ -655,9 +722,9 @@ where
     let mut total_bytes = 0_u64;
     let separator = loop {
         let mut chunk = [0_u8; 8192];
-        let count = stream
-            .read(&mut chunk)
-            .map_err(|_| "Capture Runtime response could not be read.".to_string())?;
+        let Some(count) = read_sse_chunk(&mut stream, &mut chunk, cancellation)? else {
+            return Ok(());
+        };
         if count == 0 {
             return Err("Capture Runtime response was malformed.".to_string());
         }
@@ -698,9 +765,9 @@ where
     parser.feed(&body_prefix, &mut on_event)?;
     loop {
         let mut chunk = [0_u8; 8192];
-        let count = stream
-            .read(&mut chunk)
-            .map_err(|_| "Capture Runtime response could not be read.".to_string())?;
+        let Some(count) = read_sse_chunk(&mut stream, &mut chunk, cancellation)? else {
+            return Ok(());
+        };
         if count == 0 {
             break;
         }
@@ -711,6 +778,31 @@ where
         parser.feed(&chunk[..count], &mut on_event)?;
     }
     parser.finish(&mut on_event)
+}
+
+fn read_sse_chunk(
+    stream: &mut TcpStream,
+    buffer: &mut [u8],
+    cancellation: Option<&AtomicBool>,
+) -> Result<Option<usize>, String> {
+    loop {
+        if cancellation.is_some_and(|value| value.load(Ordering::Acquire)) {
+            return Ok(None);
+        }
+        match stream.read(buffer) {
+            Ok(count) => return Ok(Some(count)),
+            Err(error)
+                if cancellation.is_some()
+                    && matches!(
+                        error.kind(),
+                        std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+                    ) =>
+            {
+                continue;
+            }
+            Err(_) => return Err("Capture Runtime response could not be read.".to_string()),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -1669,7 +1761,7 @@ mod tests {
                 }
                 assert!(request
                     .starts_with("GET /v2/captures/by-client-request/capture-request-2 HTTP/1.1",));
-                let body = r#"{"captureId":"capture-recovered"}"#;
+                let body = r#"{"captureId":"capture-recovered","ingestionId":"ingestion-2"}"#;
                 write!(
                     stream,
                     "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -1689,7 +1781,8 @@ mod tests {
                 capture_document_schema_version: "1".into(),
             },
             RequestBody {
-                bytes: br#"{"clientRequestId":"capture-request-2"}"#.to_vec(),
+                bytes: br#"{"clientRequestId":"capture-request-2","ingestionId":"ingestion-2"}"#
+                    .to_vec(),
                 content_type: "application/json".into(),
             },
             "capture-request-2",
@@ -1738,7 +1831,8 @@ mod tests {
                 capture_document_schema_version: "1".into(),
             },
             RequestBody {
-                bytes: br#"{"clientRequestId":"capture-request-3"}"#.to_vec(),
+                bytes: br#"{"clientRequestId":"capture-request-3","ingestionId":"ingestion-3"}"#
+                    .to_vec(),
                 content_type: "application/json".into(),
             },
             "capture-request-3",
@@ -1746,6 +1840,133 @@ mod tests {
         .expect_err("both create responses and lookup must fail closed");
 
         assert_eq!(error, "Capture Runtime response was not valid JSON.");
+        server.join().expect("server");
+    }
+
+    #[test]
+    fn capture_creation_surfaces_deterministic_conflicts_without_retry_or_lookup() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("listener");
+        let port = listener.local_addr().expect("address").port();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let request = read_http_request(&mut stream);
+            assert!(request.starts_with("POST /v2/captures HTTP/1.1"));
+            write!(
+                stream,
+                "HTTP/1.1 409 Conflict\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            )
+            .expect("conflict response");
+        });
+
+        let error = request_capture_with_recovery(
+            &BackendConfig {
+                base_url: format!("http://127.0.0.1:{port}"),
+                token: "token".into(),
+                runtime_version: "0.3.11".into(),
+                api_version: "1.0".into(),
+                capture_document_schema_version: "1".into(),
+            },
+            RequestBody {
+                bytes:
+                    br#"{"clientRequestId":"capture-conflict","ingestionId":"ingestion-conflict"}"#
+                        .to_vec(),
+                content_type: "application/json".into(),
+            },
+            "capture-conflict",
+        )
+        .expect_err("deterministic conflict");
+
+        assert_eq!(error, "Capture Runtime request was rejected with HTTP 409.");
+        server.join().expect("server");
+    }
+
+    #[test]
+    fn capture_creation_does_not_lookup_after_uncertain_retry_returns_a_conflict() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("listener");
+        let port = listener.local_addr().expect("address").port();
+        let server = thread::spawn(move || {
+            for (attempt, status) in [(0, 503), (1, 409)] {
+                let (mut stream, _) = listener.accept().expect("accept");
+                let request = read_http_request(&mut stream);
+                assert!(request.starts_with("POST /v2/captures HTTP/1.1"));
+                assert!(request.contains("X-Idempotency-Key: capture-conflict-retry"));
+                write!(
+                    stream,
+                    "HTTP/1.1 {status} Response\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .expect("response");
+                assert!(attempt < 2);
+            }
+        });
+
+        let error = request_capture_with_recovery(
+            &BackendConfig {
+                base_url: format!("http://127.0.0.1:{port}"),
+                token: "token".into(),
+                runtime_version: "0.3.11".into(),
+                api_version: "1.0".into(),
+                capture_document_schema_version: "1".into(),
+            },
+            RequestBody {
+                bytes: br#"{"clientRequestId":"capture-conflict-retry","ingestionId":"ingestion-conflict-retry"}"#.to_vec(),
+                content_type: "application/json".into(),
+            },
+            "capture-conflict-retry",
+        )
+        .expect_err("retry conflict");
+
+        assert_eq!(error, "Capture Runtime request was rejected with HTTP 409.");
+        server.join().expect("server");
+    }
+
+    #[test]
+    fn capture_creation_rejects_a_lookup_for_a_different_ingestion() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("listener");
+        let port = listener.local_addr().expect("address").port();
+        let server = thread::spawn(move || {
+            for attempt in 0..3 {
+                let (mut stream, _) = listener.accept().expect("accept");
+                let request = read_http_request(&mut stream);
+                if attempt < 2 {
+                    assert!(request.starts_with("POST /v2/captures HTTP/1.1"));
+                    write!(
+                        stream,
+                        "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                    )
+                    .expect("uncertain response");
+                } else {
+                    assert!(request.starts_with(
+                        "GET /v2/captures/by-client-request/capture-conflict-lookup HTTP/1.1"
+                    ));
+                    let body = r#"{"captureId":"capture-other","ingestionId":"ingestion-other"}"#;
+                    write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    )
+                    .expect("lookup response");
+                }
+            }
+        });
+
+        let error = request_capture_with_recovery(
+            &BackendConfig {
+                base_url: format!("http://127.0.0.1:{port}"),
+                token: "token".into(),
+                runtime_version: "0.3.11".into(),
+                api_version: "1.0".into(),
+                capture_document_schema_version: "1".into(),
+            },
+            RequestBody {
+                bytes: br#"{"clientRequestId":"capture-conflict-lookup","ingestionId":"ingestion-expected"}"#.to_vec(),
+                content_type: "application/json".into(),
+            },
+            "capture-conflict-lookup",
+        )
+        .expect_err("conflicting lookup");
+
+        assert_eq!(error, "Capture Runtime recovered a conflicting capture.");
         server.join().expect("server");
     }
 

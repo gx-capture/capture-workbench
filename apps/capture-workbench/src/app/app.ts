@@ -3,6 +3,7 @@ import {
   Component,
   inject,
 } from '@angular/core';
+import { DecimalPipe } from '@angular/common';
 import { MatButton } from '@angular/material/button';
 import { MatCard } from '@angular/material/card';
 import { MatDivider } from '@angular/material/divider';
@@ -26,6 +27,7 @@ import { DesktopWorkspaceStore } from './services/desktop-workspace.store';
     MatOption,
     MatSelect,
     MatSpinner,
+    DecimalPipe,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
 })

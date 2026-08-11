@@ -32,7 +32,7 @@ describe('captureEventStream', () => {
   it('passes Authorization and Last-Event-ID headers without leaking tokens into URLs', async () => {
     const fetchMock = vi
       .fn<typeof fetch>()
-      .mockResolvedValue(sseResponse([sseFrame(captureEvent(1, 'accepted'))]));
+      .mockResolvedValue(sseResponse([sseFrame(captureEvent(8, 'accepted'))]));
 
     await lastValueFrom(
       captureEventStream(fetchMock, EVENT_URL, {
@@ -57,13 +57,13 @@ describe('captureEventStream', () => {
         ': keep-alive',
         'id: 1',
         'event: accepted',
-        'data: {"eventId":"e1","sequence":1,',
-        'data: "captureId":"capture-1","eventType":"accepted","stage":"extracting","createdAt":"2026-08-11T00:00:00Z"}',
+        'data: {"protocolVersion":"2","eventId":"capture-1/1","sequence":1,',
+        'data: "captureId":"capture-1","kind":"pdf","eventType":"accepted","stage":"extracting","createdAt":"2026-08-11T00:00:00Z"}',
         'x-unknown: ignored',
         '',
         'id: 2',
         'event: completed',
-        'data: {"eventId":"e2","sequence":2,"captureId":"capture-1","eventType":"completed","stage":"completed","createdAt":"2026-08-11T00:00:01Z"}',
+        'data: {"protocolVersion":"2","eventId":"capture-1/2","sequence":2,"captureId":"capture-1","kind":"pdf","eventType":"completed","stage":"completed","createdAt":"2026-08-11T00:00:01Z"}',
       ].join('\n'),
     );
 
@@ -91,7 +91,7 @@ describe('captureEventStream', () => {
     expect(decodeCaptureEventFrame(frames[0])).toMatchObject({ sequence: 2 });
   });
 
-  it('defaults a missing protocolVersion to v2', () => {
+  it('rejects a missing protocolVersion instead of guessing the wire contract', () => {
     const event = captureEvent(1, 'accepted') as unknown as Record<
       string,
       unknown
@@ -99,7 +99,9 @@ describe('captureEventStream', () => {
     delete event['protocolVersion'];
     const frames = parseSseText(`data: ${JSON.stringify(event)}\n\n`);
 
-    expect(decodeCaptureEventFrame(frames[0]).protocolVersion).toBe('2');
+    expect(() => decodeCaptureEventFrame(frames[0])).toThrowError(
+      expect.objectContaining({ code: 'invalid_event_frame' }),
+    );
   });
 
   it('rejects malformed SSE event JSON', async () => {
@@ -154,6 +156,51 @@ describe('captureEventStream', () => {
     expect(() => decodeCaptureEventFrame(frame)).toThrowError(
       expect.objectContaining({ code: 'invalid_event_frame' }),
     );
+  });
+
+  it('binds events to the requested capture and enforces strict stream order', async () => {
+    const first = captureEvent(1, 'accepted');
+    const duplicate = captureEvent(1, 'completed');
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      sseResponse([sseFrame(first), sseFrame(duplicate)]),
+    );
+
+    await expect(
+      lastValueFrom(
+        captureEventStream(fetchMock, EVENT_URL, {
+          expectedCaptureId: 'capture-1',
+        }).pipe(toArray()),
+      ),
+    ).rejects.toMatchObject({ code: 'invalid_event_frame' });
+
+    const otherCapture = { ...captureEvent(2, 'completed'), captureId: 'capture-2' };
+    const mismatchFetch = vi.fn<typeof fetch>().mockResolvedValue(
+      sseResponse([sseFrame(otherCapture)]),
+    );
+    await expect(
+      lastValueFrom(
+        captureEventStream(mismatchFetch, EVENT_URL, {
+          expectedCaptureId: 'capture-1',
+        }),
+      ),
+    ).rejects.toMatchObject({ code: 'invalid_event_frame' });
+  });
+
+  it('rejects malformed segment and failed event payloads', () => {
+    const segment = {
+      ...captureEvent(1, 'segment'),
+      segments: [],
+    } as unknown as CaptureEventV2;
+    const failed = {
+      ...captureEvent(1, 'failed'),
+      error: { code: 'not-valid', message: '' },
+    } as unknown as CaptureEventV2;
+    for (const event of [segment, failed]) {
+      const [frame] = parseSseText(`data: ${JSON.stringify(event)}\n\n`);
+      expect(() => decodeCaptureEventFrame(frame, 'capture-1')).toThrowError(
+        expect.objectContaining({ code: 'invalid_event_frame' }),
+      );
+    }
   });
 
   it('surfaces the canonical error envelope from a non-ok response', async () => {
@@ -214,7 +261,7 @@ function captureEvent(
 ): CaptureEventV2 {
   return {
     protocolVersion: '2',
-    eventId: `event-${sequence}`,
+    eventId: `capture-1/${sequence}`,
     sequence,
     captureId: 'capture-1',
     kind: 'pdf',

@@ -507,7 +507,7 @@ function captureEvent(
 ): CaptureEventV2 {
   return {
     protocolVersion: '2',
-    eventId: `event-${sequence}`,
+    eventId: `capture-1/${sequence}`,
     sequence,
     captureId: 'capture-1',
     kind: 'pdf',

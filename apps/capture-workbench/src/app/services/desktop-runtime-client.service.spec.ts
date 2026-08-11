@@ -68,8 +68,22 @@ describe('DesktopRuntimeClientService', () => {
     expect(received).toEqual([[event]]);
     expect(commands.invokeChannel).toHaveBeenCalledWith(
       'runtime_stream_streaming_events',
-      { input: { id: 'capture-1', lastEventId: 1 } },
+      {
+        input: {
+          id: 'capture-1',
+          lastEventId: 1,
+          streamRequestId: expect.any(String),
+        },
+      },
       undefined,
+      {
+        command: 'runtime_cancel_streaming_events',
+        args: {
+          input: {
+            streamRequestId: expect.any(String),
+          },
+        },
+      },
     );
   });
 });

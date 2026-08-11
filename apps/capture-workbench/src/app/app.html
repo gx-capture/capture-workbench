@@ -186,6 +186,12 @@
       @if (item.recoveryMessage) {
         <div class="detail-error" role="alert"><strong>{{ item.recoveryCode ?? 'recovery_required' }}</strong><p>{{ item.recoveryMessage }}</p></div>
       }
+      @if (store.busyIds().has(item.documentId)) {
+        <div class="streaming-progress" data-testid="streaming-progress" aria-live="polite">
+          <progress max="1" [value]="store.streamingProgressFor(item.documentId) ?? 0"></progress>
+          <small>{{ ((store.streamingProgressFor(item.documentId) ?? 0) * 100) | number:'1.0-0' }}%</small>
+        </div>
+      }
       @if (item.raw) {
         <section class="review-block" data-testid="document-raw"><h3>OCR 原始結果</h3><pre>{{ item.raw.sourceText }}</pre>
           <ol data-testid="document-raw-segments">

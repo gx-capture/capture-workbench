@@ -27,6 +27,8 @@ export interface SseEventFrame {
 export interface CaptureEventStreamInit extends RequestInit {
   /** Resumes replay after this SSE event sequence/id. */
   readonly lastEventId?: string | number;
+  /** Binds every decoded event to the capture requested by the host. */
+  readonly expectedCaptureId?: string;
 }
 
 const STREAMING_EVENT_TYPES = new Set([
@@ -62,6 +64,7 @@ export function captureEventStream(
     if (init.lastEventId !== undefined) {
       headers.set('Last-Event-ID', String(init.lastEventId));
     }
+    const initialSequence = parseEventCursor(init.lastEventId);
     return from(
       fetchImplementation(input, {
         ...init,
@@ -71,7 +74,11 @@ export function captureEventStream(
     ).pipe(
       mergeMap((response) =>
         response.ok
-          ? eventStreamFromResponse(response)
+          ? eventStreamFromResponse(
+            response,
+            init.expectedCaptureId,
+            initialSequence,
+          )
           : errorFromResponse(response),
       ),
       finalize(() => {
@@ -87,14 +94,17 @@ export function parseSseText(text: string): readonly SseEventFrame[] {
   return [...parser.push(text), ...parser.finish()];
 }
 
-export function decodeCaptureEventFrame(frame: SseEventFrame): CaptureEventV2 {
+export function decodeCaptureEventFrame(
+  frame: SseEventFrame,
+  expectedCaptureId?: string,
+): CaptureEventV2 {
   let parsed: unknown;
   try {
     parsed = JSON.parse(frame.data);
   } catch {
     throw invalidEventFrame();
   }
-  const event = normalizeCaptureEvent(parsed);
+  const event = normalizeCaptureEvent(parsed, expectedCaptureId);
   if (
     frame.id !== undefined &&
     frame.id !== String(event.sequence)
@@ -112,6 +122,8 @@ export function decodeCaptureEventFrame(frame: SseEventFrame): CaptureEventV2 {
 
 function eventStreamFromResponse(
   response: Response,
+  expectedCaptureId: string | undefined,
+  initialSequence: number | undefined,
 ): Observable<CaptureEventV2> {
   const contentType = (response.headers.get('content-type') ?? '').toLowerCase();
   if (!contentType.startsWith('text/event-stream')) {
@@ -134,7 +146,7 @@ function eventStreamFromResponse(
         ),
     );
   }
-  return eventStreamFromBody(response.body);
+  return eventStreamFromBody(response.body, expectedCaptureId, initialSequence);
 }
 
 function errorFromResponse(response: Response): Observable<never> {
@@ -156,11 +168,22 @@ function errorFromResponse(response: Response): Observable<never> {
 
 function eventStreamFromBody(
   body: ReadableStream<Uint8Array>,
+  expectedCaptureId: string | undefined,
+  initialSequence: number | undefined,
 ): Observable<CaptureEventV2> {
   return defer(() => {
     const reader = body.getReader();
     const decoder = new TextDecoder();
     const parser = new SseCaptureEventParser();
+    let previousSequence = initialSequence;
+    const decode = (frame: SseEventFrame): CaptureEventV2 => {
+      const event = decodeCaptureEventFrame(frame, expectedCaptureId);
+      if (previousSequence !== undefined && event.sequence <= previousSequence) {
+        throw invalidEventFrame();
+      }
+      previousSequence = event.sequence;
+      return event;
+    };
     const readChunk = () =>
       from(reader.read()).pipe(
         map(({ done, value }) => ({ done, value })),
@@ -171,11 +194,11 @@ function eventStreamFromBody(
         const frames = parser.push(
           done ? decoder.decode() : decoder.decode(value, { stream: true }),
         );
-        const events = frames.map(decodeCaptureEventFrame);
+        const events = frames.map(decode);
         return done
           ? concat(
               from(events),
-              from(parser.finish().map(decodeCaptureEventFrame)),
+              from(parser.finish().map(decode)),
             )
           : from(events);
       }),
@@ -229,36 +252,86 @@ function parseSseBlock(block: string): SseEventFrame | undefined {
   return { id, event, data: data.join('\n') };
 }
 
-function normalizeCaptureEvent(value: unknown): CaptureEventV2 {
+function normalizeCaptureEvent(
+  value: unknown,
+  expectedCaptureId?: string,
+): CaptureEventV2 {
   if (!value || typeof value !== 'object') throw invalidEventFrame();
   const event = value as Record<string, unknown>;
   const isNonEmptyString = (candidate: unknown): candidate is string =>
     typeof candidate === 'string' && candidate !== '';
+  const allowedFields = new Set([
+    'protocolVersion',
+    'eventId',
+    'sequence',
+    'captureId',
+    'kind',
+    'eventType',
+    'stage',
+    'progress',
+    'partialRevision',
+    'coveredUntilMs',
+    'segments',
+    'error',
+    'createdAt',
+  ]);
   if (
+    Object.keys(event).some((key) => !allowedFields.has(key)) ||
+    event['protocolVersion'] !== '2' ||
     !isNonEmptyString(event['eventId']) ||
     typeof event['sequence'] !== 'number' ||
-    !Number.isInteger(event['sequence']) ||
+    !Number.isSafeInteger(event['sequence']) ||
     event['sequence'] < 0 ||
     !isNonEmptyString(event['captureId']) ||
+    (expectedCaptureId !== undefined && event['captureId'] !== expectedCaptureId) ||
+    !event['eventId'].startsWith(`${event['captureId']}/`) ||
+    !isNonEmptyString(event['kind']) ||
+    !['pdf', 'image', 'audio'].includes(event['kind']) ||
     !isNonEmptyString(event['eventType']) ||
     !STREAMING_EVENT_TYPES.has(event['eventType']) ||
     !isNonEmptyString(event['stage']) ||
-    !isNonEmptyString(event['createdAt'])
+    !isNonEmptyString(event['createdAt']) ||
+    !validRfc3339Timestamp(event['createdAt'])
   ) {
     throw invalidEventFrame();
   }
+  const progress = event['progress'];
   if (
-    event['protocolVersion'] !== undefined &&
-    event['protocolVersion'] !== '2'
+    progress !== undefined &&
+    progress !== null &&
+    (typeof progress !== 'number' || !Number.isFinite(progress) || progress < 0 || progress > 1)
   ) {
     throw invalidEventFrame();
   }
+  for (const field of ['partialRevision', 'coveredUntilMs'] as const) {
+    const candidate = event[field];
+    if (
+      candidate !== undefined &&
+      candidate !== null &&
+      (typeof candidate !== 'number' || !Number.isSafeInteger(candidate) || candidate < 0)
+    ) {
+      throw invalidEventFrame();
+    }
+  }
+  const segments = event['segments'];
   if (
-    event['kind'] !== undefined &&
-    event['kind'] !== 'pdf' &&
-    event['kind'] !== 'image' &&
-    event['kind'] !== 'audio'
+    segments !== undefined &&
+    segments !== null &&
+    !Array.isArray(segments)
   ) {
+    throw invalidEventFrame();
+  }
+  if (event['eventType'] === 'segment') {
+    if (!Array.isArray(segments) || segments.length === 0) throw invalidEventFrame();
+  }
+  if (Array.isArray(segments)) {
+    segments.forEach(validateCaptureSegment);
+  }
+  const error = event['error'];
+  if (event['eventType'] === 'failed') {
+    if (!isRecord(error)) throw invalidEventFrame();
+    validateCaptureFailure(error);
+  } else if (error !== undefined && error !== null) {
     throw invalidEventFrame();
   }
   return {
@@ -267,10 +340,124 @@ function normalizeCaptureEvent(value: unknown): CaptureEventV2 {
   };
 }
 
+function validateCaptureSegment(value: unknown): void {
+  if (!isRecord(value)) throw invalidEventFrame();
+  if (
+    Object.keys(value).some((key) => !['segmentId', 'order', 'locator', 'text'].includes(key)) ||
+    typeof value['segmentId'] !== 'string' ||
+    value['segmentId'] === '' ||
+    typeof value['order'] !== 'number' ||
+    !Number.isSafeInteger(value['order']) ||
+    value['order'] < 0 ||
+    typeof value['text'] !== 'string' ||
+    value['text'] === '' ||
+    [...value['text']].length > 2_000_000
+  ) {
+    throw invalidEventFrame();
+  }
+  if (!isRecord(value['locator'])) throw invalidEventFrame();
+  const locator = value['locator'];
+  if (locator['kind'] === 'page') {
+    if (
+      Object.keys(locator).some((key) => !['kind', 'page', 'boundingBox'].includes(key)) ||
+      typeof locator['page'] !== 'number' ||
+      !Number.isSafeInteger(locator['page']) ||
+      locator['page'] < 1 ||
+      (locator['boundingBox'] !== undefined &&
+        locator['boundingBox'] !== null &&
+        (!Array.isArray(locator['boundingBox']) ||
+          locator['boundingBox'].length !== 4 ||
+          locator['boundingBox'].some(
+            (item) => typeof item !== 'number' || !Number.isFinite(item),
+          )))
+    ) {
+      throw invalidEventFrame();
+    }
+    return;
+  }
+  if (
+    locator['kind'] !== 'time' ||
+    Object.keys(locator).some((key) => !['kind', 'startMs', 'endMs'].includes(key)) ||
+    typeof locator['startMs'] !== 'number' ||
+    !Number.isSafeInteger(locator['startMs']) ||
+    locator['startMs'] < 0 ||
+    typeof locator['endMs'] !== 'number' ||
+    !Number.isSafeInteger(locator['endMs']) ||
+    locator['endMs'] <= locator['startMs']
+  ) {
+    throw invalidEventFrame();
+  }
+}
+
+function validateCaptureFailure(value: Record<string, unknown>): void {
+  const code = value['code'];
+  const message = value['message'];
+  if (
+    Object.keys(value).some((key) => !['code', 'message', 'stage', 'retryable'].includes(key)) ||
+    typeof code !== 'string' ||
+    !/^[a-z][a-z0-9_]{1,63}$/u.test(code) ||
+    typeof message !== 'string' ||
+    message === '' ||
+    [...message].length > 500 ||
+    (value['stage'] !== undefined &&
+      value['stage'] !== null &&
+      (typeof value['stage'] !== 'string' || value['stage'] === '')) ||
+    (value['retryable'] !== undefined && typeof value['retryable'] !== 'boolean')
+  ) {
+    throw invalidEventFrame();
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function parseEventCursor(value: string | number | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  const text = String(value);
+  if (!/^-?\d+$/u.test(text)) throw invalidEventCursor();
+  const cursor = Number(text);
+  if (!Number.isSafeInteger(cursor) || cursor < -1) throw invalidEventCursor();
+  return cursor;
+}
+
+function validRfc3339Timestamp(value: string): boolean {
+  const match = /^(?<date>\d{4}-\d{2}-\d{2})T(?<clock>\d{2}:\d{2}:\d{2}(?:\.\d+)?)(?<zone>Z|[+-]\d{2}:\d{2})$/u.exec(value);
+  if (!match?.groups) return false;
+  const date = match.groups['date'];
+  const year = Number(date.slice(0, 4));
+  const month = Number(date.slice(5, 7));
+  const day = Number(date.slice(8, 10));
+  const clock = match.groups['clock'];
+  const [hours, minutes, seconds] = clock.split(':').map(Number);
+  if (month < 1 || month > 12 || day < 1 || day > daysInMonth(year, month)) return false;
+  if (hours > 23 || minutes > 59 || seconds > 60) return false;
+  if (match.groups['zone'] !== 'Z') {
+    const offset = match.groups['zone'].slice(1).split(':').map(Number);
+    if (offset[0] > 23 || offset[1] > 59) return false;
+  }
+  return true;
+}
+
+function daysInMonth(year: number, month: number): number {
+  if (month === 2) {
+    return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0) ? 29 : 28;
+  }
+  return [4, 6, 9, 11].includes(month) ? 30 : 31;
+}
+
 function invalidEventFrame(): CaptureHttpError {
   return new CaptureHttpError(
     0,
     'invalid_event_frame',
     'Capture runtime sent an invalid SSE event.',
+  );
+}
+
+function invalidEventCursor(): CaptureHttpError {
+  return new CaptureHttpError(
+    0,
+    'invalid_event_cursor',
+    'Capture runtime event cursor is invalid.',
   );
 }

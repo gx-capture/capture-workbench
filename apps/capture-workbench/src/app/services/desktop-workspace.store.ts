@@ -12,10 +12,12 @@ import {
   catchError,
   concatMap,
   defer,
+  endWith,
   expand,
   filter,
   finalize,
   from,
+  ignoreElements,
   map,
   type Observable,
   of,
@@ -60,6 +62,7 @@ interface ActiveCapture {
   cancelSent: boolean;
   cancelRequest$?: Observable<CaptureOperationV2>;
   lastStage?: string;
+  lastProgress?: number;
   terminalCommitted?: boolean;
   terminalStatus?: DesktopLibraryStatus;
   terminalErrorCode?: string;
@@ -108,9 +111,14 @@ export class DesktopWorkspaceStore {
   readonly busyIds = signal<ReadonlySet<string>>(new Set());
   readonly requestedRequirements = signal<ReadonlySet<CaptureRequirementId>>(new Set());
   readonly streamingPartials = signal<ReadonlyMap<string, PartialCaptureV2>>(new Map());
+  readonly streamingProgress = signal<ReadonlyMap<string, number>>(new Map());
 
   partialFor(documentId: string): PartialCaptureV2 | null {
     return this.streamingPartials().get(documentId) ?? null;
+  }
+
+  streamingProgressFor(documentId: string): number | null {
+    return this.streamingProgress().get(documentId) ?? null;
   }
 
   get requirements() {
@@ -463,6 +471,10 @@ export class DesktopWorkspaceStore {
     if (event.eventType === 'resync_required') return;
     active.lastEventSequence = Math.max(active.lastEventSequence, event.sequence);
     active.lastStage = event.stage;
+    if (typeof event.progress === 'number') {
+      active.lastProgress = Math.max(active.lastProgress ?? 0, event.progress);
+      this.setStreamingProgress(_documentId, active.lastProgress);
+    }
   }
 
   private captureNewSource$(sourcePath: string): Observable<void> {
@@ -527,7 +539,7 @@ export class DesktopWorkspaceStore {
       switchMap((operation) => {
         active.captureId = operation.captureId;
         active.ingestionId = operation.ingestionId;
-        this.applyStreamingOperation(active, operation);
+        this.applyStreamingOperation(active, operation, documentId);
         return this.library.updateCapture({
           documentId,
           captureId: operation.captureId,
@@ -561,7 +573,7 @@ export class DesktopWorkspaceStore {
           return this.cancelStreaming$(captureId, active).pipe(
             switchMap(() => this.consumeStreamingEvents$(documentId, active)),
           switchMap(() => this.runtime.getStreamingCapture(captureId)),
-          tap((operation) => this.applyStreamingOperation(active, operation)),
+          tap((operation) => this.applyStreamingOperation(active, operation, documentId)),
           switchMap((operation) => isActiveStreaming(operation)
             ? this.advanceStreaming$(documentId, operation, active)
             : of(operation)),
@@ -583,7 +595,7 @@ export class DesktopWorkspaceStore {
     const events$ = this.consumeStreamingEvents$(documentId, active);
     const snapshot$ = events$.pipe(
       switchMap(() => this.runtime.getStreamingCapture(operation.captureId)),
-      tap((snapshot) => this.applyStreamingOperation(active, snapshot)),
+      tap((snapshot) => this.applyStreamingOperation(active, snapshot, documentId)),
       switchMap((snapshot) => {
         if (!isActiveStreaming(snapshot)) return of(snapshot);
         if (reconnectAttempt >= MAX_STREAMING_RESYNC_RECONNECTS) {
@@ -605,7 +617,7 @@ export class DesktopWorkspaceStore {
     return this.cancelStreaming$(operation.captureId, active).pipe(
       switchMap(() => events$),
       switchMap(() => this.runtime.getStreamingCapture(operation.captureId)),
-      tap((snapshot) => this.applyStreamingOperation(active, snapshot)),
+      tap((snapshot) => this.applyStreamingOperation(active, snapshot, documentId)),
       switchMap((snapshot) => {
         if (!isActiveStreaming(snapshot)) return of(snapshot);
         if (reconnectAttempt >= MAX_STREAMING_RESYNC_RECONNECTS) {
@@ -644,27 +656,36 @@ export class DesktopWorkspaceStore {
         if (isAbortError(error)) return throwError(() => error);
         return of(null);
       }),
-      tap((events) => events?.forEach((event) => this.applyStreamingEvent(documentId, active, event))),
-      switchMap(() => this.runtime.getStreamingPartial(captureId)),
-      tap((partial) => {
-        if (partial) {
-          this.streamingPartials.update((current) => {
-            const next = new Map(current);
-            next.set(documentId, partial);
-            return next;
-          });
-        }
+      concatMap((events) => {
+        events?.forEach((event) => this.applyStreamingEvent(documentId, active, event));
+        return this.runtime.getStreamingPartial(captureId).pipe(
+          tap((partial) => {
+            if (partial) {
+              this.streamingPartials.update((current) => {
+                const next = new Map(current);
+                next.set(documentId, partial);
+                return next;
+              });
+            }
+          }),
+        );
       }),
-      map(() => undefined),
+      ignoreElements(),
+      endWith(undefined),
     );
   }
 
   private applyStreamingOperation(
     active: ActiveCapture,
     operation: CaptureOperationV2,
+    documentId?: string,
   ): void {
     active.lastEventSequence = operation.lastEventSequence;
     active.lastStage = operation.status;
+    if (typeof operation.progress === 'number') {
+      active.lastProgress = operation.progress;
+      if (documentId) this.setStreamingProgress(documentId, operation.progress);
+    }
   }
 
   private persistStreamingTerminal$(
@@ -745,7 +766,7 @@ export class DesktopWorkspaceStore {
       const work$ = terminalCommitted
         ? this.retryRuntimeCleanup$(document)
         : this.runtime.getStreamingCapture(document.captureId).pipe(
-          tap((operation) => this.applyStreamingOperation(active, operation)),
+          tap((operation) => this.applyStreamingOperation(active, operation, document.documentId)),
           switchMap((operation) => this.waitForStreamingTerminal$(
             document.documentId,
             operation,
@@ -856,6 +877,7 @@ export class DesktopWorkspaceStore {
         active.cancelWake.complete();
         this.activeCaptures.delete(documentId);
         this.markBusy(documentId, false);
+        this.clearStreamingProgress(documentId);
       }),
       map(() => undefined),
     );
@@ -986,6 +1008,23 @@ export class DesktopWorkspaceStore {
 
   private clearStreamingPartial(documentId: string): void {
     this.streamingPartials.update((current) => {
+      if (!current.has(documentId)) return current;
+      const next = new Map(current);
+      next.delete(documentId);
+      return next;
+    });
+  }
+
+  private setStreamingProgress(documentId: string, progress: number): void {
+    this.streamingProgress.update((current) => {
+      const next = new Map(current);
+      next.set(documentId, progress);
+      return next;
+    });
+  }
+
+  private clearStreamingProgress(documentId: string): void {
+    this.streamingProgress.update((current) => {
       if (!current.has(documentId)) return current;
       const next = new Map(current);
       next.delete(documentId);

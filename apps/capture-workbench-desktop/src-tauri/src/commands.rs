@@ -7,7 +7,7 @@ use crate::{
         LibraryDocumentSummary, LibraryExportPayload, LibraryExportRequest,
         LibraryImportSourceRequest, LibraryListRequest, RuntimeClientRequestIdInput,
         RuntimeIdInput, RuntimeInstallationStartInput, RuntimeModelInstallationStartInput,
-        RuntimeStreamingCaptureInput, RuntimeStreamingEventsInput,
+        RuntimeStreamRequestIdInput, RuntimeStreamingCaptureInput, RuntimeStreamingEventsInput,
     },
     library::LibraryStore,
     runtime_client,
@@ -203,7 +203,29 @@ pub async fn runtime_stream_streaming_events(
     channel: tauri::ipc::Channel<serde_json::Value>,
 ) -> Result<(), String> {
     let state = state.inner().clone();
-    run_blocking(move || runtime_client::stream_streaming_events(&state, input, channel)).await
+    let request_id = input.stream_request_id.clone();
+    let cancellation = request_id
+        .as_deref()
+        .map(|request_id| state.begin_streaming_request(request_id))
+        .transpose()?;
+    run_blocking(move || {
+        let result =
+            runtime_client::stream_streaming_events(&state, input, channel, cancellation.as_ref());
+        if let (Some(request_id), Some(cancellation)) = (request_id, cancellation.as_ref()) {
+            state.finish_streaming_request(&request_id, cancellation);
+        }
+        result
+    })
+    .await
+}
+
+#[tauri::command]
+pub fn runtime_cancel_streaming_events(
+    state: tauri::State<'_, DesktopState>,
+    input: RuntimeStreamRequestIdInput,
+) -> Result<(), String> {
+    state.cancel_streaming_request(&input.stream_request_id);
+    Ok(())
 }
 
 #[tauri::command]

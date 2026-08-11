@@ -124,9 +124,17 @@ export class DesktopRuntimeClientService {
     lastEventId?: number,
     signal?: AbortSignal,
   ): Observable<readonly CaptureEventV2[]> {
+    const streamRequestId = crypto.randomUUID();
     return this.commands.invokeChannel<CaptureEventV2>('runtime_stream_streaming_events', {
-      input: { id: captureId, lastEventId: lastEventId ?? null },
-    }, signal).pipe(map((event) => [event]));
+      input: {
+        id: captureId,
+        lastEventId: lastEventId ?? null,
+        streamRequestId,
+      },
+    }, signal, {
+      command: 'runtime_cancel_streaming_events',
+      args: { input: { streamRequestId } },
+    }).pipe(map((event) => [event]));
   }
 
   getStreamingPartial(captureId: string, signal?: AbortSignal): Observable<PartialCaptureV2 | null> {

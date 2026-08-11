@@ -2,6 +2,11 @@ import { Injectable } from '@angular/core';
 import { Channel, invoke, isTauri } from '@tauri-apps/api/core';
 import { defer, from, Observable, throwError } from 'rxjs';
 
+export interface TauriChannelCancellation {
+  readonly command: string;
+  readonly args: Record<string, unknown>;
+}
+
 @Injectable({ providedIn: 'root' })
 export class DesktopTauriCommandService {
   invoke<T>(command: string, args: Record<string, unknown>, signal?: AbortSignal): Observable<T> {
@@ -20,6 +25,7 @@ export class DesktopTauriCommandService {
     command: string,
     args: Record<string, unknown>,
     signal: AbortSignal | undefined,
+    cancellation?: TauriChannelCancellation,
   ): Observable<T> {
     return new Observable<T>((subscriber) => {
       if (signal?.aborted) {
@@ -31,15 +37,25 @@ export class DesktopTauriCommandService {
         return undefined;
       }
       const channel = new Channel<T>((message) => subscriber.next(message));
+      let settled = false;
       const abort = () => subscriber.error(new DOMException('Operation was aborted.', 'AbortError'));
       signal?.addEventListener('abort', abort, { once: true });
       void invoke<void>(command, { ...args, channel }).then(
-        () => subscriber.complete(),
-        (error: unknown) => subscriber.error(error),
+        () => {
+          settled = true;
+          subscriber.complete();
+        },
+        (error: unknown) => {
+          settled = true;
+          subscriber.error(error);
+        },
       );
       return () => {
         signal?.removeEventListener('abort', abort);
         channel.onmessage = () => undefined;
+        if (!settled && cancellation) {
+          void invoke<void>(cancellation.command, cancellation.args).catch(() => undefined);
+        }
       };
     });
   }
