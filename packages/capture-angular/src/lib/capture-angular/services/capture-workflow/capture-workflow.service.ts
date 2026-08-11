@@ -133,6 +133,7 @@ export class CaptureWorkflowService {
         file,
         clientRequestId: crypto.randomUUID(),
         controller,
+        cancelRequested: false,
       });
       this.taskState.update((tasks) => [...tasks, task]);
       this.emitTaskChanged(task);
@@ -149,6 +150,7 @@ export class CaptureWorkflowService {
     }
     const internal = this.internalTasks.get(taskId);
     if (!internal) return;
+    internal.cancelRequested = true;
     internal.controller.abort();
     this.reviewSubjects.get(taskId)?.complete();
     const captureId = this.captureIds.get(taskId);
@@ -161,7 +163,24 @@ export class CaptureWorkflowService {
             captureId,
             this.lifecycleController.signal,
           ),
-        ).subscribe({ error: () => undefined });
+        ).subscribe({
+          next: (operation) => this.applyCancellationOutcome(taskId, operation),
+          error: (error: unknown) => {
+            if (this.helpers.isAbortError(error) || this.lifecycleController.signal.aborted)
+              return;
+            this.requireReconciliation(
+              taskId,
+              {
+                code: 'capture_cancel_failed',
+                message: 'Capture cancellation could not be confirmed.',
+                stage: 'runtime',
+                retryable: true,
+              },
+              this.taskState().find((candidate) => candidate.id === taskId)?.raw,
+            );
+          },
+        });
+        return;
       }
     }
     const canceledTask = this.updateTask(taskId, {
@@ -795,6 +814,8 @@ export class CaptureWorkflowService {
     taskId: string,
   ): Observable<void> {
     if (this.helpers.isAbortError(error) || signal.aborted) {
+      const internal = this.internalTasks.get(taskId);
+      if (internal?.cancelRequested && this.captureIds.has(taskId)) return EMPTY;
       return defer(() => {
         if (
           this.taskState().find((candidate) => candidate.id === taskId)
@@ -820,6 +841,27 @@ export class CaptureWorkflowService {
         ),
       ),
       map(() => undefined),
+    );
+  }
+
+  private applyCancellationOutcome(taskId: string, operation: CaptureOperationV2): void {
+    if (operation.status === 'cancelled') {
+      const canceledTask = this.updateTask(taskId, {
+        status: 'canceled',
+        stage: 'cancelled',
+      });
+      if (canceledTask) this.emitCanceled(canceledTask);
+      return;
+    }
+    this.requireReconciliation(
+      taskId,
+      {
+        code: 'capture_cancel_unconfirmed',
+        message: 'Capture cancellation was not confirmed by the runtime.',
+        stage: 'runtime',
+        retryable: true,
+      },
+      this.taskState().find((candidate) => candidate.id === taskId)?.raw,
     );
   }
 

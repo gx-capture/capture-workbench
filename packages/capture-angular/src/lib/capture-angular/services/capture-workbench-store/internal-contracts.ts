@@ -20,6 +20,7 @@ export interface InternalCaptureTask {
   readonly file: File;
   readonly clientRequestId: string;
   readonly controller: AbortController;
+  cancelRequested: boolean;
 }
 
 export interface CaptureWorkflowContext {

@@ -129,7 +129,7 @@ export async function consumeSseEvents(
     if (protocolVersion !== '2' || captureId !== expectedCaptureId) {
       throw new Error('Progressive audio oracle SSE event identity was invalid.');
     }
-    if (!eventId.startsWith(captureId + '/') || !Number.isSafeInteger(sequence) || sequence <= previousSequence) {
+    if (eventId !== `${captureId}/${sequence}` || !Number.isSafeInteger(sequence) || sequence <= previousSequence) {
       throw new Error('Progressive audio oracle SSE event cursor was invalid.');
     }
     if (!Number.isFinite(Date.parse(createdAt)) || !/T.*(?:Z|[+-]\d{2}:\d{2})$/u.test(createdAt)) {

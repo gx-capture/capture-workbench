@@ -162,6 +162,18 @@ describe('captureEventStream', () => {
     );
   });
 
+  it('rejects an eventId that has the right prefix but not the exact capture sequence', () => {
+    const malformed = {
+      ...captureEvent(1, 'accepted'),
+      eventId: 'capture-1/1/extra',
+    };
+    const [frame] = parseSseText(`data: ${JSON.stringify(malformed)}\n\n`);
+
+    expect(() => decodeCaptureEventFrame(frame, 'capture-1')).toThrowError(
+      expect.objectContaining({ code: 'invalid_event_frame' }),
+    );
+  });
+
   it('rejects an SSE event name that does not match the payload eventType', () => {
     const [frame] = parseSseText(
       `id: 1\nevent: completed\ndata: ${JSON.stringify(captureEvent(1, 'accepted'))}\n\n`,

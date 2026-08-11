@@ -18,7 +18,6 @@ const outputDirectory = join(
 );
 const evidencePath = join(outputDirectory, 'real-media-smoke.json');
 const maxInstallationWaitMs = 90 * 60_000;
-const maxCaptureWaitMs = 20 * 60_000;
 export const dependencyOrder = ['windowsml-ocr', 'whisper-primary'] as const;
 
 const canonicalSourceLockPath = join(
@@ -81,6 +80,7 @@ interface StreamingEvent {
   readonly sequence: number;
   readonly eventType: string;
   readonly stage: string;
+  readonly progress?: number;
 }
 
 interface RawCapture {
@@ -563,16 +563,31 @@ async function captureAndVerify(
     }),
   });
   lane.captureId = created.captureId;
-  const awaiting = await waitForAwaitingStructuring(
+  const liveExtraction = await readStreamingEventsIncrementally(
     port,
     token,
     created.captureId,
+    undefined,
+    (event) => !isTerminalStatus(event.eventType)
+      && typeof event.progress === 'number'
+      && event.progress >= 0.9,
   );
-  if (awaiting.status !== 'awaiting_structuring') {
-    throw new Error(
-      `Real ${sourceKind} extraction ended as ${awaiting.status}${awaiting.error?.message ? `: ${awaiting.error.message}` : '.'}`,
-    );
-  }
+  assert.ok(
+    liveExtraction.events.some(
+      (event) => !isTerminalStatus(event.eventType)
+        && typeof event.progress === 'number'
+        && event.progress > 0,
+    ),
+    `Real ${sourceKind} extraction did not expose an active SSE progress checkpoint.`,
+  );
+  const replayCursor = liveExtraction.lastSequence;
+  assert.ok(replayCursor !== undefined, 'Real media SSE did not expose a recovery cursor.');
+  const resumedEvents = readStreamingEventsIncrementally(
+    port,
+    token,
+    created.captureId,
+    replayCursor,
+  );
   const partial = await request<PartialCapture>(
     port,
     token,
@@ -596,17 +611,28 @@ async function captureAndVerify(
       body: JSON.stringify(candidate),
     },
   );
-  const completed = await waitForTerminal(port, token, committed.captureId);
-  if (completed.status !== 'completed') {
+  const terminalEvents = await resumedEvents;
+  const completed = terminalEvents.events.find((event) => isTerminalStatus(event.eventType));
+  assert.ok(completed, `Real ${sourceKind} SSE reconnect did not observe a terminal event.`);
+  assert.ok(
+    terminalEvents.events.some((event) => event.sequence > replayCursor),
+    `Real ${sourceKind} SSE reconnect did not advance beyond Last-Event-ID.`,
+  );
+  const combinedEvents = [...liveExtraction.events, ...terminalEvents.events];
+  const terminalOperation = await request<CaptureOperation>(
+    port,
+    token,
+    `/v2/captures/${committed.captureId}`,
+  );
+  if (terminalOperation.status !== 'completed') {
     throw new Error(
-      `Real ${sourceKind} capture ended as ${completed.status}: ${completed.error?.message ?? 'no detail'}.`,
+      `Real ${sourceKind} capture ended as ${terminalOperation.status}: ${terminalOperation.error?.message ?? 'no detail'}.`,
     );
   }
   const events = await readStreamingEvents(port, token, created.captureId);
   assertStreamingEventOrder(events);
-  const replayCursor = events[events.length - 2]?.sequence;
   const terminalSequence = events[events.length - 1]?.sequence;
-  assert.ok(replayCursor !== undefined && terminalSequence !== undefined);
+  assert.ok(terminalSequence !== undefined);
   const replayed = await readStreamingEvents(
     port,
     token,
@@ -629,6 +655,7 @@ async function captureAndVerify(
   assert.equal(terminal.result.extractionEngine.engine, partial.extractionEngine.engine);
   assert.equal(terminal.result.structuringEngine.engine, 'host');
   assert.match(terminal.result.structuringEngine.digest, /^sha256:[a-f0-9]{64}$/u);
+  assertStreamingEventOrder(combinedEvents);
   return { raw: terminal.raw, result: terminal.result };
 }
 
@@ -813,44 +840,6 @@ async function waitForInstallation(
   throw new Error(`Dependency ${installation.requirementId} timed out.`);
 }
 
-async function waitForAwaitingStructuring(
-  port: number,
-  token: string,
-  captureId: string,
-): Promise<CaptureOperation> {
-  const deadline = Date.now() + maxCaptureWaitMs;
-  while (Date.now() < deadline) {
-    const current = await request<CaptureOperation>(
-      port,
-      token,
-      `/v2/captures/${captureId}`,
-    );
-    if (current.status === 'awaiting_structuring' || isTerminalStatus(current.status)) {
-      return current;
-    }
-    await delay(1_000);
-  }
-  throw new Error('Capture did not reach host structuring before the timeout.');
-}
-
-async function waitForTerminal(
-  port: number,
-  token: string,
-  captureId: string,
-): Promise<CaptureOperation> {
-  const deadline = Date.now() + maxCaptureWaitMs;
-  while (Date.now() < deadline) {
-    const current = await request<CaptureOperation>(
-      port,
-      token,
-      `/v2/captures/${captureId}`,
-    );
-    if (isTerminalStatus(current.status)) return current;
-    await delay(500);
-  }
-  throw new Error('Capture did not reach a terminal state before the timeout.');
-}
-
 async function deleteCapturesAndVerify(
   port: number,
   token: string,
@@ -943,60 +932,164 @@ async function readStreamingEvents(
   return parseStreamingEvents(text);
 }
 
+async function readStreamingEventsIncrementally(
+  port: number,
+  token: string,
+  captureId: string,
+  lastEventId?: number,
+  stopWhen?: (event: StreamingEvent) => boolean,
+): Promise<{ readonly events: readonly StreamingEvent[]; readonly lastSequence?: number }> {
+  const response = await fetch(`http://127.0.0.1:${port}/v2/captures/${captureId}/events`, {
+    headers: {
+      authorization: `Bearer ${token}`,
+      origin: 'http://tauri.localhost',
+      ...(lastEventId === undefined ? {} : { 'Last-Event-ID': String(lastEventId) }),
+    },
+  });
+  if (!response.ok) {
+    throw new Error(`Real media SSE response failed with HTTP ${response.status}.`);
+  }
+  assert.match(
+    response.headers.get('content-type') ?? '',
+    /^text\/event-stream(?:;|$)/iu,
+  );
+  if (!response.body) throw new Error('Real media SSE response did not expose a body.');
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const parser = new StreamingEventParser();
+  const events: StreamingEvent[] = [];
+  let lastSequence = lastEventId;
+  while (true) {
+    const { done, value } = await reader.read();
+    const text = done ? decoder.decode() : decoder.decode(value, { stream: true });
+    for (const event of parser.push(text)) {
+      events.push(event);
+      lastSequence = event.sequence;
+      if (stopWhen?.(event)) {
+        await reader.cancel();
+        return { events, lastSequence };
+      }
+    }
+    if (done) {
+      parser.finish();
+      return { events, lastSequence };
+    }
+  }
+}
+
 function isTerminalStatus(status: string): boolean {
   return status === 'completed' || status === 'failed' || status === 'cancelled';
 }
 
 export function parseStreamingEvents(text: string): StreamingEvent[] {
-  const normalized = text.replace(/\r\n?/gu, '\n');
-  if (normalized && !normalized.endsWith('\n\n')) {
-    throw new Error('Real media SSE response ended with an incomplete event frame.');
+  return parseStreamingEventChunks([text]);
+}
+
+export function parseStreamingEventChunks(chunks: readonly string[]): StreamingEvent[] {
+  const parser = new StreamingEventParser();
+  return [...chunks.flatMap((chunk) => parser.push(chunk)), ...parser.finish()];
+}
+
+class StreamingEventParser {
+  private line = '';
+  private block: string[] = [];
+  private id: string | undefined;
+  private event: string | undefined;
+  private data: string[] = [];
+  private pendingCarriageReturn = false;
+
+  push(chunk: string): StreamingEvent[] {
+    const events: StreamingEvent[] = [];
+    let index = 0;
+    if (this.pendingCarriageReturn) {
+      this.pendingCarriageReturn = false;
+      if (chunk[index] === '\n') index += 1;
+      this.emitLine(events);
+    }
+    while (index < chunk.length) {
+      const character = chunk[index];
+      index += 1;
+      if (character === '\r') {
+        if (index === chunk.length) this.pendingCarriageReturn = true;
+        else {
+          if (chunk[index] === '\n') index += 1;
+          this.emitLine(events);
+        }
+      } else if (character === '\n') {
+        this.emitLine(events);
+      } else {
+        this.line += character;
+      }
+    }
+    return events;
   }
-  const events: StreamingEvent[] = [];
-  let id: string | undefined;
-  let event: string | undefined;
-  let data: string[] = [];
-  const dispatch = (): void => {
-    if (id === undefined && event === undefined && data.length === 0) return;
-    if (id === undefined || event === undefined || data.length === 0) {
+
+  finish(): StreamingEvent[] {
+    if (this.pendingCarriageReturn || this.line !== '' || this.block.length > 0) {
+      throw new Error('Real media SSE response ended with an incomplete event frame.');
+    }
+    return [];
+  }
+
+  private emitLine(events: StreamingEvent[]): void {
+    if (this.line === '') {
+      if (this.id !== undefined || this.event !== undefined || this.data.length > 0) {
+        events.push(this.dispatch());
+      }
+      this.resetFrame();
+    } else if (this.line.startsWith(':')) {
+      this.line = '';
+      return;
+    } else {
+      this.block.push(this.line);
+      const separator = this.line.indexOf(':');
+      const field = separator < 0 ? this.line : this.line.slice(0, separator);
+      let value = separator < 0 ? '' : this.line.slice(separator + 1);
+      if (value.startsWith(' ')) value = value.slice(1);
+      if (field === 'id') this.id = value;
+      else if (field === 'event') this.event = value;
+      else if (field === 'data') this.data.push(value);
+    }
+    this.line = '';
+  }
+
+  private dispatch(): StreamingEvent {
+    if (this.id === undefined || this.event === undefined || this.data.length === 0) {
       throw new Error('Real media SSE response contained an incomplete event frame.');
     }
-    const sequence = Number(id);
+    const sequence = Number(this.id);
     if (!Number.isSafeInteger(sequence) || sequence <= 0) {
       throw new Error('Real media SSE event id was not a positive safe integer.');
     }
-    const payload = JSON.parse(data.join('\n')) as {
+    const payload = JSON.parse(this.data.join('\n')) as {
       readonly eventType?: unknown;
       readonly sequence?: unknown;
       readonly stage?: unknown;
+      readonly progress?: unknown;
     };
     if (
       payload.sequence !== sequence ||
-      payload.eventType !== event ||
-      typeof payload.stage !== 'string'
+      payload.eventType !== this.event ||
+      typeof payload.stage !== 'string' ||
+      (payload.progress !== undefined
+        && (typeof payload.progress !== 'number' || !Number.isFinite(payload.progress)))
     ) {
       throw new Error('Real media SSE event metadata did not match its frame.');
     }
-    events.push({ sequence, eventType: event, stage: payload.stage });
-    id = undefined;
-    event = undefined;
-    data = [];
-  };
-  for (const line of normalized.split('\n')) {
-    if (line === '') {
-      dispatch();
-      continue;
-    }
-    if (line.startsWith(':')) continue;
-    const separator = line.indexOf(':');
-    const field = separator < 0 ? line : line.slice(0, separator);
-    let value = separator < 0 ? '' : line.slice(separator + 1);
-    if (value.startsWith(' ')) value = value.slice(1);
-    if (field === 'id') id = value;
-    else if (field === 'event') event = value;
-    else if (field === 'data') data.push(value);
+    return {
+      sequence,
+      eventType: this.event,
+      stage: payload.stage,
+      ...(payload.progress === undefined ? {} : { progress: payload.progress }),
+    };
   }
-  return events;
+
+  private resetFrame(): void {
+    this.id = undefined;
+    this.event = undefined;
+    this.data = [];
+    this.block = [];
+  }
 }
 
 export function assertStreamingEventOrder(

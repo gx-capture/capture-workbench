@@ -310,7 +310,7 @@ function normalizeCaptureEvent(
     event['sequence'] < 0 ||
     !isNonEmptyString(event['captureId']) ||
     (expectedCaptureId !== undefined && event['captureId'] !== expectedCaptureId) ||
-    !event['eventId'].startsWith(`${event['captureId']}/`) ||
+    event['eventId'] !== `${event['captureId']}/${event['sequence']}` ||
     !isNonEmptyString(event['kind']) ||
     !['pdf', 'image', 'audio'].includes(event['kind']) ||
     !isNonEmptyString(event['eventType']) ||

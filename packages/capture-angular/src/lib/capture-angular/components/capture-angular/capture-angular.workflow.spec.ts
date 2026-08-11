@@ -264,6 +264,40 @@ describe('CaptureWorkbenchComponent', () => {
     expect(client.getStreamingResult).not.toHaveBeenCalled();
   });
 
+  it('keeps cancellation recoverable when the runtime cancel response fails', async () => {
+    const events = new Subject<CaptureEventV2>();
+    const captureEvents = vi.fn<NonNullable<CaptureClient['captureEvents']>>(() =>
+      events.asObservable(),
+    );
+    const client = fakeClient({
+      startStreamingCapture: vi.fn(() => of(streamingOperation('extracting'))),
+      captureEvents,
+      cancelStreamingCapture: vi.fn(() =>
+        throwError(() => new Error('cancel transport failed')),
+      ),
+    });
+    inputSource.client.set(client);
+    inputSource.config.set({ showRuntimeSetup: false });
+    fixture.detectChanges();
+
+    selectFiles(fixture, [new File(['test'], 'cancel-recovery.pdf')]);
+    await vi.waitFor(() => expect(captureEvents).toHaveBeenCalledOnce());
+    const taskId = fixture.componentInstance.tasks()[0]?.id;
+    if (!taskId) throw new Error('Expected a capture task.');
+
+    fixture.componentInstance.store.cancel(taskId);
+    await vi.waitFor(() =>
+      expect(fixture.componentInstance.tasks()[0]?.status).toBe('reconciliation_required'),
+    );
+
+    expect(fixture.componentInstance.tasks()[0]?.error).toMatchObject({
+      code: 'capture_cancel_failed',
+      stage: 'runtime',
+      retryable: true,
+    });
+    expect(fixture.componentInstance.tasks()[0]?.status).not.toBe('canceled');
+  });
+
   it('retries uncertain v2 start with the same request object', async () => {
     const source = new File(['test'], 'retry.pdf', { type: 'application/pdf' });
     const startStreamingCapture = vi

@@ -31,6 +31,7 @@ from capture_runtime.dependencies import RuntimeDependencies
 from capture_runtime.progressive_audio import DEFAULT_CHECKPOINT_MS
 from capture_runtime.progressive_decoder import progressive_decoder_ready
 from capture_runtime.routes.common import ApiProblem
+from capture_runtime.services.streaming_capture_service import StreamingStructureFailure
 from capture_runtime.storage import (
     StreamingEventOverflow,
     StreamingIdempotencyConflictError,
@@ -290,6 +291,8 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
     async def structure_capture(capture_id: str) -> CaptureDocumentV1:
         try:
             return await service.structure(capture_id)
+        except StreamingStructureFailure as error:
+            raise ApiProblem(500, error.code, error.message) from error
         except StreamingTransitionError as error:
             raise ApiProblem(409, "invalid_capture_state", _safe_message(str(error))) from error
         except StreamingPartialNotFoundError as error:

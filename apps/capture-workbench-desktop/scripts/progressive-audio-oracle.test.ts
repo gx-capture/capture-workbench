@@ -67,3 +67,18 @@ test('progressive audio oracle rejects SSE metadata that disagrees with the payl
     /event id did not match its sequence/u,
   );
 });
+
+test('progressive audio oracle rejects an event id with an extra sequence suffix', async () => {
+  const response = new Response(
+    `id: 1\nevent: checkpoint\ndata: ${event(1, 'checkpoint', 'extracting', 0.25).replace(
+      'capture-1/1',
+      'capture-1/1/extra',
+    )}\n\n`,
+    { headers: { 'content-type': 'text/event-stream' } },
+  );
+
+  await assert.rejects(
+    consumeSseEvents(response, 'capture-1', () => undefined),
+    /event cursor was invalid/u,
+  );
+});

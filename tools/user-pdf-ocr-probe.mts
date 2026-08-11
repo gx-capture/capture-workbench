@@ -391,7 +391,7 @@ function normalizeProbeEvent(
     || value['sequence'] < 0
     || value['sequence'] <= previousSequence
     || value['captureId'] !== captureId
-    || !value['eventId'].startsWith(`${captureId}/`)
+    || value['eventId'] !== `${captureId}/${value['sequence']}`
     || !['pdf', 'image', 'audio'].includes(String(value['kind']))
     || typeof value['eventType'] !== 'string'
     || !STREAMING_EVENT_TYPES.has(value['eventType'])

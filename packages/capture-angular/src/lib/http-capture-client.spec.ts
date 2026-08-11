@@ -277,6 +277,77 @@ describe('HttpCaptureClient', () => {
     expect(String(fetchMock.mock.calls[3]?.[0])).not.toContain('secret-token');
   });
 
+  it('recovers a committed capture after the create response is lost without deleting its ingestion', async () => {
+    const operation = {
+      protocolVersion: '2',
+      captureId: 'capture-recovered',
+      ingestionId: 'ingestion-1',
+      status: 'extracting',
+      partialRevision: 0,
+      lastEventSequence: 0,
+      createdAt: '2026-08-11T00:00:00Z',
+      updatedAt: '2026-08-11T00:00:00Z',
+    };
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse({ ingestionId: 'ingestion-1' }, 201))
+      .mockResolvedValueOnce(jsonResponse({ ingestionId: 'ingestion-1' }))
+      .mockResolvedValueOnce(jsonResponse({ ingestionId: 'ingestion-1' }))
+      .mockRejectedValueOnce(new TypeError('connection closed after commit'))
+      .mockResolvedValueOnce(jsonResponse(operation, 200));
+    const client = configureClient(fetchMock) as HttpCaptureClient;
+    let received: unknown;
+    let error: unknown;
+
+    client
+      .startStreamingCapture({
+        clientRequestId: 'request-lost-response',
+        file: new File(['abc'], 'scan.pdf', { type: 'application/pdf' }),
+        sourceKind: 'pdf',
+        structuringMode: 'runtime',
+      })
+      .subscribe({ next: (value) => (received = value), error: (value) => (error = value) });
+
+    await vi.waitFor(() => expect(received).toEqual(operation));
+    expect(error).toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+    expect(String(fetchMock.mock.calls[4]?.[0])).toContain(
+      '/v2/captures/by-client-request/request-lost-response',
+    );
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/v2/ingestions/ingestion-1'))).toBe(
+      true,
+    );
+    expect(fetchMock.mock.calls.some(([url, init]) =>
+      String(url).endsWith('/v2/ingestions/ingestion-1') && init?.method === 'DELETE',
+    )).toBe(false);
+  });
+
+  it('keeps the ingestion when uncertain create lookup is unavailable', async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse({ ingestionId: 'ingestion-1' }, 201))
+      .mockResolvedValueOnce(jsonResponse({ ingestionId: 'ingestion-1' }))
+      .mockResolvedValueOnce(jsonResponse({ ingestionId: 'ingestion-1' }))
+      .mockRejectedValueOnce(new TypeError('connection closed after commit'))
+      .mockResolvedValueOnce(new Response(null, { status: 503 }));
+    const client = configureClient(fetchMock) as HttpCaptureClient;
+    let error: unknown;
+
+    client
+      .startStreamingCapture({
+        clientRequestId: 'request-unknown-response',
+        file: new File(['abc'], 'scan.pdf', { type: 'application/pdf' }),
+        sourceKind: 'pdf',
+        structuringMode: 'runtime',
+      })
+      .subscribe({ error: (value) => (error = value) });
+
+    await vi.waitFor(() => expect(error).toBeInstanceOf(TypeError));
+    expect(fetchMock.mock.calls.some(([url, init]) =>
+      String(url).endsWith('/v2/ingestions/ingestion-1') && init?.method === 'DELETE',
+    )).toBe(false);
+  });
+
   it('uses v2 operation, partial, result, control, and delete routes', async () => {
     const fetchMock = vi
       .fn<typeof fetch>()

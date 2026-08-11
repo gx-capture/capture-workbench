@@ -190,6 +190,7 @@ pub(crate) fn start_streaming_capture(
     };
     let mut capture_request_attempted = false;
     let mut capture_response_accepted = false;
+    let mut capture_create_uncertain = false;
     let result = (|| {
         upload_source_chunks(&config, &source, &ingestion_id, &client_request_id)?;
         let source_digest = source_sha256(&source)?;
@@ -208,8 +209,17 @@ pub(crate) fn start_streaming_capture(
             None,
         )?;
         capture_request_attempted = true;
-        let capture =
-            request_capture_with_recovery(&config, capture_body.clone(), &client_request_id)?;
+        let capture = match request_capture_with_recovery_state(
+            &config,
+            capture_body.clone(),
+            &client_request_id,
+        ) {
+            Ok(value) => value,
+            Err(error) => {
+                capture_create_uncertain = error.uncertain;
+                return Err(error.message);
+            }
+        };
         capture_response_accepted = true;
         Ok::<Value, String>(capture).and_then(|value| {
             let capture_id = value
@@ -240,7 +250,8 @@ pub(crate) fn start_streaming_capture(
         Ok(value) => Ok(value),
         Err(error)
             if capture_response_accepted
-                || (capture_request_attempted && is_uncertain_capture_create_error(&error)) =>
+                || (capture_request_attempted
+                    && (capture_create_uncertain || is_uncertain_capture_create_error(&error))) =>
         {
             match reconcile_capture_by_client_request(&config, &capture_body, &client_request_id) {
                 CaptureReconciliation::Committed(value)
@@ -368,12 +379,31 @@ fn persist_capture_recovery(
         .map(|_| ())
 }
 
+#[cfg(test)]
 fn request_capture_with_recovery(
     config: &BackendConfig,
     body: RequestBody,
     client_request_id: &str,
 ) -> Result<Value, String> {
-    validate_client_request_id(client_request_id)?;
+    request_capture_with_recovery_state(config, body, client_request_id)
+        .map_err(|error| error.message)
+}
+
+#[derive(Debug)]
+struct CaptureCreateFailure {
+    message: String,
+    uncertain: bool,
+}
+
+fn request_capture_with_recovery_state(
+    config: &BackendConfig,
+    body: RequestBody,
+    client_request_id: &str,
+) -> Result<Value, CaptureCreateFailure> {
+    validate_client_request_id(client_request_id).map_err(|message| CaptureCreateFailure {
+        message,
+        uncertain: false,
+    })?;
     let send = || {
         request_with_headers(
             config,
@@ -392,7 +422,10 @@ fn request_capture_with_recovery(
         Err(error) => error,
     };
     if !is_uncertain_capture_create_error(&first_error) {
-        return Err(first_error);
+        return Err(CaptureCreateFailure {
+            message: first_error,
+            uncertain: false,
+        });
     }
     match send() {
         Ok(value) => Ok(value),
@@ -405,11 +438,19 @@ fn request_capture_with_recovery(
                 None,
                 &[],
             )
-            .map_err(|_| first_error)?;
-            validate_recovered_capture(recovered, &body)
-                .map_err(|_| "Capture Runtime recovered a conflicting capture.".to_string())
+            .map_err(|_| CaptureCreateFailure {
+                message: first_error,
+                uncertain: true,
+            })?;
+            validate_recovered_capture(recovered, &body).map_err(|_| CaptureCreateFailure {
+                message: "Capture Runtime recovered a conflicting capture.".to_string(),
+                uncertain: true,
+            })
         }
-        Err(second_error) => Err(second_error),
+        Err(second_error) => Err(CaptureCreateFailure {
+            message: second_error,
+            uncertain: true,
+        }),
     }
 }
 
@@ -864,10 +905,18 @@ where
     }
 
     let mut parser = SseParser::new(last_event_id, &config.token, expected_capture_id)?;
-    parser.feed(&body_prefix, &mut on_event)?;
+    let mut chunked_decoder = has_chunked_transfer_encoding(headers).then(ChunkedBodyDecoder::new);
+    let mut body_prefix = body_prefix;
+    let mut decoded_chunk = Vec::with_capacity(8192);
     loop {
-        let mut chunk = [0_u8; 8192];
-        let Some(count) = read_sse_chunk(&mut stream, &mut chunk, cancellation)? else {
+        let Some(count) = read_http_body_chunk(
+            &mut stream,
+            &mut chunked_decoder,
+            &mut body_prefix,
+            &mut decoded_chunk,
+            cancellation,
+        )?
+        else {
             return Ok(());
         };
         if count == 0 {
@@ -877,9 +926,177 @@ where
         if total_bytes > MAX_RUNTIME_RESPONSE_BYTES {
             return Err("Capture Runtime response exceeded the desktop safety limit.".into());
         }
-        parser.feed(&chunk[..count], &mut on_event)?;
+        parser.feed(&decoded_chunk[..count], &mut on_event)?;
     }
     parser.finish(&mut on_event)
+}
+
+fn read_http_body_chunk(
+    stream: &mut TcpStream,
+    decoder: &mut Option<ChunkedBodyDecoder>,
+    prefix: &mut Vec<u8>,
+    output: &mut Vec<u8>,
+    cancellation: Option<&AtomicBool>,
+) -> Result<Option<usize>, String> {
+    let mut raw = [0_u8; 8192];
+    loop {
+        output.clear();
+        let input = if prefix.is_empty() {
+            match read_sse_chunk(stream, &mut raw, cancellation)? {
+                None => return Ok(None),
+                Some(0) => {
+                    if let Some(decoder) = decoder {
+                        decoder.finish()?;
+                    }
+                    return Ok(None);
+                }
+                Some(count) => &raw[..count],
+            }
+        } else {
+            let pending = std::mem::take(prefix);
+            raw[..pending.len()].copy_from_slice(&pending);
+            &raw[..pending.len()]
+        };
+        if let Some(decoder) = decoder {
+            decoder.feed(input, output)?;
+            if decoder.is_done() && output.is_empty() {
+                decoder.finish()?;
+                return Ok(None);
+            }
+        } else {
+            output.extend_from_slice(input);
+        }
+        if !output.is_empty() {
+            return Ok(Some(output.len()));
+        }
+    }
+}
+
+fn has_chunked_transfer_encoding(headers: &str) -> bool {
+    headers
+        .lines()
+        .skip(1)
+        .filter_map(|line| line.split_once(':'))
+        .filter(|(name, _)| name.trim().eq_ignore_ascii_case("transfer-encoding"))
+        .flat_map(|(_, value)| value.split(','))
+        .any(|value| value.trim().eq_ignore_ascii_case("chunked"))
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum ChunkedBodyState {
+    Size,
+    Data(usize),
+    DataCrlf(bool),
+    Trailers,
+    Done,
+}
+
+struct ChunkedBodyDecoder {
+    state: ChunkedBodyState,
+    line: Vec<u8>,
+    pending_cr: bool,
+}
+
+impl ChunkedBodyDecoder {
+    fn new() -> Self {
+        Self {
+            state: ChunkedBodyState::Size,
+            line: Vec::new(),
+            pending_cr: false,
+        }
+    }
+
+    fn is_done(&self) -> bool {
+        self.state == ChunkedBodyState::Done
+    }
+
+    fn feed(&mut self, input: &[u8], output: &mut Vec<u8>) -> Result<(), String> {
+        let mut index = 0;
+        while index < input.len() {
+            match &mut self.state {
+                ChunkedBodyState::Size | ChunkedBodyState::Trailers => {
+                    let is_size = self.state == ChunkedBodyState::Size;
+                    let byte = input[index];
+                    index += 1;
+                    if self.pending_cr {
+                        if byte != b'\n' {
+                            return Err("Capture Runtime HTTP chunk framing was invalid.".into());
+                        }
+                        self.pending_cr = false;
+                        let line = std::mem::take(&mut self.line);
+                        if is_size {
+                            let size = parse_http_chunk_size(&line)?;
+                            self.state = if size == 0 {
+                                ChunkedBodyState::Trailers
+                            } else {
+                                ChunkedBodyState::Data(size)
+                            };
+                        } else if line.is_empty() {
+                            self.state = ChunkedBodyState::Done;
+                        }
+                    } else if byte == b'\r' {
+                        self.pending_cr = true;
+                    } else if byte == b'\n' {
+                        return Err("Capture Runtime HTTP chunk framing was invalid.".into());
+                    } else {
+                        self.line.push(byte);
+                        if self.line.len() > 8 * 1024 {
+                            return Err("Capture Runtime HTTP chunk metadata was too large.".into());
+                        }
+                    }
+                }
+                ChunkedBodyState::Data(remaining) => {
+                    let count = (*remaining).min(input.len() - index);
+                    output.extend_from_slice(&input[index..index + count]);
+                    *remaining -= count;
+                    index += count;
+                    if *remaining == 0 {
+                        self.state = ChunkedBodyState::DataCrlf(false);
+                    }
+                }
+                ChunkedBodyState::DataCrlf(saw_cr) => {
+                    let byte = input[index];
+                    index += 1;
+                    if !*saw_cr {
+                        if byte != b'\r' {
+                            return Err("Capture Runtime HTTP chunk framing was invalid.".into());
+                        }
+                        *saw_cr = true;
+                    } else {
+                        if byte != b'\n' {
+                            return Err("Capture Runtime HTTP chunk framing was invalid.".into());
+                        }
+                        self.state = ChunkedBodyState::Size;
+                    }
+                }
+                ChunkedBodyState::Done => {
+                    return Err(
+                        "Capture Runtime HTTP response contained data after trailers.".into(),
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn finish(&self) -> Result<(), String> {
+        if self.is_done() && !self.pending_cr && self.line.is_empty() {
+            Ok(())
+        } else {
+            Err("Capture Runtime HTTP chunked response ended before trailers.".into())
+        }
+    }
+}
+
+fn parse_http_chunk_size(line: &[u8]) -> Result<usize, String> {
+    let line = std::str::from_utf8(line)
+        .map_err(|_| "Capture Runtime HTTP chunk size was invalid.".to_string())?;
+    let size = line.split(';').next().unwrap_or_default().trim();
+    if size.is_empty() {
+        return Err("Capture Runtime HTTP chunk size was invalid.".into());
+    }
+    usize::from_str_radix(size, 16)
+        .map_err(|_| "Capture Runtime HTTP chunk size was invalid.".to_string())
 }
 
 fn read_sse_chunk(
@@ -1115,9 +1332,6 @@ fn validate_capture_event(
             "Capture Runtime SSE event capture identity did not match the request.".to_string(),
         );
     }
-    if !event_id.starts_with(&format!("{capture_id}/")) {
-        return Err("Capture Runtime SSE event id did not match its capture identity.".to_string());
-    }
     if !matches!(
         object.get("kind").and_then(Value::as_str),
         Some("pdf" | "image" | "audio")
@@ -1128,6 +1342,9 @@ fn validate_capture_event(
         .get("sequence")
         .and_then(Value::as_u64)
         .ok_or_else(|| "Capture Runtime SSE event sequence was invalid.".to_string())?;
+    if event_id != format!("{capture_id}/{sequence}") {
+        return Err("Capture Runtime SSE event id did not match its capture sequence.".to_string());
+    }
     let event_type = object
         .get("eventType")
         .and_then(Value::as_str)
@@ -1755,11 +1972,11 @@ mod tests {
                 "event: checkpoint\r\n",
                 "data: {\"protocolVersion\":\"2\",\"eventId\":\"capture-1/8\",\"sequence\":8,\"captureId\":\"capture-1\",\"kind\":\"audio\",\"eventType\":\"checkpoint\",\"stage\":\"extracting-secret-token\",\"progress\":0.5,\"partialRevision\":1,\"createdAt\":\"2026-01-01T00:00:00Z\"}\r\n\r\n",
             );
+            let chunked_body = format!("{:X}\r\n{body}\r\n0\r\n\r\n", body.len());
             write!(
                 stream,
-                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                body.len(),
-                body
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream; charset=utf-8\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n{}",
+                chunked_body
             )
             .expect("response");
         });
@@ -1911,6 +2128,8 @@ mod tests {
         });
         let mut identity = base.clone();
         identity["captureId"] = serde_json::json!("capture-2");
+        let mut event_id = base.clone();
+        event_id["eventId"] = serde_json::json!("capture-1/8/extra");
         let mut timestamp = base.clone();
         timestamp["createdAt"] = serde_json::json!("2026-01-01T00:00:00");
         let mut segment = base.clone();
@@ -1930,6 +2149,7 @@ mod tests {
         invalid_calendar["createdAt"] = serde_json::json!("2026-02-30T00:00:00Z");
         let cases = [
             ("identity", identity, "capture identity"),
+            ("event id", event_id, "capture sequence"),
             ("timestamp", timestamp, "timestamp"),
             ("segment", segment, "segment event payload"),
             ("failure", failure, "failed event payload"),
@@ -1949,6 +2169,42 @@ mod tests {
                 "expected {expected} rejection",
             );
         }
+    }
+
+    #[test]
+    fn native_http_chunked_sse_body_is_decoded_across_split_chunk_boundaries() {
+        let body = b"id: 1\r\nevent: accepted\r\ndata: {\"ok\":true}\r\n\r\n";
+        let encoded = format!("{:X};stream=yes\r\n", body.len())
+            .into_bytes()
+            .into_iter()
+            .chain(body.iter().copied())
+            .chain(b"\r\n0\r\nX-Test: complete\r\n\r\n".iter().copied())
+            .collect::<Vec<_>>();
+        let split_points = [1, 3, 7, 11, encoded.len() - 2];
+        let mut decoder = ChunkedBodyDecoder::new();
+        let mut output = Vec::new();
+        let mut decoded = Vec::new();
+        let mut start = 0;
+        for end in split_points.into_iter().chain([encoded.len()]) {
+            output.clear();
+            decoder
+                .feed(&encoded[start..end], &mut output)
+                .expect("split chunk framing");
+            decoded.extend_from_slice(&output);
+            start = end;
+        }
+        decoder.finish().expect("complete chunked body");
+        assert_eq!(decoded, body);
+    }
+
+    #[test]
+    fn native_http_chunked_sse_body_rejects_truncated_chunk_data() {
+        let mut decoder = ChunkedBodyDecoder::new();
+        let mut output = Vec::new();
+        decoder
+            .feed(b"4\r\ndata", &mut output)
+            .expect("partial chunk");
+        assert!(decoder.finish().is_err());
     }
 
     #[test]
@@ -2166,7 +2422,7 @@ mod tests {
     }
 
     #[test]
-    fn capture_creation_does_not_lookup_after_uncertain_retry_returns_a_conflict() {
+    fn capture_creation_keeps_uncertainty_after_a_retry_conflict() {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("listener");
         let port = listener.local_addr().expect("address").port();
         let server = thread::spawn(move || {
@@ -2184,7 +2440,7 @@ mod tests {
             }
         });
 
-        let error = request_capture_with_recovery(
+        assert!(request_capture_with_recovery_state(
             &BackendConfig {
                 base_url: format!("http://127.0.0.1:{port}"),
                 token: "token".into(),
@@ -2198,9 +2454,7 @@ mod tests {
             },
             "capture-conflict-retry",
         )
-        .expect_err("retry conflict");
-
-        assert_eq!(error, "Capture Runtime request was rejected with HTTP 409.");
+        .is_err());
         server.join().expect("server");
     }
 

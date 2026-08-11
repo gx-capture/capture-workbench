@@ -222,26 +222,39 @@ class StreamingCaptureService:
         if self._structurer is None:
             raise StreamingTransitionError("runtime structuring provider is unavailable")
         self.repository.mark_structuring(capture_id)
-        candidate = await self._structurer.structure(
-            raw,
-            target_language=request.target_language,
-            cancel_event=self._cancellations.setdefault(capture_id, asyncio.Event()),
-        )
-        document = _validate_runtime_document(candidate, raw)
-        expected_engine = self._structurer.engine_identity
-        if expected_engine is None or document.structuring_engine != expected_engine:
-            raise StructuringValidationError(
-                "structuring provider provenance is invalid", issues=[]
+        try:
+            candidate = await self._structurer.structure(
+                raw,
+                target_language=request.target_language,
+                cancel_event=self._cancellations.setdefault(capture_id, asyncio.Event()),
             )
-        completed = CaptureDocumentV1.model_validate(
-            {
-                **document.model_dump(mode="json", by_alias=True),
-                "completedAt": self._clock.now().isoformat(),
-            }
-        )
-        self.repository.write_result(capture_id, completed)
-        self.repository.complete_capture(capture_id)
-        return completed
+            document = _validate_runtime_document(candidate, raw)
+            expected_engine = self._structurer.engine_identity
+            if expected_engine is None or document.structuring_engine != expected_engine:
+                raise StructuringValidationError(
+                    "structuring provider provenance is invalid", issues=[]
+                )
+            completed = CaptureDocumentV1.model_validate(
+                {
+                    **document.model_dump(mode="json", by_alias=True),
+                    "completedAt": self._clock.now().isoformat(),
+                }
+            )
+            self.repository.write_result(capture_id, completed)
+            self.repository.complete_capture(capture_id)
+            return completed
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            failure = _structure_failure(error)
+            self._fail(
+                capture_id,
+                failure.code,
+                failure.message,
+                stage="structuring",
+                retryable=failure.retryable,
+            )
+            raise StreamingStructureFailure(failure.code, failure.message) from error
 
     def cancel_capture(self, capture_id: str) -> CaptureOperationV2:
         cancellation = self._cancellations.setdefault(capture_id, asyncio.Event())
@@ -332,6 +345,8 @@ class StreamingCaptureService:
                     "progressive_interrupted",
                     "Progressive capture was interrupted.",
                 )
+        except StreamingStructureFailure:
+            return
         except ProgressiveCaptureError as error:
             self._fail(
                 capture_id,
@@ -526,6 +541,29 @@ def _validate_runtime_document(candidate: object, raw: RawCaptureV1) -> CaptureD
         ) from error
 
 
+def _structure_failure(error: BaseException) -> CaptureFailureV2:
+    if isinstance(error, (StructuringValidationError, ValidationError, ValueError)):
+        return CaptureFailureV2(
+            code="structuring_invalid_output",
+            message="Structuring output failed strict schema or provenance validation.",
+            stage="structuring",
+            retryable=False,
+        )
+    if isinstance(error, (RuntimeUnavailableError, ExtractionRuntimeUnavailableError)):
+        return CaptureFailureV2(
+            code="requirement_unavailable",
+            message="Capture structuring provider is unavailable.",
+            stage="structuring",
+            retryable=True,
+        )
+    return CaptureFailureV2(
+        code="structuring_failed",
+        message="Capture structuring failed.",
+        stage="structuring",
+        retryable=True,
+    )
+
+
 def _safe_failure_message(error: BaseException) -> str:
     if isinstance(error, ProgressiveCaptureError):
         return str(error)[:500] or "Progressive audio processing failed."
@@ -539,4 +577,15 @@ def _model_fingerprint(model: BaseModel) -> str:
     ).hexdigest()
 
 
-__all__ = ["StreamingCaptureService", "StreamingTransitionError"]
+class StreamingStructureFailure(RuntimeError):
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+__all__ = [
+    "StreamingCaptureService",
+    "StreamingStructureFailure",
+    "StreamingTransitionError",
+]

@@ -13,9 +13,13 @@ from fastapi import APIRouter
 from fastapi.testclient import TestClient
 
 from capture_runtime.contracts import (
+    CaptureEngineV1,
     CaptureOperationV2,
     CaptureSourceKind,
+    RawCaptureSegmentV1,
+    RawCaptureV1,
     StreamingCaptureStatus,
+    TimeLocatorV1,
 )
 from capture_runtime.routes.streaming import register_streaming_routes
 from capture_runtime.storage import StreamingEventOverflow
@@ -644,6 +648,100 @@ def test_streaming_api_sanitizes_host_failure_before_persistence_and_sse(
     assert secret not in events.text
     assert '"code":"host_provider_failed"' in events.text
     assert '"message":"Host structuring failed."' in events.text
+
+
+def test_streaming_api_terminalizes_direct_runtime_structuring_failure(
+    client: TestClient,
+) -> None:
+    service = client.app.state.streaming_capture_service
+    repository = client.app.state.streaming_repository
+    service._extractor = None
+    service._processor = None
+
+    ingestion_id, source_sha256 = _open(client)
+    uploaded = client.put(
+        f"/v2/ingestions/{ingestion_id}/chunks/0",
+        content=_source(),
+        headers={
+            "Content-Range": "bytes 0-5/6",
+            "Digest": f"sha-256={source_sha256}",
+            "X-Idempotency-Key": "api-stream-direct-structure-chunk",
+        },
+    )
+    assert uploaded.status_code == 200, uploaded.text
+    finalized = client.post(
+        f"/v2/ingestions/{ingestion_id}/finalize",
+        json={"totalBytes": 6, "sha256": source_sha256},
+    )
+    assert finalized.status_code == 200, finalized.text
+
+    started = client.post(
+        "/v2/captures",
+        json={
+            "clientRequestId": "api-stream-direct-structure",
+            "ingestionId": ingestion_id,
+            "structuringMode": "runtime",
+            "startPolicy": "eager",
+        },
+    )
+    assert started.status_code == 202, started.text
+    capture_id = started.json()["captureId"]
+    operation = repository.get_capture(capture_id)
+    repository.write_raw(
+        capture_id,
+        RawCaptureV1(
+            source=operation.source,
+            segments=[
+                RawCaptureSegmentV1(
+                    segment_id="direct-structure-segment",
+                    order=0,
+                    locator=TimeLocatorV1(start_ms=0, end_ms=1_000),
+                    text="direct structure failure",
+                )
+            ],
+            source_text="direct structure failure",
+            extraction_engine=CaptureEngineV1(
+                engine="test-extractor",
+                model="test",
+                digest="sha256:" + "a" * 64,
+                device="test",
+            ),
+            created_at=datetime.now(UTC),
+        ),
+    )
+    repository.mark_awaiting_structuring(capture_id)
+
+    class FailingStructurer:
+        engine_identity = None
+
+        async def structure(self, raw, *, target_language, cancel_event):
+            del raw, target_language, cancel_event
+            raise RuntimeError("Bearer direct-structure-secret provider payload")
+
+    service._structurer = FailingStructurer()
+    response = client.post(f"/v2/captures/{capture_id}/structure")
+
+    assert response.status_code == 500, response.text
+    assert response.json() == {
+        "error": {
+            "code": "structuring_failed",
+            "message": "Capture structuring failed.",
+        }
+    }
+    assert "direct-structure-secret" not in response.text
+    persisted = client.get(f"/v2/captures/{capture_id}")
+    assert persisted.status_code == 200
+    assert persisted.json()["status"] == "failed"
+    assert persisted.json()["error"] == {
+        "code": "structuring_failed",
+        "message": "Capture structuring failed.",
+        "stage": "structuring",
+        "retryable": True,
+    }
+    events = client.get(f"/v2/captures/{capture_id}/events")
+    assert events.status_code == 200
+    assert "event: failed" in events.text
+    assert "direct-structure-secret" not in events.text
 
 
 def test_streaming_api_rejects_gap_checksum_and_invalid_cursor(client: TestClient) -> None:

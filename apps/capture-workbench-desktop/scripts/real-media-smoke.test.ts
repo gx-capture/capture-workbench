@@ -10,6 +10,7 @@ import {
   expectedProvenanceFromSourceLock,
   observeKnownRuntimeProcesses,
   observeOwnedRuntimeTree,
+  parseStreamingEventChunks,
   parseStreamingEvents,
   parseOwnedRuntimeEvidence,
   runtimeEnvironment,
@@ -256,6 +257,26 @@ test('real-media SSE assertions require framed metadata and terminal ordering', 
   );
   assert.throws(
     () => parseStreamingEvents('id: 1\nevent: accepted\ndata: {}\n'),
+    /incomplete event frame/u,
+  );
+});
+
+test('real-media SSE parser dispatches only after a split CRLF blank-line delimiter', () => {
+  const event = parseStreamingEventChunks([
+    'id: 1\r',
+    '\nevent: checkpoint\r',
+    '\ndata: {"sequence":1,"eventType":"checkpoint","stage":"extracting","progress":0.4}\r',
+    '\n\r',
+    '\n',
+  ]);
+
+  assert.deepEqual(event, [
+    { sequence: 1, eventType: 'checkpoint', stage: 'extracting', progress: 0.4 },
+  ]);
+  assert.throws(
+    () => parseStreamingEventChunks([
+      'id: 1\nevent: checkpoint\ndata: {"sequence":1,"eventType":"checkpoint","stage":"extracting"}',
+    ]),
     /incomplete event frame/u,
   );
 });

@@ -155,6 +155,7 @@ export class HttpCaptureClient implements CaptureClient {
     request: StartStreamingCaptureRequest,
   ): Observable<CaptureOperationV2> {
     let ingestionId: string | undefined;
+    let captureRequestAttempted = false;
     const ingestionRequest = {
       protocolVersion: '2' as const,
       kind: request.sourceKind,
@@ -189,24 +190,34 @@ export class HttpCaptureClient implements CaptureClient {
         }),
       ),
       concatMap(() =>
-        this.request<CaptureOperationV2>('/v2/captures', {
-          method: 'POST',
-          idempotencyKey: request.clientRequestId,
-          json: {
-            protocolVersion: '2',
-            clientRequestId: request.clientRequestId,
-            ingestionId,
-            structuringMode: request.structuringMode,
-            ...(request.targetLanguage ? { targetLanguage: request.targetLanguage } : {}),
-            startPolicy: 'eager',
-          },
-          signal: request.signal,
+        defer(() => {
+          captureRequestAttempted = true;
+          return this.request<CaptureOperationV2>('/v2/captures', {
+            method: 'POST',
+            idempotencyKey: request.clientRequestId,
+            json: {
+              protocolVersion: '2',
+              clientRequestId: request.clientRequestId,
+              ingestionId,
+              structuringMode: request.structuringMode,
+              ...(request.targetLanguage ? { targetLanguage: request.targetLanguage } : {}),
+              startPolicy: 'eager',
+            },
+            signal: request.signal,
+          });
         }),
       ),
     );
     return pipeline$.pipe(
       catchError((error: unknown) => {
         if (!ingestionId) return throwError(() => error);
+        if (captureRequestAttempted && isUncertainCaptureCreateFailure(error)) {
+          return this.reconcileUncertainCaptureCreate(
+            request.clientRequestId,
+            ingestionId,
+            error,
+          );
+        }
         return this.deleteStreamingIngestion(ingestionId).pipe(
           catchError(() => of(undefined)),
           mergeMap(() => throwError(() => error)),
@@ -330,6 +341,49 @@ export class HttpCaptureClient implements CaptureClient {
     return this.request<void>(`/v2/ingestions/${encodeURIComponent(ingestionId)}`, {
       method: 'DELETE',
     }).pipe(map(() => undefined));
+  }
+
+  private reconcileUncertainCaptureCreate(
+    clientRequestId: string,
+    ingestionId: string,
+    originalError: unknown,
+  ): Observable<CaptureOperationV2> {
+    return this.getStreamingCaptureByClientRequest(clientRequestId).pipe(
+      catchError((lookupError: unknown) => {
+        if (!isCaptureNotFound(lookupError)) return throwError(() => originalError);
+        return this.deleteStreamingIngestion(ingestionId).pipe(
+          catchError(() => of(undefined)),
+          mergeMap(() => throwError(() => originalError)),
+        );
+      }),
+      mergeMap((operation) => {
+        if (operation.ingestionId === ingestionId) return of(operation);
+        if (typeof operation.ingestionId !== 'string' || operation.ingestionId === '') {
+          return throwError(() => originalError);
+        }
+        return this.deleteStreamingIngestion(ingestionId).pipe(
+          catchError(() => of(undefined)),
+          mergeMap(() =>
+            throwError(
+              () =>
+                new CaptureHttpError(
+                  409,
+                  'idempotency_conflict',
+                  'Capture request id was already used with a different ingestion.',
+                ),
+            ),
+          ),
+        );
+      }),
+    );
+  }
+
+  private getStreamingCaptureByClientRequest(
+    clientRequestId: string,
+  ): Observable<CaptureOperationV2> {
+    return this.request<CaptureOperationV2>(
+      `/v2/captures/by-client-request/${encodeURIComponent(clientRequestId)}`,
+    );
   }
 
   private request<T>(
@@ -497,6 +551,18 @@ function isObservableValue(value: unknown): value is Observable<string> {
 
 function mediaTypeFor(kind: StartStreamingCaptureRequest['sourceKind']): string {
   return kind === 'pdf' ? 'application/pdf' : kind === 'image' ? 'image/*' : 'audio/*';
+}
+
+function isUncertainCaptureCreateFailure(error: unknown): boolean {
+  if (error instanceof CaptureHttpError && error.code === 'invalid_response') return true;
+  if (error instanceof TypeError) return true;
+  const status = (error as { readonly status?: unknown })?.status;
+  return typeof status === 'number' && (status === 0 || status >= 500);
+}
+
+function isCaptureNotFound(error: unknown): boolean {
+  return error instanceof CaptureHttpError
+    && (error.status === 404 || error.code === 'capture_not_found');
 }
 
 function toHex(bytes: Uint8Array): string {

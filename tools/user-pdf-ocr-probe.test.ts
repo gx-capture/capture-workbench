@@ -191,7 +191,7 @@ test('probe reconciles resync overflow before reconnecting', async () => {
       eventRequestCount += 1;
       return eventRequestCount === 1
         ? sseResponse(eventFrame(2, 'resync_required', 'resync', {
-          eventId: `${CAPTURE_ID}/resync/2`,
+          eventId: `${CAPTURE_ID}/2`,
         }))
         : sseResponse(eventFrame(3, 'checkpoint', 'awaiting_structuring'));
     }
@@ -249,6 +249,23 @@ test('probe rejects a capture-boundary SSE mismatch without exposing payload dat
       assert.ok(error instanceof UserPdfOcrProbeError);
       assert.deepEqual(error.shape, { code: 'invalid_response', stage: 'extraction' });
       assert.doesNotMatch(error.message, new RegExp(SECRET, 'u'));
+      return true;
+    },
+  );
+});
+
+test('probe rejects an event id with the right capture prefix but wrong sequence suffix', async () => {
+  const fetchImplementation = async () => sseResponse(
+    eventFrame(1, 'checkpoint', 'extracting', {
+      eventId: `${CAPTURE_ID}/1/extra`,
+    }),
+  );
+
+  await assert.rejects(
+    waitForExtraction('http://runtime.test', CAPTURE_ID, SECRET, 5_000, fetchImplementation),
+    (error: unknown) => {
+      assert.ok(error instanceof UserPdfOcrProbeError);
+      assert.deepEqual(error.shape, { code: 'invalid_response', stage: 'extraction' });
       return true;
     },
   );
