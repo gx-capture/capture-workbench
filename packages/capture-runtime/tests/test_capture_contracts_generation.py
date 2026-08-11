@@ -93,3 +93,14 @@ def test_typescript_artifact_preserves_locator_fidelity_for_in_repo_consumers() 
     assert 'readonly kind: "page";' in source
     assert "readonly boundingBox?: readonly [number, number, number, number] | null;" in source
     assert "GENERATED_CAPTURE_DOCUMENT_V1_JSON_SCHEMA" in schema_source
+
+
+def test_typescript_artifact_marks_capture_job_v1_as_deprecated() -> None:
+    source = (
+        ROOT / "packages" / "capture-contracts" / "src" / "generated" / "contracts.ts"
+    ).read_text(encoding="utf-8")
+
+    assert (
+        " * @deprecated Deprecated wire type retained only for external migration tooling."
+        in source
+    )

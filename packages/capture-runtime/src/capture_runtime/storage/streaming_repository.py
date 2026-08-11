@@ -756,6 +756,12 @@ class StreamingRepository:
     def delete_capture(self, capture_id: str) -> None:
         with self._lock:
             record = self._get_capture(capture_id)
+            if record.operation.status not in {
+                StreamingCaptureStatus.COMPLETED,
+                StreamingCaptureStatus.FAILED,
+                StreamingCaptureStatus.CANCELLED,
+            }:
+                raise StreamingTransitionError("capture is active")
             self._captures.pop(capture_id, None)
             self._capture_idempotency.pop(record.request.client_request_id, None)
             directory = self._capture_directory(capture_id)

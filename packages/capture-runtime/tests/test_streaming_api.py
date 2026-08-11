@@ -165,6 +165,27 @@ def test_streaming_api_accepts_ordered_chunks_replays_sse_and_rejects_partial_be
     assert replay_ids == ids[2:]
 
 
+def test_streaming_api_rejects_deleting_an_active_capture(client: TestClient) -> None:
+    ingestion_id, _ = _open(client)
+    started = client.post(
+        "/v2/captures",
+        json={
+            "clientRequestId": "api-stream-active-delete",
+            "ingestionId": ingestion_id,
+            "structuringMode": "host",
+            "startPolicy": "eager",
+        },
+    )
+    assert started.status_code == 202, started.text
+    capture_id = started.json()["captureId"]
+
+    deleted = client.delete(f"/v2/captures/{capture_id}")
+
+    assert deleted.status_code == 409
+    assert deleted.json()["error"]["code"] == "capture_delete_rejected"
+    assert client.get(f"/v2/captures/{capture_id}").status_code == 200
+
+
 def test_streaming_api_closes_replay_after_event_window_resync(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

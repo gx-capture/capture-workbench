@@ -134,10 +134,15 @@ def _ts_decl(name: str, schema: dict[str, Any]) -> str:
     lines: list[str] = []
     description = schema.get("description")
     if isinstance(description, str):
+        safe_description = description.replace("*/", "* /")
         lines.extend(
             [
                 "/**",
-                f" * {description.replace('*/', '* /')}",
+                (
+                    f" * @deprecated {safe_description}"
+                    if description.lstrip().lower().startswith("deprecated")
+                    else f" * {safe_description}"
+                ),
                 " */",
             ]
         )

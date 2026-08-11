@@ -108,7 +108,7 @@ export interface CaptureFailureV2 {
 }
 
 /**
- * Deprecated wire type retained only for external migration tooling.
+ * @deprecated Deprecated wire type retained only for external migration tooling.
  */
 export interface CaptureJobV1 {
   readonly captureId: string;

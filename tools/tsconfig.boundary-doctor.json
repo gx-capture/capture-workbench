@@ -5,6 +5,8 @@
   },
   "include": [
     "./capture-boundary-doctor.ts",
-    "./capture-boundary-doctor.test.ts"
+    "./capture-boundary-doctor.test.ts",
+    "./user-pdf-ocr-probe.mts",
+    "./user-pdf-ocr-probe.test.ts"
   ]
 }

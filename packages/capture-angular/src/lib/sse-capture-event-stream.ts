@@ -94,7 +94,20 @@ export function decodeCaptureEventFrame(frame: SseEventFrame): CaptureEventV2 {
   } catch {
     throw invalidEventFrame();
   }
-  return normalizeCaptureEvent(parsed);
+  const event = normalizeCaptureEvent(parsed);
+  if (
+    frame.id !== undefined &&
+    frame.id !== String(event.sequence)
+  ) {
+    throw invalidEventFrame();
+  }
+  if (
+    frame.event !== undefined &&
+    frame.event !== event.eventType
+  ) {
+    throw invalidEventFrame();
+  }
+  return event;
 }
 
 function eventStreamFromResponse(

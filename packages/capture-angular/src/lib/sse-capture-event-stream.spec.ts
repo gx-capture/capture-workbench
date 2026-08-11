@@ -136,6 +136,26 @@ describe('captureEventStream', () => {
     ).rejects.toMatchObject({ code: 'invalid_event_frame' });
   });
 
+  it('rejects an SSE id that does not match the payload sequence', () => {
+    const [frame] = parseSseText(
+      `id: 2\nevent: accepted\ndata: ${JSON.stringify(captureEvent(1, 'accepted'))}\n\n`,
+    );
+
+    expect(() => decodeCaptureEventFrame(frame)).toThrowError(
+      expect.objectContaining({ code: 'invalid_event_frame' }),
+    );
+  });
+
+  it('rejects an SSE event name that does not match the payload eventType', () => {
+    const [frame] = parseSseText(
+      `id: 1\nevent: completed\ndata: ${JSON.stringify(captureEvent(1, 'accepted'))}\n\n`,
+    );
+
+    expect(() => decodeCaptureEventFrame(frame)).toThrowError(
+      expect.objectContaining({ code: 'invalid_event_frame' }),
+    );
+  });
+
   it('surfaces the canonical error envelope from a non-ok response', async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(

@@ -146,8 +146,9 @@ pub(crate) fn start_streaming_capture(
         .get("ingestionId")
         .and_then(Value::as_str)
         .ok_or_else(|| "Progressive ingestion response is invalid.".to_string())?;
+    let client_request_id = input.client_request_id.clone();
     let result = (|| {
-        upload_source_chunks(&config, &source, ingestion_id, &input.client_request_id)?;
+        upload_source_chunks(&config, &source, ingestion_id, &client_request_id)?;
         let source_digest = source_sha256(&source)?;
         request_json(
             state,
@@ -163,33 +164,55 @@ pub(crate) fn start_streaming_capture(
             }),
             None,
         )?;
-        request_json(
-            state,
-            "POST",
-            "/v2/captures",
-            Some(RequestBody {
+        request_capture_with_recovery(
+            &config,
+            RequestBody {
                 bytes: serde_json::to_vec(&json!({
-                    "clientRequestId": input.client_request_id,
+                    "clientRequestId": client_request_id.clone(),
                     "ingestionId": ingestion_id,
                     "structuringMode": input.structuring_mode,
                     "startPolicy": "eager",
                 }))
                 .map_err(|_| "Progressive capture request cannot be encoded.".to_string())?,
                 content_type: "application/json".into(),
-            }),
-            None,
+            },
+            &client_request_id,
         )
     })();
-    if result.is_err() {
-        let _ = request_json(
+    match result {
+        Ok(value) => Ok(value),
+        Err(error) => match request_json(
             state,
             "DELETE",
             &format!("/v2/ingestions/{ingestion_id}"),
             None,
             None,
-        );
+        ) {
+            Ok(_) => Err(error),
+            Err(cleanup_error) => Err(format!("{error} Ingestion cleanup failed: {cleanup_error}")),
+        },
     }
-    result
+}
+
+fn request_capture_with_recovery(
+    config: &BackendConfig,
+    body: RequestBody,
+    client_request_id: &str,
+) -> Result<Value, String> {
+    let send = || {
+        request_with_headers(
+            config,
+            "POST",
+            "/v2/captures",
+            Some(RequestBody {
+                bytes: body.bytes.clone(),
+                content_type: body.content_type.clone(),
+            }),
+            Some(client_request_id),
+            &[],
+        )
+    };
+    send().or_else(|_| send())
 }
 
 pub(crate) fn streaming_capture(
@@ -762,6 +785,50 @@ mod tests {
             error,
             "Capture Runtime SSE response Content-Type was not text/event-stream."
         );
+        server.join().expect("server");
+    }
+
+    #[test]
+    fn capture_creation_retries_same_idempotent_request_after_lost_response() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("listener");
+        let port = listener.local_addr().expect("address").port();
+        let server = thread::spawn(move || {
+            for attempt in 0..2 {
+                let (mut stream, _) = listener.accept().expect("accept");
+                let request = read_http_request(&mut stream);
+                assert!(request.starts_with("POST /v2/captures HTTP/1.1"));
+                assert!(request.contains("X-Idempotency-Key: capture-request-1"));
+                assert!(request.contains("\"clientRequestId\":\"capture-request-1\""));
+                if attempt == 1 {
+                    let body = r#"{"captureId":"capture-1"}"#;
+                    write!(
+                        stream,
+                        "HTTP/1.1 202 Accepted\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    )
+                    .expect("response");
+                }
+            }
+        });
+
+        let value = request_capture_with_recovery(
+            &BackendConfig {
+                base_url: format!("http://127.0.0.1:{port}"),
+                token: "token".into(),
+                runtime_version: "0.3.11".into(),
+                api_version: "1.0".into(),
+                capture_document_schema_version: "1".into(),
+            },
+            RequestBody {
+                bytes: br#"{"clientRequestId":"capture-request-1"}"#.to_vec(),
+                content_type: "application/json".into(),
+            },
+            "capture-request-1",
+        )
+        .expect("idempotent recovery");
+
+        assert_eq!(value["captureId"], "capture-1");
         server.join().expect("server");
     }
 

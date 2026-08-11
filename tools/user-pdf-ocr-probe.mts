@@ -18,6 +18,101 @@ const configuredModelDir = process.env.CAPTURE_USER_MODEL_DIR
   ? resolve(process.env.CAPTURE_USER_MODEL_DIR)
   : undefined;
 
+const PROBE_ERROR_CODES = [
+  'configuration',
+  'runtime',
+  'http',
+  'invalid_response',
+  'capture_failed',
+  'timeout',
+  'probe_failed',
+] as const;
+const PROBE_STAGES = [
+  'input',
+  'runtime',
+  'model',
+  'ingestion',
+  'extraction',
+  'capture',
+] as const;
+const SAFE_EVENT_TYPES = new Set([
+  'accepted',
+  'input_checkpoint',
+  'heartbeat',
+  'segment',
+  'checkpoint',
+  'resync_required',
+  'completed',
+  'failed',
+  'cancelled',
+]);
+const SAFE_EVENT_STAGES = new Set([
+  'queued',
+  'extracting',
+  'awaiting_structuring',
+  'structuring',
+  'completed',
+  'failed',
+  'cancelled',
+]);
+
+type ProbeErrorCode = (typeof PROBE_ERROR_CODES)[number];
+type ProbeStage = (typeof PROBE_STAGES)[number];
+
+export interface UserPdfOcrProbeErrorShape {
+  readonly code: ProbeErrorCode;
+  readonly status?: number;
+  readonly stage?: ProbeStage;
+}
+
+const PROBE_ERROR_MESSAGES: Record<ProbeErrorCode, string> = {
+  configuration: 'User PDF OCR probe configuration is invalid.',
+  runtime: 'Capture Runtime is unavailable.',
+  http: 'Capture Runtime rejected a probe request.',
+  invalid_response: 'Capture Runtime returned an invalid probe response.',
+  capture_failed: 'Capture extraction failed.',
+  timeout: 'Capture extraction timed out.',
+  probe_failed: 'User PDF OCR probe failed.',
+};
+
+function isProbeErrorCode(value: string): value is ProbeErrorCode {
+  return (PROBE_ERROR_CODES as readonly string[]).includes(value);
+}
+
+function isProbeStage(value: string): value is ProbeStage {
+  return (PROBE_STAGES as readonly string[]).includes(value);
+}
+
+export function formatProbeError(shape: UserPdfOcrProbeErrorShape): string {
+  const code = isProbeErrorCode(shape.code) ? shape.code : 'probe_failed';
+  const stage = shape.stage !== undefined && isProbeStage(shape.stage)
+    ? ` stage=${shape.stage}`
+    : '';
+  const status = typeof shape.status === 'number'
+    && Number.isInteger(shape.status)
+    && shape.status >= 100
+    && shape.status <= 599
+    ? ` status=${shape.status}`
+    : '';
+  return `${PROBE_ERROR_MESSAGES[code]}${stage}${status}`;
+}
+
+export class UserPdfOcrProbeError extends Error {
+  readonly shape: UserPdfOcrProbeErrorShape;
+
+  constructor(shape: UserPdfOcrProbeErrorShape) {
+    super(formatProbeError(shape));
+    this.name = 'UserPdfOcrProbeError';
+    this.shape = shape;
+  }
+}
+
+export function sanitizeProbeError(error: unknown): string {
+  return error instanceof UserPdfOcrProbeError
+    ? error.message
+    : PROBE_ERROR_MESSAGES.probe_failed;
+}
+
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolvePromise) =>
     setTimeout(resolvePromise, milliseconds),
@@ -77,7 +172,34 @@ async function waitForReady(baseUrl: string, token: string): Promise<void> {
     }
     await delay(250);
   }
-  throw new Error('Capture Runtime did not become ready.');
+  throw new UserPdfOcrProbeError({ code: 'runtime', stage: 'runtime' });
+}
+
+export async function readJsonObject(
+  response: Response,
+  stage: ProbeStage,
+): Promise<Record<string, unknown>> {
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    throw new UserPdfOcrProbeError({
+      code: 'invalid_response',
+      stage,
+      status: response.status,
+    });
+  }
+  if (!response.ok) {
+    throw new UserPdfOcrProbeError({ code: 'http', stage, status: response.status });
+  }
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+    throw new UserPdfOcrProbeError({
+      code: 'invalid_response',
+      stage,
+      status: response.status,
+    });
+  }
+  return body as Record<string, unknown>;
 }
 
 async function getJson(
@@ -87,12 +209,7 @@ async function getJson(
   const response = await fetch(url, {
     headers: { Authorization: `Bearer ${token}` },
   });
-  const body = (await response.json()) as Record<string, unknown>;
-  if (!response.ok)
-    throw new Error(
-      `${url} failed with HTTP ${response.status}: ${JSON.stringify(body)}`,
-    );
-  return body;
+  return readJsonObject(response, 'runtime');
 }
 
 async function waitForExtraction(
@@ -106,8 +223,15 @@ async function waitForExtraction(
     `${baseUrl}/v2/captures/${encodeURIComponent(captureId)}/events`,
     { headers: { Authorization: `Bearer ${token}` } },
   );
-  if (!response.ok || !response.body) {
-    throw new Error(`Capture SSE failed with HTTP ${response.status}.`);
+  if (!response.ok) {
+    throw new UserPdfOcrProbeError({
+      code: 'http',
+      stage: 'extraction',
+      status: response.status,
+    });
+  }
+  if (!response.body) {
+    throw new UserPdfOcrProbeError({ code: 'invalid_response', stage: 'extraction' });
   }
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -130,20 +254,37 @@ async function waitForExtraction(
         .filter((line) => line.startsWith('data:'))
         .map((line) => line.slice(5).trimStart());
       if (eventData.length === 0) continue;
-      const event = JSON.parse(eventData.join('\n')) as Record<string, unknown>;
-      const stage = String(event.stage ?? '');
-      console.log(`[capture-runtime] sse ${String(event.eventType)}:${stage}:${String(event.progress ?? '')}`);
+      let event: Record<string, unknown>;
+      try {
+        const parsed = JSON.parse(eventData.join('\n')) as unknown;
+        if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          throw new Error('invalid event');
+        }
+        event = parsed as Record<string, unknown>;
+      } catch {
+        throw new UserPdfOcrProbeError({ code: 'invalid_response', stage: 'extraction' });
+      }
+      const eventType = typeof event.eventType === 'string' && SAFE_EVENT_TYPES.has(event.eventType)
+        ? event.eventType
+        : 'unknown';
+      const stage = typeof event.stage === 'string' && SAFE_EVENT_STAGES.has(event.stage)
+        ? event.stage
+        : 'unknown';
+      const progress = typeof event.progress === 'number' && Number.isFinite(event.progress)
+        ? String(event.progress)
+        : '';
+      console.log(`[capture-runtime] sse ${eventType}:${stage}:${progress}`);
       if (stage === 'awaiting_structuring') {
         await reader.cancel();
         return event;
       }
       if (event.eventType === 'failed' || event.eventType === 'cancelled') {
-        throw new Error(`Capture extraction failed: ${JSON.stringify(event)}`);
+        throw new UserPdfOcrProbeError({ code: 'capture_failed', stage: 'extraction' });
       }
     }
   }
   await reader.cancel();
-  throw new Error(`Capture extraction timed out after ${timeoutMilliseconds} ms.`);
+  throw new UserPdfOcrProbeError({ code: 'timeout', stage: 'extraction' });
 }
 
 async function startStreamingCapture(
@@ -170,9 +311,11 @@ async function startStreamingCapture(
       totalBytes: pdf.byteLength,
     }),
   });
-  const ingestion = (await ingestionResponse.json()) as Record<string, unknown>;
-  if (!ingestionResponse.ok) throw new Error(`Ingestion open failed: ${JSON.stringify(ingestion)}`);
-  const ingestionId = String(ingestion.ingestionId);
+  const ingestion = await readJsonObject(ingestionResponse, 'ingestion');
+  if (typeof ingestion.ingestionId !== 'string' || ingestion.ingestionId === '') {
+    throw new UserPdfOcrProbeError({ code: 'invalid_response', stage: 'ingestion' });
+  }
+  const ingestionId = ingestion.ingestionId;
   const chunkSize = 1024 * 1024;
   for (let offset = 0, index = 0; offset < pdf.byteLength; offset += chunkSize, index += 1) {
     const chunk = pdf.subarray(offset, Math.min(offset + chunkSize, pdf.byteLength));
@@ -192,7 +335,9 @@ async function startStreamingCapture(
         body: chunk,
       },
     );
-    if (!response.ok) throw new Error(`Ingestion chunk ${index} failed with HTTP ${response.status}.`);
+    if (!response.ok) {
+      throw new UserPdfOcrProbeError({ code: 'http', stage: 'ingestion', status: response.status });
+    }
   }
   const digest = createHash('sha256').update(pdf).digest('hex');
   const finalize = await fetch(`${baseUrl}/v2/ingestions/${encodeURIComponent(ingestionId)}/finalize`, {
@@ -204,7 +349,9 @@ async function startStreamingCapture(
     },
     body: JSON.stringify({ protocolVersion: '2', totalBytes: pdf.byteLength, sha256: digest }),
   });
-  if (!finalize.ok) throw new Error(`Ingestion finalize failed with HTTP ${finalize.status}.`);
+  if (!finalize.ok) {
+    throw new UserPdfOcrProbeError({ code: 'http', stage: 'ingestion', status: finalize.status });
+  }
   const captureResponse = await fetch(`${baseUrl}/v2/captures`, {
     method: 'POST',
     headers: {
@@ -220,9 +367,7 @@ async function startStreamingCapture(
       startPolicy: 'eager',
     }),
   });
-  const capture = (await captureResponse.json()) as Record<string, unknown>;
-  if (!captureResponse.ok) throw new Error(`Capture start failed: ${JSON.stringify(capture)}`);
-  return capture;
+  return readJsonObject(captureResponse, 'capture');
 }
 
 async function main(): Promise<void> {
@@ -238,19 +383,32 @@ async function main(): Promise<void> {
   const pdfPath = resolve(configuredPdfPath);
   await stat(runtimeExecutable);
   const pdf = await readFile(pdfPath);
-  if (pdf.byteLength === 0) throw new Error(`PDF is empty: ${pdfPath}`);
+  if (pdf.byteLength === 0) {
+    throw new UserPdfOcrProbeError({ code: 'configuration', stage: 'input' });
+  }
   if (!configuredModelDir) {
     const bundles = (await readdir(modelBundleRoot)).filter((name) =>
       name.endsWith('.zip'),
     );
-    if (bundles.length !== 1)
-      throw new Error(`Expected one model bundle under ${modelBundleRoot}.`);
+    if (bundles.length !== 1) {
+      throw new UserPdfOcrProbeError({ code: 'configuration', stage: 'model' });
+    }
   }
 
   const temporaryRoot = await mkdtemp(join(tmpdir(), 'capture-user-pdf-ocr-'));
   const modelDir = configuredModelDir ?? join(temporaryRoot, 'models');
   const dataDir = join(temporaryRoot, 'runtime-data');
   let runtime: ChildProcess | undefined;
+  const relativeRoot = temporaryRoot
+    .replace(resolve(tmpdir()), '')
+    .replace(/^[/\\]+/u, '');
+  if (
+    !relativeRoot
+    || relativeRoot === '..'
+    || relativeRoot.startsWith(`..${sep}`)
+  ) {
+    throw new UserPdfOcrProbeError({ code: 'configuration', stage: 'runtime' });
+  }
   try {
     if (!configuredModelDir) {
       await mkdir(join(modelDir, 'det'), { recursive: true });
@@ -258,17 +416,16 @@ async function main(): Promise<void> {
       const bundle = (await readdir(modelBundleRoot)).find((name) =>
         name.endsWith('.zip'),
       );
-      if (!bundle)
-        throw new Error(`Expected one model bundle under ${modelBundleRoot}.`);
+      if (!bundle) {
+        throw new UserPdfOcrProbeError({ code: 'configuration', stage: 'model' });
+      }
       const extraction = spawnSync(
         'tar',
         ['-xf', join(modelBundleRoot, bundle), '-C', modelDir],
         { windowsHide: true, encoding: 'utf8' },
       );
       if (extraction.status !== 0) {
-        throw new Error(
-          `Model bundle extraction failed: ${extraction.error?.message ?? extraction.stderr ?? `status ${extraction.status}`}`,
-        );
+        throw new UserPdfOcrProbeError({ code: 'runtime', stage: 'model' });
       }
     }
 
@@ -305,18 +462,6 @@ async function main(): Promise<void> {
     );
   } finally {
     stopRuntime(runtime);
-    const relativeRoot = temporaryRoot
-      .replace(resolve(tmpdir()), '')
-      .replace(/^[/\\]+/u, '');
-    if (
-      !relativeRoot ||
-      relativeRoot === '..' ||
-      relativeRoot.startsWith(`..${sep}`)
-    ) {
-      throw new Error(
-        `Refusing to remove unexpected temporary path: ${temporaryRoot}`,
-      );
-    }
     await rm(temporaryRoot, {
       recursive: true,
       force: true,
@@ -326,7 +471,9 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((error: unknown) => {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exitCode = 1;
-});
+if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch((error: unknown) => {
+    console.error(sanitizeProbeError(error));
+    process.exitCode = 1;
+  });
+}

@@ -351,6 +351,8 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
             raise ApiProblem(
                 404, "capture_not_found", "Streaming capture was not found."
             ) from error
+        except StreamingTransitionError as error:
+            raise ApiProblem(409, "capture_delete_rejected", _safe_message(str(error))) from error
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
