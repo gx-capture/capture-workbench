@@ -8,7 +8,6 @@ import type {
   RawCaptureV1,
 } from '../../../contracts';
 import type { ResolvedCaptureWorkbenchConfig } from '../../../contracts/workbench';
-import type { Observable } from 'rxjs';
 
 export interface RuntimeRequest {
   readonly client: CaptureClient | null;
@@ -20,7 +19,6 @@ export interface RuntimeRequest {
 export interface InternalCaptureTask {
   readonly file: File;
   readonly clientRequestId: string;
-  readonly confirmRequestId: string;
   readonly controller: AbortController;
 }
 
@@ -52,11 +50,6 @@ export interface CaptureReconciliationContext {
   ) => void;
   readonly emitCompleted: (event: CaptureCompletedEvent) => void;
   readonly emitCanceled: (task: CaptureTaskView) => void;
-  readonly tryGetRaw: (
-    client: CaptureClient,
-    captureId: string,
-    signal?: AbortSignal,
-  ) => Observable<RawCaptureV1 | undefined>;
 }
 
 export interface SettledResource {

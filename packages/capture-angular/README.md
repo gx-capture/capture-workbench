@@ -90,9 +90,10 @@ after a reconnect; the runtime suppresses already-delivered events. Terminal
 `completed`, `failed`, and `cancelled` events close the stream, and
 `resync_required` tells consumers to reload the capture snapshot.
 
-Host adapters that proxy the v2 endpoint may implement `captureEvents`; the
-method is optional on `CaptureClient` so existing v1-only host adapters keep
-compiling during the migration window.
+Host adapters that proxy the v2 endpoint must implement `captureEvents` and the
+v2 operation methods. The first-party client no longer exposes the removed v1
+capture methods; external consumers may keep importing deprecated wire types
+until the coordinated Cert Prep/Law Prep migration gate closes.
 
 ## Structuring ownership
 

@@ -1,9 +1,11 @@
 import { EffectRef, Injectable, Injector, effect, inject } from '@angular/core';
 import { catchError, defer, Observable, throwError } from 'rxjs';
 import type {
+  CaptureEventV2,
   CaptureReviewV1,
   CaptureFailureV1,
-  CaptureJobV1,
+  CaptureOperationV2,
+  PartialCaptureV2,
   RawCaptureV1,
   CaptureTaskView,
 } from '../../../contracts';
@@ -18,20 +20,58 @@ export function isTerminalTask(task: CaptureTaskView): boolean {
   );
 }
 
-export function isTerminalCaptureJob(job: CaptureJobV1): boolean {
+export function isTerminalStreamingOperation(
+  operation: CaptureOperationV2,
+): boolean {
   return (
-    job.status === 'completed' ||
-    job.status === 'failed' ||
-    job.status === 'cancelled'
+    operation.status === 'completed' ||
+    operation.status === 'failed' ||
+    operation.status === 'cancelled'
   );
 }
 
-export function isAwaitingHostStructuring(job: CaptureJobV1): boolean {
+export function isTerminalStreamingEvent(event: CaptureEventV2): boolean {
   return (
-    job.status === 'running' &&
-    job.stage === 'awaiting_structuring' &&
-    job.structuringMode === 'host'
+    event.eventType === 'completed' ||
+    event.eventType === 'failed' ||
+    event.eventType === 'cancelled'
   );
+}
+
+export function isAwaitingHostStructuring(
+  operation: CaptureOperationV2,
+): boolean {
+  return operation.status === 'awaiting_structuring';
+}
+
+export function streamingStage(stage: string): CaptureTaskView['stage'] {
+  switch (stage) {
+    case 'queued':
+    case 'extracting':
+    case 'awaiting_structuring':
+    case 'structuring':
+    case 'completed':
+    case 'failed':
+    case 'cancelled':
+      return stage;
+    default:
+      return 'preprocessing';
+  }
+}
+
+export function partialCaptureToRaw(partial: PartialCaptureV2): RawCaptureV1 {
+  if (!partial.segments || !partial.sourceText || !partial.extractionEngine) {
+    throw new Error('Streaming partial capture is not complete enough to structure.');
+  }
+  return {
+    schemaVersion: '1',
+    diagnosticOnly: true,
+    source: partial.source,
+    segments: partial.segments,
+    sourceText: partial.sourceText,
+    extractionEngine: partial.extractionEngine,
+    createdAt: partial.updatedAt,
+  };
 }
 
 export function validateCaptureReview(
@@ -247,12 +287,24 @@ export class CaptureWorkbenchStoreHelpers {
     return isTerminalTask(task);
   }
 
-  isTerminalCaptureJob(job: CaptureJobV1): boolean {
-    return isTerminalCaptureJob(job);
+  isTerminalStreamingOperation(operation: CaptureOperationV2): boolean {
+    return isTerminalStreamingOperation(operation);
   }
 
-  isAwaitingHostStructuring(job: CaptureJobV1): boolean {
-    return isAwaitingHostStructuring(job);
+  isTerminalStreamingEvent(event: CaptureEventV2): boolean {
+    return isTerminalStreamingEvent(event);
+  }
+
+  isAwaitingHostStructuring(operation: CaptureOperationV2): boolean {
+    return isAwaitingHostStructuring(operation);
+  }
+
+  streamingStage(stage: string): CaptureTaskView['stage'] {
+    return streamingStage(stage);
+  }
+
+  partialCaptureToRaw(partial: PartialCaptureV2): RawCaptureV1 {
+    return partialCaptureToRaw(partial);
   }
 
   validateCaptureReview(raw: RawCaptureV1, review: CaptureReviewV1): string[] {

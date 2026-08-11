@@ -107,6 +107,9 @@ export interface CaptureFailureV2 {
   readonly retryable?: boolean;
 }
 
+/**
+ * Deprecated wire type retained only for external migration tooling.
+ */
 export interface CaptureJobV1 {
   readonly captureId: string;
   readonly status: CaptureJobStatus;

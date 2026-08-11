@@ -5,7 +5,6 @@ import type {
   CaptureEventV2,
   CaptureDocumentV1,
   CaptureFailureV1,
-  CaptureJobV1,
   CaptureOperationV2,
   CaptureJobStage,
   CaptureReviewV1,
@@ -14,8 +13,6 @@ import type {
   PartialCaptureV2,
   RawCaptureV1,
   RuntimeInstallationV1,
-  RuntimeModelInstallationV1,
-  RuntimeModelOptionV1,
   RuntimeReadyV1 as GeneratedRuntimeReadyV1,
   RuntimeRequirementV1,
   StructuringMode,
@@ -199,71 +196,49 @@ export interface CaptureClient {
     id: string,
     signal?: AbortSignal,
   ): Observable<RuntimeInstallationV1>;
-  createCapture(request: CreateCaptureRequest): Observable<CaptureJobV1>;
-  getCapture(id: string, signal?: AbortSignal): Observable<CaptureJobV1>;
-  cancelCapture(id: string, signal?: AbortSignal): Observable<CaptureJobV1>;
-  getRaw(id: string, signal?: AbortSignal): Observable<RawCaptureV1>;
-  getResult(id: string, signal?: AbortSignal): Observable<CaptureDocumentV1>;
   /**
    * Opens the authenticated v2 capture event stream as a cold Observable.
    * Each subscription performs a fresh fetch and unsubscribing aborts it.
    * Native EventSource must not be used because the runtime requires an
    * Authorization header.
    */
-  captureEvents?(
+  captureEvents(
     id: string,
     options?: CaptureEventStreamOptions,
   ): Observable<CaptureEventV2>;
-  startStreamingCapture?(
+  startStreamingCapture(
     request: StartStreamingCaptureRequest,
   ): Observable<CaptureOperationV2>;
-  getStreamingCapture?(
+  getStreamingCapture(
     id: string,
     signal?: AbortSignal,
   ): Observable<CaptureOperationV2>;
-  cancelStreamingCapture?(
+  cancelStreamingCapture(
     id: string,
     signal?: AbortSignal,
   ): Observable<CaptureOperationV2>;
-  getStreamingPartial?(
+  getStreamingPartial(
     id: string,
     signal?: AbortSignal,
   ): Observable<PartialCaptureV2>;
-  getStreamingResult?(
+  getStreamingResult(
     id: string,
     signal?: AbortSignal,
   ): Observable<CaptureStreamingResult>;
-  commitStreamingStructuredResult?(
+  commitStreamingStructuredResult(
     id: string,
     request: CommitStreamingStructuredResultRequest,
     signal?: AbortSignal,
   ): Observable<CaptureOperationV2>;
-  reportStreamingStructuringFailure?(
+  reportStreamingStructuringFailure(
     id: string,
     request: ReportStreamingStructuringFailureRequest,
     signal?: AbortSignal,
   ): Observable<CaptureOperationV2>;
-  deleteStreamingCapture?(
+  deleteStreamingCapture(
     id: string,
     signal?: AbortSignal,
   ): Observable<void>;
-  /** Host clients use this after an explicit review confirmation. */
-  confirmCapture?(
-    id: string,
-    request: ConfirmCaptureRequest,
-    signal?: AbortSignal,
-  ): Observable<CaptureJobV1>;
-  commitStructuredResult(
-    id: string,
-    request: CommitStructuredResultRequest,
-    signal?: AbortSignal,
-  ): Observable<CaptureJobV1>;
-  reportStructuringFailure(
-    id: string,
-    request: ReportStructuringFailureRequest,
-    signal?: AbortSignal,
-  ): Observable<CaptureJobV1>;
-  deleteCapture(id: string, signal?: AbortSignal): Observable<void>;
 }
 
 export interface CaptureStructuringRequest {

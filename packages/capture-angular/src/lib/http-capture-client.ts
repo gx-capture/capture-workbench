@@ -31,17 +31,11 @@ import {
   type CaptureClient,
   type CaptureEventStreamOptions,
   type CaptureEventV2,
-  type CaptureDocumentV1,
   type CaptureOperationV2,
   type CaptureStreamingResult,
-  type CaptureJobV1,
   type CommitStreamingStructuredResultRequest,
-  type CommitStructuredResultRequest,
-  type CreateCaptureRequest,
   type PartialCaptureV2,
-  type RawCaptureV1,
   type ReportStreamingStructuringFailureRequest,
-  type ReportStructuringFailureRequest,
   type RuntimeInstallationV1,
   type RuntimeReadyV1,
   type RuntimeRequirementV1,
@@ -130,71 +124,6 @@ export class HttpCaptureClient implements CaptureClient {
       method: 'POST',
       signal,
     });
-  }
-
-  createCapture(request: CreateCaptureRequest): Observable<CaptureJobV1> {
-    const form = new FormData();
-    form.append('file', request.file, request.file.name);
-    form.append('sourceKind', request.sourceKind);
-    form.append('structuringMode', request.structuringMode);
-    if (request.targetLanguage) form.append('targetLanguage', request.targetLanguage);
-    return this.request('/v1/captures', {
-      method: 'POST',
-      body: form,
-      idempotencyKey: request.clientRequestId,
-      signal: request.signal,
-    });
-  }
-
-  getCapture(id: string, signal?: AbortSignal): Observable<CaptureJobV1> {
-    return this.request(`/v1/captures/${encodeURIComponent(id)}`, { signal });
-  }
-
-  cancelCapture(id: string, signal?: AbortSignal): Observable<CaptureJobV1> {
-    return this.request(`/v1/captures/${encodeURIComponent(id)}/cancel`, {
-      method: 'POST',
-      signal,
-    });
-  }
-
-  getRaw(id: string, signal?: AbortSignal): Observable<RawCaptureV1> {
-    return this.request(`/v1/captures/${encodeURIComponent(id)}/raw`, { signal });
-  }
-
-  getResult(id: string, signal?: AbortSignal): Observable<CaptureDocumentV1> {
-    return this.request(`/v1/captures/${encodeURIComponent(id)}/result`, { signal });
-  }
-
-  commitStructuredResult(
-    id: string,
-    request: CommitStructuredResultRequest,
-    signal?: AbortSignal,
-  ): Observable<CaptureJobV1> {
-    return this.request(`/v1/captures/${encodeURIComponent(id)}/structure`, {
-      method: 'POST',
-      idempotencyKey: request.clientRequestId,
-      json: request.candidate,
-      signal,
-    });
-  }
-
-  reportStructuringFailure(
-    id: string,
-    request: ReportStructuringFailureRequest,
-    signal?: AbortSignal,
-  ): Observable<CaptureJobV1> {
-    return this.request(`/v1/captures/${encodeURIComponent(id)}/structuring-failure`, {
-      method: 'POST',
-      json: request,
-      signal,
-    });
-  }
-
-  deleteCapture(id: string, signal?: AbortSignal): Observable<void> {
-    return this.request<void>(`/v1/captures/${encodeURIComponent(id)}`, {
-      method: 'DELETE',
-      signal,
-    }).pipe(map(() => undefined));
   }
 
   captureEvents(

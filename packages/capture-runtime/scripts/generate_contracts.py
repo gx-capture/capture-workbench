@@ -131,7 +131,17 @@ def _ts_decl(name: str, schema: dict[str, Any]) -> str:
     if schema.get("type") != "object" or not isinstance(properties, dict):
         return f"export type {_ts_identifier(name)} = {_ts_type(schema)};"
     required = set(schema.get("required", []))
-    lines = [f"export interface {_ts_identifier(name)} {{"]
+    lines: list[str] = []
+    description = schema.get("description")
+    if isinstance(description, str):
+        lines.extend(
+            [
+                "/**",
+                f" * {description.replace('*/', '* /')}",
+                " */",
+            ]
+        )
+    lines.append(f"export interface {_ts_identifier(name)} {{")
     for field, field_schema in properties.items():
         # Pydantic omits fields with defaults from JSON Schema's required list,
         # but a const/default field is still present on every wire instance.
