@@ -138,6 +138,38 @@ Each phase must have an explicit path list, its own review, and its own
 verification result. Revert consumers before reverting the runtime cutover;
 revert the deletion commit before reverting the deprecation/cutover phases.
 
+## Auditable phase evidence
+
+The phase commits below are the reviewed path groups. Every commit was created
+only after `git diff --cached --name-only`, `git diff --cached --stat`, and
+`git diff --cached --check` were inspected; unrelated dirty paths stayed
+unstaged. The final independent review was rerun against `ac44030` at the
+post-phase HEAD, with the follow-up recovery findings fixed in `5c11304`.
+
+- `812d54e` — Angular package paths under
+  `packages/capture-angular/`, plus generated contract metadata and the
+  contract generator. Verified with capture-angular typecheck, lint,
+  async-boundary, and tests; the final rerun covered 81 tests.
+- `37f023b` — desktop renderer/native bridge paths under
+  `apps/capture-workbench/` and `apps/capture-workbench-desktop/`, including
+  deterministic and real smoke harnesses. Verified with Tauri fmt/check/tests,
+  contract consistency, deterministic smoke, and package QA (183 passed, 2
+  skipped).
+- `779d06b` — `tools/capture-boundary-doctor*`,
+  `tools/clean-angular-consumer-smoke.ts`,
+  `tools/runtime-web-component-e2e.ts`, and `tools/user-pdf-ocr-probe.mts`.
+  Verified with tools typecheck/lint/tests and desktop package QA.
+- `84f71f6` — runtime SSE route/repository and `test_streaming_api.py`.
+  Verified with runtime lint/typecheck/contract check and the full runtime
+  suite (301 passed, 1 skipped).
+- `5c11304` — runtime overflow handling, Angular/desktop reconnect consumers,
+  snapshot cursor recovery, and their regression specs. Focused verification
+  passed (runtime 14, Angular 81, desktop 46); the full floor was rerun after
+  the preceding phases.
+- `464df03`, `5e860eb` — migration decision/spec/TODO evidence and the related
+  boundary-doctor documentation. Verified by the same final residual scan and
+  HEAD-bound two-axis review.
+
 ## Acceptance criteria
 
 - PDF, image, and audio each complete the same v2 lifecycle and produce
