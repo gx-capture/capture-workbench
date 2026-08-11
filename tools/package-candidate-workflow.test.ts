@@ -21,6 +21,10 @@ test('package candidate workflow is independent from the desktop product lane', 
     );
   }
   assert.match(candidateWorkflow, /capture-angular:clean-consumer-smoke/u);
+  assert.match(
+    candidateWorkflow,
+    /pnpm exec playwright install chromium/u,
+  );
   assert.match(promoteWorkflow, /candidate_kind: package/u);
   assert.doesNotMatch(
     promoteWorkflow,
