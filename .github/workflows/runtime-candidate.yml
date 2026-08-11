@@ -1,0 +1,183 @@
+name: Release Runtime Candidate
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Intended release SemVer, without the v prefix'
+        required: true
+        type: string
+      commit_sha:
+        description: 'Exact source commit to build'
+        required: true
+        type: string
+      package_candidate_run_id:
+        description: 'Successful Release Package Candidate workflow run for the same source commit'
+        required: true
+        type: string
+      package_candidate_id:
+        description: 'Immutable Package Candidate ID'
+        required: true
+        type: string
+      package_candidate_manifest_sha256:
+        description: 'SHA-256 of the Package Candidate candidate-manifest.json'
+        required: true
+        type: string
+      release_mode:
+        description: 'Candidate model mode derived from the checked-in source lock'
+        required: true
+        type: choice
+        options:
+          - core-only
+          - model-enabled
+
+permissions:
+  contents: read
+
+jobs:
+  build-candidate:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    permissions:
+      actions: read
+      contents: read
+      packages: read
+    steps:
+      - name: Check out exact source commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.commit_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify commit reachability and exact CI
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          $head = (git rev-parse HEAD).Trim()
+          if ($head -ne '${{ inputs.commit_sha }}') { throw 'Checked out commit differs from commit_sha.' }
+          git fetch --no-tags origin refs/heads/main:refs/remotes/origin/main
+          git merge-base --is-ancestor $head refs/remotes/origin/main
+          if ($LASTEXITCODE -ne 0) { throw 'Candidate commit must be reachable from main.' }
+          node tools/verify-main-ci.ts --repository "$env:GITHUB_REPOSITORY" --commit "$head" --workflow-path ".github/workflows/ci.yml" --branch "main"
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@b0f76dfb45f55f8421693e4803ac7bb65143bd34 # v6
+        with:
+          version: 11.15.1
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install uv and Python 3.12
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: '3.12'
+          enable-cache: true
+
+      - name: Install workspace dependencies
+        shell: pwsh
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
+        run: pnpm install --frozen-lockfile
+
+      - name: Download and verify the exact Package Candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: capture-package-candidate-${{ inputs.version }}-${{ inputs.package_candidate_run_id }}
+          run-id: ${{ inputs.package_candidate_run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/package-candidate
+
+      - name: Verify Package Candidate identity
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          node tools/verify-package-candidate.ts `
+            --candidate "$env:RUNNER_TEMP/package-candidate" `
+            --version '${{ inputs.version }}' `
+            --source-commit '${{ inputs.commit_sha }}' `
+            --producer-run-id '${{ inputs.package_candidate_run_id }}' `
+            --candidate-id '${{ inputs.package_candidate_id }}' `
+            --candidate-manifest-sha256 '${{ inputs.package_candidate_manifest_sha256 }}' `
+            --require-evidence
+
+      - name: Verify requested model mode
+        shell: pwsh
+        env:
+          RELEASE_MODE: ${{ inputs.release_mode }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          pnpm nx run capture-runtime:classify-release-model-mode
+          $actual = (Get-Content packages/capture-runtime/dist/metadata/release-model-mode.json -Raw | ConvertFrom-Json).releaseMode
+          if ($actual -ne $env:RELEASE_MODE) { throw "Requested release mode $env:RELEASE_MODE differs from source-lock mode $actual." }
+
+      - name: Build production runtime and reusable producer artifacts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          pnpm nx run capture-runtime:build-release-artifacts
+          pnpm nx run capture-contracts:python-build
+          pnpm nx run capture-structuring-python:build
+          pnpm nx run capture-sidecar-launcher:cargo-package-dry-run
+
+      - name: Verify standalone runtime consumer flow
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          node tools/local-release-consumer-smoke.ts --runtime-dir packages/capture-runtime/dist/release --version "$env:RELEASE_VERSION"
+
+      - name: Assemble and verify immutable Runtime Candidate
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_MODE: ${{ inputs.release_mode }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          $candidate = Join-Path $env:RUNNER_TEMP "capture-runtime-candidate-$env:GITHUB_RUN_ID"
+          node tools/assemble-runtime-candidate.ts `
+            --output "$candidate" `
+            --version "$env:RELEASE_VERSION" `
+            --source-commit '${{ inputs.commit_sha }}' `
+            --producer-run-id "$env:GITHUB_RUN_ID" `
+            --package-candidate-id '${{ inputs.package_candidate_id }}' `
+            --release-mode "$env:RELEASE_MODE"
+          node tools/record-candidate-verification.ts `
+            --candidate "$candidate" `
+            --verification runtime-product `
+            --status success `
+            --output (Join-Path $candidate 'runtime-product.json')
+          $manifest = Get-Content (Join-Path $candidate 'candidate-manifest.json') -Raw | ConvertFrom-Json
+          node tools/verify-runtime-candidate.ts `
+            --candidate "$candidate" `
+            --version "$env:RELEASE_VERSION" `
+            --source-commit '${{ inputs.commit_sha }}' `
+            --producer-run-id "$env:GITHUB_RUN_ID" `
+            --candidate-id "$($manifest.candidateId)" `
+            --candidate-manifest-sha256 (Get-FileHash (Join-Path $candidate 'candidate-manifest.json') -Algorithm SHA256).Hash.ToLowerInvariant() `
+            --package-candidate-id '${{ inputs.package_candidate_id }}' `
+            --require-evidence
+
+      - name: Upload immutable Runtime Candidate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: capture-runtime-candidate-${{ inputs.version }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/capture-runtime-candidate-${{ github.run_id }}
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0

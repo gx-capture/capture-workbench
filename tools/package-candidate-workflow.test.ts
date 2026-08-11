@@ -38,3 +38,46 @@ test('npm publication accepts a package candidate without making it a desktop ca
   assert.match(npmWorkflow, /verify-package-candidate\.ts/u);
   assert.match(npmWorkflow, /Release Package Candidate/u);
 });
+
+test('runtime candidate workflow excludes the desktop product lane', async () => {
+  const runtimeWorkflow = await readFile(
+    join(root, '.github/workflows/runtime-candidate.yml'),
+    'utf8',
+  );
+  assert.doesNotMatch(
+    runtimeWorkflow,
+    /capture-workbench-desktop|tauri|nsis|windows-install/iu,
+  );
+  assert.match(runtimeWorkflow, /capture-runtime:build-release-artifacts/u);
+  assert.match(
+    runtimeWorkflow,
+    /capture-sidecar-launcher:cargo-package-dry-run/u,
+  );
+  assert.match(runtimeWorkflow, /verify-runtime-candidate\.ts/u);
+  assert.match(runtimeWorkflow, /capture-runtime-candidate-/u);
+});
+
+test('runtime promotion requires npm evidence before publishing runtime registries', async () => {
+  const promoteWorkflow = await readFile(
+    join(root, '.github/workflows/runtime-promote.yml'),
+    'utf8',
+  );
+  const releaseWorkflow = await readFile(
+    join(root, '.github/workflows/_publish-runtime-github-release.yml'),
+    'utf8',
+  );
+  for (const content of [promoteWorkflow, releaseWorkflow]) {
+    assert.doesNotMatch(
+      content,
+      /capture-workbench-desktop|tauri|nsis|windows-install/iu,
+    );
+    assert.match(content, /FORCE_JAVASCRIPT_ACTIONS_TO_NODE24/u);
+  }
+  assert.match(promoteWorkflow, /package_promote_run_id/u);
+  assert.match(promoteWorkflow, /registry-ledger-npm-/u);
+  assert.match(promoteWorkflow, /publish-pypi/u);
+  assert.match(promoteWorkflow, /publish-crates/u);
+  assert.match(promoteWorkflow, /tag-runtime-release/u);
+  assert.match(releaseWorkflow, /create-runtime-github-release\.ts/u);
+  assert.match(releaseWorkflow, /promotion-input-/u);
+});

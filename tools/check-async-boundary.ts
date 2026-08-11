@@ -94,6 +94,15 @@ function exceptionReason(relativePath) {
   if (relativePath === 'tools/verify-package-candidate-binding.ts') {
     return 'package candidate binding verification CLI process boundary';
   }
+  if (relativePath === 'tools/assemble-runtime-candidate.ts') {
+    return 'runtime candidate assembly CLI process boundary';
+  }
+  if (relativePath === 'tools/verify-runtime-candidate.ts') {
+    return 'runtime candidate verification CLI process boundary';
+  }
+  if (relativePath === 'tools/create-runtime-github-release.ts') {
+    return 'runtime GitHub Release publication CLI process boundary';
+  }
   if (relativePath === 'tools/create-contract-snapshot.ts') {
     return 'contract snapshot generation CLI process boundary';
   }

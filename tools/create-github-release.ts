@@ -169,6 +169,9 @@ async function main(): Promise<void> {
   }
   const assets = await assetPaths(candidate);
   const expectedAssetNames = new Set(assets.map((asset) => basename(asset)));
+  const allowedRuntimeSeedAssets = new Set([
+    'capture-runtime-candidate-manifest.json',
+  ]);
   const remote = run(
     'gh',
     ['release', 'view', tag, '--json', 'isDraft,assets'],
@@ -197,7 +200,8 @@ async function main(): Promise<void> {
       (payload.assets as RemoteAsset[]).map((item) => item.name as string),
     );
     const unexpected = [...remoteNames].filter(
-      (name) => !expectedAssetNames.has(name),
+      (name) =>
+        !expectedAssetNames.has(name) && !allowedRuntimeSeedAssets.has(name),
     );
     if (unexpected.length > 0) {
       throw new Error(
@@ -224,44 +228,13 @@ async function main(): Promise<void> {
       `Immutable Capture Workbench candidate ${manifest.candidateId}.`,
     ]);
     isDraft = true;
-  } else if (!isDraft) {
-    const temporary = await mkdtemp(join(tmpdir(), 'capture-release-assets-'));
-    try {
-      for (const asset of assets) {
-        if (
-          (await assertRemoteAssetMatches(tag, asset, temporary)) !== 'same'
-        ) {
-          throw new Error(
-            `Public GitHub Release is missing asset: ${basename(asset)}.`,
-          );
-        }
-      }
-    } finally {
-      await rm(temporary, { recursive: true, force: true });
-    }
-    await writeReleaseLedger(
-      output,
-      tag,
-      sourceCommit,
-      manifest,
-      manifestBytes,
-      assets,
-    );
-    return;
   }
-  if (!isDraft) throw new Error('GitHub Release is not a mutable draft.');
   const temporary = await mkdtemp(join(tmpdir(), 'capture-release-assets-'));
   try {
     for (const asset of assets) {
       if (!remoteNames.has(basename(asset))) {
         run('gh', ['release', 'upload', tag, asset]);
-      } else if (
-        (await assertRemoteAssetMatches(tag, asset, temporary)) !== 'same'
-      ) {
-        throw new Error(
-          `Draft GitHub Release asset disappeared: ${basename(asset)}.`,
-        );
-      }
+      } else await assertRemoteAssetMatches(tag, asset, temporary);
     }
     for (const asset of assets) {
       if ((await assertRemoteAssetMatches(tag, asset, temporary)) !== 'same') {
@@ -273,12 +246,14 @@ async function main(): Promise<void> {
   } finally {
     await rm(temporary, { recursive: true, force: true });
   }
-  run('gh', ['release', 'edit', tag, '--verify-tag', '--draft=false']);
-  const finalState = run('gh', ['release', 'view', tag, '--json', 'isDraft']);
-  if (
-    (JSON.parse(finalState.stdout) as { isDraft?: unknown }).isDraft !== false
-  ) {
-    throw new Error('GitHub Release did not become public.');
+  if (isDraft) {
+    run('gh', ['release', 'edit', tag, '--verify-tag', '--draft=false']);
+    const finalState = run('gh', ['release', 'view', tag, '--json', 'isDraft']);
+    if (
+      (JSON.parse(finalState.stdout) as { isDraft?: unknown }).isDraft !== false
+    ) {
+      throw new Error('GitHub Release did not become public.');
+    }
   }
   await writeReleaseLedger(
     output,
