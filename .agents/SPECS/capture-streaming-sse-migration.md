@@ -1,6 +1,8 @@
 # Capture Streaming SSE Migration Spec
 
-Status: planning baseline; implementation has not started.
+Status: implementation in progress; P0-P3 and local v1 engine deletion are
+complete. The external consumer compatibility gate and final residual cleanup
+remain open.
 
 ## Purpose
 
@@ -95,10 +97,11 @@ depend on timer polling.
 
 ## Deprecation and deletion boundary
 
-The deprecation phase applies only to `/v1/captures`. During the migration
-window it remains operational with an explicit deprecation signal and the v2
-path is the only path used by first-party consumers. Deletion is permitted only
-after all consumers and parity tests have moved.
+The v2 path is now the only first-party capture path. The local `/v1/captures`
+route and engine were removed in the P5 deletion commit after the desktop and
+Angular cutovers; route removal superseded a live deprecation header. Public
+compatibility contract types remain temporarily annotated as deprecated while
+known external consumers migrate.
 
 The final deletion must remove active references to:
 
@@ -117,19 +120,16 @@ compatibility release before this producer can delete the public type.
 
 ## Phase and commit boundaries
 
-1. **P0 contract/spec**: this spec, decision record, active TODO, contract
-   tests, and generated contract updates. No traffic cutover.
-2. **P1 Python runtime**: generalized v2 lifecycle, live SSE, replay,
-   host-structuring handoff, cancellation, recovery, and media parity. Keep v1.
-3. **P2 Angular transport**: authenticated fetch-stream parser, RxJS API,
-   event reducer, upload pipeline, and client tests. Keep v1 fallback only as
-   a temporary rollback seam.
-4. **P3 desktop cutover**: Tauri bridge and Workbench store use v2 for all
-   media; remove audio-only branching; run deterministic parity evidence.
-5. **P4 deprecation**: mark `/v1/captures` deprecated, update documentation
-   and coordinated consumers, and prove no first-party v1 traffic remains.
-6. **P5 deletion**: delete the v1 engine and its generated/consumer residue in
-   a dedicated removal commit.
+1. **P0 contract/spec**: completed in `a93d294` and `5c36463`.
+2. **P1 Python runtime**: completed in `78b2bab`; v2 is generalized, live,
+   replayable, authenticated SSE for all supported media.
+3. **P2 Angular transport**: completed in `529f3f1`; Angular remains
+   Observable/RxJS and the fetch-stream parser aborts on unsubscribe.
+4. **P3 desktop cutover**: completed in `8a0811f` plus the v2-only bridge/store
+   follow-up; production desktop capture uses v2 for every media kind.
+5. **P4/P5 local removal**: completed in `ac44030` plus the desktop bridge
+   cleanup; `/v1/captures`, its service/repository, and native commands are
+   gone. External contract/consumer migration remains a separate gate.
 
 Each phase must have an explicit path list, its own review, and its own
 verification result. Revert consumers before reverting the runtime cutover;
@@ -148,8 +148,9 @@ revert the deletion commit before reverting the deprecation/cutover phases.
 - Angular public APIs remain Observable/RxJS-based and pass the async-boundary
   check.
 - No bearer token appears in URLs, event data, logs, or reports.
-- First-party desktop, Angular, deterministic, and E2E paths use v2 for all
-  capture kinds before v1 deletion.
+- First-party desktop and Angular production paths use v2 for all capture kinds;
+  deterministic/real smoke harnesses and probes are also v2-only. Real
+  engine-bearing execution remains an opt-in release gate.
 - Known external consumers have migrated from `CaptureJobV1`/`/v1/captures`, or
   a release owner has explicitly approved the breaking removal.
 - After P5, an active-source residual scan finds no `/v1/captures` or

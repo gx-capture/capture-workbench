@@ -2,19 +2,19 @@
 
 ## Decision status
 
-P0 planning baseline. Runtime implementation and traffic cutover are not yet
-authorized by this document alone.
+P0-P3 implementation and local v1 engine removal are complete. Final cleanup
+and the external consumer compatibility gate remain open.
 
 ## Change mode checkpoint
 
 ```text
 Change mode: mixed
-Existing owner: StreamingCaptureService/StreamingRepository for the successor;
-                CaptureService/CaptureRepository for the legacy path
-Delete candidates: /v1/captures routes, CaptureService, CaptureRepository,
-                  CaptureJobV1 capture types, polling clients and fixtures
-New owner needed?: no for the job lifecycle; yes for the live SSE subscriber
-                   boundary because the current route only replays a snapshot
+Existing owner: StreamingCaptureService/StreamingRepository for the capture
+                lifecycle and live SSE boundary
+Delete candidates: completed locally for /v1/captures routes, CaptureService,
+                  CaptureRepository, native v1 commands, and first-party v1 path
+                  usage; deprecated public types remain for external consumers
+New owner needed?: no; the v2 owner now owns all capture kinds and live SSE
 Token posture: compact quality
 Verification floor: contract generation/check, focused backend tests, Angular
                      RxJS/async-boundary tests, Tauri tests, deterministic parity,
@@ -31,9 +31,10 @@ actually deliver.
 
 ### Backend-first with a deprecation window — selected
 
-Generalize the existing v2 owner and prove live/replayable SSE while v1 remains
-available. Then move Angular and desktop consumers, deprecate v1, and delete it
-last. This creates the clearest review and rollback seams.
+Generalize the existing v2 owner and prove live/replayable SSE, then move
+Angular and desktop consumers before deleting the local v1 engine. Route
+removal superseded a live header because no first-party caller remained; public
+types stay deprecated until external consumers complete their migration.
 
 ### Consumer-first dual transport
 
@@ -57,18 +58,15 @@ claim SSE migration before Python can guarantee live delivery.
 
 ## Gates that must be resolved before P1
 
-- Decide whether the existing v2 wire contract can be widened in place or a
-  successor protocol version is required.
-- Define the exact event payload for page-based PDF/image progress and
-  time-based audio progress.
-- Define the host structuring commit/failure idempotency and terminal-event
-  semantics.
-- Define the deprecation release window and public package version impact.
+- The v2 contract widening, media-neutral event semantics, host handoff
+  idempotency, and authenticated Tauri bridge were resolved in the P0-P3
+  phase commits.
 - Inventory and coordinate known external consumers before deleting the public
   contract. Current evidence includes `C:\software-dev\cert-prep` and
   `C:\software-dev\gx.law-prep`; do not edit either repository implicitly.
-- Choose the Tauri live-event bridge; the current synchronous `read_to_end`
-  parser is not sufficient for an unbounded live stream.
+- The desktop bridge uses the bounded terminal v2 SSE response required by the
+  current native command boundary; Python and Angular retain the live SSE
+  contract.
 
 ## Rollback rules
 
