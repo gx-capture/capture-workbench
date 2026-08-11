@@ -41,6 +41,12 @@ test('npm publication accepts a package candidate without making it a desktop ca
   assert.match(npmWorkflow, /capture-package-candidate-/u);
   assert.match(npmWorkflow, /verify-package-candidate\.ts/u);
   assert.match(npmWorkflow, /Release Package Candidate/u);
+  assert.match(npmWorkflow, /registry=https:\/\/registry\.npmjs\.org\//u);
+  assert.match(npmWorkflow, /@gx-capture:registry=https:\/\/npm\.pkg\.github\.com/u);
+  assert.doesNotMatch(
+    npmWorkflow,
+    /npm install --ignore-scripts --registry https:\/\/npm\.pkg\.github\.com/u,
+  );
 });
 
 test('runtime candidate workflow excludes the desktop product lane', async () => {
