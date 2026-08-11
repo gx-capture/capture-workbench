@@ -17,6 +17,9 @@ const API_VERSION: &str = "1.0";
 const SCHEMA_VERSION: &str = "1";
 const CREATED_AT: &str = "2000-01-01T00:00:00Z";
 const COMPLETED_AT: &str = "2000-01-01T00:00:01Z";
+const INGESTION_EXPIRES_AT: &str = "2000-01-01T02:00:00Z";
+const STREAM_CHUNK_BYTES: usize = 1024 * 1024;
+const EVENT_REPLAY_WINDOW: u64 = 2;
 
 pub struct FixtureSettings {
     pub api_token: String,
@@ -44,27 +47,75 @@ impl FixtureSettings {
 }
 
 #[derive(Clone)]
+struct IngestionRecord {
+    ingestion_id: String,
+    kind: String,
+    file_name: String,
+    media_type: String,
+    total_bytes: u64,
+    received_bytes: u64,
+    contiguous_bytes: u64,
+    next_chunk_index: u64,
+    next_offset: u64,
+    source_sha256: Option<String>,
+    finalized_sha256: Option<String>,
+    status: String,
+    content: Vec<u8>,
+}
+
+impl IngestionRecord {
+    fn wire(&self) -> Value {
+        json!({
+            "protocolVersion": "2",
+            "ingestionId": self.ingestion_id,
+            "kind": self.kind,
+            "status": self.status,
+            "fileName": self.file_name,
+            "mediaType": self.media_type,
+            "totalBytes": self.total_bytes,
+            "receivedBytes": self.received_bytes,
+            "contiguousBytes": self.contiguous_bytes,
+            "nextChunkIndex": self.next_chunk_index,
+            "nextOffset": self.next_offset,
+            "sourceSha256": self.source_sha256,
+            "finalizedSha256": self.finalized_sha256,
+            "expiresAt": INGESTION_EXPIRES_AT,
+        })
+    }
+}
+
+#[derive(Clone)]
 struct CaptureRecord {
     capture_id: String,
+    ingestion_id: String,
+    kind: String,
     status: String,
     stage: String,
     structuring_mode: String,
+    target_language: Option<String>,
     progress: f64,
     source: Value,
     raw: Value,
+    partial: Option<Value>,
     result: Option<Value>,
     error: Option<Value>,
+    events: Vec<Value>,
+    last_event_sequence: u64,
+    partial_revision: u64,
     completed_at: Option<String>,
 }
 
 impl CaptureRecord {
-    fn wire(&self) -> Value {
+    fn operation_wire(&self) -> Value {
         json!({
+            "protocolVersion": "2",
             "captureId": self.capture_id,
+            "ingestionId": self.ingestion_id,
+            "kind": self.kind,
             "status": self.status,
-            "stage": self.stage,
-            "structuringMode": self.structuring_mode,
             "progress": self.progress,
+            "partialRevision": self.partial_revision,
+            "lastEventSequence": self.last_event_sequence,
             "source": self.source,
             "error": self.error,
             "createdAt": CREATED_AT,
@@ -125,11 +176,14 @@ struct IdempotencyRecord {
 pub struct FixtureState {
     settings: FixtureSettings,
     next_capture: AtomicUsize,
+    next_ingestion: AtomicUsize,
     next_installation: AtomicUsize,
     next_model_installation: AtomicUsize,
     captures: Mutex<HashMap<String, CaptureRecord>>,
     capture_idempotency: Mutex<HashMap<String, IdempotencyRecord>>,
     commit_idempotency: Mutex<HashMap<String, IdempotencyRecord>>,
+    ingestions: Mutex<HashMap<String, IngestionRecord>>,
+    ingestion_idempotency: Mutex<HashMap<String, IdempotencyRecord>>,
     installations: Mutex<HashMap<String, InstallationRecord>>,
     installation_idempotency: Mutex<HashMap<String, IdempotencyRecord>>,
     model_installations: Mutex<HashMap<String, ModelInstallationRecord>>,
@@ -141,11 +195,14 @@ impl FixtureState {
         Self {
             settings,
             next_capture: AtomicUsize::new(1),
+            next_ingestion: AtomicUsize::new(1),
             next_installation: AtomicUsize::new(1),
             next_model_installation: AtomicUsize::new(1),
             captures: Mutex::new(HashMap::new()),
             capture_idempotency: Mutex::new(HashMap::new()),
             commit_idempotency: Mutex::new(HashMap::new()),
+            ingestions: Mutex::new(HashMap::new()),
+            ingestion_idempotency: Mutex::new(HashMap::new()),
             installations: Mutex::new(HashMap::new()),
             installation_idempotency: Mutex::new(HashMap::new()),
             model_installations: Mutex::new(HashMap::new()),
@@ -161,14 +218,16 @@ impl FixtureState {
             ("GET", "/v1/runtime/installations") => self.list_installations(),
             ("POST", "/v1/runtime/installations") => self.create_installation(&request),
             ("POST", "/v1/runtime/model-installations") => self.create_model_installation(&request),
-            ("POST", "/v1/captures") => self.create_capture(&request),
+            ("POST", "/v2/ingestions") => self.open_ingestion(&request),
+            _ if request.path.starts_with("/v2/ingestions/") => self.route_ingestion(&request),
+            ("POST", "/v2/captures") => self.start_capture(&request),
+            _ if request.path.starts_with("/v2/captures/") => self.route_capture(&request),
             _ if request.path.starts_with("/v1/runtime/installations/") => {
                 self.route_installation(&request)
             }
             _ if request.path.starts_with("/v1/runtime/model-installations/") => {
                 self.route_model_installation(&request)
             }
-            _ if request.path.starts_with("/v1/captures/") => self.route_capture(&request),
             _ => api_error(404, "not_found", "Resource was not found."),
         }
     }
@@ -227,123 +286,468 @@ impl FixtureState {
         )
     }
 
-    fn create_capture(&self, request: &Request) -> Response {
-        let idempotency_key = match required_idempotency_key(request) {
-            Ok(key) => key,
+    fn open_ingestion(&self, request: &Request) -> Response {
+        let payload = match parse_json_object(request) {
+            Ok(payload) => payload,
             Err(response) => return response,
         };
-        let upload = match parse_capture_form(request) {
-            Ok(upload) => upload,
+        let client_request_id = match required_string_field(&payload, "clientRequestId") {
+            Ok(value) => value,
             Err(response) => return response,
         };
-        if upload.content.is_empty() {
-            return api_error(422, "empty_upload", "Uploaded file is empty.");
+        if !valid_opaque_id(&client_request_id) {
+            return validation_error("clientRequestId is invalid.");
         }
-        if upload.content.len() > self.settings.max_upload_bytes {
-            return api_error(
-                413,
-                "upload_too_large",
-                "Upload exceeds the configured size limit.",
-            );
-        }
-        let (source_kind, media_type) = match sniff_source(&upload.content) {
-            Some(source) => source,
-            None => {
-                return api_error(
-                    415,
-                    "unsupported_media_type",
-                    "Only PDF, PNG, JPEG, WebP, and common audio are supported",
-                )
-            }
+        let kind = match required_string_field(&payload, "kind") {
+            Ok(value) if matches!(value.as_str(), "pdf" | "image" | "audio") => value,
+            _ => return validation_error("kind must be pdf, image, or audio."),
         };
-        let digest = sha256_hex(&upload.content);
-        let fingerprint = sha256_hex(
-            format!(
-                "{}|{}|{}",
-                digest,
-                upload.structuring_mode,
-                upload.target_language.as_deref().unwrap_or_default()
-            )
-            .as_bytes(),
-        );
+        let mode = payload
+            .get("mode")
+            .and_then(Value::as_str)
+            .unwrap_or("file");
+        if mode != "file" {
+            return validation_error("mode must be file.");
+        }
+        let file_name = match required_string_field(&payload, "fileName") {
+            Ok(value) if !value.trim().is_empty() && value.len() <= 255 => safe_filename(&value),
+            _ => return validation_error("fileName is invalid."),
+        };
+        let media_type = match required_string_field(&payload, "mediaType") {
+            Ok(value) if !value.trim().is_empty() && value.len() <= 128 => value,
+            _ => return validation_error("mediaType is invalid."),
+        };
+        let total_bytes = match payload.get("totalBytes").and_then(Value::as_u64) {
+            Some(value) if value > 0 && value as usize <= self.settings.max_upload_bytes => value,
+            _ => return validation_error("totalBytes is invalid."),
+        };
+        let source_sha256 = match payload.get("sourceSha256") {
+            Some(Value::Null) | None => None,
+            Some(Value::String(value)) if valid_sha256_hex(value) => Some(value.clone()),
+            _ => return validation_error("sourceSha256 must be a SHA-256 hex digest."),
+        };
+        let fingerprint = sha256_hex(&request.body);
         if let Some(existing) = self
-            .capture_idempotency
+            .ingestion_idempotency
             .lock()
             .ok()
-            .and_then(|items| items.get(&idempotency_key).cloned())
+            .and_then(|items| items.get(&client_request_id).cloned())
         {
             if existing.fingerprint != fingerprint {
                 return api_error(
                     409,
                     "idempotency_conflict",
-                    "Idempotency key was already used with a different request.",
+                    "Ingestion request id was already used with a different request.",
                 );
             }
-            return self.capture_response(&existing.resource_id, 202);
+            return self.ingestion_response(&existing.resource_id, 201);
         }
+        let ingestion_id = format!(
+            "ingestion-{}",
+            self.next_ingestion.fetch_add(1, Ordering::Relaxed)
+        );
+        let record = IngestionRecord {
+            ingestion_id: ingestion_id.clone(),
+            kind: kind.clone(),
+            file_name,
+            media_type,
+            total_bytes,
+            received_bytes: 0,
+            contiguous_bytes: 0,
+            next_chunk_index: 0,
+            next_offset: 0,
+            source_sha256,
+            finalized_sha256: None,
+            status: "open".into(),
+            content: Vec::new(),
+        };
+        if let Ok(mut ingestions) = self.ingestions.lock() {
+            ingestions.insert(ingestion_id.clone(), record.clone());
+        }
+        if let Ok(mut items) = self.ingestion_idempotency.lock() {
+            items.insert(
+                client_request_id,
+                IdempotencyRecord {
+                    fingerprint,
+                    resource_id: ingestion_id,
+                },
+            );
+        }
+        Response::json(201, record.wire())
+    }
 
+    fn route_ingestion(&self, request: &Request) -> Response {
+        let relative = request.path.trim_start_matches("/v2/ingestions/");
+        if let Some(ingestion_id) = relative.strip_suffix("/finalize") {
+            return if request.method == "POST" {
+                self.finalize_ingestion(ingestion_id, request)
+            } else {
+                api_error(404, "not_found", "Resource was not found.")
+            };
+        }
+        if let Some((ingestion_id, chunk_path)) = relative.split_once('/') {
+            if let Some(chunk_index) = chunk_path.strip_prefix("chunks/") {
+                if !chunk_index.contains('/') {
+                    return if request.method == "PUT" {
+                        self.append_chunk(ingestion_id, chunk_index, request)
+                    } else {
+                        api_error(404, "not_found", "Resource was not found.")
+                    };
+                }
+            }
+            return api_error(404, "not_found", "Resource was not found.");
+        }
+        match request.method.as_str() {
+            "GET" => self.ingestion_response(relative, 200),
+            "DELETE" => self.delete_ingestion(relative),
+            _ => api_error(404, "not_found", "Resource was not found."),
+        }
+    }
+
+    fn ingestion_response(&self, ingestion_id: &str, status: u16) -> Response {
+        let record = self
+            .ingestions
+            .lock()
+            .ok()
+            .and_then(|items| items.get(ingestion_id).cloned());
+        match record {
+            Some(record) => Response::json(status, record.wire()),
+            None => api_error(404, "ingestion_not_found", "Ingestion was not found."),
+        }
+    }
+
+    fn append_chunk(&self, ingestion_id: &str, chunk_index: &str, request: &Request) -> Response {
+        let chunk_index = match chunk_index.parse::<u64>() {
+            Ok(value) => value,
+            Err(_) => return validation_error("Chunk index is invalid."),
+        };
+        let (start, end, total) = match parse_content_range(request) {
+            Some(value) => value,
+            None => return validation_error("Content-Range header is invalid."),
+        };
+        let digest = match request
+            .headers
+            .get("digest")
+            .map(String::as_str)
+            .and_then(parse_sha256_digest)
+        {
+            Some(value) => value,
+            None => return validation_error("Digest header is invalid."),
+        };
+        if request
+            .headers
+            .get("x-idempotency-key")
+            .is_none_or(|value| !valid_request_key(value))
+        {
+            return validation_error("X-Idempotency-Key is invalid.");
+        }
+        let Ok(mut ingestions) = self.ingestions.lock() else {
+            return api_error(
+                500,
+                "runtime_unavailable",
+                "Ingestion state is unavailable.",
+            );
+        };
+        let Some(record) = ingestions.get_mut(ingestion_id) else {
+            return api_error(404, "ingestion_not_found", "Ingestion was not found.");
+        };
+        if record.status != "open" {
+            return api_error(409, "chunk_rejected", "Ingestion is not accepting chunks.");
+        }
+        if total != record.total_bytes {
+            return api_error(
+                409,
+                "chunk_total_conflict",
+                "Content-Range total does not match the ingestion source size.",
+            );
+        }
+        if start != record.next_offset || chunk_index != record.next_chunk_index {
+            return api_error(
+                409,
+                "chunk_out_of_order",
+                "Chunk is not contiguous with the ingestion.",
+            );
+        }
+        let chunk_len = request.body.len() as u64;
+        if end < start || end - start + 1 != chunk_len {
+            return api_error(
+                422,
+                "chunk_length_mismatch",
+                "Chunk length does not match Content-Range.",
+            );
+        }
+        if chunk_len as usize > STREAM_CHUNK_BYTES {
+            return api_error(
+                413,
+                "chunk_too_large",
+                "Chunk exceeds the configured size limit.",
+            );
+        }
+        if sha256_hex(&request.body) != digest {
+            return api_error(
+                409,
+                "chunk_checksum_mismatch",
+                "Chunk digest does not match the uploaded bytes.",
+            );
+        }
+        record.content.extend_from_slice(&request.body);
+        record.received_bytes = end + 1;
+        record.contiguous_bytes = end + 1;
+        record.next_chunk_index = chunk_index + 1;
+        record.next_offset = end + 1;
+        let response = record.wire();
+        drop(ingestions);
+        Response::json(200, response)
+    }
+
+    fn finalize_ingestion(&self, ingestion_id: &str, request: &Request) -> Response {
+        let payload = match parse_json_object(request) {
+            Ok(payload) => payload,
+            Err(response) => return response,
+        };
+        let total_bytes = match payload.get("totalBytes").and_then(Value::as_u64) {
+            Some(value) => value,
+            None => return validation_error("totalBytes is required."),
+        };
+        let sha256 = match payload.get("sha256").and_then(Value::as_str) {
+            Some(value) if valid_sha256_hex(value) => value.to_owned(),
+            _ => return validation_error("sha256 must be a SHA-256 hex digest."),
+        };
+        let Ok(mut ingestions) = self.ingestions.lock() else {
+            return api_error(
+                500,
+                "runtime_unavailable",
+                "Ingestion state is unavailable.",
+            );
+        };
+        let Some(record) = ingestions.get_mut(ingestion_id) else {
+            return api_error(404, "ingestion_not_found", "Ingestion was not found.");
+        };
+        if record.status != "open" {
+            return api_error(
+                409,
+                "ingestion_finalize_rejected",
+                "Ingestion is not open for finalization.",
+            );
+        }
+        if total_bytes != record.total_bytes
+            || record.received_bytes != record.total_bytes
+            || record.next_offset != record.total_bytes
+        {
+            return api_error(
+                409,
+                "ingestion_finalize_rejected",
+                "Ingestion is not complete or totalBytes does not match.",
+            );
+        }
+        record.finalized_sha256 = Some(sha256);
+        record.status = "ready".into();
+        let response = record.wire();
+        drop(ingestions);
+        Response::json(200, response)
+    }
+
+    fn delete_ingestion(&self, ingestion_id: &str) -> Response {
+        let removed = self
+            .ingestions
+            .lock()
+            .ok()
+            .and_then(|mut items| items.remove(ingestion_id));
+        if removed.is_some() {
+            Response::empty(204)
+        } else {
+            api_error(404, "ingestion_not_found", "Ingestion was not found.")
+        }
+    }
+
+    fn start_capture(&self, request: &Request) -> Response {
+        let payload = match parse_json_object(request) {
+            Ok(payload) => payload,
+            Err(response) => return response,
+        };
+        let client_request_id = match required_string_field(&payload, "clientRequestId") {
+            Ok(value) => value,
+            Err(response) => return response,
+        };
+        if !valid_opaque_id(&client_request_id) {
+            return validation_error("clientRequestId is invalid.");
+        }
+        let ingestion_id = match required_string_field(&payload, "ingestionId") {
+            Ok(value) if valid_opaque_id(&value) => value,
+            _ => return validation_error("ingestionId is invalid."),
+        };
+        let structuring_mode = match required_string_field(&payload, "structuringMode") {
+            Ok(value) if matches!(value.as_str(), "runtime" | "host") => value,
+            _ => return validation_error("structuringMode must be runtime or host."),
+        };
+        if payload.get("startPolicy").and_then(Value::as_str) != Some("eager") {
+            return validation_error("startPolicy must be eager.");
+        }
+        let target_language = match payload.get("targetLanguage") {
+            Some(Value::Null) | None => None,
+            Some(Value::String(value)) if !value.trim().is_empty() && value.len() <= 64 => {
+                Some(value.trim().to_owned())
+            }
+            _ => return validation_error("targetLanguage must be 1 to 64 characters."),
+        };
+        let fingerprint = sha256_hex(&request.body);
+        if let Some(existing) = self
+            .capture_idempotency
+            .lock()
+            .ok()
+            .and_then(|items| items.get(&client_request_id).cloned())
+        {
+            if existing.fingerprint != fingerprint {
+                return api_error(
+                    409,
+                    "idempotency_conflict",
+                    "Capture request id was already used with a different request.",
+                );
+            }
+            return self.operation_response(&existing.resource_id, 202);
+        }
+        let ingestion = self
+            .ingestions
+            .lock()
+            .ok()
+            .and_then(|items| items.get(&ingestion_id).cloned());
+        let Some(ingestion) = ingestion else {
+            return api_error(404, "ingestion_not_found", "Ingestion was not found.");
+        };
+        if ingestion.status != "ready" {
+            return api_error(
+                409,
+                "ingestion_not_ready",
+                "Ingestion must be finalized before starting a capture.",
+            );
+        }
+        let source_sha256 = ingestion
+            .finalized_sha256
+            .clone()
+            .unwrap_or_else(|| sha256_hex(&ingestion.content));
         let source = json!({
-            "sha256": digest,
-            "fileName": safe_filename(&upload.file_name),
-            "mediaType": media_type,
-            "bytes": upload.content.len(),
+            "sha256": source_sha256,
+            "fileName": safe_filename(&ingestion.file_name),
+            "mediaType": ingestion.media_type,
+            "bytes": ingestion.total_bytes,
         });
-        let raw = build_raw_capture(&source, source_kind, &upload.content);
+        let raw = build_raw_capture(&source, &ingestion.kind, &ingestion.content);
         let capture_id = format!(
             "capture-{}",
             self.next_capture.fetch_add(1, Ordering::Relaxed)
         );
-        let (status, stage, progress, result, completed_at) =
-            if upload.structuring_mode == "runtime" {
-                (
-                    "completed",
-                    "completed",
-                    1.0,
-                    Some(build_result(&raw, upload.target_language.as_deref())),
-                    Some(COMPLETED_AT.into()),
-                )
-            } else {
-                ("running", "awaiting_structuring", 0.55, None, None)
-            };
-        let record = CaptureRecord {
+        let partial_revision = if ingestion.kind == "audio" { 1 } else { 0 };
+        let partial = if ingestion.kind == "audio" {
+            Some(build_partial(
+                &raw,
+                &capture_id,
+                &ingestion.kind,
+                partial_revision,
+            ))
+        } else {
+            None
+        };
+        let audio_covered_until_ms = if ingestion.kind == "audio" {
+            raw["segments"]
+                .as_array()
+                .map(|segments| (segments.len() * 1000) as u64)
+                .unwrap_or(0)
+        } else {
+            0
+        };
+        let mut record = CaptureRecord {
             capture_id: capture_id.clone(),
-            status: status.into(),
-            stage: stage.into(),
-            structuring_mode: upload.structuring_mode,
-            progress,
+            ingestion_id: ingestion.ingestion_id,
+            kind: ingestion.kind,
+            status: "awaiting_structuring".into(),
+            stage: "awaiting_structuring".into(),
+            structuring_mode: structuring_mode.clone(),
+            target_language: target_language.clone(),
+            progress: 0.55,
             source,
             raw,
-            result,
+            partial,
+            result: None,
             error: None,
-            completed_at,
+            events: Vec::new(),
+            last_event_sequence: 0,
+            partial_revision,
+            completed_at: None,
         };
+        append_capture_event(&mut record, "accepted", "queued", 0.0, None, None, None);
+        append_capture_event(
+            &mut record,
+            "checkpoint",
+            "extracting",
+            0.55,
+            Some(partial_revision),
+            Some(audio_covered_until_ms),
+            None,
+        );
+        if structuring_mode == "runtime" {
+            record.result = Some(build_result(&record.raw, target_language.as_deref()));
+            record.status = "completed".into();
+            record.stage = "completed".into();
+            record.progress = 1.0;
+            record.completed_at = Some(COMPLETED_AT.into());
+            append_capture_event(
+                &mut record,
+                "completed",
+                "completed",
+                1.0,
+                Some(partial_revision),
+                None,
+                None,
+            );
+        }
         if let Ok(mut captures) = self.captures.lock() {
             captures.insert(capture_id.clone(), record.clone());
         }
         if let Ok(mut idempotency) = self.capture_idempotency.lock() {
             idempotency.insert(
-                idempotency_key,
+                client_request_id,
                 IdempotencyRecord {
                     fingerprint,
                     resource_id: capture_id,
                 },
             );
         }
-        Response::json(202, record.wire())
+        Response::json(202, record.operation_wire())
     }
 
     fn route_capture(&self, request: &Request) -> Response {
-        let relative = request.path.trim_start_matches("/v1/captures/");
-        if let Some(capture_id) = relative.strip_suffix("/cancel") {
+        let relative = request.path.trim_start_matches("/v2/captures/");
+        if let Some(capture_id) = relative.strip_suffix("/structure/commit") {
             return if request.method == "POST" {
-                self.cancel_capture(capture_id)
+                self.commit_structure(capture_id, request)
             } else {
                 api_error(404, "not_found", "Resource was not found.")
             };
         }
-        if let Some(capture_id) = relative.strip_suffix("/raw") {
+        if let Some(capture_id) = relative.strip_suffix("/structure/failure") {
+            return if request.method == "POST" {
+                self.report_structuring_failure(capture_id, request)
+            } else {
+                api_error(404, "not_found", "Resource was not found.")
+            };
+        }
+        if let Some(capture_id) = relative.strip_suffix("/structure") {
+            return if request.method == "POST" {
+                self.structure_capture(capture_id)
+            } else {
+                api_error(404, "not_found", "Resource was not found.")
+            };
+        }
+        if let Some(capture_id) = relative.strip_suffix("/events") {
             return if request.method == "GET" {
-                self.raw_response(capture_id)
+                self.events_response(capture_id, request)
+            } else {
+                api_error(404, "not_found", "Resource was not found.")
+            };
+        }
+        if let Some(capture_id) = relative.strip_suffix("/partial") {
+            return if request.method == "GET" {
+                self.partial_response(capture_id)
             } else {
                 api_error(404, "not_found", "Resource was not found.")
             };
@@ -355,16 +759,9 @@ impl FixtureState {
                 api_error(404, "not_found", "Resource was not found.")
             };
         }
-        if let Some(capture_id) = relative.strip_suffix("/structure") {
+        if let Some(capture_id) = relative.strip_suffix("/cancel") {
             return if request.method == "POST" {
-                self.commit_structure(capture_id, request)
-            } else {
-                api_error(404, "not_found", "Resource was not found.")
-            };
-        }
-        if let Some(capture_id) = relative.strip_suffix("/structuring-failure") {
-            return if request.method == "POST" {
-                self.report_structuring_failure(capture_id, request)
+                self.cancel_capture(capture_id)
             } else {
                 api_error(404, "not_found", "Resource was not found.")
             };
@@ -373,33 +770,87 @@ impl FixtureState {
             return api_error(404, "not_found", "Resource was not found.");
         }
         match request.method.as_str() {
-            "GET" => self.capture_response(relative, 200),
+            "GET" => self.operation_response(relative, 200),
             "DELETE" => self.delete_capture(relative),
             _ => api_error(404, "not_found", "Resource was not found."),
         }
     }
 
-    fn capture_response(&self, capture_id: &str, status: u16) -> Response {
+    fn operation_response(&self, capture_id: &str, status: u16) -> Response {
         let record = self
             .captures
             .lock()
             .ok()
             .and_then(|captures| captures.get(capture_id).cloned());
         match record {
-            Some(record) => Response::json(status, record.wire()),
+            Some(record) => Response::json(status, record.operation_wire()),
             None => api_error(404, "capture_not_found", "Capture job was not found."),
         }
     }
 
-    fn raw_response(&self, capture_id: &str) -> Response {
-        let raw = self
+    fn events_response(&self, capture_id: &str, request: &Request) -> Response {
+        let has_cursor = request.headers.contains_key("last-event-id");
+        let after_sequence = request
+            .headers
+            .get("last-event-id")
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(0);
+        let record = self
             .captures
             .lock()
             .ok()
-            .and_then(|captures| captures.get(capture_id).map(|record| record.raw.clone()));
-        match raw {
-            Some(raw) => Response::json(200, raw),
+            .and_then(|captures| captures.get(capture_id).cloned());
+        match record {
+            Some(record) => {
+                let replay_start = record
+                    .last_event_sequence
+                    .saturating_sub(EVENT_REPLAY_WINDOW.saturating_sub(1));
+                if has_cursor && after_sequence.saturating_add(1) < replay_start {
+                    let resync = json!({
+                        "protocolVersion": "2",
+                        "eventId": format!(
+                            "event-{}-resync-{}",
+                            record.capture_id, record.last_event_sequence
+                        ),
+                        "sequence": record.last_event_sequence,
+                        "captureId": record.capture_id,
+                        "kind": record.kind,
+                        "eventType": "resync_required",
+                        "stage": "resync",
+                        "progress": record.progress,
+                        "partialRevision": record.partial_revision,
+                        "coveredUntilMs": Value::Null,
+                        "segments": [],
+                        "error": Value::Null,
+                        "createdAt": CREATED_AT,
+                    });
+                    return Response::event_stream(sse_frame(&resync));
+                }
+                let body = record
+                    .events
+                    .iter()
+                    .filter(|event| event["sequence"].as_u64().unwrap_or(0) > after_sequence)
+                    .map(sse_frame)
+                    .collect::<String>();
+                Response::event_stream(body)
+            }
             None => api_error(404, "capture_not_found", "Capture job was not found."),
+        }
+    }
+
+    fn partial_response(&self, capture_id: &str) -> Response {
+        let partial = self.captures.lock().ok().and_then(|captures| {
+            captures
+                .get(capture_id)
+                .and_then(|record| record.partial.clone())
+        });
+        match partial {
+            Some(partial) => Response::json(200, partial),
+            None => api_error(
+                409,
+                "partial_unavailable",
+                "Progressive partial capture is not available yet.",
+            ),
         }
     }
 
@@ -411,15 +862,50 @@ impl FixtureState {
             .and_then(|captures| captures.get(capture_id).cloned());
         match record {
             None => api_error(404, "capture_not_found", "Capture job was not found."),
-            Some(record) => match record.result {
-                Some(result) if record.status == "completed" => Response::json(200, result),
-                _ => api_error(
-                    409,
-                    "result_unavailable",
-                    "Structured result is not available.",
-                ),
-            },
+            Some(record) if record.status == "completed" && record.result.is_some() => {
+                Response::json(
+                    200,
+                    json!({
+                        "operation": record.operation_wire(),
+                        "raw": record.raw,
+                        "result": record.result,
+                    }),
+                )
+            }
+            Some(_) => api_error(
+                409,
+                "result_unavailable",
+                "Structured result is not available.",
+            ),
         }
+    }
+
+    fn structure_capture(&self, capture_id: &str) -> Response {
+        let Ok(mut captures) = self.captures.lock() else {
+            return api_error(500, "runtime_unavailable", "Capture state is unavailable.");
+        };
+        let Some(record) = captures.get_mut(capture_id) else {
+            return api_error(404, "capture_not_found", "Capture job was not found.");
+        };
+        if record.status == "completed" {
+            let result = record.result.clone().unwrap_or_default();
+            return Response::json(200, result);
+        }
+        if record.structuring_mode != "runtime" {
+            return api_error(
+                409,
+                "invalid_capture_state",
+                "host structuring requires a host-owned candidate",
+            );
+        }
+        let result = build_result(&record.raw, record.target_language.as_deref());
+        record.result = Some(result.clone());
+        record.status = "completed".into();
+        record.stage = "completed".into();
+        record.progress = 1.0;
+        record.completed_at = Some(COMPLETED_AT.into());
+        append_capture_event(record, "completed", "completed", 1.0, Some(1), None, None);
+        Response::json(200, result)
     }
 
     fn cancel_capture(&self, capture_id: &str) -> Response {
@@ -440,8 +926,17 @@ impl FixtureState {
                 "retryable": true,
             }));
             record.completed_at = Some(COMPLETED_AT.into());
+            append_capture_event(
+                record,
+                "cancelled",
+                "cancelled",
+                record.progress,
+                None,
+                None,
+                record.error.clone(),
+            );
         }
-        Response::json(200, record.wire())
+        Response::json(200, record.operation_wire())
     }
 
     fn delete_capture(&self, capture_id: &str) -> Response {
@@ -488,7 +983,7 @@ impl FixtureState {
                     "Commit idempotency key conflicts.",
                 );
             }
-            return self.capture_response(capture_id, 200);
+            return self.operation_response(capture_id, 200);
         }
 
         let Ok(mut captures) = self.captures.lock() else {
@@ -517,7 +1012,8 @@ impl FixtureState {
         record.stage = "completed".into();
         record.progress = 1.0;
         record.completed_at = Some(COMPLETED_AT.into());
-        let response = record.wire();
+        append_capture_event(record, "completed", "completed", 1.0, Some(1), None, None);
+        let response = record.operation_wire();
         drop(captures);
         if let Ok(mut items) = self.commit_idempotency.lock() {
             items.insert(
@@ -565,7 +1061,16 @@ impl FixtureState {
             "retryable": false,
         }));
         record.completed_at = Some(COMPLETED_AT.into());
-        Response::json(200, record.wire())
+        append_capture_event(
+            record,
+            "failed",
+            "failed",
+            record.progress,
+            None,
+            None,
+            record.error.clone(),
+        );
+        Response::json(200, record.operation_wire())
     }
 
     fn create_installation(&self, request: &Request) -> Response {
@@ -757,130 +1262,121 @@ impl FixtureState {
     }
 }
 
-struct CaptureUpload {
-    file_name: String,
-    content: Vec<u8>,
-    structuring_mode: String,
-    target_language: Option<String>,
-}
-
-#[derive(Clone)]
-struct MultipartPart {
-    headers: HashMap<String, String>,
-    body: Vec<u8>,
-}
-
-fn parse_capture_form(request: &Request) -> Result<CaptureUpload, Response> {
-    let content_type = request
+fn parse_json_object(request: &Request) -> Result<Value, Response> {
+    if !request
         .headers
         .get("content-type")
-        .ok_or_else(|| validation_error("multipart/form-data content type is required."))?;
-    let boundary = content_type
-        .split(';')
-        .map(str::trim)
-        .find_map(|value| value.strip_prefix("boundary="))
-        .map(|value| value.trim_matches('"'))
-        .filter(|value| !value.is_empty() && value.len() <= 70)
-        .ok_or_else(|| validation_error("multipart boundary is invalid."))?;
-    if !content_type
-        .split(';')
-        .next()
-        .is_some_and(|value| value.trim().eq_ignore_ascii_case("multipart/form-data"))
+        .is_some_and(|value| value.starts_with("application/json"))
     {
-        return Err(validation_error(
-            "Capture creation requires multipart/form-data.",
-        ));
+        return Err(validation_error("Request body must be application/json."));
     }
-    let parts = multipart_parts(&request.body, boundary)
-        .ok_or_else(|| validation_error("multipart body is invalid."))?;
-    let mut file = None;
-    let mut fields = HashMap::new();
-    for part in parts {
-        let Some(disposition) = part.headers.get("content-disposition") else {
-            continue;
-        };
-        let Some(name) = disposition_parameter(disposition, "name") else {
-            continue;
-        };
-        if name == "file" {
-            let file_name = disposition_parameter(disposition, "filename")
-                .unwrap_or_else(|| "upload.bin".into());
-            file = Some((file_name, part.body));
-        } else if let Ok(value) = String::from_utf8(part.body) {
-            fields.insert(name, value);
-        }
+    match serde_json::from_slice::<Value>(&request.body) {
+        Ok(value) if value.is_object() => Ok(value),
+        _ => Err(validation_error(
+            "Request body must be a valid JSON object.",
+        )),
     }
-    let (file_name, content) =
-        file.ok_or_else(|| validation_error("multipart file field is required."))?;
-    let structuring_mode = fields
-        .remove("structuringMode")
-        .unwrap_or_else(|| "runtime".into());
-    if !matches!(structuring_mode.as_str(), "runtime" | "host") {
-        return Err(validation_error("structuringMode must be runtime or host."));
-    }
-    let target_language = fields
-        .remove("targetLanguage")
-        .map(|value| value.trim().to_owned());
-    if target_language
-        .as_ref()
-        .is_some_and(|value| value.is_empty() || value.len() > 64)
-    {
-        return Err(api_error(
-            422,
-            "validation_error",
-            "targetLanguage must be 1 to 64 characters.",
-        ));
-    }
-    Ok(CaptureUpload {
-        file_name,
-        content,
-        structuring_mode,
-        target_language,
-    })
 }
 
-fn multipart_parts(body: &[u8], boundary: &str) -> Option<Vec<MultipartPart>> {
-    let delimiter = format!("--{boundary}").into_bytes();
-    let mut positions = Vec::new();
-    let mut offset = 0;
-    while let Some(relative) = find_bytes(&body[offset..], &delimiter) {
-        let absolute = offset + relative;
-        positions.push(absolute);
-        offset = absolute + delimiter.len();
-    }
-    if positions.len() < 2 {
-        return None;
-    }
-    let mut parts = Vec::new();
-    for pair in positions.windows(2) {
-        let mut value = &body[pair[0] + delimiter.len()..pair[1]];
-        if value.starts_with(b"--") {
-            break;
-        }
-        value = value.strip_prefix(b"\r\n").unwrap_or(value);
-        value = value.strip_suffix(b"\r\n").unwrap_or(value);
-        let separator = find_bytes(value, b"\r\n\r\n")?;
-        let headers = std::str::from_utf8(&value[..separator]).ok()?;
-        let headers = headers
-            .lines()
-            .filter_map(|line| line.split_once(':'))
-            .map(|(name, value)| (name.trim().to_ascii_lowercase(), value.trim().to_owned()))
-            .collect();
-        parts.push(MultipartPart {
-            headers,
-            body: value[separator + 4..].to_vec(),
-        });
-    }
-    Some(parts)
+fn required_string_field(payload: &Value, name: &str) -> Result<String, Response> {
+    payload
+        .get(name)
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| validation_error(&format!("{name} is required.")))
 }
 
-fn disposition_parameter(value: &str, name: &str) -> Option<String> {
+fn valid_opaque_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+}
+
+fn valid_request_key(value: &str) -> bool {
+    valid_opaque_id(value)
+}
+
+fn valid_sha256_hex(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn parse_content_range(request: &Request) -> Option<(u64, u64, u64)> {
+    let value = request.headers.get("content-range")?;
+    let value = value.strip_prefix("bytes ")?;
+    let (range, total) = value.split_once('/')?;
+    let (start, end) = range.split_once('-')?;
+    Some((start.parse().ok()?, end.parse().ok()?, total.parse().ok()?))
+}
+
+fn parse_sha256_digest(value: &str) -> Option<String> {
     value
-        .split(';')
-        .map(str::trim)
-        .filter_map(|part| part.split_once('='))
-        .find(|(candidate, _)| candidate.eq_ignore_ascii_case(name))
-        .map(|(_, value)| value.trim_matches('"').to_owned())
+        .strip_prefix("sha-256=")
+        .filter(|hex| valid_sha256_hex(hex))
+        .map(str::to_owned)
+}
+
+fn append_capture_event(
+    record: &mut CaptureRecord,
+    event_type: &str,
+    stage: &str,
+    progress: f64,
+    partial_revision: Option<u64>,
+    covered_until_ms: Option<u64>,
+    error: Option<Value>,
+) {
+    record.last_event_sequence += 1;
+    let sequence = record.last_event_sequence;
+    let segments = if event_type == "checkpoint" && record.kind == "audio" {
+        record.raw["segments"].clone()
+    } else {
+        json!([])
+    };
+    record.events.push(json!({
+        "protocolVersion": "2",
+        "eventId": format!("event-{}-{sequence}", record.capture_id),
+        "sequence": sequence,
+        "captureId": record.capture_id,
+        "kind": record.kind,
+        "eventType": event_type,
+        "stage": stage,
+        "progress": progress,
+        "partialRevision": partial_revision,
+        "coveredUntilMs": covered_until_ms,
+        "segments": segments,
+        "error": error,
+        "createdAt": CREATED_AT,
+    }));
+}
+
+fn sse_frame(event: &Value) -> String {
+    format!(
+        "id: {}\nevent: {}\ndata: {}\n\n",
+        event["sequence"].as_u64().unwrap_or_default(),
+        event["eventType"].as_str().unwrap_or_default(),
+        serde_json::to_string(event).unwrap_or_else(|_| "{}".into()),
+    )
+}
+
+fn build_partial(raw: &Value, capture_id: &str, kind: &str, revision: u64) -> Value {
+    let segments = raw["segments"].as_array().cloned().unwrap_or_default();
+    json!({
+        "protocolVersion": "2",
+        "captureId": capture_id,
+        "source": raw["source"],
+        "revision": revision,
+        "coveredUntilMs": if kind == "audio" {
+            (segments.len() * 1000) as u64
+        } else {
+            0
+        },
+        "segments": segments,
+        "sourceText": raw["sourceText"],
+        "extractionEngine": raw["extractionEngine"],
+        "updatedAt": CREATED_AT,
+    })
 }
 
 fn build_raw_capture(source: &Value, source_kind: &str, content: &[u8]) -> Value {
@@ -1156,34 +1652,6 @@ fn requirement(
         "installStrategy": "deterministic-fixture",
         "detail": "Available in deterministic verification mode.",
     })
-}
-
-fn sniff_source(content: &[u8]) -> Option<(&'static str, &'static str)> {
-    if content.starts_with(b"%PDF-") {
-        Some(("pdf", "application/pdf"))
-    } else if content.starts_with(b"\x89PNG\r\n\x1a\n") {
-        Some(("image", "image/png"))
-    } else if content.starts_with(b"\xff\xd8\xff") {
-        Some(("image", "image/jpeg"))
-    } else if content.len() >= 12 && &content[..4] == b"RIFF" && &content[8..12] == b"WEBP" {
-        Some(("image", "image/webp"))
-    } else if content.len() >= 12 && &content[..4] == b"RIFF" && &content[8..12] == b"WAVE" {
-        Some(("audio", "audio/wav"))
-    } else if content.starts_with(b"ID3")
-        || content
-            .get(..2)
-            .is_some_and(|value| matches!(value, b"\xff\xfb" | b"\xff\xf3" | b"\xff\xf2"))
-    {
-        Some(("audio", "audio/mpeg"))
-    } else if content.starts_with(b"fLaC") {
-        Some(("audio", "audio/flac"))
-    } else if content.starts_with(b"OggS") {
-        Some(("audio", "audio/ogg"))
-    } else if content.len() >= 12 && &content[4..8] == b"ftyp" {
-        Some(("audio", "audio/mp4"))
-    } else {
-        None
-    }
 }
 
 fn fixture_text(content: &[u8], kind: &str, sha256: &str) -> String {

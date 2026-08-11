@@ -4,6 +4,7 @@ use std::{
     time::Duration,
 };
 
+#[cfg(test)]
 use rand::{rngs::OsRng, RngCore};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -11,9 +12,8 @@ use sha2::{Digest, Sha256};
 use crate::{
     config::BackendConfig,
     contracts::{
-        RuntimeCreateCaptureInput, RuntimeIdInput, RuntimeInstallationStartInput,
-        RuntimeModelInstallationStartInput, RuntimeStreamingCaptureInput,
-        RuntimeStreamingEventsInput,
+        RuntimeIdInput, RuntimeInstallationStartInput, RuntimeModelInstallationStartInput,
+        RuntimeStreamingCaptureInput, RuntimeStreamingEventsInput,
     },
     library::{LibraryStore, RuntimeSourceFile},
     state::DesktopState,
@@ -104,35 +104,6 @@ pub(crate) fn model_installation(
         &format!("/v1/runtime/model-installations/{}", input.id),
         None,
         None,
-    )
-}
-
-pub(crate) fn create_capture(
-    state: &DesktopState,
-    library: &LibraryStore,
-    input: RuntimeCreateCaptureInput,
-) -> Result<Value, String> {
-    validate_document_id(&input.document_id)?;
-    validate_client_request_id(&input.client_request_id)?;
-    let source = library.runtime_source(&input.document_id)?;
-    let source_kind = match source.media_type.as_str() {
-        "application/pdf" => "pdf",
-        media_type if media_type.starts_with("image/") => "image",
-        media_type if media_type.starts_with("audio/") => "audio",
-        _ => return Err("Capture source media type is unsupported.".into()),
-    };
-    let body = multipart_capture_body(
-        &source.file_name,
-        &source.media_type,
-        source_kind,
-        &source.bytes,
-    )?;
-    request_json(
-        state,
-        "POST",
-        "/v1/captures",
-        Some(body),
-        Some(&input.client_request_id),
     )
 }
 
@@ -354,26 +325,6 @@ fn hex_digest(bytes: &[u8]) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-pub(crate) fn capture(state: &DesktopState, input: RuntimeIdInput) -> Result<Value, String> {
-    capture_value(state, "GET", &input.id, "", None)
-}
-
-pub(crate) fn cancel_capture(state: &DesktopState, input: RuntimeIdInput) -> Result<Value, String> {
-    capture_value(state, "POST", &input.id, "/cancel", None)
-}
-
-pub(crate) fn raw_capture(state: &DesktopState, input: RuntimeIdInput) -> Result<Value, String> {
-    null_for_http_rejection(capture_value(state, "GET", &input.id, "/raw", None), 409)
-}
-
-pub(crate) fn capture_result(state: &DesktopState, input: RuntimeIdInput) -> Result<Value, String> {
-    capture_value(state, "GET", &input.id, "/result", None)
-}
-
-pub(crate) fn delete_capture(state: &DesktopState, input: RuntimeIdInput) -> Result<Value, String> {
-    null_for_http_rejection(capture_value(state, "DELETE", &input.id, "", None), 404)
-}
-
 fn null_for_http_rejection(
     result: Result<Value, String>,
     accepted_status: u16,
@@ -382,23 +333,6 @@ fn null_for_http_rejection(
         Err(error) if is_http_rejection(&error, accepted_status) => Ok(Value::Null),
         result => result,
     }
-}
-
-fn capture_value(
-    state: &DesktopState,
-    method: &str,
-    capture_id: &str,
-    suffix: &str,
-    body: Option<RequestBody>,
-) -> Result<Value, String> {
-    validate_opaque_id(capture_id)?;
-    request_json(
-        state,
-        method,
-        &format!("/v1/captures/{capture_id}{suffix}"),
-        body,
-        None,
-    )
 }
 
 fn streaming_value(
@@ -544,6 +478,9 @@ fn request_sse(
             "Capture Runtime request was rejected with HTTP {status}."
         ));
     }
+    if !has_event_stream_content_type(headers) {
+        return Err("Capture Runtime SSE response Content-Type was not text/event-stream.".into());
+    }
     let events = response[separator + 4..]
         .split(|byte| *byte == b'\n')
         .filter_map(|line| line.strip_prefix(b"data: "))
@@ -556,6 +493,21 @@ fn request_sse(
         })
         .collect::<Result<Vec<_>, String>>()?;
     Ok(Value::Array(events))
+}
+
+fn has_event_stream_content_type(headers: &str) -> bool {
+    let content_types = headers
+        .lines()
+        .skip(1)
+        .filter_map(|line| line.split_once(':'))
+        .filter(|(name, _)| name.trim().eq_ignore_ascii_case("content-type"))
+        .map(|(_, value)| value.trim())
+        .collect::<Vec<_>>();
+    content_types.len() == 1
+        && content_types[0]
+            .split(';')
+            .next()
+            .is_some_and(|media_type| media_type.trim().eq_ignore_ascii_case("text/event-stream"))
 }
 
 fn parse_response(response: &[u8], token: &str) -> Result<Value, String> {
@@ -587,67 +539,6 @@ fn parse_response(response: &[u8], token: &str) -> Result<Value, String> {
 
 fn is_http_rejection(error: &str, status: u16) -> bool {
     error == format!("Capture Runtime request was rejected with HTTP {status}.")
-}
-
-fn multipart_capture_body(
-    file_name: &str,
-    media_type: &str,
-    source_kind: &str,
-    bytes: &[u8],
-) -> Result<RequestBody, String> {
-    if file_name.is_empty()
-        || file_name
-            .bytes()
-            .any(|byte| byte.is_ascii_control() || matches!(byte, b'"' | b'\\'))
-    {
-        return Err("Capture source file name is invalid.".into());
-    }
-    let boundary = format!("capture-workbench-{}", random_hex()?);
-    let mut body = Vec::with_capacity(bytes.len() + 1024);
-    multipart_field(
-        &mut body,
-        &boundary,
-        "file",
-        bytes,
-        Some((file_name, media_type)),
-    );
-    multipart_field(
-        &mut body,
-        &boundary,
-        "sourceKind",
-        source_kind.as_bytes(),
-        None,
-    );
-    multipart_field(&mut body, &boundary, "structuringMode", b"runtime", None);
-    body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
-    Ok(RequestBody {
-        bytes: body,
-        content_type: format!("multipart/form-data; boundary={boundary}"),
-    })
-}
-
-fn multipart_field(
-    body: &mut Vec<u8>,
-    boundary: &str,
-    name: &str,
-    value: &[u8],
-    file: Option<(&str, &str)>,
-) {
-    body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
-    if let Some((file_name, media_type)) = file {
-        body.extend_from_slice(
-            format!(
-                "Content-Disposition: form-data; name=\"{name}\"; filename=\"{file_name}\"\r\nContent-Type: {media_type}\r\n\r\n"
-            )
-            .as_bytes(),
-        );
-    } else {
-        body.extend_from_slice(
-            format!("Content-Disposition: form-data; name=\"{name}\"\r\n\r\n").as_bytes(),
-        );
-    }
-    body.extend_from_slice(value);
-    body.extend_from_slice(b"\r\n");
 }
 
 fn loopback_port(base_url: &str) -> Result<u16, String> {
@@ -707,6 +598,7 @@ fn validate_structuring_mode(value: &str) -> Result<(), String> {
     }
 }
 
+#[cfg(test)]
 fn random_hex() -> Result<String, String> {
     let mut bytes = [0_u8; 16];
     OsRng
@@ -814,7 +706,7 @@ mod tests {
             );
             write!(
                 stream,
-                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
                 body.len(),
                 body
             )
@@ -834,6 +726,42 @@ mod tests {
         .expect("events");
         assert_eq!(events[0]["sequence"], 8);
         assert_eq!(events[0]["message"], "[REDACTED]");
+        server.join().expect("server");
+    }
+
+    #[test]
+    fn streaming_sse_rejects_a_non_event_stream_content_type() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("listener");
+        let port = listener.local_addr().expect("address").port();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut request = [0_u8; 4096];
+            stream.read(&mut request).expect("request");
+            let body = "<html>not an SSE response</html>";
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .expect("response");
+        });
+        let error = request_sse(
+            &BackendConfig {
+                base_url: format!("http://127.0.0.1:{port}"),
+                token: "token".into(),
+                runtime_version: "0.3.11".into(),
+                api_version: "1.0".into(),
+                capture_document_schema_version: "1".into(),
+            },
+            "/v2/captures/capture-1/events",
+            None,
+        )
+        .expect_err("wrong content type must fail closed");
+        assert_eq!(
+            error,
+            "Capture Runtime SSE response Content-Type was not text/event-stream."
+        );
         server.join().expect("server");
     }
 

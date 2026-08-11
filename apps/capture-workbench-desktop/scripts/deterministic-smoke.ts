@@ -79,9 +79,16 @@ export function runDeterministicSmoke(): Observable<{ report: unknown; reportPat
       canonicalWire: {
         apiVersion: '1.0',
         schemaVersion,
-        captureRequest: 'multipart/form-data',
+        captureRequest: 'v2-ingestions',
         captureIdField: true,
         rawDiagnosticOnly: true,
+        events: true,
+        eventStream: {
+          contentType: 'text/event-stream',
+          terminalLast: true,
+          cursorReplay: true,
+          resyncRequired: true,
+        },
       },
       runtimePortIsDynamic: runtimePort > 0,
       ollamaPortIsIndependent: ollamaPort !== runtimePort,

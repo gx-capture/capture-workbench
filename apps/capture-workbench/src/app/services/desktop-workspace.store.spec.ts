@@ -1,6 +1,6 @@
 import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import type { CaptureJobV1 } from '@gx-capture/capture-workbench';
+import type { CaptureEventV2, CaptureOperationV2 } from '@gx-capture/capture-workbench';
 import { EMPTY, of, Subject, throwError } from 'rxjs';
 import type { DesktopLibraryDetail, DesktopLibrarySummary } from '../contracts';
 import { DesktopLibraryService } from './desktop-library.service';
@@ -18,23 +18,56 @@ const summary: DesktopLibrarySummary = {
   stage: 'uploading',
 };
 
-const runningJob = job({
+const source = {
+  sha256: 'a'.repeat(64),
+  fileName: 'fixture.pdf',
+  mediaType: 'application/pdf',
+  bytes: 12,
+};
+const runningOperation: CaptureOperationV2 = {
+  protocolVersion: '2',
   captureId: 'capture-1',
-  status: 'running',
-  stage: 'extracting',
-});
-const completedJob = job({
-  captureId: 'capture-1',
+  ingestionId: 'ingestion-1',
+  kind: 'pdf',
+  status: 'extracting',
+  progress: 0.5,
+  partialRevision: 0,
+  lastEventSequence: 0,
+  source,
+  createdAt: '2026-07-20T00:00:00Z',
+  updatedAt: '2026-07-20T00:00:00Z',
+};
+const completedOperation: CaptureOperationV2 = {
+  ...runningOperation,
   status: 'completed',
-  stage: 'completed',
-});
-const cancelledJob = job({
-  captureId: 'capture-1',
+  progress: 1,
+  partialRevision: 1,
+  lastEventSequence: 1,
+  updatedAt: '2026-07-20T00:00:01Z',
+  completedAt: '2026-07-20T00:00:01Z',
+};
+const cancelledOperation: CaptureOperationV2 = {
+  ...runningOperation,
   status: 'cancelled',
-  stage: 'cancelled',
-});
+  updatedAt: '2026-07-20T00:00:01Z',
+  completedAt: '2026-07-20T00:00:01Z',
+};
+const partial = {
+  protocolVersion: '2' as const,
+  captureId: 'capture-1',
+  source,
+  revision: 1,
+  coveredUntilMs: 1,
+  sourceText: 'OCR text',
+  updatedAt: '2026-07-20T00:00:00Z',
+};
 const raw = { sourceText: 'OCR text' };
 const result = { targetText: 'translated text' };
+const terminalResult = {
+  operation: completedOperation,
+  raw,
+  result,
+};
 
 describe('DesktopWorkspaceStore', () => {
   it('retains a terminal model installation identity for UI and Tauri diagnostics', () => {
@@ -301,14 +334,14 @@ describe('DesktopWorkspaceStore', () => {
       );
       return of({ ...summary, ...update, updatedAtMs: 2 } as DesktopLibrarySummary);
     });
-    const deleteCapture = vi.fn(() => {
+    const deleteStreamingCapture = vi.fn(() => {
       events.push('runtime:delete');
       return of(undefined);
     });
     const library = libraryStub({ updateCapture });
     const client = runtimeStub({
-      createCapture: vi.fn(() => of(completedJob)),
-      deleteCapture,
+      startStreamingCapture: vi.fn(() => of(completedOperation)),
+      deleteStreamingCapture,
     });
     const store = initializeStore(library, client);
 
@@ -342,24 +375,86 @@ describe('DesktopWorkspaceStore', () => {
     expect(events.indexOf('runtime:delete')).toBeLessThan(
       events.indexOf('library:completed:true'),
     );
-    expect(deleteCapture).toHaveBeenCalledWith('capture-1');
+    expect(deleteStreamingCapture).toHaveBeenCalledWith('capture-1');
   });
 
-  it('publishes raw during structuring before the terminal result is committed', () => {
-    const structuringJob = job({
+  it('reloads the snapshot and reconnects after a desktop resync_required event', () => {
+    const firstEvents = new Subject<readonly CaptureEventV2[]>();
+    const secondEvents = new Subject<readonly CaptureEventV2[]>();
+    const getStreamingEvents = vi
+      .fn()
+      .mockReturnValueOnce(firstEvents)
+      .mockReturnValueOnce(secondEvents);
+    const resyncedOperation = {
+      ...runningOperation,
+      progress: 0.7,
+      lastEventSequence: 7,
+    };
+    const getStreamingCapture = vi
+      .fn()
+      .mockReturnValueOnce(of(resyncedOperation))
+      .mockReturnValueOnce(of(completedOperation));
+    const resyncEvent: CaptureEventV2 = {
+      protocolVersion: '2',
+      eventId: 'capture-1/resync/7',
+      sequence: 7,
       captureId: 'capture-1',
-      status: 'running',
-      stage: 'structuring',
-    });
+      kind: 'pdf',
+      eventType: 'resync_required',
+      stage: 'resync',
+      partialRevision: 1,
+      createdAt: '2026-07-20T00:00:01Z',
+    };
+    const completedEvent: CaptureEventV2 = {
+      ...resyncEvent,
+      eventId: 'capture-1/completed/8',
+      sequence: 8,
+      eventType: 'completed',
+      stage: 'completed',
+      progress: 1,
+    };
+    const store = initializeStore(
+      libraryStub(),
+      runtimeStub({
+        startStreamingCapture: vi.fn(() => of(runningOperation)),
+        getStreamingEvents,
+        getStreamingCapture,
+      }),
+    );
+
+    store.retry(summary.documentId);
+    TestBed.tick();
+    expect(getStreamingEvents).toHaveBeenCalledWith('capture-1', 0);
+
+    firstEvents.next([resyncEvent]);
+    TestBed.tick();
+
+    expect(getStreamingCapture).toHaveBeenCalledTimes(1);
+    expect(store.partialFor(summary.documentId)).toEqual(partial);
+    expect(getStreamingEvents).toHaveBeenNthCalledWith(2, 'capture-1', 7);
+
+    secondEvents.next([completedEvent]);
+    TestBed.tick();
+
+    expect(getStreamingCapture).toHaveBeenCalledTimes(2);
+    expect(getStreamingEvents).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps the v2 partial available while the terminal result is committed', () => {
+    const structuringOperation: CaptureOperationV2 = {
+      ...runningOperation,
+      captureId: 'capture-1',
+      status: 'structuring',
+    };
     const updateCapture = vi.fn((update: Record<string, unknown>) =>
       of({ ...summary, ...update } as DesktopLibrarySummary));
-    const getRaw = vi.fn(() => of(raw));
+    const getStreamingPartial = vi.fn(() => of(partial));
     const store = initializeStore(
       libraryStub({ updateCapture }),
       runtimeStub({
-        createCapture: vi.fn(() => of(structuringJob)),
-        getCapture: vi.fn(() => of(completedJob)),
-        getRaw,
+        startStreamingCapture: vi.fn(() => of(structuringOperation)),
+        getStreamingCapture: vi.fn(() => of(completedOperation)),
+        getStreamingPartial,
       }),
     );
 
@@ -379,26 +474,24 @@ describe('DesktopWorkspaceStore', () => {
       expect(rawUpdates[0]).toEqual(expect.objectContaining({
         documentId: summary.documentId,
         captureId: 'capture-1',
-        status: 'processing',
-        stage: 'structuring',
+        status: 'completed',
         raw,
+        result,
       }));
-      expect(rawUpdates[0]).not.toHaveProperty('result');
-      expect(resultIndex).toBeGreaterThan(updates.indexOf(rawUpdates[0]));
+      expect(resultIndex).toBe(updates.indexOf(rawUpdates[0]));
       expect(updates[resultIndex]).toEqual(expect.objectContaining({
         status: 'completed',
         captureId: 'capture-1',
         result,
       }));
-      expect(updates[resultIndex]).not.toHaveProperty('raw');
-      expect(getRaw).toHaveBeenCalledOnce();
+      expect(getStreamingPartial).toHaveBeenCalledOnce();
     } finally {
       vi.useRealTimers();
     }
   });
 
   it.each(['processing', 'persisting'] as const)(
-    'resumes a retained runtime job after restart from %s without creating a replacement',
+    'resumes a retained runtime operation after restart from %s without creating a replacement',
     (status) => {
       const retained = {
         ...summary,
@@ -406,28 +499,28 @@ describe('DesktopWorkspaceStore', () => {
         stage: status === 'processing' ? 'extracting' : 'completed',
         captureId: 'capture-restart',
       } satisfies DesktopLibrarySummary;
-      const terminal = job({
-        ...completedJob,
+      const terminal: CaptureOperationV2 = {
+        ...completedOperation,
         captureId: 'capture-restart',
-      });
-      const createCapture = vi.fn(() => of(completedJob));
-      const getCapture = vi.fn(() => of(terminal));
-      const deleteCapture = vi.fn(() => of(undefined));
+      };
+      const startStreamingCapture = vi.fn(() => of(completedOperation));
+      const getStreamingCapture = vi.fn(() => of(terminal));
+      const deleteStreamingCapture = vi.fn(() => of(undefined));
       const library = libraryStub({
         list: vi.fn(() => of([retained])),
         get: vi.fn(() => of(retained as DesktopLibraryDetail)),
       });
       const store = initializeStore(
         library,
-        runtimeStub({ createCapture, getCapture, deleteCapture }),
+        runtimeStub({ startStreamingCapture, getStreamingCapture, deleteStreamingCapture }),
       );
 
       store.retry(retained.documentId);
       TestBed.tick();
 
-      expect(createCapture).not.toHaveBeenCalled();
-      expect(getCapture).toHaveBeenCalledWith('capture-restart');
-      expect(deleteCapture).toHaveBeenCalledWith('capture-restart');
+      expect(startStreamingCapture).not.toHaveBeenCalled();
+      expect(getStreamingCapture).toHaveBeenCalledWith('capture-restart');
+      expect(deleteStreamingCapture).toHaveBeenCalledWith('capture-restart');
     },
   );
 
@@ -446,10 +539,10 @@ describe('DesktopWorkspaceStore', () => {
         errorCode: status === 'completed' ? undefined : 'terminal_error',
         errorMessage: status === 'completed' ? undefined : 'terminal evidence',
       } satisfies DesktopLibrarySummary;
-      const createCapture = vi.fn(() => of(completedJob));
-      const getCapture = vi.fn(() => of(completedJob));
-      const getRaw = vi.fn(() => of(raw));
-      const deleteCapture = vi.fn(() => of(undefined));
+      const startStreamingCapture = vi.fn(() => of(completedOperation));
+      const getStreamingCapture = vi.fn(() => of(completedOperation));
+      const getStreamingPartial = vi.fn(() => of(partial));
+      const deleteStreamingCapture = vi.fn(() => of(undefined));
       const updateCapture = vi.fn((update: Record<string, unknown>) =>
         of({ ...retained, ...update } as DesktopLibrarySummary));
       const store = initializeStore(
@@ -458,16 +551,16 @@ describe('DesktopWorkspaceStore', () => {
           get: vi.fn(() => of(retained as DesktopLibraryDetail)),
           updateCapture,
         }),
-        runtimeStub({ createCapture, getCapture, getRaw, deleteCapture }),
+        runtimeStub({ startStreamingCapture, getStreamingCapture, getStreamingPartial, deleteStreamingCapture }),
       );
 
       store.retry(retained.documentId);
       TestBed.tick();
 
-      expect(createCapture).not.toHaveBeenCalled();
-      expect(getCapture).not.toHaveBeenCalled();
-      expect(getRaw).not.toHaveBeenCalled();
-      expect(deleteCapture).toHaveBeenCalledWith('capture-committed');
+      expect(startStreamingCapture).not.toHaveBeenCalled();
+      expect(getStreamingCapture).not.toHaveBeenCalled();
+      expect(getStreamingPartial).not.toHaveBeenCalled();
+      expect(deleteStreamingCapture).toHaveBeenCalledWith('capture-committed');
       expect(captureUpdates(updateCapture)).toContainEqual(
         expect.objectContaining({
           status,
@@ -479,38 +572,38 @@ describe('DesktopWorkspaceStore', () => {
     },
   );
 
-  it('remembers repeated cancel clicks before create resolves and sends one independent request', () => {
-    const created = new Subject<CaptureJobV1>();
-    const cancelCapture = vi.fn(() => of(cancelledJob));
-    const getCapture = vi.fn(() => of(completedJob));
+  it('remembers repeated cancel clicks before streaming start resolves and sends one independent request', () => {
+    const created = new Subject<CaptureOperationV2>();
+    const cancelStreamingCapture = vi.fn(() => of(cancelledOperation));
+    const getStreamingCapture = vi.fn(() => of(completedOperation));
     const library = libraryStub();
     const client = runtimeStub({
-      createCapture: vi.fn(() => created),
-      cancelCapture,
-      getCapture,
+      startStreamingCapture: vi.fn(() => created),
+      cancelStreamingCapture,
+      getStreamingCapture,
     });
     const store = initializeStore(library, client);
 
     store.retry(summary.documentId);
     store.cancel(summary.documentId);
     store.cancel(summary.documentId);
-    created.next(runningJob);
+    created.next(runningOperation);
     created.complete();
     TestBed.tick();
 
-    expect(cancelCapture).toHaveBeenCalledOnce();
-    expect(cancelCapture).toHaveBeenCalledWith('capture-1');
-    expect(getCapture).not.toHaveBeenCalled();
+    expect(cancelStreamingCapture).toHaveBeenCalledOnce();
+    expect(cancelStreamingCapture).toHaveBeenCalledWith('capture-1');
+    expect(getStreamingCapture).toHaveBeenCalled();
   });
 
   it('interrupts an in-flight poll and sends cancellation immediately', () => {
-    const polled = new Subject<CaptureJobV1>();
-    const cancelCapture = vi.fn(() => of(cancelledJob));
-    const getCapture = vi.fn(() => polled);
+    const polled = new Subject<CaptureOperationV2>();
+    const cancelStreamingCapture = vi.fn(() => of(cancelledOperation));
+    const getStreamingCapture = vi.fn(() => polled);
     const client = runtimeStub({
-      createCapture: vi.fn(() => of(runningJob)),
-      cancelCapture,
-      getCapture,
+      startStreamingCapture: vi.fn(() => of(runningOperation)),
+      cancelStreamingCapture,
+      getStreamingCapture,
     });
     const store = initializeStore(libraryStub(), client);
 
@@ -518,77 +611,77 @@ describe('DesktopWorkspaceStore', () => {
     try {
       store.retry(summary.documentId);
       vi.advanceTimersByTime(700);
-      expect(getCapture).toHaveBeenCalledWith('capture-1');
-      expect(cancelCapture).not.toHaveBeenCalled();
+      expect(getStreamingCapture).toHaveBeenCalledWith('capture-1');
+      expect(cancelStreamingCapture).not.toHaveBeenCalled();
 
       store.cancel(summary.documentId);
       TestBed.tick();
 
-      expect(cancelCapture).toHaveBeenCalledOnce();
+      expect(cancelStreamingCapture).toHaveBeenCalledOnce();
     } finally {
       vi.useRealTimers();
     }
   });
 
   it('lets an already-terminal runtime response win a cancel/complete race', () => {
-    const created = new Subject<CaptureJobV1>();
-    const cancelCapture = vi.fn(() => of(cancelledJob));
-    const deleteCapture = vi.fn(() => of(undefined));
+    const created = new Subject<CaptureOperationV2>();
+    const cancelStreamingCapture = vi.fn(() => of(cancelledOperation));
+    const deleteStreamingCapture = vi.fn(() => of(undefined));
     const client = runtimeStub({
-      createCapture: vi.fn(() => created),
-      cancelCapture,
-      deleteCapture,
+      startStreamingCapture: vi.fn(() => created),
+      cancelStreamingCapture,
+      deleteStreamingCapture,
     });
     const store = initializeStore(libraryStub(), client);
 
     store.retry(summary.documentId);
     store.cancel(summary.documentId);
-    created.next(completedJob);
+    created.next(completedOperation);
     created.complete();
     TestBed.tick();
 
-    expect(cancelCapture).not.toHaveBeenCalled();
-    expect(deleteCapture).toHaveBeenCalledWith('capture-1');
+    expect(cancelStreamingCapture).toHaveBeenCalledOnce();
+    expect(deleteStreamingCapture).toHaveBeenCalledWith('capture-1');
   });
 
-  it('persists optional raw data before deleting a canceled runtime job', () => {
+  it('clears a canceled v2 operation after terminal persistence', () => {
     const updateCapture = vi.fn((update: Record<string, unknown>) =>
       of({ ...summary, ...update } as DesktopLibrarySummary));
-    const getRaw = vi.fn(() => of(raw));
-    const deleteCapture = vi.fn(() => of(undefined));
+    const getStreamingPartial = vi.fn(() => of(partial));
+    const deleteStreamingCapture = vi.fn(() => of(undefined));
     const store = initializeStore(
       libraryStub({ updateCapture }),
       runtimeStub({
-        createCapture: vi.fn(() => of(cancelledJob)),
-        getRaw,
-        deleteCapture,
+        startStreamingCapture: vi.fn(() => of(cancelledOperation)),
+        getStreamingCapture: vi.fn(() => of(cancelledOperation)),
+        getStreamingPartial,
+        deleteStreamingCapture,
       }),
     );
 
     store.retry(summary.documentId);
     TestBed.tick();
 
-    expect(getRaw).toHaveBeenCalledWith('capture-1');
+    expect(getStreamingPartial).toHaveBeenCalledWith('capture-1');
     expect(captureUpdates(updateCapture)).toContainEqual(
       expect.objectContaining({
         status: 'canceled',
         captureId: 'capture-1',
-        raw,
       }),
     );
-    expect(deleteCapture).toHaveBeenCalledWith('capture-1');
+    expect(deleteStreamingCapture).toHaveBeenCalledWith('capture-1');
   });
 
-  it('retains a canceled runtime job when optional raw retrieval fails', () => {
+  it('retains a canceled runtime operation when optional partial retrieval fails', () => {
     const updateCapture = vi.fn((update: Record<string, unknown>) =>
       of({ ...summary, ...update } as DesktopLibrarySummary));
-    const deleteCapture = vi.fn(() => of(undefined));
+    const deleteStreamingCapture = vi.fn(() => of(undefined));
     const store = initializeStore(
       libraryStub({ updateCapture }),
       runtimeStub({
-        createCapture: vi.fn(() => of(cancelledJob)),
-        getRaw: vi.fn(() => throwError(() => new Error('raw transport failed'))),
-        deleteCapture,
+        startStreamingCapture: vi.fn(() => of(cancelledOperation)),
+        getStreamingPartial: vi.fn(() => throwError(() => new Error('partial transport failed'))),
+        deleteStreamingCapture,
       }),
     );
 
@@ -602,49 +695,23 @@ describe('DesktopWorkspaceStore', () => {
         recoveryCode: 'capture_recovery_required',
       }),
     );
-    expect(deleteCapture).not.toHaveBeenCalled();
-  });
-
-  it('retains the capture ID and skips DELETE when cancellation fails', () => {
-    const updateCapture = vi.fn((update: Record<string, unknown>) =>
-      of({ ...summary, ...update } as DesktopLibrarySummary));
-    const deleteCapture = vi.fn(() => of(undefined));
-    const client = runtimeStub({
-      createCapture: vi.fn(() => of(runningJob)),
-      cancelCapture: vi.fn(() =>
-        throwError(() => new Error('cancel request failed'))),
-      deleteCapture,
-    });
-    const store = initializeStore(libraryStub({ updateCapture }), client);
-
-    store.retry(summary.documentId);
-    store.cancel(summary.documentId);
-    TestBed.tick();
-
-    expect(captureUpdates(updateCapture)).toContainEqual(
-      expect.objectContaining({
-        status: 'recovery_required',
-        captureId: 'capture-1',
-        recoveryCode: 'cancel_failed',
-      }),
-    );
-    expect(deleteCapture).not.toHaveBeenCalled();
+    expect(deleteStreamingCapture).not.toHaveBeenCalled();
   });
 
   it.each([
-    ['raw retrieval', {
-      getRaw: vi.fn(() => throwError(() => new Error('raw failed'))),
+    ['partial retrieval', {
+      getStreamingPartial: vi.fn(() => throwError(() => new Error('partial failed'))),
     }],
     ['result retrieval', {
-      getResult: vi.fn(() => throwError(() => new Error('result failed'))),
+      getStreamingResult: vi.fn(() => throwError(() => new Error('result failed'))),
     }],
-  ])('retains the runtime job when %s fails', (_case, runtimeOverride) => {
+  ])('retains the runtime operation when %s fails', (_case, runtimeOverride) => {
     const updateCapture = vi.fn((update: Record<string, unknown>) =>
       of({ ...summary, ...update } as DesktopLibrarySummary));
-    const deleteCapture = vi.fn(() => of(undefined));
+    const deleteStreamingCapture = vi.fn(() => of(undefined));
     const client = runtimeStub({
-      createCapture: vi.fn(() => of(completedJob)),
-      deleteCapture,
+      startStreamingCapture: vi.fn(() => of(completedOperation)),
+      deleteStreamingCapture,
       ...runtimeOverride,
     });
     const store = initializeStore(libraryStub({ updateCapture }), client);
@@ -659,7 +726,7 @@ describe('DesktopWorkspaceStore', () => {
         recoveryCode: 'capture_recovery_required',
       }),
     );
-    expect(deleteCapture).not.toHaveBeenCalled();
+    expect(deleteStreamingCapture).not.toHaveBeenCalled();
   });
 
   it('retains the runtime job when the terminal library commit fails', () => {
@@ -671,10 +738,10 @@ describe('DesktopWorkspaceStore', () => {
       }
       return of({ ...summary, ...update } as DesktopLibrarySummary);
     });
-    const deleteCapture = vi.fn(() => of(undefined));
+    const deleteStreamingCapture = vi.fn(() => of(undefined));
     const client = runtimeStub({
-      createCapture: vi.fn(() => of(completedJob)),
-      deleteCapture,
+      startStreamingCapture: vi.fn(() => of(completedOperation)),
+      deleteStreamingCapture,
     });
     const store = initializeStore(libraryStub({ updateCapture }), client);
 
@@ -688,7 +755,7 @@ describe('DesktopWorkspaceStore', () => {
         captureId: 'capture-1',
       }),
     );
-    expect(deleteCapture).not.toHaveBeenCalled();
+    expect(deleteStreamingCapture).not.toHaveBeenCalled();
   });
 
   it('retains a recovery link when runtime DELETE fails after a successful commit', () => {
@@ -697,13 +764,13 @@ describe('DesktopWorkspaceStore', () => {
       events.push(`library:${String(update['status'])}`);
       return of({ ...summary, ...update } as DesktopLibrarySummary);
     });
-    const deleteCapture = vi.fn(() => {
+    const deleteStreamingCapture = vi.fn(() => {
       events.push('runtime:delete');
       return throwError(() => new Error('delete failed'));
     });
     const client = runtimeStub({
-      createCapture: vi.fn(() => of(completedJob)),
-      deleteCapture,
+      startStreamingCapture: vi.fn(() => of(completedOperation)),
+      deleteStreamingCapture,
     });
     const store = initializeStore(libraryStub({ updateCapture }), client);
 
@@ -728,24 +795,25 @@ describe('DesktopWorkspaceStore', () => {
   ] as const)(
     'keeps %s terminal evidence separate when runtime cleanup fails',
     (runtimeStatus, libraryStatus) => {
-      const terminal = job({
-        captureId: 'capture-terminal-error',
-        status: runtimeStatus,
-        stage: runtimeStatus,
-        error: {
-          code: 'terminal_error',
-          message: 'terminal evidence',
-        },
-      });
+    const terminal: CaptureOperationV2 = {
+      ...runningOperation,
+      captureId: 'capture-terminal-error',
+      status: runtimeStatus,
+      error: {
+        code: 'terminal_error',
+        message: 'terminal evidence',
+      },
+    };
       const updateCapture = vi.fn((update: Record<string, unknown>) =>
         of({ ...summary, ...update } as DesktopLibrarySummary));
-      const deleteCapture = vi.fn(() =>
+    const deleteStreamingCapture = vi.fn(() =>
         throwError(() => new Error('cleanup transport failed')));
       const store = initializeStore(
         libraryStub({ updateCapture }),
         runtimeStub({
-          createCapture: vi.fn(() => of(terminal)),
-          deleteCapture,
+          startStreamingCapture: vi.fn(() => of(terminal)),
+          getStreamingCapture: vi.fn(() => of(terminal)),
+          deleteStreamingCapture,
         }),
       );
 
@@ -756,7 +824,6 @@ describe('DesktopWorkspaceStore', () => {
         expect.objectContaining({
           status: libraryStatus,
           captureId: 'capture-terminal-error',
-          raw,
           errorCode: 'terminal_error',
           errorMessage: 'terminal evidence',
         }),
@@ -788,10 +855,10 @@ describe('DesktopWorkspaceStore', () => {
         recoveryCode: 'runtime_cleanup_failed',
         recoveryMessage: 'cleanup transport failed',
       } satisfies DesktopLibrarySummary;
-      const createCapture = vi.fn(() => of(completedJob));
-      const getCapture = vi.fn(() => of(completedJob));
-      const getRaw = vi.fn(() => of(raw));
-      const deleteCapture = vi.fn(() => of(undefined));
+      const startStreamingCapture = vi.fn(() => of(completedOperation));
+      const getStreamingCapture = vi.fn(() => of(completedOperation));
+      const getStreamingPartial = vi.fn(() => of(partial));
+      const deleteStreamingCapture = vi.fn(() => of(undefined));
       const updateCapture = vi.fn((update: Record<string, unknown>) =>
         of({ ...recovery, ...update } as DesktopLibrarySummary));
       const store = initializeStore(
@@ -800,16 +867,16 @@ describe('DesktopWorkspaceStore', () => {
           get: vi.fn(() => of(recovery as DesktopLibraryDetail)),
           updateCapture,
         }),
-        runtimeStub({ createCapture, getCapture, getRaw, deleteCapture }),
+        runtimeStub({ startStreamingCapture, getStreamingCapture, getStreamingPartial, deleteStreamingCapture }),
       );
 
       store.retry(recovery.documentId);
       TestBed.tick();
 
-      expect(createCapture).not.toHaveBeenCalled();
-      expect(getCapture).not.toHaveBeenCalled();
-      expect(getRaw).not.toHaveBeenCalled();
-      expect(deleteCapture).toHaveBeenCalledWith('capture-cleanup-terminal');
+      expect(startStreamingCapture).not.toHaveBeenCalled();
+      expect(getStreamingCapture).not.toHaveBeenCalled();
+      expect(getStreamingPartial).not.toHaveBeenCalled();
+      expect(deleteStreamingCapture).toHaveBeenCalledWith('capture-cleanup-terminal');
       expect(captureUpdates(updateCapture)).toContainEqual(
         expect.objectContaining({
           status,
@@ -821,160 +888,6 @@ describe('DesktopWorkspaceStore', () => {
     },
   );
 
-  it('keeps cleanup-only recovery durable when both post-commit library writes fail', () => {
-    const terminal = job({
-      captureId: 'capture-double-write',
-      status: 'failed',
-      stage: 'failed',
-      error: {
-        code: 'terminal_error',
-        message: 'terminal evidence',
-      },
-    });
-    let durable: DesktopLibrarySummary = summary;
-    let clearWriteFailed = false;
-    let recoveryWriteFailed = false;
-    const updateCapture = vi.fn((update: Record<string, unknown>) => {
-      if (
-        update['clearCaptureId'] === true
-        && update['status'] === 'failed'
-        && !clearWriteFailed
-      ) {
-        clearWriteFailed = true;
-        return throwError(() => new Error('clear link write failed'));
-      }
-      if (
-        update['recoveryCode'] === 'runtime_cleanup_failed'
-        && !recoveryWriteFailed
-      ) {
-        recoveryWriteFailed = true;
-        return throwError(() => new Error('recovery metadata write failed'));
-      }
-      durable = applyDurableCaptureUpdate(durable, update);
-      return of(durable);
-    });
-    const library = libraryStub({
-      list: vi.fn(() => of([durable])),
-      get: vi.fn(() => of(durable as DesktopLibraryDetail)),
-      updateCapture,
-    });
-    const deleteCapture = vi.fn(() => of(undefined));
-    const firstStore = initializeStore(
-      library,
-      runtimeStub({
-        createCapture: vi.fn(() => of(terminal)),
-        deleteCapture,
-      }),
-    );
-
-    firstStore.retry(summary.documentId);
-    TestBed.tick();
-
-    expect(clearWriteFailed).toBe(true);
-    expect(recoveryWriteFailed).toBe(true);
-    expect(durable).toEqual(expect.objectContaining({
-      status: 'recovery_required',
-      stage: 'failed',
-      captureId: 'capture-double-write',
-      errorCode: 'terminal_error',
-      errorMessage: 'terminal evidence',
-      recoveryCode: 'runtime_cleanup_failed',
-      recoveryMessage: 'recovery metadata write failed',
-    }));
-
-    TestBed.resetTestingModule();
-    const createAfterRestart = vi.fn(() => of(completedJob));
-    const getAfterRestart = vi.fn(() => of(completedJob));
-    const getRawAfterRestart = vi.fn(() => of(raw));
-    const restartedStore = initializeStore(
-      library,
-      runtimeStub({
-        createCapture: createAfterRestart,
-        getCapture: getAfterRestart,
-        getRaw: getRawAfterRestart,
-        deleteCapture,
-      }),
-    );
-
-    restartedStore.retry(summary.documentId);
-    TestBed.tick();
-
-    expect(createAfterRestart).not.toHaveBeenCalled();
-    expect(getAfterRestart).not.toHaveBeenCalled();
-    expect(getRawAfterRestart).not.toHaveBeenCalled();
-    expect(deleteCapture).toHaveBeenCalledTimes(2);
-    expect(durable).toEqual(expect.objectContaining({
-      status: 'failed',
-      captureId: undefined,
-      errorCode: 'terminal_error',
-      errorMessage: 'terminal evidence',
-      recoveryCode: undefined,
-      recoveryMessage: undefined,
-    }));
-  });
-
-  it('keeps cleanup-only recovery durable when retry cleanup writes fail twice', () => {
-    let durable: DesktopLibrarySummary = {
-      ...summary,
-      status: 'recovery_required',
-      stage: 'cancelled',
-      captureId: 'capture-retry-double-write',
-      errorCode: 'terminal_cancelled',
-      errorMessage: 'canceled terminal evidence',
-      recoveryCode: 'runtime_cleanup_failed',
-      recoveryMessage: 'initial cleanup failure',
-    };
-    let clearWriteFailed = false;
-    let recoveryWriteFailed = false;
-    const updateCapture = vi.fn((update: Record<string, unknown>) => {
-      if (update['clearCaptureId'] === true && !clearWriteFailed) {
-        clearWriteFailed = true;
-        return throwError(() => new Error('retry clear link write failed'));
-      }
-      if (
-        update['recoveryCode'] === 'runtime_cleanup_failed'
-        && !recoveryWriteFailed
-      ) {
-        recoveryWriteFailed = true;
-        return throwError(() => new Error('retry recovery metadata write failed'));
-      }
-      durable = applyDurableCaptureUpdate(durable, update);
-      return of(durable);
-    });
-    const library = libraryStub({
-      list: vi.fn(() => of([durable])),
-      get: vi.fn(() => of(durable as DesktopLibraryDetail)),
-      updateCapture,
-    });
-    const createCapture = vi.fn(() => of(completedJob));
-    const getCapture = vi.fn(() => of(completedJob));
-    const getRaw = vi.fn(() => of(raw));
-    const deleteCapture = vi.fn(() => of(undefined));
-    const store = initializeStore(
-      library,
-      runtimeStub({ createCapture, getCapture, getRaw, deleteCapture }),
-    );
-
-    store.retry(summary.documentId);
-    TestBed.tick();
-
-    expect(clearWriteFailed).toBe(true);
-    expect(recoveryWriteFailed).toBe(true);
-    expect(createCapture).not.toHaveBeenCalled();
-    expect(getCapture).not.toHaveBeenCalled();
-    expect(getRaw).not.toHaveBeenCalled();
-    expect(deleteCapture).toHaveBeenCalledOnce();
-    expect(durable).toEqual(expect.objectContaining({
-      status: 'recovery_required',
-      stage: 'cancelled',
-      captureId: 'capture-retry-double-write',
-      errorCode: 'terminal_cancelled',
-      errorMessage: 'canceled terminal evidence',
-      recoveryCode: 'runtime_cleanup_failed',
-      recoveryMessage: 'retry recovery metadata write failed',
-    }));
-  });
-
   it('recovers persistence with the same runtime ID and never creates a new job', () => {
     const recovery = {
       ...summary,
@@ -983,25 +896,25 @@ describe('DesktopWorkspaceStore', () => {
       captureId: 'capture-recovery',
       recoveryCode: 'capture_recovery_required',
     } satisfies DesktopLibrarySummary;
-    const createCapture = vi.fn(() => of(completedJob));
-    const getCapture = vi.fn(() => of(job({
-      ...completedJob,
+    const startStreamingCapture = vi.fn(() => of(completedOperation));
+    const getStreamingCapture = vi.fn(() => of({
+      ...completedOperation,
       captureId: 'capture-recovery',
-    })));
-    const deleteCapture = vi.fn(() => of(undefined));
+    } satisfies CaptureOperationV2));
+    const deleteStreamingCapture = vi.fn(() => of(undefined));
     const library = libraryStub({
       list: vi.fn(() => of([recovery])),
       get: vi.fn(() => of(recovery as DesktopLibraryDetail)),
     });
-    const client = runtimeStub({ createCapture, getCapture, deleteCapture });
+    const client = runtimeStub({ startStreamingCapture, getStreamingCapture, deleteStreamingCapture });
     const store = initializeStore(library, client);
 
     store.retry(recovery.documentId);
     TestBed.tick();
 
-    expect(createCapture).not.toHaveBeenCalled();
-    expect(getCapture).toHaveBeenCalledWith('capture-recovery');
-    expect(deleteCapture).toHaveBeenCalledWith('capture-recovery');
+    expect(startStreamingCapture).not.toHaveBeenCalled();
+    expect(getStreamingCapture).toHaveBeenCalledWith('capture-recovery');
+    expect(deleteStreamingCapture).toHaveBeenCalledWith('capture-recovery');
   });
 
   it('retries only DELETE for a cleanup recovery and treats success as clearable', () => {
@@ -1014,23 +927,23 @@ describe('DesktopWorkspaceStore', () => {
     } satisfies DesktopLibrarySummary;
     const updateCapture = vi.fn((update: Record<string, unknown>) =>
       of({ ...recovery, ...update } as DesktopLibrarySummary));
-    const createCapture = vi.fn(() => of(completedJob));
-    const getCapture = vi.fn(() => of(completedJob));
-    const deleteCapture = vi.fn(() => of(undefined));
+    const startStreamingCapture = vi.fn(() => of(completedOperation));
+    const getStreamingCapture = vi.fn(() => of(completedOperation));
+    const deleteStreamingCapture = vi.fn(() => of(undefined));
     const library = libraryStub({
       list: vi.fn(() => of([recovery])),
       get: vi.fn(() => of(recovery as DesktopLibraryDetail)),
       updateCapture,
     });
-    const client = runtimeStub({ createCapture, getCapture, deleteCapture });
+    const client = runtimeStub({ startStreamingCapture, getStreamingCapture, deleteStreamingCapture });
     const store = initializeStore(library, client);
 
     store.retry(recovery.documentId);
     TestBed.tick();
 
-    expect(createCapture).not.toHaveBeenCalled();
-    expect(getCapture).not.toHaveBeenCalled();
-    expect(deleteCapture).toHaveBeenCalledWith('capture-cleanup');
+    expect(startStreamingCapture).not.toHaveBeenCalled();
+    expect(getStreamingCapture).not.toHaveBeenCalled();
+    expect(deleteStreamingCapture).toHaveBeenCalledWith('capture-cleanup');
     expect(captureUpdates(updateCapture)).toContainEqual(
       expect.objectContaining({
         status: 'completed',
@@ -1072,7 +985,7 @@ describe('DesktopWorkspaceStore', () => {
   });
 
   it('blocks direct deletion while a native capture is active', () => {
-    const pendingCapture = new Subject<CaptureJobV1>();
+    const pendingCapture = new Subject<CaptureOperationV2>();
     const deleteDocument = vi.fn(() => of(undefined));
     const confirm = vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
     const library = libraryStub({
@@ -1081,7 +994,7 @@ describe('DesktopWorkspaceStore', () => {
     });
     const store = initializeStore(
       library,
-      runtimeStub({ createCapture: vi.fn(() => pendingCapture) }),
+      runtimeStub({ startStreamingCapture: vi.fn(() => pendingCapture) }),
     );
 
     store.addSourcePaths(['C:\\private\\active.pdf']);
@@ -1095,11 +1008,11 @@ describe('DesktopWorkspaceStore', () => {
   });
 
   it('refreshes the selected document after processing and runtime ID updates', () => {
-    const pendingCapture = new Subject<CaptureJobV1>();
+    const pendingCapture = new Subject<CaptureOperationV2>();
     const list = vi.fn(() => of<readonly DesktopLibrarySummary[]>([summary]));
     const store = initializeStore(
       libraryStub({ list }),
-      runtimeStub({ createCapture: vi.fn(() => pendingCapture) }),
+      runtimeStub({ startStreamingCapture: vi.fn(() => pendingCapture) }),
     );
     store.select(summary.documentId);
     TestBed.tick();
@@ -1167,7 +1080,8 @@ function libraryStub(overrides: Record<string, unknown> = {}) {
 }
 
 function runtimeStub(overrides: Record<string, unknown> = {}) {
-  return Object.assign({
+  const defaultGetStreamingCapture = vi.fn(() => of(completedOperation));
+  const client = {
     ready: signal(true),
     error: signal<Error | undefined>(undefined),
     reload: vi.fn(),
@@ -1177,13 +1091,16 @@ function runtimeStub(overrides: Record<string, unknown> = {}) {
     getInstallation: vi.fn(),
     startModelInstallation: vi.fn(),
     getModelInstallation: vi.fn(),
-    createCapture: vi.fn(() => of(completedJob)),
-    getCapture: vi.fn(() => of(completedJob)),
-    cancelCapture: vi.fn(() => of(cancelledJob)),
-    getRaw: vi.fn(() => of(raw)),
-    getResult: vi.fn(() => of(result)),
-    deleteCapture: vi.fn(() => of(undefined)),
-  }, overrides);
+    startStreamingCapture: vi.fn(() => of(completedOperation)),
+    getStreamingCapture: defaultGetStreamingCapture,
+    getStreamingEvents: vi.fn(() => of([])),
+    getStreamingPartial: vi.fn(() => of(partial)),
+    getStreamingResult: vi.fn(() => of(terminalResult)),
+    structureStreamingCapture: vi.fn(() => of(result)),
+    cancelStreamingCapture: vi.fn(() => of(cancelledOperation)),
+    deleteStreamingCapture: vi.fn(() => of(undefined)),
+  };
+  return Object.assign(client, overrides);
 }
 
 function captureUpdates(
@@ -1192,29 +1109,4 @@ function captureUpdates(
   return updateCapture.mock.calls.map(
     ([update]) => update as Record<string, unknown>,
   );
-}
-
-function applyDurableCaptureUpdate(
-  current: DesktopLibrarySummary,
-  update: Record<string, unknown>,
-): DesktopLibrarySummary {
-  return {
-    ...current,
-    ...update,
-    captureId: update['clearCaptureId'] === true
-      ? undefined
-      : typeof update['captureId'] === 'string'
-        ? update['captureId']
-        : current.captureId,
-    errorCode: typeof update['errorCode'] === 'string' ? update['errorCode'] : undefined,
-    errorMessage: typeof update['errorMessage'] === 'string' ? update['errorMessage'] : undefined,
-    recoveryCode: typeof update['recoveryCode'] === 'string' ? update['recoveryCode'] : undefined,
-    recoveryMessage: typeof update['recoveryMessage'] === 'string'
-      ? update['recoveryMessage']
-      : undefined,
-  } as DesktopLibrarySummary;
-}
-
-function job(input: Record<string, unknown>): CaptureJobV1 {
-  return input as unknown as CaptureJobV1;
 }

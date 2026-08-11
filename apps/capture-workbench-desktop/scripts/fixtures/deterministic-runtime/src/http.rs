@@ -20,7 +20,8 @@ pub struct Request {
 
 pub struct Response {
     status: u16,
-    body: Option<Value>,
+    body: Option<Vec<u8>>,
+    content_type: Option<String>,
     headers: Vec<(String, String)>,
 }
 
@@ -28,7 +29,17 @@ impl Response {
     pub fn json(status: u16, body: Value) -> Self {
         Self {
             status,
-            body: Some(body),
+            body: Some(serde_json::to_vec(&body).unwrap_or_else(|_| b"{}".to_vec())),
+            content_type: Some("application/json".into()),
+            headers: Vec::new(),
+        }
+    }
+
+    pub fn event_stream(body: String) -> Self {
+        Self {
+            status: 200,
+            body: Some(body.into_bytes()),
+            content_type: Some("text/event-stream".into()),
             headers: Vec::new(),
         }
     }
@@ -37,6 +48,7 @@ impl Response {
         Self {
             status,
             body: None,
+            content_type: None,
             headers: Vec::new(),
         }
     }
@@ -226,10 +238,7 @@ pub fn write_response(stream: &mut TcpStream, response: Response) {
         422 => "Unprocessable Content",
         _ => "Error",
     };
-    let body = response
-        .body
-        .map(|body| serde_json::to_vec(&body).unwrap_or_else(|_| b"{}".to_vec()))
-        .unwrap_or_default();
+    let body = response.body.unwrap_or_default();
     let _ = write!(
         stream,
         "HTTP/1.1 {} {}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\n",
@@ -237,8 +246,8 @@ pub fn write_response(stream: &mut TcpStream, response: Response) {
         reason,
         body.len()
     );
-    if !body.is_empty() {
-        let _ = write!(stream, "Content-Type: application/json\r\n");
+    if let Some(content_type) = response.content_type {
+        let _ = write!(stream, "Content-Type: {content_type}\r\n");
     }
     for (name, value) in response.headers {
         let _ = write!(stream, "{name}: {value}\r\n");

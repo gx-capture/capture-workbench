@@ -13,7 +13,7 @@ use serde_json::Value;
 use crate::contracts::{
     LibraryCaptureUpdate, LibraryDocumentDetail, LibraryDocumentRequest, LibraryDocumentSummary,
     LibraryExportFormat, LibraryExportPayload, LibraryExportRequest, LibraryImportSourceRequest,
-    LibraryListRequest, LibrarySourceInput, LibrarySourcePayload,
+    LibraryListRequest, LibrarySourceInput,
 };
 
 const INDEX_FILE_NAME: &str = "library-index-v1.json";
@@ -339,30 +339,6 @@ impl LibraryStore {
             summary: document.summary(),
             raw: read_json_optional(&directory.join(RAW_FILE_NAME))?,
             result: read_json_optional(&directory.join(RESULT_FILE_NAME))?,
-        })
-    }
-
-    pub(crate) fn load_source(
-        &self,
-        request: LibraryDocumentRequest,
-    ) -> Result<LibrarySourcePayload, String> {
-        let document = self.find_document(&request.document_id)?;
-        let source_path = self
-            .document_directory(&document.document_id)?
-            .join(SOURCE_FILE_NAME);
-        let bytes = fs::read(source_path)
-            .map_err(|error| format!("Capture library source cannot be read: {error}"))?;
-        Ok(LibrarySourcePayload {
-            document_id: document.document_id,
-            file_name: document.file_name,
-            media_type: document.media_type,
-            bytes,
-        })
-    }
-
-    pub(crate) fn runtime_source(&self, document_id: &str) -> Result<LibrarySourcePayload, String> {
-        self.load_source(LibraryDocumentRequest {
-            document_id: document_id.into(),
         })
     }
 
@@ -1002,15 +978,6 @@ mod tests {
                 .expect("list")
                 .len(),
             1
-        );
-        assert_eq!(
-            library
-                .load_source(LibraryDocumentRequest {
-                    document_id: created.document_id.clone()
-                })
-                .expect("source")
-                .bytes,
-            b"pdf bytes"
         );
         library
             .delete(LibraryDocumentRequest {

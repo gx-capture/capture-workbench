@@ -116,6 +116,16 @@ const SAFE_UI_STATE_STATUSES = new Set([
   'ready',
   'unavailable',
 ]);
+const STREAMING_CAPTURE_STATUSES = new Set([
+  'created',
+  'waiting_input',
+  'extracting',
+  'awaiting_structuring',
+  'structuring',
+  'completed',
+  'failed',
+  'cancelled',
+]);
 const SAFE_UI_STATE_REQUIREMENTS = new Set(['windowsml-ocr', 'whisper-primary', 'ollama-runtime']);
 const SAFE_UI_STATE_SOURCE_KINDS = new Set(['pdf', 'image', 'audio']);
 const SAFE_UI_STATE_ENGINES = new Set(['windowsml-ocr', 'whisper-primary']);
@@ -1668,14 +1678,17 @@ async function collectSafeBackendCaptureState(
         : 'unknown';
       return JSON.stringify({ status, stage, progressBand: 'unknown', errorCode: 'not-started' });
     }
-    const capture = await invokeTauriCommand(page, 'runtime_get_capture', { input: { id: captureId } });
+    const capture = await invokeTauriCommand(page, 'runtime_get_streaming_capture', {
+      input: { id: captureId },
+    });
     if (capture === null || typeof capture !== 'object' || Array.isArray(capture)) return undefined;
     const job = capture as Record<string, unknown>;
-    const status = typeof job.status === 'string' && SAFE_UI_STATE_STATUSES.has(job.status)
+    const status = typeof job.status === 'string'
+      && (SAFE_UI_STATE_STATUSES.has(job.status) || STREAMING_CAPTURE_STATUSES.has(job.status))
       ? job.status
       : 'unknown';
-    const stage = typeof job.stage === 'string' && SAFE_TERMINAL_DOCUMENT_STAGES.has(job.stage)
-      ? job.stage
+    const stage = typeof job.status === 'string' && SAFE_TERMINAL_DOCUMENT_STAGES.has(job.status)
+      ? job.status
       : 'unknown';
     const progress = typeof job.progress === 'number' && Number.isFinite(job.progress)
       ? Math.max(0, Math.min(1, job.progress))

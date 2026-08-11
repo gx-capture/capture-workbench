@@ -5,10 +5,12 @@ import test from 'node:test';
 import {
   assertRealMediaEvidence,
   assertRealMediaRequirementsAvailable,
+  assertStreamingEventOrder,
   dependencyOrder,
   expectedProvenanceFromSourceLock,
   observeKnownRuntimeProcesses,
   observeOwnedRuntimeTree,
+  parseStreamingEvents,
   parseOwnedRuntimeEvidence,
   runtimeEnvironment,
 } from './real-media-smoke.ts';
@@ -216,6 +218,45 @@ test('real-media diagnostic cannot claim release or consumer E2E acceptance', ()
       capturesDeletedAfterVerification: true,
       ownedProcessCleanupVerified: true,
     }),
+  );
+});
+
+test('real-media SSE assertions require framed metadata and terminal ordering', () => {
+  const events = parseStreamingEvents(
+    'id: 1\r\n' +
+      'event: accepted\r\n' +
+      'data: {"sequence":1,"eventType":"accepted",\r\n' +
+      'data: "stage":"queued"}\r\n\r\n' +
+      'id: 2\n' +
+      'event: completed\n' +
+      'data: {"sequence":2,"eventType":"completed","stage":"completed"}\n\n',
+  );
+
+  assert.deepEqual(events, [
+    { sequence: 1, eventType: 'accepted', stage: 'queued' },
+    { sequence: 2, eventType: 'completed', stage: 'completed' },
+  ]);
+  assert.doesNotThrow(() => assertStreamingEventOrder(events));
+  assert.throws(
+    () =>
+      assertStreamingEventOrder([
+        { sequence: 1, eventType: 'accepted', stage: 'queued' },
+        { sequence: 1, eventType: 'completed', stage: 'completed' },
+      ]),
+    /duplicate sequences/u,
+  );
+  assert.throws(
+    () =>
+      assertStreamingEventOrder([
+        { sequence: 1, eventType: 'accepted', stage: 'queued' },
+        { sequence: 2, eventType: 'completed', stage: 'completed' },
+        { sequence: 3, eventType: 'checkpoint', stage: 'extracting' },
+      ]),
+    /terminal event, last/u,
+  );
+  assert.throws(
+    () => parseStreamingEvents('id: 1\nevent: accepted\ndata: {}\n'),
+    /incomplete event frame/u,
   );
 });
 

@@ -16,13 +16,6 @@ pub struct RuntimeModelInstallationStartInput {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RuntimeCreateCaptureInput {
-    pub document_id: String,
-    pub client_request_id: String,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct RuntimeStreamingCaptureInput {
     pub document_id: String,
     pub client_request_id: String,

@@ -20,6 +20,7 @@ import {
   type Observable,
   of,
   race,
+  shareReplay,
   Subject,
   switchMap,
   take,
@@ -29,7 +30,6 @@ import {
 } from 'rxjs';
 import {
   type CaptureEventV2,
-  type CaptureJobV1,
   type CaptureOperationV2,
   type PartialCaptureV2,
   type CaptureRequirementId,
@@ -53,11 +53,10 @@ type WorkspaceState = 'starting' | 'needs-setup' | 'ready' | 'error';
 
 interface ActiveCapture {
   captureId?: string;
-  streaming: boolean;
   lastEventSequence: number;
-  rawPersisted: boolean;
   cancelRequested: boolean;
   cancelSent: boolean;
+  cancelRequest$?: Observable<CaptureOperationV2>;
   lastStage?: string;
   terminalCommitted?: boolean;
   terminalStatus?: DesktopLibraryStatus;
@@ -76,6 +75,8 @@ const INSTALLATION_ORDER = new Map<CaptureRequirementId, number>([
   ['whisper-primary', 1],
   ['ollama-runtime', 2],
 ]);
+
+const MAX_STREAMING_RESYNC_RECONNECTS = 3;
 
 @Injectable({ providedIn: 'root' })
 export class DesktopWorkspaceStore {
@@ -455,6 +456,7 @@ export class DesktopWorkspaceStore {
     active: ActiveCapture,
     event: CaptureEventV2,
   ): void {
+    if (event.eventType === 'resync_required') return;
     active.lastEventSequence = Math.max(active.lastEventSequence, event.sequence);
     active.lastStage = event.stage;
   }
@@ -485,11 +487,8 @@ export class DesktopWorkspaceStore {
   private captureExisting$(documentId: string): Observable<void> {
     return defer(() => {
       if (!this.runtime.ready() || this.activeCaptures.has(documentId)) return EMPTY;
-      const streaming = typeof this.runtime.startStreamingCapture === 'function';
       const active: ActiveCapture = {
-        streaming,
         lastEventSequence: 0,
-        rawPersisted: false,
         cancelRequested: false,
         cancelSent: false,
         cancelWake: new Subject<void>(),
@@ -504,34 +503,11 @@ export class DesktopWorkspaceStore {
         clearCaptureId: true,
       }).pipe(
         tap(() => this.reloadDocumentState(documentId)),
-        switchMap(() => streaming
-          ? this.captureStreaming$(documentId, active)
-          : this.captureOneShot$(documentId, active)),
+        switchMap(() => this.captureStreaming$(documentId, active)),
       );
 
       return this.trackCaptureLifecycle$(documentId, active, work$);
     });
-  }
-
-  private captureOneShot$(documentId: string, active: ActiveCapture): Observable<void> {
-    return this.runtime.createCapture(documentId, crypto.randomUUID()).pipe(
-      switchMap((job) => {
-        active.captureId = job.captureId;
-        active.lastStage = job.stage;
-        return this.library.updateCapture({
-          documentId,
-          captureId: job.captureId,
-          status: 'processing',
-          stage: job.stage,
-        }).pipe(
-          tap(() => this.reloadDocumentState(documentId)),
-          map(() => job),
-        );
-      }),
-      switchMap((job) => this.waitForTerminal$(documentId, job, active)),
-      switchMap((job) => this.persistTerminal$(documentId, job, active)),
-      map(() => undefined),
-    );
   }
 
   private captureStreaming$(documentId: string, active: ActiveCapture): Observable<void> {
@@ -542,7 +518,7 @@ export class DesktopWorkspaceStore {
     }).pipe(
       switchMap((operation) => {
         active.captureId = operation.captureId;
-        active.lastStage = operation.status;
+        this.applyStreamingOperation(active, operation);
         return this.library.updateCapture({
           documentId,
           captureId: operation.captureId,
@@ -569,11 +545,14 @@ export class DesktopWorkspaceStore {
       switchMap(() => {
         const captureId = active.captureId;
         if (active.cancelSent || !captureId) return EMPTY;
-        active.cancelSent = true;
-        return this.runtime.cancelStreamingCapture(captureId).pipe(
-          switchMap(() => this.consumeStreamingEvents$(documentId, active)),
+          return this.cancelStreaming$(captureId, active).pipe(
+            switchMap(() => this.consumeStreamingEvents$(documentId, active)),
           switchMap(() => this.runtime.getStreamingCapture(captureId)),
-        );
+          tap((operation) => this.applyStreamingOperation(active, operation)),
+          switchMap((operation) => isActiveStreaming(operation)
+            ? this.advanceStreaming$(documentId, operation, active)
+            : of(operation)),
+          );
       }),
     );
     return race(stream$, cancel$).pipe(
@@ -586,16 +565,59 @@ export class DesktopWorkspaceStore {
     documentId: string,
     operation: CaptureOperationV2,
     active: ActiveCapture,
+    reconnectAttempt = 0,
   ): Observable<CaptureOperationV2> {
     const events$ = this.consumeStreamingEvents$(documentId, active);
+    const snapshot$ = events$.pipe(
+      switchMap(() => this.runtime.getStreamingCapture(operation.captureId)),
+      tap((snapshot) => this.applyStreamingOperation(active, snapshot)),
+      switchMap((snapshot) => {
+        if (!isActiveStreaming(snapshot)) return of(snapshot);
+        if (reconnectAttempt >= MAX_STREAMING_RESYNC_RECONNECTS) {
+          return throwError(
+            () => new Error('Capture event stream exceeded the resync recovery limit.'),
+          );
+        }
+        return this.advanceStreaming$(
+          documentId,
+          snapshot,
+          active,
+          reconnectAttempt + 1,
+        );
+      }),
+    );
     if (!active.cancelRequested || active.cancelSent) {
-      return events$.pipe(switchMap(() => this.runtime.getStreamingCapture(operation.captureId)));
+      return snapshot$;
     }
-    active.cancelSent = true;
-    return this.runtime.cancelStreamingCapture(operation.captureId).pipe(
+    return this.cancelStreaming$(operation.captureId, active).pipe(
       switchMap(() => events$),
       switchMap(() => this.runtime.getStreamingCapture(operation.captureId)),
+      tap((snapshot) => this.applyStreamingOperation(active, snapshot)),
+      switchMap((snapshot) => {
+        if (!isActiveStreaming(snapshot)) return of(snapshot);
+        if (reconnectAttempt >= MAX_STREAMING_RESYNC_RECONNECTS) {
+          return throwError(
+            () => new Error('Capture event stream exceeded the resync recovery limit.'),
+          );
+        }
+        return this.advanceStreaming$(
+          documentId,
+          snapshot,
+          active,
+          reconnectAttempt + 1,
+        );
+      }),
     );
+  }
+
+  private cancelStreaming$(captureId: string, active: ActiveCapture): Observable<CaptureOperationV2> {
+    if (!active.cancelRequest$) {
+      active.cancelSent = true;
+      active.cancelRequest$ = this.runtime.cancelStreamingCapture(captureId).pipe(
+        shareReplay({ bufferSize: 1, refCount: true }),
+      );
+    }
+    return active.cancelRequest$;
   }
 
   private consumeStreamingEvents$(
@@ -620,6 +642,14 @@ export class DesktopWorkspaceStore {
     );
   }
 
+  private applyStreamingOperation(
+    active: ActiveCapture,
+    operation: CaptureOperationV2,
+  ): void {
+    active.lastEventSequence = operation.lastEventSequence;
+    active.lastStage = operation.status;
+  }
+
   private persistStreamingTerminal$(
     documentId: string,
     operation: CaptureOperationV2,
@@ -632,18 +662,24 @@ export class DesktopWorkspaceStore {
     const terminalData$: Observable<StreamingTerminalResultV2 | null> = operation.status === 'completed'
       ? this.runtime.getStreamingResult(operation.captureId)
       : of(null);
-    return terminalData$.pipe(
+    return this.library.updateCapture({
+      documentId,
+      captureId: operation.captureId,
+      status: 'persisting',
+      stage: operation.status,
+    }).pipe(
+      switchMap(() => terminalData$),
       switchMap((terminalData) => this.library.updateCapture({
-        documentId,
-        captureId: operation.captureId,
-        status: active.terminalStatus ?? 'failed',
-        stage: operation.status,
-        errorCode: operation.error?.code,
-        errorMessage: operation.error?.message,
-        ...(terminalData
-          ? { raw: terminalData.raw, result: terminalData.result }
-          : {}),
-      })),
+          documentId,
+          captureId: operation.captureId,
+          status: active.terminalStatus ?? 'failed',
+          stage: operation.status,
+          errorCode: operation.error?.code,
+          errorMessage: operation.error?.message,
+          ...(terminalData
+            ? { raw: terminalData.raw, result: terminalData.result }
+            : {}),
+        })),
       tap(() => {
         active.terminalCommitted = true;
         this.reloadDocumentState(documentId);
@@ -672,12 +708,9 @@ export class DesktopWorkspaceStore {
         return EMPTY;
       }
       const terminalCommitted = hasCommittedTerminalData(document);
-      const streaming = typeof this.runtime.startStreamingCapture === 'function';
       const active: ActiveCapture = {
         captureId: document.captureId,
-        streaming,
         lastEventSequence: 0,
-        rawPersisted: false,
         cancelRequested: false,
         cancelSent: false,
         lastStage: document.stage,
@@ -692,8 +725,7 @@ export class DesktopWorkspaceStore {
 
       const work$ = terminalCommitted
         ? this.retryRuntimeCleanup$(document)
-        : streaming
-        ? this.runtime.getStreamingCapture(document.captureId).pipe(
+        : this.runtime.getStreamingCapture(document.captureId).pipe(
           tap((operation) => active.lastStage = operation.status),
           switchMap((operation) => this.waitForStreamingTerminal$(
             document.documentId,
@@ -705,11 +737,6 @@ export class DesktopWorkspaceStore {
             operation,
             active,
           )),
-        )
-        : this.runtime.getCapture(document.captureId).pipe(
-          tap((job) => active.lastStage = job.stage),
-          switchMap((job) => this.waitForTerminal$(document.documentId, job, active)),
-          switchMap((job) => this.persistTerminal$(document.documentId, job, active)),
         );
       return this.trackCaptureLifecycle$(document.documentId, active, work$);
     });
@@ -738,216 +765,10 @@ export class DesktopWorkspaceStore {
     );
   }
 
-  private waitForTerminal$(
-    documentId: string,
-    initial: CaptureJobV1,
-    active: ActiveCapture,
-  ): Observable<CaptureJobV1> {
-    return of(initial).pipe(
-      switchMap((job) => this.persistRawDuringExtraction$(documentId, job, active)),
-      tap((job) => active.lastStage = job.stage),
-      expand((job) => {
-        if (!isActiveJob(job)) return EMPTY;
-        return this.advanceCapture$(documentId, job, active);
-      }),
-      filter((job) => !isActiveJob(job)),
-      take(1),
-    );
-  }
-
-  private advanceCapture$(
-    documentId: string,
-    job: CaptureJobV1,
-    active: ActiveCapture,
-  ): Observable<CaptureJobV1> {
-    return this.library.updateCapture({
-      documentId,
-      captureId: job.captureId,
-      status: 'processing',
-      stage: job.stage,
-    }).pipe(
-      switchMap(() => {
-        if (active.cancelRequested && !active.cancelSent) {
-          return this.sendCancellation$(job.captureId, active);
-        }
-        return race(
-          timer(700).pipe(
-            switchMap(() => this.runtime.getCapture(job.captureId)),
-          ),
-          active.cancelWake.pipe(
-            take(1),
-            switchMap(() => this.sendCancellation$(job.captureId, active)),
-          ),
-        );
-      }),
-      switchMap((next) => this.persistRawDuringExtraction$(documentId, next, active)),
-      tap((next) => active.lastStage = next.stage),
-    );
-  }
-
-  private persistRawDuringExtraction$(
-    documentId: string,
-    job: CaptureJobV1,
-    active: ActiveCapture,
-  ): Observable<CaptureJobV1> {
-    if (
-      active.rawPersisted
-      || (job.stage !== 'structuring' && job.stage !== 'awaiting_structuring')
-    ) {
-      return of(job);
-    }
-    return this.runtime.getRaw(job.captureId).pipe(
-      switchMap((raw) => {
-        if (!raw) return of(job);
-        return this.library.updateCapture({
-          documentId,
-          captureId: job.captureId,
-          status: 'processing',
-          stage: job.stage,
-          raw,
-        }).pipe(
-          tap(() => {
-            active.rawPersisted = true;
-            this.reloadDocumentState(documentId);
-          }),
-          map(() => job),
-        );
-      }),
-    );
-  }
-
-  private sendCancellation$(
-    captureId: string,
-    active: ActiveCapture,
-  ): Observable<CaptureJobV1> {
-    active.cancelSent = true;
-    return this.runtime.cancelCapture(captureId);
-  }
-
-  private persistTerminal$(
-    documentId: string,
-    job: CaptureJobV1,
-    active: ActiveCapture,
-  ) {
-    return this.library.updateCapture({
-      documentId,
-      captureId: job.captureId,
-      status: 'persisting',
-      stage: job.stage,
-    }).pipe(
-      switchMap(() => this.persistTerminalData$(documentId, job, active)),
-      tap(() => {
-        active.terminalCommitted = true;
-        active.terminalStatus = terminalLibraryStatus(job);
-        active.terminalErrorCode = job.error?.code;
-        active.terminalErrorMessage = job.error?.message;
-      }),
-      switchMap(() => this.cleanupAfterCommit$(documentId, job)),
-    );
-  }
-
-  private persistTerminalData$(documentId: string, job: CaptureJobV1, active: ActiveCapture) {
-    if (job.status === 'completed') {
-      if (active.rawPersisted) {
-        return this.runtime.getResult(job.captureId).pipe(
-          switchMap((result) => this.library.updateCapture({
-            documentId,
-            captureId: job.captureId,
-            status: 'completed' as const,
-            stage: job.stage,
-            result,
-          })),
-        );
-      }
-      return this.runtime.getRaw(job.captureId).pipe(
-        switchMap((raw) => {
-          if (!raw) {
-            return throwError(() => new Error('Capture Runtime 未提供已完成工作的原始結果。'));
-          }
-          return this.runtime.getResult(job.captureId).pipe(
-            switchMap((result) => {
-              const update = {
-                documentId,
-                captureId: job.captureId,
-                status: 'completed' as const,
-                stage: job.stage,
-                result,
-                ...(active.rawPersisted ? {} : { raw }),
-              };
-              return this.library.updateCapture(update).pipe(
-                tap(() => {
-                  if (!active.rawPersisted) active.rawPersisted = true;
-                }),
-              );
-            }),
-          );
-        }),
-      );
-    }
-    if (job.status === 'failed' || job.status === 'cancelled') {
-      if (active.rawPersisted) {
-        return this.library.updateCapture({
-          documentId,
-          captureId: job.captureId,
-          status: terminalLibraryStatus(job),
-          stage: job.stage,
-          errorCode: job.error?.code,
-          errorMessage: job.error?.message,
-        });
-      }
-      return this.runtime.getRaw(job.captureId).pipe(
-        switchMap((raw) => {
-          const update = {
-            documentId,
-            captureId: job.captureId,
-            status: terminalLibraryStatus(job),
-            stage: job.stage,
-            errorCode: job.error?.code,
-            errorMessage: job.error?.message,
-            ...(active.rawPersisted || !raw ? {} : { raw }),
-          };
-          return this.library.updateCapture(update).pipe(
-            tap(() => {
-              if (raw) active.rawPersisted = true;
-            }),
-          );
-        }),
-      );
-    }
-    return throwError(() => new Error(`Capture Runtime returned unsupported terminal status: ${job.status}`));
-  }
-
-  private cleanupAfterCommit$(documentId: string, job: CaptureJobV1) {
-    const terminalStatus = terminalLibraryStatus(job);
-    return this.runtime.deleteCapture(job.captureId).pipe(
-      switchMap(() => this.library.updateCapture({
-        documentId,
-        status: terminalStatus,
-        stage: job.stage,
-        clearCaptureId: true,
-        errorCode: job.error?.code,
-        errorMessage: job.error?.message,
-      })),
-      catchError((error) => this.library.updateCapture({
-        documentId,
-        captureId: job.captureId,
-        status: 'recovery_required',
-        stage: job.stage,
-        errorCode: job.error?.code,
-        errorMessage: job.error?.message,
-        recoveryCode: 'runtime_cleanup_failed',
-        recoveryMessage: errorMessage(error),
-      })),
-    );
-  }
-
   private retryRuntimeCleanup$(document: DesktopLibrarySummary) {
     const captureId = document.captureId;
     if (!captureId) return EMPTY;
-    const delete$ = document.mediaType.startsWith('audio/')
-      ? this.runtime.deleteStreamingCapture(captureId)
-      : this.runtime.deleteCapture(captureId);
-    return delete$.pipe(
+    return this.runtime.deleteStreamingCapture(captureId).pipe(
       switchMap(() => this.library.updateCapture({
         documentId: document.documentId,
         status: committedTerminalStatus(document),
@@ -1068,22 +889,12 @@ export class DesktopWorkspaceStore {
   }
 }
 
-function isActiveJob(job: CaptureJobV1): boolean {
-  return job.status === 'queued' || job.status === 'running';
-}
-
 function isActiveStreaming(operation: CaptureOperationV2): boolean {
   return operation.status === 'created'
     || operation.status === 'waiting_input'
     || operation.status === 'extracting'
     || operation.status === 'awaiting_structuring'
     || operation.status === 'structuring';
-}
-
-function terminalLibraryStatus(job: CaptureJobV1): DesktopLibraryStatus {
-  if (job.status === 'completed') return 'completed';
-  if (job.status === 'cancelled') return 'canceled';
-  return 'failed';
 }
 
 function terminalStatusFromStage(stage?: string): DesktopLibraryStatus {

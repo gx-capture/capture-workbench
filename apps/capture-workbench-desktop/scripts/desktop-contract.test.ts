@@ -337,8 +337,10 @@ test('renderer IPC never receives the sidecar bearer token', async () => {
   ]);
   assert.doesNotMatch(commands, /pub fn backend_config/u);
   assert.doesNotMatch(desktopHost, /backend_config|bearerToken|Authorization/u);
-  assert.match(commands, /runtime_create_capture/u);
-  assert.match(desktopHost, /runtime_create_capture/u);
+  assert.match(commands, /runtime_start_streaming_capture/u);
+  assert.match(desktopHost, /runtime_start_streaming_capture/u);
+  assert.match(commands, /runtime_delete_streaming_capture/u);
+  assert.match(desktopHost, /runtime_delete_streaming_capture/u);
 });
 
 test('blocking native I/O is isolated behind async Tauri commands', async () => {
@@ -360,6 +362,43 @@ test('blocking native I/O is isolated behind async Tauri commands', async () => 
     'runtime_model_options',
     'runtime_start_model_installation',
     'runtime_get_model_installation',
+    'runtime_start_streaming_capture',
+    'runtime_get_streaming_capture',
+    'runtime_get_streaming_events',
+    'runtime_get_streaming_partial',
+    'runtime_get_streaming_result',
+    'runtime_structure_streaming_capture',
+    'runtime_cancel_streaming_capture',
+    'runtime_delete_streaming_capture',
+  ]) {
+    assert.match(commands, new RegExp(`pub async fn ${command}`, 'u'));
+  }
+  assert.match(commands, /pub fn desktop_runtime_status/u);
+});
+
+test('desktop bridge capture lifecycle is v2-only', async () => {
+  const [commands, host, client] = await Promise.all([
+    readFile(join(appRoot, 'src-tauri', 'src', 'commands.rs'), 'utf8'),
+    readFile(join(appRoot, 'src-tauri', 'src', 'lib.rs'), 'utf8'),
+    readFile(
+      join(appRoot, 'src-tauri', 'src', 'runtime_client.rs'),
+      'utf8',
+    ),
+  ]);
+  for (const command of [
+    'runtime_start_streaming_capture',
+    'runtime_get_streaming_capture',
+    'runtime_get_streaming_events',
+    'runtime_get_streaming_partial',
+    'runtime_get_streaming_result',
+    'runtime_structure_streaming_capture',
+    'runtime_cancel_streaming_capture',
+    'runtime_delete_streaming_capture',
+  ]) {
+    assert.match(commands, new RegExp(`pub async fn ${command}`, 'u'));
+    assert.match(host, new RegExp(`commands::${command}`, 'u'));
+  }
+  for (const command of [
     'runtime_create_capture',
     'runtime_get_capture',
     'runtime_cancel_capture',
@@ -367,9 +406,12 @@ test('blocking native I/O is isolated behind async Tauri commands', async () => 
     'runtime_get_result',
     'runtime_delete_capture',
   ]) {
-    assert.match(commands, new RegExp(`pub async fn ${command}`, 'u'));
+    assert.doesNotMatch(commands, new RegExp(command, 'u'));
+    assert.doesNotMatch(host, new RegExp(command, 'u'));
   }
-  assert.match(commands, /pub fn desktop_runtime_status/u);
+  assert.match(client, /"\/v2\/ingestions"/u);
+  assert.match(client, /"\/v2\/captures"/u);
+  assert.doesNotMatch(client, /\/v1\/captures/u);
 });
 
 test('native source import keeps renderer IPC path-only and responses path-free', async () => {
@@ -528,7 +570,7 @@ test('real Ollama smoke uses the capture contract and validates profile provenan
   assert.doesNotMatch(source, /CAPTURE_WINDOWSML_BUNDLE/u);
 });
 
-test('deterministic runtime checks exact Host authority and canonical v1 names', async () => {
+test('deterministic runtime checks exact Host authority and canonical v2 capture names', async () => {
   const fixtureRoot = join(
     appRoot,
     'scripts',
@@ -545,8 +587,13 @@ test('deterministic runtime checks exact Host authority and canonical v1 names',
   assert.doesNotMatch(httpSource, /fn normalized_host/u);
   assert.match(contractSource, /"captureId"/u);
   assert.match(contractSource, /const SCHEMA_VERSION: &str = "1"/u);
-  assert.match(deterministicSource, /multipart\/form-data; boundary=/u);
-  assert.match(deterministicSource, /'structuringMode'/u);
+  assert.match(contractSource, /"\/v2\/ingestions"/u);
+  assert.match(contractSource, /"\/v2\/captures"/u);
+  assert.match(deterministicSource, /'\/v2\/ingestions'/u);
+  assert.match(deterministicSource, /'\/v2\/captures'/u);
+  assert.match(deterministicSource, /`\/v2\/captures\/\$\{captureId\}\/events`/u);
+  assert.match(deterministicSource, /`\/v2\/captures\/\$\{captureId\}\/result`/u);
+  assert.match(deterministicSource, /structuringMode/u);
   assert.match(deterministicSource, /wrongAuthorityPortRejected/u);
 });
 

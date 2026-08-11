@@ -37,19 +37,13 @@ macro_rules! desktop_invoke_handler {
             commands::runtime_model_options,
             commands::runtime_start_model_installation,
             commands::runtime_get_model_installation,
-            commands::runtime_create_capture,
             commands::runtime_start_streaming_capture,
-            commands::runtime_get_capture,
             commands::runtime_get_streaming_capture,
             commands::runtime_get_streaming_events,
             commands::runtime_get_streaming_partial,
             commands::runtime_get_streaming_result,
             commands::runtime_structure_streaming_capture,
-            commands::runtime_cancel_capture,
             commands::runtime_cancel_streaming_capture,
-            commands::runtime_get_raw,
-            commands::runtime_get_result,
-            commands::runtime_delete_capture,
             commands::runtime_delete_streaming_capture
             $(, $extra)*
         ]

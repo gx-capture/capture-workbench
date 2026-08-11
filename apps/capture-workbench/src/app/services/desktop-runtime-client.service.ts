@@ -3,7 +3,6 @@ import { rxResource } from '@angular/core/rxjs-interop';
 import {
   type CaptureDocumentV1,
   type CaptureEventV2,
-  type CaptureJobV1,
   type CaptureOperationV2,
   type PartialCaptureV2,
   type CaptureRequirementId,
@@ -99,12 +98,6 @@ export class DesktopRuntimeClientService {
     return this.commands.invoke('runtime_get_model_installation', { input: { id: installationId } }, signal);
   }
 
-  createCapture(documentId: string, clientRequestId: string, signal?: AbortSignal): Observable<CaptureJobV1> {
-    return this.commands.invoke('runtime_create_capture', {
-      input: { documentId, clientRequestId },
-    }, signal);
-  }
-
   startStreamingCapture(input: {
     readonly documentId: string;
     readonly clientRequestId: string;
@@ -152,28 +145,6 @@ export class DesktopRuntimeClientService {
   deleteStreamingCapture(captureId: string, signal?: AbortSignal): Observable<void> {
     return this.commands
       .invoke<null>('runtime_delete_streaming_capture', { input: { id: captureId } }, signal)
-      .pipe(map(() => undefined));
-  }
-
-  getCapture(captureId: string, signal?: AbortSignal): Observable<CaptureJobV1> {
-    return this.commands.invoke('runtime_get_capture', { input: { id: captureId } }, signal);
-  }
-
-  cancelCapture(captureId: string, signal?: AbortSignal): Observable<CaptureJobV1> {
-    return this.commands.invoke('runtime_cancel_capture', { input: { id: captureId } }, signal);
-  }
-
-  getRaw(captureId: string, signal?: AbortSignal): Observable<RawCaptureV1 | null> {
-    return this.commands.invoke('runtime_get_raw', { input: { id: captureId } }, signal);
-  }
-
-  getResult(captureId: string, signal?: AbortSignal): Observable<CaptureDocumentV1> {
-    return this.commands.invoke('runtime_get_result', { input: { id: captureId } }, signal);
-  }
-
-  deleteCapture(captureId: string, signal?: AbortSignal): Observable<void> {
-    return this.commands
-      .invoke<null>('runtime_delete_capture', { input: { id: captureId } }, signal)
       .pipe(map(() => undefined));
   }
 

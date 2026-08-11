@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
@@ -51,11 +51,36 @@ interface RuntimeInstallation {
   readonly error?: { readonly message?: string } | null;
 }
 
-interface CaptureJob {
+interface CaptureOperation {
   readonly captureId: string;
+  readonly ingestionId: string;
   readonly status: string;
-  readonly stage: string;
+  readonly progress: number;
   readonly error?: { readonly message?: string } | null;
+}
+
+interface PartialCapture {
+  readonly source: Record<string, unknown>;
+  readonly sourceText: string;
+  readonly updatedAt: string;
+  readonly segments: RawCapture['segments'];
+  readonly extractionEngine: RawCapture['extractionEngine'];
+}
+
+interface TerminalResult {
+  readonly operation: CaptureOperation;
+  readonly raw: RawCapture;
+  readonly result: CaptureResult;
+}
+
+interface IngestionRecord {
+  readonly ingestionId: string;
+}
+
+interface StreamingEvent {
+  readonly sequence: number;
+  readonly eventType: string;
+  readonly stage: string;
 }
 
 interface RawCapture {
@@ -398,7 +423,7 @@ async function main(): Promise<void> {
       env: runtimeEnvironment(appData, runtimePort, token, expectedProvenance),
     },
   );
-  const captureIds: string[] = [];
+  const captureLanes: Array<{ captureId?: string; ingestionId: string }> = [];
   let pdf: Awaited<ReturnType<typeof captureAndVerify>> | undefined;
   let image: Awaited<ReturnType<typeof captureAndVerify>> | undefined;
   let audio: Awaited<ReturnType<typeof captureAndVerify>> | undefined;
@@ -411,7 +436,7 @@ async function main(): Promise<void> {
       pdfBytes,
       'pdf',
       basename(pdfPath),
-      captureIds,
+      captureLanes,
       expectedProvenance,
     );
     image = await captureAndVerify(
@@ -420,7 +445,7 @@ async function main(): Promise<void> {
       imageBytes,
       'image',
       basename(imagePath),
-      captureIds,
+      captureLanes,
       expectedProvenance,
     );
     audio = await captureAndVerify(
@@ -429,13 +454,18 @@ async function main(): Promise<void> {
       audioBytes,
       'audio',
       basename(audioPath),
-      captureIds,
+      captureLanes,
       expectedProvenance,
     );
-    await deleteCapturesAndVerify(runtimePort, token, captureIds);
+    await deleteCapturesAndVerify(runtimePort, token, captureLanes);
   } finally {
-    for (const captureId of captureIds) {
-      await request<void>(runtimePort, token, `/v1/captures/${captureId}`, {
+    for (const lane of captureLanes) {
+      if (lane.captureId) {
+        await request<void>(runtimePort, token, `/v2/captures/${lane.captureId}`, {
+          method: 'DELETE',
+        }).catch(() => undefined);
+      }
+      await request<void>(runtimePort, token, `/v2/ingestions/${lane.ingestionId}`, {
         method: 'DELETE',
       }).catch(() => undefined);
     }
@@ -498,68 +528,65 @@ async function captureAndVerify(
   bytes: Uint8Array,
   sourceKind: 'pdf' | 'image' | 'audio',
   fileName: string,
-  captureIds: string[],
+  captureLanes: Array<{ captureId?: string; ingestionId: string }>,
   expectedProvenance: ExpectedProvenance,
 ): Promise<{ readonly raw: RawCapture; readonly result: CaptureResult }> {
-  const form = new FormData();
-  form.set('sourceKind', sourceKind);
-  form.set('structuringMode', 'host');
-  form.set('targetLanguage', 'zh-TW');
-  form.set(
-    'file',
-    new Blob([bytes], {
-      type: fixtureMediaType(sourceKind, fileName),
-    }),
-    fileName,
-  );
-  const created = await request<CaptureJob>(port, token, '/v1/captures', {
+  const sourceSha256 = createHash('sha256').update(bytes).digest('hex');
+  const ingestion = await request<IngestionRecord>(port, token, '/v2/ingestions', {
     method: 'POST',
-    headers: { 'x-idempotency-key': randomUUID() },
-    body: form,
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      clientRequestId: randomUUID(),
+      kind: sourceKind,
+      mode: 'file',
+      fileName,
+      mediaType: fixtureMediaType(sourceKind, fileName),
+      totalBytes: bytes.length,
+      sourceSha256,
+    }),
   });
-  captureIds.push(created.captureId);
+  const lane: { captureId?: string; ingestionId: string } = {
+    ingestionId: ingestion.ingestionId,
+  };
+  captureLanes.push(lane);
+  await uploadChunks(port, token, lane.ingestionId, bytes);
+  await finalizeIngestion(port, token, lane.ingestionId, bytes);
+  const created = await request<CaptureOperation>(port, token, '/v2/captures', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      clientRequestId: randomUUID(),
+      ingestionId: lane.ingestionId,
+      structuringMode: 'host',
+      startPolicy: 'eager',
+      targetLanguage: 'zh-TW',
+    }),
+  });
+  lane.captureId = created.captureId;
   const awaiting = await waitForAwaitingStructuring(
     port,
     token,
     created.captureId,
   );
-  if (
-    awaiting.status !== 'running' ||
-    awaiting.stage !== 'awaiting_structuring'
-  ) {
+  if (awaiting.status !== 'awaiting_structuring') {
     throw new Error(
-      `Real ${sourceKind} extraction ended as ${awaiting.status}/${awaiting.stage}.`,
+      `Real ${sourceKind} extraction ended as ${awaiting.status}${awaiting.error?.message ? `: ${awaiting.error.message}` : '.'}`,
     );
   }
-  const raw = await request<RawCapture>(
+  const partial = await request<PartialCapture>(
     port,
     token,
-    `/v1/captures/${created.captureId}/raw`,
+    `/v2/captures/${created.captureId}/partial`,
   );
-  if (raw.segments.length === 0 || !raw.sourceText.trim()) {
+  if (partial.segments.length === 0 || !partial.sourceText.trim()) {
     throw new Error(`Real ${sourceKind} extraction returned no text.`);
   }
-  if (sourceKind === 'pdf' || sourceKind === 'image') {
-    assert.equal(raw.extractionEngine.engine, 'windowsml-ocr');
-    assert.equal(raw.extractionEngine.model, expectedProvenance.ocrModel);
-    assert.equal(raw.extractionEngine.device, 'windowsml-dml');
-    assert.ok(raw.segments.some((segment) => segment.locator.kind === 'page'));
-  } else {
-    assert.equal(raw.extractionEngine.engine, 'whisper-primary');
-    assert.equal(raw.extractionEngine.model, expectedProvenance.whisperModel);
-    if (expectedProvenance.whisperPreferGpu) {
-      assert.ok(['cuda', 'cpu'].includes(raw.extractionEngine.device));
-    } else {
-      assert.equal(raw.extractionEngine.device, expectedProvenance.whisperDevice);
-    }
-    assert.ok(raw.segments.some((segment) => segment.locator.kind === 'time'));
-  }
-  assert.match(raw.extractionEngine.digest, /^sha256:[a-f0-9]{64}$/u);
-  const candidate = hostCandidate(raw);
-  const committed = await request<CaptureJob>(
+  assertPartialProvenance(partial, sourceKind, expectedProvenance);
+  const candidate = hostCandidate(partial);
+  const committed = await request<CaptureOperation>(
     port,
     token,
-    `/v1/captures/${created.captureId}/structure`,
+    `/v2/captures/${created.captureId}/structure/commit`,
     {
       method: 'POST',
       headers: {
@@ -575,15 +602,57 @@ async function captureAndVerify(
       `Real ${sourceKind} capture ended as ${completed.status}: ${completed.error?.message ?? 'no detail'}.`,
     );
   }
-  const result = await request<CaptureResult>(
+  const events = await readStreamingEvents(port, token, created.captureId);
+  assertStreamingEventOrder(events);
+  const replayCursor = events[events.length - 2]?.sequence;
+  const terminalSequence = events[events.length - 1]?.sequence;
+  assert.ok(replayCursor !== undefined && terminalSequence !== undefined);
+  const replayed = await readStreamingEvents(
     port,
     token,
-    `/v1/captures/${created.captureId}/result`,
+    created.captureId,
+    replayCursor,
   );
-  assert.equal(result.extractionEngine.engine, raw.extractionEngine.engine);
-  assert.equal(result.structuringEngine.engine, 'host');
-  assert.match(result.structuringEngine.digest, /^sha256:[a-f0-9]{64}$/u);
-  return { raw, result };
+  assertStreamingEventOrder(replayed, replayCursor, false);
+  const afterTerminal = await readStreamingEvents(
+    port,
+    token,
+    created.captureId,
+    terminalSequence,
+  );
+  assert.equal(afterTerminal.length, 0, 'Last-Event-ID replay duplicated the terminal event.');
+  const terminal = await request<TerminalResult>(
+    port,
+    token,
+    `/v2/captures/${created.captureId}/result`,
+  );
+  assert.equal(terminal.result.extractionEngine.engine, partial.extractionEngine.engine);
+  assert.equal(terminal.result.structuringEngine.engine, 'host');
+  assert.match(terminal.result.structuringEngine.digest, /^sha256:[a-f0-9]{64}$/u);
+  return { raw: terminal.raw, result: terminal.result };
+}
+
+function assertPartialProvenance(
+  partial: PartialCapture,
+  sourceKind: 'pdf' | 'image' | 'audio',
+  expectedProvenance: ExpectedProvenance,
+): void {
+  if (sourceKind === 'pdf' || sourceKind === 'image') {
+    assert.equal(partial.extractionEngine.engine, 'windowsml-ocr');
+    assert.equal(partial.extractionEngine.model, expectedProvenance.ocrModel);
+    assert.equal(partial.extractionEngine.device, 'windowsml-dml');
+    assert.ok(partial.segments.some((segment) => segment.locator.kind === 'page'));
+  } else {
+    assert.equal(partial.extractionEngine.engine, 'whisper-primary');
+    assert.equal(partial.extractionEngine.model, expectedProvenance.whisperModel);
+    if (expectedProvenance.whisperPreferGpu) {
+      assert.ok(['cuda', 'cpu'].includes(partial.extractionEngine.device));
+    } else {
+      assert.equal(partial.extractionEngine.device, expectedProvenance.whisperDevice);
+    }
+    assert.ok(partial.segments.some((segment) => segment.locator.kind === 'time'));
+  }
+  assert.match(partial.extractionEngine.digest, /^sha256:[a-f0-9]{64}$/u);
 }
 
 function fixtureMediaType(
@@ -634,8 +703,8 @@ function mediaSummary(
   } as MediaEvidence['pdf'] | MediaEvidence['audio'];
 }
 
-function hostCandidate(raw: RawCapture): Record<string, unknown> {
-  const blocks = raw.segments.map((segment, order) => ({
+function hostCandidate(partial: PartialCapture): Record<string, unknown> {
+  const blocks = partial.segments.map((segment, order) => ({
     blockId: `block-${order + 1}`,
     order: segment.order,
     type: segment.locator.kind === 'time' ? 'transcript' : 'paragraph',
@@ -646,12 +715,12 @@ function hostCandidate(raw: RawCapture): Record<string, unknown> {
   }));
   return {
     schemaVersion: '1',
-    source: raw.source,
-    rawSegments: raw.segments,
+    source: partial.source,
+    rawSegments: partial.segments,
     blocks,
-    sourceText: raw.sourceText,
+    sourceText: partial.sourceText,
     targetText: blocks.map((block) => block.targetText).join('\n'),
-    extractionEngine: raw.extractionEngine,
+    extractionEngine: partial.extractionEngine,
     structuringEngine: {
       engine: 'host',
       model: 'real-media-e2e-host-v1',
@@ -659,7 +728,7 @@ function hostCandidate(raw: RawCapture): Record<string, unknown> {
       device: 'local',
     },
     warnings: [],
-    createdAt: raw.createdAt,
+    createdAt: partial.updatedAt,
     completedAt: new Date().toISOString(),
   };
 }
@@ -748,19 +817,17 @@ async function waitForAwaitingStructuring(
   port: number,
   token: string,
   captureId: string,
-): Promise<CaptureJob> {
+): Promise<CaptureOperation> {
   const deadline = Date.now() + maxCaptureWaitMs;
   while (Date.now() < deadline) {
-    const current = await request<CaptureJob>(
+    const current = await request<CaptureOperation>(
       port,
       token,
-      `/v1/captures/${captureId}`,
+      `/v2/captures/${captureId}`,
     );
-    if (
-      current.stage === 'awaiting_structuring' ||
-      !['queued', 'running'].includes(current.status)
-    )
+    if (current.status === 'awaiting_structuring' || isTerminalStatus(current.status)) {
       return current;
+    }
     await delay(1_000);
   }
   throw new Error('Capture did not reach host structuring before the timeout.');
@@ -770,15 +837,15 @@ async function waitForTerminal(
   port: number,
   token: string,
   captureId: string,
-): Promise<CaptureJob> {
+): Promise<CaptureOperation> {
   const deadline = Date.now() + maxCaptureWaitMs;
   while (Date.now() < deadline) {
-    const current = await request<CaptureJob>(
+    const current = await request<CaptureOperation>(
       port,
       token,
-      `/v1/captures/${captureId}`,
+      `/v2/captures/${captureId}`,
     );
-    if (!['queued', 'running'].includes(current.status)) return current;
+    if (isTerminalStatus(current.status)) return current;
     await delay(500);
   }
   throw new Error('Capture did not reach a terminal state before the timeout.');
@@ -787,14 +854,15 @@ async function waitForTerminal(
 async function deleteCapturesAndVerify(
   port: number,
   token: string,
-  captureIds: string[],
+  captureLanes: Array<{ captureId?: string; ingestionId: string }>,
 ): Promise<void> {
-  for (const captureId of [...captureIds]) {
-    await request<void>(port, token, `/v1/captures/${captureId}`, {
+  for (const lane of [...captureLanes]) {
+    if (!lane.captureId) continue;
+    await request<void>(port, token, `/v2/captures/${lane.captureId}`, {
       method: 'DELETE',
     });
     const response = await fetch(
-      `http://127.0.0.1:${port}/v1/captures/${captureId}`,
+      `http://127.0.0.1:${port}/v2/captures/${lane.captureId}`,
       {
         headers: {
           authorization: `Bearer ${token}`,
@@ -804,10 +872,167 @@ async function deleteCapturesAndVerify(
     );
     if (response.status !== 404) {
       throw new Error(
-        `Capture ${captureId} remained readable after UUID-scoped deletion (HTTP ${response.status}).`,
+        `Capture ${lane.captureId} remained readable after UUID-scoped deletion (HTTP ${response.status}).`,
       );
     }
-    captureIds.splice(captureIds.indexOf(captureId), 1);
+    await request<void>(port, token, `/v2/ingestions/${lane.ingestionId}`, {
+      method: 'DELETE',
+    });
+    captureLanes.splice(captureLanes.indexOf(lane), 1);
+  }
+}
+
+async function uploadChunks(
+  port: number,
+  token: string,
+  ingestionId: string,
+  bytes: Uint8Array,
+): Promise<void> {
+  const chunkSize = 1024 * 1024;
+  for (let offset = 0, index = 0; offset < bytes.length; offset += chunkSize, index += 1) {
+    const end = Math.min(bytes.length, offset + chunkSize);
+    const chunk = bytes.subarray(offset, end);
+    const digest = createHash('sha256').update(chunk).digest('hex');
+    await request(port, token, `/v2/ingestions/${ingestionId}/chunks/${index}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Range': `bytes ${offset}-${end - 1}/${bytes.length}`,
+        Digest: `sha-256=${digest}`,
+        'X-Idempotency-Key': `real-media-${index}`,
+      },
+      body: chunk,
+    });
+  }
+}
+
+async function finalizeIngestion(
+  port: number,
+  token: string,
+  ingestionId: string,
+  bytes: Uint8Array,
+): Promise<void> {
+  await request(port, token, `/v2/ingestions/${ingestionId}/finalize`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      totalBytes: bytes.length,
+      sha256: createHash('sha256').update(bytes).digest('hex'),
+    }),
+  });
+}
+
+async function readStreamingEvents(
+  port: number,
+  token: string,
+  captureId: string,
+  lastEventId?: number,
+): Promise<StreamingEvent[]> {
+  const response = await fetch(`http://127.0.0.1:${port}/v2/captures/${captureId}/events`, {
+    headers: {
+      authorization: `Bearer ${token}`,
+      origin: 'http://tauri.localhost',
+      ...(lastEventId === undefined ? {} : { 'Last-Event-ID': String(lastEventId) }),
+    },
+  });
+  if (!response.ok) {
+    throw new Error(`Real media events request failed with HTTP ${response.status}.`);
+  }
+  assert.match(
+    response.headers.get('content-type') ?? '',
+    /^text\/event-stream(?:;|$)/iu,
+  );
+  const text = await response.text();
+  return parseStreamingEvents(text);
+}
+
+function isTerminalStatus(status: string): boolean {
+  return status === 'completed' || status === 'failed' || status === 'cancelled';
+}
+
+export function parseStreamingEvents(text: string): StreamingEvent[] {
+  const normalized = text.replace(/\r\n?/gu, '\n');
+  if (normalized && !normalized.endsWith('\n\n')) {
+    throw new Error('Real media SSE response ended with an incomplete event frame.');
+  }
+  const events: StreamingEvent[] = [];
+  let id: string | undefined;
+  let event: string | undefined;
+  let data: string[] = [];
+  const dispatch = (): void => {
+    if (id === undefined && event === undefined && data.length === 0) return;
+    if (id === undefined || event === undefined || data.length === 0) {
+      throw new Error('Real media SSE response contained an incomplete event frame.');
+    }
+    const sequence = Number(id);
+    if (!Number.isSafeInteger(sequence) || sequence <= 0) {
+      throw new Error('Real media SSE event id was not a positive safe integer.');
+    }
+    const payload = JSON.parse(data.join('\n')) as {
+      readonly eventType?: unknown;
+      readonly sequence?: unknown;
+      readonly stage?: unknown;
+    };
+    if (
+      payload.sequence !== sequence ||
+      payload.eventType !== event ||
+      typeof payload.stage !== 'string'
+    ) {
+      throw new Error('Real media SSE event metadata did not match its frame.');
+    }
+    events.push({ sequence, eventType: event, stage: payload.stage });
+    id = undefined;
+    event = undefined;
+    data = [];
+  };
+  for (const line of normalized.split('\n')) {
+    if (line === '') {
+      dispatch();
+      continue;
+    }
+    if (line.startsWith(':')) continue;
+    const separator = line.indexOf(':');
+    const field = separator < 0 ? line : line.slice(0, separator);
+    let value = separator < 0 ? '' : line.slice(separator + 1);
+    if (value.startsWith(' ')) value = value.slice(1);
+    if (field === 'id') id = value;
+    else if (field === 'event') event = value;
+    else if (field === 'data') data.push(value);
+  }
+  return events;
+}
+
+export function assertStreamingEventOrder(
+  events: readonly StreamingEvent[],
+  afterSequence = 0,
+  requireAccepted = true,
+): void {
+  if (events.length === 0) {
+    throw new Error('Real media event stream did not contain any events.');
+  }
+  const types = events.map((event) => event.eventType);
+  const sequences = events.map((event) => event.sequence);
+  if (new Set(sequences).size !== sequences.length) {
+    throw new Error('Real media event stream contained duplicate sequences.');
+  }
+  if (sequences.some((sequence, index) => index > 0 && sequence <= sequences[index - 1])) {
+    throw new Error('Real media event stream sequences were not strictly increasing.');
+  }
+  if (sequences[0] <= afterSequence) {
+    throw new Error('Real media Last-Event-ID replay returned a duplicate cursor event.');
+  }
+  const terminalIndexes = types
+    .map((type, index) => (isTerminalStatus(type) ? index : -1))
+    .filter((index) => index >= 0);
+  const acceptedIndex = types.indexOf('accepted');
+  if (
+    terminalIndexes.length !== 1 ||
+    terminalIndexes[0] !== events.length - 1 ||
+    (requireAccepted && acceptedIndex < 0) ||
+    (acceptedIndex >= 0 && acceptedIndex >= terminalIndexes[0])
+  ) {
+    throw new Error(
+      'Real media event stream must place accepted before exactly one terminal event, last.',
+    );
   }
 }
 

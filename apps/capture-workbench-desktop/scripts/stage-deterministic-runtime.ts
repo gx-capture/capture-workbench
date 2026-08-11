@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -11,6 +11,18 @@ import { sha256File, stageRuntime } from './stage-runtime.ts';
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const fixtureRoot = join(scriptDirectory, 'fixtures', 'deterministic-runtime');
 const fixtureManifest = join(fixtureRoot, 'Cargo.toml');
+const canonicalSchema = join(
+  scriptDirectory,
+  '..',
+  '..',
+  '..',
+  'packages',
+  'capture-contracts',
+  'src',
+  'generated',
+  'schemas',
+  'capture-document-v1.schema.json',
+);
 const target = 'x86_64-pc-windows-msvc';
 
 export function stageDeterministicRuntime(): Observable<unknown> {
@@ -48,17 +60,8 @@ export function stageDeterministicRuntime(): Observable<unknown> {
             `manifest-${randomBytes(4).toString('hex')}.json`,
           );
           const schemaPath = join(temporary, 'capture-document-v1.schema.json');
-          const schema = `${JSON.stringify(
-            {
-              $schema: 'https://json-schema.org/draft/2020-12/schema',
-              $id: 'https://github.com/gx-capture/capture-workbench/schema/capture-document-v1.schema.json',
-              title: 'CaptureDocumentV1 deterministic QA fixture',
-              type: 'object',
-            },
-            null,
-            2,
-          )}\n`;
-          return defer(() => from(writeFile(schemaPath, schema, 'utf8'))).pipe(
+          return defer(() => from(readFile(canonicalSchema))).pipe(
+            concatMap((schema) => defer(() => from(writeFile(schemaPath, schema)))),
             concatMap(() => sha256File(executable)),
             concatMap((digest) => sha256File(schemaPath).pipe(
               map((schemaSha256) => ({ digest, schemaSha256 })),

@@ -88,15 +88,6 @@ pub struct LibraryDocumentDetail {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct LibrarySourcePayload {
-    pub document_id: String,
-    pub file_name: String,
-    pub media_type: String,
-    pub bytes: Vec<u8>,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct LibraryExportPayload {
     pub file_name: String,
     pub media_type: String,
