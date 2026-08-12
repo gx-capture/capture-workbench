@@ -7,7 +7,8 @@ post-1db5624 final closeout, the post-695567b ingestion open-recovery phase,
 the post-9e6e2b3 final hardening phase, and the post-3b61cef security/protocol
 hardening phase, and the post-e166174 final security hardening phase are
 complete, and the post-7909eeb final lifecycle/security phase is complete.
-Final cleanup and the external consumer compatibility gate remain open.
+The post-c762e02 final lifecycle hardening phase is also complete. Final
+cleanup and the external consumer compatibility gate remain open.
 
 ## Change mode checkpoint
 

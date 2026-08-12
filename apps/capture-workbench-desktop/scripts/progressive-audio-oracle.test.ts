@@ -82,3 +82,15 @@ test('progressive audio oracle rejects an event id with an extra sequence suffix
     /event cursor was invalid/u,
   );
 });
+
+test('progressive audio oracle rejects an unterminated final EOF frame', async () => {
+  const response = new Response(
+    `id: 1\nevent: checkpoint\ndata: ${event(1, 'checkpoint', 'extracting', 0.25)}`,
+    { headers: { 'content-type': 'text/event-stream' } },
+  );
+
+  await assert.rejects(
+    consumeSseEvents(response, 'capture-1', () => undefined),
+    /incomplete event frame/u,
+  );
+});

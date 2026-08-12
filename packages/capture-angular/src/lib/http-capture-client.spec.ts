@@ -621,6 +621,87 @@ describe('HttpCaptureClient', () => {
     await vi.waitFor(() => expect(error).toMatchObject({ name: 'AbortError' }));
   });
 
+  it('fails closed and never deletes when recovered ingestion is not open', async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockRejectedValueOnce(new TypeError('connection closed after open'))
+      .mockResolvedValueOnce(jsonResponse({
+        protocolVersion: '2',
+        ingestionId: 'ingestion-1',
+        status: 'ready',
+        kind: 'pdf',
+        fileName: 'scan.pdf',
+        mediaType: 'application/pdf',
+        totalBytes: 3,
+      }));
+    const client = configureClient(fetchMock) as HttpCaptureClient;
+    let error: unknown;
+
+    client
+      .startStreamingCapture({
+        clientRequestId: 'request-non-open-recovery',
+        file: new File(['abc'], 'scan.pdf', { type: 'application/pdf' }),
+        sourceKind: 'pdf',
+        structuringMode: 'runtime',
+      })
+      .subscribe({ error: (value) => (error = value) });
+
+    await vi.waitFor(() => expect(error).toBeInstanceOf(TypeError));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls.some(([url, init]) =>
+      String(url).includes('/chunks/') && init?.method === 'PUT',
+    )).toBe(false);
+    expect(fetchMock.mock.calls.some(([url, init]) =>
+      String(url).endsWith('/v2/ingestions/ingestion-1') && init?.method === 'DELETE',
+    )).toBe(false);
+  });
+
+  it('does not delete the ingestion when cancelled before the capture id arrives', async () => {
+    const controller = new AbortController();
+    const fetchMock = vi.fn<typeof fetch>((input, init) => {
+      const url = String(input);
+      if (url.endsWith('/v2/ingestions')) {
+        return Promise.resolve(ingestionResponse('ingestion-1', 201));
+      }
+      if (url.includes('/v2/ingestions/ingestion-1/chunks/')) {
+        return Promise.resolve(jsonResponse({ ingestionId: 'ingestion-1' }));
+      }
+      if (url.endsWith('/v2/ingestions/ingestion-1/finalize')) {
+        return Promise.resolve(ingestionResponse('ingestion-1'));
+      }
+      if (url.endsWith('/v2/captures')) {
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            reject(new DOMException('The operation was aborted.', 'AbortError'));
+          }, { once: true });
+        });
+      }
+      throw new Error(`Unexpected fetch URL: ${url}`);
+    });
+    const client = configureClient(fetchMock) as HttpCaptureClient;
+    let error: unknown;
+
+    client
+      .startStreamingCapture({
+        clientRequestId: 'request-cancel-before-id',
+        file: new File(['abc'], 'scan.pdf', { type: 'application/pdf' }),
+        sourceKind: 'pdf',
+        structuringMode: 'runtime',
+        signal: controller.signal,
+      })
+      .subscribe({ error: (value) => (error = value) });
+
+    await vi.waitFor(() => expect(fetchMock.mock.calls).toHaveLength(4));
+    controller.abort();
+    await vi.waitFor(() => expect(error).toMatchObject({ name: 'AbortError' }));
+    expect(fetchMock.mock.calls.some(([url, init]) =>
+      String(url).endsWith('/v2/ingestions/ingestion-1') && init?.method === 'DELETE',
+    )).toBe(false);
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+      clientRequestId: 'request-cancel-before-id',
+    });
+  });
+
   it('recovers a committed ingestion after the open response is lost by client request lookup', async () => {
     const operation = {
       protocolVersion: '2',

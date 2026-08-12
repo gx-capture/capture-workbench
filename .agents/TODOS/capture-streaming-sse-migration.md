@@ -90,6 +90,17 @@ decision record, and phase commits.
       Playwright E2E, and `git diff --check` passed; the external Cert Prep/Law
       Prep compatibility gate remains unchecked.
 
+- [x] Complete the post-`c762e02` final lifecycle hardening phase: Angular/
+      native open-status decoding, cancellation-before-id recovery, durable
+      recovery correlation, initialize ordering, replay validation, and
+      progressive-audio oracle EOF rejection.
+  Verify: runtime streaming API/repository tests, Angular/workbench tests,
+      native tests, oracle/deterministic parser tests, full Nx
+      runtime/Angular/tools/workbench checks, Tauri fmt/check/test/contract/
+      package QA, deterministic smoke, Playwright E2E, and `git diff --check`
+      passed; the external Cert Prep/Law Prep compatibility gate remains
+      unchecked.
+
 ## Explicitly blocked evidence
 
 - Real engine-bearing OCR/Whisper smoke remains opt-in and depends on the

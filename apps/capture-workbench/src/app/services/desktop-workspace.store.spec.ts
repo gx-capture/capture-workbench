@@ -780,6 +780,133 @@ describe('DesktopWorkspaceStore', () => {
     }));
   });
 
+  it('reconciles a pending create only when the recovered capture correlates with the durable record', () => {
+    const pending = {
+      ...summary,
+      status: 'recovery_required' as const,
+      stage: 'uploading',
+      recoveryClientRequestId: 'capture-request-matched',
+      recoveryIngestionId: 'ingestion-private',
+    };
+    const matchedOperation = {
+      ...runningOperation,
+      captureId: 'capture-recovered',
+      ingestionId: 'ingestion-private',
+    } satisfies CaptureOperationV2;
+    const getStreamingCaptureByClientRequest = vi.fn(() => of(matchedOperation));
+    const updateCapture = vi.fn((update: Record<string, unknown>) =>
+      of({ ...pending, ...update } as DesktopLibrarySummary));
+    const deleteStreamingIngestion = vi.fn();
+    const store = initializeStore(
+      libraryStub({
+        list: vi.fn(() => of([pending])),
+        get: vi.fn(() => of(pending as DesktopLibraryDetail)),
+        updateCapture,
+      }),
+      runtimeStub({
+        getStreamingCaptureByClientRequest,
+        getStreamingCapture: vi.fn(() => of(matchedOperation)),
+        getStreamingEvents: vi.fn(() => of([])),
+        deleteStreamingIngestion,
+      }),
+    );
+
+    store.retry(pending.documentId);
+    TestBed.tick();
+
+    expect(getStreamingCaptureByClientRequest).toHaveBeenCalledWith(
+      'capture-request-matched',
+    );
+    expect(deleteStreamingIngestion).not.toHaveBeenCalled();
+    expect(captureUpdates(updateCapture)).toContainEqual(expect.objectContaining({
+      status: 'processing',
+      captureId: 'capture-recovered',
+      recoveryClientRequestId: undefined,
+      recoveryIngestionId: undefined,
+    }));
+  });
+
+  it('keeps pending recovery when the recovered capture has a different ingestion id', () => {
+    const pending = {
+      ...summary,
+      status: 'recovery_required' as const,
+      stage: 'uploading',
+      recoveryClientRequestId: 'capture-request-mismatch',
+      recoveryIngestionId: 'ingestion-private',
+    };
+    const mismatched = {
+      ...runningOperation,
+      captureId: 'capture-other',
+      ingestionId: 'ingestion-other',
+    } satisfies CaptureOperationV2;
+    const updateCapture = vi.fn((update: Record<string, unknown>) =>
+      of({ ...pending, ...update } as DesktopLibrarySummary));
+    const deleteStreamingIngestion = vi.fn();
+    const store = initializeStore(
+      libraryStub({
+        list: vi.fn(() => of([pending])),
+        get: vi.fn(() => of(pending as DesktopLibraryDetail)),
+        updateCapture,
+      }),
+      runtimeStub({
+        getStreamingCaptureByClientRequest: vi.fn(() => of(mismatched)),
+        deleteStreamingIngestion,
+      }),
+    );
+
+    store.retry(pending.documentId);
+    TestBed.tick();
+
+    expect(deleteStreamingIngestion).not.toHaveBeenCalled();
+    expect(captureUpdates(updateCapture)).toContainEqual(expect.objectContaining({
+      status: 'recovery_required',
+      recoveryCode: 'capture_recovery_required',
+      recoveryClientRequestId: 'capture-request-mismatch',
+      recoveryIngestionId: 'ingestion-private',
+    }));
+  });
+
+  it('keeps pending recovery when the recovered source metadata does not match', () => {
+    const pending = {
+      ...summary,
+      status: 'recovery_required' as const,
+      stage: 'uploading',
+      recoveryClientRequestId: 'capture-request-source-mismatch',
+      recoveryIngestionId: 'ingestion-private',
+    };
+    const mismatched = {
+      ...runningOperation,
+      captureId: 'capture-recovered',
+      ingestionId: 'ingestion-private',
+      source: { ...source, bytes: 13 },
+    } satisfies CaptureOperationV2;
+    const updateCapture = vi.fn((update: Record<string, unknown>) =>
+      of({ ...pending, ...update } as DesktopLibrarySummary));
+    const deleteStreamingIngestion = vi.fn();
+    const store = initializeStore(
+      libraryStub({
+        list: vi.fn(() => of([pending])),
+        get: vi.fn(() => of(pending as DesktopLibraryDetail)),
+        updateCapture,
+      }),
+      runtimeStub({
+        getStreamingCaptureByClientRequest: vi.fn(() => of(mismatched)),
+        deleteStreamingIngestion,
+      }),
+    );
+
+    store.retry(pending.documentId);
+    TestBed.tick();
+
+    expect(deleteStreamingIngestion).not.toHaveBeenCalled();
+    expect(captureUpdates(updateCapture)).toContainEqual(expect.objectContaining({
+      status: 'recovery_required',
+      recoveryCode: 'capture_recovery_required',
+      recoveryClientRequestId: 'capture-request-source-mismatch',
+      recoveryIngestionId: 'ingestion-private',
+    }));
+  });
+
   it('retains pending create recovery when lookup or active-ingestion cleanup is uncertain', () => {
     const pending = {
       ...summary,

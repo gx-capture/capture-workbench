@@ -794,7 +794,7 @@ export class DesktopWorkspaceStore {
       const clientRequestId = document.recoveryClientRequestId;
       return this.runtime.getStreamingCaptureByClientRequest(clientRequestId).pipe(
         switchMap((operation) => {
-          if (operation) {
+          if (operation && recoveryCaptureMatches(operation, document)) {
             const recovered = {
               ...document,
               captureId: operation.captureId,
@@ -815,6 +815,17 @@ export class DesktopWorkspaceStore {
             }).pipe(
               switchMap(() => this.recoverCapture$(recovered)),
             );
+          }
+          if (operation) {
+            return this.library.updateCapture({
+              documentId: document.documentId,
+              status: 'recovery_required',
+              stage: document.stage ?? 'recovery_required',
+              recoveryCode: 'capture_recovery_required',
+              recoveryMessage: 'Recovered capture did not match the durable recovery record.',
+              recoveryClientRequestId: clientRequestId,
+              recoveryIngestionId: document.recoveryIngestionId,
+            }).pipe(map(() => undefined));
           }
           if (!document.recoveryIngestionId) {
             return this.library.updateCapture({
@@ -1052,6 +1063,20 @@ function hasCommittedTerminalData(document: DesktopLibrarySummary): boolean {
     || document.status === 'completed'
     || document.status === 'failed'
     || document.status === 'canceled';
+}
+
+function recoveryCaptureMatches(
+  operation: CaptureOperationV2,
+  document: DesktopLibrarySummary,
+): boolean {
+  if (document.recoveryIngestionId && operation.ingestionId !== document.recoveryIngestionId) {
+    return false;
+  }
+  const source = operation.source;
+  return !!source
+    && source.fileName === document.fileName
+    && source.mediaType === document.mediaType
+    && source.bytes === document.byteLength;
 }
 
 function committedTerminalStatus(document: DesktopLibrarySummary): DesktopLibraryStatus {

@@ -236,6 +236,7 @@ class StreamingRepository:
 
     def initialize(self) -> None:
         with self._lock:
+            self._verify_persistence_roots()
             self.root.mkdir(parents=True, exist_ok=True)
             (self.root / "ingestions").mkdir(exist_ok=True)
             (self.root / "captures").mkdir(exist_ok=True)
@@ -594,6 +595,7 @@ class StreamingRepository:
         self._ensure_leaf_contained(directory, path)
         events: deque[CaptureEventV2] = deque(maxlen=_MAX_EVENT_REPLAY)
         replay_count = 0
+        previous_sequence: int | None = None
         with path.open("r", encoding="utf-8") as event_log:
             for line in event_log:
                 line = line.rstrip("\r\n")
@@ -603,6 +605,13 @@ class StreamingRepository:
                     event = CaptureEventV2.model_validate_json(line)
                 except ValidationError as error:
                     raise RuntimeError("streaming event log is corrupted") from error
+                if (
+                    event.capture_id != capture_id
+                    or event.event_id != f"{capture_id}/{event.sequence}"
+                    or (previous_sequence is not None and event.sequence <= previous_sequence)
+                ):
+                    raise RuntimeError("streaming event log is corrupted")
+                previous_sequence = event.sequence
                 if event.sequence > after_sequence:
                     replay_count += 1
                     if replay_count > _MAX_EVENT_REPLAY:

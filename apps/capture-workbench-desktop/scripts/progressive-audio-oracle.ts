@@ -196,8 +196,15 @@ export async function consumeSseEvents(
     }
     if (!stopped) {
       pending += decoder.decode();
-      if (pending.length > 0) {
-        await processLine(pending.endsWith('\r') ? pending.slice(0, -1) : pending);
+      if (
+        pending.length > 0
+        || frame.data.length > 0
+        || frame.id !== undefined
+        || frame.event !== undefined
+      ) {
+        throw new Error(
+          'Progressive audio oracle SSE response ended with an incomplete event frame.',
+        );
       }
       await dispatch();
     }

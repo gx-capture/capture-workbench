@@ -221,6 +221,7 @@ export class HttpCaptureClient implements CaptureClient {
     return pipeline$.pipe(
       catchError((error: unknown) => {
         if (!ingestionId) return throwError(() => error);
+        if (request.signal?.aborted || isAbortError(error)) return throwError(() => error);
         if (captureRequestAttempted && isUncertainRuntimeResponseFailure(error)) {
           return this.reconcileUncertainCaptureCreate(
             clientRequestId,
@@ -707,7 +708,8 @@ function decodeRecoveredIngestionResponse(
 ): IngestionV2 {
   const ingestion = decodeIngestionResponse(value);
   if (
-    ingestion['kind'] !== request.kind
+    ingestion['status'] !== 'open'
+    || ingestion['kind'] !== request.kind
     || ingestion['fileName'] !== request.fileName
     || ingestion['mediaType'] !== request.mediaType
     || ingestion['totalBytes'] !== request.totalBytes

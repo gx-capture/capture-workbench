@@ -5,8 +5,9 @@ post-d3bf3de hardening phase, the post-1db5624 final closeout, and the
 post-695567b ingestion open-recovery phase, and the post-9e6e2b3 final
 hardening phase, and the post-3b61cef security/protocol hardening phase are
 complete, the post-e166174 final security hardening phase is complete, and the
-post-7909eeb final lifecycle/security phase is complete. The external consumer
-compatibility gate and final residual cleanup remain open.
+post-7909eeb final lifecycle/security phase, and the post-c762e02 final
+lifecycle hardening phase are complete. The external consumer compatibility
+gate and final residual cleanup remain open.
 
 ## Purpose
 
@@ -211,6 +212,18 @@ compatibility release before this producer can delete the public type.
     command without a bridge cancellation channel, so in-flight upload/start
     cancellation is bounded by per-request timeouts plus idempotent recovery.
     The external consumer gate remains unchecked.
+13. **Post-c762e02 final lifecycle hardening**: completed in the containing
+    phase commit; Angular and native initial/recovered ingestion decoders
+    require `status == open` before upload and never delete a finalized/
+    closed ingestion as uploadable; Angular cancellation before a capture id
+    arrives retains the stable client request identity and recovery path
+    without destructive cleanup; desktop pending-recovery lookup correlates
+    ingestionId and source metadata against the durable recovery record
+    before accepting; persistence validates root/category containment before
+    creating directories and replay reads validate capture identity, canonical
+    event id, and monotonic sequence, failing closed on corruption; the
+    progressive audio oracle rejects unterminated EOF frames instead of
+    flushing pending bytes. The external consumer gate remains unchecked.
 
 Each phase must have an explicit path list, its own review, and its own
 verification result. Revert consumers before reverting the runtime cutover;
@@ -353,6 +366,31 @@ phase commit records the narrow fixes and final local verification below.
   The private engine-bearing Ollama smoke remains opt-in and was not
   synthesized for this local verification.
 
+- Post-`c762e02` final lifecycle hardening (the containing phase commit) ??
+  reviewed path groups: `packages/capture-angular/src/lib/http-capture-client.ts`
+  and `.spec.ts` (open-status decoding, cancellation-before-id recovery);
+  `apps/capture-workbench-desktop/src-tauri/src/runtime_client.rs`
+  (native open-status validation); `apps/capture-workbench/src/app/services/
+  desktop-workspace.store.ts` and `.spec.ts` (durable recovery correlation);
+  `packages/capture-runtime/src/capture_runtime/storage/streaming_repository.py`
+  and `tests/test_streaming_repository.py` (initialize ordering, replay
+  validation); `apps/capture-workbench-desktop/scripts/progressive-audio-oracle.ts`
+  and `.test.ts` (EOF rejection); `.agents/SPECS`, `.agents/TODOS`,
+  `.agents/DECISIONS` (evidence). Focused verification passed: runtime
+  streaming API/repository 47 passed/8 symlink skips, Angular client suite 109
+  passed, workbench 54 passed, native `runtime_client` 36 passed,
+  oracle/deterministic/probe/real-media parser tests 29 passed. Full local
+  verification passed: runtime 336 passed/9 skipped/1 warning; Angular 109
+  passed; tools 21 passed; workbench 54 passed; Tauri 60 passed; desktop
+  package QA 209 passed/2 skipped; deterministic smoke and 4 Playwright E2E
+  tests passed. Runtime lint/typecheck/contracts, Angular
+  async-boundary/lint/typecheck, desktop cargo fmt/check, contract
+  consistency, tools/workbench lint/typecheck, and `git diff --check` passed;
+  unrelated dirty paths remain unstaged. Symlink regression tests skip when
+  the Windows environment cannot create symlinks. The private engine-bearing
+  Ollama smoke remains opt-in and was not synthesized for this local
+  verification.
+
 ## Acceptance criteria
 
 - PDF, image, and audio each complete the same v2 lifecycle and produce
@@ -392,6 +430,12 @@ phase commit records the narrow fixes and final local verification below.
 - Persistence rejects symlinked leaf files and metadata IDs that do not match
   their directory basename.
 - SSE parsers reject incomplete final physical lines, including comments.
+- Initial and recovered ingestion responses must be `open` before upload;
+  finalized/closed ingestions fail closed and are never deleted as uploadable.
+- Pending desktop recovery accepts only captures whose ingestionId and source
+  metadata match the durable recovery record.
+- Replay reads validate capture identity, canonical event id, and monotonic
+  sequence, failing closed on corruption.
 
 ## Test plan
 
@@ -407,6 +451,9 @@ phase commit records the narrow fixes and final local verification below.
   and root/category persistence containment.
 - Initial open-ingestion correlation/status, leaf-file containment, metadata-ID
   startup validation, and incomplete-final-physical-line rejection.
+- Open-status decoding, cancellation-before-id recovery, durable recovery
+  correlation, initialize-before-create containment ordering, replay
+  validation, and progressive-audio oracle EOF rejection.
 - Angular SSE frame parser, chunk upload, abort/unsubscribe, reconnect,
   reducer, workflow, and consumer smoke tests.
 - Rust/Tauri request, authorization, cursor, event bridge, and all-media
