@@ -17,6 +17,7 @@ from capture_runtime.contracts import (
     StructuringMode,
 )
 from capture_runtime.storage import (
+    StreamingRecordNotFoundError,
     StreamingRepository,
     StreamingTransitionError,
     StreamingUploadLimitError,
@@ -98,6 +99,26 @@ def test_streaming_repository_recovers_ordered_upload_and_event_log(tmp_path: Pa
 
     assert restarted_again.get_capture(capture.capture_id).last_event_sequence == 2
     assert len(restarted_again.read_events(capture.capture_id, after_sequence=-1)) == 2
+
+
+def test_streaming_repository_finds_ingestion_by_client_request_id_and_clears_on_delete(
+    tmp_path: Path,
+) -> None:
+    clock = MutableClock()
+    repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+    repository.initialize()
+    ingestion_id, _ = _open(repository, b"abc")
+
+    recovered = repository.get_ingestion_by_client_request_id("repository-open-1")
+
+    assert recovered.ingestion_id == ingestion_id
+    with pytest.raises(StreamingRecordNotFoundError):
+        repository.get_ingestion_by_client_request_id("missing-request")
+
+    repository.delete_ingestion(ingestion_id)
+
+    with pytest.raises(StreamingRecordNotFoundError):
+        repository.get_ingestion_by_client_request_id("repository-open-1")
 
 
 def test_streaming_repository_truncates_source_after_source_write_crash_window(

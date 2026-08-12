@@ -278,9 +278,10 @@ describe('HttpCaptureClient', () => {
   });
 
   it('rejects a malformed ingestion identity before constructing a chunk URL', async () => {
-    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
-      jsonResponse({ ingestionId: '../escape' }, 201),
-    );
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse({ ingestionId: '../escape' }, 201))
+      .mockResolvedValueOnce(jsonResponse({ ingestionId: '../escape' }, 201));
     const client = configureClient(fetchMock) as HttpCaptureClient;
 
     await expect(firstValueFrom(client.startStreamingCapture({
@@ -290,10 +291,14 @@ describe('HttpCaptureClient', () => {
       structuringMode: 'runtime',
     }))).rejects.toMatchObject({ code: 'invalid_response' });
 
-    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
       'http://127.0.0.1:43119/v2/ingestions',
     );
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain(
+      '/v2/ingestions/by-client-request/request-malformed-ingestion-ingestion',
+    );
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/chunks/'))).toBe(false);
   });
 
   it('rejects a finalize response whose ingestion identity does not match the upload', async () => {
@@ -403,6 +408,102 @@ describe('HttpCaptureClient', () => {
       .subscribe({ error: (value) => (error = value) });
 
     await vi.waitFor(() => expect(error).toBeInstanceOf(TypeError));
+    expect(fetchMock.mock.calls.some(([url, init]) =>
+      String(url).endsWith('/v2/ingestions/ingestion-1') && init?.method === 'DELETE',
+    )).toBe(false);
+  });
+
+  it('recovers a committed ingestion after the open response is lost by client request lookup', async () => {
+    const operation = {
+      protocolVersion: '2',
+      captureId: 'capture-recovered',
+      ingestionId: 'ingestion-1',
+      status: 'extracting',
+      partialRevision: 0,
+      lastEventSequence: 0,
+      createdAt: '2026-08-11T00:00:00Z',
+      updatedAt: '2026-08-11T00:00:00Z',
+    };
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockRejectedValueOnce(new TypeError('connection closed after open'))
+      .mockResolvedValueOnce(ingestionResponse('ingestion-1'))
+      .mockResolvedValueOnce(jsonResponse({ ingestionId: 'ingestion-1' }))
+      .mockResolvedValueOnce(ingestionResponse('ingestion-1'))
+      .mockResolvedValueOnce(jsonResponse(operation, 202));
+    const client = configureClient(fetchMock) as HttpCaptureClient;
+    let received: unknown;
+    let error: unknown;
+
+    client
+      .startStreamingCapture({
+        clientRequestId: 'request-lost-open',
+        file: new File(['abc'], 'scan.pdf', { type: 'application/pdf' }),
+        sourceKind: 'pdf',
+        structuringMode: 'runtime',
+      })
+      .subscribe({ next: (value) => (received = value), error: (value) => (error = value) });
+
+    await vi.waitFor(() => expect(received).toEqual(operation));
+    expect(error).toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain(
+      '/v2/ingestions/by-client-request/request-lost-open-ingestion',
+    );
+    expect(fetchMock.mock.calls.some(([url, init]) =>
+      String(url).endsWith('/v2/ingestions/ingestion-1') && init?.method === 'DELETE',
+    )).toBe(false);
+  });
+
+  it('keeps the open response recoverable when its ingestion lookup is unavailable', async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockRejectedValueOnce(new TypeError('connection closed after open'))
+      .mockResolvedValueOnce(jsonResponse(
+        { error: { code: 'runtime_unavailable', message: 'Runtime unavailable.' } },
+        503,
+      ));
+    const client = configureClient(fetchMock) as HttpCaptureClient;
+    let error: unknown;
+
+    client
+      .startStreamingCapture({
+        clientRequestId: 'request-unknown-open',
+        file: new File(['abc'], 'scan.pdf', { type: 'application/pdf' }),
+        sourceKind: 'pdf',
+        structuringMode: 'runtime',
+      })
+      .subscribe({ error: (value) => (error = value) });
+
+    await vi.waitFor(() => expect(error).toBeInstanceOf(TypeError));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls.some(([url, init]) =>
+      String(url).endsWith('/v2/ingestions/ingestion-1') && init?.method === 'DELETE',
+    )).toBe(false);
+  });
+
+  it('rethrows the original open failure when lookup confirms the ingestion was never created', async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockRejectedValueOnce(new TypeError('connection closed after open'))
+      .mockResolvedValueOnce(jsonResponse(
+        { error: { code: 'ingestion_not_found', message: 'Ingestion was not found.' } },
+        404,
+      ));
+    const client = configureClient(fetchMock) as HttpCaptureClient;
+    let error: unknown;
+
+    client
+      .startStreamingCapture({
+        clientRequestId: 'request-absent-open',
+        file: new File(['abc'], 'scan.pdf', { type: 'application/pdf' }),
+        sourceKind: 'pdf',
+        structuringMode: 'runtime',
+      })
+      .subscribe({ error: (value) => (error = value) });
+
+    await vi.waitFor(() => expect(error).toBeInstanceOf(TypeError));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls.some(([url, init]) =>
       String(url).endsWith('/v2/ingestions/ingestion-1') && init?.method === 'DELETE',
     )).toBe(false);

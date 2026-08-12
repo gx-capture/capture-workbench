@@ -2,8 +2,10 @@
 
 ## Decision status
 
-P0-P3 implementation and local v1 engine removal are complete. Final cleanup
-and the external consumer compatibility gate remain open.
+P0-P3 implementation, local v1 engine removal, the post-d3bf3de hardening, the
+post-1db5624 final closeout, and the post-695567b ingestion open-recovery phase
+are complete. Final cleanup and the external consumer compatibility gate
+remain open.
 
 ## Change mode checkpoint
 

@@ -270,6 +270,13 @@ class StreamingRepository:
         with self._lock:
             return self._ingestion_snapshot(self._get_ingestion(ingestion_id))
 
+    def get_ingestion_by_client_request_id(self, client_request_id: str) -> IngestionV2:
+        with self._lock:
+            ingestion_id = self._ingestion_idempotency.get(client_request_id)
+            if ingestion_id is None:
+                raise StreamingRecordNotFoundError(client_request_id)
+            return self._ingestion_snapshot(self._get_ingestion(ingestion_id))
+
     def append_chunk(
         self,
         ingestion_id: str,

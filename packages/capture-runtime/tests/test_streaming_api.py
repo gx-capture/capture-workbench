@@ -133,6 +133,34 @@ def test_streaming_api_maps_finalize_upload_limit_to_413_after_limit_reload(
     assert finalized.json()["error"]["code"] == "upload_too_large"
 
 
+def test_streaming_api_finds_ingestion_by_client_request_id_for_lost_open_response_recovery(
+    client: TestClient,
+) -> None:
+    source = _source()
+    client_request_id = "api-stream-ingestion-recovery-lookup"
+    opened = client.post(
+        "/v2/ingestions",
+        json={
+            "clientRequestId": client_request_id,
+            "kind": "audio",
+            "fileName": "sample.mp3",
+            "mediaType": "audio/mpeg",
+            "totalBytes": len(source),
+            "sourceSha256": hashlib.sha256(source).hexdigest(),
+        },
+    )
+    assert opened.status_code == 201, opened.text
+    ingestion_id = opened.json()["ingestionId"]
+
+    recovered = client.get(
+        "/v2/ingestions/by-client-request/" + client_request_id,
+    )
+
+    assert recovered.status_code == 200, recovered.text
+    assert recovered.json()["ingestionId"] == ingestion_id
+    assert client.get("/v2/ingestions/by-client-request/missing-request").status_code == 404
+
+
 def test_streaming_capability_fails_closed_without_progressive_decoder(
     client: TestClient, monkeypatch
 ) -> None:

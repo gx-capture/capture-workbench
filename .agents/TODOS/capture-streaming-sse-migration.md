@@ -37,6 +37,16 @@ decision record, and phase commits.
       Playwright E2E, and `git diff --check` passed; the external Cert Prep/Law
       Prep compatibility gate remains unchecked.
 
+- [x] Complete the post-`695567b` ingestion open-recovery phase: add a runtime
+      by-client-request ingestion lookup and Angular/native lost-open-response
+      recovery, with the existing bounded expiry/prune documented as the orphan
+      backstop.
+  Verify: runtime streaming API/repository tests, Angular recovery tests,
+      native recovery tests, full Nx runtime/Angular/tools/workbench checks,
+      Tauri fmt/check/test/contract/package QA, deterministic smoke, Playwright
+      E2E, and `git diff --check` passed; the external Cert Prep/Law Prep
+      compatibility gate remains unchecked.
+
 ## Explicitly blocked evidence
 
 - Real engine-bearing OCR/Whisper smoke remains opt-in and depends on the

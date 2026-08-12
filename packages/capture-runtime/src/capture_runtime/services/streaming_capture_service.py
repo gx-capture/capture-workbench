@@ -81,6 +81,9 @@ class StreamingCaptureService:
     def get_ingestion(self, ingestion_id: str) -> IngestionV2:
         return self.repository.get_ingestion(ingestion_id)
 
+    def get_ingestion_by_client_request_id(self, client_request_id: str) -> IngestionV2:
+        return self.repository.get_ingestion_by_client_request_id(client_request_id)
+
     def delete_ingestion(self, ingestion_id: str) -> None:
         self.repository.delete_ingestion(ingestion_id)
 

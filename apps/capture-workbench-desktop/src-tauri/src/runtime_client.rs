@@ -140,32 +140,8 @@ pub(crate) fn start_streaming_capture(
         None,
     )?;
     let config = state.backend_config()?;
-    let ingestion = request_with_headers(
-        &config,
-        "POST",
-        "/v2/ingestions",
-        Some(RequestBody {
-            bytes: serde_json::to_vec(&json!({
-                "clientRequestId": format!("{}-ingestion", input.client_request_id),
-                "kind": source_kind,
-                "mode": "file",
-                "fileName": source.file_name.clone(),
-                "mediaType": source.media_type.clone(),
-                "totalBytes": source.bytes,
-            }))
-            .map_err(|_| "Progressive ingestion request cannot be encoded.".to_string())?,
-            content_type: "application/json".into(),
-        }),
-        None,
-        &[],
-    )?;
-    let ingestion_id = ingestion
-        .get("ingestionId")
-        .and_then(Value::as_str)
-        .ok_or_else(|| "Progressive ingestion response is invalid.".to_string())?
-        .to_string();
-    validate_opaque_id(&ingestion_id)
-        .map_err(|_| "Progressive ingestion response identity is invalid.".to_string())?;
+    let ingestion_id =
+        open_ingestion_with_recovery(&config, &source, source_kind, &input.client_request_id)?;
     persist_capture_recovery(
         library,
         &input.document_id,
@@ -251,12 +227,10 @@ pub(crate) fn start_streaming_capture(
         Err(error)
             if capture_response_accepted
                 || (capture_request_attempted
-                    && (capture_create_uncertain || is_uncertain_capture_create_error(&error))) =>
+                    && (capture_create_uncertain || is_uncertain_runtime_error(&error))) =>
         {
             match reconcile_capture_by_client_request(&config, &capture_body, &client_request_id) {
-                CaptureReconciliation::Committed(value)
-                    if is_uncertain_capture_create_error(&error) =>
-                {
+                CaptureReconciliation::Committed(value) if is_uncertain_runtime_error(&error) => {
                     let capture_id = value
                         .get("captureId")
                         .and_then(Value::as_str)
@@ -299,6 +273,63 @@ pub(crate) fn start_streaming_capture(
         }
         Err(error) => Err(cleanup_uncommitted_ingestion(&config, &ingestion_id, error)),
     }
+}
+
+fn open_ingestion_with_recovery(
+    config: &BackendConfig,
+    source: &RuntimeSourceFile,
+    source_kind: &str,
+    client_request_id: &str,
+) -> Result<String, String> {
+    let ingestion_request_id = format!("{client_request_id}-ingestion");
+    let ingestion_request = RequestBody {
+        bytes: serde_json::to_vec(&json!({
+            "clientRequestId": ingestion_request_id,
+            "kind": source_kind,
+            "mode": "file",
+            "fileName": source.file_name.clone(),
+            "mediaType": source.media_type.clone(),
+            "totalBytes": source.bytes,
+        }))
+        .map_err(|_| "Progressive ingestion request cannot be encoded.".to_string())?,
+        content_type: "application/json".into(),
+    };
+    let ingestion = match request_with_headers(
+        config,
+        "POST",
+        "/v2/ingestions",
+        Some(ingestion_request),
+        None,
+        &[],
+    ) {
+        Ok(ingestion) => ingestion,
+        Err(error) if is_uncertain_runtime_error(&error) => {
+            match request_with_headers(
+                config,
+                "GET",
+                &format!(
+                    "/v2/ingestions/by-client-request/{}",
+                    encode_path_segment(&ingestion_request_id)
+                ),
+                None,
+                None,
+                &[],
+            ) {
+                Ok(recovered) => recovered,
+                Err(lookup_error) if is_http_rejection(&lookup_error, 404) => return Err(error),
+                Err(_) => return Err(error),
+            }
+        }
+        Err(error) => return Err(error),
+    };
+    let ingestion_id = ingestion
+        .get("ingestionId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "Progressive ingestion response is invalid.".to_string())?
+        .to_string();
+    validate_opaque_id(&ingestion_id)
+        .map_err(|_| "Progressive ingestion response identity is invalid.".to_string())?;
+    Ok(ingestion_id)
 }
 
 enum CaptureReconciliation {
@@ -424,7 +455,7 @@ fn request_capture_with_recovery_state(
         Ok(value) => return Ok(value),
         Err(error) => error,
     };
-    if !is_uncertain_capture_create_error(&first_error) {
+    if !is_uncertain_runtime_error(&first_error) {
         return Err(CaptureCreateFailure {
             message: first_error,
             uncertain: false,
@@ -432,7 +463,7 @@ fn request_capture_with_recovery_state(
     }
     match send() {
         Ok(value) => Ok(value),
-        Err(second_error) if is_uncertain_capture_create_error(&second_error) => {
+        Err(second_error) if is_uncertain_runtime_error(&second_error) => {
             let recovered = request_with_headers(
                 config,
                 "GET",
@@ -493,7 +524,7 @@ fn validate_recovered_capture(value: Value, body: &RequestBody) -> Result<Value,
     Ok(value)
 }
 
-fn is_uncertain_capture_create_error(error: &str) -> bool {
+fn is_uncertain_runtime_error(error: &str) -> bool {
     if matches!(
         error,
         "Capture Runtime is unavailable."
@@ -2549,6 +2580,127 @@ mod tests {
         .expect_err("conflicting lookup");
 
         assert_eq!(error, "Capture Runtime recovered a conflicting capture.");
+        server.join().expect("server");
+    }
+
+    #[test]
+    fn open_ingestion_recovers_by_client_request_id_after_lost_response() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("listener");
+        let port = listener.local_addr().expect("address").port();
+        let server = thread::spawn(move || {
+            let (lost, _) = listener.accept().expect("lost response connection");
+            drop(lost);
+            let (mut lookup, _) = listener.accept().expect("lookup connection");
+            let lookup_request = read_http_request(&mut lookup);
+            assert!(lookup_request.starts_with(
+                "GET /v2/ingestions/by-client-request/consumer.request.v1-ingestion HTTP/1.1"
+            ));
+            let body = r#"{"protocolVersion":"2","ingestionId":"ingestion-recovered","status":"open","fileName":"scan.pdf","mediaType":"application/pdf","totalBytes":3,"receivedBytes":0,"contiguousBytes":0,"nextChunkIndex":0,"nextOffset":0,"expiresAt":"2026-08-12T00:00:00Z"}"#;
+            write!(
+                lookup,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .expect("recovered response");
+        });
+        let config = BackendConfig {
+            base_url: format!("http://127.0.0.1:{port}"),
+            token: "token".into(),
+            runtime_version: "0.3.11".into(),
+            api_version: "1.0".into(),
+            capture_document_schema_version: "1".into(),
+        };
+        let source = RuntimeSourceFile {
+            file_name: "scan.pdf".into(),
+            media_type: "application/pdf".into(),
+            path: PathBuf::from("scan.pdf"),
+            bytes: 3,
+        };
+
+        let ingestion_id =
+            open_ingestion_with_recovery(&config, &source, "pdf", "consumer.request.v1")
+                .expect("recovered ingestion");
+
+        assert_eq!(ingestion_id, "ingestion-recovered");
+        server.join().expect("server");
+    }
+
+    #[test]
+    fn open_ingestion_keeps_uncertainty_when_recovery_lookup_also_fails() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("listener");
+        let port = listener.local_addr().expect("address").port();
+        let server = thread::spawn(move || {
+            let (lost, _) = listener.accept().expect("lost response connection");
+            drop(lost);
+            let (mut lookup, _) = listener.accept().expect("lookup connection");
+            let lookup_request = read_http_request(&mut lookup);
+            assert!(lookup_request.starts_with(
+                "GET /v2/ingestions/by-client-request/unknown-open-ingestion HTTP/1.1"
+            ));
+            write!(
+                lookup,
+                "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            )
+            .expect("lookup response");
+        });
+        let config = BackendConfig {
+            base_url: format!("http://127.0.0.1:{port}"),
+            token: "token".into(),
+            runtime_version: "0.3.11".into(),
+            api_version: "1.0".into(),
+            capture_document_schema_version: "1".into(),
+        };
+        let source = RuntimeSourceFile {
+            file_name: "scan.pdf".into(),
+            media_type: "application/pdf".into(),
+            path: PathBuf::from("scan.pdf"),
+            bytes: 3,
+        };
+
+        let error = open_ingestion_with_recovery(&config, &source, "pdf", "unknown-open")
+            .expect_err("uncertain recovery");
+
+        assert!(is_uncertain_runtime_error(&error));
+        server.join().expect("server");
+    }
+
+    #[test]
+    fn open_ingestion_rethrows_original_failure_when_lookup_confirms_absence() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("listener");
+        let port = listener.local_addr().expect("address").port();
+        let server = thread::spawn(move || {
+            let (lost, _) = listener.accept().expect("lost response connection");
+            drop(lost);
+            let (mut lookup, _) = listener.accept().expect("lookup connection");
+            let lookup_request = read_http_request(&mut lookup);
+            assert!(lookup_request.starts_with(
+                "GET /v2/ingestions/by-client-request/absent-open-ingestion HTTP/1.1"
+            ));
+            write!(
+                lookup,
+                "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            )
+            .expect("absent response");
+        });
+        let config = BackendConfig {
+            base_url: format!("http://127.0.0.1:{port}"),
+            token: "token".into(),
+            runtime_version: "0.3.11".into(),
+            api_version: "1.0".into(),
+            capture_document_schema_version: "1".into(),
+        };
+        let source = RuntimeSourceFile {
+            file_name: "scan.pdf".into(),
+            media_type: "application/pdf".into(),
+            path: PathBuf::from("scan.pdf"),
+            bytes: 3,
+        };
+
+        let error = open_ingestion_with_recovery(&config, &source, "pdf", "absent-open")
+            .expect_err("confirmed absence");
+
+        assert!(is_uncertain_runtime_error(&error));
         server.join().expect("server");
     }
 

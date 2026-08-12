@@ -1,9 +1,9 @@
 # Capture Streaming SSE Migration Spec
 
 Status: implementation in progress; P0-P3, local v1 engine deletion, the
-post-d3bf3de hardening phase, and the post-1db5624 final closeout are complete.
-The external consumer compatibility gate and final residual cleanup remain
-open.
+post-d3bf3de hardening phase, the post-1db5624 final closeout, and the
+post-695567b ingestion open-recovery phase are complete. The external consumer
+compatibility gate and final residual cleanup remain open.
 
 ## Purpose
 
@@ -148,6 +148,16 @@ compatibility release before this producer can delete the public type.
    and the real Ollama smoke verifies a nonterminal operation snapshot between
    its active SSE disconnect and `Last-Event-ID` reconnect, failing on a
    terminal race. The external consumer gate remains unchecked.
+8. **Post-695567b ingestion open recovery**: completed in the containing phase
+   commit; runtime exposes `GET /v2/ingestions/by-client-request/{client_request_id}`
+   as the ingestion counterpart to the existing capture lookup, and Angular/
+   native clients recover an uncertain lost open-ingestion response through
+   that lookup. A 404 confirms the ingestion was never created and rethrows
+   the original failure; an unavailable lookup preserves the original
+   uncertainty without deleting a possibly committed ingestion. The existing
+   bounded expiry (unreferenced ingestions expire two hours after open and are
+   pruned at startup/initialize) remains the documented orphan backstop when
+   the runtime is unreachable. The external consumer gate remains unchecked.
 
 Each phase must have an explicit path list, its own review, and its own
 verification result. Revert consumers before reverting the runtime cutover;
@@ -202,6 +212,19 @@ phase commit records the narrow fixes and final local verification below.
   consistency, tools/workbench lint/typecheck, and `git diff --check` passed;
   unrelated dirty paths remain unstaged. The private engine-bearing Ollama
   smoke remains opt-in and was not synthesized for this local verification.
+- Post-`695567b` ingestion open-recovery (the containing phase commit) ??
+  runtime by-client-request ingestion lookup, Angular/native lost-open-response
+  recovery, and bounded-orphan documentation. Focused verification passed:
+  runtime streaming API/repository 40 passed, Angular client suite 99 passed,
+  native `runtime_client` 26 passed. Full local verification passed: runtime
+  329 passed/1 skipped/1 warning; Angular 99 passed; tools 21 passed; workbench
+  51 passed; Tauri 50 passed; desktop package QA 201 passed/2 skipped;
+  deterministic smoke and 4 Playwright E2E tests passed. Runtime
+  lint/typecheck/contracts, Angular async-boundary/lint/typecheck, desktop
+  cargo fmt/check, contract consistency, tools/workbench lint/typecheck, and
+  `git diff --check` passed; unrelated dirty paths remain unstaged. The private
+  engine-bearing Ollama smoke remains opt-in and was not synthesized for this
+  local verification.
 
 ## Acceptance criteria
 
@@ -224,11 +247,16 @@ phase commit records the narrow fixes and final local verification below.
 - After the final local closeout, an active-source residual scan finds no
   `/v1/captures` or
   `CaptureJobV1` capture-engine references.
+- A lost open-ingestion response can be recovered through the by-client-request
+  ingestion lookup; unreferenced ingestions remain bounded by the existing
+  two-hour expiry/prune backstop.
 
 ## Test plan
 
 - Python contract, route, repository, live subscriber, replay, reconnect,
   cancellation, cleanup, host-structuring, and all-media integration tests.
+- Ingestion lookup by client request, including recovery, confirmed-absence,
+  and unavailable-lookup outcomes.
 - Angular SSE frame parser, chunk upload, abort/unsubscribe, reconnect,
   reducer, workflow, and consumer smoke tests.
 - Rust/Tauri request, authorization, cursor, event bridge, and all-media

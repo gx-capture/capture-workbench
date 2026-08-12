@@ -32,6 +32,7 @@ import {
   type CaptureEventStreamOptions,
   type CaptureEventV2,
   type IngestionV2,
+  type OpenIngestionV2,
   type CaptureOperationV2,
   type CaptureStreamingResult,
   type CommitStreamingStructuredResultRequest,
@@ -169,16 +170,7 @@ export class HttpCaptureClient implements CaptureClient {
       mediaType: request.file.type || mediaTypeFor(request.sourceKind),
       totalBytes: request.file.size,
     };
-    const pipeline$ = this.request<IngestionV2>(
-      '/v2/ingestions',
-      {
-        method: 'POST',
-        idempotencyKey: ingestionRequest.clientRequestId,
-        json: ingestionRequest,
-        signal: request.signal,
-        decode: (value) => decodeIngestionResponse(value),
-      },
-    ).pipe(
+    const pipeline$ = this.openIngestion(ingestionRequest, request.signal).pipe(
       tap((ingestion) => {
         ingestionId = ingestion.ingestionId;
       }),
@@ -229,7 +221,7 @@ export class HttpCaptureClient implements CaptureClient {
     return pipeline$.pipe(
       catchError((error: unknown) => {
         if (!ingestionId) return throwError(() => error);
-        if (captureRequestAttempted && isUncertainCaptureCreateFailure(error)) {
+        if (captureRequestAttempted && isUncertainRuntimeResponseFailure(error)) {
           return this.reconcileUncertainCaptureCreate(
             clientRequestId,
             ingestionId,
@@ -241,6 +233,39 @@ export class HttpCaptureClient implements CaptureClient {
           mergeMap(() => throwError(() => error)),
         );
       }),
+    );
+  }
+
+  private openIngestion(
+    request: OpenIngestionV2,
+    signal?: AbortSignal,
+  ): Observable<IngestionV2> {
+    return this.request<IngestionV2>('/v2/ingestions', {
+      method: 'POST',
+      idempotencyKey: request.clientRequestId,
+      json: request,
+      signal,
+      decode: (value) => decodeIngestionResponse(value),
+    }).pipe(
+      catchError((error: unknown) => {
+        if (!isUncertainRuntimeResponseFailure(error)) return throwError(() => error);
+        return this.getStreamingIngestionByClientRequest(request.clientRequestId).pipe(
+          catchError((lookupError: unknown) => {
+            if (isIngestionNotFound(lookupError)) return throwError(() => error);
+            return throwError(() => error);
+          }),
+        );
+      }),
+    );
+  }
+
+  private getStreamingIngestionByClientRequest(
+    clientRequestId: string,
+  ): Observable<IngestionV2> {
+    const safeClientRequestId = assertClientRequestId(clientRequestId);
+    return this.request<IngestionV2>(
+      `/v2/ingestions/by-client-request/${encodeURIComponent(safeClientRequestId)}`,
+      { decode: (value) => decodeIngestionResponse(value) },
     );
   }
 
@@ -705,11 +730,16 @@ function mediaTypeFor(kind: StartStreamingCaptureRequest['sourceKind']): string 
   return kind === 'pdf' ? 'application/pdf' : kind === 'image' ? 'image/*' : 'audio/*';
 }
 
-function isUncertainCaptureCreateFailure(error: unknown): boolean {
+function isUncertainRuntimeResponseFailure(error: unknown): boolean {
   if (error instanceof CaptureHttpError && error.code === 'invalid_response') return true;
   if (error instanceof TypeError) return true;
   const status = (error as { readonly status?: unknown })?.status;
   return typeof status === 'number' && (status === 0 || status >= 500);
+}
+
+function isIngestionNotFound(error: unknown): boolean {
+  return error instanceof CaptureHttpError
+    && (error.status === 404 || error.code === 'ingestion_not_found');
 }
 
 function isCaptureNotFound(error: unknown): boolean {

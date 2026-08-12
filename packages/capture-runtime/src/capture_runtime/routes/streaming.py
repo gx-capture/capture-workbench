@@ -86,6 +86,18 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
                 "Ingestion request id was already used with different metadata.",
             ) from error
 
+    @router.get(
+        "/ingestions/by-client-request/{client_request_id}",
+        response_model=IngestionV2,
+    )
+    async def get_ingestion_by_client_request_id(
+        client_request_id: str,
+    ) -> IngestionV2:
+        try:
+            return service.get_ingestion_by_client_request_id(client_request_id)
+        except StreamingRecordNotFoundError as error:
+            raise ApiProblem(404, "ingestion_not_found", "Ingestion was not found.") from error
+
     @router.get("/ingestions/{ingestion_id}", response_model=IngestionV2)
     async def get_ingestion(ingestion_id: str) -> IngestionV2:
         try:
