@@ -174,6 +174,16 @@ describe('captureEventStream', () => {
     );
   });
 
+  it('rejects an SSE frame with a missing id', () => {
+    const [frame] = parseSseText(
+      `event: accepted\ndata: ${JSON.stringify(captureEvent(1, 'accepted'))}\n\n`,
+    );
+
+    expect(() => decodeCaptureEventFrame(frame)).toThrowError(
+      expect.objectContaining({ code: 'invalid_event_frame' }),
+    );
+  });
+
   it('rejects an eventId that has the right prefix but not the exact capture sequence', () => {
     const malformed = {
       ...captureEvent(1, 'accepted'),

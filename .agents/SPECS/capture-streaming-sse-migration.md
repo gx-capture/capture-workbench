@@ -6,8 +6,9 @@ post-695567b ingestion open-recovery phase, and the post-9e6e2b3 final
 hardening phase, and the post-3b61cef security/protocol hardening phase are
 complete, the post-e166174 final security hardening phase is complete, and the
 post-7909eeb final lifecycle/security phase, and the post-c762e02 final
-lifecycle hardening phase are complete. The external consumer compatibility
-gate and final residual cleanup remain open.
+lifecycle hardening phase, and the post-f9827bf final bounded security/protocol
+phase are complete. The external consumer compatibility gate and final
+residual cleanup remain open.
 
 ## Purpose
 
@@ -224,6 +225,14 @@ compatibility release before this producer can delete the public type.
     event id, and monotonic sequence, failing closed on corruption; the
     progressive audio oracle rejects unterminated EOF frames instead of
     flushing pending bytes. The external consumer gate remains unchecked.
+14. **Post-f9827bf final bounded security/protocol**: completed in the
+    containing phase commit; native SSE response size accounting counts body
+    bytes already present in the header-read prefix exactly once while keeping
+    the 60 MiB limit; the Tauri library rejects symlinked items/document
+    ancestors and enforces canonical no-symlink containment for reads, writes,
+    exports, and deletes under the library root; Angular and native SSE
+    parsers require a non-empty frame id matching the sequence and fail
+    closed on missing/empty ids. The external consumer gate remains unchecked.
 
 Each phase must have an explicit path list, its own review, and its own
 verification result. Revert consumers before reverting the runtime cutover;
@@ -391,6 +400,26 @@ phase commit records the narrow fixes and final local verification below.
   Ollama smoke remains opt-in and was not synthesized for this local
   verification.
 
+- Post-`f9827bf` final bounded security/protocol (the containing phase commit)
+  ??reviewed path groups: `apps/capture-workbench-desktop/src-tauri/src/
+  runtime_client.rs` (SSE size accounting, required frame id);
+  `apps/capture-workbench-desktop/src-tauri/src/library.rs` (canonical
+  no-symlink containment for document reads/writes/exports/deletes);
+  `packages/capture-angular/src/lib/sse-capture-event-stream.ts` and
+  `.spec.ts` (required frame id); `.agents/SPECS`, `.agents/TODOS`,
+  `.agents/DECISIONS` (evidence). Focused verification passed: native/library
+  lib tests 68 passed, Angular client suite 110 passed. Full local verification
+  passed: runtime 336 passed/9 skipped/1 warning; Angular 110 passed; tools 21
+  passed; workbench 54 passed; Tauri 68 passed; desktop package QA 209
+  passed/2 skipped; deterministic smoke and 4 Playwright E2E tests passed.
+  Runtime lint/typecheck/contracts, Angular async-boundary/lint/typecheck,
+  desktop cargo fmt/check, contract consistency, tools/workbench
+  lint/typecheck, and `git diff --check` passed; unrelated dirty paths remain
+  unstaged. Symlink-specific Tauri/library tests run when the OS permits
+  symlink creation; the canonical containment guards are platform-independent.
+  The private engine-bearing Ollama smoke remains opt-in and was not
+  synthesized for this local verification.
+
 ## Acceptance criteria
 
 - PDF, image, and audio each complete the same v2 lifecycle and produce
@@ -436,6 +465,12 @@ phase commit records the narrow fixes and final local verification below.
   metadata match the durable recovery record.
 - Replay reads validate capture identity, canonical event id, and monotonic
   sequence, failing closed on corruption.
+- Native SSE size accounting counts header-prefix body bytes exactly once
+  against the 60 MiB limit.
+- Tauri library document access rejects symlinked items/document ancestors and
+  enforces canonical containment for reads, writes, exports, and deletes.
+- Angular and native SSE parsers require a non-empty frame id matching the
+  event sequence.
 
 ## Test plan
 
@@ -454,6 +489,8 @@ phase commit records the narrow fixes and final local verification below.
 - Open-status decoding, cancellation-before-id recovery, durable recovery
   correlation, initialize-before-create containment ordering, replay
   validation, and progressive-audio oracle EOF rejection.
+- SSE size-accounting boundary tests, Tauri library containment guards, and
+  required frame-id regressions.
 - Angular SSE frame parser, chunk upload, abort/unsubscribe, reconnect,
   reducer, workflow, and consumer smoke tests.
 - Rust/Tauri request, authorization, cursor, event bridge, and all-media

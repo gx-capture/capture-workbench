@@ -123,6 +123,7 @@ impl LibraryStore {
         let root = app_data_dir.join("library");
         fs::create_dir_all(root.join("items"))
             .map_err(|error| format!("Capture library cannot be created: {error}"))?;
+        ensure_library_root_safe(&root)?;
         recover_library_transaction(&root)?;
         let index_path = root.join(INDEX_FILE_NAME);
         let index = match fs::read(&index_path) {
@@ -157,6 +158,7 @@ impl LibraryStore {
         let now = now_ms()?;
         let document_id = random_document_id()?;
         let document_directory = self.document_directory(&document_id)?;
+        ensure_leaf_safe(&self.root, &document_directory.join(SOURCE_FILE_NAME))?;
         fs::create_dir_all(&document_directory).map_err(|error| {
             format!("Capture library source directory cannot be created: {error}")
         })?;
@@ -287,24 +289,29 @@ impl LibraryStore {
         let transaction_id = random_document_id()?;
         let mut prepared = Vec::new();
         if let Some(raw) = &update.raw {
+            let raw_path = directory.join(RAW_FILE_NAME);
+            ensure_leaf_safe(&self.root, &raw_path)?;
             prepared.push(prepare_transaction_entry(
                 &self.root,
-                &directory.join(RAW_FILE_NAME),
+                &raw_path,
                 &transaction_id,
                 serde_json::to_vec_pretty(raw)
                     .map_err(|error| format!("Capture library JSON cannot be encoded: {error}"))?,
             )?);
         }
         if let Some(result) = &update.result {
+            let result_path = directory.join(RESULT_FILE_NAME);
+            ensure_leaf_safe(&self.root, &result_path)?;
             prepared.push(prepare_transaction_entry(
                 &self.root,
-                &directory.join(RESULT_FILE_NAME),
+                &result_path,
                 &transaction_id,
                 serde_json::to_vec_pretty(result)
                     .map_err(|error| format!("Capture library JSON cannot be encoded: {error}"))?,
             )?);
         }
         let index_path = self.root.join(INDEX_FILE_NAME);
+        ensure_leaf_safe(&self.root, &index_path)?;
         prepared.push(prepare_transaction_entry(
             &self.root,
             &index_path,
@@ -358,6 +365,8 @@ impl LibraryStore {
     ) -> Result<LibraryDocumentDetail, String> {
         let document = self.find_document(&request.document_id)?;
         let directory = self.document_directory(&document.document_id)?;
+        ensure_leaf_safe(&self.root, &directory.join(RAW_FILE_NAME))?;
+        ensure_leaf_safe(&self.root, &directory.join(RESULT_FILE_NAME))?;
         Ok(LibraryDocumentDetail {
             summary: document.summary(),
             raw: read_json_optional(&directory.join(RAW_FILE_NAME))?,
@@ -373,6 +382,7 @@ impl LibraryStore {
         let path = self
             .document_directory(&document.document_id)?
             .join(SOURCE_FILE_NAME);
+        ensure_leaf_safe(&self.root, &path)?;
         let metadata = fs::symlink_metadata(&path)
             .map_err(|_| "Capture library source cannot be inspected.".to_string())?;
         if metadata.file_type().is_symlink() || !metadata.file_type().is_file() {
@@ -395,6 +405,7 @@ impl LibraryStore {
     ) -> Result<LibraryExportPayload, String> {
         let document = self.find_document(&request.document_id)?;
         let directory = self.document_directory(&document.document_id)?;
+        ensure_leaf_safe(&self.root, &directory.join(RESULT_FILE_NAME))?;
         match request.format {
             LibraryExportFormat::Json => {
                 let result = read_json_optional(&directory.join(RESULT_FILE_NAME))?
@@ -467,13 +478,19 @@ impl LibraryStore {
 
     fn document_directory(&self, document_id: &str) -> Result<PathBuf, String> {
         validate_document_id(document_id)?;
-        Ok(self.root.join("items").join(document_id))
+        let directory = self.root.join("items").join(document_id);
+        ensure_library_root_safe(&self.root)?;
+        ensure_no_symlink_ancestors(&self.root, &directory)?;
+        ensure_canonical_within(&self.root, &directory)?;
+        Ok(directory)
     }
 
     fn save_index(&self, index: &LibraryIndex) -> Result<(), String> {
+        ensure_library_root_safe(&self.root)?;
         let bytes = serde_json::to_vec_pretty(index)
             .map_err(|error| format!("Capture library index cannot be encoded: {error}"))?;
         let index_path = self.root.join(INDEX_FILE_NAME);
+        ensure_leaf_safe(&self.root, &index_path)?;
         if index_path.exists() {
             fs::copy(&index_path, self.root.join(INDEX_BACKUP_FILE_NAME)).map_err(|error| {
                 format!("Capture library recovery copy cannot be written: {error}")
@@ -611,6 +628,80 @@ fn now_ms() -> Result<u64, String> {
         .map_err(|_| "Capture library clock is invalid.".into())
 }
 
+fn is_reparse_link(path: &Path) -> bool {
+    fs::symlink_metadata(path)
+        .map(|metadata| metadata.file_type().is_symlink())
+        .unwrap_or(false)
+        || fs::read_link(path).is_ok()
+}
+
+fn ensure_canonical_within(root: &Path, candidate: &Path) -> Result<(), String> {
+    let canonical_root = fs::canonicalize(root)
+        .map_err(|_| "Capture library root cannot be resolved.".to_string())?;
+    let canonical = canonicalize_allowing_missing(candidate)?;
+    if canonical != canonical_root && !canonical.starts_with(&canonical_root) {
+        return Err("Capture library path escaped its root.".into());
+    }
+    Ok(())
+}
+
+fn canonicalize_allowing_missing(path: &Path) -> Result<PathBuf, String> {
+    if path.exists() {
+        return fs::canonicalize(path)
+            .map_err(|_| "Capture library path cannot be resolved.".to_string());
+    }
+    let mut missing = Vec::new();
+    let mut current = path.to_path_buf();
+    while !current.exists() {
+        let name = current
+            .file_name()
+            .ok_or_else(|| "Capture library path has no file name.".to_string())?
+            .to_owned();
+        missing.push(name);
+        if !current.pop() {
+            return Err("Capture library path has no resolvable ancestor.".into());
+        }
+    }
+    let mut canonical = fs::canonicalize(&current)
+        .map_err(|_| "Capture library path cannot be resolved.".to_string())?;
+    for name in missing.iter().rev() {
+        canonical.push(name);
+    }
+    Ok(canonical)
+}
+
+fn ensure_no_symlink_ancestors(root: &Path, candidate: &Path) -> Result<(), String> {
+    let mut current = candidate.to_path_buf();
+    loop {
+        if is_reparse_link(&current) {
+            return Err("Capture library path must not contain symbolic links.".into());
+        }
+        if current == root || !current.starts_with(root) {
+            break;
+        }
+        if !current.pop() {
+            break;
+        }
+    }
+    Ok(())
+}
+
+fn ensure_library_root_safe(root: &Path) -> Result<(), String> {
+    if is_reparse_link(root) {
+        return Err("Capture library root must not be a symbolic link.".into());
+    }
+    let items = root.join("items");
+    if is_reparse_link(&items) {
+        return Err("Capture library items root must not be a symbolic link.".into());
+    }
+    ensure_canonical_within(root, &items)
+}
+
+fn ensure_leaf_safe(root: &Path, path: &Path) -> Result<(), String> {
+    ensure_no_symlink_ancestors(root, path)?;
+    ensure_canonical_within(root, path)
+}
+
 fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let temporary = path.with_extension("tmp");
     fs::write(&temporary, bytes)
@@ -661,6 +752,7 @@ fn transaction_path(root: &Path, relative: &str) -> Result<PathBuf, String> {
 }
 
 fn write_transaction_journal(root: &Path, transaction: &LibraryTransaction) -> Result<(), String> {
+    ensure_library_root_safe(root)?;
     let bytes = serde_json::to_vec_pretty(transaction)
         .map_err(|error| format!("Capture library transaction cannot be encoded: {error}"))?;
     atomic_write(&root.join(TRANSACTION_FILE_NAME), &bytes)
@@ -671,6 +763,7 @@ fn commit_library_transaction(
     mut transaction: LibraryTransaction,
     prepared: Vec<PreparedTransactionEntry>,
 ) -> Result<(), String> {
+    ensure_library_root_safe(root)?;
     for (index, entry) in prepared.iter().enumerate() {
         let temporary = transaction_path(root, &entry.journal.temporary_file_name)?;
         if let Err(error) = inject_transaction_failure(&format!("stage-write-{index}"))
@@ -728,6 +821,7 @@ fn commit_library_transaction(
 }
 
 fn recover_library_transaction(root: &Path) -> Result<(), String> {
+    ensure_library_root_safe(root)?;
     let journal_path = root.join(TRANSACTION_FILE_NAME);
     let bytes = match fs::read(&journal_path) {
         Ok(bytes) => bytes,
@@ -821,6 +915,7 @@ fn remove_file_if_exists(path: &Path) -> Result<(), String> {
 }
 
 fn load_backup_index(root: &Path) -> Result<LibraryIndex, String> {
+    ensure_library_root_safe(root)?;
     let backup_path = root.join(INDEX_BACKUP_FILE_NAME);
     let bytes = fs::read(backup_path)
         .map_err(|error| format!("Capture library recovery copy cannot be read: {error}"))?;
@@ -1544,6 +1639,94 @@ mod tests {
                     .and_then(|item| fs::metadata(item.path()).ok())
                     .is_some_and(|metadata| metadata.len() > MAX_SOURCE_BYTES as u64)
             }));
+    }
+
+    #[test]
+    fn library_path_guards_reject_external_canonical_paths() {
+        let directory = tempfile::tempdir().expect("temporary app data");
+        let root = directory.path().join("library");
+        fs::create_dir_all(root.join("items")).expect("items");
+
+        assert!(ensure_canonical_within(&root, &root.join("items")).is_ok());
+        assert!(ensure_canonical_within(&root, &directory.path().join("outside")).is_err());
+    }
+
+    #[test]
+    fn document_directory_rejects_symlinked_items_root() {
+        let directory = tempfile::tempdir().expect("temporary app data");
+        let library = LibraryStore::open(directory.path()).expect("library");
+        let items = directory.path().join("library").join("items");
+        let outside = directory.path().join("outside-items");
+        fs::create_dir(&outside).expect("outside");
+        fs::remove_dir_all(&items).expect("remove items");
+        #[cfg(windows)]
+        let symlink_result = std::os::windows::fs::symlink_dir(&outside, &items);
+        #[cfg(unix)]
+        let symlink_result = std::os::unix::fs::symlink(&outside, &items);
+        if symlink_result.is_ok() {
+            let document_id = "a".repeat(32);
+            assert!(library.document_directory(&document_id).is_err());
+        }
+    }
+
+    #[test]
+    fn document_access_rejects_symlinked_document_directory() {
+        let directory = tempfile::tempdir().expect("temporary app data");
+        let library = LibraryStore::open(directory.path()).expect("library");
+        let created = library
+            .create_source(LibrarySourceInput {
+                file_name: "notes.pdf".into(),
+                media_type: "application/pdf".into(),
+                bytes: b"pdf bytes".to_vec(),
+            })
+            .expect("source");
+        let document_directory = library
+            .document_directory(&created.document_id)
+            .expect("document directory");
+        let outside = directory.path().join("outside-document");
+        fs::create_dir(&outside).expect("outside");
+        fs::remove_dir_all(&document_directory).expect("remove document");
+        #[cfg(windows)]
+        let symlink_result = std::os::windows::fs::symlink_dir(&outside, &document_directory);
+        #[cfg(unix)]
+        let symlink_result = std::os::unix::fs::symlink(&outside, &document_directory);
+        if symlink_result.is_ok() {
+            assert!(library
+                .get(LibraryDocumentRequest {
+                    document_id: created.document_id,
+                })
+                .is_err());
+        }
+    }
+
+    #[test]
+    fn document_read_rejects_symlinked_result_leaf() {
+        let directory = tempfile::tempdir().expect("temporary app data");
+        let library = LibraryStore::open(directory.path()).expect("library");
+        let created = library
+            .create_source(LibrarySourceInput {
+                file_name: "notes.pdf".into(),
+                media_type: "application/pdf".into(),
+                bytes: b"pdf bytes".to_vec(),
+            })
+            .expect("source");
+        let result_path = library
+            .document_directory(&created.document_id)
+            .expect("document directory")
+            .join(RESULT_FILE_NAME);
+        let outside = directory.path().join("outside-result.json");
+        fs::write(&outside, b"{}").expect("outside result");
+        #[cfg(windows)]
+        let symlink_result = std::os::windows::fs::symlink_file(&outside, &result_path);
+        #[cfg(unix)]
+        let symlink_result = std::os::unix::fs::symlink(&outside, &result_path);
+        if symlink_result.is_ok() {
+            assert!(library
+                .get(LibraryDocumentRequest {
+                    document_id: created.document_id,
+                })
+                .is_err());
+        }
     }
 
     #[test]

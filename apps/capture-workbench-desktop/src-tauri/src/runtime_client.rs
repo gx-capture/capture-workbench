@@ -1027,6 +1027,29 @@ fn request_sse_stream<F>(
 where
     F: FnMut(Value) -> Result<(), String>,
 {
+    request_sse_stream_bounded(
+        config,
+        path,
+        last_event_id,
+        expected_capture_id,
+        cancellation,
+        &mut on_event,
+        MAX_RUNTIME_RESPONSE_BYTES,
+    )
+}
+
+fn request_sse_stream_bounded<F>(
+    config: &BackendConfig,
+    path: &str,
+    last_event_id: Option<&str>,
+    expected_capture_id: Option<&str>,
+    cancellation: Option<&AtomicBool>,
+    mut on_event: &mut F,
+    max_response_bytes: u64,
+) -> Result<(), String>
+where
+    F: FnMut(Value) -> Result<(), String>,
+{
     let port = loopback_port(&config.base_url)?;
     let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
     let mut stream = TcpStream::connect_timeout(&address, REQUEST_TIMEOUT)
@@ -1062,7 +1085,7 @@ where
             return Err("Capture Runtime response was malformed.".to_string());
         }
         total_bytes = total_bytes.saturating_add(count as u64);
-        if total_bytes > MAX_RUNTIME_RESPONSE_BYTES {
+        if total_bytes > max_response_bytes {
             return Err("Capture Runtime response exceeded the desktop safety limit.".into());
         }
         response_prefix.extend_from_slice(&chunk[..count]);
@@ -1071,6 +1094,7 @@ where
             .position(|window| window == b"\r\n\r\n")
         {
             body_prefix.extend_from_slice(&response_prefix[index + 4..]);
+            total_bytes = total_bytes.saturating_sub(body_prefix.len() as u64);
             break index;
         }
         if response_prefix.len() > 64 * 1024 {
@@ -1113,7 +1137,7 @@ where
             break;
         }
         total_bytes = total_bytes.saturating_add(count as u64);
-        if total_bytes > MAX_RUNTIME_RESPONSE_BYTES {
+        if total_bytes > max_response_bytes {
             return Err("Capture Runtime response exceeded the desktop safety limit.".into());
         }
         parser.feed(&decoded_chunk[..count], &mut on_event)?;
@@ -1428,10 +1452,8 @@ impl<'a> SseParser<'a> {
         let mut value: Value = serde_json::from_str(&self.frame.data.join("\n"))
             .map_err(|_| "Capture Runtime SSE event was not valid JSON.".to_string())?;
         let (sequence, event_type) = validate_capture_event(&value, self.expected_capture_id)?;
-        if let Some(id) = self.frame.id.as_deref() {
-            if id != sequence.to_string() {
-                return Err("Capture Runtime SSE event id did not match its sequence.".to_string());
-            }
+        if self.frame.id.as_deref() != Some(sequence.to_string().as_str()) {
+            return Err("Capture Runtime SSE event id did not match its sequence.".to_string());
         }
         if let Some(event) = self.frame.event.as_deref() {
             if event != event_type {
@@ -2493,11 +2515,106 @@ mod tests {
     }
 
     #[test]
+    fn request_sse_counts_header_prefix_body_bytes_exactly_once() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("listener");
+        let port = listener.local_addr().expect("address").port();
+        let max_response_bytes = 1024;
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut request = [0_u8; 4096];
+            let count = stream.read(&mut request).expect("request");
+            let request = String::from_utf8_lossy(&request[..count]);
+            assert!(request.contains("GET /v2/captures/capture-1/events HTTP/1.1"));
+            let body_size = max_response_bytes as usize - 256;
+            let mut response =
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n"
+                    .to_vec();
+            response.extend(std::iter::repeat(0u8).take(body_size));
+            stream.write_all(&response).expect("response");
+        });
+        let error = request_sse_stream_bounded(
+            &BackendConfig {
+                base_url: format!("http://127.0.0.1:{port}"),
+                token: "token".into(),
+                runtime_version: "0.3.11".into(),
+                api_version: "1.0".into(),
+                capture_document_schema_version: "1".into(),
+            },
+            "/v2/captures/capture-1/events",
+            None,
+            Some("capture-1"),
+            None,
+            &mut |_event| Ok(()),
+            max_response_bytes,
+        )
+        .expect_err("bounded response");
+
+        assert!(!error.contains("exceeded"));
+        server.join().expect("server");
+    }
+
+    #[test]
+    fn request_sse_rejects_body_over_the_bounded_limit() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("listener");
+        let port = listener.local_addr().expect("address").port();
+        let max_response_bytes = 1024;
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut request = [0_u8; 4096];
+            let count = stream.read(&mut request).expect("request");
+            let request = String::from_utf8_lossy(&request[..count]);
+            assert!(request.contains("GET /v2/captures/capture-1/events HTTP/1.1"));
+            let body_size = max_response_bytes as usize + 1;
+            let mut response =
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n"
+                    .to_vec();
+            response.extend(std::iter::repeat(0u8).take(body_size));
+            stream.write_all(&response).expect("response");
+        });
+        let error = request_sse_stream_bounded(
+            &BackendConfig {
+                base_url: format!("http://127.0.0.1:{port}"),
+                token: "token".into(),
+                runtime_version: "0.3.11".into(),
+                api_version: "1.0".into(),
+                capture_document_schema_version: "1".into(),
+            },
+            "/v2/captures/capture-1/events",
+            None,
+            Some("capture-1"),
+            None,
+            &mut |_event| Ok(()),
+            max_response_bytes,
+        )
+        .expect_err("over-limit response");
+
+        assert!(error.contains("exceeded"));
+        server.join().expect("server");
+    }
+
+    #[test]
+    fn runtime_sse_limit_stays_at_60_mib() {
+        assert_eq!(MAX_RUNTIME_RESPONSE_BYTES, 60 * 1024 * 1024);
+    }
+
+    #[test]
+    fn streaming_sse_rejects_missing_or_empty_event_ids() {
+        let payload = r#"{"protocolVersion":"2","eventId":"capture-1/8","sequence":8,"captureId":"capture-1","kind":"audio","eventType":"checkpoint","stage":"extracting","createdAt":"2026-01-01T00:00:00Z"}"#;
+        let missing = format!("event: checkpoint\ndata: {payload}\n\n");
+        let empty = format!("id: \nevent: checkpoint\ndata: {payload}\n\n");
+        let valid = format!("id: 8\nevent: checkpoint\ndata: {payload}\n\n");
+
+        assert!(parse_sse_events(missing.as_bytes(), None, "token").is_err());
+        assert!(parse_sse_events(empty.as_bytes(), None, "token").is_err());
+        assert!(parse_sse_events(valid.as_bytes(), None, "token").is_ok());
+    }
+
+    #[test]
     fn streaming_sse_rejects_metadata_mismatch_and_non_increasing_sequences() {
         let payload = r#"{"protocolVersion":"2","eventId":"capture-1/8","sequence":8,"captureId":"capture-1","kind":"audio","eventType":"checkpoint","stage":"extracting","progress":0.5,"partialRevision":1,"createdAt":"2026-01-01T00:00:00Z"}"#;
         let id_mismatch = format!("id: 7\nevent: checkpoint\ndata: {payload}\n\n");
         let event_mismatch = format!("id: 8\nevent: completed\ndata: {payload}\n\n");
-        let duplicate = format!("data: {payload}\n\ndata: {payload}\n\n",);
+        let duplicate = format!("id: 8\ndata: {payload}\n\nid: 8\ndata: {payload}\n\n");
 
         assert!(parse_sse_events(id_mismatch.as_bytes(), None, "token")
             .expect_err("id mismatch")

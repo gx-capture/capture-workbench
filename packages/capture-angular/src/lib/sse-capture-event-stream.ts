@@ -106,7 +106,6 @@ export function decodeCaptureEventFrame(
   }
   const event = normalizeCaptureEvent(parsed, expectedCaptureId);
   if (
-    frame.id !== undefined &&
     frame.id !== String(event.sequence)
   ) {
     throw invalidEventFrame();
