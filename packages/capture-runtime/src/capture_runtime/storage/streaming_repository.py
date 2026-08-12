@@ -280,7 +280,7 @@ class StreamingRepository:
             )
             directory = self._ingestion_directory(ingestion_id)
             directory.mkdir(parents=True, exist_ok=False)
-            (directory / "source.bin").touch()
+            self._ingestion_source_path(ingestion_id).touch()
             self._ingestions[ingestion_id] = record
             self._ingestion_idempotency[request.client_request_id] = ingestion_id
             self._persist_ingestion(record)
@@ -505,9 +505,10 @@ class StreamingRepository:
                 error=error,
                 created_at=self._clock.now(),
             )
-            with (self._capture_directory(capture_id) / "events.jsonl").open(
-                "a", encoding="utf-8"
-            ) as events:
+            directory = self._capture_directory(capture_id)
+            events_path = directory / "events.jsonl"
+            self._ensure_leaf_contained(directory, events_path)
+            with events_path.open("a", encoding="utf-8") as events:
                 events.write(json.dumps(event.model_dump(mode="json", by_alias=True)) + "\n")
                 events.flush()
                 os.fsync(events.fileno())
@@ -588,7 +589,9 @@ class StreamingRepository:
 
     def _read_events_locked(self, capture_id: str, *, after_sequence: int) -> list[CaptureEventV2]:
         record = self._get_capture(capture_id)
-        path = self._capture_directory(capture_id) / "events.jsonl"
+        directory = self._capture_directory(capture_id)
+        path = directory / "events.jsonl"
+        self._ensure_leaf_contained(directory, path)
         events: deque[CaptureEventV2] = deque(maxlen=_MAX_EVENT_REPLAY)
         replay_count = 0
         with path.open("r", encoding="utf-8") as event_log:
@@ -661,8 +664,10 @@ class StreamingRepository:
                 raise StreamingTransitionError("capture is terminal")
             if partial.revision < record.operation.partial_revision:
                 raise StreamingTransitionError("partial revision regressed")
+            directory = self._capture_directory(partial.capture_id)
+            self._ensure_leaf_contained(directory, directory / "partial.json")
             _atomic_json(
-                self._capture_directory(partial.capture_id) / "partial.json",
+                directory / "partial.json",
                 partial.model_dump(mode="json", by_alias=True),
             )
             record.operation = record.operation.model_copy(
@@ -678,8 +683,10 @@ class StreamingRepository:
             record = self._get_capture(capture_id)
             if record.operation.status in _TERMINAL_CAPTURE_STATUSES:
                 raise StreamingTransitionError("capture is terminal")
+            directory = self._capture_directory(capture_id)
+            self._ensure_leaf_contained(directory, directory / "raw.json")
             _atomic_json(
-                self._capture_directory(capture_id) / "raw.json",
+                directory / "raw.json",
                 raw.model_dump(mode="json", by_alias=True),
             )
 
@@ -687,9 +694,10 @@ class StreamingRepository:
         with self._lock:
             self._get_capture(capture_id)
             try:
-                return RawCaptureV1.model_validate_json(
-                    (self._capture_directory(capture_id) / "raw.json").read_text(encoding="utf-8")
-                )
+                directory = self._capture_directory(capture_id)
+                raw_path = directory / "raw.json"
+                self._ensure_leaf_contained(directory, raw_path)
+                return RawCaptureV1.model_validate_json(raw_path.read_text(encoding="utf-8"))
             except (OSError, ValidationError) as error:
                 raise StreamingPartialNotFoundError(capture_id) from error
 
@@ -698,8 +706,10 @@ class StreamingRepository:
             record = self._get_capture(capture_id)
             if record.operation.status in _TERMINAL_CAPTURE_STATUSES:
                 raise StreamingTransitionError("capture is terminal")
+            directory = self._capture_directory(capture_id)
+            self._ensure_leaf_contained(directory, directory / "result.json")
             _atomic_json(
-                self._capture_directory(capture_id) / "result.json",
+                directory / "result.json",
                 result.model_dump(mode="json", by_alias=True),
             )
 
@@ -707,10 +717,11 @@ class StreamingRepository:
         with self._lock:
             self._get_capture(capture_id)
             try:
+                directory = self._capture_directory(capture_id)
+                result_path = directory / "result.json"
+                self._ensure_leaf_contained(directory, result_path)
                 return CaptureDocumentV1.model_validate_json(
-                    (self._capture_directory(capture_id) / "result.json").read_text(
-                        encoding="utf-8"
-                    )
+                    result_path.read_text(encoding="utf-8")
                 )
             except (OSError, ValidationError) as error:
                 raise StreamingPartialNotFoundError(capture_id) from error
@@ -898,10 +909,11 @@ class StreamingRepository:
         with self._lock:
             self._get_capture(capture_id)
             try:
+                directory = self._capture_directory(capture_id)
+                partial_path = directory / "partial.json"
+                self._ensure_leaf_contained(directory, partial_path)
                 return PartialCaptureV2.model_validate_json(
-                    (self._capture_directory(capture_id) / "partial.json").read_text(
-                        encoding="utf-8"
-                    )
+                    partial_path.read_text(encoding="utf-8")
                 )
             except (OSError, ValidationError) as error:
                 raise StreamingPartialNotFoundError(capture_id) from error
@@ -947,6 +959,7 @@ class StreamingRepository:
                 record.operation.ingestion_id,
                 excluding_capture_id=capture_id,
             )
+            self._ensure_no_symlink_leaves(directory)
             _remove_directory(directory)
             self._captures.pop(capture_id, None)
             self._capture_idempotency.pop(record.request.client_request_id, None)
@@ -994,6 +1007,7 @@ class StreamingRepository:
                 raise StreamingTransitionError("ingestion has an active capture")
             directory = self._ingestion_directory(normalized)
             _ensure_contained(self.root / "ingestions", directory)
+            self._ensure_no_symlink_leaves(directory)
             _remove_directory(directory)
             self._ingestions.pop(normalized, None)
             self._ingestion_idempotency.pop(record.request.client_request_id, None)
@@ -1016,6 +1030,7 @@ class StreamingRepository:
             return
         directory = self._ingestion_directory(ingestion_id)
         _ensure_contained(self.root / "ingestions", directory)
+        self._ensure_no_symlink_leaves(directory)
         _remove_directory(directory)
         self._ingestions.pop(record.ingestion_id, None)
         self._ingestion_idempotency.pop(record.request.client_request_id, None)
@@ -1029,8 +1044,26 @@ class StreamingRepository:
         directory = self._ingestion_directory(ingestion_id)
         _ensure_contained(self.root / "ingestions", directory)
         source_path = directory / "source.bin"
-        _ensure_contained(directory, source_path)
+        self._ensure_leaf_contained(directory, source_path)
         return source_path
+
+    def _ensure_leaf_contained(self, directory: Path, leaf: Path) -> None:
+        _ensure_contained(directory, leaf)
+        if leaf.is_symlink():
+            raise RuntimeError(f"{leaf} must not be a symlink")
+
+    def _ensure_no_symlink_leaves(self, directory: Path) -> None:
+        for name in (
+            "events.jsonl",
+            "metadata.json",
+            "raw.json",
+            "result.json",
+            "partial.json",
+            "source.bin",
+        ):
+            candidate = directory / name
+            if candidate.is_symlink():
+                raise RuntimeError(f"{candidate} must not be a symlink")
 
     def _get_ingestion(self, ingestion_id: str) -> _IngestionRecord:
         normalized = _identifier(ingestion_id)
@@ -1097,12 +1130,11 @@ class StreamingRepository:
         )
 
     def _persist_ingestion(self, record: _IngestionRecord) -> None:
-        _ensure_contained(
-            self.root / "ingestions",
-            self._ingestion_directory(record.ingestion_id),
-        )
+        directory = self._ingestion_directory(record.ingestion_id)
+        _ensure_contained(self.root / "ingestions", directory)
+        self._ensure_leaf_contained(directory, directory / "metadata.json")
         _atomic_json(
-            self._ingestion_directory(record.ingestion_id) / "metadata.json",
+            directory / "metadata.json",
             {
                 "request": record.request.model_dump(mode="json", by_alias=True),
                 "ingestionId": record.ingestion_id,
@@ -1118,12 +1150,11 @@ class StreamingRepository:
         )
 
     def _persist_capture(self, record: _CaptureRecord) -> None:
-        _ensure_contained(
-            self.root / "captures",
-            self._capture_directory(record.operation.capture_id),
-        )
+        directory = self._capture_directory(record.operation.capture_id)
+        _ensure_contained(self.root / "captures", directory)
+        self._ensure_leaf_contained(directory, directory / "metadata.json")
         _atomic_json(
-            self._capture_directory(record.operation.capture_id) / "metadata.json",
+            directory / "metadata.json",
             {
                 "request": record.request.model_dump(mode="json", by_alias=True),
                 "operation": record.operation.model_dump(mode="json", by_alias=True),
@@ -1142,7 +1173,7 @@ class StreamingRepository:
         """Repair source bytes to the last metadata-confirmed chunk boundary."""
         source_path = directory / "source.bin"
         _ensure_contained(self.root / "ingestions", directory)
-        _ensure_contained(directory, source_path)
+        self._ensure_leaf_contained(directory, source_path)
         if source_path.exists():
             source = source_path.read_bytes()
         else:
@@ -1218,11 +1249,16 @@ class StreamingRepository:
                 continue
             try:
                 _ensure_contained(self.root / "ingestions", directory)
-                payload = json.loads((directory / "metadata.json").read_text(encoding="utf-8"))
+                metadata_path = directory / "metadata.json"
+                self._ensure_leaf_contained(directory, metadata_path)
+                payload = json.loads(metadata_path.read_text(encoding="utf-8"))
                 request = OpenIngestionV2.model_validate(payload["request"])
+                normalized_id = _identifier(str(payload["ingestionId"]))
+                if directory.name != normalized_id:
+                    raise ValueError("ingestion metadata id does not match directory")
                 record = _IngestionRecord(
                     request=request,
-                    ingestion_id=_identifier(str(payload["ingestionId"])),
+                    ingestion_id=normalized_id,
                     status=StreamingIngestionStatus(payload["status"]),
                     expires_at=datetime_from_text(str(payload["expiresAt"])),
                     next_chunk_index=int(payload["nextChunkIndex"]),
@@ -1237,6 +1273,7 @@ class StreamingRepository:
             except (
                 OSError,
                 RuntimeError,
+                StreamingRecordNotFoundError,
                 KeyError,
                 IndexError,
                 TypeError,
@@ -1255,9 +1292,13 @@ class StreamingRepository:
                 continue
             try:
                 _ensure_contained(self.root / "captures", directory)
-                payload = json.loads((directory / "metadata.json").read_text(encoding="utf-8"))
+                metadata_path = directory / "metadata.json"
+                self._ensure_leaf_contained(directory, metadata_path)
+                payload = json.loads(metadata_path.read_text(encoding="utf-8"))
                 request = StartCaptureV2.model_validate(payload["request"])
                 operation = CaptureOperationV2.model_validate(payload["operation"])
+                if directory.name != _identifier(operation.capture_id):
+                    raise ValueError("capture metadata id does not match directory")
                 record = _CaptureRecord(
                     operation=operation,
                     request=request,
@@ -1269,6 +1310,7 @@ class StreamingRepository:
             except (
                 OSError,
                 RuntimeError,
+                StreamingRecordNotFoundError,
                 KeyError,
                 TypeError,
                 ValueError,
@@ -1391,7 +1433,9 @@ class StreamingRepository:
         self._persist_capture(record)
 
     def _latest_persisted_event(self, capture_id: str) -> CaptureEventV2 | None:
-        path = self._capture_directory(capture_id) / "events.jsonl"
+        directory = self._capture_directory(capture_id)
+        path = directory / "events.jsonl"
+        self._ensure_leaf_contained(directory, path)
         if not path.exists():
             _atomic_bytes(path, b"")
             return None

@@ -301,6 +301,58 @@ describe('HttpCaptureClient', () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/chunks/'))).toBe(false);
   });
 
+  it('rejects an initial open-ingestion response with mismatched kind before upload', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(jsonResponse({
+      protocolVersion: '2',
+      ingestionId: 'ingestion-1',
+      status: 'open',
+      kind: 'image',
+      fileName: 'scan.pdf',
+      mediaType: 'application/pdf',
+      totalBytes: 3,
+    }, 201));
+    const client = configureClient(fetchMock) as HttpCaptureClient;
+
+    await expect(firstValueFrom(client.startStreamingCapture({
+      clientRequestId: 'request-initial-kind-mismatch',
+      file: new File(['abc'], 'scan.pdf', { type: 'application/pdf' }),
+      sourceKind: 'pdf',
+      structuringMode: 'runtime',
+    }))).rejects.toMatchObject({ code: 'invalid_response' });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain(
+      '/v2/ingestions/by-client-request/request-initial-kind-mismatch',
+    );
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/chunks/'))).toBe(false);
+  });
+
+  it('rejects an initial open-ingestion response whose status is not open', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(jsonResponse({
+      protocolVersion: '2',
+      ingestionId: 'ingestion-1',
+      status: 'ready',
+      kind: 'pdf',
+      fileName: 'scan.pdf',
+      mediaType: 'application/pdf',
+      totalBytes: 3,
+    }, 201));
+    const client = configureClient(fetchMock) as HttpCaptureClient;
+
+    await expect(firstValueFrom(client.startStreamingCapture({
+      clientRequestId: 'request-initial-status-mismatch',
+      file: new File(['abc'], 'scan.pdf', { type: 'application/pdf' }),
+      sourceKind: 'pdf',
+      structuringMode: 'runtime',
+    }))).rejects.toMatchObject({ code: 'invalid_response' });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain(
+      '/v2/ingestions/by-client-request/request-initial-status-mismatch',
+    );
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/chunks/'))).toBe(false);
+  });
+
   it('rejects a finalize response whose ingestion identity does not match the upload', async () => {
     const fetchMock = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(ingestionResponse('ingestion-1', 201))
@@ -533,6 +585,40 @@ describe('HttpCaptureClient', () => {
     resolveLookup(recoveredIngestion);
     await vi.waitFor(() => expect(error).toBeDefined());
     expect(received).toBeUndefined();
+  });
+
+  it('preserves AbortError when the lost-open ingestion recovery lookup aborts', async () => {
+    const controller = new AbortController();
+    const fetchMock = vi.fn<typeof fetch>((input, init) => {
+      const url = String(input);
+      if (url.endsWith('/v2/ingestions')) {
+        return Promise.reject(new TypeError('connection closed after open'));
+      }
+      if (url.includes('/v2/ingestions/by-client-request/')) {
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            reject(new DOMException('The operation was aborted.', 'AbortError'));
+          }, { once: true });
+        });
+      }
+      throw new Error(`Unexpected fetch URL: ${url}`);
+    });
+    const client = configureClient(fetchMock) as HttpCaptureClient;
+    let error: unknown;
+
+    client
+      .startStreamingCapture({
+        clientRequestId: 'request-lookup-abort',
+        file: new File(['abc'], 'scan.pdf', { type: 'application/pdf' }),
+        sourceKind: 'pdf',
+        structuringMode: 'runtime',
+        signal: controller.signal,
+      })
+      .subscribe({ error: (value) => (error = value) });
+
+    await vi.waitFor(() => expect(fetchMock.mock.calls).toHaveLength(2));
+    controller.abort();
+    await vi.waitFor(() => expect(error).toMatchObject({ name: 'AbortError' }));
   });
 
   it('recovers a committed ingestion after the open response is lost by client request lookup', async () => {
@@ -951,7 +1037,20 @@ function ingestionResponse(
   status = 200,
 ): Response {
   if (typeof metadata === 'number') {
-    return jsonResponse({ protocolVersion: '2', ingestionId }, metadata);
+    return jsonResponse({
+      protocolVersion: '2',
+      ingestionId,
+      status: 'open',
+      kind: 'pdf',
+      fileName: 'scan.pdf',
+      mediaType: 'application/pdf',
+      totalBytes: 3,
+      receivedBytes: 0,
+      contiguousBytes: 0,
+      nextChunkIndex: 0,
+      nextOffset: 0,
+      expiresAt: '2026-08-12T00:00:00Z',
+    }, metadata);
   }
   return jsonResponse({
     protocolVersion: '2',

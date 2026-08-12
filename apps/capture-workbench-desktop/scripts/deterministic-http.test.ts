@@ -49,3 +49,26 @@ test('deterministic SSE parser rejects an unterminated final frame', () => {
     /incomplete event frame/u,
   );
 });
+
+test('deterministic SSE parser rejects an incomplete final comment line', () => {
+  assert.throws(
+    () => parseSseFrames('id: 1\nevent: checkpoint\ndata: {"sequence":1}\n\n: keep-alive'),
+    /incomplete event frame/u,
+  );
+});
+
+test('deterministic SSE parser rejects an incomplete final unknown line', () => {
+  assert.throws(
+    () => parseSseFrames('id: 1\nevent: checkpoint\ndata: {"sequence":1}\n\nx-unknown: value'),
+    /incomplete event frame/u,
+  );
+});
+
+test('deterministic SSE parser accepts a complete trailing comment line', () => {
+  const frames = parseSseFrames(
+    'id: 1\nevent: checkpoint\ndata: {"sequence":1}\n\n: keep-alive\n',
+  );
+
+  assert.equal(frames.length, 1);
+  assert.equal(frames[0]?.data, '{"sequence":1}');
+});

@@ -4,8 +4,9 @@ Status: implementation in progress; P0-P3, local v1 engine deletion, the
 post-d3bf3de hardening phase, the post-1db5624 final closeout, and the
 post-695567b ingestion open-recovery phase, and the post-9e6e2b3 final
 hardening phase, and the post-3b61cef security/protocol hardening phase are
-complete, and the post-e166174 final security hardening phase is complete. The
-external consumer compatibility gate and final residual cleanup remain open.
+complete, the post-e166174 final security hardening phase is complete, and the
+post-7909eeb final lifecycle/security phase is complete. The external consumer
+compatibility gate and final residual cleanup remain open.
 
 ## Purpose
 
@@ -196,6 +197,20 @@ compatibility release before this producer can delete the public type.
     source/metadata access; native capture-start validation requires source
     metadata for every status that would persist or recover a capture identity.
     The external consumer gate remains unchecked.
+12. **Post-7909eeb final lifecycle/security**: completed in the containing
+    phase commit; Angular initial open-ingestion responses must correlate
+    protocol, ingestionId, kind, fileName, mediaType, totalBytes, and status
+    before upload and fail closed on mismatch while preserving AbortError and
+    recovery-lookup semantics; persistence validates canonical leaf files and
+    rejects symlinked events/metadata/raw/result/partial/source on every
+    read/write/cleanup, and startup requires metadata IDs to equal the
+    directory basename for ingestions and captures; the deterministic SSE
+    parser rejects any incomplete final physical line including comment/unknown
+    lines. Desktop cancellation propagates into active SSE streaming via
+    `stream_request_id`; native upload/start remains a bounded blocking Tauri
+    command without a bridge cancellation channel, so in-flight upload/start
+    cancellation is bounded by per-request timeouts plus idempotent recovery.
+    The external consumer gate remains unchecked.
 
 Each phase must have an explicit path list, its own review, and its own
 verification result. Revert consumers before reverting the runtime cutover;
@@ -314,6 +329,30 @@ phase commit records the narrow fixes and final local verification below.
   independent tests. The private engine-bearing Ollama smoke remains opt-in and
   was not synthesized for this local verification.
 
+- Post-`7909eeb` final lifecycle/security (the containing phase commit) ??
+  reviewed path groups: `packages/capture-angular/src/lib/http-capture-client.ts`
+  and `.spec.ts` (initial open correlation, AbortError preservation);
+  `packages/capture-runtime/src/capture_runtime/storage/streaming_repository.py`
+  and `tests/test_streaming_repository.py` (leaf-file containment, metadata-ID
+  startup validation); `apps/capture-workbench-desktop/scripts/deterministic-http.ts`
+  and `.test.ts` (incomplete-final-physical-line rejection);
+  `.agents/SPECS`, `.agents/TODOS`, `.agents/DECISIONS` (evidence).
+  Focused verification passed: runtime streaming API/repository 44 passed/8
+  symlink skips, Angular client suite 107 passed, deterministic/probe/
+  real-media parser tests 25 passed. Full local verification passed: runtime
+  333 passed/9 skipped/1 warning; Angular 107 passed; tools 21 passed;
+  workbench 51 passed; Tauri 58 passed; desktop package QA 208 passed/2
+  skipped; deterministic smoke and 4 Playwright E2E tests passed. Runtime
+  lint/typecheck/contracts, Angular async-boundary/lint/typecheck, desktop
+  cargo fmt/check, contract consistency, tools/workbench lint/typecheck, and
+  `git diff --check` passed; unrelated dirty paths remain unstaged. Symlink
+  regression tests skip when the Windows environment cannot create symlinks;
+  metadata-ID startup validation is platform-independent. Desktop cancellation
+  into native upload/start is documented as bounded by timeouts plus idempotent
+  recovery because the Tauri bridge has no upload/start cancellation channel.
+  The private engine-bearing Ollama smoke remains opt-in and was not
+  synthesized for this local verification.
+
 ## Acceptance criteria
 
 - PDF, image, and audio each complete the same v2 lifecycle and produce
@@ -348,6 +387,11 @@ phase commit records the narrow fixes and final local verification below.
 - Native capture-start responses require source metadata for any status that
   would persist or recover a capture identity.
 - Angular recovery lookups carry the caller AbortSignal.
+- Initial open-ingestion responses must correlate protocol, identity,
+  metadata, and status before upload.
+- Persistence rejects symlinked leaf files and metadata IDs that do not match
+  their directory basename.
+- SSE parsers reject incomplete final physical lines, including comments.
 
 ## Test plan
 
@@ -361,6 +405,8 @@ phase commit records the narrow fixes and final local verification below.
   persistence containment (load, source access, writes, cleanup).
 - Native/deterministic SSE EOF termination, recovery abort-signal propagation,
   and root/category persistence containment.
+- Initial open-ingestion correlation/status, leaf-file containment, metadata-ID
+  startup validation, and incomplete-final-physical-line rejection.
 - Angular SSE frame parser, chunk upload, abort/unsubscribe, reconnect,
   reducer, workflow, and consumer smoke tests.
 - Rust/Tauri request, authorization, cursor, event bridge, and all-media

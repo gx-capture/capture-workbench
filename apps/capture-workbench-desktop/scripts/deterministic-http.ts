@@ -434,7 +434,9 @@ export function parseSseFrames(text: string): readonly DeterministicSseFrame[] {
     data = [];
   };
 
-  for (const line of text.replace(/\r\n?/gu, '\n').split('\n')) {
+  const normalized = text.replace(/\r\n?/gu, '\n');
+  const incompletePhysicalLine = normalized.length > 0 && !normalized.endsWith('\n');
+  for (const line of normalized.split('\n')) {
     if (line === '') {
       dispatch();
       continue;
@@ -458,7 +460,7 @@ export function parseSseFrames(text: string): readonly DeterministicSseFrame[] {
   }
   const pending = id !== undefined || event !== undefined || data.length > 0;
   dispatch();
-  if (pending) {
+  if (pending || incompletePhysicalLine) {
     throw new Error('Deterministic SSE response ended with an incomplete event frame.');
   }
   return frames;

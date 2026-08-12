@@ -246,7 +246,7 @@ export class HttpCaptureClient implements CaptureClient {
       idempotencyKey: request.clientRequestId,
       json: request,
       signal,
-      decode: (value) => decodeIngestionResponse(value),
+      decode: (value) => decodeInitialIngestionResponse(value, request),
     }).pipe(
       catchError((error: unknown) => {
         if (!isUncertainRuntimeResponseFailure(error)) return throwError(() => error);
@@ -257,6 +257,7 @@ export class HttpCaptureClient implements CaptureClient {
         ).pipe(
           catchError((lookupError: unknown) => {
             if (isIngestionNotFound(lookupError)) return throwError(() => error);
+            if (isAbortError(lookupError)) return throwError(() => lookupError);
             return throwError(() => error);
           }),
         );
@@ -430,9 +431,13 @@ export class HttpCaptureClient implements CaptureClient {
   ): Observable<CaptureOperationV2> {
     return this.getStreamingCaptureByClientRequest(clientRequestId, signal).pipe(
       catchError((lookupError: unknown) => {
+        if (isAbortError(lookupError)) return throwError(() => lookupError);
         if (!isCaptureNotFound(lookupError)) return throwError(() => originalError);
         return this.deleteStreamingIngestion(ingestionId, signal).pipe(
-          catchError(() => of(undefined)),
+          catchError((cleanupError: unknown) => {
+            if (isAbortError(cleanupError)) return throwError(() => cleanupError);
+            return of(undefined);
+          }),
           mergeMap(() => throwError(() => originalError)),
         );
       }),
@@ -442,7 +447,10 @@ export class HttpCaptureClient implements CaptureClient {
           return throwError(() => originalError);
         }
         return this.deleteStreamingIngestion(ingestionId, signal).pipe(
-          catchError(() => of(undefined)),
+          catchError((cleanupError: unknown) => {
+            if (isAbortError(cleanupError)) return throwError(() => cleanupError);
+            return of(undefined);
+          }),
           mergeMap(() =>
             throwError(
               () =>
@@ -682,6 +690,17 @@ function decodeIngestionResponse(
   return value as unknown as IngestionV2;
 }
 
+function decodeInitialIngestionResponse(
+  value: unknown,
+  request: OpenIngestionV2,
+): IngestionV2 {
+  const ingestion = decodeRecoveredIngestionResponse(value, request);
+  if (ingestion['status'] !== 'open') {
+    throw invalidRuntimeResponse();
+  }
+  return ingestion;
+}
+
 function decodeRecoveredIngestionResponse(
   value: unknown,
   request: OpenIngestionV2,
@@ -769,6 +788,13 @@ function isUncertainRuntimeResponseFailure(error: unknown): boolean {
 function isIngestionNotFound(error: unknown): boolean {
   return error instanceof CaptureHttpError
     && (error.status === 404 || error.code === 'ingestion_not_found');
+}
+
+function isAbortError(error: unknown): boolean {
+  return !!error
+    && typeof error === 'object'
+    && 'name' in error
+    && (error as { readonly name?: unknown }).name === 'AbortError';
 }
 
 function isCaptureNotFound(error: unknown): boolean {

@@ -6,6 +6,7 @@ import os
 import shutil
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
@@ -277,6 +278,108 @@ def test_streaming_repository_rechecks_capture_directory_containment_before_even
         repository.read_events(capture.capture_id, after_sequence=-1)
 
     assert (outside / "events.jsonl").read_text() == "[]\n"
+
+
+def test_streaming_repository_rejects_symlinked_events_leaf(tmp_path: Path) -> None:
+    clock = MutableClock()
+    repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+    repository.initialize()
+    ingestion_id, _ = _open(repository, b"abcdef")
+    capture = repository.create_capture(
+        StartCaptureV2(
+            client_request_id="repository-capture-leaf",
+            ingestion_id=ingestion_id,
+            structuring_mode=StructuringMode.HOST,
+        )
+    )
+    events_path = tmp_path / "streaming" / "captures" / capture.capture_id / "events.jsonl"
+    outside = tmp_path / "outside-events.jsonl"
+    outside.write_text("[]\n")
+    events_path.unlink()
+    try:
+        os.symlink(outside, events_path)
+    except OSError:
+        pytest.skip("file symlinks are not available")
+
+    with pytest.raises(RuntimeError, match="must not be a symlink"):
+        repository.read_events(capture.capture_id, after_sequence=-1)
+
+    assert outside.read_text() == "[]\n"
+
+
+def test_streaming_repository_rejects_symlinked_ingestion_metadata_leaf_on_persist(
+    tmp_path: Path,
+) -> None:
+    clock = MutableClock()
+    repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+    repository.initialize()
+    ingestion_id, _ = _open(repository, b"abcdef")
+    metadata_path = tmp_path / "streaming" / "ingestions" / ingestion_id / "metadata.json"
+    outside = tmp_path / "outside-metadata.json"
+    outside.write_text("{}")
+    metadata_path.unlink()
+    try:
+        os.symlink(outside, metadata_path)
+    except OSError:
+        pytest.skip("file symlinks are not available")
+
+    with pytest.raises(RuntimeError, match="must not be a symlink"):
+        repository.append_chunk(
+            ingestion_id,
+            chunk_index=0,
+            byte_offset=0,
+            data=b"a",
+            sha256=hashlib.sha256(b"a").hexdigest(),
+            max_chunk_bytes=4 * 1024 * 1024,
+            declared_total_bytes=6,
+        )
+
+    assert outside.read_text() == "{}"
+
+
+def test_streaming_repository_quarantines_ingestion_metadata_id_mismatch(
+    tmp_path: Path,
+) -> None:
+    clock = MutableClock()
+    repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+    repository.initialize()
+    ingestion_id, _ = _open(repository, b"abcdef")
+    metadata_path = tmp_path / "streaming" / "ingestions" / ingestion_id / "metadata.json"
+    payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    payload["ingestionId"] = str(uuid4())
+    metadata_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    restarted = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+    restarted.initialize()
+
+    with pytest.raises(StreamingRecordNotFoundError):
+        restarted.get_ingestion(ingestion_id)
+
+
+def test_streaming_repository_quarantines_capture_metadata_id_mismatch(
+    tmp_path: Path,
+) -> None:
+    clock = MutableClock()
+    repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+    repository.initialize()
+    ingestion_id, _ = _open(repository, b"abcdef")
+    capture = repository.create_capture(
+        StartCaptureV2(
+            client_request_id="repository-capture-id-mismatch",
+            ingestion_id=ingestion_id,
+            structuring_mode=StructuringMode.HOST,
+        )
+    )
+    metadata_path = tmp_path / "streaming" / "captures" / capture.capture_id / "metadata.json"
+    payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    payload["operation"]["captureId"] = str(uuid4())
+    metadata_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    restarted = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+    restarted.initialize()
+
+    with pytest.raises(StreamingRecordNotFoundError):
+        restarted.get_capture(capture.capture_id)
 
 
 def test_streaming_repository_truncates_source_after_source_write_crash_window(

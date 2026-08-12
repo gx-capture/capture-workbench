@@ -80,6 +80,16 @@ decision record, and phase commits.
       passed; the external Cert Prep/Law Prep compatibility gate remains
       unchecked.
 
+- [x] Complete the post-`7909eeb` final lifecycle/security phase: Angular
+      initial open-ingestion correlation/status, persistence leaf-file and
+      metadata-ID containment, deterministic incomplete-final-line rejection,
+      and documented bounded desktop cancellation for native upload/start.
+  Verify: runtime streaming API/repository tests, Angular client tests,
+      deterministic parser tests, full Nx runtime/Angular/tools/workbench
+      checks, Tauri fmt/check/test/contract/package QA, deterministic smoke,
+      Playwright E2E, and `git diff --check` passed; the external Cert Prep/Law
+      Prep compatibility gate remains unchecked.
+
 ## Explicitly blocked evidence
 
 - Real engine-bearing OCR/Whisper smoke remains opt-in and depends on the
