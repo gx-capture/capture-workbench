@@ -58,6 +58,17 @@ decision record, and phase commits.
       passed; the external Cert Prep/Law Prep compatibility gate remains
       unchecked.
 
+- [x] Complete the post-`3b61cef` security/protocol hardening phase: Angular
+      recovered-ingestion correlation, native capture-start semantic
+      validation/recovery, unterminated-final-SSE rejection, and canonical
+      persistence containment.
+  Verify: runtime streaming API/repository tests, Angular client/SSE tests,
+      native recovery/SSE tests, probe parser tests, full Nx
+      runtime/Angular/tools/workbench checks, Tauri fmt/check/test/contract/
+      package QA, deterministic smoke, Playwright E2E, and `git diff --check`
+      passed; the external Cert Prep/Law Prep compatibility gate remains
+      unchecked.
+
 ## Explicitly blocked evidence
 
 - Real engine-bearing OCR/Whisper smoke remains opt-in and depends on the

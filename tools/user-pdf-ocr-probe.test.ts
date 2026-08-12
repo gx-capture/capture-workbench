@@ -151,30 +151,25 @@ test('probe reconnects after a closed stream and sends the last event cursor', a
   assert.equal(new Headers(eventRequests[1]?.headers).get('Last-Event-ID'), '1');
 });
 
-test('probe ignores an unterminated final SSE frame at normal EOF', async () => {
-  let snapshotRequests = 0;
+test('probe rejects an unterminated final SSE frame at normal EOF', async () => {
   const fetchImplementation = async (input: Parameters<typeof globalThis.fetch>[0]) => {
     const url = String(input);
     if (url.endsWith('/events')) {
       return sseResponse(eventFrame(1, 'checkpoint', 'extracting').replace(/\r\n\r\n$/u, ''));
     }
-    if (url.endsWith(`/v2/captures/${CAPTURE_ID}`)) {
-      snapshotRequests += 1;
-      return snapshotResponse('completed', 1);
-    }
     throw new Error(`Unexpected probe URL: ${url}`);
   };
 
-  const result = await waitForExtraction(
-    'http://runtime.test',
-    CAPTURE_ID,
-    SECRET,
-    5_000,
-    fetchImplementation,
+  await assert.rejects(
+    waitForExtraction(
+      'http://runtime.test',
+      CAPTURE_ID,
+      SECRET,
+      5_000,
+      fetchImplementation,
+    ),
+    (error) => error instanceof UserPdfOcrProbeError && error.shape.code === 'invalid_response',
   );
-
-  assert.equal(result['status'], 'completed');
-  assert.equal(snapshotRequests, 1);
 });
 
 test('probe reconciles resync overflow before reconnecting', async () => {

@@ -4,8 +4,9 @@
 
 P0-P3 implementation, local v1 engine removal, the post-d3bf3de hardening, the
 post-1db5624 final closeout, the post-695567b ingestion open-recovery phase,
-and the post-9e6e2b3 final hardening phase are complete. Final cleanup and the
-external consumer compatibility gate remain open.
+the post-9e6e2b3 final hardening phase, and the post-3b61cef security/protocol
+hardening phase are complete. Final cleanup and the external consumer
+compatibility gate remain open.
 
 ## Change mode checkpoint
 

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import shutil
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -119,6 +121,97 @@ def test_streaming_repository_finds_ingestion_by_client_request_id_and_clears_on
 
     with pytest.raises(StreamingRecordNotFoundError):
         repository.get_ingestion_by_client_request_id("repository-open-1")
+
+
+def test_streaming_repository_containment_guard_rejects_external_canonical_children(
+    tmp_path: Path,
+) -> None:
+    from capture_runtime.storage.streaming_repository import _ensure_contained
+
+    root = tmp_path / "root"
+    outside = tmp_path / "outside"
+
+    _ensure_contained(root, root / "child")
+    with pytest.raises(RuntimeError, match="escaped repository root"):
+        _ensure_contained(root, outside)
+
+
+def test_streaming_repository_rejects_symlinked_ingestion_source(tmp_path: Path) -> None:
+    clock = MutableClock()
+    repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+    repository.initialize()
+    ingestion_id, _ = _open(repository, b"abcdef")
+    source_path = repository.source_path(ingestion_id)
+    outside = tmp_path / "outside.bin"
+    outside.write_bytes(b"EVIL")
+    source_path.unlink()
+    try:
+        os.symlink(outside, source_path)
+    except OSError:
+        pytest.skip("file symlinks are not available")
+
+    with pytest.raises(RuntimeError, match="escaped repository root"):
+        repository.source_path(ingestion_id)
+    with pytest.raises(RuntimeError, match="escaped repository root"):
+        repository.append_chunk(
+            ingestion_id,
+            chunk_index=0,
+            byte_offset=0,
+            data=b"a",
+            sha256=hashlib.sha256(b"a").hexdigest(),
+            max_chunk_bytes=4 * 1024 * 1024,
+            declared_total_bytes=6,
+        )
+
+    assert outside.read_bytes() == b"EVIL"
+
+
+def test_streaming_repository_rejects_symlinked_ingestion_directory_cleanup(
+    tmp_path: Path,
+) -> None:
+    clock = MutableClock()
+    repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+    repository.initialize()
+    ingestion_id, _ = _open(repository, b"abcdef")
+    directory = tmp_path / "streaming" / "ingestions" / ingestion_id
+    outside = tmp_path / "outside-directory"
+    outside.mkdir()
+    (outside / "keep.txt").write_text("keep")
+    shutil.rmtree(directory)
+    try:
+        os.symlink(outside, directory, target_is_directory=True)
+    except OSError:
+        pytest.skip("directory symlinks are not available")
+
+    with pytest.raises(RuntimeError, match="escaped repository root"):
+        repository.delete_ingestion(ingestion_id)
+
+    assert (outside / "keep.txt").exists()
+
+
+def test_streaming_repository_quarantines_symlinked_ingestion_directory_on_load(
+    tmp_path: Path,
+) -> None:
+    clock = MutableClock()
+    repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+    repository.initialize()
+    ingestion_id, _ = _open(repository, b"abcdef")
+    directory = tmp_path / "streaming" / "ingestions" / ingestion_id
+    outside = tmp_path / "outside-load-directory"
+    outside.mkdir()
+    (outside / "keep.txt").write_text("keep")
+    shutil.rmtree(directory)
+    try:
+        os.symlink(outside, directory, target_is_directory=True)
+    except OSError:
+        pytest.skip("directory symlinks are not available")
+
+    restarted = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+    restarted.initialize()
+
+    with pytest.raises(StreamingRecordNotFoundError):
+        restarted.get_ingestion(ingestion_id)
+    assert (outside / "keep.txt").exists()
 
 
 def test_streaming_repository_truncates_source_after_source_write_crash_window(

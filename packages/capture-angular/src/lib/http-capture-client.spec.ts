@@ -427,7 +427,12 @@ describe('HttpCaptureClient', () => {
     const fetchMock = vi
       .fn<typeof fetch>()
       .mockRejectedValueOnce(new TypeError('connection closed after open'))
-      .mockResolvedValueOnce(ingestionResponse('ingestion-1'))
+      .mockResolvedValueOnce(ingestionResponse('ingestion-1', {
+        kind: 'pdf',
+        fileName: 'scan.pdf',
+        mediaType: 'application/pdf',
+        totalBytes: 3,
+      }))
       .mockResolvedValueOnce(jsonResponse({ ingestionId: 'ingestion-1' }))
       .mockResolvedValueOnce(ingestionResponse('ingestion-1'))
       .mockResolvedValueOnce(jsonResponse(operation, 202));
@@ -450,6 +455,38 @@ describe('HttpCaptureClient', () => {
     expect(String(fetchMock.mock.calls[1]?.[0])).toContain(
       '/v2/ingestions/by-client-request/request-lost-open',
     );
+    expect(fetchMock.mock.calls.some(([url, init]) =>
+      String(url).endsWith('/v2/ingestions/ingestion-1') && init?.method === 'DELETE',
+    )).toBe(false);
+  });
+
+  it('fails closed when recovered ingestion metadata does not match the open request', async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockRejectedValueOnce(new TypeError('connection closed after open'))
+      .mockResolvedValueOnce(ingestionResponse('ingestion-1', {
+        kind: 'image',
+        fileName: 'scan.pdf',
+        mediaType: 'application/pdf',
+        totalBytes: 3,
+      }));
+    const client = configureClient(fetchMock) as HttpCaptureClient;
+    let error: unknown;
+
+    client
+      .startStreamingCapture({
+        clientRequestId: 'request-mismatched-recovery',
+        file: new File(['abc'], 'scan.pdf', { type: 'application/pdf' }),
+        sourceKind: 'pdf',
+        structuringMode: 'runtime',
+      })
+      .subscribe({ error: (value) => (error = value) });
+
+    await vi.waitFor(() => expect(error).toBeInstanceOf(TypeError));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls.some(([url, init]) =>
+      String(url).includes('/chunks/') && init?.method === 'PUT',
+    )).toBe(false);
     expect(fetchMock.mock.calls.some(([url, init]) =>
       String(url).endsWith('/v2/ingestions/ingestion-1') && init?.method === 'DELETE',
     )).toBe(false);
@@ -781,8 +818,30 @@ function jsonResponse(value: unknown, status = 200): Response {
   });
 }
 
-function ingestionResponse(ingestionId: string, status = 200): Response {
-  return jsonResponse({ protocolVersion: '2', ingestionId }, status);
+function ingestionResponse(
+  ingestionId: string,
+  metadata: {
+    readonly kind: string;
+    readonly fileName: string;
+    readonly mediaType: string;
+    readonly totalBytes: number;
+  } | number = 200,
+  status = 200,
+): Response {
+  if (typeof metadata === 'number') {
+    return jsonResponse({ protocolVersion: '2', ingestionId }, metadata);
+  }
+  return jsonResponse({
+    protocolVersion: '2',
+    ingestionId,
+    status: 'open',
+    ...metadata,
+    receivedBytes: 0,
+    contiguousBytes: 0,
+    nextChunkIndex: 0,
+    nextOffset: 0,
+    expiresAt: '2026-08-12T00:00:00Z',
+  }, status);
 }
 
 function captureEvent(

@@ -167,6 +167,13 @@ pub(crate) fn start_streaming_capture(
     let mut capture_request_attempted = false;
     let mut capture_response_accepted = false;
     let mut capture_create_uncertain = false;
+    let capture_expectation = CaptureStartExpectation {
+        ingestion_id: ingestion_id.clone(),
+        kind: source_kind.to_string(),
+        file_name: source.file_name.clone(),
+        media_type: source.media_type.clone(),
+        total_bytes: source.bytes,
+    };
     let result = (|| {
         upload_source_chunks(&config, &source, &ingestion_id, &client_request_id)?;
         let source_digest = source_sha256(&source)?;
@@ -198,12 +205,7 @@ pub(crate) fn start_streaming_capture(
         };
         capture_response_accepted = true;
         Ok::<Value, String>(capture).and_then(|value| {
-            let capture_id = value
-                .get("captureId")
-                .and_then(Value::as_str)
-                .ok_or_else(|| "Progressive capture response is invalid.".to_string())?;
-            validate_opaque_id(capture_id)
-                .map_err(|_| "Progressive capture response identity is invalid.".to_string())?;
+            let capture_id = validate_capture_start_response(&value, &capture_expectation)?;
             let stage = value
                 .get("status")
                 .and_then(Value::as_str)
@@ -213,7 +215,7 @@ pub(crate) fn start_streaming_capture(
                 &input.document_id,
                 "processing",
                 stage,
-                Some(capture_id),
+                Some(&capture_id),
                 None,
                 None,
                 None,
@@ -229,28 +231,48 @@ pub(crate) fn start_streaming_capture(
                 || (capture_request_attempted
                     && (capture_create_uncertain || is_uncertain_runtime_error(&error))) =>
         {
-            match reconcile_capture_by_client_request(&config, &capture_body, &client_request_id) {
+            match reconcile_capture_by_client_request(
+                &config,
+                &client_request_id,
+                &capture_expectation,
+            ) {
                 CaptureReconciliation::Committed(value) if is_uncertain_runtime_error(&error) => {
-                    let capture_id = value
-                        .get("captureId")
-                        .and_then(Value::as_str)
-                        .ok_or_else(|| "Progressive capture response is invalid.".to_string())?;
-                    let stage = value
-                        .get("status")
-                        .and_then(Value::as_str)
-                        .unwrap_or("created");
-                    persist_capture_recovery(
-                        library,
-                        &input.document_id,
-                        "processing",
-                        stage,
-                        Some(capture_id),
-                        None,
-                        None,
-                        None,
-                        None,
-                    )?;
-                    Ok(value)
+                    match validate_capture_start_response(&value, &capture_expectation) {
+                        Ok(capture_id) => {
+                            let stage = value
+                                .get("status")
+                                .and_then(Value::as_str)
+                                .unwrap_or("created");
+                            persist_capture_recovery(
+                                library,
+                                &input.document_id,
+                                "processing",
+                                stage,
+                                Some(&capture_id),
+                                None,
+                                None,
+                                None,
+                                None,
+                            )?;
+                            Ok(value)
+                        }
+                        Err(_) => {
+                            persist_capture_recovery(
+                                library,
+                                &input.document_id,
+                                "recovery_required",
+                                "capture",
+                                None,
+                                Some("capture_pending"),
+                                Some(
+                                    "Capture request could not be safely reconciled; retry is required.",
+                                ),
+                                Some(&client_request_id),
+                                Some(&ingestion_id),
+                            )?;
+                            Err(error)
+                        }
+                    }
                 }
                 CaptureReconciliation::ConfirmedAbsent => {
                     Err(cleanup_uncommitted_ingestion(&config, &ingestion_id, error))
@@ -398,10 +420,18 @@ enum CaptureReconciliation {
     Unknown,
 }
 
+struct CaptureStartExpectation {
+    ingestion_id: String,
+    kind: String,
+    file_name: String,
+    media_type: String,
+    total_bytes: u64,
+}
+
 fn reconcile_capture_by_client_request(
     config: &BackendConfig,
-    body: &RequestBody,
     client_request_id: &str,
+    expectation: &CaptureStartExpectation,
 ) -> CaptureReconciliation {
     let response = request_with_headers(
         config,
@@ -415,13 +445,73 @@ fn reconcile_capture_by_client_request(
         &[],
     );
     match response {
-        Ok(value) => match validate_recovered_capture(value, body) {
-            Ok(value) => CaptureReconciliation::Committed(value),
+        Ok(value) => match validate_capture_start_response(&value, expectation) {
+            Ok(_) => CaptureReconciliation::Committed(value),
             Err(_) => CaptureReconciliation::Unknown,
         },
         Err(error) if is_http_rejection(&error, 404) => CaptureReconciliation::ConfirmedAbsent,
         Err(_) => CaptureReconciliation::Unknown,
     }
+}
+
+fn validate_capture_start_response(
+    value: &Value,
+    expectation: &CaptureStartExpectation,
+) -> Result<String, String> {
+    if value.get("protocolVersion").and_then(Value::as_str) != Some("2") {
+        return Err("Progressive capture response is invalid.".into());
+    }
+    let capture_id = value
+        .get("captureId")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "Progressive capture response is invalid.".to_string())?;
+    validate_opaque_id(capture_id)
+        .map_err(|_| "Progressive capture response identity is invalid.".to_string())?;
+    let ingestion_id = value
+        .get("ingestionId")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "Progressive capture response is invalid.".to_string())?;
+    validate_opaque_id(ingestion_id)
+        .map_err(|_| "Progressive capture response identity is invalid.".to_string())?;
+    if ingestion_id != expectation.ingestion_id {
+        return Err("Progressive capture response identity is invalid.".into());
+    }
+    if value.get("kind").and_then(Value::as_str) != Some(expectation.kind.as_str()) {
+        return Err("Progressive capture response identity is invalid.".into());
+    }
+    if !matches!(
+        value.get("status").and_then(Value::as_str),
+        Some(
+            "created"
+                | "waiting_input"
+                | "extracting"
+                | "awaiting_structuring"
+                | "structuring"
+                | "completed"
+                | "failed"
+                | "cancelled"
+        )
+    ) {
+        return Err("Progressive capture response is invalid.".into());
+    }
+    if let Some(source) = value.get("source") {
+        if !source.is_null() {
+            let source = source
+                .as_object()
+                .ok_or_else(|| "Progressive capture response is invalid.".to_string())?;
+            if source.get("fileName").and_then(Value::as_str)
+                != Some(expectation.file_name.as_str())
+                || source.get("mediaType").and_then(Value::as_str)
+                    != Some(expectation.media_type.as_str())
+                || source.get("bytes").and_then(Value::as_u64) != Some(expectation.total_bytes)
+            {
+                return Err("Progressive capture response identity is invalid.".into());
+            }
+        }
+    }
+    Ok(capture_id.to_string())
 }
 
 fn cleanup_uncommitted_ingestion(
@@ -594,6 +684,8 @@ fn is_uncertain_runtime_error(error: &str) -> bool {
             | "Capture Runtime response was not valid JSON."
             | "Capture Runtime response identifier is invalid."
             | "Capture Runtime recovered a conflicting capture."
+            | "Progressive capture response is invalid."
+            | "Progressive capture response identity is invalid."
     ) {
         return true;
     }
@@ -1288,6 +1380,15 @@ impl<'a> SseParser<'a> {
     where
         F: FnMut(Value) -> Result<(), String>,
     {
+        if !self.pending.is_empty()
+            || !self.frame.data.is_empty()
+            || self.frame.id.is_some()
+            || self.frame.event.is_some()
+        {
+            return Err(
+                "Capture Runtime SSE response ended with an incomplete event frame.".into(),
+            );
+        }
         self.pending.clear();
         self.frame = SseFrame::default();
         Ok(())
@@ -1890,6 +1991,17 @@ fn random_hex() -> Result<String, String> {
     Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
+#[cfg(test)]
+fn capture_start_expectation(ingestion_id: &str) -> CaptureStartExpectation {
+    CaptureStartExpectation {
+        ingestion_id: ingestion_id.into(),
+        kind: "pdf".into(),
+        file_name: "scan.pdf".into(),
+        media_type: "application/pdf".into(),
+        total_bytes: 3,
+    }
+}
+
 fn redact_token(value: &mut Value, token: &str) {
     match value {
         Value::String(text) => *text = text.replace(token, "[REDACTED]"),
@@ -2016,13 +2128,9 @@ mod tests {
             api_version: "1.0".into(),
             capture_document_schema_version: "1".into(),
         };
-        let body = RequestBody {
-            bytes: br#"{"clientRequestId":"capture-request-cleanup","ingestionId":"ingestion-1"}"#
-                .to_vec(),
-            content_type: "application/json".into(),
-        };
+        let expectation = capture_start_expectation("ingestion-1");
         assert!(matches!(
-            reconcile_capture_by_client_request(&config, &body, "capture-request-cleanup"),
+            reconcile_capture_by_client_request(&config, "capture-request-cleanup", &expectation),
             CaptureReconciliation::ConfirmedAbsent
         ));
         assert_eq!(
@@ -2058,15 +2166,139 @@ mod tests {
             api_version: "1.0".into(),
             capture_document_schema_version: "1".into(),
         };
-        let body = RequestBody {
-            bytes: br#"{"clientRequestId":"capture-request-conflict","ingestionId":"ingestion-1"}"#
-                .to_vec(),
-            content_type: "application/json".into(),
-        };
+        let expectation = capture_start_expectation("ingestion-1");
         assert!(matches!(
-            reconcile_capture_by_client_request(&config, &body, "capture-request-conflict"),
+            reconcile_capture_by_client_request(&config, "capture-request-conflict", &expectation),
             CaptureReconciliation::Unknown
         ));
+        server.join().expect("server");
+    }
+
+    #[test]
+    fn capture_start_responses_require_full_semantic_correlation() {
+        let expectation = capture_start_expectation("ingestion-1");
+        let valid = serde_json::json!({
+            "protocolVersion": "2",
+            "captureId": "capture-1",
+            "ingestionId": "ingestion-1",
+            "kind": "pdf",
+            "status": "extracting",
+            "source": {
+                "fileName": "scan.pdf",
+                "mediaType": "application/pdf",
+                "bytes": 3,
+            },
+        });
+        assert_eq!(
+            validate_capture_start_response(&valid, &expectation).expect("valid capture"),
+            "capture-1"
+        );
+
+        let mut no_protocol = valid.clone();
+        no_protocol
+            .as_object_mut()
+            .expect("object")
+            .remove("protocolVersion");
+        assert!(validate_capture_start_response(&no_protocol, &expectation).is_err());
+
+        let mut wrong_ingestion = valid.clone();
+        wrong_ingestion.as_object_mut().expect("object")["ingestionId"] =
+            serde_json::json!("ingestion-other");
+        assert!(validate_capture_start_response(&wrong_ingestion, &expectation).is_err());
+
+        let mut wrong_kind = valid.clone();
+        wrong_kind.as_object_mut().expect("object")["kind"] = serde_json::json!("audio");
+        assert!(validate_capture_start_response(&wrong_kind, &expectation).is_err());
+
+        let mut invalid_status = valid.clone();
+        invalid_status.as_object_mut().expect("object")["status"] = serde_json::json!("uploading");
+        assert!(validate_capture_start_response(&invalid_status, &expectation).is_err());
+
+        let mut wrong_source = valid.clone();
+        wrong_source.as_object_mut().expect("object")["source"]
+            .as_object_mut()
+            .expect("source object")["fileName"] = serde_json::json!("other.pdf");
+        assert!(validate_capture_start_response(&wrong_source, &expectation).is_err());
+
+        let mut waiting_input = valid;
+        waiting_input.as_object_mut().expect("object")["status"] =
+            serde_json::json!("waiting_input");
+        waiting_input
+            .as_object_mut()
+            .expect("object")
+            .remove("source");
+        assert!(validate_capture_start_response(&waiting_input, &expectation).is_ok());
+    }
+
+    #[test]
+    fn capture_start_recovery_commits_a_fully_correlated_lookup() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("listener");
+        let port = listener.local_addr().expect("address").port();
+        let server = thread::spawn(move || {
+            let (mut lookup, _) = listener.accept().expect("lookup connection");
+            let lookup_request = read_http_request(&mut lookup);
+            assert!(lookup_request
+                .starts_with("GET /v2/captures/by-client-request/capture-request-valid HTTP/1.1"));
+            let body = r#"{"protocolVersion":"2","captureId":"capture-recovered","ingestionId":"ingestion-1","kind":"pdf","status":"extracting","source":{"fileName":"scan.pdf","mediaType":"application/pdf","bytes":3}}"#;
+            write!(
+                lookup,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .expect("valid lookup response");
+        });
+        let config = BackendConfig {
+            base_url: format!("http://127.0.0.1:{port}"),
+            token: "token".into(),
+            runtime_version: "0.3.11".into(),
+            api_version: "1.0".into(),
+            capture_document_schema_version: "1".into(),
+        };
+        let expectation = capture_start_expectation("ingestion-1");
+
+        let recovered =
+            reconcile_capture_by_client_request(&config, "capture-request-valid", &expectation);
+
+        assert!(matches!(
+            recovered,
+            CaptureReconciliation::Committed(value) if value["captureId"] == "capture-recovered"
+        ));
+        server.join().expect("server");
+    }
+
+    #[test]
+    fn capture_start_recovery_rejects_a_lookup_with_mismatched_metadata() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("listener");
+        let port = listener.local_addr().expect("address").port();
+        let server = thread::spawn(move || {
+            let (mut lookup, _) = listener.accept().expect("lookup connection");
+            let lookup_request = read_http_request(&mut lookup);
+            assert!(lookup_request.starts_with(
+                "GET /v2/captures/by-client-request/capture-request-mismatch HTTP/1.1"
+            ));
+            let body = r#"{"protocolVersion":"2","captureId":"capture-other","ingestionId":"ingestion-1","kind":"audio","status":"extracting","source":{"fileName":"scan.pdf","mediaType":"application/pdf","bytes":3}}"#;
+            write!(
+                lookup,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .expect("mismatched lookup response");
+        });
+        let config = BackendConfig {
+            base_url: format!("http://127.0.0.1:{port}"),
+            token: "token".into(),
+            runtime_version: "0.3.11".into(),
+            api_version: "1.0".into(),
+            capture_document_schema_version: "1".into(),
+        };
+        let expectation = capture_start_expectation("ingestion-1");
+
+        let recovered =
+            reconcile_capture_by_client_request(&config, "capture-request-mismatch", &expectation);
+
+        assert!(matches!(recovered, CaptureReconciliation::Unknown));
         server.join().expect("server");
     }
 
@@ -2185,7 +2417,7 @@ mod tests {
     }
 
     #[test]
-    fn streaming_sse_preserves_split_crlf_and_ignores_unterminated_eof_frames() {
+    fn streaming_sse_preserves_split_crlf_and_rejects_unterminated_eof_frames() {
         let payload = r#"{"protocolVersion":"2","eventId":"capture-1/8","sequence":8,"captureId":"capture-1","kind":"audio","eventType":"checkpoint","stage":"extracting","progress":0.5,"partialRevision":1,"createdAt":"2026-01-01T00:00:00Z"}"#;
         let body = format!("id: 8\r\nevent: checkpoint\r\ndata: {payload}\r\n\r\n");
         let split = body.find("\r\n").expect("line ending") + 1;
@@ -2216,9 +2448,7 @@ mod tests {
                 &mut collect_truncated,
             )
             .expect("truncated frame");
-        truncated
-            .finish(&mut collect_truncated)
-            .expect("truncated finish");
+        assert!(truncated.finish(&mut collect_truncated).is_err());
         assert!(truncated_events.is_empty());
     }
 

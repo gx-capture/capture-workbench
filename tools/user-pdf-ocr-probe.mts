@@ -511,9 +511,11 @@ class ProbeSseParser {
   }
 
   finish(): readonly ProbeSseFrame[] {
+    const pending = this.pendingCarriageReturn || this.line !== '' || this.block.length > 0;
     this.line = '';
     this.block = [];
     this.pendingCarriageReturn = false;
+    if (pending) throw invalidProbeEvent();
     return [];
   }
 

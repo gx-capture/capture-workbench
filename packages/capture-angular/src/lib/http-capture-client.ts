@@ -249,7 +249,10 @@ export class HttpCaptureClient implements CaptureClient {
     }).pipe(
       catchError((error: unknown) => {
         if (!isUncertainRuntimeResponseFailure(error)) return throwError(() => error);
-        return this.getStreamingIngestionByClientRequest(request.clientRequestId).pipe(
+        return this.getStreamingIngestionByClientRequest(
+          request.clientRequestId,
+          request,
+        ).pipe(
           catchError((lookupError: unknown) => {
             if (isIngestionNotFound(lookupError)) return throwError(() => error);
             return throwError(() => error);
@@ -261,11 +264,12 @@ export class HttpCaptureClient implements CaptureClient {
 
   private getStreamingIngestionByClientRequest(
     clientRequestId: string,
+    request: OpenIngestionV2,
   ): Observable<IngestionV2> {
     const safeClientRequestId = assertClientRequestId(clientRequestId);
     return this.request<IngestionV2>(
       `/v2/ingestions/by-client-request/${encodeURIComponent(safeClientRequestId)}`,
-      { decode: (value) => decodeIngestionResponse(value) },
+      { decode: (value) => decodeRecoveredIngestionResponse(value, request) },
     );
   }
 
@@ -667,6 +671,22 @@ function decodeIngestionResponse(
     throw invalidRuntimeResponse();
   }
   return value as unknown as IngestionV2;
+}
+
+function decodeRecoveredIngestionResponse(
+  value: unknown,
+  request: OpenIngestionV2,
+): IngestionV2 {
+  const ingestion = decodeIngestionResponse(value);
+  if (
+    ingestion['kind'] !== request.kind
+    || ingestion['fileName'] !== request.fileName
+    || ingestion['mediaType'] !== request.mediaType
+    || ingestion['totalBytes'] !== request.totalBytes
+  ) {
+    throw invalidRuntimeResponse();
+  }
+  return ingestion;
 }
 
 function decodeCaptureOperationResponse(

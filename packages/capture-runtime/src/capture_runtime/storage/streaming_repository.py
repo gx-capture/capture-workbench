@@ -180,6 +180,14 @@ def _remove_directory(directory: Path) -> None:
             raise
 
 
+def _ensure_contained(root: Path, candidate: Path) -> None:
+    """Reject candidates whose canonical path escapes a persistence root."""
+    canonical_root = Path(os.path.realpath(root))
+    canonical_candidate = Path(os.path.realpath(candidate))
+    if canonical_candidate != canonical_root and canonical_root not in canonical_candidate.parents:
+        raise RuntimeError(f"{candidate} escaped repository root")
+
+
 @dataclass(slots=True)
 class _IngestionRecord:
     request: OpenIngestionV2
@@ -315,7 +323,7 @@ class StreamingRepository:
                 raise StreamingTransitionError("chunks must be contiguous and ordered")
             if record.next_offset + len(data) > record.request.total_bytes:
                 raise StreamingTransitionError("chunks exceed declared source size")
-            with (self._ingestion_directory(ingestion_id) / "source.bin").open("ab") as source:
+            with self._ingestion_source_path(ingestion_id).open("ab") as source:
                 source.write(data)
                 source.flush()
                 os.fsync(source.fileno())
@@ -344,7 +352,7 @@ class StreamingRepository:
                 raise StreamingUploadLimitError("ingestion exceeds configured upload limit")
             if total_bytes != record.request.total_bytes or total_bytes != record.next_offset:
                 raise StreamingTransitionError("final byte count does not match upload")
-            actual_sha256 = _file_sha256(self._ingestion_directory(ingestion_id) / "source.bin")
+            actual_sha256 = _file_sha256(self._ingestion_source_path(ingestion_id))
             if sha256 != actual_sha256 or (
                 record.request.source_sha256 is not None and record.request.source_sha256 != sha256
             ):
@@ -919,8 +927,7 @@ class StreamingRepository:
             if record.operation.status not in _TERMINAL_CAPTURE_STATUSES:
                 raise StreamingTransitionError("capture is active")
             directory = self._capture_directory(capture_id)
-            if directory.parent.resolve() != (self.root / "captures").resolve():
-                raise RuntimeError("capture directory escaped repository root")
+            _ensure_contained(self.root / "captures", directory)
             # Keep the capture record and directory as the durable recovery
             # anchor until a private ingestion has been removed successfully.
             # A failed ingestion delete must leave the capture retryable.
@@ -974,8 +981,7 @@ class StreamingRepository:
             ):
                 raise StreamingTransitionError("ingestion has an active capture")
             directory = self._ingestion_directory(normalized)
-            if directory.parent.resolve() != (self.root / "ingestions").resolve():
-                raise RuntimeError("ingestion directory escaped repository root")
+            _ensure_contained(self.root / "ingestions", directory)
             _remove_directory(directory)
             self._ingestions.pop(normalized, None)
             self._ingestion_idempotency.pop(record.request.client_request_id, None)
@@ -997,8 +1003,7 @@ class StreamingRepository:
         except StreamingRecordNotFoundError:
             return
         directory = self._ingestion_directory(ingestion_id)
-        if directory.parent.resolve() != (self.root / "ingestions").resolve():
-            raise RuntimeError("ingestion directory escaped repository root")
+        _ensure_contained(self.root / "ingestions", directory)
         _remove_directory(directory)
         self._ingestions.pop(record.ingestion_id, None)
         self._ingestion_idempotency.pop(record.request.client_request_id, None)
@@ -1006,7 +1011,14 @@ class StreamingRepository:
     def source_path(self, ingestion_id: str) -> Path:
         with self._lock:
             self._get_ingestion(ingestion_id)
-            return self._ingestion_directory(ingestion_id) / "source.bin"
+            return self._ingestion_source_path(ingestion_id)
+
+    def _ingestion_source_path(self, ingestion_id: str) -> Path:
+        directory = self._ingestion_directory(ingestion_id)
+        _ensure_contained(self.root / "ingestions", directory)
+        source_path = directory / "source.bin"
+        _ensure_contained(directory, source_path)
+        return source_path
 
     def _get_ingestion(self, ingestion_id: str) -> _IngestionRecord:
         normalized = _identifier(ingestion_id)
@@ -1057,6 +1069,10 @@ class StreamingRepository:
         )
 
     def _persist_ingestion(self, record: _IngestionRecord) -> None:
+        _ensure_contained(
+            self.root / "ingestions",
+            self._ingestion_directory(record.ingestion_id),
+        )
         _atomic_json(
             self._ingestion_directory(record.ingestion_id) / "metadata.json",
             {
@@ -1074,6 +1090,10 @@ class StreamingRepository:
         )
 
     def _persist_capture(self, record: _CaptureRecord) -> None:
+        _ensure_contained(
+            self.root / "captures",
+            self._capture_directory(record.operation.capture_id),
+        )
         _atomic_json(
             self._capture_directory(record.operation.capture_id) / "metadata.json",
             {
@@ -1093,6 +1113,8 @@ class StreamingRepository:
     ) -> None:
         """Repair source bytes to the last metadata-confirmed chunk boundary."""
         source_path = directory / "source.bin"
+        _ensure_contained(self.root / "ingestions", directory)
+        _ensure_contained(directory, source_path)
         if source_path.exists():
             source = source_path.read_bytes()
         else:
@@ -1167,6 +1189,7 @@ class StreamingRepository:
             if not directory.is_dir():
                 continue
             try:
+                _ensure_contained(self.root / "ingestions", directory)
                 payload = json.loads((directory / "metadata.json").read_text(encoding="utf-8"))
                 request = OpenIngestionV2.model_validate(payload["request"])
                 record = _IngestionRecord(
@@ -1185,6 +1208,7 @@ class StreamingRepository:
                 self._reconcile_loaded_ingestion(record, directory)
             except (
                 OSError,
+                RuntimeError,
                 KeyError,
                 IndexError,
                 TypeError,
@@ -1202,6 +1226,7 @@ class StreamingRepository:
             if not directory.is_dir():
                 continue
             try:
+                _ensure_contained(self.root / "captures", directory)
                 payload = json.loads((directory / "metadata.json").read_text(encoding="utf-8"))
                 request = StartCaptureV2.model_validate(payload["request"])
                 operation = CaptureOperationV2.model_validate(payload["operation"])
@@ -1215,6 +1240,7 @@ class StreamingRepository:
                 )
             except (
                 OSError,
+                RuntimeError,
                 KeyError,
                 TypeError,
                 ValueError,
@@ -1235,6 +1261,7 @@ class StreamingRepository:
     def _quarantine_directory(self, directory: Path, category: str) -> None:
         quarantine_root = self.root / "quarantine" / category
         try:
+            _ensure_contained(self.root, quarantine_root)
             quarantine_root.mkdir(parents=True, exist_ok=True)
             destination = quarantine_root / directory.name
             suffix = 1

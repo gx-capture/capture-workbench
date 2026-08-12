@@ -3,8 +3,9 @@
 Status: implementation in progress; P0-P3, local v1 engine deletion, the
 post-d3bf3de hardening phase, the post-1db5624 final closeout, and the
 post-695567b ingestion open-recovery phase, and the post-9e6e2b3 final
-hardening phase are complete. The external consumer compatibility gate and
-final residual cleanup remain open.
+hardening phase, and the post-3b61cef security/protocol hardening phase are
+complete. The external consumer compatibility gate and final residual cleanup
+remain open.
 
 ## Purpose
 
@@ -173,6 +174,18 @@ compatibility release before this producer can delete the public type.
    `source_kind_mismatch` before sniff-based dispatch can route mislabeled
    content to a different extractor. The external consumer gate remains
    unchecked.
+10. **Post-3b61cef security/protocol hardening**: completed in the containing
+    phase commit; Angular lost-open recovery correlates the recovered
+    ingestion with protocol version, kind, fileName, mediaType, and totalBytes
+    before any upload and fails closed on mismatch; native capture-start
+    validates protocolVersion, captureId/ingestionId correlation, kind,
+    status, and source metadata before persisting recovery state, and
+    malformed/mismatched committed 2xx responses recover through the
+    by-client-request lookup or fail closed; Angular, native, and user/probe
+    SSE parsers reject an unterminated final frame at EOF instead of treating
+    it as clean completion; runtime persistence enforces canonical child
+    containment for ingestion descendants before load, source access, writes,
+    and cleanup. The external consumer gate remains unchecked.
 
 Each phase must have an explicit path list, its own review, and its own
 verification result. Revert consumers before reverting the runtime cutover;
@@ -254,6 +267,23 @@ phase commit records the narrow fixes and final local verification below.
   consistency, tools/workbench lint/typecheck, and `git diff --check` passed;
   unrelated dirty paths remain unstaged. The private engine-bearing Ollama
   smoke remains opt-in and was not synthesized for this local verification.
+- Post-`3b61cef` security/protocol hardening (the containing phase commit) ??
+  Angular recovered-ingestion correlation, native capture-start semantic
+  validation/recovery, unterminated-final-SSE rejection, and canonical
+  persistence containment. Focused verification passed: runtime streaming
+  API/repository 42 passed/3 symlink skips, Angular client suite 102 passed,
+  native `runtime_client` 33 passed, probe/real-media parser tests 19 passed.
+  Full local verification passed: runtime 331 passed/4 skipped/1 warning;
+  Angular 102 passed; tools 21 passed; workbench 51 passed; Tauri 57 passed;
+  desktop package QA 203 passed/2 skipped; deterministic smoke and 4 Playwright
+  E2E tests passed. Runtime lint/typecheck/contracts, Angular
+  async-boundary/lint/typecheck, desktop cargo fmt/check, contract
+  consistency, tools/workbench lint/typecheck, and `git diff --check` passed;
+  unrelated dirty paths remain unstaged. Symlink regression tests skip when
+  the Windows environment cannot create symlinks; the canonical containment
+  guard itself is covered by a platform-independent test. The private
+  engine-bearing Ollama smoke remains opt-in and was not synthesized for this
+  local verification.
 
 ## Acceptance criteria
 
@@ -282,6 +312,10 @@ phase commit records the narrow fixes and final local verification below.
 - Declared capture kind is authoritative; content that sniffs as a different
   kind fails closed with `source_kind_mismatch` instead of being routed
   silently through a different extractor.
+- Lost-open recovery and capture-start responses are correlated against the
+  original request before upload or recovery-state persistence.
+- SSE parsers reject an unterminated final frame at EOF; persistence rejects
+  symlinked ingestion descendants outside the canonical persistence root.
 
 ## Test plan
 
@@ -291,6 +325,8 @@ phase commit records the narrow fixes and final local verification below.
   and unavailable-lookup outcomes.
 - Native committed-2xx semantic recovery, 128-character request-id bounds, v2
   status/stage mapping, and source-kind/content mismatch rejection.
+- Angular/native/probe unterminated-final-SSE rejection and canonical
+  persistence containment (load, source access, writes, cleanup).
 - Angular SSE frame parser, chunk upload, abort/unsubscribe, reconnect,
   reducer, workflow, and consumer smoke tests.
 - Rust/Tauri request, authorization, cursor, event bridge, and all-media

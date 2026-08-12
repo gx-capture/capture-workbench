@@ -97,12 +97,24 @@ describe('captureEventStream', () => {
     expect(events[0]).toMatchObject({ sequence: 2, eventType: 'completed' });
   });
 
-  it('ignores a final frame that has no trailing blank line', () => {
-    const frames = parseSseText(
-      `id: 2\nevent: completed\ndata: ${JSON.stringify(captureEvent(2, 'completed'))}`,
+  it('rejects a final frame that has no trailing blank line', () => {
+    expect(() =>
+      parseSseText(
+        `id: 2\nevent: completed\ndata: ${JSON.stringify(captureEvent(2, 'completed'))}`,
+      ),
+    ).toThrowError(expect.objectContaining({ code: 'invalid_event_frame' }));
+  });
+
+  it('rejects an unterminated final SSE frame at EOF', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      sseResponse([
+        `id: 2\nevent: completed\ndata: ${JSON.stringify(captureEvent(2, 'completed'))}`,
+      ]),
     );
 
-    expect(frames).toHaveLength(0);
+    await expect(
+      lastValueFrom(captureEventStream(fetchMock, EVENT_URL)),
+    ).rejects.toMatchObject({ code: 'invalid_event_frame' });
   });
 
   it('rejects a missing protocolVersion instead of guessing the wire contract', () => {
