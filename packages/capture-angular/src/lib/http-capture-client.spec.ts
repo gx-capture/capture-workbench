@@ -296,7 +296,7 @@ describe('HttpCaptureClient', () => {
       'http://127.0.0.1:43119/v2/ingestions',
     );
     expect(String(fetchMock.mock.calls[1]?.[0])).toContain(
-      '/v2/ingestions/by-client-request/request-malformed-ingestion-ingestion',
+      '/v2/ingestions/by-client-request/request-malformed-ingestion',
     );
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/chunks/'))).toBe(false);
   });
@@ -448,7 +448,7 @@ describe('HttpCaptureClient', () => {
     expect(error).toBeUndefined();
     expect(fetchMock).toHaveBeenCalledTimes(5);
     expect(String(fetchMock.mock.calls[1]?.[0])).toContain(
-      '/v2/ingestions/by-client-request/request-lost-open-ingestion',
+      '/v2/ingestions/by-client-request/request-lost-open',
     );
     expect(fetchMock.mock.calls.some(([url, init]) =>
       String(url).endsWith('/v2/ingestions/ingestion-1') && init?.method === 'DELETE',
@@ -507,6 +507,44 @@ describe('HttpCaptureClient', () => {
     expect(fetchMock.mock.calls.some(([url, init]) =>
       String(url).endsWith('/v2/ingestions/ingestion-1') && init?.method === 'DELETE',
     )).toBe(false);
+  });
+
+  it('keeps a 128-character client request id within the ingestion request bound', async () => {
+    const operation = {
+      protocolVersion: '2',
+      captureId: 'capture-128',
+      ingestionId: 'ingestion-128',
+      status: 'extracting',
+      partialRevision: 0,
+      lastEventSequence: 0,
+      createdAt: '2026-08-11T00:00:00Z',
+      updatedAt: '2026-08-11T00:00:00Z',
+    };
+    const clientRequestId = 'r'.repeat(128);
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(ingestionResponse('ingestion-128', 201))
+      .mockResolvedValueOnce(jsonResponse({ ingestionId: 'ingestion-128' }))
+      .mockResolvedValueOnce(ingestionResponse('ingestion-128'))
+      .mockResolvedValueOnce(jsonResponse(operation, 202));
+    const client = configureClient(fetchMock) as HttpCaptureClient;
+
+    await expect(firstValueFrom(client.startStreamingCapture({
+      clientRequestId,
+      file: new File(['abc'], 'scan.pdf', { type: 'application/pdf' }),
+      sourceKind: 'pdf',
+      structuringMode: 'runtime',
+    }))).resolves.toEqual(operation);
+
+    const openBody = String(fetchMock.mock.calls[0]?.[1]?.body);
+    expect(JSON.parse(openBody)).toMatchObject({ clientRequestId });
+    expect(openBody).not.toContain('-ingestion');
+    expect(String(fetchMock.mock.calls[3]?.[0])).toBe(
+      'http://127.0.0.1:43119/v2/captures',
+    );
+    expect((fetchMock.mock.calls[3]?.[1]?.headers as Headers).get('X-Idempotency-Key')).toBe(
+      clientRequestId,
+    );
   });
 
   it('uses v2 operation, partial, result, control, and delete routes', async () => {

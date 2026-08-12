@@ -808,11 +808,11 @@ async function startStreamingCapture(
     headers: {
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
-      'X-Idempotency-Key': `${requestId}-ingestion`,
+      'X-Idempotency-Key': requestId,
     },
     body: JSON.stringify({
       protocolVersion: '2',
-      clientRequestId: `${requestId}-ingestion`,
+      clientRequestId: requestId,
       kind: 'pdf',
       mode: 'file',
       fileName,

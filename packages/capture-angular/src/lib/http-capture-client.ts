@@ -165,7 +165,7 @@ export class HttpCaptureClient implements CaptureClient {
       protocolVersion: '2' as const,
       kind: request.sourceKind,
       mode: 'file' as const,
-      clientRequestId: `${clientRequestId}-ingestion`,
+      clientRequestId,
       fileName: request.file.name,
       mediaType: request.file.type || mediaTypeFor(request.sourceKind),
       totalBytes: request.file.size,

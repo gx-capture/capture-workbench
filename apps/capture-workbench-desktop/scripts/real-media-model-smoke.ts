@@ -126,12 +126,24 @@ const STREAMING_CAPTURE_STATUSES = new Set([
   'failed',
   'cancelled',
 ]);
+const STREAMING_CAPTURE_STAGES = new Set([
+  'created',
+  'waiting_input',
+  'extracting',
+  'awaiting_structuring',
+  'structuring',
+  'completed',
+  'failed',
+  'cancelled',
+]);
 const SAFE_UI_STATE_REQUIREMENTS = new Set(['windowsml-ocr', 'whisper-primary', 'ollama-runtime']);
 const SAFE_UI_STATE_SOURCE_KINDS = new Set(['pdf', 'image', 'audio']);
 const SAFE_UI_STATE_ENGINES = new Set(['windowsml-ocr', 'whisper-primary']);
 const SAFE_UI_STATE_DEVICES = new Set(['windowsml-dml', 'cpu']);
 const SAFE_TERMINAL_DOCUMENT_STATUSES = new Set(['failed', 'canceled']);
 const SAFE_TERMINAL_DOCUMENT_STAGES = new Set([
+  'created',
+  'waiting_input',
   'queued',
   'extracting',
   'awaiting_structuring',
@@ -148,6 +160,7 @@ const SAFE_TERMINAL_DOCUMENT_ERROR_CODES = new Set([
   'progressive_failed',
   'progressive_no_text_at_sample',
   'progressive_stall',
+  'source_kind_mismatch',
   'progressive_worker_exit',
   'progressive_decode_failed',
   'progressive_engine_resolution_failed',
@@ -170,7 +183,7 @@ const SAFE_TERMINAL_DOCUMENT_ERROR_CODES = new Set([
 const SAFE_WORKER_STAGE_TOKEN = '(?:worker-entry(?:-[a-z0-9-]+)?|python-import-[a-z0-9-]+|ocr-[a-z0-9-]+|whisper-[a-z0-9-]+|worker-process-[a-z0-9-]+|worker-stage-sequence-truncated)';
 const SAFE_WORKER_STAGE_SEQUENCE = `${SAFE_WORKER_STAGE_TOKEN}(?:>${SAFE_WORKER_STAGE_TOKEN})*`;
 const SAFE_TERMINAL_DOCUMENT_FAILURE = new RegExp(
-  `^Desktop capture terminated\\. status=(?:failed|canceled); stage=(?:queued|extracting|awaiting_structuring|structuring|persisting|completed|failed|cancelled|unknown); errorCode=(?:capture_cancelled|extraction_failed|requirement_unavailable|progressive_failed|progressive_no_text_at_sample|progressive_stall|progressive_worker_exit|progressive_decode_failed|progressive_engine_resolution_failed|progressive_decoder_init_failed|progressive_decoder_process_failed|progressive_decoder_finish_failed|progressive_worker_start_failed|progressive_worker_input_failed|progressive_worker_finish_failed|progressive_worker_event_invalid|progressive_event_persist_failed|progressive_partial_invalid|progressive_output_invalid|progressive_session_failed|session_failed|session_cancelled|structuring_failed|structuring_invalid_output|unknown)(?:; mediaKind=(?:pdf|image|audio))?(?:; (?:workerStage=${SAFE_WORKER_STAGE_SEQUENCE}|failureReason=(?:no-non-empty-output|validation-failed|runtime-boundary|worker-boundary)))?\\.$`,
+  `^Desktop capture terminated\\. status=(?:failed|canceled); stage=(?:created|waiting_input|queued|extracting|awaiting_structuring|structuring|persisting|completed|failed|cancelled|unknown); errorCode=(?:capture_cancelled|extraction_failed|requirement_unavailable|progressive_failed|progressive_no_text_at_sample|progressive_stall|source_kind_mismatch|progressive_worker_exit|progressive_decode_failed|progressive_engine_resolution_failed|progressive_decoder_init_failed|progressive_decoder_process_failed|progressive_decoder_finish_failed|progressive_worker_start_failed|progressive_worker_input_failed|progressive_worker_finish_failed|progressive_worker_event_invalid|progressive_event_persist_failed|progressive_partial_invalid|progressive_output_invalid|progressive_session_failed|session_failed|session_cancelled|structuring_failed|structuring_invalid_output|unknown)(?:; mediaKind=(?:pdf|image|audio))?(?:; (?:workerStage=${SAFE_WORKER_STAGE_SEQUENCE}|failureReason=(?:no-non-empty-output|validation-failed|runtime-boundary|worker-boundary)))?\\.$`,
   'u',
 );
 const SAFE_WORKER_FAILURE_MESSAGE = new RegExp(
@@ -1605,6 +1618,12 @@ export function safeUiStateSnapshot(records: readonly unknown[]): string {
   return JSON.stringify(safeRecords);
 }
 
+export function safeV2CaptureStage(status: unknown): string {
+  return typeof status === 'string' && STREAMING_CAPTURE_STAGES.has(status)
+    ? status
+    : 'unknown';
+}
+
 function smokeFailureKind(error: unknown): string {
   if (error instanceof NativePickerAutomationError) return 'native-source-picker';
   if (error instanceof Error && SAFE_TERMINAL_DOCUMENT_FAILURE.test(error.message)) {
@@ -1687,9 +1706,7 @@ async function collectSafeBackendCaptureState(
       && (SAFE_UI_STATE_STATUSES.has(job.status) || STREAMING_CAPTURE_STATUSES.has(job.status))
       ? job.status
       : 'unknown';
-    const stage = typeof job.status === 'string' && SAFE_TERMINAL_DOCUMENT_STAGES.has(job.status)
-      ? job.status
-      : 'unknown';
+    const stage = safeV2CaptureStage(job.status);
     const progress = typeof job.progress === 'number' && Number.isFinite(job.progress)
       ? Math.max(0, Math.min(1, job.progress))
       : undefined;

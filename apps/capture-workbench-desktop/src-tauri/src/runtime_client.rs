@@ -281,10 +281,10 @@ fn open_ingestion_with_recovery(
     source_kind: &str,
     client_request_id: &str,
 ) -> Result<String, String> {
-    let ingestion_request_id = format!("{client_request_id}-ingestion");
+    validate_client_request_id(client_request_id)?;
     let ingestion_request = RequestBody {
         bytes: serde_json::to_vec(&json!({
-            "clientRequestId": ingestion_request_id,
+            "clientRequestId": client_request_id,
             "kind": source_kind,
             "mode": "file",
             "fileName": source.file_name.clone(),
@@ -294,42 +294,102 @@ fn open_ingestion_with_recovery(
         .map_err(|_| "Progressive ingestion request cannot be encoded.".to_string())?,
         content_type: "application/json".into(),
     };
-    let ingestion = match request_with_headers(
+    let response = request_with_headers(
         config,
         "POST",
         "/v2/ingestions",
         Some(ingestion_request),
         None,
         &[],
-    ) {
-        Ok(ingestion) => ingestion,
-        Err(error) if is_uncertain_runtime_error(&error) => {
-            match request_with_headers(
-                config,
-                "GET",
-                &format!(
-                    "/v2/ingestions/by-client-request/{}",
-                    encode_path_segment(&ingestion_request_id)
-                ),
-                None,
-                None,
-                &[],
+    );
+    match response {
+        Ok(ingestion) => {
+            match validate_open_ingestion_response(
+                &ingestion,
+                source_kind,
+                &source.file_name,
+                &source.media_type,
+                source.bytes,
             ) {
-                Ok(recovered) => recovered,
-                Err(lookup_error) if is_http_rejection(&lookup_error, 404) => return Err(error),
-                Err(_) => return Err(error),
+                Ok(ingestion_id) => Ok(ingestion_id),
+                Err(validation_error) => {
+                    match lookup_ingestion_by_client_request(config, client_request_id) {
+                        Ok(recovered) => {
+                            match validate_open_ingestion_response(
+                                &recovered,
+                                source_kind,
+                                &source.file_name,
+                                &source.media_type,
+                                source.bytes,
+                            ) {
+                                Ok(ingestion_id) => Ok(ingestion_id),
+                                Err(_) => Err(validation_error),
+                            }
+                        }
+                        Err(_) => Err(validation_error),
+                    }
+                }
             }
         }
-        Err(error) => return Err(error),
-    };
-    let ingestion_id = ingestion
+        Err(error) if is_uncertain_runtime_error(&error) => {
+            match lookup_ingestion_by_client_request(config, client_request_id) {
+                Ok(recovered) => validate_open_ingestion_response(
+                    &recovered,
+                    source_kind,
+                    &source.file_name,
+                    &source.media_type,
+                    source.bytes,
+                ),
+                Err(lookup_error) if is_http_rejection(&lookup_error, 404) => Err(error),
+                Err(_) => Err(error),
+            }
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn lookup_ingestion_by_client_request(
+    config: &BackendConfig,
+    client_request_id: &str,
+) -> Result<Value, String> {
+    request_with_headers(
+        config,
+        "GET",
+        &format!(
+            "/v2/ingestions/by-client-request/{}",
+            encode_path_segment(client_request_id)
+        ),
+        None,
+        None,
+        &[],
+    )
+}
+
+fn validate_open_ingestion_response(
+    value: &Value,
+    expected_kind: &str,
+    expected_file_name: &str,
+    expected_media_type: &str,
+    expected_total_bytes: u64,
+) -> Result<String, String> {
+    if value.get("protocolVersion").and_then(Value::as_str) != Some("2") {
+        return Err("Progressive ingestion response is invalid.".into());
+    }
+    let ingestion_id = value
         .get("ingestionId")
         .and_then(Value::as_str)
-        .ok_or_else(|| "Progressive ingestion response is invalid.".to_string())?
-        .to_string();
-    validate_opaque_id(&ingestion_id)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "Progressive ingestion response is invalid.".to_string())?;
+    validate_opaque_id(ingestion_id)
         .map_err(|_| "Progressive ingestion response identity is invalid.".to_string())?;
-    Ok(ingestion_id)
+    if value.get("kind").and_then(Value::as_str) != Some(expected_kind)
+        || value.get("fileName").and_then(Value::as_str) != Some(expected_file_name)
+        || value.get("mediaType").and_then(Value::as_str) != Some(expected_media_type)
+        || value.get("totalBytes").and_then(Value::as_u64) != Some(expected_total_bytes)
+    {
+        return Err("Progressive ingestion response identity is invalid.".into());
+    }
+    Ok(ingestion_id.to_string())
 }
 
 enum CaptureReconciliation {
@@ -2592,10 +2652,9 @@ mod tests {
             drop(lost);
             let (mut lookup, _) = listener.accept().expect("lookup connection");
             let lookup_request = read_http_request(&mut lookup);
-            assert!(lookup_request.starts_with(
-                "GET /v2/ingestions/by-client-request/consumer.request.v1-ingestion HTTP/1.1"
-            ));
-            let body = r#"{"protocolVersion":"2","ingestionId":"ingestion-recovered","status":"open","fileName":"scan.pdf","mediaType":"application/pdf","totalBytes":3,"receivedBytes":0,"contiguousBytes":0,"nextChunkIndex":0,"nextOffset":0,"expiresAt":"2026-08-12T00:00:00Z"}"#;
+            assert!(lookup_request
+                .starts_with("GET /v2/ingestions/by-client-request/consumer.request.v1 HTTP/1.1"));
+            let body = r#"{"protocolVersion":"2","kind":"pdf","ingestionId":"ingestion-recovered","status":"open","fileName":"scan.pdf","mediaType":"application/pdf","totalBytes":3,"receivedBytes":0,"contiguousBytes":0,"nextChunkIndex":0,"nextOffset":0,"expiresAt":"2026-08-12T00:00:00Z"}"#;
             write!(
                 lookup,
                 "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -2635,9 +2694,8 @@ mod tests {
             drop(lost);
             let (mut lookup, _) = listener.accept().expect("lookup connection");
             let lookup_request = read_http_request(&mut lookup);
-            assert!(lookup_request.starts_with(
-                "GET /v2/ingestions/by-client-request/unknown-open-ingestion HTTP/1.1"
-            ));
+            assert!(lookup_request
+                .starts_with("GET /v2/ingestions/by-client-request/unknown-open HTTP/1.1"));
             write!(
                 lookup,
                 "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
@@ -2674,9 +2732,8 @@ mod tests {
             drop(lost);
             let (mut lookup, _) = listener.accept().expect("lookup connection");
             let lookup_request = read_http_request(&mut lookup);
-            assert!(lookup_request.starts_with(
-                "GET /v2/ingestions/by-client-request/absent-open-ingestion HTTP/1.1"
-            ));
+            assert!(lookup_request
+                .starts_with("GET /v2/ingestions/by-client-request/absent-open HTTP/1.1"));
             write!(
                 lookup,
                 "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
@@ -2701,6 +2758,192 @@ mod tests {
             .expect_err("confirmed absence");
 
         assert!(is_uncertain_runtime_error(&error));
+        server.join().expect("server");
+    }
+
+    #[test]
+    fn open_ingestion_recovers_after_semantically_invalid_committed_response() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("listener");
+        let port = listener.local_addr().expect("address").port();
+        let server = thread::spawn(move || {
+            let (mut committed, _) = listener.accept().expect("committed response connection");
+            let committed_request = read_http_request(&mut committed);
+            assert!(committed_request.starts_with("POST /v2/ingestions HTTP/1.1"));
+            write!(
+                committed,
+                "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{{}}"
+            )
+            .expect("invalid committed response");
+            let (mut lookup, _) = listener.accept().expect("lookup connection");
+            let lookup_request = read_http_request(&mut lookup);
+            assert!(lookup_request
+                .starts_with("GET /v2/ingestions/by-client-request/valid-open HTTP/1.1"));
+            let body = r#"{"protocolVersion":"2","kind":"pdf","ingestionId":"ingestion-recovered","status":"open","fileName":"scan.pdf","mediaType":"application/pdf","totalBytes":3,"receivedBytes":0,"contiguousBytes":0,"nextChunkIndex":0,"nextOffset":0,"expiresAt":"2026-08-12T00:00:00Z"}"#;
+            write!(
+                lookup,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .expect("recovered response");
+        });
+        let config = BackendConfig {
+            base_url: format!("http://127.0.0.1:{port}"),
+            token: "token".into(),
+            runtime_version: "0.3.11".into(),
+            api_version: "1.0".into(),
+            capture_document_schema_version: "1".into(),
+        };
+        let source = RuntimeSourceFile {
+            file_name: "scan.pdf".into(),
+            media_type: "application/pdf".into(),
+            path: PathBuf::from("scan.pdf"),
+            bytes: 3,
+        };
+
+        let ingestion_id = open_ingestion_with_recovery(&config, &source, "pdf", "valid-open")
+            .expect("recovered ingestion");
+
+        assert_eq!(ingestion_id, "ingestion-recovered");
+        server.join().expect("server");
+    }
+
+    #[test]
+    fn open_ingestion_recovers_after_mismatched_committed_identity() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("listener");
+        let port = listener.local_addr().expect("address").port();
+        let server = thread::spawn(move || {
+            let (mut committed, _) = listener.accept().expect("committed response connection");
+            let committed_request = read_http_request(&mut committed);
+            assert!(committed_request.starts_with("POST /v2/ingestions HTTP/1.1"));
+            let body = r#"{"protocolVersion":"2","kind":"audio","ingestionId":"ingestion-committed","status":"open","fileName":"scan.pdf","mediaType":"application/pdf","totalBytes":3,"receivedBytes":0,"contiguousBytes":0,"nextChunkIndex":0,"nextOffset":0,"expiresAt":"2026-08-12T00:00:00Z"}"#;
+            write!(
+                committed,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .expect("mismatched committed response");
+            let (mut lookup, _) = listener.accept().expect("lookup connection");
+            let lookup_request = read_http_request(&mut lookup);
+            assert!(lookup_request
+                .starts_with("GET /v2/ingestions/by-client-request/mismatched-open HTTP/1.1"));
+            let recovered = r#"{"protocolVersion":"2","kind":"pdf","ingestionId":"ingestion-recovered","status":"open","fileName":"scan.pdf","mediaType":"application/pdf","totalBytes":3,"receivedBytes":0,"contiguousBytes":0,"nextChunkIndex":0,"nextOffset":0,"expiresAt":"2026-08-12T00:00:00Z"}"#;
+            write!(
+                lookup,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                recovered.len(),
+                recovered
+            )
+            .expect("recovered response");
+        });
+        let config = BackendConfig {
+            base_url: format!("http://127.0.0.1:{port}"),
+            token: "token".into(),
+            runtime_version: "0.3.11".into(),
+            api_version: "1.0".into(),
+            capture_document_schema_version: "1".into(),
+        };
+        let source = RuntimeSourceFile {
+            file_name: "scan.pdf".into(),
+            media_type: "application/pdf".into(),
+            path: PathBuf::from("scan.pdf"),
+            bytes: 3,
+        };
+
+        let ingestion_id = open_ingestion_with_recovery(&config, &source, "pdf", "mismatched-open")
+            .expect("recovered ingestion");
+
+        assert_eq!(ingestion_id, "ingestion-recovered");
+        server.join().expect("server");
+    }
+
+    #[test]
+    fn open_ingestion_keeps_original_validation_error_when_recovery_is_also_invalid() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("listener");
+        let port = listener.local_addr().expect("address").port();
+        let server = thread::spawn(move || {
+            let (mut committed, _) = listener.accept().expect("committed response connection");
+            let committed_request = read_http_request(&mut committed);
+            assert!(committed_request.starts_with("POST /v2/ingestions HTTP/1.1"));
+            write!(
+                committed,
+                "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{{}}"
+            )
+            .expect("invalid committed response");
+            let (mut lookup, _) = listener.accept().expect("lookup connection");
+            let lookup_request = read_http_request(&mut lookup);
+            assert!(lookup_request
+                .starts_with("GET /v2/ingestions/by-client-request/invalid-recovery HTTP/1.1"));
+            write!(
+                lookup,
+                "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{{}}"
+            )
+            .expect("invalid recovery response");
+        });
+        let config = BackendConfig {
+            base_url: format!("http://127.0.0.1:{port}"),
+            token: "token".into(),
+            runtime_version: "0.3.11".into(),
+            api_version: "1.0".into(),
+            capture_document_schema_version: "1".into(),
+        };
+        let source = RuntimeSourceFile {
+            file_name: "scan.pdf".into(),
+            media_type: "application/pdf".into(),
+            path: PathBuf::from("scan.pdf"),
+            bytes: 3,
+        };
+
+        let error = open_ingestion_with_recovery(&config, &source, "pdf", "invalid-recovery")
+            .expect_err("invalid recovery");
+
+        assert_eq!(error, "Progressive ingestion response is invalid.");
+        server.join().expect("server");
+    }
+
+    #[test]
+    fn open_ingestion_preserves_128_character_client_request_id_without_derived_suffix() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("listener");
+        let port = listener.local_addr().expect("address").port();
+        let request_id = "r".repeat(128);
+        let expected_request_id = request_id.clone();
+        let server = thread::spawn(move || {
+            let (mut committed, _) = listener.accept().expect("committed response connection");
+            let committed_request = read_http_request(&mut committed);
+            assert!(committed_request.starts_with("POST /v2/ingestions HTTP/1.1"));
+            assert!(committed_request
+                .contains(&format!("\"clientRequestId\":\"{}\"", expected_request_id)));
+            assert!(!committed_request.contains("-ingestion"));
+            let body = r#"{"protocolVersion":"2","kind":"pdf","ingestionId":"ingestion-128","status":"open","fileName":"scan.pdf","mediaType":"application/pdf","totalBytes":3,"receivedBytes":0,"contiguousBytes":0,"nextChunkIndex":0,"nextOffset":0,"expiresAt":"2026-08-12T00:00:00Z"}"#;
+            write!(
+                committed,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .expect("committed response");
+        });
+        let config = BackendConfig {
+            base_url: format!("http://127.0.0.1:{port}"),
+            token: "token".into(),
+            runtime_version: "0.3.11".into(),
+            api_version: "1.0".into(),
+            capture_document_schema_version: "1".into(),
+        };
+        let source = RuntimeSourceFile {
+            file_name: "scan.pdf".into(),
+            media_type: "application/pdf".into(),
+            path: PathBuf::from("scan.pdf"),
+            bytes: 3,
+        };
+
+        validate_client_request_id(&request_id).expect("bounded request id");
+        assert!(validate_client_request_id(&format!("{request_id}-ingestion")).is_err());
+        let ingestion_id = open_ingestion_with_recovery(&config, &source, "pdf", &request_id)
+            .expect("bounded ingestion request id");
+
+        assert_eq!(ingestion_id, "ingestion-128");
         server.join().expect("server");
     }
 

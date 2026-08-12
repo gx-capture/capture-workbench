@@ -342,6 +342,7 @@ class StreamingCaptureService:
                     source=operation.source,
                     source_path=source_path,
                     cancellation=cancellation,
+                    expected_kind=operation.kind,
                 )
             self.repository.write_raw(capture_id, raw)
             raw_written = True
@@ -476,12 +477,20 @@ class StreamingCaptureService:
         source: CaptureSourceV1,
         source_path: Path,
         cancellation: asyncio.Event,
+        expected_kind: CaptureSourceKind,
     ) -> RawCaptureV1:
         if self._extractor is None:
             raise ExtractionRuntimeUnavailableError("capture extractor is unavailable")
         if cancellation.is_set():
             raise asyncio.CancelledError
         content = await asyncio.to_thread(source_path.read_bytes)
+        sniffed = self._extractor.sniff(content)
+        if sniffed.kind is not expected_kind:
+            raise ProgressiveCaptureError(
+                "Uploaded source content does not match its declared capture kind.",
+                code="source_kind_mismatch",
+                retryable=False,
+            )
         raw = await self._extractor.extract(content, source, cancellation)
         if cancellation.is_set():
             raise asyncio.CancelledError

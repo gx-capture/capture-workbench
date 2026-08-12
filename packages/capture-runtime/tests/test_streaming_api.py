@@ -581,6 +581,67 @@ def test_streaming_api_runs_one_lifecycle_for_every_capture_kind(
     assert client.get(f"/v2/captures/{capture_id}/result").status_code == 200
 
 
+def test_streaming_api_fails_closed_when_source_content_kind_mismatches_declared_kind(
+    client: TestClient,
+) -> None:
+    source = b"\x89PNG\r\n\x1a\nCAPTURE_TEXT:image page"
+    digest = hashlib.sha256(source).hexdigest()
+    opened = client.post(
+        "/v2/ingestions",
+        json={
+            "clientRequestId": "api-stream-kind-mismatch",
+            "kind": "pdf",
+            "fileName": "mismatch.pdf",
+            "mediaType": "application/pdf",
+            "totalBytes": len(source),
+            "sourceSha256": digest,
+        },
+    )
+    assert opened.status_code == 201, opened.text
+    ingestion_id = opened.json()["ingestionId"]
+    uploaded = client.put(
+        f"/v2/ingestions/{ingestion_id}/chunks/0",
+        content=source,
+        headers={
+            "Content-Range": f"bytes 0-{len(source) - 1}/{len(source)}",
+            "Digest": f"sha-256={digest}",
+            "X-Idempotency-Key": "api-stream-kind-mismatch-chunk",
+        },
+    )
+    assert uploaded.status_code == 200, uploaded.text
+    finalized = client.post(
+        f"/v2/ingestions/{ingestion_id}/finalize",
+        json={"totalBytes": len(source), "sha256": digest},
+    )
+    assert finalized.status_code == 200, finalized.text
+    started = client.post(
+        "/v2/captures",
+        json={
+            "clientRequestId": "api-stream-kind-mismatch-capture",
+            "ingestionId": ingestion_id,
+            "structuringMode": "runtime",
+            "startPolicy": "eager",
+        },
+    )
+    assert started.status_code == 202, started.text
+    capture_id = started.json()["captureId"]
+
+    operation: dict[str, object] = {}
+    for _ in range(100):
+        response = client.get(f"/v2/captures/{capture_id}")
+        assert response.status_code == 200, response.text
+        operation = response.json()
+        if operation["status"] == "failed":
+            break
+        time.sleep(0.01)
+
+    assert operation["status"] == "failed"
+    assert operation["error"]["code"] == "source_kind_mismatch"
+    assert operation["error"]["stage"] == "extraction"
+    assert operation["error"]["retryable"] is False
+    assert "does not match" in operation["error"]["message"]
+
+
 def test_streaming_api_commits_host_structuring_idempotently(client: TestClient) -> None:
     source = b"\x89PNG\r\n\x1a\nCAPTURE_TEXT:host page"
     digest = hashlib.sha256(source).hexdigest()

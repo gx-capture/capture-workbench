@@ -2,8 +2,9 @@
 
 Status: implementation in progress; P0-P3, local v1 engine deletion, the
 post-d3bf3de hardening phase, the post-1db5624 final closeout, and the
-post-695567b ingestion open-recovery phase are complete. The external consumer
-compatibility gate and final residual cleanup remain open.
+post-695567b ingestion open-recovery phase, and the post-9e6e2b3 final
+hardening phase are complete. The external consumer compatibility gate and
+final residual cleanup remain open.
 
 ## Purpose
 
@@ -158,6 +159,20 @@ compatibility release before this producer can delete the public type.
    bounded expiry (unreferenced ingestions expire two hours after open and are
    pruned at startup/initialize) remains the documented orphan backstop when
    the runtime is unreachable. The external consumer gate remains unchecked.
+9. **Post-9e6e2b3 final hardening**: completed in the containing phase commit;
+   native open-ingestion enters by-client-request recovery on any committed
+   2xx response that fails semantic identity validation (missing/malformed
+   `ingestionId`, wrong protocol version, or metadata identity mismatch).
+   Ingestion open requests reuse the same bounded client request id as the
+   capture request because the runtime idempotency maps are separate, keeping
+   every request id within the 128-character contract without truncation or
+   collision risk and preserving path-safe encoding. Real-media-model-smoke
+   maps every v2 capture status (`created`, `waiting_input`, and the rest) to
+   its own stage instead of the legacy document-stage allowlist. Declared
+   capture kind is authoritative: pdf/image extraction fails closed with
+   `source_kind_mismatch` before sniff-based dispatch can route mislabeled
+   content to a different extractor. The external consumer gate remains
+   unchecked.
 
 Each phase must have an explicit path list, its own review, and its own
 verification result. Revert consumers before reverting the runtime cutover;
@@ -225,6 +240,20 @@ phase commit records the narrow fixes and final local verification below.
   `git diff --check` passed; unrelated dirty paths remain unstaged. The private
   engine-bearing Ollama smoke remains opt-in and was not synthesized for this
   local verification.
+- Post-`9e6e2b3` final hardening (the containing phase commit) ??native
+  committed-2xx semantic recovery, same-bounded-id ingestion requests,
+  real-media-model-smoke v2 stage mapping, and authoritative source-kind
+  rejection. Focused verification passed: runtime streaming API/repository 41
+  passed, Angular client suite 100 passed, native `runtime_client` 30 passed,
+  real-media-model-smoke plus probe 42 passed/1 skipped. Full local
+  verification passed: runtime 330 passed/1 skipped/1 warning; Angular 100
+  passed; tools 21 passed; workbench 51 passed; Tauri 54 passed; desktop
+  package QA 203 passed/2 skipped; deterministic smoke and 4 Playwright E2E
+  tests passed. Runtime lint/typecheck/contracts, Angular
+  async-boundary/lint/typecheck, desktop cargo fmt/check, contract
+  consistency, tools/workbench lint/typecheck, and `git diff --check` passed;
+  unrelated dirty paths remain unstaged. The private engine-bearing Ollama
+  smoke remains opt-in and was not synthesized for this local verification.
 
 ## Acceptance criteria
 
@@ -250,6 +279,9 @@ phase commit records the narrow fixes and final local verification below.
 - A lost open-ingestion response can be recovered through the by-client-request
   ingestion lookup; unreferenced ingestions remain bounded by the existing
   two-hour expiry/prune backstop.
+- Declared capture kind is authoritative; content that sniffs as a different
+  kind fails closed with `source_kind_mismatch` instead of being routed
+  silently through a different extractor.
 
 ## Test plan
 
@@ -257,6 +289,8 @@ phase commit records the narrow fixes and final local verification below.
   cancellation, cleanup, host-structuring, and all-media integration tests.
 - Ingestion lookup by client request, including recovery, confirmed-absence,
   and unavailable-lookup outcomes.
+- Native committed-2xx semantic recovery, 128-character request-id bounds, v2
+  status/stage mapping, and source-kind/content mismatch rejection.
 - Angular SSE frame parser, chunk upload, abort/unsubscribe, reconnect,
   reducer, workflow, and consumer smoke tests.
 - Rust/Tauri request, authorization, cursor, event bridge, and all-media

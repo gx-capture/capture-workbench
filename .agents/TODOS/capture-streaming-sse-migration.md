@@ -47,6 +47,17 @@ decision record, and phase commits.
       E2E, and `git diff --check` passed; the external Cert Prep/Law Prep
       compatibility gate remains unchecked.
 
+- [x] Complete the post-`9e6e2b3` final hardening phase: native open-ingestion
+      semantic-2xx recovery, same-bounded-id ingestion requests, v2
+      status/stage mapping in real-media-model-smoke, and authoritative
+      source-kind rejection.
+  Verify: runtime streaming API/repository tests, Angular client tests, native
+      recovery tests, real-media-model-smoke/probe tests, full Nx
+      runtime/Angular/tools/workbench checks, Tauri fmt/check/test/contract/
+      package QA, deterministic smoke, Playwright E2E, and `git diff --check`
+      passed; the external Cert Prep/Law Prep compatibility gate remains
+      unchecked.
+
 ## Explicitly blocked evidence
 
 - Real engine-bearing OCR/Whisper smoke remains opt-in and depends on the

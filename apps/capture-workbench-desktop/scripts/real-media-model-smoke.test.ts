@@ -33,6 +33,7 @@ import {
   safeTerminalDocumentFailure,
   safeTerminalInstallationFailure,
   safeTerminalModelInstallationFailure,
+  safeV2CaptureStage,
   safeUiAutomationDiagnostics,
   sha256,
   shouldUseBackendReuseReadiness,
@@ -71,6 +72,39 @@ test('audio v2 smoke keeps bounded runtime failure codes visible', () => {
       'audio',
     ),
     'Desktop capture terminated. status=failed; stage=failed; errorCode=progressive_stall; mediaKind=audio.',
+  );
+});
+
+test('v2 backend capture state represents every streaming status as its own stage', () => {
+  for (const status of [
+    'created',
+    'waiting_input',
+    'extracting',
+    'awaiting_structuring',
+    'structuring',
+    'completed',
+    'failed',
+    'cancelled',
+  ]) {
+    assert.equal(safeV2CaptureStage(status), status);
+  }
+  assert.equal(safeV2CaptureStage(null), 'unknown');
+  assert.equal(safeV2CaptureStage('queued'), 'unknown');
+  assert.equal(safeV2CaptureStage('legacy-stage'), 'unknown');
+});
+
+test('terminal document failure represents v2 stages and source kind mismatches', () => {
+  assert.equal(
+    safeTerminalDocumentFailure('failed', 'created', 'source_kind_mismatch'),
+    'Desktop capture terminated. status=failed; stage=created; errorCode=source_kind_mismatch.',
+  );
+  assert.equal(
+    safeTerminalDocumentFailure('failed', 'waiting_input', 'progressive_failed'),
+    'Desktop capture terminated. status=failed; stage=waiting_input; errorCode=progressive_failed.',
+  );
+  assert.equal(
+    safeTerminalDocumentFailure('failed', 'legacy-stage', 'extraction_failed'),
+    'Desktop capture terminated. status=failed; stage=unknown; errorCode=extraction_failed.',
   );
 });
 
