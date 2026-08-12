@@ -226,6 +226,7 @@ export class HttpCaptureClient implements CaptureClient {
             clientRequestId,
             ingestionId,
             error,
+            request.signal,
           );
         }
         return this.deleteStreamingIngestion(ingestionId).pipe(
@@ -252,6 +253,7 @@ export class HttpCaptureClient implements CaptureClient {
         return this.getStreamingIngestionByClientRequest(
           request.clientRequestId,
           request,
+          signal,
         ).pipe(
           catchError((lookupError: unknown) => {
             if (isIngestionNotFound(lookupError)) return throwError(() => error);
@@ -265,11 +267,12 @@ export class HttpCaptureClient implements CaptureClient {
   private getStreamingIngestionByClientRequest(
     clientRequestId: string,
     request: OpenIngestionV2,
+    signal?: AbortSignal,
   ): Observable<IngestionV2> {
     const safeClientRequestId = assertClientRequestId(clientRequestId);
     return this.request<IngestionV2>(
       `/v2/ingestions/by-client-request/${encodeURIComponent(safeClientRequestId)}`,
-      { decode: (value) => decodeRecoveredIngestionResponse(value, request) },
+      { signal, decode: (value) => decodeRecoveredIngestionResponse(value, request) },
     );
   }
 
@@ -408,10 +411,14 @@ export class HttpCaptureClient implements CaptureClient {
     );
   }
 
-  private deleteStreamingIngestion(ingestionId: string): Observable<void> {
+  private deleteStreamingIngestion(
+    ingestionId: string,
+    signal?: AbortSignal,
+  ): Observable<void> {
     const safeIngestionId = assertOpaqueRuntimeId(ingestionId);
     return this.request<void>(`/v2/ingestions/${encodeURIComponent(safeIngestionId)}`, {
       method: 'DELETE',
+      signal,
     }).pipe(map(() => undefined));
   }
 
@@ -419,11 +426,12 @@ export class HttpCaptureClient implements CaptureClient {
     clientRequestId: string,
     ingestionId: string,
     originalError: unknown,
+    signal?: AbortSignal,
   ): Observable<CaptureOperationV2> {
-    return this.getStreamingCaptureByClientRequest(clientRequestId).pipe(
+    return this.getStreamingCaptureByClientRequest(clientRequestId, signal).pipe(
       catchError((lookupError: unknown) => {
         if (!isCaptureNotFound(lookupError)) return throwError(() => originalError);
-        return this.deleteStreamingIngestion(ingestionId).pipe(
+        return this.deleteStreamingIngestion(ingestionId, signal).pipe(
           catchError(() => of(undefined)),
           mergeMap(() => throwError(() => originalError)),
         );
@@ -433,7 +441,7 @@ export class HttpCaptureClient implements CaptureClient {
         if (typeof operation.ingestionId !== 'string' || operation.ingestionId === '') {
           return throwError(() => originalError);
         }
-        return this.deleteStreamingIngestion(ingestionId).pipe(
+        return this.deleteStreamingIngestion(ingestionId, signal).pipe(
           catchError(() => of(undefined)),
           mergeMap(() =>
             throwError(
@@ -452,11 +460,12 @@ export class HttpCaptureClient implements CaptureClient {
 
   private getStreamingCaptureByClientRequest(
     clientRequestId: string,
+    signal?: AbortSignal,
   ): Observable<CaptureOperationV2> {
     const safeClientRequestId = assertClientRequestId(clientRequestId);
     return this.request<CaptureOperationV2>(
       `/v2/captures/by-client-request/${encodeURIComponent(safeClientRequestId)}`,
-      { decode: (value) => decodeCaptureOperationResponse(value) },
+      { signal, decode: (value) => decodeCaptureOperationResponse(value) },
     );
   }
 

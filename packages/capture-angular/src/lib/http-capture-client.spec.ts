@@ -413,6 +413,128 @@ describe('HttpCaptureClient', () => {
     )).toBe(false);
   });
 
+  it('propagates the caller abort signal to the uncertain capture-create recovery lookup', async () => {
+    const operation = {
+      protocolVersion: '2',
+      captureId: 'capture-recovered',
+      ingestionId: 'ingestion-1',
+      status: 'extracting',
+      partialRevision: 0,
+      lastEventSequence: 0,
+      createdAt: '2026-08-11T00:00:00Z',
+      updatedAt: '2026-08-11T00:00:00Z',
+    };
+    const controller = new AbortController();
+    let resolveLookup!: (value: Response) => void;
+    const lookup = new Promise<Response>((resolve) => {
+      resolveLookup = resolve;
+    });
+    const fetchMock = vi.fn<typeof fetch>((input) => {
+      const url = String(input);
+      if (url.endsWith('/v2/ingestions')) {
+        return Promise.resolve(ingestionResponse('ingestion-1', 201));
+      }
+      if (url.includes('/v2/ingestions/ingestion-1/chunks/')) {
+        return Promise.resolve(jsonResponse({ ingestionId: 'ingestion-1' }));
+      }
+      if (url.endsWith('/v2/ingestions/ingestion-1/finalize')) {
+        return Promise.resolve(ingestionResponse('ingestion-1'));
+      }
+      if (url.endsWith('/v2/captures')) {
+        return Promise.reject(new TypeError('connection closed after commit'));
+      }
+      if (url.includes('/v2/captures/by-client-request/')) {
+        return lookup;
+      }
+      throw new Error(`Unexpected fetch URL: ${url}`);
+    });
+    const client = configureClient(fetchMock) as HttpCaptureClient;
+    let received: unknown;
+
+    client
+      .startStreamingCapture({
+        clientRequestId: 'request-signal-create',
+        file: new File(['abc'], 'scan.pdf', { type: 'application/pdf' }),
+        sourceKind: 'pdf',
+        structuringMode: 'runtime',
+        signal: controller.signal,
+      })
+      .subscribe({ next: (value) => (received = value) });
+
+    await vi.waitFor(() => expect(fetchMock.mock.calls).toHaveLength(5));
+    controller.abort();
+    await vi.waitFor(() =>
+      expect((fetchMock.mock.calls[4]?.[1]?.signal as AbortSignal).aborted).toBe(true),
+    );
+    resolveLookup(jsonResponse(operation, 200));
+    await vi.waitFor(() => expect(received).toEqual(operation));
+  });
+
+  it('propagates the caller abort signal to the lost-open ingestion recovery lookup', async () => {
+    const operation = {
+      protocolVersion: '2',
+      captureId: 'capture-recovered',
+      ingestionId: 'ingestion-1',
+      status: 'extracting',
+      partialRevision: 0,
+      lastEventSequence: 0,
+      createdAt: '2026-08-11T00:00:00Z',
+      updatedAt: '2026-08-11T00:00:00Z',
+    };
+    const controller = new AbortController();
+    let resolveLookup!: (value: Response) => void;
+    const lookup = new Promise<Response>((resolve) => {
+      resolveLookup = resolve;
+    });
+    const fetchMock = vi.fn<typeof fetch>((input) => {
+      const url = String(input);
+      if (url.endsWith('/v2/ingestions')) {
+        return Promise.reject(new TypeError('connection closed after open'));
+      }
+      if (url.includes('/v2/ingestions/by-client-request/')) {
+        return lookup;
+      }
+      if (url.includes('/v2/ingestions/ingestion-1/chunks/')) {
+        return Promise.resolve(jsonResponse({ ingestionId: 'ingestion-1' }));
+      }
+      if (url.endsWith('/v2/ingestions/ingestion-1/finalize')) {
+        return Promise.resolve(ingestionResponse('ingestion-1'));
+      }
+      if (url.endsWith('/v2/captures')) {
+        return Promise.resolve(jsonResponse(operation, 202));
+      }
+      throw new Error(`Unexpected fetch URL: ${url}`);
+    });
+    const recoveredIngestion = ingestionResponse('ingestion-1', {
+        kind: 'pdf',
+        fileName: 'scan.pdf',
+        mediaType: 'application/pdf',
+        totalBytes: 3,
+      });
+    const client = configureClient(fetchMock) as HttpCaptureClient;
+    let received: unknown;
+    let error: unknown;
+
+    client
+      .startStreamingCapture({
+        clientRequestId: 'request-signal-open',
+        file: new File(['abc'], 'scan.pdf', { type: 'application/pdf' }),
+        sourceKind: 'pdf',
+        structuringMode: 'runtime',
+        signal: controller.signal,
+      })
+      .subscribe({ next: (value) => (received = value), error: (value) => (error = value) });
+
+    await vi.waitFor(() => expect(fetchMock.mock.calls).toHaveLength(2));
+    controller.abort();
+    await vi.waitFor(() =>
+      expect((fetchMock.mock.calls[1]?.[1]?.signal as AbortSignal).aborted).toBe(true),
+    );
+    resolveLookup(recoveredIngestion);
+    await vi.waitFor(() => expect(error).toBeDefined());
+    expect(received).toBeUndefined();
+  });
+
   it('recovers a committed ingestion after the open response is lost by client request lookup', async () => {
     const operation = {
       protocolVersion: '2',

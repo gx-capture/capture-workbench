@@ -214,6 +214,71 @@ def test_streaming_repository_quarantines_symlinked_ingestion_directory_on_load(
     assert (outside / "keep.txt").exists()
 
 
+def test_streaming_repository_rejects_symlinked_persistence_root(tmp_path: Path) -> None:
+    real = tmp_path / "real-root"
+    real.mkdir()
+    link = tmp_path / "root-link"
+    try:
+        os.symlink(real, link, target_is_directory=True)
+    except OSError:
+        pytest.skip("directory symlinks are not available")
+
+    with pytest.raises(RuntimeError, match="persistence root must not be a symlink"):
+        StreamingRepository(link, clock=MutableClock(), retention_hours=4).initialize()
+
+
+def test_streaming_repository_rejects_symlinked_ingestions_root_on_initialize(
+    tmp_path: Path,
+) -> None:
+    clock = MutableClock()
+    repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+    repository.initialize()
+    category = tmp_path / "streaming" / "ingestions"
+    outside = tmp_path / "outside-ingestions-root"
+    outside.mkdir()
+    (outside / "keep.txt").write_text("keep")
+    shutil.rmtree(category)
+    try:
+        os.symlink(outside, category, target_is_directory=True)
+    except OSError:
+        pytest.skip("directory symlinks are not available")
+
+    with pytest.raises(RuntimeError, match="ingestions root must not be a symlink"):
+        StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4).initialize()
+
+    assert (outside / "keep.txt").exists()
+
+
+def test_streaming_repository_rechecks_capture_directory_containment_before_event_read(
+    tmp_path: Path,
+) -> None:
+    clock = MutableClock()
+    repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+    repository.initialize()
+    ingestion_id, _ = _open(repository, b"abcdef")
+    capture = repository.create_capture(
+        StartCaptureV2(
+            client_request_id="repository-capture-containment",
+            ingestion_id=ingestion_id,
+            structuring_mode=StructuringMode.HOST,
+        )
+    )
+    directory = tmp_path / "streaming" / "captures" / capture.capture_id
+    outside = tmp_path / "outside-capture-directory"
+    outside.mkdir()
+    (outside / "events.jsonl").write_text("[]\n")
+    shutil.rmtree(directory)
+    try:
+        os.symlink(outside, directory, target_is_directory=True)
+    except OSError:
+        pytest.skip("directory symlinks are not available")
+
+    with pytest.raises(RuntimeError, match="escaped repository root"):
+        repository.read_events(capture.capture_id, after_sequence=-1)
+
+    assert (outside / "events.jsonl").read_text() == "[]\n"
+
+
 def test_streaming_repository_truncates_source_after_source_write_crash_window(
     tmp_path: Path,
 ) -> None:

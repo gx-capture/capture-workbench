@@ -28,3 +28,24 @@ test('deterministic SSE parser preserves ordered replay frames and multiline dat
     },
   ]);
 });
+
+test('deterministic SSE parser preserves bare-CR line endings', () => {
+  const frames = parseSseFrames(
+    'id: 1\revent: checkpoint\rdata: {"sequence":1}\r\r',
+  );
+
+  assert.deepEqual(frames, [
+    {
+      id: '1',
+      event: 'checkpoint',
+      data: '{"sequence":1}',
+    },
+  ]);
+});
+
+test('deterministic SSE parser rejects an unterminated final frame', () => {
+  assert.throws(
+    () => parseSseFrames('id: 1\nevent: checkpoint\ndata: {"sequence":1}'),
+    /incomplete event frame/u,
+  );
+});

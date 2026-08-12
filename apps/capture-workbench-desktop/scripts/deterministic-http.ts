@@ -456,7 +456,11 @@ export function parseSseFrames(text: string): readonly DeterministicSseFrame[] {
       data.push(value);
     }
   }
+  const pending = id !== undefined || event !== undefined || data.length > 0;
   dispatch();
+  if (pending) {
+    throw new Error('Deterministic SSE response ended with an incomplete event frame.');
+  }
   return frames;
 }
 

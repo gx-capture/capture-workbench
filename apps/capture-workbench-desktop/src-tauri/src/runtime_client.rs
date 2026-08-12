@@ -496,20 +496,15 @@ fn validate_capture_start_response(
     ) {
         return Err("Progressive capture response is invalid.".into());
     }
-    if let Some(source) = value.get("source") {
-        if !source.is_null() {
-            let source = source
-                .as_object()
-                .ok_or_else(|| "Progressive capture response is invalid.".to_string())?;
-            if source.get("fileName").and_then(Value::as_str)
-                != Some(expectation.file_name.as_str())
-                || source.get("mediaType").and_then(Value::as_str)
-                    != Some(expectation.media_type.as_str())
-                || source.get("bytes").and_then(Value::as_u64) != Some(expectation.total_bytes)
-            {
-                return Err("Progressive capture response identity is invalid.".into());
-            }
-        }
+    let source = value
+        .get("source")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "Progressive capture response is invalid.".to_string())?;
+    if source.get("fileName").and_then(Value::as_str) != Some(expectation.file_name.as_str())
+        || source.get("mediaType").and_then(Value::as_str) != Some(expectation.media_type.as_str())
+        || source.get("bytes").and_then(Value::as_u64) != Some(expectation.total_bytes)
+    {
+        return Err("Progressive capture response identity is invalid.".into());
     }
     Ok(capture_id.to_string())
 }
@@ -1109,7 +1104,7 @@ where
             cancellation,
         )?
         else {
-            return Ok(());
+            return parser.finish(&mut on_event);
         };
         if count == 0 {
             break;
@@ -2220,13 +2215,20 @@ mod tests {
             .expect("source object")["fileName"] = serde_json::json!("other.pdf");
         assert!(validate_capture_start_response(&wrong_source, &expectation).is_err());
 
-        let mut waiting_input = valid;
-        waiting_input.as_object_mut().expect("object")["status"] =
-            serde_json::json!("waiting_input");
-        waiting_input
+        let mut null_source = valid.clone();
+        null_source.as_object_mut().expect("object")["source"] = serde_json::Value::Null;
+        assert!(validate_capture_start_response(&null_source, &expectation).is_err());
+
+        let mut missing_source = valid.clone();
+        missing_source
             .as_object_mut()
             .expect("object")
             .remove("source");
+        assert!(validate_capture_start_response(&missing_source, &expectation).is_err());
+
+        let mut waiting_input = valid;
+        waiting_input.as_object_mut().expect("object")["status"] =
+            serde_json::json!("waiting_input");
         assert!(validate_capture_start_response(&waiting_input, &expectation).is_ok());
     }
 
@@ -2450,6 +2452,41 @@ mod tests {
             .expect("truncated frame");
         assert!(truncated.finish(&mut collect_truncated).is_err());
         assert!(truncated_events.is_empty());
+    }
+
+    #[test]
+    fn request_sse_rejects_unterminated_final_frame_at_eof() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("listener");
+        let port = listener.local_addr().expect("address").port();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut request = [0_u8; 4096];
+            let count = stream.read(&mut request).expect("request");
+            let request = String::from_utf8_lossy(&request[..count]);
+            assert!(request.contains("GET /v2/captures/capture-1/events HTTP/1.1"));
+            let body = "id: 8\nevent: checkpoint\ndata: {\"protocolVersion\":\"2\",\"eventId\":\"capture-1/8\",\"sequence\":8,\"captureId\":\"capture-1\",\"kind\":\"audio\",\"eventType\":\"checkpoint\",\"stage\":\"extracting\",\"createdAt\":\"2026-01-01T00:00:00Z\"}";
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n{}",
+                body
+            )
+            .expect("response");
+        });
+        let error = request_sse(
+            &BackendConfig {
+                base_url: format!("http://127.0.0.1:{port}"),
+                token: "token".into(),
+                runtime_version: "0.3.11".into(),
+                api_version: "1.0".into(),
+                capture_document_schema_version: "1".into(),
+            },
+            "/v2/captures/capture-1/events",
+            None,
+        )
+        .expect_err("unterminated final frame");
+
+        assert!(error.contains("incomplete event frame"));
+        server.join().expect("server");
     }
 
     #[test]

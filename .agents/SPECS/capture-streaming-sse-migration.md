@@ -4,8 +4,8 @@ Status: implementation in progress; P0-P3, local v1 engine deletion, the
 post-d3bf3de hardening phase, the post-1db5624 final closeout, and the
 post-695567b ingestion open-recovery phase, and the post-9e6e2b3 final
 hardening phase, and the post-3b61cef security/protocol hardening phase are
-complete. The external consumer compatibility gate and final residual cleanup
-remain open.
+complete, and the post-e166174 final security hardening phase is complete. The
+external consumer compatibility gate and final residual cleanup remain open.
 
 ## Purpose
 
@@ -186,6 +186,16 @@ compatibility release before this producer can delete the public type.
     it as clean completion; runtime persistence enforces canonical child
     containment for ingestion descendants before load, source access, writes,
     and cleanup. The external consumer gate remains unchecked.
+11. **Post-e166174 final security hardening**: completed in the containing
+    phase commit; the native SSE EOF path always calls `SseParser.finish` and
+    rejects pending unterminated frames, and the deterministic HTTP parser
+    does the same while preserving CRLF/bare-CR framing; Angular uncertain-
+    create and lost-open recovery lookups propagate the caller `AbortSignal`;
+    persistence rejects symlinked roots/category roots and re-checks canonical
+    containment before every capture event/raw/result/partial and ingestion
+    source/metadata access; native capture-start validation requires source
+    metadata for every status that would persist or recover a capture identity.
+    The external consumer gate remains unchecked.
 
 Each phase must have an explicit path list, its own review, and its own
 verification result. Revert consumers before reverting the runtime cutover;
@@ -284,6 +294,25 @@ phase commit records the narrow fixes and final local verification below.
   guard itself is covered by a platform-independent test. The private
   engine-bearing Ollama smoke remains opt-in and was not synthesized for this
   local verification.
+- Post-`e166174` final security hardening (the containing phase commit) ??
+  native/deterministic SSE EOF termination, Angular recovery abort-signal
+  propagation, root/category persistence containment, and required native
+  capture-start source metadata. Focused verification passed: runtime streaming
+  API/repository 42 passed/6 symlink skips, Angular client suite 104 passed,
+  native `runtime_client` 34 passed, deterministic/probe/real-media parser
+  tests 22 passed. Full local verification passed (final rerun): runtime 331
+  passed/7 skipped/1 warning; Angular 104 passed; tools 21 passed; workbench 51
+  passed; Tauri 58 passed; desktop package QA 205 passed/2 skipped;
+  deterministic smoke and 4 Playwright E2E tests passed. Runtime
+  lint/typecheck/contracts, Angular async-boundary/lint/typecheck, desktop
+  cargo fmt/check, contract consistency, tools/workbench lint/typecheck, and
+  `git diff --check` passed; unrelated dirty paths remain unstaged. One
+  unrelated host-structuring API test showed a load-timing provenance flake in
+  the first full run and passed in isolation and in the final full rerun.
+  Symlink regression tests skip when the Windows environment cannot create
+  symlinks; the canonical containment guards are covered by platform-
+  independent tests. The private engine-bearing Ollama smoke remains opt-in and
+  was not synthesized for this local verification.
 
 ## Acceptance criteria
 
@@ -316,6 +345,9 @@ phase commit records the narrow fixes and final local verification below.
   original request before upload or recovery-state persistence.
 - SSE parsers reject an unterminated final frame at EOF; persistence rejects
   symlinked ingestion descendants outside the canonical persistence root.
+- Native capture-start responses require source metadata for any status that
+  would persist or recover a capture identity.
+- Angular recovery lookups carry the caller AbortSignal.
 
 ## Test plan
 
@@ -327,6 +359,8 @@ phase commit records the narrow fixes and final local verification below.
   status/stage mapping, and source-kind/content mismatch rejection.
 - Angular/native/probe unterminated-final-SSE rejection and canonical
   persistence containment (load, source access, writes, cleanup).
+- Native/deterministic SSE EOF termination, recovery abort-signal propagation,
+  and root/category persistence containment.
 - Angular SSE frame parser, chunk upload, abort/unsubscribe, reconnect,
   reducer, workflow, and consumer smoke tests.
 - Rust/Tauri request, authorization, cursor, event bridge, and all-media

@@ -239,6 +239,7 @@ class StreamingRepository:
             self.root.mkdir(parents=True, exist_ok=True)
             (self.root / "ingestions").mkdir(exist_ok=True)
             (self.root / "captures").mkdir(exist_ok=True)
+            self._verify_persistence_roots()
             self._ingestions.clear()
             self._ingestion_idempotency.clear()
             self._captures.clear()
@@ -248,6 +249,17 @@ class StreamingRepository:
             self._load_captures()
             self.recover_interrupted()
             self.prune_expired()
+
+    def _verify_persistence_roots(self) -> None:
+        if self.root.is_symlink():
+            raise RuntimeError("configured persistence root must not be a symlink")
+        canonical_root = Path(os.path.realpath(self.root))
+        for category in ("ingestions", "captures"):
+            child = self.root / category
+            if child.is_symlink():
+                raise RuntimeError(f"{category} root must not be a symlink")
+            if Path(os.path.realpath(child)) != canonical_root / category:
+                raise RuntimeError(f"{category} root escaped repository root")
 
     def create_ingestion(self, request: OpenIngestionV2) -> IngestionV2:
         with self._lock:
@@ -1045,10 +1057,26 @@ class StreamingRepository:
         )
 
     def _ingestion_directory(self, ingestion_id: str) -> Path:
-        return self.root / "ingestions" / _identifier(ingestion_id)
+        category_root = self.root / "ingestions"
+        if self.root.is_symlink():
+            raise RuntimeError("configured persistence root must not be a symlink")
+        if category_root.is_symlink():
+            raise RuntimeError("ingestions root must not be a symlink")
+        _ensure_contained(self.root, category_root)
+        directory = category_root / _identifier(ingestion_id)
+        _ensure_contained(category_root, directory)
+        return directory
 
     def _capture_directory(self, capture_id: str) -> Path:
-        return self.root / "captures" / _identifier(capture_id)
+        category_root = self.root / "captures"
+        if self.root.is_symlink():
+            raise RuntimeError("configured persistence root must not be a symlink")
+        if category_root.is_symlink():
+            raise RuntimeError("captures root must not be a symlink")
+        _ensure_contained(self.root, category_root)
+        directory = category_root / _identifier(capture_id)
+        _ensure_contained(category_root, directory)
+        return directory
 
     @staticmethod
     def _ingestion_snapshot(record: _IngestionRecord) -> IngestionV2:
