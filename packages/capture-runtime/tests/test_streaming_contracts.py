@@ -81,6 +81,19 @@ def test_v2_contracts_use_camel_case_and_preserve_sealed_segment_projection() ->
     assert event.model_dump(by_alias=True)["segments"][0]["locator"]["startMs"] == 0
 
 
+def test_capture_event_requires_canonical_capture_sequence_identity() -> None:
+    with pytest.raises(ValueError, match="eventId must equal captureId/sequence"):
+        CaptureEventV2(
+            event_id="capture-1/1/extra",
+            sequence=1,
+            capture_id="capture-1",
+            kind=CaptureSourceKind.AUDIO,
+            event_type=StreamingEventType.ACCEPTED,
+            stage="extracting",
+            created_at=NOW,
+        )
+
+
 @pytest.mark.parametrize("kind", list(CaptureSourceKind))
 def test_v2_ingestion_contract_carries_every_capture_kind(kind: CaptureSourceKind) -> None:
     request = _request(kind)

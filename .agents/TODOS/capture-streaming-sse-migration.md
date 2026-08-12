@@ -19,9 +19,17 @@ decision record, and phase commits.
   Verify: Nx runtime/Angular/desktop targets, `git diff --check`, and residual
       scans pass without staging unrelated dirty changes.
 
+- [x] Complete the post-`d3bf3de` hardening slice: canonical resync event
+      identity, crash-window ingestion repair and max-upload enforcement,
+      Angular runtime response identity decoders, and active SSE/reconnect
+      coverage in the real Ollama smoke.
+  Verify: the containing phase commit records the exact focused/full command
+      results; the external Cert Prep/Law Prep compatibility gate below stays
+      unchecked.
+
 ## Explicitly blocked evidence
 
 - Real engine-bearing OCR/Whisper smoke remains opt-in and depends on the
   existing approved catalog and private fixture gates. Do not synthesize
-  missing fixtures or make that unrelated release gate part of ordinary P0-P5
+  missing fixtures or make that unrelated release gate part of ordinary P0-P6
   CI.

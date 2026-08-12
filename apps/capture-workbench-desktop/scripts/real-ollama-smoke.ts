@@ -4,6 +4,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import net from 'node:net';
 import { basename, join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { assertStagedRuntime } from './assert-staged-runtime.ts';
 import { appRoot, stagedExecutable } from './stage-runtime.ts';
@@ -36,9 +37,12 @@ interface TerminalResult {
 }
 
 interface StreamingEvent {
+  readonly captureId: string;
+  readonly eventId: string;
   readonly sequence: number;
   readonly eventType: string;
   readonly stage: string;
+  readonly progress?: number;
 }
 
 interface RuntimeRequirement {
@@ -146,16 +150,28 @@ async function main(): Promise<void> {
       },
     );
     captureId = created.captureId;
-    const terminal = await waitForTerminal(runtimePort, host, origin, token, captureId);
-    if (terminal.status !== 'completed') {
-      throw new Error(`Real capture ended as ${terminal.status}: ${terminal.error?.message ?? 'no detail'}`);
-    }
-    const events = await readStreamingEvents(runtimePort, host, origin, token, captureId);
-    assertStreamingEventOrder(events);
-    const replayCursor = events[events.length - 2]?.sequence;
-    const terminalSequence = events[events.length - 1]?.sequence;
-    assert.ok(replayCursor !== undefined && terminalSequence !== undefined);
-    const replayed = await readStreamingEvents(
+    const liveExtraction = await readStreamingEventsIncrementally(
+      runtimePort,
+      host,
+      origin,
+      token,
+      captureId,
+      undefined,
+      (event) => !isTerminalStatus(event.eventType)
+        && typeof event.progress === 'number'
+        && event.progress > 0,
+    );
+    assert.ok(
+      liveExtraction.events.some(
+        (event) => !isTerminalStatus(event.eventType)
+          && typeof event.progress === 'number'
+          && event.progress > 0,
+      ),
+      'Real capture did not expose an active SSE progress checkpoint.',
+    );
+    const replayCursor = liveExtraction.lastSequence;
+    assert.ok(replayCursor !== undefined, 'Real Ollama SSE did not expose a recovery cursor.');
+    const resumedEvents = await readStreamingEventsIncrementally(
       runtimePort,
       host,
       origin,
@@ -163,7 +179,31 @@ async function main(): Promise<void> {
       captureId,
       replayCursor,
     );
-    assertStreamingEventOrder(replayed, replayCursor, false);
+    assertStreamingEventOrder(resumedEvents.events, replayCursor, false, captureId);
+    assert.ok(
+      resumedEvents.events.some((event) => event.sequence > replayCursor),
+      'Real Ollama SSE reconnect did not advance beyond Last-Event-ID.',
+    );
+    const terminal = await request<CaptureOperation>(
+      runtimePort, host, origin, token, `/v2/captures/${captureId}`,
+    );
+    if (terminal.status !== 'completed') {
+      throw new Error(`Real capture ended as ${terminal.status}: ${terminal.error?.message ?? 'no detail'}`);
+    }
+    const events = await readStreamingEvents(runtimePort, host, origin, token, captureId);
+    assertStreamingEventOrder(events, 0, true, captureId);
+    const terminalReplayCursor = events[events.length - 2]?.sequence;
+    const terminalSequence = events[events.length - 1]?.sequence;
+    assert.ok(terminalReplayCursor !== undefined && terminalSequence !== undefined);
+    const replayed = await readStreamingEvents(
+      runtimePort,
+      host,
+      origin,
+      token,
+      captureId,
+      terminalReplayCursor,
+    );
+    assertStreamingEventOrder(replayed, terminalReplayCursor, false, captureId);
     const afterTerminal = await readStreamingEvents(
       runtimePort,
       host,
@@ -332,22 +372,6 @@ async function waitForReady(port: number, host: string, origin: string, token: s
   throw new Error('Real runtime did not become ready before the timeout.');
 }
 
-async function waitForTerminal(port: number, host: string, origin: string, token: string, captureId: string): Promise<CaptureOperation> {
-  const deadline = Date.now() + maxWaitMs;
-  while (Date.now() < deadline) {
-    const operation = await request<CaptureOperation>(
-      port,
-      host,
-      origin,
-      token,
-      `/v2/captures/${captureId}`,
-    );
-    if (isTerminalStatus(operation.status)) return operation;
-    await delay(750);
-  }
-  throw new Error('Real capture did not reach a terminal state before the timeout.');
-}
-
 async function uploadChunks(
   port: number,
   host: string,
@@ -394,65 +418,194 @@ async function readStreamingEvents(
     /^text\/event-stream(?:;|$)/iu,
   );
   const text = await response.text();
-  return parseStreamingEvents(text);
+  return parseStreamingEvents(text, captureId);
 }
 
-export function parseStreamingEvents(text: string): StreamingEvent[] {
-  const normalized = text.replace(/\r\n?/gu, '\n');
-  if (normalized && !normalized.endsWith('\n\n')) {
-    throw new Error('Real Ollama SSE response ended with an incomplete event frame.');
+async function readStreamingEventsIncrementally(
+  port: number,
+  host: string,
+  origin: string,
+  token: string,
+  captureId: string,
+  lastEventId?: number,
+  stopWhen?: (event: StreamingEvent) => boolean,
+): Promise<{ readonly events: readonly StreamingEvent[]; readonly lastSequence?: number }> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), maxWaitMs);
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/v2/captures/${captureId}/events`, {
+      headers: {
+        authorization: `Bearer ${token}`,
+        origin,
+        ...(lastEventId === undefined ? {} : { 'Last-Event-ID': String(lastEventId) }),
+      },
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error(`Runtime events request failed with ${response.status}.`);
+    assert.match(
+      response.headers.get('content-type') ?? '',
+      /^text\/event-stream(?:;|$)/iu,
+    );
+    if (!response.body) throw new Error('Real Ollama SSE response did not expose a body.');
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    const parser = new StreamingEventParser(captureId);
+    const events: StreamingEvent[] = [];
+    let lastSequence = lastEventId;
+    while (true) {
+      const { done, value } = await reader.read();
+      const text = done ? decoder.decode() : decoder.decode(value, { stream: true });
+      for (const event of parser.push(text)) {
+        events.push(event);
+        lastSequence = event.sequence;
+        if (stopWhen?.(event)) {
+          await reader.cancel();
+          return { events, lastSequence };
+        }
+      }
+      if (done) {
+        parser.finish();
+        return { events, lastSequence };
+      }
+    }
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error('Real Ollama SSE did not reach the required checkpoint before the timeout.');
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
   }
-  const events: StreamingEvent[] = [];
-  let id: string | undefined;
-  let event: string | undefined;
-  let data: string[] = [];
-  const dispatch = (): void => {
-    if (id === undefined && event === undefined && data.length === 0) return;
-    if (id === undefined || event === undefined || data.length === 0) {
+}
+
+export function parseStreamingEvents(text: string, expectedCaptureId?: string): StreamingEvent[] {
+  return parseStreamingEventChunks([text], expectedCaptureId);
+}
+
+export function parseStreamingEventChunks(
+  chunks: readonly string[],
+  expectedCaptureId?: string,
+): StreamingEvent[] {
+  const parser = new StreamingEventParser(expectedCaptureId);
+  return [...chunks.flatMap((chunk) => parser.push(chunk)), ...parser.finish()];
+}
+
+class StreamingEventParser {
+  private line = '';
+  private id: string | undefined;
+  private event: string | undefined;
+  private data: string[] = [];
+  private pendingCarriageReturn = false;
+  private readonly expectedCaptureId: string | undefined;
+
+  constructor(expectedCaptureId?: string) {
+    this.expectedCaptureId = expectedCaptureId;
+  }
+
+  push(chunk: string): StreamingEvent[] {
+    const events: StreamingEvent[] = [];
+    let index = 0;
+    if (this.pendingCarriageReturn) {
+      this.pendingCarriageReturn = false;
+      if (chunk[index] === '\n') index += 1;
+      this.emitLine(events);
+    }
+    while (index < chunk.length) {
+      const character = chunk[index];
+      index += 1;
+      if (character === '\r') {
+        if (index === chunk.length) this.pendingCarriageReturn = true;
+        else {
+          if (chunk[index] === '\n') index += 1;
+          this.emitLine(events);
+        }
+      } else if (character === '\n') {
+        this.emitLine(events);
+      } else {
+        this.line += character;
+      }
+    }
+    return events;
+  }
+
+  finish(): StreamingEvent[] {
+    if (this.pendingCarriageReturn || this.line !== '' || this.id !== undefined || this.event !== undefined || this.data.length > 0) {
+      throw new Error('Real Ollama SSE response ended with an incomplete event frame.');
+    }
+    return [];
+  }
+
+  private emitLine(events: StreamingEvent[]): void {
+    if (this.line === '') {
+      if (this.id !== undefined || this.event !== undefined || this.data.length > 0) {
+        events.push(this.dispatch());
+      }
+      this.resetFrame();
+    } else if (this.line.startsWith(':')) {
+      this.line = '';
+      return;
+    } else {
+      const separator = this.line.indexOf(':');
+      const field = separator < 0 ? this.line : this.line.slice(0, separator);
+      let value = separator < 0 ? '' : this.line.slice(separator + 1);
+      if (value.startsWith(' ')) value = value.slice(1);
+      if (field === 'id') this.id = value;
+      else if (field === 'event') this.event = value;
+      else if (field === 'data') this.data.push(value);
+    }
+    this.line = '';
+  }
+
+  private dispatch(): StreamingEvent {
+    if (this.id === undefined || this.event === undefined || this.data.length === 0) {
       throw new Error('Real Ollama SSE response contained an incomplete event frame.');
     }
-    const sequence = Number(id);
+    const sequence = Number(this.id);
     if (!Number.isSafeInteger(sequence) || sequence <= 0) {
       throw new Error('Real Ollama SSE event id was not a positive safe integer.');
     }
-    const payload = JSON.parse(data.join('\n')) as {
-      readonly eventType?: unknown;
-      readonly sequence?: unknown;
-      readonly stage?: unknown;
-    };
+    const payload = JSON.parse(this.data.join('\n')) as Record<string, unknown>;
+    const captureId = payload['captureId'];
+    const eventId = payload['eventId'];
+    const eventType = payload['eventType'];
+    const stage = payload['stage'];
+    const progress = payload['progress'];
+    const frameEventType = this.event;
     if (
-      payload.sequence !== sequence ||
-      payload.eventType !== event ||
-      typeof payload.stage !== 'string'
+      typeof captureId !== 'string'
+      || typeof eventId !== 'string'
+      || payload['sequence'] !== sequence
+      || frameEventType === undefined
+      || eventType !== frameEventType
+      || typeof stage !== 'string'
+      || eventId !== `${captureId}/${sequence}`
+      || (this.expectedCaptureId !== undefined && captureId !== this.expectedCaptureId)
+      || (progress !== undefined && (typeof progress !== 'number' || !Number.isFinite(progress)))
     ) {
       throw new Error('Real Ollama SSE event metadata did not match its frame.');
     }
-    events.push({ sequence, eventType: event, stage: payload.stage });
-    id = undefined;
-    event = undefined;
-    data = [];
-  };
-  for (const line of normalized.split('\n')) {
-    if (line === '') {
-      dispatch();
-      continue;
-    }
-    if (line.startsWith(':')) continue;
-    const separator = line.indexOf(':');
-    const field = separator < 0 ? line : line.slice(0, separator);
-    let value = separator < 0 ? '' : line.slice(separator + 1);
-    if (value.startsWith(' ')) value = value.slice(1);
-    if (field === 'id') id = value;
-    else if (field === 'event') event = value;
-    else if (field === 'data') data.push(value);
+    return {
+      captureId,
+      eventId,
+      sequence,
+      eventType: frameEventType,
+      stage,
+      ...(typeof progress === 'number' ? { progress } : {}),
+    };
   }
-  return events;
+
+  private resetFrame(): void {
+    this.id = undefined;
+    this.event = undefined;
+    this.data = [];
+  }
 }
 
 export function assertStreamingEventOrder(
   events: readonly StreamingEvent[],
   afterSequence = 0,
   requireAccepted = true,
+  expectedCaptureId?: string,
 ): void {
   if (events.length === 0) {
     throw new Error('Real Ollama event stream did not contain any events.');
@@ -467,6 +620,12 @@ export function assertStreamingEventOrder(
   }
   if (sequences[0] <= afterSequence) {
     throw new Error('Real Ollama Last-Event-ID replay returned a duplicate cursor event.');
+  }
+  if (events.some((event) =>
+    (expectedCaptureId !== undefined && event.captureId !== expectedCaptureId)
+      || event.eventId !== `${event.captureId}/${event.sequence}`
+  )) {
+    throw new Error('Real Ollama event identity did not match captureId/sequence.');
   }
   const terminalIndexes = types
     .map((type, index) => (isTerminalStatus(type) ? index : -1))
@@ -581,7 +740,12 @@ function observe<T>(observable: { subscribe: (observer: { next: (value: T) => vo
   return new Promise((resolveValue, reject) => observable.subscribe({ next: resolveValue, error: reject }));
 }
 
-void main().catch((error: unknown) => {
-  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-  process.exitCode = 1;
-});
+if (
+  process.argv[1]
+  && pathToFileURL(resolve(process.argv[1])).href === import.meta.url
+) {
+  void main().catch((error: unknown) => {
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.exitCode = 1;
+  });
+}

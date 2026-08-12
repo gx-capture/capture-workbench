@@ -26,6 +26,7 @@ from capture_runtime.contracts import (
     StartCaptureV2,
     StreamingCaptureStatus,
     StreamingEventType,
+    capture_event_id,
 )
 from capture_runtime.dependencies import RuntimeDependencies
 from capture_runtime.progressive_audio import DEFAULT_CHECKPOINT_MS
@@ -38,6 +39,7 @@ from capture_runtime.storage import (
     StreamingPartialNotFoundError,
     StreamingRecordNotFoundError,
     StreamingTransitionError,
+    StreamingUploadLimitError,
 )
 
 _CONTENT_RANGE = re.compile(r"^bytes ([0-9]+)-([0-9]+)/([0-9]+)$")
@@ -71,6 +73,12 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
     async def open_ingestion(request: OpenIngestionV2) -> IngestionV2:
         try:
             return service.open_ingestion(request)
+        except StreamingUploadLimitError as error:
+            raise ApiProblem(
+                413,
+                "upload_too_large",
+                "Ingestion exceeds the configured upload limit.",
+            ) from error
         except StreamingIdempotencyConflictError as error:
             raise ApiProblem(
                 409,
@@ -138,6 +146,12 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
             )
         except StreamingRecordNotFoundError as error:
             raise ApiProblem(404, "ingestion_not_found", "Ingestion was not found.") from error
+        except StreamingUploadLimitError as error:
+            raise ApiProblem(
+                413,
+                "upload_too_large",
+                "Ingestion exceeds the configured upload limit.",
+            ) from error
         except StreamingTransitionError as error:
             raise ApiProblem(
                 409,
@@ -433,7 +447,7 @@ def _event_frame(event: CaptureEventV2) -> str:
 
 def _resync_event(operation: CaptureOperationV2) -> CaptureEventV2:
     return CaptureEventV2(
-        event_id=f"{operation.capture_id}/resync/{operation.last_event_sequence}",
+        event_id=capture_event_id(operation.capture_id, operation.last_event_sequence),
         sequence=operation.last_event_sequence,
         capture_id=operation.capture_id,
         kind=operation.kind,

@@ -838,10 +838,7 @@ impl FixtureState {
                 if has_cursor && after_sequence.saturating_add(1) < replay_start {
                     let resync = json!({
                         "protocolVersion": "2",
-                        "eventId": format!(
-                            "event-{}-resync-{}",
-                            record.capture_id, record.last_event_sequence
-                        ),
+                        "eventId": format!("{}/{}", record.capture_id, record.last_event_sequence),
                         "sequence": record.last_event_sequence,
                         "captureId": record.capture_id,
                         "kind": record.kind,
@@ -1387,7 +1384,7 @@ fn append_capture_event(
     };
     record.events.push(json!({
         "protocolVersion": "2",
-        "eventId": format!("event-{}-{sequence}", record.capture_id),
+        "eventId": format!("{}/{}", record.capture_id, sequence),
         "sequence": sequence,
         "captureId": record.capture_id,
         "kind": record.kind,

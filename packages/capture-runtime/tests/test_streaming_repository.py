@@ -16,7 +16,11 @@ from capture_runtime.contracts import (
     StreamingIngestionStatus,
     StructuringMode,
 )
-from capture_runtime.storage import StreamingRepository, StreamingTransitionError
+from capture_runtime.storage import (
+    StreamingRepository,
+    StreamingTransitionError,
+    StreamingUploadLimitError,
+)
 
 
 class MutableClock(Clock):
@@ -94,6 +98,103 @@ def test_streaming_repository_recovers_ordered_upload_and_event_log(tmp_path: Pa
 
     assert restarted_again.get_capture(capture.capture_id).last_event_sequence == 2
     assert len(restarted_again.read_events(capture.capture_id, after_sequence=-1)) == 2
+
+
+def test_streaming_repository_truncates_source_after_source_write_crash_window(
+    tmp_path: Path,
+) -> None:
+    clock = MutableClock()
+    source = b"abcdef"
+    repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+    repository.initialize()
+    ingestion_id, source_sha256 = _open(repository, source)
+    first_chunk = source[:3]
+    repository.append_chunk(
+        ingestion_id,
+        chunk_index=0,
+        byte_offset=0,
+        data=first_chunk,
+        sha256=hashlib.sha256(first_chunk).hexdigest(),
+        max_chunk_bytes=4 * 1024 * 1024,
+        declared_total_bytes=len(source),
+    )
+
+    # Simulate the source write succeeding while metadata persistence was still
+    # stale. Reload must make the persisted offset authoritative before retry.
+    repository.source_path(ingestion_id).write_bytes(source)
+
+    restarted = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+    restarted.initialize()
+
+    repaired = restarted.get_ingestion(ingestion_id)
+    assert repaired.next_chunk_index == 1
+    assert repaired.next_offset == 3
+    assert restarted.source_path(ingestion_id).read_bytes() == first_chunk
+
+    second_chunk = source[3:]
+    restarted.append_chunk(
+        ingestion_id,
+        chunk_index=1,
+        byte_offset=3,
+        data=second_chunk,
+        sha256=hashlib.sha256(second_chunk).hexdigest(),
+        max_chunk_bytes=4 * 1024 * 1024,
+        declared_total_bytes=len(source),
+    )
+    finalized = restarted.finalize_ingestion(
+        ingestion_id,
+        total_bytes=len(source),
+        sha256=source_sha256,
+    )
+
+    assert finalized.status is StreamingIngestionStatus.READY
+    assert restarted.source_path(ingestion_id).read_bytes() == source
+
+
+def test_streaming_repository_rejects_append_after_configured_limit_changes(
+    tmp_path: Path,
+) -> None:
+    clock = MutableClock()
+    source = b"abcd"
+    original = StreamingRepository(
+        tmp_path / "streaming",
+        clock=clock,
+        retention_hours=4,
+        max_upload_bytes=len(source),
+    )
+    original.initialize()
+    ingestion_id, _ = _open(original, source)
+    first_chunk = source[:2]
+    original.append_chunk(
+        ingestion_id,
+        chunk_index=0,
+        byte_offset=0,
+        data=first_chunk,
+        sha256=hashlib.sha256(first_chunk).hexdigest(),
+        max_chunk_bytes=4 * 1024 * 1024,
+        declared_total_bytes=len(source),
+    )
+
+    limited = StreamingRepository(
+        tmp_path / "streaming",
+        clock=clock,
+        retention_hours=4,
+        max_upload_bytes=3,
+    )
+    limited.initialize()
+
+    with pytest.raises(StreamingUploadLimitError):
+        limited.append_chunk(
+            ingestion_id,
+            chunk_index=1,
+            byte_offset=2,
+            data=source[2:],
+            sha256=hashlib.sha256(source[2:]).hexdigest(),
+            max_chunk_bytes=4 * 1024 * 1024,
+            declared_total_bytes=len(source),
+        )
+
+    assert limited.source_path(ingestion_id).read_bytes() == first_chunk
 
 
 def test_streaming_repository_repairs_terminal_metadata_without_a_terminal_event(
@@ -621,3 +722,4 @@ def test_streaming_repository_returns_resync_when_replay_is_too_large(tmp_path: 
     assert len(events) == 1
     assert events[0].event_type is StreamingEventType.RESYNC_REQUIRED
     assert events[0].sequence == repository.get_capture(capture.capture_id).last_event_sequence
+    assert events[0].event_id == f"{capture.capture_id}/{events[0].sequence}"

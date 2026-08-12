@@ -1,8 +1,8 @@
 # Capture Streaming SSE Migration Spec
 
-Status: implementation in progress; P0-P3 and local v1 engine deletion are
-complete. The external consumer compatibility gate and final residual cleanup
-remain open.
+Status: implementation in progress; P0-P3, local v1 engine deletion, and the
+post-d3bf3de hardening phase are complete. The external consumer compatibility
+gate and final residual cleanup remain open.
 
 ## Purpose
 
@@ -133,6 +133,13 @@ compatibility release before this producer can delete the public type.
    `84f71f6`; `/v1/captures`, its service/repository, and native commands are
    gone, with resync/token hardening added. External contract/consumer
    migration remains a separate gate.
+6. **Post-d3bf3de hardening**: completed in the containing phase commit; the
+   canonical `captureId/sequence` identity now covers resync events and
+   deterministic/native/client validation, ingestion load recovery repairs
+   stale source offsets and enforces the configured upload ceiling, Angular
+   HTTP responses validate opaque identities before URL reuse, and the real
+   Ollama smoke consumes an active SSE checkpoint before reconnecting with
+   `Last-Event-ID`. The external consumer gate remains unchecked.
 
 Each phase must have an explicit path list, its own review, and its own
 verification result. Revert consumers before reverting the runtime cutover;
@@ -170,6 +177,12 @@ post-phase HEAD, with the follow-up recovery findings fixed in `5c11304`.
   boundary-doctor documentation. Verified by the same final residual scan and
   HEAD-bound two-axis review.
 
+- Post-`d3bf3de` hardening (the containing phase commit) ??runtime event
+  identity, ingestion recovery/limits, Angular response decoding, and the
+  real Ollama active-SSE smoke. Focused runtime and Angular tests, desktop
+  parser/package QA, and the full verification floor are required before this
+  phase is considered complete; unrelated dirty paths remain unstaged.
+
 ## Acceptance criteria
 
 - PDF, image, and audio each complete the same v2 lifecycle and produce
@@ -188,7 +201,7 @@ post-phase HEAD, with the follow-up recovery findings fixed in `5c11304`.
   engine-bearing execution remains an opt-in release gate.
 - Known external consumers have migrated from `CaptureJobV1`/`/v1/captures`, or
   a release owner has explicitly approved the breaking removal.
-- After P5, an active-source residual scan finds no `/v1/captures` or
+- After P6, an active-source residual scan finds no `/v1/captures` or
   `CaptureJobV1` capture-engine references.
 
 ## Test plan

@@ -112,7 +112,7 @@ export function streamingEvent(
 ): CaptureEventV2 {
   return {
     protocolVersion: '2',
-    eventId: `event-${eventType}`,
+    eventId: `capture-1/${eventType === 'completed' ? 3 : 2}`,
     sequence: eventType === 'completed' ? 3 : 2,
     captureId: 'capture-1',
     kind: 'pdf',

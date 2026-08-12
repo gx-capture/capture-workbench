@@ -12,6 +12,7 @@ from conftest import TOKEN
 from fastapi import APIRouter
 from fastapi.testclient import TestClient
 
+from capture_runtime.app import create_app
 from capture_runtime.contracts import (
     CaptureEngineV1,
     CaptureOperationV2,
@@ -59,6 +60,28 @@ def test_streaming_capability_is_strictly_advertised(client: TestClient) -> None
         "heartbeatIntervalMs": 5_000,
         "stallTimeoutMs": 90_000,
     }
+
+
+def test_streaming_api_rejects_ingestion_above_configured_upload_limit(settings_factory) -> None:
+    settings = settings_factory(CAPTURE_MAX_UPLOAD_BYTES="5")
+    with TestClient(
+        create_app(settings),
+        base_url=f"http://127.0.0.1:{settings.port}",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+    ) as limited_client:
+        response = limited_client.post(
+            "/v2/ingestions",
+            json={
+                "clientRequestId": "api-upload-limit",
+                "kind": "pdf",
+                "fileName": "large.pdf",
+                "mediaType": "application/pdf",
+                "totalBytes": 6,
+            },
+        )
+
+    assert response.status_code == 413
+    assert response.json()["error"]["code"] == "upload_too_large"
 
 
 def test_streaming_capability_fails_closed_without_progressive_decoder(
@@ -273,6 +296,14 @@ def test_streaming_api_closes_replay_after_event_window_resync(
     assert replay.text.endswith("\n\n")
     assert "event: resync_required" in replay.text
     assert "event: accepted" not in replay.text
+    resync_payload = json.loads(
+        next(
+            line.removeprefix("data: ")
+            for line in replay.text.splitlines()
+            if line.startswith("data: ")
+        )
+    )
+    assert resync_payload["eventId"] == f"{capture_id}/{resync_payload['sequence']}"
 
 
 def test_streaming_api_closes_when_terminal_cursor_has_no_replay() -> None:
@@ -373,6 +404,10 @@ def test_streaming_api_marks_a_live_subscriber_overflow_as_reconnectable_resync(
     assert "event: resync_required" in body
     assert "event: checkpoint" not in body
     assert body.endswith("\n\n")
+    resync_payload = json.loads(
+        next(line.removeprefix("data: ") for line in body.splitlines() if line.startswith("data: "))
+    )
+    assert resync_payload["eventId"] == "capture-overflow/7"
     assert subscription.closed
 
 

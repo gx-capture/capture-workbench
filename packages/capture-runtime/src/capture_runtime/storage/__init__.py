@@ -14,6 +14,7 @@ from capture_runtime.storage.model_installation_repository import (
     ModelInstallationRepository,
 )
 from capture_runtime.storage.streaming_repository import (
+    DEFAULT_MAX_UPLOAD_BYTES,
     StreamingEventOverflow,
     StreamingEventSubscription,
     StreamingIdempotencyConflictError,
@@ -21,6 +22,7 @@ from capture_runtime.storage.streaming_repository import (
     StreamingRecordNotFoundError,
     StreamingRepository,
     StreamingTransitionError,
+    StreamingUploadLimitError,
 )
 
 __all__ = [
@@ -37,5 +39,7 @@ __all__ = [
     "StreamingRecordNotFoundError",
     "StreamingRepository",
     "StreamingTransitionError",
+    "StreamingUploadLimitError",
+    "DEFAULT_MAX_UPLOAD_BYTES",
     "TransitionRejectedError",
 ]

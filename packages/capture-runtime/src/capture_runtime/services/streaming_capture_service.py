@@ -38,11 +38,13 @@ from capture_runtime.progressive_capture import (
 )
 from capture_runtime.progressive_decoder import ProgressiveDecoderError
 from capture_runtime.storage import (
+    DEFAULT_MAX_UPLOAD_BYTES,
     StreamingEventSubscription,
     StreamingPartialNotFoundError,
     StreamingRecordNotFoundError,
     StreamingRepository,
     StreamingTransitionError,
+    StreamingUploadLimitError,
 )
 from capture_runtime.streaming import MAX_STREAM_CHUNK_BYTES
 from capture_runtime.structuring_provider import CaptureStructuringProvider
@@ -58,11 +60,15 @@ class StreamingCaptureService:
         processor: ProgressiveCaptureProcessor | None = None,
         structurer: CaptureStructuringProvider | None = None,
         max_chunk_bytes: int = MAX_STREAM_CHUNK_BYTES,
+        max_upload_bytes: int = DEFAULT_MAX_UPLOAD_BYTES,
     ) -> None:
         self.repository = repository
         self._clock = clock
         self._extractor = extractor
         self.max_chunk_bytes = max_chunk_bytes
+        if max_upload_bytes <= 0:
+            raise ValueError("max_upload_bytes must be positive")
+        self.max_upload_bytes = max_upload_bytes
         self._processor = processor
         self._structurer = structurer
         self._tasks: dict[str, asyncio.Task[None]] = {}
@@ -89,6 +95,11 @@ class StreamingCaptureService:
         declared_total_bytes: int,
     ) -> IngestionV2:
         before = self.repository.get_ingestion(ingestion_id)
+        if (
+            before.total_bytes > self.max_upload_bytes
+            or before.next_offset + len(data) > self.max_upload_bytes
+        ):
+            raise StreamingUploadLimitError("ingestion exceeds configured upload limit")
         snapshot = self.repository.append_chunk(
             ingestion_id,
             chunk_index=chunk_index,

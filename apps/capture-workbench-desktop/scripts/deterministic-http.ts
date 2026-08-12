@@ -482,7 +482,7 @@ function validateEvents(response, captureId, expectedTypes, expectedSequences) {
     assert.equal(frame.id, String(event.sequence));
     assert.equal(frame.event, event.eventType);
     assert.equal(event.captureId, captureId);
-    assert.equal(typeof event.eventId, 'string');
+    assert.equal(event.eventId, `${captureId}/${event.sequence}`);
     assert.equal(typeof event.createdAt, 'string');
     if (index > 0) {
       assert.ok(event.sequence > events[index - 1].sequence);
@@ -509,6 +509,7 @@ function validateResyncEvent(response, captureId, expectedSequence) {
   assert.equal(event.protocolVersion, '2');
   assert.equal(event.captureId, captureId);
   assert.equal(event.sequence, expectedSequence);
+  assert.equal(event.eventId, `${captureId}/${expectedSequence}`);
   assert.equal(event.eventType, 'resync_required');
   assert.equal(event.stage, 'resync');
 }

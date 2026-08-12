@@ -238,9 +238,9 @@ describe('HttpCaptureClient', () => {
     };
     const fetchMock = vi
       .fn<typeof fetch>()
-      .mockResolvedValueOnce(jsonResponse({ ingestionId: 'ingestion-1' }, 201))
+      .mockResolvedValueOnce(ingestionResponse('ingestion-1', 201))
       .mockResolvedValueOnce(jsonResponse({ ingestionId: 'ingestion-1' }))
-      .mockResolvedValueOnce(jsonResponse({ ingestionId: 'ingestion-1' }))
+      .mockResolvedValueOnce(ingestionResponse('ingestion-1'))
       .mockResolvedValueOnce(jsonResponse(operation, 202));
     const client = configureClient(fetchMock) as HttpCaptureClient;
     let received: unknown;
@@ -277,6 +277,66 @@ describe('HttpCaptureClient', () => {
     expect(String(fetchMock.mock.calls[3]?.[0])).not.toContain('secret-token');
   });
 
+  it('rejects a malformed ingestion identity before constructing a chunk URL', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse({ ingestionId: '../escape' }, 201),
+    );
+    const client = configureClient(fetchMock) as HttpCaptureClient;
+
+    await expect(firstValueFrom(client.startStreamingCapture({
+      clientRequestId: 'request-malformed-ingestion',
+      file: new File(['abc'], 'scan.pdf', { type: 'application/pdf' }),
+      sourceKind: 'pdf',
+      structuringMode: 'runtime',
+    }))).rejects.toMatchObject({ code: 'invalid_response' });
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      'http://127.0.0.1:43119/v2/ingestions',
+    );
+  });
+
+  it('rejects a finalize response whose ingestion identity does not match the upload', async () => {
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(ingestionResponse('ingestion-1', 201))
+      .mockResolvedValueOnce(jsonResponse({ ingestionId: 'ingestion-1' }))
+      .mockResolvedValueOnce(ingestionResponse('ingestion-2'))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    const client = configureClient(fetchMock) as HttpCaptureClient;
+
+    await expect(firstValueFrom(client.startStreamingCapture({
+      clientRequestId: 'request-mismatched-finalize',
+      file: new File(['abc'], 'scan.pdf', { type: 'application/pdf' }),
+      sourceKind: 'pdf',
+      structuringMode: 'runtime',
+    }))).rejects.toMatchObject({ code: 'invalid_response' });
+
+    expect(fetchMock.mock.calls.some(([url, init]) =>
+      String(url).endsWith('/v2/ingestions/ingestion-1') && init?.method === 'DELETE',
+    )).toBe(true);
+  });
+
+  it('rejects a capture response whose identity does not match the requested URL', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({
+      protocolVersion: '2',
+      captureId: 'capture-2',
+      ingestionId: 'ingestion-1',
+      status: 'extracting',
+      partialRevision: 0,
+      lastEventSequence: 0,
+      createdAt: '2026-08-11T00:00:00Z',
+      updatedAt: '2026-08-11T00:00:00Z',
+    }));
+    const client = configureClient(fetchMock) as HttpCaptureClient;
+
+    await expect(firstValueFrom(client.getStreamingCapture('capture-1'))).rejects.toMatchObject({
+      code: 'invalid_response',
+    });
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      'http://127.0.0.1:43119/v2/captures/capture-1',
+    );
+  });
+
   it('recovers a committed capture after the create response is lost without deleting its ingestion', async () => {
     const operation = {
       protocolVersion: '2',
@@ -290,9 +350,9 @@ describe('HttpCaptureClient', () => {
     };
     const fetchMock = vi
       .fn<typeof fetch>()
-      .mockResolvedValueOnce(jsonResponse({ ingestionId: 'ingestion-1' }, 201))
+      .mockResolvedValueOnce(ingestionResponse('ingestion-1', 201))
       .mockResolvedValueOnce(jsonResponse({ ingestionId: 'ingestion-1' }))
-      .mockResolvedValueOnce(jsonResponse({ ingestionId: 'ingestion-1' }))
+      .mockResolvedValueOnce(ingestionResponse('ingestion-1'))
       .mockRejectedValueOnce(new TypeError('connection closed after commit'))
       .mockResolvedValueOnce(jsonResponse(operation, 200));
     const client = configureClient(fetchMock) as HttpCaptureClient;
@@ -325,9 +385,9 @@ describe('HttpCaptureClient', () => {
   it('keeps the ingestion when uncertain create lookup is unavailable', async () => {
     const fetchMock = vi
       .fn<typeof fetch>()
-      .mockResolvedValueOnce(jsonResponse({ ingestionId: 'ingestion-1' }, 201))
+      .mockResolvedValueOnce(ingestionResponse('ingestion-1', 201))
       .mockResolvedValueOnce(jsonResponse({ ingestionId: 'ingestion-1' }))
-      .mockResolvedValueOnce(jsonResponse({ ingestionId: 'ingestion-1' }))
+      .mockResolvedValueOnce(ingestionResponse('ingestion-1'))
       .mockRejectedValueOnce(new TypeError('connection closed after commit'))
       .mockResolvedValueOnce(new Response(null, { status: 503 }));
     const client = configureClient(fetchMock) as HttpCaptureClient;
@@ -349,14 +409,24 @@ describe('HttpCaptureClient', () => {
   });
 
   it('uses v2 operation, partial, result, control, and delete routes', async () => {
+    const operation = {
+      protocolVersion: '2',
+      captureId: 'capture-1',
+      ingestionId: 'ingestion-1',
+      status: 'extracting',
+      partialRevision: 0,
+      lastEventSequence: 0,
+      createdAt: '2026-08-11T00:00:00Z',
+      updatedAt: '2026-08-11T00:00:00Z',
+    };
     const fetchMock = vi
       .fn<typeof fetch>()
-      .mockResolvedValueOnce(jsonResponse({}))
-      .mockResolvedValueOnce(jsonResponse({}))
-      .mockResolvedValueOnce(jsonResponse({}))
-      .mockResolvedValueOnce(jsonResponse({}))
-      .mockResolvedValueOnce(jsonResponse({}))
-      .mockResolvedValueOnce(jsonResponse({}))
+      .mockResolvedValueOnce(jsonResponse(operation))
+      .mockResolvedValueOnce(jsonResponse(operation))
+      .mockResolvedValueOnce(jsonResponse({ protocolVersion: '2', captureId: 'capture-1' }))
+      .mockResolvedValueOnce(jsonResponse({ operation, raw: {}, result: {} }))
+      .mockResolvedValueOnce(jsonResponse(operation))
+      .mockResolvedValueOnce(jsonResponse(operation))
       .mockResolvedValueOnce(new Response(null, { status: 204 }));
     const client = configureClient(fetchMock) as HttpCaptureClient;
     const signal = new AbortController().signal;
@@ -570,6 +640,10 @@ function jsonResponse(value: unknown, status = 200): Response {
     status,
     headers: { 'Content-Type': 'application/json' },
   });
+}
+
+function ingestionResponse(ingestionId: string, status = 200): Response {
+  return jsonResponse({ protocolVersion: '2', ingestionId }, status);
 }
 
 function captureEvent(

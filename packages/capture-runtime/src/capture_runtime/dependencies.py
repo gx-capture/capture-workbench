@@ -170,6 +170,7 @@ def build_runtime_dependencies(
         settings.app_data_dir / "jobs" / "streaming",
         clock=runtime_clock,
         retention_hours=settings.retention_hours,
+        max_upload_bytes=settings.max_upload_bytes,
     )
     staging_root = settings.app_data_dir / "jobs" / "staging"
     progressive_processor = (
@@ -188,6 +189,7 @@ def build_runtime_dependencies(
         extractor=active_extractor,
         processor=progressive_processor,
         structurer=active_structurer,
+        max_upload_bytes=settings.max_upload_bytes,
     )
     installation_service = InstallationService(
         active_installation_repository,

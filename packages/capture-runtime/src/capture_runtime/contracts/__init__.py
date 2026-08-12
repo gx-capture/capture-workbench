@@ -426,6 +426,11 @@ class StreamingEventType(StrEnum):
     CANCELLED = "cancelled"
 
 
+def capture_event_id(capture_id: str, sequence: int) -> str:
+    """Return the only valid wire identity for a capture event."""
+    return f"{capture_id}/{sequence}"
+
+
 class OpenIngestionV2(StrictModel):
     protocol_version: Literal["2"] = "2"
     kind: CaptureSourceKind = CaptureSourceKind.AUDIO
@@ -575,6 +580,8 @@ class CaptureEventV2(StrictModel):
 
     @model_validator(mode="after")
     def validate_event_payload(self) -> Self:
+        if self.event_id != capture_event_id(self.capture_id, self.sequence):
+            raise ValueError("eventId must equal captureId/sequence")
         if self.event_type is StreamingEventType.SEGMENT and not self.segments:
             raise ValueError("segment events must contain at least one segment")
         if self.event_type is StreamingEventType.FAILED and self.error is None:

@@ -35,6 +35,7 @@ from capture_runtime.contracts import (
     StreamingEventType,
     StreamingIngestionStatus,
     StructuringMode,
+    capture_event_id,
 )
 
 
@@ -47,6 +48,10 @@ class StreamingIdempotencyConflictError(ValueError):
 
 
 class StreamingTransitionError(ValueError):
+    pass
+
+
+class StreamingUploadLimitError(StreamingTransitionError):
     pass
 
 
@@ -77,6 +82,7 @@ class StreamingEventSubscription:
 
 _SAFE_ID = re.compile(r"^[0-9a-f-]{36}$")
 _MAX_EVENT_REPLAY = 1_024
+DEFAULT_MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 _SAFE_HOST_FAILURE_CODE = "host_provider_failed"
 _SAFE_HOST_FAILURE_MESSAGE = "Host structuring failed."
 _TERMINAL_CAPTURE_STATUSES = {
@@ -199,10 +205,20 @@ class _CaptureRecord:
 class StreamingRepository:
     """A bounded, recoverable repository behind the streaming service seam."""
 
-    def __init__(self, root: Path, *, clock: Clock, retention_hours: int) -> None:
+    def __init__(
+        self,
+        root: Path,
+        *,
+        clock: Clock,
+        retention_hours: int,
+        max_upload_bytes: int = DEFAULT_MAX_UPLOAD_BYTES,
+    ) -> None:
         self.root = root
         self._clock = clock
         self._retention = timedelta(hours=retention_hours)
+        if max_upload_bytes <= 0:
+            raise ValueError("max_upload_bytes must be positive")
+        self.max_upload_bytes = max_upload_bytes
         self._ingestions: dict[str, _IngestionRecord] = {}
         self._ingestion_idempotency: dict[str, str] = {}
         self._captures: dict[str, _CaptureRecord] = {}
@@ -227,6 +243,8 @@ class StreamingRepository:
 
     def create_ingestion(self, request: OpenIngestionV2) -> IngestionV2:
         with self._lock:
+            if request.total_bytes > self.max_upload_bytes:
+                raise StreamingUploadLimitError("ingestion exceeds configured upload limit")
             existing_id = self._ingestion_idempotency.get(request.client_request_id)
             if existing_id is not None:
                 existing = self._ingestions[existing_id]
@@ -271,6 +289,11 @@ class StreamingRepository:
                 raise StreamingTransitionError("chunk metadata is invalid")
             if len(data) > max_chunk_bytes:
                 raise StreamingTransitionError("chunk exceeds the configured limit")
+            if (
+                record.request.total_bytes > self.max_upload_bytes
+                or record.next_offset + len(data) > self.max_upload_bytes
+            ):
+                raise StreamingUploadLimitError("ingestion exceeds configured upload limit")
             if declared_total_bytes != record.request.total_bytes:
                 raise StreamingTransitionError("chunk total bytes conflict with ingestion")
             actual_sha256 = hashlib.sha256(data).hexdigest()
@@ -310,6 +333,8 @@ class StreamingRepository:
                 raise StreamingTransitionError("finalize conflicts with existing source")
             if record.status is not StreamingIngestionStatus.OPEN:
                 raise StreamingTransitionError("ingestion is not open")
+            if record.request.total_bytes > self.max_upload_bytes:
+                raise StreamingUploadLimitError("ingestion exceeds configured upload limit")
             if total_bytes != record.request.total_bytes or total_bytes != record.next_offset:
                 raise StreamingTransitionError("final byte count does not match upload")
             actual_sha256 = _file_sha256(self._ingestion_directory(ingestion_id) / "source.bin")
@@ -440,7 +465,7 @@ class StreamingRepository:
                 raise StreamingTransitionError("capture is terminal")
             sequence = record.operation.last_event_sequence + 1
             event = CaptureEventV2(
-                event_id=f"{capture_id}/{sequence}",
+                event_id=capture_event_id(capture_id, sequence),
                 sequence=sequence,
                 capture_id=capture_id,
                 kind=kind or record.operation.kind,
@@ -554,7 +579,7 @@ class StreamingRepository:
                         latest_sequence = record.operation.last_event_sequence
                         return [
                             CaptureEventV2(
-                                event_id=f"{capture_id}/resync/{latest_sequence}",
+                                event_id=capture_event_id(capture_id, latest_sequence),
                                 sequence=latest_sequence,
                                 capture_id=capture_id,
                                 kind=record.operation.kind,
@@ -1054,6 +1079,82 @@ class StreamingRepository:
             },
         )
 
+    def _reconcile_loaded_ingestion(
+        self,
+        record: _IngestionRecord,
+        directory: Path,
+    ) -> None:
+        """Repair source bytes to the last metadata-confirmed chunk boundary."""
+        source_path = directory / "source.bin"
+        if source_path.exists():
+            source = source_path.read_bytes()
+        else:
+            source = b""
+            _atomic_bytes(source_path, source)
+
+        accepted: dict[int, tuple[int, int, str]] = {}
+        next_offset = 0
+        for index in range(max(record.next_chunk_index, 0)):
+            candidate = record.accepted_chunks.get(index)
+            if candidate is None:
+                break
+            offset, length, digest = candidate
+            if (
+                offset != next_offset
+                or length <= 0
+                or offset + length > len(source)
+                or hashlib.sha256(source[offset : offset + length]).hexdigest() != digest
+            ):
+                break
+            accepted[index] = candidate
+            next_offset += length
+
+        if len(source) > next_offset:
+            self._truncate_recovered_source(source_path, source, next_offset)
+
+        changed = (
+            record.accepted_chunks != accepted
+            or record.next_chunk_index != len(accepted)
+            or record.next_offset != next_offset
+        )
+        record.accepted_chunks = accepted
+        record.next_chunk_index = len(accepted)
+        record.next_offset = next_offset
+
+        source_after_repair = source[:next_offset]
+        source_is_ready = (
+            next_offset == record.request.total_bytes
+            and len(source_after_repair) == record.request.total_bytes
+            and record.finalized_sha256 is not None
+            and hashlib.sha256(source_after_repair).hexdigest() == record.finalized_sha256
+        )
+        if record.status is StreamingIngestionStatus.READY and not source_is_ready:
+            record.status = StreamingIngestionStatus.OPEN
+            record.finalized_sha256 = None
+            changed = True
+        elif record.status is StreamingIngestionStatus.OPEN and record.finalized_sha256 is not None:
+            record.finalized_sha256 = None
+            changed = True
+        if changed:
+            self._persist_ingestion(record)
+
+    @staticmethod
+    def _truncate_recovered_source(
+        source_path: Path,
+        source: bytes,
+        next_offset: int,
+    ) -> None:
+        suffix = source[next_offset:]
+        if suffix:
+            digest = hashlib.sha256(suffix).hexdigest()[:16]
+            evidence = source_path.with_name(f"{source_path.name}.recovered.{digest}")
+            if not evidence.exists():
+                _atomic_bytes(evidence, suffix)
+        with source_path.open("r+b") as output:
+            output.truncate(next_offset)
+            output.flush()
+            os.fsync(output.fileno())
+
     def _load_ingestions(self) -> None:
         for directory in sorted((self.root / "ingestions").iterdir()):
             if not directory.is_dir():
@@ -1074,9 +1175,11 @@ class StreamingRepository:
                     },
                     finalized_sha256=payload.get("finalizedSha256"),
                 )
+                self._reconcile_loaded_ingestion(record, directory)
             except (
                 OSError,
                 KeyError,
+                IndexError,
                 TypeError,
                 ValueError,
                 ValidationError,
