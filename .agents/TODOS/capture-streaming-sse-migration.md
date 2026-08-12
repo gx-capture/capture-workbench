@@ -110,6 +110,18 @@ decision record, and phase commits.
       passed; the external Cert Prep/Law Prep compatibility gate remains
       unchecked.
 
+- [x] Complete the post-`8c98a32` final hardening phase: Tauri pre-mutation
+      root validation and unique atomic temp writes, native source TOCTOU
+      guards, replay gap/subscriber-order hardening, Angular parser caps and
+      empty-later-id rejection, mandatory probe/oracle ids, and real-media
+      payload identity validation.
+  Verify: native/library tests, Angular/workbench tests, runtime repository
+      tests, node parser/probe/oracle tests, full Nx
+      runtime/Angular/tools/workbench checks, Tauri fmt/check/test/contract/
+      package QA, deterministic smoke, Playwright E2E, and `git diff --check`
+      passed; the external Cert Prep/Law Prep compatibility gate remains
+      unchecked.
+
 ## Explicitly blocked evidence
 
 - Real engine-bearing OCR/Whisper smoke remains opt-in and depends on the

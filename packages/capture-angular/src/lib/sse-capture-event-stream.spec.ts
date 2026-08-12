@@ -184,6 +184,26 @@ describe('captureEventStream', () => {
     );
   });
 
+  it('rejects an SSE frame with an empty later id', () => {
+    expect(() =>
+      parseSseText(
+        `id: 1\nid: \nevent: accepted\ndata: ${JSON.stringify(captureEvent(1, 'accepted'))}\n\n`,
+      ),
+    ).toThrowError(expect.objectContaining({ code: 'invalid_event_frame' }));
+  });
+
+  it('rejects an oversized SSE line', () => {
+    expect(() =>
+      parseSseText(`data: ${'x'.repeat(70_000)}\n\n`),
+    ).toThrowError(expect.objectContaining({ code: 'invalid_event_frame' }));
+  });
+
+  it('rejects excessive SSE frame lines', () => {
+    expect(() =>
+      parseSseText('x: y\n'.repeat(1025)),
+    ).toThrowError(expect.objectContaining({ code: 'invalid_event_frame' }));
+  });
+
   it('rejects an eventId that has the right prefix but not the exact capture sequence', () => {
     const malformed = {
       ...captureEvent(1, 'accepted'),

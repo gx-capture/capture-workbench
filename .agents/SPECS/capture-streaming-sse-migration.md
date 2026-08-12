@@ -7,8 +7,8 @@ hardening phase, and the post-3b61cef security/protocol hardening phase are
 complete, the post-e166174 final security hardening phase is complete, and the
 post-7909eeb final lifecycle/security phase, and the post-c762e02 final
 lifecycle hardening phase, and the post-f9827bf final bounded security/protocol
-phase are complete. The external consumer compatibility gate and final
-residual cleanup remain open.
+phase, and the post-8c98a32 final hardening phase are complete. The external
+consumer compatibility gate and final residual cleanup remain open.
 
 ## Purpose
 
@@ -233,6 +233,18 @@ compatibility release before this producer can delete the public type.
     exports, and deletes under the library root; Angular and native SSE
     parsers require a non-empty frame id matching the sequence and fail
     closed on missing/empty ids. The external consumer gate remains unchecked.
+15. **Post-8c98a32 final hardening**: completed in the containing phase
+    commit; the Tauri library validates root/items before directory mutation,
+    uses unique atomic temp files immune to stale symlinks, and enforces
+    canonical no-symlink containment on all operations; native upload/hash
+    revalidates the canonical source immediately before every reopen/read;
+    runtime replay rejects sequence gaps and corrupt logs before any
+    subscriber is registered; Angular parser fails closed on empty later ids
+    and caps line/frame accumulation; user probe and progressive oracle
+    require mandatory frame ids; the real-media evidence parser validates
+    payload protocol/captureId/eventId/kind, and desktop reconnect fixtures
+    use canonical captureId/sequence ids. The external consumer gate remains
+    unchecked.
 
 Each phase must have an explicit path list, its own review, and its own
 verification result. Revert consumers before reverting the runtime cutover;
@@ -420,6 +432,34 @@ phase commit records the narrow fixes and final local verification below.
   The private engine-bearing Ollama smoke remains opt-in and was not
   synthesized for this local verification.
 
+- Post-`8c98a32` final hardening (the containing phase commit) ??reviewed
+  path groups: `apps/capture-workbench-desktop/src-tauri/src/library.rs`
+  (pre-mutation root validation, unique atomic temp writes, containment);
+  `apps/capture-workbench-desktop/src-tauri/src/runtime_client.rs`
+  (source reopen/read TOCTOU guard); `packages/capture-runtime/src/capture_runtime/
+  storage/streaming_repository.py` and `tests/test_streaming_repository.py`
+  (replay gap rejection, subscriber registration order); `packages/capture-angular/
+  src/lib/sse-capture-event-stream.ts` and `.spec.ts` (empty-later-id, caps);
+  `tools/user-pdf-ocr-probe.mts` and `.test.ts`, `apps/capture-workbench-desktop/
+  scripts/progressive-audio-oracle.ts` and `.test.ts` (mandatory frame ids);
+  `apps/capture-workbench-desktop/scripts/real-media-smoke.ts` and `.test.ts`
+  (payload identity validation); `apps/capture-workbench/src/app/services/
+  desktop-workspace.store.spec.ts` (canonical reconnect fixtures);
+  `.agents/SPECS`, `.agents/TODOS`, `.agents/DECISIONS` (evidence). Focused
+  verification passed: native/library lib tests 69 passed, Angular client
+  suite 113 passed, workbench 54 passed, runtime repository 26 passed/8
+  symlink skips, node parser/probe/oracle/real-media tests 32 passed. Full
+  local verification passed: runtime 338 passed/9 skipped/1 warning; Angular
+  113 passed; tools 22 passed; workbench 54 passed; Tauri 69 passed; desktop
+  package QA 212 passed/2 skipped; deterministic smoke and 4 Playwright E2E
+  tests passed. Runtime lint/typecheck/contracts, Angular
+  async-boundary/lint/typecheck, desktop cargo fmt/check, contract
+  consistency, tools/workbench lint/typecheck, and `git diff --check` passed;
+  unrelated dirty paths remain unstaged. Symlink-specific tests run when the
+  OS permits symlink creation; canonical containment and replay-corruption
+  guards are platform-independent. The private engine-bearing Ollama smoke
+  remains opt-in and was not synthesized for this local verification.
+
 ## Acceptance criteria
 
 - PDF, image, and audio each complete the same v2 lifecycle and produce
@@ -471,6 +511,12 @@ phase commit records the narrow fixes and final local verification below.
   enforces canonical containment for reads, writes, exports, and deletes.
 - Angular and native SSE parsers require a non-empty frame id matching the
   event sequence.
+- Tauri library validates roots before mutation and uses unique atomic temp
+  files; native source reopen/read revalidates canonical containment.
+- Runtime replay rejects sequence gaps and registers subscribers only after a
+  clean replay load.
+- Real-media evidence parsing validates payload protocol, captureId, eventId,
+  and kind.
 
 ## Test plan
 
@@ -491,6 +537,9 @@ phase commit records the narrow fixes and final local verification below.
   validation, and progressive-audio oracle EOF rejection.
 - SSE size-accounting boundary tests, Tauri library containment guards, and
   required frame-id regressions.
+- Pre-mutation root validation, unique atomic temp writes, source TOCTOU
+  guards, replay gap/subscriber-order tests, parser caps, mandatory probe/
+  oracle ids, and real-media payload identity tests.
 - Angular SSE frame parser, chunk upload, abort/unsubscribe, reconnect,
   reducer, workflow, and consumer smoke tests.
 - Rust/Tauri request, authorization, cursor, event bridge, and all-media

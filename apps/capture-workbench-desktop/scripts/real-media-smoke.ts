@@ -1062,12 +1062,22 @@ class StreamingEventParser {
       throw new Error('Real media SSE event id was not a positive safe integer.');
     }
     const payload = JSON.parse(this.data.join('\n')) as {
+      readonly protocolVersion?: unknown;
+      readonly captureId?: unknown;
+      readonly eventId?: unknown;
+      readonly kind?: unknown;
       readonly eventType?: unknown;
       readonly sequence?: unknown;
       readonly stage?: unknown;
       readonly progress?: unknown;
     };
     if (
+      payload.protocolVersion !== '2' ||
+      typeof payload.captureId !== 'string' ||
+      payload.captureId === '' ||
+      typeof payload.eventId !== 'string' ||
+      payload.eventId !== `${payload.captureId}/${sequence}` ||
+      !['pdf', 'image', 'audio'].includes(String(payload.kind)) ||
       payload.sequence !== sequence ||
       payload.eventType !== this.event ||
       typeof payload.stage !== 'string' ||

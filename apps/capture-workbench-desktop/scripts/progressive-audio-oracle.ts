@@ -135,7 +135,7 @@ export async function consumeSseEvents(
     if (!Number.isFinite(Date.parse(createdAt)) || !/T.*(?:Z|[+-]\d{2}:\d{2})$/u.test(createdAt)) {
       throw new Error('Progressive audio oracle SSE event timestamp was invalid.');
     }
-    if (frame.id !== undefined && frame.id !== String(sequence)) {
+    if (frame.id !== String(sequence)) {
       throw new Error('Progressive audio oracle SSE event id did not match its sequence.');
     }
     if (frame.event !== undefined && frame.event !== eventType) {

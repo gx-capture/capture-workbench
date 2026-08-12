@@ -172,6 +172,28 @@ test('probe rejects an unterminated final SSE frame at normal EOF', async () => 
   );
 });
 
+test('probe rejects an SSE frame with a missing id', async () => {
+  const fetchImplementation = async (input: Parameters<typeof globalThis.fetch>[0]) => {
+    const url = String(input);
+    if (url.endsWith('/events')) {
+      const frame = eventFrame(1, 'checkpoint', 'extracting').replace(/^id: 1\r\n/u, '');
+      return sseResponse(frame);
+    }
+    throw new Error(`Unexpected probe URL: ${url}`);
+  };
+
+  await assert.rejects(
+    waitForExtraction(
+      'http://runtime.test',
+      CAPTURE_ID,
+      SECRET,
+      5_000,
+      fetchImplementation,
+    ),
+    (error) => error instanceof UserPdfOcrProbeError && error.shape.code === 'invalid_response',
+  );
+});
+
 test('probe reconciles resync overflow before reconnecting', async () => {
   const eventRequests: RequestInit[] = [];
   let eventRequestCount = 0;

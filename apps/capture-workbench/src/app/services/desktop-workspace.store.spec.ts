@@ -396,7 +396,7 @@ describe('DesktopWorkspaceStore', () => {
       .mockReturnValueOnce(of(completedOperation));
     const resyncEvent: CaptureEventV2 = {
       protocolVersion: '2',
-      eventId: 'capture-1/resync/7',
+      eventId: 'capture-1/7',
       sequence: 7,
       captureId: 'capture-1',
       kind: 'pdf',
@@ -407,7 +407,7 @@ describe('DesktopWorkspaceStore', () => {
     };
     const completedEvent: CaptureEventV2 = {
       ...resyncEvent,
-      eventId: 'capture-1/completed/8',
+      eventId: 'capture-1/8',
       sequence: 8,
       eventType: 'completed',
       stage: 'completed',
@@ -460,7 +460,7 @@ describe('DesktopWorkspaceStore', () => {
       .mockReturnValueOnce(of(completedOperation));
     const checkpointEvent: CaptureEventV2 = {
       protocolVersion: '2',
-      eventId: 'capture-1/checkpoint/6',
+      eventId: 'capture-1/6',
       sequence: 6,
       captureId: 'capture-1',
       kind: 'pdf',
@@ -472,7 +472,7 @@ describe('DesktopWorkspaceStore', () => {
     };
     const completedEvent: CaptureEventV2 = {
       ...checkpointEvent,
-      eventId: 'capture-1/completed/8',
+      eventId: 'capture-1/8',
       sequence: 8,
       eventType: 'completed',
       stage: 'completed',
@@ -523,7 +523,7 @@ describe('DesktopWorkspaceStore', () => {
       .mockReturnValueOnce(of(completedOperation));
     const completedEvent: CaptureEventV2 = {
       protocolVersion: '2',
-      eventId: 'capture-1/completed/8',
+      eventId: 'capture-1/8',
       sequence: 8,
       captureId: 'capture-1',
       kind: 'pdf',

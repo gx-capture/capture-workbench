@@ -121,6 +121,12 @@ pub(crate) struct RuntimeSourceFile {
 impl LibraryStore {
     pub(crate) fn open(app_data_dir: &Path) -> Result<Self, String> {
         let root = app_data_dir.join("library");
+        if is_reparse_link(&root) {
+            return Err("Capture library root must not be a symbolic link.".into());
+        }
+        if is_reparse_link(&root.join("items")) {
+            return Err("Capture library items root must not be a symbolic link.".into());
+        }
         fs::create_dir_all(root.join("items"))
             .map_err(|error| format!("Capture library cannot be created: {error}"))?;
         ensure_library_root_safe(&root)?;
@@ -391,10 +397,12 @@ impl LibraryStore {
         if metadata.len() != document.byte_length || metadata.len() == 0 {
             return Err("Capture library source changed after import.".into());
         }
+        let canonical_path = fs::canonicalize(&path)
+            .map_err(|_| "Capture library source cannot be resolved.".to_string())?;
         Ok(RuntimeSourceFile {
             file_name: document.file_name,
             media_type: document.media_type,
-            path,
+            path: canonical_path,
             bytes: metadata.len(),
         })
     }
@@ -703,11 +711,24 @@ fn ensure_leaf_safe(root: &Path, path: &Path) -> Result<(), String> {
 }
 
 fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    let temporary = path.with_extension("tmp");
-    fs::write(&temporary, bytes)
-        .map_err(|error| format!("Capture library cannot be written: {error}"))?;
-    fs::rename(temporary, path)
-        .map_err(|error| format!("Capture library cannot finalize data: {error}"))
+    let parent = path
+        .parent()
+        .ok_or_else(|| "Capture library target has no parent.".to_string())?;
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "Capture library target file name is invalid.".to_string())?;
+    let temporary = parent.join(format!(".{file_name}.{}.tmp", random_document_id()?));
+    let result = fs::write(&temporary, bytes)
+        .map_err(|error| format!("Capture library cannot be written: {error}"))
+        .and_then(|()| {
+            fs::rename(&temporary, path)
+                .map_err(|error| format!("Capture library cannot finalize data: {error}"))
+        });
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
 }
 
 fn prepare_transaction_entry(

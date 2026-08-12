@@ -830,6 +830,7 @@ fn upload_source_chunks(
     ingestion_id: &str,
     request_id: &str,
 ) -> Result<(), String> {
+    ensure_runtime_source_safe(&source.path, source.bytes)?;
     let mut file = std::fs::File::open(&source.path)
         .map_err(|_| "Capture library source cannot be opened for streaming.".to_string())?;
     let mut offset = 0_u64;
@@ -867,6 +868,7 @@ fn upload_source_chunks(
 }
 
 fn source_sha256(source: &RuntimeSourceFile) -> Result<String, String> {
+    ensure_runtime_source_safe(&source.path, source.bytes)?;
     let mut file = std::fs::File::open(&source.path)
         .map_err(|_| "Capture library source cannot be opened for finalization.".to_string())?;
     let mut hasher = Sha256::new();
@@ -886,6 +888,23 @@ fn source_sha256(source: &RuntimeSourceFile) -> Result<String, String> {
         return Err("Capture library source changed during finalization.".into());
     }
     Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn ensure_runtime_source_safe(path: &std::path::Path, expected_len: u64) -> Result<(), String> {
+    let metadata = std::fs::symlink_metadata(path)
+        .map_err(|_| "Capture library source cannot be inspected.".to_string())?;
+    if metadata.file_type().is_symlink() || !metadata.file_type().is_file() {
+        return Err("Capture library source is not a regular file.".into());
+    }
+    let canonical = std::fs::canonicalize(path)
+        .map_err(|_| "Capture library source cannot be resolved.".to_string())?;
+    if canonical != path {
+        return Err("Capture library source path must be canonical.".into());
+    }
+    if metadata.len() != expected_len || metadata.len() == 0 {
+        return Err("Capture library source changed after import.".into());
+    }
+    Ok(())
 }
 
 fn hex_digest(bytes: &[u8]) -> String {
@@ -2598,6 +2617,26 @@ mod tests {
     }
 
     #[test]
+    fn runtime_source_reopen_guard_rejects_symlinks_and_length_changes() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let target = directory.path().join("target.bin");
+        fs::write(&target, b"abc").expect("target");
+        let canonical_target = fs::canonicalize(&target).expect("canonical target");
+
+        assert!(ensure_runtime_source_safe(&canonical_target, 3).is_ok());
+        assert!(ensure_runtime_source_safe(&canonical_target, 4).is_err());
+
+        let link = directory.path().join("link.bin");
+        #[cfg(windows)]
+        let symlink_result = std::os::windows::fs::symlink_file(&target, &link);
+        #[cfg(unix)]
+        let symlink_result = std::os::unix::fs::symlink(&target, &link);
+        if symlink_result.is_ok() {
+            assert!(ensure_runtime_source_safe(&link, 3).is_err());
+        }
+    }
+
+    #[test]
     fn streaming_sse_rejects_missing_or_empty_event_ids() {
         let payload = r#"{"protocolVersion":"2","eventId":"capture-1/8","sequence":8,"captureId":"capture-1","kind":"audio","eventType":"checkpoint","stage":"extracting","createdAt":"2026-01-01T00:00:00Z"}"#;
         let missing = format!("event: checkpoint\ndata: {payload}\n\n");
@@ -3444,6 +3483,7 @@ mod tests {
         let bytes = vec![0x41_u8; STREAM_CHUNK_BYTES + 17];
         let source_bytes = bytes.len() as u64;
         fs::write(&source_path, &bytes).expect("source");
+        let source_path = fs::canonicalize(&source_path).expect("canonical source");
         let server = thread::spawn(move || {
             for expected in [
                 (0_u64, 0_u64, STREAM_CHUNK_BYTES as u64 - 1),

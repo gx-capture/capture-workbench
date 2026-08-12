@@ -562,9 +562,9 @@ class StreamingRepository:
             self._get_capture(capture_id)
             if after_sequence < -1:
                 raise ValueError("event cursor must not be less than -1")
+            replay = self._read_events_locked(capture_id, after_sequence=after_sequence)
             subscriber: Queue[CaptureEventV2 | StreamingEventOverflow] = Queue(maxsize=256)
             self._subscribers.setdefault(capture_id, set()).add(subscriber)
-            replay = self._read_events_locked(capture_id, after_sequence=after_sequence)
             return StreamingEventSubscription(
                 replay=replay,
                 _queue=subscriber,
@@ -605,10 +605,11 @@ class StreamingRepository:
                     event = CaptureEventV2.model_validate_json(line)
                 except ValidationError as error:
                     raise RuntimeError("streaming event log is corrupted") from error
+                expected_sequence = 1 if previous_sequence is None else previous_sequence + 1
                 if (
                     event.capture_id != capture_id
                     or event.event_id != f"{capture_id}/{event.sequence}"
-                    or (previous_sequence is not None and event.sequence <= previous_sequence)
+                    or event.sequence != expected_sequence
                 ):
                     raise RuntimeError("streaming event log is corrupted")
                 previous_sequence = event.sequence

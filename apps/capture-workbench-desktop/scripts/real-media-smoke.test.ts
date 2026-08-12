@@ -226,11 +226,11 @@ test('real-media SSE assertions require framed metadata and terminal ordering', 
   const events = parseStreamingEvents(
     'id: 1\r\n' +
       'event: accepted\r\n' +
-      'data: {"sequence":1,"eventType":"accepted",\r\n' +
+      'data: {"protocolVersion":"2","captureId":"capture-1","eventId":"capture-1/1","kind":"pdf","sequence":1,"eventType":"accepted",\r\n' +
       'data: "stage":"queued"}\r\n\r\n' +
       'id: 2\n' +
       'event: completed\n' +
-      'data: {"sequence":2,"eventType":"completed","stage":"completed"}\n\n',
+      'data: {"protocolVersion":"2","captureId":"capture-1","eventId":"capture-1/2","kind":"pdf","sequence":2,"eventType":"completed","stage":"completed"}\n\n',
   );
 
   assert.deepEqual(events, [
@@ -265,7 +265,7 @@ test('real-media SSE parser dispatches only after a split CRLF blank-line delimi
   const event = parseStreamingEventChunks([
     'id: 1\r',
     '\nevent: checkpoint\r',
-    '\ndata: {"sequence":1,"eventType":"checkpoint","stage":"extracting","progress":0.4}\r',
+    '\ndata: {"protocolVersion":"2","captureId":"capture-1","eventId":"capture-1/1","kind":"pdf","sequence":1,"eventType":"checkpoint","stage":"extracting","progress":0.4}\r',
     '\n\r',
     '\n',
   ]);
@@ -275,9 +275,47 @@ test('real-media SSE parser dispatches only after a split CRLF blank-line delimi
   ]);
   assert.throws(
     () => parseStreamingEventChunks([
-      'id: 1\nevent: checkpoint\ndata: {"sequence":1,"eventType":"checkpoint","stage":"extracting"}',
+      'id: 1\nevent: checkpoint\ndata: {"protocolVersion":"2","captureId":"capture-1","eventId":"capture-1/1","kind":"pdf","sequence":1,"eventType":"checkpoint","stage":"extracting"}',
     ]),
     /incomplete event frame/u,
+  );
+});
+
+test('real-media SSE parser validates payload protocol, identity, and kind', () => {
+  const payload = JSON.stringify({
+    protocolVersion: '2',
+    captureId: 'capture-1',
+    eventId: 'capture-1/1',
+    kind: 'pdf',
+    sequence: 1,
+    eventType: 'checkpoint',
+    stage: 'extracting',
+    progress: 0.4,
+  });
+  assert.deepEqual(
+    parseStreamingEventChunks([`id: 1\nevent: checkpoint\ndata: ${payload}\n\n`]),
+    [{ sequence: 1, eventType: 'checkpoint', stage: 'extracting', progress: 0.4 }],
+  );
+
+  const withoutCaptureId = payload.replace('"captureId":"capture-1",', '');
+  assert.throws(
+    () => parseStreamingEventChunks([`id: 1\nevent: checkpoint\ndata: ${withoutCaptureId}\n\n`]),
+    /metadata did not match/u,
+  );
+  const wrongEventId = payload.replace('capture-1/1', 'capture-1/2');
+  assert.throws(
+    () => parseStreamingEventChunks([`id: 1\nevent: checkpoint\ndata: ${wrongEventId}\n\n`]),
+    /metadata did not match/u,
+  );
+  const wrongProtocol = payload.replace('"protocolVersion":"2"', '"protocolVersion":"1"');
+  assert.throws(
+    () => parseStreamingEventChunks([`id: 1\nevent: checkpoint\ndata: ${wrongProtocol}\n\n`]),
+    /metadata did not match/u,
+  );
+  const wrongKind = payload.replace('"kind":"pdf"', '"kind":"text"');
+  assert.throws(
+    () => parseStreamingEventChunks([`id: 1\nevent: checkpoint\ndata: ${wrongKind}\n\n`]),
+    /metadata did not match/u,
   );
 });
 

@@ -382,7 +382,7 @@ def test_streaming_repository_quarantines_capture_metadata_id_mismatch(
         restarted.get_capture(capture.capture_id)
 
 
-@pytest.mark.parametrize("corruption", ["capture_id", "event_id", "sequence"])
+@pytest.mark.parametrize("corruption", ["capture_id", "event_id", "sequence", "gap"])
 def test_streaming_repository_replay_fails_closed_on_corrupt_event_log(
     tmp_path: Path,
     corruption: str,
@@ -418,15 +418,58 @@ def test_streaming_repository_replay_fails_closed_on_corrupt_event_log(
         payload = json.loads(lines[0])
         payload["eventId"] = f"{payload['captureId']}/{payload['sequence'] + 1}"
         lines[0] = json.dumps(payload)
-    else:
+    elif corruption == "sequence":
         payload = json.loads(lines[1])
         payload["sequence"] = 1
         payload["eventId"] = f"{payload['captureId']}/1"
+        lines[1] = json.dumps(payload)
+    else:
+        payload = json.loads(lines[1])
+        payload["sequence"] = 3
+        payload["eventId"] = f"{payload['captureId']}/3"
         lines[1] = json.dumps(payload)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     with pytest.raises(RuntimeError, match="streaming event log is corrupted"):
         repository.read_events(capture.capture_id, after_sequence=-1)
+
+
+def test_streaming_repository_subscribe_fails_closed_without_registering_subscriber(
+    tmp_path: Path,
+) -> None:
+    clock = MutableClock()
+    repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+    repository.initialize()
+    ingestion_id, _ = _open(repository, b"abcdef")
+    capture = repository.create_capture(
+        StartCaptureV2(
+            client_request_id="repository-subscriber-corruption",
+            ingestion_id=ingestion_id,
+            structuring_mode=StructuringMode.HOST,
+        )
+    )
+    repository.append_event(
+        capture.capture_id,
+        event_type=StreamingEventType.ACCEPTED,
+        stage="queued",
+    )
+    repository.append_event(
+        capture.capture_id,
+        event_type=StreamingEventType.CHECKPOINT,
+        stage="extracting",
+    )
+    path = tmp_path / "streaming" / "captures" / capture.capture_id / "events.jsonl"
+    lines = path.read_text(encoding="utf-8").splitlines()
+    payload = json.loads(lines[1])
+    payload["sequence"] = 3
+    payload["eventId"] = f"{payload['captureId']}/3"
+    lines[1] = json.dumps(payload)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="streaming event log is corrupted"):
+        repository.subscribe_events(capture.capture_id, after_sequence=-1)
+
+    assert capture.capture_id not in repository._subscribers
 
 
 def test_streaming_repository_truncates_source_after_source_write_crash_window(

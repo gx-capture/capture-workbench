@@ -402,7 +402,7 @@ function normalizeProbeEvent(
   ) {
     throw invalidProbeEvent();
   }
-  if (frame.id !== undefined && frame.id !== String(value['sequence'])) {
+  if (frame.id !== String(value['sequence'])) {
     throw invalidProbeEvent();
   }
   if (frame.event !== undefined && frame.event !== value['eventType']) {

@@ -42,6 +42,8 @@ const STREAMING_EVENT_TYPES = new Set([
   'failed',
   'cancelled',
 ]);
+const MAX_SSE_LINE_BYTES = 64 * 1024;
+const MAX_SSE_FRAME_LINES = 1024;
 
 /**
  * Cold, authenticated fetch + ReadableStream SSE parser. Every subscription
@@ -232,6 +234,7 @@ class SseCaptureEventParser {
         this.emitLine(frames);
       } else {
         this.line += character;
+        if (this.line.length > MAX_SSE_LINE_BYTES) throw invalidEventFrame();
       }
     }
     return frames;
@@ -252,6 +255,7 @@ class SseCaptureEventParser {
       if (frame) frames.push(frame);
       this.block = [];
     } else {
+      if (this.block.length >= MAX_SSE_FRAME_LINES) throw invalidEventFrame();
       this.block.push(this.line);
     }
     this.line = '';
@@ -270,7 +274,8 @@ function parseSseBlock(block: string): SseEventFrame | undefined {
     const value = rawLine.slice(colon + 1).replace(/^ /u, '');
     if (field === 'data') data.push(value);
     else if (field === 'id') {
-      if (value) id = value;
+      if (!value) throw invalidEventFrame();
+      id = value;
     } else if (field === 'event') {
       if (value) event = value;
     }
