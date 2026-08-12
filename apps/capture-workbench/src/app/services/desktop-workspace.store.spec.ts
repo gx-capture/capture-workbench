@@ -907,6 +907,88 @@ describe('DesktopWorkspaceStore', () => {
     }));
   });
 
+  it('keeps pending recovery when the recovered operation violates the full v2 contract', () => {
+    const pending = {
+      ...summary,
+      status: 'recovery_required' as const,
+      stage: 'uploading',
+      recoveryClientRequestId: 'capture-request-invalid-operation',
+      recoveryIngestionId: 'ingestion-private',
+    };
+    const invalidOperation = {
+      ...runningOperation,
+      captureId: 'capture-recovered',
+      ingestionId: 'ingestion-private',
+      kind: undefined,
+    } as unknown as CaptureOperationV2;
+    const updateCapture = vi.fn((update: Record<string, unknown>) =>
+      of({ ...pending, ...update } as DesktopLibrarySummary));
+    const deleteStreamingIngestion = vi.fn();
+    const store = initializeStore(
+      libraryStub({
+        list: vi.fn(() => of([pending])),
+        get: vi.fn(() => of(pending as DesktopLibraryDetail)),
+        updateCapture,
+      }),
+      runtimeStub({
+        getStreamingCaptureByClientRequest: vi.fn(() => of(invalidOperation)),
+        deleteStreamingIngestion,
+      }),
+    );
+
+    store.retry(pending.documentId);
+    TestBed.tick();
+
+    expect(deleteStreamingIngestion).not.toHaveBeenCalled();
+    expect(captureUpdates(updateCapture)).toContainEqual(expect.objectContaining({
+      status: 'recovery_required',
+      recoveryCode: 'capture_recovery_required',
+      recoveryClientRequestId: 'capture-request-invalid-operation',
+      recoveryIngestionId: 'ingestion-private',
+    }));
+  });
+
+  it('keeps pending recovery when the recovered kind does not match the durable media type', () => {
+    const pending = {
+      ...summary,
+      status: 'recovery_required' as const,
+      stage: 'uploading',
+      recoveryClientRequestId: 'capture-request-kind-mismatch',
+      recoveryIngestionId: 'ingestion-private',
+    };
+    const kindMismatch = {
+      ...runningOperation,
+      captureId: 'capture-recovered',
+      ingestionId: 'ingestion-private',
+      kind: 'audio',
+    } satisfies CaptureOperationV2;
+    const updateCapture = vi.fn((update: Record<string, unknown>) =>
+      of({ ...pending, ...update } as DesktopLibrarySummary));
+    const deleteStreamingIngestion = vi.fn();
+    const store = initializeStore(
+      libraryStub({
+        list: vi.fn(() => of([pending])),
+        get: vi.fn(() => of(pending as DesktopLibraryDetail)),
+        updateCapture,
+      }),
+      runtimeStub({
+        getStreamingCaptureByClientRequest: vi.fn(() => of(kindMismatch)),
+        deleteStreamingIngestion,
+      }),
+    );
+
+    store.retry(pending.documentId);
+    TestBed.tick();
+
+    expect(deleteStreamingIngestion).not.toHaveBeenCalled();
+    expect(captureUpdates(updateCapture)).toContainEqual(expect.objectContaining({
+      status: 'recovery_required',
+      recoveryCode: 'capture_recovery_required',
+      recoveryClientRequestId: 'capture-request-kind-mismatch',
+      recoveryIngestionId: 'ingestion-private',
+    }));
+  });
+
   it('retains pending create recovery when lookup or active-ingestion cleanup is uncertain', () => {
     const pending = {
       ...summary,

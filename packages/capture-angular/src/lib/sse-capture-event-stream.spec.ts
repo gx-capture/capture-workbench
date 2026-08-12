@@ -198,6 +198,26 @@ describe('captureEventStream', () => {
     ).toThrowError(expect.objectContaining({ code: 'invalid_event_frame' }));
   });
 
+  it('caps SSE lines by UTF-8 byte length, not code-unit length', () => {
+    expect(() =>
+      parseSseText(`data: ${'界'.repeat(21_843)}\n\n`),
+    ).not.toThrow();
+
+    expect(() =>
+      parseSseText(`data: ${'界'.repeat(21_844)}\n\n`),
+    ).toThrowError(expect.objectContaining({ code: 'invalid_event_frame' }));
+  });
+
+  it('counts surrogate-pair UTF-8 bytes as four bytes per code point', () => {
+    expect(() =>
+      parseSseText(`data: ${'😀'.repeat(16_382)}\n\n`),
+    ).not.toThrow();
+
+    expect(() =>
+      parseSseText(`data: ${'😀'.repeat(16_383)}\n\n`),
+    ).toThrowError(expect.objectContaining({ code: 'invalid_event_frame' }));
+  });
+
   it('rejects excessive SSE frame lines', () => {
     expect(() =>
       parseSseText('x: y\n'.repeat(1025)),

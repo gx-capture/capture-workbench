@@ -250,6 +250,11 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
         try:
             operation = service.get_capture(capture_id)
             subscription = service.subscribe_events(capture_id, after_sequence=after_sequence)
+            # Re-read under the repository lock that just registered the
+            # subscriber: a terminal transition before this point is visible
+            # either in the replay or in this fresh snapshot, and any later
+            # transition is delivered on the live queue below.
+            operation = service.get_capture(capture_id)
         except StreamingRecordNotFoundError as error:
             raise ApiProblem(
                 404, "capture_not_found", "Streaming capture was not found."
@@ -281,6 +286,8 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
                         yield _event_frame(_resync_event(service.get_capture(capture_id)))
                         return
                     if item.sequence <= last_sequence:
+                        if _is_terminal_event(item):
+                            return
                         continue
                     yield _event_frame(item)
                     last_sequence = item.sequence

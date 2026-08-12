@@ -209,6 +209,8 @@ function eventStreamFromBody(
 
 class SseCaptureEventParser {
   private line = '';
+  private lineBytes = 0;
+  private pendingHighSurrogate = false;
   private block: string[] = [];
   private pendingCarriageReturn = false;
 
@@ -233,8 +235,7 @@ class SseCaptureEventParser {
       } else if (character === '\n') {
         this.emitLine(frames);
       } else {
-        this.line += character;
-        if (this.line.length > MAX_SSE_LINE_BYTES) throw invalidEventFrame();
+        this.appendLineCharacter(character);
       }
     }
     return frames;
@@ -243,10 +244,30 @@ class SseCaptureEventParser {
   finish(): readonly SseEventFrame[] {
     const pending = this.pendingCarriageReturn || this.line !== '' || this.block.length > 0;
     this.line = '';
+    this.lineBytes = 0;
+    this.pendingHighSurrogate = false;
     this.block = [];
     this.pendingCarriageReturn = false;
     if (pending) throw invalidEventFrame();
     return [];
+  }
+
+  private appendLineCharacter(character: string): void {
+    this.line += character;
+    const code = character.charCodeAt(0);
+    if (this.pendingHighSurrogate) {
+      this.pendingHighSurrogate = false;
+      // The pending high surrogate was counted as a U+FFFD replacement (3
+      // bytes); a completed pair encodes as 4 UTF-8 bytes, so add the final
+      // byte here. A lone high surrogate keeps the replacement count.
+      this.lineBytes += 1;
+    } else if (code >= 0xd800 && code <= 0xdbff) {
+      this.pendingHighSurrogate = true;
+      this.lineBytes += 3;
+    } else {
+      this.lineBytes += utf8BytesForCodeUnit(code);
+    }
+    if (this.lineBytes > MAX_SSE_LINE_BYTES) throw invalidEventFrame();
   }
 
   private emitLine(frames: SseEventFrame[]): void {
@@ -259,7 +280,15 @@ class SseCaptureEventParser {
       this.block.push(this.line);
     }
     this.line = '';
+    this.lineBytes = 0;
+    this.pendingHighSurrogate = false;
   }
+}
+
+function utf8BytesForCodeUnit(code: number): number {
+  if (code <= 0x7f) return 1;
+  if (code <= 0x7ff) return 2;
+  return 3;
 }
 
 function parseSseBlock(block: string): SseEventFrame | undefined {

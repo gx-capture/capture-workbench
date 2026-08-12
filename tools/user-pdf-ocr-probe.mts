@@ -151,6 +151,36 @@ function delay(milliseconds: number): Promise<void> {
   );
 }
 
+let activeProbeReadDeadlines = 0;
+
+/** Returns the number of per-read probe deadline timers still pending. */
+export function pendingProbeReadDeadlines(): number {
+  return activeProbeReadDeadlines;
+}
+
+class ProbeReadDeadline {
+  private timer: NodeJS.Timeout | undefined;
+
+  wait(milliseconds: number): Promise<void> {
+    this.clear();
+    activeProbeReadDeadlines += 1;
+    return new Promise((resolvePromise) => {
+      this.timer = setTimeout(() => {
+        this.timer = undefined;
+        activeProbeReadDeadlines -= 1;
+        resolvePromise();
+      }, Math.max(0, milliseconds));
+    });
+  }
+
+  clear(): void {
+    if (this.timer === undefined) return;
+    clearTimeout(this.timer);
+    this.timer = undefined;
+    activeProbeReadDeadlines -= 1;
+  }
+}
+
 function startRuntime(
   root: string,
   modelDir: string,
@@ -543,6 +573,7 @@ async function readProbeStream(
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   const parser = new ProbeSseParser();
+  const readDeadline = new ProbeReadDeadline();
   let sequence = previousSequence;
   try {
     const consume = (frames: readonly ProbeSseFrame[]): ProbeStreamEvent | undefined => {
@@ -572,8 +603,9 @@ async function readProbeStream(
       const remaining = deadline - Date.now();
       const result = await Promise.race([
         reader.read().then((value) => ({ kind: 'read' as const, value })),
-        delay(remaining).then(() => ({ kind: 'timeout' as const })),
+        readDeadline.wait(remaining).then(() => ({ kind: 'timeout' as const })),
       ]);
+      readDeadline.clear();
       if (result.kind === 'timeout') {
         await reader.cancel();
         return { kind: 'timeout', sequence };
@@ -597,6 +629,7 @@ async function readProbeStream(
     if (error instanceof UserPdfOcrProbeError) throw error;
     return { kind: 'disconnected', sequence };
   } finally {
+    readDeadline.clear();
     reader.releaseLock();
   }
 }

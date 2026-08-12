@@ -472,6 +472,106 @@ def test_streaming_repository_subscribe_fails_closed_without_registering_subscri
     assert capture.capture_id not in repository._subscribers
 
 
+def test_streaming_repository_quarantines_a_sequence_gap_on_startup(tmp_path: Path) -> None:
+    clock = MutableClock()
+    repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+    repository.initialize()
+    ingestion_id, _ = _open(repository, b"audio")
+    capture = repository.create_capture(
+        StartCaptureV2(
+            client_request_id="repository-startup-gap",
+            ingestion_id=ingestion_id,
+            structuring_mode=StructuringMode.HOST,
+        )
+    )
+    repository.append_event(
+        capture.capture_id,
+        event_type=StreamingEventType.ACCEPTED,
+        stage="queued",
+    )
+    repository.append_event(
+        capture.capture_id,
+        event_type=StreamingEventType.CHECKPOINT,
+        stage="extracting",
+    )
+    path = repository.root / "captures" / capture.capture_id / "events.jsonl"
+    lines = path.read_text(encoding="utf-8").splitlines()
+    payload = json.loads(lines[1])
+    payload["sequence"] = 3
+    payload["eventId"] = f"{payload['captureId']}/3"
+    lines[1] = json.dumps(payload)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    restarted = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+    restarted.initialize()
+
+    with pytest.raises(KeyError):
+        restarted.get_capture(capture.capture_id)
+    assert (
+        repository.root / "quarantine" / "captures" / capture.capture_id / "metadata.json"
+    ).is_file()
+
+
+def test_streaming_repository_quarantines_a_symlinked_record_directory_alias_on_load(
+    tmp_path: Path,
+) -> None:
+    clock = MutableClock()
+    repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+    repository.initialize()
+    ingestion_id, _ = _open(repository, b"audio")
+    directory = repository.root / "ingestions" / ingestion_id
+    alias = repository.root / "ingestions" / ("f" * 36)
+    try:
+        os.symlink(directory, alias, target_is_directory=True)
+    except OSError:
+        pytest.skip("directory symlinks are not available")
+
+    restarted = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+    restarted.initialize()
+
+    assert restarted.get_ingestion(ingestion_id).ingestion_id == ingestion_id
+    assert not alias.exists()
+    assert (directory / "metadata.json").is_file()
+
+
+def test_streaming_repository_rejects_symlinked_record_directory_alias_before_access(
+    tmp_path: Path,
+) -> None:
+    clock = MutableClock()
+    repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+    repository.initialize()
+    first_id, _ = _open(repository, b"audio")
+    second = repository.create_ingestion(
+        OpenIngestionV2(
+            client_request_id="repository-alias-target-2",
+            file_name="second.wav",
+            media_type="audio/wav",
+            total_bytes=4,
+        )
+    )
+    second_id = second.ingestion_id
+    directory = repository.root / "ingestions" / first_id
+    target = repository.root / "ingestions" / second_id
+    shutil.rmtree(directory)
+    try:
+        os.symlink(target, directory, target_is_directory=True)
+    except OSError:
+        pytest.skip("directory symlinks are not available")
+
+    with pytest.raises(RuntimeError, match="must not be a symlink"):
+        repository.append_chunk(
+            first_id,
+            chunk_index=0,
+            byte_offset=0,
+            data=b"a",
+            sha256=hashlib.sha256(b"a").hexdigest(),
+            max_chunk_bytes=4 * 1024 * 1024,
+            declared_total_bytes=4,
+        )
+
+    assert repository.get_ingestion(second_id).received_bytes == 0
+
+
 def test_streaming_repository_truncates_source_after_source_write_crash_window(
     tmp_path: Path,
 ) -> None:

@@ -31,6 +31,7 @@ import {
   timer,
 } from 'rxjs';
 import {
+  decodeCaptureOperationResponse,
   type CaptureEventV2,
   type CaptureOperationV2,
   type PartialCaptureV2,
@@ -1069,14 +1070,28 @@ function recoveryCaptureMatches(
   operation: CaptureOperationV2,
   document: DesktopLibrarySummary,
 ): boolean {
+  try {
+    decodeCaptureOperationResponse(operation);
+  } catch {
+    return false;
+  }
   if (document.recoveryIngestionId && operation.ingestionId !== document.recoveryIngestionId) {
     return false;
   }
   const source = operation.source;
+  const kind = captureKindForMediaType(document.mediaType);
   return !!source
+    && operation.kind === kind
     && source.fileName === document.fileName
     && source.mediaType === document.mediaType
     && source.bytes === document.byteLength;
+}
+
+function captureKindForMediaType(mediaType: string): CaptureOperationV2['kind'] | undefined {
+  if (mediaType === 'application/pdf') return 'pdf';
+  if (mediaType.startsWith('image/')) return 'image';
+  if (mediaType.startsWith('audio/')) return 'audio';
+  return undefined;
 }
 
 function committedTerminalStatus(document: DesktopLibrarySummary): DesktopLibraryStatus {

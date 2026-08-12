@@ -7,6 +7,7 @@ import {
   type CaptureStructuringCandidateV1,
 } from './contracts';
 import {
+  decodeCaptureOperationResponse,
   HttpCaptureClient,
   provideHttpCaptureClient,
 } from './http-capture-client';
@@ -230,9 +231,16 @@ describe('HttpCaptureClient', () => {
       protocolVersion: '2',
       captureId: 'capture-1',
       ingestionId: 'ingestion-1',
+      kind: 'pdf',
       status: 'extracting',
       partialRevision: 0,
       lastEventSequence: 0,
+      source: {
+        sha256: 'a'.repeat(64),
+        fileName: 'scan.pdf',
+        mediaType: 'application/pdf',
+        bytes: 3,
+      },
       createdAt: '2026-08-11T00:00:00Z',
       updatedAt: '2026-08-11T00:00:00Z',
     };
@@ -378,6 +386,7 @@ describe('HttpCaptureClient', () => {
       protocolVersion: '2',
       captureId: 'capture-2',
       ingestionId: 'ingestion-1',
+      kind: 'pdf',
       status: 'extracting',
       partialRevision: 0,
       lastEventSequence: 0,
@@ -399,9 +408,16 @@ describe('HttpCaptureClient', () => {
       protocolVersion: '2',
       captureId: 'capture-recovered',
       ingestionId: 'ingestion-1',
+      kind: 'pdf',
       status: 'extracting',
       partialRevision: 0,
       lastEventSequence: 0,
+      source: {
+        sha256: 'a'.repeat(64),
+        fileName: 'scan.pdf',
+        mediaType: 'application/pdf',
+        bytes: 3,
+      },
       createdAt: '2026-08-11T00:00:00Z',
       updatedAt: '2026-08-11T00:00:00Z',
     };
@@ -470,9 +486,16 @@ describe('HttpCaptureClient', () => {
       protocolVersion: '2',
       captureId: 'capture-recovered',
       ingestionId: 'ingestion-1',
+      kind: 'pdf',
       status: 'extracting',
       partialRevision: 0,
       lastEventSequence: 0,
+      source: {
+        sha256: 'a'.repeat(64),
+        fileName: 'scan.pdf',
+        mediaType: 'application/pdf',
+        bytes: 3,
+      },
       createdAt: '2026-08-11T00:00:00Z',
       updatedAt: '2026-08-11T00:00:00Z',
     };
@@ -527,9 +550,16 @@ describe('HttpCaptureClient', () => {
       protocolVersion: '2',
       captureId: 'capture-recovered',
       ingestionId: 'ingestion-1',
+      kind: 'pdf',
       status: 'extracting',
       partialRevision: 0,
       lastEventSequence: 0,
+      source: {
+        sha256: 'a'.repeat(64),
+        fileName: 'scan.pdf',
+        mediaType: 'application/pdf',
+        bytes: 3,
+      },
       createdAt: '2026-08-11T00:00:00Z',
       updatedAt: '2026-08-11T00:00:00Z',
     };
@@ -707,9 +737,16 @@ describe('HttpCaptureClient', () => {
       protocolVersion: '2',
       captureId: 'capture-recovered',
       ingestionId: 'ingestion-1',
+      kind: 'pdf',
       status: 'extracting',
       partialRevision: 0,
       lastEventSequence: 0,
+      source: {
+        sha256: 'a'.repeat(64),
+        fileName: 'scan.pdf',
+        mediaType: 'application/pdf',
+        bytes: 3,
+      },
       createdAt: '2026-08-11T00:00:00Z',
       updatedAt: '2026-08-11T00:00:00Z',
     };
@@ -840,9 +877,16 @@ describe('HttpCaptureClient', () => {
       protocolVersion: '2',
       captureId: 'capture-128',
       ingestionId: 'ingestion-128',
+      kind: 'pdf',
       status: 'extracting',
       partialRevision: 0,
       lastEventSequence: 0,
+      source: {
+        sha256: 'a'.repeat(64),
+        fileName: 'scan.pdf',
+        mediaType: 'application/pdf',
+        bytes: 3,
+      },
       createdAt: '2026-08-11T00:00:00Z',
       updatedAt: '2026-08-11T00:00:00Z',
     };
@@ -878,6 +922,7 @@ describe('HttpCaptureClient', () => {
       protocolVersion: '2',
       captureId: 'capture-1',
       ingestionId: 'ingestion-1',
+      kind: 'pdf',
       status: 'extracting',
       partialRevision: 0,
       lastEventSequence: 0,
@@ -964,6 +1009,7 @@ describe('HttpCaptureClient', () => {
       protocolVersion: '2',
       captureId: 'capture-1',
       ingestionId: 'ingestion-1',
+      kind: 'pdf',
       status: 'failed',
       partialRevision: 1,
       lastEventSequence: 3,
@@ -1085,7 +1131,115 @@ describe('HttpCaptureClient', () => {
     );
     expect(JSON.stringify(error)).not.toContain('secret-token');
   });
+
+  it('validates the full v2 operation contract before accepting an operation', () => {
+    const valid = fullOperation();
+    expect(decodeCaptureOperationResponse(valid, 'capture-1')).toEqual(valid);
+
+    const mutations: ReadonlyArray<(value: Record<string, unknown>) => void> = [
+      (value) => delete value['kind'],
+      (value) => { value['status'] = 'uploading'; },
+      (value) => { value['partialRevision'] = -1; },
+      (value) => { value['lastEventSequence'] = -1; },
+      (value) => { value['progress'] = 1.5; },
+      (value) => { value['createdAt'] = 'not-a-timestamp'; },
+      (value) => { value['updatedAt'] = 'not-a-timestamp'; },
+    ];
+    for (const mutate of mutations) {
+      const malformed = fullOperation();
+      mutate(malformed);
+      expect(() => decodeCaptureOperationResponse(malformed, 'capture-1')).toThrowError(
+        expect.objectContaining({ code: 'invalid_response' }),
+      );
+    }
+  });
+
+  it('requires completedAt exactly for terminal operation statuses', () => {
+    const terminalWithoutTimestamp = fullOperation();
+    terminalWithoutTimestamp['status'] = 'completed';
+    expect(() =>
+      decodeCaptureOperationResponse(terminalWithoutTimestamp, 'capture-1'),
+    ).toThrowError(expect.objectContaining({ code: 'invalid_response' }));
+
+    const activeWithTimestamp = fullOperation();
+    activeWithTimestamp['completedAt'] = '2026-08-11T00:00:01Z';
+    expect(() =>
+      decodeCaptureOperationResponse(activeWithTimestamp, 'capture-1'),
+    ).toThrowError(expect.objectContaining({ code: 'invalid_response' }));
+  });
+
+  it('rejects malformed operation source metadata', () => {
+    const malformed = fullOperation();
+    malformed['source'] = {
+      sha256: 'not-a-digest',
+      fileName: '',
+      mediaType: '',
+      bytes: 0,
+    };
+    expect(() => decodeCaptureOperationResponse(malformed, 'capture-1')).toThrowError(
+      expect.objectContaining({ code: 'invalid_response' }),
+    );
+  });
+
+  it('rejects a capture-start response whose source metadata does not match the request', async () => {
+    const operation = fullOperation();
+    (operation['source'] as Record<string, unknown>)['bytes'] = 4;
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(ingestionResponse('ingestion-1', 201))
+      .mockResolvedValueOnce(jsonResponse({ ingestionId: 'ingestion-1' }))
+      .mockResolvedValueOnce(ingestionResponse('ingestion-1'))
+      .mockResolvedValueOnce(jsonResponse(operation, 202));
+    const client = configureClient(fetchMock) as HttpCaptureClient;
+
+    await expect(firstValueFrom(client.startStreamingCapture({
+      clientRequestId: 'request-source-mismatch',
+      file: new File(['abc'], 'scan.pdf', { type: 'application/pdf' }),
+      sourceKind: 'pdf',
+      structuringMode: 'runtime',
+    }))).rejects.toMatchObject({ code: 'invalid_response' });
+  });
+
+  it('rejects a capture-start response that omits source metadata', async () => {
+    const operation = fullOperation();
+    delete operation['source'];
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(ingestionResponse('ingestion-1', 201))
+      .mockResolvedValueOnce(jsonResponse({ ingestionId: 'ingestion-1' }))
+      .mockResolvedValueOnce(ingestionResponse('ingestion-1'))
+      .mockResolvedValueOnce(jsonResponse(operation, 202));
+    const client = configureClient(fetchMock) as HttpCaptureClient;
+
+    await expect(firstValueFrom(client.startStreamingCapture({
+      clientRequestId: 'request-source-missing',
+      file: new File(['abc'], 'scan.pdf', { type: 'application/pdf' }),
+      sourceKind: 'pdf',
+      structuringMode: 'runtime',
+    }))).rejects.toMatchObject({ code: 'invalid_response' });
+  });
 });
+
+function fullOperation(): Record<string, unknown> {
+  return {
+    protocolVersion: '2',
+    captureId: 'capture-1',
+    ingestionId: 'ingestion-1',
+    kind: 'pdf',
+    status: 'extracting',
+    progress: 0.5,
+    partialRevision: 0,
+    lastEventSequence: 0,
+    source: {
+      sha256: 'a'.repeat(64),
+      fileName: 'scan.pdf',
+      mediaType: 'application/pdf',
+      bytes: 3,
+    },
+    createdAt: '2026-08-11T00:00:00Z',
+    updatedAt: '2026-08-11T00:00:00Z',
+  };
+}
 
 function configureClient(fetchMock: typeof fetch): CaptureClient {
   TestBed.configureTestingModule({

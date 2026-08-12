@@ -122,6 +122,18 @@ decision record, and phase commits.
       passed; the external Cert Prep/Law Prep compatibility gate remains
       unchecked.
 
+- [x] Complete the post-`5b5aa3c` final lifecycle hardening phase: native
+      cancellation pending-map preservation, probe per-read deadline-timer
+      cleanup, Angular UTF-8 byte line caps, record-directory symlink/alias
+      rejection, startup sequence-gap quarantine, terminal-race-safe SSE
+      subscription/status setup, and full v2 operation contract correlation.
+  Verify: runtime streaming API/repository tests, Angular/workbench tests,
+      native state/runtime-client tests, probe tests, full Nx
+      runtime/Angular/tools/workbench checks, Tauri fmt/check/test/contract/
+      package QA, deterministic smoke, Playwright E2E, and `git diff --check`
+      passed; the external Cert Prep/Law Prep compatibility gate remains
+      unchecked.
+
 ## Explicitly blocked evidence
 
 - Real engine-bearing OCR/Whisper smoke remains opt-in and depends on the

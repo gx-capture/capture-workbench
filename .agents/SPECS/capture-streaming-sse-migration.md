@@ -7,8 +7,9 @@ hardening phase, and the post-3b61cef security/protocol hardening phase are
 complete, the post-e166174 final security hardening phase is complete, and the
 post-7909eeb final lifecycle/security phase, and the post-c762e02 final
 lifecycle hardening phase, and the post-f9827bf final bounded security/protocol
-phase, and the post-8c98a32 final hardening phase are complete. The external
-consumer compatibility gate and final residual cleanup remain open.
+phase, the post-8c98a32 final hardening phase, and the post-5b5aa3c final
+lifecycle hardening phase are complete. The external consumer compatibility
+gate and final residual cleanup remain open.
 
 ## Purpose
 
@@ -245,6 +246,23 @@ compatibility release before this producer can delete the public type.
     payload protocol/captureId/eventId/kind, and desktop reconnect fixtures
     use canonical captureId/sequence ids. The external consumer gate remains
     unchecked.
+16. **Post-5b5aa3c final lifecycle hardening**: completed in the containing
+    phase commit; native stream cancellation keeps a pending per-request
+    cancellation map so a cancel observed before registration or after
+    teardown cannot leave an SSE request running uncancelled; the user PDF
+    probe clears every per-read deadline timer via an abortable deadline; the
+    Angular SSE parser caps lines by UTF-8 byte length (including surrogate
+    pairs) while preserving split CRLF/multiline framing; runtime persistence
+    rejects symlink/reparse record directories and in-root aliases on load
+    and before every access; startup recovery quarantines event-log sequence
+    gaps instead of repairing and continuing; SSE subscription/replay/status
+    setup re-reads terminal state after subscriber registration and closes on
+    terminal events behind the client cursor so a terminal transition cannot
+    leave an empty active heartbeat stream; the Angular capture-operation
+    decoder and native/desktop recovery matching validate the full v2
+    operation contract (kind, status, revisions, progress, timestamps,
+    completedAt/terminal equivalence, source and error shapes) plus
+    request/source correlation. The external consumer gate remains unchecked.
 
 Each phase must have an explicit path list, its own review, and its own
 verification result. Revert consumers before reverting the runtime cutover;
@@ -460,6 +478,39 @@ phase commit records the narrow fixes and final local verification below.
   guards are platform-independent. The private engine-bearing Ollama smoke
   remains opt-in and was not synthesized for this local verification.
 
+- Post-`5b5aa3c` final lifecycle hardening (the containing phase commit) ??
+  reviewed path groups: `apps/capture-workbench-desktop/src-tauri/src/state.rs`
+  (pending-cancellation preservation and race tests);
+  `apps/capture-workbench-desktop/src-tauri/src/runtime_client.rs` (full v2
+  operation contract validation for start/recovery/by-client-request/get
+  paths); `tools/user-pdf-ocr-probe.mts` and `.test.ts` (per-read
+  deadline-timer cleanup); `packages/capture-angular/src/lib/
+  sse-capture-event-stream.ts` and `.spec.ts` (UTF-8 byte line caps);
+  `packages/capture-angular/src/lib/http-capture-client.ts` and `.spec.ts`
+  (full v2 operation contract and request/source correlation);
+  `apps/capture-workbench/src/app/services/desktop-workspace.store.ts` and
+  `.spec.ts` (desktop recovery full-contract matching);
+  `packages/capture-runtime/src/capture_runtime/storage/streaming_repository.py`,
+  `packages/capture-runtime/src/capture_runtime/routes/streaming.py`,
+  `packages/capture-runtime/tests/test_streaming_repository.py`, and
+  `packages/capture-runtime/tests/test_streaming_api.py` (record-directory
+  symlink/alias rejection, startup gap quarantine, terminal-race-safe SSE
+  setup); `.agents/SPECS`, `.agents/TODOS`, `.agents/DECISIONS` (evidence).
+  Focused verification passed: runtime streaming API/repository 52 passed/10
+  symlink skips, Angular client suite 120 passed, workbench 56 passed, native
+  state/runtime-client lib tests 73 passed, tools probe tests 11 passed. Full
+  local verification passed: runtime 341 passed/11 skipped/1 warning; Angular
+  120 passed; tools 24 passed; workbench 56 passed; Tauri 73 passed; desktop
+  package QA 214 passed/2 skipped; deterministic smoke and 4 Playwright E2E
+  tests passed. Runtime lint/typecheck/contracts, Angular
+  async-boundary/lint/typecheck, desktop cargo fmt/check, contract
+  consistency, tools/workbench lint/typecheck, and `git diff --check` passed;
+  unrelated dirty paths remain unstaged. Symlink regression tests skip when
+  the Windows environment cannot create symlinks; canonical containment and
+  gap-quarantine guards are platform-independent. The private engine-bearing
+  Ollama smoke remains opt-in and was not synthesized for this local
+  verification.
+
 ## Acceptance criteria
 
 - PDF, image, and audio each complete the same v2 lifecycle and produce
@@ -517,6 +568,17 @@ phase commit records the narrow fixes and final local verification below.
   clean replay load.
 - Real-media evidence parsing validates payload protocol, captureId, eventId,
   and kind.
+- Native SSE cancellation is preserved across begin/finish races so teardown
+  cannot leave an SSE request running.
+- Probe per-read deadline timers are always cleared.
+- Angular SSE line caps use UTF-8 byte length while preserving framing.
+- Runtime load/access rejects symlink/reparse record directories and in-root
+  aliases.
+- Startup recovery quarantines event-log sequence gaps instead of continuing
+  at the next sequence.
+- Terminal transitions cannot leave an empty active heartbeat SSE stream.
+- Angular/native/desktop operation decoders validate the full v2 operation
+  contract and request/source correlation.
 
 ## Test plan
 
@@ -540,6 +602,9 @@ phase commit records the narrow fixes and final local verification below.
 - Pre-mutation root validation, unique atomic temp writes, source TOCTOU
   guards, replay gap/subscriber-order tests, parser caps, mandatory probe/
   oracle ids, and real-media payload identity tests.
+- Native cancellation race, probe deadline-timer cleanup, UTF-8 line caps,
+  record-directory alias rejection, startup gap quarantine, terminal-race SSE
+  tests, and full v2 operation contract/correlation regressions.
 - Angular SSE frame parser, chunk upload, abort/unsubscribe, reconnect,
   reducer, workflow, and consumer smoke tests.
 - Rust/Tauri request, authorization, cursor, event bridge, and all-media

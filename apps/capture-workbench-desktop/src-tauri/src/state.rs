@@ -16,12 +16,18 @@ use crate::{
     resources::RuntimeAssets,
 };
 
+#[derive(Default)]
+struct StreamingRequestState {
+    active: HashMap<String, Arc<AtomicBool>>,
+    pending_cancellations: HashMap<String, bool>,
+}
+
 struct DesktopStateInner {
     data_dir: PathBuf,
     config: Mutex<Option<BackendConfig>>,
     status: Mutex<DesktopRuntimeStatus>,
     child: Mutex<Option<OwnedSidecarProcess>>,
-    streaming_cancellations: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    streaming_requests: Mutex<StreamingRequestState>,
     stopping: AtomicBool,
 }
 
@@ -38,7 +44,7 @@ impl DesktopState {
                 config: Mutex::new(None),
                 status: Mutex::new(DesktopRuntimeStatus::starting()),
                 child: Mutex::new(None),
-                streaming_cancellations: Mutex::new(HashMap::new()),
+                streaming_requests: Mutex::new(StreamingRequestState::default()),
                 stopping: AtomicBool::new(false),
             }),
         }
@@ -129,13 +135,12 @@ impl DesktopState {
 
     pub(crate) fn shutdown(&self) {
         self.inner.stopping.store(true, Ordering::Release);
-        if let Ok(cancellations) = self.inner.streaming_cancellations.lock() {
-            for cancellation in cancellations.values() {
+        if let Ok(mut requests) = self.inner.streaming_requests.lock() {
+            for cancellation in requests.active.values() {
                 cancellation.store(true, Ordering::Release);
             }
-        }
-        if let Ok(mut cancellations) = self.inner.streaming_cancellations.lock() {
-            cancellations.clear();
+            requests.active.clear();
+            requests.pending_cancellations.clear();
         }
         if let Ok(mut config) = self.inner.config.lock() {
             *config = None;
@@ -160,20 +165,31 @@ impl DesktopState {
         let cancellation = Arc::new(AtomicBool::new(false));
         let mut requests = self
             .inner
-            .streaming_cancellations
+            .streaming_requests
             .lock()
             .map_err(|_| "Capture runtime stream state is unavailable.".to_string())?;
-        if requests.contains_key(request_id) {
+        if requests.active.contains_key(request_id) {
             return Err("Capture Runtime SSE request is already active.".into());
         }
-        requests.insert(request_id.to_string(), Arc::clone(&cancellation));
+        let pending = requests
+            .pending_cancellations
+            .remove(request_id)
+            .unwrap_or(false);
+        cancellation.store(pending, Ordering::Release);
+        requests
+            .active
+            .insert(request_id.to_string(), Arc::clone(&cancellation));
         Ok(cancellation)
     }
 
     pub(crate) fn cancel_streaming_request(&self, request_id: &str) {
-        if let Ok(requests) = self.inner.streaming_cancellations.lock() {
-            if let Some(cancellation) = requests.get(request_id) {
+        if let Ok(mut requests) = self.inner.streaming_requests.lock() {
+            if let Some(cancellation) = requests.active.get(request_id) {
                 cancellation.store(true, Ordering::Release);
+            } else {
+                requests
+                    .pending_cancellations
+                    .insert(request_id.to_string(), true);
             }
         }
     }
@@ -183,12 +199,13 @@ impl DesktopState {
         request_id: &str,
         cancellation: &Arc<AtomicBool>,
     ) {
-        if let Ok(mut requests) = self.inner.streaming_cancellations.lock() {
+        if let Ok(mut requests) = self.inner.streaming_requests.lock() {
             if requests
+                .active
                 .get(request_id)
                 .is_some_and(|active| Arc::ptr_eq(active, cancellation))
             {
-                requests.remove(request_id);
+                requests.active.remove(request_id);
             }
         }
     }
@@ -197,11 +214,12 @@ impl DesktopState {
 impl Drop for DesktopStateInner {
     fn drop(&mut self) {
         self.stopping.store(true, Ordering::Release);
-        if let Ok(cancellations) = self.streaming_cancellations.get_mut() {
-            for cancellation in cancellations.values() {
+        if let Ok(requests) = self.streaming_requests.get_mut() {
+            for cancellation in requests.active.values() {
                 cancellation.store(true, Ordering::Release);
             }
-            cancellations.clear();
+            requests.active.clear();
+            requests.pending_cancellations.clear();
         }
         if let Ok(child) = self.child.get_mut() {
             if let Some(child) = child.take() {
@@ -249,5 +267,60 @@ mod tests {
         state.finish_streaming_request("stream-request-1", &cancellation);
         assert!(state.begin_streaming_request("stream-request-1").is_ok());
         state.shutdown();
+    }
+
+    #[test]
+    fn cancel_before_begin_returns_an_already_cancelled_stream() {
+        let state = DesktopState::new(PathBuf::from("workbench-data"));
+        state.cancel_streaming_request("race-before-begin");
+
+        let cancellation = state
+            .begin_streaming_request("race-before-begin")
+            .expect("register cancelled stream");
+        assert!(cancellation.load(Ordering::Acquire));
+        state.finish_streaming_request("race-before-begin", &cancellation);
+
+        let reused = state
+            .begin_streaming_request("race-before-begin")
+            .expect("reuse request id");
+        assert!(!reused.load(Ordering::Acquire));
+        state.finish_streaming_request("race-before-begin", &reused);
+        state.shutdown();
+    }
+
+    #[test]
+    fn cancel_after_finish_is_preserved_for_a_reused_request_id() {
+        let state = DesktopState::new(PathBuf::from("workbench-data"));
+        let cancellation = state
+            .begin_streaming_request("race-after-finish")
+            .expect("register stream");
+        state.finish_streaming_request("race-after-finish", &cancellation);
+
+        state.cancel_streaming_request("race-after-finish");
+        let reused = state
+            .begin_streaming_request("race-after-finish")
+            .expect("teardown cancellation is preserved");
+        assert!(reused.load(Ordering::Acquire));
+        state.finish_streaming_request("race-after-finish", &reused);
+        state.shutdown();
+    }
+
+    #[test]
+    fn shutdown_cancels_active_streams_and_clears_pending_cancellations() {
+        let state = DesktopState::new(PathBuf::from("workbench-data"));
+        let cancellation = state
+            .begin_streaming_request("race-shutdown-active")
+            .expect("register stream");
+        state.cancel_streaming_request("race-shutdown-pending");
+
+        state.shutdown();
+
+        assert!(cancellation.load(Ordering::Acquire));
+        assert_eq!(
+            state
+                .begin_streaming_request("race-shutdown-pending")
+                .expect_err("stopped"),
+            "Capture runtime is stopped."
+        );
     }
 }

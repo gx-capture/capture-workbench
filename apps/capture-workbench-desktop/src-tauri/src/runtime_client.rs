@@ -461,6 +461,37 @@ fn validate_capture_start_response(
     value: &Value,
     expectation: &CaptureStartExpectation,
 ) -> Result<String, String> {
+    validate_capture_operation_contract(value)?;
+    let capture_id = value
+        .get("captureId")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "Progressive capture response is invalid.".to_string())?;
+    let ingestion_id = value
+        .get("ingestionId")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "Progressive capture response is invalid.".to_string())?;
+    if ingestion_id != expectation.ingestion_id {
+        return Err("Progressive capture response identity is invalid.".into());
+    }
+    if value.get("kind").and_then(Value::as_str) != Some(expectation.kind.as_str()) {
+        return Err("Progressive capture response identity is invalid.".into());
+    }
+    let source = value
+        .get("source")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "Progressive capture response is invalid.".to_string())?;
+    if source.get("fileName").and_then(Value::as_str) != Some(expectation.file_name.as_str())
+        || source.get("mediaType").and_then(Value::as_str) != Some(expectation.media_type.as_str())
+        || source.get("bytes").and_then(Value::as_u64) != Some(expectation.total_bytes)
+    {
+        return Err("Progressive capture response identity is invalid.".into());
+    }
+    Ok(capture_id.to_string())
+}
+
+fn validate_capture_operation_contract(value: &Value) -> Result<(), String> {
     if value.get("protocolVersion").and_then(Value::as_str) != Some("2") {
         return Err("Progressive capture response is invalid.".into());
     }
@@ -478,11 +509,11 @@ fn validate_capture_start_response(
         .ok_or_else(|| "Progressive capture response is invalid.".to_string())?;
     validate_opaque_id(ingestion_id)
         .map_err(|_| "Progressive capture response identity is invalid.".to_string())?;
-    if ingestion_id != expectation.ingestion_id {
-        return Err("Progressive capture response identity is invalid.".into());
-    }
-    if value.get("kind").and_then(Value::as_str) != Some(expectation.kind.as_str()) {
-        return Err("Progressive capture response identity is invalid.".into());
+    if !matches!(
+        value.get("kind").and_then(Value::as_str),
+        Some("pdf" | "image" | "audio")
+    ) {
+        return Err("Progressive capture response is invalid.".into());
     }
     if !matches!(
         value.get("status").and_then(Value::as_str),
@@ -499,17 +530,82 @@ fn validate_capture_start_response(
     ) {
         return Err("Progressive capture response is invalid.".into());
     }
+    if value
+        .get("partialRevision")
+        .and_then(Value::as_u64)
+        .is_none()
+        || value
+            .get("lastEventSequence")
+            .and_then(Value::as_u64)
+            .is_none()
+    {
+        return Err("Progressive capture response is invalid.".into());
+    }
+    let progress = value.get("progress");
+    if progress.is_some_and(|value| {
+        !value.is_null()
+            && !value
+                .as_f64()
+                .is_some_and(|number| number.is_finite() && (0.0..=1.0).contains(&number))
+    }) {
+        return Err("Progressive capture response is invalid.".into());
+    }
+    for field in ["createdAt", "updatedAt"] {
+        let timestamp = value.get(field).and_then(Value::as_str);
+        if !timestamp.is_some_and(valid_rfc3339_timestamp) {
+            return Err("Progressive capture response is invalid.".into());
+        }
+    }
+    let completed_at = value.get("completedAt");
+    let has_completed_at = completed_at.is_some_and(|value| !value.is_null());
+    if has_completed_at
+        && !completed_at
+            .and_then(Value::as_str)
+            .is_some_and(valid_rfc3339_timestamp)
+    {
+        return Err("Progressive capture response is invalid.".into());
+    }
+    let terminal_status = matches!(
+        value.get("status").and_then(Value::as_str),
+        Some("completed" | "failed" | "cancelled")
+    );
+    if terminal_status != has_completed_at {
+        return Err("Progressive capture response is invalid.".into());
+    }
+    let error = value.get("error");
+    if error.is_some_and(|value| !value.is_null()) {
+        let error = error
+            .and_then(Value::as_object)
+            .ok_or_else(|| "Progressive capture response is invalid.".to_string())?;
+        validate_capture_failure(error)
+            .map_err(|_| "Progressive capture response is invalid.".to_string())?;
+    }
     let source = value
         .get("source")
         .and_then(Value::as_object)
         .ok_or_else(|| "Progressive capture response is invalid.".to_string())?;
-    if source.get("fileName").and_then(Value::as_str) != Some(expectation.file_name.as_str())
-        || source.get("mediaType").and_then(Value::as_str) != Some(expectation.media_type.as_str())
-        || source.get("bytes").and_then(Value::as_u64) != Some(expectation.total_bytes)
+    if source
+        .get("sha256")
+        .and_then(Value::as_str)
+        .is_none_or(|digest| {
+            digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+        })
+        || source
+            .get("fileName")
+            .and_then(Value::as_str)
+            .is_none_or(|value| value.is_empty())
+        || source
+            .get("mediaType")
+            .and_then(Value::as_str)
+            .is_none_or(|value| value.is_empty())
+        || source
+            .get("bytes")
+            .and_then(Value::as_u64)
+            .is_none_or(|bytes| bytes == 0)
     {
-        return Err("Progressive capture response identity is invalid.".into());
+        return Err("Progressive capture response is invalid.".into());
     }
-    Ok(capture_id.to_string())
+    Ok(())
 }
 
 fn cleanup_uncommitted_ingestion(
@@ -701,7 +797,9 @@ pub(crate) fn streaming_capture(
     state: &DesktopState,
     input: RuntimeIdInput,
 ) -> Result<Value, String> {
-    streaming_value(state, "GET", &input.id, "", None, None)
+    let value = streaming_value(state, "GET", &input.id, "", None, None)?;
+    validate_capture_operation_contract(&value)?;
+    Ok(value)
 }
 
 pub(crate) fn streaming_capture_by_client_request(
@@ -710,7 +808,7 @@ pub(crate) fn streaming_capture_by_client_request(
 ) -> Result<Value, String> {
     validate_client_request_id(&input.client_request_id)?;
     let config = state.backend_config()?;
-    null_for_http_rejection(
+    let value = null_for_http_rejection(
         request_with_headers(
             &config,
             "GET",
@@ -723,7 +821,11 @@ pub(crate) fn streaming_capture_by_client_request(
             &[],
         ),
         404,
-    )
+    )?;
+    if !value.is_null() {
+        validate_capture_operation_contract(&value)?;
+    }
+    Ok(value)
 }
 
 pub(crate) fn streaming_partial(
@@ -2222,11 +2324,17 @@ mod tests {
             "ingestionId": "ingestion-1",
             "kind": "pdf",
             "status": "extracting",
+            "progress": 0.5,
+            "partialRevision": 1,
+            "lastEventSequence": 3,
             "source": {
+                "sha256": "a".repeat(64),
                 "fileName": "scan.pdf",
                 "mediaType": "application/pdf",
                 "bytes": 3,
             },
+            "createdAt": "2026-01-01T00:00:00Z",
+            "updatedAt": "2026-01-01T00:00:01Z",
         });
         assert_eq!(
             validate_capture_start_response(&valid, &expectation).expect("valid capture"),
@@ -2277,6 +2385,91 @@ mod tests {
     }
 
     #[test]
+    fn capture_start_responses_require_the_full_operation_contract() {
+        let expectation = capture_start_expectation("ingestion-1");
+        let valid = serde_json::json!({
+            "protocolVersion": "2",
+            "captureId": "capture-1",
+            "ingestionId": "ingestion-1",
+            "kind": "pdf",
+            "status": "failed",
+            "progress": 0.5,
+            "partialRevision": 1,
+            "lastEventSequence": 3,
+            "source": {
+                "sha256": "a".repeat(64),
+                "fileName": "scan.pdf",
+                "mediaType": "application/pdf",
+                "bytes": 3,
+            },
+            "error": {
+                "code": "provider_failed",
+                "message": "Provider failed.",
+                "stage": "extracting",
+                "retryable": true,
+            },
+            "createdAt": "2026-01-01T00:00:00Z",
+            "updatedAt": "2026-01-01T00:00:01Z",
+            "completedAt": "2026-01-01T00:00:01Z",
+        });
+        assert_eq!(
+            validate_capture_start_response(&valid, &expectation).expect("valid terminal"),
+            "capture-1"
+        );
+
+        let mut missing_revision = valid.clone();
+        missing_revision
+            .as_object_mut()
+            .expect("object")
+            .remove("partialRevision");
+        assert!(validate_capture_start_response(&missing_revision, &expectation).is_err());
+
+        let mut missing_sequence = valid.clone();
+        missing_sequence
+            .as_object_mut()
+            .expect("object")
+            .remove("lastEventSequence");
+        assert!(validate_capture_start_response(&missing_sequence, &expectation).is_err());
+
+        let mut invalid_progress = valid.clone();
+        invalid_progress.as_object_mut().expect("object")["progress"] = serde_json::json!(1.5);
+        assert!(validate_capture_start_response(&invalid_progress, &expectation).is_err());
+
+        let mut invalid_timestamp = valid.clone();
+        invalid_timestamp.as_object_mut().expect("object")["createdAt"] =
+            serde_json::json!("2026-01-01T00:00:00");
+        assert!(validate_capture_start_response(&invalid_timestamp, &expectation).is_err());
+
+        let mut terminal_without_timestamp = valid.clone();
+        terminal_without_timestamp
+            .as_object_mut()
+            .expect("object")
+            .remove("completedAt");
+        assert!(
+            validate_capture_start_response(&terminal_without_timestamp, &expectation).is_err()
+        );
+
+        let mut active_with_timestamp = valid.clone();
+        active_with_timestamp.as_object_mut().expect("object")["status"] =
+            serde_json::json!("extracting");
+        assert!(validate_capture_start_response(&active_with_timestamp, &expectation).is_err());
+
+        let mut missing_digest = valid.clone();
+        missing_digest.as_object_mut().expect("object")["source"]
+            .as_object_mut()
+            .expect("source object")
+            .remove("sha256");
+        assert!(validate_capture_start_response(&missing_digest, &expectation).is_err());
+
+        let mut invalid_error = valid.clone();
+        invalid_error.as_object_mut().expect("object")["error"] = serde_json::json!({
+            "code": "Not Valid!",
+            "message": "",
+        });
+        assert!(validate_capture_start_response(&invalid_error, &expectation).is_err());
+    }
+
+    #[test]
     fn capture_start_recovery_commits_a_fully_correlated_lookup() {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("listener");
         let port = listener.local_addr().expect("address").port();
@@ -2285,7 +2478,7 @@ mod tests {
             let lookup_request = read_http_request(&mut lookup);
             assert!(lookup_request
                 .starts_with("GET /v2/captures/by-client-request/capture-request-valid HTTP/1.1"));
-            let body = r#"{"protocolVersion":"2","captureId":"capture-recovered","ingestionId":"ingestion-1","kind":"pdf","status":"extracting","source":{"fileName":"scan.pdf","mediaType":"application/pdf","bytes":3}}"#;
+            let body = r#"{"protocolVersion":"2","captureId":"capture-recovered","ingestionId":"ingestion-1","kind":"pdf","status":"extracting","progress":0.5,"partialRevision":1,"lastEventSequence":3,"source":{"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","fileName":"scan.pdf","mediaType":"application/pdf","bytes":3},"createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-01T00:00:01Z"}"#;
             write!(
                 lookup,
                 "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -2323,7 +2516,7 @@ mod tests {
             assert!(lookup_request.starts_with(
                 "GET /v2/captures/by-client-request/capture-request-mismatch HTTP/1.1"
             ));
-            let body = r#"{"protocolVersion":"2","captureId":"capture-other","ingestionId":"ingestion-1","kind":"audio","status":"extracting","source":{"fileName":"scan.pdf","mediaType":"application/pdf","bytes":3}}"#;
+            let body = r#"{"protocolVersion":"2","captureId":"capture-other","ingestionId":"ingestion-1","kind":"audio","status":"extracting","progress":0.5,"partialRevision":1,"lastEventSequence":3,"source":{"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","fileName":"scan.pdf","mediaType":"application/pdf","bytes":3},"createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-01T00:00:01Z"}"#;
             write!(
                 lookup,
                 "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",

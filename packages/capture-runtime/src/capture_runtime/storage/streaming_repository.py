@@ -1107,7 +1107,7 @@ class StreamingRepository:
             raise RuntimeError("ingestions root must not be a symlink")
         _ensure_contained(self.root, category_root)
         directory = category_root / _identifier(ingestion_id)
-        _ensure_contained(category_root, directory)
+        self._ensure_record_directory_contained(category_root, directory)
         return directory
 
     def _capture_directory(self, capture_id: str) -> Path:
@@ -1118,8 +1118,16 @@ class StreamingRepository:
             raise RuntimeError("captures root must not be a symlink")
         _ensure_contained(self.root, category_root)
         directory = category_root / _identifier(capture_id)
-        _ensure_contained(category_root, directory)
+        self._ensure_record_directory_contained(category_root, directory)
         return directory
+
+    def _ensure_record_directory_contained(self, category_root: Path, directory: Path) -> None:
+        if directory.is_symlink():
+            raise RuntimeError(f"{directory} must not be a symlink")
+        _ensure_contained(category_root, directory)
+        canonical_root = Path(os.path.realpath(category_root))
+        if Path(os.path.realpath(directory)) != canonical_root / directory.name:
+            raise RuntimeError(f"{directory} escaped {category_root.name} root")
 
     @staticmethod
     def _ingestion_snapshot(record: _IngestionRecord) -> IngestionV2:
@@ -1255,10 +1263,13 @@ class StreamingRepository:
 
     def _load_ingestions(self) -> None:
         for directory in sorted((self.root / "ingestions").iterdir()):
+            if directory.is_symlink():
+                self._quarantine_directory(directory, "ingestions")
+                continue
             if not directory.is_dir():
                 continue
             try:
-                _ensure_contained(self.root / "ingestions", directory)
+                self._ensure_record_directory_contained(self.root / "ingestions", directory)
                 metadata_path = directory / "metadata.json"
                 self._ensure_leaf_contained(directory, metadata_path)
                 payload = json.loads(metadata_path.read_text(encoding="utf-8"))
@@ -1298,10 +1309,13 @@ class StreamingRepository:
 
     def _load_captures(self) -> None:
         for directory in sorted((self.root / "captures").iterdir()):
+            if directory.is_symlink():
+                self._quarantine_directory(directory, "captures")
+                continue
             if not directory.is_dir():
                 continue
             try:
-                _ensure_contained(self.root / "captures", directory)
+                self._ensure_record_directory_contained(self.root / "captures", directory)
                 metadata_path = directory / "metadata.json"
                 self._ensure_leaf_contained(directory, metadata_path)
                 payload = json.loads(metadata_path.read_text(encoding="utf-8"))
@@ -1465,13 +1479,13 @@ class StreamingRepository:
             except (UnicodeDecodeError, ValidationError, ValueError):
                 corrupted_suffix = b"".join(lines[index:])
                 break
+            expected_sequence = 1 if latest is None else latest.sequence + 1
             if (
                 event.capture_id != capture_id
                 or event.event_id != f"{capture_id}/{event.sequence}"
-                or (latest is not None and event.sequence <= latest.sequence)
+                or event.sequence != expected_sequence
             ):
-                corrupted_suffix = b"".join(lines[index:])
-                break
+                raise RuntimeError("streaming event log is corrupted")
             valid_lines.append(raw_line)
             latest = event
         if corrupted_suffix is not None:

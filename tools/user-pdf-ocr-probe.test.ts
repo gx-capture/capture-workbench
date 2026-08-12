@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  pendingProbeReadDeadlines,
   readJsonObject,
   sanitizeProbeError,
   UserPdfOcrProbeError,
@@ -250,6 +251,47 @@ test('probe treats normal terminal stream closure as success, not timeout', asyn
 
   assert.equal(result['eventType'], 'completed');
   assert.equal(requestCount, 1);
+});
+
+test('probe clears per-read deadline timers after a normal read', async () => {
+  const fetchImplementation = async () => sseResponse(
+    eventFrame(4, 'completed', 'completed'),
+  );
+
+  await waitForExtraction(
+    'http://runtime.test',
+    CAPTURE_ID,
+    SECRET,
+    5_000,
+    fetchImplementation,
+  );
+
+  assert.equal(pendingProbeReadDeadlines(), 0);
+});
+
+test('probe clears per-read deadline timers after a timeout read', async () => {
+  const fetchImplementation = async () => new Response(
+    new ReadableStream({
+      start(controller) {
+        // Keep the body open so only the per-read deadline can complete the read.
+        void controller;
+      },
+    }),
+    { status: 200, headers: { 'content-type': 'text/event-stream' } },
+  );
+
+  await assert.rejects(
+    waitForExtraction(
+      'http://runtime.test',
+      CAPTURE_ID,
+      SECRET,
+      50,
+      fetchImplementation,
+    ),
+    (error) => error instanceof UserPdfOcrProbeError && error.shape.code === 'timeout',
+  );
+
+  assert.equal(pendingProbeReadDeadlines(), 0);
 });
 
 test('probe rejects a capture-boundary SSE mismatch without exposing payload data', async () => {

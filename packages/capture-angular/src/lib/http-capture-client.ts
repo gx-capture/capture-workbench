@@ -31,6 +31,7 @@ import {
   type CaptureClient,
   type CaptureEventStreamOptions,
   type CaptureEventV2,
+  type CaptureSourceKind,
   type IngestionV2,
   type OpenIngestionV2,
   type CaptureOperationV2,
@@ -68,6 +69,22 @@ const CAPTURE_HTTP_CLIENT_OPTIONS = new InjectionToken<CaptureHttpClientOptions>
 );
 
 const STREAMING_CHUNK_BYTES = 1024 * 1024;
+const CAPTURE_SOURCE_KINDS = new Set<string>(['pdf', 'image', 'audio']);
+const CAPTURE_OPERATION_STATUSES = new Set([
+  'created',
+  'waiting_input',
+  'extracting',
+  'awaiting_structuring',
+  'structuring',
+  'completed',
+  'failed',
+  'cancelled',
+]);
+const TERMINAL_CAPTURE_OPERATION_STATUSES = new Set([
+  'completed',
+  'failed',
+  'cancelled',
+]);
 
 export class HttpCaptureClient implements CaptureClient {
   constructor(private readonly options: CaptureHttpClientOptions) {}
@@ -213,6 +230,12 @@ export class HttpCaptureClient implements CaptureClient {
               value,
               undefined,
               finalizedIngestionId,
+              {
+                kind: request.sourceKind,
+                fileName: request.file.name,
+                mediaType: request.file.type || mediaTypeFor(request.sourceKind),
+                bytes: request.file.size,
+              },
             ),
           });
         }),
@@ -719,10 +742,16 @@ function decodeRecoveredIngestionResponse(
   return ingestion;
 }
 
-function decodeCaptureOperationResponse(
+export function decodeCaptureOperationResponse(
   value: unknown,
   expectedCaptureId?: string,
   expectedIngestionId?: string,
+  expectedSource?: {
+    readonly kind: CaptureSourceKind;
+    readonly fileName: string;
+    readonly mediaType: string;
+    readonly bytes: number;
+  },
 ): CaptureOperationV2 {
   if (!isRecord(value) || value['protocolVersion'] !== '2') {
     throw invalidRuntimeResponse();
@@ -735,7 +764,116 @@ function decodeCaptureOperationResponse(
   ) {
     throw invalidRuntimeResponse();
   }
+  const kind = value['kind'];
+  if (typeof kind !== 'string' || !CAPTURE_SOURCE_KINDS.has(kind)) {
+    throw invalidRuntimeResponse();
+  }
+  const status = value['status'];
+  if (typeof status !== 'string' || !CAPTURE_OPERATION_STATUSES.has(status)) {
+    throw invalidRuntimeResponse();
+  }
+  const partialRevision = value['partialRevision'];
+  if (
+    typeof partialRevision !== 'number'
+    || !Number.isSafeInteger(partialRevision)
+    || partialRevision < 0
+  ) {
+    throw invalidRuntimeResponse();
+  }
+  const lastEventSequence = value['lastEventSequence'];
+  if (
+    typeof lastEventSequence !== 'number'
+    || !Number.isSafeInteger(lastEventSequence)
+    || lastEventSequence < 0
+  ) {
+    throw invalidRuntimeResponse();
+  }
+  const progress = value['progress'];
+  if (
+    progress !== undefined
+    && progress !== null
+    && (typeof progress !== 'number' || !Number.isFinite(progress) || progress < 0 || progress > 1)
+  ) {
+    throw invalidRuntimeResponse();
+  }
+  for (const field of ['createdAt', 'updatedAt'] as const) {
+    const timestamp = value[field];
+    if (typeof timestamp !== 'string' || !validRfc3339Timestamp(timestamp)) {
+      throw invalidRuntimeResponse();
+    }
+  }
+  const completedAt = value['completedAt'];
+  if (completedAt !== undefined && completedAt !== null) {
+    if (typeof completedAt !== 'string' || !validRfc3339Timestamp(completedAt)) {
+      throw invalidRuntimeResponse();
+    }
+  }
+  const terminal = TERMINAL_CAPTURE_OPERATION_STATUSES.has(status);
+  if (terminal !== (completedAt !== undefined && completedAt !== null)) {
+    throw invalidRuntimeResponse();
+  }
+  const source = value['source'];
+  if (source !== undefined && source !== null) {
+    if (!isRecord(source)) throw invalidRuntimeResponse();
+    validateCaptureSourceV1(source);
+    if (
+      expectedSource !== undefined
+      && (
+        kind !== expectedSource.kind
+        || source['fileName'] !== expectedSource.fileName
+        || source['mediaType'] !== expectedSource.mediaType
+        || source['bytes'] !== expectedSource.bytes
+      )
+    ) {
+      throw invalidRuntimeResponse();
+    }
+  } else if (expectedSource !== undefined) {
+    throw invalidRuntimeResponse();
+  }
+  const error = value['error'];
+  if (error !== undefined && error !== null) {
+    if (!isRecord(error)) throw invalidRuntimeResponse();
+    validateCaptureFailure(error);
+  }
+  if (status !== 'failed' && error !== undefined && error !== null) {
+    throw invalidRuntimeResponse();
+  }
   return value as unknown as CaptureOperationV2;
+}
+
+function validateCaptureSourceV1(value: Record<string, unknown>): void {
+  const { sha256, fileName, mediaType, bytes } = value;
+  if (
+    typeof sha256 !== 'string'
+    || !/^[0-9a-f]{64}$/u.test(sha256)
+    || typeof fileName !== 'string'
+    || fileName === ''
+    || typeof mediaType !== 'string'
+    || mediaType === ''
+    || typeof bytes !== 'number'
+    || !Number.isSafeInteger(bytes)
+    || bytes < 1
+  ) {
+    throw invalidRuntimeResponse();
+  }
+}
+
+function validateCaptureFailure(value: Record<string, unknown>): void {
+  const code = value['code'];
+  const message = value['message'];
+  if (
+    typeof code !== 'string'
+    || !/^[a-z][a-z0-9_]{1,63}$/u.test(code)
+    || typeof message !== 'string'
+    || message === ''
+    || [...message].length > 500
+    || (value['stage'] !== undefined
+      && value['stage'] !== null
+      && (typeof value['stage'] !== 'string' || value['stage'] === ''))
+    || (value['retryable'] !== undefined && typeof value['retryable'] !== 'boolean')
+  ) {
+    throw invalidRuntimeResponse();
+  }
 }
 
 function decodePartialCaptureResponse(
@@ -770,6 +908,31 @@ function invalidRuntimeResponse(): CaptureHttpError {
     'invalid_response',
     'Capture runtime returned an invalid response.',
   );
+}
+
+function validRfc3339Timestamp(value: string): boolean {
+  const match = /^(?<date>\d{4}-\d{2}-\d{2})T(?<clock>\d{2}:\d{2}:\d{2}(?:\.\d+)?)(?<zone>Z|[+-]\d{2}:\d{2})$/u.exec(value);
+  if (!match?.groups) return false;
+  const date = match.groups['date'];
+  const year = Number(date.slice(0, 4));
+  const month = Number(date.slice(5, 7));
+  const day = Number(date.slice(8, 10));
+  const clock = match.groups['clock'];
+  const [hours, minutes, seconds] = clock.split(':').map(Number);
+  if (month < 1 || month > 12 || day < 1 || day > daysInMonth(year, month)) return false;
+  if (hours > 23 || minutes > 59 || seconds > 60) return false;
+  if (match.groups['zone'] !== 'Z') {
+    const offset = match.groups['zone'].slice(1).split(':').map(Number);
+    if (offset[0] > 23 || offset[1] > 59) return false;
+  }
+  return true;
+}
+
+function daysInMonth(year: number, month: number): number {
+  if (month === 2) {
+    return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0) ? 29 : 28;
+  }
+  return [4, 6, 9, 11].includes(month) ? 30 : 31;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
