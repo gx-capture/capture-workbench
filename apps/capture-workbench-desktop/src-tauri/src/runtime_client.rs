@@ -315,7 +315,10 @@ fn reconcile_capture_by_client_request(
     let response = request_with_headers(
         config,
         "GET",
-        &format!("/v2/captures/by-client-request/{client_request_id}"),
+        &format!(
+            "/v2/captures/by-client-request/{}",
+            encode_path_segment(client_request_id)
+        ),
         None,
         None,
         &[],
@@ -433,7 +436,10 @@ fn request_capture_with_recovery_state(
             let recovered = request_with_headers(
                 config,
                 "GET",
-                &format!("/v2/captures/by-client-request/{client_request_id}"),
+                &format!(
+                    "/v2/captures/by-client-request/{}",
+                    encode_path_segment(client_request_id)
+                ),
                 None,
                 None,
                 &[],
@@ -527,7 +533,10 @@ pub(crate) fn streaming_capture_by_client_request(
         request_with_headers(
             &config,
             "GET",
-            &format!("/v2/captures/by-client-request/{}", input.client_request_id),
+            &format!(
+                "/v2/captures/by-client-request/{}",
+                encode_path_segment(&input.client_request_id)
+            ),
             None,
             None,
             &[],
@@ -1728,8 +1737,32 @@ fn validate_opaque_id(value: &str) -> Result<(), String> {
 }
 
 fn validate_client_request_id(value: &str) -> Result<(), String> {
-    validate_opaque_id(value)
-        .map_err(|_| "Capture client request identifier is invalid.".to_string())
+    if value.is_empty()
+        || value.len() > 128
+        || value != value.trim()
+        || matches!(value, "." | "..")
+        || value
+            .chars()
+            .any(|character| character.is_control() || matches!(character, '/' | '\\' | '?' | '#'))
+    {
+        return Err("Capture client request identifier is invalid.".into());
+    }
+    Ok(())
+}
+
+fn encode_path_segment(value: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut encoded = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
+            encoded.push(byte as char);
+        } else {
+            encoded.push('%');
+            encoded.push(HEX[(byte >> 4) as usize] as char);
+            encoded.push(HEX[(byte & 0x0F) as usize] as char);
+        }
+    }
+    encoded
 }
 
 fn validate_requirement_id(value: &str) -> Result<(), String> {
@@ -1826,6 +1859,15 @@ mod tests {
     fn runtime_identifiers_reject_path_traversal() {
         assert!(validate_opaque_id("../capture").is_err());
         assert!(validate_document_id("../document").is_err());
+    }
+
+    #[test]
+    fn consumer_request_ids_are_bounded_and_allow_dots_without_path_controls() {
+        assert!(validate_client_request_id("consumer.request.v1").is_ok());
+        assert!(validate_client_request_id("").is_err());
+        assert!(validate_client_request_id(&"r".repeat(129)).is_err());
+        assert!(validate_client_request_id("consumer/request").is_err());
+        assert!(validate_client_request_id("consumer\\request").is_err());
     }
 
     #[test]
@@ -2297,11 +2339,12 @@ mod tests {
                 let request = read_http_request(&mut stream);
                 if attempt < 2 {
                     assert!(request.starts_with("POST /v2/captures HTTP/1.1"));
-                    assert!(request.contains("X-Idempotency-Key: capture-request-2"));
+                    assert!(request.contains("X-Idempotency-Key: consumer.request.v1"));
                     continue;
                 }
-                assert!(request
-                    .starts_with("GET /v2/captures/by-client-request/capture-request-2 HTTP/1.1",));
+                assert!(request.starts_with(
+                    "GET /v2/captures/by-client-request/consumer.request.v1 HTTP/1.1",
+                ));
                 let body = r#"{"captureId":"capture-recovered","ingestionId":"ingestion-2"}"#;
                 write!(
                     stream,
@@ -2322,11 +2365,11 @@ mod tests {
                 capture_document_schema_version: "1".into(),
             },
             RequestBody {
-                bytes: br#"{"clientRequestId":"capture-request-2","ingestionId":"ingestion-2"}"#
+                bytes: br#"{"clientRequestId":"consumer.request.v1","ingestionId":"ingestion-2"}"#
                     .to_vec(),
                 content_type: "application/json".into(),
             },
-            "capture-request-2",
+            "consumer.request.v1",
         )
         .expect("lookup recovery");
 

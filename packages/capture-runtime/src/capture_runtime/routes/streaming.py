@@ -168,6 +168,12 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
             return service.finalize_ingestion(ingestion_id, request)
         except StreamingRecordNotFoundError as error:
             raise ApiProblem(404, "ingestion_not_found", "Ingestion was not found.") from error
+        except StreamingUploadLimitError as error:
+            raise ApiProblem(
+                413,
+                "upload_too_large",
+                "Ingestion exceeds the configured upload limit.",
+            ) from error
         except StreamingTransitionError as error:
             raise ApiProblem(
                 409,

@@ -1,8 +1,9 @@
 # Capture Streaming SSE Migration Spec
 
-Status: implementation in progress; P0-P3, local v1 engine deletion, and the
-post-d3bf3de hardening phase are complete. The external consumer compatibility
-gate and final residual cleanup remain open.
+Status: implementation in progress; P0-P3, local v1 engine deletion, the
+post-d3bf3de hardening phase, and the post-1db5624 final closeout are complete.
+The external consumer compatibility gate and final residual cleanup remain
+open.
 
 ## Purpose
 
@@ -140,6 +141,13 @@ compatibility release before this producer can delete the public type.
    HTTP responses validate opaque identities before URL reuse, and the real
    Ollama smoke consumes an active SSE checkpoint before reconnecting with
    `Last-Event-ID`. The external consumer gate remains unchecked.
+7. **Post-1db5624 final closeout**: completed in the containing phase commit;
+   finalize maps `StreamingUploadLimitError` to HTTP 413, Angular/native
+   clients validate bounded non-empty consumer request IDs separately from
+   opaque runtime IDs (including dotted IDs) and encode lookup path segments,
+   and the real Ollama smoke verifies a nonterminal operation snapshot between
+   its active SSE disconnect and `Last-Event-ID` reconnect, failing on a
+   terminal race. The external consumer gate remains unchecked.
 
 Each phase must have an explicit path list, its own review, and its own
 verification result. Revert consumers before reverting the runtime cutover;
@@ -150,8 +158,8 @@ revert the deletion commit before reverting the deprecation/cutover phases.
 The phase commits below are the reviewed path groups. Every commit was created
 only after `git diff --cached --name-only`, `git diff --cached --stat`, and
 `git diff --cached --check` were inspected; unrelated dirty paths stayed
-unstaged. The final independent review was rerun against `ac44030` at the
-post-phase HEAD, with the follow-up recovery findings fixed in `5c11304`.
+unstaged. The final closeout review started from `1db5624`; the containing
+phase commit records the narrow fixes and final local verification below.
 
 - `812d54e` — Angular package paths under
   `packages/capture-angular/`, plus generated contract metadata and the
@@ -177,11 +185,23 @@ post-phase HEAD, with the follow-up recovery findings fixed in `5c11304`.
   boundary-doctor documentation. Verified by the same final residual scan and
   HEAD-bound two-axis review.
 
-- Post-`d3bf3de` hardening (the containing phase commit) ??runtime event
+- Post-`d3bf3de` hardening (the containing phase commit) — runtime event
   identity, ingestion recovery/limits, Angular response decoding, and the
-  real Ollama active-SSE smoke. Focused runtime and Angular tests, desktop
-  parser/package QA, and the full verification floor are required before this
-  phase is considered complete; unrelated dirty paths remain unstaged.
+  real Ollama active-SSE smoke. The focused and full verification floor for
+  that phase passed before this closeout.
+- Post-`1db5624` final closeout (the containing phase commit) — finalize
+  upload-limit mapping, consumer request-ID validation/recovery, and the live
+  reconnect terminal-race gate. Focused verification passed: runtime finalize
+  API 1 passed (20 deselected, 1 warning), Angular recovery 1 passed (95
+  skipped), native request-ID validation 1 passed, and the live-reconnect
+  smoke filter passed 5 tests. Full local verification passed: runtime 327
+  passed/1 skipped/1 warning; Angular 96 passed; tools 21 passed; workbench
+  51 passed; Tauri 47 passed; desktop package QA 201 passed/2 skipped;
+  deterministic smoke and 4 Playwright E2E tests passed. Runtime contracts,
+  Angular async-boundary/lint/typecheck, desktop cargo fmt/check, contract
+  consistency, tools/workbench lint/typecheck, and `git diff --check` passed;
+  unrelated dirty paths remain unstaged. The private engine-bearing Ollama
+  smoke remains opt-in and was not synthesized for this local verification.
 
 ## Acceptance criteria
 
@@ -201,7 +221,8 @@ post-phase HEAD, with the follow-up recovery findings fixed in `5c11304`.
   engine-bearing execution remains an opt-in release gate.
 - Known external consumers have migrated from `CaptureJobV1`/`/v1/captures`, or
   a release owner has explicitly approved the breaking removal.
-- After P6, an active-source residual scan finds no `/v1/captures` or
+- After the final local closeout, an active-source residual scan finds no
+  `/v1/captures` or
   `CaptureJobV1` capture-engine references.
 
 ## Test plan

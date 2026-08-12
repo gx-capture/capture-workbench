@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import {
+  assertLiveReconnectWindow,
   assertStreamingEventOrder,
   parseStreamingEventChunks,
   parseStreamingEvents,
@@ -69,6 +70,14 @@ test('real Ollama SSE parser rejects an unterminated final frame', () => {
       'id: 1\nevent: accepted\ndata: {"captureId":"capture-1","eventId":"capture-1/1","sequence":1,"eventType":"accepted","stage":"extracting"}',
     ], 'capture-1'),
     /incomplete event frame/u,
+  );
+});
+
+test('real Ollama smoke fails the live reconnect gate if disconnect observes a terminal race', () => {
+  assert.doesNotThrow(() => assertLiveReconnectWindow({ status: 'extracting' }));
+  assert.throws(
+    () => assertLiveReconnectWindow({ status: 'completed' }),
+    /terminal race.*live-reconnect gate failed/u,
   );
 });
 

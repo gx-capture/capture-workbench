@@ -169,6 +169,10 @@ async function main(): Promise<void> {
       ),
       'Real capture did not expose an active SSE progress checkpoint.',
     );
+    const disconnectedOperation = await request<CaptureOperation>(
+      runtimePort, host, origin, token, `/v2/captures/${captureId}`,
+    );
+    assertLiveReconnectWindow(disconnectedOperation);
     const replayCursor = liveExtraction.lastSequence;
     assert.ok(replayCursor !== undefined, 'Real Ollama SSE did not expose a recovery cursor.');
     const resumedEvents = await readStreamingEventsIncrementally(
@@ -640,6 +644,14 @@ export function assertStreamingEventOrder(
     throw new Error(
       'Real Ollama event stream must place accepted before exactly one terminal event, last.',
     );
+  }
+}
+
+export function assertLiveReconnectWindow(
+  operation: Pick<CaptureOperation, 'status'>,
+): void {
+  if (isTerminalStatus(operation.status)) {
+    throw new Error('Real Ollama terminal race observed; live-reconnect gate failed.');
   }
 }
 

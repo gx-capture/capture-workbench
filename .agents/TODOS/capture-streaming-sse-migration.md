@@ -27,6 +27,16 @@ decision record, and phase commits.
       results; the external Cert Prep/Law Prep compatibility gate below stays
       unchecked.
 
+- [x] Complete the post-`1db5624` final closeout: map finalize upload-limit
+      failures to HTTP 413, keep bounded consumer request IDs distinct from
+      opaque runtime IDs (including dotted IDs), and fail the live reconnect
+      gate when the disconnect-to-reconnect window observes a terminal race.
+  Verify: runtime finalize focused test, Angular recovery test, native request
+      ID test, real-Ollama smoke gate, full Nx runtime/Angular/tools/workbench
+      checks, Tauri fmt/check/test/contract/package QA, deterministic smoke,
+      Playwright E2E, and `git diff --check` passed; the external Cert Prep/Law
+      Prep compatibility gate remains unchecked.
+
 ## Explicitly blocked evidence
 
 - Real engine-bearing OCR/Whisper smoke remains opt-in and depends on the

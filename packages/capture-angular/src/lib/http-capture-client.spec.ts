@@ -361,7 +361,7 @@ describe('HttpCaptureClient', () => {
 
     client
       .startStreamingCapture({
-        clientRequestId: 'request-lost-response',
+        clientRequestId: 'consumer.request.v1',
         file: new File(['abc'], 'scan.pdf', { type: 'application/pdf' }),
         sourceKind: 'pdf',
         structuringMode: 'runtime',
@@ -372,7 +372,7 @@ describe('HttpCaptureClient', () => {
     expect(error).toBeUndefined();
     expect(fetchMock).toHaveBeenCalledTimes(5);
     expect(String(fetchMock.mock.calls[4]?.[0])).toContain(
-      '/v2/captures/by-client-request/request-lost-response',
+      '/v2/captures/by-client-request/consumer.request.v1',
     );
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/v2/ingestions/ingestion-1'))).toBe(
       true,

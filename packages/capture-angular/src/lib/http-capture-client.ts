@@ -100,9 +100,10 @@ export class HttpCaptureClient implements CaptureClient {
     request: StartRuntimeInstallationRequest,
     signal?: AbortSignal,
   ): Observable<RuntimeInstallationV1> {
+    const clientRequestId = assertClientRequestId(request.clientRequestId);
     return this.request('/v1/runtime/installations', {
       method: 'POST',
-      idempotencyKey: request.clientRequestId,
+      idempotencyKey: clientRequestId,
       json: { requirementId: request.requirementId, consent: request.consent },
       signal,
     });
@@ -131,7 +132,7 @@ export class HttpCaptureClient implements CaptureClient {
     id: string,
     options: CaptureEventStreamOptions = {},
   ): Observable<CaptureEventV2> {
-    const captureId = assertOpaqueRuntimeId(id, 'captureId');
+    const captureId = assertOpaqueRuntimeId(id);
     return this.resolveTarget().pipe(
       switchMap(({ baseUrl, bearerToken }) => {
         const headers = new Headers({ Accept: 'text/event-stream' });
@@ -156,13 +157,14 @@ export class HttpCaptureClient implements CaptureClient {
   startStreamingCapture(
     request: StartStreamingCaptureRequest,
   ): Observable<CaptureOperationV2> {
+    const clientRequestId = assertClientRequestId(request.clientRequestId);
     let ingestionId: string | undefined;
     let captureRequestAttempted = false;
     const ingestionRequest = {
       protocolVersion: '2' as const,
       kind: request.sourceKind,
       mode: 'file' as const,
-      clientRequestId: `${request.clientRequestId}-ingestion`,
+      clientRequestId: `${clientRequestId}-ingestion`,
       fileName: request.file.name,
       mediaType: request.file.type || mediaTypeFor(request.sourceKind),
       totalBytes: request.file.size,
@@ -187,7 +189,7 @@ export class HttpCaptureClient implements CaptureClient {
       concatMap(() => this.hashFile(request.file, request.signal)),
       concatMap((sha256) =>
         defer(() => {
-          const finalizedIngestionId = assertOpaqueRuntimeId(ingestionId, 'ingestionId');
+          const finalizedIngestionId = assertOpaqueRuntimeId(ingestionId);
           return this.request<IngestionV2>(
             `/v2/ingestions/${encodeURIComponent(finalizedIngestionId)}/finalize`,
             {
@@ -202,13 +204,13 @@ export class HttpCaptureClient implements CaptureClient {
       concatMap(() =>
         defer(() => {
           captureRequestAttempted = true;
-          const finalizedIngestionId = assertOpaqueRuntimeId(ingestionId, 'ingestionId');
+          const finalizedIngestionId = assertOpaqueRuntimeId(ingestionId);
           return this.request<CaptureOperationV2>('/v2/captures', {
             method: 'POST',
-            idempotencyKey: request.clientRequestId,
+            idempotencyKey: clientRequestId,
             json: {
               protocolVersion: '2',
-              clientRequestId: request.clientRequestId,
+              clientRequestId,
               ingestionId: finalizedIngestionId,
               structuringMode: request.structuringMode,
               ...(request.targetLanguage ? { targetLanguage: request.targetLanguage } : {}),
@@ -229,7 +231,7 @@ export class HttpCaptureClient implements CaptureClient {
         if (!ingestionId) return throwError(() => error);
         if (captureRequestAttempted && isUncertainCaptureCreateFailure(error)) {
           return this.reconcileUncertainCaptureCreate(
-            request.clientRequestId,
+            clientRequestId,
             ingestionId,
             error,
           );
@@ -246,7 +248,7 @@ export class HttpCaptureClient implements CaptureClient {
     id: string,
     signal?: AbortSignal,
   ): Observable<CaptureOperationV2> {
-    const captureId = assertOpaqueRuntimeId(id, 'captureId');
+    const captureId = assertOpaqueRuntimeId(id);
     return this.request<CaptureOperationV2>(`/v2/captures/${encodeURIComponent(captureId)}`, {
       signal,
       decode: (value) => decodeCaptureOperationResponse(value, captureId),
@@ -257,7 +259,7 @@ export class HttpCaptureClient implements CaptureClient {
     id: string,
     signal?: AbortSignal,
   ): Observable<CaptureOperationV2> {
-    const captureId = assertOpaqueRuntimeId(id, 'captureId');
+    const captureId = assertOpaqueRuntimeId(id);
     return this.request<CaptureOperationV2>(`/v2/captures/${encodeURIComponent(captureId)}/cancel`, {
       method: 'POST',
       signal,
@@ -269,7 +271,7 @@ export class HttpCaptureClient implements CaptureClient {
     id: string,
     signal?: AbortSignal,
   ): Observable<PartialCaptureV2> {
-    const captureId = assertOpaqueRuntimeId(id, 'captureId');
+    const captureId = assertOpaqueRuntimeId(id);
     return this.request<PartialCaptureV2>(`/v2/captures/${encodeURIComponent(captureId)}/partial`, {
       signal,
       decode: (value) => decodePartialCaptureResponse(value, captureId),
@@ -280,7 +282,7 @@ export class HttpCaptureClient implements CaptureClient {
     id: string,
     signal?: AbortSignal,
   ): Observable<CaptureStreamingResult> {
-    const captureId = assertOpaqueRuntimeId(id, 'captureId');
+    const captureId = assertOpaqueRuntimeId(id);
     return this.request<CaptureStreamingResult>(`/v2/captures/${encodeURIComponent(captureId)}/result`, {
       signal,
       decode: (value) => decodeCaptureStreamingResult(value, captureId),
@@ -292,10 +294,11 @@ export class HttpCaptureClient implements CaptureClient {
     request: CommitStreamingStructuredResultRequest,
     signal?: AbortSignal,
   ): Observable<CaptureOperationV2> {
-    const captureId = assertOpaqueRuntimeId(id, 'captureId');
+    const captureId = assertOpaqueRuntimeId(id);
+    const clientRequestId = assertClientRequestId(request.clientRequestId);
     return this.request<CaptureOperationV2>(`/v2/captures/${encodeURIComponent(captureId)}/structure/commit`, {
       method: 'POST',
-      idempotencyKey: request.clientRequestId,
+      idempotencyKey: clientRequestId,
       json: request.candidate,
       signal,
       decode: (value) => decodeCaptureOperationResponse(value, captureId),
@@ -308,10 +311,13 @@ export class HttpCaptureClient implements CaptureClient {
     signal?: AbortSignal,
   ): Observable<CaptureOperationV2> {
     const { clientRequestId, ...failure } = request;
-    const captureId = assertOpaqueRuntimeId(id, 'captureId');
+    const captureId = assertOpaqueRuntimeId(id);
+    const idempotencyKey = clientRequestId === undefined
+      ? crypto.randomUUID()
+      : assertClientRequestId(clientRequestId);
     return this.request<CaptureOperationV2>(`/v2/captures/${encodeURIComponent(captureId)}/structure/failure`, {
       method: 'POST',
-      idempotencyKey: clientRequestId ?? crypto.randomUUID(),
+      idempotencyKey,
       json: failure,
       signal,
       decode: (value) => decodeCaptureOperationResponse(value, captureId),
@@ -319,7 +325,7 @@ export class HttpCaptureClient implements CaptureClient {
   }
 
   deleteStreamingCapture(id: string, signal?: AbortSignal): Observable<void> {
-    const captureId = assertOpaqueRuntimeId(id, 'captureId');
+    const captureId = assertOpaqueRuntimeId(id);
     return this.request<void>(`/v2/captures/${encodeURIComponent(captureId)}`, {
       method: 'DELETE',
       signal,
@@ -331,7 +337,7 @@ export class HttpCaptureClient implements CaptureClient {
     file: File,
     signal?: AbortSignal,
   ): Observable<unknown> {
-    const safeIngestionId = assertOpaqueRuntimeId(ingestionId, 'ingestionId');
+    const safeIngestionId = assertOpaqueRuntimeId(ingestionId);
     const count = Math.ceil(file.size / STREAMING_CHUNK_BYTES);
     return readFileBytes(file).pipe(
       concatMap((fileBytes) =>
@@ -374,7 +380,7 @@ export class HttpCaptureClient implements CaptureClient {
   }
 
   private deleteStreamingIngestion(ingestionId: string): Observable<void> {
-    const safeIngestionId = assertOpaqueRuntimeId(ingestionId, 'ingestionId');
+    const safeIngestionId = assertOpaqueRuntimeId(ingestionId);
     return this.request<void>(`/v2/ingestions/${encodeURIComponent(safeIngestionId)}`, {
       method: 'DELETE',
     }).pipe(map(() => undefined));
@@ -418,8 +424,9 @@ export class HttpCaptureClient implements CaptureClient {
   private getStreamingCaptureByClientRequest(
     clientRequestId: string,
   ): Observable<CaptureOperationV2> {
+    const safeClientRequestId = assertClientRequestId(clientRequestId);
     return this.request<CaptureOperationV2>(
-      `/v2/captures/by-client-request/${encodeURIComponent(assertOpaqueRuntimeId(clientRequestId, 'clientRequestId'))}`,
+      `/v2/captures/by-client-request/${encodeURIComponent(safeClientRequestId)}`,
       { decode: (value) => decodeCaptureOperationResponse(value) },
     );
   }
@@ -589,16 +596,38 @@ function isObservableValue(value: unknown): value is Observable<string> {
 }
 
 const OPAQUE_RUNTIME_ID = /^[A-Za-z0-9_-]{1,128}$/u;
+const MAX_CLIENT_REQUEST_ID_LENGTH = 128;
 
-function assertOpaqueRuntimeId(value: unknown, label: string): string {
+function assertOpaqueRuntimeId(value: unknown): string {
   if (
-    !['captureId', 'ingestionId', 'clientRequestId'].includes(label)
-    || typeof value !== 'string'
+    typeof value !== 'string'
     || !OPAQUE_RUNTIME_ID.test(value)
   ) {
     throw invalidRuntimeResponse();
   }
   return value;
+}
+
+function assertClientRequestId(value: unknown): string {
+  if (
+    typeof value !== 'string'
+    || value.length === 0
+    || value.length > MAX_CLIENT_REQUEST_ID_LENGTH
+    || value !== value.trim()
+    || value === '.'
+    || value === '..'
+    || hasUnsafeClientRequestIdCharacters(value)
+  ) {
+    throw invalidRuntimeResponse();
+  }
+  return value;
+}
+
+function hasUnsafeClientRequestIdCharacters(value: string): boolean {
+  return [...value].some((character) => {
+    const code = character.charCodeAt(0);
+    return code <= 0x1f || code === 0x7f || '/\\?#'.includes(character);
+  });
 }
 
 function decodeIngestionResponse(
@@ -608,7 +637,7 @@ function decodeIngestionResponse(
   if (!isRecord(value) || value['protocolVersion'] !== '2') {
     throw invalidRuntimeResponse();
   }
-  const ingestionId = assertOpaqueRuntimeId(value['ingestionId'], 'ingestionId');
+  const ingestionId = assertOpaqueRuntimeId(value['ingestionId']);
   if (expectedIngestionId !== undefined && ingestionId !== expectedIngestionId) {
     throw invalidRuntimeResponse();
   }
@@ -623,8 +652,8 @@ function decodeCaptureOperationResponse(
   if (!isRecord(value) || value['protocolVersion'] !== '2') {
     throw invalidRuntimeResponse();
   }
-  const captureId = assertOpaqueRuntimeId(value['captureId'], 'captureId');
-  const ingestionId = assertOpaqueRuntimeId(value['ingestionId'], 'ingestionId');
+  const captureId = assertOpaqueRuntimeId(value['captureId']);
+  const ingestionId = assertOpaqueRuntimeId(value['ingestionId']);
   if (
     (expectedCaptureId !== undefined && captureId !== expectedCaptureId)
     || (expectedIngestionId !== undefined && ingestionId !== expectedIngestionId)
@@ -641,7 +670,7 @@ function decodePartialCaptureResponse(
   if (!isRecord(value) || value['protocolVersion'] !== '2') {
     throw invalidRuntimeResponse();
   }
-  const captureId = assertOpaqueRuntimeId(value['captureId'], 'captureId');
+  const captureId = assertOpaqueRuntimeId(value['captureId']);
   if (captureId !== expectedCaptureId) throw invalidRuntimeResponse();
   return value as unknown as PartialCaptureV2;
 }

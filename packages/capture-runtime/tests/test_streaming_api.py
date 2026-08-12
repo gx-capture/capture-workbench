@@ -84,6 +84,55 @@ def test_streaming_api_rejects_ingestion_above_configured_upload_limit(settings_
     assert response.json()["error"]["code"] == "upload_too_large"
 
 
+def test_streaming_api_maps_finalize_upload_limit_to_413_after_limit_reload(
+    settings_factory,
+) -> None:
+    source = _source()
+    settings = settings_factory(CAPTURE_MAX_UPLOAD_BYTES=str(len(source)))
+    with TestClient(
+        create_app(settings),
+        base_url=f"http://127.0.0.1:{settings.port}",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+    ) as limited_client:
+        opened = limited_client.post(
+            "/v2/ingestions",
+            json={
+                "clientRequestId": "api-finalize-upload-limit",
+                "kind": "audio",
+                "fileName": "sample.mp3",
+                "mediaType": "audio/mpeg",
+                "totalBytes": len(source),
+            },
+        )
+        assert opened.status_code == 201, opened.text
+        ingestion_id = opened.json()["ingestionId"]
+        uploaded = limited_client.put(
+            f"/v2/ingestions/{ingestion_id}/chunks/0",
+            content=source,
+            headers={
+                "Content-Range": f"bytes 0-{len(source) - 1}/{len(source)}",
+                "Digest": f"sha-256={hashlib.sha256(source).hexdigest()}",
+                "X-Idempotency-Key": "api-finalize-upload-limit-chunk",
+            },
+        )
+        assert uploaded.status_code == 200, uploaded.text
+
+        # Simulate a runtime restart with a lower configured ceiling after the
+        # upload was accepted. Finalize must retain the same 413 contract as
+        # open and append instead of leaking the transition superclass.
+        limited_client.app.state.streaming_repository.max_upload_bytes = len(source) - 1
+        finalized = limited_client.post(
+            f"/v2/ingestions/{ingestion_id}/finalize",
+            json={
+                "totalBytes": len(source),
+                "sha256": hashlib.sha256(source).hexdigest(),
+            },
+        )
+
+    assert finalized.status_code == 413
+    assert finalized.json()["error"]["code"] == "upload_too_large"
+
+
 def test_streaming_capability_fails_closed_without_progressive_decoder(
     client: TestClient, monkeypatch
 ) -> None:
