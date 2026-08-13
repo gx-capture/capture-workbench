@@ -30,6 +30,7 @@ from capture_runtime.progressive_capture import (
     _SessionWorker,
 )
 from capture_runtime.progressive_decoder import ProgressiveDecoderError
+from capture_runtime.extractors import DeterministicCaptureExtractor
 from capture_runtime.services import StreamingCaptureService
 from capture_runtime.storage import StreamingRepository
 from capture_runtime.structuring_provider import FakeCaptureStructuringProvider
@@ -305,6 +306,42 @@ def test_progressive_runtime_exposes_bounded_decoder_failure(
         assert failed.status.value == "failed"
         assert failed.error is not None
         assert failed.error.code == "progressive_decode_failed"
+        assert failed.error.stage == "extraction"
+        await service.shutdown()
+
+    asyncio.run(scenario())
+
+
+def test_streaming_runtime_fails_when_audio_processor_is_unavailable(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        clock = FixedClock()
+        repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+        repository.initialize()
+        ingestion_id, _ = _open(repository)
+        service = StreamingCaptureService(
+            repository,
+            clock=clock,
+            processor=None,
+            extractor=DeterministicCaptureExtractor(clock),
+            structurer=FakeCaptureStructuringProvider(clock),
+        )
+        operation = service.start_capture(
+            StartCaptureV2(
+                client_request_id="missing-audio-processor",
+                ingestion_id=ingestion_id,
+                structuring_mode=StructuringMode.RUNTIME,
+            )
+        )
+        for _ in range(100):
+            if service.get_capture(operation.capture_id).status.value == "failed":
+                break
+            await asyncio.sleep(0.01)
+        failed = service.get_capture(operation.capture_id)
+        assert failed.status.value == "failed"
+        assert failed.error is not None
+        assert failed.error.code == "requirement_unavailable"
         assert failed.error.stage == "extraction"
         await service.shutdown()
 

@@ -218,13 +218,9 @@ def test_streaming_api_accepts_ordered_chunks_replays_sse_and_rejects_partial_be
 
     capture = client.get(f"/v2/captures/{capture_id}")
     assert capture.status_code == 200
-    assert capture.json()["status"] == "extracting"
+    assert capture.json()["status"] == "failed"
     assert capture.json()["kind"] == "audio"
     assert capture.json()["source"]["sha256"] == source_sha256
-
-    cancelled = client.post(f"/v2/captures/{capture_id}/cancel")
-    assert cancelled.status_code == 200, cancelled.text
-    assert cancelled.json()["status"] == "cancelled"
 
     events = client.get(f"/v2/captures/{capture_id}/events")
     assert events.status_code == 200

@@ -342,7 +342,11 @@ class StreamingCaptureService:
                     cancellation,
                 )
             else:
-                return
+                raise ProgressiveCaptureError(
+                    "The selected capture kind is unavailable in this runtime.",
+                    code="requirement_unavailable",
+                    retryable=True,
+                )
             self.repository.write_raw(capture_id, raw)
             raw_written = True
             if cancellation.is_set():
