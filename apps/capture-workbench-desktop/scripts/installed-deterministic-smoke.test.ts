@@ -426,6 +426,25 @@ test('Nx target depends on the deterministic NSIS build and writes only non-rele
   assert.match(target.options.command, /installed-deterministic-smoke\.ts/u);
 });
 
+test('post-uninstall cleanup tolerates the owned install root being removed', async () => {
+  const source = await readFile(
+    join(appRoot, 'scripts', 'installed-deterministic-smoke.ts'),
+    'utf8',
+  );
+  const postUninstallCleanup = source.slice(
+    source.indexOf('registry.waitForInstalledDirectoryRemoval(installDirectory)'),
+    source.indexOf('concatMap(() =>\n          state.cleanup.ownedProcessesStopped'),
+  );
+  assert.match(
+    postUninstallCleanup,
+    /stopAndProveResidualProcessRoots\(\[installDirectory\]\)/u,
+  );
+  assert.match(
+    postUninstallCleanup,
+    /stopAndProveOwnedProcessRoots\(\[\s*temporaryDirectory,\s*\]\)/u,
+  );
+});
+
 function captureFixture(locatorKind) {
   const sourceKind = locatorKind === 'time' ? 'audio' : 'image';
   const fileName = locatorKind === 'time' ? 'fixture.wav' : 'fixture.png';

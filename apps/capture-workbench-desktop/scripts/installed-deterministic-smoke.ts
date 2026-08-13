@@ -837,10 +837,15 @@ export function runInstalledDeterministicSmoke(
             concatMap(() =>
               attempt(
                 state.privateProcessRootsRegistered
-                  ? processCleanup.stopAndProveOwnedProcessRoots([
-                      installDirectory,
-                      temporaryDirectory,
-                    ])
+                  ? processCleanup
+                      .stopAndProveResidualProcessRoots([installDirectory])
+                      .pipe(
+                        concatMap(() =>
+                          processCleanup.stopAndProveOwnedProcessRoots([
+                            temporaryDirectory,
+                          ]),
+                        ),
+                      )
                   : processCleanup.stopAndProveResidualProcessRoots([
                       installDirectory,
                       temporaryDirectory,
