@@ -80,8 +80,8 @@ export function assertInstallationCleanupAllowed(ownedProcessesStopped) {
 }
 
 export function buildInstalledAppEnvironment(source, directories, cdpPort) {
-  if (!Number.isSafeInteger(cdpPort) || cdpPort < 1 || cdpPort > 65_535) {
-    throw new Error('WebView2 CDP port must be from 1 through 65535.');
+  if (!Number.isSafeInteger(cdpPort) || cdpPort < 0 || cdpPort > 65_535) {
+    throw new Error('WebView2 CDP port must be 0 (dynamic) or from 1 through 65535.');
   }
   const environment = {};
   for (const allowedName of childEnvironmentAllowlist) {

@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import net from 'node:net';
+import { join } from 'node:path';
 
 import { chromium } from '@playwright/test';
 import {
@@ -24,6 +26,7 @@ import { INSTALLED_FIXTURES } from './constants/installed.ts';
 
 const fixtures = INSTALLED_FIXTURES;
 export const installedWebViewCdpReadyTimeoutMs = 180_000;
+export const dynamicWebViewCdpPort = 0;
 
 export function reserveLoopbackPort() {
   return new Observable((subscriber) => {
@@ -45,8 +48,20 @@ export function reserveLoopbackPort() {
   });
 }
 
-export function connectToInstalledWebView(port, appProcess) {
-  const endpoint = `http://127.0.0.1:${port}`;
+export function parseInstalledWebViewCdpPort(contents) {
+  const port = Number(contents.split(/\r?\n/u)[0]?.trim());
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
+    throw new Error('Installed WebView2 DevToolsActivePort did not contain a valid CDP port.');
+  }
+  return port;
+}
+
+export function connectToInstalledWebView(
+  port,
+  appProcess,
+  webViewDataDirectory,
+) {
+  const deadline = Date.now() + installedWebViewCdpReadyTimeoutMs;
   const processTerminated = race(
     fromEvent(appProcess, 'error'),
     fromEvent(appProcess, 'exit'),
@@ -55,13 +70,53 @@ export function connectToInstalledWebView(port, appProcess) {
     switchMap(() => throwError(() => new Error('Installed Tauri app terminated before WebView2 CDP readiness.'))),
   );
   return race(
-    connectAttempt(
-      endpoint,
+    resolveCdpPort(
+      port,
       appProcess,
-      Date.now() + installedWebViewCdpReadyTimeoutMs,
+      webViewDataDirectory,
+      deadline,
       undefined,
+    ).pipe(
+      switchMap((resolvedPort) =>
+        connectAttempt(
+          `http://127.0.0.1:${resolvedPort}`,
+          appProcess,
+          deadline,
+          undefined,
+        ).pipe(map((browser) => ({ browser, port: resolvedPort }))),
+      ),
     ),
     processTerminated,
+  );
+}
+
+function resolveCdpPort(port, appProcess, webViewDataDirectory, deadline, lastError) {
+  if (appProcess.exitCode !== null) {
+    return throwError(() => new Error(`Installed Tauri app exited before WebView2 CDP readiness (${appProcess.exitCode}).`));
+  }
+  if (port !== dynamicWebViewCdpPort) return of(port);
+  if (typeof webViewDataDirectory !== 'string' || webViewDataDirectory.length === 0) {
+    return throwError(() => new Error('Dynamic WebView2 CDP requires an isolated user-data directory.'));
+  }
+  if (Date.now() >= deadline) {
+    return throwError(() => new Error(`Installed WebView2 CDP port metadata was not ready: ${errorMessage(lastError)}.`));
+  }
+  const portFile = join(webViewDataDirectory, 'EBWebView', 'DevToolsActivePort');
+  return defer(() => from(readFile(portFile, 'utf8'))).pipe(
+    map(parseInstalledWebViewCdpPort),
+    catchError((error) =>
+      timer(250).pipe(
+        concatMap(() =>
+          resolveCdpPort(
+            port,
+            appProcess,
+            webViewDataDirectory,
+            deadline,
+            error,
+          ),
+        ),
+      ),
+    ),
   );
 }
 

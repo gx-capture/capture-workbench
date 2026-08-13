@@ -15,8 +15,8 @@ import { assertStagedRuntime } from './assert-staged-runtime.ts';
 import { buildInstalledAppEnvironment } from './contracts/installed.ts';
 import {
   connectToInstalledWebView,
+  dynamicWebViewCdpPort,
   installedPage,
-  reserveLoopbackPort,
 } from './installed-browser.ts';
 import {
   createTrackedProcessTreeTerminator,
@@ -2735,7 +2735,7 @@ async function run(): Promise<void> {
   let metadata;
   try { metadata = await lstat(executable); } catch { throw new Error('CAPTURE_REAL_MEDIA_MODEL_EXECUTABLE must be a regular packaged Tauri executable.'); }
   if (!metadata.isFile() || metadata.isSymbolicLink()) throw new Error('CAPTURE_REAL_MEDIA_MODEL_EXECUTABLE must be a regular packaged Tauri executable.');
-  const cdpPort = await firstValueFrom(reserveLoopbackPort());
+  let cdpPort: number | undefined;
   await mkdir(appDataRoot, { recursive: true });
   const appEnvironment = buildInstalledAppEnvironment(process.env, {
     root: runRoot,
@@ -2743,7 +2743,7 @@ async function run(): Promise<void> {
     localAppData: localAppDataRoot,
     temporary: temporaryRoot,
     webViewData: webViewDataRoot,
-  }, cdpPort);
+  }, dynamicWebViewCdpPort);
   appEnvironment.CAPTURE_SMOKE_APP_DATA_ROOT = appDataRoot;
   appEnvironment.CAPTURE_SMOKE_FIXTURE_ROOT = runRoot;
   assert(inputs && pdf && image && audio);
@@ -2778,7 +2778,11 @@ async function run(): Promise<void> {
     assertCudaPathRetainedForAppLaunch(process.env, appEnvironment);
     app = spawn(executable, [], { cwd: resolve(executable, '..'), env: appEnvironment, stdio: 'ignore', windowsHide: true });
     if (!app.pid) throw new Error('Real model smoke Tauri process did not expose a PID.');
-    browser = await firstValueFrom(connectToInstalledWebView(cdpPort, app));
+    const connected = await firstValueFrom(
+      connectToInstalledWebView(dynamicWebViewCdpPort, app, webViewDataRoot),
+    );
+    browser = connected.browser;
+    cdpPort = connected.port;
     page = await firstValueFrom(installedPage(browser, app));
     const useBackendReuseReadiness = shouldUseBackendReuseReadiness(reuseRunData, audioOnly);
     if (useBackendReuseReadiness) {
@@ -2895,9 +2899,13 @@ async function run(): Promise<void> {
       });
       await firstValueFrom(terminate(app, 'Real model-enabled Tauri application')).catch(() => undefined);
     }
-    await waitForPortReleased(cdpPort)
-      .then(() => { cdpPortReleased = true; })
-      .catch(() => { cleanupVerified = false; });
+    if (cdpPort === undefined) {
+      cdpPortReleased = true;
+    } else {
+      await waitForPortReleased(cdpPort)
+        .then(() => { cdpPortReleased = true; })
+        .catch(() => { cleanupVerified = false; });
+    }
     if (workerMirror) {
       await workerMirror.close();
       await waitForPortReleased(workerMirror.port)

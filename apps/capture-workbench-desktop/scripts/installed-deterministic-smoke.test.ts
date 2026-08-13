@@ -25,7 +25,10 @@ import {
   uninstallerArguments,
 } from './installed-deterministic-smoke.ts';
 import { expectedInstallerName } from './installed-smoke-lifecycle.ts';
-import { installedWebViewCdpReadyTimeoutMs } from './installed-browser.ts';
+import {
+  installedWebViewCdpReadyTimeoutMs,
+  parseInstalledWebViewCdpPort,
+} from './installed-browser.ts';
 import { appRoot } from './stage-runtime.ts';
 
 function observe(observable) {
@@ -143,6 +146,39 @@ test('installed app environment is process-scoped, isolated, and drops ambient s
     '--remote-debugging-address=127.0.0.1 --remote-debugging-port=43219 --remote-allow-origins=*',
   );
   assert.equal(environment.WEBVIEW2_USER_DATA_FOLDER, join(root, 'webview2'));
+
+  const dynamicEnvironment = buildInstalledAppEnvironment(
+    {},
+    {
+      root,
+      appData: join(root, 'appdata'),
+      localAppData: join(root, 'localappdata'),
+      temporary: join(root, 'temp'),
+      webViewData: join(root, 'webview2'),
+    },
+    0,
+  );
+  assert.equal(
+    dynamicEnvironment.WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS,
+    '--remote-debugging-address=127.0.0.1 --remote-debugging-port=0 --remote-allow-origins=*',
+  );
+});
+
+test('installed WebView2 dynamic CDP metadata accepts only a valid port', () => {
+  assert.equal(
+    parseInstalledWebViewCdpPort(
+      '62086\r\n/devtools/browser/test-guid\r\n',
+    ),
+    62_086,
+  );
+  assert.throws(
+    () => parseInstalledWebViewCdpPort('0\n/devtools/browser/test-guid\n'),
+    /valid CDP port/u,
+  );
+  assert.throws(
+    () => parseInstalledWebViewCdpPort('not-a-port\n'),
+    /valid CDP port/u,
+  );
 });
 
 test('registry cleanup is allowed only for the exact owned install directory', () => {

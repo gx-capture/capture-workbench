@@ -54,9 +54,9 @@ import {
 import { assertCaptureDocumentForFixture } from './installed-document-assertions.ts';
 import {
   connectToInstalledWebView,
+  dynamicWebViewCdpPort,
   exerciseInstalledUi,
   installedPage,
-  reserveLoopbackPort,
 } from './installed-browser.ts';
 import {
   createInstalledProcessCleanup,
@@ -651,37 +651,38 @@ export function runInstalledDeterministicSmoke(
             installDirectory,
           ),
         ),
-        concatMap(() =>
-          reserveLoopbackPort().pipe(
-            tap((port) => {
+        concatMap(() => {
+          const appEnvironment = buildInstalledAppEnvironment(
+            process.env,
+            {
+              root: runRoot,
+              appData: appDataDirectory,
+              localAppData: localAppDataDirectory,
+              temporary: temporaryDirectory,
+              webViewData: webViewDataDirectory,
+            },
+            dynamicWebViewCdpPort,
+          );
+          state.appProcess = spawn(
+            join(installDirectory, installedExecutableName),
+            [],
+            {
+              cwd: installDirectory,
+              env: appEnvironment,
+              stdio: 'ignore',
+              windowsHide: true,
+            },
+          );
+          state.appProcess.on('error', () => undefined);
+          return connectToInstalledWebView(
+            dynamicWebViewCdpPort,
+            state.appProcess,
+            webViewDataDirectory,
+          ).pipe(
+            tap(({ browser, port }) => {
+              state.browser = browser;
               state.cdpPort = port;
-              const appEnvironment = buildInstalledAppEnvironment(
-                process.env,
-                {
-                  root: runRoot,
-                  appData: appDataDirectory,
-                  localAppData: localAppDataDirectory,
-                  temporary: temporaryDirectory,
-                  webViewData: webViewDataDirectory,
-                },
-                port,
-              );
-              state.appProcess = spawn(
-                join(installDirectory, installedExecutableName),
-                [],
-                {
-                  cwd: installDirectory,
-                  env: appEnvironment,
-                  stdio: 'ignore',
-                  windowsHide: true,
-                },
-              );
-              state.appProcess.on('error', () => undefined);
             }),
-            concatMap(() =>
-              connectToInstalledWebView(state.cdpPort, state.appProcess),
-            ),
-            tap((browser) => (state.browser = browser)),
             concatMap(() => installedPage(state.browser, state.appProcess)),
             concatMap((page) =>
               expectedSource === 'release'
@@ -704,8 +705,8 @@ export function runInstalledDeterministicSmoke(
                 );
               }
             }),
-          ),
-        ),
+          );
+        }),
         map(() => undefined),
         catchError((error) => {
           state.exerciseError = error;
