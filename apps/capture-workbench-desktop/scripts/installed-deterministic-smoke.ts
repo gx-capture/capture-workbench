@@ -979,19 +979,29 @@ function containsAbsoluteWindowsPath(value) {
   );
 }
 
+function redactAbsolutePathFragments(value) {
+  return value
+    .replace(/[A-Za-z]:[\\/][^\s"'`<>|]+/gu, installedSmokeDiagnosticRedactionMarker)
+    .replace(/\\\\[^\\/\s]+[\\/][^\s"'`<>|]+/gu, installedSmokeDiagnosticRedactionMarker)
+    .replace(
+      /(?:^|[\s"'`()[\]{}<>,;=:])[\\/](?![\\/])[^\s"'`<>|]+/gu,
+      (match) =>
+        match.slice(0, match.length - match.trimStart().length) +
+        installedSmokeDiagnosticRedactionMarker,
+    );
+}
+
 function sanitizedDiagnosticMessage(error) {
   const raw = errorMessage(error);
-  if (
-    containsSensitiveDiagnosticLabel(raw) ||
-    containsAbsoluteWindowsPath(raw)
-  ) {
+  if (containsSensitiveDiagnosticLabel(raw)) {
     return installedSmokeDiagnosticRedactionMarker;
   }
   const normalized = raw.replace(/\s+/gu, ' ').trim();
-  if (normalized.length <= installedSmokeDiagnosticMessageLimit) {
-    return normalized;
-  }
-  return `${normalized.slice(0, installedSmokeDiagnosticMessageLimit - 3)}...`;
+  const redacted = containsAbsoluteWindowsPath(normalized)
+    ? redactAbsolutePathFragments(normalized)
+    : normalized;
+  if (redacted.length <= installedSmokeDiagnosticMessageLimit) return redacted;
+  return `${redacted.slice(0, installedSmokeDiagnosticMessageLimit - 3)}...`;
 }
 
 export function nestedErrorMessages(error) {

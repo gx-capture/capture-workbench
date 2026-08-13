@@ -304,6 +304,16 @@ test('installed smoke diagnostics redact nested paths and secrets while retainin
   assert.ok(messages.some((message) => message.endsWith('...')));
 });
 
+test('installed smoke diagnostics retain safe error context when redacting paths', () => {
+  const messages = nestedErrorMessages(
+    new Error('Installed NSIS uninstaller failed for C:\\runner\\temp\\install'),
+  );
+  assert.equal(messages.length, 1);
+  assert.match(messages[0], /Installed NSIS uninstaller failed/u);
+  assert.equal(messages[0].includes('C:\\runner\\temp\\install'), false);
+  assert.match(messages[0], /redacted unsafe diagnostic/u);
+});
+
 test('exclusive smoke lock rejects concurrent product mutation and is reusable after release', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'capture-installed-smoke-lock-'));
   t.after(() => rm(root, { recursive: true, force: true }));
