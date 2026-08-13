@@ -146,7 +146,7 @@ test('owned process observer uses a bounded .NET process query and fails closed 
     assert.doesNotMatch(script, /Win32_Process/u);
     assert.doesNotMatch(script, /Get-ChildItem[\s\S]*-Recurse/u);
     assert.doesNotMatch(script, /Get-Process/u);
-    assert.equal(call.options.timeout, 30_000);
+    assert.equal(call.options.timeout, 60_000);
   }
 });
 

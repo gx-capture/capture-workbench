@@ -26,7 +26,7 @@ import {
 } from './contracts/installed.ts';
 
 const ownedProcessObserverAttemptLimit = 2;
-const ownedProcessObserverTimeoutMs = 30_000;
+const ownedProcessObserverTimeoutMs = 60_000;
 const safeDiagnosticToken = /^[A-Za-z0-9_-]+$/u;
 const defaultOwnedProcessExecutableNames = [
   'capture-workbench-desktop.exe',
