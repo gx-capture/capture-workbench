@@ -1,6 +1,6 @@
 {
   "name": "@gx-capture/capture-structuring",
-  "version": "0.3.11",
+  "version": "0.3.12",
   "description": "Brain-agnostic, provenance-safe Capture Workbench host structuring SDK.",
   "license": "MIT",
   "repository": {

@@ -162,9 +162,9 @@ async function startWorkerMirror(port: number): Promise<Server> {
     'capture-runtime',
     'dist',
     'release',
-    'capture-engine-whisper-0.3.11-windows-x64.zip',
+    'capture-engine-whisper-0.3.12-windows-x64.zip',
   );
-  const archiveName = 'capture-engine-whisper-0.3.11-windows-x64.zip';
+  const archiveName = 'capture-engine-whisper-0.3.12-windows-x64.zip';
   const archiveMetadata = await stat(archivePath).catch(() => undefined);
   if (!archiveMetadata?.isFile()) throw new Error('Progressive audio oracle worker archive is missing.');
   const server = createServer((request, response) => {

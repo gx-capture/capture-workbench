@@ -13,6 +13,7 @@ from capture_runtime.contracts import (
     OpenIngestionV2,
     PartialCaptureV2,
     RawCaptureSegmentV1,
+    ReportStructuringFailureV2,
     StreamingEventType,
 )
 from capture_runtime.streaming import (
@@ -95,6 +96,25 @@ def test_partial_capture_rejects_non_projection_text() -> None:
             ],
             source_text="tampered",
             updated_at=NOW,
+        )
+
+
+def test_v2_host_failure_contract_defaults_protocol_and_rejects_runtime_fields() -> None:
+    failure = ReportStructuringFailureV2(
+        code="host_model_failed",
+        message="Host model did not respond.",
+    )
+
+    assert failure.model_dump(by_alias=True) == {
+        "protocolVersion": "2",
+        "code": "host_model_failed",
+        "message": "Host model did not respond.",
+    }
+    with pytest.raises(ValueError):
+        ReportStructuringFailureV2(
+            code="host_model_failed",
+            message="Host model did not respond.",
+            retryable=True,
         )
 
 

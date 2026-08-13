@@ -202,6 +202,7 @@ def build_runtime_dependencies(
         streaming_repository,
         clock=runtime_clock,
         processor=progressive_processor,
+        extractor=active_extractor,
         structurer=active_structurer,
     )
     installation_service = InstallationService(

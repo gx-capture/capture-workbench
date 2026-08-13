@@ -422,7 +422,7 @@ class StreamingEventType(StrEnum):
 
 class OpenIngestionV2(StrictModel):
     protocol_version: Literal["2"] = "2"
-    kind: Literal["audio"] = "audio"
+    kind: CaptureSourceKind = CaptureSourceKind.AUDIO
     mode: StreamingIngestionMode = StreamingIngestionMode.FILE
     client_request_id: NonEmptyString
     file_name: Annotated[
@@ -435,6 +435,7 @@ class OpenIngestionV2(StrictModel):
 
 class IngestionV2(StrictModel):
     protocol_version: Literal["2"] = "2"
+    kind: CaptureSourceKind = CaptureSourceKind.AUDIO
     ingestion_id: NonEmptyString
     status: StreamingIngestionStatus
     file_name: Annotated[
@@ -495,10 +496,17 @@ class CaptureFailureV2(StrictModel):
     retryable: bool = False
 
 
+class ReportStructuringFailureV2(StrictModel):
+    protocol_version: Literal["2"] = "2"
+    code: Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_]{1,63}$")]
+    message: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
+
+
 class CaptureOperationV2(StrictModel):
     protocol_version: Literal["2"] = "2"
     capture_id: NonEmptyString
     ingestion_id: NonEmptyString
+    kind: CaptureSourceKind = CaptureSourceKind.AUDIO
     status: StreamingCaptureStatus
     progress: float | None = Field(default=None, ge=0, le=1)
     partial_revision: int = Field(ge=0)
@@ -553,8 +561,10 @@ class CaptureEventV2(StrictModel):
     event_id: NonEmptyString
     sequence: int = Field(ge=0)
     capture_id: NonEmptyString
+    kind: CaptureSourceKind = CaptureSourceKind.AUDIO
     event_type: StreamingEventType
     stage: NonEmptyString
+    progress: float | None = Field(default=None, ge=0, le=1)
     partial_revision: int | None = Field(default=None, ge=0)
     covered_until_ms: int | None = Field(default=None, ge=0)
     segments: list[RawCaptureSegmentV1] = Field(default_factory=list, max_length=1_000)
@@ -576,7 +586,15 @@ class CaptureEventV2(StrictModel):
 
 class RuntimeStreamingCapabilitiesV2(StrictModel):
     protocol_version: Literal["2"] = "2"
-    supports_progressive_audio: Literal[True] = True
+    capture_kinds: list[CaptureSourceKind] = Field(
+        default_factory=lambda: [
+            CaptureSourceKind.PDF,
+            CaptureSourceKind.IMAGE,
+            CaptureSourceKind.AUDIO,
+        ],
+        min_length=1,
+    )
+    supports_progressive_audio: bool = True
     max_chunk_bytes: int = Field(gt=0, le=4 * 1024 * 1024)
     checkpoint_interval_ms: int = Field(gt=0)
     heartbeat_interval_ms: int = Field(gt=0)
@@ -597,7 +615,7 @@ class RuntimeReadyV1(StrictModel):
     api_version: Literal["1.0"] = API_VERSION
     # This exact Literal is the release handshake and must stay synchronized
     # with RUNTIME_VERSION when the runtime version changes.
-    runtime_version: Literal["0.3.11"] = RUNTIME_VERSION
+    runtime_version: Literal["0.3.12"] = RUNTIME_VERSION
     capture_document_schema_version: Literal["1"] = CAPTURE_DOCUMENT_SCHEMA_VERSION
     capabilities: RuntimeCapabilitiesV1
     message: str | None = None

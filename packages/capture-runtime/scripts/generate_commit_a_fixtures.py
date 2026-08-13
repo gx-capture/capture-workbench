@@ -7,7 +7,7 @@ import zlib
 from pathlib import Path
 from typing import Final
 
-RELEASE_VERSION: Final = "0.3.11"
+RELEASE_VERSION: Final = "0.3.12"
 DET_REVISION: Final = "61323801669c338b7891481ec7bac61ce31b576a"
 REC_REVISION: Final = "50c7eacafc52fa7bcf4194e8cd08e46f8558504b"
 PADDLEOCR_DICT_REVISION: Final = "b03f46425e8ff4442b268ce449e3eef758146cd4"
@@ -175,7 +175,7 @@ def _license_text() -> bytes:
 
 def _notice_text() -> bytes:
     return (
-        b"Capture Workbench v0.3.11 Commit A notice\n\n"
+        b"Capture Workbench v0.3.12 Commit A notice\n\n"
         b"These files contain no model weights. The fixed OCR\n"
         b"phrase is intentionally limited to `CAPTURE OCR FIXTURE`. PaddleOCR\n"
         b"and model-revision metadata identify user-directed upstream inputs; their\n"

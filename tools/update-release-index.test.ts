@@ -30,13 +30,13 @@ function releases(entries: ReleaseIndex['releases'] = {}): ReleaseIndex {
 test('promotion records an immutable release and stable pointer', () => {
   const result = updateReleaseIndex(stable(), releases(), {
     operation: 'promote',
-    tag: 'v0.3.11',
+    tag: 'v0.3.12',
     candidateId: firstCandidate,
     manifestSha256: firstManifest,
     updatedAt: '2026-08-06T00:00:00.000Z',
   });
-  assert.equal(result.stable.releaseTag, 'v0.3.11');
-  assert.deepEqual(result.releases.releases['v0.3.11'], {
+  assert.equal(result.stable.releaseTag, 'v0.3.12');
+  assert.deepEqual(result.releases.releases['v0.3.12'], {
     status: 'released',
     manifestSha256: firstManifest,
     candidateId: firstCandidate,
@@ -52,7 +52,7 @@ test('supersession moves stable to the replacement and preserves defective histo
         manifestSha256: firstManifest,
         candidateId: firstCandidate,
       },
-      'v0.3.11': {
+      'v0.3.12': {
         status: 'released',
         manifestSha256: secondManifest,
         candidateId: secondCandidate,
@@ -61,19 +61,19 @@ test('supersession moves stable to the replacement and preserves defective histo
     {
       operation: 'supersede',
       defectiveTag: 'v0.3.10',
-      replacementTag: 'v0.3.11',
+      replacementTag: 'v0.3.12',
       defectiveManifestSha256: firstManifest,
       replacementManifestSha256: secondManifest,
       reason: 'runtime metadata defect',
       updatedAt: '2026-08-06T00:00:00.000Z',
     },
   );
-  assert.equal(result.stable.releaseTag, 'v0.3.11');
+  assert.equal(result.stable.releaseTag, 'v0.3.12');
   assert.deepEqual(result.releases.releases['v0.3.10'], {
     status: 'superseded',
     manifestSha256: firstManifest,
     candidateId: firstCandidate,
-    supersededBy: 'v0.3.11',
+    supersededBy: 'v0.3.12',
     reason: 'runtime metadata defect',
   });
 });
@@ -84,7 +84,7 @@ test('superseded history cannot be revived by a promotion retry', () => {
       updateReleaseIndex(
         stable(),
         releases({
-          'v0.3.11': {
+          'v0.3.12': {
             status: 'superseded',
             manifestSha256: secondManifest,
             candidateId: secondCandidate,
@@ -94,7 +94,7 @@ test('superseded history cannot be revived by a promotion retry', () => {
         }),
         {
           operation: 'promote',
-          tag: 'v0.3.11',
+          tag: 'v0.3.12',
           candidateId: secondCandidate,
           manifestSha256: secondManifest,
           updatedAt: '2026-08-06T00:00:00.000Z',

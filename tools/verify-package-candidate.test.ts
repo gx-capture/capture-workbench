@@ -8,7 +8,7 @@ import test from 'node:test';
 import { verifyPackageCandidate } from './verify-package-candidate.ts';
 import { verifyPackageCandidateBinding } from './verify-package-candidate-binding.ts';
 
-const version = '0.3.11';
+const version = '0.3.12';
 const sourceCommit = 'a'.repeat(40);
 const producerRunId = 12345;
 const packages = [
@@ -123,7 +123,7 @@ test('package candidate verification rejects changed archive bytes', async () =>
       join(
         candidate.root,
         'package',
-        'gx-capture-capture-workbench-0.3.11.tgz',
+        'gx-capture-capture-workbench-0.3.12.tgz',
       ),
       'tampered',
     );

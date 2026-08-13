@@ -31,6 +31,8 @@ from capture_runtime.storage import (
     CaptureRepository,
     InstallationRepository,
     ModelInstallationRepository,
+    StreamingRecordNotFoundError,
+    StreamingTransitionError,
 )
 from capture_runtime.structuring_provider import CaptureStructuringProvider
 
@@ -43,7 +45,9 @@ class CandidateBodyLimitMiddleware:
         self.max_bytes = max_bytes
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http" or not str(scope.get("path", "")).endswith("/structure"):
+        if scope["type"] != "http" or not _is_candidate_structure_path(
+            str(scope.get("path", ""))
+        ):
             await self.app(scope, receive, send)
             return
         received = 0
@@ -75,6 +79,10 @@ class CandidateBodyLimitMiddleware:
             return message
 
         await self.app(scope, replay_receive, send)
+
+
+def _is_candidate_structure_path(path: str) -> bool:
+    return path.endswith("/structure") or path.endswith("/structure/commit")
 
 
 def _normalized_authority(value: str) -> str | None:
@@ -213,7 +221,7 @@ def create_app(
         if origin is not None and origin not in runtime_settings.allowed_origins:
             return error_response(403, "origin_not_allowed", "Request Origin is not allowed.")
         content_length = request.headers.get("content-length")
-        if request.url.path.endswith("/structure") and content_length is not None:
+        if _is_candidate_structure_path(request.url.path) and content_length is not None:
             try:
                 candidate_bytes = int(content_length)
             except ValueError:
@@ -256,15 +264,27 @@ def create_app(
         capture_id = _request.path_params.get("capture_id")
         invalid_structure = (
             isinstance(capture_id, str)
-            and _request.url.path.endswith("/structure")
+            and _is_candidate_structure_path(_request.url.path)
             and any(issue["loc"] and issue["loc"][0] == "body" for issue in error.errors())
         )
         if invalid_structure:
             assert isinstance(capture_id, str)
-            try:
-                runtime_dependencies.capture_service.fail_invalid_host_structure(capture_id)
-            except (RecordNotFoundError, InvalidJobStateError):
-                pass
+            if _request.url.path.endswith("/structure/commit"):
+                try:
+                    runtime_dependencies.streaming_capture_service.fail_invalid_host_structure(
+                        capture_id,
+                        idempotency_key=(
+                            _request.headers.get("x-idempotency-key")
+                            or f"invalid-structure-{capture_id}"
+                        ),
+                    )
+                except (StreamingRecordNotFoundError, StreamingTransitionError):
+                    pass
+            else:
+                try:
+                    runtime_dependencies.capture_service.fail_invalid_host_structure(capture_id)
+                except (RecordNotFoundError, InvalidJobStateError):
+                    pass
             return error_response(
                 422,
                 "invalid_structure",

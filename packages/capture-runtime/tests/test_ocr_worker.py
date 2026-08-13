@@ -76,7 +76,7 @@ def test_ocr_pdf_renders_one_page_at_a_time(
             operation="run",
             payload={
                 "requirementId": "windowsml-ocr",
-                "artifactVersion": "0.3.11",
+                "artifactVersion": "0.3.12",
                 "modelPath": str(model_path),
                 "sourcePath": str(source),
                 "mediaType": "application/pdf",
@@ -129,7 +129,7 @@ def test_ocr_run_reports_empty_output_stage(
                 operation="run",
                 payload={
                     "requirementId": "windowsml-ocr",
-                    "artifactVersion": "0.3.11",
+                    "artifactVersion": "0.3.12",
                     "modelPath": str(model_path),
                     "sourcePath": str(source),
                     "mediaType": "application/pdf",

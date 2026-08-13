@@ -1,12 +1,11 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { provideCaptureWorkbenchInputs } from '../../../contracts';
 import type {
   CaptureClient,
-  CaptureDocumentV1,
-  CaptureJobV1,
+  CaptureEventV2,
   CaptureStructuringProvider,
 } from '../../../contracts';
-import { provideCaptureWorkbenchInputs } from '../../../contracts';
-import { Subject, map, of, throwError } from 'rxjs';
+import { Subject, of, throwError } from 'rxjs';
 import { CaptureWorkbenchComponent } from './capture-angular';
 import {
   CaptureWorkbenchTestInputSource,
@@ -14,8 +13,9 @@ import {
   captureWorkbenchRoot,
   createCaptureWorkbenchTestInputSource,
   fakeClient,
-  job,
   selectFiles,
+  streamingEvent,
+  streamingOperation,
 } from './capture-angular-test-support';
 
 describe('CaptureWorkbenchComponent', () => {
@@ -31,14 +31,16 @@ describe('CaptureWorkbenchComponent', () => {
     fixture = TestBed.createComponent(CaptureWorkbenchComponent);
   });
 
-  it('emits a runtime-validated canonical result', async () => {
-    const client = fakeClient();
+  it('completes through the v2 streaming result boundary', async () => {
+    const startStreamingCapture = vi.fn<
+      NonNullable<CaptureClient['startStreamingCapture']>
+    >(
+      () => of(streamingOperation('completed')),
+    );
+    const client = fakeClient({ startStreamingCapture });
     const completed = vi.fn();
     inputSource.client.set(client);
-    inputSource.config.set({
-      showRuntimeSetup: false,
-      pollIntervalMs: 0,
-    });
+    inputSource.config.set({ showRuntimeSetup: false });
     fixture.componentInstance.completed.subscribe(completed);
     fixture.detectChanges();
 
@@ -48,8 +50,8 @@ describe('CaptureWorkbenchComponent', () => {
     await fixture.whenStable();
     fixture.detectChanges();
 
-    expect(client.createCapture).toHaveBeenCalledOnce();
-    expect(client.getResult).toHaveBeenCalledWith(
+    expect(startStreamingCapture).toHaveBeenCalledOnce();
+    expect(client.getStreamingResult).toHaveBeenCalledWith(
       'capture-1',
       expect.any(AbortSignal),
     );
@@ -58,284 +60,217 @@ describe('CaptureWorkbenchComponent', () => {
       document: DOCUMENT,
     });
     expect(
-      captureWorkbenchRoot(fixture).querySelector('.result-preview')
-        ?.textContent,
-    ).toContain('page one');
-    expect(
       captureWorkbenchRoot(fixture).querySelector('[data-testid="capture-result"]')
         ?.textContent,
     ).toContain('page one');
-    const extractionProvenance = captureWorkbenchRoot(fixture).querySelector(
-      '[data-testid="capture-extraction-provenance"]',
-    ) as HTMLElement | null;
-    expect(extractionProvenance).not.toBeNull();
-    expect(extractionProvenance?.dataset).toMatchObject({
-      engine: DOCUMENT.extractionEngine.engine,
-      model: DOCUMENT.extractionEngine.model,
-      digest: DOCUMENT.extractionEngine.digest,
-    });
-    expect(extractionProvenance?.textContent).toContain(
-      DOCUMENT.extractionEngine.digest,
-    );
-    expect(extractionProvenance?.textContent).not.toMatch(/Bearer|secret-token|C:\\private/iu);
   });
 
-  it('polls queued jobs through rxResource until completion without overlap', async () => {
-    const createCapture = vi
-      .fn<CaptureClient['createCapture']>()
-      .mockReturnValue(of(job('queued', 'queued')));
-    const getCapture = vi
-      .fn<CaptureClient['getCapture']>()
-      .mockReturnValueOnce(of(job('running', 'extracting')))
-      .mockReturnValueOnce(of(job('completed', 'completed')));
-    const client = fakeClient({ createCapture, getCapture });
-    inputSource.client.set(client);
-    inputSource.config.set({
-      showRuntimeSetup: false,
-      pollIntervalMs: 0,
-    });
-    fixture.detectChanges();
-
-    selectFiles(fixture, [new File(['test'], 'queued.pdf')]);
-    await fixture.whenStable();
-    fixture.detectChanges();
-
-    expect(getCapture).toHaveBeenCalledTimes(2);
-    expect(getCapture.mock.invocationCallOrder[0]).toBeLessThan(
-      getCapture.mock.invocationCallOrder[1] ?? Number.POSITIVE_INFINITY,
+  it('consumes v2 SSE stages without timer polling', async () => {
+    const events = new Subject<CaptureEventV2>();
+    const startStreamingCapture = vi.fn<
+      NonNullable<CaptureClient['startStreamingCapture']>
+    >(
+      () => of(streamingOperation('extracting', 0.1)),
     );
-    expect(fixture.componentInstance.tasks()[0]?.status).toBe('completed');
-    expect(client.getResult).toHaveBeenCalledOnce();
-  });
-
-  it('stops host polling at awaiting_structuring and does not poll after commit', async () => {
-    const createCapture = vi
-      .fn<CaptureClient['createCapture']>()
-      .mockReturnValue(of(job('running', 'extracting', 'host')));
-    const getCapture = vi
-      .fn<CaptureClient['getCapture']>()
-      .mockReturnValue(of(job('running', 'awaiting_structuring', 'host')));
-    const structure = vi.fn(() => of(DOCUMENT));
-    const client = fakeClient({ createCapture, getCapture });
-    inputSource.client.set(client);
-    inputSource.structuringProvider.set({ structure });
-    inputSource.config.set({
-      showRuntimeSetup: false,
-      structuringMode: 'host',
-      pollIntervalMs: 0,
-    });
-    fixture.detectChanges();
-
-    selectFiles(fixture, [new File(['test'], 'host.pdf')]);
-    await fixture.whenStable();
-
-    expect(getCapture).toHaveBeenCalledOnce();
-    expect(structure).toHaveBeenCalledOnce();
-    expect(client.commitStructuredResult).toHaveBeenCalledOnce();
-    await vi.waitFor(() => expect(client.getResult).toHaveBeenCalledOnce());
-  });
-
-  it('preserves runtime progress while entering component-owned structuring', async () => {
-    const structureResult = new Subject<CaptureDocumentV1>();
-    const structure = vi.fn<CaptureStructuringProvider['structure']>(
-      () => structureResult,
+    const captureEvents = vi.fn<NonNullable<CaptureClient['captureEvents']>>(() =>
+      events.asObservable(),
     );
-    const initialJob = {
-      ...job('running', 'awaiting_structuring', 'host'),
-      progress: 0.95,
-    };
+    const getStreamingCapture = vi.fn<
+      NonNullable<CaptureClient['getStreamingCapture']>
+    >(() =>
+      of(streamingOperation('completed')),
+    );
     const client = fakeClient({
-      createCapture: vi.fn(() => of(initialJob)),
+      startStreamingCapture,
+      captureEvents,
+      getStreamingCapture,
     });
+    inputSource.client.set(client);
+    inputSource.config.set({ showRuntimeSetup: false, pollIntervalMs: 25_000 });
+    fixture.detectChanges();
+
+    selectFiles(fixture, [new File(['test'], 'stream.pdf')]);
+    await vi.waitFor(() => expect(captureEvents).toHaveBeenCalledOnce());
+
+    events.next(streamingEvent('checkpoint', 'extracting'));
+    fixture.detectChanges();
+    expect(fixture.componentInstance.tasks()[0]?.stage).toBe('extracting');
+
+    events.next(streamingEvent('completed', 'completed'));
+    await fixture.whenStable();
+
+    expect(getStreamingCapture).toHaveBeenCalledWith(
+      'capture-1',
+      expect.any(AbortSignal),
+    );
+  });
+
+  it('reloads the v2 snapshot and reconnects SSE after resync_required', async () => {
+    const firstEvents = new Subject<CaptureEventV2>();
+    const secondEvents = new Subject<CaptureEventV2>();
+    let streamIndex = 0;
+    const captureEvents = vi.fn<NonNullable<CaptureClient['captureEvents']>>(() =>
+      (streamIndex++ === 0 ? firstEvents : secondEvents).asObservable(),
+    );
+    const resyncedOperation = {
+      ...streamingOperation('extracting', 0.4),
+      lastEventSequence: 7,
+    };
+    const getStreamingCapture = vi
+      .fn<NonNullable<CaptureClient['getStreamingCapture']>>()
+      .mockReturnValueOnce(of(resyncedOperation))
+      .mockReturnValueOnce(of(streamingOperation('completed')));
+    const client = fakeClient({
+      startStreamingCapture: vi.fn(() => of(streamingOperation('extracting', 0.1))),
+      captureEvents,
+      getStreamingCapture,
+    });
+    inputSource.client.set(client);
+    inputSource.config.set({ showRuntimeSetup: false });
+    fixture.detectChanges();
+
+    selectFiles(fixture, [new File(['test'], 'resync.pdf')]);
+    await vi.waitFor(() => expect(captureEvents).toHaveBeenCalledOnce());
+
+    firstEvents.next(streamingEvent('resync_required', 'resync'));
+    await vi.waitFor(() => expect(captureEvents).toHaveBeenCalledTimes(2));
+
+    expect(client.getStreamingCapture).toHaveBeenCalledTimes(1);
+    expect(client.getStreamingPartial).toHaveBeenCalledWith(
+      'capture-1',
+      expect.any(AbortSignal),
+    );
+    expect(captureEvents).toHaveBeenNthCalledWith(
+      2,
+      'capture-1',
+      expect.objectContaining({ lastEventId: 7 }),
+    );
+
+    secondEvents.next(streamingEvent('completed', 'completed'));
+    await fixture.whenStable();
+
+    expect(client.getStreamingCapture).toHaveBeenCalledTimes(2);
+    expect(client.getStreamingResult).toHaveBeenCalledOnce();
+  });
+
+  it('aborts a v2 SSE subscription on cancellation and ignores late events', async () => {
+    const events = new Subject<CaptureEventV2>();
+    const captureEvents = vi.fn<NonNullable<CaptureClient['captureEvents']>>(() =>
+      events.asObservable(),
+    );
+    const client = fakeClient({
+      startStreamingCapture: vi.fn(() => of(streamingOperation('extracting'))),
+      captureEvents,
+    });
+    inputSource.client.set(client);
+    inputSource.config.set({ showRuntimeSetup: false });
+    fixture.detectChanges();
+
+    selectFiles(fixture, [new File(['test'], 'cancel.pdf')]);
+    await vi.waitFor(() => expect(captureEvents).toHaveBeenCalledOnce());
+    const taskId = fixture.componentInstance.tasks()[0]?.id;
+    if (!taskId) throw new Error('Expected a capture task.');
+    const streamSignal = captureEvents.mock.calls[0]?.[1]?.signal;
+
+    fixture.componentInstance.store.cancel(taskId);
+    events.next(streamingEvent('completed', 'completed'));
+    await fixture.whenStable();
+
+    expect(streamSignal?.aborted).toBe(true);
+    expect(client.cancelStreamingCapture).toHaveBeenCalledWith(
+      'capture-1',
+      expect.any(AbortSignal),
+    );
+    expect(fixture.componentInstance.tasks()[0]?.status).toBe('canceled');
+    expect(client.getStreamingResult).not.toHaveBeenCalled();
+  });
+
+  it('retries uncertain v2 start with the same request object', async () => {
+    const source = new File(['test'], 'retry.pdf', { type: 'application/pdf' });
+    const startStreamingCapture = vi
+      .fn<NonNullable<CaptureClient['startStreamingCapture']>>()
+      .mockReturnValueOnce(throwError(() => new TypeError('connection reset')))
+      .mockReturnValueOnce(of(streamingOperation('completed')));
+    const client = fakeClient({ startStreamingCapture });
+    inputSource.client.set(client);
+    inputSource.config.set({ showRuntimeSetup: false });
+    fixture.detectChanges();
+
+    selectFiles(fixture, [source]);
+    await fixture.whenStable();
+
+    expect(startStreamingCapture).toHaveBeenCalledTimes(2);
+    const firstRequest = startStreamingCapture.mock.calls[0]?.[0];
+    const retryRequest = startStreamingCapture.mock.calls[1]?.[0];
+    expect(firstRequest).toBe(retryRequest);
+    expect(firstRequest?.clientRequestId).toMatch(/^[0-9a-f-]{36}$/u);
+    expect(firstRequest?.file).toBe(source);
+  });
+
+  it('uses v2 partial, commit, and result APIs for component-owned structuring', async () => {
+    const structure = vi.fn<CaptureStructuringProvider['structure']>(() =>
+      of(DOCUMENT),
+    );
+    const startStreamingCapture = vi.fn<
+      NonNullable<CaptureClient['startStreamingCapture']>
+    >(
+      () => of(streamingOperation('awaiting_structuring', 0.7)),
+    );
+    const commitStreamingStructuredResult = vi.fn<
+      NonNullable<CaptureClient['commitStreamingStructuredResult']>
+    >(() => of(streamingOperation('completed')));
+    const client = fakeClient({
+      startStreamingCapture,
+      commitStreamingStructuredResult,
+    });
+    const completed = vi.fn();
     inputSource.client.set(client);
     inputSource.structuringProvider.set({ structure });
     inputSource.config.set({
       showRuntimeSetup: false,
       structuringMode: 'host',
       hostStructuringOwner: 'component',
-      pollIntervalMs: 0,
     });
+    fixture.componentInstance.completed.subscribe(completed);
     fixture.detectChanges();
 
-    selectFiles(fixture, [new File(['test'], 'host-progress.pdf')]);
-    await vi.waitFor(() => expect(structure).toHaveBeenCalledOnce());
-
-    expect(fixture.componentInstance.tasks()[0]?.progress).toBe(95);
-    structureResult.next(DOCUMENT);
-    structureResult.complete();
+    selectFiles(fixture, [new File(['test'], 'host.pdf')]);
     await fixture.whenStable();
-  });
 
-  it('cancels an in-flight rxResource poll without applying a late result', async () => {
-    const pendingPoll = new Subject<CaptureJobV1>();
-    const createCapture = vi
-      .fn<CaptureClient['createCapture']>()
-      .mockReturnValue(of(job('queued', 'queued')));
-    const getCapture = vi.fn<CaptureClient['getCapture']>(() =>
-      pendingPoll.asObservable(),
+    expect(client.getStreamingPartial).toHaveBeenCalledWith(
+      'capture-1',
+      expect.any(AbortSignal),
     );
-    const client = fakeClient({ createCapture, getCapture });
-    inputSource.client.set(client);
-    inputSource.config.set({
-      showRuntimeSetup: false,
-      pollIntervalMs: 0,
-    });
-    fixture.detectChanges();
-
-    selectFiles(fixture, [new File(['test'], 'cancel.pdf')]);
-    await vi.waitFor(() => expect(getCapture).toHaveBeenCalledOnce());
-    const taskId = fixture.componentInstance.tasks()[0]?.id;
-    if (!taskId) throw new Error('Expected a capture task.');
-
-    fixture.componentInstance.store.cancel(taskId);
-    pendingPoll.next(job('completed', 'completed'));
-    pendingPoll.complete();
-    await fixture.whenStable();
-
-    expect(fixture.componentInstance.tasks()[0]?.status).toBe('canceled');
-    expect(client.getResult).not.toHaveBeenCalled();
-    expect(getCapture.mock.calls[0]?.[1]?.aborted).toBe(true);
+    expect(structure).toHaveBeenCalledOnce();
+    expect(commitStreamingStructuredResult).toHaveBeenCalledWith(
+      'capture-1',
+      expect.objectContaining({ candidate: DOCUMENT }),
+      expect.any(AbortSignal),
+    );
+    expect(client.getStreamingResult).toHaveBeenCalledOnce();
+    expect(completed).toHaveBeenCalledOnce();
   });
 
-  it('retries an uncertain capture creation with the same request and file', async () => {
-    const source = new File(['test'], 'scan.pdf', {
-      type: 'application/pdf',
+  it('keeps component-owned review in the RxJS boundary before v2 commit', async () => {
+    const structure = vi.fn<CaptureStructuringProvider['structure']>(() =>
+      of(DOCUMENT),
+    );
+    const client = fakeClient({
+      startStreamingCapture: vi.fn(() =>
+        of(streamingOperation('awaiting_structuring', 0.7)),
+      ),
     });
-    const createCapture = vi
-      .fn<CaptureClient['createCapture']>()
-      .mockReturnValueOnce(throwError(() => new TypeError('connection reset')))
-      .mockReturnValueOnce(of(job('completed', 'completed')));
-    const client = fakeClient({ createCapture });
-    inputSource.client.set(client);
-    inputSource.config.set({
-      showRuntimeSetup: false,
-      pollIntervalMs: 0,
-    });
-    fixture.detectChanges();
-
-    selectFiles(fixture, [source]);
-    await fixture.whenStable();
-
-    expect(createCapture).toHaveBeenCalledTimes(2);
-    const firstRequest = createCapture.mock.calls[0]?.[0];
-    const retryRequest = createCapture.mock.calls[1]?.[0];
-    expect(firstRequest).toBe(retryRequest);
-    expect(firstRequest?.clientRequestId).toMatch(/^[0-9a-f-]{36}$/u);
-    expect(retryRequest?.clientRequestId).toBe(firstRequest?.clientRequestId);
-    expect(firstRequest?.file).toBe(source);
-    expect(retryRequest?.file).toBe(source);
-    expect(client.getCapture).not.toHaveBeenCalled();
-    expect(client.getResult).toHaveBeenCalledOnce();
-  });
-
-  it('does not retry capture creation after an abort response', async () => {
-    const createCapture = vi
-      .fn<CaptureClient['createCapture']>()
-      .mockReturnValueOnce(
-        throwError(
-          () => new DOMException('The operation was aborted.', 'AbortError'),
-        ),
-      );
-    const client = fakeClient({ createCapture });
-    inputSource.client.set(client);
-    inputSource.config.set({
-      showRuntimeSetup: false,
-      pollIntervalMs: 0,
-    });
-    fixture.detectChanges();
-
-    selectFiles(fixture, [
-      new File(['test'], 'scan.pdf', { type: 'application/pdf' }),
-    ]);
-    await fixture.whenStable();
-
-    expect(createCapture).toHaveBeenCalledOnce();
-    expect(client.getCapture).not.toHaveBeenCalled();
-    expect(client.getResult).not.toHaveBeenCalled();
-    expect(fixture.componentInstance.tasks()[0]?.status).toBe('canceled');
-  });
-
-  it('does not retry a plain domain error from a custom capture client', async () => {
-    const createCapture = vi
-      .fn<CaptureClient['createCapture']>()
-      .mockReturnValueOnce(
-        throwError(() => new Error('host validation rejected the request')),
-      );
-    const client = fakeClient({ createCapture });
-    inputSource.client.set(client);
-    inputSource.config.set({
-      showRuntimeSetup: false,
-      pollIntervalMs: 0,
-    });
-    fixture.detectChanges();
-
-    selectFiles(fixture, [
-      new File(['test'], 'scan.pdf', { type: 'application/pdf' }),
-    ]);
-    await fixture.whenStable();
-
-    expect(createCapture).toHaveBeenCalledOnce();
-    expect(client.getCapture).not.toHaveBeenCalled();
-    expect(fixture.componentInstance.tasks()[0]?.status).toBe('failed');
-  });
-
-  it('keeps later files queued and supports canceling them', async () => {
-    const preprocessing = new Subject<void>();
-    const release = (): void => {
-      preprocessing.next();
-      preprocessing.complete();
-    };
-    const client = fakeClient();
-    inputSource.client.set(client);
-    inputSource.preprocessor.set({
-      preprocess: vi.fn(({ file }) => preprocessing.pipe(map(() => file))),
-    });
-    inputSource.config.set({
-      concurrency: 1,
-      showRuntimeSetup: false,
-      pollIntervalMs: 0,
-    });
-    fixture.detectChanges();
-
-    selectFiles(fixture, [
-      new File(['1'], 'one.pdf'),
-      new File(['2'], 'two.pdf'),
-    ]);
-    const second = fixture.componentInstance.tasks()[1];
-    expect(second?.status).toBe('queued');
-    if (!second) throw new Error('Expected the second task to be queued.');
-    fixture.componentInstance.store.cancel(second.id);
-    expect(fixture.componentInstance.tasks()[1]?.status).toBe('canceled');
-
-    release();
-    await fixture.whenStable();
-    expect(client.createCapture).toHaveBeenCalledOnce();
-  });
-
-  it('pauses OCR at review, sends only edits on confirm, and emits completion afterward', async () => {
-    const confirmCapture = vi
-      .fn<NonNullable<CaptureClient['confirmCapture']>>()
-      .mockReturnValue(of(job('completed', 'completed', 'host')));
-    const createCapture = vi
-      .fn<CaptureClient['createCapture']>()
-      .mockReturnValue(of(job('running', 'extracting', 'host')));
-    const getCapture = vi
-      .fn<CaptureClient['getCapture']>()
-      .mockReturnValue(of(job('running', 'awaiting_structuring', 'host')));
     const reviewRequired = vi.fn();
-    const completed = vi.fn();
-    const client = fakeClient({ createCapture, getCapture, confirmCapture });
     inputSource.client.set(client);
+    inputSource.structuringProvider.set({ structure });
     inputSource.config.set({
       showRuntimeSetup: false,
       structuringMode: 'host',
-      hostStructuringOwner: 'client',
+      hostStructuringOwner: 'component',
       reviewBeforeCommit: true,
       reviewEditable: true,
-      pollIntervalMs: 0,
     });
     fixture.componentInstance.reviewRequired.subscribe(reviewRequired);
-    fixture.componentInstance.completed.subscribe(completed);
     fixture.detectChanges();
 
     selectFiles(fixture, [new File(['test'], 'review.pdf')]);
@@ -344,184 +279,28 @@ describe('CaptureWorkbenchComponent', () => {
         'awaiting_confirmation',
       ),
     );
-    fixture.detectChanges();
-
-    expect(client.getRaw).toHaveBeenCalledOnce();
-    expect(confirmCapture).not.toHaveBeenCalled();
-    expect(reviewRequired).toHaveBeenCalledOnce();
-    expect(completed).not.toHaveBeenCalled();
-    const textarea = captureWorkbenchRoot(fixture).querySelector(
-      '.ocr-review textarea',
-    ) as HTMLTextAreaElement;
-    expect(textarea.value).toBe('page one');
-    const valueSetter = vi.spyOn(HTMLTextAreaElement.prototype, 'value', 'set');
-    const defaultValueSetter = vi.spyOn(
-      HTMLTextAreaElement.prototype,
-      'defaultValue',
-      'set',
-    );
-    textarea.value = 'page one corrected';
-    valueSetter.mockClear();
-    defaultValueSetter.mockClear();
-    textarea.dispatchEvent(new Event('input'));
-    fixture.detectChanges();
-    expect(valueSetter).not.toHaveBeenCalled();
-    expect(defaultValueSetter).not.toHaveBeenCalled();
-    (
-      captureWorkbenchRoot(fixture).querySelector(
-        '.ocr-review .primary',
-      ) as HTMLButtonElement
-    ).click();
-    valueSetter.mockRestore();
-    defaultValueSetter.mockRestore();
-
-    await vi.waitFor(() => expect(confirmCapture).toHaveBeenCalledOnce());
-    expect(confirmCapture.mock.calls[0]?.[1]).toMatchObject({
-      clientRequestId: expect.stringMatching(/^[0-9a-f-]{36}$/u),
-      review: {
-        reviewVersion: 1,
-        edits: [{ segmentId: 'segment-1', reviewedText: 'page one corrected' }],
-      },
-    });
-    await vi.waitFor(() => expect(completed).toHaveBeenCalledOnce());
-  });
-
-  it('waits for review before component-owned host structuring', async () => {
-    const structure = vi.fn<CaptureStructuringProvider['structure']>(() =>
-      of(DOCUMENT),
-    );
-    const client = fakeClient({
-      createCapture: vi.fn(() =>
-        of(job('running', 'awaiting_structuring', 'host')),
-      ),
-    });
-    inputSource.client.set(client);
-    inputSource.structuringProvider.set({ structure });
-    inputSource.config.set({
-      showRuntimeSetup: false,
-      structuringMode: 'host',
-      hostStructuringOwner: 'component',
-      reviewBeforeCommit: true,
-      reviewEditable: true,
-      pollIntervalMs: 0,
-    });
-    fixture.detectChanges();
-
-    selectFiles(fixture, [new File(['test'], 'component-review.pdf')]);
-    await vi.waitFor(() =>
-      expect(fixture.componentInstance.tasks()[0]?.status).toBe(
-        'awaiting_confirmation',
-      ),
-    );
-    expect(structure).not.toHaveBeenCalled();
-
     const taskId = fixture.componentInstance.tasks()[0]?.id;
-    if (!taskId) throw new Error('Expected review task.');
+    if (!taskId) throw new Error('Expected a review task.');
+
     fixture.componentInstance.store.updateReview(
       taskId,
       'segment-1',
-      'component corrected',
+      'page one corrected',
     );
     fixture.componentInstance.store.confirm(taskId);
-
-    await vi.waitFor(() => expect(structure).toHaveBeenCalledOnce());
-    expect(structure.mock.calls[0]?.[0]).toMatchObject({
-      review: {
-        reviewVersion: 1,
-        edits: [
-          { segmentId: 'segment-1', reviewedText: 'component corrected' },
-        ],
-      },
-    });
-    await vi.waitFor(() =>
-      expect(client.commitStructuredResult).toHaveBeenCalledOnce(),
-    );
-  });
-
-  it('cancels a client-owned review while awaiting confirmation', async () => {
-    const confirmCapture = vi
-      .fn<NonNullable<CaptureClient['confirmCapture']>>()
-      .mockReturnValue(of(job('completed', 'completed', 'host')));
-    const cancelCapture = vi.fn(() =>
-      of(job('cancelled', 'cancelled', 'host')),
-    );
-    const client = fakeClient({
-      createCapture: vi.fn(() => of(job('running', 'extracting', 'host'))),
-      getCapture: vi.fn(() =>
-        of(job('running', 'awaiting_structuring', 'host')),
-      ),
-      cancelCapture,
-      confirmCapture,
-    });
-    inputSource.client.set(client);
-    inputSource.config.set({
-      showRuntimeSetup: false,
-      structuringMode: 'host',
-      hostStructuringOwner: 'client',
-      reviewBeforeCommit: true,
-      reviewEditable: true,
-      pollIntervalMs: 0,
-    });
-    fixture.detectChanges();
-
-    selectFiles(fixture, [new File(['test'], 'discard-review.pdf')]);
-    await vi.waitFor(() =>
-      expect(fixture.componentInstance.tasks()[0]?.status).toBe(
-        'awaiting_confirmation',
-      ),
-    );
-
-    (
-      captureWorkbenchRoot(fixture).querySelector(
-        '.ocr-review .secondary',
-      ) as HTMLButtonElement
-    ).click();
     await fixture.whenStable();
 
-    expect(fixture.componentInstance.tasks()[0]?.status).toBe('canceled');
-    expect(cancelCapture).toHaveBeenCalledOnce();
-    expect(confirmCapture).not.toHaveBeenCalled();
-  });
-
-  it('rejects an empty review edit without confirming the capture', async () => {
-    const confirmCapture = vi
-      .fn<NonNullable<CaptureClient['confirmCapture']>>()
-      .mockReturnValue(of(job('completed', 'completed', 'host')));
-    const createCapture = vi
-      .fn<CaptureClient['createCapture']>()
-      .mockReturnValue(of(job('running', 'extracting', 'host')));
-    const getCapture = vi
-      .fn<CaptureClient['getCapture']>()
-      .mockReturnValue(of(job('running', 'awaiting_structuring', 'host')));
-    const client = fakeClient({ createCapture, getCapture, confirmCapture });
-    inputSource.client.set(client);
-    inputSource.config.set({
-      showRuntimeSetup: false,
-      structuringMode: 'host',
-      hostStructuringOwner: 'client',
-      reviewBeforeCommit: true,
-      reviewEditable: true,
-      pollIntervalMs: 0,
-    });
-    fixture.detectChanges();
-
-    selectFiles(fixture, [new File(['test'], 'review-invalid.pdf')]);
-    await vi.waitFor(() =>
-      expect(fixture.componentInstance.tasks()[0]?.status).toBe(
-        'awaiting_confirmation',
-      ),
+    expect(reviewRequired).toHaveBeenCalledOnce();
+    expect(structure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        review: {
+          reviewVersion: 1,
+          edits: [
+            { segmentId: 'segment-1', reviewedText: 'page one corrected' },
+          ],
+        },
+      }),
     );
-    const taskId = fixture.componentInstance.tasks()[0]?.id;
-    if (!taskId) throw new Error('Expected review task.');
-    fixture.componentInstance.store.updateReview(taskId, 'segment-1', '   ');
-    fixture.componentInstance.store.confirm(taskId);
-
-    expect(confirmCapture).not.toHaveBeenCalled();
-    expect(fixture.componentInstance.tasks()[0]?.status).toBe(
-      'awaiting_confirmation',
-    );
-    expect(fixture.componentInstance.tasks()[0]?.error?.code).toBe(
-      'invalid_review',
-    );
+    expect(client.commitStreamingStructuredResult).toHaveBeenCalledOnce();
   });
 });

@@ -6,7 +6,7 @@ import { createContractSnapshot } from './create-contract-snapshot.ts';
 test('contract snapshot captures generated cross-language contracts and metadata', async () => {
   const snapshot = await createContractSnapshot(process.cwd());
   assert.equal(snapshot.schemaVersion, '1');
-  assert.equal(snapshot.releaseVersion, '0.3.11');
+  assert.equal(snapshot.releaseVersion, '0.3.12');
   assert.equal(
     (snapshot.runtimeApi as { apiVersion: string }).apiVersion,
     '1.0',

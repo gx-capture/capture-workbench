@@ -1,7 +1,7 @@
 {
   "manifestVersion": "1",
-  "packageVersion": "0.3.11",
-  "runtimeVersion": "0.3.11",
+  "packageVersion": "0.3.12",
+  "runtimeVersion": "0.3.12",
   "apiVersion": "1.0",
   "captureDocumentSchemaVersion": "1",
   "captureDocumentSchemaId": "https://github.com/gx-capture/capture-workbench/schema/capture-document-v1.schema.json",
@@ -31,7 +31,7 @@
     {
       "name": "CaptureEventV2",
       "schemaFile": "capture-event-v2.schema.json",
-      "schemaSha256": "056f6eb607802bd7741956e9e42cf86b067edfd477385ab8154eab79524e0ec0",
+      "schemaSha256": "cf166477cb01a6a1027cf66d884eff52c31f556f4b94db05f23eb1480ae40c22",
       "extraPolicy": "forbid",
       "strStripWhitespace": true
     },
@@ -59,7 +59,7 @@
     {
       "name": "CaptureOperationV2",
       "schemaFile": "capture-operation-v2.schema.json",
-      "schemaSha256": "a3096f60f588594fe4c850c344d9f3cc34a5cafc7e1e280ca4e073eaa0422d57",
+      "schemaSha256": "29cf094cb86bd0b2257a31f1b92be9ad98a94cc8598c14df4996e3e1d484c64e",
       "extraPolicy": "forbid",
       "strStripWhitespace": true
     },
@@ -108,14 +108,14 @@
     {
       "name": "IngestionV2",
       "schemaFile": "ingestion-v2.schema.json",
-      "schemaSha256": "a3922afe5e7769fd7283bbe8d71af2a59827f829119a2503d54e373feb386195",
+      "schemaSha256": "09c0b9921749c98eca3f481365a072f4eb27d534f1c8bf213de0d4363cdc0163",
       "extraPolicy": "forbid",
       "strStripWhitespace": true
     },
     {
       "name": "OpenIngestionV2",
       "schemaFile": "open-ingestion-v2.schema.json",
-      "schemaSha256": "2ab1d3f1469c4675cea0fd73899a444303e330023411c5cd00cd68f3ed8891e9",
+      "schemaSha256": "f90a8f29f8a3bd7320e52e393ea1b70e168ea426e646b05108150fbad408f7e6",
       "extraPolicy": "forbid",
       "strStripWhitespace": true
     },
@@ -151,6 +151,13 @@
       "name": "ReportStructuringFailureV1",
       "schemaFile": "report-structuring-failure-v1.schema.json",
       "schemaSha256": "99f21e4eccafd7a762c1cccf6fab9d7d276997af0835cda0d5fd9c91c36208cc",
+      "extraPolicy": "forbid",
+      "strStripWhitespace": true
+    },
+    {
+      "name": "ReportStructuringFailureV2",
+      "schemaFile": "report-structuring-failure-v2.schema.json",
+      "schemaSha256": "e2f0c7ccceeca111cd04bee4f98cf2a5672acc02130cb38fc0c2f46255ac6bb1",
       "extraPolicy": "forbid",
       "strStripWhitespace": true
     },
@@ -213,7 +220,7 @@
     {
       "name": "RuntimeReadyV1",
       "schemaFile": "runtime-ready-v1.schema.json",
-      "schemaSha256": "e23eda9ef04d9cb2765c72d7293cab51ab5e27eb265c6639bf1af2acb97ee180",
+      "schemaSha256": "91c07f8e36773e66b3fa130e6e65cbb1b1625be29ab131a866c8193def19e479",
       "extraPolicy": "forbid",
       "strStripWhitespace": true
     },
@@ -234,7 +241,7 @@
     {
       "name": "RuntimeStreamingCapabilitiesV2",
       "schemaFile": "runtime-streaming-capabilities-v2.schema.json",
-      "schemaSha256": "ea69b1c895aebb35b9da294237c3eaf3da8944b07e3982ed316078050c7ff3bd",
+      "schemaSha256": "1db979758052fe0e39ab130e4d426d4edc2944da4e7b0a467f1ad42e8dc2dad1",
       "extraPolicy": "forbid",
       "strStripWhitespace": true
     },

@@ -1,4 +1,15 @@
 {
+  "$defs": {
+    "CaptureSourceKind": {
+      "enum": [
+        "pdf",
+        "image",
+        "audio"
+      ],
+      "title": "CaptureSourceKind",
+      "type": "string"
+    }
+  },
   "additionalProperties": false,
   "properties": {
     "protocolVersion": {
@@ -7,8 +18,15 @@
       "title": "Protocolversion",
       "type": "string"
     },
+    "captureKinds": {
+      "items": {
+        "$ref": "#/$defs/CaptureSourceKind"
+      },
+      "minItems": 1,
+      "title": "Capturekinds",
+      "type": "array"
+    },
     "supportsProgressiveAudio": {
-      "const": true,
       "default": true,
       "title": "Supportsprogressiveaudio",
       "type": "boolean"

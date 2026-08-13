@@ -1,6 +1,6 @@
 {
   "name": "@gx-capture/capture-contracts",
-  "version": "0.3.11",
+  "version": "0.3.12",
   "description": "Generated Capture Workbench wire-contract schemas and TypeScript types.",
   "license": "MIT",
   "repository": {

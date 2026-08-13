@@ -16,14 +16,20 @@ the same `.npmrc.example`):
 //npm.pkg.github.com/:_authToken=${GITHUB_PACKAGES_TOKEN}
 ```
 
-Then install an exact synchronized version:
+The working tree intentionally retains the `0.3.12` source version while the
+published `0.3.12` registry bytes are not the synchronized v2 source candidate.
+Do not use that immutable package for consumer verification or claim it is
+reproducible from this tree. The next synchronized package/runtime candidate
+must use `0.3.12`, coordinated across the existing release version sources.
+
+For a future synchronized candidate, install the exact version:
 
 ```powershell
 $env:GITHUB_PACKAGES_TOKEN = '<read:packages token>'
-corepack pnpm add @gx-capture/capture-workbench@0.3.11 --save-exact
+corepack pnpm add @gx-capture/capture-workbench@0.3.12 --save-exact
 ```
 
-## v0.3.11 Angular integration contract
+## Angular integration contract (next synchronized candidate)
 
 All public asynchronous client, provider, preprocessor, and reconciliation
 context methods return cold `Observable<T>` values. Compose them with RxJS and
@@ -57,9 +63,12 @@ bootstrapApplication(App, {
 ```
 
 When that backend also invokes the host's existing LLM provider, configure
-`structuringMode: 'host'` and `hostStructuringOwner: 'client'`. The component
-then polls the injected client through `awaiting_structuring` and never requests
-raw capture data or an LLM provider in the WebView.
+`structuringMode: 'host'` and `hostStructuringOwner: 'client'`. The v2 client
+uses `captureEvents()` for authenticated SSE and the streaming operation
+methods for snapshot/reconciliation. The host commits a validated candidate
+with `commitStreamingStructuredResult()` or reports a terminal failure with
+`reportStreamingStructuringFailure()`; the package never receives a bearer
+token or invokes an LLM provider in the WebView.
 
 Do not put a sidecar bearer token in a URL, browser log, or `localStorage`.
 
@@ -69,6 +78,42 @@ WebView. Use a host-owned `CaptureClient` adapter and keep authentication in
 the host backend. The client rejects non-HTTP or non-loopback origins before
 any credential resolver is evaluated and enforces the `capture-runtime`
 service identity during its compatibility handshake.
+
+## v2 capture event streaming (SSE)
+
+`CaptureClient.captureEvents(captureId, options?)` opens a cold, authenticated
+SSE stream for a v2 capture:
+
+```ts
+client.captureEvents(captureId, { lastEventId }).subscribe({
+  next: (event) => updateProgress(event),
+});
+```
+
+`HttpCaptureClient` implements it with `fetch` plus `ReadableStream` parsing
+against `/v2/captures/{captureId}/events`. Native `EventSource` is not used
+because the stream requires an `Authorization` header, and bearer tokens are
+never placed in URLs. Every subscription starts a fresh request and
+unsubscribing aborts it. Pass `lastEventId` (an SSE sequence) to resume replay
+after a reconnect; the runtime suppresses already-delivered events. Terminal
+`completed`, `failed`, and `cancelled` events close the stream, and
+`resync_required` tells consumers to reload the capture snapshot.
+
+Host adapters that proxy the v2 endpoint must implement `captureEvents`,
+`startStreamingCapture`, `getStreamingCapture`, `cancelStreamingCapture`,
+`getStreamingPartial`, `getStreamingResult`,
+`commitStreamingStructuredResult`, `reportStreamingStructuringFailure`, and
+`deleteStreamingCapture`. The first-party client no longer exposes the removed
+v1 capture methods; the generated v1 wire types remain available for current
+runtime compatibility during the coordinated consumer migration.
+
+The host commit boundary is `POST /v2/captures/{captureId}/structure/commit`
+with a full `CaptureDocumentV1` candidate and an idempotency key. The runtime
+validates schema, locator/order, non-empty text, and raw provenance before
+terminal completion. Host failure uses
+`POST /v2/captures/{captureId}/structure/failure` with `{ code, message }` and
+terminates at `failed/structuring`; source and document persistence remains
+host-owned because runtime capture state is ephemeral.
 
 ## Structuring ownership
 

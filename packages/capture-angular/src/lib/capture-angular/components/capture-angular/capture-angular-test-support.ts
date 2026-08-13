@@ -2,7 +2,10 @@ import { signal, type WritableSignal } from '@angular/core';
 import type {
   CaptureClient,
   CaptureDocumentV1,
-  CaptureJobV1,
+  CaptureEventV2,
+  CaptureOperationV2,
+  CaptureStreamingResult,
+  PartialCaptureV2,
   RawCaptureV1,
   RuntimeReadyV1,
   CapturePreprocessor,
@@ -82,6 +85,59 @@ export const DOCUMENT: CaptureDocumentV1 = {
   completedAt: '2026-07-20T00:00:01Z',
 };
 
+export function streamingOperation(
+  status: CaptureOperationV2['status'],
+  progress = status === 'completed' ? 1 : 0.7,
+): CaptureOperationV2 {
+  return {
+    protocolVersion: '2',
+    captureId: 'capture-1',
+    ingestionId: 'ingestion-1',
+    kind: 'audio',
+    status,
+    progress,
+    partialRevision: 1,
+    lastEventSequence: status === 'completed' ? 3 : 1,
+    source: RAW.source,
+    createdAt: RAW.createdAt,
+    updatedAt: RAW.createdAt,
+    ...(status === 'completed' ? { completedAt: '2026-07-20T00:00:01Z' } : {}),
+  };
+}
+
+export function streamingEvent(
+  eventType: CaptureEventV2['eventType'],
+  stage: string,
+): CaptureEventV2 {
+  return {
+    protocolVersion: '2',
+    eventId: `event-${eventType}`,
+    sequence: eventType === 'completed' ? 3 : 2,
+    captureId: 'capture-1',
+    eventType,
+    stage,
+    createdAt: RAW.createdAt,
+  };
+}
+
+export const PARTIAL: PartialCaptureV2 = {
+  protocolVersion: '2',
+  captureId: 'capture-1',
+  source: RAW.source,
+  revision: 1,
+  coveredUntilMs: 0,
+  segments: RAW.segments,
+  sourceText: RAW.sourceText,
+  extractionEngine: RAW.extractionEngine,
+  updatedAt: RAW.createdAt,
+};
+
+export function streamingResult(
+  operation = streamingOperation('completed'),
+): CaptureStreamingResult {
+  return { operation, raw: RAW, result: DOCUMENT };
+}
+
 export interface CaptureWorkbenchTestInputSource
   extends CaptureWorkbenchInputSource {
   readonly config: WritableSignal<CaptureWorkbenchConfig>;
@@ -99,23 +155,6 @@ export function createCaptureWorkbenchTestInputSource(): CaptureWorkbenchTestInp
   };
 }
 
-export function job(
-  status: CaptureJobV1['status'],
-  stage: CaptureJobV1['stage'],
-  structuringMode: CaptureJobV1['structuringMode'] = 'runtime',
-): CaptureJobV1 {
-  return {
-    captureId: 'capture-1',
-    status,
-    stage,
-    structuringMode,
-    progress: status === 'completed' ? 1 : 0.7,
-    source: RAW.source,
-    createdAt: RAW.createdAt,
-    updatedAt: RAW.createdAt,
-  };
-}
-
 export function fakeClient(
   overrides: Partial<CaptureClient> = {},
 ): CaptureClient {
@@ -126,16 +165,26 @@ export function fakeClient(
     listInstallations: vi.fn(() => of([])),
     getInstallation: vi.fn(),
     cancelInstallation: vi.fn(),
-    createCapture: vi.fn(() => of(job('completed', 'completed'))),
-    getCapture: vi.fn(() => of(job('completed', 'completed'))),
-    cancelCapture: vi.fn(() => of(job('cancelled', 'cancelled'))),
-    getRaw: vi.fn(() => of(RAW)),
-    getResult: vi.fn(() => of(DOCUMENT)),
-    commitStructuredResult: vi.fn(() =>
-      of(job('completed', 'completed', 'host')),
+    captureEvents: vi.fn(() => of(streamingEvent('completed', 'completed'))),
+    startStreamingCapture: vi.fn(() => of(streamingOperation('completed'))),
+    getStreamingCapture: vi.fn(() => of(streamingOperation('completed'))),
+    cancelStreamingCapture: vi.fn(() => of(streamingOperation('cancelled'))),
+    getStreamingPartial: vi.fn(() => of(PARTIAL)),
+    getStreamingResult: vi.fn(() => of(streamingResult())),
+    commitStreamingStructuredResult: vi.fn(() =>
+      of(streamingOperation('completed')),
     ),
-    reportStructuringFailure: vi.fn(() => of(job('failed', 'failed', 'host'))),
-    deleteCapture: vi.fn(() => of(undefined)),
+    reportStreamingStructuringFailure: vi.fn(() =>
+      of({
+        ...streamingOperation('failed'),
+        error: {
+          code: 'host_provider_failed',
+          message: 'Host structuring failed.',
+          stage: 'structuring',
+        },
+      }),
+    ),
+    deleteStreamingCapture: vi.fn(() => of(undefined)),
     ...overrides,
   };
 }

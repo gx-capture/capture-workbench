@@ -112,7 +112,7 @@ def test_health_auth_host_origin_and_version_handshake(client: TestClient) -> No
         "ready": True,
         "service": "capture-runtime",
         "apiVersion": "1.0",
-        "runtimeVersion": "0.3.11",
+        "runtimeVersion": "0.3.12",
         "captureDocumentSchemaVersion": "1",
         "capabilities": {
             "captureKinds": ["pdf", "image", "audio"],

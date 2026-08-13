@@ -40,6 +40,15 @@
       "title": "CaptureFailureV2",
       "type": "object"
     },
+    "CaptureSourceKind": {
+      "enum": [
+        "pdf",
+        "image",
+        "audio"
+      ],
+      "title": "CaptureSourceKind",
+      "type": "string"
+    },
     "PageLocatorV1": {
       "additionalProperties": false,
       "properties": {
@@ -202,6 +211,10 @@
       "title": "Captureid",
       "type": "string"
     },
+    "kind": {
+      "$ref": "#/$defs/CaptureSourceKind",
+      "default": "audio"
+    },
     "eventType": {
       "$ref": "#/$defs/StreamingEventType"
     },
@@ -209,6 +222,20 @@
       "minLength": 1,
       "title": "Stage",
       "type": "string"
+    },
+    "progress": {
+      "anyOf": [
+        {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Progress"
     },
     "partialRevision": {
       "anyOf": [

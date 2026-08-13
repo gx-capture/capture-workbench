@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 from contextlib import suppress
+from pathlib import Path
 
 from capture_structuring import StructuringValidationError, validate_structuring_candidate
 from pydantic import ValidationError
@@ -14,6 +17,8 @@ from capture_runtime.contracts import (
     CaptureEventV2,
     CaptureFailureV2,
     CaptureOperationV2,
+    CaptureSourceKind,
+    CaptureSourceV1,
     FinalizeIngestionV2,
     IngestionV2,
     OpenIngestionV2,
@@ -24,7 +29,11 @@ from capture_runtime.contracts import (
     StreamingEventType,
     StructuringMode,
 )
-from capture_runtime.extractors import ExtractionRuntimeUnavailableError
+from capture_runtime.extractors import (
+    CaptureExtractor,
+    ExtractionRuntimeUnavailableError,
+    UnsupportedMediaError,
+)
 from capture_runtime.ollama.lifecycle_impl import RuntimeUnavailableError
 from capture_runtime.progressive_audio import ProgressiveAudioError, ProgressiveSessionEvent
 from capture_runtime.progressive_capture import (
@@ -49,6 +58,7 @@ class StreamingCaptureService:
         *,
         clock: Clock,
         processor: ProgressiveCaptureProcessor | None = None,
+        extractor: CaptureExtractor | None = None,
         structurer: CaptureStructuringProvider | None = None,
         max_chunk_bytes: int = MAX_STREAM_CHUNK_BYTES,
     ) -> None:
@@ -56,6 +66,7 @@ class StreamingCaptureService:
         self._clock = clock
         self.max_chunk_bytes = max_chunk_bytes
         self._processor = processor
+        self._extractor = extractor
         self._structurer = structurer
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._cancellations: dict[str, asyncio.Event] = {}
@@ -130,6 +141,20 @@ class StreamingCaptureService:
     def events(self, capture_id: str, *, after_sequence: int) -> list[CaptureEventV2]:
         return self.repository.read_events(capture_id, after_sequence=after_sequence)
 
+    def event_stream_should_close(self, capture_id: str) -> bool:
+        operation = self.repository.get_capture(capture_id)
+        if operation.status in {
+            StreamingCaptureStatus.COMPLETED,
+            StreamingCaptureStatus.FAILED,
+            StreamingCaptureStatus.CANCELLED,
+        }:
+            return True
+        return (
+            operation.status is StreamingCaptureStatus.AWAITING_STRUCTURING
+            and self.repository.capture_request(capture_id).structuring_mode
+            is StructuringMode.HOST
+        )
+
     def partial(self, capture_id: str) -> PartialCaptureV2:
         return self.repository.read_partial(capture_id)
 
@@ -177,6 +202,80 @@ class StreamingCaptureService:
         self.repository.complete_capture(capture_id)
         return completed
 
+    def commit_host_result(
+        self,
+        capture_id: str,
+        candidate: CaptureDocumentV1,
+        *,
+        idempotency_key: str,
+    ) -> CaptureOperationV2:
+        operation = self.repository.get_capture(capture_id)
+        fingerprint = _candidate_fingerprint(candidate)
+        if operation.status is StreamingCaptureStatus.COMPLETED:
+            return self.repository.commit_host_result(
+                capture_id,
+                idempotency_key=idempotency_key,
+                fingerprint=fingerprint,
+                result=candidate,
+            )
+        request = self.repository.capture_request(capture_id)
+        if (
+            request.structuring_mode is not StructuringMode.HOST
+            or operation.status is not StreamingCaptureStatus.AWAITING_STRUCTURING
+        ):
+            raise StreamingTransitionError("capture is not awaiting host structuring")
+        raw = self.repository.read_raw(capture_id)
+        validated = _validate_runtime_document(candidate, raw)
+        completed = CaptureDocumentV1.model_validate(
+            {
+                **validated.model_dump(mode="json", by_alias=True),
+                "completedAt": self._clock.now().isoformat(),
+            }
+        )
+        return self.repository.commit_host_result(
+            capture_id,
+            idempotency_key=idempotency_key,
+            fingerprint=fingerprint,
+            result=completed,
+        )
+
+    def report_host_failure(
+        self,
+        capture_id: str,
+        *,
+        code: str,
+        message: str,
+        idempotency_key: str,
+    ) -> CaptureOperationV2:
+        operation = self.repository.get_capture(capture_id)
+        request = self.repository.capture_request(capture_id)
+        if (
+            request.structuring_mode is not StructuringMode.HOST
+            or operation.status is not StreamingCaptureStatus.AWAITING_STRUCTURING
+        ):
+            raise StreamingTransitionError("capture is not awaiting host structuring")
+        return self.repository.fail_host_structure(
+            capture_id,
+            idempotency_key=idempotency_key,
+            fingerprint=_failure_fingerprint(code, message),
+            failure=CaptureFailureV2(
+                code=code,
+                message=message,
+                stage="structuring",
+                retryable=False,
+            ),
+        )
+
+    def fail_invalid_host_structure(
+        self, capture_id: str, *, idempotency_key: str
+    ) -> CaptureOperationV2:
+        return self.report_host_failure(
+            capture_id,
+            code="structuring_invalid_output",
+            message="Host structuring output failed strict schema or provenance validation.",
+            idempotency_key=idempotency_key,
+        )
+
     def cancel_capture(self, capture_id: str) -> CaptureOperationV2:
         cancellation = self._cancellations.setdefault(capture_id, asyncio.Event())
         cancellation.set()
@@ -201,7 +300,10 @@ class StreamingCaptureService:
         self._cancellations.clear()
 
     def _schedule(self, capture_id: str) -> None:
-        if self._processor is None or capture_id in self._tasks or self._shutting_down:
+        if (
+            self._processor is None
+            and self._extractor is None
+        ) or capture_id in self._tasks or self._shutting_down:
             return
         cancellation = self._cancellations.setdefault(capture_id, asyncio.Event())
         task = asyncio.create_task(
@@ -221,15 +323,26 @@ class StreamingCaptureService:
                 raise ProgressiveCaptureError("finalized streaming source is unavailable")
             source_path = self.repository.source_path(operation.ingestion_id)
             processor = self._processor
-            if processor is None:
+            if operation.kind is CaptureSourceKind.AUDIO and processor is not None:
+                raw = await processor.process(
+                    capture_id=capture_id,
+                    source=operation.source,
+                    source_path=source_path,
+                    cancellation=cancellation,
+                    sink=lambda events, session: self._persist_events(
+                        capture_id, events, session
+                    ),
+                )
+            elif operation.kind is not CaptureSourceKind.AUDIO and self._extractor is not None:
+                raw = await self._extract_buffered_source(
+                    capture_id,
+                    operation.source,
+                    operation.kind,
+                    source_path,
+                    cancellation,
+                )
+            else:
                 return
-            raw = await processor.process(
-                capture_id=capture_id,
-                source=operation.source,
-                source_path=source_path,
-                cancellation=cancellation,
-                sink=lambda events, session: self._persist_events(capture_id, events, session),
-            )
             self.repository.write_raw(capture_id, raw)
             raw_written = True
             if cancellation.is_set():
@@ -317,6 +430,70 @@ class StreamingCaptureService:
                 stage="structuring" if raw_written else "extraction",
             )
 
+    async def _extract_buffered_source(
+        self,
+        capture_id: str,
+        source: CaptureSourceV1,
+        declared_kind: CaptureSourceKind,
+        source_path: Path,
+        cancellation: asyncio.Event,
+    ) -> RawCaptureV1:
+        extractor = self._extractor
+        if extractor is None:
+            raise ProgressiveCaptureError(
+                "The capture extractor is unavailable.",
+                code="extraction_runtime_unavailable",
+                retryable=False,
+            )
+        if cancellation.is_set():
+            raise asyncio.CancelledError
+        try:
+            content = await asyncio.to_thread(source_path.read_bytes)
+            sniffed = extractor.sniff(content[:64])
+        except UnsupportedMediaError as error:
+            raise ProgressiveCaptureError(
+                "Uploaded source content is not a supported capture kind.",
+                code="unsupported_media_type",
+                retryable=False,
+            ) from error
+        except OSError as error:
+            raise ProgressiveCaptureError(
+                "Streaming source content could not be opened.",
+                code="streaming_source_unavailable",
+            ) from error
+        if sniffed.kind is not declared_kind:
+            raise ProgressiveCaptureError(
+                "Uploaded source content does not match its declared capture kind.",
+                code="source_kind_mismatch",
+                retryable=False,
+            )
+        raw = await extractor.extract(content, source, cancellation)
+        if not raw.segments:
+            raise ProgressiveCaptureError(
+                "Extraction produced no non-empty content.",
+                code="progressive_no_text_at_sample",
+                retryable=False,
+            )
+        partial = PartialCaptureV2(
+            capture_id=capture_id,
+            source=raw.source,
+            revision=1,
+            covered_until_ms=0,
+            segments=raw.segments,
+            source_text=raw.source_text,
+            extraction_engine=raw.extraction_engine,
+            updated_at=raw.created_at,
+        )
+        self.repository.write_partial(partial)
+        self.repository.append_event(
+            capture_id,
+            event_type=StreamingEventType.SEGMENT,
+            stage="extracting",
+            partial_revision=partial.revision,
+            segments=list(raw.segments),
+        )
+        return raw
+
     async def _persist_events(
         self,
         capture_id: str,
@@ -384,6 +561,26 @@ def _safe_failure_message(error: BaseException) -> str:
     if isinstance(error, ProgressiveCaptureError):
         return str(error)[:500] or "Progressive audio processing failed."
     return "Progressive audio processing failed at a bounded runtime boundary."
+
+
+def _candidate_fingerprint(candidate: CaptureDocumentV1) -> str:
+    canonical = json.dumps(
+        candidate.model_dump(mode="json", by_alias=True),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def _failure_fingerprint(code: str, message: str) -> str:
+    canonical = json.dumps(
+        {"code": code, "message": message},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(canonical.encode()).hexdigest()
 
 
 __all__ = ["StreamingCaptureService", "StreamingTransitionError"]

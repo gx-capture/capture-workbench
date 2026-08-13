@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from capture_runtime.clock import Clock
 from capture_runtime.contracts import (
+    CaptureSourceKind,
     OpenIngestionV2,
     StartCaptureV2,
     StreamingCaptureStatus,
@@ -71,6 +73,13 @@ def test_streaming_repository_recovers_ordered_upload_and_event_log(tmp_path: Pa
         )
     )
     assert capture.status is StreamingCaptureStatus.EXTRACTING
+    assert capture.kind is CaptureSourceKind.AUDIO
+    metadata = json.loads(
+        (tmp_path / "streaming" / "captures" / capture.capture_id / "metadata.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert metadata["operation"]["kind"] == "audio"
 
     restarted = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
     restarted.initialize()
@@ -78,6 +87,7 @@ def test_streaming_repository_recovers_ordered_upload_and_event_log(tmp_path: Pa
     assert restarted.get_ingestion(ingestion_id).status is StreamingIngestionStatus.READY
     recovered = restarted.get_capture(capture.capture_id)
     assert recovered.last_event_sequence == 1
+    assert recovered.kind is CaptureSourceKind.AUDIO
     assert len(restarted.read_events(capture.capture_id, after_sequence=-1)) == 1
     assert restarted.source_path(ingestion_id).read_bytes() == source
 

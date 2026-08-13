@@ -16,7 +16,7 @@ function snapshot(overrides: Record<string, unknown> = {}) {
   };
   return {
     schemaVersion: '1',
-    releaseVersion: '0.3.11',
+    releaseVersion: '0.3.12',
     runtimeApi: {
       apiVersion: '1.0',
       documentSchemaVersion: '1',
@@ -26,8 +26,8 @@ function snapshot(overrides: Record<string, unknown> = {}) {
     },
     contractManifest: {
       manifestVersion: '1',
-      packageVersion: '0.3.11',
-      runtimeVersion: '0.3.11',
+      packageVersion: '0.3.12',
+      runtimeVersion: '0.3.12',
       apiVersion: '1.0',
       captureDocumentSchemaVersion: '1',
       captureDocumentSchemaId:
@@ -50,7 +50,7 @@ function snapshot(overrides: Record<string, unknown> = {}) {
 
 test('description, ordering, digest, and release-version changes are no-impact', () => {
   const candidate = snapshot({
-    releaseVersion: '0.3.11',
+    releaseVersion: '0.3.12',
     runtimeApi: {
       apiVersion: '1.0',
       documentSchemaVersion: '1',
@@ -70,8 +70,8 @@ test('description, ordering, digest, and release-version changes are no-impact',
     },
     contractManifest: {
       ...snapshot().contractManifest,
-      packageVersion: '0.3.11',
-      runtimeVersion: '0.3.11',
+      packageVersion: '0.3.12',
+      runtimeVersion: '0.3.12',
       captureDocumentSchemaSha256: 'b'.repeat(64),
     },
   });

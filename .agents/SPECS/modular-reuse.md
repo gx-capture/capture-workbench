@@ -119,3 +119,59 @@ consumer's focused tests pass.
   command for regeneration drift, Python wheel smoke, SDK wheel smoke, and
   launcher publish dry-run. The release workflow remains the actual registry
   publication owner.
+
+## 0.3.12 producer candidate status
+
+As of 2026-08-13, the producer workspace is preparing the v2-first
+`@gx-capture/capture-workbench@0.3.12` candidate. It is not published yet; the
+matching runtime release/tag and runtime assets are not published either.
+
+- The generated contracts package and Web Component expose the authenticated v2
+  streaming types. Runtime v2 uses Bearer authentication on every route and
+  emits live durable SSE, heartbeats, and `Last-Event-ID` replay until terminal
+  completion or host-owned handoff.
+- The Web Component package owns `@angular/elements` and its compiler loader;
+  clean consumers import only `@gx-capture/capture-workbench` and assign object
+  dependencies through DOM properties.
+- The canonical executable is
+  `capture-runtime-x86_64-pc-windows-msvc.exe`, staged with its manifest,
+  checksum, and schema by the runtime candidate/release workflows in this
+  repository. PyPI and crates.io publication workflows remain required
+  distribution seams for their respective artifacts.
+- V2 host-owned structuring ends the SSE stream at `awaiting_structuring`; the
+  host then uses the v2 candidate commit/failure routes with an idempotency key.
+
+Formal publication remains blocked until the exact-source candidate passes the
+producer and three consumer gates, has the matching GitHub Release runtime
+asset, and has a documented decision on whether the existing PyPI/crates.io
+workflows remain required. Publication credentials were not accessed during
+this local candidate work.
+
+## 2026-08-13 v2 host candidate parity and package integrity review
+
+The v2 host-owned structuring seam is an additive extension of the existing v1
+host semantics. `POST /v2/captures/{captureId}/structure/commit` accepts a
+direct `CaptureDocumentV1` candidate plus `X-Idempotency-Key`; the runtime
+revalidates raw provenance and schema, owns `completedAt`, and returns the
+terminal `CaptureOperationV2`. `POST /v2/captures/{captureId}/structure/failure`
+accepts the v2 failure report (`code` and `message`) and returns a terminal
+failed `CaptureOperationV2`. Both transitions are Bearer-authenticated,
+ephemeral, atomic against concurrent terminal transitions, and do not carry or
+persist sidecar credentials.
+
+The runtime-owned `POST /v2/captures/{captureId}/structure` remains unchanged
+for `structuringMode: "runtime"`; host mode must use the new commit/failure
+routes after `awaiting_structuring`. Invalid candidates are terminalized as
+`structuring_invalid_output` while retaining diagnostic raw data, matching v1.
+
+The 0.3.11 package cannot be treated as immutable/reproducible consumer
+evidence: root review reports the current GitHub Packages tarball digest as
+`de56d4c8...` with integrity `sha512-K8qw...`, while the cert-prep lock selects
+an older `522cd3...` tarball with integrity `sha512-CNd...`; package contents
+differ. Producer publication controls were audited: `_publish-npm.yml` calls
+`tools/publish-npm-candidate.ts`, whose exact-integrity decision permits a
+same-version reuse only when registry `dist.integrity` equals the approved
+candidate and aborts on a mismatch. No workflow path was found that safely
+overwrites a same-version package; the mismatched 0.3.11 evidence therefore
+remains fail-closed and requires a future approved candidate/consumer lock
+alignment rather than a registry mutation.

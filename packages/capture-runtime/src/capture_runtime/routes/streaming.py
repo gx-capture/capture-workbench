@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
+import time
 from collections.abc import AsyncIterator
 from typing import Annotated
 
+from capture_structuring import StructuringValidationError
 from fastapi import APIRouter, Header, Path, Request, Response, status
 from fastapi.responses import StreamingResponse
 
@@ -17,6 +20,7 @@ from capture_runtime.contracts import (
     IngestionV2,
     OpenIngestionV2,
     PartialCaptureV2,
+    ReportStructuringFailureV2,
     RuntimeStreamingCapabilitiesV2,
     StartCaptureV2,
 )
@@ -40,13 +44,8 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
 
     @router.get("/health/ready", response_model=RuntimeStreamingCapabilitiesV2)
     async def streaming_ready() -> RuntimeStreamingCapabilitiesV2:
-        if not progressive_decoder_ready():
-            raise ApiProblem(
-                503,
-                "progressive_audio_unavailable",
-                "Progressive audio decoding is unavailable in this runtime.",
-            )
         return RuntimeStreamingCapabilitiesV2(
+            supports_progressive_audio=progressive_decoder_ready(),
             max_chunk_bytes=service.max_chunk_bytes,
             checkpoint_interval_ms=DEFAULT_CHECKPOINT_MS,
             heartbeat_interval_ms=5_000,
@@ -201,15 +200,50 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
             ) from error
 
         async def stream() -> AsyncIterator[str]:
-            for event in events:
-                payload = json.dumps(
-                    event.model_dump(mode="json", by_alias=True),
-                    ensure_ascii=False,
-                    separators=(",", ":"),
+            cursor = after_sequence
+            initial_replay = True
+            heartbeat_deadline = time.monotonic() + 5
+            while True:
+                current_events = (
+                    events
+                    if initial_replay
+                    else service.events(capture_id, after_sequence=cursor)
                 )
-                yield (
-                    f"id: {event.sequence}\nevent: {event.event_type.value}\ndata: {payload}\n\n"
-                )
+                initial_replay = False
+                for event in current_events:
+                    payload = json.dumps(
+                        event.model_dump(mode="json", by_alias=True),
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    )
+                    yield (
+                        f"id: {event.sequence}\nevent: {event.event_type.value}"
+                        f"\ndata: {payload}\n\n"
+                    )
+                    cursor = max(cursor, event.sequence)
+                    heartbeat_deadline = time.monotonic() + 5
+
+                if service.event_stream_should_close(capture_id):
+                    # A repository transition persists the terminal snapshot
+                    # immediately before appending its terminal event. Flush
+                    # the durable tail before closing so a fast consumer never
+                    # observes an EOF after only the initial replay.
+                    for event in service.events(capture_id, after_sequence=cursor):
+                        payload = json.dumps(
+                            event.model_dump(mode="json", by_alias=True),
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                        )
+                        yield (
+                            f"id: {event.sequence}\nevent: {event.event_type.value}"
+                            f"\ndata: {payload}\n\n"
+                        )
+                        cursor = max(cursor, event.sequence)
+                    return
+                if time.monotonic() >= heartbeat_deadline:
+                    yield ": heartbeat\n\n"
+                    heartbeat_deadline = time.monotonic() + 5
+                await asyncio.sleep(0.05)
 
         return StreamingResponse(
             stream(),
@@ -251,6 +285,76 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
             raise ApiProblem(
                 409, "raw_unavailable", "Raw progressive capture is not available."
             ) from error
+        except StreamingRecordNotFoundError as error:
+            raise ApiProblem(
+                404, "capture_not_found", "Streaming capture was not found."
+            ) from error
+
+    @router.post(
+        "/captures/{capture_id}/structure/commit", response_model=CaptureOperationV2
+    )
+    async def commit_host_structure(
+        capture_id: str,
+        candidate: CaptureDocumentV1,
+        idempotency_key: Annotated[
+            str, Header(alias="X-Idempotency-Key", min_length=1, max_length=128)
+        ],
+    ) -> CaptureOperationV2:
+        try:
+            return service.commit_host_result(
+                capture_id, candidate, idempotency_key=idempotency_key
+            )
+        except StructuringValidationError as error:
+            try:
+                service.fail_invalid_host_structure(
+                    capture_id, idempotency_key=idempotency_key
+                )
+            except (StreamingRecordNotFoundError, StreamingTransitionError):
+                pass
+            raise ApiProblem(
+                422,
+                "invalid_structure",
+                "Candidate failed strict schema or provenance validation.",
+                details={"issues": error.issues},
+            ) from error
+        except StreamingIdempotencyConflictError as error:
+            raise ApiProblem(
+                409, "idempotency_conflict", "Commit idempotency key conflicts."
+            ) from error
+        except StreamingPartialNotFoundError as error:
+            raise ApiProblem(
+                409, "raw_unavailable", "Raw progressive capture is not available."
+            ) from error
+        except StreamingTransitionError as error:
+            raise ApiProblem(409, "invalid_capture_state", _safe_message(str(error))) from error
+        except StreamingRecordNotFoundError as error:
+            raise ApiProblem(
+                404, "capture_not_found", "Streaming capture was not found."
+            ) from error
+
+    @router.post(
+        "/captures/{capture_id}/structure/failure", response_model=CaptureOperationV2
+    )
+    async def report_host_structure_failure(
+        capture_id: str,
+        payload: ReportStructuringFailureV2,
+        idempotency_key: Annotated[
+            str, Header(alias="X-Idempotency-Key", min_length=1, max_length=128)
+        ],
+    ) -> CaptureOperationV2:
+        try:
+            return service.report_host_failure(
+                capture_id,
+                code=payload.code,
+                message=payload.message,
+                idempotency_key=idempotency_key,
+            )
+        except StreamingIdempotencyConflictError as error:
+            raise ApiProblem(
+                409, "idempotency_conflict", "Failure idempotency key conflicts."
+            ) from error
+        except StreamingTransitionError as error:
+            raise ApiProblem(409, "invalid_capture_state", _safe_message(str(error))) from error
         except StreamingRecordNotFoundError as error:
             raise ApiProblem(
                 404, "capture_not_found", "Streaming capture was not found."

@@ -7,24 +7,32 @@ import {
   catchError,
   concatMap,
   defer,
+  endWith,
+  fromEvent,
   finalize,
+  ignoreElements,
   map,
   of,
   take,
+  takeUntil,
+  takeWhile,
   tap,
   throwError,
 } from 'rxjs';
 import {
   type CaptureClient,
   type CaptureCompletedEvent,
+  type CaptureEventV2,
   type CaptureFailedEvent,
   type CaptureFailureV1,
-  type CaptureJobV1,
+  type CaptureOperationV2,
+  type PartialCaptureV2,
   type CapturePreprocessor,
   type CaptureReviewV1,
   type CaptureStructuringProvider,
   type CaptureTaskView,
   type RawCaptureV1,
+  type StartStreamingCaptureRequest,
 } from '../../../contracts';
 import type { ResolvedCaptureWorkbenchConfig } from '../../../contracts/workbench';
 import type {
@@ -33,9 +41,10 @@ import type {
 } from '../capture-workbench-store/internal-contracts';
 import { CaptureHelpersService } from '../../../capture-helpers';
 import { CAPTURE_DOCUMENT_V1_CONTRACT } from '../../../capture-document-schema';
-import { CaptureJobPollResourceService } from '../capture-job-poll-resource/capture-job-poll-resource';
 import { CaptureWorkbenchStoreHelpers } from '../capture-workbench-store/capture-workbench-store-helpers';
 import { CaptureReconciliationService } from '../capture-reconciliation/capture-reconciliation.service';
+
+const MAX_STREAMING_RESYNC_RECONNECTS = 3;
 
 @Injectable()
 export class CaptureWorkflowService {
@@ -48,7 +57,6 @@ export class CaptureWorkflowService {
   private runningTasks = 0;
   private context?: CaptureWorkflowContext;
   private readonly reconciliation = inject(CaptureReconciliationService);
-  private readonly pollResourceService = inject(CaptureJobPollResourceService);
   private readonly captureHelpers = inject(CaptureHelpersService);
   private readonly helpers = inject(CaptureWorkbenchStoreHelpers);
   private readonly taskState = signal<readonly CaptureTaskView[]>([]);
@@ -87,8 +95,6 @@ export class CaptureWorkflowService {
         this.failTask(taskId, fileName, error, raw, stage),
       emitCompleted: (event) => this.emitCompleted(event),
       emitCanceled: (task) => this.emitCanceled(task),
-      tryGetRaw: (client, captureId, signal) =>
-        this.tryGetRaw(client, captureId, signal),
     });
   }
 
@@ -126,7 +132,6 @@ export class CaptureWorkflowService {
       this.internalTasks.set(id, {
         file,
         clientRequestId: crypto.randomUUID(),
-        confirmRequestId: crypto.randomUUID(),
         controller,
       });
       this.taskState.update((tasks) => [...tasks, task]);
@@ -149,7 +154,15 @@ export class CaptureWorkflowService {
     const captureId = this.captureIds.get(taskId);
     const client = this.activeClient();
     if (captureId && client) {
-      client.cancelCapture(captureId).subscribe({ error: () => undefined });
+      const streamingClient = asStreamingClient(client);
+      if (streamingClient) {
+        defer(() =>
+          streamingClient.cancelStreamingCapture(
+            captureId,
+            this.lifecycleController.signal,
+          ),
+        ).subscribe({ error: () => undefined });
+      }
     }
     const canceledTask = this.updateTask(taskId, {
       status: 'canceled',
@@ -218,22 +231,29 @@ export class CaptureWorkflowService {
     if (!task || !this.helpers.isTerminalTask(task)) return;
     const client = this.activeClient();
     if (task.captureId && client) {
-      defer(() => client.deleteCapture(task.captureId as string))
-        .pipe(
-          catchError((error: unknown) => {
-            this.updateTask(taskId, {
-              error: this.helpers.failureFrom(
-                error,
-                'runtime',
-                'Unable to clear capture data.',
-              ),
-            });
-            return EMPTY;
-          }),
+      const streamingClient = asStreamingClient(client);
+      if (streamingClient) {
+        defer(() =>
+          streamingClient.deleteStreamingCapture(task.captureId as string),
         )
-        .subscribe({
-          complete: () => this.removeTask(taskId),
-        });
+          .pipe(
+            catchError((error: unknown) => {
+              this.updateTask(taskId, {
+                error: this.helpers.failureFrom(
+                  error,
+                  'runtime',
+                  'Unable to clear capture data.',
+                ),
+              });
+              return EMPTY;
+            }),
+          )
+          .subscribe({
+            complete: () => this.removeTask(taskId),
+          });
+        return;
+      }
+      this.removeTask(taskId);
       return;
     }
     this.removeTask(taskId);
@@ -324,235 +344,31 @@ export class CaptureWorkflowService {
         return of(undefined);
       });
     }
-    if (
-      config.reviewBeforeCommit &&
-      !componentOwnsHostStructuring &&
-      !client.confirmCapture
-    ) {
+    const signal = internal.controller.signal;
+    const streamingClient = asStreamingClient(client);
+    if (!streamingClient) {
       return defer(() => {
         this.failTask(taskId, task.fileName, {
-          code: 'review_confirmation_not_supported',
-          message:
-            'The capture client does not support OCR review confirmation.',
-          stage: 'structuring',
+          code: 'streaming_client_unavailable',
+          message: 'The capture client does not support streaming capture.',
+          stage: 'runtime',
         });
         return of(undefined);
       });
     }
-
-    const signal = internal.controller.signal;
-    const process$ = this.preprocess(
-      internal.file,
-      task.sourceKind,
+    return this.processStreamingTask(
+      streamingClient,
+      internal,
+      task,
+      config,
+      provider,
+      componentOwnsHostStructuring,
       signal,
+      taskId,
     ).pipe(
-      tap(() => this.helpers.throwIfAborted(signal)),
-      concatMap((file) => {
-        this.updateTask(taskId, { stage: 'uploading', progress: 5 });
-        const request = {
-          clientRequestId: internal.clientRequestId,
-          file,
-          sourceKind: task.sourceKind,
-          structuringMode: config.structuringMode,
-          targetLanguage: config.targetLanguage,
-          signal,
-        } as const;
-        return this.helpers.retryUncertainResponse(
-          () => client.createCapture(request),
-          signal,
-        );
-      }),
-      tap((job) => {
-        this.captureIds.set(taskId, job.captureId);
-        this.updateTask(taskId, {
-          captureId: job.captureId,
-          stage: job.stage,
-          progress: this.helpers.runtimeProgressPercent(job.progress),
-        });
-      }),
-      concatMap((job) =>
-        componentOwnsHostStructuring
-          ? this.processHostStructuring(
-              client,
-              provider as CaptureStructuringProvider,
-              job,
-              task,
-              config,
-              signal,
-              taskId,
-            )
-          : config.reviewBeforeCommit
-            ? this.processClientReview(client, job, signal, taskId)
-            : of(job),
-      ),
-      concatMap((job) => this.waitForJob(client, job, signal, false, taskId)),
-      concatMap((job) => this.settleJob(client, task, job, signal, taskId)),
-    );
-
-    return process$.pipe(
       catchError((error: unknown) =>
         this.handleProcessError(error, client, task, signal, taskId),
       ),
-    );
-  }
-
-  private processHostStructuring(
-    client: CaptureClient,
-    provider: CaptureStructuringProvider,
-    initial: CaptureJobV1,
-    task: CaptureTaskView,
-    config: ResolvedCaptureWorkbenchConfig,
-    signal: AbortSignal,
-    taskId: string,
-  ): Observable<CaptureJobV1> {
-    return this.waitForJob(client, initial, signal, true, taskId).pipe(
-      concatMap((job) => {
-        if (
-          !(job.stage === 'awaiting_structuring' && job.status === 'running')
-        ) {
-          return of(job);
-        }
-        return client.getRaw(job.captureId, signal).pipe(
-          concatMap((raw) =>
-            this.awaitReview(taskId, raw, config, job.progress).pipe(
-              concatMap((review) =>
-                defer(() =>
-                  provider.structure({
-                    raw: this.helpers.deepFreeze(structuredClone(raw)),
-                    review,
-                    documentContract: CAPTURE_DOCUMENT_V1_CONTRACT,
-                    targetLanguage: config.targetLanguage,
-                    signal,
-                    reportProgress: (progress) =>
-                      this.updateTask(taskId, {
-                        progress:
-                          70 + this.helpers.clampProgress(progress) * 0.2,
-                      }),
-                  }),
-                ).pipe(
-                  map((candidate) => {
-                    const validationIssues =
-                      this.captureHelpers.validateStructuringCandidate(
-                        candidate,
-                        raw,
-                      );
-                    if (validationIssues.length > 0) {
-                      throw new Error(
-                        `Invalid structured capture: ${validationIssues.join('; ')}`,
-                      );
-                    }
-                    return { job, raw, candidate } as const;
-                  }),
-                  catchError((error: unknown) => {
-                    if (this.helpers.isAbortError(error))
-                      return throwError(() => error);
-                    const failure = this.helpers.failureFrom(
-                      error,
-                      'structuring',
-                      'Host structuring failed.',
-                    );
-                    return this.reconciliation
-                      .reportHostFailureAndReconcile(
-                        client,
-                        job.captureId,
-                        this.helpers.normalizeHostFailureMessage(
-                          failure.message,
-                        ),
-                        signal,
-                      )
-                      .pipe(
-                        map((reconciledJob) => ({
-                          job: reconciledJob,
-                          raw,
-                          candidate: undefined,
-                        })),
-                        catchError((reconciliationError: unknown) => {
-                          if (this.helpers.isAbortError(reconciliationError))
-                            return throwError(() => reconciliationError);
-                          this.requireReconciliation(
-                            taskId,
-                            this.helpers.hostReconciliationFailure(
-                              reconciliationError,
-                            ),
-                            raw,
-                          );
-                          return EMPTY;
-                        }),
-                      );
-                  }),
-                ),
-              ),
-            ),
-          ),
-          concatMap(({ job: reconciledJob, candidate }) => {
-            if (
-              !candidate ||
-              reconciledJob.status !== 'running' ||
-              reconciledJob.stage !== 'awaiting_structuring'
-            ) {
-              return of(reconciledJob);
-            }
-            return this.reconciliation
-              .commitHostResultAndReconcile(
-                client,
-                reconciledJob.captureId,
-                candidate,
-                signal,
-              )
-              .pipe(
-                catchError((reconciliationError: unknown) => {
-                  if (this.helpers.isAbortError(reconciliationError))
-                    return throwError(() => reconciliationError);
-                  this.requireReconciliation(
-                    taskId,
-                    this.helpers.hostReconciliationFailure(reconciliationError),
-                    this.taskState().find(
-                      (candidateTask) => candidateTask.id === taskId,
-                    )?.raw,
-                  );
-                  return EMPTY;
-                }),
-              );
-          }),
-        );
-      }),
-    );
-  }
-
-  private processClientReview(
-    client: CaptureClient,
-    initial: CaptureJobV1,
-    signal: AbortSignal,
-    taskId: string,
-  ): Observable<CaptureJobV1> {
-    return this.waitForJob(client, initial, signal, true, taskId).pipe(
-      concatMap((job) => {
-        if (
-          !(job.stage === 'awaiting_structuring' && job.status === 'running')
-        ) {
-          return of(job);
-        }
-        return client.getRaw(job.captureId, signal).pipe(
-          concatMap((raw) =>
-            this.awaitReview(taskId, raw, this.resolvedConfig(), job.progress),
-          ),
-          concatMap((review) => {
-            const internal = this.internalTasks.get(taskId);
-            const confirmCapture = client.confirmCapture;
-            if (!internal || !confirmCapture) {
-              return throwError(
-                () => new Error('Capture client confirmation is unavailable.'),
-              );
-            }
-            return confirmCapture.call(
-              client,
-              job.captureId,
-              { clientRequestId: internal.confirmRequestId, review },
-              signal,
-            );
-          }),
-        );
-      }),
     );
   }
 
@@ -596,14 +412,276 @@ export class CaptureWorkflowService {
     );
   }
 
-  private settleJob(
-    client: CaptureClient,
+  private processStreamingTask(
+    client: StreamingClient,
+    internal: InternalCaptureTask,
     task: CaptureTaskView,
-    job: CaptureJobV1,
+    config: ResolvedCaptureWorkbenchConfig,
+    provider: CaptureStructuringProvider | null,
+    componentOwnsHostStructuring: boolean,
     signal: AbortSignal,
     taskId: string,
   ): Observable<void> {
-    if (job.status === 'cancelled') {
+    return this.preprocess(internal.file, task.sourceKind, signal).pipe(
+      tap(() => this.helpers.throwIfAborted(signal)),
+      concatMap((file) => {
+        this.updateTask(taskId, { stage: 'uploading', progress: 5 });
+        const request: StartStreamingCaptureRequest = {
+          clientRequestId: internal.clientRequestId,
+          file,
+          sourceKind: task.sourceKind,
+          structuringMode: config.structuringMode,
+          targetLanguage: config.targetLanguage,
+          signal,
+        };
+        return this.helpers.retryUncertainResponse(
+          () => client.startStreamingCapture(request),
+          signal,
+        );
+      }),
+      tap((operation) => {
+        this.captureIds.set(taskId, operation.captureId);
+        this.applyStreamingOperation(taskId, operation);
+      }),
+      concatMap((operation) => {
+        if (componentOwnsHostStructuring) {
+          if (!provider) {
+            return throwError(
+              () => new Error('Host structuring provider is not configured.'),
+            );
+          }
+          return this.processStreamingHostStructuring(
+            client,
+            provider,
+            operation,
+            config,
+            signal,
+            taskId,
+          );
+        }
+        if (config.reviewBeforeCommit) {
+          return throwError(
+            () =>
+              new Error(
+                'Review confirmation is not supported by the v2 streaming contract.',
+              ),
+          );
+        }
+        return of(operation);
+      }),
+      concatMap((operation) =>
+        this.waitForStreamingOperation(client, operation, signal, false, taskId),
+      ),
+      concatMap((operation) =>
+        this.settleStreaming(client, task, operation, signal, taskId),
+      ),
+    );
+  }
+
+  private processStreamingHostStructuring(
+    client: StreamingClient,
+    provider: CaptureStructuringProvider,
+    initial: CaptureOperationV2,
+    config: ResolvedCaptureWorkbenchConfig,
+    signal: AbortSignal,
+    taskId: string,
+  ): Observable<CaptureOperationV2> {
+    return this.waitForStreamingOperation(client, initial, signal, true, taskId).pipe(
+      concatMap((operation) => {
+        if (operation.status !== 'awaiting_structuring') return of(operation);
+        return client.getStreamingPartial(operation.captureId, signal).pipe(
+          map((partial) => this.helpers.partialCaptureToRaw(partial)),
+          concatMap((raw) =>
+            this.awaitReview(taskId, raw, config, operation.progress ?? 0).pipe(
+              concatMap((review) =>
+                defer(() =>
+                  provider.structure({
+                    raw: this.helpers.deepFreeze(structuredClone(raw)),
+                    review,
+                    documentContract: CAPTURE_DOCUMENT_V1_CONTRACT,
+                    targetLanguage: config.targetLanguage,
+                    signal,
+                    reportProgress: (progress) =>
+                      this.updateTask(taskId, {
+                        progress: 70 + this.helpers.clampProgress(progress) * 0.2,
+                      }),
+                  }),
+                ).pipe(
+                  map((candidate) => {
+                    const issues = this.captureHelpers.validateStructuringCandidate(
+                      candidate,
+                      raw,
+                    );
+                    if (issues.length > 0) {
+                      throw new Error(`Invalid structured capture: ${issues.join('; ')}`);
+                    }
+                    return { candidate } as const;
+                  }),
+                  catchError((error: unknown) => {
+                    if (this.helpers.isAbortError(error)) return throwError(() => error);
+                    const failure = this.helpers.failureFrom(
+                      error,
+                      'structuring',
+                      'Host structuring failed.',
+                    );
+                    return this.reconciliation
+                      .reportHostFailureAndReconcile(
+                        client,
+                        operation.captureId,
+                        this.helpers.normalizeHostFailureMessage(failure.message),
+                        signal,
+                      )
+                      .pipe(
+                        map((reported) => ({ operation: reported } as const)),
+                        catchError((reconciliationError: unknown) => {
+                          if (this.helpers.isAbortError(reconciliationError))
+                            return throwError(() => reconciliationError);
+                          this.requireReconciliation(
+                            taskId,
+                            this.helpers.hostReconciliationFailure(
+                              reconciliationError,
+                            ),
+                            raw,
+                          );
+                          return EMPTY;
+                        }),
+                      );
+                  }),
+                ),
+              ),
+            ),
+          ),
+          concatMap((outcome) => {
+            if ('operation' in outcome) return of(outcome.operation);
+            return this.reconciliation
+              .commitHostResultAndReconcile(
+                client,
+                operation.captureId,
+                outcome.candidate,
+                signal,
+              )
+              .pipe(
+                catchError((reconciliationError: unknown) => {
+                  if (this.helpers.isAbortError(reconciliationError))
+                    return throwError(() => reconciliationError);
+                  this.requireReconciliation(
+                    taskId,
+                    this.helpers.hostReconciliationFailure(reconciliationError),
+                    this.taskState().find(
+                      (candidateTask) => candidateTask.id === taskId,
+                    )?.raw,
+                  );
+                  return EMPTY;
+                }),
+              );
+          }),
+        );
+      }),
+    );
+  }
+
+  private waitForStreamingOperation(
+    client: StreamingClient,
+    initial: CaptureOperationV2,
+    signal: AbortSignal,
+    stopForHost: boolean,
+    taskId: string,
+    reconnectAttempt = 0,
+  ): Observable<CaptureOperationV2> {
+    if (
+      this.helpers.isTerminalStreamingOperation(initial) ||
+      (stopForHost && initial.status === 'awaiting_structuring')
+    ) {
+      return of(initial);
+    }
+    let resyncRequired = false;
+    return client.captureEvents(initial.captureId, {
+      signal,
+      lastEventId: initial.lastEventSequence,
+    }).pipe(
+      tap((event) => {
+        resyncRequired = isResyncRequiredEvent(event);
+        if (!resyncRequired) this.applyStreamingEvent(taskId, event);
+      }),
+      takeWhile(
+        (event) => !isResyncRequiredEvent(event)
+          && !this.helpers.isTerminalStreamingEvent(event)
+          && !(stopForHost && event.stage === 'awaiting_structuring'),
+        true,
+      ),
+      ignoreElements(),
+      endWith(undefined),
+      concatMap(() => this.reloadStreamingSnapshot$(
+        client,
+        initial.captureId,
+        signal,
+        taskId,
+        resyncRequired,
+      )),
+      concatMap((snapshot) => {
+        if (
+          this.helpers.isTerminalStreamingOperation(snapshot) ||
+          (stopForHost && snapshot.status === 'awaiting_structuring')
+        ) {
+          return of(snapshot);
+        }
+        if (!resyncRequired) return of(snapshot);
+        if (reconnectAttempt >= MAX_STREAMING_RESYNC_RECONNECTS) {
+          return throwError(
+            () => new Error('Capture event stream exceeded the resync recovery limit.'),
+          );
+        }
+        return this.waitForStreamingOperation(
+          client,
+          snapshot,
+          signal,
+          stopForHost,
+          taskId,
+          reconnectAttempt + 1,
+        );
+      }),
+      takeUntil(fromEvent(signal, 'abort')),
+    );
+  }
+
+  private reloadStreamingSnapshot$(
+    client: StreamingClient,
+    captureId: string,
+    signal: AbortSignal,
+    taskId: string,
+    includePartial: boolean,
+  ): Observable<CaptureOperationV2> {
+    return client.getStreamingCapture(captureId, signal).pipe(
+      tap((operation) => this.applyStreamingOperation(taskId, operation)),
+      concatMap((operation) => {
+        if (!includePartial) return of(operation);
+        return client.getStreamingPartial(captureId, signal).pipe(
+          tap((partial) => this.applyStreamingPartial(taskId, partial)),
+          map(() => operation),
+          catchError(() => of(operation)),
+        );
+      }),
+    );
+  }
+
+  private applyStreamingPartial(taskId: string, partial: PartialCaptureV2): void {
+    try {
+      this.updateTask(taskId, {
+        raw: this.helpers.partialCaptureToRaw(partial),
+      });
+    } catch {
+      // A resync snapshot may arrive before the partial has all extraction fields.
+    }
+  }
+
+  private settleStreaming(
+    client: StreamingClient,
+    task: CaptureTaskView,
+    operation: CaptureOperationV2,
+    signal: AbortSignal,
+    taskId: string,
+  ): Observable<void> {
+    if (operation.status === 'cancelled') {
       return defer(() => {
         const canceledTask = this.updateTask(taskId, {
           status: 'canceled',
@@ -613,18 +691,23 @@ export class CaptureWorkflowService {
         return of(undefined);
       });
     }
-    if (job.status === 'failed') {
-      return this.tryGetRaw(client, job.captureId, signal).pipe(
+    if (operation.status === 'failed') {
+      return this.tryGetRaw(client, operation.captureId, signal).pipe(
         tap((raw) =>
           this.failTask(
             taskId,
             task.fileName,
-            job.error
-              ? this.helpers.redactFailure(job.error)
+            operation.error
+              ? {
+                  code: operation.error.code,
+                  message: operation.error.message,
+                  stage: operation.error.stage ?? undefined,
+                  retryable: operation.error.retryable ?? undefined,
+                }
               : {
                   code: 'capture_failed',
                   message: 'Capture failed.',
-                  stage: job.stage,
+                  stage: 'runtime',
                 },
             raw,
           ),
@@ -632,34 +715,47 @@ export class CaptureWorkflowService {
         map(() => undefined),
       );
     }
-    if (job.status !== 'completed') {
+    if (operation.status !== 'completed') {
       return throwError(
-        () =>
-          new Error(
-            `Capture ended in unexpected state: ${job.status}/${job.stage}`,
-          ),
+        () => new Error(`Capture ended in unexpected state: ${operation.status}`),
       );
     }
-
-    return client.getResult(job.captureId, signal).pipe(
+    return client.getStreamingResult(operation.captureId, signal).pipe(
       tap((result) => {
-        this.helpers.throwIfAborted(signal);
         const completedTask = this.updateTask(taskId, {
           status: 'completed',
           stage: 'completed',
           progress: 100,
-          result,
+          raw: result.raw,
+          result: result.result,
         });
         if (completedTask) {
           this.emitCompleted({
             taskId,
-            document: result,
+            document: result.result,
             review: completedTask.review,
           });
         }
       }),
       map(() => undefined),
     );
+  }
+
+  private applyStreamingEvent(taskId: string, event: CaptureEventV2): void {
+    this.updateTask(taskId, {
+      stage: this.helpers.streamingStage(event.stage),
+    });
+  }
+
+  private applyStreamingOperation(taskId: string, operation: CaptureOperationV2): void {
+    this.updateTask(taskId, {
+      captureId: operation.captureId,
+      stage: this.helpers.streamingStage(operation.status),
+      progress:
+        operation.progress === undefined || operation.progress === null
+          ? 0
+          : this.helpers.runtimeProgressPercent(operation.progress),
+    });
   }
 
   private handleProcessError(
@@ -698,42 +794,6 @@ export class CaptureWorkflowService {
     );
   }
 
-  private waitForJob(
-    client: CaptureClient,
-    initial: CaptureJobV1,
-    signal: AbortSignal,
-    stopForHost: boolean,
-    taskId: string,
-  ): Observable<CaptureJobV1> {
-    if (
-      initial.status !== 'queued' &&
-      !(
-        initial.status === 'running' &&
-        !(stopForHost && initial.stage === 'awaiting_structuring')
-      )
-    ) {
-      return of(initial);
-    }
-
-    return defer(() => {
-      const pollResource = this.pollResourceService.create({
-        client,
-        captureId: initial.captureId,
-        pollIntervalMs: this.resolvedConfig().pollIntervalMs,
-        signal,
-        stopForHost,
-        onJob: (job) =>
-          this.updateTask(taskId, {
-            stage: job.stage,
-            progress: this.helpers.runtimeProgressPercent(job.progress),
-          }),
-      });
-      return pollResource.terminal$.pipe(
-        finalize(() => pollResource.destroy()),
-      );
-    });
-  }
-
   private preprocess(
     file: File,
     sourceKind: CaptureTaskView['sourceKind'],
@@ -752,9 +812,14 @@ export class CaptureWorkflowService {
     captureId: string,
     signal?: AbortSignal,
   ): Observable<RawCaptureV1 | undefined> {
-    return defer(() => client.getRaw(captureId, signal)).pipe(
-      catchError(() => of(undefined)),
-    );
+    const streamingClient = asStreamingClient(client);
+    if (streamingClient) {
+      return defer(() => streamingClient.getStreamingPartial(captureId, signal)).pipe(
+        map((partial) => this.helpers.partialCaptureToRaw(partial)),
+        catchError(() => of(undefined)),
+      );
+    }
+    return of(undefined);
   }
 
   private activeClient(): CaptureClient | null {
@@ -854,4 +919,38 @@ export class CaptureWorkflowService {
   private emitTaskChanged(task: CaptureTaskView): void {
     this.events.next({ type: 'task-changed', task });
   }
+}
+
+function isResyncRequiredEvent(event: CaptureEventV2): boolean {
+  return event.eventType === 'resync_required';
+}
+
+type StreamingClient = CaptureClient &
+  Required<
+    Pick<
+      CaptureClient,
+      | 'captureEvents'
+      | 'startStreamingCapture'
+      | 'getStreamingCapture'
+      | 'cancelStreamingCapture'
+      | 'getStreamingPartial'
+      | 'getStreamingResult'
+      | 'commitStreamingStructuredResult'
+      | 'reportStreamingStructuringFailure'
+      | 'deleteStreamingCapture'
+    >
+  >;
+
+function asStreamingClient(client: CaptureClient): StreamingClient | undefined {
+  return typeof client.captureEvents === 'function' &&
+    typeof client.startStreamingCapture === 'function' &&
+    typeof client.getStreamingCapture === 'function' &&
+    typeof client.cancelStreamingCapture === 'function' &&
+    typeof client.getStreamingPartial === 'function' &&
+    typeof client.getStreamingResult === 'function' &&
+    typeof client.commitStreamingStructuredResult === 'function' &&
+    typeof client.reportStreamingStructuringFailure === 'function' &&
+    typeof client.deleteStreamingCapture === 'function'
+    ? client as StreamingClient
+    : undefined;
 }

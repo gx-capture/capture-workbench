@@ -138,3 +138,23 @@
       generated output, and owned processes afterward. The checked-in OCR PDF
       and image are available, but the lock-selected private audio fixture is
       not present on this machine; do not synthesize a replacement.
+
+## 0.3.12 v2 producer and consumer release gates
+
+- [x] Reconcile the authenticated v2 SSE contract with generated contracts,
+      live durable replay, heartbeat comments, `Last-Event-ID`, and terminal or
+      host-handoff close semantics.
+- [x] Reconcile the v2 Web Component import boundary. The package-owned
+      `loader.mjs` owns Angular compiler/elements dependencies; clean Angular,
+      Vanilla, React, and Vue consumers use only the public package entry point.
+- [x] Add v2 host candidate commit/failure parity with idempotency and strict
+      provenance validation. Verify: focused runtime API/contract tests.
+- [ ] Build one exact-source 0.3.12 candidate and update all three consumer
+      lockfiles to its published tarball integrity; never fabricate registry
+      URLs or reuse the mixed 0.3.11 artifact.
+- [ ] Publish the matching GitHub Release runtime executable and manifest, then
+      run engine-bearing Windows OCR/Whisper smoke with cleanup evidence.
+- [ ] Complete gx.law-prep, cert-prep, and capture-workbench consumer gates
+      against the same immutable candidate before promote. Keep the existing
+      PyPI/crates.io workflows until a separate artifact-ownership review proves
+      they can be retired safely.

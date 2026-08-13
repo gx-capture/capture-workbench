@@ -80,8 +80,8 @@
       "type": "string"
     },
     "runtimeVersion": {
-      "const": "0.3.11",
-      "default": "0.3.11",
+      "const": "0.3.12",
+      "default": "0.3.12",
       "title": "Runtimeversion",
       "type": "string"
     },

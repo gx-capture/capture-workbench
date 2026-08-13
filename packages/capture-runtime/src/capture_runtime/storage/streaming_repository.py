@@ -31,6 +31,7 @@ from capture_runtime.contracts import (
     StreamingCaptureStatus,
     StreamingEventType,
     StreamingIngestionStatus,
+    StructuringMode,
 )
 
 
@@ -91,6 +92,10 @@ class _IngestionRecord:
 class _CaptureRecord:
     operation: CaptureOperationV2
     request: StartCaptureV2
+    commit_idempotency_key: str | None = None
+    commit_fingerprint: str | None = None
+    failure_idempotency_key: str | None = None
+    failure_fingerprint: str | None = None
 
 
 class StreamingRepository:
@@ -235,6 +240,7 @@ class StreamingRepository:
             operation = CaptureOperationV2(
                 capture_id=capture_id,
                 ingestion_id=request.ingestion_id,
+                kind=ingestion.request.kind,
                 status=(
                     StreamingCaptureStatus.EXTRACTING
                     if source is not None
@@ -287,7 +293,9 @@ class StreamingRepository:
                 record.operation = record.operation.model_copy(
                     update={
                         "status": StreamingCaptureStatus.EXTRACTING,
+                        "kind": ingestion.request.kind,
                         "source": self._source_for(ingestion),
+                        "progress": 0.1,
                         "updated_at": now,
                     }
                 )
@@ -310,6 +318,7 @@ class StreamingRepository:
         covered_until_ms: int | None = None,
         segments: list[Any] | None = None,
         error: CaptureFailureV2 | None = None,
+        progress: float | None = None,
     ) -> CaptureEventV2:
         with self._lock:
             record = self._get_capture(capture_id)
@@ -318,8 +327,12 @@ class StreamingRepository:
                 event_id=f"{capture_id}/{sequence}",
                 sequence=sequence,
                 capture_id=capture_id,
+                kind=record.operation.kind,
                 event_type=event_type,
                 stage=stage,
+                progress=(
+                    record.operation.progress if progress is None else progress
+                ),
                 partial_revision=partial_revision,
                 covered_until_ms=covered_until_ms,
                 segments=segments or [],
@@ -339,6 +352,11 @@ class StreamingRepository:
                     "partial_revision": max(
                         record.operation.partial_revision, partial_revision or 0
                     ),
+                    "progress": (
+                        record.operation.progress
+                        if progress is None
+                        else max(record.operation.progress or 0, progress)
+                    ),
                     "updated_at": now,
                 }
             )
@@ -356,7 +374,10 @@ class StreamingRepository:
                 if not line:
                     continue
                 try:
-                    event = CaptureEventV2.model_validate_json(line)
+                    payload = json.loads(line)
+                    event = CaptureEventV2.model_validate(payload)
+                    if "kind" not in payload:
+                        event = event.model_copy(update={"kind": record.operation.kind})
                 except ValidationError as error:
                     raise RuntimeError("streaming event log is corrupted") from error
                 if event.sequence > after_sequence:
@@ -371,6 +392,8 @@ class StreamingRepository:
                     capture_id=capture_id,
                     event_type=StreamingEventType.RESYNC_REQUIRED,
                     stage="resync",
+                    kind=record.operation.kind,
+                    progress=record.operation.progress,
                     partial_revision=record.operation.partial_revision,
                     created_at=self._clock.now(),
                 )
@@ -418,6 +441,51 @@ class StreamingRepository:
                 self._capture_directory(capture_id) / "result.json",
                 result.model_dump(mode="json", by_alias=True),
             )
+
+    def commit_host_result(
+        self,
+        capture_id: str,
+        *,
+        idempotency_key: str,
+        fingerprint: str,
+        result: CaptureDocumentV1,
+    ) -> CaptureOperationV2:
+        with self._lock:
+            record = self._get_capture(capture_id)
+            if record.operation.status is StreamingCaptureStatus.COMPLETED:
+                if (
+                    record.commit_idempotency_key == idempotency_key
+                    and record.commit_fingerprint == fingerprint
+                ):
+                    return record.operation
+                raise StreamingIdempotencyConflictError(idempotency_key)
+            if (
+                record.request.structuring_mode is not StructuringMode.HOST
+                or record.operation.status is not StreamingCaptureStatus.AWAITING_STRUCTURING
+            ):
+                raise StreamingTransitionError("capture is no longer awaiting host structuring")
+            _atomic_json(
+                self._capture_directory(capture_id) / "result.json",
+                result.model_dump(mode="json", by_alias=True),
+            )
+            record.commit_idempotency_key = idempotency_key
+            record.commit_fingerprint = fingerprint
+            now = result.completed_at
+            record.operation = record.operation.model_copy(
+                update={
+                    "status": StreamingCaptureStatus.COMPLETED,
+                    "progress": 1.0,
+                    "updated_at": now,
+                    "completed_at": now,
+                }
+            )
+            self._persist_capture(record)
+            self.append_event(
+                capture_id,
+                event_type=StreamingEventType.COMPLETED,
+                stage="completed",
+            )
+            return record.operation
 
     def read_result(self, capture_id: str) -> CaptureDocumentV1:
         with self._lock:
@@ -475,6 +543,32 @@ class StreamingRepository:
             self._persist_capture(record)
             return record.operation
 
+    def fail_host_structure(
+        self,
+        capture_id: str,
+        *,
+        idempotency_key: str,
+        fingerprint: str,
+        failure: CaptureFailureV2,
+    ) -> CaptureOperationV2:
+        with self._lock:
+            record = self._get_capture(capture_id)
+            if record.operation.status is StreamingCaptureStatus.FAILED:
+                if (
+                    record.failure_idempotency_key == idempotency_key
+                    and record.failure_fingerprint == fingerprint
+                ):
+                    return record.operation
+                raise StreamingIdempotencyConflictError(idempotency_key)
+            if (
+                record.request.structuring_mode is not StructuringMode.HOST
+                or record.operation.status is not StreamingCaptureStatus.AWAITING_STRUCTURING
+            ):
+                raise StreamingTransitionError("capture is no longer awaiting host structuring")
+            record.failure_idempotency_key = idempotency_key
+            record.failure_fingerprint = fingerprint
+            return self._fail_capture_locked(record, failure)
+
     def complete_capture(self, capture_id: str) -> CaptureOperationV2:
         with self._lock:
             record = self._get_capture(capture_id)
@@ -501,31 +595,35 @@ class StreamingRepository:
 
     def fail_capture(self, capture_id: str, failure: CaptureFailureV2) -> CaptureOperationV2:
         with self._lock:
-            record = self._get_capture(capture_id)
-            if record.operation.status in {
-                StreamingCaptureStatus.COMPLETED,
-                StreamingCaptureStatus.FAILED,
-                StreamingCaptureStatus.CANCELLED,
-            }:
-                return record.operation
-            now = self._clock.now()
-            record.operation = record.operation.model_copy(
-                update={
-                    "status": StreamingCaptureStatus.FAILED,
-                    "progress": record.operation.progress,
-                    "error": failure,
-                    "updated_at": now,
-                    "completed_at": now,
-                }
-            )
-            self._persist_capture(record)
-            self.append_event(
-                capture_id,
-                event_type=StreamingEventType.FAILED,
-                stage=failure.stage or "failed",
-                error=failure,
-            )
+            return self._fail_capture_locked(self._get_capture(capture_id), failure)
+
+    def _fail_capture_locked(
+        self, record: _CaptureRecord, failure: CaptureFailureV2
+    ) -> CaptureOperationV2:
+        if record.operation.status in {
+            StreamingCaptureStatus.COMPLETED,
+            StreamingCaptureStatus.FAILED,
+            StreamingCaptureStatus.CANCELLED,
+        }:
             return record.operation
+        now = self._clock.now()
+        record.operation = record.operation.model_copy(
+            update={
+                "status": StreamingCaptureStatus.FAILED,
+                "progress": record.operation.progress,
+                "error": failure,
+                "updated_at": now,
+                "completed_at": now,
+            }
+        )
+        self._persist_capture(record)
+        self.append_event(
+            record.operation.capture_id,
+            event_type=StreamingEventType.FAILED,
+            stage=failure.stage or "failed",
+            error=failure,
+        )
+        return record.operation
 
     def read_partial(self, capture_id: str) -> PartialCaptureV2:
         with self._lock:
@@ -666,6 +764,7 @@ class StreamingRepository:
     def _ingestion_snapshot(record: _IngestionRecord) -> IngestionV2:
         return IngestionV2(
             ingestion_id=record.ingestion_id,
+            kind=record.request.kind,
             status=record.status,
             file_name=record.request.file_name,
             media_type=record.request.media_type,
@@ -702,6 +801,10 @@ class StreamingRepository:
             {
                 "request": record.request.model_dump(mode="json", by_alias=True),
                 "operation": record.operation.model_dump(mode="json", by_alias=True),
+                "commitIdempotencyKey": record.commit_idempotency_key,
+                "commitFingerprint": record.commit_fingerprint,
+                "failureIdempotencyKey": record.failure_idempotency_key,
+                "failureFingerprint": record.failure_fingerprint,
             },
         )
 
@@ -740,8 +843,20 @@ class StreamingRepository:
             try:
                 payload = json.loads((directory / "metadata.json").read_text(encoding="utf-8"))
                 request = StartCaptureV2.model_validate(payload["request"])
-                operation = CaptureOperationV2.model_validate(payload["operation"])
-                record = _CaptureRecord(operation=operation, request=request)
+                operation_payload = payload["operation"]
+                operation = CaptureOperationV2.model_validate(operation_payload)
+                if "kind" not in operation_payload:
+                    ingestion = self._ingestions.get(operation.ingestion_id)
+                    if ingestion is not None:
+                        operation = operation.model_copy(update={"kind": ingestion.request.kind})
+                record = _CaptureRecord(
+                    operation=operation,
+                    request=request,
+                    commit_idempotency_key=payload.get("commitIdempotencyKey"),
+                    commit_fingerprint=payload.get("commitFingerprint"),
+                    failure_idempotency_key=payload.get("failureIdempotencyKey"),
+                    failure_fingerprint=payload.get("failureFingerprint"),
+                )
             except (
                 OSError,
                 KeyError,

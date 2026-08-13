@@ -193,7 +193,7 @@ mod tests {
 
     fn expected() -> ManifestExpectations {
         ManifestExpectations {
-            runtime_version: "0.3.11".into(),
+            runtime_version: "0.3.12".into(),
             api_version: "1.0".into(),
             capture_document_schema_version: "1".into(),
             file_name: "capture-runtime.exe".into(),
@@ -204,7 +204,7 @@ mod tests {
     fn manifest(bytes: u64, sha256: &str) -> SidecarManifest {
         SidecarManifest {
             manifest_version: "1".into(),
-            runtime_version: "0.3.11".into(),
+            runtime_version: "0.3.12".into(),
             api_version: "1.0".into(),
             capture_document_schema_version: "1".into(),
             platform: "windows".into(),

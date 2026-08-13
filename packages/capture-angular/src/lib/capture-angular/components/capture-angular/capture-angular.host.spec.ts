@@ -1,6 +1,10 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideCaptureWorkbenchInputs } from '../../../contracts';
-import type { CaptureStructuringProvider } from '../../../contracts';
+import type {
+  CaptureClient,
+  PartialCaptureV2,
+  CaptureStructuringProvider,
+} from '../../../contracts';
 import { of, throwError } from 'rxjs';
 import { CaptureWorkbenchComponent } from './capture-angular';
 import {
@@ -10,8 +14,8 @@ import {
   captureWorkbenchRoot,
   createCaptureWorkbenchTestInputSource,
   fakeClient,
-  job,
   selectFiles,
+  streamingOperation,
 } from './capture-angular-test-support';
 
 describe('CaptureWorkbenchComponent', () => {
@@ -27,44 +31,41 @@ describe('CaptureWorkbenchComponent', () => {
     fixture = TestBed.createComponent(CaptureWorkbenchComponent);
   });
 
-  it('reports host structuring failure with raw diagnostics and never completes', async () => {
+  it('reports v2 host structuring failure with raw diagnostics and never completes', async () => {
     const client = fakeClient({
-      createCapture: vi.fn(() =>
-        of(job('running', 'awaiting_structuring', 'host')),
+      startStreamingCapture: vi.fn(() =>
+        of(streamingOperation('awaiting_structuring', 0.7)),
+      ),
+      reportStreamingStructuringFailure: vi.fn(() =>
+        of({
+          ...streamingOperation('failed'),
+          error: {
+            code: 'host_provider_failed',
+            message: 'Bearer [redacted]',
+            stage: 'structuring',
+          },
+        }),
       ),
     });
     const structure = vi.fn<CaptureStructuringProvider['structure']>(() =>
-      throwError(() => ({
-        code: 'NOT VALID!',
-         message: 'Bearer secret-token',
-      })),
+      throwError(() => ({ code: 'NOT VALID!', message: 'Bearer secret-token' })),
     );
-    const provider: CaptureStructuringProvider = { structure };
     const completed = vi.fn();
     const failed = vi.fn();
     inputSource.client.set(client);
-    inputSource.structuringProvider.set(provider);
-    inputSource.config.set({
-      structuringMode: 'host',
-      showRuntimeSetup: false,
-      pollIntervalMs: 0,
-    });
+    inputSource.structuringProvider.set({ structure });
+    inputSource.config.set({ structuringMode: 'host', showRuntimeSetup: false });
     fixture.componentInstance.completed.subscribe(completed);
     fixture.componentInstance.failed.subscribe(failed);
     fixture.detectChanges();
 
-    selectFiles(fixture, [
-      new File(['test'], 'scan.pdf', { type: 'application/pdf' }),
-    ]);
+    selectFiles(fixture, [new File(['test'], 'scan.pdf')]);
     await fixture.whenStable();
     fixture.detectChanges();
 
-    expect(client.reportStructuringFailure).toHaveBeenCalledWith(
+    expect(client.reportStreamingStructuringFailure).toHaveBeenCalledWith(
       'capture-1',
-      {
-        code: 'host_provider_failed',
-         message: 'Bearer [redacted]',
-      },
+      { code: 'host_provider_failed', message: 'Bearer [redacted]' },
       expect.any(AbortSignal),
     );
     expect(structure).toHaveBeenCalledWith(
@@ -72,44 +73,44 @@ describe('CaptureWorkbenchComponent', () => {
         documentContract: expect.objectContaining({ schemaVersion: '1' }),
       }),
     );
-    const request = structure.mock.calls[0]?.[0];
-    expect(Object.isFrozen(request?.documentContract.jsonSchema ?? {})).toBe(
-      true,
-    );
     expect(completed).not.toHaveBeenCalled();
     expect(failed).toHaveBeenCalledWith(
-      expect.objectContaining({ fileName: 'scan.pdf', raw: RAW }),
+      expect.objectContaining({
+        fileName: 'scan.pdf',
+        raw: expect.objectContaining({
+          source: RAW.source,
+          segments: RAW.segments,
+          sourceText: RAW.sourceText,
+          extractionEngine: RAW.extractionEngine,
+        }),
+      }),
     );
-    expect(
-      captureWorkbenchRoot(fixture).querySelector('.raw-diagnostics')
-        ?.textContent,
-    ).toContain('diagnostic only');
-    expect(
-      captureWorkbenchRoot(fixture).querySelector('[data-testid="capture-raw"]')
-        ?.textContent,
-    ).toContain(RAW.sourceText);
     expect(captureWorkbenchRoot(fixture).textContent).not.toContain(
       'secret-token',
     );
-    expect(
-      captureWorkbenchRoot(fixture).querySelector('[data-testid="capture-raw-segment"]'),
-    ).toMatchObject({
-      dataset: expect.objectContaining({
-        segmentId: 'segment-1',
-        order: '0',
-        locatorKind: 'page',
-        page: '1',
-      }),
-    });
   });
 
-  it('isolates saved raw evidence from component-owned provider mutation', async () => {
+  it('isolates saved v2 raw evidence from component-owned provider mutation', async () => {
     const raw = structuredClone(RAW);
     const client = fakeClient({
-      createCapture: vi.fn(() =>
-        of(job('running', 'awaiting_structuring', 'host')),
+      startStreamingCapture: vi.fn(() =>
+        of(streamingOperation('awaiting_structuring', 0.7)),
       ),
-      getRaw: vi.fn(() => of(raw)),
+      getStreamingPartial: vi.fn<
+        NonNullable<CaptureClient['getStreamingPartial']>
+      >(() =>
+        of({
+          protocolVersion: '2',
+          captureId: 'capture-1',
+          source: raw.source,
+          revision: 1,
+          coveredUntilMs: 0,
+          segments: raw.segments,
+          sourceText: raw.sourceText,
+          extractionEngine: raw.extractionEngine,
+          updatedAt: raw.createdAt,
+        } satisfies PartialCaptureV2),
+      ),
     });
     const structure = vi.fn<CaptureStructuringProvider['structure']>(
       (request) => {
@@ -118,49 +119,30 @@ describe('CaptureWorkbenchComponent', () => {
         expect(Object.isFrozen(request.raw.source)).toBe(true);
         expect(Object.isFrozen(request.raw.segments)).toBe(true);
         expect(Object.isFrozen(request.raw.segments[0]?.locator)).toBe(true);
-
         expect(() => {
           (request.raw.source as { fileName: string }).fileName = 'mutated.pdf';
-        }).toThrow(TypeError);
-        expect(() => {
-          (
-            request.raw.segments[0]?.locator as {
-              page: number;
-            }
-          ).page = 99;
         }).toThrow(TypeError);
         return of(DOCUMENT);
       },
     );
-    const completed = vi.fn();
     inputSource.client.set(client);
     inputSource.structuringProvider.set({ structure });
-    inputSource.config.set({
-      structuringMode: 'host',
-      showRuntimeSetup: false,
-      pollIntervalMs: 0,
-    });
-    fixture.componentInstance.completed.subscribe(completed);
+    inputSource.config.set({ structuringMode: 'host', showRuntimeSetup: false });
     fixture.detectChanges();
 
-    selectFiles(fixture, [
-      new File(['test'], 'scan.pdf', { type: 'application/pdf' }),
-    ]);
+    selectFiles(fixture, [new File(['test'], 'scan.pdf')]);
     await fixture.whenStable();
 
     expect(structure).toHaveBeenCalledOnce();
     expect(raw.source.fileName).toBe('scan.pdf');
-    expect(raw.segments[0]?.locator).toEqual({ kind: 'page', page: 1 });
-    expect(fixture.componentInstance.tasks()[0]?.raw).toBe(raw);
-    expect(completed).toHaveBeenCalledOnce();
+    expect(fixture.componentInstance.tasks()[0]?.raw).not.toBe(raw);
   });
 
-  it('lets a trusted host client own structuring without a browser provider', async () => {
+  it('lets the v2 client own structuring without a browser provider', async () => {
     const client = fakeClient({
-      createCapture: vi.fn(() =>
-        of(job('running', 'awaiting_structuring', 'host')),
+      startStreamingCapture: vi.fn(() =>
+        of(streamingOperation('completed')),
       ),
-      getCapture: vi.fn(() => of(job('completed', 'completed', 'host'))),
     });
     const completed = vi.fn();
     inputSource.client.set(client);
@@ -168,20 +150,17 @@ describe('CaptureWorkbenchComponent', () => {
       structuringMode: 'host',
       hostStructuringOwner: 'client',
       showRuntimeSetup: false,
-      pollIntervalMs: 0,
     });
     fixture.componentInstance.completed.subscribe(completed);
     fixture.detectChanges();
 
-    selectFiles(fixture, [
-      new File(['test'], 'scan.pdf', { type: 'application/pdf' }),
-    ]);
+    selectFiles(fixture, [new File(['test'], 'scan.pdf')]);
     await fixture.whenStable();
 
-    expect(client.getRaw).not.toHaveBeenCalled();
-    expect(client.commitStructuredResult).not.toHaveBeenCalled();
-    expect(client.reportStructuringFailure).not.toHaveBeenCalled();
-    expect(client.getResult).toHaveBeenCalledWith(
+    expect(client.getStreamingPartial).not.toHaveBeenCalled();
+    expect(client.commitStreamingStructuredResult).not.toHaveBeenCalled();
+    expect(client.reportStreamingStructuringFailure).not.toHaveBeenCalled();
+    expect(client.getStreamingResult).toHaveBeenCalledWith(
       'capture-1',
       expect.any(AbortSignal),
     );

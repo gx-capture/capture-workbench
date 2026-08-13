@@ -1,4 +1,4 @@
-"""Fail-closed validation for the v0.3.11 direct-model source lock."""
+"""Fail-closed validation for the v0.3.12 direct-model source lock."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 LOCK_VERSION = "2"
-RELEASE_VERSION = "0.3.11"
+RELEASE_VERSION = "0.3.12"
 COMMIT_A_SHA = "31821b241846878d917a60e638a4fce39aba418a"
 FIRST_PARTY_ROOT = (
     "https://raw.githubusercontent.com/gx-capture/capture-workbench/"
