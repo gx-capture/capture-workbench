@@ -329,7 +329,11 @@ describe('HttpCaptureClient', () => {
     client
       .reportStreamingStructuringFailure(
         'capture-1',
-        { code: 'provider_failed', message: 'Provider failed.' },
+        {
+          clientRequestId: 'failure-1',
+          code: 'provider_failed',
+          message: 'Provider failed.',
+        },
         signal,
       )
       .subscribe();
@@ -350,6 +354,16 @@ describe('HttpCaptureClient', () => {
       ['http://127.0.0.1:43119/v2/captures/capture-1/structure/failure', 'POST'],
       ['http://127.0.0.1:43119/v2/captures/capture-1', 'DELETE'],
     ]);
+    const failureRequest = fetchMock.mock.calls[5]?.[1];
+    expect(new Headers(failureRequest?.headers).get('X-Idempotency-Key')).toBe(
+      'failure-1',
+    );
+    expect(JSON.parse(String(failureRequest?.body))).toEqual({
+      protocolVersion: '2',
+      clientRequestId: 'failure-1',
+      code: 'provider_failed',
+      message: 'Provider failed.',
+    });
   });
 
   it('is cold and aborts each subscription fetch on unsubscribe', async () => {

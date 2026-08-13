@@ -149,6 +149,7 @@ export interface CommitStreamingStructuredResultRequest {
 }
 
 export interface ReportStreamingStructuringFailureRequest {
+  readonly clientRequestId?: string;
   readonly code: string;
   readonly message: string;
 }
