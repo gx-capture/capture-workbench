@@ -44,6 +44,7 @@ const STREAMING_EVENT_TYPES = new Set([
 ]);
 const MAX_SSE_LINE_BYTES = 64 * 1024;
 const MAX_SSE_FRAME_LINES = 1024;
+const MAX_SSE_SEGMENTS = 10_000;
 
 /**
  * Cold, authenticated fetch + ReadableStream SSE parser. Every subscription
@@ -174,9 +175,16 @@ function eventStreamFromBody(
 ): Observable<CaptureEventV2> {
   return defer(() => {
     const reader = body.getReader();
-    const decoder = new TextDecoder();
+    const decoder = new TextDecoder('utf-8', { fatal: true });
     const parser = new SseCaptureEventParser();
     let previousSequence = initialSequence;
+    const decodeText = (value?: Uint8Array, streaming = false): string => {
+      try {
+        return decoder.decode(value, streaming ? { stream: true } : undefined);
+      } catch {
+        throw invalidEventFrame();
+      }
+    };
     const decode = (frame: SseEventFrame): CaptureEventV2 => {
       const event = decodeCaptureEventFrame(frame, expectedCaptureId);
       if (previousSequence !== undefined && event.sequence <= previousSequence) {
@@ -192,9 +200,7 @@ function eventStreamFromBody(
     return readChunk().pipe(
       expand(({ done }) => (done ? EMPTY : readChunk())),
       mergeMap(({ done, value }) => {
-        const frames = parser.push(
-          done ? decoder.decode() : decoder.decode(value, { stream: true }),
-        );
+        const frames = parser.push(done ? decodeText() : decodeText(value, true));
         const events = frames.map(decode);
         return done
           ? concat(
@@ -378,7 +384,7 @@ function normalizeCaptureEvent(
   if (
     segments !== undefined &&
     segments !== null &&
-    !Array.isArray(segments)
+    (!Array.isArray(segments) || segments.length > MAX_SSE_SEGMENTS)
   ) {
     throw invalidEventFrame();
   }

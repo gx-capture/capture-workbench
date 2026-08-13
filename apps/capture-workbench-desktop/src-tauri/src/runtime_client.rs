@@ -25,6 +25,9 @@ use crate::{
 };
 
 const MAX_RUNTIME_RESPONSE_BYTES: u64 = 60 * 1024 * 1024;
+const MAX_SSE_LINE_BYTES: usize = 64 * 1024;
+const MAX_SSE_FRAME_LINES: usize = 1024;
+const MAX_SSE_SEGMENTS_PER_EVENT: usize = 10_000;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 const STREAM_CHUNK_BYTES: usize = 1024 * 1024;
 
@@ -1468,6 +1471,7 @@ struct SseFrame {
 
 struct SseParser<'a> {
     frame: SseFrame,
+    frame_lines: usize,
     pending: Vec<u8>,
     previous_sequence: Option<u64>,
     token: &'a str,
@@ -1489,6 +1493,7 @@ impl<'a> SseParser<'a> {
             .transpose()?;
         Ok(Self {
             frame: SseFrame::default(),
+            frame_lines: 0,
             pending: Vec::new(),
             previous_sequence,
             token,
@@ -1534,6 +1539,7 @@ impl<'a> SseParser<'a> {
         }
         self.pending.clear();
         self.frame = SseFrame::default();
+        self.frame_lines = 0;
         Ok(())
     }
 
@@ -1545,6 +1551,13 @@ impl<'a> SseParser<'a> {
             .map_err(|_| "Capture Runtime SSE response was not valid UTF-8.".to_string())?;
         if line.is_empty() {
             return self.dispatch(on_event);
+        }
+        if line.len() > MAX_SSE_LINE_BYTES {
+            return Err("Capture Runtime SSE line exceeded the safety limit.".into());
+        }
+        self.frame_lines += 1;
+        if self.frame_lines > MAX_SSE_FRAME_LINES {
+            return Err("Capture Runtime SSE frame exceeded the line limit.".into());
         }
         if line.starts_with(':') {
             return Ok(());
@@ -1568,6 +1581,7 @@ impl<'a> SseParser<'a> {
     {
         if self.frame.data.is_empty() {
             self.frame = SseFrame::default();
+            self.frame_lines = 0;
             return Ok(());
         }
         let mut value: Value = serde_json::from_str(&self.frame.data.join("\n"))
@@ -1593,6 +1607,7 @@ impl<'a> SseParser<'a> {
         redact_token(&mut value, self.token);
         on_event(value)?;
         self.frame = SseFrame::default();
+        self.frame_lines = 0;
         Ok(())
     }
 }
@@ -1765,6 +1780,9 @@ fn validate_capture_segments(value: &Value) -> Result<(), String> {
     let items = value
         .as_array()
         .ok_or_else(|| "Capture Runtime SSE event segments payload was invalid.".to_string())?;
+    if items.len() > MAX_SSE_SEGMENTS_PER_EVENT {
+        return Err("Capture Runtime SSE event segments exceeded the safety limit.".into());
+    }
     for segment in items {
         let segment = segment
             .as_object()
@@ -2839,6 +2857,42 @@ mod tests {
         assert!(parse_sse_events(missing.as_bytes(), None, "token").is_err());
         assert!(parse_sse_events(empty.as_bytes(), None, "token").is_err());
         assert!(parse_sse_events(valid.as_bytes(), None, "token").is_ok());
+    }
+
+    #[test]
+    fn sse_parser_rejects_malformed_utf8_lines() {
+        let error = parse_sse_events(b"data: \xff\n\n", None, "token")
+            .expect_err("malformed UTF-8 must fail closed");
+        assert_eq!(error, "Capture Runtime SSE response was not valid UTF-8.");
+    }
+
+    #[test]
+    fn sse_parser_rejects_oversized_lines_and_excessive_frame_lines() {
+        let oversized = format!("data: {}\n\n", "x".repeat(MAX_SSE_LINE_BYTES + 1));
+        assert!(parse_sse_events(oversized.as_bytes(), None, "token")
+            .expect_err("oversized line")
+            .contains("line exceeded"));
+
+        let excessive = ": x\n".repeat(MAX_SSE_FRAME_LINES + 1);
+        assert!(parse_sse_events(excessive.as_bytes(), None, "token")
+            .expect_err("excessive frame lines")
+            .contains("line limit"));
+    }
+
+    #[test]
+    fn sse_parser_rejects_excessive_segment_counts() {
+        let segment = r#"{"segmentId":"s","order":0,"locator":{"kind":"time","startMs":0,"endMs":1},"text":"t"}"#;
+        let segments = (0..=MAX_SSE_SEGMENTS_PER_EVENT)
+            .map(|_| segment)
+            .collect::<Vec<_>>()
+            .join(",");
+        let payload = format!(
+            r#"{{"protocolVersion":"2","eventId":"capture-1/1","sequence":1,"captureId":"capture-1","kind":"audio","eventType":"segment","stage":"extracting","segments":[{segments}],"createdAt":"2026-01-01T00:00:00Z"}}"#
+        );
+        let frame = format!("id: 1\nevent: segment\ndata: {payload}\n\n");
+        assert!(parse_sse_events(frame.as_bytes(), None, "token")
+            .expect_err("excessive segments")
+            .contains("safety limit"));
     }
 
     #[test]

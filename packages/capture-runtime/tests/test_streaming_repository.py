@@ -4,6 +4,8 @@ import hashlib
 import json
 import os
 import shutil
+import threading
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
@@ -12,6 +14,7 @@ import pytest
 
 from capture_runtime.clock import Clock
 from capture_runtime.contracts import (
+    CaptureDocumentV1,
     OpenIngestionV2,
     StartCaptureV2,
     StreamingCaptureStatus,
@@ -22,6 +25,7 @@ from capture_runtime.contracts import (
 from capture_runtime.storage import (
     StreamingRecordNotFoundError,
     StreamingRepository,
+    StreamingSubscriptionClosed,
     StreamingTransitionError,
     StreamingUploadLimitError,
 )
@@ -472,6 +476,43 @@ def test_streaming_repository_subscribe_fails_closed_without_registering_subscri
     assert capture.capture_id not in repository._subscribers
 
 
+def test_streaming_subscription_close_wakes_a_blocked_get_promptly(tmp_path: Path) -> None:
+    clock = MutableClock()
+    repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+    repository.initialize()
+    ingestion_id, _ = _open(repository, b"audio")
+    capture = repository.create_capture(
+        StartCaptureV2(
+            client_request_id="repository-subscription-wake",
+            ingestion_id=ingestion_id,
+            structuring_mode=StructuringMode.HOST,
+        )
+    )
+    subscription = repository.subscribe_events(capture.capture_id, after_sequence=-1)
+    started = threading.Event()
+    result: list[object] = []
+
+    def consume() -> None:
+        started.set()
+        try:
+            result.append(subscription.get(5.0))
+        except Exception as error:  # noqa: BLE001
+            result.append(error)
+
+    worker = threading.Thread(target=consume)
+    worker.start()
+    assert started.wait(1.0)
+    time.sleep(0.05)
+    began = time.monotonic()
+    subscription.close()
+    worker.join(1.0)
+    elapsed = time.monotonic() - began
+
+    assert not worker.is_alive()
+    assert elapsed < 1.0
+    assert isinstance(result[0], StreamingSubscriptionClosed)
+
+
 def test_streaming_repository_quarantines_a_sequence_gap_on_startup(tmp_path: Path) -> None:
     clock = MutableClock()
     repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
@@ -510,6 +551,32 @@ def test_streaming_repository_quarantines_a_sequence_gap_on_startup(tmp_path: Pa
     assert (
         repository.root / "quarantine" / "captures" / capture.capture_id / "metadata.json"
     ).is_file()
+
+
+def test_streaming_repository_cancelled_capture_cannot_retain_a_result(tmp_path: Path) -> None:
+    clock = MutableClock()
+    repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+    repository.initialize()
+    ingestion_id, _ = _open(repository, b"audio")
+    capture = repository.create_capture(
+        StartCaptureV2(
+            client_request_id="repository-cancel-result",
+            ingestion_id=ingestion_id,
+            structuring_mode=StructuringMode.HOST,
+        )
+    )
+    repository.mark_awaiting_structuring(capture.capture_id)
+    repository.mark_structuring(capture.capture_id)
+    repository.cancel_capture(capture.capture_id)
+
+    with pytest.raises(StreamingTransitionError, match="not being structured"):
+        repository.complete_capture_with_result(
+            capture.capture_id,
+            CaptureDocumentV1.model_construct(),  # type: ignore[arg-type]
+        )
+
+    assert not (repository.root / "captures" / capture.capture_id / "result.json").exists()
+    assert repository.get_capture(capture.capture_id).status is StreamingCaptureStatus.CANCELLED
 
 
 def test_streaming_repository_quarantines_a_symlinked_record_directory_alias_on_load(

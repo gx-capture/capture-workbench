@@ -326,7 +326,9 @@ impl LibraryStore {
                 .map_err(|error| format!("Capture library index cannot be encoded: {error}"))?,
         )?);
         if index_path.exists() {
-            fs::copy(&index_path, self.root.join(INDEX_BACKUP_FILE_NAME)).map_err(|error| {
+            let backup_path = self.root.join(INDEX_BACKUP_FILE_NAME);
+            ensure_leaf_safe(&self.root, &backup_path)?;
+            fs::copy(&index_path, &backup_path).map_err(|error| {
                 format!("Capture library recovery copy cannot be written: {error}")
             })?;
         }
@@ -455,12 +457,16 @@ impl LibraryStore {
         }
         let directory = self.document_directory(&request.document_id)?;
         let tombstone = directory.with_extension("deleting");
+        ensure_leaf_safe(&self.root, &directory)?;
+        ensure_leaf_safe(&self.root, &tombstone)?;
         fs::rename(&directory, &tombstone).map_err(|error| {
             format!("Capture library source cannot be prepared for deletion: {error}")
         })?;
         let removed = index.documents.remove(position);
         if let Err(error) = self.save_index(&index) {
             index.documents.insert(position, removed);
+            ensure_leaf_safe(&self.root, &tombstone)?;
+            ensure_leaf_safe(&self.root, &directory)?;
             let _ = fs::rename(tombstone, directory);
             return Err(error);
         }
@@ -500,7 +506,9 @@ impl LibraryStore {
         let index_path = self.root.join(INDEX_FILE_NAME);
         ensure_leaf_safe(&self.root, &index_path)?;
         if index_path.exists() {
-            fs::copy(&index_path, self.root.join(INDEX_BACKUP_FILE_NAME)).map_err(|error| {
+            let backup_path = self.root.join(INDEX_BACKUP_FILE_NAME);
+            ensure_leaf_safe(&self.root, &backup_path)?;
+            fs::copy(&index_path, &backup_path).map_err(|error| {
                 format!("Capture library recovery copy cannot be written: {error}")
             })?;
         }
@@ -710,6 +718,11 @@ fn ensure_leaf_safe(root: &Path, path: &Path) -> Result<(), String> {
     ensure_canonical_within(root, path)
 }
 
+fn ensure_transaction_path_safe(root: &Path, path: &Path) -> Result<(), String> {
+    ensure_library_root_safe(root)?;
+    ensure_leaf_safe(root, path)
+}
+
 fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let parent = path
         .parent()
@@ -737,6 +750,7 @@ fn prepare_transaction_entry(
     transaction_id: &str,
     bytes: Vec<u8>,
 ) -> Result<PreparedTransactionEntry, String> {
+    ensure_transaction_path_safe(root, target)?;
     let file_name = target
         .file_name()
         .and_then(|value| value.to_str())
@@ -774,6 +788,7 @@ fn transaction_path(root: &Path, relative: &str) -> Result<PathBuf, String> {
 
 fn write_transaction_journal(root: &Path, transaction: &LibraryTransaction) -> Result<(), String> {
     ensure_library_root_safe(root)?;
+    ensure_leaf_safe(root, &root.join(TRANSACTION_FILE_NAME))?;
     let bytes = serde_json::to_vec_pretty(transaction)
         .map_err(|error| format!("Capture library transaction cannot be encoded: {error}"))?;
     atomic_write(&root.join(TRANSACTION_FILE_NAME), &bytes)
@@ -787,14 +802,14 @@ fn commit_library_transaction(
     ensure_library_root_safe(root)?;
     for (index, entry) in prepared.iter().enumerate() {
         let temporary = transaction_path(root, &entry.journal.temporary_file_name)?;
+        ensure_transaction_path_safe(root, &temporary)?;
         if let Err(error) = inject_transaction_failure(&format!("stage-write-{index}"))
             .and_then(|()| fs::write(&temporary, &entry.bytes))
         {
             for cleanup in &prepared {
-                let _ = remove_file_if_exists(&transaction_path(
-                    root,
-                    &cleanup.journal.temporary_file_name,
-                )?);
+                let cleanup_path = transaction_path(root, &cleanup.journal.temporary_file_name)?;
+                ensure_transaction_path_safe(root, &cleanup_path)?;
+                let _ = remove_file_if_exists(&cleanup_path);
             }
             return Err(format!(
                 "Capture library transaction data cannot be staged: {error}"
@@ -809,6 +824,9 @@ fn commit_library_transaction(
         let target = transaction_path(root, &entry.target_file_name)?;
         let temporary = transaction_path(root, &entry.temporary_file_name)?;
         let backup = transaction_path(root, &entry.backup_file_name)?;
+        ensure_transaction_path_safe(root, &target)?;
+        ensure_transaction_path_safe(root, &temporary)?;
+        ensure_transaction_path_safe(root, &backup)?;
         let replacement = (|| -> Result<(), String> {
             if entry.had_target {
                 inject_transaction_failure(&format!("rename-{index}-backup"))
@@ -844,6 +862,7 @@ fn commit_library_transaction(
 fn recover_library_transaction(root: &Path) -> Result<(), String> {
     ensure_library_root_safe(root)?;
     let journal_path = root.join(TRANSACTION_FILE_NAME);
+    ensure_leaf_safe(root, &journal_path)?;
     let bytes = match fs::read(&journal_path) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
@@ -886,6 +905,9 @@ fn rollback_library_transaction(
         let target = transaction_path(root, &entry.target_file_name)?;
         let temporary = transaction_path(root, &entry.temporary_file_name)?;
         let backup = transaction_path(root, &entry.backup_file_name)?;
+        ensure_transaction_path_safe(root, &target)?;
+        ensure_transaction_path_safe(root, &temporary)?;
+        ensure_transaction_path_safe(root, &backup)?;
         if backup.exists() {
             remove_file_if_exists(&target)?;
             fs::rename(&backup, &target).map_err(|error| {
@@ -896,7 +918,9 @@ fn rollback_library_transaction(
         }
         remove_file_if_exists(&temporary)?;
     }
-    remove_file_if_exists(&root.join(TRANSACTION_FILE_NAME))
+    let journal = root.join(TRANSACTION_FILE_NAME);
+    ensure_transaction_path_safe(root, &journal)?;
+    remove_file_if_exists(&journal)
 }
 
 fn finalize_library_transaction(
@@ -907,6 +931,9 @@ fn finalize_library_transaction(
         let target = transaction_path(root, &entry.target_file_name)?;
         let temporary = transaction_path(root, &entry.temporary_file_name)?;
         let backup = transaction_path(root, &entry.backup_file_name)?;
+        ensure_transaction_path_safe(root, &target)?;
+        ensure_transaction_path_safe(root, &temporary)?;
+        ensure_transaction_path_safe(root, &backup)?;
         if !target.exists() && temporary.exists() {
             fs::rename(&temporary, &target).map_err(|error| {
                 format!("Capture library transaction cannot be completed: {error}")
@@ -918,7 +945,9 @@ fn finalize_library_transaction(
         remove_file_if_exists(&temporary)?;
         remove_file_if_exists(&backup)?;
     }
-    remove_file_if_exists(&root.join(TRANSACTION_FILE_NAME))
+    let journal = root.join(TRANSACTION_FILE_NAME);
+    ensure_transaction_path_safe(root, &journal)?;
+    remove_file_if_exists(&journal)
 }
 
 fn remove_file_if_exists(path: &Path) -> Result<(), String> {
@@ -1355,6 +1384,107 @@ mod tests {
         assert_eq!(detail.raw.expect("raw")["sourceText"], "after");
         assert_eq!(detail.result.expect("result")["targetText"], "after");
         assert!(!reopened.root.join(TRANSACTION_FILE_NAME).exists());
+    }
+
+    #[test]
+    fn commit_transaction_rejects_a_symlinked_target_before_rename() {
+        let directory = tempfile::tempdir().expect("temporary app data");
+        let library = LibraryStore::open(directory.path()).expect("library");
+        let created = library
+            .create_source(LibrarySourceInput {
+                file_name: "symlink-target.pdf".into(),
+                media_type: "application/pdf".into(),
+                bytes: b"pdf bytes".to_vec(),
+            })
+            .expect("source");
+        library
+            .update_capture(completed_update(&created.document_id, "before"))
+            .expect("baseline");
+        let document_directory = library
+            .document_directory(&created.document_id)
+            .expect("document directory");
+        let target = document_directory.join(RESULT_FILE_NAME);
+        let transaction_id = "2".repeat(32);
+        let prepared = vec![prepare_transaction_entry(
+            &library.root,
+            &target,
+            &transaction_id,
+            serde_json::to_vec_pretty(&serde_json::json!({ "targetText": "after" }))
+                .expect("result"),
+        )
+        .expect("result entry")];
+        let outside = directory.path().join("outside-result.json");
+        fs::write(&outside, b"{}").expect("outside result");
+        fs::remove_file(&target).expect("remove target");
+        #[cfg(windows)]
+        let symlink_result = std::os::windows::fs::symlink_file(&outside, &target);
+        #[cfg(unix)]
+        let symlink_result = std::os::unix::fs::symlink(&outside, &target);
+        if symlink_result.is_ok() {
+            let transaction = LibraryTransaction {
+                transaction_id,
+                document_id: created.document_id.clone(),
+                operation: "update_capture".into(),
+                target_index_version: INDEX_VERSION,
+                stage: TransactionStage::Prepared,
+                applied_entries: 0,
+                entries: prepared.iter().map(|entry| entry.journal.clone()).collect(),
+            };
+            assert!(commit_library_transaction(&library.root, transaction, prepared).is_err());
+            assert_eq!(fs::read_to_string(&outside).expect("outside result"), "{}");
+        }
+    }
+
+    #[test]
+    fn recovery_rejects_a_symlinked_transaction_target() {
+        let directory = tempfile::tempdir().expect("temporary app data");
+        let library = LibraryStore::open(directory.path()).expect("library");
+        let created = library
+            .create_source(LibrarySourceInput {
+                file_name: "recovery-symlink.pdf".into(),
+                media_type: "application/pdf".into(),
+                bytes: b"pdf bytes".to_vec(),
+            })
+            .expect("source");
+        library
+            .update_capture(completed_update(&created.document_id, "before"))
+            .expect("baseline");
+        let document_directory = library
+            .document_directory(&created.document_id)
+            .expect("document directory");
+        let target = document_directory.join(RESULT_FILE_NAME);
+        let transaction_id = "3".repeat(32);
+        let prepared = vec![prepare_transaction_entry(
+            &library.root,
+            &target,
+            &transaction_id,
+            serde_json::to_vec_pretty(&serde_json::json!({ "targetText": "after" }))
+                .expect("result"),
+        )
+        .expect("result entry")];
+        let outside = directory.path().join("outside-recovery.json");
+        fs::write(&outside, b"{}").expect("outside result");
+        fs::remove_file(&target).expect("remove target");
+        #[cfg(windows)]
+        let symlink_result = std::os::windows::fs::symlink_file(&outside, &target);
+        #[cfg(unix)]
+        let symlink_result = std::os::unix::fs::symlink(&outside, &target);
+        if symlink_result.is_ok() {
+            let transaction = LibraryTransaction {
+                transaction_id,
+                document_id: created.document_id.clone(),
+                operation: "update_capture".into(),
+                target_index_version: INDEX_VERSION,
+                stage: TransactionStage::Replacing,
+                applied_entries: 0,
+                entries: prepared.iter().map(|entry| entry.journal.clone()).collect(),
+            };
+            write_transaction_journal(&library.root, &transaction).expect("journal");
+            drop(library);
+
+            assert!(LibraryStore::open(directory.path()).is_err());
+            assert_eq!(fs::read_to_string(&outside).expect("outside result"), "{}");
+        }
     }
 
     #[test]

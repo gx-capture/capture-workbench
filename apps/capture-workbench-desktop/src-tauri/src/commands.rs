@@ -224,8 +224,7 @@ pub fn runtime_cancel_streaming_events(
     state: tauri::State<'_, DesktopState>,
     input: RuntimeStreamRequestIdInput,
 ) -> Result<(), String> {
-    state.cancel_streaming_request(&input.stream_request_id);
-    Ok(())
+    state.cancel_streaming_request(&input.stream_request_id)
 }
 
 #[tauri::command]

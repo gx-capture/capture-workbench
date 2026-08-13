@@ -140,6 +140,24 @@ describe('captureEventStream', () => {
     ).rejects.toMatchObject({ code: 'invalid_event_frame' });
   });
 
+  it('rejects malformed UTF-8 bytes instead of substituting replacement characters', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new Uint8Array([0x64, 0x61, 0x74, 0x61, 0x3a, 0x20, 0xff]));
+            controller.close();
+          },
+        }),
+        { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
+      ),
+    );
+
+    await expect(
+      lastValueFrom(captureEventStream(fetchMock, EVENT_URL)),
+    ).rejects.toMatchObject({ code: 'invalid_event_frame' });
+  });
+
   it('rejects capture events missing required fields', async () => {
     const fetchMock = vi
       .fn<typeof fetch>()
@@ -289,6 +307,24 @@ describe('captureEventStream', () => {
         expect.objectContaining({ code: 'invalid_event_frame' }),
       );
     }
+  });
+
+  it('rejects an SSE event with more than the bounded segment count', () => {
+    const segment = {
+      segmentId: 's',
+      order: 0,
+      locator: { kind: 'time', startMs: 0, endMs: 1 },
+      text: 't',
+    };
+    const event = {
+      ...captureEvent(1, 'segment'),
+      segments: Array.from({ length: 10_001 }, () => segment),
+    } as unknown as CaptureEventV2;
+    const frame = { id: '1', data: JSON.stringify(event) };
+
+    expect(() => decodeCaptureEventFrame(frame, 'capture-1')).toThrowError(
+      expect.objectContaining({ code: 'invalid_event_frame' }),
+    );
   });
 
   it('surfaces the canonical error envelope from a non-ok response', async () => {

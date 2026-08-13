@@ -64,19 +64,30 @@ class StreamingEventOverflow:
     """Marker returned when a live subscriber exceeded its bounded queue."""
 
 
+@dataclass(frozen=True, slots=True)
+class StreamingSubscriptionClosed:
+    """Marker that wakes a blocked subscriber when its subscription closes."""
+
+
 @dataclass(slots=True)
 class StreamingEventSubscription:
     replay: list[CaptureEventV2]
-    _queue: Queue[CaptureEventV2 | StreamingEventOverflow]
+    _queue: Queue[CaptureEventV2 | StreamingEventOverflow | StreamingSubscriptionClosed]
     _close: Any
     closed: bool = False
 
-    def get(self, timeout: float) -> CaptureEventV2 | StreamingEventOverflow:
+    def get(
+        self, timeout: float
+    ) -> CaptureEventV2 | StreamingEventOverflow | StreamingSubscriptionClosed:
         return self._queue.get(timeout=timeout)
 
     def close(self) -> None:
         if not self.closed:
             self.closed = True
+            try:
+                self._queue.put_nowait(StreamingSubscriptionClosed())
+            except Full:
+                pass
             self._close(self._queue)
 
 
@@ -231,7 +242,10 @@ class StreamingRepository:
         self._ingestion_idempotency: dict[str, str] = {}
         self._captures: dict[str, _CaptureRecord] = {}
         self._capture_idempotency: dict[str, str] = {}
-        self._subscribers: dict[str, set[Queue[CaptureEventV2 | StreamingEventOverflow]]] = {}
+        self._subscribers: dict[
+            str,
+            set[Queue[CaptureEventV2 | StreamingEventOverflow | StreamingSubscriptionClosed]],
+        ] = {}
         self._lock = threading.RLock()
 
     def initialize(self) -> None:
@@ -563,7 +577,9 @@ class StreamingRepository:
             if after_sequence < -1:
                 raise ValueError("event cursor must not be less than -1")
             replay = self._read_events_locked(capture_id, after_sequence=after_sequence)
-            subscriber: Queue[CaptureEventV2 | StreamingEventOverflow] = Queue(maxsize=256)
+            subscriber: Queue[
+                CaptureEventV2 | StreamingEventOverflow | StreamingSubscriptionClosed
+            ] = Queue(maxsize=256)
             self._subscribers.setdefault(capture_id, set()).add(subscriber)
             return StreamingEventSubscription(
                 replay=replay,
@@ -574,7 +590,7 @@ class StreamingRepository:
     def unsubscribe_events(
         self,
         capture_id: str,
-        subscriber: Queue[CaptureEventV2 | StreamingEventOverflow],
+        subscriber: Queue[CaptureEventV2 | StreamingEventOverflow | StreamingSubscriptionClosed],
     ) -> None:
         with self._lock:
             subscribers = self._subscribers.get(capture_id)
@@ -807,6 +823,50 @@ class StreamingRepository:
                     "progress": 1.0,
                     "updated_at": now,
                     "completed_at": now,
+                }
+            )
+            self._persist_capture(record)
+            return record.operation
+
+    def complete_capture_with_result(
+        self,
+        capture_id: str,
+        result: CaptureDocumentV1,
+    ) -> CaptureOperationV2:
+        """Persist a result and its terminal event under one lock.
+
+        A cancellation that wins before this call is observed atomically and
+        prevents both the result write and the terminal transition; a
+        cancellation that loses observes the completed terminal state.
+        """
+        with self._lock:
+            record = self._get_capture(capture_id)
+            if record.operation.status is StreamingCaptureStatus.COMPLETED:
+                return record.operation
+            if record.operation.status not in {
+                StreamingCaptureStatus.AWAITING_STRUCTURING,
+                StreamingCaptureStatus.STRUCTURING,
+            }:
+                raise StreamingTransitionError("capture is not being structured")
+            directory = self._capture_directory(capture_id)
+            result_path = directory / "result.json"
+            self._ensure_leaf_contained(directory, result_path)
+            _atomic_json(
+                result_path,
+                result.model_dump(mode="json", by_alias=True),
+            )
+            self.append_event(
+                capture_id,
+                event_type=StreamingEventType.COMPLETED,
+                stage="completed",
+                progress=1.0,
+            )
+            record.operation = record.operation.model_copy(
+                update={
+                    "status": StreamingCaptureStatus.COMPLETED,
+                    "progress": 1.0,
+                    "updated_at": result.completed_at,
+                    "completed_at": result.completed_at,
                 }
             )
             self._persist_capture(record)
@@ -1514,5 +1574,6 @@ __all__ = [
     "StreamingPartialNotFoundError",
     "StreamingRecordNotFoundError",
     "StreamingRepository",
+    "StreamingSubscriptionClosed",
     "StreamingTransitionError",
 ]

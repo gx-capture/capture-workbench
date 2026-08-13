@@ -571,10 +571,17 @@ async function readProbeStream(
   const contentType = (response.headers.get('content-type') ?? '').toLowerCase();
   if (!contentType.startsWith('text/event-stream')) throw invalidProbeEvent();
   const reader = response.body.getReader();
-  const decoder = new TextDecoder();
+  const decoder = new TextDecoder('utf-8', { fatal: true });
   const parser = new ProbeSseParser();
   const readDeadline = new ProbeReadDeadline();
   let sequence = previousSequence;
+  const decodeChunk = (value?: Uint8Array, streaming = false): string => {
+    try {
+      return decoder.decode(value, streaming ? { stream: true } : undefined);
+    } catch {
+      throw invalidProbeEvent();
+    }
+  };
   try {
     const consume = (frames: readonly ProbeSseFrame[]): ProbeStreamEvent | undefined => {
       for (const frame of frames) {
@@ -612,12 +619,12 @@ async function readProbeStream(
       }
       if (result.value.done) {
         const event = consume([
-          ...parser.push(decoder.decode()),
+          ...parser.push(decodeChunk()),
           ...parser.finish(),
         ]);
         return event ?? { kind: 'closed', sequence };
       }
-      const event = consume(parser.push(decoder.decode(result.value.value, { stream: true })));
+      const event = consume(parser.push(decodeChunk(result.value.value, true)));
       if (event) {
         await reader.cancel();
         return event;

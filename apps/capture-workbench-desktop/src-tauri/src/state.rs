@@ -16,10 +16,26 @@ use crate::{
     resources::RuntimeAssets,
 };
 
+const MAX_PENDING_STREAM_CANCELLATIONS: usize = 256;
+
 #[derive(Default)]
 struct StreamingRequestState {
     active: HashMap<String, Arc<AtomicBool>>,
     pending_cancellations: HashMap<String, bool>,
+}
+
+fn validate_stream_request_id(value: &str) -> Result<(), String> {
+    if value.is_empty()
+        || value.len() > 128
+        || value != value.trim()
+        || matches!(value, "." | "..")
+        || value
+            .chars()
+            .any(|character| character.is_control() || matches!(character, '/' | '\\' | '?' | '#'))
+    {
+        return Err("Capture stream request identifier is invalid.".into());
+    }
+    Ok(())
 }
 
 struct DesktopStateInner {
@@ -159,6 +175,7 @@ impl DesktopState {
         &self,
         request_id: &str,
     ) -> Result<Arc<AtomicBool>, String> {
+        validate_stream_request_id(request_id)?;
         if self.inner.stopping.load(Ordering::Acquire) {
             return Err("Capture runtime is stopped.".into());
         }
@@ -182,16 +199,30 @@ impl DesktopState {
         Ok(cancellation)
     }
 
-    pub(crate) fn cancel_streaming_request(&self, request_id: &str) {
-        if let Ok(mut requests) = self.inner.streaming_requests.lock() {
-            if let Some(cancellation) = requests.active.get(request_id) {
-                cancellation.store(true, Ordering::Release);
-            } else {
-                requests
-                    .pending_cancellations
-                    .insert(request_id.to_string(), true);
-            }
+    pub(crate) fn cancel_streaming_request(&self, request_id: &str) -> Result<(), String> {
+        validate_stream_request_id(request_id)?;
+        let mut requests = self
+            .inner
+            .streaming_requests
+            .lock()
+            .map_err(|_| "Capture runtime stream state is unavailable.".to_string())?;
+        if let Some(cancellation) = requests.active.get(request_id) {
+            cancellation.store(true, Ordering::Release);
+            return Ok(());
         }
+        if requests.pending_cancellations.contains_key(request_id) {
+            requests
+                .pending_cancellations
+                .insert(request_id.to_string(), true);
+            return Ok(());
+        }
+        if requests.pending_cancellations.len() >= MAX_PENDING_STREAM_CANCELLATIONS {
+            return Err("Capture runtime stream cancellation state is exhausted.".into());
+        }
+        requests
+            .pending_cancellations
+            .insert(request_id.to_string(), true);
+        Ok(())
     }
 
     pub(crate) fn finish_streaming_request(
@@ -262,7 +293,9 @@ mod tests {
             .begin_streaming_request("stream-request-1")
             .expect("register stream");
         assert!(!cancellation.load(Ordering::Acquire));
-        state.cancel_streaming_request("stream-request-1");
+        state
+            .cancel_streaming_request("stream-request-1")
+            .expect("cancel stream");
         assert!(cancellation.load(Ordering::Acquire));
         state.finish_streaming_request("stream-request-1", &cancellation);
         assert!(state.begin_streaming_request("stream-request-1").is_ok());
@@ -272,7 +305,9 @@ mod tests {
     #[test]
     fn cancel_before_begin_returns_an_already_cancelled_stream() {
         let state = DesktopState::new(PathBuf::from("workbench-data"));
-        state.cancel_streaming_request("race-before-begin");
+        state
+            .cancel_streaming_request("race-before-begin")
+            .expect("pending cancel");
 
         let cancellation = state
             .begin_streaming_request("race-before-begin")
@@ -296,7 +331,9 @@ mod tests {
             .expect("register stream");
         state.finish_streaming_request("race-after-finish", &cancellation);
 
-        state.cancel_streaming_request("race-after-finish");
+        state
+            .cancel_streaming_request("race-after-finish")
+            .expect("teardown cancel");
         let reused = state
             .begin_streaming_request("race-after-finish")
             .expect("teardown cancellation is preserved");
@@ -311,7 +348,9 @@ mod tests {
         let cancellation = state
             .begin_streaming_request("race-shutdown-active")
             .expect("register stream");
-        state.cancel_streaming_request("race-shutdown-pending");
+        state
+            .cancel_streaming_request("race-shutdown-pending")
+            .expect("pending cancel");
 
         state.shutdown();
 
@@ -322,5 +361,34 @@ mod tests {
                 .expect_err("stopped"),
             "Capture runtime is stopped."
         );
+    }
+
+    #[test]
+    fn pending_stream_cancellations_are_bounded_and_validated() {
+        let state = DesktopState::new(PathBuf::from("workbench-data"));
+        for index in 0..MAX_PENDING_STREAM_CANCELLATIONS {
+            state
+                .cancel_streaming_request(&format!("pending-cancel-{index}"))
+                .expect("bounded pending cancel");
+        }
+        assert_eq!(
+            state
+                .cancel_streaming_request("pending-cancel-overflow")
+                .expect_err("overflow"),
+            "Capture runtime stream cancellation state is exhausted."
+        );
+        assert_eq!(
+            state
+                .cancel_streaming_request("../invalid")
+                .expect_err("invalid id"),
+            "Capture stream request identifier is invalid."
+        );
+
+        let cancelled = state
+            .begin_streaming_request("pending-cancel-0")
+            .expect("cancel-before-begin is preserved");
+        assert!(cancelled.load(Ordering::Acquire));
+        state.finish_streaming_request("pending-cancel-0", &cancelled);
+        state.shutdown();
     }
 }

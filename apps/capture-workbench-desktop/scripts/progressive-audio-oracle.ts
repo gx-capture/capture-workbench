@@ -107,7 +107,7 @@ export async function consumeSseEvents(
 ): Promise<void> {
   if (!response.body) throw new Error('Progressive audio oracle SSE response had no body.');
   const reader = response.body.getReader();
-  const decoder = new TextDecoder();
+  const decoder = new TextDecoder('utf-8', { fatal: true });
   let pending = '';
   let frame: SseFrame = { data: [] };
   let previousSequence = 0;

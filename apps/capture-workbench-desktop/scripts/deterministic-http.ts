@@ -904,8 +904,9 @@ function requestJson({
         response.on('data', (chunk) => chunks.push(chunk));
         response.on('end', () => {
           try {
-            const text = Buffer.concat(chunks).toString('utf8');
             const contentType = responseContentType(response.headers);
+            const bytes = Buffer.concat(chunks);
+            const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
             subscriber.next({
               status: response.statusCode,
               headers: response.headers,

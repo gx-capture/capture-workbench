@@ -9,8 +9,10 @@ hardening phase, and the post-e166174 final security hardening phase are
 complete, and the post-7909eeb final lifecycle/security phase is complete.
 The post-c762e02 final lifecycle hardening phase and the post-f9827bf final
 bounded security/protocol phase, the post-8c98a32 final hardening phase, and
-the post-5b5aa3c final lifecycle hardening phase are also complete. Final
-cleanup and the external consumer compatibility gate remain open.
+the post-5b5aa3c final lifecycle hardening phase are also complete. The
+post-59bcbf5 final lifecycle hardening phase is complete in the current phase
+commit. Final cleanup and the external consumer compatibility gate remain
+open.
 
 ## Change mode checkpoint
 

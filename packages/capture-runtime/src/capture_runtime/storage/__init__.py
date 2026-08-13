@@ -21,6 +21,7 @@ from capture_runtime.storage.streaming_repository import (
     StreamingPartialNotFoundError,
     StreamingRecordNotFoundError,
     StreamingRepository,
+    StreamingSubscriptionClosed,
     StreamingTransitionError,
     StreamingUploadLimitError,
 )
@@ -38,6 +39,7 @@ __all__ = [
     "StreamingPartialNotFoundError",
     "StreamingRecordNotFoundError",
     "StreamingRepository",
+    "StreamingSubscriptionClosed",
     "StreamingTransitionError",
     "StreamingUploadLimitError",
     "DEFAULT_MAX_UPLOAD_BYTES",

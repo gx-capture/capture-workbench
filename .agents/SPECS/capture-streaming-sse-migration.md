@@ -7,9 +7,10 @@ hardening phase, and the post-3b61cef security/protocol hardening phase are
 complete, the post-e166174 final security hardening phase is complete, and the
 post-7909eeb final lifecycle/security phase, and the post-c762e02 final
 lifecycle hardening phase, and the post-f9827bf final bounded security/protocol
-phase, the post-8c98a32 final hardening phase, and the post-5b5aa3c final
-lifecycle hardening phase are complete. The external consumer compatibility
-gate and final residual cleanup remain open.
+phase, the post-8c98a32 final hardening phase, the post-5b5aa3c final
+lifecycle hardening phase, and the post-59bcbf5 final lifecycle hardening
+phase are complete. The external consumer compatibility gate and final
+residual cleanup remain open.
 
 ## Purpose
 
@@ -263,6 +264,14 @@ compatibility release before this producer can delete the public type.
     operation contract (kind, status, revisions, progress, timestamps,
     completedAt/terminal equivalence, source and error shapes) plus
     request/source correlation. The external consumer gate remains unchecked.
+17. **Post-59bcbf5 final lifecycle hardening**: completed in the containing
+    phase commit; bounded native cancellation state validates request ids,
+    Tauri transaction cleanup revalidates no-symlink containment, runtime
+    result persistence and terminal event publication share one repository
+    lock, Angular/native/probe SSE readers reject malformed UTF-8 and bounded
+    segment/frame payloads, and the route drains a terminal event queued after
+    the replay snapshot instead of returning an empty stream. The external
+    consumer gate remains unchecked.
 
 Each phase must have an explicit path list, its own review, and its own
 verification result. Revert consumers before reverting the runtime cutover;
@@ -317,7 +326,7 @@ phase commit records the narrow fixes and final local verification below.
   consistency, tools/workbench lint/typecheck, and `git diff --check` passed;
   unrelated dirty paths remain unstaged. The private engine-bearing Ollama
   smoke remains opt-in and was not synthesized for this local verification.
-- Post-`695567b` ingestion open-recovery (the containing phase commit) ??
+- Post-`695567b` ingestion open-recovery (the containing phase commit) —
   runtime by-client-request ingestion lookup, Angular/native lost-open-response
   recovery, and bounded-orphan documentation. Focused verification passed:
   runtime streaming API/repository 40 passed, Angular client suite 99 passed,
@@ -330,7 +339,7 @@ phase commit records the narrow fixes and final local verification below.
   `git diff --check` passed; unrelated dirty paths remain unstaged. The private
   engine-bearing Ollama smoke remains opt-in and was not synthesized for this
   local verification.
-- Post-`9e6e2b3` final hardening (the containing phase commit) ??native
+- Post-`9e6e2b3` final hardening (the containing phase commit) —native
   committed-2xx semantic recovery, same-bounded-id ingestion requests,
   real-media-model-smoke v2 stage mapping, and authoritative source-kind
   rejection. Focused verification passed: runtime streaming API/repository 41
@@ -344,7 +353,7 @@ phase commit records the narrow fixes and final local verification below.
   consistency, tools/workbench lint/typecheck, and `git diff --check` passed;
   unrelated dirty paths remain unstaged. The private engine-bearing Ollama
   smoke remains opt-in and was not synthesized for this local verification.
-- Post-`3b61cef` security/protocol hardening (the containing phase commit) ??
+- Post-`3b61cef` security/protocol hardening (the containing phase commit) —
   Angular recovered-ingestion correlation, native capture-start semantic
   validation/recovery, unterminated-final-SSE rejection, and canonical
   persistence containment. Focused verification passed: runtime streaming
@@ -361,7 +370,7 @@ phase commit records the narrow fixes and final local verification below.
   guard itself is covered by a platform-independent test. The private
   engine-bearing Ollama smoke remains opt-in and was not synthesized for this
   local verification.
-- Post-`e166174` final security hardening (the containing phase commit) ??
+- Post-`e166174` final security hardening (the containing phase commit) —
   native/deterministic SSE EOF termination, Angular recovery abort-signal
   propagation, root/category persistence containment, and required native
   capture-start source metadata. Focused verification passed: runtime streaming
@@ -381,7 +390,7 @@ phase commit records the narrow fixes and final local verification below.
   independent tests. The private engine-bearing Ollama smoke remains opt-in and
   was not synthesized for this local verification.
 
-- Post-`7909eeb` final lifecycle/security (the containing phase commit) ??
+- Post-`7909eeb` final lifecycle/security (the containing phase commit) —
   reviewed path groups: `packages/capture-angular/src/lib/http-capture-client.ts`
   and `.spec.ts` (initial open correlation, AbortError preservation);
   `packages/capture-runtime/src/capture_runtime/storage/streaming_repository.py`
@@ -405,7 +414,7 @@ phase commit records the narrow fixes and final local verification below.
   The private engine-bearing Ollama smoke remains opt-in and was not
   synthesized for this local verification.
 
-- Post-`c762e02` final lifecycle hardening (the containing phase commit) ??
+- Post-`c762e02` final lifecycle hardening (the containing phase commit) —
   reviewed path groups: `packages/capture-angular/src/lib/http-capture-client.ts`
   and `.spec.ts` (open-status decoding, cancellation-before-id recovery);
   `apps/capture-workbench-desktop/src-tauri/src/runtime_client.rs`
@@ -431,7 +440,7 @@ phase commit records the narrow fixes and final local verification below.
   verification.
 
 - Post-`f9827bf` final bounded security/protocol (the containing phase commit)
-  ??reviewed path groups: `apps/capture-workbench-desktop/src-tauri/src/
+  —reviewed path groups: `apps/capture-workbench-desktop/src-tauri/src/
   runtime_client.rs` (SSE size accounting, required frame id);
   `apps/capture-workbench-desktop/src-tauri/src/library.rs` (canonical
   no-symlink containment for document reads/writes/exports/deletes);
@@ -450,7 +459,7 @@ phase commit records the narrow fixes and final local verification below.
   The private engine-bearing Ollama smoke remains opt-in and was not
   synthesized for this local verification.
 
-- Post-`8c98a32` final hardening (the containing phase commit) ??reviewed
+- Post-`8c98a32` final hardening (the containing phase commit) —reviewed
   path groups: `apps/capture-workbench-desktop/src-tauri/src/library.rs`
   (pre-mutation root validation, unique atomic temp writes, containment);
   `apps/capture-workbench-desktop/src-tauri/src/runtime_client.rs`
@@ -478,7 +487,7 @@ phase commit records the narrow fixes and final local verification below.
   guards are platform-independent. The private engine-bearing Ollama smoke
   remains opt-in and was not synthesized for this local verification.
 
-- Post-`5b5aa3c` final lifecycle hardening (the containing phase commit) ??
+- Post-`5b5aa3c` final lifecycle hardening (the containing phase commit) —
   reviewed path groups: `apps/capture-workbench-desktop/src-tauri/src/state.rs`
   (pending-cancellation preservation and race tests);
   `apps/capture-workbench-desktop/src-tauri/src/runtime_client.rs` (full v2

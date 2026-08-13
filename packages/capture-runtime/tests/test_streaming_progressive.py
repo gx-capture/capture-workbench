@@ -19,6 +19,7 @@ from capture_runtime.contracts import (
     RawCaptureSegmentV1,
     RawCaptureV1,
     StartCaptureV2,
+    StreamingCaptureStatus,
     StreamingEventType,
     StructuringMode,
     TimeLocatorV1,
@@ -169,6 +170,17 @@ class FailingStructurer:
         raise StructuringValidationError("invalid generated structure", issues=[])
 
 
+class LateReturnStructurer(FakeCaptureStructuringProvider):
+    async def structure(self, raw, *, target_language, cancel_event):
+        await cancel_event.wait()
+        # Simulate a provider that ignores cancellation and returns late.
+        return await super().structure(
+            raw,
+            target_language=target_language,
+            cancel_event=asyncio.Event(),
+        )
+
+
 class FailingDecoderProcessor:
     async def process(self, *, capture_id, source, source_path, cancellation, sink):
         raise ProgressiveDecoderError("decoder failed")
@@ -235,6 +247,51 @@ def test_progressive_runtime_materializes_partial_raw_result_and_terminal_events
         ]
         assert StreamingEventType.SEGMENT in event_types
         assert StreamingEventType.COMPLETED in event_types
+        await service.shutdown()
+
+    asyncio.run(scenario())
+
+
+def test_cancel_wins_before_result_persist_and_no_success_is_returned(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        clock = FixedClock()
+        repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+        repository.initialize()
+        ingestion_id, _ = _open(repository)
+        service = StreamingCaptureService(
+            repository,
+            clock=clock,
+            processor=FakeProgressiveProcessor(clock),  # type: ignore[arg-type]
+            structurer=LateReturnStructurer(clock),  # type: ignore[arg-type]
+        )
+        operation = service.start_capture(
+            StartCaptureV2(
+                client_request_id="progressive-cancel-result",
+                ingestion_id=ingestion_id,
+                structuring_mode=StructuringMode.RUNTIME,
+            )
+        )
+        for _ in range(100):
+            if (
+                service.get_capture(operation.capture_id).status
+                is StreamingCaptureStatus.STRUCTURING
+            ):
+                break
+            await asyncio.sleep(0.01)
+
+        service.cancel_capture(operation.capture_id)
+        task = service._tasks.get(operation.capture_id)
+        if task is not None:
+            for _ in range(100):
+                if task.done():
+                    break
+                await asyncio.sleep(0.01)
+
+        cancelled = service.get_capture(operation.capture_id)
+        assert cancelled.status is StreamingCaptureStatus.CANCELLED
+        assert not (repository.root / "captures" / operation.capture_id / "result.json").exists()
+        events = repository.read_events(operation.capture_id, after_sequence=-1)
+        assert events[-1].event_type is StreamingEventType.CANCELLED
         await service.shutdown()
 
     asyncio.run(scenario())

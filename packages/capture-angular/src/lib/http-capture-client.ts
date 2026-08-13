@@ -85,6 +85,21 @@ const TERMINAL_CAPTURE_OPERATION_STATUSES = new Set([
   'failed',
   'cancelled',
 ]);
+const CAPTURE_BLOCK_TYPES = new Set([
+  'heading',
+  'paragraph',
+  'list-item',
+  'table',
+  'quote',
+  'transcript',
+]);
+const MAX_PARTIAL_SEGMENTS = 10_000;
+const MAX_DOCUMENT_SEGMENTS = 10_000;
+const MAX_DOCUMENT_BLOCKS = 10_000;
+const MAX_RAW_WARNINGS = 1_000;
+const MAX_WARNING_TEXT = 500;
+const MAX_CAPTURE_TEXT = 2_000_000;
+const MAX_PROJECTED_TEXT = 8_000_000;
 
 export class HttpCaptureClient implements CaptureClient {
   constructor(private readonly options: CaptureHttpClientOptions) {}
@@ -835,9 +850,6 @@ export function decodeCaptureOperationResponse(
     if (!isRecord(error)) throw invalidRuntimeResponse();
     validateCaptureFailure(error);
   }
-  if (status !== 'failed' && error !== undefined && error !== null) {
-    throw invalidRuntimeResponse();
-  }
   return value as unknown as CaptureOperationV2;
 }
 
@@ -876,7 +888,7 @@ function validateCaptureFailure(value: Record<string, unknown>): void {
   }
 }
 
-function decodePartialCaptureResponse(
+export function decodePartialCaptureResponse(
   value: unknown,
   expectedCaptureId: string,
 ): PartialCaptureV2 {
@@ -885,10 +897,48 @@ function decodePartialCaptureResponse(
   }
   const captureId = assertOpaqueRuntimeId(value['captureId']);
   if (captureId !== expectedCaptureId) throw invalidRuntimeResponse();
+  if (!isRecord(value['source'])) throw invalidRuntimeResponse();
+  validateCaptureSourceV1(value['source']);
+  const revision = value['revision'];
+  if (
+    typeof revision !== 'number'
+    || !Number.isSafeInteger(revision)
+    || revision < 0
+  ) {
+    throw invalidRuntimeResponse();
+  }
+  const coveredUntilMs = value['coveredUntilMs'];
+  if (
+    typeof coveredUntilMs !== 'number'
+    || !Number.isSafeInteger(coveredUntilMs)
+    || coveredUntilMs < 0
+  ) {
+    throw invalidRuntimeResponse();
+  }
+  const segments = value['segments'];
+  if (segments !== undefined && segments !== null) {
+    validateCaptureSegments(segments, 0, MAX_PARTIAL_SEGMENTS);
+  }
+  const sourceText = value['sourceText'];
+  if (
+    sourceText !== undefined
+    && sourceText !== null
+    && (typeof sourceText !== 'string' || [...sourceText].length > MAX_PROJECTED_TEXT)
+  ) {
+    throw invalidRuntimeResponse();
+  }
+  const extractionEngine = value['extractionEngine'];
+  if (extractionEngine !== undefined && extractionEngine !== null) {
+    validateCaptureEngineV1(extractionEngine);
+  }
+  const updatedAt = value['updatedAt'];
+  if (typeof updatedAt !== 'string' || !validRfc3339Timestamp(updatedAt)) {
+    throw invalidRuntimeResponse();
+  }
   return value as unknown as PartialCaptureV2;
 }
 
-function decodeCaptureStreamingResult(
+export function decodeCaptureStreamingResult(
   value: unknown,
   expectedCaptureId: string,
 ): CaptureStreamingResult {
@@ -899,7 +949,232 @@ function decodeCaptureStreamingResult(
   if (!isRecord(value['raw']) || !isRecord(value['result'])) {
     throw invalidRuntimeResponse();
   }
+  validateRawCaptureV1(value['raw']);
+  validateCaptureDocumentV1(value['result']);
+  if (operation.source) {
+    const rawSource = value['raw']['source'];
+    const resultSource = value['result']['source'];
+    if (
+      !isRecord(rawSource)
+      || !isRecord(resultSource)
+      || rawSource['sha256'] !== operation.source.sha256
+      || rawSource['bytes'] !== operation.source.bytes
+      || resultSource['sha256'] !== operation.source.sha256
+      || resultSource['bytes'] !== operation.source.bytes
+    ) {
+      throw invalidRuntimeResponse();
+    }
+  }
   return { ...value, operation } as CaptureStreamingResult;
+}
+
+function validateCaptureEngineV1(value: unknown): void {
+  if (!isRecord(value)) throw invalidRuntimeResponse();
+  const { engine, model, digest, device } = value;
+  if (
+    typeof engine !== 'string'
+    || engine === ''
+    || typeof model !== 'string'
+    || model === ''
+    || typeof digest !== 'string'
+    || !/^sha256:[0-9a-f]{64}$/u.test(digest)
+    || (device !== undefined
+      && device !== null
+      && (typeof device !== 'string' || device === ''))
+  ) {
+    throw invalidRuntimeResponse();
+  }
+}
+
+function validateCaptureLocatorV1(value: unknown): void {
+  if (!isRecord(value)) throw invalidRuntimeResponse();
+  const kind = value['kind'];
+  if (kind === 'page') {
+    const boundingBox = value['boundingBox'];
+    if (
+      Object.keys(value).some((key) => !['kind', 'page', 'boundingBox'].includes(key))
+      || typeof value['page'] !== 'number'
+      || !Number.isSafeInteger(value['page'])
+      || value['page'] < 1
+      || (boundingBox !== undefined
+        && boundingBox !== null
+        && (!Array.isArray(boundingBox)
+          || boundingBox.length !== 4
+          || boundingBox.some((item) => typeof item !== 'number' || !Number.isFinite(item))))
+    ) {
+      throw invalidRuntimeResponse();
+    }
+    return;
+  }
+  if (
+    kind !== 'time'
+    || Object.keys(value).some((key) => !['kind', 'startMs', 'endMs'].includes(key))
+    || typeof value['startMs'] !== 'number'
+    || !Number.isSafeInteger(value['startMs'])
+    || value['startMs'] < 0
+    || typeof value['endMs'] !== 'number'
+    || !Number.isSafeInteger(value['endMs'])
+    || value['endMs'] <= value['startMs']
+  ) {
+    throw invalidRuntimeResponse();
+  }
+}
+
+function validateCaptureSegmentV1(value: unknown): void {
+  if (!isRecord(value)) throw invalidRuntimeResponse();
+  if (
+    Object.keys(value).some((key) => !['segmentId', 'order', 'locator', 'text'].includes(key))
+    || typeof value['segmentId'] !== 'string'
+    || value['segmentId'] === ''
+    || typeof value['order'] !== 'number'
+    || !Number.isSafeInteger(value['order'])
+    || value['order'] < 0
+    || typeof value['text'] !== 'string'
+    || value['text'] === ''
+    || [...value['text']].length > MAX_CAPTURE_TEXT
+  ) {
+    throw invalidRuntimeResponse();
+  }
+  validateCaptureLocatorV1(value['locator']);
+}
+
+function validateCaptureSegments(
+  value: unknown,
+  min: number,
+  max: number,
+  requireContiguousOrder = false,
+): void {
+  if (!Array.isArray(value) || value.length < min || value.length > max) {
+    throw invalidRuntimeResponse();
+  }
+  const identifiers = new Set<string>();
+  value.forEach((segment, index) => {
+    validateCaptureSegmentV1(segment);
+    const record = segment as Record<string, unknown>;
+    if (requireContiguousOrder && record['order'] !== index) {
+      throw invalidRuntimeResponse();
+    }
+    identifiers.add(record['segmentId'] as string);
+  });
+  if (identifiers.size !== value.length) throw invalidRuntimeResponse();
+}
+
+function validateCaptureWarnings(value: unknown): void {
+  if (value === undefined || value === null) return;
+  if (
+    !Array.isArray(value)
+    || value.length > MAX_RAW_WARNINGS
+    || value.some(
+      (warning) => typeof warning !== 'string' || [...warning].length > MAX_WARNING_TEXT,
+    )
+  ) {
+    throw invalidRuntimeResponse();
+  }
+}
+
+function validateRawCaptureV1(value: Record<string, unknown>): void {
+  if (value['schemaVersion'] !== '1' || value['diagnosticOnly'] !== true) {
+    throw invalidRuntimeResponse();
+  }
+  if (!isRecord(value['source'])) throw invalidRuntimeResponse();
+  validateCaptureSourceV1(value['source']);
+  validateCaptureSegments(value['segments'], 1, MAX_DOCUMENT_SEGMENTS, true);
+  const sourceText = value['sourceText'];
+  if (typeof sourceText !== 'string' || [...sourceText].length > MAX_PROJECTED_TEXT) {
+    throw invalidRuntimeResponse();
+  }
+  const projected = (value['segments'] as unknown[])
+    .map((segment) => (segment as Record<string, unknown>)['text'])
+    .join('\n');
+  if (sourceText !== projected) throw invalidRuntimeResponse();
+  validateCaptureEngineV1(value['extractionEngine']);
+  validateCaptureWarnings(value['warnings']);
+  const createdAt = value['createdAt'];
+  if (typeof createdAt !== 'string' || !validRfc3339Timestamp(createdAt)) {
+    throw invalidRuntimeResponse();
+  }
+}
+
+function validateCaptureDocumentV1(value: Record<string, unknown>): void {
+  if (value['schemaVersion'] !== '1') throw invalidRuntimeResponse();
+  if (!isRecord(value['source'])) throw invalidRuntimeResponse();
+  validateCaptureSourceV1(value['source']);
+  const rawSegments = value['rawSegments'];
+  const blocks = value['blocks'];
+  if (
+    !Array.isArray(rawSegments)
+    || rawSegments.length < 1
+    || rawSegments.length > MAX_DOCUMENT_SEGMENTS
+  ) {
+    throw invalidRuntimeResponse();
+  }
+  validateCaptureSegments(rawSegments, 1, MAX_DOCUMENT_SEGMENTS, true);
+  if (
+    !Array.isArray(blocks)
+    || blocks.length < 1
+    || blocks.length > MAX_DOCUMENT_BLOCKS
+    || blocks.length !== rawSegments.length
+  ) {
+    throw invalidRuntimeResponse();
+  }
+  const blockIdentifiers = new Set<string>();
+  blocks.forEach((block, index) => {
+    if (!isRecord(block)) throw invalidRuntimeResponse();
+    const sourceSegment = rawSegments[index] as Record<string, unknown>;
+    if (
+      Object.keys(block).some(
+        (key) => ![
+          'blockId',
+          'order',
+          'type',
+          'sourceSegmentId',
+          'locator',
+          'sourceText',
+          'targetText',
+        ].includes(key),
+      )
+      || typeof block['blockId'] !== 'string'
+      || block['blockId'] === ''
+      || typeof block['order'] !== 'number'
+      || !Number.isSafeInteger(block['order'])
+      || block['order'] !== index
+      || typeof block['type'] !== 'string'
+      || !CAPTURE_BLOCK_TYPES.has(block['type'])
+      || typeof block['sourceSegmentId'] !== 'string'
+      || block['sourceSegmentId'] !== sourceSegment['segmentId']
+      || typeof block['sourceText'] !== 'string'
+      || block['sourceText'] === ''
+      || [...block['sourceText']].length > MAX_CAPTURE_TEXT
+      || typeof block['targetText'] !== 'string'
+      || block['targetText'] === ''
+      || [...block['targetText']].length > MAX_CAPTURE_TEXT
+    ) {
+      throw invalidRuntimeResponse();
+    }
+    validateCaptureLocatorV1(block['locator']);
+    blockIdentifiers.add(block['blockId'] as string);
+  });
+  if (blockIdentifiers.size !== blocks.length) throw invalidRuntimeResponse();
+  for (const field of ['sourceText', 'targetText'] as const) {
+    const text = value[field];
+    if (typeof text !== 'string' || [...text].length > MAX_PROJECTED_TEXT) {
+      throw invalidRuntimeResponse();
+    }
+  }
+  validateCaptureEngineV1(value['extractionEngine']);
+  validateCaptureEngineV1(value['structuringEngine']);
+  validateCaptureWarnings(value['warnings']);
+  const createdAt = value['createdAt'];
+  const completedAt = value['completedAt'];
+  if (
+    typeof createdAt !== 'string'
+    || !validRfc3339Timestamp(createdAt)
+    || typeof completedAt !== 'string'
+    || !validRfc3339Timestamp(completedAt)
+    || Date.parse(completedAt) < Date.parse(createdAt)
+  ) {
+    throw invalidRuntimeResponse();
+  }
 }
 
 function invalidRuntimeResponse(): CaptureHttpError {

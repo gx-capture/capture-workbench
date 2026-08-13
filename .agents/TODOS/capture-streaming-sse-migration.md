@@ -134,6 +134,16 @@ decision record, and phase commits.
       passed; the external Cert Prep/Law Prep compatibility gate remains
       unchecked.
 
+- [x] Complete the post-`59bcbf5` final lifecycle hardening phase: bounded
+      native cancellation identifiers, Tauri transaction containment,
+      runtime result/event completion atomicity, malformed UTF-8/payload caps,
+      and terminal-after-replay SSE draining.
+  Verify: runtime `346 passed, 11 skipped, 1 warning`; Angular `126 passed`;
+      workbench `58 passed`; Tauri `79 passed`; package QA `215 passed, 2
+      skipped`; tools `25 passed`; deterministic smoke, 4 Playwright E2E tests,
+      contract checks, typechecks, lint, and `git diff --check` passed. The
+      external Cert Prep/Law Prep compatibility gate remains unchecked.
+
 ## Explicitly blocked evidence
 
 - Real engine-bearing OCR/Whisper smoke remains opt-in and depends on the

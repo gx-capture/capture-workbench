@@ -195,6 +195,29 @@ test('probe rejects an SSE frame with a missing id', async () => {
   );
 });
 
+test('probe rejects malformed UTF-8 bytes instead of substituting replacement characters', async () => {
+  const fetchImplementation = async () => new Response(
+    new ReadableStream({
+      start(controller) {
+        controller.enqueue(new Uint8Array([0x66, 0x66, 0xff]));
+        controller.close();
+      },
+    }),
+    { status: 200, headers: { 'content-type': 'text/event-stream' } },
+  );
+
+  await assert.rejects(
+    waitForExtraction(
+      'http://runtime.test',
+      CAPTURE_ID,
+      SECRET,
+      5_000,
+      fetchImplementation,
+    ),
+    (error) => error instanceof UserPdfOcrProbeError && error.shape.code === 'invalid_response',
+  );
+});
+
 test('probe reconciles resync overflow before reconnecting', async () => {
   const eventRequests: RequestInit[] = [];
   let eventRequestCount = 0;

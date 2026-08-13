@@ -61,8 +61,51 @@ const partial = {
   sourceText: 'OCR text',
   updatedAt: '2026-07-20T00:00:00Z',
 };
-const raw = { sourceText: 'OCR text' };
-const result = { targetText: 'translated text' };
+const rawSegment = {
+  segmentId: 'segment-0',
+  order: 0,
+  locator: { kind: 'time', startMs: 0, endMs: 1 },
+  text: 'OCR text',
+};
+const engine = {
+  engine: 'windowsml',
+  model: 'test-ocr',
+  digest: `sha256:${'b'.repeat(64)}`,
+  device: 'cpu',
+};
+const raw = {
+  schemaVersion: '1',
+  diagnosticOnly: true,
+  source,
+  segments: [rawSegment],
+  sourceText: 'OCR text',
+  extractionEngine: engine,
+  warnings: [],
+  createdAt: '2026-07-20T00:00:00Z',
+};
+const result = {
+  schemaVersion: '1',
+  source,
+  rawSegments: [rawSegment],
+  blocks: [
+    {
+      blockId: 'block-0',
+      order: 0,
+      type: 'transcript',
+      sourceSegmentId: 'segment-0',
+      locator: rawSegment.locator,
+      sourceText: 'OCR text',
+      targetText: 'translated text',
+    },
+  ],
+  sourceText: 'OCR text',
+  targetText: 'translated text',
+  extractionEngine: engine,
+  structuringEngine: engine,
+  warnings: [],
+  createdAt: '2026-07-20T00:00:00Z',
+  completedAt: '2026-07-20T00:00:01Z',
+};
 const terminalResult = {
   operation: completedOperation,
   raw,
@@ -626,7 +669,19 @@ describe('DesktopWorkspaceStore', () => {
       });
       const store = initializeStore(
         library,
-        runtimeStub({ startStreamingCapture, getStreamingCapture, deleteStreamingCapture }),
+        runtimeStub({
+          startStreamingCapture,
+          getStreamingCapture,
+          deleteStreamingCapture,
+          getStreamingResult: vi.fn(() => of({
+            ...terminalResult,
+            operation: { ...terminalResult.operation, captureId: 'capture-restart' },
+          })),
+          getStreamingPartial: vi.fn(() => of({
+            ...partial,
+            captureId: 'capture-restart',
+          })),
+        }),
       );
 
       store.retry(retained.documentId);
@@ -989,6 +1044,79 @@ describe('DesktopWorkspaceStore', () => {
     }));
   });
 
+  it('fails closed when recovery receives a malformed partial payload', () => {
+    const recovered = {
+      ...summary,
+      status: 'recovery_required' as const,
+      stage: 'capture',
+      captureId: 'capture-1',
+    };
+    const malformedPartial = {
+      protocolVersion: '2',
+      captureId: 'capture-1',
+      revision: -1,
+      coveredUntilMs: 0,
+      updatedAt: '2026-07-20T00:00:00Z',
+    };
+    const updateCapture = vi.fn((update: Record<string, unknown>) =>
+      of({ ...recovered, ...update } as DesktopLibrarySummary));
+    const store = initializeStore(
+      libraryStub({
+        list: vi.fn(() => of([recovered])),
+        get: vi.fn(() => of(recovered as DesktopLibraryDetail)),
+        updateCapture,
+      }),
+      runtimeStub({
+        getStreamingPartial: vi.fn(() => of(malformedPartial)),
+      }),
+    );
+
+    store.retry(recovered.documentId);
+    TestBed.tick();
+
+    expect(captureUpdates(updateCapture)).toContainEqual(expect.objectContaining({
+      status: 'recovery_required',
+      recoveryCode: 'capture_recovery_required',
+    }));
+  });
+
+  it('fails closed when recovery receives a malformed terminal result payload', () => {
+    const recovered = {
+      ...summary,
+      status: 'recovery_required' as const,
+      stage: 'capture',
+      captureId: 'capture-1',
+    };
+    const malformedResult = {
+      operation: completedOperation,
+      raw: { sourceText: 'OCR text' },
+      result: { targetText: 'translated text' },
+    };
+    const updateCapture = vi.fn((update: Record<string, unknown>) =>
+      of({ ...recovered, ...update } as DesktopLibrarySummary));
+    const store = initializeStore(
+      libraryStub({
+        list: vi.fn(() => of([recovered])),
+        get: vi.fn(() => of(recovered as DesktopLibraryDetail)),
+        updateCapture,
+      }),
+      runtimeStub({
+        getStreamingResult: vi.fn(() => of(malformedResult)),
+      }),
+    );
+
+    store.retry(recovered.documentId);
+    TestBed.tick();
+
+    expect(captureUpdates(updateCapture)).toContainEqual(expect.objectContaining({
+      status: 'recovery_required',
+      recoveryCode: 'capture_recovery_required',
+    }));
+    expect(
+      captureUpdates(updateCapture).some((update) => update['raw'] !== undefined),
+    ).toBe(false);
+  });
+
   it('retains pending create recovery when lookup or active-ingestion cleanup is uncertain', () => {
     const pending = {
       ...summary,
@@ -1226,6 +1354,8 @@ describe('DesktopWorkspaceStore', () => {
       ...runningOperation,
       captureId: 'capture-terminal-error',
       status: runtimeStatus,
+      updatedAt: '2026-07-20T00:00:01Z',
+      completedAt: '2026-07-20T00:00:01Z',
       error: {
         code: 'terminal_error',
         message: 'terminal evidence',
@@ -1241,6 +1371,10 @@ describe('DesktopWorkspaceStore', () => {
           startStreamingCapture: vi.fn(() => of(terminal)),
           getStreamingCapture: vi.fn(() => of(terminal)),
           deleteStreamingCapture,
+          getStreamingPartial: vi.fn(() => of({
+            ...partial,
+            captureId: 'capture-terminal-error',
+          })),
         }),
       );
 
@@ -1347,6 +1481,14 @@ describe('DesktopWorkspaceStore', () => {
       getStreamingCapture,
       getStreamingEvents,
       deleteStreamingCapture,
+      getStreamingResult: vi.fn(() => of({
+        ...terminalResult,
+        operation: { ...terminalResult.operation, captureId: 'capture-recovery' },
+      })),
+      getStreamingPartial: vi.fn(() => of({
+        ...partial,
+        captureId: 'capture-recovery',
+      })),
     });
     const store = initializeStore(library, client);
 

@@ -452,7 +452,7 @@ async function readStreamingEventsIncrementally(
     );
     if (!response.body) throw new Error('Real Ollama SSE response did not expose a body.');
     const reader = response.body.getReader();
-    const decoder = new TextDecoder();
+    const decoder = new TextDecoder('utf-8', { fatal: true });
     const parser = new StreamingEventParser(captureId);
     const events: StreamingEvent[] = [];
     let lastSequence = lastEventId;

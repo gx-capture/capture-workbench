@@ -32,6 +32,8 @@ import {
 } from 'rxjs';
 import {
   decodeCaptureOperationResponse,
+  decodeCaptureStreamingResult,
+  decodePartialCaptureResponse,
   type CaptureEventV2,
   type CaptureOperationV2,
   type PartialCaptureV2,
@@ -655,6 +657,7 @@ export class DesktopWorkspaceStore {
     return this.runtime.getStreamingEvents(captureId, active.lastEventSequence).pipe(
       catchError((error: unknown) => {
         if (isAbortError(error)) return throwError(() => error);
+        if (isInvalidRuntimeResponse(error)) return throwError(() => error);
         return of(null);
       }),
       concatMap((events) => {
@@ -662,9 +665,10 @@ export class DesktopWorkspaceStore {
         return this.runtime.getStreamingPartial(captureId).pipe(
           tap((partial) => {
             if (partial) {
+              const decodedPartial = decodePartialCaptureResponse(partial, captureId);
               this.streamingPartials.update((current) => {
                 const next = new Map(current);
-                next.set(documentId, partial);
+                next.set(documentId, decodedPartial);
                 return next;
               });
             }
@@ -681,6 +685,7 @@ export class DesktopWorkspaceStore {
     operation: CaptureOperationV2,
     documentId?: string,
   ): void {
+    decodeCaptureOperationResponse(operation);
     active.lastEventSequence = operation.lastEventSequence;
     active.lastStage = operation.status;
     if (typeof operation.progress === 'number') {
@@ -708,17 +713,22 @@ export class DesktopWorkspaceStore {
       stage: operation.status,
     }).pipe(
       switchMap(() => terminalData$),
-      switchMap((terminalData) => this.library.updateCapture({
+      switchMap((terminalData) => {
+        const decoded = terminalData
+          ? decodeCaptureStreamingResult(terminalData, operation.captureId)
+          : null;
+        return this.library.updateCapture({
           documentId,
           captureId: operation.captureId,
           status: active.terminalStatus ?? 'failed',
           stage: operation.status,
           errorCode: operation.error?.code,
           errorMessage: operation.error?.message,
-          ...(terminalData
-            ? { raw: terminalData.raw, result: terminalData.result }
+          ...(decoded
+            ? { raw: decoded.raw, result: decoded.result }
             : {}),
-        })),
+        });
+      }),
       tap(() => {
         active.terminalCommitted = true;
         this.reloadDocumentState(documentId);
@@ -1117,6 +1127,13 @@ function isAbortError(error: unknown): boolean {
   return error instanceof DOMException
     ? error.name === 'AbortError'
     : error instanceof Error && error.name === 'AbortError';
+}
+
+function isInvalidRuntimeResponse(error: unknown): boolean {
+  return !!error
+    && typeof error === 'object'
+    && 'code' in error
+    && (error as { readonly code?: unknown }).code === 'invalid_response';
 }
 
 function redactSensitiveMessage(message: string): string {

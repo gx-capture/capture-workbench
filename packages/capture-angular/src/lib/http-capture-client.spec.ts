@@ -8,6 +8,8 @@ import {
 } from './contracts';
 import {
   decodeCaptureOperationResponse,
+  decodeCaptureStreamingResult,
+  decodePartialCaptureResponse,
   HttpCaptureClient,
   provideHttpCaptureClient,
 } from './http-capture-client';
@@ -933,8 +935,12 @@ describe('HttpCaptureClient', () => {
       .fn<typeof fetch>()
       .mockResolvedValueOnce(jsonResponse(operation))
       .mockResolvedValueOnce(jsonResponse(operation))
-      .mockResolvedValueOnce(jsonResponse({ protocolVersion: '2', captureId: 'capture-1' }))
-      .mockResolvedValueOnce(jsonResponse({ operation, raw: {}, result: {} }))
+      .mockResolvedValueOnce(jsonResponse(validPartial()))
+      .mockResolvedValueOnce(jsonResponse({
+        operation,
+        raw: validRaw(),
+        result: validDocument(),
+      }))
       .mockResolvedValueOnce(jsonResponse(operation))
       .mockResolvedValueOnce(jsonResponse(operation))
       .mockResolvedValueOnce(new Response(null, { status: 204 }));
@@ -1218,6 +1224,102 @@ describe('HttpCaptureClient', () => {
       structuringMode: 'runtime',
     }))).rejects.toMatchObject({ code: 'invalid_response' });
   });
+
+  it('validates the full bounded partial payload before accepting it', () => {
+    const valid = {
+      protocolVersion: '2',
+      captureId: 'capture-1',
+      source: validSource(),
+      revision: 1,
+      coveredUntilMs: 100,
+      segments: [validSegment(0)],
+      sourceText: 'text-0',
+      extractionEngine: validEngine(),
+      updatedAt: '2026-08-11T00:00:01Z',
+    };
+    expect(decodePartialCaptureResponse(valid, 'capture-1')).toEqual(valid);
+
+    const malformed = [
+      { ...valid, revision: -1 },
+      { ...valid, coveredUntilMs: -1 },
+      { ...valid, segments: Array.from({ length: 10_001 }, () => validSegment(0)) },
+      { ...valid, sourceText: 'x'.repeat(8_000_001) },
+      { ...valid, updatedAt: 'not-a-timestamp' },
+    ];
+    for (const candidate of malformed) {
+      expect(() => decodePartialCaptureResponse(candidate, 'capture-1')).toThrowError(
+        expect.objectContaining({ code: 'invalid_response' }),
+      );
+    }
+  });
+
+  it('validates the full bounded raw/result payload before accepting terminal data', () => {
+    const operation = fullOperation();
+    const valid = { operation, raw: validRaw(), result: validDocument() };
+    expect(decodeCaptureStreamingResult(valid, 'capture-1')).toEqual(valid);
+
+    const invalidRaw = [
+      { ...valid, raw: { ...valid.raw, segments: [] } },
+      { ...valid, raw: { ...valid.raw, sourceText: 'different' } },
+      {
+        ...valid,
+        raw: {
+          ...valid.raw,
+          segments: Array.from({ length: 10_001 }, () => validSegment(0)),
+        },
+      },
+    ];
+    for (const candidate of invalidRaw) {
+      expect(() => decodeCaptureStreamingResult(candidate, 'capture-1')).toThrowError(
+        expect.objectContaining({ code: 'invalid_response' }),
+      );
+    }
+
+    const block = (valid.result as Record<string, unknown>)['blocks'] as Record<string, unknown>[];
+    const invalidResult = [
+      { ...valid, result: { ...valid.result, blocks: [] } },
+      { ...valid, result: { ...valid.result, blocks: [{ ...block[0], order: 1 }] } },
+      { ...valid, result: { ...valid.result, completedAt: '2026-08-10T00:00:00Z' } },
+      {
+        ...valid,
+        result: { ...valid.result, source: { ...validSource(), bytes: 99 } },
+      },
+    ];
+    for (const candidate of invalidResult) {
+      expect(() => decodeCaptureStreamingResult(candidate, 'capture-1')).toThrowError(
+        expect.objectContaining({ code: 'invalid_response' }),
+      );
+    }
+  });
+
+  it('fails closed on a malformed partial recovery payload from the client', async () => {
+    const malformedPartial = {
+      protocolVersion: '2',
+      captureId: 'capture-1',
+      source: validSource(),
+      revision: -1,
+      coveredUntilMs: 0,
+      updatedAt: '2026-08-11T00:00:00Z',
+    };
+    const partialFetch = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(malformedPartial));
+    const partialClient = configureClient(partialFetch) as HttpCaptureClient;
+    await expect(
+      firstValueFrom(partialClient.getStreamingPartial('capture-1')),
+    ).rejects.toMatchObject({ code: 'invalid_response' });
+  });
+
+  it('fails closed on a malformed terminal result payload from the client', async () => {
+    const malformedResult = {
+      operation: fullOperation(),
+      raw: validRaw(),
+      result: { ...validDocument(), blocks: [] },
+    };
+    const resultFetch = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(malformedResult));
+    const resultClient = configureClient(resultFetch) as HttpCaptureClient;
+    await expect(
+      firstValueFrom(resultClient.getStreamingResult('capture-1')),
+    ).rejects.toMatchObject({ code: 'invalid_response' });
+  });
 });
 
 function fullOperation(): Record<string, unknown> {
@@ -1238,6 +1340,88 @@ function fullOperation(): Record<string, unknown> {
     },
     createdAt: '2026-08-11T00:00:00Z',
     updatedAt: '2026-08-11T00:00:00Z',
+  };
+}
+
+function validSource(): Record<string, unknown> {
+  return {
+    sha256: 'a'.repeat(64),
+    fileName: 'scan.pdf',
+    mediaType: 'application/pdf',
+    bytes: 3,
+  };
+}
+
+function validEngine(): Record<string, unknown> {
+  return {
+    engine: 'windowsml',
+    model: 'test-ocr',
+    digest: `sha256:${'b'.repeat(64)}`,
+    device: 'cpu',
+  };
+}
+
+function validSegment(order: number, segmentId = `segment-${order}`): Record<string, unknown> {
+  return {
+    segmentId,
+    order,
+    locator: { kind: 'time', startMs: 0, endMs: 1 },
+    text: `text-${order}`,
+  };
+}
+
+function validRaw(source = validSource()): Record<string, unknown> {
+  const segments = [validSegment(0)];
+  return {
+    schemaVersion: '1',
+    diagnosticOnly: true,
+    source,
+    segments,
+    sourceText: 'text-0',
+    extractionEngine: validEngine(),
+    warnings: [],
+    createdAt: '2026-08-11T00:00:00Z',
+  };
+}
+
+function validDocument(source = validSource()): Record<string, unknown> {
+  const rawSegments = [validSegment(0)];
+  return {
+    schemaVersion: '1',
+    source,
+    rawSegments,
+    blocks: [
+      {
+        blockId: 'block-0',
+        order: 0,
+        type: 'transcript',
+        sourceSegmentId: 'segment-0',
+        locator: rawSegments[0]?.['locator'],
+        sourceText: 'text-0',
+        targetText: 'text-0',
+      },
+    ],
+    sourceText: 'text-0',
+    targetText: 'text-0',
+    extractionEngine: validEngine(),
+    structuringEngine: validEngine(),
+    warnings: [],
+    createdAt: '2026-08-11T00:00:00Z',
+    completedAt: '2026-08-11T00:00:01Z',
+  };
+}
+
+function validPartial(): Record<string, unknown> {
+  return {
+    protocolVersion: '2',
+    captureId: 'capture-1',
+    source: validSource(),
+    revision: 1,
+    coveredUntilMs: 100,
+    segments: [validSegment(0)],
+    sourceText: 'text-0',
+    extractionEngine: validEngine(),
+    updatedAt: '2026-08-11T00:00:01Z',
   };
 }
 

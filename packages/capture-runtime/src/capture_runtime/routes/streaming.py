@@ -38,6 +38,7 @@ from capture_runtime.storage import (
     StreamingIdempotencyConflictError,
     StreamingPartialNotFoundError,
     StreamingRecordNotFoundError,
+    StreamingSubscriptionClosed,
     StreamingTransitionError,
     StreamingUploadLimitError,
 )
@@ -274,7 +275,7 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
                     StreamingCaptureStatus.COMPLETED,
                     StreamingCaptureStatus.FAILED,
                     StreamingCaptureStatus.CANCELLED,
-                }:
+                } and operation.last_event_sequence <= last_sequence:
                     return
                 while True:
                     try:
@@ -284,6 +285,8 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
                         continue
                     if isinstance(item, StreamingEventOverflow):
                         yield _event_frame(_resync_event(service.get_capture(capture_id)))
+                        return
+                    if isinstance(item, StreamingSubscriptionClosed):
                         return
                     if item.sequence <= last_sequence:
                         if _is_terminal_event(item):

@@ -254,8 +254,7 @@ class StreamingCaptureService:
                     "completedAt": self._clock.now().isoformat(),
                 }
             )
-            self.repository.write_result(capture_id, completed)
-            self.repository.complete_capture(capture_id)
+            self.repository.complete_capture_with_result(capture_id, completed)
             return completed
         except asyncio.CancelledError:
             raise

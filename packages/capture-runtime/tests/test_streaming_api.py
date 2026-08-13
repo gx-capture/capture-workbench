@@ -25,7 +25,7 @@ from capture_runtime.contracts import (
     TimeLocatorV1,
 )
 from capture_runtime.routes.streaming import register_streaming_routes
-from capture_runtime.storage import StreamingEventOverflow
+from capture_runtime.storage import StreamingEventOverflow, StreamingSubscriptionClosed
 
 
 def _source() -> bytes:
@@ -486,6 +486,66 @@ def test_streaming_api_refreshes_terminal_status_after_subscribe_to_avoid_empty_
     assert subscription.closed
 
 
+def test_streaming_api_drains_terminal_event_queued_after_replay_snapshot() -> None:
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    operation = CaptureOperationV2(
+        capture_id="capture-terminal-after-replay",
+        ingestion_id="ingestion-terminal-after-replay",
+        kind=CaptureSourceKind.IMAGE,
+        status=StreamingCaptureStatus.COMPLETED,
+        progress=1,
+        partial_revision=0,
+        last_event_sequence=4,
+        created_at=now,
+        updated_at=now,
+        completed_at=now,
+    )
+    terminal_event = CaptureEventV2(
+        event_id="capture-terminal-after-replay/4",
+        sequence=4,
+        capture_id="capture-terminal-after-replay",
+        kind=CaptureSourceKind.IMAGE,
+        event_type=StreamingEventType.COMPLETED,
+        stage="completed",
+        progress=1,
+        created_at=now,
+    )
+
+    class LateTerminalSubscription:
+        replay = []
+        closed = False
+
+        def get(self, _timeout: float) -> CaptureEventV2:
+            return terminal_event
+
+        def close(self) -> None:
+            self.closed = True
+
+    subscription = LateTerminalSubscription()
+    service = SimpleNamespace(
+        get_capture=lambda _capture_id: operation,
+        subscribe_events=lambda _capture_id, *, after_sequence: subscription,
+    )
+    router = APIRouter()
+    register_streaming_routes(
+        router,
+        SimpleNamespace(streaming_capture_service=service),
+    )
+    endpoint = next(
+        route.endpoint for route in router.routes if route.path == "/captures/{capture_id}/events"
+    )
+
+    async def collect() -> str:
+        response = await endpoint("capture-terminal-after-replay", "3")
+        return "".join([chunk async for chunk in response.body_iterator])
+
+    body = asyncio.run(collect())
+
+    assert "event: completed" in body
+    assert '"sequence":4' in body
+    assert subscription.closed
+
+
 def test_streaming_api_returns_when_a_terminal_event_arrives_behind_the_client_cursor() -> None:
     now = datetime(2026, 1, 1, tzinfo=UTC)
     operation = CaptureOperationV2(
@@ -536,6 +596,52 @@ def test_streaming_api_returns_when_a_terminal_event_arrives_behind_the_client_c
 
     async def collect() -> str:
         response = await endpoint("capture-terminal-behind-cursor", "5")
+        return "".join([chunk async for chunk in response.body_iterator])
+
+    assert asyncio.run(collect()) == ""
+    assert subscription.closed
+
+
+def test_streaming_api_returns_when_subscription_close_wakes_the_queue_wait() -> None:
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    operation = CaptureOperationV2(
+        capture_id="capture-subscription-closed",
+        ingestion_id="ingestion-subscription-closed",
+        kind=CaptureSourceKind.IMAGE,
+        status=StreamingCaptureStatus.EXTRACTING,
+        progress=0.5,
+        partial_revision=0,
+        last_event_sequence=3,
+        created_at=now,
+        updated_at=now,
+    )
+
+    class ClosedSubscription:
+        replay = []
+        closed = False
+
+        def get(self, _timeout: float) -> StreamingSubscriptionClosed:
+            return StreamingSubscriptionClosed()
+
+        def close(self) -> None:
+            self.closed = True
+
+    subscription = ClosedSubscription()
+    service = SimpleNamespace(
+        get_capture=lambda _capture_id: operation,
+        subscribe_events=lambda _capture_id, *, after_sequence: subscription,
+    )
+    router = APIRouter()
+    register_streaming_routes(
+        router,
+        SimpleNamespace(streaming_capture_service=service),
+    )
+    endpoint = next(
+        route.endpoint for route in router.routes if route.path == "/captures/{capture_id}/events"
+    )
+
+    async def collect() -> str:
+        response = await endpoint("capture-subscription-closed", None)
         return "".join([chunk async for chunk in response.body_iterator])
 
     assert asyncio.run(collect()) == ""
