@@ -505,7 +505,7 @@ class StreamingCaptureService:
             segments=list(raw.segments),
             source_text=raw.source_text,
             extraction_engine=raw.extraction_engine,
-            updated_at=self._clock.now(),
+            updated_at=raw.created_at,
         )
         self.repository.write_partial(partial)
         self.repository.append_event(

@@ -4,7 +4,7 @@ import asyncio
 import hashlib
 import json
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -30,6 +30,16 @@ from capture_runtime.storage import StreamingEventOverflow, StreamingSubscriptio
 
 def _source() -> bytes:
     return b"ID3def"
+
+
+class AdvancingClock:
+    def __init__(self) -> None:
+        self.current = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+
+    def now(self) -> datetime:
+        current = self.current
+        self.current += timedelta(microseconds=1)
+        return current
 
 
 def _open(client: TestClient) -> tuple[str, str]:
@@ -861,6 +871,13 @@ def test_streaming_api_fails_closed_when_source_content_kind_mismatches_declared
 
 
 def test_streaming_api_commits_host_structuring_idempotently(client: TestClient) -> None:
+    clock = AdvancingClock()
+    service = client.app.state.streaming_capture_service
+    extractor = service._extractor
+    assert extractor is not None
+    service._clock = clock
+    extractor._clock = clock
+
     source = b"\x89PNG\r\n\x1a\nCAPTURE_TEXT:host page"
     digest = hashlib.sha256(source).hexdigest()
     opened = client.post(
@@ -911,6 +928,8 @@ def test_streaming_api_commits_host_structuring_idempotently(client: TestClient)
             break
         time.sleep(0.01)
     assert partial
+    raw = client.app.state.streaming_repository.read_raw(capture_id)
+    assert partial["updatedAt"] == raw.model_dump(mode="json", by_alias=True)["createdAt"]
     segments = partial["segments"]
     blocks = [
         {
