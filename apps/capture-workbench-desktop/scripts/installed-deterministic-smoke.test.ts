@@ -26,6 +26,7 @@ import {
 } from './installed-deterministic-smoke.ts';
 import { expectedInstallerName } from './installed-smoke-lifecycle.ts';
 import {
+  formatInstalledWebViewStartupDiagnostics,
   installedWebViewCdpReadyTimeoutMs,
   parseInstalledWebViewCdpPort,
 } from './installed-browser.ts';
@@ -179,6 +180,23 @@ test('installed WebView2 dynamic CDP metadata accepts only a valid port', () => 
     () => parseInstalledWebViewCdpPort('not-a-port\n'),
     /valid CDP port/u,
   );
+});
+
+test('installed WebView2 startup diagnostics expose only safe bounded facts', () => {
+  const message = formatInstalledWebViewStartupDiagnostics({
+    appRunning: true,
+    webViewProcessCount: 2,
+    webViewRemoteDebuggingArgument: false,
+    webViewUserDataArgument: true,
+    requestedPortListening: false,
+    devToolsActivePortFile: false,
+    path: 'must-not-appear',
+  });
+  assert.equal(
+    message,
+    'Installed WebView2 startup diagnostics: appRunning=true;webViewProcessCount=2;webViewRemoteDebuggingArgument=false;webViewUserDataArgument=true;requestedPortListening=false;devToolsActivePortFile=false.',
+  );
+  assert.equal(message.includes('must-not-appear'), false);
 });
 
 test('registry cleanup is allowed only for the exact owned install directory', () => {

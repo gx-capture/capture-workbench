@@ -53,6 +53,7 @@ import {
 } from './contracts/installed.ts';
 import { assertCaptureDocumentForFixture } from './installed-document-assertions.ts';
 import {
+  collectInstalledWebViewStartupDiagnostics,
   connectToInstalledWebView,
   dynamicWebViewCdpPort,
   exerciseInstalledUi,
@@ -709,7 +710,16 @@ export function runInstalledDeterministicSmoke(
         }),
         map(() => undefined),
         catchError((error) => {
-          state.exerciseError = error;
+          const diagnostics = state.appProcess
+            ? collectInstalledWebViewStartupDiagnostics(
+                state.appProcess,
+                webViewDataDirectory,
+                state.cdpPort ?? dynamicWebViewCdpPort,
+              )
+            : undefined;
+          state.exerciseError = diagnostics
+            ? new AggregateError([error, new Error(diagnostics)], 'Installed WebView2 startup failed.')
+            : error;
           return of(undefined);
         }),
       );

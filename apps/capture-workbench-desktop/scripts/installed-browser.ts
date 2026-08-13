@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import net from 'node:net';
 import { join } from 'node:path';
@@ -28,6 +30,15 @@ const fixtures = INSTALLED_FIXTURES;
 export const installedWebViewCdpReadyTimeoutMs = 180_000;
 export const dynamicWebViewCdpPort = 0;
 
+const startupDiagnosticKeys = [
+  'appRunning',
+  'webViewProcessCount',
+  'webViewRemoteDebuggingArgument',
+  'webViewUserDataArgument',
+  'requestedPortListening',
+  'devToolsActivePortFile',
+] as const;
+
 export function reserveLoopbackPort() {
   return new Observable((subscriber) => {
     const server = net.createServer();
@@ -54,6 +65,70 @@ export function parseInstalledWebViewCdpPort(contents) {
     throw new Error('Installed WebView2 DevToolsActivePort did not contain a valid CDP port.');
   }
   return port;
+}
+
+export function formatInstalledWebViewStartupDiagnostics(diagnostics) {
+  return `Installed WebView2 startup diagnostics: ${startupDiagnosticKeys
+    .map((key) => `${key}=${String(diagnostics?.[key] ?? false)}`)
+    .join(';')}.`;
+}
+
+export function collectInstalledWebViewStartupDiagnostics(
+  appProcess,
+  webViewDataDirectory,
+  requestedPort,
+) {
+  const defaults = {
+    appRunning: appProcess?.exitCode === null,
+    webViewProcessCount: 0,
+    webViewRemoteDebuggingArgument: false,
+    webViewUserDataArgument: false,
+    requestedPortListening: false,
+    devToolsActivePortFile:
+      typeof webViewDataDirectory === 'string' &&
+      existsSync(join(webViewDataDirectory, 'EBWebView', 'DevToolsActivePort')),
+  };
+  if (!Number.isSafeInteger(appProcess?.pid) || appProcess.pid < 1) {
+    return formatInstalledWebViewStartupDiagnostics(defaults);
+  }
+  const script = `
+$app = Get-CimInstance Win32_Process -Filter "ProcessId=$env:CAPTURE_SMOKE_DIAGNOSTIC_PID"
+$webViews = @(Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'")
+$arguments = @($webViews | ForEach-Object { [string]$_.CommandLine })
+$listening = $false
+try {
+  if ([int]$env:CAPTURE_SMOKE_DIAGNOSTIC_PORT -gt 0) {
+    $listening = @(Get-NetTCPConnection -State Listen -LocalAddress '127.0.0.1' -LocalPort ([int]$env:CAPTURE_SMOKE_DIAGNOSTIC_PORT) -ErrorAction Stop).Count -gt 0
+  }
+} catch {}
+[ordered]@{
+  appRunning = $null -ne $app
+  webViewProcessCount = $webViews.Count
+  webViewRemoteDebuggingArgument = @($arguments | Where-Object { $_ -match '--remote-debugging-(?:address|port)=' }).Count -gt 0
+  webViewUserDataArgument = @($arguments | Where-Object { $_ -match '--user-data-dir=' }).Count -gt 0
+  requestedPortListening = $listening
+} | ConvertTo-Json -Compress
+`;
+  try {
+    const output = execFileSync(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-Command', script],
+      {
+        encoding: 'utf8',
+        timeout: 10_000,
+        windowsHide: true,
+        env: {
+          ...process.env,
+          CAPTURE_SMOKE_DIAGNOSTIC_PID: String(appProcess.pid),
+          CAPTURE_SMOKE_DIAGNOSTIC_PORT: String(requestedPort),
+        },
+      },
+    );
+    const observed = JSON.parse(output.trim());
+    return formatInstalledWebViewStartupDiagnostics({ ...defaults, ...observed });
+  } catch {
+    return formatInstalledWebViewStartupDiagnostics(defaults);
+  }
 }
 
 export function connectToInstalledWebView(
