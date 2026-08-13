@@ -208,8 +208,9 @@ worker ZIPs remain release assets.
 Before a model-enabled tag, the local Windows machine runs the exact-SHA real
 OCR/Whisper probes and Tauri/WebView three-media smoke against the canonical
 source lock. The tag workflow then verifies main CI, rebuilds the lock-bound
-catalog and worker archives, checks every checksum, core-only NSIS, installed
-size report, synchronized package integrity, and exact remote release
+catalog and worker archives, checks every checksum, the NSIS/package set for
+the selected `release_mode`, installed size report, synchronized package
+integrity, and exact remote release
 asset-name set before publication. The package tarball is a GitHub Packages
 artifact, never a GitHub Release asset. Model files and model ZIPs never enter
 the GitHub Release.

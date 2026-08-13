@@ -1,0 +1,10 @@
+{
+  "evidenceVersion": "1",
+  "releaseMode": "model-enabled",
+  "sourceCommit": "f55140b",
+  "releaseCandidateRunId": 31693056293,
+  "runtimeCandidateId": "b6344be18a9012af0c238ff806512d3a4d628fbf2814cd24e1feb4ce8f67e860",
+  "runtimeArtifactId": 9177740708,
+  "runtimeExecutableMeasuredBytes": 60552680,
+  "nsisInstallerMeasuredBytes": 62634838
+}

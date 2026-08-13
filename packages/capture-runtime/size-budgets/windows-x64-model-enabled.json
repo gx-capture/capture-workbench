@@ -1,0 +1,13 @@
+{
+  "budgetVersion": "1",
+  "evidence": {
+    "headroomBasisPoints": 1000,
+    "measuredAtUtc": "2026-08-13",
+    "measurementReport": "size-budgets/windows-x64-model-enabled-measurement-evidence.json",
+    "measurementReportSha256": "27a72afb1ac2b0eea0a28bd1f632f8f422dfe87ce3a79baf3668fdea00d6d988",
+    "nsisInstallerMeasuredBytes": 62634838,
+    "runtimeExecutableMeasuredBytes": 60552680
+  },
+  "nsisInstallerBytes": 68898322,
+  "runtimeExecutableBytes": 66607948
+}

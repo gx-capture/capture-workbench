@@ -190,12 +190,15 @@ jobs:
 
       - name: Verify packaging budget
         shell: pwsh
+        env:
+          RELEASE_MODE: ${{ inputs.release_mode }}
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
           New-Item -ItemType Directory -Force -Path packages/capture-runtime/dist/release | Out-Null
           Copy-Item -Path "$env:RUNTIME_CANDIDATE_PATH/runtime/*" -Destination packages/capture-runtime/dist/release -Recurse -Force
-          pnpm nx run capture-runtime:size-regression-check
+          $sizeTarget = if ($env:RELEASE_MODE -eq 'model-enabled') { 'capture-runtime:size-regression-check-model-enabled' } else { 'capture-runtime:size-regression-check' }
+          pnpm nx run $sizeTarget
           Copy-Item packages/capture-runtime/dist/size/runtime-size-report.json packages/capture-runtime/dist/release/runtime-size-report.json
           $digest = (Get-FileHash packages/capture-runtime/dist/release/runtime-size-report.json -Algorithm SHA256).Hash.ToLowerInvariant()
           "$digest  runtime-size-report.json" | Set-Content packages/capture-runtime/dist/release/runtime-size-report.json.sha256 -Encoding utf8NoBOM

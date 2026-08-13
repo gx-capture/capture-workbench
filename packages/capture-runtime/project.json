@@ -367,6 +367,15 @@
         "command": "uv run --python 3.12 python scripts/size_regression_check.py --report dist/size/runtime-size-report.json --budgets size-budgets/windows-x64.json"
       }
     },
+    "size-regression-check-model-enabled": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "dependsOn": ["bundle-size-report"],
+      "options": {
+        "cwd": "packages/capture-runtime",
+        "command": "uv run --python 3.12 python scripts/size_regression_check.py --report dist/size/runtime-size-report.json --budgets size-budgets/windows-x64-model-enabled.json"
+      }
+    },
     "build-release-artifacts": {
       "cache": false,
       "executor": "nx:run-commands",

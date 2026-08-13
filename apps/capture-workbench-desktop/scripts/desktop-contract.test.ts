@@ -1237,6 +1237,14 @@ test('release workflow is SHA-pinned and tag-audit-only', async () => {
     /capture-runtime:size-regression-check/u,
   );
   assert.match(
+    releaseSizeValidationStep.source,
+    /RELEASE_MODE[s\S]*size-regression-check-model-enabled[s\S]*size-regression-check/u,
+  );
+  assert.match(
+    releaseSizeValidationStep.source,
+    /windows-x64-model-enabled\.json/u,
+  );
+  assert.match(
     releaseSizeValidationStep.script ?? '',
     /runtime-size-report\.json[\s\S]*Get-FileHash[\s\S]*runtime-size-report\.json.*\.sha256/u,
   );

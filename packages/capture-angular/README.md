@@ -16,20 +16,19 @@ the same `.npmrc.example`):
 //npm.pkg.github.com/:_authToken=${GITHUB_PACKAGES_TOKEN}
 ```
 
-The working tree intentionally retains the `0.3.12` source version while the
-published `0.3.12` registry bytes are not the synchronized v2 source candidate.
-Do not use that immutable package for consumer verification or claim it is
-reproducible from this tree. The next synchronized package/runtime candidate
-must use `0.3.12`, coordinated across the existing release version sources.
+The published `0.3.12` registry bytes are the synchronized v2 package
+candidate and have been verified against the package candidate artifact. The
+published version is immutable; any future package metadata or API change
+must use the next coordinated version (for example, `0.3.13`).
 
-For a future synchronized candidate, install the exact version:
+Install the exact published version for consumer verification:
 
 ```powershell
 $env:GITHUB_PACKAGES_TOKEN = '<read:packages token>'
 corepack pnpm add @gx-capture/capture-workbench@0.3.12 --save-exact
 ```
 
-## Angular integration contract (next synchronized candidate)
+## Angular integration contract
 
 All public asynchronous client, provider, preprocessor, and reconciliation
 context methods return cold `Observable<T>` values. Compose them with RxJS and
