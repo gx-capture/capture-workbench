@@ -45,9 +45,7 @@ class CandidateBodyLimitMiddleware:
         self.max_bytes = max_bytes
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http" or not _is_candidate_structure_path(
-            str(scope.get("path", ""))
-        ):
+        if scope["type"] != "http" or not _is_candidate_structure_path(str(scope.get("path", ""))):
             await self.app(scope, receive, send)
             return
         received = 0

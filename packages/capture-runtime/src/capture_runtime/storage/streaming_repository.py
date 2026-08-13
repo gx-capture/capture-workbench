@@ -330,9 +330,7 @@ class StreamingRepository:
                 kind=record.operation.kind,
                 event_type=event_type,
                 stage=stage,
-                progress=(
-                    record.operation.progress if progress is None else progress
-                ),
+                progress=(record.operation.progress if progress is None else progress),
                 partial_revision=partial_revision,
                 covered_until_ms=covered_until_ms,
                 segments=segments or [],

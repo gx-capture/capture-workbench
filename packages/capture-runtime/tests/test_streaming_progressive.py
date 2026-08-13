@@ -23,6 +23,7 @@ from capture_runtime.contracts import (
     StructuringMode,
     TimeLocatorV1,
 )
+from capture_runtime.extractors import DeterministicCaptureExtractor
 from capture_runtime.progressive_audio import DecodedAudioWindow, ProgressiveSessionEvent
 from capture_runtime.progressive_capture import (
     _ProgressiveState,
@@ -30,7 +31,6 @@ from capture_runtime.progressive_capture import (
     _SessionWorker,
 )
 from capture_runtime.progressive_decoder import ProgressiveDecoderError
-from capture_runtime.extractors import DeterministicCaptureExtractor
 from capture_runtime.services import StreamingCaptureService
 from capture_runtime.storage import StreamingRepository
 from capture_runtime.structuring_provider import FakeCaptureStructuringProvider

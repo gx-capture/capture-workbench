@@ -151,8 +151,7 @@ class StreamingCaptureService:
             return True
         return (
             operation.status is StreamingCaptureStatus.AWAITING_STRUCTURING
-            and self.repository.capture_request(capture_id).structuring_mode
-            is StructuringMode.HOST
+            and self.repository.capture_request(capture_id).structuring_mode is StructuringMode.HOST
         )
 
     def partial(self, capture_id: str) -> PartialCaptureV2:
@@ -301,9 +300,10 @@ class StreamingCaptureService:
 
     def _schedule(self, capture_id: str) -> None:
         if (
-            self._processor is None
-            and self._extractor is None
-        ) or capture_id in self._tasks or self._shutting_down:
+            (self._processor is None and self._extractor is None)
+            or capture_id in self._tasks
+            or self._shutting_down
+        ):
             return
         cancellation = self._cancellations.setdefault(capture_id, asyncio.Event())
         task = asyncio.create_task(
@@ -329,9 +329,7 @@ class StreamingCaptureService:
                     source=operation.source,
                     source_path=source_path,
                     cancellation=cancellation,
-                    sink=lambda events, session: self._persist_events(
-                        capture_id, events, session
-                    ),
+                    sink=lambda events, session: self._persist_events(capture_id, events, session),
                 )
             elif operation.kind is not CaptureSourceKind.AUDIO and self._extractor is not None:
                 raw = await self._extract_buffered_source(

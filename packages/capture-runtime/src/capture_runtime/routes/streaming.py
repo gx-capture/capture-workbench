@@ -205,9 +205,7 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
             heartbeat_deadline = time.monotonic() + 5
             while True:
                 current_events = (
-                    events
-                    if initial_replay
-                    else service.events(capture_id, after_sequence=cursor)
+                    events if initial_replay else service.events(capture_id, after_sequence=cursor)
                 )
                 initial_replay = False
                 for event in current_events:
@@ -290,9 +288,7 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
                 404, "capture_not_found", "Streaming capture was not found."
             ) from error
 
-    @router.post(
-        "/captures/{capture_id}/structure/commit", response_model=CaptureOperationV2
-    )
+    @router.post("/captures/{capture_id}/structure/commit", response_model=CaptureOperationV2)
     async def commit_host_structure(
         capture_id: str,
         candidate: CaptureDocumentV1,
@@ -306,9 +302,7 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
             )
         except StructuringValidationError as error:
             try:
-                service.fail_invalid_host_structure(
-                    capture_id, idempotency_key=idempotency_key
-                )
+                service.fail_invalid_host_structure(capture_id, idempotency_key=idempotency_key)
             except (StreamingRecordNotFoundError, StreamingTransitionError):
                 pass
             raise ApiProblem(
@@ -332,9 +326,7 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
                 404, "capture_not_found", "Streaming capture was not found."
             ) from error
 
-    @router.post(
-        "/captures/{capture_id}/structure/failure", response_model=CaptureOperationV2
-    )
+    @router.post("/captures/{capture_id}/structure/failure", response_model=CaptureOperationV2)
     async def report_host_structure_failure(
         capture_id: str,
         payload: ReportStructuringFailureV2,
