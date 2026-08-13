@@ -1,16 +1,9 @@
 # Capture Streaming SSE Migration Spec
 
-Status: implementation in progress; P0-P3, local v1 engine deletion, the
-post-d3bf3de hardening phase, the post-1db5624 final closeout, and the
-post-695567b ingestion open-recovery phase, and the post-9e6e2b3 final
-hardening phase, and the post-3b61cef security/protocol hardening phase are
-complete, the post-e166174 final security hardening phase is complete, and the
-post-7909eeb final lifecycle/security phase, and the post-c762e02 final
-lifecycle hardening phase, and the post-f9827bf final bounded security/protocol
-phase, the post-8c98a32 final hardening phase, the post-5b5aa3c final
-lifecycle hardening phase, and the post-59bcbf5 final lifecycle hardening
-phase are complete. The external consumer compatibility gate and final
-residual cleanup remain open.
+Status: complete. The v2 Python runtime is the only capture job engine for
+image, PDF, and audio; progress is delivered through authenticated SSE while
+Angular remains Observable/RxJS-based. First-party and known external
+consumers are migrated, and the retired v1 capture job contract is deleted.
 
 ## Purpose
 
@@ -107,9 +100,9 @@ depend on timer polling.
 
 The v2 path is now the only first-party capture path. The local `/v1/captures`
 route and engine were removed in the P5 deletion commit after the desktop and
-Angular cutovers; route removal superseded a live deprecation header. Public
-compatibility contract types remain temporarily annotated as deprecated while
-known external consumers migrate.
+Angular cutovers; route removal superseded a live deprecation header. Cert Prep
+and Law Prep subsequently migrated to v2, so the temporary public compatibility
+types and their generated schemas are now removed.
 
 The final deletion must remove active references to:
 
@@ -120,11 +113,9 @@ The final deletion must remove active references to:
 - Angular capture polling and v1 client methods;
 - desktop v1 capture commands and deterministic fixtures.
 
-Deletion is also blocked while known external consumers still depend on the
-legacy contract. The current inventory includes Cert Prep's Capture Workbench
-client/backend tests and Law Prep's generated/validated `CaptureJobV1` contract.
-Those repositories need a coordinated migration or an explicitly approved
-compatibility release before this producer can delete the public type.
+The external gate closed with Cert Prep commit `6801c0c` and Law Prep commit
+`4a0182a`. Both consumer commits were independently reviewed and verified before
+the producer compatibility contract was deleted.
 
 ## Phase and commit boundaries
 
@@ -147,14 +138,16 @@ compatibility release before this producer can delete the public type.
    stale source offsets and enforces the configured upload ceiling, Angular
    HTTP responses validate opaque identities before URL reuse, and the real
    Ollama smoke consumes an active SSE checkpoint before reconnecting with
-   `Last-Event-ID`. The external consumer gate remains unchecked.
+   `Last-Event-ID`. At that phase boundary, the external consumer gate was
+   still unchecked.
 7. **Post-1db5624 final closeout**: completed in the containing phase commit;
    finalize maps `StreamingUploadLimitError` to HTTP 413, Angular/native
    clients validate bounded non-empty consumer request IDs separately from
    opaque runtime IDs (including dotted IDs) and encode lookup path segments,
    and the real Ollama smoke verifies a nonterminal operation snapshot between
    its active SSE disconnect and `Last-Event-ID` reconnect, failing on a
-   terminal race. The external consumer gate remains unchecked.
+   terminal race. At that phase boundary, the external consumer gate was still
+   unchecked.
 8. **Post-695567b ingestion open recovery**: completed in the containing phase
    commit; runtime exposes `GET /v2/ingestions/by-client-request/{client_request_id}`
    as the ingestion counterpart to the existing capture lookup, and Angular/
@@ -164,7 +157,8 @@ compatibility release before this producer can delete the public type.
    uncertainty without deleting a possibly committed ingestion. The existing
    bounded expiry (unreferenced ingestions expire two hours after open and are
    pruned at startup/initialize) remains the documented orphan backstop when
-   the runtime is unreachable. The external consumer gate remains unchecked.
+   the runtime is unreachable. At that phase boundary, the external consumer
+   gate was still unchecked.
 9. **Post-9e6e2b3 final hardening**: completed in the containing phase commit;
    native open-ingestion enters by-client-request recovery on any committed
    2xx response that fails semantic identity validation (missing/malformed
@@ -190,7 +184,8 @@ compatibility release before this producer can delete the public type.
     SSE parsers reject an unterminated final frame at EOF instead of treating
     it as clean completion; runtime persistence enforces canonical child
     containment for ingestion descendants before load, source access, writes,
-    and cleanup. The external consumer gate remains unchecked.
+    and cleanup. At that phase boundary, the external consumer gate was still
+    unchecked.
 11. **Post-e166174 final security hardening**: completed in the containing
     phase commit; the native SSE EOF path always calls `SseParser.finish` and
     rejects pending unterminated frames, and the deterministic HTTP parser
@@ -200,7 +195,7 @@ compatibility release before this producer can delete the public type.
     containment before every capture event/raw/result/partial and ingestion
     source/metadata access; native capture-start validation requires source
     metadata for every status that would persist or recover a capture identity.
-    The external consumer gate remains unchecked.
+    At that phase boundary, the external consumer gate was still unchecked.
 12. **Post-7909eeb final lifecycle/security**: completed in the containing
     phase commit; Angular initial open-ingestion responses must correlate
     protocol, ingestionId, kind, fileName, mediaType, totalBytes, and status
@@ -214,7 +209,7 @@ compatibility release before this producer can delete the public type.
     `stream_request_id`; native upload/start remains a bounded blocking Tauri
     command without a bridge cancellation channel, so in-flight upload/start
     cancellation is bounded by per-request timeouts plus idempotent recovery.
-    The external consumer gate remains unchecked.
+    At that phase boundary, the external consumer gate was still unchecked.
 13. **Post-c762e02 final lifecycle hardening**: completed in the containing
     phase commit; Angular and native initial/recovered ingestion decoders
     require `status == open` before upload and never delete a finalized/
@@ -226,7 +221,8 @@ compatibility release before this producer can delete the public type.
     creating directories and replay reads validate capture identity, canonical
     event id, and monotonic sequence, failing closed on corruption; the
     progressive audio oracle rejects unterminated EOF frames instead of
-    flushing pending bytes. The external consumer gate remains unchecked.
+    flushing pending bytes. At that phase boundary, the external consumer gate
+    was still unchecked.
 14. **Post-f9827bf final bounded security/protocol**: completed in the
     containing phase commit; native SSE response size accounting counts body
     bytes already present in the header-read prefix exactly once while keeping
@@ -234,7 +230,8 @@ compatibility release before this producer can delete the public type.
     ancestors and enforces canonical no-symlink containment for reads, writes,
     exports, and deletes under the library root; Angular and native SSE
     parsers require a non-empty frame id matching the sequence and fail
-    closed on missing/empty ids. The external consumer gate remains unchecked.
+    closed on missing/empty ids. At that phase boundary, the external consumer
+    gate was still unchecked.
 15. **Post-8c98a32 final hardening**: completed in the containing phase
     commit; the Tauri library validates root/items before directory mutation,
     uses unique atomic temp files immune to stale symlinks, and enforces
@@ -263,15 +260,28 @@ compatibility release before this producer can delete the public type.
     decoder and native/desktop recovery matching validate the full v2
     operation contract (kind, status, revisions, progress, timestamps,
     completedAt/terminal equivalence, source and error shapes) plus
-    request/source correlation. The external consumer gate remains unchecked.
+    request/source correlation. At that phase boundary, the external consumer
+    gate was still unchecked.
 17. **Post-59bcbf5 final lifecycle hardening**: completed in the containing
     phase commit; bounded native cancellation state validates request ids,
     Tauri transaction cleanup revalidates no-symlink containment, runtime
     result persistence and terminal event publication share one repository
     lock, Angular/native/probe SSE readers reject malformed UTF-8 and bounded
     segment/frame payloads, and the route drains a terminal event queued after
-    the replay snapshot instead of returning an empty stream. The external
-    consumer gate remains unchecked.
+    the replay snapshot instead of returning an empty stream.
+18. **Host partial provenance hardening**: completed in `e65e92f`; one-shot
+    image/PDF partials expose the persisted raw capture creation time so a host
+    can construct a candidate that passes exact provenance validation without
+    a clock race. An advancing-clock regression makes the former mismatch
+    deterministic.
+19. **External consumer cutover**: completed in Cert Prep commit `6801c0c` and
+    Law Prep commit `4a0182a`; both consumers use v2 operation/result endpoints
+    and replayable SSE without legacy capture-job polling or compatibility DTOs.
+20. **Producer compatibility deletion**: completed in the containing phase
+    commit; the canonical Python DTOs, generated TypeScript/Python exports,
+    Angular re-exports, and both `capture-job-v1` schemas are removed. Contract
+    generation now reports stale schemas in check mode and deletes them during
+    regeneration, preventing retired artifacts from remaining publishable.
 
 Each phase must have an explicit path list, its own review, and its own
 verification result. Revert consumers before reverting the runtime cutover;
@@ -284,6 +294,34 @@ only after `git diff --cached --name-only`, `git diff --cached --stat`, and
 `git diff --cached --check` were inspected; unrelated dirty paths stayed
 unstaged. The final closeout review started from `1db5624`; the containing
 phase commit records the narrow fixes and final local verification below.
+
+- External consumer cutover: Cert Prep `6801c0c` and Law Prep `4a0182a`.
+  Each repository was clean after its narrow commit. Cert Prep verification
+  covered 287 backend tests, 199 Angular tests, lint/build, contract scans, one
+  focused Playwright test, and seven real-backend Playwright tests. Law Prep
+  verification covered 369 engine tests, 12 focused Angular tests, five schema
+  integration tests, contract consistency, lint, production build, and
+  Spotless.
+- `e65e92f` — runtime host-partial provenance time and advancing-clock
+  regression. Focused host-commit and streaming API/progressive tests passed
+  (1 and 36 tests); the full runtime suite passed with 347 tests, 11
+  platform-limited skips, and one existing Starlette warning.
+- `39422f8` — behavior-preserving SSE route formatting, isolated after Ruff
+  identified formatting drift already present at the phase baseline. Full
+  runtime lint passed across 110 files and the 27 streaming API tests passed.
+- Producer compatibility deletion (the containing phase commit): canonical
+  runtime contracts and generator, generated TypeScript/Python artifacts,
+  Angular contract exports, stale-schema regressions, and migration evidence.
+  Verification passed: runtime 347 tests/11 platform-limited skips/one existing
+  Starlette warning, runtime lint/typecheck/contract sync; Angular 126 tests,
+  async-boundary/lint/typecheck/build; TypeScript and Python contract
+  lint/typecheck/build/smokes; workspace lint/typecheck/test/build and
+  production-bundle check; Rust fmt/check/test, desktop contract consistency,
+  package QA (215 passed/two Windows symlink skips), clean packaged Angular/
+  Vanilla/React/Vue consumers, deterministic sidecar smoke, four Playwright
+  E2E tests, and producer/Cert Prep/Law Prep active-source residual scans. The
+  pre-existing `packages/capture-contracts/python/uv.lock` change remains
+  explicitly unstaged.
 
 - `812d54e` — Angular package paths under
   `packages/capture-angular/`, plus generated contract metadata and the

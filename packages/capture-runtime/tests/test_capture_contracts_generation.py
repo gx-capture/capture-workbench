@@ -95,12 +95,71 @@ def test_typescript_artifact_preserves_locator_fidelity_for_in_repo_consumers() 
     assert "GENERATED_CAPTURE_DOCUMENT_V1_JSON_SCHEMA" in schema_source
 
 
-def test_typescript_artifact_marks_capture_job_v1_as_deprecated() -> None:
-    source = (
-        ROOT / "packages" / "capture-contracts" / "src" / "generated" / "contracts.ts"
-    ).read_text(encoding="utf-8")
+def test_retired_capture_job_v1_contract_is_not_published() -> None:
+    output = ROOT / "packages" / "capture-contracts"
+    legacy_names = {"CaptureJobV1", "CaptureJobStatus", "CaptureJobStage"}
 
-    assert (
-        " * @deprecated Deprecated wire type retained only for external migration tooling."
-        in source
+    for manifest_path in (
+        output / "src" / "generated" / "contract-manifest.json",
+        output / "python" / "src" / "capture_contracts" / "contract-manifest.json",
+    ):
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        assert legacy_names.isdisjoint(item["name"] for item in manifest["models"])
+        assert legacy_names.isdisjoint(item["name"] for item in manifest["enums"])
+        assert all(
+            not legacy_names.intersection(item["models"].split(", "))
+            for item in manifest["invariants"]
+        )
+
+    for generated_source in (
+        output / "src" / "generated" / "contracts.ts",
+        output / "python" / "src" / "capture_contracts" / "generated_models.py",
+        ROOT / "packages" / "capture-angular" / "src" / "lib" / "contracts" / "index.ts",
+    ):
+        source = generated_source.read_text(encoding="utf-8")
+        assert all(name not in source for name in legacy_names)
+
+    assert not (output / "src" / "generated" / "schemas" / "capture-job-v1.schema.json").exists()
+    assert not (
+        output / "python" / "src" / "capture_contracts" / "schemas" / "capture-job-v1.schema.json"
+    ).exists()
+
+
+def test_generator_rejects_and_removes_stale_schema_artifacts(tmp_path: Path) -> None:
+    output = tmp_path / "capture-contracts"
+    generated = subprocess.run(
+        [sys.executable, str(GENERATOR), "--output", str(output)],
+        cwd=ROOT / "packages" / "capture-runtime",
+        check=False,
+        capture_output=True,
+        text=True,
     )
+    assert generated.returncode == 0, generated.stdout + generated.stderr
+
+    stale_paths = (
+        output / "src" / "generated" / "schemas" / "retired.schema.json",
+        output / "python" / "src" / "capture_contracts" / "schemas" / "retired.schema.json",
+    )
+    for stale_path in stale_paths:
+        stale_path.write_text("{}\n", encoding="utf-8")
+
+    checked = subprocess.run(
+        [sys.executable, str(GENERATOR), "--output", str(output), "--check"],
+        cwd=ROOT / "packages" / "capture-runtime",
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert checked.returncode != 0
+    check_output = checked.stdout + checked.stderr
+    assert all(str(path) in check_output for path in stale_paths)
+
+    regenerated = subprocess.run(
+        [sys.executable, str(GENERATOR), "--output", str(output)],
+        cwd=ROOT / "packages" / "capture-runtime",
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert regenerated.returncode == 0, regenerated.stdout + regenerated.stderr
+    assert all(not path.exists() for path in stale_paths)

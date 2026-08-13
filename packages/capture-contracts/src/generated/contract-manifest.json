@@ -50,13 +50,6 @@
       "strStripWhitespace": true
     },
     {
-      "name": "CaptureJobV1",
-      "schemaFile": "capture-job-v1.schema.json",
-      "schemaSha256": "6047742d8d2fb563435032a2480db43f3c9922191bca9e00a7b6d16e26e1bc07",
-      "extraPolicy": "forbid",
-      "strStripWhitespace": true
-    },
-    {
       "name": "CaptureOperationV2",
       "schemaFile": "capture-operation-v2.schema.json",
       "schemaSha256": "29cf094cb86bd0b2257a31f1b92be9ad98a94cc8598c14df4996e3e1d484c64e",
@@ -269,28 +262,6 @@
   ],
   "enums": [
     {
-      "name": "CaptureJobStage",
-      "values": [
-        "queued",
-        "extracting",
-        "awaiting_structuring",
-        "structuring",
-        "completed",
-        "failed",
-        "cancelled"
-      ]
-    },
-    {
-      "name": "CaptureJobStatus",
-      "values": [
-        "queued",
-        "running",
-        "completed",
-        "failed",
-        "cancelled"
-      ]
-    },
-    {
       "name": "CaptureSourceKind",
       "values": [
         "pdf",
@@ -431,24 +402,19 @@
       "description": "completedAt must not precede createdAt."
     },
     {
-      "id": "terminal-jobs-have-completion-time",
-      "models": "CaptureJobV1",
-      "description": "terminal capture jobs must carry completedAt."
-    },
-    {
       "id": "time-locator-interval-valid",
       "models": "TimeLocatorV1",
       "description": "endMs must be greater than startMs."
     },
     {
       "id": "timestamps-timezone-aware",
-      "models": "RawCaptureV1, CaptureDocumentV1, CaptureJobV1, RuntimeInstallationV1",
+      "models": "RawCaptureV1, CaptureDocumentV1, RuntimeInstallationV1",
       "description": "timestamp fields must include a timezone."
     }
   ],
   "generator": {
     "script": "packages/capture-runtime/scripts/generate_contracts.py",
-    "generatorSha256": "a844f8c46667f1855ff86ffc8009fe2b96c1b361ce96931daed3a10227bbd2d3",
+    "generatorSha256": "c1a203540b4594e7b873066f7bed72d3dd42900f6492751ed7a9dfb8ec059b57",
     "schemaGenerator": "pydantic.model_json_schema",
     "pydanticVersion": "2.13.4",
     "pydanticCoreVersion": "2.46.4"

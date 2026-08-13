@@ -361,18 +361,13 @@ def _invariants() -> list[dict[str, str]]:
             "description": "completedAt must not precede createdAt.",
         },
         {
-            "id": "terminal-jobs-have-completion-time",
-            "models": "CaptureJobV1",
-            "description": "terminal capture jobs must carry completedAt.",
-        },
-        {
             "id": "time-locator-interval-valid",
             "models": "TimeLocatorV1",
             "description": "endMs must be greater than startMs.",
         },
         {
             "id": "timestamps-timezone-aware",
-            "models": "RawCaptureV1, CaptureDocumentV1, CaptureJobV1, RuntimeInstallationV1",
+            "models": "RawCaptureV1, CaptureDocumentV1, RuntimeInstallationV1",
             "description": "timestamp fields must include a timezone.",
         },
     ]
@@ -476,6 +471,26 @@ def _expected_files(output: Path) -> dict[Path, bytes]:
     return files
 
 
+def _managed_schema_paths(output: Path) -> set[Path]:
+    schema_directories = (
+        output / "src" / "generated" / "schemas",
+        output / "python" / "src" / "capture_contracts" / "schemas",
+    )
+    return {
+        path
+        for directory in schema_directories
+        if directory.is_dir()
+        for path in directory.glob("*.schema.json")
+    }
+
+
+def _display_path(path: Path) -> str:
+    try:
+        return str(path.relative_to(ROOT))
+    except ValueError:
+        return str(path)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
@@ -483,14 +498,21 @@ def main() -> None:
     arguments = parser.parse_args()
     output = arguments.output.resolve()
     expected = _expected_files(output)
-    mismatches = []
+    expected_paths = set(expected)
+    stale_schema_paths = _managed_schema_paths(output) - expected_paths
+    mismatches = (
+        [_display_path(path) for path in sorted(stale_schema_paths)] if arguments.check else []
+    )
     for path, content in expected.items():
         if arguments.check:
             if not path.is_file() or path.read_bytes() != content:
-                mismatches.append(str(path.relative_to(ROOT)))
+                mismatches.append(_display_path(path))
         else:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(content)
+    if not arguments.check:
+        for path in stale_schema_paths:
+            path.unlink()
     if mismatches:
         raise SystemExit("Generated contract artifacts are stale:\n- " + "\n- ".join(mismatches))
     print(

@@ -92,9 +92,9 @@ after a reconnect; the runtime suppresses already-delivered events. Terminal
 `resync_required` tells consumers to reload the capture snapshot.
 
 Host adapters that proxy the v2 endpoint must implement `captureEvents` and the
-v2 operation methods. The first-party client no longer exposes the removed v1
-capture methods; external consumers may keep importing deprecated wire types
-until the coordinated Cert Prep/Law Prep migration gate closes.
+v2 operation methods. The first-party client and shared contract package no
+longer expose the removed v1 capture methods or `CaptureJobV1` compatibility
+types; consumers must use the v2 operation and event contracts.
 
 ## Structuring ownership
 

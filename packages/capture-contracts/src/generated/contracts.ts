@@ -10,12 +10,6 @@ export const CAPTURE_DOCUMENT_SCHEMA_ID = "https://github.com/gx-capture/capture
 export const CAPTURE_DOCUMENT_SCHEMA_SHA256 = "2721093496a9f09044d5737cce70d2356d5f71757b1cd23a960e1d003ea014f2" as const;
 
 /** Wire enum. */
-export type CaptureJobStage = "queued" | "extracting" | "awaiting_structuring" | "structuring" | "completed" | "failed" | "cancelled";
-
-/** Wire enum. */
-export type CaptureJobStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
-
-/** Wire enum. */
 export type CaptureSourceKind = "pdf" | "image" | "audio";
 
 /** Wire enum. */
@@ -105,22 +99,6 @@ export interface CaptureFailureV2 {
   readonly message: string;
   readonly stage?: string | null;
   readonly retryable?: boolean;
-}
-
-/**
- * @deprecated Deprecated wire type retained only for external migration tooling.
- */
-export interface CaptureJobV1 {
-  readonly captureId: string;
-  readonly status: CaptureJobStatus;
-  readonly stage: CaptureJobStage;
-  readonly structuringMode: StructuringMode;
-  readonly progress: number;
-  readonly source?: CaptureSourceV1 | null;
-  readonly error?: CaptureFailureV1 | null;
-  readonly createdAt: string;
-  readonly updatedAt: string;
-  readonly completedAt?: string | null;
 }
 
 export interface CaptureOperationV2 {
@@ -362,7 +340,7 @@ export interface TimeLocatorV1 {
   readonly endMs: number;
 }
 
-export type CaptureContractName = "CaptureBlockV1" | "CaptureDocumentV1" | "CaptureEngineV1" | "CaptureEventV2" | "CaptureFailureV1" | "CaptureFailureV2" | "CaptureJobV1" | "CaptureOperationV2" | "CaptureReviewEditV1" | "CaptureReviewV1" | "CaptureSourceV1" | "ErrorBodyV1" | "ErrorEnvelopeV1" | "FinalizeIngestionV2" | "IngestionV2" | "OpenIngestionV2" | "PageLocatorV1" | "PartialCaptureV2" | "RawCaptureSegmentV1" | "RawCaptureV1" | "ReportStructuringFailureV1" | "RuntimeArtifactDescriptorV1" | "RuntimeCapabilitiesV1" | "RuntimeInstallationV1" | "RuntimeInstallationsV1" | "RuntimeModelInstallationV1" | "RuntimeModelInstallationsV1" | "RuntimeModelOptionV1" | "RuntimeModelOptionsV1" | "RuntimeReadyV1" | "RuntimeRequirementV1" | "RuntimeRequirementsV1" | "RuntimeStreamingCapabilitiesV2" | "StartCaptureV2" | "StartRuntimeInstallationV1" | "StartRuntimeModelInstallationV1" | "TimeLocatorV1";
+export type CaptureContractName = "CaptureBlockV1" | "CaptureDocumentV1" | "CaptureEngineV1" | "CaptureEventV2" | "CaptureFailureV1" | "CaptureFailureV2" | "CaptureOperationV2" | "CaptureReviewEditV1" | "CaptureReviewV1" | "CaptureSourceV1" | "ErrorBodyV1" | "ErrorEnvelopeV1" | "FinalizeIngestionV2" | "IngestionV2" | "OpenIngestionV2" | "PageLocatorV1" | "PartialCaptureV2" | "RawCaptureSegmentV1" | "RawCaptureV1" | "ReportStructuringFailureV1" | "RuntimeArtifactDescriptorV1" | "RuntimeCapabilitiesV1" | "RuntimeInstallationV1" | "RuntimeInstallationsV1" | "RuntimeModelInstallationV1" | "RuntimeModelInstallationsV1" | "RuntimeModelOptionV1" | "RuntimeModelOptionsV1" | "RuntimeReadyV1" | "RuntimeRequirementV1" | "RuntimeRequirementsV1" | "RuntimeStreamingCapabilitiesV2" | "StartCaptureV2" | "StartRuntimeInstallationV1" | "StartRuntimeModelInstallationV1" | "TimeLocatorV1";
 
 export type CaptureContractInvariant = {
   readonly id: string;
@@ -412,18 +390,13 @@ export const CAPTURE_CONTRACT_INVARIANTS = [
     description: "completedAt must not precede createdAt.",
   },
   {
-    id: "terminal-jobs-have-completion-time",
-    models: "CaptureJobV1",
-    description: "terminal capture jobs must carry completedAt.",
-  },
-  {
     id: "time-locator-interval-valid",
     models: "TimeLocatorV1",
     description: "endMs must be greater than startMs.",
   },
   {
     id: "timestamps-timezone-aware",
-    models: "RawCaptureV1, CaptureDocumentV1, CaptureJobV1, RuntimeInstallationV1",
+    models: "RawCaptureV1, CaptureDocumentV1, RuntimeInstallationV1",
     description: "timestamp fields must include a timezone.",
   },
 ] as const satisfies readonly CaptureContractInvariant[];
@@ -437,7 +410,6 @@ export const CAPTURE_CONTRACT_EXTRA_POLICIES = {
   "CaptureEventV2": "forbid",
   "CaptureFailureV1": "forbid",
   "CaptureFailureV2": "forbid",
-  "CaptureJobV1": "forbid",
   "CaptureOperationV2": "forbid",
   "CaptureReviewEditV1": "forbid",
   "CaptureReviewV1": "forbid",

@@ -2,17 +2,11 @@
 
 ## Decision status
 
-P0-P3 implementation, local v1 engine removal, the post-d3bf3de hardening, the
-post-1db5624 final closeout, the post-695567b ingestion open-recovery phase,
-the post-9e6e2b3 final hardening phase, and the post-3b61cef security/protocol
-hardening phase, and the post-e166174 final security hardening phase are
-complete, and the post-7909eeb final lifecycle/security phase is complete.
-The post-c762e02 final lifecycle hardening phase and the post-f9827bf final
-bounded security/protocol phase, the post-8c98a32 final hardening phase, and
-the post-5b5aa3c final lifecycle hardening phase are also complete. The
-post-59bcbf5 final lifecycle hardening phase is complete in the current phase
-commit. Final cleanup and the external consumer compatibility gate remain
-open.
+Complete. P0-P5, the subsequent lifecycle/security hardening, the Cert Prep and
+Law Prep consumer cutovers, host partial provenance hardening in `e65e92f`, and
+behavior-preserving Ruff normalization in `39422f8`, and the producer
+compatibility-contract deletion have all passed their phase-specific review
+and verification gates.
 
 ## Change mode checkpoint
 
@@ -21,8 +15,8 @@ Change mode: mixed
 Existing owner: StreamingCaptureService/StreamingRepository for the capture
                 lifecycle and live SSE boundary
 Delete candidates: completed locally for /v1/captures routes, CaptureService,
-                  CaptureRepository, native v1 commands, and first-party v1 path
-                  usage; deprecated public types remain for external consumers
+                   CaptureRepository, native v1 commands, and first-party v1 path
+                   usage; retired public job types and schemas are also deleted
 New owner needed?: no; the v2 owner now owns all capture kinds and live SSE
 Token posture: compact quality
 Verification floor: contract generation/check, focused backend tests, Angular
@@ -70,9 +64,8 @@ claim SSE migration before Python can guarantee live delivery.
 - The v2 contract widening, media-neutral event semantics, host handoff
   idempotency, and authenticated Tauri bridge were resolved in the P0-P3
   phase commits.
-- Inventory and coordinate known external consumers before deleting the public
-  contract. Current evidence includes `C:\software-dev\cert-prep` and
-  `C:\software-dev\gx.law-prep`; do not edit either repository implicitly.
+- The known external-consumer gate closed through separately reviewed Cert Prep
+  commit `6801c0c` and Law Prep commit `4a0182a` before producer deletion.
 - The desktop bridge uses the bounded terminal v2 SSE response required by the
   current native command boundary; Python and Angular retain the live SSE
   contract.
@@ -88,7 +81,8 @@ claim SSE migration before Python can guarantee live delivery.
 - Existing dirty files are never reverted, reformatted, or staged as part of
   this work.
 - Producer deletion is blocked until external consumer migration evidence is
-  recorded or an explicit breaking-release owner approves the removal.
+  recorded or an explicit breaking-release owner approves the removal. This
+  gate closed with Cert Prep `6801c0c` and Law Prep `4a0182a`.
 
 ## Review rule
 

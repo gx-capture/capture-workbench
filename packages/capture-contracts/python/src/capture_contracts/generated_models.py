@@ -80,28 +80,6 @@ class CaptureReviewV1(StrictModel):
         return self
 
 
-class CaptureJobStatus(StrEnum):
-    """Deprecated compatibility type; the v1 capture engine is removed."""
-
-    QUEUED = "queued"
-    RUNNING = "running"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
-
-
-class CaptureJobStage(StrEnum):
-    """Deprecated compatibility type; the v1 capture engine is removed."""
-
-    QUEUED = "queued"
-    EXTRACTING = "extracting"
-    AWAITING_STRUCTURING = "awaiting_structuring"
-    STRUCTURING = "structuring"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
-
-
 class RuntimeInstallationStatus(StrEnum):
     QUEUED = "queued"
     RUNNING = "running"
@@ -273,36 +251,6 @@ class CaptureFailureV1(StrictModel):
     message: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
     stage: NonEmptyString | None = None
     retryable: bool = False
-
-
-class CaptureJobV1(StrictModel):
-    """Deprecated wire type retained only for external migration tooling."""
-
-    capture_id: str
-    status: CaptureJobStatus
-    stage: CaptureJobStage
-    structuring_mode: StructuringMode
-    progress: float = Field(ge=0, le=1)
-    source: CaptureSourceV1 | None = None
-    error: CaptureFailureV1 | None = None
-    created_at: datetime
-    updated_at: datetime
-    completed_at: datetime | None = None
-
-    _aware_times = field_validator("created_at", "updated_at", "completed_at")(
-        lambda value: None if value is None else _require_aware(value)
-    )
-
-    @model_validator(mode="after")
-    def validate_state(self) -> Self:
-        terminal = {
-            CaptureJobStatus.COMPLETED,
-            CaptureJobStatus.FAILED,
-            CaptureJobStatus.CANCELLED,
-        }
-        if (self.status in terminal) != (self.completed_at is not None):
-            raise ValueError("terminal capture jobs must have completedAt")
-        return self
 
 
 class RuntimeArtifactDescriptorV1(StrictModel):
@@ -667,7 +615,6 @@ __all__ = [
     'CaptureBlockV1',
     'CaptureDocumentV1',
     'CaptureFailureV1',
-    'CaptureJobV1',
     'RuntimeArtifactDescriptorV1',
     'RuntimeRequirementV1',
     'RuntimeRequirementsV1',
@@ -695,8 +642,6 @@ __all__ = [
     'ErrorEnvelopeV1',
     'CaptureSourceKind',
     'StructuringMode',
-    'CaptureJobStatus',
-    'CaptureJobStage',
     'RuntimeInstallationStatus',
     'RuntimeModelOptionStatus',
     'RuntimeRequirementStatus',

@@ -6,7 +6,6 @@ import type {
   CaptureDocumentV1,
   CaptureFailureV1,
   CaptureOperationV2,
-  CaptureJobStage,
   CaptureReviewV1,
   CaptureSourceKind,
   PageLocatorV1,
@@ -40,9 +39,6 @@ export type {
   CaptureEngineV1,
   CaptureFailureV1,
   CaptureFailureV2,
-  CaptureJobV1,
-  CaptureJobStage,
-  CaptureJobStatus,
   CaptureOperationV2,
   FinalizeIngestionV2,
   IngestionV2,
@@ -108,7 +104,17 @@ export type CaptureTaskStatus =
   | 'failed'
   | 'canceled';
 
-export type CaptureTaskStage = CaptureJobStage | 'uploading' | 'preprocessing';
+/** UI-only lifecycle stages; this is not a runtime wire contract. */
+export type CaptureTaskStage =
+  | 'queued'
+  | 'uploading'
+  | 'preprocessing'
+  | 'extracting'
+  | 'awaiting_structuring'
+  | 'structuring'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
 
 export interface StartRuntimeInstallationRequest {
   readonly clientRequestId: string;
