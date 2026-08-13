@@ -271,11 +271,15 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
                     last_sequence = event.sequence
                     if _is_terminal_event(event):
                         return
-                if operation.status in {
-                    StreamingCaptureStatus.COMPLETED,
-                    StreamingCaptureStatus.FAILED,
-                    StreamingCaptureStatus.CANCELLED,
-                } and operation.last_event_sequence <= last_sequence:
+                if (
+                    operation.status
+                    in {
+                        StreamingCaptureStatus.COMPLETED,
+                        StreamingCaptureStatus.FAILED,
+                        StreamingCaptureStatus.CANCELLED,
+                    }
+                    and operation.last_event_sequence <= last_sequence
+                ):
                     return
                 while True:
                     try:
