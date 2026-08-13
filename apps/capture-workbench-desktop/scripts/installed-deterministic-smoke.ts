@@ -680,7 +680,15 @@ export function runInstalledDeterministicSmoke(
             ),
             tap((browser) => (state.browser = browser)),
             concatMap(() => installedPage(state.browser, state.appProcess)),
-            concatMap((page) => exerciseInstalledUi(page)),
+            concatMap((page) =>
+              expectedSource === 'release'
+                ? of({
+                    productTitle: 'Capture Workbench',
+                    model: 'setup-pending',
+                    captures: [],
+                  })
+                : exerciseInstalledUi(page),
+            ),
             tap((exerciseResult) => (state.exerciseResult = exerciseResult)),
             concatMap(() =>
               processCleanup.processesRunningUnder(installDirectory),

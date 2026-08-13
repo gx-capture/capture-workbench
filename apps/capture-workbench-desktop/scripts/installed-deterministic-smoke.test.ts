@@ -445,6 +445,21 @@ test('post-uninstall cleanup tolerates the owned install root being removed', as
   );
 });
 
+test('release installed smoke verifies the packaged shell without auto-installing runtime requirements', async () => {
+  const source = await readFile(
+    join(appRoot, 'scripts', 'installed-deterministic-smoke.ts'),
+    'utf8',
+  );
+  assert.match(
+    source,
+    /expectedSource === 'release'[\s\S]+model: 'setup-pending'[\s\S]+captures: \[\]/u,
+  );
+  assert.match(
+    source,
+    /expectedSource === 'release'[\s\S]+: exerciseInstalledUi\(page\)/u,
+  );
+});
+
 function captureFixture(locatorKind) {
   const sourceKind = locatorKind === 'time' ? 'audio' : 'image';
   const fileName = locatorKind === 'time' ? 'fixture.wav' : 'fixture.png';
