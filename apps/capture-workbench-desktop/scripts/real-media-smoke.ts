@@ -19,6 +19,7 @@ const outputDirectory = join(
 const evidencePath = join(outputDirectory, 'real-media-smoke.json');
 const maxInstallationWaitMs = 90 * 60_000;
 const maxCaptureWaitMs = 20 * 60_000;
+const ownedRuntimeObserverTimeoutMs = 45_000;
 export const dependencyOrder = ['windowsml-ocr', 'whisper-primary'] as const;
 
 const canonicalSourceLockPath = join(
@@ -951,7 +952,7 @@ function runOwnedRuntimeObserver(script: string): OwnedRuntimeEvidence {
     {
       encoding: 'utf8',
       windowsHide: true,
-      timeout: 15_000,
+      timeout: ownedRuntimeObserverTimeoutMs,
     },
   );
   if (result.error || result.status !== 0 || !result.stdout.trim()) {

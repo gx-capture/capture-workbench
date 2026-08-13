@@ -184,6 +184,15 @@ test(
   },
 );
 
+test('owned runtime observer leaves enough budget for hosted Windows process probes', async () => {
+  const source = await readFile(
+    new URL('./real-media-smoke.ts', import.meta.url),
+    'utf8',
+  );
+  assert.match(source, /ownedRuntimeObserverTimeoutMs = 45_000/u);
+  assert.match(source, /timeout: ownedRuntimeObserverTimeoutMs/u);
+});
+
 test('real-media diagnostic cannot claim release or consumer E2E acceptance', () => {
   assert.doesNotThrow(() =>
     assertRealMediaEvidence({
