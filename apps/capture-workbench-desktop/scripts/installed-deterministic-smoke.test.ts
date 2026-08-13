@@ -25,6 +25,7 @@ import {
   uninstallerArguments,
 } from './installed-deterministic-smoke.ts';
 import { expectedInstallerName } from './installed-smoke-lifecycle.ts';
+import { installedWebViewCdpReadyTimeoutMs } from './installed-browser.ts';
 import { appRoot } from './stage-runtime.ts';
 
 function observe(observable) {
@@ -439,6 +440,10 @@ test('Nx target depends on the deterministic NSIS build and writes only non-rele
 
 test('installed smoke gives model-enabled hosted runners enough time to unpack the payload', () => {
   assert.equal(installedSmokeExecutableTimeoutMs, 600_000);
+});
+
+test('installed smoke gives hosted WebView2 enough time to expose CDP', () => {
+  assert.equal(installedWebViewCdpReadyTimeoutMs, 180_000);
 });
 
 test('post-uninstall cleanup tolerates the owned install root being removed', async () => {

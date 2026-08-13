@@ -23,6 +23,7 @@ import {
 import { INSTALLED_FIXTURES } from './constants/installed.ts';
 
 const fixtures = INSTALLED_FIXTURES;
+export const installedWebViewCdpReadyTimeoutMs = 180_000;
 
 export function reserveLoopbackPort() {
   return new Observable((subscriber) => {
@@ -54,7 +55,12 @@ export function connectToInstalledWebView(port, appProcess) {
     switchMap(() => throwError(() => new Error('Installed Tauri app terminated before WebView2 CDP readiness.'))),
   );
   return race(
-    connectAttempt(endpoint, appProcess, Date.now() + 60_000, undefined),
+    connectAttempt(
+      endpoint,
+      appProcess,
+      Date.now() + installedWebViewCdpReadyTimeoutMs,
+      undefined,
+    ),
     processTerminated,
   );
 }
