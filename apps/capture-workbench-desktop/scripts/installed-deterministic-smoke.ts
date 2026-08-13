@@ -109,6 +109,9 @@ const productRegistryKey = PRODUCT_REGISTRY_KEY;
 const uninstallRegistryKey = UNINSTALL_REGISTRY_KEY;
 const registryViews = REGISTRY_VIEWS;
 const childEnvironmentAllowlist = CHILD_ENVIRONMENT_ALLOWLIST;
+// Model-enabled Windows installers unpack large engine payloads on hosted
+// runners. Keep this budget explicit while process cleanup remains fail-closed.
+export const installedSmokeExecutableTimeoutMs = 300_000;
 
 function baseChildEnvironment(source, isolatedTemp, ownedRoot = runRoot) {
   const environment = {};
@@ -338,7 +341,7 @@ function runInstalledSizeMeasurement() {
             installerArguments(smokeRoot, installDirectory),
             'Release-size NSIS installer',
             baseChildEnvironment(process.env, temporaryDirectory),
-            180_000,
+            installedSmokeExecutableTimeoutMs,
           ),
         );
         await firstValueFrom(
@@ -391,7 +394,7 @@ function runInstalledSizeMeasurement() {
               uninstallerArguments(smokeRoot, installDirectory),
               'Installed NSIS uninstaller',
               baseChildEnvironment(process.env, temporaryDirectory),
-              180_000,
+              installedSmokeExecutableTimeoutMs,
             ),
           );
           nativeUninstall.uninstallerCompleted = true;
@@ -633,7 +636,7 @@ export function runInstalledDeterministicSmoke(
             installerArguments(smokeRoot, installDirectory),
             'Deterministic NSIS installer',
             baseChildEnvironment(process.env, temporaryDirectory),
-            180_000,
+            installedSmokeExecutableTimeoutMs,
           ),
         ),
         concatMap(() =>
@@ -820,7 +823,7 @@ export function runInstalledDeterministicSmoke(
                                 process.env,
                                 temporaryDirectory,
                               ),
-                              180_000,
+                              installedSmokeExecutableTimeoutMs,
                             ),
                           ),
                         ),

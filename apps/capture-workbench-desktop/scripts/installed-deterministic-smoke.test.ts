@@ -17,6 +17,7 @@ import {
   buildInstalledAppEnvironment,
   installedSmokeDiagnosticMessageLimit,
   installedSmokeDiagnosticRedactionMarker,
+  installedSmokeExecutableTimeoutMs,
   installerArguments,
   nestedErrorMessages,
   releaseExclusiveSmokeLock,
@@ -424,6 +425,10 @@ test('Nx target depends on the deterministic NSIS build and writes only non-rele
     '{workspaceRoot}/tmp/capture-workbench-desktop/installed-smoke/installed-smoke.json',
   ]);
   assert.match(target.options.command, /installed-deterministic-smoke\.ts/u);
+});
+
+test('installed smoke gives model-enabled hosted runners enough time to unpack the payload', () => {
+  assert.equal(installedSmokeExecutableTimeoutMs, 300_000);
 });
 
 test('post-uninstall cleanup tolerates the owned install root being removed', async () => {
