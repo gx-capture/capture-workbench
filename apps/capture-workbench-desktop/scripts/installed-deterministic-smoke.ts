@@ -111,7 +111,7 @@ const registryViews = REGISTRY_VIEWS;
 const childEnvironmentAllowlist = CHILD_ENVIRONMENT_ALLOWLIST;
 // Model-enabled Windows installers unpack large engine payloads on hosted
 // runners. Keep this budget explicit while process cleanup remains fail-closed.
-export const installedSmokeExecutableTimeoutMs = 300_000;
+export const installedSmokeExecutableTimeoutMs = 600_000;
 
 function baseChildEnvironment(source, isolatedTemp, ownedRoot = runRoot) {
   const environment = {};

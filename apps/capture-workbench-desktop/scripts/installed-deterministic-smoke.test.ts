@@ -428,7 +428,7 @@ test('Nx target depends on the deterministic NSIS build and writes only non-rele
 });
 
 test('installed smoke gives model-enabled hosted runners enough time to unpack the payload', () => {
-  assert.equal(installedSmokeExecutableTimeoutMs, 300_000);
+  assert.equal(installedSmokeExecutableTimeoutMs, 600_000);
 });
 
 test('post-uninstall cleanup tolerates the owned install root being removed', async () => {
