@@ -185,6 +185,8 @@ test('installed WebView2 dynamic CDP metadata accepts only a valid port', () => 
 test('installed WebView2 startup diagnostics expose only safe bounded facts', () => {
   const message = formatInstalledWebViewStartupDiagnostics({
     appRunning: true,
+    appOsProcess: true,
+    webViewRuntimeInstalled: true,
     webViewProcessCount: 2,
     webViewRemoteDebuggingArgument: false,
     webViewUserDataArgument: true,
@@ -194,7 +196,7 @@ test('installed WebView2 startup diagnostics expose only safe bounded facts', ()
   });
   assert.equal(
     message,
-    'Installed WebView2 startup diagnostics: appRunning=true;webViewProcessCount=2;webViewRemoteDebuggingArgument=false;webViewUserDataArgument=true;requestedPortListening=false;devToolsActivePortFile=false.',
+    'Installed WebView2 startup diagnostics: appRunning=true;appOsProcess=true;webViewRuntimeInstalled=true;webViewProcessCount=2;webViewRemoteDebuggingArgument=false;webViewUserDataArgument=true;requestedPortListening=false;devToolsActivePortFile=false.',
   );
   assert.equal(message.includes('must-not-appear'), false);
 });

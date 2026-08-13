@@ -32,6 +32,8 @@ export const dynamicWebViewCdpPort = 0;
 
 const startupDiagnosticKeys = [
   'appRunning',
+  'appOsProcess',
+  'webViewRuntimeInstalled',
   'webViewProcessCount',
   'webViewRemoteDebuggingArgument',
   'webViewUserDataArgument',
@@ -80,6 +82,8 @@ export function collectInstalledWebViewStartupDiagnostics(
 ) {
   const defaults = {
     appRunning: appProcess?.exitCode === null,
+    appOsProcess: false,
+    webViewRuntimeInstalled: false,
     webViewProcessCount: 0,
     webViewRemoteDebuggingArgument: false,
     webViewUserDataArgument: false,
@@ -91,9 +95,15 @@ export function collectInstalledWebViewStartupDiagnostics(
   if (!Number.isSafeInteger(appProcess?.pid) || appProcess.pid < 1) {
     return formatInstalledWebViewStartupDiagnostics(defaults);
   }
-  const script = `
+  const script = String.raw`
 $app = Get-CimInstance Win32_Process -Filter "ProcessId=$env:CAPTURE_SMOKE_DIAGNOSTIC_PID"
 $webViews = @(Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'")
+$runtimeKeys = @(
+  'HKLM:\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}',
+  'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}',
+  'HKCU:\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+)
+$runtimeInstalled = @($runtimeKeys | Where-Object { (Get-ItemProperty -LiteralPath $_ -Name 'pv' -ErrorAction SilentlyContinue).pv }).Count -gt 0
 $arguments = @($webViews | ForEach-Object { [string]$_.CommandLine })
 $listening = $false
 try {
@@ -103,6 +113,8 @@ try {
 } catch {}
 [ordered]@{
   appRunning = $null -ne $app
+  appOsProcess = $null -ne $app
+  webViewRuntimeInstalled = $runtimeInstalled
   webViewProcessCount = $webViews.Count
   webViewRemoteDebuggingArgument = @($arguments | Where-Object { $_ -match '--remote-debugging-(?:address|port)=' }).Count -gt 0
   webViewUserDataArgument = @($arguments | Where-Object { $_ -match '--user-data-dir=' }).Count -gt 0
