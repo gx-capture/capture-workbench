@@ -54,18 +54,27 @@ export function reserveLoopbackPort() {
       server.close((error) => {
         server.off('error', onError);
         if (error) subscriber.error(error);
-        else if (!port) subscriber.error(new Error('Dynamic CDP port was unavailable.'));
-        else { subscriber.next(port); subscriber.complete(); }
+        else if (!port)
+          subscriber.error(new Error('Dynamic CDP port was unavailable.'));
+        else {
+          subscriber.next(port);
+          subscriber.complete();
+        }
       });
     });
-    return () => { server.off('error', onError); server.close(); };
+    return () => {
+      server.off('error', onError);
+      server.close();
+    };
   });
 }
 
 export function parseInstalledWebViewCdpPort(contents) {
   const port = Number(contents.split(/\r?\n/u)[0]?.trim());
   if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
-    throw new Error('Installed WebView2 DevToolsActivePort did not contain a valid CDP port.');
+    throw new Error(
+      'Installed WebView2 DevToolsActivePort did not contain a valid CDP port.',
+    );
   }
   return port;
 }
@@ -138,7 +147,10 @@ try {
       },
     );
     const observed = JSON.parse(output.trim());
-    return formatInstalledWebViewStartupDiagnostics({ ...defaults, ...observed });
+    return formatInstalledWebViewStartupDiagnostics({
+      ...defaults,
+      ...observed,
+    });
   } catch {
     return formatInstalledWebViewStartupDiagnostics(defaults);
   }
@@ -155,7 +167,14 @@ export function connectToInstalledWebView(
     fromEvent(appProcess, 'exit'),
   ).pipe(
     take(1),
-    switchMap(() => throwError(() => new Error('Installed Tauri app terminated before WebView2 CDP readiness.'))),
+    switchMap(() =>
+      throwError(
+        () =>
+          new Error(
+            'Installed Tauri app terminated before WebView2 CDP readiness.',
+          ),
+      ),
+    ),
   );
   return race(
     resolveCdpPort(
@@ -178,18 +197,46 @@ export function connectToInstalledWebView(
   );
 }
 
-function resolveCdpPort(port, appProcess, webViewDataDirectory, deadline, lastError) {
+function resolveCdpPort(
+  port,
+  appProcess,
+  webViewDataDirectory,
+  deadline,
+  lastError,
+) {
   if (appProcess.exitCode !== null) {
-    return throwError(() => new Error(`Installed Tauri app exited before WebView2 CDP readiness (${appProcess.exitCode}).`));
+    return throwError(
+      () =>
+        new Error(
+          `Installed Tauri app exited before WebView2 CDP readiness (${appProcess.exitCode}).`,
+        ),
+    );
   }
   if (port !== dynamicWebViewCdpPort) return of(port);
-  if (typeof webViewDataDirectory !== 'string' || webViewDataDirectory.length === 0) {
-    return throwError(() => new Error('Dynamic WebView2 CDP requires an isolated user-data directory.'));
+  if (
+    typeof webViewDataDirectory !== 'string' ||
+    webViewDataDirectory.length === 0
+  ) {
+    return throwError(
+      () =>
+        new Error(
+          'Dynamic WebView2 CDP requires an isolated user-data directory.',
+        ),
+    );
   }
   if (Date.now() >= deadline) {
-    return throwError(() => new Error(`Installed WebView2 CDP port metadata was not ready: ${errorMessage(lastError)}.`));
+    return throwError(
+      () =>
+        new Error(
+          `Installed WebView2 CDP port metadata was not ready: ${errorMessage(lastError)}.`,
+        ),
+    );
   }
-  const portFile = join(webViewDataDirectory, 'EBWebView', 'DevToolsActivePort');
+  const portFile = join(
+    webViewDataDirectory,
+    'EBWebView',
+    'DevToolsActivePort',
+  );
   return defer(() => from(readFile(portFile, 'utf8'))).pipe(
     map(parseInstalledWebViewCdpPort),
     catchError((error) =>
@@ -212,12 +259,26 @@ export function installedPage(browser, appProcess) {
   const deadline = Date.now() + 30_000;
   function findPage() {
     if (appProcess.exitCode !== null) {
-      return throwError(() => new Error('Installed Tauri app exited before its page was available.'));
+      return throwError(
+        () =>
+          new Error(
+            'Installed Tauri app exited before its page was available.',
+          ),
+      );
     }
-    const page = browser.contexts().flatMap((context) => context.pages())
+    const page = browser
+      .contexts()
+      .flatMap((context) => context.pages())
       .find((candidate) => candidate.url() === 'http://tauri.localhost/');
-    if (page) return defer(() => from(page.waitForLoadState('domcontentloaded'))).pipe(map(() => page));
-    if (Date.now() >= deadline) return throwError(() => new Error('Installed WebView did not expose an application page.'));
+    if (page)
+      return defer(() => from(page.waitForLoadState('domcontentloaded'))).pipe(
+        map(() => page),
+      );
+    if (Date.now() >= deadline)
+      return throwError(
+        () =>
+          new Error('Installed WebView did not expose an application page.'),
+      );
     return timer(100).pipe(concatMap(() => findPage()));
   }
   return defer(findPage);
@@ -225,13 +286,29 @@ export function installedPage(browser, appProcess) {
 
 function connectAttempt(endpoint, appProcess, deadline, lastError) {
   if (appProcess.exitCode !== null) {
-    return throwError(() => new Error(`Installed Tauri app exited before WebView2 CDP readiness (${appProcess.exitCode}).`));
+    return throwError(
+      () =>
+        new Error(
+          `Installed Tauri app exited before WebView2 CDP readiness (${appProcess.exitCode}).`,
+        ),
+    );
   }
   if (Date.now() >= deadline) {
-    return throwError(() => new Error(`Installed WebView2 CDP endpoint was not ready: ${errorMessage(lastError)}.`));
+    return throwError(
+      () =>
+        new Error(
+          `Installed WebView2 CDP endpoint was not ready: ${errorMessage(lastError)}.`,
+        ),
+    );
   }
-  return defer(() => from(chromium.connectOverCDP(endpoint, { timeout: 2_000 }))).pipe(
-    catchError((error) => timer(250).pipe(concatMap(() => connectAttempt(endpoint, appProcess, deadline, error)))),
+  return defer(() =>
+    from(chromium.connectOverCDP(endpoint, { timeout: 2_000 })),
+  ).pipe(
+    catchError((error) =>
+      timer(250).pipe(
+        concatMap(() => connectAttempt(endpoint, appProcess, deadline, error)),
+      ),
+    ),
   );
 }
 
@@ -239,26 +316,64 @@ function captureFixture(page, fixture, appPid, fixtureDirectory) {
   const filePath = join(fixtureDirectory, fixture.fileName);
   const importButton = page.getByTestId('source-import');
   return defer(() => from(writeFile(filePath, fixture.buffer))).pipe(
-    concatMap(() => defer(() => from(nativeOpenDialogUiAutomation(
-      filePath,
-      appPid,
-      () => importButton.click(),
-    )))),
-    map(() => page.locator('.document-card').filter({ hasText: fixture.fileName }).last()),
-    concatMap((card) => defer(() => from(card.waitFor({ state: 'visible', timeout: 15_000 }))).pipe(map(() => card))),
-    concatMap((card) => waitUntil(
-      () => defer(() => from(card.locator('.status').textContent())).pipe(map((status) => status === '已完成')),
-      45_000,
-      `Installed ${fixture.sourceKind} capture did not complete.`,
-    ).pipe(map(() => card))),
+    concatMap(() =>
+      defer(() =>
+        from(
+          nativeOpenDialogUiAutomation(filePath, appPid, () =>
+            importButton.click(),
+          ),
+        ),
+      ).pipe(
+        catchError((error) => {
+          const diagnostics =
+            typeof error?.diagnostics === 'string'
+              ? error.diagnostics
+              : undefined;
+          return throwError(() =>
+            diagnostics
+              ? new Error(
+                  `Native source picker automation failed: ${diagnostics}.`,
+                )
+              : error,
+          );
+        }),
+      ),
+    ),
+    map(() =>
+      page
+        .locator('.document-card')
+        .filter({ hasText: fixture.fileName })
+        .last(),
+    ),
+    concatMap((card) =>
+      defer(() =>
+        from(card.waitFor({ state: 'visible', timeout: 15_000 })),
+      ).pipe(map(() => card)),
+    ),
+    concatMap((card) =>
+      waitUntil(
+        () =>
+          defer(() => from(card.locator('.status').textContent())).pipe(
+            map((status) => status === '已完成'),
+          ),
+        45_000,
+        `Installed ${fixture.sourceKind} capture did not complete.`,
+      ).pipe(map(() => card)),
+    ),
     concatMap((card) => defer(() => from(card.click())).pipe(map(() => card))),
     concatMap(() => {
       const result = page.locator('.review-block.result pre');
-      return defer(() => from(result.waitFor({ state: 'visible', timeout: 15_000 }))).pipe(
+      return defer(() =>
+        from(result.waitFor({ state: 'visible', timeout: 15_000 })),
+      ).pipe(
         concatMap(() => defer(() => from(result.textContent()))),
         map((text) => {
           assert.ok(text?.trim(), 'Installed result preview was empty.');
-          return { sourceKind: fixture.sourceKind, fileName: fixture.fileName, targetTextVisible: true };
+          return {
+            sourceKind: fixture.sourceKind,
+            fileName: fixture.fileName,
+            targetTextVisible: true,
+          };
         }),
       );
     }),
@@ -266,7 +381,13 @@ function captureFixture(page, fixture, appPid, fixtureDirectory) {
 }
 
 export function exerciseInstalledUi(page, appPid, fixtureDirectory) {
-  return defer(() => from(page.getByRole('heading', { name: '文件擷取工作台' }).waitFor({ state: 'visible', timeout: 30_000 }))).pipe(
+  return defer(() =>
+    from(
+      page
+        .getByRole('heading', { name: '文件擷取工作台' })
+        .waitFor({ state: 'visible', timeout: 30_000 }),
+    ),
+  ).pipe(
     concatMap(() => prepareFirstRun(page)),
     concatMap(() =>
       defer(() =>
@@ -274,7 +395,13 @@ export function exerciseInstalledUi(page, appPid, fixtureDirectory) {
       ),
     ),
     switchMap((enabled) => {
-      if (!enabled) return throwError(() => new Error('Installed desktop workbench did not finish first-run requirements.'));
+      if (!enabled)
+        return throwError(
+          () =>
+            new Error(
+              'Installed desktop workbench did not finish first-run requirements.',
+            ),
+        );
       return defer(() => from(page.locator('.model-chip').textContent())).pipe(
         map((model) => {
           assert.match(model ?? '', /qwen(?:3\.5:|\s+3\.5\s+)0\.8b/iu);
@@ -282,13 +409,19 @@ export function exerciseInstalledUi(page, appPid, fixtureDirectory) {
         }),
       );
     }),
-    concatMap((model) => from(fixtures).pipe(
-      concatMap((fixture) => captureFixture(page, fixture, appPid, fixtureDirectory)),
-      toArray(),
-      map((captures) => ({
-        productTitle: 'Capture Workbench', model, captures,
-      })),
-    )),
+    concatMap((model) =>
+      from(fixtures).pipe(
+        concatMap((fixture) =>
+          captureFixture(page, fixture, appPid, fixtureDirectory),
+        ),
+        toArray(),
+        map((captures) => ({
+          productTitle: 'Capture Workbench',
+          model,
+          captures,
+        })),
+      ),
+    ),
   );
 }
 
@@ -296,10 +429,11 @@ function prepareFirstRun(page) {
   const intake = page.getByRole('button', { name: '選擇檔案' });
   const install = page.getByRole('button', { name: '同意並安裝核心需求' });
   return waitUntil(
-    () => forkJoin({
-      enabled: defer(() => from(intake.isEnabled())),
-      installVisible: defer(() => from(install.isVisible())),
-    }).pipe(map(({ enabled, installVisible }) => enabled || installVisible)),
+    () =>
+      forkJoin({
+        enabled: defer(() => from(intake.isEnabled())),
+        installVisible: defer(() => from(install.isVisible())),
+      }).pipe(map(({ enabled, installVisible }) => enabled || installVisible)),
     75_000,
     'Installed desktop workbench did not reach its ready or first-run setup state.',
   ).pipe(
@@ -307,11 +441,13 @@ function prepareFirstRun(page) {
     switchMap((enabled) => {
       if (enabled) return of(undefined);
       return defer(() => from(install.click())).pipe(
-        concatMap(() => waitUntil(
-          () => defer(() => from(intake.isEnabled())),
-          45_000,
-          'Installed desktop workbench did not complete first-run requirements.',
-        )),
+        concatMap(() =>
+          waitUntil(
+            () => defer(() => from(intake.isEnabled())),
+            45_000,
+            'Installed desktop workbench did not complete first-run requirements.',
+          ),
+        ),
       );
     }),
   );
@@ -322,7 +458,9 @@ function waitUntil(check, timeout, message, deadline = Date.now() + timeout) {
     switchMap((done) => {
       if (done) return of(undefined);
       if (Date.now() >= deadline) return throwError(() => new Error(message));
-      return timer(100).pipe(concatMap(() => waitUntil(check, timeout, message, deadline)));
+      return timer(100).pipe(
+        concatMap(() => waitUntil(check, timeout, message, deadline)),
+      );
     }),
   );
 }
