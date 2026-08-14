@@ -272,7 +272,7 @@ export function exerciseInstalledUi(page) {
       if (!enabled) return throwError(() => new Error('Installed desktop workbench did not finish first-run requirements.'));
       return defer(() => from(page.locator('.model-chip').textContent())).pipe(
         map((model) => {
-          assert.match(model ?? '', /qwen3\.5:4b/u);
+          assert.match(model ?? '', /qwen3\.5:0\.8b/u);
           return model;
         }),
       );

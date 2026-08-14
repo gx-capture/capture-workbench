@@ -502,6 +502,15 @@ test('installed smoke gives hosted WebView2 enough time to expose CDP', () => {
   assert.equal(installedWebViewCdpReadyTimeoutMs, 180_000);
 });
 
+test('installed smoke verifies the v2 bundled Ollama model', async () => {
+  const source = await readFile(
+    join(appRoot, 'scripts', 'installed-browser.ts'),
+    'utf8',
+  );
+  assert.match(source, /qwen3\\.5:0\\.8b/u);
+  assert.doesNotMatch(source, /qwen3\\.5:4b/u);
+});
+
 test('post-uninstall cleanup tolerates the owned install root being removed', async () => {
   const source = await readFile(
     join(appRoot, 'scripts', 'installed-deterministic-smoke.ts'),
