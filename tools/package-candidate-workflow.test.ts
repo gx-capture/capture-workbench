@@ -85,6 +85,9 @@ test('runtime promotion requires npm evidence before publishing runtime registri
   }
   assert.match(promoteWorkflow, /package_promote_run_id/u);
   assert.match(promoteWorkflow, /registry-ledger-npm-/u);
+  assert.match(promoteWorkflow, /publication_scope/u);
+  assert.match(promoteWorkflow, /github-release/u);
+  assert.match(promoteWorkflow, /inputs\.publication_scope == 'registries'/u);
   assert.match(promoteWorkflow, /publish-pypi/u);
   assert.match(promoteWorkflow, /publish-crates/u);
   assert.match(promoteWorkflow, /tag-runtime-release/u);

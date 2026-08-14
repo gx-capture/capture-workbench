@@ -34,6 +34,14 @@ on:
         description: 'Release SemVer without the v prefix'
         required: true
         type: string
+      publication_scope:
+        description: 'Publish the runtime GitHub Release only, or also publish Python and crate registries'
+        required: true
+        default: github-release
+        type: choice
+        options:
+          - github-release
+          - registries
 
 permissions:
   actions: read
@@ -120,6 +128,7 @@ jobs:
           compression-level: 0
 
   publish-pypi:
+    if: ${{ inputs.publication_scope == 'registries' }}
     needs: prepare-candidate
     uses: ./.github/workflows/_publish-pypi.yml
     permissions:
@@ -133,6 +142,7 @@ jobs:
     secrets: inherit
 
   publish-crates:
+    if: ${{ inputs.publication_scope == 'registries' }}
     needs: prepare-candidate
     uses: ./.github/workflows/_publish-crates.yml
     permissions:
@@ -144,7 +154,13 @@ jobs:
     secrets: inherit
 
   tag-runtime-release:
-    if: ${{ needs.publish-pypi.result == 'success' && needs.publish-crates.result == 'success' }}
+    if: >-
+      ${{
+        always() &&
+        needs.prepare-candidate.result == 'success' &&
+        (inputs.publication_scope == 'github-release' ||
+         (needs.publish-pypi.result == 'success' && needs.publish-crates.result == 'success'))
+      }}
     needs: [prepare-candidate, publish-pypi, publish-crates]
     runs-on: ubuntu-latest
     permissions:
@@ -156,7 +172,7 @@ jobs:
           ref: ${{ inputs.source_commit }}
           fetch-depth: 0
           persist-credentials: true
-      - name: Create or verify the annotated release tag after registries pass
+      - name: Create or verify the annotated release tag after selected publication gates pass
         shell: bash
         run: |
           set -euo pipefail
