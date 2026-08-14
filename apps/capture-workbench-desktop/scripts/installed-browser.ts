@@ -235,7 +235,7 @@ function connectAttempt(endpoint, appProcess, deadline, lastError) {
 }
 
 function captureFixture(page, fixture) {
-  const filePicker = page.getByRole('button', { name: '選擇檔案' });
+  const filePicker = page.getByLabel('選擇檔案');
   return defer(() => from(filePicker.setInputFiles({
     name: fixture.fileName, mimeType: fixture.mimeType, buffer: fixture.buffer,
   }))).pipe(

@@ -511,6 +511,18 @@ test('installed smoke verifies the v2 bundled Ollama model', async () => {
   assert.doesNotMatch(source, /qwen3\\.5:4b/u);
 });
 
+test('installed smoke uploads through the public file input', async () => {
+  const source = await readFile(
+    join(appRoot, 'scripts', 'installed-browser.ts'),
+    'utf8',
+  );
+  assert.match(source, /const filePicker = page\.getByLabel\(/u);
+  assert.doesNotMatch(
+    source,
+    /const filePicker = page\.getByRole\('button'/u,
+  );
+});
+
 test('post-uninstall cleanup tolerates the owned install root being removed', async () => {
   const source = await readFile(
     join(appRoot, 'scripts', 'installed-deterministic-smoke.ts'),
