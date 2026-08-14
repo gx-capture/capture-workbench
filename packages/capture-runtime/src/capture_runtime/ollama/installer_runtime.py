@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from capture_runtime.contracts import RuntimeRequirementV1
+from capture_runtime.contracts import RuntimeRequirementV2
 from capture_runtime.engine_adapters import WINDOWSML_REQUIRED_MODEL_FILES
 
 
@@ -186,7 +186,7 @@ class RuntimeInstaller(Protocol):
     def requirements(
         self,
         enabled_requirement_ids: Collection[str] | None = None,
-    ) -> list[RuntimeRequirementV1]: ...
+    ) -> list[RuntimeRequirementV2]: ...
 
     async def install(
         self,

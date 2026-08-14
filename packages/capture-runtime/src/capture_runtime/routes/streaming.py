@@ -14,12 +14,14 @@ from fastapi import APIRouter, Header, Path, Request, Response, status
 from fastapi.responses import StreamingResponse
 
 from capture_runtime.contracts import (
-    CaptureDocumentV1,
+    CaptureDocument,
     CaptureOperationV2,
+    CaptureStreamingResult,
     FinalizeIngestionV2,
     IngestionV2,
     OpenIngestionV2,
     PartialCaptureV2,
+    RawCapture,
     ReportStructuringFailureV2,
     RuntimeStreamingCapabilitiesV2,
     StartCaptureV2,
@@ -42,7 +44,7 @@ _DIGEST = re.compile(r"^sha-256=([0-9a-f]{64})$")
 def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependencies) -> None:
     service = dependencies.streaming_capture_service
 
-    @router.get("/health/ready", response_model=RuntimeStreamingCapabilitiesV2)
+    @router.get("/streaming/health/ready", response_model=RuntimeStreamingCapabilitiesV2)
     async def streaming_ready() -> RuntimeStreamingCapabilitiesV2:
         return RuntimeStreamingCapabilitiesV2(
             supports_progressive_audio=progressive_decoder_ready(),
@@ -57,7 +59,13 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
         response_model=IngestionV2,
         status_code=status.HTTP_201_CREATED,
     )
-    async def open_ingestion(request: OpenIngestionV2) -> IngestionV2:
+    async def open_ingestion(
+        request: OpenIngestionV2,
+        idempotency_key: Annotated[
+            str, Header(alias="X-Idempotency-Key", min_length=1, max_length=128)
+        ],
+    ) -> IngestionV2:
+        _require_matching_idempotency_key(idempotency_key, request.client_request_id)
         try:
             return service.open_ingestion(request)
         except StreamingIdempotencyConflictError as error:
@@ -165,7 +173,13 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
         response_model=CaptureOperationV2,
         status_code=status.HTTP_202_ACCEPTED,
     )
-    async def start_capture(request: StartCaptureV2) -> CaptureOperationV2:
+    async def start_capture(
+        request: StartCaptureV2,
+        idempotency_key: Annotated[
+            str, Header(alias="X-Idempotency-Key", min_length=1, max_length=128)
+        ],
+    ) -> CaptureOperationV2:
+        _require_matching_idempotency_key(idempotency_key, request.client_request_id)
         try:
             return service.start_capture(request)
         except StreamingRecordNotFoundError as error:
@@ -264,6 +278,19 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
                 404, "capture_not_found", "Streaming capture was not found."
             ) from error
 
+    @router.get("/captures/{capture_id}/raw", response_model=RawCapture)
+    async def capture_raw(capture_id: str) -> RawCapture:
+        try:
+            return service.raw(capture_id)
+        except StreamingPartialNotFoundError as error:
+            raise ApiProblem(
+                409, "raw_unavailable", "Raw extraction is not available yet."
+            ) from error
+        except StreamingRecordNotFoundError as error:
+            raise ApiProblem(
+                404, "capture_not_found", "Streaming capture was not found."
+            ) from error
+
     @router.post("/captures/{capture_id}/cancel", response_model=CaptureOperationV2)
     async def cancel_capture(capture_id: str) -> CaptureOperationV2:
         try:
@@ -273,8 +300,8 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
                 404, "capture_not_found", "Streaming capture was not found."
             ) from error
 
-    @router.post("/captures/{capture_id}/structure", response_model=CaptureDocumentV1)
-    async def structure_capture(capture_id: str) -> CaptureDocumentV1:
+    @router.post("/captures/{capture_id}/structure", response_model=CaptureDocument)
+    async def structure_capture(capture_id: str) -> CaptureDocument:
         try:
             return await service.structure(capture_id)
         except StreamingTransitionError as error:
@@ -291,7 +318,7 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
     @router.post("/captures/{capture_id}/structure/commit", response_model=CaptureOperationV2)
     async def commit_host_structure(
         capture_id: str,
-        candidate: CaptureDocumentV1,
+        candidate: CaptureDocument,
         idempotency_key: Annotated[
             str, Header(alias="X-Idempotency-Key", min_length=1, max_length=128)
         ],
@@ -352,8 +379,8 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
                 404, "capture_not_found", "Streaming capture was not found."
             ) from error
 
-    @router.get("/captures/{capture_id}/result")
-    async def capture_result(capture_id: str) -> dict[str, object]:
+    @router.get("/captures/{capture_id}/result", response_model=CaptureStreamingResult)
+    async def capture_result(capture_id: str) -> CaptureStreamingResult:
         try:
             return service.terminal_result(capture_id)
         except StreamingPartialNotFoundError as error:
@@ -414,6 +441,15 @@ def _chunk_error_code(message: str) -> str:
 
 def _safe_message(message: str) -> str:
     return message[:200]
+
+
+def _require_matching_idempotency_key(idempotency_key: str, client_request_id: str) -> None:
+    if idempotency_key != client_request_id:
+        raise ApiProblem(
+            409,
+            "idempotency_conflict",
+            "X-Idempotency-Key must match clientRequestId.",
+        )
 
 
 __all__ = ["register_streaming_routes"]

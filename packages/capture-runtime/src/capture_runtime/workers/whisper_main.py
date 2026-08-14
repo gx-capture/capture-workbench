@@ -274,7 +274,7 @@ def prepare(request: WorkerRequestModel) -> None:
 
 def _session() -> None:
     from capture_runtime.clock import SystemClock
-    from capture_runtime.contracts import CaptureSourceV1
+    from capture_runtime.contracts import CaptureSource
     from capture_runtime.progressive_audio import ProgressiveAudioSession
     from capture_runtime.progressive_whisper import (
         DirectWindowDecoder,
@@ -287,7 +287,7 @@ def _session() -> None:
     temp_dir = Path(os.environ.get("CAPTURE_SESSION_TEMP_DIR", ""))
     if not model_path.is_absolute() or not model_path.is_dir() or not temp_dir.is_absolute():
         raise ValueError("Whisper session paths are invalid")
-    source = CaptureSourceV1(
+    source = CaptureSource(
         sha256=os.environ["CAPTURE_SESSION_SOURCE_SHA256"],
         file_name=os.environ["CAPTURE_SESSION_FILE_NAME"],
         media_type=os.environ["CAPTURE_SESSION_MEDIA_TYPE"],

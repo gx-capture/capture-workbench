@@ -15,20 +15,20 @@ from capture_structuring import StructuringValidationError
 
 from capture_runtime.clock import Clock
 from capture_runtime.contracts import (
-    CaptureBlockV1,
-    CaptureDocumentV1,
-    CaptureEngineV1,
-    RawCaptureV1,
+    CaptureBlock,
+    CaptureDocument,
+    CaptureEngine,
+    RawCapture,
 )
 
 
 class CaptureStructuringProvider(Protocol):
     @property
-    def engine_identity(self) -> CaptureEngineV1 | None: ...
+    def engine_identity(self) -> CaptureEngine | None: ...
 
     async def structure(
         self,
-        raw: RawCaptureV1,
+        raw: RawCapture,
         *,
         target_language: str | None,
         cancel_event: asyncio.Event,
@@ -39,12 +39,12 @@ class HostOnlyCaptureStructuringProvider:
     """Fail closed if an internal caller bypasses host-mode capability checks."""
 
     @property
-    def engine_identity(self) -> CaptureEngineV1 | None:
+    def engine_identity(self) -> CaptureEngine | None:
         return None
 
     async def structure(
         self,
-        raw: RawCaptureV1,
+        raw: RawCapture,
         *,
         target_language: str | None,
         cancel_event: asyncio.Event,
@@ -69,7 +69,7 @@ class FakeCaptureStructuringProvider:
         self._delay_seconds = delay_seconds
         self._mode = mode
         digest_source = "fake-structurer:deterministic-structure-v1"
-        self._engine_identity = CaptureEngineV1(
+        self._engine_identity = CaptureEngine(
             engine="fake-structurer",
             model="deterministic-structure-v1",
             digest=f"sha256:{hashlib.sha256(digest_source.encode()).hexdigest()}",
@@ -77,12 +77,12 @@ class FakeCaptureStructuringProvider:
         )
 
     @property
-    def engine_identity(self) -> CaptureEngineV1:
+    def engine_identity(self) -> CaptureEngine:
         return self._engine_identity
 
     async def structure(
         self,
-        raw: RawCaptureV1,
+        raw: RawCapture,
         *,
         target_language: str | None,
         cancel_event: asyncio.Event,
@@ -99,7 +99,7 @@ class FakeCaptureStructuringProvider:
 
         target_prefix = f"[{target_language}] " if target_language else ""
         blocks = [
-            CaptureBlockV1(
+            CaptureBlock(
                 block_id=f"block-{index + 1}",
                 order=index,
                 type="transcript" if segment.locator.kind == "time" else "paragraph",
@@ -110,7 +110,7 @@ class FakeCaptureStructuringProvider:
             )
             for index, segment in enumerate(raw.segments)
         ]
-        document = CaptureDocumentV1(
+        document = CaptureDocument(
             source=raw.source,
             raw_segments=raw.segments,
             blocks=blocks,

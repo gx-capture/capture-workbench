@@ -10,7 +10,7 @@ lifecycle, provenance validation, and schema enforcement.
 
 ## Non-Goals
 
-- Cross-platform production executables; v1 remains Windows 11 x64.
+- Cross-platform production executables; the product target remains Windows 11 x64.
 - A public Tauri desktop product.
 - Persisting host-domain data in the runtime.
 - Accepting Ollama credentials in URLs, browser requests, or logs.
@@ -34,7 +34,7 @@ lifecycle, provenance validation, and schema enforcement.
 
 ### HTTP API
 
-The existing `/v1` API and `CaptureDocumentV1` schema remain unchanged. In
+The existing `/v2` API and `CaptureDocument` schema remain unchanged. In
 external mode, runtime capabilities continue to advertise `runtime` and
 `host` structuring modes, while Ollama installation requirements are disabled.
 The runtime actively validates that the configured model is present at
@@ -80,7 +80,7 @@ The runtime actively validates that the configured model is present at
 - A test proves external mode validates endpoint/model settings, does not expose
   Ollama installation requirements, and uses the configured Bearer API key.
 - A test proves external Ollama tags and generate responses produce a validated
-  `CaptureDocumentV1` and that missing model/invalid digest fail closed.
+  `CaptureDocument` and that missing model/invalid digest fail closed.
 - `corepack pnpm verify:release-version -- v0.3.0` passes.
 - The release artifact builder produces the canonical executable, checksum,
   manifest, and schema when supplied with a public WindowsML descriptor.

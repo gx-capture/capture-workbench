@@ -1,7 +1,7 @@
 import { Injectable, inject } from '@angular/core';
 import type {
-  CaptureDocumentV1,
-  RawCaptureV1,
+  CaptureDocument,
+  RawCapture,
 } from '@gx-capture/capture-workbench-ui';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { open } from '@tauri-apps/plugin-dialog';
@@ -107,8 +107,8 @@ export class DesktopLibraryService {
     readonly captureId?: string;
     readonly clearCaptureId?: boolean;
     readonly stage?: string;
-    readonly raw?: RawCaptureV1;
-    readonly result?: CaptureDocumentV1;
+    readonly raw?: RawCapture;
+    readonly result?: CaptureDocument;
     readonly errorCode?: string;
     readonly errorMessage?: string;
     readonly recoveryCode?: string;

@@ -6,7 +6,7 @@ import { CAPTURE_BLOCK_TYPES } from './constants/installed.ts';
 const captureBlockTypes = CAPTURE_BLOCK_TYPES;
 
 export function assertCaptureDocumentForFixture(document, fixture) {
-  assertRecord(document, 'CaptureDocumentV1');
+  assertRecord(document, 'CaptureDocument');
   assertExactKeys(
     document,
     [
@@ -22,15 +22,15 @@ export function assertCaptureDocumentForFixture(document, fixture) {
       'targetText',
       'warnings',
     ],
-    'CaptureDocumentV1',
+    'CaptureDocument',
   );
-  assert.equal(document.schemaVersion, '1');
+  assert.equal(document.schemaVersion, '2');
 
-  assertRecord(document.source, 'CaptureDocumentV1.source');
+  assertRecord(document.source, 'CaptureDocument.source');
   assertExactKeys(
     document.source,
     ['bytes', 'fileName', 'mediaType', 'sha256'],
-    'CaptureDocumentV1.source',
+    'CaptureDocument.source',
   );
   assert.equal(document.source.fileName, fixture.fileName);
   assert.equal(document.source.mediaType, fixture.mimeType);
@@ -41,10 +41,10 @@ export function assertCaptureDocumentForFixture(document, fixture) {
   );
   assert.match(document.source.sha256, /^[0-9a-f]{64}$/u);
 
-  assertEngine(document.extractionEngine, 'CaptureDocumentV1.extractionEngine');
+  assertEngine(document.extractionEngine, 'CaptureDocument.extractionEngine');
   assertEngine(
     document.structuringEngine,
-    'CaptureDocumentV1.structuringEngine',
+    'CaptureDocument.structuringEngine',
   );
   assert.ok(Array.isArray(document.warnings));
   assert.ok(
@@ -79,7 +79,7 @@ export function assertCaptureDocumentForFixture(document, fixture) {
     document.sourceText,
     document.rawSegments.map((segment) => segment.text).join('\n'),
   );
-  assertNonEmptyString(document.sourceText, 'CaptureDocumentV1.sourceText');
+  assertNonEmptyString(document.sourceText, 'CaptureDocument.sourceText');
 
   assert.ok(Array.isArray(document.blocks));
   assert.equal(document.blocks.length, fixture.expectedSegments);
@@ -118,15 +118,15 @@ export function assertCaptureDocumentForFixture(document, fixture) {
     document.targetText,
     document.blocks.map((block) => block.targetText).join('\n'),
   );
-  assertNonEmptyString(document.targetText, 'CaptureDocumentV1.targetText');
+  assertNonEmptyString(document.targetText, 'CaptureDocument.targetText');
 
   const createdAt = assertDateTime(
     document.createdAt,
-    'CaptureDocumentV1.createdAt',
+    'CaptureDocument.createdAt',
   );
   const completedAt = assertDateTime(
     document.completedAt,
-    'CaptureDocumentV1.completedAt',
+    'CaptureDocument.completedAt',
   );
   assert.ok(completedAt >= createdAt, 'completedAt must not precede createdAt');
 }

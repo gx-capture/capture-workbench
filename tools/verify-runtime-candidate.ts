@@ -43,6 +43,7 @@ function parseArguments(args: readonly string[]) {
         '--candidate-id',
         '--candidate-manifest-sha256',
         '--package-candidate-id',
+        '--contract-set-sha256',
       ].includes(name) ||
       !value ||
       values.has(name)
@@ -66,7 +67,8 @@ function parseArguments(args: readonly string[]) {
     producerRunId < 1 ||
     !hex64(values.get('--candidate-id')) ||
     !hex64(values.get('--candidate-manifest-sha256')) ||
-    !hex64(values.get('--package-candidate-id'))
+    !hex64(values.get('--package-candidate-id')) ||
+    !hex64(values.get('--contract-set-sha256'))
   ) {
     throw new Error('Runtime candidate identity arguments are invalid.');
   }
@@ -78,6 +80,7 @@ function parseArguments(args: readonly string[]) {
     candidateId: values.get('--candidate-id')!,
     candidateManifestSha256: values.get('--candidate-manifest-sha256')!,
     packageCandidateId: values.get('--package-candidate-id')!,
+    contractSetSha256: values.get('--contract-set-sha256')!,
     requireEvidence,
   };
 }
@@ -113,6 +116,7 @@ export async function verifyRuntimeCandidate(input: {
   readonly candidateId: string;
   readonly candidateManifestSha256: string;
   readonly packageCandidateId: string;
+  readonly contractSetSha256: string;
   readonly requireEvidence?: boolean;
 }): Promise<void> {
   const manifestPath = join(input.candidate, 'candidate-manifest.json');
@@ -130,6 +134,7 @@ export async function verifyRuntimeCandidate(input: {
       'artifacts',
       'candidateId',
       'candidateKind',
+      'contractSetSha256',
       'packageCandidateId',
       'producerRunId',
       'releaseMode',
@@ -144,6 +149,7 @@ export async function verifyRuntimeCandidate(input: {
   assert.equal(manifest.candidateKind, 'runtime');
   assert.equal(manifest.candidateId, input.candidateId);
   assert.equal(manifest.packageCandidateId, input.packageCandidateId);
+  assert.match(String(manifest.contractSetSha256), /^[0-9a-f]{64}$/u);
   assert.equal(manifest.sourceCommit, input.sourceCommit);
   assert.equal(manifest.releaseVersion, input.version);
   assert.equal(manifest.producerRunId, input.producerRunId);
@@ -167,13 +173,13 @@ export async function verifyRuntimeCandidate(input: {
   const schemaPath = join(
     input.candidate,
     'runtime',
-    'capture-document-v1.schema.json',
+    'capture-document-v2.schema.json',
   );
   const schemaDigest = await sha256(schemaPath);
   assert.equal(runtimeManifest.runtimeVersion, input.version);
   assert.equal(
     runtimeManifest.schemaFileName,
-    'capture-document-v1.schema.json',
+    'capture-document-v2.schema.json',
   );
   assert.equal(runtimeManifest.schemaSha256, schemaDigest);
   const catalog = JSON.parse(
@@ -228,11 +234,28 @@ export async function verifyRuntimeCandidate(input: {
   );
   assert(runtimeFiles.some((path) => path.endsWith('.exe')));
   assert(runtimeFiles.includes('runtime/capture-runtime-manifest.json'));
-  assert(runtimeFiles.includes('runtime/capture-document-v1.schema.json'));
+  assert(runtimeFiles.includes('runtime/capture-document-v2.schema.json'));
   assert(runtimeFiles.includes('runtime/capture-engine-catalog.json'));
+  const contractSetSha256 = (
+    await readFile(
+      join(input.candidate, 'contracts', 'contract-set.sha256'),
+      'utf8',
+    )
+  ).trim();
+  assert.equal(manifest.contractSetSha256, contractSetSha256);
+  assert.match(contractSetSha256, /^[0-9a-f]{64}$/u);
+  assert.equal(
+    contractSetSha256,
+    input.contractSetSha256,
+    'Runtime candidate contract-set SHA-256 differs from the requested identity.',
+  );
+  assert.equal(
+    await sha256(join(input.candidate, 'contracts', 'contract-set.json')),
+    contractSetSha256,
+  );
   assert(
     [...expectedArtifacts].some((path) =>
-      /^python\/capture_contracts-.*\.(?:whl|tar\.gz)$/u.test(path),
+      /^python\/capture_runtime_client-.*\.(?:whl|tar\.gz)$/u.test(path),
     ),
   );
   assert(

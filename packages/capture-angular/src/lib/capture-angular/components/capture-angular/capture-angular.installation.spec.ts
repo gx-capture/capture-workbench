@@ -2,7 +2,7 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideCaptureWorkbenchInputs } from '../../../contracts';
 import type {
   CaptureClient,
-  RuntimeRequirementV1,
+  RuntimeRequirement,
   StartRuntimeInstallationRequest,
 } from '../../../contracts';
 import { of, throwError } from 'rxjs';
@@ -123,7 +123,7 @@ describe('CaptureWorkbenchComponent', () => {
       getRequirements: vi.fn(() =>
         of(
           (['windowsml-ocr', 'whisper-primary'] as const).map(
-            (requirementId): RuntimeRequirementV1 => ({
+            (requirementId): RuntimeRequirement => ({
               requirementId,
               kind: 'model',
               displayName: requirementId,
@@ -153,7 +153,7 @@ describe('CaptureWorkbenchComponent', () => {
   });
 
   it('installs OCR before Whisper even when the runtime lists dependencies in reverse order', async () => {
-    const requirements: readonly RuntimeRequirementV1[] = [
+    const requirements: readonly RuntimeRequirement[] = [
       {
         requirementId: 'whisper-primary',
         kind: 'stt',
@@ -201,7 +201,7 @@ describe('CaptureWorkbenchComponent', () => {
   });
 
   it('retries an uncertain installation once and installs a newly unlocked model', async () => {
-    const ollamaRuntime: RuntimeRequirementV1 = {
+    const ollamaRuntime: RuntimeRequirement = {
       requirementId: 'ollama-runtime',
       kind: 'runtime',
       displayName: 'Ollama',
@@ -209,7 +209,7 @@ describe('CaptureWorkbenchComponent', () => {
       requiredFor: ['runtime'],
       installStrategy: 'winget',
     };
-    const captureModel: RuntimeRequirementV1 = {
+    const captureModel: RuntimeRequirement = {
       requirementId: 'capture-ollama-model',
       kind: 'model',
       displayName: 'Capture model',
@@ -217,17 +217,17 @@ describe('CaptureWorkbenchComponent', () => {
       requiredFor: ['runtime'],
       installStrategy: 'manual',
     };
-    const ollamaInstallable: readonly RuntimeRequirementV1[] = [
+    const ollamaInstallable: readonly RuntimeRequirement[] = [
       ollamaRuntime,
       captureModel,
     ];
-    const modelInstallable: readonly RuntimeRequirementV1[] = [
+    const modelInstallable: readonly RuntimeRequirement[] = [
       // A stale runtime probe must not cause the already-completed ID to be
       // repeated; the newly unlocked model should still be selected.
       ollamaRuntime,
       { ...captureModel, status: 'installable' },
     ];
-    const allReady: readonly RuntimeRequirementV1[] = [
+    const allReady: readonly RuntimeRequirement[] = [
       { ...ollamaRuntime, status: 'ready' },
       { ...captureModel, status: 'ready' },
     ];
@@ -277,7 +277,7 @@ describe('CaptureWorkbenchComponent', () => {
   });
 
   it('does not retry an installation after an abort response', async () => {
-    const requirement: RuntimeRequirementV1 = {
+    const requirement: RuntimeRequirement = {
       requirementId: 'ollama-runtime',
       kind: 'runtime',
       displayName: 'Ollama',

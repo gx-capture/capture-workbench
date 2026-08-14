@@ -1,0 +1,53 @@
+{
+  "name": "capture-runtime-client",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "packages/capture-runtime-client/src",
+  "projectType": "library",
+  "tags": ["npm:public", "scope:capture", "type:sdk"],
+  "targets": {
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm exec tsc --noEmit -p packages/capture-runtime-client/tsconfig.json"
+      }
+    },
+    "build": {
+      "executor": "@nx/js:tsc",
+      "outputs": ["{workspaceRoot}/dist/{projectRoot}"],
+      "options": {
+        "main": "packages/capture-runtime-client/src/index.ts",
+        "outputPath": "dist/packages/capture-runtime-client",
+        "outputFileName": "index.js",
+        "rootDir": "packages/capture-runtime-client/src",
+        "tsConfig": "packages/capture-runtime-client/tsconfig.lib.json",
+        "generatePackageJson": true,
+        "generateExportsField": true,
+        "assets": [
+          { "glob": "README.md", "input": "packages/capture-runtime-client", "output": "." },
+          { "glob": "assets/**", "input": "packages/capture-runtime-client/src/private", "output": "private" }
+        ]
+      }
+    },
+    "pack": {
+      "executor": "nx:run-commands",
+      "dependsOn": ["build"],
+      "outputs": ["{workspaceRoot}/dist/packs"],
+      "options": {
+        "cwd": "dist/packages/capture-runtime-client",
+        "command": "corepack pnpm pack --pack-destination ../../packs"
+      }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm exec vitest run --config packages/capture-runtime-client/vitest.config.ts packages/capture-runtime-client/src/client.spec.ts"
+      }
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm exec eslint packages/capture-runtime-client/src"
+      }
+    }
+  }
+}

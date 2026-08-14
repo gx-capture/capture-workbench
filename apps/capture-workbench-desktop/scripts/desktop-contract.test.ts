@@ -245,7 +245,7 @@ test('Nx separates root verification build from release and deterministic NSIS l
   assert.equal(project.targets['build-nsis-release'], undefined);
   assert.ok(
     project.targets['stage-deterministic-runtime'].outputs.some((output) =>
-      output.endsWith('capture-document-v1.schema.json'),
+      output.endsWith('capture-document-v2.schema.json'),
     ),
   );
   assert.deepEqual(project.targets['package-qa'].dependsOn, [
@@ -298,7 +298,7 @@ test('production CSP is strict while allowing only dynamic loopback API ports', 
   assert.deepEqual(config.bundle.resources, [
     'binaries/capture-runtime-x86_64-pc-windows-msvc.exe',
     'resources/capture-runtime-manifest.json',
-    'resources/capture-document-v1.schema.json',
+    'resources/capture-document-v2.schema.json',
   ]);
   assert.match(
     config.build.beforeBuildCommand,
@@ -528,7 +528,7 @@ test('real Ollama smoke uses the capture contract and validates profile provenan
   assert.doesNotMatch(source, /CAPTURE_WINDOWSML_BUNDLE/u);
 });
 
-test('deterministic runtime checks exact Host authority and canonical v1 names', async () => {
+test('deterministic runtime checks exact Host authority and canonical v2 names', async () => {
   const fixtureRoot = join(
     appRoot,
     'scripts',
@@ -544,7 +544,8 @@ test('deterministic runtime checks exact Host authority and canonical v1 names',
   assert.match(httpSource, /rsplit_once\(':'\)/u);
   assert.doesNotMatch(httpSource, /fn normalized_host/u);
   assert.match(contractSource, /"captureId"/u);
-  assert.match(contractSource, /const SCHEMA_VERSION: &str = "1"/u);
+  assert.match(contractSource, /const API_VERSION: &str = "2\.0"/u);
+  assert.match(contractSource, /const SCHEMA_VERSION: &str = "2"/u);
   assert.match(deterministicSource, /multipart\/form-data; boundary=/u);
   assert.match(deterministicSource, /'structuringMode'/u);
   assert.match(deterministicSource, /wrongAuthorityPortRejected/u);

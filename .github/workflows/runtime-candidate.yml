@@ -26,6 +26,10 @@ on:
         description: 'SHA-256 of the Package Candidate candidate-manifest.json'
         required: true
         type: string
+      contract_set_sha256:
+        description: 'Canonical v2 contract-set SHA-256 for this release train'
+        required: true
+        type: string
       release_mode:
         description: 'Candidate model mode derived from the checked-in source lock'
         required: true
@@ -109,6 +113,7 @@ jobs:
             --producer-run-id '${{ inputs.package_candidate_run_id }}' `
             --candidate-id '${{ inputs.package_candidate_id }}' `
             --candidate-manifest-sha256 '${{ inputs.package_candidate_manifest_sha256 }}' `
+            --contract-set-sha256 '${{ inputs.contract_set_sha256 }}' `
             --require-evidence
 
       - name: Verify requested model mode
@@ -128,7 +133,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
           pnpm nx run capture-runtime:build-release-artifacts
-          pnpm nx run capture-contracts:python-build
+          pnpm nx run capture-runtime-client-python:build
           pnpm nx run capture-structuring-python:build
           pnpm nx run capture-sidecar-launcher:cargo-package-dry-run
 
@@ -171,6 +176,7 @@ jobs:
             --candidate-id "$($manifest.candidateId)" `
             --candidate-manifest-sha256 (Get-FileHash (Join-Path $candidate 'candidate-manifest.json') -Algorithm SHA256).Hash.ToLowerInvariant() `
             --package-candidate-id '${{ inputs.package_candidate_id }}' `
+            --contract-set-sha256 '${{ inputs.contract_set_sha256 }}' `
             --require-evidence
 
       - name: Upload immutable Runtime Candidate

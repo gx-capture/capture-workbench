@@ -37,8 +37,6 @@ declare global {
     __captureE2eDetail?: unknown;
     __captureE2eBubbles?: boolean;
     __captureE2eComposed?: boolean;
-    __captureRuntimeBaseUrl: string;
-    __captureRuntimeToken: string;
   }
 }
 
@@ -58,7 +56,7 @@ const ocrWorkerArchive = join(
   'capture-runtime',
   'dist',
   'release',
-  'capture-engine-ocr-0.3.12-windows-x64.zip',
+  'capture-engine-ocr-0.4.0-windows-x64.zip',
 );
 const defaultPdfPath = join(
   repoRoot,
@@ -80,9 +78,9 @@ const packageManifest = JSON.parse(
     'utf8',
   ),
 ) as { name: string; version: string };
-const contractsManifest = JSON.parse(
+const runtimeClientManifest = JSON.parse(
   readFileSync(
-    join(repoRoot, 'packages', 'capture-contracts', 'package.json'),
+    join(repoRoot, 'packages', 'capture-runtime-client', 'package.json'),
     'utf8',
   ),
 ) as { name: string; version: string };
@@ -92,11 +90,11 @@ const packageArchive = join(
   'packs',
   `${archiveName(packageManifest.name)}-${packageManifest.version}.tgz`,
 );
-const contractsArchive = join(
+const runtimeClientArchive = join(
   repoRoot,
   'dist',
   'packs',
-  `${archiveName(contractsManifest.name)}-${contractsManifest.version}.tgz`,
+  `${archiveName(runtimeClientManifest.name)}-${runtimeClientManifest.version}.tgz`,
 );
 const fixtureBase = resolve(repoRoot, '..', '.cw-phase15');
 const corepackCli = resolveNode24Corepack();
@@ -129,6 +127,57 @@ function stopProcessTree(child: ReturnType<typeof spawn>): void {
     });
   } else {
     child.kill('SIGTERM');
+  }
+}
+
+function stopRuntimeProcessTree(
+  child: ReturnType<typeof spawn>,
+  port: number,
+): void {
+  stopProcessTree(child);
+  if (process.platform !== 'win32') return;
+  const runtimePath = runtimeExecutable.replaceAll("'", "''");
+  const expectedSuffix = `serve --port ${port}`;
+  const systemRoot = process.env['SystemRoot'];
+  if (!systemRoot) {
+    throw new Error(
+      'SystemRoot is required to stop the packaged Capture Runtime.',
+    );
+  }
+  const powershellExecutable = join(
+    systemRoot,
+    'System32',
+    'WindowsPowerShell',
+    'v1.0',
+    'powershell.exe',
+  );
+  const script = [
+    "$ErrorActionPreference = 'Stop'",
+    `$runtimePath = '${runtimePath}'`,
+    `$expectedSuffix = '${expectedSuffix}'`,
+    '$matches = @(Get-CimInstance Win32_Process | Where-Object {',
+    '  $_.ExecutablePath -eq $runtimePath -and',
+    '  $_.CommandLine -and',
+    '  $_.CommandLine.TrimEnd().EndsWith($expectedSuffix, [System.StringComparison]::Ordinal)',
+    '})',
+    'foreach ($match in $matches) {',
+    '  Stop-Process -Id $match.ProcessId -Force -ErrorAction Stop',
+    '}',
+  ].join('\n');
+  const result = spawnSync(
+    powershellExecutable,
+    ['-NoProfile', '-NonInteractive', '-Command', script],
+    {
+      encoding: 'utf8',
+      shell: false,
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  );
+  if (result.error || result.status !== 0) {
+    throw new Error(
+      `Could not stop the packaged Capture Runtime: ${result.error?.message || result.stderr || `exit code ${result.status}`}`,
+    );
   }
 }
 
@@ -383,7 +432,12 @@ async function startRuntime(
   dataDirectory: string,
   workerMirrorOrigin: string,
   installOcrRequired: boolean,
-): Promise<{ child: ReturnType<typeof spawn>; token: string }> {
+): Promise<{
+  child: ReturnType<typeof spawn>;
+  token: string;
+  port: number;
+  stderr: () => string;
+}> {
   const token = `capture-runtime-phase-1-5-${randomUUID()}-${randomUUID()}`;
   const child = spawn(runtimeExecutable, ['serve', '--port', String(port)], {
     cwd: dirname(runtimeExecutable),
@@ -405,13 +459,18 @@ async function startRuntime(
     windowsHide: true,
     stdio: ['ignore', 'ignore', 'pipe'],
   });
-  child.stderr?.resume();
+  let stderr = '';
+  child.stderr?.setEncoding('utf8');
+  child.stderr?.on('data', (chunk: string) => {
+    stderr = `${stderr}${chunk}`.slice(-16_384);
+  });
+  const readStderr = () => stderr.trim();
   try {
-    await waitForRuntimeReady(child, port, token);
+    await waitForRuntimeReady(child, port, token, readStderr);
     if (installOcrRequired) await installOcr(port, token);
-    return { child, token };
+    return { child, token, port, stderr: readStderr };
   } catch (error) {
-    stopProcessTree(child);
+    stopRuntimeProcessTree(child, port);
     throw error;
   }
 }
@@ -420,14 +479,17 @@ async function waitForRuntimeReady(
   child: ReturnType<typeof spawn>,
   port: number,
   token: string,
+  stderr: () => string,
 ): Promise<void> {
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
     if (child.exitCode !== null || child.signalCode !== null) {
-      throw new Error('Capture Runtime exited before Phase 1.5 E2E readiness.');
+      throw new Error(
+        `Capture Runtime exited before Phase 1.5 E2E readiness: ${stderr() || 'no stderr'}.`,
+      );
     }
     try {
-      const response = await fetch(`http://127.0.0.1:${port}/v1/health/ready`, {
+      const response = await fetch(`http://127.0.0.1:${port}/v2/health/ready`, {
         headers: { Authorization: `Bearer ${token}` },
         signal: AbortSignal.timeout(1_000),
       });
@@ -455,7 +517,7 @@ async function installOcr(port: number, token: string): Promise<void> {
   const baseUrl = `http://127.0.0.1:${port}`;
   const headers = { Authorization: `Bearer ${token}` };
   const requirementsResponse = await fetch(
-    `${baseUrl}/v1/runtime/requirements`,
+    `${baseUrl}/v2/runtime/requirements`,
     {
       headers,
     },
@@ -487,7 +549,7 @@ async function installOcr(port: number, token: string): Promise<void> {
     );
   }
   const installationResponse = await fetch(
-    `${baseUrl}/v1/runtime/installations`,
+    `${baseUrl}/v2/runtime/installations`,
     {
       method: 'POST',
       headers: {
@@ -514,7 +576,7 @@ async function installOcr(port: number, token: string): Promise<void> {
   const deadline = Date.now() + 15 * 60_000;
   while (Date.now() < deadline) {
     const statusResponse = await fetch(
-      `${baseUrl}/v1/runtime/installations/${encodeURIComponent(installation.installationId)}`,
+      `${baseUrl}/v2/runtime/installations/${encodeURIComponent(installation.installationId)}`,
       { headers },
     );
     if (!statusResponse.ok) {
@@ -541,6 +603,8 @@ async function installOcr(port: number, token: string): Promise<void> {
 async function startPreview(
   fixtureRoot: string,
   port: number,
+  runtimeOrigin: string,
+  runtimeToken: string,
 ): Promise<ReturnType<typeof spawn>> {
   const viteCli = join(fixtureRoot, 'node_modules', 'vite', 'bin', 'vite.js');
   const child = spawn(
@@ -548,7 +612,12 @@ async function startPreview(
     [viteCli, '--host', '127.0.0.1', '--port', String(port), '--strictPort'],
     {
       cwd: fixtureRoot,
-      env: { ...process.env, CI: 'true' },
+      env: {
+        ...process.env,
+        CI: 'true',
+        CAPTURE_E2E_RUNTIME_ORIGIN: runtimeOrigin,
+        CAPTURE_E2E_RUNTIME_TOKEN: runtimeToken,
+      },
       shell: false,
       windowsHide: true,
       stdio: ['ignore', 'ignore', 'pipe'],
@@ -565,9 +634,9 @@ async function startPreview(
 }
 
 async function main(): Promise<void> {
-  if (!existsSync(packageArchive) || !existsSync(contractsArchive)) {
+  if (!existsSync(packageArchive) || !existsSync(runtimeClientArchive)) {
     throw new Error(
-      'Packed Capture Workbench and Capture Contracts archives are required. Run capture-angular:pack first.',
+      'Packed Capture Workbench and Runtime Client archives are required. Run capture-angular:pack and capture-runtime-client:build first.',
     );
   }
   if (!corepackCli) {
@@ -597,7 +666,14 @@ async function main(): Promise<void> {
   mkdirSync(fixtureBase, { recursive: true });
   const fixtureRoot = mkdtempSync(join(fixtureBase, 'runtime-web-component-'));
   const dataDirectory = mkdtempSync(join(fixtureBase, 'runtime-data-'));
-  let runtime: { child: ReturnType<typeof spawn>; token: string } | undefined;
+  let runtime:
+    | {
+        child: ReturnType<typeof spawn>;
+        token: string;
+        port: number;
+        stderr: () => string;
+      }
+    | undefined;
   let preview: ReturnType<typeof spawn> | undefined;
   let workerMirror: Awaited<ReturnType<typeof startWorkerMirror>> | undefined;
   let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
@@ -618,7 +694,8 @@ async function main(): Promise<void> {
             '@angular/elements': '22.0.7',
             '@angular/forms': '22.0.7',
             '@angular/platform-browser': '22.0.7',
-            '@gx-capture/capture-contracts': fileSpec(contractsArchive),
+            '@gx-capture/capture-runtime-client':
+              fileSpec(runtimeClientArchive),
             '@gx-capture/capture-workbench-ui': fileSpec(packageArchive),
             rxjs: '7.8.2',
             tslib: '2.8.1',
@@ -636,13 +713,38 @@ async function main(): Promise<void> {
 allowBuilds:
   esbuild: true
 overrides:
-  '@gx-capture/capture-contracts': '${fileSpec(contractsArchive)}'
+  '@gx-capture/capture-runtime-client': ${fileSpec(runtimeClientArchive)}
 `,
     );
     writeFixture(
       fixtureRoot,
       'index.html',
       '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Phase 1.5 Runtime Web Component E2E</title></head><body><capture-workbench></capture-workbench><script type="module" src="/src/main.ts"></script></body></html>\n',
+    );
+    writeFixture(
+      fixtureRoot,
+      'vite.config.ts',
+      `import { defineConfig } from 'vite';
+
+const runtimeOrigin = process.env['CAPTURE_E2E_RUNTIME_ORIGIN'];
+const runtimeToken = process.env['CAPTURE_E2E_RUNTIME_TOKEN'];
+if (!runtimeOrigin || !runtimeToken) {
+  throw new Error('Trusted Runtime proxy configuration is incomplete.');
+}
+
+export default defineConfig({
+  server: {
+    proxy: {
+      '/capture-runtime': {
+        target: runtimeOrigin,
+        changeOrigin: true,
+        headers: { Authorization: 'Bearer ' + runtimeToken },
+        rewrite: (path) => path.slice('/capture-runtime'.length),
+      },
+    },
+  },
+});
+`,
     );
     writeFixture(
       fixtureRoot,
@@ -654,6 +756,10 @@ import {
   type CaptureWorkbenchElement,
   type CaptureStructuringProvider,
 } from '@gx-capture/capture-workbench-ui';
+import type {
+  RuntimeTransport,
+  RuntimeTransportRequest,
+} from '@gx-capture/capture-runtime-client';
 
 declare global {
   interface Window {
@@ -663,15 +769,23 @@ declare global {
     __captureE2eDetail?: unknown;
     __captureE2eBubbles?: boolean;
     __captureE2eComposed?: boolean;
-    __captureRuntimeBaseUrl: string;
-    __captureRuntimeToken: string;
   }
 }
 
 const element = document.querySelector('capture-workbench') as CaptureWorkbenchElement;
+const transport: RuntimeTransport = {
+  request: (request: RuntimeTransportRequest) =>
+    fetch('/capture-runtime' + request.path, {
+      method: request.method ?? 'GET',
+      headers: request.headers,
+      body: request.body,
+      signal: request.signal,
+      credentials: 'same-origin',
+      redirect: 'error',
+    }),
+};
 const client = new HttpCaptureClient({
-  baseUrl: () => window.__captureRuntimeBaseUrl,
-  bearerToken: () => window.__captureRuntimeToken,
+  transport,
 });
 
 const hostNormalizer: CaptureStructuringProvider = {
@@ -687,7 +801,7 @@ const hostNormalizer: CaptureStructuringProvider = {
       targetText: segment.text,
     }));
     return of({
-      schemaVersion: '1' as const,
+      schemaVersion: '2' as const,
       source: raw.source,
       rawSegments: raw.segments,
       blocks,
@@ -696,7 +810,7 @@ const hostNormalizer: CaptureStructuringProvider = {
       extractionEngine: raw.extractionEngine,
       structuringEngine: {
         engine: 'host-normalizer',
-        model: 'capture-workbench-e2e-host-normalizer-v1',
+        model: 'capture-workbench-e2e-host-normalizer-v2',
         digest: 'sha256:' + '0'.repeat(64),
       },
       warnings: raw.warnings,
@@ -733,7 +847,17 @@ element.addEventListener('capture-completed', (event) => {
   window.__captureE2eCompleted = true;
 });
 element.addEventListener('capture-failed', (event) => {
-  window.__captureE2eFailed = (event as CustomEvent).detail;
+  const detail = (event as CustomEvent).detail as
+    | {
+        error?: unknown;
+        raw?: { segments?: readonly unknown[] };
+      }
+    | undefined;
+  window.__captureE2eFailed = {
+    error: detail?.error ?? { code: 'capture_failed_without_detail' },
+    rawAvailable: detail?.raw !== undefined,
+    rawSegmentCount: detail?.raw?.segments?.length ?? 0,
+  };
 });
 window.__captureE2eReady = true;
 `,
@@ -756,38 +880,100 @@ window.__captureE2eReady = true;
       workerMirror.origin,
       ocrPageCount > 0,
     );
-    preview = await startPreview(fixtureRoot, browserPort);
+    preview = await startPreview(
+      fixtureRoot,
+      browserPort,
+      `http://127.0.0.1:${runtimePort}`,
+      runtime.token,
+    );
     browser = await chromium.launch();
     const page = await browser.newPage();
     const pageErrors: string[] = [];
     const consoleErrors: string[] = [];
     const requestPaths: string[] = [];
+    const browserCredentialLeakPaths: string[] = [];
     const responseStatuses: string[] = [];
+    const errorResponses: {
+      status: number;
+      path: string;
+      code?: string;
+      issueLocations: string[][];
+    }[] = [];
+    const responseInspections: Promise<void>[] = [];
     page.on('pageerror', (error) => pageErrors.push(error.message));
     page.on('console', (message) => {
       if (message.type() === 'error') consoleErrors.push(message.text());
     });
     page.on('request', (request) => {
       const url = new URL(request.url());
-      if (url.hostname === '127.0.0.1' && url.port === String(runtimePort)) {
-        requestPaths.push(url.pathname);
+      if (
+        url.origin === browserOrigin &&
+        url.pathname.startsWith('/capture-runtime/')
+      ) {
+        requestPaths.push(url.pathname.slice('/capture-runtime'.length));
+        if (request.headers()['authorization']) {
+          browserCredentialLeakPaths.push(
+            url.pathname.slice('/capture-runtime'.length),
+          );
+        }
       }
     });
     page.on('response', (response) => {
       const url = new URL(response.url());
-      if (url.hostname === '127.0.0.1' && url.port === String(runtimePort)) {
-        responseStatuses.push(`${response.status()} ${url.pathname}`);
+      if (
+        url.origin === browserOrigin &&
+        url.pathname.startsWith('/capture-runtime/')
+      ) {
+        const runtimePath = url.pathname.slice('/capture-runtime'.length);
+        responseStatuses.push(`${response.status()} ${runtimePath}`);
+        if (!response.ok()) {
+          responseInspections.push(
+            response
+              .json()
+              .then((payload: unknown) => {
+                const error = (payload as { error?: unknown } | null)?.error as
+                  | {
+                      code?: unknown;
+                      details?: { issues?: unknown };
+                    }
+                  | undefined;
+                const issues = Array.isArray(error?.details?.issues)
+                  ? error.details.issues
+                  : [];
+                errorResponses.push({
+                  status: response.status(),
+                  path: runtimePath,
+                  code:
+                    typeof error?.code === 'string' ? error.code : undefined,
+                  issueLocations: issues
+                    .map((issue) =>
+                      Array.isArray(
+                        (issue as { location?: unknown } | null)?.location,
+                      )
+                        ? (
+                            issue as {
+                              location: unknown[];
+                            }
+                          ).location.map(String)
+                        : [],
+                    )
+                    .filter((location) => location.length > 0),
+                });
+              })
+              .catch(() => undefined),
+          );
+        }
       }
     });
-    await page.addInitScript(
-      ({ baseUrl, token }) => {
-        window.__captureRuntimeBaseUrl = baseUrl;
-        window.__captureRuntimeToken = token;
-      },
-      { baseUrl: `http://127.0.0.1:${runtimePort}`, token: runtime.token },
-    );
     await page.goto(`${browserOrigin}/`, { waitUntil: 'domcontentloaded' });
-    await page.waitForFunction(() => window.__captureE2eReady === true);
+    try {
+      await page.waitForFunction(() => window.__captureE2eReady === true);
+    } catch (error) {
+      throw new Error(
+        `Runtime Web Component fixture did not initialize: ${error instanceof Error ? error.message : String(error)}; requests=${JSON.stringify(requestPaths)}; responses=${JSON.stringify(responseStatuses)}; pageErrors=${JSON.stringify(pageErrors)}; consoleErrors=${JSON.stringify(consoleErrors)}`,
+        { cause: error },
+      );
+    }
     const fileInput = page.locator('capture-workbench input[type=file]');
     await fileInput.waitFor({ state: 'attached', timeout: 30_000 });
     try {
@@ -804,12 +990,15 @@ window.__captureE2eReady = true;
       buffer: sourceBytes,
     });
     await page.waitForFunction(
-      () => window.__captureE2eCompleted === true,
+      () =>
+        window.__captureE2eCompleted === true ||
+        window.__captureE2eFailed !== undefined,
       undefined,
       {
         timeout: 15 * 60_000,
       },
     );
+    await Promise.all(responseInspections);
     const state = await page.evaluate(() => ({
       defined: customElements.get('capture-workbench') !== undefined,
       shadow:
@@ -845,6 +1034,25 @@ window.__captureE2eReady = true;
         : 'pdf-embedded-text';
     const expectedExtractionDevice = ocrPageCount > 0 ? 'windowsml-dml' : 'cpu';
     const rawSegments = state.detail?.document?.rawSegments ?? [];
+    const stateSummary = {
+      defined: state.defined,
+      shadow: state.shadow,
+      failed: state.failed,
+      bubbles: state.bubbles,
+      composed: state.composed,
+      document: state.detail?.document
+        ? {
+            hasSourceText: Boolean(state.detail.document.sourceText?.trim()),
+            targetMatchesSource:
+              state.detail.document.targetText ===
+              state.detail.document.sourceText,
+            rawSegmentCount: rawSegments.length,
+            extractionEngine: state.detail.document.extractionEngine,
+            sourceFileNameMatches:
+              state.detail.document.source?.fileName === sourceName,
+          }
+        : undefined,
+    };
     const embeddedTextMismatches = pdfEvidence.embeddedPages
       .filter(({ page, text }) => {
         const segment = rawSegments.find(
@@ -881,10 +1089,11 @@ window.__captureE2eReady = true;
         expectedExtractionEngine ||
       state.detail.document.extractionEngine.device !==
         expectedExtractionDevice ||
-      state.detail.document.source?.fileName !== sourceName
+      state.detail.document.source?.fileName !== sourceName ||
+      browserCredentialLeakPaths.length > 0
     ) {
       throw new Error(
-        `Runtime and packed Web Component lifecycle failed: ${JSON.stringify({ state, pageErrors, consoleErrors, requestPaths })}`,
+        `Runtime and packed Web Component lifecycle failed: ${JSON.stringify({ state: stateSummary, pageErrors, consoleErrors, requestPaths, responseStatuses, errorResponses, runtimeStderr: runtime.stderr() })}`,
       );
     }
     if (embeddedTextMismatches.length > 0) {
@@ -893,15 +1102,33 @@ window.__captureE2eReady = true;
       );
     }
     const expectedPaths = [
-      '/v1/health/ready',
-      '/v1/runtime/requirements',
-      '/v1/captures',
+      '/v2/health/ready',
+      '/meta/v2/contracts',
+      '/v2/streaming/health/ready',
+      '/v2/runtime/requirements',
+      '/v2/ingestions',
+      '/v2/captures',
     ];
     if (
       !expectedPaths.every((path) => requestPaths.includes(path)) ||
-      !requestPaths.some((path) => /^\/v1\/captures\/[^/]+$/u.test(path)) ||
       !requestPaths.some((path) =>
-        /^\/v1\/captures\/[^/]+\/result$/u.test(path),
+        /^\/meta\/v2\/contracts\/sha256\/[0-9a-f]{64}$/u.test(path),
+      ) ||
+      !requestPaths.some((path) =>
+        /^\/v2\/ingestions\/[^/]+\/finalize$/u.test(path),
+      ) ||
+      !requestPaths.some((path) =>
+        /^\/v2\/captures\/[^/]+\/events$/u.test(path),
+      ) ||
+      !requestPaths.some((path) => /^\/v2\/captures\/[^/]+$/u.test(path)) ||
+      !requestPaths.some((path) =>
+        /^\/v2\/captures\/[^/]+\/raw$/u.test(path),
+      ) ||
+      !requestPaths.some((path) =>
+        /^\/v2\/captures\/[^/]+\/structure\/commit$/u.test(path),
+      ) ||
+      !requestPaths.some((path) =>
+        /^\/v2\/captures\/[^/]+\/result$/u.test(path),
       )
     ) {
       throw new Error(
@@ -919,12 +1146,12 @@ window.__captureE2eReady = true;
       );
     }
     process.stdout.write(
-      `Phase 1.5 runtime and packed Web Component E2E passed for ${packageManifest.name}@${packageManifest.version}: ${sourceName}; embeddedTextPages=${pdfEvidence.embeddedPages.length}; ocrPages=${ocrPageCount}; engine=${expectedExtractionEngine}; device=${expectedExtractionDevice}.\n`,
+      `Phase 1.5 runtime and packed Web Component E2E passed for ${packageManifest.name}@${packageManifest.version}: pageCount=${pdfEvidence.pageCount}; embeddedTextPages=${pdfEvidence.embeddedPages.length}; ocrPages=${ocrPageCount}; engine=${expectedExtractionEngine}; device=${expectedExtractionDevice}.\n`,
     );
   } finally {
     await browser?.close();
     if (preview) stopProcessTree(preview);
-    if (runtime) stopProcessTree(runtime.child);
+    if (runtime) stopRuntimeProcessTree(runtime.child, runtime.port);
     await closeServer(workerMirror?.server);
     assertTemporaryFixture(fixtureRoot);
     assertTemporaryFixture(dataDirectory);

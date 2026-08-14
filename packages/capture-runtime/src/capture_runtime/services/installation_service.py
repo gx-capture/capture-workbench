@@ -7,9 +7,9 @@ from contextlib import suppress
 
 from capture_runtime.clock import Clock
 from capture_runtime.contracts import (
-    CaptureFailureV1,
+    CaptureFailureV2,
     RuntimeInstallationStatus,
-    RuntimeInstallationV1,
+    RuntimeInstallationV2,
 )
 from capture_runtime.engine_installation import EngineInstallationError
 from capture_runtime.ollama import ManualActionRequiredError, RuntimeInstaller
@@ -74,7 +74,7 @@ class InstallationService:
 
     def create(
         self, *, idempotency_key: str, request_fingerprint: str, requirement_id: str
-    ) -> RuntimeInstallationV1:
+    ) -> RuntimeInstallationV2:
         record, created = self.repository.create_or_get(
             idempotency_key=idempotency_key,
             request_fingerprint=request_fingerprint,
@@ -91,13 +91,13 @@ class InstallationService:
             task.add_done_callback(self._installation_done)
         return record.job
 
-    def get(self, installation_id: str) -> RuntimeInstallationV1:
+    def get(self, installation_id: str) -> RuntimeInstallationV2:
         return self.repository.get(installation_id).job
 
-    def list(self) -> list[RuntimeInstallationV1]:
+    def list(self) -> list[RuntimeInstallationV2]:
         return self.repository.list()
 
-    async def cancel(self, installation_id: str) -> RuntimeInstallationV1:
+    async def cancel(self, installation_id: str) -> RuntimeInstallationV2:
         job = self.get(installation_id)
         if job.status in TERMINAL_INSTALLATION_STATUSES:
             return job
@@ -214,7 +214,7 @@ class InstallationService:
         job = self.get(installation_id).model_copy(
             update={
                 "status": status,
-                "error": CaptureFailureV1(
+                "error": CaptureFailureV2(
                     code=code,
                     message=message,
                     stage="runtime",
@@ -226,12 +226,12 @@ class InstallationService:
         )
         self.repository.update_job(installation_id, job)
 
-    def _cancelled_job(self, job: RuntimeInstallationV1) -> RuntimeInstallationV1:
+    def _cancelled_job(self, job: RuntimeInstallationV2) -> RuntimeInstallationV2:
         now = self._clock.now()
         return job.model_copy(
             update={
                 "status": RuntimeInstallationStatus.CANCELLED,
-                "error": CaptureFailureV1(
+                "error": CaptureFailureV2(
                     code="installation_cancelled",
                     message="Runtime installation was cancelled.",
                     stage="runtime",

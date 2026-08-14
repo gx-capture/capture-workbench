@@ -2,7 +2,7 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideCaptureWorkbenchInputs } from '../../../contracts';
 import type {
   CaptureClient,
-  PartialCaptureV2,
+  PartialCapture,
   CaptureStructuringProvider,
 } from '../../../contracts';
 import { of, throwError } from 'rxjs';
@@ -70,7 +70,7 @@ describe('CaptureWorkbenchComponent', () => {
     );
     expect(structure).toHaveBeenCalledWith(
       expect.objectContaining({
-        documentContract: expect.objectContaining({ schemaVersion: '1' }),
+        documentContract: expect.objectContaining({ schemaVersion: '2' }),
       }),
     );
     expect(completed).not.toHaveBeenCalled();
@@ -91,7 +91,10 @@ describe('CaptureWorkbenchComponent', () => {
   });
 
   it('isolates saved v2 raw evidence from component-owned provider mutation', async () => {
-    const raw = structuredClone(RAW);
+    const raw = {
+      ...structuredClone(RAW),
+      warnings: ['runtime-warning'],
+    };
     const client = fakeClient({
       startStreamingCapture: vi.fn(() =>
         of(streamingOperation('awaiting_structuring', 0.7)),
@@ -109,11 +112,13 @@ describe('CaptureWorkbenchComponent', () => {
           sourceText: raw.sourceText,
           extractionEngine: raw.extractionEngine,
           updatedAt: raw.createdAt,
-        } satisfies PartialCaptureV2),
+        } satisfies PartialCapture),
       ),
+      getStreamingRaw: vi.fn(() => of(raw)),
     });
     const structure = vi.fn<CaptureStructuringProvider['structure']>(
       (request) => {
+        expect(request.raw.warnings).toEqual(['runtime-warning']);
         expect(request.raw).not.toBe(raw);
         expect(Object.isFrozen(request.raw)).toBe(true);
         expect(Object.isFrozen(request.raw.source)).toBe(true);
@@ -122,7 +127,7 @@ describe('CaptureWorkbenchComponent', () => {
         expect(() => {
           (request.raw.source as { fileName: string }).fileName = 'mutated.pdf';
         }).toThrow(TypeError);
-        return of(DOCUMENT);
+        return of({ ...DOCUMENT, warnings: raw.warnings });
       },
     );
     inputSource.client.set(client);
@@ -134,6 +139,10 @@ describe('CaptureWorkbenchComponent', () => {
     await fixture.whenStable();
 
     expect(structure).toHaveBeenCalledOnce();
+    expect(client.getStreamingRaw).toHaveBeenCalledWith(
+      'capture-1',
+      expect.any(AbortSignal),
+    );
     expect(raw.source.fileName).toBe('scan.pdf');
     expect(fixture.componentInstance.tasks()[0]?.raw).not.toBe(raw);
   });

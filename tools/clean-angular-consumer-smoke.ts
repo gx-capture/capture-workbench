@@ -20,18 +20,18 @@ const sourcePackage = JSON.parse(
 );
 const archiveName = `${sourcePackage.name.replace(/^@/u, '').replace('/', '-')}-${sourcePackage.version}.tgz`;
 const archivePath = join(repoRoot, 'dist', 'packs', archiveName);
-const contractsPackage = JSON.parse(
+const runtimeClientPackage = JSON.parse(
   readFileSync(
-    join(repoRoot, 'packages/capture-contracts/package.json'),
+    join(repoRoot, 'packages/capture-runtime-client/package.json'),
     'utf8',
   ),
 );
-const contractsArchiveName = `${contractsPackage.name.replace(/^@/u, '').replace('/', '-')}-${contractsPackage.version}.tgz`;
-const contractsArchivePath = join(
+const runtimeClientArchiveName = `${runtimeClientPackage.name.replace(/^@/u, '').replace('/', '-')}-${runtimeClientPackage.version}.tgz`;
+const runtimeClientArchivePath = join(
   repoRoot,
   'dist',
   'packs',
-  contractsArchiveName,
+  runtimeClientArchiveName,
 );
 // Keep the isolated virtual store path short enough for Windows package paths.
 const fixtureBase = resolve(repoRoot, '..', '.cw-clean');
@@ -182,17 +182,41 @@ async function browserSmoke(name, cwd, outDir, verify) {
     const page = await browser.newPage();
     const pageErrors: string[] = [];
     const consoleErrors: string[] = [];
+    const requestFailures: string[] = [];
+    const responseStatuses: string[] = [];
     page.on('pageerror', (error) => pageErrors.push(error.message));
     page.on('console', (message) => {
       if (message.type() === 'error') consoleErrors.push(message.text());
     });
+    page.on('requestfailed', (request) =>
+      requestFailures.push(
+        `${new URL(request.url()).pathname} ${request.failure()?.errorText ?? 'failed'}`,
+      ),
+    );
+    page.on('response', (response) =>
+      responseStatuses.push(
+        `${response.status()} ${new URL(response.url()).pathname}`,
+      ),
+    );
     await page.goto(url);
     try {
       await verify(page);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      const documentState = await page.evaluate(() => ({
+        readyState: document.readyState,
+        customElementDefined:
+          customElements.get('capture-workbench') !== undefined,
+        appRootPresent: document.querySelector('app-root') !== null,
+        captureReady: window.__captureReady,
+        captureCompleted: window.__captureCompleted,
+        initializationPhase: window.__captureInitializationPhase,
+        moduleScripts: [
+          ...document.querySelectorAll('script[type="module"]'),
+        ].map((script) => script.getAttribute('src')),
+      }));
       throw new Error(
-        `${name} browser smoke failed: ${message}; pageErrors=${JSON.stringify(pageErrors)}; consoleErrors=${JSON.stringify(consoleErrors)}`,
+        `${name} browser smoke failed: ${message}; document=${JSON.stringify(documentState)}; responses=${JSON.stringify(responseStatuses)}; requestFailures=${JSON.stringify(requestFailures)}; pageErrors=${JSON.stringify(pageErrors)}; consoleErrors=${JSON.stringify(consoleErrors)}`,
         { cause: error },
       );
     }
@@ -209,7 +233,19 @@ async function runBrowserSmokes() {
     fixtureRoot,
     'dist/consumer/browser',
     async (page) => {
-      await page.waitForFunction(() => window.__captureReady === true);
+      await page.waitForFunction(
+        () =>
+          window.__captureReady === true ||
+          window.__captureInitializationError !== undefined,
+      );
+      const initializationError = await page.evaluate(
+        () => window.__captureInitializationError,
+      );
+      if (initializationError) {
+        throw new Error(
+          `Angular Web Component initialization failed: ${initializationError}`,
+        );
+      }
       await page.locator('capture-workbench input[type=file]').setInputFiles({
         name: 'fixture.pdf',
         mimeType: 'application/pdf',
@@ -282,7 +318,7 @@ async function runBrowserSmokes() {
 
 try {
   const archiveSpec = `file:${archivePath.replaceAll('\\', '/')}`;
-  const contractsArchiveSpec = `file:${contractsArchivePath.replaceAll('\\', '/')}`;
+  const runtimeClientArchiveSpec = `file:${runtimeClientArchivePath.replaceAll('\\', '/')}`;
   write(
     'package.json',
     `${JSON.stringify(
@@ -300,7 +336,7 @@ try {
           '@angular/forms': '22.0.7',
           '@angular/platform-browser': '22.0.7',
           '@angular/router': '22.0.7',
-          '@gx-capture/capture-contracts': contractsArchiveSpec,
+          '@gx-capture/capture-runtime-client': runtimeClientArchiveSpec,
           '@gx-capture/capture-workbench-ui': archiveSpec,
           rxjs: '7.8.2',
           tslib: '2.8.1',
@@ -339,7 +375,7 @@ allowBuilds:
   msgpackr-extract: true
   nx: true
 overrides:
-  '@gx-capture/capture-contracts': '${contractsArchiveSpec}'
+  '@gx-capture/capture-runtime-client': ${runtimeClientArchiveSpec}
 `,
   );
   write(
@@ -462,17 +498,17 @@ overrides:
   );
   write(
     'src/index.html',
-    '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Capture Angular Consumer</title><base href="/"><meta name="viewport" content="width=device-width, initial-scale=1"></head><body><app-root></app-root></body></html>\n',
+    '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Capture Angular Consumer</title><base href="/"><meta name="viewport" content="width=device-width, initial-scale=1"></head><body><main id="capture-root"></main></body></html>\n',
   );
   write('public/.gitkeep', '');
   write('src/styles.css', 'body { font-family: sans-serif; }\n');
   write(
     'src/main.ts',
-    `import { bootstrapApplication } from '@angular/platform-browser';\nimport { firstValueFrom } from 'rxjs';\nimport { defineCaptureWorkbenchElement } from '@gx-capture/capture-workbench-ui';\nimport { App } from './app/app';\n\nawait firstValueFrom(defineCaptureWorkbenchElement());\nawait bootstrapApplication(App);\n`,
+    `import { defineCaptureWorkbenchElement, type CaptureWorkbenchElement } from '@gx-capture/capture-workbench-ui';\nimport { fakeClient } from './app/fake-client';\n\ndeclare global { interface Window { __captureReady?: boolean; __captureCompleted?: boolean; __captureDetail?: any; __captureInitializationError?: string; __captureInitializationPhase?: string; } }\nwindow.__captureInitializationPhase = 'subscribing';\ndefineCaptureWorkbenchElement().subscribe({\n  next: () => {\n    window.__captureInitializationPhase = 'creating-element';\n    const capture = document.createElement('capture-workbench') as CaptureWorkbenchElement;\n    window.__captureInitializationPhase = 'setting-config';\n    capture.config = { showRuntimeSetup: false, pollIntervalMs: 0 };\n    window.__captureInitializationPhase = 'setting-client';\n    capture.client = fakeClient;\n    window.__captureInitializationPhase = 'setting-listener';\n    capture.addEventListener('capture-completed', (event) => { window.__captureDetail = (event as CustomEvent).detail; window.__captureCompleted = true; });\n    window.__captureInitializationPhase = 'connecting-element';\n    document.querySelector('#capture-root')?.append(capture);\n    window.__captureInitializationPhase = 'ready';\n    window.__captureReady = true;\n  },\n  error: (error: unknown) => { window.__captureInitializationError = error instanceof Error ? error.message : String(error); },\n});\n`,
   );
   write(
     'src/app/fake-client.ts',
-    `import type { CaptureClient } from '@gx-capture/capture-workbench-ui';\nimport { of } from 'rxjs';\n\nconst source = { sha256: 'a'.repeat(64), fileName: 'fixture.pdf', mediaType: 'application/pdf', bytes: 16 };\nconst raw = { schemaVersion: '1', diagnosticOnly: true, source, segments: [{ segmentId: 'segment-1', order: 0, locator: { kind: 'page', page: 1 }, text: 'page one' }], sourceText: 'page one', extractionEngine: { engine: 'windowsml', model: 'ocr-v1', digest: \`sha256:\${'b'.repeat(64)}\` }, warnings: [], createdAt: '2026-07-29T00:00:00Z' };\nconst document = { schemaVersion: '1', source, rawSegments: raw.segments, blocks: [{ blockId: 'block-1', order: 0, sourceSegmentId: 'segment-1', type: 'paragraph', locator: { kind: 'page', page: 1 }, sourceText: 'page one', targetText: 'page one' }], sourceText: 'page one', targetText: 'page one', extractionEngine: raw.extractionEngine, structuringEngine: { engine: 'ollama', model: 'fixture', digest: \`sha256:\${'c'.repeat(64)}\` }, warnings: [], createdAt: raw.createdAt, completedAt: '2026-07-29T00:00:01Z' };\nconst operation = { protocolVersion: '2', captureId: 'capture-1', ingestionId: 'ingestion-1', kind: 'pdf', status: 'completed', progress: 1, partialRevision: 1, lastEventSequence: 1, source, createdAt: raw.createdAt, updatedAt: raw.createdAt, completedAt: '2026-07-29T00:00:01Z' };\nconst partial = { protocolVersion: '2', captureId: operation.captureId, source, revision: 1, coveredUntilMs: 0, segments: raw.segments, sourceText: raw.sourceText, extractionEngine: raw.extractionEngine, updatedAt: raw.createdAt };\nconst completedEvent = { protocolVersion: '2', eventId: 'capture-1/1', sequence: 1, captureId: operation.captureId, kind: 'pdf', eventType: 'completed', stage: 'completed', progress: 1, partialRevision: 1, createdAt: raw.createdAt };\nexport const fakeClient = {\n  getReady: () => of({ ready: true, service: 'capture-runtime', runtimeVersion: '0.3.12', apiVersion: '1.0', captureDocumentSchemaVersion: '1', capabilities: { captureKinds: ['pdf', 'image', 'audio'], structuringModes: ['runtime', 'host'], supportsCancellation: true, supportsRawDiagnostics: true, maxUploadBytes: 50 * 1024 * 1024 } }),\n  getRequirements: () => of([]), startInstallation: () => of({}), listInstallations: () => of([]), getInstallation: () => of({}), cancelInstallation: () => of({}),\n  captureEvents: () => of(completedEvent), startStreamingCapture: () => of(operation), getStreamingCapture: () => of(operation), cancelStreamingCapture: () => of({ ...operation, status: 'cancelled', progress: 0 }),\n  getStreamingPartial: () => of(partial), getStreamingResult: () => of({ operation, raw, result: document }), commitStreamingStructuredResult: () => of(operation), reportStreamingStructuringFailure: () => of(operation), deleteStreamingCapture: () => of(undefined),\n} as unknown as CaptureClient;\n`,
+    `import type { CaptureClient } from '@gx-capture/capture-workbench-ui';\nimport { of } from 'rxjs';\n\nconst source = { sha256: 'a'.repeat(64), fileName: 'fixture.pdf', mediaType: 'application/pdf', bytes: 16 };\nconst raw = { schemaVersion: '2', diagnosticOnly: true, source, segments: [{ segmentId: 'segment-1', order: 0, locator: { kind: 'page', page: 1 }, text: 'page one' }], sourceText: 'page one', extractionEngine: { engine: 'windowsml', model: 'ocr-v1', digest: \`sha256:\${'b'.repeat(64)}\` }, warnings: [], createdAt: '2026-07-29T00:00:00Z' };\nconst document = { schemaVersion: '2', source, rawSegments: raw.segments, blocks: [{ blockId: 'block-1', order: 0, sourceSegmentId: 'segment-1', type: 'paragraph', locator: { kind: 'page', page: 1 }, sourceText: 'page one', targetText: 'page one' }], sourceText: 'page one', targetText: 'page one', extractionEngine: raw.extractionEngine, structuringEngine: { engine: 'ollama', model: 'fixture', digest: \`sha256:\${'c'.repeat(64)}\` }, warnings: [], createdAt: raw.createdAt, completedAt: '2026-07-29T00:00:01Z' };\nconst operation = { protocolVersion: '2', captureId: 'capture-1', ingestionId: 'ingestion-1', kind: 'pdf', status: 'completed', progress: 1, partialRevision: 1, lastEventSequence: 1, source, createdAt: raw.createdAt, updatedAt: raw.createdAt, completedAt: '2026-07-29T00:00:01Z' };\nconst partial = { protocolVersion: '2', captureId: operation.captureId, source, revision: 1, coveredUntilMs: 0, segments: raw.segments, sourceText: raw.sourceText, extractionEngine: raw.extractionEngine, updatedAt: raw.createdAt };\nconst completedEvent = { protocolVersion: '2', eventId: 'capture-1/1', sequence: 1, captureId: operation.captureId, kind: 'pdf', eventType: 'completed', stage: 'completed', progress: 1, partialRevision: 1, createdAt: raw.createdAt };\nexport const fakeClient = {\n  getReady: () => of({ ready: true, service: 'capture-runtime', runtimeVersion: '0.4.0', apiVersion: '2.0', captureDocumentSchemaVersion: '2', capabilities: { captureKinds: ['pdf', 'image', 'audio'], structuringModes: ['runtime', 'host'], supportsCancellation: true, supportsRawDiagnostics: true, maxUploadBytes: 50 * 1024 * 1024 } }),\n  getRequirements: () => of([]), startInstallation: () => of({}), listInstallations: () => of([]), getInstallation: () => of({}), cancelInstallation: () => of({}),\n  captureEvents: () => of(completedEvent), startStreamingCapture: () => of(operation), getStreamingCapture: () => of(operation), cancelStreamingCapture: () => of({ ...operation, status: 'cancelled', progress: 0 }),\n  getStreamingPartial: () => of(partial), getStreamingRaw: () => of(raw), getStreamingResult: () => of({ operation, raw, result: document }), commitStreamingStructuredResult: () => of(operation), reportStreamingStructuringFailure: () => of(operation), deleteStreamingCapture: () => of(undefined),\n} as unknown as CaptureClient;\n`,
   );
   write(
     'src/app/direct-app.ts',
@@ -484,7 +520,7 @@ overrides:
   );
   write(
     'src/app/app.spec.ts',
-    `import { TestBed } from '@angular/core/testing';\nimport { CAPTURE_DOCUMENT_V1_JSON_SCHEMA, CAPTURE_DOCUMENT_V1_SCHEMA_SHA256, defineCaptureWorkbenchElement } from '@gx-capture/capture-workbench-ui';\nimport { DirectApp } from './direct-app';\n\ndescribe('packed capture consumer', () => {\n  it('renders the installed direct Angular component and exposes public contracts', async () => {\n    await TestBed.configureTestingModule({ imports: [DirectApp] }).compileComponents();\n    const fixture = TestBed.createComponent(DirectApp);\n    fixture.detectChanges();\n    expect(fixture.nativeElement.querySelector('gx-capture-workbench')).toBeTruthy();\n    expect(typeof defineCaptureWorkbenchElement).toBe('function');\n    expect(CAPTURE_DOCUMENT_V1_JSON_SCHEMA.$id).toBe('https://github.com/gx-capture/capture-workbench/schema/capture-document-v1.schema.json');\n    expect(CAPTURE_DOCUMENT_V1_SCHEMA_SHA256).toBe('2721093496a9f09044d5737cce70d2356d5f71757b1cd23a960e1d003ea014f2');\n  });\n});\n`,
+    `import { TestBed } from '@angular/core/testing';\nimport { CAPTURE_DOCUMENT_SCHEMA, CAPTURE_DOCUMENT_SCHEMA_HASH, defineCaptureWorkbenchElement } from '@gx-capture/capture-workbench-ui';\nimport { DirectApp } from './direct-app';\n\ndescribe('packed capture consumer', () => {\n  it('renders the installed direct Angular component and exposes public contracts', async () => {\n    await TestBed.configureTestingModule({ imports: [DirectApp] }).compileComponents();\n    const fixture = TestBed.createComponent(DirectApp);\n    fixture.detectChanges();\n    expect(fixture.nativeElement.querySelector('gx-capture-workbench')).toBeTruthy();\n    expect(typeof defineCaptureWorkbenchElement).toBe('function');\n    expect(CAPTURE_DOCUMENT_SCHEMA.$id).toBe('https://github.com/gx-capture/capture-workbench/schema/capture-document-v2.schema.json');\n    expect(CAPTURE_DOCUMENT_SCHEMA_HASH).toBe('850afd212d049c25da41d3867ba5477451a6a2c6c7e41f116fe60f26b6a35335');\n  });\n});\n`,
   );
 
   write(

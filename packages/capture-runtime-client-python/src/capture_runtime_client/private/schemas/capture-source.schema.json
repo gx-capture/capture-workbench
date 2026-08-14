@@ -1,0 +1,34 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Sha256",
+      "type": "string"
+    },
+    "fileName": {
+      "maxLength": 255,
+      "minLength": 1,
+      "title": "Filename",
+      "type": "string"
+    },
+    "mediaType": {
+      "minLength": 1,
+      "title": "Mediatype",
+      "type": "string"
+    },
+    "bytes": {
+      "minimum": 1,
+      "title": "Bytes",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "sha256",
+    "fileName",
+    "mediaType",
+    "bytes"
+  ],
+  "title": "CaptureSource",
+  "type": "object"
+}

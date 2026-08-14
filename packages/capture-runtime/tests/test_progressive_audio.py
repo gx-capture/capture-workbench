@@ -6,8 +6,8 @@ import pytest
 
 from capture_runtime.clock import Clock
 from capture_runtime.contracts import (
-    CaptureEngineV1,
-    CaptureSourceV1,
+    CaptureEngine,
+    CaptureSource,
     StreamingEventType,
 )
 from capture_runtime.progressive_audio import (
@@ -47,8 +47,8 @@ class FakeTranscriber:
         return self.results[window.start_ms]
 
 
-def _source() -> CaptureSourceV1:
-    return CaptureSourceV1(
+def _source() -> CaptureSource:
+    return CaptureSource(
         sha256="a" * 64,
         file_name="sample.mp3",
         media_type="audio/mpeg",
@@ -56,8 +56,8 @@ def _source() -> CaptureSourceV1:
     )
 
 
-def _engine(device: str = "cuda") -> CaptureEngineV1:
-    return CaptureEngineV1(
+def _engine(device: str = "cuda") -> CaptureEngine:
+    return CaptureEngine(
         engine="whisper-primary",
         model="large-v3-turbo" if device == "cuda" else "small",
         digest=f"sha256:{'b' * 64}",

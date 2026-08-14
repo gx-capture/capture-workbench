@@ -35,7 +35,7 @@ def raw_capture() -> dict[str, object]:
         },
     ]
     return {
-        "schemaVersion": "1",
+        "schemaVersion": "2",
         "diagnosticOnly": True,
         "source": {
             "sha256": "a" * 64,
@@ -100,7 +100,7 @@ def test_sdk_rebuilds_provenance_from_minimal_llm_bytes() -> None:
         "targetText": "A trusted source sentence.",
     }
     assert document["completedAt"] == COMPLETED_AT.isoformat()
-    assert prompts[0]["schema"]["title"] == "CaptureIdentityBlockBatchV1"
+    assert prompts[0]["schema"]["title"] == "CaptureIdentityBlockBatch"
 
 
 def test_sdk_preserves_global_block_order_across_batches() -> None:

@@ -12,9 +12,9 @@ use sha2::{Digest, Sha256};
 
 use crate::http::{api_error, api_error_details, find_bytes, Request, Response};
 
-const RUNTIME_VERSION: &str = "0.3.12";
-const API_VERSION: &str = "1.0";
-const SCHEMA_VERSION: &str = "1";
+const RUNTIME_VERSION: &str = "0.4.0";
+const API_VERSION: &str = "2.0";
+const SCHEMA_VERSION: &str = "2";
 const CREATED_AT: &str = "2000-01-01T00:00:00Z";
 const COMPLETED_AT: &str = "2000-01-01T00:00:01Z";
 
@@ -155,20 +155,20 @@ impl FixtureState {
 
     pub fn route(&self, request: Request) -> Response {
         match (request.method.as_str(), request.path.as_str()) {
-            ("GET", "/v1/health/ready") => self.ready(),
-            ("GET", "/v1/runtime/requirements") => self.requirements(),
-            ("GET", "/v1/runtime/model-options") => self.model_options(),
-            ("GET", "/v1/runtime/installations") => self.list_installations(),
-            ("POST", "/v1/runtime/installations") => self.create_installation(&request),
-            ("POST", "/v1/runtime/model-installations") => self.create_model_installation(&request),
-            ("POST", "/v1/captures") => self.create_capture(&request),
-            _ if request.path.starts_with("/v1/runtime/installations/") => {
+            ("GET", "/v2/health/ready") => self.ready(),
+            ("GET", "/v2/runtime/requirements") => self.requirements(),
+            ("GET", "/v2/runtime/model-options") => self.model_options(),
+            ("GET", "/v2/runtime/installations") => self.list_installations(),
+            ("POST", "/v2/runtime/installations") => self.create_installation(&request),
+            ("POST", "/v2/runtime/model-installations") => self.create_model_installation(&request),
+            ("POST", "/v2/captures") => self.create_capture(&request),
+            _ if request.path.starts_with("/v2/runtime/installations/") => {
                 self.route_installation(&request)
             }
-            _ if request.path.starts_with("/v1/runtime/model-installations/") => {
+            _ if request.path.starts_with("/v2/runtime/model-installations/") => {
                 self.route_model_installation(&request)
             }
-            _ if request.path.starts_with("/v1/captures/") => self.route_capture(&request),
+            _ if request.path.starts_with("/v2/captures/") => self.route_capture(&request),
             _ => api_error(404, "not_found", "Resource was not found."),
         }
     }
@@ -333,7 +333,7 @@ impl FixtureState {
     }
 
     fn route_capture(&self, request: &Request) -> Response {
-        let relative = request.path.trim_start_matches("/v1/captures/");
+        let relative = request.path.trim_start_matches("/v2/captures/");
         if let Some(capture_id) = relative.strip_suffix("/cancel") {
             return if request.method == "POST" {
                 self.cancel_capture(capture_id)
@@ -700,7 +700,7 @@ impl FixtureState {
     fn route_installation(&self, request: &Request) -> Response {
         let relative = request
             .path
-            .trim_start_matches("/v1/runtime/installations/");
+            .trim_start_matches("/v2/runtime/installations/");
         if let Some(installation_id) = relative.strip_suffix("/cancel") {
             return if request.method == "POST" {
                 self.installation_response(installation_id, 200)
@@ -717,7 +717,7 @@ impl FixtureState {
     fn route_model_installation(&self, request: &Request) -> Response {
         let installation_id = request
             .path
-            .trim_start_matches("/v1/runtime/model-installations/");
+            .trim_start_matches("/v2/runtime/model-installations/");
         if request.method == "GET" && !installation_id.contains('/') {
             return self.model_installation_response(installation_id, 200);
         }
@@ -1002,7 +1002,7 @@ fn validate_host_candidate(candidate: &Value, raw: &Value) -> Result<(), Vec<Val
         }
     }
     if candidate.get("schemaVersion") != Some(&json!(SCHEMA_VERSION)) {
-        issues.push(issue("schemaVersion", "must equal 1"));
+        issues.push(issue("schemaVersion", "must equal 2"));
     }
     for (candidate_field, raw_field) in [
         ("source", "source"),

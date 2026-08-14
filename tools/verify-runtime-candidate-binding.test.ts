@@ -22,7 +22,7 @@ async function makeCandidates() {
   }
   const artifacts = [
     ['runtime/capture-runtime.exe', 'runtime'],
-    ['python/capture_contracts.whl', 'contracts'],
+    ['python/capture_runtime_client.whl', 'runtime-client'],
     ['crate/capture-sidecar-launcher.crate', 'crate'],
     ['contracts/contract-snapshot.json', '{"schemaVersion":"1"}\n'],
   ];
@@ -36,7 +36,7 @@ async function makeCandidates() {
       candidateKind: 'runtime',
       candidateId,
       sourceCommit: 'a'.repeat(40),
-      releaseVersion: '0.3.12',
+      releaseVersion: '0.4.0',
       releaseMode: 'core-only',
       artifacts: artifacts.map(([path, value]) => ({
         path,
@@ -50,7 +50,7 @@ async function makeCandidates() {
     JSON.stringify({
       runtimeCandidateId: candidateId,
       sourceCommit: 'a'.repeat(40),
-      releaseVersion: '0.3.12',
+      releaseVersion: '0.4.0',
       releaseMode: 'core-only',
       artifacts: artifacts.map(([path, value]) => ({
         path,

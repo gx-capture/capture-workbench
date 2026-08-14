@@ -46,6 +46,26 @@ test('async boundary permits only the exact approved CLI paths', async () => {
     'app',
     'forbidden-async.ts',
   );
+  const runtimeClientPath = join(
+    workspaceRoot,
+    'packages',
+    'capture-runtime-client',
+    'src',
+    'client.ts',
+  );
+  const angularSdkAdapterPath = join(
+    workspaceRoot,
+    'packages',
+    'capture-angular',
+    'src',
+    'lib',
+    'http-capture-client.ts',
+  );
+  const javaCandidateToolPath = join(
+    workspaceRoot,
+    'tools',
+    'assemble-java-sdk-candidate.ts',
+  );
 
   try {
     await Promise.all([
@@ -55,6 +75,8 @@ test('async boundary permits only the exact approved CLI paths', async () => {
       mkdir(dirname(boundaryDoctorPath), { recursive: true }),
       mkdir(dirname(angularSourcePath), { recursive: true }),
       mkdir(join(workspaceRoot, 'packages'), { recursive: true }),
+      mkdir(dirname(runtimeClientPath), { recursive: true }),
+      mkdir(dirname(angularSdkAdapterPath), { recursive: true }),
     ]);
     await copyFile(checkerSource, checkerPath);
     await writeFile(
@@ -70,6 +92,21 @@ test('async boundary permits only the exact approved CLI paths', async () => {
     await writeFile(
       boundaryDoctorPath,
       'export async function runBoundaryDoctor() { await Promise.resolve(); }\n',
+      'utf8',
+    );
+    await writeFile(
+      runtimeClientPath,
+      'export async function runRuntimeClient() { await Promise.resolve(); }\n',
+      'utf8',
+    );
+    await writeFile(
+      angularSdkAdapterPath,
+      'export async function bridgeSdk() { await Promise.resolve(); }\n',
+      'utf8',
+    );
+    await writeFile(
+      javaCandidateToolPath,
+      'export async function runJavaCandidateTool() { await Promise.resolve(); }\n',
       'utf8',
     );
 

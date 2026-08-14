@@ -26,12 +26,13 @@ function parseArguments(args: readonly string[]) {
         '--release-mode',
         '--package-candidate',
         '--runtime-candidate',
+        '--contract-set-sha256',
       ].includes(name) ||
       !value ||
       values.has(name)
     ) {
       throw new Error(
-        'Use --output <directory> --version <semver> --release-mode <mode> [--package-candidate <directory>] [--runtime-candidate <directory>].',
+        'Use --output <directory> --version <semver> --release-mode <mode> [--package-candidate <directory>] [--runtime-candidate <directory>] [--contract-set-sha256 <sha>].',
       );
     }
     values.set(name, value);
@@ -47,7 +48,7 @@ function parseArguments(args: readonly string[]) {
     !['core-only', 'model-enabled'].includes(releaseMode)
   ) {
     throw new Error(
-      'Use --output <directory> --version <semver> --release-mode <mode> [--package-candidate <directory>] [--runtime-candidate <directory>].',
+      'Use --output <directory> --version <semver> --release-mode <mode> [--package-candidate <directory>] [--runtime-candidate <directory>] [--contract-set-sha256 <sha>].',
     );
   }
   return {
@@ -56,6 +57,7 @@ function parseArguments(args: readonly string[]) {
     releaseMode: releaseMode as ReleaseMode,
     packageCandidate: values.get('--package-candidate'),
     runtimeCandidate: values.get('--runtime-candidate'),
+    contractSetSha256: values.get('--contract-set-sha256'),
   };
 }
 
@@ -85,7 +87,14 @@ async function copyMatching(
 }
 
 async function main(): Promise<void> {
-  const { output, version, releaseMode, packageCandidate, runtimeCandidate } =
+  const {
+    output,
+    version,
+    releaseMode,
+    packageCandidate,
+    runtimeCandidate,
+    contractSetSha256: requestedContractSetSha256,
+  } =
     parseArguments(process.argv.slice(2));
   const root = resolve(import.meta.dirname, '..');
   const runtime = join(output, 'runtime');
@@ -122,17 +131,17 @@ async function main(): Promise<void> {
       ? join(resolve(packageCandidate), 'package')
       : resolve(root, 'dist/packs'),
     packages,
-    /^(?:gx-capture-capture-workbench-ui|gx-capture-capture-contracts|gx-capture-capture-structuring)-\d+\.\d+\.\d+(?:-[^/]+)?\.tgz$/u,
+    /^(?:gx-capture-capture-workbench-ui|gx-capture-capture-runtime-client|gx-capture-capture-structuring)-\d+\.\d+\.\d+(?:-[^/]+)?\.tgz$/u,
     3,
   );
   const pythonNames = [
     ...(await copyMatching(
       runtimeCandidate
         ? join(resolve(runtimeCandidate), 'python')
-        : resolve(root, 'packages/capture-contracts/python/dist'),
+        : resolve(root, 'packages/capture-runtime-client-python/dist'),
       python,
       new RegExp(
-        `^capture_contracts-${version.replaceAll('.', '\\.')}(?:-[^/]+)?\\.(?:whl|tar\\.gz)$`,
+        `^capture_runtime_client-${version.replaceAll('.', '\\.')}(?:-[^/]+)?\\.(?:whl|tar\\.gz)$`,
         'u',
       ),
       2,
@@ -219,6 +228,43 @@ async function main(): Promise<void> {
     `${JSON.stringify(await createContractSnapshot(root), null, 2)}\n`,
     'utf8',
   );
+
+  // The contract-set bundle is the canonical cross-language release binding.
+  // Stage the exact bytes in the immutable candidate and reject a package
+  // candidate that was assembled against a different runtime contract set.
+  const contractSetJson = resolve(
+    root,
+    'packages/capture-runtime/src/capture_runtime/assets/contract-set.json',
+  );
+  const contractSetDigestPath = resolve(
+    root,
+    'packages/capture-runtime/src/capture_runtime/assets/contract-set.sha256',
+  );
+  const contractSetSha256 = (await readFile(contractSetDigestPath, 'utf8')).trim();
+  if (!/^[0-9a-f]{64}$/u.test(contractSetSha256)) {
+    throw new Error('Canonical contract-set hash is missing or malformed.');
+  }
+  if ((await sha256(contractSetJson)) !== contractSetSha256) {
+    throw new Error('Canonical contract-set bundle does not match its SHA-256 asset.');
+  }
+  if (
+    requestedContractSetSha256 !== undefined &&
+    requestedContractSetSha256 !== contractSetSha256
+  ) {
+    throw new Error(
+      `Requested contract-set hash differs from canonical asset: ${requestedContractSetSha256}.`,
+    );
+  }
+  if (packageCandidate) {
+    const packageManifest = JSON.parse(
+      await readFile(join(resolve(packageCandidate), 'java-candidate-manifest.json'), 'utf8'),
+    ) as { contractSetSha256?: unknown };
+    if (packageManifest.contractSetSha256 !== contractSetSha256) {
+      throw new Error('Package Candidate Java SDK is bound to a different contract set.');
+    }
+  }
+  await cp(contractSetJson, join(contracts, 'contract-set.json'));
+  await cp(contractSetDigestPath, join(contracts, 'contract-set.sha256'));
 
   for (const name of [...packageNames, ...pythonNames, crateName]) {
     const directory = packageNames.includes(name)

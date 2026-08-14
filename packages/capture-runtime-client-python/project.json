@@ -1,0 +1,25 @@
+{
+  "name": "capture-runtime-client-python",
+  "sourceRoot": "packages/capture-runtime-client-python/src",
+  "projectType": "library",
+  "tags": ["scope:capture", "type:sdk"],
+  "targets": {
+    "test": {
+      "executor": "nx:run-commands",
+      "options": { "command": "uv run --project packages/capture-runtime-client-python pytest packages/capture-runtime-client-python/tests" }
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": { "command": "uv run --project packages/capture-runtime-client-python ruff check packages/capture-runtime-client-python/src packages/capture-runtime-client-python/tests" }
+    },
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "options": { "command": "uv run --project packages/capture-runtime-client-python mypy packages/capture-runtime-client-python/src" }
+    },
+    "build": {
+      "executor": "nx:run-commands",
+      "outputs": ["{projectRoot}/dist"],
+      "options": { "command": "uv build --project packages/capture-runtime-client-python" }
+    }
+  }
+}

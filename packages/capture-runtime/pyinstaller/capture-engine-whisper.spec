@@ -6,8 +6,7 @@ from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, co
 root = Path(SPEC).resolve().parents[1]
 hiddenimports = collect_submodules("faster_whisper") + collect_submodules("huggingface_hub")
 datas = (
-    collect_data_files("capture_contracts")
-    + collect_data_files("faster_whisper")
+    collect_data_files("faster_whisper")
     + collect_data_files("huggingface_hub")
 )
 binaries = collect_dynamic_libs("av")

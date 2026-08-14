@@ -12,16 +12,16 @@ from capture_structuring import StructuringValidationError
 
 from capture_runtime.clock import Clock
 from capture_runtime.contracts import (
-    CaptureEngineV1,
-    CaptureSourceV1,
+    CaptureEngine,
+    CaptureSource,
     OpenIngestionV2,
     PartialCaptureV2,
-    RawCaptureSegmentV1,
-    RawCaptureV1,
+    RawCapture,
+    RawCaptureSegment,
     StartCaptureV2,
     StreamingEventType,
     StructuringMode,
-    TimeLocatorV1,
+    TimeLocator,
 )
 from capture_runtime.extractors import DeterministicCaptureExtractor
 from capture_runtime.progressive_audio import DecodedAudioWindow, ProgressiveSessionEvent
@@ -48,7 +48,7 @@ def test_progressive_worker_launch_strips_windows_extended_path_prefix(
 
 
 def test_progressive_state_reorders_segments_from_overlapping_worker_events() -> None:
-    source = CaptureSourceV1(
+    source = CaptureSource(
         sha256="a" * 64,
         file_name="sample.wav",
         media_type="audio/wav",
@@ -59,7 +59,7 @@ def test_progressive_state_reorders_segments_from_overlapping_worker_events() ->
         capture_id="capture-state-order",
         clock=FixedClock(),
     )
-    engine = CaptureEngineV1(
+    engine = CaptureEngine(
         engine="whisper-primary",
         model="small",
         digest=f"sha256:{'b' * 64}",
@@ -72,10 +72,10 @@ def test_progressive_state_reorders_segments_from_overlapping_worker_events() ->
             partial_revision=1,
             covered_until_ms=120_000,
             segments=(
-                RawCaptureSegmentV1(
+                RawCaptureSegment(
                     segment_id="segment-later",
                     order=0,
-                    locator=TimeLocatorV1(start_ms=110_000, end_ms=120_000),
+                    locator=TimeLocator(start_ms=110_000, end_ms=120_000),
                     text="later",
                 ),
             ),
@@ -89,10 +89,10 @@ def test_progressive_state_reorders_segments_from_overlapping_worker_events() ->
             partial_revision=2,
             covered_until_ms=210_000,
             segments=(
-                RawCaptureSegmentV1(
+                RawCaptureSegment(
                     segment_id="segment-earlier",
                     order=0,
-                    locator=TimeLocatorV1(start_ms=90_000, end_ms=100_000),
+                    locator=TimeLocator(start_ms=90_000, end_ms=100_000),
                     text="earlier",
                 ),
             ),
@@ -115,7 +115,7 @@ class FixedClock(Clock):
 class FakeProgressiveProcessor:
     def __init__(self, clock: Clock) -> None:
         self.clock = clock
-        self.engine = CaptureEngineV1(
+        self.engine = CaptureEngine(
             engine="whisper-primary",
             model="small",
             digest=f"sha256:{'a' * 64}",
@@ -125,10 +125,10 @@ class FakeProgressiveProcessor:
     async def process(self, *, capture_id, source, source_path, cancellation, sink):
         assert source_path.is_file()
         assert not cancellation.is_set()
-        segment = RawCaptureSegmentV1(
+        segment = RawCaptureSegment(
             segment_id="segment-1",
             order=0,
-            locator=TimeLocatorV1(start_ms=0, end_ms=1_000),
+            locator=TimeLocator(start_ms=0, end_ms=1_000),
             text="hello streaming",
         )
         partial = PartialCaptureV2(
@@ -154,7 +154,7 @@ class FakeProgressiveProcessor:
             ),
             partial,
         )
-        return RawCaptureV1(
+        return RawCapture(
             source=source,
             segments=[segment],
             source_text=segment.text,
@@ -228,8 +228,8 @@ def test_progressive_runtime_materializes_partial_raw_result_and_terminal_events
         completed = service.get_capture(operation.capture_id)
         assert completed.status.value == "completed"
         terminal = service.terminal_result(operation.capture_id)
-        assert terminal["raw"]["sourceText"] == "hello streaming"
-        assert terminal["result"]["targetText"] == "hello streaming"
+        assert terminal.raw.source_text == "hello streaming"
+        assert terminal.result.target_text == "hello streaming"
         event_types = [
             event.event_type
             for event in repository.read_events(operation.capture_id, after_sequence=-1)

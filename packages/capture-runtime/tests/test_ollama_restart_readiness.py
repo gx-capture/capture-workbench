@@ -427,7 +427,7 @@ def test_requirements_api_recovers_installed_profile_after_process_restart(
             base_url=f"http://127.0.0.1:{settings.port}",
             headers=headers,
         ) as client:
-            response = client.get("/v1/runtime/requirements")
+            response = client.get("/v2/runtime/requirements")
             assert response.status_code == 200
             model = next(
                 item
@@ -460,7 +460,7 @@ def test_requirements_api_runs_sync_installer_off_the_event_loop(
             base_url=f"http://127.0.0.1:{settings.port}",
             headers={"Authorization": f"Bearer {TOKEN}"},
         ) as client:
-            response = await client.get("/v1/runtime/requirements")
+            response = await client.get("/v2/runtime/requirements")
         assert response.status_code == 200
         return loop_thread_id, installer.thread_id
 

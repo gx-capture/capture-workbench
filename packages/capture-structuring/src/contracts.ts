@@ -1,9 +1,9 @@
 import type {
-  CaptureBlockV1,
-  CaptureEngineV1,
-  RawCaptureSegmentV1,
-  RawCaptureV1,
-} from '@gx-capture/capture-contracts';
+  CaptureBlock,
+  CaptureEngine,
+  RawCaptureSegment,
+  RawCapture,
+} from '@gx-capture/capture-runtime-client';
 
 /** JSON Schema object supplied to an LLM generation provider. */
 export type StructuringSchema = Readonly<Record<string, unknown>>;
@@ -22,11 +22,11 @@ export type StructuringBatchPrompt = Readonly<{
 }>;
 
 /** The minimal semantic fields that may cross the untrusted LLM boundary. */
-export type CaptureSemanticBlockV1 = Readonly<{
+export type CaptureSemanticBlock = Readonly<{
   /** Stable identifier binding the semantic result to one raw segment. */
   sourceSegmentId: string;
   /** Semantic block classification selected by the model. */
-  type: CaptureBlockV1['type'];
+  type: CaptureBlock['type'];
   /** Translated text; omitted for identity structuring. */
   targetText?: string;
 }>;
@@ -61,7 +61,7 @@ export class StructuringValidationError extends Error {
 /** Token-budget accounting for one host LLM request. */
 export interface StructuringBatchPlan {
   /** Raw segments included in this request, in source order. */
-  readonly segments: readonly RawCaptureSegmentV1[];
+  readonly segments: readonly RawCaptureSegment[];
   /** Estimated input token count including fixed prompt/schema overhead. */
   readonly inputTokens: number;
   /** Estimated output token count including fixed response overhead. */
@@ -71,11 +71,11 @@ export interface StructuringBatchPlan {
 /** Inputs required to structure one raw capture through a host-owned LLM. */
 export interface StructureCaptureOptions {
   /** Canonical raw capture whose provenance must be preserved. */
-  readonly raw: RawCaptureV1;
+  readonly raw: RawCapture;
   /** Host callback that performs the actual LLM generation. */
   readonly llmGenerate: LlmGenerate;
   /** Trusted identity of the engine that produced the structured result. */
-  readonly structuringEngine: CaptureEngineV1;
+  readonly structuringEngine: CaptureEngine;
   /**
    * Optional semantic response schema. Defaults to the canonical Capture
    * schema; Ollama hosts may pass an Ollama-compatible schema explicitly.

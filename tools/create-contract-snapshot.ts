@@ -1,4 +1,5 @@
-import { readFile, readdir, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -18,108 +19,86 @@ function canonicalize(value: unknown): unknown {
   );
 }
 
-function normalizeGeneratedSource(
-  source: string,
-  language: 'typescript' | 'python',
-  manifest: JsonObject,
-): string {
-  const withoutComments =
-    language === 'typescript'
-      ? source.replace(/\/\*[\s\S]*?\*\//gu, '').replace(/^\s*\/\/.*$/gmu, '')
-      : source.replace(/^\s*#.*$/gmu, '');
-  return withoutComments
-    .replace(
-      new RegExp(
-        String(manifest.runtimeVersion).replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'),
-        'gu',
-      ),
-      '<runtime-version>',
-    )
-    .replace(/[0-9a-f]{64}/gu, '<digest>')
-    .replace(/\s+/gu, ' ')
-    .trim();
-}
-
 async function readJson(path: string): Promise<JsonObject> {
   const value = JSON.parse(await readFile(path, 'utf8')) as unknown;
   if (!isRecord(value)) throw new Error(`Expected an object in ${path}.`);
   return value;
 }
 
-async function readOptionalCollection(
-  root: string,
-  names: readonly string[],
-): Promise<unknown[]> {
-  for (const name of names) {
-    try {
-      const value = JSON.parse(
-        await readFile(join(root, name), 'utf8'),
-      ) as unknown;
-      if (!Array.isArray(value))
-        throw new Error(`${name} must contain an array.`);
-      return value;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-    }
-  }
-  return [];
-}
-
 export async function createContractSnapshot(
   sourceRoot: string,
 ): Promise<JsonObject> {
-  const typescriptRoot = join(
+  const bundlePath = join(
     sourceRoot,
-    'packages/capture-contracts/src/generated',
+    'packages/capture-runtime/src/capture_runtime/assets/contract-set.json',
   );
-  const pythonRoot = join(
+  const hashPath = join(
     sourceRoot,
-    'packages/capture-contracts/python/src/capture_contracts',
+    'packages/capture-runtime/src/capture_runtime/assets/contract-set.sha256',
   );
-  const manifest = await readJson(
-    join(typescriptRoot, 'contract-manifest.json'),
-  );
-  const schemaDirectory = join(typescriptRoot, 'schemas');
-  const schemaNames = (await readdir(schemaDirectory))
-    .filter((name) => name.endsWith('.json'))
-    .sort();
-  const schemas: JsonObject = {};
-  for (const name of schemaNames) {
-    schemas[name] = await readJson(join(schemaDirectory, name));
+  const bundleBytes = await readFile(bundlePath);
+  const bundle = JSON.parse(bundleBytes.toString('utf8')) as JsonObject;
+  const contractSetSha256 = (await readFile(hashPath, 'utf8')).trim();
+  if (
+    bundle.contractSetVersion !== '2' ||
+    !/^[0-9a-f]{64}$/u.test(contractSetSha256) ||
+    createHash('sha256').update(bundleBytes).digest('hex') !== contractSetSha256
+  ) {
+    throw new Error('Canonical v2 contract-set bundle/hash is invalid.');
   }
+  const schemas: JsonObject = {};
+  let captureDocumentEntry: JsonObject | undefined;
+  for (const value of Array.isArray(bundle.schemas) ? bundle.schemas : []) {
+    if (!isRecord(value) || !isRecord(value.schema)) continue;
+    const name =
+      typeof value.schemaFile === 'string'
+        ? value.schemaFile
+        : typeof value.name === 'string'
+          ? value.name
+          : undefined;
+    if (name) schemas[name] = value.schema;
+    if (name === 'capture-document.schema.json') captureDocumentEntry = value;
+  }
+  const captureDocument = captureDocumentEntry?.schema;
+  const runtimeVersion =
+    /(?:^|\n)version\s*=\s*"([^"]+)"/u.exec(
+      await readFile(
+        join(sourceRoot, 'packages/capture-runtime/pyproject.toml'),
+        'utf8',
+      ),
+    )?.[1] ?? '0.0.0';
   const runtimeApi = {
-    apiVersion: manifest.apiVersion,
-    documentSchemaVersion: manifest.captureDocumentSchemaVersion,
-    documentSchemaId: manifest.captureDocumentSchemaId,
-    documentSchemaSha256: manifest.captureDocumentSchemaSha256,
+    apiVersion: '2.0',
+    documentSchemaVersion: '2',
+    documentSchemaId:
+      isRecord(captureDocument) && typeof captureDocument.$id === 'string'
+        ? captureDocument.$id
+        : 'https://github.com/gx-capture/capture-workbench/schema/capture-document-v2.schema.json',
+    documentSchemaSha256:
+      typeof captureDocumentEntry?.schemaSha256 === 'string'
+        ? captureDocumentEntry.schemaSha256
+        : '',
   };
   if (Object.values(runtimeApi).some((value) => typeof value !== 'string')) {
     throw new Error('Contract manifest is missing runtime API metadata.');
   }
   return {
     schemaVersion: '1',
-    releaseVersion: manifest.runtimeVersion,
+    releaseVersion: runtimeVersion,
     runtimeApi,
-    contractManifest: canonicalize(manifest),
+    contractManifest: canonicalize({
+      contractSetVersion: bundle.contractSetVersion,
+      operations: bundle.operations,
+      problems: bundle.problems,
+      surfaces: bundle.surfaces,
+      invariants: bundle.invariants,
+    }),
     schemas: canonicalize(schemas),
-    typescript: normalizeGeneratedSource(
-      await readFile(join(typescriptRoot, 'contracts.ts'), 'utf8'),
-      'typescript',
-      manifest,
-    ),
-    python: normalizeGeneratedSource(
-      await readFile(join(pythonRoot, 'generated_models.py'), 'utf8'),
-      'python',
-      manifest,
-    ),
-    events: await readOptionalCollection(typescriptRoot, [
-      'events.json',
-      'event-codes.json',
-    ]),
-    errorCodes: await readOptionalCollection(typescriptRoot, [
-      'error-codes.json',
-      'errors.json',
-    ]),
+    typescript: '',
+    python: '',
+    events: [],
+    errorCodes: Array.isArray(bundle.problems) ? bundle.problems : [],
+    contractSetSha256,
   };
 }
 

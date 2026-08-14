@@ -15,11 +15,11 @@ from pydantic import ValidationError
 
 from capture_runtime.clock import Clock
 from capture_runtime.contracts import (
-    CaptureFailureV1,
+    CaptureFailureV2,
     RuntimeInstallationStatus,
-    RuntimeInstallationV1,
+    RuntimeInstallationV2,
 )
-from capture_runtime.storage.capture_repository import (
+from capture_runtime.storage.common import (
     IdempotencyConflictError,
     RecordNotFoundError,
     _atomic_json,
@@ -30,7 +30,7 @@ from capture_runtime.storage.capture_repository import (
 
 @dataclass(slots=True)
 class InstallationRecord:
-    job: RuntimeInstallationV1
+    job: RuntimeInstallationV2
     idempotency_key: str
     request_fingerprint: str
 
@@ -44,7 +44,7 @@ class InstallationRecord:
     @classmethod
     def load(cls, payload: dict[str, Any]) -> InstallationRecord:
         return cls(
-            job=RuntimeInstallationV1.model_validate(payload["job"]),
+            job=RuntimeInstallationV2.model_validate(payload["job"]),
             idempotency_key=str(payload["idempotencyKey"]),
             request_fingerprint=str(payload["requestFingerprint"]),
         )
@@ -102,7 +102,7 @@ class InstallationRepository:
                 return existing, False
             now = self._clock.now()
             installation_id = str(uuid4())
-            job = RuntimeInstallationV1(
+            job = RuntimeInstallationV2(
                 installation_id=installation_id,
                 requirement_id=requirement_id,
                 status=RuntimeInstallationStatus.QUEUED,
@@ -124,7 +124,7 @@ class InstallationRepository:
             except KeyError as error:
                 raise RecordNotFoundError(installation_id) from error
 
-    def list(self) -> list[RuntimeInstallationV1]:
+    def list(self) -> list[RuntimeInstallationV2]:
         with self._lock:
             return sorted(
                 (record.job for record in self._records.values()),
@@ -132,7 +132,7 @@ class InstallationRepository:
                 reverse=True,
             )
 
-    def update_job(self, installation_id: str, job: RuntimeInstallationV1) -> InstallationRecord:
+    def update_job(self, installation_id: str, job: RuntimeInstallationV2) -> InstallationRecord:
         with self._lock:
             record = self.get(installation_id)
             record.job = job
@@ -151,7 +151,7 @@ class InstallationRepository:
                 record.job = record.job.model_copy(
                     update={
                         "status": RuntimeInstallationStatus.FAILED,
-                        "error": CaptureFailureV1(
+                        "error": CaptureFailureV2(
                             code="runtime_restarted",
                             message="Capture Runtime restarted before installation completed.",
                             stage="runtime",

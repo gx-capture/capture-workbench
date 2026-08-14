@@ -2,14 +2,14 @@ import { Injectable } from '@angular/core';
 import {
   CAPTURE_API_VERSION,
   CAPTURE_DOCUMENT_SCHEMA_VERSION,
-  type CaptureDocumentV1,
-  type CaptureLocatorV1,
+  type CaptureDocument,
+  type CaptureLocator,
   type CaptureOutputMode,
   type CaptureSourceKind,
-  type CaptureStructuringCandidateV1,
+  type CaptureStructuringCandidate,
   type CaptureStructuringMode,
-  type RawCaptureV1,
-  type RuntimeReadyV1,
+  type RawCapture,
+  type RuntimeReady,
 } from './contracts';
 import { CAPTURE_RUNTIME_MAJOR, CAPTURE_RUNTIME_MINOR } from './constants';
 
@@ -70,12 +70,12 @@ export class CaptureHelpersService {
     return values.join(',');
   }
 
-  captureDocumentText(document: CaptureDocumentV1): string {
+  captureDocumentText(document: CaptureDocument): string {
     return document.targetText.trim() || document.sourceText;
   }
 
   serializeCaptureDocument(
-    document: CaptureDocumentV1,
+    document: CaptureDocument,
     mode: CaptureOutputMode,
   ): string {
     return mode === 'json'
@@ -83,12 +83,12 @@ export class CaptureHelpersService {
       : this.captureDocumentText(document);
   }
 
-  serializeRawCapture(raw: RawCaptureV1): string {
+  serializeRawCapture(raw: RawCapture): string {
     return JSON.stringify(raw, null, 2);
   }
 
   assertCaptureRuntimeCompatible(
-    ready: RuntimeReadyV1,
+    ready: RuntimeReady,
     compatibleRuntimeMajor = CAPTURE_RUNTIME_MAJOR,
     requiredStructuringMode?: CaptureStructuringMode,
     compatibleRuntimeMinor = CAPTURE_RUNTIME_MINOR,
@@ -128,9 +128,11 @@ export class CaptureHelpersService {
         `Capture runtime does not support schema ${CAPTURE_DOCUMENT_SCHEMA_VERSION}.`,
       );
     }
+    const structuringModes = ready.capabilities['structuringModes'];
     if (
       requiredStructuringMode &&
-      !ready.capabilities.structuringModes.includes(requiredStructuringMode)
+      (!Array.isArray(structuringModes) ||
+        !structuringModes.includes(requiredStructuringMode))
     ) {
       throw new CaptureCompatibilityError(
         `Capture runtime does not support ${requiredStructuringMode} structuring mode.`,
@@ -139,8 +141,8 @@ export class CaptureHelpersService {
   }
 
   validateStructuringCandidate(
-    candidate: CaptureStructuringCandidateV1,
-    raw: RawCaptureV1,
+    candidate: CaptureStructuringCandidate,
+    raw: RawCapture,
   ): readonly string[] {
     return validateStructuringCandidateImpl(candidate, raw);
   }
@@ -158,23 +160,23 @@ export function captureAccept(enabled: readonly CaptureSourceKind[]): string {
   return publicCaptureHelpers.captureAccept(enabled);
 }
 
-export function captureDocumentText(document: CaptureDocumentV1): string {
+export function captureDocumentText(document: CaptureDocument): string {
   return publicCaptureHelpers.captureDocumentText(document);
 }
 
 export function serializeCaptureDocument(
-  document: CaptureDocumentV1,
+  document: CaptureDocument,
   mode: CaptureOutputMode,
 ): string {
   return publicCaptureHelpers.serializeCaptureDocument(document, mode);
 }
 
-export function serializeRawCapture(raw: RawCaptureV1): string {
+export function serializeRawCapture(raw: RawCapture): string {
   return publicCaptureHelpers.serializeRawCapture(raw);
 }
 
 export function assertCaptureRuntimeCompatible(
-  ready: RuntimeReadyV1,
+  ready: RuntimeReady,
   compatibleRuntimeMajor = CAPTURE_RUNTIME_MAJOR,
   requiredStructuringMode?: CaptureStructuringMode,
   compatibleRuntimeMinor = CAPTURE_RUNTIME_MINOR,
@@ -188,15 +190,15 @@ export function assertCaptureRuntimeCompatible(
 }
 
 export function validateStructuringCandidate(
-  candidate: CaptureStructuringCandidateV1,
-  raw: RawCaptureV1,
+  candidate: CaptureStructuringCandidate,
+  raw: RawCapture,
 ): readonly string[] {
   return publicCaptureHelpers.validateStructuringCandidate(candidate, raw);
 }
 
 function validateStructuringCandidateImpl(
-  candidate: CaptureStructuringCandidateV1,
-  raw: RawCaptureV1,
+  candidate: CaptureStructuringCandidate,
+  raw: RawCapture,
 ): readonly string[] {
   const issues: string[] = [];
   if (candidate.schemaVersion !== CAPTURE_DOCUMENT_SCHEMA_VERSION) {
@@ -276,7 +278,7 @@ function validateStructuringCandidateImpl(
     issues.push('raw.sourceText must be the exact raw segment projection');
   }
 
-  let previous: CaptureLocatorV1 | undefined;
+  let previous: CaptureLocator | undefined;
   const blockIds = new Set<string>();
   for (const [index, block] of candidate.blocks.entries()) {
     if (block.order !== index)
@@ -342,7 +344,7 @@ function parseMinor(version: string): number {
   return Number.isFinite(minor) ? minor : -1;
 }
 
-function isValidLocator(locator: CaptureLocatorV1, raw: RawCaptureV1): boolean {
+function isValidLocator(locator: CaptureLocator, raw: RawCapture): boolean {
   if (locator.kind === 'page') {
     return (
       Number.isInteger(locator.page) &&
@@ -372,8 +374,8 @@ function isValidLocator(locator: CaptureLocatorV1, raw: RawCaptureV1): boolean {
 }
 
 function compareLocators(
-  left: CaptureLocatorV1,
-  right: CaptureLocatorV1,
+  left: CaptureLocator,
+  right: CaptureLocator,
 ): number {
   if (left.kind !== right.kind) return left.kind === 'page' ? -1 : 1;
   return left.kind === 'page'
@@ -382,8 +384,8 @@ function compareLocators(
 }
 
 function locatorsEqual(
-  left: CaptureLocatorV1,
-  right: CaptureLocatorV1,
+  left: CaptureLocator,
+  right: CaptureLocator,
 ): boolean {
   if (left.kind !== right.kind) return false;
   if (left.kind === 'time') {
@@ -401,8 +403,8 @@ function locatorsEqual(
 }
 
 function sameSource(
-  left: CaptureDocumentV1['source'],
-  right: RawCaptureV1['source'],
+  left: CaptureDocument['source'],
+  right: RawCapture['source'],
 ): boolean {
   return (
     left.sha256 === right.sha256 &&
@@ -413,8 +415,8 @@ function sameSource(
 }
 
 function sameEngine(
-  left: CaptureDocumentV1['extractionEngine'],
-  right: RawCaptureV1['extractionEngine'],
+  left: CaptureDocument['extractionEngine'],
+  right: RawCapture['extractionEngine'],
 ): boolean {
   return (
     left.engine === right.engine &&

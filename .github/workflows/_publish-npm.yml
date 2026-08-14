@@ -28,6 +28,16 @@ on:
       release_version:
         required: true
         type: string
+      release_candidate_id:
+        description: 'Full release candidate ID bound to this source ledger'
+        required: false
+        default: ''
+        type: string
+      contract_set_sha256:
+        description: 'Canonical v2 contract-set hash for this release train'
+        required: false
+        default: ''
+        type: string
 
 permissions:
   actions: read
@@ -88,6 +98,7 @@ jobs:
             --producer-run-id '${{ inputs.candidate_run_id }}' \
             --candidate-id '${{ inputs.candidate_id }}' \
             --candidate-manifest-sha256 '${{ inputs.candidate_manifest_sha256 }}' \
+            --contract-set-sha256 '${{ inputs.contract_set_sha256 }}' \
             --require-evidence
 
       - name: Publish or verify exact npm package bytes
@@ -100,6 +111,16 @@ jobs:
             --candidate promotion-input/candidate \
             --version '${{ inputs.release_version }}' \
             --output registry-ledger-npm.json
+
+      - name: Bind npm ledger to the full release candidate and contract set
+        if: ${{ inputs.release_candidate_id != '' || inputs.contract_set_sha256 != '' }}
+        shell: bash
+        env:
+          RELEASE_CANDIDATE_ID: ${{ inputs.release_candidate_id }}
+          CONTRACT_SET_SHA256: ${{ inputs.contract_set_sha256 }}
+        run: |
+          set -euo pipefail
+          node --input-type=module -e "const fs=await import('node:fs/promises'); const path='registry-ledger-npm.json'; const ledger=JSON.parse(await fs.readFile(path,'utf8')); if(!/^[0-9a-f]{64}$/.test(process.env.RELEASE_CANDIDATE_ID)||!/^[0-9a-f]{64}$/.test(process.env.CONTRACT_SET_SHA256)) throw new Error('Release candidate ledger binding is incomplete.'); ledger.releaseCandidateId=process.env.RELEASE_CANDIDATE_ID; ledger.contractSetSha256=process.env.CONTRACT_SET_SHA256; await fs.writeFile(path,JSON.stringify(ledger,null,2)+'\\n');"
 
       - name: Verify clean npm installation from GitHub Packages
         shell: bash
@@ -115,13 +136,13 @@ jobs:
           npm init --yes >/dev/null
           npm install --ignore-scripts \
             "@gx-capture/capture-workbench-ui@${{ inputs.release_version }}" \
-            "@gx-capture/capture-contracts@${{ inputs.release_version }}" \
+            "@gx-capture/capture-runtime-client@${{ inputs.release_version }}" \
             "@gx-capture/capture-structuring@${{ inputs.release_version }}"
 
       - name: Upload npm publication ledger
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: registry-ledger-npm-${{ inputs.candidate_id }}
+          name: registry-ledger-npm-${{ inputs.release_candidate_id || inputs.candidate_id }}
           path: registry-ledger-npm.json
           if-no-files-found: error
           retention-days: 14

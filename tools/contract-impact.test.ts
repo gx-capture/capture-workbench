@@ -16,22 +16,22 @@ function snapshot(overrides: Record<string, unknown> = {}) {
   };
   return {
     schemaVersion: '1',
-    releaseVersion: '0.3.12',
+    releaseVersion: '0.4.0',
     runtimeApi: {
-      apiVersion: '1.0',
-      documentSchemaVersion: '1',
+      apiVersion: '2.0',
+      documentSchemaVersion: '2',
       documentSchemaId:
-        'https://example.test/schema/capture-document-v1.schema.json',
+        'https://example.test/schema/capture-document-v2.schema.json',
       documentSchemaSha256: 'a'.repeat(64),
     },
     contractManifest: {
       manifestVersion: '1',
-      packageVersion: '0.3.12',
-      runtimeVersion: '0.3.12',
-      apiVersion: '1.0',
-      captureDocumentSchemaVersion: '1',
+      packageVersion: '0.4.0',
+      runtimeVersion: '0.4.0',
+      apiVersion: '2.0',
+      captureDocumentSchemaVersion: '2',
       captureDocumentSchemaId:
-        'https://example.test/schema/capture-document-v1.schema.json',
+        'https://example.test/schema/capture-document-v2.schema.json',
       captureDocumentSchemaSha256: 'a'.repeat(64),
       models: [],
       enums: [],
@@ -44,18 +44,19 @@ function snapshot(overrides: Record<string, unknown> = {}) {
     python: 'class Example: pass',
     events: [],
     errorCodes: [],
+    contractSetSha256: 'a'.repeat(64),
     ...overrides,
   };
 }
 
 test('description, ordering, digest, and release-version changes are no-impact', () => {
   const candidate = snapshot({
-    releaseVersion: '0.3.12',
+    releaseVersion: '0.4.0',
     runtimeApi: {
-      apiVersion: '1.0',
-      documentSchemaVersion: '1',
+      apiVersion: '2.0',
+      documentSchemaVersion: '2',
       documentSchemaId:
-        'https://example.test/schema/capture-document-v1.schema.json',
+        'https://example.test/schema/capture-document-v2.schema.json',
       documentSchemaSha256: 'b'.repeat(64),
     },
     schemas: {
@@ -70,8 +71,8 @@ test('description, ordering, digest, and release-version changes are no-impact',
     },
     contractManifest: {
       ...snapshot().contractManifest,
-      packageVersion: '0.3.12',
-      runtimeVersion: '0.3.12',
+      packageVersion: '0.4.0',
+      runtimeVersion: '0.4.0',
       captureDocumentSchemaSha256: 'b'.repeat(64),
     },
   });

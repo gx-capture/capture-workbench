@@ -24,6 +24,7 @@ export type ContractSnapshot = {
   readonly python: string;
   readonly events: readonly unknown[];
   readonly errorCodes: readonly unknown[];
+  readonly contractSetSha256: string;
 };
 
 export type ContractImpactResult = {
@@ -336,7 +337,7 @@ function compareCollections(
 
 function validateSnapshot(value: unknown, label: string): ContractSnapshot {
   if (!isRecord(value)) throw new Error(`${label} snapshot must be an object.`);
-  const required = ['runtimeApi', 'contractManifest', 'schemas'];
+  const required = ['runtimeApi', 'contractManifest', 'schemas', 'contractSetSha256'];
   if (
     value.schemaVersion !== '1' ||
     typeof value.releaseVersion !== 'string' ||
@@ -346,7 +347,9 @@ function validateSnapshot(value: unknown, label: string): ContractSnapshot {
     typeof value.typescript !== 'string' ||
     typeof value.python !== 'string' ||
     !Array.isArray(value.events) ||
-    !Array.isArray(value.errorCodes)
+    !Array.isArray(value.errorCodes) ||
+    typeof value.contractSetSha256 !== 'string' ||
+    !/^[0-9a-f]{64}$/u.test(value.contractSetSha256)
   ) {
     throw new Error(
       `${label} snapshot is incomplete; expected ${required.join(', ')}.`,
@@ -366,6 +369,14 @@ export function classifyContractImpact(
   const baseline = validateSnapshot(baselineValue, 'Baseline');
   const candidate = validateSnapshot(candidateValue, 'Candidate');
   const changes: ContractImpactChange[] = [];
+  if (baseline.contractSetSha256 !== candidate.contractSetSha256) {
+    addChange(
+      changes,
+      'breaking',
+      'contractSetSha256',
+      'Canonical contract-set bundle hash changed.',
+    );
+  }
   if (!equal(baseline.runtimeApi.apiVersion, candidate.runtimeApi.apiVersion)) {
     addChange(
       changes,

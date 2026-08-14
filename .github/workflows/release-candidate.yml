@@ -26,6 +26,10 @@ on:
         description: 'SHA-256 of the Package Candidate candidate-manifest.json'
         required: true
         type: string
+      contract_set_sha256:
+        description: 'Canonical v2 contract-set SHA-256 for this release train'
+        required: true
+        type: string
       runtime_candidate_run_id:
         description: 'Successful Release Runtime Candidate workflow run for the same source commit'
         required: true
@@ -128,6 +132,7 @@ jobs:
             --producer-run-id '${{ inputs.package_candidate_run_id }}' `
             --candidate-id '${{ inputs.package_candidate_id }}' `
             --candidate-manifest-sha256 '${{ inputs.package_candidate_manifest_sha256 }}' `
+            --contract-set-sha256 '${{ inputs.contract_set_sha256 }}' `
             --require-evidence
           "PACKAGE_CANDIDATE_PATH=$candidate" >> $env:GITHUB_ENV
 
@@ -152,6 +157,7 @@ jobs:
             --candidate-id '${{ inputs.runtime_candidate_id }}' `
             --candidate-manifest-sha256 '${{ inputs.runtime_candidate_manifest_sha256 }}' `
             --package-candidate-id '${{ inputs.package_candidate_id }}' `
+            --contract-set-sha256 '${{ inputs.contract_set_sha256 }}' `
             --require-evidence
           "RUNTIME_CANDIDATE_PATH=$candidate" >> $env:GITHUB_ENV
 
@@ -180,7 +186,7 @@ jobs:
           node apps/capture-workbench-desktop/scripts/stage-runtime.ts `
             --artifact "$env:RUNTIME_CANDIDATE_PATH/runtime/capture-runtime-x86_64-pc-windows-msvc.exe" `
             --manifest "$env:RUNTIME_CANDIDATE_PATH/runtime/capture-runtime-manifest.json" `
-            --schema "$env:RUNTIME_CANDIDATE_PATH/runtime/capture-document-v1.schema.json" `
+            --schema "$env:RUNTIME_CANDIDATE_PATH/runtime/capture-document-v2.schema.json" `
             --source release
           pnpm nx run capture-workbench-desktop:build-nsis
 
@@ -217,7 +223,8 @@ jobs:
             --version "$env:RELEASE_VERSION" `
             --release-mode "$env:RELEASE_MODE" `
             --package-candidate "$env:PACKAGE_CANDIDATE_PATH" `
-            --runtime-candidate "$env:RUNTIME_CANDIDATE_PATH"
+            --runtime-candidate "$env:RUNTIME_CANDIDATE_PATH" `
+            --contract-set-sha256 '${{ inputs.contract_set_sha256 }}'
           $sourceCommit = (git rev-parse HEAD).Trim()
           node tools/verify-release-candidate.ts `
             --candidate "$candidate" `
@@ -225,7 +232,8 @@ jobs:
             --source-commit "$sourceCommit" `
             --release-mode "$env:RELEASE_MODE" `
             --package-candidate-id '${{ inputs.package_candidate_id }}' `
-            --runtime-candidate-id '${{ inputs.runtime_candidate_id }}'
+            --runtime-candidate-id '${{ inputs.runtime_candidate_id }}' `
+            --contract-set-sha256 '${{ inputs.contract_set_sha256 }}'
           "CAPTURE_CANDIDATE_PATH=$candidate" >> $env:GITHUB_ENV
           $manifest = Get-Content "$candidate/candidate-manifest.json" -Raw | ConvertFrom-Json
           "candidateId=$($manifest.candidateId)" >> $env:GITHUB_OUTPUT
@@ -368,11 +376,12 @@ jobs:
             --version "$env:RELEASE_VERSION" `
             --source-commit "$sourceCommit" `
             --release-mode "$env:RELEASE_MODE" `
-            --runtime-candidate-id '${{ inputs.runtime_candidate_id }}'
+            --runtime-candidate-id '${{ inputs.runtime_candidate_id }}' `
+            --contract-set-sha256 '${{ inputs.contract_set_sha256 }}'
           node apps/capture-workbench-desktop/scripts/stage-runtime.ts `
             --artifact "$candidate/runtime/capture-runtime-x86_64-pc-windows-msvc.exe" `
             --manifest "$candidate/runtime/capture-runtime-manifest.json" `
-            --schema "$candidate/runtime/capture-document-v1.schema.json" `
+            --schema "$candidate/runtime/capture-document-v2.schema.json" `
             --source release
           $nsis = 'apps/capture-workbench-desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis'
           New-Item -ItemType Directory -Force -Path $nsis | Out-Null
@@ -441,7 +450,7 @@ jobs:
           $PSNativeCommandUseErrorActionPreference = $true
           $candidate = Join-Path $env:RUNNER_TEMP 'capture-candidate'
           $sourceCommit = (git rev-parse HEAD).Trim()
-          node tools/verify-release-candidate.ts --candidate "$candidate" --version "$env:RELEASE_VERSION" --source-commit "$sourceCommit" --release-mode "$env:RELEASE_MODE" --runtime-candidate-id '${{ inputs.runtime_candidate_id }}'
+          node tools/verify-release-candidate.ts --candidate "$candidate" --version "$env:RELEASE_VERSION" --source-commit "$sourceCommit" --release-mode "$env:RELEASE_MODE" --runtime-candidate-id '${{ inputs.runtime_candidate_id }}' --contract-set-sha256 '${{ inputs.contract_set_sha256 }}'
           node tools/local-release-consumer-smoke.ts --runtime-dir "$candidate/runtime" --version "$env:RELEASE_VERSION"
 
       - name: Record candidate verification result
@@ -504,7 +513,7 @@ jobs:
           $PSNativeCommandUseErrorActionPreference = $true
           $candidate = Join-Path $env:RUNNER_TEMP 'capture-candidate'
           $sourceCommit = (git rev-parse HEAD).Trim()
-          node tools/verify-release-candidate.ts --candidate "$candidate" --version "$env:RELEASE_VERSION" --source-commit "$sourceCommit" --release-mode "$env:RELEASE_MODE" --runtime-candidate-id '${{ inputs.runtime_candidate_id }}'
+          node tools/verify-release-candidate.ts --candidate "$candidate" --version "$env:RELEASE_VERSION" --source-commit "$sourceCommit" --release-mode "$env:RELEASE_MODE" --runtime-candidate-id '${{ inputs.runtime_candidate_id }}' --contract-set-sha256 '${{ inputs.contract_set_sha256 }}'
           New-Item -ItemType Directory -Force -Path 'dist/packs' | Out-Null
           Copy-Item -Path (Join-Path $candidate 'package/*.tgz') -Destination 'dist/packs' -Force
           node tools/verify-candidate-packages.ts --candidate "$candidate" --version "$env:RELEASE_VERSION"
@@ -568,7 +577,7 @@ jobs:
           $PSNativeCommandUseErrorActionPreference = $true
           $candidate = Join-Path $env:RUNNER_TEMP 'capture-candidate'
           $sourceCommit = (git rev-parse HEAD).Trim()
-          node tools/verify-release-candidate.ts --candidate "$candidate" --version "$env:RELEASE_VERSION" --source-commit "$sourceCommit" --release-mode "$env:RELEASE_MODE" --runtime-candidate-id '${{ inputs.runtime_candidate_id }}'
+          node tools/verify-release-candidate.ts --candidate "$candidate" --version "$env:RELEASE_VERSION" --source-commit "$sourceCommit" --release-mode "$env:RELEASE_MODE" --runtime-candidate-id '${{ inputs.runtime_candidate_id }}' --contract-set-sha256 '${{ inputs.contract_set_sha256 }}'
           $catalog = Get-Content "$candidate/runtime/capture-engine-catalog.json" -Raw | ConvertFrom-Json
           if ($catalog.runtimeVersion -ne $env:RELEASE_VERSION) { throw 'Candidate model catalog runtime version drifted.' }
           if ($catalog.requirements.Count -ne 2) { throw 'Model-enabled candidate must contain exactly OCR and Whisper requirements.' }

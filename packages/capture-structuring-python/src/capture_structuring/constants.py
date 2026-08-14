@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from copy import deepcopy
 
-from .contracts import CaptureBlockBatchV1, CaptureIdentityBlockBatchV1
+from .contracts import CaptureBlockBatch, CaptureIdentityBlockBatch
 
 DEFAULT_STRUCTURING_NUM_CTX = 8_192
 """Default Ollama context budget for bounded structuring requests."""
@@ -28,11 +28,11 @@ MIN_REQUEST_TOKENS = 256
 IDENTITY_TEXT_PREVIEW_CHARACTERS = 256
 """Maximum source preview sent to the identity classifier."""
 
-CAPTURE_BLOCK_BATCH_SCHEMA: dict[str, object] = CaptureBlockBatchV1.model_json_schema(by_alias=True)
+CAPTURE_BLOCK_BATCH_SCHEMA: dict[str, object] = CaptureBlockBatch.model_json_schema(by_alias=True)
 """JSON Schema for translated semantic block batches."""
 
 CAPTURE_IDENTITY_BLOCK_BATCH_SCHEMA: dict[str, object] = (
-    CaptureIdentityBlockBatchV1.model_json_schema(by_alias=True)
+    CaptureIdentityBlockBatch.model_json_schema(by_alias=True)
 )
 """JSON Schema for identity-mode semantic block batches."""
 

@@ -7,7 +7,7 @@ and durable before it replaces PR #4.
 
 ## Non-goals
 
-- No public `/v1`, package, or `CaptureDocumentV1` changes.
+- No public `/v2`, package, or `CaptureDocument` changes.
 - No bearer token in renderer IPC, logs, reports, or library files.
 - No native file picker or binary/streaming IPC migration.
 - No broad store/component split, typed runtime DTO migration, or smoke-helper

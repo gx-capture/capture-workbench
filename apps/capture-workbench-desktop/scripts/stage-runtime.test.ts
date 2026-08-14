@@ -12,15 +12,15 @@ import {
 function manifestFor(bytes, sha256, schemaSha256) {
   return {
     manifestVersion: '1',
-    runtimeVersion: '0.3.12',
-    apiVersion: '1.0',
-    captureDocumentSchemaVersion: '1',
+    runtimeVersion: '0.4.0',
+    apiVersion: '2.0',
+    captureDocumentSchemaVersion: '2',
     platform: 'windows',
     arch: 'x86_64',
     fileName: 'capture-runtime-x86_64-pc-windows-msvc.exe',
     bytes,
     sha256,
-    schemaFileName: 'capture-document-v1.schema.json',
+    schemaFileName: 'capture-document-v2.schema.json',
     schemaSha256,
   };
 }
@@ -45,7 +45,7 @@ test('staging validation binds manifest bytes and SHA-256 to one artifact', asyn
   try {
     const artifact = join(directory, 'capture-runtime.exe');
     const manifestPath = join(directory, 'capture-runtime-manifest.json');
-    const schemaPath = join(directory, 'capture-document-v1.schema.json');
+    const schemaPath = join(directory, 'capture-document-v2.schema.json');
     await writeFile(artifact, 'deterministic runtime', 'utf8');
     await writeFile(schemaPath, '{"type":"object"}\n', 'utf8');
     const digest = await observe(sha256File(artifact));
@@ -84,7 +84,7 @@ test('staging manifest rejects schema drift and path traversal', () => {
   assert.doesNotThrow(() => validateManifestShape(valid));
   assert.throws(
     () =>
-      validateManifestShape({ ...valid, captureDocumentSchemaVersion: '2' }),
+      validateManifestShape({ ...valid, captureDocumentSchemaVersion: '3' }),
     /captureDocumentSchemaVersion/u,
   );
   assert.throws(
@@ -96,7 +96,7 @@ test('staging manifest rejects schema drift and path traversal', () => {
     () =>
       validateManifestShape({
         ...valid,
-        schemaFileName: '..\\capture-document-v1.schema.json',
+        schemaFileName: '..\\capture-document-v2.schema.json',
       }),
     /schemaFileName/u,
   );

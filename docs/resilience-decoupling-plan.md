@@ -106,9 +106,9 @@ Example:
 
 ```json
 {
-  "releaseVersion": "0.3.11",
-  "runtimeApiVersion": "1.0",
-  "documentSchemaVersion": "1"
+  "releaseVersion": "0.4.0",
+  "runtimeApiVersion": "2.0",
+  "documentSchemaVersion": "2"
 }
 ```
 
@@ -206,12 +206,12 @@ Run in or immediately after candidate assembly:
 * Install them in a clean temporary project.
 * Reject leaked `workspace:*` dependencies.
 * Verify exports and type declarations.
-* Import contracts, structuring, and Workbench packages.
+* Import the runtime client, structuring, and Workbench packages.
 
 ### Python
 
 * Install each wheel and source distribution in a clean virtual environment.
-* Import `capture_contracts`.
+* Import `capture_runtime_client`.
 * Import `capture_structuring`.
 * Validate packaged schema availability.
 * Verify inter-package dependencies.
@@ -755,7 +755,7 @@ Example:
 {
   "schemaVersion": "1",
   "channel": "stable",
-  "releaseTag": "v0.3.11",
+  "releaseTag": "v0.4.0",
   "manifestSha256": "...",
   "manifestAssetName": "capture-release-manifest-v1.json",
   "updatedAt": "..."
@@ -807,7 +807,7 @@ Example:
 {
   "v0.3.10": {
     "status": "superseded",
-    "supersededBy": "v0.3.11",
+    "supersededBy": "v0.4.0",
     "reason": "launcher metadata defect"
   }
 }

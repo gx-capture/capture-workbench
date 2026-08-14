@@ -16,9 +16,14 @@ function snapshot(releaseVersion: string, title: string): object {
   return {
     schemaVersion: '1',
     releaseVersion,
-    runtimeApi: { apiVersion: '1.0' },
+    runtimeApi: {
+      apiVersion: '2.0',
+      documentSchemaVersion: '2',
+      documentSchemaId: 'capture-document-v2',
+    },
     contractManifest: { title },
     schemas: {},
+    contractSetSha256: 'a'.repeat(64),
     typescript: 'type Capture = { id: string }',
     python: 'class Capture: pass',
     events: [],
@@ -35,10 +40,10 @@ test('classification is generated from the candidate snapshot and exact candidat
       mkdir(contracts, { recursive: true }),
     );
     const candidateBytes = Buffer.from(
-      `${JSON.stringify(snapshot('0.3.12', 'same'))}\n`,
+      `${JSON.stringify(snapshot('0.4.0', 'same'))}\n`,
     );
     const baselineBytes = Buffer.from(
-      `${JSON.stringify(snapshot('0.3.12', 'same'))}\n`,
+      `${JSON.stringify(snapshot('0.4.0', 'same'))}\n`,
     );
     const candidatePath = join(contracts, 'contract-snapshot.json');
     const baselinePath = join(root, 'baseline.json');
@@ -65,7 +70,7 @@ test('classification is generated from the candidate snapshot and exact candidat
     assert.equal(impact.candidateId, candidateId);
     assert.equal(impact.candidateSnapshotSha256, digest(candidateBytes));
     assert.equal(impact.classification, 'no-impact');
-    assert.equal(impact.baselineRelease, '0.3.12');
+    assert.equal(impact.baselineRelease, '0.4.0');
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -81,7 +86,7 @@ test('missing stable baseline fails closed into manual review', async () => {
     );
     await writeFile(
       join(contracts, 'contract-snapshot.json'),
-      `${JSON.stringify(snapshot('0.3.12', 'candidate'))}\n`,
+      `${JSON.stringify(snapshot('0.4.0', 'candidate'))}\n`,
     );
     const output = join(root, 'contract-impact.json');
     const result = spawnSync(

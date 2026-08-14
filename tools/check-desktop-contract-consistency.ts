@@ -4,9 +4,17 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const workspaceRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const contractsManifestPath = join(
+const contractSetPath = join(
   workspaceRoot,
-  'packages/capture-contracts/src/generated/contract-manifest.json',
+  'packages/capture-runtime/src/capture_runtime/assets/contract-set.json',
+);
+const contractSetDigestPath = join(
+  workspaceRoot,
+  'packages/capture-runtime/src/capture_runtime/assets/contract-set.sha256',
+);
+const runtimeProjectPath = join(
+  workspaceRoot,
+  'packages/capture-runtime/pyproject.toml',
 );
 const desktopRoot = join(workspaceRoot, 'apps/capture-workbench-desktop');
 const versionsPath = join(desktopRoot, 'src-tauri/src/constants/versions.rs');
@@ -17,7 +25,7 @@ const desktopManifestPath = join(
 );
 const desktopSchemaPath = join(
   desktopRoot,
-  'src-tauri/resources/capture-document-v1.schema.json',
+  'src-tauri/resources/capture-document-v2.schema.json',
 );
 
 interface ContractManifest {
@@ -57,7 +65,36 @@ function expectEqual(name: string, actual: unknown, expected: unknown): void {
   }
 }
 
-const contracts = readJson<ContractManifest>(contractsManifestPath);
+const contractSet = readJson<{
+  readonly contractSetVersion: string;
+  readonly schemas: readonly {
+    readonly name: string;
+    readonly schemaFile: string;
+    readonly schemaSha256: string;
+  }[];
+}>(contractSetPath);
+const runtimeVersion = readFileSync(runtimeProjectPath, 'utf8').match(
+  /^version\s*=\s*"([^"]+)"/mu,
+)?.[1];
+if (!runtimeVersion) throw new Error('Missing runtime package version.');
+const captureDocumentSchema = contractSet.schemas.find(
+  (schema) => schema.name === 'CaptureDocument',
+);
+if (!captureDocumentSchema) throw new Error('Missing CaptureDocument schema.');
+const contracts: ContractManifest = {
+  manifestVersion: '1',
+  packageVersion: runtimeVersion,
+  runtimeVersion,
+  apiVersion: '2.0',
+  captureDocumentSchemaVersion: '2',
+  captureDocumentSchemaSha256: captureDocumentSchema.schemaSha256,
+};
+expectEqual('contract-set version', contractSet.contractSetVersion, '2');
+expectEqual(
+  'contract-set digest',
+  createHash('sha256').update(readFileSync(contractSetPath)).digest('hex'),
+  readFileSync(contractSetDigestPath, 'utf8').trim(),
+);
 const desktopManifest = readJson<RuntimeManifest>(desktopManifestPath);
 const versionsSource = readFileSync(versionsPath, 'utf8');
 const cargoSource = readFileSync(cargoPath, 'utf8');
@@ -116,7 +153,7 @@ expectEqual(
 expectEqual(
   'desktop runtime manifest schemaFileName',
   desktopManifest.schemaFileName,
-  'capture-document-v1.schema.json',
+  'capture-document-v2.schema.json',
 );
 expectEqual(
   'desktop runtime manifest schemaSha256',

@@ -1,13 +1,4 @@
-import { catchError, from, map, of, type Observable } from 'rxjs';
-import type { CaptureFailureV1 } from './contracts';
-
-export interface ErrorEnvelope {
-  readonly error?: {
-    readonly code?: string;
-    readonly message?: string;
-    readonly details?: unknown;
-  };
-}
+import type { CaptureFailure } from './contracts';
 export class CaptureHttpError extends Error {
   constructor(
     readonly status: number,
@@ -22,20 +13,9 @@ export class CaptureHttpError extends Error {
 
   readonly details?: unknown;
 
-  asFailure(stage?: CaptureFailureV1['stage']): CaptureFailureV1 {
+  asFailure(stage?: CaptureFailure['stage']): CaptureFailure {
     return { code: this.code, message: this.message, stage };
   }
-}
-
-export function readJson<T>(response: Response): Observable<T | undefined> {
-  return from(response.json()).pipe(
-    map((value) => value as T),
-    catchError(() => of(undefined)),
-  );
-}
-
-export function createAbortError(): DOMException {
-  return new DOMException('The operation was aborted.', 'AbortError');
 }
 
 function redactSensitiveMessage(message: string): string {

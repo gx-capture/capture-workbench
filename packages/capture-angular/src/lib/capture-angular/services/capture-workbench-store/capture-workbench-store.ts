@@ -18,7 +18,7 @@ import {
   type CaptureStructuringProvider,
   type CaptureTaskView,
   type CaptureWorkbenchConfig,
-  type RuntimeRequirementV1,
+  type RuntimeRequirement,
 } from '../../../contracts';
 import type {
   ResolvedCaptureWorkbenchConfig,
@@ -360,7 +360,7 @@ export class CaptureWorkbenchStore {
     );
   }
 
-  private requirementIsNeeded(requirement: RuntimeRequirementV1): boolean {
+  private requirementIsNeeded(requirement: RuntimeRequirement): boolean {
     const enabled = this.resolvedConfig().enabledSources;
     if (requirement.requirementId === 'windowsml-ocr') {
       return enabled.includes('pdf') || enabled.includes('image');

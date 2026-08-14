@@ -58,7 +58,7 @@ class _SemanticModel(BaseModel):
     )
 
 
-class CaptureSemanticBlockV1(_SemanticModel):
+class CaptureSemanticBlock(_SemanticModel):
     """The only block fields a host LLM is allowed to return."""
 
     source_segment_id: NonEmptyString
@@ -66,23 +66,23 @@ class CaptureSemanticBlockV1(_SemanticModel):
     target_text: CaptureText | None = None
 
 
-class CaptureIdentitySemanticBlockV1(_SemanticModel):
+class CaptureIdentitySemanticBlock(_SemanticModel):
     """Identity-mode semantics, which must not include a target-text echo."""
 
     source_segment_id: NonEmptyString
     type: Literal["heading", "paragraph", "list-item", "table", "quote", "transcript"]
 
 
-class CaptureBlockBatchV1(_SemanticModel):
+class CaptureBlockBatch(_SemanticModel):
     """Translated semantic blocks returned for one bounded host request."""
 
-    blocks: list[CaptureSemanticBlockV1] = Field(min_length=1)
+    blocks: list[CaptureSemanticBlock] = Field(min_length=1)
 
 
-class CaptureIdentityBlockBatchV1(_SemanticModel):
+class CaptureIdentityBlockBatch(_SemanticModel):
     """Identity semantic blocks returned for one bounded host request."""
 
-    blocks: list[CaptureIdentitySemanticBlockV1] = Field(min_length=1)
+    blocks: list[CaptureIdentitySemanticBlock] = Field(min_length=1)
 
 
 class _ValidatedSemanticBlock:
@@ -102,10 +102,10 @@ class StructuringBatchPlan:
 
 
 __all__ = [
-    "CaptureBlockBatchV1",
-    "CaptureIdentityBlockBatchV1",
-    "CaptureIdentitySemanticBlockV1",
-    "CaptureSemanticBlockV1",
+    "CaptureBlockBatch",
+    "CaptureIdentityBlockBatch",
+    "CaptureIdentitySemanticBlock",
+    "CaptureSemanticBlock",
     "CaptureText",
     "LlmGenerate",
     "NonEmptyString",

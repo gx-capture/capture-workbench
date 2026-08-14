@@ -1,4 +1,4 @@
-"""Pydantic wire contracts for Capture Runtime API v1 and streaming v2."""
+"""Pydantic wire contracts for the Capture Runtime v2 API."""
 
 from __future__ import annotations
 
@@ -16,11 +16,7 @@ from pydantic import (
 )
 from pydantic.alias_generators import to_camel
 
-from capture_runtime.constants import (
-    API_VERSION,
-    CAPTURE_DOCUMENT_SCHEMA_VERSION,
-    RUNTIME_VERSION,
-)
+from capture_runtime.constants import API_VERSION, CAPTURE_DOCUMENT_SCHEMA_VERSION, RUNTIME_VERSION
 
 NonEmptyString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 CaptureText = Annotated[
@@ -62,41 +58,6 @@ class StructuringMode(StrEnum):
     HOST = "host"
 
 
-class CaptureReviewEditV1(StrictModel):
-    segment_id: NonEmptyString
-    reviewed_text: CaptureText
-
-
-class CaptureReviewV1(StrictModel):
-    review_version: Literal[1] = 1
-    edits: list[CaptureReviewEditV1] = Field(default_factory=list, max_length=10_000)
-
-    @model_validator(mode="after")
-    def validate_unique_segments(self) -> Self:
-        identifiers = [edit.segment_id for edit in self.edits]
-        if len(identifiers) != len(set(identifiers)):
-            raise ValueError("review edits must contain unique segmentId values")
-        return self
-
-
-class CaptureJobStatus(StrEnum):
-    QUEUED = "queued"
-    RUNNING = "running"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
-
-
-class CaptureJobStage(StrEnum):
-    QUEUED = "queued"
-    EXTRACTING = "extracting"
-    AWAITING_STRUCTURING = "awaiting_structuring"
-    STRUCTURING = "structuring"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
-
-
 class RuntimeInstallationStatus(StrEnum):
     QUEUED = "queued"
     RUNNING = "running"
@@ -128,13 +89,13 @@ CaptureRequirementId = Literal[
 ]
 
 
-class PageLocatorV1(StrictModel):
+class PageLocator(StrictModel):
     kind: Literal["page"] = "page"
     page: int = Field(ge=1)
     bounding_box: tuple[float, float, float, float] | None = None
 
 
-class TimeLocatorV1(StrictModel):
+class TimeLocator(StrictModel):
     kind: Literal["time"] = "time"
     start_ms: int = Field(ge=0)
     end_ms: int = Field(gt=0)
@@ -146,10 +107,10 @@ class TimeLocatorV1(StrictModel):
         return self
 
 
-CaptureLocatorV1 = Annotated[PageLocatorV1 | TimeLocatorV1, Field(discriminator="kind")]
+CaptureLocator = Annotated[PageLocator | TimeLocator, Field(discriminator="kind")]
 
 
-class CaptureSourceV1(StrictModel):
+class CaptureSource(StrictModel):
     sha256: Sha256Hex
     file_name: Annotated[
         str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)
@@ -158,31 +119,31 @@ class CaptureSourceV1(StrictModel):
     bytes: int = Field(ge=1)
 
 
-class CaptureEngineV1(StrictModel):
+class CaptureEngine(StrictModel):
     engine: NonEmptyString
     model: NonEmptyString
     digest: EngineDigest
     device: NonEmptyString | None = None
 
 
-class RawCaptureSegmentV1(StrictModel):
+class RawCaptureSegment(StrictModel):
     segment_id: NonEmptyString
     order: int = Field(ge=0)
-    locator: CaptureLocatorV1
+    locator: CaptureLocator
     text: CaptureText
 
 
-def project_source_text(segments: list[RawCaptureSegmentV1]) -> str:
+def project_source_text(segments: list[RawCaptureSegment]) -> str:
     return "\n".join(segment.text for segment in segments)
 
 
-class RawCaptureV1(StrictModel):
-    schema_version: Literal["1"] = CAPTURE_DOCUMENT_SCHEMA_VERSION
+class RawCapture(StrictModel):
+    schema_version: Literal["2"] = CAPTURE_DOCUMENT_SCHEMA_VERSION
     diagnostic_only: Literal[True] = True
-    source: CaptureSourceV1
-    segments: list[RawCaptureSegmentV1] = Field(min_length=1, max_length=10_000)
+    source: CaptureSource
+    segments: list[RawCaptureSegment] = Field(min_length=1, max_length=10_000)
     source_text: ProjectedText
-    extraction_engine: CaptureEngineV1
+    extraction_engine: CaptureEngine
     warnings: list[WarningText] = Field(default_factory=list, max_length=1_000)
     created_at: datetime
 
@@ -201,25 +162,25 @@ class RawCaptureV1(StrictModel):
         return self
 
 
-class CaptureBlockV1(StrictModel):
+class CaptureBlock(StrictModel):
     block_id: NonEmptyString
     order: int = Field(ge=0)
     type: Literal["heading", "paragraph", "list-item", "table", "quote", "transcript"]
     source_segment_id: NonEmptyString
-    locator: CaptureLocatorV1
+    locator: CaptureLocator
     source_text: CaptureText
     target_text: CaptureText
 
 
-class CaptureDocumentV1(StrictModel):
-    schema_version: Literal["1"] = CAPTURE_DOCUMENT_SCHEMA_VERSION
-    source: CaptureSourceV1
-    raw_segments: list[RawCaptureSegmentV1] = Field(min_length=1, max_length=10_000)
-    blocks: list[CaptureBlockV1] = Field(min_length=1, max_length=10_000)
+class CaptureDocument(StrictModel):
+    schema_version: Literal["2"] = CAPTURE_DOCUMENT_SCHEMA_VERSION
+    source: CaptureSource
+    raw_segments: list[RawCaptureSegment] = Field(min_length=1, max_length=10_000)
+    blocks: list[CaptureBlock] = Field(min_length=1, max_length=10_000)
     source_text: ProjectedText
     target_text: ProjectedText
-    extraction_engine: CaptureEngineV1
-    structuring_engine: CaptureEngineV1
+    extraction_engine: CaptureEngine
+    structuring_engine: CaptureEngine
     warnings: list[WarningText] = Field(default_factory=list, max_length=1_000)
     created_at: datetime
     completed_at: datetime
@@ -263,49 +224,14 @@ class CaptureDocumentV1(StrictModel):
         return self
 
 
-class CaptureFailureV1(StrictModel):
-    code: Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_]{1,63}$")]
-    message: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
-    stage: NonEmptyString | None = None
-    retryable: bool = False
-
-
-class CaptureJobV1(StrictModel):
-    capture_id: str
-    status: CaptureJobStatus
-    stage: CaptureJobStage
-    structuring_mode: StructuringMode
-    progress: float = Field(ge=0, le=1)
-    source: CaptureSourceV1 | None = None
-    error: CaptureFailureV1 | None = None
-    created_at: datetime
-    updated_at: datetime
-    completed_at: datetime | None = None
-
-    _aware_times = field_validator("created_at", "updated_at", "completed_at")(
-        lambda value: None if value is None else _require_aware(value)
-    )
-
-    @model_validator(mode="after")
-    def validate_state(self) -> Self:
-        terminal = {
-            CaptureJobStatus.COMPLETED,
-            CaptureJobStatus.FAILED,
-            CaptureJobStatus.CANCELLED,
-        }
-        if (self.status in terminal) != (self.completed_at is not None):
-            raise ValueError("terminal capture jobs must have completedAt")
-        return self
-
-
-class RuntimeArtifactDescriptorV1(StrictModel):
+class RuntimeArtifactDescriptorV2(StrictModel):
     artifact_url: NonEmptyString
     artifact_file_name: NonEmptyString
     bytes: int = Field(ge=1, le=536_870_912)
     sha256: Sha256Hex
 
 
-class RuntimeRequirementV1(StrictModel):
+class RuntimeRequirementV2(StrictModel):
     requirement_id: CaptureRequirementId
     kind: NonEmptyString
     display_name: NonEmptyString
@@ -313,19 +239,19 @@ class RuntimeRequirementV1(StrictModel):
     required_for: list[str]
     install_strategy: NonEmptyString
     detail: str | None = None
-    artifact: RuntimeArtifactDescriptorV1 | None = None
+    artifact: RuntimeArtifactDescriptorV2 | None = None
 
 
-class RuntimeRequirementsV1(StrictModel):
-    items: list[RuntimeRequirementV1]
+class RuntimeRequirementsV2(StrictModel):
+    items: list[RuntimeRequirementV2]
 
 
-class StartRuntimeInstallationV1(StrictModel):
+class StartRuntimeInstallationV2(StrictModel):
     requirement_id: CaptureRequirementId
     consent: Literal[True]
 
 
-class RuntimeModelOptionV1(StrictModel):
+class RuntimeModelOptionV2(StrictModel):
     option_id: NonEmptyString
     display_name: NonEmptyString
     model_reference: NonEmptyString
@@ -336,22 +262,22 @@ class RuntimeModelOptionV1(StrictModel):
     status: RuntimeModelOptionStatus
 
 
-class RuntimeModelOptionsV1(StrictModel):
+class RuntimeModelOptionsV2(StrictModel):
     catalog_sha256: Sha256Hex
-    items: list[RuntimeModelOptionV1]
+    items: list[RuntimeModelOptionV2]
 
 
-class StartRuntimeModelInstallationV1(StrictModel):
+class StartRuntimeModelInstallationV2(StrictModel):
     option_id: NonEmptyString
     consent: Literal[True]
 
 
-class RuntimeModelInstallationV1(StrictModel):
+class RuntimeModelInstallationV2(StrictModel):
     installation_id: str
     option_id: NonEmptyString
     status: RuntimeInstallationStatus
     progress: float = Field(ge=0, le=1)
-    error: CaptureFailureV1 | None = None
+    error: CaptureFailureV2 | None = None
     created_at: datetime
     updated_at: datetime
     completed_at: datetime | None = None
@@ -361,16 +287,16 @@ class RuntimeModelInstallationV1(StrictModel):
     )
 
 
-class RuntimeModelInstallationsV1(StrictModel):
-    items: list[RuntimeModelInstallationV1]
+class RuntimeModelInstallationsV2(StrictModel):
+    items: list[RuntimeModelInstallationV2]
 
 
-class RuntimeInstallationV1(StrictModel):
+class RuntimeInstallationV2(StrictModel):
     installation_id: str
     requirement_id: CaptureRequirementId
     status: RuntimeInstallationStatus
     progress: float = Field(ge=0, le=1)
-    error: CaptureFailureV1 | None = None
+    error: CaptureFailureV2 | None = None
     created_at: datetime
     updated_at: datetime
     completed_at: datetime | None = None
@@ -380,8 +306,8 @@ class RuntimeInstallationV1(StrictModel):
     )
 
 
-class RuntimeInstallationsV1(StrictModel):
-    items: list[RuntimeInstallationV1]
+class RuntimeInstallationsV2(StrictModel):
+    items: list[RuntimeInstallationV2]
 
 
 class StreamingIngestionMode(StrEnum):
@@ -511,7 +437,7 @@ class CaptureOperationV2(StrictModel):
     progress: float | None = Field(default=None, ge=0, le=1)
     partial_revision: int = Field(ge=0)
     last_event_sequence: int = Field(ge=0)
-    source: CaptureSourceV1 | None = None
+    source: CaptureSource | None = None
     error: CaptureFailureV2 | None = None
     created_at: datetime
     updated_at: datetime
@@ -533,15 +459,29 @@ class CaptureOperationV2(StrictModel):
         return self
 
 
+class CaptureStreamingResult(StrictModel):
+    operation: CaptureOperationV2
+    raw: RawCapture
+    result: CaptureDocument
+
+    @model_validator(mode="after")
+    def validate_source_identity(self) -> Self:
+        if self.raw.source != self.result.source:
+            raise ValueError("raw and structured result source identity must match")
+        if self.operation.source is not None and self.operation.source != self.raw.source:
+            raise ValueError("operation and result source identity must match")
+        return self
+
+
 class PartialCaptureV2(StrictModel):
     protocol_version: Literal["2"] = "2"
     capture_id: NonEmptyString
-    source: CaptureSourceV1
+    source: CaptureSource
     revision: int = Field(ge=0)
     covered_until_ms: int = Field(ge=0)
-    segments: list[RawCaptureSegmentV1] = Field(default_factory=list, max_length=10_000)
+    segments: list[RawCaptureSegment] = Field(default_factory=list, max_length=10_000)
     source_text: Annotated[str, StringConstraints(max_length=8_000_000)] = ""
-    extraction_engine: CaptureEngineV1 | None = None
+    extraction_engine: CaptureEngine | None = None
     updated_at: datetime
 
     _aware_updated_at = field_validator("updated_at")(_require_aware)
@@ -567,7 +507,7 @@ class CaptureEventV2(StrictModel):
     progress: float | None = Field(default=None, ge=0, le=1)
     partial_revision: int | None = Field(default=None, ge=0)
     covered_until_ms: int | None = Field(default=None, ge=0)
-    segments: list[RawCaptureSegmentV1] = Field(default_factory=list, max_length=1_000)
+    segments: list[RawCaptureSegment] = Field(default_factory=list, max_length=1_000)
     error: CaptureFailureV2 | None = None
     created_at: datetime
 
@@ -601,36 +541,26 @@ class RuntimeStreamingCapabilitiesV2(StrictModel):
     stall_timeout_ms: int = Field(gt=0)
 
 
-class RuntimeCapabilitiesV1(StrictModel):
-    capture_kinds: list[CaptureSourceKind]
-    structuring_modes: list[StructuringMode]
-    supports_cancellation: Literal[True] = True
-    supports_raw_diagnostics: Literal[True] = True
-    max_upload_bytes: int = Field(gt=0)
+class RuntimeReady(StrictModel):
+    """General v2 readiness payload shared by runtime clients."""
 
-
-class RuntimeReadyV1(StrictModel):
     ready: bool
     service: Literal["capture-runtime"] = "capture-runtime"
-    api_version: Literal["1.0"] = API_VERSION
-    # This exact Literal is the release handshake and must stay synchronized
-    # with RUNTIME_VERSION when the runtime version changes.
-    runtime_version: Literal["0.3.12"] = RUNTIME_VERSION
-    capture_document_schema_version: Literal["1"] = CAPTURE_DOCUMENT_SCHEMA_VERSION
-    capabilities: RuntimeCapabilitiesV1
+    api_version: Literal["2.0"] = API_VERSION
+    runtime_version: Literal["0.4.0"] = RUNTIME_VERSION
+    capture_document_schema_version: Literal["2"] = CAPTURE_DOCUMENT_SCHEMA_VERSION
+    capture_document_schema_sha256: Sha256Hex | None = None
+    schema_sha256: Sha256Hex | None = None
+    contract_set_version: Literal["2"] = "2"
+    capabilities: dict[str, Any] = Field(default_factory=dict)
     message: str | None = None
 
 
-class ReportStructuringFailureV1(StrictModel):
-    code: Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_]{1,63}$")]
-    message: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
-
-
-class ErrorBodyV1(StrictModel):
+class ErrorBodyV2(StrictModel):
     code: NonEmptyString
     message: NonEmptyString
     details: dict[str, Any] | None = None
 
 
-class ErrorEnvelopeV1(StrictModel):
-    error: ErrorBodyV1
+class ErrorEnvelopeV2(StrictModel):
+    error: ErrorBodyV2

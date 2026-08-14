@@ -16,9 +16,9 @@ from pydantic import ValidationError
 from capture_runtime.clock import Clock
 from capture_runtime.contracts import (
     RuntimeInstallationStatus,
-    RuntimeModelInstallationV1,
+    RuntimeModelInstallationV2,
 )
-from capture_runtime.storage.capture_repository import (
+from capture_runtime.storage.common import (
     IdempotencyConflictError,
     RecordNotFoundError,
     _atomic_json,
@@ -29,7 +29,7 @@ from capture_runtime.storage.capture_repository import (
 
 @dataclass(slots=True)
 class ModelInstallationRecord:
-    job: RuntimeModelInstallationV1
+    job: RuntimeModelInstallationV2
     idempotency_key: str
     request_fingerprint: str
 
@@ -43,7 +43,7 @@ class ModelInstallationRecord:
     @classmethod
     def load(cls, payload: dict[str, Any]) -> ModelInstallationRecord:
         return cls(
-            job=RuntimeModelInstallationV1.model_validate(payload["job"]),
+            job=RuntimeModelInstallationV2.model_validate(payload["job"]),
             idempotency_key=str(payload["idempotencyKey"]),
             request_fingerprint=str(payload["requestFingerprint"]),
         )
@@ -102,7 +102,7 @@ class ModelInstallationRepository:
                 return existing, False
             now = self._clock.now()
             installation_id = str(uuid4())
-            job = RuntimeModelInstallationV1(
+            job = RuntimeModelInstallationV2(
                 installation_id=installation_id,
                 option_id=option_id,
                 status=RuntimeInstallationStatus.QUEUED,
@@ -124,7 +124,7 @@ class ModelInstallationRepository:
             except KeyError as error:
                 raise RecordNotFoundError(installation_id) from error
 
-    def list(self) -> list[RuntimeModelInstallationV1]:
+    def list(self) -> list[RuntimeModelInstallationV2]:
         with self._lock:
             return sorted(
                 (record.job for record in self._records.values()),
@@ -133,7 +133,7 @@ class ModelInstallationRepository:
             )
 
     def update_job(
-        self, installation_id: str, job: RuntimeModelInstallationV1
+        self, installation_id: str, job: RuntimeModelInstallationV2
     ) -> ModelInstallationRecord:
         with self._lock:
             record = self.get(installation_id)

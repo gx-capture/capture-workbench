@@ -1,11 +1,14 @@
 import type {
-  CaptureBlockV1,
-  CaptureDocumentV1,
-  CaptureEngineV1,
-  RawCaptureSegmentV1,
-  RawCaptureV1,
-} from '@gx-capture/capture-contracts';
-import { CAPTURE_DOCUMENT_V1_JSON_SCHEMA } from '@gx-capture/capture-contracts';
+  CaptureBlock,
+  CaptureDocument,
+  CaptureEngine,
+  RawCaptureSegment,
+  RawCapture,
+} from '@gx-capture/capture-runtime-client';
+import {
+  CAPTURE_DOCUMENT_SCHEMA,
+  CAPTURE_DOCUMENT_SCHEMA_VERSION,
+} from '@gx-capture/capture-runtime-client';
 import Ajv2020, {
   type AnySchema,
   type ErrorObject,
@@ -27,7 +30,7 @@ import {
   structuringBatchSchema,
 } from './constants.js';
 import type {
-  CaptureSemanticBlockV1,
+  CaptureSemanticBlock,
   StructuringBatchPlan,
   StructuringBatchPrompt,
   StructuringSchema,
@@ -60,7 +63,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Compiles the generated CaptureDocumentV1 schema once for SDK-local checks.
+ * Compiles the generated CaptureDocument schema once for SDK-local checks.
  *
  * @returns A reusable JSON Schema validator.
  */
@@ -70,7 +73,7 @@ function createDocumentSchemaValidator(): ValidateFunction {
     strict: false,
   });
   addFormats(ajv);
-  return ajv.compile(CAPTURE_DOCUMENT_V1_JSON_SCHEMA as unknown as AnySchema);
+  return ajv.compile(CAPTURE_DOCUMENT_SCHEMA as unknown as AnySchema);
 }
 
 const documentSchemaValidator = createDocumentSchemaValidator();
@@ -110,7 +113,7 @@ function schemaErrorIssues(
 function validateDocumentSchema(document: Record<string, unknown>): void {
   if (!documentSchemaValidator(document)) {
     throw new StructuringValidationError(
-      'structuring output does not satisfy CaptureDocumentV1',
+      'structuring output does not satisfy CaptureDocument',
       schemaErrorIssues(documentSchemaValidator.errors),
     );
   }
@@ -153,7 +156,7 @@ function textTokens(value: string): number {
  * @returns The model-visible segment payload.
  */
 function promptSegment(
-  segment: RawCaptureSegmentV1,
+  segment: RawCaptureSegment,
   targetLanguage: string | undefined,
 ): Readonly<Record<string, unknown>> {
   if (targetLanguage === undefined) {
@@ -176,13 +179,13 @@ function promptSegment(
  * @returns Prompt and bounded raw segment payload for the host callback.
  */
 export function buildStructuringBatchPrompt(
-  segments: readonly RawCaptureSegmentV1[],
+  segments: readonly RawCaptureSegment[],
   targetLanguage?: string,
 ): StructuringBatchPrompt {
   const instruction =
     targetLanguage === undefined
-      ? 'Return exactly one CaptureIdentityBlockBatchV1 JSON object with one block for every raw segment. Preserve sourceSegmentId and choose the semantic type. Do not emit targetText, sourceText, locators, block IDs, or any provenance; the SDK projects trusted source text for targetText. Do not add markdown or hidden reasoning.'
-      : 'Return exactly one CaptureBlockBatchV1 JSON object with one block for every raw segment. Preserve sourceSegmentId and choose the semantic type. Translate only targetText to targetLanguage. Do not emit sourceText, locators, block IDs, or any provenance. Do not add markdown or hidden reasoning.';
+      ? 'Return exactly one CaptureIdentityBlockBatch JSON object with one block for every raw segment. Preserve sourceSegmentId and choose the semantic type. Do not emit targetText, sourceText, locators, block IDs, or any provenance; the SDK projects trusted source text for targetText. Do not add markdown or hidden reasoning.'
+      : 'Return exactly one CaptureBlockBatch JSON object with one block for every raw segment. Preserve sourceSegmentId and choose the semantic type. Translate only targetText to targetLanguage. Do not emit sourceText, locators, block IDs, or any provenance. Do not add markdown or hidden reasoning.';
   return {
     instruction,
     targetLanguage: targetLanguage ?? null,
@@ -202,7 +205,7 @@ export function buildStructuringBatchPrompt(
  * @throws {Error} when the configured budgets are internally inconsistent.
  */
 export function planStructuringBatches(
-  segments: readonly RawCaptureSegmentV1[],
+  segments: readonly RawCaptureSegment[],
   options: {
     readonly targetLanguage?: string;
     readonly numCtx?: number;
@@ -234,7 +237,7 @@ export function planStructuringBatches(
   }
 
   const plans: StructuringBatchPlan[] = [];
-  let current: RawCaptureSegmentV1[] = [];
+  let current: RawCaptureSegment[] = [];
   let currentInput = fixedInput;
   let currentOutput = fixedOutput;
   for (const segment of segments) {
@@ -393,7 +396,7 @@ function assertSemanticBlock(
   value: unknown,
   targetLanguage: string | undefined,
   index: number,
-): asserts value is CaptureSemanticBlockV1 {
+): asserts value is CaptureSemanticBlock {
   if (!isRecord(value)) {
     throw new StructuringValidationError('structuring batch semantic fields are invalid', [
       { location: ['blocks', String(index)], message: 'must be an object' },
@@ -404,7 +407,7 @@ function assertSemanticBlock(
     : ['sourceSegmentId', 'type', 'targetText'];
   if (!exactKeys(value, keys)) {
     throw new StructuringValidationError(
-      'structuring batch semantic fields do not satisfy CaptureBlockBatchV1',
+      'structuring batch semantic fields do not satisfy CaptureBlockBatch',
       [{ location: ['blocks', String(index)], message: 'contains forbidden provenance fields' }],
     );
   }
@@ -412,12 +415,12 @@ function assertSemanticBlock(
     typeof value['sourceSegmentId'] !== 'string' ||
     value['sourceSegmentId'].trim().length === 0 ||
     typeof value['type'] !== 'string' ||
-    !CAPTURE_BLOCK_TYPES.includes(value['type'] as CaptureBlockV1['type']) ||
+    !CAPTURE_BLOCK_TYPES.includes(value['type'] as CaptureBlock['type']) ||
     (targetLanguage !== undefined &&
       (typeof value['targetText'] !== 'string' || value['targetText'].trim().length === 0))
   ) {
     throw new StructuringValidationError(
-      'structuring batch semantic fields do not satisfy CaptureBlockBatchV1',
+      'structuring batch semantic fields do not satisfy CaptureBlockBatch',
       [{ location: ['blocks', String(index)], message: 'contains an invalid semantic field' }],
     );
   }
@@ -437,9 +440,9 @@ function assertSemanticBlock(
  */
 export function validateStructuringBatch(
   candidate: Uint8Array | string | unknown,
-  segments: readonly RawCaptureSegmentV1[],
+  segments: readonly RawCaptureSegment[],
   options: { readonly targetLanguage?: string } = {},
-): CaptureBlockV1[] {
+): CaptureBlock[] {
   const decoded = decodeCandidate(candidate);
   if (!isRecord(decoded) || !exactKeys(decoded, ['blocks']) || !Array.isArray(decoded['blocks'])) {
     throw new StructuringValidationError('structuring batch must be one JSON object');
@@ -478,13 +481,13 @@ export function validateStructuringBatch(
  *
  * @param candidate JSON bytes, JSON text, or a decoded document candidate.
  * @param raw Canonical raw capture whose trusted fields must be preserved.
- * @returns A provenance-validated CaptureDocumentV1 value.
+ * @returns A provenance-validated CaptureDocument value.
  * @throws {@link StructuringValidationError} when provenance checks fail.
  */
 export function validateStructuringCandidate(
   candidate: unknown,
-  raw: RawCaptureV1,
-): CaptureDocumentV1 {
+  raw: RawCapture,
+): CaptureDocument {
   const document = decodeCandidate(candidate);
   if (!isRecord(document)) {
     throw new StructuringValidationError('structuring output must be a JSON object');
@@ -531,7 +534,7 @@ export function validateStructuringCandidate(
       mismatches.push('targetText');
     }
   }
-  if (document['schemaVersion'] !== '1' ||
+  if (document['schemaVersion'] !== CAPTURE_DOCUMENT_SCHEMA_VERSION ||
     typeof document['completedAt'] !== 'string' ||
     !isRecord(document['structuringEngine'])) {
     mismatches.push('document');
@@ -539,10 +542,10 @@ export function validateStructuringCandidate(
   if (mismatches.length > 0) {
     throw new StructuringValidationError(
       'structured output changed extraction provenance or failed document validation',
-      mismatches.map((field) => ({ location: [field], message: 'failed CaptureDocumentV1 validation' })),
+      mismatches.map((field) => ({ location: [field], message: 'failed CaptureDocument validation' })),
     );
   }
-  return document as unknown as CaptureDocumentV1;
+  return document as unknown as CaptureDocument;
 }
 
 /**
@@ -551,17 +554,17 @@ export function validateStructuringCandidate(
  * @param raw Canonical raw capture supplying source and extraction provenance.
  * @param blocks Canonical blocks produced by {@link validateStructuringBatch}.
  * @param options Trusted engine identity and completion timestamp.
- * @returns A provenance-validated CaptureDocumentV1 value.
+ * @returns A provenance-validated CaptureDocument value.
  * @throws {@link StructuringValidationError} when the document fails validation.
  */
 export function assembleStructuringDocument(
-  raw: RawCaptureV1,
-  blocks: readonly CaptureBlockV1[],
-  options: { readonly engineIdentity: CaptureEngineV1; readonly completedAt: string },
-): CaptureDocumentV1 {
+  raw: RawCapture,
+  blocks: readonly CaptureBlock[],
+  options: { readonly engineIdentity: CaptureEngine; readonly completedAt: string },
+): CaptureDocument {
   return validateStructuringCandidate(
     {
-      schemaVersion: '1',
+      schemaVersion: CAPTURE_DOCUMENT_SCHEMA_VERSION,
       source: raw.source,
       rawSegments: raw.segments,
       blocks,
@@ -585,12 +588,12 @@ export function assembleStructuringDocument(
  * never selects, starts, or owns an LLM provider.
  *
  * @param options Raw capture, host callback, trusted engine identity, and budgets.
- * @returns The fully assembled CaptureDocumentV1 document.
+ * @returns The fully assembled CaptureDocument document.
  * @throws {@link StructuringValidationError} when a provider response is unsafe.
  */
 export async function structureCapture(
   options: StructureCaptureOptions,
-): Promise<CaptureDocumentV1> {
+): Promise<CaptureDocument> {
   const plans = planStructuringBatches(options.raw.segments, {
     targetLanguage: options.targetLanguage,
     numCtx: options.numCtx,
@@ -598,7 +601,7 @@ export async function structureCapture(
     schema: options.schema,
   });
   const schema = options.schema ?? structuringBatchSchema(options.targetLanguage);
-  const blocks: CaptureBlockV1[] = [];
+  const blocks: CaptureBlock[] = [];
   for (const plan of plans) {
     const candidate = await options.llmGenerate(
       buildStructuringBatchPrompt(plan.segments, options.targetLanguage),

@@ -4,10 +4,10 @@ import { basename, join, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const EXPECTED_SCHEMA_SHA256 =
-  '2721093496a9f09044d5737cce70d2356d5f71757b1cd23a960e1d003ea014f2';
+  '850afd212d049c25da41d3867ba5477451a6a2c6c7e41f116fe60f26b6a35335';
 const EXPECTED_NPM_PACKAGES = new Set([
   '@gx-capture/capture-workbench-ui',
-  '@gx-capture/capture-contracts',
+  '@gx-capture/capture-runtime-client',
   '@gx-capture/capture-structuring',
 ]);
 
@@ -18,6 +18,7 @@ function parseArguments(args: readonly string[]): {
   releaseMode?: 'core-only' | 'model-enabled';
   packageCandidateId?: string;
   runtimeCandidateId?: string;
+  contractSetSha256?: string;
 } {
   const values = new Map<string, string>();
   for (let index = 0; index < args.length; index += 2) {
@@ -31,12 +32,13 @@ function parseArguments(args: readonly string[]): {
         '--release-mode',
         '--package-candidate-id',
         '--runtime-candidate-id',
+        '--contract-set-sha256',
       ].includes(name) ||
       !value ||
       values.has(name)
     ) {
       throw new Error(
-        'Use --candidate <directory> --version <semver> [--source-commit <sha>] [--release-mode <mode>] [--package-candidate-id <sha>] [--runtime-candidate-id <sha>].',
+        'Use --candidate <directory> --version <semver> [--source-commit <sha>] [--release-mode <mode>] [--package-candidate-id <sha>] [--runtime-candidate-id <sha>] [--contract-set-sha256 <sha>].',
       );
     }
     values.set(name, value);
@@ -46,6 +48,7 @@ function parseArguments(args: readonly string[]): {
   const releaseMode = values.get('--release-mode');
   const packageCandidateId = values.get('--package-candidate-id');
   const runtimeCandidateId = values.get('--runtime-candidate-id');
+  const contractSetSha256 = values.get('--contract-set-sha256');
   if (
     !values.has('--candidate') ||
     !version ||
@@ -57,10 +60,12 @@ function parseArguments(args: readonly string[]): {
     (packageCandidateId !== undefined &&
       !/^[0-9a-f]{64}$/iu.test(packageCandidateId)) ||
     (runtimeCandidateId !== undefined &&
-      !/^[0-9a-f]{64}$/iu.test(runtimeCandidateId))
+      !/^[0-9a-f]{64}$/iu.test(runtimeCandidateId)) ||
+    (contractSetSha256 !== undefined &&
+      !/^[0-9a-f]{64}$/iu.test(contractSetSha256))
   ) {
     throw new Error(
-      'Use --candidate <directory> --version <semver> [--source-commit <sha>] [--release-mode <mode>] [--package-candidate-id <sha>] [--runtime-candidate-id <sha>].',
+      'Use --candidate <directory> --version <semver> [--source-commit <sha>] [--release-mode <mode>] [--package-candidate-id <sha>] [--runtime-candidate-id <sha>] [--contract-set-sha256 <sha>].',
     );
   }
   return {
@@ -70,6 +75,7 @@ function parseArguments(args: readonly string[]): {
     releaseMode: releaseMode as 'core-only' | 'model-enabled' | undefined,
     packageCandidateId,
     runtimeCandidateId,
+    contractSetSha256,
   };
 }
 
@@ -107,6 +113,7 @@ function candidateManifestBase(
   releaseMode: 'core-only' | 'model-enabled',
   packageCandidateId: string | null,
   runtimeCandidateId: string | null,
+  contractSetSha256: string,
   artifacts: Array<{ path: string; bytes: number; sha256: string }>,
   toolchains: Record<string, string>,
 ) {
@@ -115,8 +122,9 @@ function candidateManifestBase(
     sourceCommit,
     releaseVersion: version,
     releaseMode,
-    runtimeApiVersion: '1.0',
-    documentSchemaVersion: '1',
+    runtimeApiVersion: '2.0',
+    documentSchemaVersion: '2',
+    contractSetSha256,
     artifacts: artifacts.sort((left, right) =>
       left.path.localeCompare(right.path),
     ),
@@ -183,7 +191,7 @@ async function requireChecksums(
   for (const artifact of artifacts) {
     const checksumPath = join(checksumsDirectory, `${artifact}.sha256`);
     const checksumText = (await readFile(checksumPath, 'utf8')).trim();
-    const match = checksumText.match(/^([0-9a-f]{64})  (.+)$/u);
+    const match = checksumText.match(/^([0-9a-f]{64}) {2}(.+)$/u);
     if (!match || match[2] !== artifact) {
       throw new Error(`Checksum record is malformed for ${artifact}.`);
     }
@@ -229,7 +237,7 @@ async function main(): Promise<void> {
     schemaFileName?: unknown;
     schemaSha256?: unknown;
   };
-  const schemaPath = join(runtime, 'capture-document-v1.schema.json');
+  const schemaPath = join(runtime, 'capture-document-v2.schema.json');
   const schemaDigest = await sha256(schemaPath);
   if (
     manifest.runtimeVersion !== version ||
@@ -256,17 +264,17 @@ async function main(): Promise<void> {
   const pythonArtifacts = await requireFiles(
     python,
     new RegExp(
-      `^(capture_contracts|capture_structuring)-${version.replaceAll('.', '\\.')}(?:-[^/]+)?\\.(?:whl|tar\\.gz)$`,
+      `^(capture_runtime_client|capture_structuring)-${version.replaceAll('.', '\\.')}(?:-[^/]+)?\\.(?:whl|tar\\.gz)$`,
       'u',
     ),
     'Python package candidate',
   );
   if (
     !pythonArtifacts.some((name) =>
-      name.startsWith(`capture_contracts-${version}`),
+    name.startsWith(`capture_runtime_client-${version}`),
     )
   ) {
-    throw new Error('capture-contracts Python artifact version is missing.');
+    throw new Error('capture-runtime-client Python artifact version is missing.');
   }
   if (
     !pythonArtifacts.some((name) =>
@@ -286,7 +294,7 @@ async function main(): Promise<void> {
 
   const expectedNpmPackages = new Set([
     `gx-capture-capture-workbench-ui-${version}.tgz`,
-    `gx-capture-capture-contracts-${version}.tgz`,
+    `gx-capture-capture-runtime-client-${version}.tgz`,
     `gx-capture-capture-structuring-${version}.tgz`,
   ]);
   if (!npmPackages.every((name) => expectedNpmPackages.has(name))) {
@@ -363,6 +371,7 @@ async function main(): Promise<void> {
     join(candidate, 'checksums'),
   ];
   let hasContracts = false;
+  let contractSetSha256: string | undefined;
   try {
     const metadata = await stat(contracts);
     if (!metadata.isDirectory()) {
@@ -370,8 +379,10 @@ async function main(): Promise<void> {
     }
     hasContracts = true;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-    // Candidates created before Phase 4 remain valid for recovery.
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      throw new Error('Candidate contract-set assets are missing.');
+    }
+    throw error;
   }
   if (hasContracts) {
     const snapshot = JSON.parse(
@@ -380,7 +391,31 @@ async function main(): Promise<void> {
     if (snapshot.schemaVersion !== '1') {
       throw new Error('Candidate contract snapshot schema is unsupported.');
     }
+    const contractSetDigest = (
+      await readFile(join(contracts, 'contract-set.sha256'), 'utf8')
+    ).trim();
+    if (!/^[0-9a-f]{64}$/u.test(contractSetDigest)) {
+      throw new Error('Candidate contract-set SHA-256 is malformed.');
+    }
+    if (
+      (await sha256(join(contracts, 'contract-set.json'))) !==
+      contractSetDigest
+    ) {
+      throw new Error('Candidate contract-set bundle does not match its SHA-256.');
+    }
+    if (
+      parsed.contractSetSha256 !== undefined &&
+      parsed.contractSetSha256 !== contractSetDigest
+    ) {
+      throw new Error(
+        `Candidate contract-set SHA-256 differs from requested ${parsed.contractSetSha256}.`,
+      );
+    }
+    contractSetSha256 = contractSetDigest;
     candidateDirectories.push(contracts);
+  }
+  if (contractSetSha256 === undefined) {
+    throw new Error('Candidate contract-set assets are missing.');
   }
   const inventory = [];
   for (const directory of candidateDirectories) {
@@ -406,6 +441,7 @@ async function main(): Promise<void> {
     releaseMode,
     packageCandidateId,
     runtimeCandidateId,
+    contractSetSha256,
     inventory,
     toolchains,
   );

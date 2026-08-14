@@ -43,6 +43,6 @@ Provide a Tauri 2 Windows 11 x64 NSIS harness that packages the Angular referenc
 
 - Rust unit tests for pure launch policy and manifest checks.
 - Cargo check/test for the native host.
-- Node smoke for the canonical multipart `file`/`structuringMode`/`targetLanguage` wire, `captureId`, schema version `1`, exact status/raw/result/error envelopes, idempotency, host structuring, authentication, exact Host authority, Origin/CORS rejection, readiness, and redaction.
+- Node smoke for the canonical multipart `file`/`structuringMode`/`targetLanguage` wire, `captureId`, schema version `2`, exact status/raw/result/error envelopes, idempotency, host structuring, authentication, exact Host authority, Origin/CORS rejection, readiness, and redaction.
 - Windows package QA skeleton for NSIS artifact/resource inspection.
 - Real release gate remains an external clean Windows run with real WindowsML, Whisper, Ollama, PDF, image, and licensed audio fixtures.

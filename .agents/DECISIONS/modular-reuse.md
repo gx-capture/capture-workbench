@@ -1,122 +1,48 @@
 # Modular Host Reuse Decisions
 
-## Change mode
+## Ownership
 
-- Change mode: mixed.
-- Existing owners: runtime contracts/validation, runtime structuring providers,
-  Workbench Tauri launcher/process modules, and consumer persistence remain
-  responsible for their current behavior.
-- Delete candidates: generated consumer DTO copies, consumer structuring batch
-  reimplementations, and consumer launcher/process duplication after the shared
-  artifacts are proven.
-- New owners needed: a generated contracts artifact, a host SDK, and a shared
-  launcher crate, each only because there are already multiple consumers and a
-  real package/process boundary.
-- Token posture: compact quality; prefer extraction and deletion over parallel
-  compatibility layers.
-- Verification floor: focused producer tests plus clean-consumer smoke and
-  standalone desktop verification at each phase.
+- `capture-runtime` owns extraction, canonical validation, runtime lifecycle,
+  the contract models, and the embedded contract-set asset.
+- The Python, TypeScript, and Java runtime-client SDKs expose typed public
+  interfaces generated from that asset. Consumer applications do not copy
+  wire DTOs or schemas.
+- `capture-structuring` owns shared prompt/batching and semantic assembly
+  behavior. Runtime providers and host adapters use the same implementation;
+  no consumer forks the validation rules.
+- The sidecar launcher crate owns process/health/launch-policy mechanics.
+  Installers, persistence, and Tauri UI remain owned by each host.
+- Host LLM output is untrusted semantic input. Provenance is reconstructed from
+  validated raw capture and the runtime accepts or rejects the complete result.
 
-## Accepted architecture
+## Release identity
 
-1. Keep `capture-runtime` as the canonical validator and schema source.
-2. Generate consumer-facing contracts from the runtime models; do not hand-copy
-   DTOs into cert-prep or law-prep.
-3. Extract structuring pure logic into a host SDK. Runtime providers and hosts
-   import the same implementation; no move-and-duplicate fork is allowed.
-4. Extract only sidecar lifecycle mechanics into the Rust crate. Installer,
-   persistence, and Tauri UI ownership stay with each host.
-5. Treat the host LLM as untrusted semantic input. Reconstruct provenance from
-   validated raw capture and let the runtime accept/reject the final candidate.
-
-## Provisional release decisions
-
-- TypeScript artifacts follow the existing GitHub Packages convention used by
-  `@gx-capture/capture-workbench-ui`.
-- The Python wheels use public PyPI with GitHub Actions OIDC Trusted
-  Publishing (`id-token: write`); GitHub Packages is not the wheel registry.
-- This registry/auth choice is a publication gate, not proof of current package
-  availability; CI configuration and a clean import probe must confirm it
-  before consumer source cutover.
-- Package names, versions, and install URLs must be recorded in phase evidence
-  before a consumer changes its dependency.
+- Runtime, SDKs, and named consumers ship as one release train bound to the
+  contract-set version and SHA-256, not to independently inferred schema copies.
+- Generated SDK codecs remain private implementation details; public DTOs and
+  client methods are deliberate stable interfaces.
+- Registry publication uses the package's configured trusted publisher and
+  records immutable artifact digests in a release ledger. A clean install/import
+  probe is required before consumer source or lockfile cutover.
+- The Rust launcher publication is independently retriable, but its manifest,
+  version, and digest must match the same candidate before promotion.
 
 ## Rejected alternatives
 
-- A monorepo merge is rejected because independent product boundaries are
-  deliberate.
-- A second runtime/provider in each host is rejected because the host owns its
-  existing brain and the sidecar owns extraction/validation.
-- Full `CaptureBlockV1` model output from an LLM is rejected because it allows
-  untrusted provenance and is the current cert-prep anti-pattern.
-- Compatibility re-export/shim modules are rejected after the shared package is
-  real; imports must move to the published owner and old copies be deleted.
+- Merging the independent product repositories would blur ownership boundaries.
+- A second runtime or semantic provider in each host would duplicate native
+  lifecycle and validation responsibilities.
+- Letting an LLM return complete provenance-bearing blocks would permit
+  untrusted locator and source data.
+- Compatibility re-exports, hand-maintained schema copies, and parallel
+  validators are not permitted after the shared v2 source is available.
 
-## Rollback
+## Rollback and verification
 
-- Producer rollback: retain the prior artifact and runtime minor; do not reuse
-  immutable failed release tags or alter `CaptureDocumentV1`.
-- Consumer rollback: revert the consumer dependency/import slice to the last
-  verified producer artifact, without deleting the canonical runtime contract.
-- Minor-alignment rollout: keep an explicit break-glass path until every
-  in-scope consumer is confirmed same-minor.
-
-## Resolved design gates
-
-- Python package names are `capture-contracts` and `capture-structuring`; CI
-  publishes them to public PyPI through OIDC Trusted Publishing.
-- Consumer cutover is still gated on immutable registry artifacts and clean
-  install/import probes; local path sources remain until that evidence exists.
-- `sourceSegmentId` provenance and cross-repo rollback ownership remain part of
-  the existing contract and release review evidence.
-
-## 2026-08-05 release-boundary decision
-
-- Use public PyPI for `capture-contracts` and `capture-structuring`, with
-  GitHub Actions OIDC Trusted Publishing (`id-token: write`), rather than
-  GitHub Packages as a wheel registry.
-- PyPI pending publishers are project-specific, so the release matrix uses the
-  existing `pypi` environment for `capture-contracts` and a separate
-  `pypi-structuring` environment for `capture-structuring`; each writes its own
-  publication ledger and registry digest probe.
-- Use crates.io for `capture-sidecar-launcher`; its publish job is independent
-  from npm and PyPI and is validated with `cargo publish --dry-run` first.
-- Keep a release ledger per registry and retry only artifacts not recorded as
-  successfully published. Consumer path dependencies remain until all probes
-  pass; there is no assumed cross-registry rollback.
-- Java law-prep uses the staged `capture-document-v1.schema.json` and pinned
-  runtime manifest as the authority for Foundry responses. The hand-written
-  Java DTOs remain mapping targets, not schema sources.
-- `generate_schema.py` is retained because runtime release staging consumes it;
-  only its retired Angular-specific output path is deleted.
-- Runner availability does not weaken validation: local pre-commit commands
-  cover deterministic artifact checks, while actual registry publication and
+- A failed immutable artifact is never overwritten or reused. Roll back the
+  runtime, SDKs, and consumers together to the last verified digest.
+- Keep a break-glass dependency path only until every in-scope consumer has
+  passed the same-digest installation and integration checks.
+- Local verification covers deterministic generation, route/manifest parity,
+  package integrity, and clean-consumer fixtures. Registry publication and
   staged-file integration remain fail-closed gates.
-
-## 2026-08-05 publication and consumer evidence
-
-- The immutable `0.3.10` release is published. Producer CI run `31007970169`
-  passed at `a3a7fee`; recovery run `31009720361` passed all registry gates.
-- The recovery ledger records canonical schema SHA
-  `2721093496a9f09044d5737cce70d2356d5f71757b1cd23a960e1d003ea014f2` and
-  crates.io archive SHA
-  `533f497aa550589cec8e608c6b5fee29e69afb638ffe9d8c4cc41c0c4654bd0f`.
-  Cargo candidate SHA is retained separately as provenance, not treated as a
-  registry byte identity.
-- Cert-prep PR #1 and law-prep PR #67 passed their published-package,
-  lockfile/source consistency, Java schema, and desktop checks. Their capture
-  dependencies no longer use local path sources. Angular web integration in
-  law-prep remains explicitly deferred.
-
-## Resolved producer gates
-
-- `@gx-capture/capture-workbench-ui@0.3.10` is installable from the authenticated
-  canonical GitHub Packages npm registry; npmjs.org is not the source.
-- Contract generation is pinned to Pydantic `2.13.4`, pydantic-core `2.46.4`,
-  and `pydantic.model_json_schema`; the generated manifest records these
-  versions and the generator hash.
-- Phase 1.5 keeps the contracts package as the Angular wire/schema owner. The
-  producer release and clean registry probes are evidenced; the desktop keeps
-  its Rust-local staged schema because it cannot consume TypeScript, but CI
-  compares its manifest, versions, and schema SHA to the generated contracts
-  manifest.

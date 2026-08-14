@@ -6,7 +6,7 @@ import { pathToFileURL } from 'node:url';
 
 const PACKAGE_NAMES = new Map([
   ['gx-capture-capture-workbench-ui', '@gx-capture/capture-workbench-ui'],
-  ['gx-capture-capture-contracts', '@gx-capture/capture-contracts'],
+  ['gx-capture-capture-runtime-client', '@gx-capture/capture-runtime-client'],
   ['gx-capture-capture-structuring', '@gx-capture/capture-structuring'],
 ]);
 
@@ -68,12 +68,13 @@ function parseArguments(args: readonly string[]) {
         '--producer-run-id',
         '--candidate-id',
         '--candidate-manifest-sha256',
+        '--contract-set-sha256',
       ].includes(name) ||
       !value ||
       values.has(name)
     ) {
       throw new Error(
-        'Use --candidate <directory> --version <semver> --source-commit <sha> --producer-run-id <id> --candidate-id <sha> --candidate-manifest-sha256 <sha> [--require-evidence].',
+        'Use --candidate <directory> --version <semver> --source-commit <sha> --producer-run-id <id> --candidate-id <sha> --candidate-manifest-sha256 <sha> --contract-set-sha256 <sha> [--require-evidence].',
       );
     }
     values.set(name, value);
@@ -85,10 +86,11 @@ function parseArguments(args: readonly string[]) {
     '--producer-run-id',
     '--candidate-id',
     '--candidate-manifest-sha256',
+    '--contract-set-sha256',
   ];
   if (required.some((name) => !values.has(name))) {
     throw new Error(
-      'Use --candidate <directory> --version <semver> --source-commit <sha> --producer-run-id <id> --candidate-id <sha> --candidate-manifest-sha256 <sha> [--require-evidence].',
+      'Use --candidate <directory> --version <semver> --source-commit <sha> --producer-run-id <id> --candidate-id <sha> --candidate-manifest-sha256 <sha> --contract-set-sha256 <sha> [--require-evidence].',
     );
   }
   const producerRunId = Number(values.get('--producer-run-id'));
@@ -98,6 +100,7 @@ function parseArguments(args: readonly string[]) {
     !/^[0-9a-f]{40}$/u.test(values.get('--source-commit')!) ||
     !/^[0-9a-f]{64}$/u.test(values.get('--candidate-id')!) ||
     !/^[0-9a-f]{64}$/u.test(values.get('--candidate-manifest-sha256')!) ||
+    !/^[0-9a-f]{64}$/u.test(values.get('--contract-set-sha256')!) ||
     !Number.isSafeInteger(producerRunId) ||
     producerRunId < 1
   ) {
@@ -110,6 +113,7 @@ function parseArguments(args: readonly string[]) {
     producerRunId,
     candidateId: values.get('--candidate-id')!,
     candidateManifestSha256: values.get('--candidate-manifest-sha256')!,
+    contractSetSha256: values.get('--contract-set-sha256')!,
     requireEvidence,
   };
 }
@@ -121,6 +125,7 @@ export async function verifyPackageCandidate(input: {
   readonly producerRunId: number;
   readonly candidateId: string;
   readonly candidateManifestSha256: string;
+  readonly contractSetSha256: string;
   readonly requireEvidence?: boolean;
 }): Promise<PackageCandidateVerification> {
   const manifestPath = join(input.candidate, 'candidate-manifest.json');
@@ -142,6 +147,7 @@ export async function verifyPackageCandidate(input: {
       'candidateId',
       'candidateKind',
       'packageManifestSha256',
+      'contractSetSha256',
       'producerRunId',
       'releaseVersion',
       'schemaVersion',
@@ -157,6 +163,11 @@ export async function verifyPackageCandidate(input: {
   assert.equal(manifest.releaseVersion, input.version);
   assert.equal(manifest.producerRunId, input.producerRunId);
   assert.match(String(manifest.packageManifestSha256), /^[0-9a-f]{64}$/u);
+  assert.equal(
+    manifest.contractSetSha256,
+    input.contractSetSha256,
+    'Candidate contract-set hash differs from the requested release hash.',
+  );
   assert(
     Array.isArray(manifest.artifacts),
     'Package candidate artifacts must be an array.',
@@ -231,12 +242,55 @@ export async function verifyPackageCandidate(input: {
       `Package artifact checksum record differs: ${item.path}.`,
     );
   }
+  const pythonNames = (await readdir(join(input.candidate, 'python'))).sort();
+  assert.equal(
+    pythonNames.length,
+    4,
+    'Package candidate must carry exactly four Python distributions.',
+  );
+  const escapedVersion = input.version.replaceAll('.', '\\.');
+  const pythonPatterns = [
+    new RegExp(
+      `^capture_runtime_client-${escapedVersion}(?:-[^/]+)?\\.(?:whl|tar\\.gz)$`,
+      'u',
+    ),
+    new RegExp(
+      `^capture_structuring-${escapedVersion}(?:-[^/]+)?\\.(?:whl|tar\\.gz)$`,
+      'u',
+    ),
+  ];
+  for (const name of pythonNames) {
+    assert(
+      pythonPatterns.some((pattern) => pattern.test(name)),
+      `Python artifact name is not an exact ${input.version} distribution: ${name}.`,
+    );
+  }
+  assert.equal(
+    pythonNames.filter((name) => name.startsWith('capture_runtime_client-'))
+      .length,
+    2,
+    'Package candidate must carry both capture-runtime-client Python distributions.',
+  );
+  assert.equal(
+    pythonNames.filter((name) => name.startsWith('capture_structuring-'))
+      .length,
+    2,
+    'Package candidate must carry both capture-structuring Python distributions.',
+  );
   const expectedArtifacts = new Set([
     ...[...PACKAGE_NAMES.keys()].map(
       (name) => `package/${name}-${input.version}.tgz`,
     ),
+    ...pythonNames.map((name) => `python/${name}`),
     'package-manifest.json',
     'contracts/contract-snapshot.json',
+    'contracts/contract-set.json',
+    'contracts/contract-set.sha256',
+    'java-candidate-manifest.json',
+    `maven/capture-runtime-client-${input.version}.jar`,
+    `maven/capture-runtime-client-${input.version}-sources.jar`,
+    'maven/pom.xml',
+    'maven/capture-runtime-contract-set.sha256',
   ]);
   assert.deepEqual(
     artifactPaths,
@@ -287,6 +341,23 @@ export async function verifyPackageCandidate(input: {
     isRecord(contractSnapshot) && contractSnapshot.schemaVersion === '1',
     'Contract snapshot is invalid.',
   );
+  const contractSetJsonPath = join(
+    input.candidate,
+    'contracts',
+    'contract-set.json',
+  );
+  const contractSetShaPath = join(
+    input.candidate,
+    'contracts',
+    'contract-set.sha256',
+  );
+  const contractSetSha256 = (await readFile(contractSetShaPath, 'utf8')).trim();
+  assert.equal(contractSetSha256, input.contractSetSha256);
+  assert.equal(
+    await sha256(contractSetJsonPath),
+    contractSetSha256,
+    'Contract-set bundle digest differs from its declared hash.',
+  );
 
   if (input.requireEvidence) {
     const evidencePath = join(
@@ -310,6 +381,7 @@ export async function verifyPackageCandidate(input: {
   return {
     candidateId: input.candidateId,
     candidateManifestSha256: input.candidateManifestSha256,
+    contractSetSha256: input.contractSetSha256,
     sourceCommit: input.sourceCommit,
     releaseVersion: input.version,
     producerRunId: input.producerRunId,

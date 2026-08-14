@@ -19,7 +19,7 @@ from capture_structuring import (
 
 from capture_runtime.clock import Clock
 from capture_runtime.config import OllamaRuntimeConfig
-from capture_runtime.contracts import CaptureDocumentV1, RawCaptureV1
+from capture_runtime.contracts import CaptureDocument, RawCapture
 from capture_runtime.ollama import (
     OllamaCaptureStructuringProvider,
     RuntimeUnavailableError,
@@ -63,7 +63,7 @@ def _config(tmp_path: Path) -> OllamaRuntimeConfig:
     )
 
 
-def _raw(*, count: int = 1, text_chars: int = 40) -> RawCaptureV1:
+def _raw(*, count: int = 1, text_chars: int = 40) -> RawCapture:
     segments = [
         {
             "segmentId": f"page-{index + 1}",
@@ -73,9 +73,9 @@ def _raw(*, count: int = 1, text_chars: int = 40) -> RawCaptureV1:
         }
         for index in range(count)
     ]
-    return RawCaptureV1.model_validate(
+    return RawCapture.model_validate(
         {
-            "schemaVersion": "1",
+            "schemaVersion": "2",
             "diagnosticOnly": True,
             "source": {
                 "sha256": "a" * 64,
@@ -139,16 +139,16 @@ def test_ollama_generation_schema_keeps_shape_but_omits_grammar_hostile_maxima()
     assert _contains_max_length(CAPTURE_BLOCK_BATCH_SCHEMA)
     assert not _contains_max_length(OLLAMA_CAPTURE_BLOCK_BATCH_SCHEMA)
     definitions = OLLAMA_CAPTURE_BLOCK_BATCH_SCHEMA["$defs"]
-    assert "CaptureSemanticBlockV1" in definitions
-    assert "PageLocatorV1" not in definitions
-    assert "TimeLocatorV1" not in definitions
+    assert "CaptureSemanticBlock" in definitions
+    assert "PageLocator" not in definitions
+    assert "TimeLocator" not in definitions
 
 
 def test_identity_generation_schema_excludes_source_text_projection() -> None:
-    assert CAPTURE_IDENTITY_BLOCK_BATCH_SCHEMA["title"] == "CaptureIdentityBlockBatchV1"
+    assert CAPTURE_IDENTITY_BLOCK_BATCH_SCHEMA["title"] == "CaptureIdentityBlockBatch"
     assert not _contains_max_length(OLLAMA_IDENTITY_BLOCK_BATCH_SCHEMA)
     identity_definition = OLLAMA_IDENTITY_BLOCK_BATCH_SCHEMA["$defs"][
-        "CaptureIdentitySemanticBlockV1"
+        "CaptureIdentitySemanticBlock"
     ]
     assert "targetText" not in identity_definition["properties"]
     assert (
@@ -186,10 +186,8 @@ def test_isolated_ollama_structures_token_bounded_batches_and_releases_process(
         provider.structure(raw, target_language="zh-TW", cancel_event=asyncio.Event())
     )
 
-    assert isinstance(document, CaptureDocumentV1)
-    assert (
-        CaptureDocumentV1.model_validate(validate_structuring_candidate(document, raw)) == document
-    )
+    assert isinstance(document, CaptureDocument)
+    assert CaptureDocument.model_validate(validate_structuring_candidate(document, raw)) == document
     assert lifecycle.starts == 1
     assert lifecycle.stops == 1
     assert lifecycle.running is False
@@ -200,7 +198,7 @@ def test_isolated_ollama_structures_token_bounded_batches_and_releases_process(
     for call in generate_calls:
         prompt = json.loads(str(call["prompt"]))
         supplied_ids.extend(segment["segmentId"] for segment in prompt["rawSegments"])
-        assert call["format"]["title"] == "CaptureBlockBatchV1"
+        assert call["format"]["title"] == "CaptureBlockBatch"
         assert call["think"] is False
         assert call["keep_alive"] == -1
         assert 0 < call["options"]["num_ctx"] <= 8_192
@@ -240,8 +238,8 @@ def test_isolated_ollama_serializes_owned_process_leases(tmp_path: Path) -> None
             provider.structure(_raw(), target_language=None, cancel_event=asyncio.Event()),
         )
 
-        assert isinstance(first, CaptureDocumentV1)
-        assert isinstance(second, CaptureDocumentV1)
+        assert isinstance(first, CaptureDocument)
+        assert isinstance(second, CaptureDocument)
         assert maximum_active_generations == 1
         assert lifecycle.starts == 2
         assert lifecycle.stops == 2
@@ -273,16 +271,15 @@ def test_isolated_ollama_rebuilds_trusted_identity_target_from_raw_segments(
         provider.structure(_raw(), target_language=None, cancel_event=asyncio.Event())
     )
 
-    assert isinstance(document, CaptureDocumentV1)
+    assert isinstance(document, CaptureDocument)
     assert (
-        CaptureDocumentV1.model_validate(validate_structuring_candidate(document, _raw()))
-        == document
+        CaptureDocument.model_validate(validate_structuring_candidate(document, _raw())) == document
     )
     assert document.blocks[0].block_id == "block-page-1"
     assert document.blocks[0].source_segment_id == "page-1"
     assert document.blocks[0].source_text == _raw().segments[0].text
     assert document.blocks[0].target_text == _raw().segments[0].text
-    identity_definition = generate_calls[0]["format"]["$defs"]["CaptureIdentitySemanticBlockV1"]
+    identity_definition = generate_calls[0]["format"]["$defs"]["CaptureIdentitySemanticBlock"]
     assert "targetText" not in identity_definition["properties"]
     identity_prompt = json.loads(str(generate_calls[0]["prompt"]))
     assert identity_prompt["rawSegments"] == [
@@ -350,7 +347,7 @@ def test_qwen_0_8b_structures_large_identity_capture_as_exact_single_segment_bat
         blocks_schema = call["format"]["properties"]["blocks"]
         assert blocks_schema["minItems"] == 1
         assert blocks_schema["maxItems"] == 1
-        identity_schema = call["format"]["$defs"]["CaptureIdentitySemanticBlockV1"]
+        identity_schema = call["format"]["$defs"]["CaptureIdentitySemanticBlock"]
         assert identity_schema["properties"]["sourceSegmentId"]["enum"] == [segment.segment_id]
 
 

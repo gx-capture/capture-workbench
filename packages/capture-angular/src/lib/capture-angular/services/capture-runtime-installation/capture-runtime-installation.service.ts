@@ -15,8 +15,8 @@ import {
 } from 'rxjs';
 import {
   type CaptureClient,
-  type RuntimeInstallationV1,
-  type RuntimeRequirementV1,
+  type RuntimeInstallation,
+  type RuntimeRequirement,
 } from '../../../contracts';
 import { MAX_INSTALLATIONS_PER_USER_ACTION } from '../../../constants';
 import { CaptureWorkbenchStoreHelpers } from '../capture-workbench-store/capture-workbench-store-helpers';
@@ -32,7 +32,7 @@ const INSTALLATION_ORDER = new Map([
 export class CaptureRuntimeInstallationService {
   private readonly destroyRef = inject(DestroyRef);
   private readonly helpers = inject(CaptureWorkbenchStoreHelpers);
-  readonly installation = signal<RuntimeInstallationV1 | null>(null);
+  readonly installation = signal<RuntimeInstallation | null>(null);
   readonly error = signal<string | undefined>(undefined);
   private controller?: AbortController;
   private installSubscription?: Subscription;
@@ -50,7 +50,7 @@ export class CaptureRuntimeInstallationService {
 
   install(options: {
     readonly client: CaptureClient | null;
-    readonly requirements: () => readonly RuntimeRequirementV1[];
+    readonly requirements: () => readonly RuntimeRequirement[];
     readonly pollIntervalMs: () => number;
     readonly reload: () => Observable<void>;
   }): void {
@@ -184,8 +184,8 @@ export class CaptureRuntimeInstallationService {
   }
 
   private sanitizeInstallation(
-    installation: RuntimeInstallationV1,
-  ): RuntimeInstallationV1 {
+    installation: RuntimeInstallation,
+  ): RuntimeInstallation {
     return installation.error
       ? { ...installation, error: this.helpers.redactFailure(installation.error) }
       : installation;
@@ -194,12 +194,12 @@ export class CaptureRuntimeInstallationService {
 
 function pollInstallation(
   client: CaptureClient,
-  initial: RuntimeInstallationV1,
+  initial: RuntimeInstallation,
   pollIntervalMs: () => number,
   signal: AbortSignal,
-  onInstallation: (installation: RuntimeInstallationV1) => void,
-): Observable<RuntimeInstallationV1> {
-  const read = (installationId: string): Observable<RuntimeInstallationV1> =>
+  onInstallation: (installation: RuntimeInstallation) => void,
+): Observable<RuntimeInstallation> {
+  const read = (installationId: string): Observable<RuntimeInstallation> =>
     abortableDelay(pollIntervalMs(), signal).pipe(
       concatMap(() => client.getInstallation(installationId, signal)),
     );

@@ -49,7 +49,7 @@ over-designed.
   to the workspace Angular version. This lets cert-prep remove its direct
   application dependency without leaving an Angular version-mismatch peer
   warning in clean consumers.
-- No change is made to `CaptureDocumentV1`, runtime HTTP, bearer-token, or
+- No change is made to `CaptureDocument`, runtime HTTP, bearer-token, or
   persistence contracts.
 
 ## Acceptance Criteria

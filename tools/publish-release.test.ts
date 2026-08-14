@@ -20,18 +20,18 @@ import {
   sha512Integrity,
 } from './publish-release.ts';
 
-const version = '0.3.12';
+const version = '0.4.0';
 const tag = `v${version}`;
 const runtimeAssetNames = [
   'capture-runtime-x86_64-pc-windows-msvc.exe',
   'capture-runtime-x86_64-pc-windows-msvc.exe.sha256',
   'capture-runtime-manifest.json',
-  'capture-document-v1.schema.json',
+  'capture-document-v2.schema.json',
 ];
 const engineCatalogName = 'capture-engine-catalog.json';
 const runtimeSizeReportName = 'runtime-size-report.json';
 const packageNames = [
-  '@gx-capture/capture-contracts',
+  '@gx-capture/capture-runtime-client',
   '@gx-capture/capture-structuring',
   '@gx-capture/capture-workbench-ui',
 ];
@@ -440,11 +440,11 @@ test('release argument parser accepts the complete package set', () => {
     '--package',
     'capture-workbench.tgz',
     '--package',
-    'capture-contracts.tgz',
+    'capture-runtime-client.tgz',
   ]);
   assert.deepEqual(
     parsed.packagePaths.map((path) => basename(path)),
-    ['capture-workbench.tgz', 'capture-contracts.tgz'],
+    ['capture-workbench.tgz', 'capture-runtime-client.tgz'],
   );
   assert.throws(
     () =>
@@ -488,8 +488,8 @@ test('zero-asset draft uploads from inventory before readback, package, and publ
     assert.equal(remote.state.release, 'public');
     assert.equal(remote.state.packageIntegrity, candidate.packageIntegrity);
     assert.equal(
-      remote.state.packageIntegrities['@gx-capture/capture-contracts'],
-      candidate.packageIntegrities['@gx-capture/capture-contracts'],
+      remote.state.packageIntegrities['@gx-capture/capture-runtime-client'],
+      candidate.packageIntegrities['@gx-capture/capture-runtime-client'],
     );
     assert.deepEqual(
       [...remote.assets.keys()].sort(),
@@ -514,7 +514,11 @@ test('zero-asset draft uploads from inventory before readback, package, and publ
     assert.match(releaseNotes, /SHA-256/u);
     assert.match(
       releaseNotes,
-      /@gx-capture\/capture-workbench-ui@0\.3\.12.*GitHub Packages.*never a GitHub Release asset/su,
+      new RegExp(
+        `@gx-capture/capture-workbench-ui@${version.replaceAll('.', '\\.')}` +
+          '.*GitHub Packages.*never a GitHub Release asset',
+        'su',
+      ),
     );
     const firstUploadIndex = remote.calls.findIndex(
       ([command, group, operation]) =>
@@ -920,7 +924,7 @@ test('model ZIPs are rejected from the local release asset set', async () => {
     writeFileSync(
       join(
         candidate.input.runtimeDirectory,
-        'capture-model-whisper-primary-0.3.12.zip',
+        'capture-model-whisper-primary-0.4.0.zip',
       ),
       'forbidden model archive',
     );

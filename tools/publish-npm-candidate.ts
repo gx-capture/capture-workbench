@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -6,7 +7,7 @@ import { pathToFileURL } from 'node:url';
 const REGISTRY = 'https://npm.pkg.github.com';
 const PACKAGE_NAMES = new Set([
   '@gx-capture/capture-workbench-ui',
-  '@gx-capture/capture-contracts',
+  '@gx-capture/capture-runtime-client',
   '@gx-capture/capture-structuring',
 ]);
 
@@ -97,9 +98,8 @@ async function main(): Promise<void> {
   if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(version)) {
     throw new Error('Npm candidate version is invalid.');
   }
-  const manifest = JSON.parse(
-    await readFile(join(candidate, 'candidate-manifest.json'), 'utf8'),
-  ) as { candidateId?: unknown };
+  const manifestBytes = await readFile(join(candidate, 'candidate-manifest.json'));
+  const manifest = JSON.parse(manifestBytes.toString('utf8')) as { candidateId?: unknown };
   if (
     typeof manifest.candidateId !== 'string' ||
     !/^[0-9a-f]{64}$/u.test(manifest.candidateId)
@@ -178,6 +178,7 @@ async function main(): Promise<void> {
         schemaVersion: '1',
         registry: 'npm',
         candidateId: manifest.candidateId,
+        sourceCandidateManifestSha256: createHash('sha256').update(manifestBytes).digest('hex'),
         releaseVersion: version,
         status: 'published',
         packages: packages.sort((left, right) =>

@@ -46,7 +46,7 @@
   fixture and prepared catalog assets.
 
 - [ ] Prove real isolated Ollama raw extraction, structuring,
-  `CaptureDocumentV1`, persistence, and cleanup.
+  `CaptureDocument`, persistence, and cleanup.
   Verify: `corepack pnpm nx run capture-workbench-desktop:smoke-real-ollama`.
 
 - [x] Run the full repository verification floor and keep any unavailable

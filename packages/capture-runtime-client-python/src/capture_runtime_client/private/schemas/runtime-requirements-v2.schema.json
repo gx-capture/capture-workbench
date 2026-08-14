@@ -1,0 +1,137 @@
+{
+  "$defs": {
+    "RuntimeArtifactDescriptorV2": {
+      "additionalProperties": false,
+      "properties": {
+        "artifactUrl": {
+          "minLength": 1,
+          "title": "Artifacturl",
+          "type": "string"
+        },
+        "artifactFileName": {
+          "minLength": 1,
+          "title": "Artifactfilename",
+          "type": "string"
+        },
+        "bytes": {
+          "maximum": 536870912,
+          "minimum": 1,
+          "title": "Bytes",
+          "type": "integer"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifactUrl",
+        "artifactFileName",
+        "bytes",
+        "sha256"
+      ],
+      "title": "RuntimeArtifactDescriptorV2",
+      "type": "object"
+    },
+    "RuntimeRequirementStatus": {
+      "enum": [
+        "ready",
+        "missing",
+        "installable",
+        "manual_action_required",
+        "unavailable"
+      ],
+      "title": "RuntimeRequirementStatus",
+      "type": "string"
+    },
+    "RuntimeRequirementV2": {
+      "additionalProperties": false,
+      "properties": {
+        "requirementId": {
+          "enum": [
+            "windowsml-ocr",
+            "whisper-primary",
+            "ollama-runtime",
+            "capture-ollama-model"
+          ],
+          "title": "Requirementid",
+          "type": "string"
+        },
+        "kind": {
+          "minLength": 1,
+          "title": "Kind",
+          "type": "string"
+        },
+        "displayName": {
+          "minLength": 1,
+          "title": "Displayname",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/RuntimeRequirementStatus"
+        },
+        "requiredFor": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Requiredfor",
+          "type": "array"
+        },
+        "installStrategy": {
+          "minLength": 1,
+          "title": "Installstrategy",
+          "type": "string"
+        },
+        "detail": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Detail"
+        },
+        "artifact": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RuntimeArtifactDescriptorV2"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "requirementId",
+        "kind",
+        "displayName",
+        "status",
+        "requiredFor",
+        "installStrategy"
+      ],
+      "title": "RuntimeRequirementV2",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "items": {
+      "items": {
+        "$ref": "#/$defs/RuntimeRequirementV2"
+      },
+      "title": "Items",
+      "type": "array"
+    }
+  },
+  "required": [
+    "items"
+  ],
+  "title": "RuntimeRequirementsV2",
+  "type": "object"
+}

@@ -31,13 +31,11 @@ from capture_runtime.ollama import (
 )
 from capture_runtime.progressive_capture import ProgressiveCaptureProcessor
 from capture_runtime.services import (
-    CaptureService,
     InstallationService,
     ModelInstallationService,
     StreamingCaptureService,
 )
 from capture_runtime.storage import (
-    CaptureRepository,
     InstallationRepository,
     ModelInstallationRepository,
     StreamingRepository,
@@ -61,9 +59,7 @@ class RuntimeDependencies:
     extractor: CaptureExtractor
     structurer: CaptureStructuringProvider
     installer: RuntimeInstaller
-    capture_repository: CaptureRepository
     installation_repository: InstallationRepository
-    capture_service: CaptureService
     streaming_repository: StreamingRepository
     streaming_capture_service: StreamingCaptureService
     installation_service: InstallationService
@@ -84,7 +80,6 @@ def build_runtime_dependencies(
     structurer: CaptureStructuringProvider | None = None,
     installer: RuntimeInstaller | None = None,
     process_controller: ProcessController | None = None,
-    capture_repository: CaptureRepository | None = None,
     installation_repository: InstallationRepository | None = None,
     model_installation_repository: ModelInstallationRepository | None = None,
 ) -> RuntimeDependencies:
@@ -158,11 +153,6 @@ def build_runtime_dependencies(
         extraction_config=settings.extraction,
     )
 
-    active_capture_repository = capture_repository or CaptureRepository(
-        settings.app_data_dir / "jobs" / "captures",
-        clock=runtime_clock,
-        retention_hours=settings.retention_hours,
-    )
     active_installation_repository = installation_repository or InstallationRepository(
         settings.app_data_dir / "jobs" / "installations",
         clock=runtime_clock,
@@ -192,12 +182,6 @@ def build_runtime_dependencies(
             staging_root=staging_root,
         )
     )
-    capture_service = CaptureService(
-        active_capture_repository,
-        extractor=active_extractor,
-        structurer=active_structurer,
-        clock=runtime_clock,
-    )
     streaming_capture_service = StreamingCaptureService(
         streaming_repository,
         clock=runtime_clock,
@@ -222,9 +206,7 @@ def build_runtime_dependencies(
         extractor=active_extractor,
         structurer=active_structurer,
         installer=active_installer,
-        capture_repository=active_capture_repository,
         installation_repository=active_installation_repository,
-        capture_service=capture_service,
         streaming_repository=streaming_repository,
         streaming_capture_service=streaming_capture_service,
         installation_service=installation_service,

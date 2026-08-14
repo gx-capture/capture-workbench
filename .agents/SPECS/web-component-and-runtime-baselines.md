@@ -3,7 +3,7 @@
 ## Purpose
 
 Ship `capture-workbench` as a framework-neutral, property-first custom element
-without changing `CaptureDocumentV1`. Angular Elements owns custom-element
+without changing `CaptureDocument`. Angular Elements owns custom-element
 lifecycle and input synchronization; the package remains an NPM ESM library.
 
 ## Interfaces
@@ -36,7 +36,7 @@ lifecycle and input synchronization; the package remains an NPM ESM library.
 
 ## Non-goals
 
-- Changing the `CaptureDocumentV1` schema, runtime API, or provenance rules.
+- Changing the `CaptureDocument` schema, runtime API, or provenance rules.
 - Moving or renaming the existing GitHub repository.
 - Serializing a `CaptureClient`, provider, preprocessor, or bearer token into
   HTML attributes.
@@ -57,7 +57,7 @@ lifecycle and input synchronization; the package remains an NPM ESM library.
 - Vanilla, React, and Vue fixtures can register, configure, and consume
   `capture-workbench` through standard DOM properties and stable event names.
 - The facade forwards object properties and common primitive attributes to the
-  Angular component without changing `CaptureDocumentV1` contracts.
+  Angular component without changing `CaptureDocument` contracts.
 - All root `tools/*.mjs` and desktop harness `scripts/*.mjs` files and their
   references are replaced by `.ts`.
 - Every published package/import reference uses `@gx-capture/capture-workbench-ui`.

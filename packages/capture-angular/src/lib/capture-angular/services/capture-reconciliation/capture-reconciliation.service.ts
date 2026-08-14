@@ -21,13 +21,13 @@ import {
 import {
   type CaptureClient,
   type CaptureCompletedEvent,
-  type CaptureFailureV1,
-  type CaptureOperationV2,
-  type CaptureEventV2,
-  type CaptureStructuringCandidateV1,
+  type CaptureFailure,
+  type CaptureOperation,
+  type CaptureEvent,
+  type CaptureStructuringCandidate,
   type CaptureTaskView,
-  type PartialCaptureV2,
-  type RawCaptureV1,
+  type PartialCapture,
+  type RawCapture,
 } from '../../../contracts';
 import type { CaptureReconciliationContext } from '../capture-workbench-store/internal-contracts';
 import {
@@ -78,8 +78,8 @@ export class CaptureReconciliationService {
 
   private requireReconciliation(
     taskId: string,
-    error: CaptureFailureV1,
-    raw?: RawCaptureV1,
+    error: CaptureFailure,
+    raw?: RawCapture,
   ): void {
     this.context?.requireReconciliation(taskId, error, raw);
   }
@@ -87,8 +87,8 @@ export class CaptureReconciliationService {
   private failTask(
     taskId: string,
     fileName: string,
-    error: CaptureFailureV1,
-    raw?: RawCaptureV1,
+    error: CaptureFailure,
+    raw?: RawCapture,
     stage?: CaptureTaskView['stage'],
   ): void {
     this.context?.failTask(taskId, fileName, error, raw, stage);
@@ -106,9 +106,8 @@ export class CaptureReconciliationService {
     client: StreamingClient,
     captureId: string,
     signal?: AbortSignal,
-  ): Observable<RawCaptureV1 | undefined> {
-    return defer(() => client.getStreamingPartial(captureId, signal)).pipe(
-      map((partial) => this.helpers.partialCaptureToRaw(partial)),
+  ): Observable<RawCapture | undefined> {
+    return defer(() => client.getStreamingRaw(captureId, signal)).pipe(
       catchError(() => of(undefined)),
     );
   }
@@ -164,9 +163,9 @@ export class CaptureReconciliationService {
   commitHostResultAndReconcile(
     client: CaptureClient,
     captureId: string,
-    candidate: CaptureStructuringCandidateV1,
+    candidate: CaptureStructuringCandidate,
     signal: AbortSignal,
-  ): Observable<CaptureOperationV2> {
+  ): Observable<CaptureOperation> {
     const streamingClient = asStreamingClient(client);
     if (!streamingClient) {
       return throwError(() => new Error('Streaming capture client is unavailable.'));
@@ -177,7 +176,7 @@ export class CaptureReconciliationService {
     } as const;
 
     return this.commitAttempt(streamingClient, captureId, request, signal).pipe(
-      switchMap((first): Observable<CaptureOperationV2> =>
+      switchMap((first): Observable<CaptureOperation> =>
         this.helpers.isAwaitingHostStructuring(first)
           ? this.commitAttempt(streamingClient, captureId, request, signal)
           : of(first),
@@ -200,7 +199,7 @@ export class CaptureReconciliationService {
     captureId: string,
     message: string,
     signal: AbortSignal,
-  ): Observable<CaptureOperationV2> {
+  ): Observable<CaptureOperation> {
     const streamingClient = asStreamingClient(client);
     if (!streamingClient) {
       return throwError(() => new Error('Streaming capture client is unavailable.'));
@@ -224,10 +223,10 @@ export class CaptureReconciliationService {
     captureId: string,
     request: {
       readonly clientRequestId: string;
-      readonly candidate: CaptureStructuringCandidateV1;
+      readonly candidate: CaptureStructuringCandidate;
     },
     signal: AbortSignal,
-  ): Observable<CaptureOperationV2> {
+  ): Observable<CaptureOperation> {
     return defer(() =>
       client.commitStreamingStructuredResult(captureId, request, signal),
     ).pipe(
@@ -243,7 +242,7 @@ export class CaptureReconciliationService {
     captureId: string,
     message: string,
     signal: AbortSignal,
-  ): Observable<CaptureOperationV2> {
+  ): Observable<CaptureOperation> {
     return defer(() =>
       client.reportStreamingStructuringFailure(
         captureId,
@@ -262,7 +261,7 @@ export class CaptureReconciliationService {
     client: StreamingClient,
     captureId: string,
     taskId?: string,
-  ): Observable<CaptureOperationV2> {
+  ): Observable<CaptureOperation> {
     const signal = this.lifecycleController.signal;
     return client.getStreamingCapture(captureId, signal).pipe(
       switchMap((initial) =>
@@ -273,12 +272,12 @@ export class CaptureReconciliationService {
 
   private waitForTerminal(
     client: StreamingClient,
-    initial: CaptureOperationV2,
+    initial: CaptureOperation,
     signal: AbortSignal,
     taskId?: string,
     stopForHost = false,
     reconnectAttempt = 0,
-  ): Observable<CaptureOperationV2> {
+  ): Observable<CaptureOperation> {
     if (this.helpers.isTerminalStreamingOperation(initial)) return of(initial);
     let resyncRequired = false;
     return client
@@ -338,7 +337,7 @@ export class CaptureReconciliationService {
     signal: AbortSignal,
     taskId: string | undefined,
     includePartial: boolean,
-  ): Observable<CaptureOperationV2> {
+  ): Observable<CaptureOperation> {
     return client.getStreamingCapture(captureId, signal).pipe(
       tap((operation) => {
         if (taskId) this.applyStreamingOperation(taskId, operation);
@@ -358,7 +357,7 @@ export class CaptureReconciliationService {
     client: StreamingClient,
     captureId: string,
     signal: AbortSignal,
-  ): Observable<CaptureOperationV2> {
+  ): Observable<CaptureOperation> {
     return defer(() => client.cancelStreamingCapture(captureId, signal)).pipe(
       catchError((error: unknown) => {
         if (this.helpers.isAbortError(error)) return throwError(() => error);
@@ -403,7 +402,7 @@ export class CaptureReconciliationService {
   private settleOrRequire(
     task: CaptureTaskView,
     client: StreamingClient,
-    operation: CaptureOperationV2,
+    operation: CaptureOperation,
   ): Observable<void> {
     if (!this.helpers.isTerminalStreamingOperation(operation)) {
       this.requireReconciliation(
@@ -416,7 +415,7 @@ export class CaptureReconciliationService {
     return this.settleConfirmedOperation(task, client, operation);
   }
 
-  private unknownTerminalState(operation: CaptureOperationV2): CaptureFailureV1 {
+  private unknownTerminalState(operation: CaptureOperation): CaptureFailure {
     return {
       code: HOST_RECONCILIATION_FAILURE_CODE,
       message: `Capture runtime is still ${operation.status}; check again or cancel it.`,
@@ -425,13 +424,13 @@ export class CaptureReconciliationService {
     };
   }
 
-  private applyStreamingEvent(taskId: string, event: CaptureEventV2): void {
+  private applyStreamingEvent(taskId: string, event: CaptureEvent): void {
     this.updateTask(taskId, {
       stage: this.helpers.streamingStage(event.stage),
     });
   }
 
-  private applyStreamingOperation(taskId: string, operation: CaptureOperationV2): void {
+  private applyStreamingOperation(taskId: string, operation: CaptureOperation): void {
     this.updateTask(taskId, {
       stage: this.helpers.streamingStage(operation.status),
       ...(operation.progress === undefined || operation.progress === null
@@ -440,7 +439,7 @@ export class CaptureReconciliationService {
     });
   }
 
-  private applyStreamingPartial(taskId: string, partial: PartialCaptureV2): void {
+  private applyStreamingPartial(taskId: string, partial: PartialCapture): void {
     try {
       this.updateTask(taskId, {
         raw: this.helpers.partialCaptureToRaw(partial),
@@ -453,7 +452,7 @@ export class CaptureReconciliationService {
   private settleConfirmedOperation(
     task: CaptureTaskView,
     client: StreamingClient,
-    operation: CaptureOperationV2,
+    operation: CaptureOperation,
   ): Observable<void> {
     if (operation.status === 'cancelled') {
       const canceledTask = this.updateTask(task.id, {
@@ -526,7 +525,7 @@ export class CaptureReconciliationService {
   }
 }
 
-function isResyncRequiredEvent(event: CaptureEventV2): boolean {
+function isResyncRequiredEvent(event: CaptureEvent): boolean {
   return event.eventType === 'resync_required';
 }
 
@@ -545,6 +544,7 @@ type StreamingClient = CaptureClient &
       | 'getStreamingCapture'
       | 'cancelStreamingCapture'
       | 'getStreamingPartial'
+      | 'getStreamingRaw'
       | 'getStreamingResult'
       | 'commitStreamingStructuredResult'
       | 'reportStreamingStructuringFailure'
@@ -556,6 +556,7 @@ function asStreamingClient(client: CaptureClient): StreamingClient | undefined {
     typeof client.getStreamingCapture === 'function' &&
     typeof client.cancelStreamingCapture === 'function' &&
     typeof client.getStreamingPartial === 'function' &&
+    typeof client.getStreamingRaw === 'function' &&
     typeof client.getStreamingResult === 'function' &&
     typeof client.commitStreamingStructuredResult === 'function' &&
     typeof client.reportStreamingStructuringFailure === 'function'

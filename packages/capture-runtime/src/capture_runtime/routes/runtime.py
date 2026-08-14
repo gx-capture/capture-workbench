@@ -9,45 +9,53 @@ from uuid import UUID
 from fastapi import APIRouter, Header, status
 
 from capture_runtime.contracts import (
-    RuntimeCapabilitiesV1,
-    RuntimeInstallationsV1,
-    RuntimeInstallationV1,
-    RuntimeModelInstallationV1,
+    RuntimeInstallationsV2,
+    RuntimeInstallationV2,
+    RuntimeModelInstallationV2,
     RuntimeModelOptionStatus,
-    RuntimeModelOptionsV1,
-    RuntimeModelOptionV1,
-    RuntimeReadyV1,
-    RuntimeRequirementsV1,
-    StartRuntimeInstallationV1,
-    StartRuntimeModelInstallationV1,
+    RuntimeModelOptionsV2,
+    RuntimeModelOptionV2,
+    RuntimeReady,
+    RuntimeRequirementsV2,
+    StartRuntimeInstallationV2,
+    StartRuntimeModelInstallationV2,
 )
 from capture_runtime.dependencies import RuntimeDependencies
 from capture_runtime.model_catalog import MODEL_OPTIONS, ActiveModelSelectionStore, catalog_sha256
+from capture_runtime.release import CAPTURE_DOCUMENT_SCHEMA_RELEASE_SHA256
 from capture_runtime.routes.common import ApiProblem, request_fingerprint
 from capture_runtime.services import IdempotencyConflictError, RecordNotFoundError
 
 
-def register_runtime_routes(router: APIRouter, dependencies: RuntimeDependencies) -> None:
+def register_runtime_routes(
+    router: APIRouter,
+    dependencies: RuntimeDependencies,
+) -> None:
     """Register readiness, requirement and installation endpoints."""
 
-    @router.get("/health/ready", response_model=RuntimeReadyV1)
-    async def ready() -> RuntimeReadyV1:
-        return RuntimeReadyV1(
+    @router.get("/health/ready", response_model=RuntimeReady)
+    async def ready() -> RuntimeReady:
+        return RuntimeReady(
             ready=True,
-            capabilities=RuntimeCapabilitiesV1(
-                capture_kinds=["pdf", "image", "audio"],
-                structuring_modes=dependencies.supported_structuring_modes,
-                max_upload_bytes=dependencies.settings.max_upload_bytes,
-            ),
+            capture_document_schema_sha256=CAPTURE_DOCUMENT_SCHEMA_RELEASE_SHA256,
+            capabilities={
+                "captureKinds": ["pdf", "image", "audio"],
+                "structuringModes": [
+                    mode.value for mode in dependencies.supported_structuring_modes
+                ],
+                "supportsCancellation": True,
+                "supportsRawDiagnostics": True,
+                "maxUploadBytes": dependencies.settings.max_upload_bytes,
+            },
         )
 
-    @router.get("/runtime/requirements", response_model=RuntimeRequirementsV1)
-    async def requirements() -> RuntimeRequirementsV1:
+    @router.get("/runtime/requirements", response_model=RuntimeRequirementsV2)
+    async def requirements() -> RuntimeRequirementsV2:
         items = await asyncio.to_thread(
             dependencies.installer.requirements,
             dependencies.enabled_requirement_ids,
         )
-        return RuntimeRequirementsV1(
+        return RuntimeRequirementsV2(
             items=[
                 item
                 for item in items
@@ -55,8 +63,8 @@ def register_runtime_routes(router: APIRouter, dependencies: RuntimeDependencies
             ]
         )
 
-    @router.get("/runtime/model-options", response_model=RuntimeModelOptionsV1)
-    async def model_options() -> RuntimeModelOptionsV1:
+    @router.get("/runtime/model-options", response_model=RuntimeModelOptionsV2)
+    async def model_options() -> RuntimeModelOptionsV2:
         if dependencies.settings.structuring_provider != "ollama":
             raise ApiProblem(
                 422,
@@ -65,10 +73,10 @@ def register_runtime_routes(router: APIRouter, dependencies: RuntimeDependencies
             )
         active = ActiveModelSelectionStore(dependencies.lifecycle.config.app_data_dir).load()
         active_option_id = active.get("optionId") if active is not None else None
-        return RuntimeModelOptionsV1(
+        return RuntimeModelOptionsV2(
             catalog_sha256=catalog_sha256(),
             items=[
-                RuntimeModelOptionV1(
+                RuntimeModelOptionV2(
                     option_id=option.option_id,
                     display_name=option.display_name,
                     model_reference=option.model_reference,
@@ -88,13 +96,13 @@ def register_runtime_routes(router: APIRouter, dependencies: RuntimeDependencies
 
     @router.post(
         "/runtime/installations",
-        response_model=RuntimeInstallationV1,
+        response_model=RuntimeInstallationV2,
         status_code=status.HTTP_202_ACCEPTED,
     )
     async def create_installation(
-        payload: StartRuntimeInstallationV1,
+        payload: StartRuntimeInstallationV2,
         idempotency_key: Annotated[UUID, Header(alias="X-Idempotency-Key")],
-    ) -> RuntimeInstallationV1:
+    ) -> RuntimeInstallationV2:
         if payload.requirement_id in dependencies.disabled_requirement_ids:
             raise ApiProblem(
                 422,
@@ -115,12 +123,12 @@ def register_runtime_routes(router: APIRouter, dependencies: RuntimeDependencies
                 "Idempotency key was already used with a different request.",
             ) from error
 
-    @router.get("/runtime/installations", response_model=RuntimeInstallationsV1)
-    async def list_installations() -> RuntimeInstallationsV1:
-        return RuntimeInstallationsV1(items=dependencies.installation_service.list())
+    @router.get("/runtime/installations", response_model=RuntimeInstallationsV2)
+    async def list_installations() -> RuntimeInstallationsV2:
+        return RuntimeInstallationsV2(items=dependencies.installation_service.list())
 
-    @router.get("/runtime/installations/{installation_id}", response_model=RuntimeInstallationV1)
-    async def get_installation(installation_id: str) -> RuntimeInstallationV1:
+    @router.get("/runtime/installations/{installation_id}", response_model=RuntimeInstallationV2)
+    async def get_installation(installation_id: str) -> RuntimeInstallationV2:
         try:
             return dependencies.installation_service.get(installation_id)
         except RecordNotFoundError as error:
@@ -130,9 +138,9 @@ def register_runtime_routes(router: APIRouter, dependencies: RuntimeDependencies
 
     @router.post(
         "/runtime/installations/{installation_id}/cancel",
-        response_model=RuntimeInstallationV1,
+        response_model=RuntimeInstallationV2,
     )
-    async def cancel_installation(installation_id: str) -> RuntimeInstallationV1:
+    async def cancel_installation(installation_id: str) -> RuntimeInstallationV2:
         try:
             return await dependencies.installation_service.cancel(installation_id)
         except RecordNotFoundError as error:
@@ -142,13 +150,13 @@ def register_runtime_routes(router: APIRouter, dependencies: RuntimeDependencies
 
     @router.post(
         "/runtime/model-installations",
-        response_model=RuntimeModelInstallationV1,
+        response_model=RuntimeModelInstallationV2,
         status_code=status.HTTP_202_ACCEPTED,
     )
     async def create_model_installation(
-        payload: StartRuntimeModelInstallationV1,
+        payload: StartRuntimeModelInstallationV2,
         idempotency_key: Annotated[UUID, Header(alias="X-Idempotency-Key")],
-    ) -> RuntimeModelInstallationV1:
+    ) -> RuntimeModelInstallationV2:
         if dependencies.settings.structuring_provider != "ollama":
             raise ApiProblem(
                 422,
@@ -173,9 +181,9 @@ def register_runtime_routes(router: APIRouter, dependencies: RuntimeDependencies
 
     @router.get(
         "/runtime/model-installations/{installation_id}",
-        response_model=RuntimeModelInstallationV1,
+        response_model=RuntimeModelInstallationV2,
     )
-    async def get_model_installation(installation_id: str) -> RuntimeModelInstallationV1:
+    async def get_model_installation(installation_id: str) -> RuntimeModelInstallationV2:
         try:
             return dependencies.model_installation_service.get(installation_id)
         except RecordNotFoundError as error:
@@ -185,9 +193,9 @@ def register_runtime_routes(router: APIRouter, dependencies: RuntimeDependencies
 
     @router.post(
         "/runtime/model-installations/{installation_id}/cancel",
-        response_model=RuntimeModelInstallationV1,
+        response_model=RuntimeModelInstallationV2,
     )
-    async def cancel_model_installation(installation_id: str) -> RuntimeModelInstallationV1:
+    async def cancel_model_installation(installation_id: str) -> RuntimeModelInstallationV2:
         try:
             return await dependencies.model_installation_service.cancel(installation_id)
         except RecordNotFoundError as error:

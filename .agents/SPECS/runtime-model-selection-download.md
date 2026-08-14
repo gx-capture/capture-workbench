@@ -9,13 +9,13 @@ runtime model store.
 
 ## Contract
 
-The existing generic runtime installation contract remains unchanged for
-backward compatibility. Model selection uses additive endpoints:
+Model selection is a first-class v2 runtime surface with explicit setup and
+installation semantics:
 
-- `GET /v1/runtime/model-options`
-- `POST /v1/runtime/model-installations`
-- `GET /v1/runtime/model-installations/{id}`
-- `POST /v1/runtime/model-installations/{id}/cancel`
+- `GET /v2/runtime/model-options`
+- `POST /v2/runtime/model-installations`
+- `GET /v2/runtime/model-installations/{id}`
+- `POST /v2/runtime/model-installations/{id}/cancel`
 
 The renderer submits only a stable `optionId` and `consent: true`. Model
 references, profile IDs, profile specifications, and verification metadata are

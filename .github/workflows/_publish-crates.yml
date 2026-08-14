@@ -12,6 +12,16 @@ on:
       source_commit:
         required: true
         type: string
+      release_candidate_id:
+        description: 'Full release candidate ID bound to this source ledger'
+        required: false
+        default: ''
+        type: string
+      contract_set_sha256:
+        description: 'Canonical v2 contract-set hash for this release train'
+        required: false
+        default: ''
+        type: string
 
 permissions:
   actions: read
@@ -46,6 +56,16 @@ jobs:
             --candidate promotion-input/candidate \
             --output registry-ledger-crates.io.json
 
+      - name: Bind crates.io ledger to the full release candidate and contract set
+        if: ${{ inputs.release_candidate_id != '' || inputs.contract_set_sha256 != '' }}
+        shell: bash
+        env:
+          RELEASE_CANDIDATE_ID: ${{ inputs.release_candidate_id }}
+          CONTRACT_SET_SHA256: ${{ inputs.contract_set_sha256 }}
+        run: |
+          set -euo pipefail
+          node --input-type=module -e "const fs=await import('node:fs/promises'); const crypto=await import('node:crypto'); const path='registry-ledger-crates.io.json'; const ledger=JSON.parse(await fs.readFile(path,'utf8')); if(!/^[0-9a-f]{64}$/.test(process.env.RELEASE_CANDIDATE_ID)||!/^[0-9a-f]{64}$/.test(process.env.CONTRACT_SET_SHA256)) throw new Error('Release candidate ledger binding is incomplete.'); const source=await fs.readFile('promotion-input/candidate/runtime-candidate-manifest.json').catch(()=>fs.readFile('promotion-input/candidate/candidate-manifest.json')); ledger.releaseCandidateId=process.env.RELEASE_CANDIDATE_ID; ledger.contractSetSha256=process.env.CONTRACT_SET_SHA256; ledger.sourceCandidateManifestSha256=crypto.createHash('sha256').update(source).digest('hex'); await fs.writeFile(path,JSON.stringify(ledger,null,2)+'\\n');"
+
       - name: Verify clean Cargo installation from crates.io
         shell: bash
         run: |
@@ -56,7 +76,7 @@ jobs:
       - name: Upload crates.io publication ledger
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: registry-ledger-crates.io-${{ inputs.candidate_id }}
+          name: registry-ledger-crates.io-${{ inputs.release_candidate_id || inputs.candidate_id }}
           path: registry-ledger-crates.io.json
           if-no-files-found: error
           retention-days: 14

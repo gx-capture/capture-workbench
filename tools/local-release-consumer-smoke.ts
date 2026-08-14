@@ -32,7 +32,7 @@ export const CORE_RUNTIME_ASSET_NAMES = Object.freeze([
   'capture-runtime-x86_64-pc-windows-msvc.exe',
   'capture-runtime-x86_64-pc-windows-msvc.exe.sha256',
   'capture-runtime-manifest.json',
-  'capture-document-v1.schema.json',
+  'capture-document-v2.schema.json',
 ]);
 // Keep the historical export for callers that only need the core manifest names.
 export const RUNTIME_ASSET_NAMES = CORE_RUNTIME_ASSET_NAMES;
@@ -308,8 +308,8 @@ export function validateRuntimeManifest(
     );
   }
   if (
-    manifest.apiVersion !== '1.0' ||
-    manifest.captureDocumentSchemaVersion !== '1' ||
+    manifest.apiVersion !== '2.0' ||
+    manifest.captureDocumentSchemaVersion !== '2' ||
     manifest.platform !== 'windows' ||
     manifest.arch !== 'x86_64'
   ) {
@@ -703,7 +703,7 @@ async function runRuntimeReadiness(
       }
       try {
         const response = await fetch(
-          `http://127.0.0.1:${port}/v1/health/ready`,
+          `http://127.0.0.1:${port}/v2/health/ready`,
           {
             headers: { Authorization: `Bearer ${token}` },
             signal: AbortSignal.timeout(1_000),

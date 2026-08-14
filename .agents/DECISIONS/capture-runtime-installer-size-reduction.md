@@ -24,8 +24,8 @@
 
 ## Delivery and Behavior Preservation
 
-- Preserve `/v1`, schemas, requirement IDs, `CaptureClient`,
-  `CaptureDocumentV1`, structuring modes, job lifecycle, Tauri token isolation,
+- Preserve `/v2`, schemas, requirement IDs, `CaptureClient`,
+  `CaptureDocument`, structuring modes, job lifecycle, Tauri token isolation,
   and deterministic/product lane separation.
 - Keep embedded PDF text in core; delegate only missing-page PDF OCR, image
   OCR, and audio transcription.
@@ -89,7 +89,7 @@
   components before extraction and bound the inner files manifest to 1 MiB
   using ZIP metadata before reading it.
 - Carry the configured WindowsML device ID only through the internal OCR probe
-  option. Default to device zero and leave Whisper and `/v1` contracts
+  option. Default to device zero and leave Whisper and `/v2` contracts
   unchanged.
 - A release candidate is draft-only until exact uploaded assets are
   re-downloaded and verified. Local implementation does not publish or mutate

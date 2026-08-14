@@ -24,7 +24,7 @@
             outputMode: 'text',
           };
           capture.addEventListener(CAPTURE_WORKBENCH_CUSTOM_EVENTS.completed, ({ detail }) => {
-            console.log('Runtime-validated CaptureDocumentV1:', detail.document);
+            console.log('Runtime-validated CaptureDocument:', detail.document);
           });
           capture.addEventListener(CAPTURE_WORKBENCH_CUSTOM_EVENTS.failed, ({ detail }) => {
             console.error('Capture failed:', detail.error);

@@ -27,7 +27,7 @@ Release automation must stage a Windows x64 runtime and its release manifest bef
 node apps/capture-workbench-desktop/scripts/stage-runtime.ts `
   --artifact <capture-runtime.exe> `
   --manifest <capture-runtime-manifest.json> `
-  --schema <capture-document-v1.schema.json> `
+  --schema <capture-document-v2.schema.json> `
   --source release
 corepack pnpm nx run capture-workbench-desktop:build-nsis
 ```
@@ -94,7 +94,7 @@ The cert-prep PDF and audio are copied only into the owned temporary run and
 must not be committed or uploaded. The image remains a lock-pinned project
 fixture. Only the packaged executable can be overridden for local runs with
 `CAPTURE_REAL_MEDIA_MODEL_EXECUTABLE`. The preflight fails closed unless the staged
-generated catalog and source lock are the approved 0.3.12 model-enabled
+generated catalog and source lock are the approved 0.4.0 model-enabled
 contract.
 
 ## Installed deterministic smoke

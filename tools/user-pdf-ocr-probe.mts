@@ -68,7 +68,7 @@ async function waitForReady(baseUrl: string, token: string): Promise<void> {
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
     try {
-      const response = await fetch(`${baseUrl}/v1/health/ready`, {
+      const response = await fetch(`${baseUrl}/v2/health/ready`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (response.ok) return;
@@ -104,7 +104,7 @@ async function waitForExtraction(
   const deadline = Date.now() + timeoutMilliseconds;
   let lastState = '';
   let job = await getJson(
-    `${baseUrl}/v1/captures/${encodeURIComponent(captureId)}`,
+    `${baseUrl}/v2/captures/${encodeURIComponent(captureId)}`,
     token,
   );
 
@@ -120,7 +120,7 @@ async function waitForExtraction(
     }
     await delay(500);
     job = await getJson(
-      `${baseUrl}/v1/captures/${encodeURIComponent(captureId)}`,
+      `${baseUrl}/v2/captures/${encodeURIComponent(captureId)}`,
       token,
     );
   }
@@ -191,7 +191,7 @@ async function main(): Promise<void> {
     );
     form.append('sourceKind', 'pdf');
     form.append('structuringMode', 'host');
-    const createResponse = await fetch(`${baseUrl}/v1/captures`, {
+    const createResponse = await fetch(`${baseUrl}/v2/captures`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
@@ -205,7 +205,7 @@ async function main(): Promise<void> {
     const captureId = String(created.captureId);
     const job = await waitForExtraction(baseUrl, captureId, token);
     const raw = await getJson(
-      `${baseUrl}/v1/captures/${encodeURIComponent(captureId)}/raw`,
+      `${baseUrl}/v2/captures/${encodeURIComponent(captureId)}/raw`,
       token,
     );
     const segments = Array.isArray(raw.segments) ? raw.segments : [];

@@ -17,13 +17,13 @@ from capture_runtime.clock import Clock
 from capture_runtime.config import ExtractionRuntimeConfig
 from capture_runtime.constants import WHISPER_REQUIREMENT_ID, WINDOWSML_REQUIREMENT_ID
 from capture_runtime.contracts import (
-    CaptureEngineV1,
+    CaptureEngine,
+    CaptureSource,
     CaptureSourceKind,
-    CaptureSourceV1,
-    PageLocatorV1,
-    RawCaptureSegmentV1,
-    RawCaptureV1,
-    TimeLocatorV1,
+    PageLocator,
+    RawCapture,
+    RawCaptureSegment,
+    TimeLocator,
     project_source_text,
 )
 from capture_runtime.engine_installation import EngineInstallationManager
@@ -56,9 +56,9 @@ class CaptureExtractor(Protocol):
     async def extract(
         self,
         content: bytes,
-        source: CaptureSourceV1,
+        source: CaptureSource,
         cancel_event: asyncio.Event,
-    ) -> RawCaptureV1: ...
+    ) -> RawCapture: ...
 
 
 def sniff_source(content: bytes) -> SniffedSource:
@@ -107,9 +107,9 @@ class StandaloneRuntimeCaptureExtractor:
     async def extract(
         self,
         content: bytes,
-        source: CaptureSourceV1,
+        source: CaptureSource,
         cancel_event: asyncio.Event,
-    ) -> RawCaptureV1:
+    ) -> RawCapture:
         if self.engine_manager is not None:
             return await self._extract_with_workers(content, source, cancel_event)
         try:
@@ -120,9 +120,9 @@ class StandaloneRuntimeCaptureExtractor:
     async def _extract_with_workers(
         self,
         content: bytes,
-        source: CaptureSourceV1,
+        source: CaptureSource,
         cancel_event: asyncio.Event,
-    ) -> RawCaptureV1:
+    ) -> RawCapture:
         sniffed = self.sniff(content)
         self._checkpoint(cancel_event)
         try:
@@ -164,7 +164,7 @@ class StandaloneRuntimeCaptureExtractor:
         self._checkpoint(cancel_event)
         if not segments:
             raise ValueError("Extraction produced no non-empty content.")
-        return RawCaptureV1(
+        return RawCapture(
             source=source,
             segments=segments,
             source_text=project_source_text(segments),
@@ -177,7 +177,7 @@ class StandaloneRuntimeCaptureExtractor:
         self,
         content: bytes,
         cancel_event: asyncio.Event,
-    ) -> tuple[list[RawCaptureSegmentV1], CaptureEngineV1, list[str]]:
+    ) -> tuple[list[RawCaptureSegment], CaptureEngine, list[str]]:
         try:
             reader = PdfReader(BytesIO(content))
         except Exception as error:
@@ -223,15 +223,15 @@ class StandaloneRuntimeCaptureExtractor:
                 item.page: item.text for item in worker_result.segments if item.page is not None
             }
             warnings.extend(worker_result.warnings)
-        segments: list[RawCaptureSegmentV1] = []
+        segments: list[RawCaptureSegment] = []
         for page_number in range(1, len(reader.pages) + 1):
             text = embedded.get(page_number) or worker_pages.get(page_number, "")
             if text:
                 segments.append(
-                    RawCaptureSegmentV1(
+                    RawCaptureSegment(
                         segment_id=f"page-{page_number}",
                         order=len(segments),
-                        locator=PageLocatorV1(page=page_number),
+                        locator=PageLocator(page=page_number),
                         text=text,
                     )
                 )
@@ -242,7 +242,7 @@ class StandaloneRuntimeCaptureExtractor:
             digest = hashlib.sha256(
                 f"{embedded_digest}:{worker_result.digest}".encode()
             ).hexdigest()
-            engine = CaptureEngineV1(
+            engine = CaptureEngine(
                 engine="pdf-embedded+windowsml-ocr",
                 model=f"pypdf+{worker_result.model}",
                 digest=f"sha256:{digest}",
@@ -252,7 +252,7 @@ class StandaloneRuntimeCaptureExtractor:
             engine = self._capture_engine(worker_result, expected_engine="windowsml-ocr")
         else:
             version = importlib.metadata.version("pypdf")
-            engine = CaptureEngineV1(
+            engine = CaptureEngine(
                 engine="pdf-embedded-text",
                 model=f"pypdf-{version}",
                 digest=pdf_embedded_engine_digest(),
@@ -313,7 +313,7 @@ class StandaloneRuntimeCaptureExtractor:
             path.unlink(missing_ok=True)
 
     @staticmethod
-    def _capture_engine(result: WorkerRunResult, *, expected_engine: str) -> CaptureEngineV1:
+    def _capture_engine(result: WorkerRunResult, *, expected_engine: str) -> CaptureEngine:
         if result.engine != expected_engine:
             raise ValueError("worker returned incompatible engine provenance")
         if expected_engine == "windowsml-ocr" and result.device not in {
@@ -321,7 +321,7 @@ class StandaloneRuntimeCaptureExtractor:
             "cpu",
         }:
             raise ValueError("OCR worker returned incompatible device provenance")
-        return CaptureEngineV1(
+        return CaptureEngine(
             engine=result.engine,
             model=result.model,
             digest=result.digest,
@@ -329,12 +329,12 @@ class StandaloneRuntimeCaptureExtractor:
         )
 
     @staticmethod
-    def _page_segments(result: WorkerRunResult) -> list[RawCaptureSegmentV1]:
+    def _page_segments(result: WorkerRunResult) -> list[RawCaptureSegment]:
         return [
-            RawCaptureSegmentV1(
+            RawCaptureSegment(
                 segment_id=f"page-{item.page}",
                 order=index,
-                locator=PageLocatorV1(page=item.page),
+                locator=PageLocator(page=item.page),
                 text=item.text,
             )
             for index, item in enumerate(result.segments)
@@ -342,12 +342,12 @@ class StandaloneRuntimeCaptureExtractor:
         ]
 
     @staticmethod
-    def _time_segments(result: WorkerRunResult) -> list[RawCaptureSegmentV1]:
+    def _time_segments(result: WorkerRunResult) -> list[RawCaptureSegment]:
         return [
-            RawCaptureSegmentV1(
+            RawCaptureSegment(
                 segment_id=f"segment-{index + 1}",
                 order=index,
-                locator=TimeLocatorV1(start_ms=item.start_ms, end_ms=item.end_ms),
+                locator=TimeLocator(start_ms=item.start_ms, end_ms=item.end_ms),
                 text=item.text,
             )
             for index, item in enumerate(result.segments)
@@ -357,9 +357,9 @@ class StandaloneRuntimeCaptureExtractor:
     def _extract_sync(
         self,
         content: bytes,
-        source: CaptureSourceV1,
+        source: CaptureSource,
         cancel_event: asyncio.Event,
-    ) -> RawCaptureV1:
+    ) -> RawCapture:
         sniffed = self.sniff(content)
         self._checkpoint(cancel_event)
         if sniffed.kind is CaptureSourceKind.PDF:
@@ -373,7 +373,7 @@ class StandaloneRuntimeCaptureExtractor:
         self._checkpoint(cancel_event)
         if not segments:
             raise ValueError("Extraction produced no non-empty content.")
-        return RawCaptureV1(
+        return RawCapture(
             source=source,
             segments=segments,
             source_text=project_source_text(segments),
@@ -384,7 +384,7 @@ class StandaloneRuntimeCaptureExtractor:
 
     def _extract_pdf(
         self, content: bytes, cancel_event: asyncio.Event
-    ) -> tuple[list[RawCaptureSegmentV1], CaptureEngineV1, list[str]]:
+    ) -> tuple[list[RawCaptureSegment], CaptureEngine, list[str]]:
         try:
             reader = PdfReader(BytesIO(content))
         except Exception as error:
@@ -395,7 +395,7 @@ class StandaloneRuntimeCaptureExtractor:
             raise ValueError(
                 f"PDF has {len(reader.pages)} pages; limit is {self.config.max_pdf_pages}."
             )
-        segments: list[RawCaptureSegmentV1] = []
+        segments: list[RawCaptureSegment] = []
         warnings: list[str] = []
         ocr_results = []
         embedded_pages = 0
@@ -422,10 +422,10 @@ class StandaloneRuntimeCaptureExtractor:
                     warnings.append(result.warning)
             if text:
                 segments.append(
-                    RawCaptureSegmentV1(
+                    RawCaptureSegment(
                         segment_id=f"page-{page_number}",
                         order=len(segments),
-                        locator=PageLocatorV1(page=page_number),
+                        locator=PageLocator(page=page_number),
                         text=text,
                     )
                 )
@@ -435,7 +435,7 @@ class StandaloneRuntimeCaptureExtractor:
             ocr = ocr_results[0]
             embedded_digest = pdf_embedded_engine_digest()
             digest = hashlib.sha256(f"{embedded_digest}:{ocr.digest}".encode()).hexdigest()
-            engine = CaptureEngineV1(
+            engine = CaptureEngine(
                 engine="pdf-embedded+windowsml-ocr",
                 model=f"pypdf+{ocr.model}",
                 digest=f"sha256:{digest}",
@@ -443,7 +443,7 @@ class StandaloneRuntimeCaptureExtractor:
             )
         elif ocr_results:
             ocr = ocr_results[0]
-            engine = CaptureEngineV1(
+            engine = CaptureEngine(
                 engine="windowsml-ocr",
                 model=ocr.model,
                 digest=ocr.digest,
@@ -451,7 +451,7 @@ class StandaloneRuntimeCaptureExtractor:
             )
         else:
             version = __import__("pypdf").__version__
-            engine = CaptureEngineV1(
+            engine = CaptureEngine(
                 engine="pdf-embedded-text",
                 model=f"pypdf-{version}",
                 digest=pdf_embedded_engine_digest(),
@@ -481,7 +481,7 @@ class StandaloneRuntimeCaptureExtractor:
 
     def _extract_image(
         self, content: bytes, cancel_event: asyncio.Event
-    ) -> tuple[list[RawCaptureSegmentV1], CaptureEngineV1, list[str]]:
+    ) -> tuple[list[RawCaptureSegment], CaptureEngine, list[str]]:
         import warnings as image_warnings
 
         from PIL import Image, UnidentifiedImageError
@@ -518,10 +518,10 @@ class StandaloneRuntimeCaptureExtractor:
         text = result.text.strip()
         segments = (
             [
-                RawCaptureSegmentV1(
+                RawCaptureSegment(
                     segment_id="page-1",
                     order=0,
-                    locator=PageLocatorV1(page=1),
+                    locator=PageLocator(page=1),
                     text=text,
                 )
             ]
@@ -531,7 +531,7 @@ class StandaloneRuntimeCaptureExtractor:
         warnings = [result.warning] if result.warning else []
         return (
             segments,
-            CaptureEngineV1(
+            CaptureEngine(
                 engine="windowsml-ocr",
                 model=result.model,
                 digest=result.digest,
@@ -542,7 +542,7 @@ class StandaloneRuntimeCaptureExtractor:
 
     def _extract_audio(
         self, content: bytes, media_type: str, cancel_event: asyncio.Event
-    ) -> tuple[list[RawCaptureSegmentV1], CaptureEngineV1, list[str]]:
+    ) -> tuple[list[RawCaptureSegment], CaptureEngine, list[str]]:
         suffix = {
             "audio/wav": ".wav",
             "audio/mpeg": ".mp3",
@@ -566,10 +566,10 @@ class StandaloneRuntimeCaptureExtractor:
         finally:
             path.unlink(missing_ok=True)
         segments = [
-            RawCaptureSegmentV1(
+            RawCaptureSegment(
                 segment_id=f"segment-{index + 1}",
                 order=index,
-                locator=TimeLocatorV1(start_ms=item.start_ms, end_ms=item.end_ms),
+                locator=TimeLocator(start_ms=item.start_ms, end_ms=item.end_ms),
                 text=item.text,
             )
             for index, item in enumerate(result.segments)
@@ -577,7 +577,7 @@ class StandaloneRuntimeCaptureExtractor:
         warnings = [result.warning] if result.warning else []
         return (
             segments,
-            CaptureEngineV1(
+            CaptureEngine(
                 engine="whisper-primary",
                 model=result.model,
                 digest=result.digest,
@@ -634,9 +634,9 @@ class DeterministicCaptureExtractor:
     async def extract(
         self,
         content: bytes,
-        source: CaptureSourceV1,
+        source: CaptureSource,
         cancel_event: asyncio.Event,
-    ) -> RawCaptureV1:
+    ) -> RawCapture:
         sniffed = self.sniff(content)
         if self._delay_seconds:
             try:
@@ -650,10 +650,10 @@ class DeterministicCaptureExtractor:
         if sniffed.kind is CaptureSourceKind.AUDIO:
             parts = [part.strip() for part in text.split("|") if part.strip()]
             segments = [
-                RawCaptureSegmentV1(
+                RawCaptureSegment(
                     segment_id=f"segment-{index + 1}",
                     order=index,
-                    locator=TimeLocatorV1(
+                    locator=TimeLocator(
                         start_ms=index * 1000,
                         end_ms=(index + 1) * 1000,
                     ),
@@ -661,7 +661,7 @@ class DeterministicCaptureExtractor:
                 )
                 for index, part in enumerate(parts)
             ]
-            engine = CaptureEngineV1(
+            engine = CaptureEngine(
                 engine="whisper-primary",
                 model="deterministic-whisper-v1",
                 digest=_engine_digest("whisper-primary", "deterministic-whisper-v1"),
@@ -670,15 +670,15 @@ class DeterministicCaptureExtractor:
         else:
             parts = [part.strip() for part in text.split("\f") if part.strip()]
             segments = [
-                RawCaptureSegmentV1(
+                RawCaptureSegment(
                     segment_id=f"segment-{index + 1}",
                     order=index,
-                    locator=PageLocatorV1(page=index + 1),
+                    locator=PageLocator(page=index + 1),
                     text=part,
                 )
                 for index, part in enumerate(parts)
             ]
-            engine = CaptureEngineV1(
+            engine = CaptureEngine(
                 engine="windowsml-ocr",
                 model="deterministic-windowsml-v1",
                 digest=_engine_digest("windowsml-ocr", "deterministic-windowsml-v1"),
@@ -686,7 +686,7 @@ class DeterministicCaptureExtractor:
             )
         if not segments:
             raise ValueError("extraction produced no non-empty content")
-        return RawCaptureV1(
+        return RawCapture(
             source=source,
             segments=segments,
             source_text=project_source_text(segments),

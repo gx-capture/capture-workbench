@@ -34,7 +34,7 @@
         "build",
         {
           "target": "pack",
-          "projects": ["capture-contracts"]
+          "projects": ["capture-runtime-client"]
         }
       ],
       "outputs": ["{workspaceRoot}/dist/packs"],

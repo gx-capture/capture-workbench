@@ -12,7 +12,7 @@ import {
   verifyRuntimeRelease,
 } from './local-release-consumer-smoke.ts';
 
-const version = '0.3.12';
+const version = '0.4.0';
 
 function digest(bytes: Buffer): string {
   return createHash('sha256').update(bytes).digest('hex');
@@ -39,8 +39,8 @@ async function createFixture(): Promise<string> {
   const manifest = {
     manifestVersion: '1',
     runtimeVersion: version,
-    apiVersion: '1.0',
-    captureDocumentSchemaVersion: '1',
+    apiVersion: '2.0',
+    captureDocumentSchemaVersion: '2',
     platform: 'windows',
     arch: 'x86_64',
     fileName: RUNTIME_ASSET_NAMES[0],
@@ -65,8 +65,8 @@ async function createFixture(): Promise<string> {
 async function createModelFixture(): Promise<string> {
   const directory = await createFixture();
   const workerAssets = [
-    ['windowsml-ocr', 'capture-engine-ocr-0.3.12-windows-x64.zip'],
-    ['whisper-primary', 'capture-engine-whisper-0.3.12-windows-x64.zip'],
+    ['windowsml-ocr', 'capture-engine-ocr-0.4.0-windows-x64.zip'],
+    ['whisper-primary', 'capture-engine-whisper-0.4.0-windows-x64.zip'],
   ] as const;
   const pendingWrites: Promise<void>[] = [];
   const requirements = workerAssets.map(([requirementId, fileName]) => {
@@ -208,7 +208,7 @@ test('runtime release verifier rejects manifest version drift', async () => {
   await withFixture(async (directory) => {
     const path = join(directory, 'capture-runtime-manifest.json');
     const manifest = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>;
-    manifest.runtimeVersion = '0.4.0';
+    manifest.runtimeVersion = '999.999.999';
     await writeFile(path, `${JSON.stringify(manifest)}\n`);
     await assert.rejects(
       verifyRuntimeRelease(directory, version),
@@ -234,8 +234,8 @@ test('runtime manifest validation rejects non-Windows releases', () => {
         {
           manifestVersion: '1',
           runtimeVersion: version,
-          apiVersion: '1.0',
-          captureDocumentSchemaVersion: '1',
+          apiVersion: '2.0',
+          captureDocumentSchemaVersion: '2',
           platform: 'linux',
           arch: 'x86_64',
           fileName: RUNTIME_ASSET_NAMES[0],

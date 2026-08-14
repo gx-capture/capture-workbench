@@ -9,15 +9,15 @@ from conftest import TOKEN
 from fastapi.testclient import TestClient
 
 from capture_runtime.contracts import (
-    CaptureBlockV1,
-    CaptureDocumentV1,
-    CaptureEngineV1,
+    CaptureBlock,
+    CaptureDocument,
+    CaptureEngine,
     OpenIngestionV2,
-    RawCaptureSegmentV1,
-    RawCaptureV1,
+    RawCapture,
+    RawCaptureSegment,
     StartCaptureV2,
     StructuringMode,
-    TimeLocatorV1,
+    TimeLocator,
 )
 
 
@@ -36,6 +36,7 @@ def _open(client: TestClient) -> tuple[str, str]:
             "totalBytes": len(source),
             "sourceSha256": hashlib.sha256(source).hexdigest(),
         },
+        headers={"X-Idempotency-Key": "api-stream-open-1"},
     )
     assert response.status_code == 201, response.text
     return response.json()["ingestionId"], hashlib.sha256(source).hexdigest()
@@ -77,19 +78,19 @@ def _seed_host_capture(client: TestClient) -> tuple[str, dict[str, object]]:
     )
     assert operation.source is not None
     created_at = datetime(2026, 8, 13, tzinfo=UTC)
-    segment = RawCaptureSegmentV1(
+    segment = RawCaptureSegment(
         segment_id="segment-1",
         order=0,
-        locator=TimeLocatorV1(start_ms=0, end_ms=1_000),
+        locator=TimeLocator(start_ms=0, end_ms=1_000),
         text="host words",
     )
-    extraction_engine = CaptureEngineV1(
+    extraction_engine = CaptureEngine(
         engine="whisper-primary",
         model="test-model",
         digest=f"sha256:{'a' * 64}",
         device="cpu",
     )
-    raw = RawCaptureV1(
+    raw = RawCapture(
         source=operation.source,
         segments=[segment],
         source_text=segment.text,
@@ -98,16 +99,16 @@ def _seed_host_capture(client: TestClient) -> tuple[str, dict[str, object]]:
     )
     repository.write_raw(operation.capture_id, raw)
     repository.mark_awaiting_structuring(operation.capture_id)
-    structuring_engine = CaptureEngineV1(
+    structuring_engine = CaptureEngine(
         engine="host-provider",
         model="test-model",
         digest=f"sha256:{'b' * 64}",
     )
-    candidate = CaptureDocumentV1(
+    candidate = CaptureDocument(
         source=raw.source,
         raw_segments=raw.segments,
         blocks=[
-            CaptureBlockV1(
+            CaptureBlock(
                 block_id="block-1",
                 order=0,
                 type="transcript",
@@ -128,7 +129,7 @@ def _seed_host_capture(client: TestClient) -> tuple[str, dict[str, object]]:
 
 
 def test_streaming_capability_is_strictly_advertised(client: TestClient) -> None:
-    response = client.get("/v2/health/ready")
+    response = client.get("/v2/streaming/health/ready")
 
     assert response.status_code == 200
     assert response.json() == {
@@ -147,11 +148,43 @@ def test_streaming_capability_keeps_ocr_available_without_progressive_decoder(
 ) -> None:
     monkeypatch.setattr("capture_runtime.routes.streaming.progressive_decoder_ready", lambda: False)
 
-    response = client.get("/v2/health/ready")
+    response = client.get("/v2/streaming/health/ready")
 
     assert response.status_code == 200
     assert response.json()["captureKinds"] == ["pdf", "image", "audio"]
     assert response.json()["supportsProgressiveAudio"] is False
+
+
+def test_open_ingestion_and_start_capture_require_matching_idempotency_headers(
+    client: TestClient,
+) -> None:
+    source = _source()
+    request = {
+        "clientRequestId": "required-open-key",
+        "fileName": "sample.mp3",
+        "mediaType": "audio/mpeg",
+        "totalBytes": len(source),
+        "sourceSha256": hashlib.sha256(source).hexdigest(),
+    }
+
+    assert client.post("/v2/ingestions", json=request).status_code == 422
+    mismatch = client.post(
+        "/v2/ingestions",
+        json=request,
+        headers={"X-Idempotency-Key": "different-key"},
+    )
+    assert mismatch.status_code == 409
+    assert mismatch.json()["error"]["code"] == "idempotency_conflict"
+
+
+def test_v2_raw_capture_route_returns_the_strict_runtime_payload(client: TestClient) -> None:
+    capture_id, _candidate = _seed_host_capture(client)
+
+    response = client.get(f"/v2/captures/{capture_id}/raw")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["sourceText"] == "host words"
+    assert response.json()["segments"][0]["segmentId"] == "segment-1"
 
 
 def test_streaming_api_accepts_ordered_chunks_replays_sse_and_rejects_partial_before_worker(
@@ -166,6 +199,7 @@ def test_streaming_api_accepts_ordered_chunks_replays_sse_and_rejects_partial_be
             "structuringMode": "host",
             "startPolicy": "eager",
         },
+        headers={"X-Idempotency-Key": "api-stream-capture-1"},
     )
     assert started.status_code == 202, started.text
     capture_id = started.json()["captureId"]
@@ -266,6 +300,7 @@ def test_streaming_api_processes_pdf_ocr_through_the_same_v2_sse_lifecycle(
             "totalBytes": len(source),
             "sourceSha256": digest,
         },
+        headers={"X-Idempotency-Key": "api-stream-pdf-open-1"},
     )
     assert opened.status_code == 201, opened.text
     ingestion_id = opened.json()["ingestionId"]
@@ -295,6 +330,7 @@ def test_streaming_api_processes_pdf_ocr_through_the_same_v2_sse_lifecycle(
             "structuringMode": "runtime",
             "startPolicy": "eager",
         },
+        headers={"X-Idempotency-Key": "api-stream-pdf-capture-1"},
     )
     assert started.status_code == 202, started.text
     capture_id = started.json()["captureId"]
@@ -358,6 +394,7 @@ def test_streaming_api_rejects_gap_checksum_and_invalid_cursor(client: TestClien
             "structuringMode": "host",
             "startPolicy": "eager",
         },
+        headers={"X-Idempotency-Key": "api-stream-capture-cursor"},
     )
     assert started.status_code == 202
     invalid_cursor = client.get(
@@ -389,7 +426,7 @@ def test_streaming_api_allows_ingestion_cleanup(client: TestClient) -> None:
     assert client.get(f"/v2/ingestions/{ingestion_id}").status_code == 404
 
 
-def test_v2_host_commit_and_failure_routes_preserve_v1_terminal_semantics(
+def test_v2_host_commit_and_failure_routes_preserve_terminal_semantics(
     client: TestClient,
 ) -> None:
     capture_id, candidate = _seed_host_capture(client)

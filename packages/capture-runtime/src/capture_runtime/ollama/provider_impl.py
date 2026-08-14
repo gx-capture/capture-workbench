@@ -22,10 +22,10 @@ from capture_structuring import (
 
 from capture_runtime.clock import Clock
 from capture_runtime.contracts import (
-    CaptureBlockV1,
-    CaptureDocumentV1,
-    CaptureEngineV1,
-    RawCaptureV1,
+    CaptureBlock,
+    CaptureDocument,
+    CaptureEngine,
+    RawCapture,
 )
 from capture_runtime.model_catalog import model_option
 from capture_runtime.ollama.lifecycle_impl import IsolatedOllamaLifecycle, RuntimeUnavailableError
@@ -56,7 +56,7 @@ def _single_segment_generation_schema(
     blocks["maxItems"] = 1
     definitions = cast(dict[str, object], schema["$defs"])
     definition_name = (
-        "CaptureIdentitySemanticBlockV1" if target_language is None else "CaptureSemanticBlockV1"
+        "CaptureIdentitySemanticBlock" if target_language is None else "CaptureSemanticBlock"
     )
     block_definition = cast(dict[str, object], definitions[definition_name])
     block_properties = cast(dict[str, object], block_definition["properties"])
@@ -84,16 +84,16 @@ class OllamaCaptureStructuringProvider:
         self._num_ctx = num_ctx
         self._num_predict = num_predict
         self._transport = transport
-        self._engine_identity: CaptureEngineV1 | None = None
+        self._engine_identity: CaptureEngine | None = None
         self._structure_lock = asyncio.Lock()
 
     @property
-    def engine_identity(self) -> CaptureEngineV1 | None:
+    def engine_identity(self) -> CaptureEngine | None:
         return self._engine_identity
 
     async def structure(
         self,
-        raw: RawCaptureV1,
+        raw: RawCapture,
         *,
         target_language: str | None,
         cancel_event: asyncio.Event,
@@ -107,7 +107,7 @@ class OllamaCaptureStructuringProvider:
 
     async def _structure_exclusive(
         self,
-        raw: RawCaptureV1,
+        raw: RawCapture,
         *,
         target_language: str | None,
         cancel_event: asyncio.Event,
@@ -139,7 +139,7 @@ class OllamaCaptureStructuringProvider:
                     num_predict=self._num_predict,
                     schema=ollama_structuring_batch_schema(target_language=target_language),
                 )
-            blocks: list[CaptureBlockV1] = []
+            blocks: list[CaptureBlock] = []
             async with httpx.AsyncClient(
                 base_url=self._lifecycle.config.host_url,
                 timeout=self._timeout,
@@ -164,7 +164,7 @@ class OllamaCaptureStructuringProvider:
                         profile_id=profile_id,
                     )
                     blocks.extend(
-                        CaptureBlockV1.model_validate(block)
+                        CaptureBlock.model_validate(block)
                         for block in validate_structuring_batch(
                             candidate,
                             plan.segments,
@@ -172,7 +172,7 @@ class OllamaCaptureStructuringProvider:
                             order_offset=len(blocks),
                         )
                     )
-            return CaptureDocumentV1.model_validate(
+            return CaptureDocument.model_validate(
                 assemble_structuring_document(
                     raw,
                     blocks,
@@ -250,7 +250,7 @@ class OllamaCaptureStructuringProvider:
 
     async def _wait_until_ready(
         self, cancel_event: asyncio.Event, profile_id: str
-    ) -> CaptureEngineV1:
+    ) -> CaptureEngine:
         deadline = asyncio.get_running_loop().time() + 30
         async with httpx.AsyncClient(
             base_url=self._lifecycle.config.host_url,
@@ -281,7 +281,7 @@ class OllamaCaptureStructuringProvider:
                                 raise RuntimeUnavailableError(
                                     "isolated Ollama returned an invalid model digest"
                                 )
-                            return CaptureEngineV1(
+                            return CaptureEngine(
                                 engine="ollama",
                                 model=profile_id,
                                 digest=digest,

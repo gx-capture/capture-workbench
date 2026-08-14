@@ -77,7 +77,7 @@ export function runDeterministicSmoke(): Observable<{ report: unknown; reportPat
       evidenceKind: 'deterministic-sidecar-smoke',
       releaseGateSatisfied: false,
       canonicalWire: {
-        apiVersion: '1.0',
+        apiVersion: '2.0',
         schemaVersion,
         captureRequest: 'multipart/form-data',
         captureIdField: true,

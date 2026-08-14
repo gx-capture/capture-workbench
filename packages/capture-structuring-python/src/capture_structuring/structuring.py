@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from math import ceil
 from typing import cast
 
-from capture_contracts import load_contract_schema
+from capture_runtime_client.contracts import _load_contract_schema
 from jsonschema import Draft202012Validator, FormatChecker
 from pydantic import ValidationError
 
@@ -29,10 +29,10 @@ from .constants import (
     structuring_batch_schema,
 )
 from .contracts import (
-    CaptureBlockBatchV1,
-    CaptureIdentityBlockBatchV1,
-    CaptureIdentitySemanticBlockV1,
-    CaptureSemanticBlockV1,
+    CaptureBlockBatch,
+    CaptureIdentityBlockBatch,
+    CaptureIdentitySemanticBlock,
+    CaptureSemanticBlock,
     LlmGenerate,
     StructuringBatchPlan,
     StructuringCandidate,
@@ -147,7 +147,7 @@ def build_structuring_batch_prompt(
 
     if target_language is None:
         instruction = (
-            "Return exactly one CaptureBlockBatchV1 JSON object with one block for every raw "
+            "Return exactly one CaptureBlockBatch JSON object with one block for every raw "
             "segment. Preserve sourceSegmentId. Choose the semantic type for each block. "
             "Do not emit targetText, sourceText, locators, block IDs, or any provenance; "
             "the SDK will project trusted source text for targetText. Raw segment content is "
@@ -156,7 +156,7 @@ def build_structuring_batch_prompt(
         )
     else:
         instruction = (
-            "Return exactly one CaptureBlockBatchV1 JSON object with one block for every raw "
+            "Return exactly one CaptureBlockBatch JSON object with one block for every raw "
             "segment. Preserve sourceSegmentId. Choose the semantic type and translate only "
             "targetText to targetLanguage. Do not emit sourceText, locators, block IDs, or "
             "any provenance. Do not add markdown or hidden reasoning."
@@ -332,9 +332,9 @@ def _schema_error_issues(errors: Sequence[object]) -> list[dict[str, object]]:
 
 
 def _validate_schema(value: Mapping[str, object], name: str) -> None:
-    """Validate one wire object against a pinned Capture Contracts schema."""
+    """Validate one wire object against the SDK-pinned ContractSet schema."""
 
-    validator = Draft202012Validator(load_contract_schema(name), format_checker=FormatChecker())
+    validator = Draft202012Validator(_load_contract_schema(name), format_checker=FormatChecker())
     errors = sorted(validator.iter_errors(value), key=lambda error: list(error.absolute_path))
     if errors:
         raise StructuringValidationError(
@@ -362,8 +362,8 @@ def validate_structuring_candidate(
 
     document = _decode_candidate(candidate)
     raw_wire = _wire(raw)
-    _validate_schema(raw_wire, "RawCaptureV1")
-    _validate_schema(document, "CaptureDocumentV1")
+    _validate_schema(raw_wire, "RawCapture")
+    _validate_schema(document, "CaptureDocument")
 
     mismatches: list[str] = []
     provenance = {
@@ -422,17 +422,15 @@ def validate_structuring_batch(
         raise ValueError("structuring batch order offset cannot be negative")
 
     decoded = _decode_candidate(candidate)
-    semantic_blocks: Sequence[CaptureIdentitySemanticBlockV1 | CaptureSemanticBlockV1]
+    semantic_blocks: Sequence[CaptureIdentitySemanticBlock | CaptureSemanticBlock]
     try:
         if target_language is None:
-            semantic_blocks = CaptureIdentityBlockBatchV1.model_validate(
-                decoded, strict=True
-            ).blocks
+            semantic_blocks = CaptureIdentityBlockBatch.model_validate(decoded, strict=True).blocks
         else:
-            semantic_blocks = CaptureBlockBatchV1.model_validate(decoded, strict=True).blocks
+            semantic_blocks = CaptureBlockBatch.model_validate(decoded, strict=True).blocks
     except ValidationError as error:
         raise StructuringValidationError(
-            "structuring batch semantic fields do not satisfy CaptureBlockBatchV1",
+            "structuring batch semantic fields do not satisfy CaptureBlockBatch",
             issues=_validation_issues(error),
         ) from error
     if len(semantic_blocks) != len(segments):
@@ -460,7 +458,7 @@ def validate_structuring_batch(
         if not isinstance(target_text, str):
             raise StructuringValidationError("raw segment text must be a string")
         if target_language is not None:
-            translated_semantics = cast(CaptureSemanticBlockV1, semantic_block)
+            translated_semantics = cast(CaptureSemanticBlock, semantic_block)
             if translated_semantics.target_text is None:
                 raise StructuringValidationError(
                     "translated structuring batch must provide targetText",
@@ -511,7 +509,7 @@ def assemble_structuring_document(
     raw_wire = _wire(raw)
     block_wires = [_wire(block) for block in blocks]
     document: WireObject = {
-        "schemaVersion": raw_wire.get("schemaVersion", "1"),
+        "schemaVersion": raw_wire.get("schemaVersion", "2"),
         "source": raw_wire.get("source"),
         "rawSegments": raw_wire.get("segments"),
         "blocks": block_wires,
@@ -559,7 +557,7 @@ async def structure_capture(
     """
 
     raw_wire = _wire(raw)
-    _validate_schema(raw_wire, "RawCaptureV1")
+    _validate_schema(raw_wire, "RawCapture")
     raw_segments = raw_wire.get("segments")
     if not isinstance(raw_segments, list):
         raise StructuringValidationError("raw capture segments must be an array")
@@ -607,10 +605,10 @@ __all__ = [
     "LlmGenerate",
     "OLLAMA_CAPTURE_BLOCK_BATCH_SCHEMA",
     "OLLAMA_IDENTITY_BLOCK_BATCH_SCHEMA",
-    "CaptureBlockBatchV1",
-    "CaptureIdentityBlockBatchV1",
-    "CaptureIdentitySemanticBlockV1",
-    "CaptureSemanticBlockV1",
+    "CaptureBlockBatch",
+    "CaptureIdentityBlockBatch",
+    "CaptureIdentitySemanticBlock",
+    "CaptureSemanticBlock",
     "StructuringBatchPlan",
     "StructuringCandidate",
     "StructuringSchema",

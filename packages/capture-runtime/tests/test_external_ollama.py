@@ -9,7 +9,7 @@ import pytest
 
 from capture_runtime.clock import Clock
 from capture_runtime.config import ExternalOllamaConfig
-from capture_runtime.contracts import CaptureDocumentV1, RawCaptureV1
+from capture_runtime.contracts import CaptureDocument, RawCapture
 from capture_runtime.ollama import (
     ExternalOllamaCaptureStructuringProvider,
     RuntimeUnavailableError,
@@ -24,10 +24,10 @@ class FixedClock(Clock):
         return COMPLETED_AT
 
 
-def _raw() -> RawCaptureV1:
-    return RawCaptureV1.model_validate(
+def _raw() -> RawCapture:
+    return RawCapture.model_validate(
         {
-            "schemaVersion": "1",
+            "schemaVersion": "2",
             "diagnosticOnly": True,
             "source": {
                 "sha256": "a" * 64,
@@ -102,7 +102,7 @@ def test_external_ollama_structures_with_bearer_auth() -> None:
         provider.structure(_raw(), target_language="zh-TW", cancel_event=asyncio.Event())
     )
 
-    assert isinstance(document, CaptureDocumentV1)
+    assert isinstance(document, CaptureDocument)
     assert document.target_text == "translated text"
     assert document.structuring_engine.model == "qwen3.5:4b"
     assert document.structuring_engine.device == "remote"

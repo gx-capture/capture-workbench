@@ -19,9 +19,9 @@ const RUNTIME_TOKEN = 'runtime-secret-sentinel';
 const ready = {
   ready: true,
   service: 'capture-runtime',
-  runtimeVersion: '0.3.12',
-  apiVersion: '1.0',
-  captureDocumentSchemaVersion: '1',
+  runtimeVersion: '0.4.0',
+  apiVersion: '2.0',
+  captureDocumentSchemaVersion: '2',
   capabilities: {
     captureKinds: ['audio', 'image', 'pdf'],
     structuringModes: ['host', 'runtime'],
@@ -103,9 +103,9 @@ function baseRoutes() {
       'http://127.0.0.1:8765/capture-runtime/requirements',
       [jsonResponse(requirements)],
     ],
-    ['http://127.0.0.1:8766/v1/health/ready', [jsonResponse(ready)]],
+    ['http://127.0.0.1:8766/v2/health/ready', [jsonResponse(ready)]],
     [
-      'http://127.0.0.1:8766/v1/runtime/requirements',
+      'http://127.0.0.1:8766/v2/runtime/requirements',
       [jsonResponse(requirements)],
     ],
   ]);
@@ -440,7 +440,7 @@ function correlatedRoutes(
     operations.map((value) => jsonResponse(value)),
   );
   routes.set(
-    'http://127.0.0.1:8766/v1/captures/capture-1',
+    'http://127.0.0.1:8766/v2/captures/capture-1',
     captures.map((value) => jsonResponse(value)),
   );
   return routes;
@@ -450,8 +450,8 @@ function duplicateBaseRoutes(routes: Map<string, RouteValue[]>, count: number) {
   for (const url of [
     'http://127.0.0.1:8765/capture-runtime/ready',
     'http://127.0.0.1:8765/capture-runtime/requirements',
-    'http://127.0.0.1:8766/v1/health/ready',
-    'http://127.0.0.1:8766/v1/runtime/requirements',
+    'http://127.0.0.1:8766/v2/health/ready',
+    'http://127.0.0.1:8766/v2/runtime/requirements',
   ]) {
     const current = routes.get(url);
     assert.ok(current?.[0]);

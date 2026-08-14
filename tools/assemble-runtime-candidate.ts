@@ -138,10 +138,10 @@ async function main(): Promise<void> {
     recursive: true,
   });
   await copyMatching(
-    resolve(root, 'packages/capture-contracts/python/dist'),
+    resolve(root, 'packages/capture-runtime-client-python/dist'),
     python,
     new RegExp(
-      `^capture_contracts-${version.replaceAll('.', '\\.')}(?:-[^/]+)?\\.(?:whl|tar\\.gz)$`,
+      `^capture_runtime_client-${version.replaceAll('.', '\\.')}(?:-[^/]+)?\\.(?:whl|tar\\.gz)$`,
       'u',
     ),
     2,
@@ -168,6 +168,23 @@ async function main(): Promise<void> {
     `${JSON.stringify(await createContractSnapshot(root), null, 2)}\n`,
     'utf8',
   );
+  const contractSetJson = resolve(
+    root,
+    'packages/capture-runtime/src/capture_runtime/assets/contract-set.json',
+  );
+  const contractSetShaPath = resolve(
+    root,
+    'packages/capture-runtime/src/capture_runtime/assets/contract-set.sha256',
+  );
+  const contractSetSha256 = (await readFile(contractSetShaPath, 'utf8')).trim();
+  if (
+    !/^[0-9a-f]{64}$/u.test(contractSetSha256) ||
+    (await sha256(contractSetJson)) !== contractSetSha256
+  ) {
+    throw new Error('Canonical v2 contract-set bundle/hash is invalid.');
+  }
+  await cp(contractSetJson, join(contracts, 'contract-set.json'));
+  await cp(contractSetShaPath, join(contracts, 'contract-set.sha256'));
 
   const artifacts = await inventory(output, [
     'runtime',
@@ -190,6 +207,7 @@ async function main(): Promise<void> {
     releaseMode,
     producerRunId,
     packageCandidateId,
+    contractSetSha256,
     artifacts,
     toolchains: {
       node: process.version,

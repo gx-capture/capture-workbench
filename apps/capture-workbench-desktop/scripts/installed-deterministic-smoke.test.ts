@@ -601,7 +601,7 @@ function captureDocument(fixture) {
     device: 'fake',
   };
   return {
-    schemaVersion: '1',
+    schemaVersion: '2',
     source: {
       sha256: createHash('sha256').update(fixture.buffer).digest('hex'),
       fileName: fixture.fileName,

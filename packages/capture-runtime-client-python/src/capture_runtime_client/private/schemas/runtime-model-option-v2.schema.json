@@ -1,0 +1,80 @@
+{
+  "$defs": {
+    "RuntimeModelOptionStatus": {
+      "enum": [
+        "not-installed",
+        "installed",
+        "active"
+      ],
+      "title": "RuntimeModelOptionStatus",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "optionId": {
+      "minLength": 1,
+      "title": "Optionid",
+      "type": "string"
+    },
+    "displayName": {
+      "minLength": 1,
+      "title": "Displayname",
+      "type": "string"
+    },
+    "modelReference": {
+      "minLength": 1,
+      "title": "Modelreference",
+      "type": "string"
+    },
+    "expectedDigest": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Expecteddigest"
+    },
+    "expectedBytes": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Expectedbytes"
+    },
+    "profileId": {
+      "minLength": 1,
+      "title": "Profileid",
+      "type": "string"
+    },
+    "profileSpecSha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Profilespecsha256",
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/RuntimeModelOptionStatus"
+    }
+  },
+  "required": [
+    "optionId",
+    "displayName",
+    "modelReference",
+    "profileId",
+    "profileSpecSha256",
+    "status"
+  ],
+  "title": "RuntimeModelOptionV2",
+  "type": "object"
+}

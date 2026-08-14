@@ -34,18 +34,11 @@ manifest.module = loaderPath.slice(2);
 manifest.exports['.'].default = loaderPath;
 manifest.sideEffects = [loaderPath];
 
-if (
-  manifest.dependencies?.['@gx-capture/capture-contracts'] === 'workspace:*'
-) {
-  const contractsManifestPath = resolve(
-    packageDirectory,
-    '../capture-contracts/package.json',
+if (manifest.dependencies?.['@gx-capture/capture-runtime-client'] === 'workspace:*') {
+  const runtimeClientManifest = JSON.parse(
+    readFileSync(resolve(packageDirectory, '../capture-runtime-client/package.json'), 'utf8'),
   );
-  const contractsManifest = JSON.parse(
-    readFileSync(contractsManifestPath, 'utf8'),
-  );
-  manifest.dependencies['@gx-capture/capture-contracts'] =
-    contractsManifest.version;
+  manifest.dependencies['@gx-capture/capture-runtime-client'] = runtimeClientManifest.version;
 }
 writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
 process.stdout.write(

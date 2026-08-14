@@ -286,7 +286,7 @@ class RuntimeSettings:
             extraction.whisper_primary_model,
             extraction.whisper_fallback_model,
         } - supported_whisper_models:
-            raise ValueError("Capture Whisper models must be large-v3-turbo or small in runtime v1")
+            raise ValueError("Capture Whisper models must be large-v3-turbo or small in runtime v2")
 
         external_ollama = None
         if provider == "external-ollama":
