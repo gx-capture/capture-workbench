@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import net from 'node:net';
 import { join } from 'node:path';
 
@@ -25,6 +25,7 @@ import {
 } from 'rxjs';
 
 import { INSTALLED_FIXTURES } from './constants/installed.ts';
+import { nativeOpenDialogUiAutomation } from './real-media-model-smoke.ts';
 
 const fixtures = INSTALLED_FIXTURES;
 export const installedWebViewCdpReadyTimeoutMs = 180_000;
@@ -234,11 +235,15 @@ function connectAttempt(endpoint, appProcess, deadline, lastError) {
   );
 }
 
-function captureFixture(page, fixture) {
-  const filePicker = page.getByLabel('選擇檔案');
-  return defer(() => from(filePicker.setInputFiles({
-    name: fixture.fileName, mimeType: fixture.mimeType, buffer: fixture.buffer,
-  }))).pipe(
+function captureFixture(page, fixture, appPid, fixtureDirectory) {
+  const filePath = join(fixtureDirectory, fixture.fileName);
+  const importButton = page.getByTestId('source-import');
+  return defer(() => from(writeFile(filePath, fixture.buffer))).pipe(
+    concatMap(() => defer(() => from(nativeOpenDialogUiAutomation(
+      filePath,
+      appPid,
+      () => importButton.click(),
+    )))),
     map(() => page.locator('.document-card').filter({ hasText: fixture.fileName }).last()),
     concatMap((card) => defer(() => from(card.waitFor({ state: 'visible', timeout: 15_000 }))).pipe(map(() => card))),
     concatMap((card) => waitUntil(
@@ -260,7 +265,7 @@ function captureFixture(page, fixture) {
   );
 }
 
-export function exerciseInstalledUi(page) {
+export function exerciseInstalledUi(page, appPid, fixtureDirectory) {
   return defer(() => from(page.getByRole('heading', { name: '文件擷取工作台' }).waitFor({ state: 'visible', timeout: 30_000 }))).pipe(
     concatMap(() => prepareFirstRun(page)),
     concatMap(() =>
@@ -278,7 +283,7 @@ export function exerciseInstalledUi(page) {
       );
     }),
     concatMap((model) => from(fixtures).pipe(
-      concatMap((fixture) => captureFixture(page, fixture)),
+      concatMap((fixture) => captureFixture(page, fixture, appPid, fixtureDirectory)),
       toArray(),
       map((captures) => ({
         productTitle: 'Capture Workbench', model, captures,

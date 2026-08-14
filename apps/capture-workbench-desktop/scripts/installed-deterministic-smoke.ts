@@ -692,7 +692,11 @@ export function runInstalledDeterministicSmoke(
                     model: 'setup-pending',
                     captures: [],
                   })
-                : exerciseInstalledUi(page),
+                : exerciseInstalledUi(
+                    page,
+                    state.appProcess.pid,
+                    temporaryDirectory,
+                  ),
             ),
             tap((exerciseResult) => (state.exerciseResult = exerciseResult)),
             concatMap(() =>
