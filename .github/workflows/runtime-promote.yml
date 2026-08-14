@@ -187,7 +187,12 @@ jobs:
           git push origin "refs/tags/$tag"
 
   publish-runtime-release:
-    if: ${{ needs.tag-runtime-release.result == 'success' }}
+    if: >-
+      ${{
+        always() &&
+        needs.prepare-candidate.result == 'success' &&
+        needs.tag-runtime-release.result == 'success'
+      }}
     needs: [prepare-candidate, tag-runtime-release]
     uses: ./.github/workflows/_publish-runtime-github-release.yml
     permissions:
