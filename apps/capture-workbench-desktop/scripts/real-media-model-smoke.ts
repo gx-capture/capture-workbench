@@ -1546,10 +1546,15 @@ exit 1
 }
 
 export function safeUiAutomationDiagnostics(output: string): string {
-  const diagnostics = output
+  const lines = output
     .split(/\r?\n/u)
     .map((line) => line.trim())
     .filter((line) => line.length <= 500 && /^(?:UIA|TOP)\|[A-Za-z0-9_.#,:;=|-]+$/u.test(line))
+    .slice(0, 120);
+  const prioritized = lines.filter(
+    (line) => line.startsWith('UIA|stage=') || !line.includes('|relation=other|'),
+  );
+  const diagnostics = [...new Set([...prioritized, ...lines])]
     .slice(0, 120)
     .join(' ');
   return diagnostics || 'none';
