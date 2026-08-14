@@ -60,37 +60,42 @@ async function assertRemoteAssetMatches(
   asset: string,
   temporary: string,
 ): Promise<void> {
-  const download = run(
-    'gh',
-    [
-      'release',
-      'download',
-      tag,
-      '--pattern',
-      basename(asset),
-      '--dir',
-      temporary,
-    ],
-    true,
-  );
-  if (download.status !== 0)
-    throw new Error(
-      `Unable to inspect GitHub Release asset ${basename(asset)}.`,
+  const remoteTemporary = await mkdtemp(join(temporary, 'remote-'));
+  try {
+    const download = run(
+      'gh',
+      [
+        'release',
+        'download',
+        tag,
+        '--pattern',
+        basename(asset),
+        '--dir',
+        remoteTemporary,
+      ],
+      true,
     );
-  const remote = join(temporary, basename(asset));
-  const [localBytes, remoteBytes, localStat, remoteStat] = await Promise.all([
-    readFile(asset),
-    readFile(remote),
-    stat(asset),
-    stat(remote),
-  ]);
-  if (
-    localStat.size !== remoteStat.size ||
-    sha256(localBytes) !== sha256(remoteBytes)
-  ) {
-    throw new Error(
-      `GitHub Release asset differs from the approved runtime candidate: ${basename(asset)}.`,
-    );
+    if (download.status !== 0)
+      throw new Error(
+        `Unable to inspect GitHub Release asset ${basename(asset)}.`,
+      );
+    const remote = join(remoteTemporary, basename(asset));
+    const [localBytes, remoteBytes, localStat, remoteStat] = await Promise.all([
+      readFile(asset),
+      readFile(remote),
+      stat(asset),
+      stat(remote),
+    ]);
+    if (
+      localStat.size !== remoteStat.size ||
+      sha256(localBytes) !== sha256(remoteBytes)
+    ) {
+      throw new Error(
+        `GitHub Release asset differs from the approved runtime candidate: ${basename(asset)}.`,
+      );
+    }
+  } finally {
+    await rm(remoteTemporary, { recursive: true, force: true });
   }
 }
 
