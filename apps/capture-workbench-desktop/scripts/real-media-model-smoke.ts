@@ -1429,7 +1429,7 @@ function Test-DialogStillOpen($dialog, [IntPtr]$handle) {
 
 $targetMainWindowHandles = @([CaptureDialogOwner]::FindExactTopLevelWindows(
   [uint32]$targetProcessId,
-  'Tauri_Window'
+  'Tauri Window'
 ))
 if ($targetMainWindowHandles.Count -ne 1) {
   Write-Output ('UIA|stage=target-window|code=count-invalid|count=' + [string]$targetMainWindowHandles.Count)
@@ -1443,7 +1443,7 @@ while ([DateTime]::UtcNow -lt $activationDeadline) {
     $targetElement = [System.Windows.Automation.AutomationElement]::FromHandle($targetHandle)
     $targetElement.SetFocus()
   } catch { }
-  if ([CaptureDialogOwner]::ActivateExactWindow($targetHandle, [uint32]$targetProcessId, 'Tauri_Window')) {
+  if ([CaptureDialogOwner]::ActivateExactWindow($targetHandle, [uint32]$targetProcessId, 'Tauri Window')) {
     $targetActivated = $true
     break
   }

@@ -459,7 +459,7 @@ test('native dialog UIA script is process-owned, localization-independent, and m
   assert.match(script, /UIA\|stage=target-activation\|code=failed/u);
   assert.match(script, /baselineWindowHandles/u);
   assert.match(script, /targetMainWindowHandles/u);
-  assert.match(script, /Tauri_Window/u);
+  assert.match(script, /Tauri Window/u);
   assert.match(script, /FileNameControlHost/u);
   assert.match(script, /(?:'1001'|'1148')/u);
   assert.match(script, /ValuePattern/u);
