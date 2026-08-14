@@ -1,7 +1,7 @@
 import type {
   CaptureDocumentV1,
   RawCaptureV1,
-} from '@gx-capture/capture-workbench';
+} from '@gx-capture/capture-workbench-ui';
 
 export type DesktopLibraryStatus =
   | 'queued'

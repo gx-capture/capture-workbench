@@ -1,7 +1,7 @@
 # Standalone Desktop Merge Hardening Decisions
 
 - Change mode: correctness repair with private desktop-contract additions.
-- Public `/v1`, `CaptureDocumentV1`, `@gx/capture-workbench`, and the native-only
+- Public `/v1`, `CaptureDocumentV1`, `@gx/capture-workbench-ui`, and the native-only
   bearer-token boundary remain unchanged.
 - Tauri commands that perform filesystem or runtime HTTP work are async
   wrappers. Existing synchronous library and runtime-client code runs through

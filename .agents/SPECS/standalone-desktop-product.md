@@ -14,7 +14,7 @@ runtime-owned isolated Ollama structuring.
   runtime-owned, user-selected allowlisted model profile; the release does not
   force or bundle a fixed Qwen model, and external Ollama is not a product
   setting.
-- `@gx-capture/capture-workbench`, `/v1`, and `CaptureDocumentV1` remain
+- `@gx-capture/capture-workbench-ui`, `/v1`, and `CaptureDocumentV1` remain
   compatible public contracts.
 - The app owns saved source copies, raw diagnostics, structured results, and
   user-facing export. The runtime job is deleted after terminal data is copied.

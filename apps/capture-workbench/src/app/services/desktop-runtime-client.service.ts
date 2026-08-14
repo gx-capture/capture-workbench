@@ -12,7 +12,7 @@ import {
   type RuntimeModelInstallationV1,
   type RuntimeModelOptionV1,
   type RuntimeRequirementV1,
-} from '@gx-capture/capture-workbench';
+} from '@gx-capture/capture-workbench-ui';
 import {
   EMPTY,
   defer,

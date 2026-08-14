@@ -1,6 +1,6 @@
 import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import type { CaptureJobV1 } from '@gx-capture/capture-workbench';
+import type { CaptureJobV1 } from '@gx-capture/capture-workbench-ui';
 import { EMPTY, of, Subject, throwError } from 'rxjs';
 import type { DesktopLibraryDetail, DesktopLibrarySummary } from '../contracts';
 import { DesktopLibraryService } from './desktop-library.service';

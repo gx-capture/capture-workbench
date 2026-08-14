@@ -234,7 +234,7 @@ describe('Capture Workbench custom element', () => {
     class WinningElement extends HTMLElement {}
     Object.defineProperty(
       WinningElement,
-      Symbol.for('@gx-capture/capture-workbench/element'),
+      Symbol.for('@gx-capture/capture-workbench-ui/element'),
       { value: true },
     );
     const service = new DelayedRegistrationService();

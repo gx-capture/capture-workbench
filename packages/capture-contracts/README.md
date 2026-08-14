@@ -54,7 +54,7 @@ event requires refreshing the operation and partial/result snapshots.
 
 The package version stays synchronized with the runtime (currently `0.3.12`).
 The release workflow publishes both `@gx-capture/capture-contracts` and
-`@gx-capture/capture-workbench` to GitHub Packages after validating their exact
+`@gx-capture/capture-workbench-ui` to GitHub Packages after validating their exact
 tarball identities and integrities. The Python contract/structuring wheels and
 the `capture-sidecar-launcher` crate retain their separate PyPI and crates.io
 publication workflows; they are not replaced by the npm package.

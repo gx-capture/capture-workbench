@@ -619,7 +619,7 @@ async function main(): Promise<void> {
             '@angular/forms': '22.0.7',
             '@angular/platform-browser': '22.0.7',
             '@gx-capture/capture-contracts': fileSpec(contractsArchive),
-            '@gx-capture/capture-workbench': fileSpec(packageArchive),
+            '@gx-capture/capture-workbench-ui': fileSpec(packageArchive),
             rxjs: '7.8.2',
             tslib: '2.8.1',
           },
@@ -653,7 +653,7 @@ import {
   defineCaptureWorkbenchElement,
   type CaptureWorkbenchElement,
   type CaptureStructuringProvider,
-} from '@gx-capture/capture-workbench';
+} from '@gx-capture/capture-workbench-ui';
 
 declare global {
   interface Window {

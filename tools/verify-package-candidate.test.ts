@@ -12,7 +12,7 @@ const version = '0.3.12';
 const sourceCommit = 'a'.repeat(40);
 const producerRunId = 12345;
 const packages = [
-  ['@gx-capture/capture-workbench', 'gx-capture-capture-workbench'],
+  ['@gx-capture/capture-workbench-ui', 'gx-capture-capture-workbench-ui'],
   ['@gx-capture/capture-contracts', 'gx-capture-capture-contracts'],
   ['@gx-capture/capture-structuring', 'gx-capture-capture-structuring'],
 ] as const;
@@ -123,7 +123,7 @@ test('package candidate verification rejects changed archive bytes', async () =>
       join(
         candidate.root,
         'package',
-        'gx-capture-capture-workbench-0.3.12.tgz',
+        'gx-capture-capture-workbench-ui-0.3.12.tgz',
       ),
       'tampered',
     );

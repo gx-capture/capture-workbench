@@ -19,7 +19,7 @@ function parseArguments(args: readonly string[]) {
 const { candidate, version } = parseArguments(process.argv.slice(2));
 const packageDirectory = join(candidate, 'package');
 const expected = new Set([
-  '@gx-capture/capture-workbench',
+  '@gx-capture/capture-workbench-ui',
   '@gx-capture/capture-contracts',
   '@gx-capture/capture-structuring',
 ]);

@@ -1,5 +1,5 @@
 {
-  "name": "@gx-capture/capture-workbench",
+  "name": "@gx-capture/capture-workbench-ui",
   "version": "0.3.12",
   "description": "Capture Workbench UI for the Capture Runtime sidecar.",
   "license": "MIT",

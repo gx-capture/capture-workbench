@@ -46,7 +46,7 @@ model-enabled candidate.
 ## Use the package
 
 The public package is
-[`@gx-capture/capture-workbench@0.3.10`](https://github.com/orgs/gx-capture/packages/npm/package/capture-workbench).
+[`@gx-capture/capture-workbench-ui@0.3.10`](https://github.com/orgs/gx-capture/packages/npm/package/capture-workbench-ui).
 In the consuming workspace, configure the GitHub Packages scope without
 committing a token:
 
@@ -57,7 +57,7 @@ committing a token:
 
 ```powershell
 $env:GITHUB_PACKAGES_TOKEN = '<GitHub token with read:packages>'
-corepack pnpm add @gx-capture/capture-workbench@0.3.10 --save-exact
+corepack pnpm add @gx-capture/capture-workbench-ui@0.3.10 --save-exact
 ```
 
 An Angular host supplies its own `CaptureClient`, normally backed by its
@@ -69,7 +69,7 @@ import { bootstrapApplication } from '@angular/platform-browser';
 import {
   CaptureWorkbenchComponent,
   provideCaptureClient,
-} from '@gx-capture/capture-workbench';
+} from '@gx-capture/capture-workbench-ui';
 
 @Component({
   selector: 'app-root',

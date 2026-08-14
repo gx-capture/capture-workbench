@@ -123,7 +123,7 @@ consumer's focused tests pass.
 ## 0.3.12 producer candidate status
 
 As of 2026-08-13, the producer workspace is preparing the v2-first
-`@gx-capture/capture-workbench@0.3.12` candidate. It is not published yet; the
+`@gx-capture/capture-workbench-ui@0.3.12` candidate. It is not published yet; the
 matching runtime release/tag and runtime assets are not published either.
 
 - The generated contracts package and Web Component expose the authenticated v2
@@ -131,7 +131,7 @@ matching runtime release/tag and runtime assets are not published either.
   emits live durable SSE, heartbeats, and `Last-Event-ID` replay until terminal
   completion or host-owned handoff.
 - The Web Component package owns `@angular/elements` and its compiler loader;
-  clean consumers import only `@gx-capture/capture-workbench` and assign object
+  clean consumers import only `@gx-capture/capture-workbench-ui` and assign object
   dependencies through DOM properties.
 - The canonical executable is
   `capture-runtime-x86_64-pc-windows-msvc.exe`, staged with its manifest,

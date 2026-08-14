@@ -2,7 +2,7 @@
 
 ## Phase 0 - stop the bleeding
 
-- [x] Verify `@gx-capture/capture-workbench@0.3.10` through the canonical GitHub
+- [x] Verify `@gx-capture/capture-workbench-ui@0.3.10` through the canonical GitHub
       Packages registry and record the install source.
       Evidence: `gh api /orgs/gx-capture/packages/npm/capture-workbench/versions`
       returned `0.3.10`; authenticated registry metadata returned the version,

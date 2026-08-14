@@ -1,4 +1,4 @@
-# @gx-capture/capture-workbench
+# @gx-capture/capture-workbench-ui
 
 Publishable Capture Workbench UI and transport contracts for Capture Runtime. The package
 owns runtime setup, file preprocessing, queued capture jobs, progress,
@@ -25,7 +25,7 @@ Install the exact published version for consumer verification:
 
 ```powershell
 $env:GITHUB_PACKAGES_TOKEN = '<read:packages token>'
-corepack pnpm add @gx-capture/capture-workbench@0.3.12 --save-exact
+corepack pnpm add @gx-capture/capture-workbench-ui@0.3.12 --save-exact
 ```
 
 ## Angular integration contract
@@ -54,7 +54,7 @@ their own backend and inject it with `provideCaptureClient()`. This keeps the
 sidecar URL and high-entropy bearer token backend-only.
 
 ```ts
-import { provideCaptureClient } from '@gx-capture/capture-workbench';
+import { provideCaptureClient } from '@gx-capture/capture-workbench-ui';
 
 bootstrapApplication(App, {
   providers: [provideCaptureClient(certPrepCaptureClient)],
@@ -121,7 +121,7 @@ model. A host that already owns an Ollama or another LLM provider can select
 `host` mode and inject the narrow `CaptureStructuringProvider` interface:
 
 ```ts
-import { provideCaptureStructuringProvider, type CaptureStructuringProvider } from '@gx-capture/capture-workbench';
+import { provideCaptureStructuringProvider, type CaptureStructuringProvider } from '@gx-capture/capture-workbench-ui';
 import { defer } from 'rxjs';
 
 const provider: CaptureStructuringProvider = {
@@ -158,7 +158,7 @@ for the host framework's normal stabilization boundary instead of awaiting the
 method.
 
 ```ts
-import { provideCaptureWorkbenchInputs, type CaptureWorkbenchInputSource } from '@gx-capture/capture-workbench';
+import { provideCaptureWorkbenchInputs, type CaptureWorkbenchInputSource } from '@gx-capture/capture-workbench-ui';
 
 const captureInputs: CaptureWorkbenchInputSource = {
   config: () => ({
@@ -186,11 +186,11 @@ Elements owns the element lifecycle; the public configuration API is
 property-first. `@angular/elements` is a package-owned implementation
 dependency. A package-owned loader initializes Angular's compiler before the
 partially compiled FESM for non-Angular bundlers. Consumers import only
-`@gx-capture/capture-workbench`; they do not import `@angular/elements` or
+`@gx-capture/capture-workbench-ui`; they do not import `@angular/elements` or
 `@angular/compiler` directly:
 
 ```ts
-import { CAPTURE_WORKBENCH_CUSTOM_EVENTS, defineCaptureWorkbenchElement, type CaptureWorkbenchElement } from '@gx-capture/capture-workbench';
+import { CAPTURE_WORKBENCH_CUSTOM_EVENTS, defineCaptureWorkbenchElement, type CaptureWorkbenchElement } from '@gx-capture/capture-workbench-ui';
 
 defineCaptureWorkbenchElement().subscribe({
   error: (error) => console.error('Capture element registration failed.', error),
@@ -230,7 +230,7 @@ later registration attempt may retry after the underlying error is corrected.
 
 The framework-neutral fixture is
 [`fixtures/web-component/index.html`](./fixtures/web-component/index.html).
-Install `@gx-capture/capture-workbench` from the configured NPM-compatible registry and
+Install `@gx-capture/capture-workbench-ui` from the configured NPM-compatible registry and
 import it from your bundler. The package does not publish a standalone browser
 bundle or CDN entry.
 

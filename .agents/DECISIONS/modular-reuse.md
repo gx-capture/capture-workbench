@@ -32,7 +32,7 @@
 ## Provisional release decisions
 
 - TypeScript artifacts follow the existing GitHub Packages convention used by
-  `@gx-capture/capture-workbench`.
+  `@gx-capture/capture-workbench-ui`.
 - The Python wheels use public PyPI with GitHub Actions OIDC Trusted
   Publishing (`id-token: write`); GitHub Packages is not the wheel registry.
 - This registry/auth choice is a publication gate, not proof of current package
@@ -110,7 +110,7 @@
 
 ## Resolved producer gates
 
-- `@gx-capture/capture-workbench@0.3.10` is installable from the authenticated
+- `@gx-capture/capture-workbench-ui@0.3.10` is installable from the authenticated
   canonical GitHub Packages npm registry; npmjs.org is not the source.
 - Contract generation is pinned to Pydantic `2.13.4`, pydantic-core `2.46.4`,
   and `pydantic.model_json_schema`; the generated manifest records these

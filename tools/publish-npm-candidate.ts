@@ -5,7 +5,7 @@ import { pathToFileURL } from 'node:url';
 
 const REGISTRY = 'https://npm.pkg.github.com';
 const PACKAGE_NAMES = new Set([
-  '@gx-capture/capture-workbench',
+  '@gx-capture/capture-workbench-ui',
   '@gx-capture/capture-contracts',
   '@gx-capture/capture-structuring',
 ]);

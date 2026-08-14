@@ -7,7 +7,7 @@ import test from 'node:test';
 
 const finalizer = resolve('tools/finalize-packed-package.ts');
 const expectedLoader =
-  "import '@angular/compiler';\nexport * from './fesm2022/gx-capture-capture-workbench.mjs';\n";
+  "import '@angular/compiler';\nexport * from './fesm2022/gx-capture-capture-workbench-ui.mjs';\n";
 
 function runFinalizer(packageDirectory: string) {
   return spawnSync(process.execPath, [finalizer, packageDirectory], {
@@ -26,11 +26,11 @@ test('packed package finalization is exact, idempotent, and fail-closed', async 
       manifestPath,
       `${JSON.stringify(
         {
-          name: '@gx-capture/capture-workbench',
-          module: 'fesm2022/gx-capture-capture-workbench.mjs',
+          name: '@gx-capture/capture-workbench-ui',
+          module: 'fesm2022/gx-capture-capture-workbench-ui.mjs',
           exports: {
             '.': {
-              default: './fesm2022/gx-capture-capture-workbench.mjs',
+              default: './fesm2022/gx-capture-capture-workbench-ui.mjs',
             },
           },
           sideEffects: ['./loader.mjs'],

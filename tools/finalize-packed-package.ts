@@ -6,7 +6,7 @@ const packageDirectory = resolve(
 );
 const manifestPath = join(packageDirectory, 'package.json');
 const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
-const fesmPath = './fesm2022/gx-capture-capture-workbench.mjs';
+const fesmPath = './fesm2022/gx-capture-capture-workbench-ui.mjs';
 const loaderPath = './loader.mjs';
 const usesPristineEntryPoint =
   manifest.module === fesmPath.slice(2) &&
@@ -16,7 +16,7 @@ const usesFinalizedEntryPoint =
   manifest.exports?.['.']?.default === loaderPath;
 
 if (
-  manifest.name !== '@gx-capture/capture-workbench' ||
+  manifest.name !== '@gx-capture/capture-workbench-ui' ||
   (!usesPristineEntryPoint && !usesFinalizedEntryPoint) ||
   JSON.stringify(manifest.sideEffects) !== JSON.stringify([loaderPath])
 ) {

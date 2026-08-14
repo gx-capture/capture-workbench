@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const PACKAGE_NAMES = new Map([
-  ['gx-capture-capture-workbench', '@gx-capture/capture-workbench'],
+  ['gx-capture-capture-workbench-ui', '@gx-capture/capture-workbench-ui'],
   ['gx-capture-capture-contracts', '@gx-capture/capture-contracts'],
   ['gx-capture-capture-structuring', '@gx-capture/capture-structuring'],
 ]);

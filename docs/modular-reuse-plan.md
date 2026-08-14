@@ -39,7 +39,7 @@ keeping heavy native extraction (OCR / Whisper) as a sidecar process.
 
 | Layer | Target form | Status today |
 |---|---|---|
-| Angular component | npm lib `@gx-capture/capture-workbench` | ✅ done |
+| Angular component | npm lib `@gx-capture/capture-workbench-ui` | ✅ done |
 | Wire contracts / schema | generated shared types pkg (TS + Py) | ❌ hand-mirrored in cert-prep |
 | Structuring scaffolding | host SDK (Py wheel + TS) | ❌ locked in sidecar; cert-prep forked it unsafely |
 | Sidecar lifecycle | shared Rust crate | ❌ cert-prep forked it, already drifting |
@@ -80,7 +80,7 @@ Phase 2 explicitly imports the contract types directly from the runtime and
 documents that exception.
 
 - **Phase 0.0 prerequisite:** confirm that
-  `@gx-capture/capture-workbench@0.3.10` is published. If it is absent, cut
+  `@gx-capture/capture-workbench-ui@0.3.10` is published. If it is absent, cut
   that producer release before attempting the consumer alignment in 0.1.
 - **Producer before consumer:** publish each contracts package, structuring
   SDK, and launcher crate before its corresponding cert-prep consumer phase
@@ -103,16 +103,16 @@ documents that exception.
 
 ## Phase 0 — Stop the bleeding (cert-prep; immediate; independent)
 
-cert-prep currently ships an **untested combination**: `@gx-capture/capture-workbench@0.3.8`
+cert-prep currently ships an **untested combination**: `@gx-capture/capture-workbench-ui@0.3.8`
 (npm component) + runtime `0.3.10` (Rust/Python/manifest/UI all say 0.3.10). The
 compatibility handshake only checks major `0`, so it cannot catch this.
 
-**0.0** Confirm that `@gx-capture/capture-workbench@0.3.10` is published and
+**0.0** Confirm that `@gx-capture/capture-workbench-ui@0.3.10` is published and
 installable by cert-prep. If it is not published, cut the producer component
 release before changing consumer pins.
 
 **0.1** Pick the canonical target version (`0.3.10`) and align every declaration:
-- `apps/cert-prep/package.json` (`@gx-capture/capture-workbench` pin)
+- `apps/cert-prep/package.json` (`@gx-capture/capture-workbench-ui` pin)
 - `pnpm-lock.yaml`, `pnpm-workspace.yaml` (`minimumReleaseAgeExclude`)
 - `apps/cert-prep-desktop/scripts/package-qa/constants.mts` (`CAPTURE_RUNTIME_VERSION`)
 - `apps/cert-prep-backend/src/cert_prep_backend/domains/capture_workbench/contracts.py` (`SUPPORTED_RUNTIME_VERSION`)
@@ -156,7 +156,7 @@ the generator toolchain version alongside the pinned release evidence so the
 regeneration diff is deterministic.
 
 **1.2** Publish the TS package to the existing GitHub Packages namespace
-alongside `@gx-capture/capture-workbench`; publish the Python wheels to public
+alongside `@gx-capture/capture-workbench-ui`; publish the Python wheels to public
 PyPI with GitHub Actions OIDC Trusted Publishing, without conflating them with
 the standalone runtime executable asset inventory. The consumer cutover is
 gated on clean PyPI installation and import probes.

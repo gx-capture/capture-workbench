@@ -8,7 +8,7 @@
 
 ## Purpose
 
-Publish `@gx-capture/capture-workbench` and the Windows x64 `capture-runtime` assets
+Publish `@gx-capture/capture-workbench-ui` and the Windows x64 `capture-runtime` assets
 from one verified build candidate without a separate clean-install evidence
 workflow.
 

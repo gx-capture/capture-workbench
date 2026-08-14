@@ -14,7 +14,7 @@ const archiveName = `${manifest.name.replace(/^@/u, '').replace('/', '-')}-${man
 const archivePath = join(archiveDirectory, archiveName);
 
 assert(
-  manifest.name === '@gx-capture/capture-workbench',
+  manifest.name === '@gx-capture/capture-workbench-ui',
   'Unexpected package name.',
 );
 assert(manifest.version === '0.3.12', 'Unexpected package version.');
@@ -119,7 +119,7 @@ assert(
   'Tarball is missing FESM output.',
 );
 const fesm = readFileSync(
-  join(packageDirectory, 'fesm2022/gx-capture-capture-workbench.mjs'),
+  join(packageDirectory, 'fesm2022/gx-capture-capture-workbench-ui.mjs'),
   'utf8',
 );
 assert(
@@ -129,7 +129,7 @@ assert(
 const loader = readFileSync(join(packageDirectory, 'loader.mjs'), 'utf8');
 assert(
   loader ===
-    "import '@angular/compiler';\nexport * from './fesm2022/gx-capture-capture-workbench.mjs';\n",
+    "import '@angular/compiler';\nexport * from './fesm2022/gx-capture-capture-workbench-ui.mjs';\n",
   'The package compiler loader must initialize Angular before the FESM.',
 );
 

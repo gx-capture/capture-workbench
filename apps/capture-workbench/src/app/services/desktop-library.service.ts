@@ -2,7 +2,7 @@ import { Injectable, inject } from '@angular/core';
 import type {
   CaptureDocumentV1,
   RawCaptureV1,
-} from '@gx-capture/capture-workbench';
+} from '@gx-capture/capture-workbench-ui';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { open } from '@tauri-apps/plugin-dialog';
 import { defer, from, map, Observable } from 'rxjs';

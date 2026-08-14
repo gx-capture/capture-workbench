@@ -25,7 +25,7 @@ published `v0.3.9` bytes and its final integration diff remains uncommitted.
 - [x] Add the Tauri/WebView scanned-PDF, image, and private-audio smoke plus
       early raw OCR visibility, UUID-scoped deletion, bounded redacted
       evidence, and owned process/listener cleanup checks.
-- [x] Update `@gx-capture/capture-workbench` and the desktop/runtime release
+- [x] Update `@gx-capture/capture-workbench-ui` and the desktop/runtime release
       surfaces to candidate version `0.3.9`; retain literal `0.3.8` only in
       explicitly historical compatibility fixtures and evidence.
 
@@ -55,7 +55,7 @@ published `v0.3.9` bytes and its final integration diff remains uncommitted.
 - [ ] Create and push `v0.3.9` only after the local worker probe and desktop
       three-media evidence pass. Verify the release publishes the core runtime,
       catalog/checksums, worker archives, NSIS installer, and
-      `@gx-capture/capture-workbench@0.3.9`, with no model, model ZIP, fixture,
+      `@gx-capture/capture-workbench-ui@0.3.9`, with no model, model ZIP, fixture,
       or package tarball in GitHub Release assets.
 - [ ] Update Cert Prep to the published package/runtime bytes, run fresh
       packaged scanned-PDF, image, and audio E2E plus v0.3.8 compatibility and

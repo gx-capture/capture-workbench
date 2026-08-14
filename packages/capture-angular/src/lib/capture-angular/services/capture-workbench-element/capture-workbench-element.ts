@@ -37,10 +37,10 @@ import { CaptureWorkbenchElementFacadeComponent } from '../../components/capture
 export const CAPTURE_WORKBENCH_ELEMENT_TAG = 'capture-workbench';
 
 const CAPTURE_WORKBENCH_REGISTRY_KEY = Symbol.for(
-  '@gx-capture/capture-workbench/custom-element-registrations',
+  '@gx-capture/capture-workbench-ui/custom-element-registrations',
 );
 const CAPTURE_WORKBENCH_ELEMENT_BRAND = Symbol.for(
-  '@gx-capture/capture-workbench/element',
+  '@gx-capture/capture-workbench-ui/element',
 );
 
 const CAPTURE_WORKBENCH_DECLARATIVE_ATTRIBUTES = Object.freeze([

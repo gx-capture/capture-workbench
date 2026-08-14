@@ -6,7 +6,7 @@ import { pathToFileURL } from 'node:url';
 const EXPECTED_SCHEMA_SHA256 =
   '2721093496a9f09044d5737cce70d2356d5f71757b1cd23a960e1d003ea014f2';
 const EXPECTED_NPM_PACKAGES = new Set([
-  '@gx-capture/capture-workbench',
+  '@gx-capture/capture-workbench-ui',
   '@gx-capture/capture-contracts',
   '@gx-capture/capture-structuring',
 ]);
@@ -285,7 +285,7 @@ async function main(): Promise<void> {
     throw new Error('Expected exactly one launcher crate candidate.');
 
   const expectedNpmPackages = new Set([
-    `gx-capture-capture-workbench-${version}.tgz`,
+    `gx-capture-capture-workbench-ui-${version}.tgz`,
     `gx-capture-capture-contracts-${version}.tgz`,
     `gx-capture-capture-structuring-${version}.tgz`,
   ]);

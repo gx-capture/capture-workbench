@@ -4,7 +4,7 @@ import { provideNoopAnimations } from '@angular/platform-browser/animations';
 import type {
   RuntimeModelInstallationV1,
   RuntimeModelOptionV1,
-} from '@gx-capture/capture-workbench';
+} from '@gx-capture/capture-workbench-ui';
 import { App } from './app';
 import { DesktopWorkspaceStore } from './services/desktop-workspace.store';
 

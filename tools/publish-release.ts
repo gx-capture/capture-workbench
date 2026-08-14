@@ -7,7 +7,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Observable, defer, from, map } from 'rxjs';
 
-const packageName = '@gx-capture/capture-workbench';
+const packageName = '@gx-capture/capture-workbench-ui';
 const releasePackageNames = Object.freeze([
   packageName,
   '@gx-capture/capture-contracts',

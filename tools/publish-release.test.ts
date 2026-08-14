@@ -33,7 +33,7 @@ const runtimeSizeReportName = 'runtime-size-report.json';
 const packageNames = [
   '@gx-capture/capture-contracts',
   '@gx-capture/capture-structuring',
-  '@gx-capture/capture-workbench',
+  '@gx-capture/capture-workbench-ui',
 ];
 
 function hash(bytes, algorithm, encoding = 'hex') {
@@ -225,7 +225,7 @@ function createCandidate() {
     ]),
   );
   const workbenchPackage = packageEntries.find(
-    ({ name }) => name === '@gx-capture/capture-workbench',
+    ({ name }) => name === '@gx-capture/capture-workbench-ui',
   );
   return {
     root,
@@ -303,7 +303,7 @@ function createRemote(candidate, initial = {}) {
     packageIntegrities: {
       ...(hasInitialPackageIntegrity ? candidate.packageIntegrities : {}),
       ...(hasInitialPackageIntegrity
-        ? { '@gx-capture/capture-workbench': initial.packageIntegrity }
+        ? { '@gx-capture/capture-workbench-ui': initial.packageIntegrity }
         : {}),
       ...(initial.packageIntegrities ?? {}),
     },
@@ -353,7 +353,7 @@ function createRemote(candidate, initial = {}) {
       state.packageIntegrities[packageEntry.name] =
         packageEntry.packageIntegrity;
       state.packageIntegrity =
-        state.packageIntegrities['@gx-capture/capture-workbench'];
+        state.packageIntegrities['@gx-capture/capture-workbench-ui'];
       return success();
     }
     if (command === 'gh' && args[0] === 'release' && args[1] === 'view') {
@@ -514,7 +514,7 @@ test('zero-asset draft uploads from inventory before readback, package, and publ
     assert.match(releaseNotes, /SHA-256/u);
     assert.match(
       releaseNotes,
-      /@gx-capture\/capture-workbench@0\.3\.12.*GitHub Packages.*never a GitHub Release asset/su,
+      /@gx-capture\/capture-workbench-ui@0\.3\.12.*GitHub Packages.*never a GitHub Release asset/su,
     );
     const firstUploadIndex = remote.calls.findIndex(
       ([command, group, operation]) =>

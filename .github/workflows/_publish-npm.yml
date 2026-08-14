@@ -114,7 +114,7 @@ jobs:
           cd "$probe"
           npm init --yes >/dev/null
           npm install --ignore-scripts \
-            "@gx-capture/capture-workbench@${{ inputs.release_version }}" \
+            "@gx-capture/capture-workbench-ui@${{ inputs.release_version }}" \
             "@gx-capture/capture-contracts@${{ inputs.release_version }}" \
             "@gx-capture/capture-structuring@${{ inputs.release_version }}"
 

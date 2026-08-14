@@ -122,7 +122,7 @@ async function main(): Promise<void> {
       ? join(resolve(packageCandidate), 'package')
       : resolve(root, 'dist/packs'),
     packages,
-    /^(?:gx-capture-capture-workbench|gx-capture-capture-contracts|gx-capture-capture-structuring)-\d+\.\d+\.\d+(?:-[^/]+)?\.tgz$/u,
+    /^(?:gx-capture-capture-workbench-ui|gx-capture-capture-contracts|gx-capture-capture-structuring)-\d+\.\d+\.\d+(?:-[^/]+)?\.tgz$/u,
     3,
   );
   const pythonNames = [
