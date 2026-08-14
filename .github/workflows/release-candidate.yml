@@ -295,6 +295,58 @@ jobs:
         shell: pwsh
         run: pnpm install --frozen-lockfile
 
+      - name: Ensure WebView2 Evergreen Runtime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $clientGuid = '{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+          $registryKeys = @(
+            "HKLM:\SOFTWARE\Microsoft\EdgeUpdate\Clients\$clientGuid",
+            "HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\$clientGuid",
+            "HKCU:\SOFTWARE\Microsoft\EdgeUpdate\Clients\$clientGuid"
+          )
+          function Test-WebView2RuntimeInstalled {
+            foreach ($registryKey in $registryKeys) {
+              $version = (Get-ItemProperty -LiteralPath $registryKey -Name 'pv' -ErrorAction SilentlyContinue).pv
+              if ($version) {
+                try {
+                  if ([version]$version -gt [version]'0.0.0.0') { return $true }
+                } catch {
+                  continue
+                }
+              }
+            }
+            return $false
+          }
+
+          if (-not (Test-WebView2RuntimeInstalled)) {
+            $bootstrapper = Join-Path $env:RUNNER_TEMP 'MicrosoftEdgeWebview2Setup.exe'
+            Invoke-WebRequest `
+              -Uri 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' `
+              -OutFile $bootstrapper
+            $installerProcess = Start-Process `
+              -FilePath $bootstrapper `
+              -ArgumentList '/silent', '/install' `
+              -Wait `
+              -PassThru `
+              -WindowStyle Hidden
+            if ($installerProcess.ExitCode -ne 0) {
+              throw "WebView2 Evergreen Runtime installer failed with exit code $($installerProcess.ExitCode)."
+            }
+          }
+
+          $runtimeReady = $false
+          for ($attempt = 0; $attempt -lt 15; $attempt++) {
+            if (Test-WebView2RuntimeInstalled) {
+              $runtimeReady = $true
+              break
+            }
+            Start-Sleep -Seconds 2
+          }
+          if (-not $runtimeReady) {
+            throw 'WebView2 Evergreen Runtime is not installed after prerequisite setup.'
+          }
+
       - name: Download and verify the exact candidate
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:

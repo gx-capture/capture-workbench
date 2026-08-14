@@ -591,6 +591,22 @@ test('release candidate workflow is dispatch-only, exact-commit, and immutable',
   const windowsInstallJob = workflow.slice(
     workflow.indexOf('  verify-windows-install:'),
   );
+  assert.match(windowsInstallJob, /Ensure WebView2 Evergreen Runtime/u);
+  assert.match(windowsInstallJob, /F3017226-FE2A-4295-8BDF-00C3A9A7E4C5/u);
+  assert.match(
+    windowsInstallJob,
+    /https:\/\/go\.microsoft\.com\/fwlink\/p\/\?LinkId=2124703/u,
+  );
+  assert.match(windowsInstallJob, /MicrosoftEdgeWebview2Setup\.exe/u);
+  assert.match(windowsInstallJob, /ArgumentList '\/silent', '\/install'/u);
+  assert.match(
+    windowsInstallJob,
+    /WebView2 Evergreen Runtime is not installed after prerequisite setup/u,
+  );
+  assert.ok(
+    windowsInstallJob.indexOf('Ensure WebView2 Evergreen Runtime') <
+      windowsInstallJob.indexOf('Download and verify the exact candidate'),
+  );
   assert.match(
     windowsInstallJob,
     /installed-deterministic-smoke\.ts(?: --release)?\s*$/mu,
