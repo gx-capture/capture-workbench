@@ -205,3 +205,4 @@ jobs:
       source_commit: ${{ inputs.source_commit }}
       release_version: ${{ inputs.release_version }}
       tag: v${{ inputs.release_version }}
+      tooling_commit: ${{ github.sha }}

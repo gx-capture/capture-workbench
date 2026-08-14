@@ -93,6 +93,8 @@ test('runtime promotion requires npm evidence before publishing runtime registri
   assert.match(promoteWorkflow, /tag-runtime-release/u);
   assert.match(releaseWorkflow, /create-runtime-github-release\.ts/u);
   assert.match(releaseWorkflow, /promotion-input-/u);
+  assert.match(releaseWorkflow, /tooling_commit/u);
+  assert.match(promoteWorkflow, /tooling_commit: \$\{\{ github\.sha \}\}/u);
 });
 
 test('desktop candidate consumes an exact Runtime Candidate', async () => {
