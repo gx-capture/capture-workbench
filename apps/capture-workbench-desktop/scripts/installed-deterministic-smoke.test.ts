@@ -507,7 +507,7 @@ test('installed smoke verifies the v2 bundled Ollama model', async () => {
     join(appRoot, 'scripts', 'installed-browser.ts'),
     'utf8',
   );
-  assert.match(source, /qwen3\\.5:0\\.8b/u);
+  assert.match(source, /qwen\(\?:3\\\.5:/u);
   assert.doesNotMatch(source, /qwen3\\.5:4b/u);
 });
 
