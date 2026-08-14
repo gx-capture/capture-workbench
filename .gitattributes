@@ -2,3 +2,4 @@ packages/capture-runtime/model-sources/release-model-source-lock.json text eol=l
 packages/capture-runtime/model-sources/commit-a/** -text
 packages/capture-runtime/scripts/generate_contracts.py text eol=lf
 packages/capture-runtime/tests/test_contract_set_generation.py text eol=lf
+packages/capture-runtime/src/capture_runtime/assets/contract-set.sha256 text eol=lf
