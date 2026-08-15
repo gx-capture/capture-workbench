@@ -44,6 +44,16 @@ test('package candidate workflow is independent from the desktop product lane', 
   assert.match(candidateWorkflow, /capture-runtime-client-java:build/u);
   assert.match(candidateWorkflow, /capture-runtime-client-python:build/u);
   assert.match(candidateWorkflow, /capture-structuring-python:build/u);
+  assert.match(
+    candidateWorkflow,
+    /astral-sh\/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b/u,
+  );
+  assert.match(candidateWorkflow, /python-version: '3\.12'/u);
+  assert(
+    candidateWorkflow.indexOf('astral-sh/setup-uv@') <
+      candidateWorkflow.indexOf('capture-runtime-client-python:build'),
+    'uv and Python must be installed before the Python package builds run.',
+  );
   assert.match(candidateWorkflow, /assemble-java-sdk-candidate\.ts/u);
   assert(
     candidateWorkflow.indexOf('assemble-java-sdk-candidate.ts') <
@@ -52,6 +62,14 @@ test('package candidate workflow is independent from the desktop product lane', 
   );
   assert.match(candidateWorkflow, /capture-angular:clean-consumer-smoke/u);
   assert.match(candidateWorkflow, /pnpm exec playwright install chromium/u);
+  assert.equal(
+    [
+      ...candidateWorkflow.matchAll(
+        /if: \$\{\{ always\(\) && env\.PACKAGE_CANDIDATE_ID != '' \}\}/gu,
+      ),
+    ].length,
+    3,
+  );
   assert.match(promoteWorkflow, /candidate_kind: package/u);
   assert.match(promoteWorkflow, /publish-maven/u);
   assert.match(promoteWorkflow, /publish-pypi/u);

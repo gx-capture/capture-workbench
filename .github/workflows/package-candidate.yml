@@ -49,6 +49,11 @@ jobs:
           node-version: 24
           cache: pnpm
 
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: '3.12'
+
       - name: Install Java for the Maven SDK candidate
         uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
         with:
@@ -140,7 +145,7 @@ jobs:
         run: pnpm nx run capture-angular:clean-consumer-smoke --skip-nx-cache
 
       - name: Record package consumer evidence
-        if: ${{ always() }}
+        if: ${{ always() && env.PACKAGE_CANDIDATE_ID != '' }}
         shell: bash
         env:
           VERIFICATION_STATUS: ${{ job.status }}
@@ -153,7 +158,7 @@ jobs:
             --output "$PACKAGE_CANDIDATE/cross-framework-consumers.json"
 
       - name: Re-verify the complete Package Candidate evidence
-        if: ${{ always() }}
+        if: ${{ always() && env.PACKAGE_CANDIDATE_ID != '' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -169,7 +174,7 @@ jobs:
 
       - name: Upload immutable Package Candidate
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: ${{ always() }}
+        if: ${{ always() && env.PACKAGE_CANDIDATE_ID != '' }}
         with:
           name: capture-package-candidate-${{ inputs.version }}-${{ github.run_id }}
           path: ${{ runner.temp }}/capture-package-candidate-${{ github.run_id }}
