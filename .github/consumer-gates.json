@@ -11,6 +11,7 @@
     "repository": "WodenWang820118/gx.law-prep",
     "workflowPath": ".github/workflows/capture-contract-gate.yml",
     "ref": "main",
-    "requiredWhen": "contract"
+    "requiredWhen": "contract",
+    "requiresPackageCandidateRunId": true
   }
 ]

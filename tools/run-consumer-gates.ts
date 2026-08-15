@@ -19,6 +19,7 @@ type GateConfig = {
   readonly workflowPath: string;
   readonly ref: string;
   readonly requiredWhen: 'always' | 'contract';
+  readonly requiresPackageCandidateRunId?: boolean;
 };
 
 type WorkflowRun = {
@@ -94,12 +95,18 @@ function validateConfig(value: unknown): GateConfig[] {
     const record = item as Record<string, unknown>;
     const keys = Object.keys(record).sort();
     if (
-      keys.join(',') !== 'name,ref,repository,requiredWhen,workflowPath' ||
+      !(
+        keys.join(',') === 'name,ref,repository,requiredWhen,workflowPath' ||
+        keys.join(',') ===
+          'name,ref,repository,requiredWhen,requiresPackageCandidateRunId,workflowPath'
+      ) ||
       typeof record.name !== 'string' ||
       typeof record.repository !== 'string' ||
       typeof record.workflowPath !== 'string' ||
       typeof record.ref !== 'string' ||
-      !['always', 'contract'].includes(String(record.requiredWhen))
+      !['always', 'contract'].includes(String(record.requiredWhen)) ||
+      (record.requiresPackageCandidateRunId !== undefined &&
+        typeof record.requiresPackageCandidateRunId !== 'boolean')
     ) {
       throw new Error('Consumer gate config contains an invalid gate.');
     }
@@ -119,6 +126,9 @@ function validateConfig(value: unknown): GateConfig[] {
       workflowPath: record.workflowPath,
       ref: record.ref,
       requiredWhen: record.requiredWhen as GateConfig['requiredWhen'],
+      ...(record.requiresPackageCandidateRunId === true
+        ? { requiresPackageCandidateRunId: true }
+        : {}),
     };
   });
 }
@@ -236,6 +246,9 @@ async function main(): Promise<void> {
     values,
     '--candidate-manifest-sha256',
   );
+  const packageCandidateRunId = Number(
+    required(values, '--package-candidate-run-id'),
+  );
   const sourceCommit = required(values, '--source-commit');
   const releaseVersion = required(values, '--release-version');
   const producerRepository = required(values, '--producer-repository');
@@ -243,6 +256,8 @@ async function main(): Promise<void> {
   const output = resolve(required(values, '--output'));
   if (!Number.isSafeInteger(producerRunId) || producerRunId < 1)
     throw new Error('Producer run ID is invalid.');
+  if (!Number.isSafeInteger(packageCandidateRunId) || packageCandidateRunId < 1)
+    throw new Error('Package candidate run ID is invalid.');
   await verifyCandidateManifest(candidate, {
     candidateId,
     candidateManifestSha256,
@@ -325,6 +340,9 @@ async function main(): Promise<void> {
       `inputs[candidate_id]=${candidateId}`,
       '-f',
       `inputs[candidate_manifest_sha256]=${candidateManifestSha256}`,
+      ...(gate.requiresPackageCandidateRunId
+        ? ['-f', `inputs[package_candidate_run_id]=${packageCandidateRunId}`]
+        : []),
       '-f',
       `inputs[source_commit]=${sourceCommit}`,
       '-f',

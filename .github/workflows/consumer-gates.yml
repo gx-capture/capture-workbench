@@ -18,6 +18,10 @@ on:
         description: 'SHA-256 of candidate-manifest.json'
         required: true
         type: string
+      package_candidate_run_id:
+        description: 'Successful Release Package Candidate workflow run containing the Java SDK candidate'
+        required: true
+        type: string
       source_commit:
         description: 'Exact producer source commit'
         required: true
@@ -62,6 +66,7 @@ jobs:
             --candidate "$RUNNER_TEMP/capture-candidate" \
             --candidate-id "${{ inputs.candidate_id }}" \
             --candidate-manifest-sha256 "${{ inputs.candidate_manifest_sha256 }}" \
+            --package-candidate-run-id "${{ inputs.package_candidate_run_id }}" \
             --source-commit "${{ inputs.source_commit }}" \
             --release-version "${{ inputs.release_version }}" \
             --producer-repository "${{ github.repository }}" \
