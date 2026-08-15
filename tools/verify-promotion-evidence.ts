@@ -47,6 +47,7 @@ const REQUIRED_PRODUCER_JOBS = [
   'verify-runtime-product',
   'verify-cross-framework-consumers',
 ] as const;
+const MODEL_ENABLED_PRODUCER_JOB = 'verify-model-enabled-runtime';
 const CONTRACT_CLASSIFICATIONS = new Set<ContractClassification>([
   'no-impact',
   'additive',
@@ -176,7 +177,7 @@ function verifyProducerJobs(
   const required = new Set<string>([
     'build-candidate',
     ...REQUIRED_PRODUCER_JOBS,
-    ...(releaseMode === 'model-enabled' ? ['model-enabled-runtime'] : []),
+    ...(releaseMode === 'model-enabled' ? [MODEL_ENABLED_PRODUCER_JOB] : []),
   ]);
   const jobs = new Map<string, JsonRecord>();
   for (const item of value) {
