@@ -121,7 +121,10 @@ export function buildInstalledAppEnvironment(source, directories, cdpPort) {
     LOCALAPPDATA: localAppData,
     TEMP: temporary,
     TMP: temporary,
-    WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-address=127.0.0.1 --remote-debugging-port=${cdpPort} --remote-allow-origins=*`,
+    // WebView2 documents --remote-debugging-port as the supported opt-in for
+    // the CDP endpoint. Keep this value minimal: extra Chromium flags can
+    // cause hosted WebView2 instances to ignore the whole environment value.
+    WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${cdpPort}`,
     WEBVIEW2_USER_DATA_FOLDER: webViewData,
   };
 }
