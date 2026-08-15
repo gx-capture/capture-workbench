@@ -60,10 +60,7 @@ jobs:
         uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
         env:
           MAVEN_USERNAME: ${{ github.actor }}
-          # The reusable workflow is granted packages:write, so the ephemeral
-          # repository token is the authoritative credential for this repo.
-          # This avoids relying on a PAT with an independently managed scope.
-          MAVEN_PASSWORD: ${{ github.token }}
+          MAVEN_PASSWORD: ${{ secrets.MAVEN_TOKEN }}
         with:
           distribution: temurin
           java-version: '25'
