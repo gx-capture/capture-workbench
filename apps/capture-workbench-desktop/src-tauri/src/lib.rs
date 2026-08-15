@@ -61,6 +61,34 @@ pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
+            // Tauri creates configured windows before running `setup`, which does not
+            // allow the installed smoke harness to provide its reserved WebView2 CDP
+            // port. Create the configured window here instead so the opt-in QA
+            // environment can be passed through Wry's explicit browser-argument API.
+            // Production launches do not set this environment variable and retain
+            // Wry's normal defaults.
+            let window_config = app
+                .config()
+                .app
+                .windows
+                .iter()
+                .find(|config| config.label == "main")
+                .ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        "Capture Workbench main window is not configured.",
+                    )
+                })?;
+            let mut window_builder =
+                tauri::WebviewWindowBuilder::from_config(app.handle(), window_config)?;
+            if let Ok(arguments) = std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS") {
+                let arguments = arguments.trim();
+                if !arguments.is_empty() {
+                    window_builder = window_builder.additional_browser_args(arguments);
+                }
+            }
+            window_builder.build()?;
+
             let data_dir = app_data_dir(app)?;
             #[cfg(feature = "model-smoke-app-data")]
             let model_smoke_fixtures =

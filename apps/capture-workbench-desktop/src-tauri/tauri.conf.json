@@ -13,6 +13,7 @@
     "windows": [
       {
         "label": "main",
+        "create": false,
         "title": "Capture Workbench",
         "width": 1280,
         "height": 860,
