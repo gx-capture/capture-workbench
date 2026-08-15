@@ -34,6 +34,10 @@ on:
         description: 'Release SemVer without the v prefix'
         required: true
         type: string
+      contract_set_sha256:
+        description: 'Canonical v2 contract-set SHA-256 for the release train'
+        required: true
+        type: string
       publication_scope:
         description: 'Publish the runtime GitHub Release only, or also publish Python and crate registries'
         required: true
@@ -109,8 +113,9 @@ jobs:
             --candidate-id '${{ inputs.runtime_candidate_id }}' \
             --candidate-manifest-sha256 '${{ inputs.runtime_candidate_manifest_sha256 }}' \
             --package-candidate-id '${{ inputs.package_candidate_id }}' \
+            --contract-set-sha256 '${{ inputs.contract_set_sha256 }}' \
             --require-evidence
-          node --input-type=module -e "const l=JSON.parse(await import('node:fs/promises').then(x=>x.readFile(process.argv[1],'utf8'))); if(l.schemaVersion!=='1'||l.registry!=='npm'||l.candidateId!=='${{ inputs.package_candidate_id }}'||l.releaseVersion!=='${{ inputs.release_version }}'||l.status!=='published') throw new Error('npm ledger is not bound to the published Package Candidate.');" "$RUNNER_TEMP/npm-ledger/registry-ledger-npm.json"
+          node --input-type=module -e "const l=JSON.parse(await import('node:fs/promises').then(x=>x.readFile(process.argv[1],'utf8'))); if(l.schemaVersion!=='1'||l.registry!=='npm'||l.candidateId!=='${{ inputs.package_candidate_id }}'||l.releaseCandidateId!=='${{ inputs.package_candidate_id }}'||l.contractSetSha256!=='${{ inputs.contract_set_sha256 }}'||!/^[0-9a-f]{64}$/.test(l.sourceCandidateManifestSha256)||l.releaseVersion!=='${{ inputs.release_version }}'||l.status!=='published') throw new Error('npm ledger is not bound to the published Package Candidate and contract set.');" "$RUNNER_TEMP/npm-ledger/registry-ledger-npm.json"
 
       - name: Upload exact promotion input for registry and release publication
         shell: bash
@@ -139,6 +144,8 @@ jobs:
       candidate_id: ${{ inputs.runtime_candidate_id }}
       source_commit: ${{ inputs.source_commit }}
       release_version: ${{ inputs.release_version }}
+      release_candidate_id: ${{ inputs.runtime_candidate_id }}
+      contract_set_sha256: ${{ inputs.contract_set_sha256 }}
     secrets: inherit
 
   publish-crates:
@@ -151,6 +158,8 @@ jobs:
     with:
       candidate_id: ${{ inputs.runtime_candidate_id }}
       source_commit: ${{ inputs.source_commit }}
+      release_candidate_id: ${{ inputs.runtime_candidate_id }}
+      contract_set_sha256: ${{ inputs.contract_set_sha256 }}
     secrets: inherit
 
   tag-runtime-release:

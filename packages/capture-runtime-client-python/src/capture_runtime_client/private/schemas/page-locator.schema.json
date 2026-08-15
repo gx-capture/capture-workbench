@@ -1,0 +1,49 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "kind": {
+      "const": "page",
+      "default": "page",
+      "title": "Kind",
+      "type": "string"
+    },
+    "page": {
+      "minimum": 1,
+      "title": "Page",
+      "type": "integer"
+    },
+    "boundingBox": {
+      "anyOf": [
+        {
+          "maxItems": 4,
+          "minItems": 4,
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Boundingbox"
+    }
+  },
+  "required": [
+    "page"
+  ],
+  "title": "PageLocator",
+  "type": "object"
+}

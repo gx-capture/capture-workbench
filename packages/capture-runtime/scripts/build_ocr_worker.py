@@ -14,7 +14,7 @@ def main() -> None:
     if sys.version_info[:2] != (3, 12):
         raise SystemExit("OCR worker requires Python 3.12")
     if platform.system() != "Windows" or platform.machine().lower() not in {"amd64", "x86_64"}:
-        raise SystemExit("OCR worker v1 is Windows x64 only")
+        raise SystemExit("OCR worker v2 is Windows x64 only")
     root = Path(__file__).resolve().parents[1]
     dist = root / "dist" / "workers"
     work = root / ".build" / "pyinstaller" / "ocr-worker"

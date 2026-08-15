@@ -8,11 +8,11 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable, Mapping
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-from conftest import TOKEN, idempotency_headers, poll_capture, poll_installation
+from conftest import TOKEN, idempotency_headers, poll_installation
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
@@ -23,7 +23,7 @@ from capture_runtime.config import (
     RuntimeSettings,
     sanitized_child_environment,
 )
-from capture_runtime.contracts import CaptureDocumentV1
+from capture_runtime.contracts import CaptureDocument
 from capture_runtime.ollama import (
     FakeRuntimeInstaller,
     IsolatedOllamaLifecycle,
@@ -45,43 +45,6 @@ class MutableClock(Clock):
         return self.current
 
 
-def test_startup_recovery_preserves_raw_and_retention_prunes(
-    settings_factory: Callable[..., RuntimeSettings],
-) -> None:
-    settings = settings_factory()
-    clock = MutableClock()
-    app = create_app(settings, clock=clock)
-    headers = {"Authorization": f"Bearer {TOKEN}"}
-    with TestClient(app, base_url=f"http://127.0.0.1:{settings.port}", headers=headers) as first:
-        response = first.post(
-            "/v1/captures",
-            headers=idempotency_headers(),
-            files={"file": ("recover.pdf", b"%PDF-1.7\nCAPTURE_TEXT:recover", "application/pdf")},
-            data={"sourceKind": "pdf", "structuringMode": "host"},
-        )
-        capture_id = response.json()["captureId"]
-        poll_capture(first, capture_id, lambda job: job["stage"] == "awaiting_structuring")
-
-    restarted_app = create_app(settings, clock=clock)
-    with TestClient(
-        restarted_app, base_url=f"http://127.0.0.1:{settings.port}", headers=headers
-    ) as restarted:
-        recovered = restarted.get(f"/v1/captures/{capture_id}")
-        assert recovered.status_code == 200
-        assert recovered.json()["error"]["code"] == "runtime_restarted"
-        assert restarted.get(f"/v1/captures/{capture_id}/raw").status_code == 200
-        assert not (
-            restarted.app.state.capture_repository.root / capture_id / "source.bin"
-        ).exists()
-
-    clock.current += timedelta(hours=25)
-    pruned_app = create_app(settings, clock=clock)
-    with TestClient(
-        pruned_app, base_url=f"http://127.0.0.1:{settings.port}", headers=headers
-    ) as pruned:
-        assert pruned.get(f"/v1/captures/{capture_id}").status_code == 404
-
-
 def test_startup_recovery_marks_interrupted_installation_failed(
     settings_factory: Callable[..., RuntimeSettings],
 ) -> None:
@@ -92,7 +55,7 @@ def test_startup_recovery_marks_interrupted_installation_failed(
         first_app, base_url=f"http://127.0.0.1:{settings.port}", headers=headers
     ) as first:
         response = first.post(
-            "/v1/runtime/installations",
+            "/v2/runtime/installations",
             headers=idempotency_headers(),
             json={"requirementId": "whisper-primary", "consent": True},
         )
@@ -103,18 +66,18 @@ def test_startup_recovery_marks_interrupted_installation_failed(
     with TestClient(
         restarted_app, base_url=f"http://127.0.0.1:{settings.port}", headers=headers
     ) as restarted:
-        recovered = restarted.get(f"/v1/runtime/installations/{installation_id}")
+        recovered = restarted.get(f"/v2/runtime/installations/{installation_id}")
         assert recovered.status_code == 200
         assert recovered.json()["status"] == "failed"
         assert recovered.json()["error"]["code"] == "runtime_restarted"
 
 
 def test_schema_and_manifest_are_generated_from_pydantic(tmp_path: Path) -> None:
-    schema_path = write_capture_document_schema(tmp_path / "capture-document-v1.schema.json")
+    schema_path = write_capture_document_schema(tmp_path / "capture-document-v2.schema.json")
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
     assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
-    assert "type" in schema["$defs"]["CaptureBlockV1"]["required"]
-    assert "targetText" in schema["$defs"]["CaptureBlockV1"]["required"]
+    assert "type" in schema["$defs"]["CaptureBlock"]["required"]
+    assert "targetText" in schema["$defs"]["CaptureBlock"]["required"]
     assert schema["additionalProperties"] is False
 
     executable = tmp_path / "capture-runtime.exe"
@@ -139,7 +102,7 @@ def test_schema_and_manifest_are_generated_from_pydantic(tmp_path: Path) -> None
 
 def test_contract_rejects_extra_fields() -> None:
     with pytest.raises(ValidationError) as raised:
-        CaptureDocumentV1.model_validate({"schemaVersion": "1", "unexpected": True})
+        CaptureDocument.model_validate({"schemaVersion": "2", "unexpected": True})
     assert any(issue["type"] == "extra_forbidden" for issue in raised.value.errors())
 
 

@@ -1,1 +1,1 @@
-"""HTTP route registration for the Capture Runtime v1 API."""
+"""HTTP route registration for the Capture Runtime v2 API."""

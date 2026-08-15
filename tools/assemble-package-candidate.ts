@@ -14,9 +14,16 @@ import { createContractSnapshot } from './create-contract-snapshot.ts';
 
 const PACKAGE_FILES = new Map([
   ['gx-capture-capture-workbench-ui', '@gx-capture/capture-workbench-ui'],
-  ['gx-capture-capture-contracts', '@gx-capture/capture-contracts'],
+  ['gx-capture-capture-runtime-client', '@gx-capture/capture-runtime-client'],
   ['gx-capture-capture-structuring', '@gx-capture/capture-structuring'],
 ]);
+
+const MAVEN_FILES = [
+  'maven/capture-runtime-client-{version}.jar',
+  'maven/capture-runtime-client-{version}-sources.jar',
+  'maven/pom.xml',
+  'maven/capture-runtime-contract-set.sha256',
+] as const;
 
 export type PackageCandidateManifest = {
   readonly schemaVersion: '1';
@@ -26,6 +33,7 @@ export type PackageCandidateManifest = {
   readonly releaseVersion: string;
   readonly producerRunId: number;
   readonly packageManifestSha256: string;
+  readonly contractSetSha256: string;
   readonly artifacts: readonly {
     readonly path: string;
     readonly bytes: number;
@@ -108,13 +116,15 @@ async function main(): Promise<void> {
   );
   const root = resolve(import.meta.dirname, '..');
   const packageDirectory = join(output, 'package');
+  const pythonDirectory = join(output, 'python');
   const contractsDirectory = join(output, 'contracts');
   const checksumsDirectory = join(output, 'checksums');
-  await mkdir(output, { recursive: false });
+  await mkdir(output, { recursive: true });
   await Promise.all([
-    mkdir(packageDirectory),
-    mkdir(contractsDirectory),
-    mkdir(checksumsDirectory),
+    mkdir(packageDirectory, { recursive: true }),
+    mkdir(pythonDirectory, { recursive: true }),
+    mkdir(contractsDirectory, { recursive: true }),
+    mkdir(checksumsDirectory, { recursive: true }),
   ]);
 
   const packDirectory = resolve(root, 'dist/packs');
@@ -135,6 +145,21 @@ async function main(): Promise<void> {
       cp(join(packDirectory, name), join(packageDirectory, name)),
     ),
   );
+
+  const pythonArtifactNames = [
+    ...(await copyPythonArtifacts(
+      resolve(root, 'packages/capture-runtime-client-python/dist'),
+      pythonDirectory,
+      'capture_runtime_client',
+      version,
+    )),
+    ...(await copyPythonArtifacts(
+      resolve(root, 'packages/capture-structuring-python/dist'),
+      pythonDirectory,
+      'capture_structuring',
+      version,
+    )),
+  ];
 
   const packageManifest = {
     schemaVersion: '1',
@@ -176,10 +201,32 @@ async function main(): Promise<void> {
     `${JSON.stringify(await createContractSnapshot(root), null, 2)}\n`,
     'utf8',
   );
+  const contractSetJson = resolve(
+    root,
+    'packages/capture-runtime/src/capture_runtime/assets/contract-set.json',
+  );
+  const contractSetShaPath = resolve(
+    root,
+    'packages/capture-runtime/src/capture_runtime/assets/contract-set.sha256',
+  );
+  const contractSetSha256 = (await readFile(contractSetShaPath, 'utf8')).trim();
+  if (
+    !/^[0-9a-f]{64}$/u.test(contractSetSha256) ||
+    (await sha256(contractSetJson)) !== contractSetSha256
+  ) {
+    throw new Error('Canonical v2 contract-set bundle/hash is invalid.');
+  }
+  await cp(contractSetJson, join(contractsDirectory, 'contract-set.json'));
+  await cp(contractSetShaPath, join(contractsDirectory, 'contract-set.sha256'));
   const artifactPaths = [
     ...archiveNames.map((name) => `package/${name}`),
+    ...pythonArtifactNames.map((name) => `python/${name}`),
     'package-manifest.json',
     'contracts/contract-snapshot.json',
+    'contracts/contract-set.json',
+    'contracts/contract-set.sha256',
+    'java-candidate-manifest.json',
+    ...MAVEN_FILES.map((path) => path.replace('{version}', version)),
   ];
   const artifacts = (await inventory(output, artifactPaths)).sort(
     (left, right) => left.path.localeCompare(right.path),
@@ -191,8 +238,9 @@ async function main(): Promise<void> {
     releaseVersion: version,
     producerRunId,
     packageManifestSha256,
+    contractSetSha256,
     artifacts,
-    toolchains: { node: process.version },
+    toolchains: { node: process.version, python: '3.12' },
   } as const;
   const candidateId = createHash('sha256')
     .update(JSON.stringify(baseManifest))
@@ -220,6 +268,33 @@ async function main(): Promise<void> {
   process.stdout.write(
     `Assembled npm package candidate ${version} (${candidateId}) at ${output}.\n`,
   );
+}
+
+async function copyPythonArtifacts(
+  sourceDirectory: string,
+  destinationDirectory: string,
+  distribution: 'capture_runtime_client' | 'capture_structuring',
+  version: string,
+): Promise<string[]> {
+  const escapedVersion = version.replaceAll('.', '\\.');
+  const pattern = new RegExp(
+    `^${distribution}-${escapedVersion}(?:-[^/]+)?\\.(?:whl|tar\\.gz)$`,
+    'u',
+  );
+  const names = (await readdir(sourceDirectory))
+    .filter((name) => pattern.test(name))
+    .sort();
+  if (names.length !== 2) {
+    throw new Error(
+      `Expected exactly one wheel and one source archive for ${distribution} ${version}; found ${names.length}.`,
+    );
+  }
+  await Promise.all(
+    names.map((name) =>
+      cp(join(sourceDirectory, name), join(destinationDirectory, name)),
+    ),
+  );
+  return names;
 }
 
 if (

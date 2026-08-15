@@ -47,7 +47,7 @@ def artifact(
     return {
         "role": "worker",
         "requirementId": requirement_id,
-        "artifactVersion": "0.3.12",
+        "artifactVersion": "0.4.0",
         "workerProtocolVersion": "1",
         "platform": "windows",
         "arch": "x86_64",
@@ -57,7 +57,7 @@ def artifact(
         "extractedBytes": extracted_bytes,
         "entryPoint": entry_point,
         "filesManifestSha256": hashlib.sha256(manifest).hexdigest(),
-        "url": f"https://example.invalid/v0.3.12/{file_name}",
+        "url": f"https://example.invalid/v0.4.0/{file_name}",
     }
 
 
@@ -115,7 +115,7 @@ def complete_catalog(engine_dir: Path, catalog_path: Path) -> None:
         canonical_json_bytes(
             {
                 "catalogVersion": "2",
-                "runtimeVersion": "0.3.12",
+                "runtimeVersion": "0.4.0",
                 "requirements": requirements,
             }
         )
@@ -127,7 +127,7 @@ def test_release_copies_only_catalogued_engine_assets_with_checksums(
 ) -> None:
     executable = tmp_path / "capture-runtime.exe"
     executable.write_bytes(b"runtime")
-    schema = write_capture_document_schema(tmp_path / "capture-document-v1.schema.json")
+    schema = write_capture_document_schema(tmp_path / "capture-document-v2.schema.json")
     engine_dir = tmp_path / "engines"
     engine_dir.mkdir()
     catalog = tmp_path / "capture-engine-catalog.json"
@@ -150,7 +150,7 @@ def test_release_copies_only_catalogued_engine_assets_with_checksums(
 def test_release_rejects_catalog_archive_drift_before_copying(tmp_path: Path) -> None:
     executable = tmp_path / "capture-runtime.exe"
     executable.write_bytes(b"runtime")
-    schema = write_capture_document_schema(tmp_path / "capture-document-v1.schema.json")
+    schema = write_capture_document_schema(tmp_path / "capture-document-v2.schema.json")
     engine_dir = tmp_path / "engines"
     engine_dir.mkdir()
     catalog = tmp_path / "capture-engine-catalog.json"

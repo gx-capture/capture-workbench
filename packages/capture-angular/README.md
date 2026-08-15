@@ -16,16 +16,16 @@ the same `.npmrc.example`):
 //npm.pkg.github.com/:_authToken=${GITHUB_PACKAGES_TOKEN}
 ```
 
-The published `0.3.12` registry bytes are the synchronized v2 package
+The published `0.4.0` registry bytes are the synchronized v2 package
 candidate and have been verified against the package candidate artifact. The
 published version is immutable; any future package metadata or API change
-must use the next coordinated version (for example, `0.3.13`).
+must use the next coordinated version (for example, `0.4.1`).
 
 Install the exact published version for consumer verification:
 
 ```powershell
 $env:GITHUB_PACKAGES_TOKEN = '<read:packages token>'
-corepack pnpm add @gx-capture/capture-workbench-ui@0.3.12 --save-exact
+corepack pnpm add @gx-capture/capture-workbench-ui@0.4.0 --save-exact
 ```
 
 ## Angular integration contract
@@ -38,8 +38,8 @@ provided. Angular runtime state is exposed through signals backed by
 publish their result through signals/events. `defineCaptureWorkbenchElement()`
 also returns an `Observable<void>` and should be subscribed during startup.
 
-Successful output is always the runtime-validated `CaptureDocumentV1`. A
-structuring failure may expose `RawCaptureV1` with `diagnosticOnly: true`, but
+Successful output is always the runtime-validated `CaptureDocument`. A
+structuring failure may expose `RawCapture` with `diagnosticOnly: true`, but
 the component never emits `completed` for that path.
 
 If every commit/report status check is temporarily unreachable, the task remains
@@ -71,12 +71,12 @@ token or invokes an LLM provider in the WebView.
 
 Do not put a sidecar bearer token in a URL, browser log, or `localStorage`.
 
-`HttpCaptureClient` remains available for framework-neutral transport use, but
-the public consumer contract does not pass a bearer token into Angular or a
-WebView. Use a host-owned `CaptureClient` adapter and keep authentication in
-the host backend. The client rejects non-HTTP or non-loopback origins before
-any credential resolver is evaluated and enforces the `capture-runtime`
-service identity during its compatibility handshake.
+`HttpCaptureClient` is the RxJS adapter over the canonical TypeScript Runtime
+SDK. It accepts only a host-owned `RuntimeTransport`; sidecar origins and bearer
+credentials are deliberately absent from the Angular/WebView API. Its
+readiness call performs strict `/meta/v2/contracts` discovery, validates the
+content-addressed bundle against the release allowlist, and rejects any
+non-`capture-runtime` service identity.
 
 ## v2 capture event streaming (SSE)
 
@@ -89,10 +89,9 @@ client.captureEvents(captureId, { lastEventId }).subscribe({
 });
 ```
 
-`HttpCaptureClient` implements it with `fetch` plus `ReadableStream` parsing
-against `/v2/captures/{captureId}/events`. Native `EventSource` is not used
-because the stream requires an `Authorization` header, and bearer tokens are
-never placed in URLs. Every subscription starts a fresh request and
+`HttpCaptureClient` delegates the stream to the TypeScript SDK through the
+host-provided transport and exposes it as a cold RxJS Observable. Native
+`EventSource` is not used. Every subscription starts a fresh request and
 unsubscribing aborts it. Pass `lastEventId` (an SSE sequence) to resume replay
 after a reconnect; the runtime suppresses already-delivered events. Terminal
 `completed`, `failed`, and `cancelled` events close the stream, and
@@ -102,12 +101,12 @@ Host adapters that proxy the v2 endpoint must implement `captureEvents`,
 `startStreamingCapture`, `getStreamingCapture`, `cancelStreamingCapture`,
 `getStreamingPartial`, `getStreamingResult`,
 `commitStreamingStructuredResult`, `reportStreamingStructuringFailure`, and
-`deleteStreamingCapture`. The first-party client no longer exposes the removed
-v1 capture methods; the generated v1 wire types remain available for current
-runtime compatibility during the coordinated consumer migration.
+`deleteStreamingCapture`. The first-party client exposes only the canonical v2
+capture methods and public DTOs. Generated wire codecs remain private
+implementation details.
 
 The host commit boundary is `POST /v2/captures/{captureId}/structure/commit`
-with a full `CaptureDocumentV1` candidate and an idempotency key. The runtime
+with a full `CaptureDocument` candidate and an idempotency key. The runtime
 validates schema, locator/order, non-empty text, and raw provenance before
 terminal completion. Host failure uses
 `POST /v2/captures/{captureId}/structure/failure` with `{ code, message }` and
@@ -143,7 +142,7 @@ bootstrapApplication(App, {
 ```
 
 For a trusted frontend-owned integration, the provider receives canonical raw OCR/STT and returns a full
-`CaptureDocumentV1` candidate. The component submits that candidate to the
+`CaptureDocument` candidate. The component submits that candidate to the
 runtime; only a candidate accepted by runtime schema, locator, non-empty, and
 ordering validation can produce `completed`.
 
@@ -254,5 +253,5 @@ do not grant arbitrary HTTPS, `unsafe-eval`, or wildcard origins. The element
 uses the existing CSS variables `--capture-accent`, `--capture-background`,
 `--capture-foreground`, `--capture-muted`, `--capture-border`, and
 `--capture-danger`. It preserves the package's runtime API-major and
-`CaptureDocumentV1` schema handshake; element and runtime versions must remain
+`CaptureDocument` schema handshake; element and runtime versions must remain
 compatible.

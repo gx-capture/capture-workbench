@@ -8,7 +8,7 @@ import pytest
 from capture_structuring import StructuringValidationError, validate_structuring_candidate
 from pydantic import ValidationError
 
-from capture_runtime.contracts import CaptureDocumentV1, RawCaptureV1
+from capture_runtime.contracts import CaptureDocument, RawCapture
 
 
 def _engine(name: str) -> dict[str, str]:
@@ -33,7 +33,7 @@ def _raw_payload() -> dict[str, object]:
         },
     ]
     return {
-        "schemaVersion": "1",
+        "schemaVersion": "2",
         "diagnosticOnly": True,
         "source": {
             "sha256": "1" * 64,
@@ -66,7 +66,7 @@ def _document_payload() -> dict[str, object]:
         for index, segment in enumerate(segments)
     ]
     return {
-        "schemaVersion": "1",
+        "schemaVersion": "2",
         "source": raw["source"],
         "rawSegments": segments,
         "blocks": blocks,
@@ -81,7 +81,7 @@ def _document_payload() -> dict[str, object]:
 
 
 def test_document_requires_exact_block_coverage_order_source_text_and_locator() -> None:
-    assert CaptureDocumentV1.model_validate(_document_payload()).target_text == "First\nSecond"
+    assert CaptureDocument.model_validate(_document_payload()).target_text == "First\nSecond"
 
     omitted = copy.deepcopy(_document_payload())
     omitted["blocks"] = omitted["blocks"][:1]
@@ -106,16 +106,16 @@ def test_document_requires_exact_block_coverage_order_source_text_and_locator() 
 
     for invalid in [omitted, reordered, duplicated, changed_text, changed_locator]:
         with pytest.raises(ValidationError):
-            CaptureDocumentV1.model_validate(invalid)
+            CaptureDocument.model_validate(invalid)
 
 
 def test_candidate_cannot_omit_raw_provenance_even_if_internally_valid() -> None:
-    raw = RawCaptureV1.model_validate(_raw_payload())
+    raw = RawCapture.model_validate(_raw_payload())
     candidate = copy.deepcopy(_document_payload())
     candidate["rawSegments"] = candidate["rawSegments"][:1]
     candidate["blocks"] = candidate["blocks"][:1]
     candidate["sourceText"] = "First"
     candidate["targetText"] = "First"
-    internally_valid = CaptureDocumentV1.model_validate(candidate)
+    internally_valid = CaptureDocument.model_validate(candidate)
     with pytest.raises(StructuringValidationError):
         validate_structuring_candidate(internally_valid, raw)

@@ -150,9 +150,8 @@ async function main(): Promise<void> {
   const values = parseArguments(process.argv.slice(2));
   const candidate = resolve(values.get('--candidate')!);
   const output = resolve(values.get('--output')!);
-  const manifest = JSON.parse(
-    await readFile(join(candidate, 'candidate-manifest.json'), 'utf8'),
-  ) as { candidateId?: unknown };
+  const manifestBytes = await readFile(join(candidate, 'candidate-manifest.json'));
+  const manifest = JSON.parse(manifestBytes.toString('utf8')) as { candidateId?: unknown };
   if (
     typeof manifest.candidateId !== 'string' ||
     !/^[0-9a-f]{64}$/u.test(manifest.candidateId)
@@ -261,6 +260,7 @@ async function main(): Promise<void> {
         schemaVersion: '1',
         registry: 'crates.io',
         candidateId: manifest.candidateId,
+        sourceCandidateManifestSha256: createHash('sha256').update(manifestBytes).digest('hex'),
         releaseVersion: version,
         status: 'published',
         artifacts: [{ name: crateName, candidateSha256, registrySha256 }],

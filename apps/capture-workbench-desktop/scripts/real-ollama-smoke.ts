@@ -81,7 +81,7 @@ async function main(): Promise<void> {
     form.set('structuringMode', 'runtime');
     form.set('targetLanguage', 'zh-TW');
     form.set('file', new Blob([sourceBytes], { type: 'application/pdf' }), basename(sourcePath));
-    const created = await request<CaptureJob>(runtimePort, host, origin, token, '/v1/captures', {
+    const created = await request<CaptureJob>(runtimePort, host, origin, token, '/v2/captures', {
       method: 'POST', headers: { 'x-idempotency-key': randomUUID() }, body: form,
     });
     captureId = created.captureId;
@@ -90,7 +90,7 @@ async function main(): Promise<void> {
       throw new Error(`Real capture ended as ${terminal.status}: ${terminal.error?.message ?? terminal.stage}`);
     }
     const result = await request<Record<string, unknown>>(
-      runtimePort, host, origin, token, `/v1/captures/${captureId}/result`,
+      runtimePort, host, origin, token, `/v2/captures/${captureId}/result`,
     );
     const structuring = result['structuringEngine'] as Record<string, unknown> | undefined;
     if (
@@ -113,7 +113,7 @@ async function main(): Promise<void> {
     process.stdout.write(`Real Ollama smoke report: ${join(outputDirectory, 'real-ollama-smoke.json')}\n`);
   } finally {
     if (captureId) {
-      await request<void>(runtimePort, host, origin, token, `/v1/captures/${captureId}`, { method: 'DELETE' }).catch(() => undefined);
+      await request<void>(runtimePort, host, origin, token, `/v2/captures/${captureId}`, { method: 'DELETE' }).catch(() => undefined);
     }
     terminateOwnedTree(child.pid);
   }
@@ -130,7 +130,7 @@ async function prepareCoreRequirements(
     host,
     origin,
     token,
-    '/v1/runtime/requirements',
+    '/v2/runtime/requirements',
   );
   for (const requirementId of coreRequirementIds) {
     const requirement = listed.items.find((item) => item.requirementId === requirementId);
@@ -148,7 +148,7 @@ async function prepareCoreRequirements(
       host,
       origin,
       token,
-      '/v1/runtime/installations',
+      '/v2/runtime/installations',
       {
         method: 'POST',
         headers: {
@@ -165,7 +165,7 @@ async function prepareCoreRequirements(
     host,
     origin,
     token,
-    '/v1/runtime/requirements',
+    '/v2/runtime/requirements',
   );
   for (const requirementId of coreRequirementIds) {
     const status = verified.items.find((item) => item.requirementId === requirementId)?.status;
@@ -183,7 +183,7 @@ async function prepareSelectedModel(
 ): Promise<void> {
   const options = await request<{
     readonly items: readonly { readonly optionId: string; readonly status: string }[];
-  }>(port, host, origin, token, '/v1/runtime/model-options');
+  }>(port, host, origin, token, '/v2/runtime/model-options');
   const option = options.items.find((item) => item.optionId === 'qwen3.5-0.8b-v1');
   if (!option) throw new Error('Real runtime did not expose the qwen3.5 0.8B model option.');
   if (option.status === 'active') return;
@@ -192,7 +192,7 @@ async function prepareSelectedModel(
     host,
     origin,
     token,
-    '/v1/runtime/model-installations',
+    '/v2/runtime/model-installations',
     {
       method: 'POST',
       headers: {
@@ -237,7 +237,7 @@ async function waitForReady(port: number, host: string, origin: string, token: s
   while (Date.now() < deadline) {
     if (child.exitCode !== null) throw new Error('Real runtime exited before readiness.');
     try {
-      const ready = await request<{ readonly ready: boolean }>(port, host, origin, token, '/v1/health/ready');
+      const ready = await request<{ readonly ready: boolean }>(port, host, origin, token, '/v2/health/ready');
       if (ready.ready) return;
     } catch { /* Runtime is still starting. */ }
     await delay(500);
@@ -248,7 +248,7 @@ async function waitForReady(port: number, host: string, origin: string, token: s
 async function waitForTerminal(port: number, host: string, origin: string, token: string, captureId: string): Promise<CaptureJob> {
   const deadline = Date.now() + maxWaitMs;
   while (Date.now() < deadline) {
-    const job = await request<CaptureJob>(port, host, origin, token, `/v1/captures/${captureId}`);
+    const job = await request<CaptureJob>(port, host, origin, token, `/v2/captures/${captureId}`);
     if (!['queued', 'running'].includes(job.status)) return job;
     await delay(750);
   }
@@ -269,7 +269,7 @@ async function waitForInstallation(
       host,
       origin,
       token,
-      `/v1/runtime/installations/${installation.installationId}`,
+      `/v2/runtime/installations/${installation.installationId}`,
     );
     if (current.status === 'completed') return;
     if (!['queued', 'running'].includes(current.status)) {
@@ -296,7 +296,7 @@ async function waitForModelInstallation(
       host,
       origin,
       token,
-      `/v1/runtime/model-installations/${installation.installationId}`,
+      `/v2/runtime/model-installations/${installation.installationId}`,
     );
     if (current.status === 'completed') return;
     if (!['queued', 'running'].includes(current.status)) {

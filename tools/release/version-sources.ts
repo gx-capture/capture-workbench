@@ -109,8 +109,8 @@ export function collectReleaseVersionEntries(
   const packagePaths = [
     ['Capture Workbench package', 'packages/capture-angular/package.json'],
     [
-      'Capture contracts TypeScript package',
-      'packages/capture-contracts/package.json',
+      'Capture Runtime client TypeScript package',
+      'packages/capture-runtime-client/package.json',
     ],
     [
       'Capture structuring TypeScript package',
@@ -122,8 +122,8 @@ export function collectReleaseVersionEntries(
 
   const tomlPaths = [
     [
-      'Capture contracts Python wheel',
-      'packages/capture-contracts/python/pyproject.toml',
+      'Capture Runtime client Python wheel',
+      'packages/capture-runtime-client-python/pyproject.toml',
     ],
     [
       'Capture structuring Python wheel',
@@ -257,46 +257,6 @@ export function collectReleaseVersionEntries(
     ),
   );
 
-  const generatedManifests = [
-    [
-      'Generated TypeScript contract packageVersion',
-      'packages/capture-contracts/src/generated/contract-manifest.json',
-      'packageVersion',
-    ],
-    [
-      'Generated TypeScript contract runtimeVersion',
-      'packages/capture-contracts/src/generated/contract-manifest.json',
-      'runtimeVersion',
-    ],
-    [
-      'Generated Python contract packageVersion',
-      'packages/capture-contracts/python/src/capture_contracts/contract-manifest.json',
-      'packageVersion',
-    ],
-    [
-      'Generated Python contract runtimeVersion',
-      'packages/capture-contracts/python/src/capture_contracts/contract-manifest.json',
-      'runtimeVersion',
-    ],
-  ] as const;
-  for (const [label, path, key] of generatedManifests)
-    add(entries, label, json(root, path)[key]);
-
-  addRegex(
-    entries,
-    'Generated TypeScript runtime constant',
-    text(root, 'packages/capture-contracts/src/generated/contracts.ts'),
-    /export const RUNTIME_VERSION\s*=\s*["']([^"']+)["']/u,
-  );
-  addRegexAll(
-    entries,
-    'Generated Python runtime version',
-    text(
-      root,
-      'packages/capture-contracts/python/src/capture_contracts/generated_models.py',
-    ),
-    /(?:RUNTIME_VERSION\s*=\s*|runtime_version:\s*Literal\[)["']([^"']+)["']/gu,
-  );
   addRegex(
     entries,
     'Canonical runtime contract literal',

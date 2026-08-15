@@ -1,0 +1,40 @@
+{
+  "name": "capture-runtime-client-java",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "library",
+  "sourceRoot": "packages/capture-runtime-client-java/src",
+  "tags": ["scope:capture", "type:sdk", "lang:java"],
+  "targets": {
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "mvn test",
+        "cwd": "{projectRoot}"
+      }
+    },
+    "build": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "mvn package -DskipTests",
+        "cwd": "{projectRoot}"
+      },
+      "outputs": ["{projectRoot}/target"]
+    },
+    "install": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "mvn install -DskipTests",
+        "cwd": "{projectRoot}"
+      },
+      "outputs": ["{projectRoot}/target"]
+    },
+    "verify-contract-hash": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "mvn -q -DskipTests package && node ../../tools/verify-java-sdk-artifact.mjs",
+        "cwd": "{projectRoot}"
+      },
+      "outputs": ["{projectRoot}/target"]
+    }
+  }
+}

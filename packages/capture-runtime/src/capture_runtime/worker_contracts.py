@@ -1,6 +1,6 @@
 """Internal JSON-lines worker protocol contracts.
 
-These types are intentionally not exported through the public ``/v1`` models.
+These types are intentionally not exported through the public v2 models.
 """
 
 from __future__ import annotations

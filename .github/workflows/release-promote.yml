@@ -56,6 +56,11 @@ on:
           - npm
           - pypi
           - crates
+          - maven
+      contract_set_sha256:
+        description: 'Canonical v2 contract-set SHA-256 for the release train'
+        required: true
+        type: string
 
 permissions:
   actions: read
@@ -73,6 +78,9 @@ jobs:
     outputs:
       source_commit: ${{ steps.evidence.outputs.source_commit }}
       release_version: ${{ steps.evidence.outputs.release_version }}
+      java_candidate_manifest_sha256: ${{ steps.evidence.outputs.java_candidate_manifest_sha256 }}
+      java_candidate_id: ${{ steps.evidence.outputs.java_candidate_id }}
+      runtime_candidate_manifest_sha256: ${{ steps.evidence.outputs.runtime_candidate_manifest_sha256 }}
     steps:
       - name: Check out promotion tooling
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -123,9 +131,10 @@ jobs:
             --candidate "$RUNNER_TEMP/package-candidate" \
             --version "$release_version" \
             --source-commit "$source_commit" \
-            --producer-run-id '${{ inputs.package_candidate_run_id }}' \
+           --producer-run-id '${{ inputs.package_candidate_run_id }}' \
            --candidate-id '${{ inputs.package_candidate_id }}' \
            --candidate-manifest-sha256 '${{ inputs.package_candidate_manifest_sha256 }}' \
+           --contract-set-sha256 '${{ inputs.contract_set_sha256 }}' \
            --require-evidence
           node tools/verify-runtime-candidate.ts \
             --candidate "$RUNNER_TEMP/runtime-candidate" \
@@ -135,6 +144,7 @@ jobs:
             --candidate-id '${{ inputs.runtime_candidate_id }}' \
             --candidate-manifest-sha256 '${{ inputs.runtime_candidate_manifest_sha256 }}' \
             --package-candidate-id '${{ inputs.package_candidate_id }}' \
+            --contract-set-sha256 '${{ inputs.contract_set_sha256 }}' \
             --require-evidence
           node tools/verify-package-candidate-binding.ts \
             --desktop-candidate "$candidate_root" \
@@ -144,6 +154,9 @@ jobs:
             --desktop-candidate "$candidate_root" \
             --runtime-candidate "$RUNNER_TEMP/runtime-candidate" \
             --candidate-id '${{ inputs.runtime_candidate_id }}'
+          java_hash="$(node --input-type=module -e "const m=JSON.parse(await import('node:fs/promises').then(x=>x.readFile(process.argv[1],'utf8'))); process.stdout.write(m.contractSetSha256||'')" "$RUNNER_TEMP/package-candidate/java-candidate-manifest.json")"
+          test "$java_hash" = '${{ inputs.contract_set_sha256 }}'
+          test "$(printf '%s' "$java_hash" | wc -c)" = 64
 
       - name: Verify immutable promotion evidence without building
         id: evidence
@@ -167,11 +180,18 @@ jobs:
           candidate_root="$(node --input-type=module -e "const m=JSON.parse(await import('node:fs/promises').then(x=>x.readFile(process.argv[1],'utf8'))); process.stdout.write(m.candidateRoot)" "$RUNNER_TEMP/promotion-evidence.json")"
           mkdir -p "$RUNNER_TEMP/promotion-input/candidate"
           cp -a "$candidate_root/." "$RUNNER_TEMP/promotion-input/candidate/"
+          cp "$RUNNER_TEMP/runtime-candidate/candidate-manifest.json" "$RUNNER_TEMP/promotion-input/candidate/runtime-candidate-manifest.json"
           cp "$RUNNER_TEMP/promotion-evidence.json" "$RUNNER_TEMP/promotion-input/promotion-evidence.json"
           cp "$RUNNER_TEMP/consumer-gate/consumer-gate-ledger.json" "$RUNNER_TEMP/promotion-input/consumer-gate-ledger.json"
+          java_candidate_manifest_sha256="$(sha256sum "$RUNNER_TEMP/package-candidate/java-candidate-manifest.json" | cut -d ' ' -f1)"
+          java_candidate_id="$(node --input-type=module -e "const m=JSON.parse(await import('node:fs/promises').then(x=>x.readFile(process.argv[1],'utf8'))); process.stdout.write(m.candidateId)" "$RUNNER_TEMP/package-candidate/java-candidate-manifest.json")"
+          runtime_candidate_manifest_sha256="$(sha256sum "$RUNNER_TEMP/runtime-candidate/candidate-manifest.json" | cut -d ' ' -f1)"
           {
             echo "source_commit=$source_commit"
             echo "release_version=$release_version"
+            echo "java_candidate_manifest_sha256=$java_candidate_manifest_sha256"
+            echo "java_candidate_id=$java_candidate_id"
+            echo "runtime_candidate_manifest_sha256=$runtime_candidate_manifest_sha256"
           } >> "$GITHUB_OUTPUT"
 
       - name: Upload the prepared exact promotion input
@@ -198,6 +218,8 @@ jobs:
       candidate_manifest_sha256: ${{ inputs.package_candidate_manifest_sha256 }}
       source_commit: ${{ needs.prepare-candidate.outputs.source_commit }}
       release_version: ${{ needs.prepare-candidate.outputs.release_version }}
+      release_candidate_id: ${{ inputs.candidate_id }}
+      contract_set_sha256: ${{ inputs.contract_set_sha256 }}
     secrets: inherit
 
   publish-pypi:
@@ -212,6 +234,8 @@ jobs:
       candidate_id: ${{ inputs.candidate_id }}
       source_commit: ${{ needs.prepare-candidate.outputs.source_commit }}
       release_version: ${{ needs.prepare-candidate.outputs.release_version }}
+      release_candidate_id: ${{ inputs.candidate_id }}
+      contract_set_sha256: ${{ inputs.contract_set_sha256 }}
     secrets: inherit
 
   publish-crates:
@@ -224,6 +248,26 @@ jobs:
     with:
       candidate_id: ${{ inputs.candidate_id }}
       source_commit: ${{ needs.prepare-candidate.outputs.source_commit }}
+      release_candidate_id: ${{ inputs.candidate_id }}
+      contract_set_sha256: ${{ inputs.contract_set_sha256 }}
+    secrets: inherit
+
+  publish-maven:
+    if: ${{ inputs.publication_scope == 'all' || inputs.publication_scope == 'maven' }}
+    needs: prepare-candidate
+    uses: ./.github/workflows/_publish-maven.yml
+    permissions:
+      actions: read
+      contents: read
+      packages: write
+    with:
+      candidate_id: ${{ inputs.package_candidate_id }}
+      candidate_run_id: ${{ inputs.package_candidate_run_id }}
+      candidate_manifest_sha256: ${{ inputs.package_candidate_manifest_sha256 }}
+      source_commit: ${{ needs.prepare-candidate.outputs.source_commit }}
+      release_version: ${{ needs.prepare-candidate.outputs.release_version }}
+      release_candidate_id: ${{ inputs.candidate_id }}
+      contract_set_sha256: ${{ inputs.contract_set_sha256 }}
     secrets: inherit
 
   verify-registries:
@@ -231,12 +275,20 @@ jobs:
       ${{
         always() &&
         needs.prepare-candidate.result == 'success' &&
-        ((inputs.publication_scope == 'all' && needs.publish-npm.result == 'success' && needs.publish-pypi.result == 'success' && needs.publish-crates.result == 'success') ||
+        ((inputs.publication_scope == 'all' && needs.publish-npm.result == 'success' && needs.publish-pypi.result == 'success' && needs.publish-crates.result == 'success' && needs.publish-maven.result == 'success') ||
          (inputs.publication_scope == 'npm' && needs.publish-npm.result == 'success') ||
          (inputs.publication_scope == 'pypi' && needs.publish-pypi.result == 'success') ||
-         (inputs.publication_scope == 'crates' && needs.publish-crates.result == 'success'))
+         (inputs.publication_scope == 'crates' && needs.publish-crates.result == 'success') ||
+         (inputs.publication_scope == 'maven' && needs.publish-maven.result == 'success'))
       }}
-    needs: [prepare-candidate, publish-npm, publish-pypi, publish-crates]
+    needs:
+      [
+        prepare-candidate,
+        publish-npm,
+        publish-pypi,
+        publish-crates,
+        publish-maven,
+      ]
     uses: ./.github/workflows/_verify-registries.yml
     permissions:
       actions: read
@@ -246,6 +298,14 @@ jobs:
       source_commit: ${{ needs.prepare-candidate.outputs.source_commit }}
       release_version: ${{ needs.prepare-candidate.outputs.release_version }}
       publication_scope: ${{ inputs.publication_scope }}
+      release_candidate_id: ${{ inputs.candidate_id }}
+      package_candidate_id: ${{ inputs.package_candidate_id }}
+      runtime_candidate_id: ${{ inputs.runtime_candidate_id }}
+      java_candidate_id: ${{ needs.prepare-candidate.outputs.java_candidate_id }}
+      package_candidate_manifest_sha256: ${{ inputs.package_candidate_manifest_sha256 }}
+      java_candidate_manifest_sha256: ${{ needs.prepare-candidate.outputs.java_candidate_manifest_sha256 }}
+      runtime_candidate_manifest_sha256: ${{ needs.prepare-candidate.outputs.runtime_candidate_manifest_sha256 }}
+      contract_set_sha256: ${{ inputs.contract_set_sha256 }}
 
   tag-release:
     if: ${{ inputs.publication_scope == 'all' && needs.verify-registries.result == 'success' }}
@@ -288,6 +348,7 @@ jobs:
       source_commit: ${{ needs.prepare-candidate.outputs.source_commit }}
       release_version: ${{ needs.prepare-candidate.outputs.release_version }}
       tag: v${{ needs.prepare-candidate.outputs.release_version }}
+      java_candidate_id: ${{ needs.prepare-candidate.outputs.java_candidate_id }}
 
   promotion-ledger:
     if: ${{ inputs.publication_scope == 'all' && needs.publish-stable-pointer.result == 'success' }}

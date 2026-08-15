@@ -1,6 +1,6 @@
 import type {
-  CaptureDocumentV1,
-  RawCaptureV1,
+  CaptureDocument,
+  RawCapture,
 } from '@gx-capture/capture-workbench-ui';
 
 export type DesktopLibraryStatus =
@@ -30,8 +30,8 @@ export interface DesktopLibrarySummary {
 }
 
 export interface DesktopLibraryDetail extends DesktopLibrarySummary {
-  readonly raw?: RawCaptureV1;
-  readonly result?: CaptureDocumentV1;
+  readonly raw?: RawCapture;
+  readonly result?: CaptureDocument;
 }
 
 export interface DesktopLibraryExport {

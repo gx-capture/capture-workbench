@@ -162,9 +162,9 @@ async function startWorkerMirror(port: number): Promise<Server> {
     'capture-runtime',
     'dist',
     'release',
-    'capture-engine-whisper-0.3.12-windows-x64.zip',
+    'capture-engine-whisper-0.4.0-windows-x64.zip',
   );
-  const archiveName = 'capture-engine-whisper-0.3.12-windows-x64.zip';
+  const archiveName = 'capture-engine-whisper-0.4.0-windows-x64.zip';
   const archiveMetadata = await stat(archivePath).catch(() => undefined);
   if (!archiveMetadata?.isFile()) throw new Error('Progressive audio oracle worker archive is missing.');
   const server = createServer((request, response) => {
@@ -189,7 +189,7 @@ async function installWhisper(
   baseUrl: string,
   child: ReturnType<typeof spawn>,
 ): Promise<void> {
-  const started = await jsonRequest<JsonRecord>(baseUrl, '/v1/runtime/installations', {
+  const started = await jsonRequest<JsonRecord>(baseUrl, '/v2/runtime/installations', {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
@@ -201,7 +201,7 @@ async function installWhisper(
   const deadline = Date.now() + 30 * 60_000;
   while (Date.now() < deadline) {
     if (child.exitCode !== null) throw new Error('Progressive audio oracle runtime exited during Whisper installation.');
-    const current = await jsonRequest<JsonRecord>(baseUrl, `/v1/runtime/installations/${installationId}`);
+    const current = await jsonRequest<JsonRecord>(baseUrl, `/v2/runtime/installations/${installationId}`);
     const status = requiredString(current.status);
     if (status === 'completed') return;
     if (status === 'failed' || status === 'cancelled' || status === 'manual_action_required') {

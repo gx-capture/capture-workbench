@@ -2,8 +2,8 @@ import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { provideNoopAnimations } from '@angular/platform-browser/animations';
 import type {
-  RuntimeModelInstallationV1,
-  RuntimeModelOptionV1,
+  RuntimeModelInstallation,
+  RuntimeModelOption,
 } from '@gx-capture/capture-workbench-ui';
 import { App } from './app';
 import { DesktopWorkspaceStore } from './services/desktop-workspace.store';
@@ -166,7 +166,7 @@ describe('App', () => {
   });
 });
 
-function workspaceStub(selected: unknown = null, modelInstallation: RuntimeModelInstallationV1 | null = null) {
+function workspaceStub(selected: unknown = null, modelInstallation: RuntimeModelInstallation | null = null) {
   return {
     state: signal<'ready' | 'needs-setup'>('ready'),
     message: signal('Capture Runtime 已準備完成，可以開始處理文件。'),
@@ -177,12 +177,12 @@ function workspaceStub(selected: unknown = null, modelInstallation: RuntimeModel
     query: signal(''),
     statusFilter: signal(''),
     installing: signal(false),
-    activeModelInstallation: signal<RuntimeModelInstallationV1 | null>(modelInstallation),
+    activeModelInstallation: signal<RuntimeModelInstallation | null>(modelInstallation),
     modelInstallationPhase: signal(''),
     modelInstallationPercent: signal(0),
     activeModelOption: signal(null),
     modelSelectionRequired: signal(false),
-    modelOptions: signal<readonly RuntimeModelOptionV1[]>([]),
+    modelOptions: signal<readonly RuntimeModelOption[]>([]),
     selectedModelOptionId: signal<string | null>(null),
     busyIds: signal(new Set<string>()),
     canCapture: signal(true),

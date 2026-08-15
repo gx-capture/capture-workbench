@@ -22,7 +22,7 @@ def test_model_options_are_allowlisted_and_do_not_start_a_model_store(
         base_url=f"http://127.0.0.1:{settings.port}",
         headers={"Authorization": f"Bearer {TOKEN}"},
     ) as client:
-        response = client.get("/v1/runtime/model-options")
+        response = client.get("/v2/runtime/model-options")
 
     assert response.status_code == 200, response.text
     payload = response.json()
@@ -47,7 +47,7 @@ def test_model_options_report_selection_from_isolated_ollama_app_data(settings_f
         base_url=f"http://127.0.0.1:{settings.port}",
         headers={"Authorization": f"Bearer {TOKEN}"},
     ) as client:
-        response = client.get("/v1/runtime/model-options")
+        response = client.get("/v2/runtime/model-options")
 
     assert response.status_code == 200, response.text
     active = [item for item in response.json()["items"] if item["status"] == "active"]
@@ -64,7 +64,7 @@ def test_model_installation_accepts_only_option_id_and_is_idempotent(settings_fa
     ) as client:
         headers = idempotency_headers()
         response = client.post(
-            "/v1/runtime/model-installations",
+            "/v2/runtime/model-installations",
             headers=headers,
             json={"optionId": "qwen3.5-0.8b-v1", "consent": True},
         )
@@ -72,20 +72,20 @@ def test_model_installation_accepts_only_option_id_and_is_idempotent(settings_fa
         installation_id = response.json()["installationId"]
         deadline = time.monotonic() + 3
         while time.monotonic() < deadline:
-            job = client.get(f"/v1/runtime/model-installations/{installation_id}").json()
+            job = client.get(f"/v2/runtime/model-installations/{installation_id}").json()
             if job["status"] == "completed":
                 break
             time.sleep(0.01)
         assert job["status"] == "completed"
         replay = client.post(
-            "/v1/runtime/model-installations",
+            "/v2/runtime/model-installations",
             headers=headers,
             json={"optionId": "qwen3.5-0.8b-v1", "consent": True},
         )
         assert replay.status_code == 202
         assert replay.json()["installationId"] == installation_id
         unknown = client.post(
-            "/v1/runtime/model-installations",
+            "/v2/runtime/model-installations",
             headers=idempotency_headers(),
             json={"optionId": "qwen3.5-7b-v1", "consent": True},
         )
@@ -133,7 +133,7 @@ def test_host_runtime_cannot_expose_model_selection(settings_factory) -> None:
         base_url=f"http://127.0.0.1:{settings.port}",
         headers={"Authorization": f"Bearer {TOKEN}"},
     ) as client:
-        response = client.get("/v1/runtime/model-options")
+        response = client.get("/v2/runtime/model-options")
 
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "requirement_disabled"

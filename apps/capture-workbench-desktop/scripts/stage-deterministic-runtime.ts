@@ -47,12 +47,12 @@ export function stageDeterministicRuntime(): Observable<unknown> {
             temporary,
             `manifest-${randomBytes(4).toString('hex')}.json`,
           );
-          const schemaPath = join(temporary, 'capture-document-v1.schema.json');
+          const schemaPath = join(temporary, 'capture-document-v2.schema.json');
           const schema = `${JSON.stringify(
             {
               $schema: 'https://json-schema.org/draft/2020-12/schema',
-              $id: 'https://github.com/gx-capture/capture-workbench/schema/capture-document-v1.schema.json',
-              title: 'CaptureDocumentV1 deterministic QA fixture',
+              $id: 'https://github.com/gx-capture/capture-workbench/schema/capture-document-v2.schema.json',
+              title: 'CaptureDocument deterministic QA fixture',
               type: 'object',
             },
             null,
@@ -66,15 +66,15 @@ export function stageDeterministicRuntime(): Observable<unknown> {
             concatMap(({ digest, schemaSha256 }) => {
               const manifest = {
                 manifestVersion: '1',
-                runtimeVersion: '0.3.12',
-                apiVersion: '1.0',
-                captureDocumentSchemaVersion: '1',
+                runtimeVersion: '0.4.0',
+                apiVersion: '2.0',
+                captureDocumentSchemaVersion: '2',
                 platform: 'windows',
                 arch: 'x86_64',
                 fileName: 'capture-runtime-x86_64-pc-windows-msvc.exe',
                 bytes: metadata.size,
                 sha256: digest,
-                schemaFileName: 'capture-document-v1.schema.json',
+                schemaFileName: 'capture-document-v2.schema.json',
                 schemaSha256,
               };
               return defer(() =>

@@ -22,16 +22,16 @@ import {
 import {
   type CaptureClient,
   type CaptureCompletedEvent,
-  type CaptureEventV2,
+  type CaptureEvent,
   type CaptureFailedEvent,
-  type CaptureFailureV1,
-  type CaptureOperationV2,
-  type PartialCaptureV2,
+  type CaptureFailure,
+  type CaptureOperation,
+  type PartialCapture,
   type CapturePreprocessor,
-  type CaptureReviewV1,
+  type CaptureReview,
   type CaptureStructuringProvider,
   type CaptureTaskView,
-  type RawCaptureV1,
+  type RawCapture,
   type StartStreamingCaptureRequest,
 } from '../../../contracts';
 import type { ResolvedCaptureWorkbenchConfig } from '../../../contracts/workbench';
@@ -40,7 +40,7 @@ import type {
   InternalCaptureTask,
 } from '../capture-workbench-store/internal-contracts';
 import { CaptureHelpersService } from '../../../capture-helpers';
-import { CAPTURE_DOCUMENT_V1_CONTRACT } from '../../../capture-document-schema';
+import { CAPTURE_DOCUMENT_CONTRACT } from '../../../capture-document-schema';
 import { CaptureWorkbenchStoreHelpers } from '../capture-workbench-store/capture-workbench-store-helpers';
 import { CaptureReconciliationService } from '../capture-reconciliation/capture-reconciliation.service';
 
@@ -53,7 +53,7 @@ export class CaptureWorkflowService {
   private readonly internalTasks = new Map<string, InternalCaptureTask>();
   private readonly captureIds = new Map<string, string>();
   private readonly taskSubscriptions = new Map<string, Subscription>();
-  private readonly reviewSubjects = new Map<string, Subject<CaptureReviewV1>>();
+  private readonly reviewSubjects = new Map<string, Subject<CaptureReview>>();
   private runningTasks = 0;
   private context?: CaptureWorkflowContext;
   private readonly reconciliation = inject(CaptureReconciliationService);
@@ -374,11 +374,11 @@ export class CaptureWorkflowService {
 
   private awaitReview(
     taskId: string,
-    raw: RawCaptureV1,
+    raw: RawCapture,
     config: ResolvedCaptureWorkbenchConfig,
     runtimeProgress: number,
-  ): Observable<CaptureReviewV1> {
-    const emptyReview: CaptureReviewV1 = { reviewVersion: 1, edits: [] };
+  ): Observable<CaptureReview> {
+    const emptyReview: CaptureReview = { reviewVersion: 1, edits: [] };
     if (!config.reviewBeforeCommit) {
       this.updateTask(taskId, {
         raw,
@@ -390,7 +390,7 @@ export class CaptureWorkflowService {
       });
       return of(emptyReview);
     }
-    const subject = new Subject<CaptureReviewV1>();
+    const subject = new Subject<CaptureReview>();
     this.reviewSubjects.set(taskId, subject);
     const task = this.updateTask(taskId, {
       status: 'awaiting_confirmation',
@@ -481,16 +481,15 @@ export class CaptureWorkflowService {
   private processStreamingHostStructuring(
     client: StreamingClient,
     provider: CaptureStructuringProvider,
-    initial: CaptureOperationV2,
+    initial: CaptureOperation,
     config: ResolvedCaptureWorkbenchConfig,
     signal: AbortSignal,
     taskId: string,
-  ): Observable<CaptureOperationV2> {
+  ): Observable<CaptureOperation> {
     return this.waitForStreamingOperation(client, initial, signal, true, taskId).pipe(
       concatMap((operation) => {
         if (operation.status !== 'awaiting_structuring') return of(operation);
-        return client.getStreamingPartial(operation.captureId, signal).pipe(
-          map((partial) => this.helpers.partialCaptureToRaw(partial)),
+        return client.getStreamingRaw(operation.captureId, signal).pipe(
           concatMap((raw) =>
             this.awaitReview(taskId, raw, config, operation.progress ?? 0).pipe(
               concatMap((review) =>
@@ -498,7 +497,7 @@ export class CaptureWorkflowService {
                   provider.structure({
                     raw: this.helpers.deepFreeze(structuredClone(raw)),
                     review,
-                    documentContract: CAPTURE_DOCUMENT_V1_CONTRACT,
+                    documentContract: CAPTURE_DOCUMENT_CONTRACT,
                     targetLanguage: config.targetLanguage,
                     signal,
                     reportProgress: (progress) =>
@@ -582,12 +581,12 @@ export class CaptureWorkflowService {
 
   private waitForStreamingOperation(
     client: StreamingClient,
-    initial: CaptureOperationV2,
+    initial: CaptureOperation,
     signal: AbortSignal,
     stopForHost: boolean,
     taskId: string,
     reconnectAttempt = 0,
-  ): Observable<CaptureOperationV2> {
+  ): Observable<CaptureOperation> {
     if (
       this.helpers.isTerminalStreamingOperation(initial) ||
       (stopForHost && initial.status === 'awaiting_structuring')
@@ -650,7 +649,7 @@ export class CaptureWorkflowService {
     signal: AbortSignal,
     taskId: string,
     includePartial: boolean,
-  ): Observable<CaptureOperationV2> {
+  ): Observable<CaptureOperation> {
     return client.getStreamingCapture(captureId, signal).pipe(
       tap((operation) => this.applyStreamingOperation(taskId, operation)),
       concatMap((operation) => {
@@ -664,7 +663,7 @@ export class CaptureWorkflowService {
     );
   }
 
-  private applyStreamingPartial(taskId: string, partial: PartialCaptureV2): void {
+  private applyStreamingPartial(taskId: string, partial: PartialCapture): void {
     try {
       this.updateTask(taskId, {
         raw: this.helpers.partialCaptureToRaw(partial),
@@ -677,7 +676,7 @@ export class CaptureWorkflowService {
   private settleStreaming(
     client: StreamingClient,
     task: CaptureTaskView,
-    operation: CaptureOperationV2,
+    operation: CaptureOperation,
     signal: AbortSignal,
     taskId: string,
   ): Observable<void> {
@@ -741,13 +740,13 @@ export class CaptureWorkflowService {
     );
   }
 
-  private applyStreamingEvent(taskId: string, event: CaptureEventV2): void {
+  private applyStreamingEvent(taskId: string, event: CaptureEvent): void {
     this.updateTask(taskId, {
       stage: this.helpers.streamingStage(event.stage),
     });
   }
 
-  private applyStreamingOperation(taskId: string, operation: CaptureOperationV2): void {
+  private applyStreamingOperation(taskId: string, operation: CaptureOperation): void {
     this.updateTask(taskId, {
       captureId: operation.captureId,
       stage: this.helpers.streamingStage(operation.status),
@@ -811,11 +810,10 @@ export class CaptureWorkflowService {
     client: CaptureClient,
     captureId: string,
     signal?: AbortSignal,
-  ): Observable<RawCaptureV1 | undefined> {
+  ): Observable<RawCapture | undefined> {
     const streamingClient = asStreamingClient(client);
     if (streamingClient) {
-      return defer(() => streamingClient.getStreamingPartial(captureId, signal)).pipe(
-        map((partial) => this.helpers.partialCaptureToRaw(partial)),
+      return defer(() => streamingClient.getStreamingRaw(captureId, signal)).pipe(
         catchError(() => of(undefined)),
       );
     }
@@ -835,7 +833,7 @@ export class CaptureWorkflowService {
     sourceKind: CaptureTaskView['sourceKind'],
   ): void {
     const id = crypto.randomUUID();
-    const error: CaptureFailureV1 = {
+    const error: CaptureFailure = {
       code: 'unsupported_source',
       message: `Unsupported capture source: ${file.name}`,
       stage: 'input',
@@ -856,8 +854,8 @@ export class CaptureWorkflowService {
   private failTask(
     taskId: string,
     fileName: string,
-    error: CaptureFailureV1,
-    raw?: RawCaptureV1,
+    error: CaptureFailure,
+    raw?: RawCapture,
     stage?: CaptureTaskView['stage'],
   ): void {
     const safeError = this.helpers.redactFailure(error);
@@ -878,8 +876,8 @@ export class CaptureWorkflowService {
 
   private requireReconciliation(
     taskId: string,
-    error: CaptureFailureV1,
-    raw?: RawCaptureV1,
+    error: CaptureFailure,
+    raw?: RawCapture,
   ): void {
     this.updateTask(taskId, {
       status: 'reconciliation_required',
@@ -921,7 +919,7 @@ export class CaptureWorkflowService {
   }
 }
 
-function isResyncRequiredEvent(event: CaptureEventV2): boolean {
+function isResyncRequiredEvent(event: CaptureEvent): boolean {
   return event.eventType === 'resync_required';
 }
 
@@ -934,6 +932,7 @@ type StreamingClient = CaptureClient &
       | 'getStreamingCapture'
       | 'cancelStreamingCapture'
       | 'getStreamingPartial'
+      | 'getStreamingRaw'
       | 'getStreamingResult'
       | 'commitStreamingStructuredResult'
       | 'reportStreamingStructuringFailure'
@@ -947,6 +946,7 @@ function asStreamingClient(client: CaptureClient): StreamingClient | undefined {
     typeof client.getStreamingCapture === 'function' &&
     typeof client.cancelStreamingCapture === 'function' &&
     typeof client.getStreamingPartial === 'function' &&
+    typeof client.getStreamingRaw === 'function' &&
     typeof client.getStreamingResult === 'function' &&
     typeof client.commitStreamingStructuredResult === 'function' &&
     typeof client.reportStreamingStructuringFailure === 'function' &&

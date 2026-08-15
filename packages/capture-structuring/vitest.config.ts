@@ -8,9 +8,9 @@ const packageRoot = dirname(fileURLToPath(import.meta.url));
 export default defineConfig({
   resolve: {
     alias: {
-      '@gx-capture/capture-contracts': resolve(
+      '@gx-capture/capture-runtime-client': resolve(
         packageRoot,
-        '../capture-contracts/src/index.ts',
+        '../capture-runtime-client/src/index.ts',
       ),
     },
   },

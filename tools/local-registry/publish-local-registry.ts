@@ -15,7 +15,7 @@ interface PackageDescriptor {
 }
 
 const packageDescriptors: readonly PackageDescriptor[] = [
-  'capture-contracts',
+  'capture-runtime-client',
   'capture-angular',
   'capture-structuring',
 ].map((project) => {

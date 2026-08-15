@@ -1,9 +1,12 @@
 import { TestBed } from '@angular/core/testing';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { CAPTURE_CONTRACT_SET_SHA256 } from '@gx-capture/capture-runtime-client';
 import {
   CAPTURE_CLIENT,
   type CaptureClient,
-  type CaptureEventV2,
-  type CaptureStructuringCandidateV1,
+  type CaptureEvent,
+  type CaptureStructuringCandidate,
 } from './contracts';
 import {
   HttpCaptureClient,
@@ -11,40 +14,19 @@ import {
 } from './http-capture-client';
 
 describe('HttpCaptureClient', () => {
-  it('performs the compatibility handshake and unwraps requirements', async () => {
+  it('unwraps requirements through the strict SDK client', async () => {
     const fetchMock = vi
       .fn<typeof fetch>()
-      .mockResolvedValueOnce(
-        jsonResponse({
-          ready: true,
-          service: 'capture-runtime',
-          runtimeVersion: '0.3.8',
-          apiVersion: '1.0',
-          captureDocumentSchemaVersion: '1',
-          capabilities: {
-            captureKinds: ['pdf'],
-            structuringModes: ['runtime'],
-            supportsCancellation: true,
-            supportsRawDiagnostics: true,
-            maxUploadBytes: 1024,
-          },
-        }),
-      )
       .mockResolvedValueOnce(jsonResponse({ items: [] }));
     const client = configureClient(fetchMock);
 
-    let ready: unknown;
     let requirements: unknown;
     let error: unknown;
-    client.getReady().subscribe({
-      next: (value) => (ready = value),
+    client.getRequirements().subscribe({
+      next: (value) => (requirements = value),
       error: (value) => (error = value),
-      complete: () => client.getRequirements().subscribe({
-        next: (value) => (requirements = value),
-        error: (value) => (error = value),
-      }),
     });
-    await vi.waitFor(() => expect(ready).toMatchObject({ captureDocumentSchemaVersion: '1' }));
+    await vi.waitFor(() => expect(requirements).toEqual([]));
     expect(error).toBeUndefined();
     expect(requirements).toEqual([]);
   });
@@ -75,26 +57,9 @@ describe('HttpCaptureClient', () => {
     expect(installations).toEqual([installation]);
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
-      'http://127.0.0.1:43119/v1/runtime/installations',
+      'http://127.0.0.1:43119/v2/runtime/installations',
     );
     expect(fetchMock.mock.calls[0]?.[1]?.method).toBe('GET');
-  });
-
-  it('rejects a non-loopback destination before resolving the bearer token', async () => {
-    const bearerToken = vi.fn(() => 'must-stay-memory-only');
-    const fetchMock = vi.fn<typeof fetch>();
-    const client = new HttpCaptureClient({
-      baseUrl: 'https://capture.example.test:43119',
-      bearerToken,
-      fetch: fetchMock,
-    });
-
-    let error: unknown;
-    client.getReady().subscribe({ error: (value) => (error = value) });
-    await vi.waitFor(() => expect(error).toEqual(expect.objectContaining({ code: 'unsafe_base_url' })));
-    expect(error).toEqual(expect.objectContaining({ code: 'unsafe_base_url' }));
-    expect(bearerToken).not.toHaveBeenCalled();
-    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('does not rewrite or accept a different loopback service identity', async () => {
@@ -103,8 +68,8 @@ describe('HttpCaptureClient', () => {
         ready: true,
         service: 'untrusted-service',
         runtimeVersion: '0.3.8',
-        apiVersion: '1.0',
-        captureDocumentSchemaVersion: '1',
+        apiVersion: '2.0',
+        captureDocumentSchemaVersion: '2',
         capabilities: {
           captureKinds: ['pdf'],
           structuringModes: ['runtime'],
@@ -114,20 +79,29 @@ describe('HttpCaptureClient', () => {
         },
       }),
     );
-    const client = configureClient(fetchMock);
+    const client = configureClient(fetchMock, false);
 
     let error: unknown;
     client.getReady().subscribe({ error: (value) => (error = value) });
-    await vi.waitFor(() => expect(error).toEqual(expect.objectContaining({ code: 'runtime_service_mismatch' })));
+    await vi.waitFor(() =>
+      expect(error).toEqual(
+        expect.objectContaining({ code: 'incompatible_runtime' }),
+      ),
+    );
     expect(error).toEqual(
-      expect.objectContaining({ code: 'runtime_service_mismatch' }),
+      expect.objectContaining({ code: 'incompatible_runtime' }),
     );
   });
 
   it('surfaces the canonical error envelope', async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
       jsonResponse(
-        { error: { code: 'result_unavailable', message: 'No successful result exists.' } },
+        {
+          error: {
+            code: 'result_unavailable',
+            message: 'No successful result exists.',
+          },
+        },
         409,
       ),
     );
@@ -137,7 +111,9 @@ describe('HttpCaptureClient', () => {
     client.getStreamingResult('capture-1').subscribe({
       error: (value) => (error = value),
     });
-    await vi.waitFor(() => expect(error).toEqual(expect.objectContaining({ status: 409 })));
+    await vi.waitFor(() =>
+      expect(error).toEqual(expect.objectContaining({ status: 409 })),
+    );
     expect(error).toEqual(
       expect.objectContaining({
         status: 409,
@@ -148,19 +124,21 @@ describe('HttpCaptureClient', () => {
   });
 
   it('redacts credential-shaped error text and details before exposing it', async () => {
-    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
-      jsonResponse(
-        {
-          error: {
-            code: 'runtime_failed',
-            message: 'Bearer secret-token',
-            details: { authorization: 'Bearer secret-token' },
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(() =>
+      Promise.resolve(
+        jsonResponse(
+          {
+            error: {
+              code: 'runtime_failed',
+              message: 'Bearer secret-token',
+              details: { authorization: 'Bearer secret-token' },
+            },
           },
-        },
-        500,
+          500,
+        ),
       ),
     );
-    const client = configureClient(fetchMock);
+    const client = configureClient(fetchMock, false);
 
     let error: unknown;
     client.getReady().subscribe({ error: (value) => (error = value) });
@@ -175,14 +153,16 @@ describe('HttpCaptureClient', () => {
     expect(JSON.stringify(error)).not.toContain('secret-token');
   });
 
-  it('streams v2 capture events through an authenticated SSE response', async () => {
+  it('streams v2 capture events through the host transport', async () => {
     const accepted = captureEvent(1, 'accepted');
     const completed = captureEvent(2, 'completed');
     const fetchMock = vi
       .fn<typeof fetch>()
-      .mockResolvedValue(sseResponse([sseFrame(accepted), sseFrame(completed)]));
+      .mockResolvedValue(
+        sseResponse([sseFrame(accepted), sseFrame(completed)]),
+      );
     const client = configureClient(fetchMock) as HttpCaptureClient;
-    const events: CaptureEventV2[] = [];
+    const events: CaptureEvent[] = [];
     let completedStreams = 0;
 
     client.captureEvents('capture-1').subscribe({
@@ -203,8 +183,8 @@ describe('HttpCaptureClient', () => {
       'http://127.0.0.1:43119/v2/captures/capture-1/events',
     );
     expect(String(url)).not.toContain('secret-token');
-    const headers = request?.headers as Headers;
-    expect(headers.get('Authorization')).toBe('Bearer secret-token');
+    const headers = new Headers(request?.headers);
+    expect(headers.get('Authorization')).toBeNull();
     expect(headers.get('Accept')).toBe('text/event-stream');
   });
 
@@ -213,14 +193,14 @@ describe('HttpCaptureClient', () => {
       .fn<typeof fetch>()
       .mockResolvedValue(sseResponse([sseFrame(captureEvent(4, 'completed'))]));
     const client = configureClient(fetchMock) as HttpCaptureClient;
-    const events: CaptureEventV2[] = [];
+    const events: CaptureEvent[] = [];
 
     client
       .captureEvents('capture-1', { lastEventId: 3 })
       .subscribe({ next: (event) => events.push(event) });
     await vi.waitFor(() => expect(events).toHaveLength(1));
 
-    const headers = fetchMock.mock.calls[0]?.[1]?.headers as Headers;
+    const headers = new Headers(fetchMock.mock.calls[0]?.[1]?.headers);
     expect(headers.get('Last-Event-ID')).toBe('3');
   });
 
@@ -237,9 +217,11 @@ describe('HttpCaptureClient', () => {
     };
     const fetchMock = vi
       .fn<typeof fetch>()
-      .mockResolvedValueOnce(jsonResponse({ ingestionId: 'ingestion-1' }, 201))
-      .mockResolvedValueOnce(jsonResponse({ ingestionId: 'ingestion-1' }))
-      .mockResolvedValueOnce(jsonResponse({ ingestionId: 'ingestion-1' }))
+      .mockResolvedValueOnce(jsonResponse(ingestion(0), 201))
+      .mockResolvedValueOnce(jsonResponse(ingestion(3)))
+      .mockResolvedValueOnce(
+        jsonResponse({ ...ingestion(3), status: 'finalized' }),
+      )
       .mockResolvedValueOnce(jsonResponse(operation, 202));
     const client = configureClient(fetchMock) as HttpCaptureClient;
     let received: unknown;
@@ -261,50 +243,53 @@ describe('HttpCaptureClient', () => {
     expect(String(fetchMock.mock.calls[1]?.[0])).toContain(
       '/v2/ingestions/ingestion-1/chunks/0',
     );
-    expect((fetchMock.mock.calls[1]?.[1]?.headers as Headers).get('Digest')).toMatch(
-      /^sha-256=[0-9a-f]{64}$/,
-    );
+    expect(
+      new Headers(fetchMock.mock.calls[1]?.[1]?.headers).get('Digest'),
+    ).toMatch(/^sha-256=[0-9a-f]{64}$/);
     expect(String(fetchMock.mock.calls[3]?.[0])).toBe(
       'http://127.0.0.1:43119/v2/captures',
     );
-    expect((fetchMock.mock.calls[3]?.[1]?.headers as Headers).get('Authorization')).toBe(
-      'Bearer secret-token',
-    );
-    expect((fetchMock.mock.calls[3]?.[1]?.headers as Headers).get('X-Idempotency-Key')).toBe(
-      'request-1',
-    );
+    expect(
+      new Headers(fetchMock.mock.calls[3]?.[1]?.headers).get('Authorization'),
+    ).toBeNull();
+    expect(
+      new Headers(fetchMock.mock.calls[3]?.[1]?.headers).get(
+        'X-Idempotency-Key',
+      ),
+    ).toBe('request-1');
     expect(String(fetchMock.mock.calls[3]?.[0])).not.toContain('secret-token');
   });
 
   it('uses v2 operation, partial, result, control, and delete routes', async () => {
-    const fetchMock = vi
-      .fn<typeof fetch>()
-      .mockResolvedValueOnce(jsonResponse({}))
-      .mockResolvedValueOnce(jsonResponse({}))
-      .mockResolvedValueOnce(jsonResponse({}))
-      .mockResolvedValueOnce(jsonResponse({}))
-      .mockResolvedValueOnce(jsonResponse({}))
-      .mockResolvedValueOnce(jsonResponse({}))
-      .mockResolvedValueOnce(new Response(null, { status: 204 }));
-    const client = configureClient(fetchMock) as HttpCaptureClient;
-    const signal = new AbortController().signal;
-    const candidate = {
-      schemaVersion: '1',
-      source: {
-        sha256: 'a'.repeat(64),
-        fileName: 'scan.pdf',
-        mediaType: 'application/pdf',
-        bytes: 1,
-      },
-      rawSegments: [],
-      blocks: [],
+    const source = {
+      sha256: 'a'.repeat(64),
+      fileName: 'scan.pdf',
+      mediaType: 'application/pdf',
+      bytes: 1,
+    };
+    const operation = captureOperation();
+    const raw = {
+      schemaVersion: '2',
+      diagnosticOnly: true,
+      source,
+      segments: [],
       sourceText: '',
-      targetText: '',
       extractionEngine: {
         engine: 'windowsml',
         model: 'test-ocr',
         digest: `sha256:${'b'.repeat(64)}`,
       },
+      warnings: [],
+      createdAt: '2026-08-11T00:00:00Z',
+    };
+    const candidate = {
+      schemaVersion: '2',
+      source,
+      rawSegments: [],
+      blocks: [],
+      sourceText: '',
+      targetText: '',
+      extractionEngine: raw.extractionEngine,
       structuringEngine: {
         engine: 'ollama',
         model: 'test-structuring',
@@ -313,11 +298,35 @@ describe('HttpCaptureClient', () => {
       warnings: [],
       createdAt: '2026-08-11T00:00:00Z',
       completedAt: '2026-08-11T00:00:01Z',
-    } satisfies CaptureStructuringCandidateV1;
+    } satisfies CaptureStructuringCandidate;
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse(operation))
+      .mockResolvedValueOnce(jsonResponse(operation))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          protocolVersion: '2',
+          captureId: 'capture-1',
+          source,
+          revision: 1,
+          coveredUntilMs: 0,
+          updatedAt: '2026-08-11T00:00:00Z',
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(raw))
+      .mockResolvedValueOnce(
+        jsonResponse({ operation, raw, result: candidate }),
+      )
+      .mockResolvedValueOnce(jsonResponse(operation))
+      .mockResolvedValueOnce(jsonResponse(operation))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    const client = configureClient(fetchMock) as HttpCaptureClient;
+    const signal = new AbortController().signal;
 
     client.getStreamingCapture('capture-1', signal).subscribe();
     client.cancelStreamingCapture('capture-1', signal).subscribe();
     client.getStreamingPartial('capture-1', signal).subscribe();
+    client.getStreamingRaw('capture-1', signal).subscribe();
     client.getStreamingResult('capture-1', signal).subscribe();
     client
       .commitStreamingStructuredResult(
@@ -339,7 +348,7 @@ describe('HttpCaptureClient', () => {
       .subscribe();
     client.deleteStreamingCapture('capture-1', signal).subscribe();
 
-    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(7));
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(8));
     expect(
       fetchMock.mock.calls.map(([url, request]) => [
         String(url),
@@ -349,18 +358,21 @@ describe('HttpCaptureClient', () => {
       ['http://127.0.0.1:43119/v2/captures/capture-1', 'GET'],
       ['http://127.0.0.1:43119/v2/captures/capture-1/cancel', 'POST'],
       ['http://127.0.0.1:43119/v2/captures/capture-1/partial', 'GET'],
+      ['http://127.0.0.1:43119/v2/captures/capture-1/raw', 'GET'],
       ['http://127.0.0.1:43119/v2/captures/capture-1/result', 'GET'],
       ['http://127.0.0.1:43119/v2/captures/capture-1/structure/commit', 'POST'],
-      ['http://127.0.0.1:43119/v2/captures/capture-1/structure/failure', 'POST'],
+      [
+        'http://127.0.0.1:43119/v2/captures/capture-1/structure/failure',
+        'POST',
+      ],
       ['http://127.0.0.1:43119/v2/captures/capture-1', 'DELETE'],
     ]);
-    const failureRequest = fetchMock.mock.calls[5]?.[1];
+    const failureRequest = fetchMock.mock.calls[6]?.[1];
     expect(new Headers(failureRequest?.headers).get('X-Idempotency-Key')).toBe(
       'failure-1',
     );
     expect(JSON.parse(String(failureRequest?.body))).toEqual({
       protocolVersion: '2',
-      clientRequestId: 'failure-1',
       code: 'provider_failed',
       message: 'Provider failed.',
     });
@@ -368,13 +380,15 @@ describe('HttpCaptureClient', () => {
 
   it('is cold and aborts each subscription fetch on unsubscribe', async () => {
     const signals: AbortSignal[] = [];
-    const fetchMock = vi.fn<typeof fetch>().mockImplementation((_input, init) => {
-      const signal = init?.signal;
-      if (signal) signals.push(signal);
-      return Promise.resolve(
-        sseInfiniteResponse([sseFrame(captureEvent(1, 'accepted'))]),
-      );
-    });
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockImplementation((_input, init) => {
+        const signal = init?.signal;
+        if (signal) signals.push(signal);
+        return Promise.resolve(
+          sseInfiniteResponse([sseFrame(captureEvent(1, 'accepted'))]),
+        );
+      });
     const client = configureClient(fetchMock) as HttpCaptureClient;
     const first = client.captureEvents('capture-1').subscribe();
     await vi.waitFor(() => expect(signals).toHaveLength(1));
@@ -394,17 +408,17 @@ describe('HttpCaptureClient', () => {
   it('aborts the event stream when the caller signal aborts', async () => {
     const caller = new AbortController();
     let fetchSignal: AbortSignal | undefined;
-    const fetchMock = vi.fn<typeof fetch>().mockImplementation((_input, init) => {
-      fetchSignal = init?.signal ?? undefined;
-      return Promise.resolve(
-        sseInfiniteResponse([sseFrame(captureEvent(1, 'accepted'))]),
-      );
-    });
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockImplementation((_input, init) => {
+        fetchSignal = init?.signal ?? undefined;
+        return Promise.resolve(
+          sseInfiniteResponse([sseFrame(captureEvent(1, 'accepted'))]),
+        );
+      });
     const client = configureClient(fetchMock) as HttpCaptureClient;
 
-    client
-      .captureEvents('capture-1', { signal: caller.signal })
-      .subscribe();
+    client.captureEvents('capture-1', { signal: caller.signal }).subscribe();
     await vi.waitFor(() => expect(fetchSignal).toBeDefined());
     let aborted = false;
     fetchSignal?.addEventListener('abort', () => {
@@ -414,30 +428,15 @@ describe('HttpCaptureClient', () => {
     await vi.waitFor(() => expect(aborted).toBe(true));
   });
 
-  it('rejects a non-loopback destination before resolving the bearer token for event streams', async () => {
-    const bearerToken = vi.fn(() => 'must-stay-memory-only');
-    const fetchMock = vi.fn<typeof fetch>();
-    const client = new HttpCaptureClient({
-      baseUrl: 'https://capture.example.test:43119',
-      bearerToken,
-      fetch: fetchMock,
-    });
-
-    let error: unknown;
-    client.captureEvents('capture-1').subscribe({
-      error: (value) => (error = value),
-    });
-    await vi.waitFor(() =>
-      expect(error).toEqual(expect.objectContaining({ code: 'unsafe_base_url' })),
-    );
-    expect(bearerToken).not.toHaveBeenCalled();
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
   it('surfaces canonical event stream errors and redacts credentials', async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
       jsonResponse(
-        { error: { code: 'capture_not_found', message: 'Bearer secret-token' } },
+        {
+          error: {
+            code: 'capture_not_found',
+            message: 'Bearer secret-token',
+          },
+        },
         404,
       ),
     );
@@ -460,17 +459,85 @@ describe('HttpCaptureClient', () => {
   });
 });
 
-function configureClient(fetchMock: typeof fetch): CaptureClient {
+const contractBundle = Uint8Array.from(
+  readFileSync(
+    resolve(
+      process.cwd(),
+      'packages/capture-runtime/src/capture_runtime/assets/contract-set.json',
+    ),
+  ),
+);
+const contractIndex = {
+  catalogVersion: '2',
+  runtimeVersion: '0.4.0',
+  contractSetVersion: '2',
+  surfaces: [{ id: 'v2' }],
+  sha256: CAPTURE_CONTRACT_SET_SHA256,
+  href: `/meta/v2/contracts/sha256/${CAPTURE_CONTRACT_SET_SHA256}`,
+};
+
+function configureClient(
+  fetchMock: typeof fetch,
+  interceptDiscovery = true,
+): CaptureClient {
   TestBed.configureTestingModule({
     providers: [
       provideHttpCaptureClient({
-        baseUrl: 'http://127.0.0.1:43119/',
-        bearerToken: 'secret-token',
-        fetch: fetchMock,
+        transport: {
+          request: (request) => {
+            const discovery = interceptDiscovery
+              ? discoveryResponse(request.path)
+              : undefined;
+            if (discovery) return Promise.resolve(discovery);
+            return fetchMock(`http://127.0.0.1:43119${request.path}`, {
+              method: request.method ?? 'GET',
+              headers: request.headers,
+              body: request.body,
+              signal: request.signal,
+              credentials: 'omit',
+              redirect: 'error',
+            });
+          },
+        },
       }),
     ],
   });
   return TestBed.inject(CAPTURE_CLIENT);
+}
+
+function discoveryResponse(path: string): Response | undefined {
+  if (path === '/v2/health/ready') {
+    return jsonResponse({
+      ready: true,
+      service: 'capture-runtime',
+      apiVersion: '2.0',
+      runtimeVersion: '0.4.0',
+      captureDocumentSchemaVersion: '2',
+      captureDocumentSchemaSha256:
+        '850afd212d049c25da41d3867ba5477451a6a2c6c7e41f116fe60f26b6a35335',
+      capabilities: {
+        captureKinds: ['pdf'],
+        structuringModes: ['host'],
+        supportsCancellation: true,
+        supportsRawDiagnostics: true,
+        maxUploadBytes: 1024,
+      },
+    });
+  }
+  if (path === '/meta/v2/contracts') return jsonResponse(contractIndex);
+  if (path === contractIndex.href) {
+    return new Response(contractBundle, {
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Contract-SHA256': CAPTURE_CONTRACT_SET_SHA256,
+        ETag: `"${CAPTURE_CONTRACT_SET_SHA256}"`,
+      },
+    });
+  }
+  if (path === '/v2/streaming/health/ready') {
+    return jsonResponse(streamingCapabilities());
+  }
+  return undefined;
 }
 
 function jsonResponse(value: unknown, status = 200): Response {
@@ -480,10 +547,49 @@ function jsonResponse(value: unknown, status = 200): Response {
   });
 }
 
+function streamingCapabilities() {
+  return {
+    protocolVersion: '2',
+    maxChunkBytes: 1024 * 1024,
+    checkpointIntervalMs: 250,
+    heartbeatIntervalMs: 1000,
+    stallTimeoutMs: 30000,
+  };
+}
+
+function ingestion(receivedBytes: number) {
+  return {
+    protocolVersion: '2',
+    ingestionId: 'ingestion-1',
+    status: 'open',
+    fileName: 'scan.pdf',
+    mediaType: 'application/pdf',
+    totalBytes: 3,
+    receivedBytes,
+    contiguousBytes: receivedBytes,
+    nextChunkIndex: receivedBytes === 0 ? 0 : 1,
+    nextOffset: receivedBytes,
+    expiresAt: '2026-08-11T01:00:00Z',
+  };
+}
+
+function captureOperation() {
+  return {
+    protocolVersion: '2',
+    captureId: 'capture-1',
+    ingestionId: 'ingestion-1',
+    status: 'extracting',
+    partialRevision: 0,
+    lastEventSequence: 0,
+    createdAt: '2026-08-11T00:00:00Z',
+    updatedAt: '2026-08-11T00:00:00Z',
+  };
+}
+
 function captureEvent(
   sequence: number,
-  eventType: CaptureEventV2['eventType'],
-): CaptureEventV2 {
+  eventType: CaptureEvent['eventType'],
+): CaptureEvent {
   return {
     protocolVersion: '2',
     eventId: `event-${sequence}`,
@@ -495,7 +601,7 @@ function captureEvent(
   };
 }
 
-function sseFrame(event: CaptureEventV2): string {
+function sseFrame(event: CaptureEvent): string {
   return `id: ${event.sequence}\nevent: ${event.eventType}\ndata: ${JSON.stringify(event)}\n\n`;
 }
 
@@ -503,7 +609,8 @@ function sseResponse(chunks: readonly string[]): Response {
   return new Response(
     new ReadableStream({
       start(controller) {
-        for (const chunk of chunks) controller.enqueue(new TextEncoder().encode(chunk));
+        for (const chunk of chunks)
+          controller.enqueue(new TextEncoder().encode(chunk));
         controller.close();
       },
     }),
@@ -515,7 +622,8 @@ function sseInfiniteResponse(chunks: readonly string[]): Response {
   return new Response(
     new ReadableStream({
       start(controller) {
-        for (const chunk of chunks) controller.enqueue(new TextEncoder().encode(chunk));
+        for (const chunk of chunks)
+          controller.enqueue(new TextEncoder().encode(chunk));
       },
     }),
     { status: 200, headers: { 'Content-Type': 'text/event-stream' } },

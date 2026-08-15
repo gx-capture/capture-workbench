@@ -28,7 +28,7 @@ function rawCapture() {
     },
   ];
   return {
-    schemaVersion: '1' as const,
+    schemaVersion: '2' as const,
     diagnosticOnly: true as const,
     source: {
       sha256: 'a'.repeat(64),

@@ -31,9 +31,8 @@ async function main(): Promise<void> {
   const candidate = resolve(values.get('--candidate')!);
   const version = values.get('--version')!;
   const output = resolve(values.get('--output')!);
-  const manifest = JSON.parse(
-    await readFile(join(candidate, 'candidate-manifest.json'), 'utf8'),
-  ) as { candidateId?: unknown };
+  const manifestBytes = await readFile(join(candidate, 'candidate-manifest.json'));
+  const manifest = JSON.parse(manifestBytes.toString('utf8')) as { candidateId?: unknown };
   if (
     typeof manifest.candidateId !== 'string' ||
     !/^[0-9a-f]{64}$/u.test(manifest.candidateId)
@@ -48,7 +47,7 @@ async function main(): Promise<void> {
     artifacts.some(
       (name) =>
         !new RegExp(
-          `^(?:capture_contracts|capture_structuring)-${version.replaceAll('.', '\\.')}(?:-[^/]+)?\\.(?:whl|tar\\.gz)$`,
+        `^(?:capture_runtime_client|capture_structuring)-${version.replaceAll('.', '\\.')}(?:-[^/]+)?\\.(?:whl|tar\\.gz)$`,
           'u',
         ).test(name),
     )
@@ -58,7 +57,7 @@ async function main(): Promise<void> {
     );
   }
   const artifactRecords = [] as Array<{ name: string; sha256: string }>;
-  for (const project of ['capture-contracts', 'capture-structuring']) {
+  for (const project of ['capture-runtime-client', 'capture-structuring']) {
     const response = await fetch(
       `https://pypi.org/pypi/${project}/${version}/json`,
       {
@@ -88,7 +87,7 @@ async function main(): Promise<void> {
       ),
     );
     for (const name of artifacts.filter((artifact) =>
-      artifact.startsWith(`${project.replace('-', '_')}_`),
+      artifact.startsWith(`${project.replaceAll('-', '_')}_`),
     )) {
       const candidateDigest = createHash('sha256')
         .update(await readFile(join(candidate, 'python', name)))
@@ -108,6 +107,7 @@ async function main(): Promise<void> {
         schemaVersion: '1',
         registry: 'pypi',
         candidateId: manifest.candidateId,
+        sourceCandidateManifestSha256: createHash('sha256').update(manifestBytes).digest('hex'),
         releaseVersion: version,
         status: 'published',
         artifacts: artifactRecords.sort((left, right) =>

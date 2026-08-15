@@ -1,6 +1,6 @@
 import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import type { CaptureJobV1 } from '@gx-capture/capture-workbench-ui';
+import type { CaptureOperation } from '@gx-capture/capture-workbench-ui';
 import { EMPTY, of, Subject, throwError } from 'rxjs';
 import type { DesktopLibraryDetail, DesktopLibrarySummary } from '../contracts';
 import { DesktopLibraryService } from './desktop-library.service';
@@ -480,7 +480,7 @@ describe('DesktopWorkspaceStore', () => {
   );
 
   it('remembers repeated cancel clicks before create resolves and sends one independent request', () => {
-    const created = new Subject<CaptureJobV1>();
+    const created = new Subject<CaptureOperation>();
     const cancelCapture = vi.fn(() => of(cancelledJob));
     const getCapture = vi.fn(() => of(completedJob));
     const library = libraryStub();
@@ -504,7 +504,7 @@ describe('DesktopWorkspaceStore', () => {
   });
 
   it('interrupts an in-flight poll and sends cancellation immediately', () => {
-    const polled = new Subject<CaptureJobV1>();
+    const polled = new Subject<CaptureOperation>();
     const cancelCapture = vi.fn(() => of(cancelledJob));
     const getCapture = vi.fn(() => polled);
     const client = runtimeStub({
@@ -531,7 +531,7 @@ describe('DesktopWorkspaceStore', () => {
   });
 
   it('lets an already-terminal runtime response win a cancel/complete race', () => {
-    const created = new Subject<CaptureJobV1>();
+    const created = new Subject<CaptureOperation>();
     const cancelCapture = vi.fn(() => of(cancelledJob));
     const deleteCapture = vi.fn(() => of(undefined));
     const client = runtimeStub({
@@ -1072,7 +1072,7 @@ describe('DesktopWorkspaceStore', () => {
   });
 
   it('blocks direct deletion while a native capture is active', () => {
-    const pendingCapture = new Subject<CaptureJobV1>();
+    const pendingCapture = new Subject<CaptureOperation>();
     const deleteDocument = vi.fn(() => of(undefined));
     const confirm = vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
     const library = libraryStub({
@@ -1095,7 +1095,7 @@ describe('DesktopWorkspaceStore', () => {
   });
 
   it('refreshes the selected document after processing and runtime ID updates', () => {
-    const pendingCapture = new Subject<CaptureJobV1>();
+    const pendingCapture = new Subject<CaptureOperation>();
     const list = vi.fn(() => of<readonly DesktopLibrarySummary[]>([summary]));
     const store = initializeStore(
       libraryStub({ list }),
@@ -1215,6 +1215,6 @@ function applyDurableCaptureUpdate(
   } as DesktopLibrarySummary;
 }
 
-function job(input: Record<string, unknown>): CaptureJobV1 {
-  return input as unknown as CaptureJobV1;
+function job(input: Record<string, unknown>): CaptureOperation {
+  return input as unknown as CaptureOperation;
 }

@@ -165,7 +165,7 @@ def _catalog(root: Path, *, version: str = "engine-1") -> tuple[EngineCatalog, d
         EngineCatalog.from_dict(
             {
                 "catalogVersion": "2",
-                "runtimeVersion": "0.3.12",
+                "runtimeVersion": "0.4.0",
                 "requirements": [
                     {
                         "requirementId": "windowsml-ocr",
@@ -754,7 +754,7 @@ def test_next_install_removes_only_validated_crash_residue(tmp_path: Path) -> No
     )
     requirement_root = root / "windowsml-ocr"
     staging_residue = requirement_root / ".staging" / ("a" * 32)
-    version_residue = requirement_root / "versions" / f".crashed-0.3.12.{'b' * 32}"
+    version_residue = requirement_root / "versions" / f".crashed-0.4.0.{'b' * 32}"
     invalid_staging = requirement_root / ".staging" / "not-owned"
     invalid_version = requirement_root / "versions" / ".not-owned"
     for path in (
@@ -863,7 +863,7 @@ def test_core_only_catalog_reports_models_unavailable_without_downloading(
     catalog = EngineCatalog.from_dict(
         {
             "catalogVersion": "2",
-            "runtimeVersion": "0.3.12",
+            "runtimeVersion": "0.4.0",
             "requirements": [],
         }
     )

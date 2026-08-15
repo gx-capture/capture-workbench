@@ -1,23 +1,23 @@
 import type { Observable } from 'rxjs';
-import { CAPTURE_DOCUMENT_SCHEMA_VERSION } from '@gx-capture/capture-contracts';
+import { CAPTURE_DOCUMENT_SCHEMA_VERSION } from '@gx-capture/capture-runtime-client';
 import type {
-  CaptureBlockV1,
-  CaptureEventV2,
-  CaptureDocumentV1,
-  CaptureFailureV1,
-  CaptureOperationV2,
-  CaptureJobStage,
-  CaptureReviewV1,
+  CaptureBlock,
+  CaptureEvent,
+  CaptureDocument,
+  CaptureFailure,
+  CaptureOperation,
+  StreamingCaptureStatus,
+  CaptureReview,
   CaptureSourceKind,
-  PageLocatorV1,
-  PartialCaptureV2,
-  RawCaptureV1,
-  RuntimeInstallationV1,
-  RuntimeReadyV1 as GeneratedRuntimeReadyV1,
-  RuntimeRequirementV1,
+  PageLocator,
+  PartialCapture,
+  RawCapture,
+  RuntimeInstallation,
+  RuntimeReady as GeneratedRuntimeReady,
+  RuntimeRequirement,
   StructuringMode,
-  TimeLocatorV1,
-} from '@gx-capture/capture-contracts';
+  TimeLocator,
+} from '@gx-capture/capture-runtime-client';
 
 export {
   CAPTURE_API_VERSION,
@@ -29,67 +29,60 @@ export {
   CAPTURE_RUNTIME_VERSION,
   CONTRACT_MANIFEST_VERSION,
   RUNTIME_VERSION,
-} from '@gx-capture/capture-contracts';
+} from '@gx-capture/capture-runtime-client';
 export type {
-  CaptureBlockV1,
-  CaptureEventV2,
+  CaptureBlock,
+  CaptureEvent,
   CaptureContractExtraPolicy,
   CaptureContractInvariant,
   CaptureContractName,
-  CaptureDocumentV1,
-  CaptureEngineV1,
-  CaptureFailureV1,
-  CaptureFailureV2,
-  CaptureJobV1,
-  CaptureJobStage,
-  CaptureJobStatus,
-  CaptureOperationV2,
-  FinalizeIngestionV2,
-  IngestionV2,
-  OpenIngestionV2,
-  CaptureReviewEditV1,
-  CaptureReviewV1,
-  CaptureLocatorV1,
+  CaptureDocument,
+  CaptureEngine,
+  CaptureFailure,
+  CaptureOperation,
+  FinalizeIngestion,
+  Ingestion,
+  OpenIngestion,
+  CaptureReviewEdit,
+  CaptureReview,
+  CaptureLocator,
   CaptureSourceKind,
-  ErrorBodyV1,
-  ErrorEnvelopeV1,
-  PageLocatorV1,
-  PartialCaptureV2,
-  RawCaptureSegmentV1,
-  RawCaptureV1,
-  ReportStructuringFailureV1,
-  ReportStructuringFailureV2,
-  RuntimeArtifactDescriptorV1,
-  RuntimeCapabilitiesV1,
+  ErrorBody,
+  ErrorEnvelope,
+  PageLocator,
+  PartialCapture,
+  RawCaptureSegment,
+  RawCapture,
+  ReportStructuringFailure,
+  RuntimeArtifactDescriptor,
   RuntimeInstallationStatus,
-  RuntimeInstallationV1,
-  RuntimeInstallationsV1,
-  RuntimeModelInstallationV1,
-  RuntimeModelOptionV1,
+  RuntimeInstallation,
+  RuntimeInstallations,
+  RuntimeModelInstallation,
+  RuntimeModelOption,
   RuntimeModelOptionStatus,
-  RuntimeModelOptionsV1,
+  RuntimeModelOptions,
   RuntimeRequirementStatus,
-  RuntimeRequirementV1,
-  RuntimeRequirementsV1,
-  StartRuntimeInstallationV1,
+  RuntimeRequirement,
+  RuntimeRequirements,
   StructuringMode,
-  TimeLocatorV1,
-} from '@gx-capture/capture-contracts';
+  TimeLocator,
+} from '@gx-capture/capture-runtime-client';
 
 /** Angular's API naming remains stable while the wire owner is generated. */
 export type CaptureStructuringMode = StructuringMode;
-export type CaptureRequirementId = RuntimeRequirementV1['requirementId'];
-export type CapturePageLocatorV1 = PageLocatorV1;
-export type CaptureTimeLocatorV1 = TimeLocatorV1;
-export type CaptureBlockType = CaptureBlockV1['type'];
-export type CaptureStructuringCandidateV1 = CaptureDocumentV1;
+export type CaptureRequirementId = RuntimeRequirement['requirementId'];
+export type CapturePageLocator = PageLocator;
+export type CaptureTimeLocator = TimeLocator;
+export type CaptureBlockType = CaptureBlock['type'];
+export type CaptureStructuringCandidate = CaptureDocument;
 
 /**
  * A client receives arbitrary handshake versions so it can report incompatibility;
  * the generated release model intentionally narrows these fields to this release.
  */
-export type RuntimeReadyV1 = Omit<
-  GeneratedRuntimeReadyV1,
+export type RuntimeReady = Omit<
+  GeneratedRuntimeReady,
   'apiVersion' | 'runtimeVersion' | 'captureDocumentSchemaVersion'
 > & {
   readonly apiVersion: string;
@@ -109,7 +102,11 @@ export type CaptureTaskStatus =
   | 'failed'
   | 'canceled';
 
-export type CaptureTaskStage = CaptureJobStage | 'uploading' | 'preprocessing';
+export type CaptureTaskStage =
+  | StreamingCaptureStatus
+  | 'queued'
+  | 'uploading'
+  | 'preprocessing';
 
 export interface StartRuntimeInstallationRequest {
   readonly clientRequestId: string;
@@ -138,14 +135,14 @@ export interface StartStreamingCaptureRequest {
 }
 
 export interface CaptureStreamingResult {
-  readonly operation: CaptureOperationV2;
-  readonly raw: RawCaptureV1;
-  readonly result: CaptureDocumentV1;
+  readonly operation: CaptureOperation;
+  readonly raw: RawCapture;
+  readonly result: CaptureDocument;
 }
 
 export interface CommitStreamingStructuredResultRequest {
   readonly clientRequestId: string;
-  readonly candidate: CaptureStructuringCandidateV1;
+  readonly candidate: CaptureStructuringCandidate;
 }
 
 export interface ReportStreamingStructuringFailureRequest {
@@ -165,7 +162,7 @@ export interface CaptureEventStreamOptions {
 
 export interface CommitStructuredResultRequest {
   readonly clientRequestId: string;
-  readonly candidate: CaptureStructuringCandidateV1;
+  readonly candidate: CaptureStructuringCandidate;
 }
 
 export interface ReportStructuringFailureRequest {
@@ -175,29 +172,29 @@ export interface ReportStructuringFailureRequest {
 
 export interface ConfirmCaptureRequest {
   readonly clientRequestId: string;
-  readonly review: CaptureReviewV1;
+  readonly review: CaptureReview;
 }
 
 export interface CaptureClient {
-  getReady(signal?: AbortSignal): Observable<RuntimeReadyV1>;
+  getReady(signal?: AbortSignal): Observable<RuntimeReady>;
   getRequirements(
     signal?: AbortSignal,
-  ): Observable<readonly RuntimeRequirementV1[]>;
+  ): Observable<readonly RuntimeRequirement[]>;
   startInstallation(
     request: StartRuntimeInstallationRequest,
     signal?: AbortSignal,
-  ): Observable<RuntimeInstallationV1>;
+  ): Observable<RuntimeInstallation>;
   listInstallations(
     signal?: AbortSignal,
-  ): Observable<readonly RuntimeInstallationV1[]>;
+  ): Observable<readonly RuntimeInstallation[]>;
   getInstallation(
     id: string,
     signal?: AbortSignal,
-  ): Observable<RuntimeInstallationV1>;
+  ): Observable<RuntimeInstallation>;
   cancelInstallation(
     id: string,
     signal?: AbortSignal,
-  ): Observable<RuntimeInstallationV1>;
+  ): Observable<RuntimeInstallation>;
   /**
    * Opens the authenticated v2 capture event stream as a cold Observable.
    * Each subscription performs a fresh fetch and unsubscribing aborts it.
@@ -207,22 +204,23 @@ export interface CaptureClient {
   captureEvents(
     id: string,
     options?: CaptureEventStreamOptions,
-  ): Observable<CaptureEventV2>;
+  ): Observable<CaptureEvent>;
   startStreamingCapture(
     request: StartStreamingCaptureRequest,
-  ): Observable<CaptureOperationV2>;
+  ): Observable<CaptureOperation>;
   getStreamingCapture(
     id: string,
     signal?: AbortSignal,
-  ): Observable<CaptureOperationV2>;
+  ): Observable<CaptureOperation>;
   cancelStreamingCapture(
     id: string,
     signal?: AbortSignal,
-  ): Observable<CaptureOperationV2>;
+  ): Observable<CaptureOperation>;
   getStreamingPartial(
     id: string,
     signal?: AbortSignal,
-  ): Observable<PartialCaptureV2>;
+  ): Observable<PartialCapture>;
+  getStreamingRaw(id: string, signal?: AbortSignal): Observable<RawCapture>;
   getStreamingResult(
     id: string,
     signal?: AbortSignal,
@@ -231,12 +229,12 @@ export interface CaptureClient {
     id: string,
     request: CommitStreamingStructuredResultRequest,
     signal?: AbortSignal,
-  ): Observable<CaptureOperationV2>;
+  ): Observable<CaptureOperation>;
   reportStreamingStructuringFailure(
     id: string,
     request: ReportStreamingStructuringFailureRequest,
     signal?: AbortSignal,
-  ): Observable<CaptureOperationV2>;
+  ): Observable<CaptureOperation>;
   deleteStreamingCapture(
     id: string,
     signal?: AbortSignal,
@@ -244,15 +242,15 @@ export interface CaptureClient {
 }
 
 export interface CaptureStructuringRequest {
-  readonly raw: RawCaptureV1;
-  readonly review?: CaptureReviewV1;
-  readonly documentContract: CaptureDocumentContractV1;
+  readonly raw: RawCapture;
+  readonly review?: CaptureReview;
+  readonly documentContract: CaptureDocumentContract;
   readonly targetLanguage?: string;
   readonly signal: AbortSignal;
   readonly reportProgress: (percentage: number) => void;
 }
 
-export interface CaptureDocumentContractV1 {
+export interface CaptureDocumentContract {
   readonly schemaVersion: typeof CAPTURE_DOCUMENT_SCHEMA_VERSION;
   /** SHA-256 of the canonical CRLF-terminated release schema bytes. */
   readonly schemaSha256: string;
@@ -267,7 +265,7 @@ export interface CaptureDocumentContractV1 {
 export interface CaptureStructuringProvider {
   structure(
     request: CaptureStructuringRequest,
-  ): Observable<CaptureStructuringCandidateV1>;
+  ): Observable<CaptureStructuringCandidate>;
 }
 
 export interface CapturePreprocessRequest {
@@ -358,24 +356,24 @@ export interface CaptureTaskView {
   readonly status: CaptureTaskStatus;
   readonly stage?: CaptureTaskStage;
   readonly progress: number;
-  readonly result?: CaptureDocumentV1;
-  readonly raw?: RawCaptureV1;
-  readonly review?: CaptureReviewV1;
-  readonly error?: CaptureFailureV1;
+  readonly result?: CaptureDocument;
+  readonly raw?: RawCapture;
+  readonly review?: CaptureReview;
+  readonly error?: CaptureFailure;
 }
 
 export interface CaptureCompletedEvent {
   readonly taskId: string;
-  readonly document: CaptureDocumentV1;
-  readonly review?: CaptureReviewV1;
+  readonly document: CaptureDocument;
+  readonly review?: CaptureReview;
 }
 
 export interface CaptureFailedEvent {
   readonly taskId: string;
   readonly captureId?: string;
   readonly fileName: string;
-  readonly error: CaptureFailureV1;
-  readonly raw?: RawCaptureV1;
+  readonly error: CaptureFailure;
+  readonly raw?: RawCapture;
 }
 
 export * from './injection';

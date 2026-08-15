@@ -14,11 +14,11 @@ if (manifest.name !== '@gx-capture/capture-structuring') {
   throw new Error('Refusing to finalize an unexpected Capture Structuring package.');
 }
 
-if (manifest.dependencies?.['@gx-capture/capture-contracts'] === 'workspace:*') {
-  const contractsManifest = JSON.parse(
-    readFileSync(join(packageDirectory, '../capture-contracts/package.json'), 'utf8'),
+if (manifest.dependencies?.['@gx-capture/capture-runtime-client'] === 'workspace:*') {
+  const runtimeClientManifest = JSON.parse(
+    readFileSync(join(packageDirectory, '../capture-runtime-client/package.json'), 'utf8'),
   ) as { version: string };
-  manifest.dependencies['@gx-capture/capture-contracts'] = contractsManifest.version;
+  manifest.dependencies['@gx-capture/capture-runtime-client'] = runtimeClientManifest.version;
 }
 
 writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');

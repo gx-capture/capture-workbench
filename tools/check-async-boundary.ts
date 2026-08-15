@@ -32,6 +32,21 @@ function collectTypescriptFiles(directory) {
 }
 
 function exceptionReason(relativePath) {
+  if (/^packages[\\/]capture-runtime-client[\\/]src[\\/]/u.test(relativePath)) {
+    return 'framework-neutral Capture Runtime SDK transport boundary';
+  }
+  if (
+    relativePath ===
+    'packages/capture-angular/src/lib/http-capture-client.ts'
+  ) {
+    return 'RxJS adapter over the framework-neutral Capture Runtime SDK boundary';
+  }
+  if (
+    relativePath === 'tools/assemble-java-sdk-candidate.ts' ||
+    relativePath === 'tools/verify-java-sdk-candidate.ts'
+  ) {
+    return 'Java SDK candidate tooling process boundary';
+  }
   if (/^apps[\\/]capture-workbench-e2e[\\/]/u.test(relativePath)) {
     return 'Playwright test API boundary';
   }

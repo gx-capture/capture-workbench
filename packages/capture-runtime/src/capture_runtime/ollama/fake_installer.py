@@ -11,7 +11,7 @@ from capture_runtime.constants import (
     WHISPER_REQUIREMENT_ID,
     WINDOWSML_REQUIREMENT_ID,
 )
-from capture_runtime.contracts import RuntimeRequirementStatus, RuntimeRequirementV1
+from capture_runtime.contracts import RuntimeRequirementStatus, RuntimeRequirementV2
 from capture_runtime.ollama.lifecycle_impl import ManualActionRequiredError
 
 
@@ -30,7 +30,7 @@ class FakeRuntimeInstaller:
     def requirements(
         self,
         enabled_requirement_ids: Collection[str] | None = None,
-    ) -> list[RuntimeRequirementV1]:
+    ) -> list[RuntimeRequirementV2]:
         descriptions = {
             WINDOWSML_REQUIREMENT_ID: ("OCR", "WindowsML OCR", ["pdf", "image"]),
             WHISPER_REQUIREMENT_ID: ("transcription", "Whisper transcription", ["audio"]),
@@ -49,7 +49,7 @@ class FakeRuntimeInstaller:
             set(descriptions) if enabled_requirement_ids is None else set(enabled_requirement_ids)
         )
         return [
-            RuntimeRequirementV1(
+            RuntimeRequirementV2(
                 requirement_id=requirement_id,
                 kind=kind,
                 display_name=name,

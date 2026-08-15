@@ -1,0 +1,35 @@
+{
+  "name": "@gx-capture/capture-runtime-client",
+  "version": "0.4.0",
+  "description": "Framework-neutral Capture Runtime client SDK and private wire codecs.",
+  "contractSetSha256": "5b93bcb557acca034386b6e9e47502efec91210331ecebabd9c470196d35fec3",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gx-capture/capture-workbench.git",
+    "directory": "packages/capture-runtime-client"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "public"
+  },
+  "type": "module",
+  "files": [
+    "README.md",
+    "*.js",
+    "*.d.ts",
+    "*.map",
+    "private"
+  ],
+  "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "dependencies": {
+    "tslib": "^2.8.1"
+  }
+}

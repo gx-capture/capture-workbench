@@ -82,9 +82,35 @@ async function main(): Promise<void> {
     );
   }
   const registryLedgers: Record<string, unknown> = {};
-  for (const name of ['npm', 'pypi', 'crates.io']) {
+  for (const name of ['npm', 'pypi', 'crates.io', 'maven']) {
     const path = join(registryDirectory, `registry-ledger-${name}.json`);
     registryLedgers[name] = JSON.parse(await readFile(path, 'utf8')) as unknown;
+  }
+  const registryValues = Object.values(registryLedgers) as Array<Record<string, unknown>>;
+  const releaseCandidateId = registryValues[0]?.releaseCandidateId;
+  const contractSetSha256 = registryValues[0]?.contractSetSha256;
+  if (
+    typeof releaseCandidateId !== 'string' ||
+    !/^[0-9a-f]{64}$/u.test(releaseCandidateId) ||
+    typeof contractSetSha256 !== 'string' ||
+    !/^[0-9a-f]{64}$/u.test(contractSetSha256) ||
+    registryValues.some(
+      (ledger) =>
+        ledger.releaseCandidateId !== releaseCandidateId ||
+        ledger.contractSetSha256 !== contractSetSha256,
+    )
+  ) {
+    throw new Error('Registry ledgers do not share one release candidate and contract-set hash.');
+  }
+  const sourceManifestDigests: Record<string, string> = {};
+  for (const [name, ledger] of Object.entries(registryLedgers)) {
+    if (
+      typeof ledger.sourceCandidateManifestSha256 !== 'string' ||
+      !/^[0-9a-f]{64}$/u.test(ledger.sourceCandidateManifestSha256)
+    ) {
+      throw new Error(`Registry ledger is missing a valid source candidate manifest digest: ${name}.`);
+    }
+    sourceManifestDigests[name] = ledger.sourceCandidateManifestSha256;
   }
   const evidenceBytes = await readBytes(evidencePath);
   const githubReleaseBytes = await readBytes(githubReleasePath);
@@ -103,6 +129,9 @@ async function main(): Promise<void> {
         candidateManifestSha256: evidence.candidateManifestSha256,
         sourceCommit: evidence.sourceCommit,
         releaseVersion: evidence.releaseVersion,
+        releaseCandidateId,
+        contractSetSha256,
+        registrySourceCandidateManifestSha256: sourceManifestDigests,
         contractClassification: evidence.contractClassification,
         tag: `v${evidence.releaseVersion}`,
         status: 'promoted',

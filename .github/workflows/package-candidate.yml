@@ -49,6 +49,13 @@ jobs:
           node-version: 24
           cache: pnpm
 
+      - name: Install Java for the Maven SDK candidate
+        uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+
       - name: Install workspace dependencies
         shell: bash
         run: pnpm install --frozen-lockfile
@@ -63,6 +70,9 @@ jobs:
           set -euo pipefail
           pnpm nx run capture-angular:pack --skip-nx-cache
           pnpm nx run capture-structuring:pack --skip-nx-cache
+          pnpm nx run capture-runtime-client-python:build --skip-nx-cache
+          pnpm nx run capture-structuring-python:build --skip-nx-cache
+          pnpm nx run capture-runtime-client-java:build --skip-nx-cache
 
       - name: Install Playwright Chromium for consumer evidence
         shell: bash
@@ -74,6 +84,18 @@ jobs:
           PACKAGE_CANDIDATE: ${{ runner.temp }}/capture-package-candidate-${{ github.run_id }}
         run: |
           set -euo pipefail
+          contract_set_sha256="$(tr -d '\r\n' < packages/capture-runtime/src/capture_runtime/assets/contract-set.sha256)"
+          if [[ ! "$contract_set_sha256" =~ ^[0-9a-f]{64}$ ]]; then
+            echo 'Canonical contract-set hash is missing or malformed.' >&2
+            exit 1
+          fi
+          CAPTURE_CONTRACT_SET_SHA256="$contract_set_sha256" node tools/verify-java-sdk-artifact.mjs
+          node tools/assemble-java-sdk-candidate.ts \
+            --output "$PACKAGE_CANDIDATE" \
+            --version '${{ inputs.version }}' \
+            --source-commit '${{ inputs.commit_sha }}' \
+            --producer-run-id '${{ github.run_id }}' \
+            --contract-set-sha256 "$contract_set_sha256"
           node tools/assemble-package-candidate.ts \
             --output "$PACKAGE_CANDIDATE" \
             --version '${{ inputs.version }}' \
@@ -81,9 +103,14 @@ jobs:
             --producer-run-id '${{ github.run_id }}'
           manifest="$(node --input-type=module -e "const m=JSON.parse(await import('node:fs/promises').then(x=>x.readFile(process.argv[1],'utf8'))); process.stdout.write(m.candidateId)" "$PACKAGE_CANDIDATE/candidate-manifest.json")"
           manifest_sha256="$(sha256sum "$PACKAGE_CANDIDATE/candidate-manifest.json" | cut -d ' ' -f1)"
+          java_manifest="$(node --input-type=module -e "const m=JSON.parse(await import('node:fs/promises').then(x=>x.readFile(process.argv[1],'utf8'))); process.stdout.write(m.candidateId)" "$PACKAGE_CANDIDATE/java-candidate-manifest.json")"
+          java_manifest_sha256="$(sha256sum "$PACKAGE_CANDIDATE/java-candidate-manifest.json" | cut -d ' ' -f1)"
           echo "PACKAGE_CANDIDATE=$PACKAGE_CANDIDATE" >> "$GITHUB_ENV"
           echo "PACKAGE_CANDIDATE_ID=$manifest" >> "$GITHUB_ENV"
           echo "PACKAGE_CANDIDATE_MANIFEST_SHA256=$manifest_sha256" >> "$GITHUB_ENV"
+          echo "JAVA_CANDIDATE_ID=$java_manifest" >> "$GITHUB_ENV"
+          echo "JAVA_CANDIDATE_MANIFEST_SHA256=$java_manifest_sha256" >> "$GITHUB_ENV"
+          echo "CAPTURE_CONTRACT_SET_SHA256=$contract_set_sha256" >> "$GITHUB_ENV"
 
       - name: Verify package exports and dependency boundaries
         shell: bash
@@ -95,10 +122,18 @@ jobs:
             --source-commit '${{ inputs.commit_sha }}' \
             --producer-run-id '${{ github.run_id }}' \
             --candidate-id "$PACKAGE_CANDIDATE_ID" \
-            --candidate-manifest-sha256 "$PACKAGE_CANDIDATE_MANIFEST_SHA256"
+            --candidate-manifest-sha256 "$PACKAGE_CANDIDATE_MANIFEST_SHA256" \
+            --contract-set-sha256 "$CAPTURE_CONTRACT_SET_SHA256"
           node tools/verify-candidate-packages.ts \
             --candidate "$PACKAGE_CANDIDATE" \
             --version '${{ inputs.version }}'
+          node tools/verify-java-sdk-candidate.ts \
+            --candidate "$PACKAGE_CANDIDATE" \
+            --version '${{ inputs.version }}' \
+            --source-commit '${{ inputs.commit_sha }}' \
+            --candidate-id "$JAVA_CANDIDATE_ID" \
+            --candidate-manifest-sha256 "$JAVA_CANDIDATE_MANIFEST_SHA256" \
+            --contract-set-sha256 "$CAPTURE_CONTRACT_SET_SHA256"
 
       - name: Run Tier 1 Web Component consumer evidence
         shell: bash
@@ -129,6 +164,7 @@ jobs:
             --producer-run-id '${{ github.run_id }}' \
             --candidate-id "$PACKAGE_CANDIDATE_ID" \
             --candidate-manifest-sha256 "$PACKAGE_CANDIDATE_MANIFEST_SHA256" \
+            --contract-set-sha256 "$CAPTURE_CONTRACT_SET_SHA256" \
             --require-evidence
 
       - name: Upload immutable Package Candidate

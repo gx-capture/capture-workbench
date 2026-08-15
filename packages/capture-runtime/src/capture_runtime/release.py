@@ -14,13 +14,13 @@ from capture_runtime.constants import (
     CAPTURE_DOCUMENT_SCHEMA_VERSION,
     RUNTIME_VERSION,
 )
-from capture_runtime.contracts import CaptureDocumentV1
+from capture_runtime.contracts import CaptureDocument
 
 CAPTURE_DOCUMENT_SCHEMA_ID = (
-    "https://github.com/gx-capture/capture-workbench/schema/capture-document-v1.schema.json"
+    "https://github.com/gx-capture/capture-workbench/schema/capture-document-v2.schema.json"
 )
 CAPTURE_DOCUMENT_SCHEMA_RELEASE_SHA256 = (
-    "2721093496a9f09044d5737cce70d2356d5f71757b1cd23a960e1d003ea014f2"
+    "850afd212d049c25da41d3867ba5477451a6a2c6c7e41f116fe60f26b6a35335"
 )
 
 
@@ -100,16 +100,16 @@ def _validated_engine_release_files(
 
 
 def capture_document_schema() -> dict[str, Any]:
-    """Return the authoritative semantic CaptureDocumentV1 JSON Schema."""
+    """Return the authoritative semantic CaptureDocument JSON Schema."""
 
-    schema = CaptureDocumentV1.model_json_schema(by_alias=True)
+    schema = CaptureDocument.model_json_schema(by_alias=True)
     schema["$schema"] = "https://json-schema.org/draft/2020-12/schema"
     schema["$id"] = CAPTURE_DOCUMENT_SCHEMA_ID
     return schema
 
 
 def capture_document_schema_release_bytes() -> bytes:
-    """Serialize the v1 release schema with deterministic Windows CRLF bytes."""
+    """Serialize the v2 release schema with deterministic Windows CRLF bytes."""
 
     serialized = json.dumps(capture_document_schema(), ensure_ascii=False, indent=2, sort_keys=True)
     return (serialized.replace("\n", "\r\n") + "\r\n").encode("utf-8")
@@ -124,7 +124,7 @@ def write_capture_document_schema(output: Path) -> Path:
     digest = hashlib.sha256(schema_bytes).hexdigest()
     if digest != CAPTURE_DOCUMENT_SCHEMA_RELEASE_SHA256:
         raise ValueError(
-            "CaptureDocumentV1 schema bytes changed without an intentional schema release"
+            "CaptureDocument schema bytes changed without an intentional schema release"
         )
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_bytes(schema_bytes)
@@ -165,7 +165,7 @@ def build_release_artifacts(
         shutil.rmtree(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     released_executable = output_dir / "capture-runtime-x86_64-pc-windows-msvc.exe"
-    released_schema = output_dir / "capture-document-v1.schema.json"
+    released_schema = output_dir / "capture-document-v2.schema.json"
     shutil.copy2(executable, released_executable)
     shutil.copy2(schema, released_schema)
     manifest: dict[str, Any] = {

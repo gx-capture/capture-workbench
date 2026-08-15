@@ -18,6 +18,10 @@ on:
       tag:
         required: true
         type: string
+      java_candidate_id:
+        description: 'Exact Java SDK Candidate ID bound to the Maven publication ledger'
+        required: true
+        type: string
 
 permissions:
   actions: read
@@ -67,6 +71,7 @@ jobs:
             --promotion-evidence promotion-input/promotion-evidence.json \
             --consumer-gate-ledger promotion-input/consumer-gate-ledger.json \
             --registry-directory registry-ledgers \
+            --java-candidate-id '${{ inputs.java_candidate_id }}' \
             --output promotion-input/candidate/capture-release-manifest-v1.json
 
       - name: Stage the public contract snapshot asset

@@ -7,7 +7,7 @@ import wave
 from collections.abc import Iterable
 from pathlib import Path
 
-from capture_runtime.contracts import CaptureEngineV1
+from capture_runtime.contracts import CaptureEngine
 from capture_runtime.engine_adapters import WhisperAdapter, WhisperTranscriptionResult
 from capture_runtime.progressive_audio import (
     DecodedAudioWindow,
@@ -110,8 +110,8 @@ class ProgressiveWhisperWorkerBackend:
             )
 
 
-def _engine_from_result(result: WhisperTranscriptionResult) -> CaptureEngineV1:
-    return CaptureEngineV1(
+def _engine_from_result(result: WhisperTranscriptionResult) -> CaptureEngine:
+    return CaptureEngine(
         engine="whisper-primary",
         model=result.model,
         digest=result.digest,

@@ -1,7 +1,7 @@
 import type {
-  CaptureDocumentV1,
-  RawCaptureV1,
-  RuntimeReadyV1,
+  CaptureDocument,
+  RawCapture,
+  RuntimeReady,
 } from './contracts';
 import {
   assertCaptureRuntimeCompatible,
@@ -9,13 +9,13 @@ import {
   validateStructuringCandidate,
 } from './capture-helpers';
 import {
-  CAPTURE_DOCUMENT_V1_CONTRACT,
-  CAPTURE_DOCUMENT_V1_JSON_SCHEMA,
-  CAPTURE_DOCUMENT_V1_SCHEMA_SHA256,
+  CAPTURE_DOCUMENT_CONTRACT,
+  CAPTURE_DOCUMENT_SCHEMA,
+  CAPTURE_DOCUMENT_SCHEMA_HASH,
 } from './capture-document-schema';
 
-const raw: RawCaptureV1 = {
-  schemaVersion: '1',
+const raw: RawCapture = {
+  schemaVersion: '2',
   diagnosticOnly: true,
   source: {
     sha256: 'a'.repeat(64),
@@ -47,8 +47,8 @@ const raw: RawCaptureV1 = {
   createdAt: '2026-07-20T00:00:00Z',
 };
 
-const candidate: CaptureDocumentV1 = {
-  schemaVersion: '1',
+const candidate: CaptureDocument = {
+  schemaVersion: '2',
   source: raw.source,
   rawSegments: raw.segments,
   blocks: raw.segments.map((segment) => ({
@@ -75,11 +75,11 @@ const candidate: CaptureDocumentV1 = {
 
 describe('capture helpers', () => {
   it('rejects runtime major and document schema mismatches', () => {
-    const ready: RuntimeReadyV1 = {
+    const ready: RuntimeReady = {
       ready: true,
       service: 'capture-runtime',
       runtimeVersion: '1.0.0',
-      apiVersion: '1.0',
+      apiVersion: '2.0',
       captureDocumentSchemaVersion: '2',
       capabilities: {
         captureKinds: ['pdf'],
@@ -100,8 +100,8 @@ describe('capture helpers', () => {
       ready: true,
       service: 'not-capture-runtime',
       runtimeVersion: '0.3.8',
-      apiVersion: '1.0',
-      captureDocumentSchemaVersion: '1',
+      apiVersion: '2.0',
+      captureDocumentSchemaVersion: '2',
       capabilities: {
         captureKinds: ['pdf'],
         structuringModes: ['runtime'],
@@ -109,7 +109,7 @@ describe('capture helpers', () => {
         supportsRawDiagnostics: true,
         maxUploadBytes: 100,
       },
-    } as unknown as RuntimeReadyV1;
+    } as unknown as RuntimeReady;
 
     expect(() => assertCaptureRuntimeCompatible(ready)).toThrow(
       'not Capture Runtime',
@@ -117,12 +117,12 @@ describe('capture helpers', () => {
   });
 
   it('rejects a runtime process that does not expose the configured structuring mode', () => {
-    const hostOnly: RuntimeReadyV1 = {
+    const hostOnly: RuntimeReady = {
       ready: true,
       service: 'capture-runtime',
-      runtimeVersion: '0.3.8',
-      apiVersion: '1.0',
-      captureDocumentSchemaVersion: '1',
+      runtimeVersion: '0.4.0',
+      apiVersion: '2.0',
+      captureDocumentSchemaVersion: '2',
       capabilities: {
         captureKinds: ['pdf', 'image', 'audio'],
         structuringModes: ['host'],
@@ -141,12 +141,12 @@ describe('capture helpers', () => {
   });
 
   it('rejects a different runtime minor while the client is on 0.x', () => {
-    const ready: RuntimeReadyV1 = {
+    const ready: RuntimeReady = {
       ready: true,
       service: 'capture-runtime',
       runtimeVersion: '0.2.9',
-      apiVersion: '1.0',
-      captureDocumentSchemaVersion: '1',
+      apiVersion: '2.0',
+      captureDocumentSchemaVersion: '2',
       capabilities: {
         captureKinds: ['pdf'],
         structuringModes: ['runtime'],
@@ -157,17 +157,17 @@ describe('capture helpers', () => {
     };
 
     expect(() => assertCaptureRuntimeCompatible(ready)).toThrow(
-      'incompatible with client runtime minor 3',
+      'incompatible with client runtime minor 4',
     );
   });
 
   it('allows patch updates within the configured 0.x minor', () => {
-    const ready: RuntimeReadyV1 = {
+    const ready: RuntimeReady = {
       ready: true,
       service: 'capture-runtime',
-      runtimeVersion: '0.3.8',
-      apiVersion: '1.0',
-      captureDocumentSchemaVersion: '1',
+      runtimeVersion: '0.4.8',
+      apiVersion: '2.0',
+      captureDocumentSchemaVersion: '2',
       capabilities: {
         captureKinds: ['pdf'],
         structuringModes: ['runtime'],
@@ -181,25 +181,25 @@ describe('capture helpers', () => {
   });
 
   it('exports a deeply immutable canonical document schema', () => {
-    expect(CAPTURE_DOCUMENT_V1_CONTRACT.schemaVersion).toBe('1');
-    expect(CAPTURE_DOCUMENT_V1_CONTRACT.schemaSha256).toBe(
-      '2721093496a9f09044d5737cce70d2356d5f71757b1cd23a960e1d003ea014f2',
+    expect(CAPTURE_DOCUMENT_CONTRACT.schemaVersion).toBe('2');
+    expect(CAPTURE_DOCUMENT_CONTRACT.schemaSha256).toBe(
+      '850afd212d049c25da41d3867ba5477451a6a2c6c7e41f116fe60f26b6a35335',
     );
-    expect(CAPTURE_DOCUMENT_V1_SCHEMA_SHA256).toBe(
-      '2721093496a9f09044d5737cce70d2356d5f71757b1cd23a960e1d003ea014f2',
+    expect(CAPTURE_DOCUMENT_SCHEMA_HASH).toBe(
+      '850afd212d049c25da41d3867ba5477451a6a2c6c7e41f116fe60f26b6a35335',
     );
-    expect(Object.isFrozen(CAPTURE_DOCUMENT_V1_JSON_SCHEMA)).toBe(true);
+    expect(Object.isFrozen(CAPTURE_DOCUMENT_SCHEMA)).toBe(true);
     expect(
       Object.isFrozen(
-        CAPTURE_DOCUMENT_V1_JSON_SCHEMA.$defs.CaptureBlockV1.properties,
+        CAPTURE_DOCUMENT_SCHEMA.$defs.CaptureBlock.properties,
       ),
     ).toBe(true);
     expect(
-      CAPTURE_DOCUMENT_V1_JSON_SCHEMA.$defs.CaptureEngineV1.properties.digest
+      CAPTURE_DOCUMENT_SCHEMA.$defs.CaptureEngine.properties.digest
         .pattern,
     ).toBe('^sha256:[0-9a-f]{64}$');
-    expect(CAPTURE_DOCUMENT_V1_JSON_SCHEMA.$id).toBe(
-      'https://github.com/gx-capture/capture-workbench/schema/capture-document-v1.schema.json',
+    expect(CAPTURE_DOCUMENT_SCHEMA.$id).toBe(
+      'https://github.com/gx-capture/capture-workbench/schema/capture-document-v2.schema.json',
     );
   });
 
@@ -211,7 +211,7 @@ describe('capture helpers', () => {
     const first = candidate.blocks[0];
     const second = candidate.blocks[1];
     if (!first || !second) throw new Error('Expected two candidate blocks.');
-    const invalid: CaptureDocumentV1 = {
+    const invalid: CaptureDocument = {
       ...candidate,
       targetText: '',
       blocks: [
@@ -229,7 +229,7 @@ describe('capture helpers', () => {
   });
 
   it('rejects malformed SHA-256 provenance and zero-length time locators', () => {
-    const timedRaw: RawCaptureV1 = {
+    const timedRaw: RawCapture = {
       ...raw,
       segments: [
         {
@@ -245,7 +245,7 @@ describe('capture helpers', () => {
     const timedSegment = timedRaw.segments[0];
     if (!firstBlock || !timedSegment)
       throw new Error('Expected timed fixture evidence.');
-    const timedCandidate: CaptureDocumentV1 = {
+    const timedCandidate: CaptureDocument = {
       ...candidate,
       source: { ...candidate.source, sha256: 'ABC' },
       rawSegments: timedRaw.segments,
@@ -284,12 +284,12 @@ describe('capture helpers', () => {
     const firstBlock = candidate.blocks[0];
     if (!firstSegment || !firstBlock)
       throw new Error('Expected page fixture evidence.');
-    const boxedRaw: RawCaptureV1 = {
+    const boxedRaw: RawCapture = {
       ...raw,
       segments: [{ ...firstSegment, locator: boxedLocator }],
       sourceText: 'one',
     };
-    const boxedCandidate: CaptureDocumentV1 = {
+    const boxedCandidate: CaptureDocument = {
       ...candidate,
       rawSegments: boxedRaw.segments,
       blocks: [{ ...firstBlock, locator: boxedLocator }],

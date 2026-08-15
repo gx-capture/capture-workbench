@@ -2,7 +2,7 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideCaptureWorkbenchInputs } from '../../../contracts';
 import type {
   CaptureClient,
-  CaptureEventV2,
+  CaptureEvent,
   CaptureStructuringProvider,
 } from '../../../contracts';
 import { Subject, of, throwError } from 'rxjs';
@@ -66,7 +66,7 @@ describe('CaptureWorkbenchComponent', () => {
   });
 
   it('consumes v2 SSE stages without timer polling', async () => {
-    const events = new Subject<CaptureEventV2>();
+    const events = new Subject<CaptureEvent>();
     const startStreamingCapture = vi.fn<
       NonNullable<CaptureClient['startStreamingCapture']>
     >(
@@ -106,8 +106,8 @@ describe('CaptureWorkbenchComponent', () => {
   });
 
   it('reloads the v2 snapshot and reconnects SSE after resync_required', async () => {
-    const firstEvents = new Subject<CaptureEventV2>();
-    const secondEvents = new Subject<CaptureEventV2>();
+    const firstEvents = new Subject<CaptureEvent>();
+    const secondEvents = new Subject<CaptureEvent>();
     let streamIndex = 0;
     const captureEvents = vi.fn<NonNullable<CaptureClient['captureEvents']>>(() =>
       (streamIndex++ === 0 ? firstEvents : secondEvents).asObservable(),
@@ -154,7 +154,7 @@ describe('CaptureWorkbenchComponent', () => {
   });
 
   it('aborts a v2 SSE subscription on cancellation and ignores late events', async () => {
-    const events = new Subject<CaptureEventV2>();
+    const events = new Subject<CaptureEvent>();
     const captureEvents = vi.fn<NonNullable<CaptureClient['captureEvents']>>(() =>
       events.asObservable(),
     );
@@ -207,7 +207,7 @@ describe('CaptureWorkbenchComponent', () => {
     expect(firstRequest?.file).toBe(source);
   });
 
-  it('uses v2 partial, commit, and result APIs for component-owned structuring', async () => {
+  it('uses v2 raw, commit, and result APIs for component-owned structuring', async () => {
     const structure = vi.fn<CaptureStructuringProvider['structure']>(() =>
       of(DOCUMENT),
     );
@@ -237,7 +237,7 @@ describe('CaptureWorkbenchComponent', () => {
     selectFiles(fixture, [new File(['test'], 'host.pdf')]);
     await fixture.whenStable();
 
-    expect(client.getStreamingPartial).toHaveBeenCalledWith(
+    expect(client.getStreamingRaw).toHaveBeenCalledWith(
       'capture-1',
       expect.any(AbortSignal),
     );

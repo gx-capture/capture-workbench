@@ -38,8 +38,8 @@
       "dependsOn": [
         "build",
         {
-          "target": "python-build",
-          "projects": ["capture-contracts"]
+          "target": "build",
+          "projects": ["capture-runtime-client-python"]
         }
       ],
       "options": {

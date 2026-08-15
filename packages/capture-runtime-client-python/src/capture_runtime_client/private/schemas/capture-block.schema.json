@@ -1,0 +1,151 @@
+{
+  "$defs": {
+    "PageLocator": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "page",
+          "default": "page",
+          "title": "Kind",
+          "type": "string"
+        },
+        "page": {
+          "minimum": 1,
+          "title": "Page",
+          "type": "integer"
+        },
+        "boundingBox": {
+          "anyOf": [
+            {
+              "maxItems": 4,
+              "minItems": 4,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Boundingbox"
+        }
+      },
+      "required": [
+        "page"
+      ],
+      "title": "PageLocator",
+      "type": "object"
+    },
+    "TimeLocator": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "time",
+          "default": "time",
+          "title": "Kind",
+          "type": "string"
+        },
+        "startMs": {
+          "minimum": 0,
+          "title": "Startms",
+          "type": "integer"
+        },
+        "endMs": {
+          "exclusiveMinimum": 0,
+          "title": "Endms",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "startMs",
+        "endMs"
+      ],
+      "title": "TimeLocator",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "blockId": {
+      "minLength": 1,
+      "title": "Blockid",
+      "type": "string"
+    },
+    "order": {
+      "minimum": 0,
+      "title": "Order",
+      "type": "integer"
+    },
+    "type": {
+      "enum": [
+        "heading",
+        "paragraph",
+        "list-item",
+        "table",
+        "quote",
+        "transcript"
+      ],
+      "title": "Type",
+      "type": "string"
+    },
+    "sourceSegmentId": {
+      "minLength": 1,
+      "title": "Sourcesegmentid",
+      "type": "string"
+    },
+    "locator": {
+      "discriminator": {
+        "mapping": {
+          "page": "#/$defs/PageLocator",
+          "time": "#/$defs/TimeLocator"
+        },
+        "propertyName": "kind"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/PageLocator"
+        },
+        {
+          "$ref": "#/$defs/TimeLocator"
+        }
+      ],
+      "title": "Locator"
+    },
+    "sourceText": {
+      "maxLength": 2000000,
+      "minLength": 1,
+      "title": "Sourcetext",
+      "type": "string"
+    },
+    "targetText": {
+      "maxLength": 2000000,
+      "minLength": 1,
+      "title": "Targettext",
+      "type": "string"
+    }
+  },
+  "required": [
+    "blockId",
+    "order",
+    "type",
+    "sourceSegmentId",
+    "locator",
+    "sourceText",
+    "targetText"
+  ],
+  "title": "CaptureBlock",
+  "type": "object"
+}

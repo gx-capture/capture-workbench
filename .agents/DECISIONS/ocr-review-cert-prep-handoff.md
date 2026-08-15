@@ -2,7 +2,7 @@
 
 - The review gate is opt-in and applies to host-owned structuring only; the
   existing automatic runtime-structuring path remains unchanged.
-- Review edits are an overlay, not a mutation of CaptureDocumentV1. Runtime
+- Review edits are an overlay, not a mutation of CaptureDocument. Runtime
   provenance validation therefore remains strict and unchanged.
 - Segment edits are per page/segment. IDs, order, locators, and segment count
   are immutable; reviewed text must be non-empty.

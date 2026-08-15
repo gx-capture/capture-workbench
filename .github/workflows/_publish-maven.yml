@@ -1,0 +1,160 @@
+name: Reusable Capture Maven Publication
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+on:
+  workflow_call:
+    inputs:
+      candidate_id:
+        description: 'Immutable npm Package Candidate ID containing the Java candidate'
+        required: true
+        type: string
+      candidate_run_id:
+        description: 'Successful Release Package Candidate workflow run'
+        required: true
+        type: string
+      candidate_manifest_sha256:
+        description: 'SHA-256 of the npm Package Candidate candidate-manifest.json'
+        required: true
+        type: string
+      source_commit:
+        required: true
+        type: string
+      release_version:
+        required: true
+        type: string
+      contract_set_sha256:
+        description: 'Canonical runtime contract-set hash for this release train'
+        required: true
+        type: string
+      release_candidate_id:
+        description: 'Full release candidate ID bound to this source ledger'
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: capture-registry-maven
+    steps:
+      - name: Check out publication tooling at the candidate source commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.source_commit }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+
+      - name: Install Java and configure GitHub Packages credentials
+        uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        env:
+          MAVEN_USERNAME: ${{ github.actor }}
+          MAVEN_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          distribution: temurin
+          java-version: '25'
+          server-id: github
+          server-username: MAVEN_USERNAME
+          server-password: MAVEN_PASSWORD
+          settings-path: ${{ github.workspace }}
+
+      - name: Download the exact immutable Package Candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: capture-package-candidate-${{ inputs.release_version }}-${{ inputs.candidate_run_id }}
+          run-id: ${{ inputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+          path: promotion-input/candidate
+
+      - name: Verify the exact package producer run and Java candidate
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          run_json="$(gh run view '${{ inputs.candidate_run_id }}' --repo '${{ github.repository }}' --json status,conclusion,workflowName,headSha)"
+          node --input-type=module -e "const r=JSON.parse(process.argv[1]); if(r.status!=='completed'||r.conclusion!=='success'||r.workflowName!=='Release Package Candidate'||r.headSha!=='${{ inputs.source_commit }}') throw new Error('Package producer run is not a successful exact-source package candidate.');" "$run_json"
+          node tools/verify-package-candidate.ts \
+            --candidate promotion-input/candidate \
+            --version '${{ inputs.release_version }}' \
+            --source-commit '${{ inputs.source_commit }}' \
+            --producer-run-id '${{ inputs.candidate_run_id }}' \
+            --candidate-id '${{ inputs.candidate_id }}' \
+            --candidate-manifest-sha256 '${{ inputs.candidate_manifest_sha256 }}' \
+            --contract-set-sha256 '${{ inputs.contract_set_sha256 }}' \
+            --require-evidence
+          java_candidate_id="$(node --input-type=module -e "const m=JSON.parse(await import('node:fs/promises').then(x=>x.readFile(process.argv[1],'utf8'))); process.stdout.write(m.candidateId)" promotion-input/candidate/java-candidate-manifest.json)"
+          java_manifest_sha256="$(sha256sum promotion-input/candidate/java-candidate-manifest.json | cut -d ' ' -f1)"
+          echo "JAVA_CANDIDATE_ID=$java_candidate_id" >> "$GITHUB_ENV"
+          echo "JAVA_CANDIDATE_MANIFEST_SHA256=$java_manifest_sha256" >> "$GITHUB_ENV"
+          node tools/verify-java-sdk-candidate.ts \
+            --candidate promotion-input/candidate \
+            --version '${{ inputs.release_version }}' \
+            --source-commit '${{ inputs.source_commit }}' \
+            --candidate-id "$java_candidate_id" \
+            --candidate-manifest-sha256 "$java_manifest_sha256" \
+            --contract-set-sha256 '${{ inputs.contract_set_sha256 }}'
+
+      - name: Publish exact Maven bytes to GitHub Packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          mvn -B -q -s "$GITHUB_WORKSPACE/settings.xml" \
+            org.apache.maven.plugins:maven-deploy-plugin:3.1.4:deploy-file \
+            -DrepositoryId=github \
+            -Durl=https://maven.pkg.github.com/gx-capture/capture-workbench \
+            -Dfile="promotion-input/candidate/maven/capture-runtime-client-${{ inputs.release_version }}.jar" \
+            -Dsources="promotion-input/candidate/maven/capture-runtime-client-${{ inputs.release_version }}-sources.jar" \
+            -DpomFile=promotion-input/candidate/maven/pom.xml \
+            -DgeneratePom=false
+
+      - name: Verify a clean Maven consumer installation and record the ledger
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ inputs.release_version }}
+          CONTRACT_SET_SHA256: ${{ inputs.contract_set_sha256 }}
+          RELEASE_CANDIDATE_ID: ${{ inputs.release_candidate_id }}
+        run: |
+          set -euo pipefail
+          clean_repo="$RUNNER_TEMP/capture-maven-clean-repo"
+          rm -rf "$clean_repo"
+          mvn -B -q -s "$GITHUB_WORKSPACE/settings.xml" \
+            -Dmaven.repo.local="$clean_repo" \
+            dependency:get \
+            -Dartifact="com.gx.capture:capture-runtime-client:${RELEASE_VERSION}" \
+            -Dtransitive=false \
+            -DremoteRepositories=github::default::https://maven.pkg.github.com/gx-capture/capture-workbench
+          published="${clean_repo}/com/gx/capture/capture-runtime-client/${RELEASE_VERSION}/capture-runtime-client-${RELEASE_VERSION}.jar"
+          test -f "$published"
+          cmp --silent "$published" "promotion-input/candidate/maven/capture-runtime-client-${RELEASE_VERSION}.jar"
+          node --input-type=module -e "const fs=await import('node:fs/promises'); const crypto=await import('node:crypto'); const releaseCandidateId=process.env.RELEASE_CANDIDATE_ID||process.env.JAVA_CANDIDATE_ID; if(!/^[0-9a-f]{64}$/.test(releaseCandidateId)) throw new Error('Release candidate ledger binding is incomplete.'); const javaManifest=await fs.readFile('promotion-input/candidate/java-candidate-manifest.json'); await fs.writeFile('promotion-input/candidate/maven-ledger.json', JSON.stringify({schemaVersion:'1',registry:'maven',status:'published',candidateId:process.env.JAVA_CANDIDATE_ID,releaseCandidateId,releaseVersion:process.env.RELEASE_VERSION,contractSetSha256:process.env.CONTRACT_SET_SHA256,sourceCandidateManifestSha256:crypto.createHash('sha256').update(javaManifest).digest('hex')},null,2)+'\\n');"
+          release_candidate_args=()
+          if [[ -n "$RELEASE_CANDIDATE_ID" ]]; then release_candidate_args+=(--release-candidate-id "$RELEASE_CANDIDATE_ID"); fi
+          node tools/verify-java-sdk-candidate.ts \
+            --candidate promotion-input/candidate \
+            --version "$RELEASE_VERSION" \
+            --source-commit '${{ inputs.source_commit }}' \
+            --candidate-id "$JAVA_CANDIDATE_ID" \
+            --candidate-manifest-sha256 "$JAVA_CANDIDATE_MANIFEST_SHA256" \
+            --contract-set-sha256 "$CONTRACT_SET_SHA256" \
+            "${release_candidate_args[@]}" \
+            --require-ledger
+
+      - name: Upload Maven publication ledger
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: registry-ledger-maven-${{ inputs.release_candidate_id || inputs.candidate_id }}
+          path: promotion-input/candidate/maven-ledger.json
+          if-no-files-found: error
+          retention-days: 14

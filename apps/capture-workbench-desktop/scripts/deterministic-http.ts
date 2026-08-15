@@ -83,7 +83,7 @@ export function verifyRequestPolicy(context) {
 }
 
 export function verifyRequirements(context) {
-  return requestJson({ ...context, path: '/v1/runtime/requirements' }).pipe(
+  return requestJson({ ...context, path: '/v2/runtime/requirements' }).pipe(
     concatMap((requirements) => {
       assert.equal(requirements.status, 200);
       const requirementIds = requirements.body.items.map((item) => item.requirementId);
@@ -98,7 +98,7 @@ export function verifyRequirements(context) {
       return requestJson({
         ...context,
         method: 'POST',
-        path: '/v1/runtime/installations',
+        path: '/v2/runtime/installations',
         headers: { 'content-type': 'application/json', 'x-idempotency-key': installationKey },
         body: installationPayload,
       }).pipe(
@@ -110,7 +110,7 @@ export function verifyRequirements(context) {
           return requestJson({
             ...context,
             method: 'POST',
-            path: '/v1/runtime/installations',
+            path: '/v2/runtime/installations',
             headers: { 'content-type': 'application/json', 'x-idempotency-key': installationKey },
             body: installationPayload,
           }).pipe(
@@ -131,7 +131,7 @@ export function verifyRuntimeCapture(context, fixture) {
   return requestJson({
     ...context,
     method: 'POST',
-    path: '/v1/captures',
+    path: '/v2/captures',
     headers: {
       'content-type': request.contentType,
       'x-idempotency-key': idempotencyKey,
@@ -144,7 +144,7 @@ export function verifyRuntimeCapture(context, fixture) {
       return requestJson({
         ...context,
         method: 'POST',
-        path: '/v1/captures',
+        path: '/v2/captures',
         headers: { 'content-type': request.contentType, 'x-idempotency-key': idempotencyKey },
         body: request.body,
       }).pipe(
@@ -161,17 +161,17 @@ export function verifyRuntimeCapture(context, fixture) {
           return requestJson({
             ...context,
             method: 'POST',
-            path: '/v1/captures',
+            path: '/v2/captures',
             headers: { 'content-type': changed.contentType, 'x-idempotency-key': idempotencyKey },
             body: changed.body,
           }).pipe(
             tap((conflict) => assertApiError(conflict, 409, 'idempotency_conflict')),
-            concatMap(() => requestJson({ ...context, path: `/v1/captures/${captureId}` })),
+            concatMap(() => requestJson({ ...context, path: `/v2/captures/${captureId}` })),
             tap((status) => validateJob(status, 200, { status: 'completed', stage: 'completed', mode: 'runtime' })),
-            concatMap(() => requestJson({ ...context, path: `/v1/captures/${captureId}/raw` })),
+            concatMap(() => requestJson({ ...context, path: `/v2/captures/${captureId}/raw` })),
             tap((raw) => validateRaw(fixture, raw)),
             concatMap((raw) =>
-              requestJson({ ...context, path: `/v1/captures/${captureId}/result` }).pipe(
+              requestJson({ ...context, path: `/v2/captures/${captureId}/result` }).pipe(
                 map((result) => {
                   validateResult(fixture, raw.body, result, 'zh-TW');
                   return {
@@ -179,7 +179,7 @@ export function verifyRuntimeCapture(context, fixture) {
                     captureId,
                     locatorKind: result.body.blocks[0].locator.kind,
                     segments: result.body.rawSegments.length,
-                    jsonReparsed: JSON.parse(JSON.stringify(result.body)).schemaVersion === '1',
+                    jsonReparsed: JSON.parse(JSON.stringify(result.body)).schemaVersion === '2',
                     textProjection: result.body.targetText === result.body.blocks.map((block) => block.targetText).join('\n'),
                     idempotency: true,
                   };
@@ -197,21 +197,21 @@ export function verifyHostStructuring(context, fixture) {
   return createHostCapture(context, fixture).pipe(
     concatMap((awaiting) => {
       const captureId = awaiting.body.captureId;
-      return requestJson({ ...context, path: `/v1/captures/${captureId}/result` }).pipe(
+      return requestJson({ ...context, path: `/v2/captures/${captureId}/result` }).pipe(
         tap((unavailable) => assertApiError(unavailable, 409, 'result_unavailable')),
-        concatMap(() => requestJson({ ...context, path: `/v1/captures/${captureId}/raw` })),
+        concatMap(() => requestJson({ ...context, path: `/v2/captures/${captureId}/raw` })),
         tap((raw) => validateRaw(fixture, raw)),
         concatMap((raw) => {
           const candidate = hostCandidate(raw.body);
           return requestJson({
             ...context,
             method: 'POST',
-            path: `/v1/captures/${captureId}/structure`,
+            path: `/v2/captures/${captureId}/structure`,
             headers: { 'content-type': 'application/json', 'x-idempotency-key': randomUUID() },
             body: JSON.stringify(candidate),
           }).pipe(
             tap((structured) => validateJob(structured, 200, { status: 'completed', stage: 'completed', mode: 'host' })),
-            concatMap(() => requestJson({ ...context, path: `/v1/captures/${captureId}/result` })),
+            concatMap(() => requestJson({ ...context, path: `/v2/captures/${captureId}/result` })),
             tap((result) => {
               assert.equal(result.status, 200);
               assert.deepEqual(result.body, candidate);
@@ -222,7 +222,7 @@ export function verifyHostStructuring(context, fixture) {
               return requestJson({
                 ...context,
                 method: 'POST',
-                path: `/v1/captures/${failedId}/structuring-failure`,
+                path: `/v2/captures/${failedId}/structuring-failure`,
                 headers: { 'content-type': 'application/json' },
                 body: JSON.stringify({ code: 'invalid_provider_json', message: 'Provider returned invalid JSON.' }),
               }).pipe(
@@ -235,9 +235,9 @@ export function verifyHostStructuring(context, fixture) {
                     retryable: false,
                   });
                 }),
-                concatMap(() => requestJson({ ...context, path: `/v1/captures/${failedId}/result` })),
+                concatMap(() => requestJson({ ...context, path: `/v2/captures/${failedId}/result` })),
                 tap((failedResult) => assertApiError(failedResult, 409, 'result_unavailable')),
-                concatMap(() => requestJson({ ...context, path: `/v1/captures/${failedId}/raw` })),
+                concatMap(() => requestJson({ ...context, path: `/v2/captures/${failedId}/raw` })),
                 map((diagnostic) => {
                   assert.equal(diagnostic.status, 200);
                   assert.equal(diagnostic.body.diagnosticOnly, true);
@@ -262,7 +262,7 @@ function createHostCapture(context, fixture) {
   return requestJson({
     ...context,
     method: 'POST',
-    path: '/v1/captures',
+    path: '/v2/captures',
     headers: {
       'content-type': request.contentType,
       'x-idempotency-key': randomUUID(),
@@ -291,7 +291,7 @@ export function validateReady(response) {
     'service',
   ]);
   assert.equal(response.body.service, 'capture-runtime');
-  assert.equal(response.body.apiVersion, '1.0');
+  assert.equal(response.body.apiVersion, '2.0');
   assert.equal(response.body.captureDocumentSchemaVersion, schemaVersion);
   assert.equal(response.body.capabilities.maxUploadBytes, maxUploadBytes);
 }
@@ -494,7 +494,7 @@ function requestJson({
   origin,
   token,
   method = 'GET',
-  path = '/v1/health/ready',
+  path = '/v2/health/ready',
   headers = {},
   body = Buffer.alloc(0),
 }): Observable<{ status: number; headers: http.IncomingHttpHeaders; body: any }> { // eslint-disable-line @typescript-eslint/no-explicit-any

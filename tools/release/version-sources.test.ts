@@ -15,15 +15,15 @@ test('release intent is the synchronized source for all release-managed versions
   assert.ok(entries.length >= 30);
   assert.ok(entries.every((entry) => entry.value === intent.releaseVersion));
   assert.deepEqual(loadReleaseIntent(workspaceRoot), {
-    releaseVersion: '0.3.12',
-    runtimeApiVersion: '1.0',
-    documentSchemaVersion: '1',
+    releaseVersion: '0.4.0',
+    runtimeApiVersion: '2.0',
+    documentSchemaVersion: '2',
   });
 });
 
 test('release replacement is exact and does not alter adjacent versions', () => {
   assert.equal(
-    replaceReleaseVersion('0.3.12 0.3.100 v0.3.12', '0.3.12', '0.3.12'),
-    '0.3.12 0.3.100 v0.3.12',
+    replaceReleaseVersion('0.4.0 0.3.100 v0.4.0', '0.4.0', '0.4.0'),
+    '0.4.0 0.3.100 v0.4.0',
   );
 });

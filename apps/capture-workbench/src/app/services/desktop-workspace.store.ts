@@ -28,15 +28,14 @@ import {
   timer,
 } from 'rxjs';
 import {
-  type CaptureEventV2,
-  type CaptureJobV1,
-  type CaptureOperationV2,
-  type PartialCaptureV2,
+  type CaptureEvent,
+  type CaptureOperation,
+  type PartialCapture,
   type CaptureRequirementId,
-  type RuntimeInstallationV1,
-  type RuntimeModelInstallationV1,
-  type RuntimeModelOptionV1,
-  type RuntimeRequirementV1,
+  type RuntimeInstallation,
+  type RuntimeModelInstallation,
+  type RuntimeModelOption,
+  type RuntimeRequirement,
 } from '@gx-capture/capture-workbench-ui';
 import type {
   DesktopLibraryDetail,
@@ -46,6 +45,7 @@ import type {
 import { DesktopLibraryService } from './desktop-library.service';
 import {
   DesktopRuntimeClientService,
+  type DesktopCaptureOperation,
   type StreamingTerminalResultV2,
 } from './desktop-runtime-client.service';
 
@@ -84,8 +84,8 @@ export class DesktopWorkspaceStore {
   readonly query = signal('');
   readonly statusFilter = signal('');
   readonly installing = signal(false);
-  readonly activeInstallation = signal<RuntimeInstallationV1 | null>(null);
-  readonly activeModelInstallation = signal<RuntimeModelInstallationV1 | null>(null);
+  readonly activeInstallation = signal<RuntimeInstallation | null>(null);
+  readonly activeModelInstallation = signal<RuntimeModelInstallation | null>(null);
   readonly modelInstallationPercent = computed(() => {
     const progress = this.activeModelInstallation()?.progress ?? 0;
     return Math.round(Math.min(Math.max(progress, 0), 1) * 100);
@@ -104,9 +104,9 @@ export class DesktopWorkspaceStore {
   readonly selectedModelOptionId = signal<string | null>(null);
   readonly busyIds = signal<ReadonlySet<string>>(new Set());
   readonly requestedRequirements = signal<ReadonlySet<CaptureRequirementId>>(new Set());
-  readonly streamingPartials = signal<ReadonlyMap<string, PartialCaptureV2>>(new Map());
+  readonly streamingPartials = signal<ReadonlyMap<string, PartialCapture>>(new Map());
 
-  partialFor(documentId: string): PartialCaptureV2 | null {
+  partialFor(documentId: string): PartialCapture | null {
     return this.streamingPartials().get(documentId) ?? null;
   }
 
@@ -176,7 +176,7 @@ export class DesktopWorkspaceStore {
   private dropListenerStarted = false;
 
   private readonly requirementsResource = rxResource<
-    readonly RuntimeRequirementV1[],
+    readonly RuntimeRequirement[],
     { readonly ready: true } | undefined
   >({
     defaultValue: [],
@@ -185,7 +185,7 @@ export class DesktopWorkspaceStore {
   });
 
   private readonly modelOptionsResource = rxResource<
-    readonly RuntimeModelOptionV1[],
+    readonly RuntimeModelOption[],
     { readonly ready: true } | undefined
   >({
     defaultValue: [],
@@ -459,7 +459,7 @@ export class DesktopWorkspaceStore {
   private applyStreamingEvent(
     _documentId: string,
     active: ActiveCapture,
-    event: CaptureEventV2,
+    event: CaptureEvent,
   ): void {
     active.lastEventSequence = Math.max(active.lastEventSequence, event.sequence);
     active.lastStage = event.stage;
@@ -565,9 +565,9 @@ export class DesktopWorkspaceStore {
 
   private waitForStreamingTerminal$(
     documentId: string,
-    initial: CaptureOperationV2,
+    initial: CaptureOperation,
     active: ActiveCapture,
-  ): Observable<CaptureOperationV2> {
+  ): Observable<CaptureOperation> {
     return of(initial).pipe(
       switchMap((operation) => this.advanceStreaming$(documentId, operation, active)),
       expand((operation) => isActiveStreaming(operation)
@@ -580,9 +580,9 @@ export class DesktopWorkspaceStore {
 
   private advanceStreaming$(
     documentId: string,
-    operation: CaptureOperationV2,
+    operation: CaptureOperation,
     active: ActiveCapture,
-  ): Observable<CaptureOperationV2> {
+  ): Observable<CaptureOperation> {
     const events$ = this.runtime.getStreamingEvents(
       operation.captureId,
       active.lastEventSequence,
@@ -611,7 +611,7 @@ export class DesktopWorkspaceStore {
 
   private persistStreamingTerminal$(
     documentId: string,
-    operation: CaptureOperationV2,
+    operation: CaptureOperation,
     active: ActiveCapture,
   ): Observable<void> {
     active.terminalStatus = operation.status === 'completed' ? 'completed'
@@ -728,9 +728,9 @@ export class DesktopWorkspaceStore {
 
   private waitForTerminal$(
     documentId: string,
-    initial: CaptureJobV1,
+    initial: DesktopCaptureOperation,
     active: ActiveCapture,
-  ): Observable<CaptureJobV1> {
+  ): Observable<DesktopCaptureOperation> {
     return of(initial).pipe(
       switchMap((job) => this.persistRawDuringExtraction$(documentId, job, active)),
       tap((job) => active.lastStage = job.stage),
@@ -745,9 +745,9 @@ export class DesktopWorkspaceStore {
 
   private advanceCapture$(
     documentId: string,
-    job: CaptureJobV1,
+    job: DesktopCaptureOperation,
     active: ActiveCapture,
-  ): Observable<CaptureJobV1> {
+  ): Observable<DesktopCaptureOperation> {
     return this.library.updateCapture({
       documentId,
       captureId: job.captureId,
@@ -775,9 +775,9 @@ export class DesktopWorkspaceStore {
 
   private persistRawDuringExtraction$(
     documentId: string,
-    job: CaptureJobV1,
+    job: DesktopCaptureOperation,
     active: ActiveCapture,
-  ): Observable<CaptureJobV1> {
+  ): Observable<DesktopCaptureOperation> {
     if (
       active.rawPersisted
       || (job.stage !== 'structuring' && job.stage !== 'awaiting_structuring')
@@ -807,14 +807,14 @@ export class DesktopWorkspaceStore {
   private sendCancellation$(
     captureId: string,
     active: ActiveCapture,
-  ): Observable<CaptureJobV1> {
+  ): Observable<DesktopCaptureOperation> {
     active.cancelSent = true;
     return this.runtime.cancelCapture(captureId);
   }
 
   private persistTerminal$(
     documentId: string,
-    job: CaptureJobV1,
+    job: DesktopCaptureOperation,
     active: ActiveCapture,
   ) {
     return this.library.updateCapture({
@@ -834,7 +834,7 @@ export class DesktopWorkspaceStore {
     );
   }
 
-  private persistTerminalData$(documentId: string, job: CaptureJobV1, active: ActiveCapture) {
+  private persistTerminalData$(documentId: string, job: DesktopCaptureOperation, active: ActiveCapture) {
     if (job.status === 'completed') {
       if (active.rawPersisted) {
         return this.runtime.getResult(job.captureId).pipe(
@@ -905,7 +905,7 @@ export class DesktopWorkspaceStore {
     return throwError(() => new Error(`Capture Runtime returned unsupported terminal status: ${job.status}`));
   }
 
-  private cleanupAfterCommit$(documentId: string, job: CaptureJobV1) {
+  private cleanupAfterCommit$(documentId: string, job: DesktopCaptureOperation) {
     const terminalStatus = terminalLibraryStatus(job);
     return this.runtime.deleteCapture(job.captureId).pipe(
       switchMap(() => this.library.updateCapture({
@@ -994,7 +994,7 @@ export class DesktopWorkspaceStore {
     });
   }
 
-  private installRequirement$(requirement: RuntimeRequirementV1): Observable<RuntimeInstallationV1> {
+  private installRequirement$(requirement: RuntimeRequirement): Observable<RuntimeInstallation> {
     if (requirement.status === 'manual_action_required') {
       return throwError(() => new Error(
         `${requirement.displayName} 需要手動處理：${requirement.detail ?? '請完成安裝後再試。'}`,
@@ -1056,11 +1056,11 @@ export class DesktopWorkspaceStore {
   }
 }
 
-function isActiveJob(job: CaptureJobV1): boolean {
+function isActiveJob(job: DesktopCaptureOperation): boolean {
   return job.status === 'queued' || job.status === 'running';
 }
 
-function isActiveStreaming(operation: CaptureOperationV2): boolean {
+function isActiveStreaming(operation: CaptureOperation): boolean {
   return operation.status === 'created'
     || operation.status === 'waiting_input'
     || operation.status === 'extracting'
@@ -1068,7 +1068,7 @@ function isActiveStreaming(operation: CaptureOperationV2): boolean {
     || operation.status === 'structuring';
 }
 
-function terminalLibraryStatus(job: CaptureJobV1): DesktopLibraryStatus {
+function terminalLibraryStatus(job: DesktopCaptureOperation): DesktopLibraryStatus {
   if (job.status === 'completed') return 'completed';
   if (job.status === 'cancelled') return 'canceled';
   return 'failed';

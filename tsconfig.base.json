@@ -17,8 +17,8 @@
       "@gx-capture/capture-workbench-ui": [
         "./packages/capture-angular/src/index.ts"
       ],
-      "@gx-capture/capture-contracts": [
-        "./packages/capture-contracts/src/index.ts"
+      "@gx-capture/capture-runtime-client": [
+        "./packages/capture-runtime-client/src/index.ts"
       ]
     },
     "strict": false,

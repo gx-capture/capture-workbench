@@ -14,7 +14,7 @@ import capture_runtime.engine_adapters as engine_adapters
 import capture_runtime.extractors as extractor_module
 from capture_runtime.clock import SystemClock
 from capture_runtime.config import ExtractionRuntimeConfig, OllamaRuntimeConfig, RuntimeSettings
-from capture_runtime.contracts import CaptureSourceV1
+from capture_runtime.contracts import CaptureSource
 from capture_runtime.engine_adapters import (
     EngineProbe,
     EngineRuntimeUnavailableError,
@@ -746,8 +746,8 @@ class FakeWhisperAdapter:
         )
 
 
-def _source(content: bytes, name: str, media_type: str) -> CaptureSourceV1:
-    return CaptureSourceV1(
+def _source(content: bytes, name: str, media_type: str) -> CaptureSource:
+    return CaptureSource(
         sha256=hashlib.sha256(content).hexdigest(),
         file_name=name,
         media_type=media_type,
@@ -814,7 +814,7 @@ def test_worker_backed_audio_forwards_strict_cuda_fallback_policy(tmp_path: Path
         async def resolve_active_engine(self, _requirement_id: str) -> InstalledEngine:
             return InstalledEngine(
                 requirement_id="whisper-primary",
-                artifact_version="0.3.12",
+                artifact_version="0.4.0",
                 executable=tmp_path / "whisper.exe",
                 model_dir=tmp_path / "models",
             )

@@ -16,7 +16,7 @@
       "dependsOn": [
         {
           "target": "build",
-          "projects": ["capture-contracts"]
+        "projects": ["capture-runtime-client"]
         }
       ],
       "outputs": ["{workspaceRoot}/dist/{projectRoot}"],
@@ -43,7 +43,7 @@
         "build",
         {
           "target": "pack",
-          "projects": ["capture-contracts"]
+          "projects": ["capture-runtime-client"]
         }
       ],
       "outputs": ["{workspaceRoot}/dist/packs"],

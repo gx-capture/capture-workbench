@@ -1,0 +1,26 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "requirementId": {
+      "enum": [
+        "windowsml-ocr",
+        "whisper-primary",
+        "ollama-runtime",
+        "capture-ollama-model"
+      ],
+      "title": "Requirementid",
+      "type": "string"
+    },
+    "consent": {
+      "const": true,
+      "title": "Consent",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "requirementId",
+    "consent"
+  ],
+  "title": "StartRuntimeInstallationV2",
+  "type": "object"
+}

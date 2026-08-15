@@ -8,6 +8,10 @@ import test from 'node:test';
 
 const candidateId = 'a'.repeat(64);
 const sourceCommit = 'b'.repeat(40);
+const packageCandidateId = 'c'.repeat(64);
+const runtimeCandidateId = 'd'.repeat(64);
+const javaCandidateId = '9'.repeat(64);
+const contractSetSha256 = 'e'.repeat(64);
 
 function digest(bytes: Buffer): string {
   return createHash('sha256').update(bytes).digest('hex');
@@ -31,9 +35,12 @@ test('release manifest is immutable, candidate-bound, and records registry and g
         schemaVersion: '1',
         candidateId,
         sourceCommit,
-        releaseVersion: '0.3.12',
-        runtimeApiVersion: '1.0',
-        documentSchemaVersion: '1',
+        releaseVersion: '0.4.0',
+        runtimeApiVersion: '2.0',
+        documentSchemaVersion: '2',
+        packageCandidateId,
+        runtimeCandidateId,
+        contractSetSha256,
       })}\n`,
     );
     await writeFile(
@@ -41,7 +48,7 @@ test('release manifest is immutable, candidate-bound, and records registry and g
       candidateManifest,
     );
     const snapshot = Buffer.from(
-      `${JSON.stringify({ schemaVersion: '1', releaseVersion: '0.3.12' })}\n`,
+      `${JSON.stringify({ schemaVersion: '1', releaseVersion: '0.4.0' })}\n`,
     );
     await writeFile(
       join(candidate, 'contracts', 'contract-snapshot.json'),
@@ -92,7 +99,7 @@ test('release manifest is immutable, candidate-bound, and records registry and g
         candidateId,
         candidateManifestSha256: digest(candidateManifest),
         sourceCommit,
-        releaseVersion: '0.3.12',
+        releaseVersion: '0.4.0',
         contractClassification: 'no-impact',
       }),
     );
@@ -102,11 +109,14 @@ test('release manifest is immutable, candidate-bound, and records registry and g
       JSON.stringify({
         schemaVersion: '1',
         registry: 'npm',
-        candidateId,
-        releaseVersion: '0.3.12',
+        candidateId: packageCandidateId,
+        sourceCandidateManifestSha256: 'f'.repeat(64),
+        releaseCandidateId: candidateId,
+        contractSetSha256,
+        releaseVersion: '0.4.0',
         status: 'published',
         packages: [
-          { name: '@gx-capture/capture-contracts', integrity: 'sha512-a' },
+          { name: '@gx-capture/capture-runtime-client', integrity: 'sha512-a' },
         ],
       }),
     );
@@ -115,12 +125,15 @@ test('release manifest is immutable, candidate-bound, and records registry and g
       JSON.stringify({
         schemaVersion: '1',
         registry: 'pypi',
-        candidateId,
-        releaseVersion: '0.3.12',
+        candidateId: runtimeCandidateId,
+        sourceCandidateManifestSha256: '1'.repeat(64),
+        releaseCandidateId: candidateId,
+        contractSetSha256,
+        releaseVersion: '0.4.0',
         status: 'published',
         artifacts: [
           {
-            name: 'capture_contracts-0.3.12-py3-none-any.whl',
+            name: 'capture_runtime_client-0.4.0-py3-none-any.whl',
             sha256: 'e'.repeat(64),
           },
         ],
@@ -131,14 +144,36 @@ test('release manifest is immutable, candidate-bound, and records registry and g
       JSON.stringify({
         schemaVersion: '1',
         registry: 'crates.io',
-        candidateId,
-        releaseVersion: '0.3.12',
+        candidateId: runtimeCandidateId,
+        sourceCandidateManifestSha256: '2'.repeat(64),
+        releaseCandidateId: candidateId,
+        contractSetSha256,
+        releaseVersion: '0.4.0',
         status: 'published',
         artifacts: [
           {
-            name: 'capture-sidecar-launcher-0.3.12.crate',
+            name: 'capture-sidecar-launcher-0.4.0.crate',
             candidateSha256: 'f'.repeat(64),
             registrySha256: 'f'.repeat(64),
+          },
+        ],
+      }),
+    );
+    await writeFile(
+      join(registries, 'registry-ledger-maven.json'),
+      JSON.stringify({
+        schemaVersion: '1',
+        registry: 'maven',
+        candidateId: javaCandidateId,
+        sourceCandidateManifestSha256: '3'.repeat(64),
+        releaseCandidateId: candidateId,
+        contractSetSha256,
+        releaseVersion: '0.4.0',
+        status: 'published',
+        artifacts: [
+          {
+            name: 'capture-runtime-client-0.4.0.jar',
+            sha256: 'f'.repeat(64),
           },
         ],
       }),
@@ -151,13 +186,15 @@ test('release manifest is immutable, candidate-bound, and records registry and g
         '--candidate',
         candidate,
         '--tag',
-        'v0.3.12',
+        'v0.4.0',
         '--promotion-evidence',
         evidencePath,
         '--consumer-gate-ledger',
         gatePath,
         '--registry-directory',
         registries,
+        '--java-candidate-id',
+        javaCandidateId,
         '--output',
         output,
       ],
@@ -167,12 +204,12 @@ test('release manifest is immutable, candidate-bound, and records registry and g
     const manifest = JSON.parse(await readFile(output, 'utf8'));
     assert.equal(manifest.status, 'released');
     assert.equal(manifest.candidateId, candidateId);
-    assert.equal(manifest.releaseTag, 'v0.3.12');
-    assert.equal(manifest.registryArtifacts.length, 3);
+    assert.equal(manifest.releaseTag, 'v0.4.0');
+    assert.equal(manifest.registryArtifacts.length, 4);
     assert.equal(manifest.consumerGates.gates[0].verdict, 'passed');
     assert.match(
       await readFile(`${output}.sha256`, 'utf8'),
-      /^[0-9a-f]{64}  capture-release-manifest-v1\.json\n$/u,
+      /^[0-9a-f]{64} {2}capture-release-manifest-v1\.json\n$/u,
     );
     assert.deepEqual(
       JSON.parse(

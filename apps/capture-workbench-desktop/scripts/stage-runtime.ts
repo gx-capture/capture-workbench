@@ -39,7 +39,7 @@ export const stagedSchema = join(
   appRoot,
   'src-tauri',
   'resources',
-  'capture-document-v1.schema.json',
+  'capture-document-v2.schema.json',
 );
 export const stageProvenance = join(
   appRoot,
@@ -50,13 +50,13 @@ export const stageProvenance = join(
 
 const expected = Object.freeze({
   manifestVersion: '1',
-  runtimeVersion: '0.3.12',
-  apiVersion: '1.0',
-  captureDocumentSchemaVersion: '1',
+  runtimeVersion: '0.4.0',
+  apiVersion: '2.0',
+  captureDocumentSchemaVersion: '2',
   platform: 'windows',
   arch: 'x86_64',
   fileName: 'capture-runtime-x86_64-pc-windows-msvc.exe',
-  schemaFileName: 'capture-document-v1.schema.json',
+  schemaFileName: 'capture-document-v2.schema.json',
 });
 
 const manifestFields = Object.freeze([

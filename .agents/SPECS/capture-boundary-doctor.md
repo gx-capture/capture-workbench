@@ -52,9 +52,9 @@ deadline or until both correlated jobs are terminal.
   - `GET /capture-runtime/requirements`
   - optional `GET /projects/{projectId}/document-operations/{operationId}`
 - Capture Runtime direct:
-  - `GET /v1/health/ready`
-  - `GET /v1/runtime/requirements`
-  - optional `GET /v1/captures/{captureId}`
+  - `GET /v2/health/ready`
+  - `GET /v2/runtime/requirements`
+  - optional `GET /v2/captures/{captureId}`
 
 The tool validates and retains only the fields needed for diagnosis. It never
 copies response headers, authorization values, arbitrary raw payloads, source

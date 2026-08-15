@@ -1,12 +1,12 @@
 import { EffectRef, Injectable, Injector, effect, inject } from '@angular/core';
 import { catchError, defer, Observable, throwError } from 'rxjs';
 import type {
-  CaptureEventV2,
-  CaptureReviewV1,
-  CaptureFailureV1,
-  CaptureOperationV2,
-  PartialCaptureV2,
-  RawCaptureV1,
+  CaptureEvent,
+  CaptureReview,
+  CaptureFailure,
+  CaptureOperation,
+  PartialCapture,
+  RawCapture,
   CaptureTaskView,
 } from '../../../contracts';
 import { HOST_RECONCILIATION_FAILURE_CODE } from '../../../constants';
@@ -20,7 +20,7 @@ export function isTerminalTask(task: CaptureTaskView): boolean {
   );
 }
 export function isTerminalStreamingOperation(
-  operation: CaptureOperationV2,
+  operation: CaptureOperation,
 ): boolean {
   return (
     operation.status === 'completed' ||
@@ -29,7 +29,7 @@ export function isTerminalStreamingOperation(
   );
 }
 
-export function isTerminalStreamingEvent(event: CaptureEventV2): boolean {
+export function isTerminalStreamingEvent(event: CaptureEvent): boolean {
   return (
     event.eventType === 'completed' ||
     event.eventType === 'failed' ||
@@ -38,7 +38,7 @@ export function isTerminalStreamingEvent(event: CaptureEventV2): boolean {
 }
 
 export function isAwaitingHostStructuring(
-  operation: CaptureOperationV2,
+  operation: CaptureOperation,
 ): boolean {
   return operation.status === 'awaiting_structuring';
 }
@@ -58,12 +58,12 @@ export function streamingStage(stage: string): CaptureTaskView['stage'] {
   }
 }
 
-export function partialCaptureToRaw(partial: PartialCaptureV2): RawCaptureV1 {
+export function partialCaptureToRaw(partial: PartialCapture): RawCapture {
   if (!partial.segments || !partial.sourceText || !partial.extractionEngine) {
     throw new Error('Streaming partial capture is not complete enough to structure.');
   }
   return {
-    schemaVersion: '1',
+    schemaVersion: '2',
     diagnosticOnly: true,
     source: partial.source,
     segments: partial.segments,
@@ -74,8 +74,8 @@ export function partialCaptureToRaw(partial: PartialCaptureV2): RawCaptureV1 {
 }
 
 export function validateCaptureReview(
-  raw: RawCaptureV1,
-  review: CaptureReviewV1,
+  raw: RawCapture,
+  review: CaptureReview,
 ): string[] {
   if (review.reviewVersion !== 1) return ['reviewVersion must be 1'];
   const segmentsById = new Map(
@@ -106,7 +106,7 @@ export function normalizeHostFailureMessage(message: string): string {
   return (normalized || 'Host structuring failed.').slice(0, 500);
 }
 
-export function hostReconciliationFailure(error: unknown): CaptureFailureV1 {
+export function hostReconciliationFailure(error: unknown): CaptureFailure {
   return {
     code: HOST_RECONCILIATION_FAILURE_CODE,
     message: errorMessage(
@@ -143,9 +143,9 @@ export function errorMessage(error: unknown, fallback: string): string {
 
 export function failureFrom(
   error: unknown,
-  stage: CaptureFailureV1['stage'],
+  stage: CaptureFailure['stage'],
   fallback: string,
-): CaptureFailureV1 {
+): CaptureFailure {
   const candidate = error as {
     readonly code?: unknown;
     readonly message?: unknown;
@@ -163,7 +163,7 @@ export function failureFrom(
   };
 }
 
-export function redactFailure(error: CaptureFailureV1): CaptureFailureV1 {
+export function redactFailure(error: CaptureFailure): CaptureFailure {
   return {
     ...error,
     code: redactSensitiveMessage(error.code),
@@ -286,15 +286,15 @@ export class CaptureWorkbenchStoreHelpers {
     return isTerminalTask(task);
   }
 
-  isTerminalStreamingOperation(operation: CaptureOperationV2): boolean {
+  isTerminalStreamingOperation(operation: CaptureOperation): boolean {
     return isTerminalStreamingOperation(operation);
   }
 
-  isTerminalStreamingEvent(event: CaptureEventV2): boolean {
+  isTerminalStreamingEvent(event: CaptureEvent): boolean {
     return isTerminalStreamingEvent(event);
   }
 
-  isAwaitingHostStructuring(operation: CaptureOperationV2): boolean {
+  isAwaitingHostStructuring(operation: CaptureOperation): boolean {
     return isAwaitingHostStructuring(operation);
   }
 
@@ -302,11 +302,11 @@ export class CaptureWorkbenchStoreHelpers {
     return streamingStage(stage);
   }
 
-  partialCaptureToRaw(partial: PartialCaptureV2): RawCaptureV1 {
+  partialCaptureToRaw(partial: PartialCapture): RawCapture {
     return partialCaptureToRaw(partial);
   }
 
-  validateCaptureReview(raw: RawCaptureV1, review: CaptureReviewV1): string[] {
+  validateCaptureReview(raw: RawCapture, review: CaptureReview): string[] {
     return validateCaptureReview(raw, review);
   }
 
@@ -314,7 +314,7 @@ export class CaptureWorkbenchStoreHelpers {
     return normalizeHostFailureMessage(message);
   }
 
-  hostReconciliationFailure(error: unknown): CaptureFailureV1 {
+  hostReconciliationFailure(error: unknown): CaptureFailure {
     return hostReconciliationFailure(error);
   }
 
@@ -336,13 +336,13 @@ export class CaptureWorkbenchStoreHelpers {
 
   failureFrom(
     error: unknown,
-    stage: CaptureFailureV1['stage'],
+    stage: CaptureFailure['stage'],
     fallback: string,
-  ): CaptureFailureV1 {
+  ): CaptureFailure {
     return failureFrom(error, stage, fallback);
   }
 
-  redactFailure(error: CaptureFailureV1): CaptureFailureV1 {
+  redactFailure(error: CaptureFailure): CaptureFailure {
     return redactFailure(error);
   }
 

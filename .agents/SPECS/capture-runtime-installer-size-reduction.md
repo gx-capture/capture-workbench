@@ -7,8 +7,8 @@ plus a lightweight `capture-runtime-core`. WindowsML OCR and Whisper executable
 workers, their models, and the app-managed Ollama runtime/model are installed
 only after explicit requirement installation.
 
-The existing authenticated loopback `/v1` API, `CaptureClient`,
-`CaptureDocumentV1`, requirement IDs, local desktop library/history, isolated
+The existing authenticated loopback `/v2` API, `CaptureClient`,
+`CaptureDocument`, requirement IDs, local desktop library/history, isolated
 app-managed Ollama behavior, job cancellation/rollback, renderer token
 isolation, and DirectML-first fail-closed OCR policy are unchanged.
 
@@ -23,7 +23,7 @@ isolation, and DirectML-first fail-closed OCR policy are unchanged.
 - It replaces the old meaning of an OCR `bundled` install strategy. The
   checksum-pinned descriptor remains runtime-owned, but code and model bytes
   are optional release artifacts and are not NSIS resources.
-- It extends `release-publication-v1.md` only for the governed artifact set and
+- It extends `release-model-artifact-provisioning.md` only for the governed artifact set and
   draft verification. It does not restore the retired separate clean-install
   evidence workflow or protected release environment.
 - Deterministic development/smoke remains a QA lane. Product staging uses the
@@ -31,7 +31,7 @@ isolation, and DirectML-first fail-closed OCR policy are unchanged.
 
 ## Non-goals
 
-- No public `/v1` route, schema, requirement ID, `CaptureDocumentV1`, or
+- No public `/v2` route, schema, requirement ID, `CaptureDocument`, or
   `CaptureClient` change.
 - No renderer-provided artifact URL, byte count, checksum, catalog, local path,
   bearer token, or worker command.
@@ -39,7 +39,7 @@ isolation, and DirectML-first fail-closed OCR policy are unchanged.
   Python-package installation.
 - No OCR/Whisper worker or model in the initial NSIS installer.
 - No automatic Ollama inclusion in the initial installer.
-- No other platform than Windows 11 x64 in v1.
+- No platform other than Windows 11 x64.
 
 ## Delivery Slices and Ownership
 
@@ -380,7 +380,7 @@ authorized self-hosted Windows x64 DirectML runner are available.
   including names with extensions. `files-manifest.json` is capped at 1 MiB
   from its `ZipInfo.file_size` before it can be read.
 - OCR install probes use the configured WindowsML DirectML device ID, defaulting
-  to zero. Whisper probe payload and the public `/v1` API/schema are unchanged.
+  to zero. Whisper probe payload and the public `/v2` API/schema are unchanged.
 
 ## Acceptance Criteria
 
@@ -390,7 +390,7 @@ authorized self-hosted Windows x64 DirectML runner are available.
   text and owns job lifecycle.
 - OCR/Whisper install from runtime-owned pinned/checksummed catalog artifacts,
   activate atomically, rollback, and run offline after installation.
-- API, schemas, `CaptureClient`, `CaptureDocumentV1`, requirement IDs,
+- API, schemas, `CaptureClient`, `CaptureDocument`, requirement IDs,
   cancellation, renderer token isolation, local history, and structuring modes
   remain compatible.
 - DirectML policy and provenance are unchanged and fail closed.

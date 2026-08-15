@@ -3,7 +3,7 @@
 ## Scope
 
 PDF and image OCR in `capture-runtime` use ONNX Runtime DirectML first on Windows. Audio
-Whisper, Ollama, `CaptureEngineV1`, `/v1`, and the Angular package contract are unchanged.
+Whisper, Ollama, `CaptureEngine`, `/v2`, and the Angular package contract are unchanged.
 
 ## Provider policy
 
@@ -27,7 +27,7 @@ does not route OCR through Whisper's CUDA device. Hosts may explicitly override 
 
 ## User-visible provenance
 
-`CaptureDocumentV1.extractionEngine.device` remains the existing field and reports
+`CaptureDocument.extractionEngine.device` remains the existing field and reports
 `windowsml-dml` or `cpu`. The desktop review surface displays this value beside the OCR engine
 and model. `windowsml-dml` means the OCR session was configured DML-first; it does not claim that
 every operator ran on the GPU because the same session retains the CPU execution provider.

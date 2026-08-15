@@ -7,12 +7,12 @@ from datetime import UTC, datetime
 import pytest
 
 from capture_runtime.contracts import (
-    CaptureEngineV1,
+    CaptureEngine,
     CaptureEventV2,
-    CaptureSourceV1,
+    CaptureSource,
     OpenIngestionV2,
     PartialCaptureV2,
-    RawCaptureSegmentV1,
+    RawCaptureSegment,
     ReportStructuringFailureV2,
     StreamingEventType,
 )
@@ -21,7 +21,7 @@ from capture_runtime.streaming import (
     StreamingIngestionError,
 )
 
-SOURCE = CaptureSourceV1(
+SOURCE = CaptureSource(
     sha256="0" * 64,
     file_name="sample.mp3",
     media_type="audio/mpeg",
@@ -41,7 +41,7 @@ def _request() -> OpenIngestionV2:
 
 
 def test_v2_contracts_use_camel_case_and_preserve_sealed_segment_projection() -> None:
-    segment = RawCaptureSegmentV1(
+    segment = RawCaptureSegment(
         segment_id="segment-1",
         order=0,
         locator={"kind": "time", "startMs": 0, "endMs": 1000},
@@ -54,7 +54,7 @@ def test_v2_contracts_use_camel_case_and_preserve_sealed_segment_projection() ->
         covered_until_ms=600_000,
         segments=[segment],
         source_text="first sentence",
-        extraction_engine=CaptureEngineV1(
+        extraction_engine=CaptureEngine(
             engine="whisper-primary",
             model="test-model",
             digest="sha256:" + "1" * 64,

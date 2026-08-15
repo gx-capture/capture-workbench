@@ -414,7 +414,7 @@ export async function collectBoundarySample(
     ? `${certPrep}/projects/${encodeURIComponent(options.correlation.projectId)}/document-operations/${encodeURIComponent(options.correlation.operationId)}`
     : undefined;
   const captureUrl = options.correlation
-    ? `${runtime}/v1/captures/${encodeURIComponent(options.correlation.captureId)}`
+    ? `${runtime}/v2/captures/${encodeURIComponent(options.correlation.captureId)}`
     : undefined;
 
   const [
@@ -440,14 +440,14 @@ export async function collectBoundarySample(
         dependencies,
       ),
       requestJson(
-        `${runtime}/v1/health/ready`,
+        `${runtime}/v2/health/ready`,
         options.runtimeToken,
         parseReady,
         options.requestTimeoutMs,
         dependencies,
       ),
       requestJson(
-        `${runtime}/v1/runtime/requirements`,
+        `${runtime}/v2/runtime/requirements`,
         options.runtimeToken,
         parseRequirements,
         options.requestTimeoutMs,

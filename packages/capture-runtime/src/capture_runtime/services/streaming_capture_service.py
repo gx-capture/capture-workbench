@@ -13,17 +13,18 @@ from pydantic import ValidationError
 
 from capture_runtime.clock import Clock
 from capture_runtime.contracts import (
-    CaptureDocumentV1,
+    CaptureDocument,
     CaptureEventV2,
     CaptureFailureV2,
     CaptureOperationV2,
+    CaptureSource,
     CaptureSourceKind,
-    CaptureSourceV1,
+    CaptureStreamingResult,
     FinalizeIngestionV2,
     IngestionV2,
     OpenIngestionV2,
     PartialCaptureV2,
-    RawCaptureV1,
+    RawCapture,
     StartCaptureV2,
     StreamingCaptureStatus,
     StreamingEventType,
@@ -157,19 +158,20 @@ class StreamingCaptureService:
     def partial(self, capture_id: str) -> PartialCaptureV2:
         return self.repository.read_partial(capture_id)
 
-    def terminal_result(self, capture_id: str) -> dict[str, object]:
+    def raw(self, capture_id: str) -> RawCapture:
+        return self.repository.read_raw(capture_id)
+
+    def terminal_result(self, capture_id: str) -> CaptureStreamingResult:
         operation = self.repository.get_capture(capture_id)
         if operation.status is not StreamingCaptureStatus.COMPLETED:
             raise StreamingPartialNotFoundError(capture_id)
-        return {
-            "operation": operation.model_dump(mode="json", by_alias=True),
-            "raw": self.repository.read_raw(capture_id).model_dump(mode="json", by_alias=True),
-            "result": self.repository.read_result(capture_id).model_dump(
-                mode="json", by_alias=True
-            ),
-        }
+        return CaptureStreamingResult(
+            operation=operation,
+            raw=self.repository.read_raw(capture_id),
+            result=self.repository.read_result(capture_id),
+        )
 
-    async def structure(self, capture_id: str) -> CaptureDocumentV1:
+    async def structure(self, capture_id: str) -> CaptureDocument:
         operation = self.repository.get_capture(capture_id)
         if operation.status is StreamingCaptureStatus.COMPLETED:
             return self.repository.read_result(capture_id)
@@ -191,7 +193,7 @@ class StreamingCaptureService:
             raise StructuringValidationError(
                 "structuring provider provenance is invalid", issues=[]
             )
-        completed = CaptureDocumentV1.model_validate(
+        completed = CaptureDocument.model_validate(
             {
                 **document.model_dump(mode="json", by_alias=True),
                 "completedAt": self._clock.now().isoformat(),
@@ -204,7 +206,7 @@ class StreamingCaptureService:
     def commit_host_result(
         self,
         capture_id: str,
-        candidate: CaptureDocumentV1,
+        candidate: CaptureDocument,
         *,
         idempotency_key: str,
     ) -> CaptureOperationV2:
@@ -225,7 +227,7 @@ class StreamingCaptureService:
             raise StreamingTransitionError("capture is not awaiting host structuring")
         raw = self.repository.read_raw(capture_id)
         validated = _validate_runtime_document(candidate, raw)
-        completed = CaptureDocumentV1.model_validate(
+        completed = CaptureDocument.model_validate(
             {
                 **validated.model_dump(mode="json", by_alias=True),
                 "completedAt": self._clock.now().isoformat(),
@@ -435,11 +437,11 @@ class StreamingCaptureService:
     async def _extract_buffered_source(
         self,
         capture_id: str,
-        source: CaptureSourceV1,
+        source: CaptureSource,
         declared_kind: CaptureSourceKind,
         source_path: Path,
         cancellation: asyncio.Event,
-    ) -> RawCaptureV1:
+    ) -> RawCapture:
         extractor = self._extractor
         if extractor is None:
             raise ProgressiveCaptureError(
@@ -542,12 +544,12 @@ class StreamingCaptureService:
         ]
 
 
-def _validate_runtime_document(candidate: object, raw: RawCaptureV1) -> CaptureDocumentV1:
+def _validate_runtime_document(candidate: object, raw: RawCapture) -> CaptureDocument:
     try:
-        return CaptureDocumentV1.model_validate(validate_structuring_candidate(candidate, raw))
+        return CaptureDocument.model_validate(validate_structuring_candidate(candidate, raw))
     except ValidationError as error:
         raise StructuringValidationError(
-            "structuring output does not satisfy CaptureDocumentV1",
+            "structuring output does not satisfy CaptureDocument",
             issues=[
                 {
                     "location": [str(part) for part in issue["loc"]],
@@ -565,7 +567,7 @@ def _safe_failure_message(error: BaseException) -> str:
     return "Progressive audio processing failed at a bounded runtime boundary."
 
 
-def _candidate_fingerprint(candidate: CaptureDocumentV1) -> str:
+def _candidate_fingerprint(candidate: CaptureDocument) -> str:
     canonical = json.dumps(
         candidate.model_dump(mode="json", by_alias=True),
         ensure_ascii=False,

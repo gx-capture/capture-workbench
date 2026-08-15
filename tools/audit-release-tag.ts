@@ -6,7 +6,7 @@ import { pathToFileURL } from 'node:url';
 
 const NPM_PACKAGES = [
   '@gx-capture/capture-workbench-ui',
-  '@gx-capture/capture-contracts',
+  '@gx-capture/capture-runtime-client',
   '@gx-capture/capture-structuring',
 ];
 
@@ -158,8 +158,8 @@ async function main(): Promise<void> {
     ]);
   }
   await assertPublished(
-    `https://pypi.org/pypi/capture-contracts/${version}/json`,
-    `PyPI capture-contracts ${version}`,
+    `https://pypi.org/pypi/capture-runtime-client/${version}/json`,
+    `PyPI capture-runtime-client ${version}`,
   );
   await assertPublished(
     `https://pypi.org/pypi/capture-structuring/${version}/json`,

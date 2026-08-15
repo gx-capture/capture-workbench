@@ -18,15 +18,15 @@ from pydantic import ValidationError
 
 from capture_runtime.clock import Clock
 from capture_runtime.contracts import (
-    CaptureDocumentV1,
+    CaptureDocument,
     CaptureEventV2,
     CaptureFailureV2,
     CaptureOperationV2,
-    CaptureSourceV1,
+    CaptureSource,
     IngestionV2,
     OpenIngestionV2,
     PartialCaptureV2,
-    RawCaptureV1,
+    RawCapture,
     StartCaptureV2,
     StreamingCaptureStatus,
     StreamingEventType,
@@ -414,7 +414,7 @@ class StreamingRepository:
             )
             self._persist_capture(record)
 
-    def write_raw(self, capture_id: str, raw: RawCaptureV1) -> None:
+    def write_raw(self, capture_id: str, raw: RawCapture) -> None:
         with self._lock:
             self._get_capture(capture_id)
             _atomic_json(
@@ -422,17 +422,17 @@ class StreamingRepository:
                 raw.model_dump(mode="json", by_alias=True),
             )
 
-    def read_raw(self, capture_id: str) -> RawCaptureV1:
+    def read_raw(self, capture_id: str) -> RawCapture:
         with self._lock:
             self._get_capture(capture_id)
             try:
-                return RawCaptureV1.model_validate_json(
+                return RawCapture.model_validate_json(
                     (self._capture_directory(capture_id) / "raw.json").read_text(encoding="utf-8")
                 )
             except (OSError, ValidationError) as error:
                 raise StreamingPartialNotFoundError(capture_id) from error
 
-    def write_result(self, capture_id: str, result: CaptureDocumentV1) -> None:
+    def write_result(self, capture_id: str, result: CaptureDocument) -> None:
         with self._lock:
             self._get_capture(capture_id)
             _atomic_json(
@@ -446,7 +446,7 @@ class StreamingRepository:
         *,
         idempotency_key: str,
         fingerprint: str,
-        result: CaptureDocumentV1,
+        result: CaptureDocument,
     ) -> CaptureOperationV2:
         with self._lock:
             record = self._get_capture(capture_id)
@@ -485,11 +485,11 @@ class StreamingRepository:
             )
             return record.operation
 
-    def read_result(self, capture_id: str) -> CaptureDocumentV1:
+    def read_result(self, capture_id: str) -> CaptureDocument:
         with self._lock:
             self._get_capture(capture_id)
             try:
-                return CaptureDocumentV1.model_validate_json(
+                return CaptureDocument.model_validate_json(
                     (self._capture_directory(capture_id) / "result.json").read_text(
                         encoding="utf-8"
                     )
@@ -742,10 +742,10 @@ class StreamingRepository:
         except KeyError as error:
             raise StreamingRecordNotFoundError(capture_id) from error
 
-    def _source_for(self, record: _IngestionRecord) -> CaptureSourceV1:
+    def _source_for(self, record: _IngestionRecord) -> CaptureSource:
         if record.status is not StreamingIngestionStatus.READY or record.finalized_sha256 is None:
             raise StreamingTransitionError("source is not finalized")
-        return CaptureSourceV1(
+        return CaptureSource(
             sha256=record.finalized_sha256,
             file_name=record.request.file_name,
             media_type=record.request.media_type,

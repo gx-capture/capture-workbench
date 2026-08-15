@@ -16,7 +16,7 @@ Accepted for the Windows 11 x64 verification host.
 8. Deterministic package QA is diagnostic consumer evidence. Its fake runtime does not certify real
    WindowsML, Whisper, Ollama, or licensed-fixture behavior and is not a publication gate.
 9. The launcher advertises a 50 MiB upload ceiling. This keeps single-file multipart buffering bounded while still covering the reference PDF, image, and short-audio workflows.
-10. The deterministic runtime matches the canonical v1 transport: multipart capture creation, `captureId`, schema version `1`, and the status/raw/result/error envelopes used by the Angular client and Python runtime.
+10. The deterministic runtime matches the canonical v2 transport: resumable ingestion, `captureId`, schema version `2`, and the status/raw/result/error envelopes used by the Angular client and Python runtime.
 
 ## Residual Risk
 

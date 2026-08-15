@@ -6,8 +6,8 @@ import type {
   CaptureStructuringProvider,
   CaptureTaskView,
   CaptureWorkbenchConfig,
-  RuntimeReadyV1,
-  RuntimeRequirementV1,
+  RuntimeReady,
+  RuntimeRequirement,
 } from './index';
 
 export interface ResolvedCaptureWorkbenchConfig {
@@ -38,14 +38,14 @@ export interface RuntimeViewState {
     | 'needs-setup'
     | 'incompatible'
     | 'error';
-  readonly ready?: RuntimeReadyV1;
-  readonly requirements: readonly RuntimeRequirementV1[];
+  readonly ready?: RuntimeReady;
+  readonly requirements: readonly RuntimeRequirement[];
   readonly error?: string;
 }
 
 export interface RuntimeHandshake {
-  readonly ready: RuntimeReadyV1;
-  readonly requirements: readonly RuntimeRequirementV1[];
+  readonly ready: RuntimeReady;
+  readonly requirements: readonly RuntimeRequirement[];
 }
 
 export interface CaptureWorkbenchInputSource {

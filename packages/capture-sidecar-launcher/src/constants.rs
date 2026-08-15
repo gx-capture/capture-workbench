@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 pub(crate) const LOOPBACK_HOST: &str = "127.0.0.1";
-pub(crate) const HEALTH_PATH: &str = "/v1/health/ready";
+pub(crate) const HEALTH_PATH: &str = "/v2/health/ready";
 pub(crate) const MAX_HEALTH_RESPONSE_BYTES: u64 = 64 * 1024;
 pub(crate) const READY_TIMEOUT: Duration = Duration::from_secs(45);
 pub(crate) const READY_POLL_INTERVAL: Duration = Duration::from_millis(100);

@@ -10,7 +10,7 @@ import { Observable, defer, from, map } from 'rxjs';
 const packageName = '@gx-capture/capture-workbench-ui';
 const releasePackageNames = Object.freeze([
   packageName,
-  '@gx-capture/capture-contracts',
+  '@gx-capture/capture-runtime-client',
   '@gx-capture/capture-structuring',
 ]);
 const registry = 'https://npm.pkg.github.com';
@@ -18,7 +18,7 @@ const coreRuntimeAssetNames = Object.freeze([
   'capture-runtime-x86_64-pc-windows-msvc.exe',
   'capture-runtime-x86_64-pc-windows-msvc.exe.sha256',
   'capture-runtime-manifest.json',
-  'capture-document-v1.schema.json',
+  'capture-document-v2.schema.json',
 ]);
 const engineCatalogName = 'capture-engine-catalog.json';
 const runtimeSizeReportName = 'runtime-size-report.json';

@@ -1,13 +1,13 @@
 import { signal, type WritableSignal } from '@angular/core';
 import type {
   CaptureClient,
-  CaptureDocumentV1,
-  CaptureEventV2,
-  CaptureOperationV2,
+  CaptureDocument,
+  CaptureEvent,
+  CaptureOperation,
   CaptureStreamingResult,
-  PartialCaptureV2,
-  RawCaptureV1,
-  RuntimeReadyV1,
+  PartialCapture,
+  RawCapture,
+  RuntimeReady,
   CapturePreprocessor,
   CaptureStructuringProvider,
   CaptureWorkbenchConfig,
@@ -15,12 +15,12 @@ import type {
 } from '../../../contracts';
 import { of } from 'rxjs';
 
-export const READY: RuntimeReadyV1 = {
+export const READY: RuntimeReady = {
   ready: true,
   service: 'capture-runtime',
-  runtimeVersion: '0.3.8',
-  apiVersion: '1.0',
-  captureDocumentSchemaVersion: '1',
+  runtimeVersion: '0.4.0',
+  apiVersion: '2.0',
+  captureDocumentSchemaVersion: '2',
   capabilities: {
     captureKinds: ['pdf', 'image', 'audio'],
     structuringModes: ['runtime', 'host'],
@@ -30,8 +30,8 @@ export const READY: RuntimeReadyV1 = {
   },
 };
 
-export const RAW: RawCaptureV1 = {
-  schemaVersion: '1',
+export const RAW: RawCapture = {
+  schemaVersion: '2',
   diagnosticOnly: true,
   source: {
     sha256: 'a'.repeat(64),
@@ -57,8 +57,8 @@ export const RAW: RawCaptureV1 = {
   createdAt: '2026-07-20T00:00:00Z',
 };
 
-export const DOCUMENT: CaptureDocumentV1 = {
-  schemaVersion: '1',
+export const DOCUMENT: CaptureDocument = {
+  schemaVersion: '2',
   source: RAW.source,
   rawSegments: RAW.segments,
   blocks: [
@@ -86,9 +86,9 @@ export const DOCUMENT: CaptureDocumentV1 = {
 };
 
 export function streamingOperation(
-  status: CaptureOperationV2['status'],
+  status: CaptureOperation['status'],
   progress = status === 'completed' ? 1 : 0.7,
-): CaptureOperationV2 {
+): CaptureOperation {
   return {
     protocolVersion: '2',
     captureId: 'capture-1',
@@ -106,9 +106,9 @@ export function streamingOperation(
 }
 
 export function streamingEvent(
-  eventType: CaptureEventV2['eventType'],
+  eventType: CaptureEvent['eventType'],
   stage: string,
-): CaptureEventV2 {
+): CaptureEvent {
   return {
     protocolVersion: '2',
     eventId: `event-${eventType}`,
@@ -120,7 +120,7 @@ export function streamingEvent(
   };
 }
 
-export const PARTIAL: PartialCaptureV2 = {
+export const PARTIAL: PartialCapture = {
   protocolVersion: '2',
   captureId: 'capture-1',
   source: RAW.source,
@@ -170,6 +170,7 @@ export function fakeClient(
     getStreamingCapture: vi.fn(() => of(streamingOperation('completed'))),
     cancelStreamingCapture: vi.fn(() => of(streamingOperation('cancelled'))),
     getStreamingPartial: vi.fn(() => of(PARTIAL)),
+    getStreamingRaw: vi.fn(() => of(RAW)),
     getStreamingResult: vi.fn(() => of(streamingResult())),
     commitStreamingStructuredResult: vi.fn(() =>
       of(streamingOperation('completed')),

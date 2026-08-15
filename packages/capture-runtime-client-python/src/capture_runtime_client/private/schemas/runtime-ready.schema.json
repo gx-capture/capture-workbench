@@ -1,0 +1,88 @@
+{
+  "additionalProperties": false,
+  "description": "General v2 readiness payload shared by runtime clients.",
+  "properties": {
+    "ready": {
+      "title": "Ready",
+      "type": "boolean"
+    },
+    "service": {
+      "const": "capture-runtime",
+      "default": "capture-runtime",
+      "title": "Service",
+      "type": "string"
+    },
+    "apiVersion": {
+      "const": "2.0",
+      "default": "2.0",
+      "title": "Apiversion",
+      "type": "string"
+    },
+    "runtimeVersion": {
+      "const": "0.4.0",
+      "default": "0.4.0",
+      "title": "Runtimeversion",
+      "type": "string"
+    },
+    "captureDocumentSchemaVersion": {
+      "const": "2",
+      "default": "2",
+      "title": "Capturedocumentschemaversion",
+      "type": "string"
+    },
+    "captureDocumentSchemaSha256": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Capturedocumentschemasha256"
+    },
+    "schemaSha256": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Schemasha256"
+    },
+    "contractSetVersion": {
+      "const": "2",
+      "default": "2",
+      "title": "Contractsetversion",
+      "type": "string"
+    },
+    "capabilities": {
+      "additionalProperties": true,
+      "title": "Capabilities",
+      "type": "object"
+    },
+    "message": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Message"
+    }
+  },
+  "required": [
+    "ready"
+  ],
+  "title": "RuntimeReady",
+  "type": "object"
+}

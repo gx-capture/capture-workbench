@@ -436,7 +436,7 @@ async function main(): Promise<void> {
     await deleteCapturesAndVerify(runtimePort, token, captureIds);
   } finally {
     for (const captureId of captureIds) {
-      await request<void>(runtimePort, token, `/v1/captures/${captureId}`, {
+      await request<void>(runtimePort, token, `/v2/captures/${captureId}`, {
         method: 'DELETE',
       }).catch(() => undefined);
     }
@@ -464,7 +464,7 @@ async function main(): Promise<void> {
 async function installDependencies(port: number, token: string): Promise<void> {
   const listed = await request<{
     readonly items: readonly RuntimeRequirement[];
-  }>(port, token, '/v1/runtime/requirements');
+  }>(port, token, '/v2/runtime/requirements');
   for (const requirementId of dependencyOrder) {
     const requirement = listed.items.find(
       (item) => item.requirementId === requirementId,
@@ -479,7 +479,7 @@ async function installDependencies(port: number, token: string): Promise<void> {
     const installation = await request<RuntimeInstallation>(
       port,
       token,
-      '/v1/runtime/installations',
+      '/v2/runtime/installations',
       {
         method: 'POST',
         headers: {
@@ -513,7 +513,7 @@ async function captureAndVerify(
     }),
     fileName,
   );
-  const created = await request<CaptureJob>(port, token, '/v1/captures', {
+  const created = await request<CaptureJob>(port, token, '/v2/captures', {
     method: 'POST',
     headers: { 'x-idempotency-key': randomUUID() },
     body: form,
@@ -535,7 +535,7 @@ async function captureAndVerify(
   const raw = await request<RawCapture>(
     port,
     token,
-    `/v1/captures/${created.captureId}/raw`,
+    `/v2/captures/${created.captureId}/raw`,
   );
   if (raw.segments.length === 0 || !raw.sourceText.trim()) {
     throw new Error(`Real ${sourceKind} extraction returned no text.`);
@@ -560,7 +560,7 @@ async function captureAndVerify(
   const committed = await request<CaptureJob>(
     port,
     token,
-    `/v1/captures/${created.captureId}/structure`,
+    `/v2/captures/${created.captureId}/structure`,
     {
       method: 'POST',
       headers: {
@@ -579,7 +579,7 @@ async function captureAndVerify(
   const result = await request<CaptureResult>(
     port,
     token,
-    `/v1/captures/${created.captureId}/result`,
+    `/v2/captures/${created.captureId}/result`,
   );
   assert.equal(result.extractionEngine.engine, raw.extractionEngine.engine);
   assert.equal(result.structuringEngine.engine, 'host');
@@ -646,7 +646,7 @@ function hostCandidate(raw: RawCapture): Record<string, unknown> {
     targetText: segment.text,
   }));
   return {
-    schemaVersion: '1',
+    schemaVersion: '2',
     source: raw.source,
     rawSegments: raw.segments,
     blocks,
@@ -711,7 +711,7 @@ async function waitForReady(
       const ready = await request<{ readonly ready: boolean }>(
         port,
         token,
-        '/v1/health/ready',
+        '/v2/health/ready',
       );
       if (ready.ready) return;
     } catch {
@@ -732,7 +732,7 @@ async function waitForInstallation(
     const current = await request<RuntimeInstallation>(
       port,
       token,
-      `/v1/runtime/installations/${installation.installationId}`,
+      `/v2/runtime/installations/${installation.installationId}`,
     );
     if (current.status === 'completed') return;
     if (!['queued', 'running'].includes(current.status)) {
@@ -755,7 +755,7 @@ async function waitForAwaitingStructuring(
     const current = await request<CaptureJob>(
       port,
       token,
-      `/v1/captures/${captureId}`,
+      `/v2/captures/${captureId}`,
     );
     if (
       current.stage === 'awaiting_structuring' ||
@@ -777,7 +777,7 @@ async function waitForTerminal(
     const current = await request<CaptureJob>(
       port,
       token,
-      `/v1/captures/${captureId}`,
+      `/v2/captures/${captureId}`,
     );
     if (!['queued', 'running'].includes(current.status)) return current;
     await delay(500);
@@ -791,11 +791,11 @@ async function deleteCapturesAndVerify(
   captureIds: string[],
 ): Promise<void> {
   for (const captureId of [...captureIds]) {
-    await request<void>(port, token, `/v1/captures/${captureId}`, {
+    await request<void>(port, token, `/v2/captures/${captureId}`, {
       method: 'DELETE',
     });
     const response = await fetch(
-      `http://127.0.0.1:${port}/v1/captures/${captureId}`,
+      `http://127.0.0.1:${port}/v2/captures/${captureId}`,
       {
         headers: {
           authorization: `Bearer ${token}`,

@@ -20,14 +20,14 @@ from capture_runtime.clock import Clock
 from capture_runtime.config import ExtractionRuntimeConfig, sanitized_child_environment
 from capture_runtime.constants import WHISPER_REQUIREMENT_ID
 from capture_runtime.contracts import (
-    CaptureEngineV1,
+    CaptureEngine,
     CaptureFailureV2,
-    CaptureSourceV1,
+    CaptureSource,
     PartialCaptureV2,
-    RawCaptureSegmentV1,
-    RawCaptureV1,
+    RawCapture,
+    RawCaptureSegment,
     StreamingEventType,
-    TimeLocatorV1,
+    TimeLocator,
     project_source_text,
 )
 from capture_runtime.engine_installation import EngineInstallationManager
@@ -79,13 +79,13 @@ EventSink = Callable[
 
 @dataclass(slots=True)
 class _ProgressiveState:
-    source: CaptureSourceV1
+    source: CaptureSource
     capture_id: str
     clock: Clock
     revision: int = 0
     covered_until_ms: int = 0
-    extraction_engine: CaptureEngineV1 | None = None
-    segments: list[RawCaptureSegmentV1] = field(default_factory=list)
+    extraction_engine: CaptureEngine | None = None
+    segments: list[RawCaptureSegment] = field(default_factory=list)
 
     @property
     def partial(self) -> PartialCaptureV2 | None:
@@ -124,7 +124,7 @@ class _ProgressiveState:
             for order, segment in enumerate(self.segments):
                 segment.order = order
 
-    def raw(self) -> RawCaptureV1:
+    def raw(self) -> RawCapture:
         partial = self.partial
         if partial is None or not partial.segments:
             raise ProgressiveCaptureError(
@@ -133,7 +133,7 @@ class _ProgressiveState:
                 stage="checkpoint",
             )
         assert partial.extraction_engine is not None
-        return RawCaptureV1(
+        return RawCapture(
             source=partial.source,
             segments=partial.segments,
             source_text=partial.source_text,
@@ -143,16 +143,16 @@ class _ProgressiveState:
         )
 
 
-def _state_segment_start(segment: RawCaptureSegmentV1) -> int:
+def _state_segment_start(segment: RawCaptureSegment) -> int:
     locator = segment.locator
-    if not isinstance(locator, TimeLocatorV1):
+    if not isinstance(locator, TimeLocator):
         raise ProgressiveCaptureError("progressive audio segment locator is not time-based")
     return locator.start_ms
 
 
-def _state_segment_end(segment: RawCaptureSegmentV1) -> int:
+def _state_segment_end(segment: RawCaptureSegment) -> int:
     locator = segment.locator
-    if not isinstance(locator, TimeLocatorV1):
+    if not isinstance(locator, TimeLocator):
         raise ProgressiveCaptureError("progressive audio segment locator is not time-based")
     return locator.end_ms
 
@@ -177,11 +177,11 @@ class ProgressiveCaptureProcessor:
         self,
         *,
         capture_id: str,
-        source: CaptureSourceV1,
+        source: CaptureSource,
         source_path: Path,
         cancellation: asyncio.Event,
         sink: EventSink,
-    ) -> RawCaptureV1:
+    ) -> RawCapture:
         try:
             engine = await self._resolve_engine()
         except (ExtractionRuntimeUnavailableError, TimeoutError):
@@ -374,7 +374,7 @@ class _SessionWorker:
         cls,
         *,
         engine: InstalledEngine,
-        source: CaptureSourceV1,
+        source: CaptureSource,
         capture_id: str,
         config: ExtractionRuntimeConfig,
     ) -> _SessionWorker:
@@ -640,11 +640,11 @@ def _segment_event(payload: bytes) -> ProgressiveSessionEvent:
         "extracting",
         partial_revision=int(value["partialRevision"]),
         covered_until_ms=int(value["coveredUntilMs"]),
-        segments=tuple(RawCaptureSegmentV1.model_validate(item) for item in value["segments"]),
+        segments=tuple(RawCaptureSegment.model_validate(item) for item in value["segments"]),
         extraction_engine=(
             None
             if value.get("extractionEngine") is None
-            else CaptureEngineV1.model_validate(value["extractionEngine"])
+            else CaptureEngine.model_validate(value["extractionEngine"])
         ),
     )
 

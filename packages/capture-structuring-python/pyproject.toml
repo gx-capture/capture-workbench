@@ -4,13 +4,13 @@ build-backend = "hatchling.build"
 
 [project]
 name = "capture-structuring"
-version = "0.3.12"
+version = "0.4.0"
 description = "Brain-agnostic, provenance-safe Capture Workbench host structuring SDK."
 readme = "README.md"
 requires-python = ">=3.12,<3.15"
 license = { text = "MIT" }
 dependencies = [
-  "capture-contracts>=0.3.12,<0.4.0",
+  "capture-runtime-client>=0.4.0,<0.5.0",
   "jsonschema>=4.25.0,<5.0.0",
   "pydantic>=2.12.0,<3.0.0",
 ]
@@ -30,7 +30,7 @@ dev = [
 ]
 
 [tool.uv.sources]
-capture-contracts = { path = "../capture-contracts/python" }
+capture-runtime-client = { path = "../capture-runtime-client-python" }
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

@@ -1,11 +1,11 @@
 import type {
   CaptureClient,
   CaptureCompletedEvent,
-  CaptureFailureV1,
+  CaptureFailure,
   CapturePreprocessor,
   CaptureStructuringProvider,
   CaptureTaskView,
-  RawCaptureV1,
+  RawCapture,
 } from '../../../contracts';
 import type { ResolvedCaptureWorkbenchConfig } from '../../../contracts/workbench';
 
@@ -38,14 +38,14 @@ export interface CaptureReconciliationContext {
   ) => CaptureTaskView | undefined;
   readonly requireReconciliation: (
     taskId: string,
-    error: CaptureFailureV1,
-    raw?: RawCaptureV1,
+    error: CaptureFailure,
+    raw?: RawCapture,
   ) => void;
   readonly failTask: (
     taskId: string,
     fileName: string,
-    error: CaptureFailureV1,
-    raw?: RawCaptureV1,
+    error: CaptureFailure,
+    raw?: RawCapture,
     stage?: CaptureTaskView['stage'],
   ) => void;
   readonly emitCompleted: (event: CaptureCompletedEvent) => void;
@@ -61,4 +61,4 @@ export interface CaptureTaskPatch {
   readonly patch: Partial<CaptureTaskView>;
 }
 
-export type CaptureWorkflowFailure = CaptureFailureV1;
+export type CaptureWorkflowFailure = CaptureFailure;

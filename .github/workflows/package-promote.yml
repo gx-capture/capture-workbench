@@ -26,6 +26,10 @@ on:
         description: 'Package release version without v prefix'
         required: true
         type: string
+      contract_set_sha256:
+        description: 'Canonical runtime v2 contract-set SHA-256 for this release train'
+        required: true
+        type: string
 
 permissions:
   actions: read
@@ -45,4 +49,39 @@ jobs:
       candidate_manifest_sha256: ${{ inputs.candidate_manifest_sha256 }}
       source_commit: ${{ inputs.source_commit }}
       release_version: ${{ inputs.release_version }}
+      release_candidate_id: ${{ inputs.candidate_id }}
+      contract_set_sha256: ${{ inputs.contract_set_sha256 }}
+    secrets: inherit
+
+  publish-maven:
+    uses: ./.github/workflows/_publish-maven.yml
+    permissions:
+      actions: read
+      contents: read
+      packages: write
+    with:
+      candidate_id: ${{ inputs.candidate_id }}
+      candidate_run_id: ${{ inputs.candidate_run_id }}
+      candidate_manifest_sha256: ${{ inputs.candidate_manifest_sha256 }}
+      source_commit: ${{ inputs.source_commit }}
+      release_version: ${{ inputs.release_version }}
+      release_candidate_id: ${{ inputs.candidate_id }}
+      contract_set_sha256: ${{ inputs.contract_set_sha256 }}
+    secrets: inherit
+
+  publish-pypi:
+    uses: ./.github/workflows/_publish-pypi.yml
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    with:
+      candidate_kind: package
+      candidate_id: ${{ inputs.candidate_id }}
+      candidate_run_id: ${{ inputs.candidate_run_id }}
+      candidate_manifest_sha256: ${{ inputs.candidate_manifest_sha256 }}
+      source_commit: ${{ inputs.source_commit }}
+      release_version: ${{ inputs.release_version }}
+      release_candidate_id: ${{ inputs.candidate_id }}
+      contract_set_sha256: ${{ inputs.contract_set_sha256 }}
     secrets: inherit

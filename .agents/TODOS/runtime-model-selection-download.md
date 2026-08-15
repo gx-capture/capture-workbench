@@ -1,10 +1,10 @@
 # Runtime model selection/download TODO
 
-- [ ] Add generated V1 contracts for model options and model installations.
+- [ ] Bind model options and installations to the canonical v2 contract set.
 - [ ] Add runtime-owned allowlist, active-selection persistence, and post-pull
       digest/size verification.
-- [ ] Add additive model-option routes while preserving generic installation
-      behavior.
+- [ ] Verify the v2 model-option and installation routes alongside generic
+      runtime requirement setup.
 - [ ] Make the Workbench Tauri bridge and Angular setup flow select and consent
       to a model before capture structuring is enabled.
 - [ ] Remove the fixed standalone 4B environment/profile from launch policy.

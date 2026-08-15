@@ -7,7 +7,7 @@ import { test } from 'node:test';
 
 import { verifyRuntimeCandidate } from './verify-runtime-candidate.ts';
 
-const VERSION = '0.3.12';
+const VERSION = '0.4.0';
 const SOURCE_COMMIT = 'a'.repeat(40);
 const PACKAGE_CANDIDATE_ID = 'b'.repeat(64);
 
@@ -25,16 +25,16 @@ async function createCandidate() {
     'checksums',
   ])
     await mkdir(join(root, directory));
-  const schema = Buffer.from('{"title":"CaptureDocumentV1"}\n');
+  const schema = Buffer.from('{"title":"CaptureDocument"}\n');
   await writeFile(
-    join(root, 'runtime/capture-document-v1.schema.json'),
+    join(root, 'runtime/capture-document-v2.schema.json'),
     schema,
   );
   await writeFile(
     join(root, 'runtime/capture-runtime-manifest.json'),
     JSON.stringify({
       runtimeVersion: VERSION,
-      schemaFileName: 'capture-document-v1.schema.json',
+      schemaFileName: 'capture-document-v2.schema.json',
       schemaSha256: digest(schema),
     }),
   );
@@ -44,20 +44,27 @@ async function createCandidate() {
   );
   await writeFile(join(root, 'runtime/capture-runtime-x64.exe'), 'runtime');
   const packageFiles = [
-    'capture_contracts-0.3.12-py3-none-any.whl',
-    'capture_contracts-0.3.12.tar.gz',
-    'capture_structuring-0.3.12-py3-none-any.whl',
-    'capture_structuring-0.3.12.tar.gz',
+    'capture_runtime_client-0.4.0-py3-none-any.whl',
+    'capture_runtime_client-0.4.0.tar.gz',
+    'capture_structuring-0.4.0-py3-none-any.whl',
+    'capture_structuring-0.4.0.tar.gz',
   ];
   for (const name of packageFiles)
     await writeFile(join(root, 'python', name), name);
   await writeFile(
-    join(root, 'crate/capture-sidecar-launcher-0.3.12.crate'),
+    join(root, 'crate/capture-sidecar-launcher-0.4.0.crate'),
     'crate',
   );
   await writeFile(
     join(root, 'contracts/contract-snapshot.json'),
     '{"schemaVersion":"1"}\n',
+  );
+  const contractSet = Buffer.from('{"contractSetVersion":"2"}\n');
+  const contractSetSha256 = digest(contractSet);
+  await writeFile(join(root, 'contracts/contract-set.json'), contractSet);
+  await writeFile(
+    join(root, 'contracts/contract-set.sha256'),
+    `${contractSetSha256}\n`,
   );
 
   const artifacts = [];
@@ -85,6 +92,7 @@ async function createCandidate() {
     releaseMode: 'core-only',
     producerRunId: 42,
     packageCandidateId: PACKAGE_CANDIDATE_ID,
+    contractSetSha256,
     artifacts,
     toolchains: { node: 'v24.0.0', python: '3.12', runtime: 'capture-runtime' },
   };
@@ -103,7 +111,12 @@ async function createCandidate() {
       status: 'success',
     }),
   );
-  return { root, candidateId, manifestSha256: digest(manifestBytes) };
+  return {
+    root,
+    candidateId,
+    manifestSha256: digest(manifestBytes),
+    contractSetSha256,
+  };
 }
 
 test('runtime candidate verification binds runtime and reusable producer artifacts', async () => {
@@ -117,6 +130,7 @@ test('runtime candidate verification binds runtime and reusable producer artifac
       candidateId: candidate.candidateId,
       candidateManifestSha256: candidate.manifestSha256,
       packageCandidateId: PACKAGE_CANDIDATE_ID,
+      contractSetSha256: candidate.contractSetSha256,
       requireEvidence: true,
     });
   } finally {
@@ -140,8 +154,30 @@ test('runtime candidate verification rejects changed runtime bytes', async () =>
         candidateId: candidate.candidateId,
         candidateManifestSha256: candidate.manifestSha256,
         packageCandidateId: PACKAGE_CANDIDATE_ID,
+        contractSetSha256: candidate.contractSetSha256,
       }),
       /Expected values|digest differs|checksum mismatch/u,
+    );
+  } finally {
+    await rm(candidate.root, { recursive: true, force: true });
+  }
+});
+
+test('runtime candidate verification rejects a different requested contract set', async () => {
+  const candidate = await createCandidate();
+  try {
+    await assert.rejects(
+      verifyRuntimeCandidate({
+        candidate: candidate.root,
+        version: VERSION,
+        sourceCommit: SOURCE_COMMIT,
+        producerRunId: 42,
+        candidateId: candidate.candidateId,
+        candidateManifestSha256: candidate.manifestSha256,
+        packageCandidateId: PACKAGE_CANDIDATE_ID,
+        contractSetSha256: 'f'.repeat(64),
+      }),
+      /contract-set SHA-256 differs/u,
     );
   } finally {
     await rm(candidate.root, { recursive: true, force: true });

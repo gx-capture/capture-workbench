@@ -29,7 +29,7 @@ struct RequestBody {
 }
 
 pub(crate) fn requirements(state: &DesktopState) -> Result<Value, String> {
-    request_json(state, "GET", "/v1/runtime/requirements", None, None)
+    request_json(state, "GET", "/v2/runtime/requirements", None, None)
 }
 
 pub(crate) fn start_installation(
@@ -46,7 +46,7 @@ pub(crate) fn start_installation(
     request_json(
         state,
         "POST",
-        "/v1/runtime/installations",
+        "/v2/runtime/installations",
         Some(RequestBody {
             bytes: body,
             content_type: "application/json".into(),
@@ -60,14 +60,14 @@ pub(crate) fn installation(state: &DesktopState, input: RuntimeIdInput) -> Resul
     request_json(
         state,
         "GET",
-        &format!("/v1/runtime/installations/{}", input.id),
+        &format!("/v2/runtime/installations/{}", input.id),
         None,
         None,
     )
 }
 
 pub(crate) fn model_options(state: &DesktopState) -> Result<Value, String> {
-    request_json(state, "GET", "/v1/runtime/model-options", None, None)
+    request_json(state, "GET", "/v2/runtime/model-options", None, None)
 }
 
 pub(crate) fn start_model_installation(
@@ -84,7 +84,7 @@ pub(crate) fn start_model_installation(
     request_json(
         state,
         "POST",
-        "/v1/runtime/model-installations",
+        "/v2/runtime/model-installations",
         Some(RequestBody {
             bytes: body,
             content_type: "application/json".into(),
@@ -101,7 +101,7 @@ pub(crate) fn model_installation(
     request_json(
         state,
         "GET",
-        &format!("/v1/runtime/model-installations/{}", input.id),
+        &format!("/v2/runtime/model-installations/{}", input.id),
         None,
         None,
     )
@@ -130,7 +130,7 @@ pub(crate) fn create_capture(
     request_json(
         state,
         "POST",
-        "/v1/captures",
+        "/v2/captures",
         Some(body),
         Some(&input.client_request_id),
     )
@@ -392,7 +392,7 @@ fn capture_value(
     request_json(
         state,
         method,
-        &format!("/v1/captures/{capture_id}{suffix}"),
+        &format!("/v2/captures/{capture_id}{suffix}"),
         body,
         None,
     )
@@ -751,12 +751,12 @@ mod tests {
             &BackendConfig {
                 base_url: format!("http://127.0.0.1:{port}"),
                 token: "secret-token".into(),
-                runtime_version: "0.3.12".into(),
-                api_version: "1.0".into(),
-                capture_document_schema_version: "1".into(),
+                runtime_version: "0.4.0".into(),
+                api_version: "2.0".into(),
+                capture_document_schema_version: "2".into(),
             },
             "GET",
-            "/v1/runtime/requirements",
+            "/v2/runtime/requirements",
             None,
             None,
         )
@@ -821,9 +821,9 @@ mod tests {
             &BackendConfig {
                 base_url: format!("http://127.0.0.1:{port}"),
                 token: "secret-token".into(),
-                runtime_version: "0.3.12".into(),
-                api_version: "1.0".into(),
-                capture_document_schema_version: "1".into(),
+                runtime_version: "0.4.0".into(),
+                api_version: "2.0".into(),
+                capture_document_schema_version: "2".into(),
             },
             "/v2/captures/capture-1/events",
             Some("7"),
@@ -883,9 +883,9 @@ mod tests {
             &BackendConfig {
                 base_url: format!("http://127.0.0.1:{port}"),
                 token: "token".into(),
-                runtime_version: "0.3.12".into(),
-                api_version: "1.0".into(),
-                capture_document_schema_version: "1".into(),
+                runtime_version: "0.4.0".into(),
+                api_version: "2.0".into(),
+                capture_document_schema_version: "2".into(),
             },
             &RuntimeSourceFile {
                 file_name: "sample.mp3".into(),

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import re
+import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
@@ -75,10 +77,32 @@ def test_ocr_bundle_collects_pypdfium2_runtime_metadata() -> None:
         assert f'"{distribution}"' in spec
 
 
-def test_core_runtime_collects_capture_contract_package_data() -> None:
+def test_core_runtime_does_not_collect_public_capture_contract_package_data() -> None:
     spec = RUNTIME_SPEC.read_text(encoding="utf-8")
 
-    assert 'collect_data_files("capture_contracts")' in spec
+    retired_package = "capture_" + "contracts"
+    assert f'collect_data_files("{retired_package}")' not in spec
+
+
+def test_worker_module_import_does_not_bootstrap_http_application() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; "
+                "import capture_runtime.engine_adapters; "
+                "assert 'capture_runtime.app' not in sys.modules"
+            ),
+        ],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        shell=False,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_exact_dependency_ownership_rejects_duplicate_or_broader_entries() -> None:

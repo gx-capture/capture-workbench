@@ -9,7 +9,7 @@ from typing import Any
 
 from fastapi.responses import JSONResponse
 
-from capture_runtime.contracts import ErrorBodyV1, ErrorEnvelopeV1
+from capture_runtime.contracts import ErrorBodyV2, ErrorEnvelopeV2
 
 
 class ApiProblem(Exception):
@@ -36,7 +36,7 @@ def error_response(
     details: dict[str, Any] | None = None,
     headers: dict[str, str] | None = None,
 ) -> JSONResponse:
-    envelope = ErrorEnvelopeV1(error=ErrorBodyV1(code=code, message=message, details=details))
+    envelope = ErrorEnvelopeV2(error=ErrorBodyV2(code=code, message=message, details=details))
     return JSONResponse(
         status_code=status_code,
         content=envelope.model_dump(mode="json", by_alias=True, exclude_none=True),

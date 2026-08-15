@@ -1,7 +1,7 @@
 {
   "$schema": "../../../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Capture Workbench",
-  "version": "0.3.12",
+  "version": "0.4.0",
   "identifier": "io.github.gx-capture.capture-workbench",
   "build": {
     "beforeDevCommand": "corepack pnpm nx run capture-workbench:serve",
@@ -33,7 +33,7 @@
     "resources": [
       "binaries/capture-runtime-x86_64-pc-windows-msvc.exe",
       "resources/capture-runtime-manifest.json",
-      "resources/capture-document-v1.schema.json"
+      "resources/capture-document-v2.schema.json"
     ],
     "windows": {
       "nsis": {

@@ -7,19 +7,19 @@ correct page/segment text before Cert Prep structures and persists the result.
 
 ## Non-goals
 
-- Do not change CaptureDocumentV1, its schema version, or the Capture Runtime
+- Do not change CaptureDocument, its schema version, or the Capture Runtime
   sidecar API.
 - Do not expose the sidecar bearer token or loopback URL to the browser.
 - Do not add audio transcript review in this slice.
 
 ## Interfaces
 
-- Capture Workbench adds an opt-in review gate and `CaptureReviewV1` edits.
+- Capture Workbench adds an opt-in review gate and `CaptureReview` edits.
 - Host clients may implement `confirmCapture(captureId, request)`; the request
   contains only a review version and segment text overrides.
 - Cert Prep exposes capture-review upload, status, raw, confirm, cancel, and
   result routes under `/projects/{projectId}/capture-workbench/captures`.
-- A completion event carries the canonical CaptureDocumentV1 plus review edits.
+- A completion event carries the canonical CaptureDocument plus review edits.
 
 ## Key decisions
 

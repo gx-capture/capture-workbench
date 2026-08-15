@@ -1,4 +1,4 @@
-import type { CaptureBlockV1 } from '@gx-capture/capture-contracts';
+import type { CaptureBlock } from '@gx-capture/capture-runtime-client';
 
 import type { StructuringSchema } from './contracts.js';
 
@@ -31,7 +31,7 @@ export const CAPTURE_BLOCK_TYPES = [
   'table',
   'quote',
   'transcript',
-] as const satisfies readonly CaptureBlockV1['type'][];
+] as const satisfies readonly CaptureBlock['type'][];
 
 const semanticBlockDefinition = {
   type: 'object',
@@ -47,7 +47,7 @@ const semanticBlockDefinition = {
 /** JSON Schema for translated semantic block batches. */
 export const CAPTURE_BLOCK_BATCH_SCHEMA: StructuringSchema = {
   $schema: 'https://json-schema.org/draft/2020-12/schema',
-  title: 'CaptureBlockBatchV1',
+  title: 'CaptureBlockBatch',
   type: 'object',
   additionalProperties: false,
   required: ['blocks'],
@@ -55,16 +55,16 @@ export const CAPTURE_BLOCK_BATCH_SCHEMA: StructuringSchema = {
     blocks: {
       type: 'array',
       minItems: 1,
-      items: { $ref: '#/$defs/CaptureSemanticBlockV1' },
+      items: { $ref: '#/$defs/CaptureSemanticBlock' },
     },
   },
-  $defs: { CaptureSemanticBlockV1: semanticBlockDefinition },
+  $defs: { CaptureSemanticBlock: semanticBlockDefinition },
 };
 
 /** JSON Schema for identity-mode semantic block batches. */
 export const CAPTURE_IDENTITY_BLOCK_BATCH_SCHEMA: StructuringSchema = {
   $schema: 'https://json-schema.org/draft/2020-12/schema',
-  title: 'CaptureIdentityBlockBatchV1',
+  title: 'CaptureIdentityBlockBatch',
   type: 'object',
   additionalProperties: false,
   required: ['blocks'],
@@ -72,11 +72,11 @@ export const CAPTURE_IDENTITY_BLOCK_BATCH_SCHEMA: StructuringSchema = {
     blocks: {
       type: 'array',
       minItems: 1,
-      items: { $ref: '#/$defs/CaptureIdentitySemanticBlockV1' },
+      items: { $ref: '#/$defs/CaptureIdentitySemanticBlock' },
     },
   },
   $defs: {
-    CaptureIdentitySemanticBlockV1: {
+    CaptureIdentitySemanticBlock: {
       type: 'object',
       additionalProperties: false,
       required: ['sourceSegmentId', 'type'],

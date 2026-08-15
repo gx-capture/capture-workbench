@@ -9,13 +9,13 @@ from typing import Protocol
 
 from capture_runtime.clock import Clock
 from capture_runtime.contracts import (
-    CaptureEngineV1,
+    CaptureEngine,
     CaptureFailureV2,
-    CaptureSourceV1,
+    CaptureSource,
     PartialCaptureV2,
-    RawCaptureSegmentV1,
+    RawCaptureSegment,
     StreamingEventType,
-    TimeLocatorV1,
+    TimeLocator,
     project_source_text,
 )
 
@@ -64,7 +64,7 @@ class WhisperWindowSegment:
 @dataclass(frozen=True, slots=True)
 class WhisperWindowResult:
     segments: tuple[WhisperWindowSegment, ...]
-    extraction_engine: CaptureEngineV1
+    extraction_engine: CaptureEngine
     warnings: tuple[str, ...] = ()
 
 
@@ -84,9 +84,9 @@ class ProgressiveSessionEvent:
     stage: str
     partial_revision: int | None = None
     covered_until_ms: int | None = None
-    segments: tuple[RawCaptureSegmentV1, ...] = ()
+    segments: tuple[RawCaptureSegment, ...] = ()
     error: CaptureFailureV2 | None = None
-    extraction_engine: CaptureEngineV1 | None = None
+    extraction_engine: CaptureEngine | None = None
 
 
 class ProgressiveAudioSession:
@@ -94,7 +94,7 @@ class ProgressiveAudioSession:
 
     def __init__(
         self,
-        source: CaptureSourceV1,
+        source: CaptureSource,
         *,
         capture_id: str,
         decoder: IncrementalAudioDecoder,
@@ -128,8 +128,8 @@ class ProgressiveAudioSession:
         self._covered_until_ms = 0
         self._next_checkpoint_ms = checkpoint_ms
         self._partial_revision = 0
-        self._segments: list[RawCaptureSegmentV1] = []
-        self._engine: CaptureEngineV1 | None = None
+        self._segments: list[RawCaptureSegment] = []
+        self._engine: CaptureEngine | None = None
         self._warnings: list[str] = []
         self._pending_events: list[ProgressiveSessionEvent] = []
         self._last_progress_at = clock.now()
@@ -150,7 +150,7 @@ class ProgressiveAudioSession:
         return self._engine is not None and bool(self._segments)
 
     @property
-    def extraction_engine(self) -> CaptureEngineV1 | None:
+    def extraction_engine(self) -> CaptureEngine | None:
         return self._engine
 
     @property
@@ -283,7 +283,7 @@ class ProgressiveAudioSession:
         window: DecodedAudioWindow,
         segments: Iterable[WhisperWindowSegment],
     ) -> None:
-        newly_sealed: list[RawCaptureSegmentV1] = []
+        newly_sealed: list[RawCaptureSegment] = []
         for segment in segments:
             if not segment.text.strip():
                 continue
@@ -303,16 +303,16 @@ class ProgressiveAudioSession:
             )
             if duplicate is not None:
                 locator = duplicate.locator
-                assert isinstance(locator, TimeLocatorV1)
-                duplicate.locator = TimeLocatorV1(
+                assert isinstance(locator, TimeLocator)
+                duplicate.locator = TimeLocator(
                     start_ms=min(locator.start_ms, start_ms),
                     end_ms=max(locator.end_ms, end_ms),
                 )
                 continue
-            sealed = RawCaptureSegmentV1(
+            sealed = RawCaptureSegment(
                 segment_id=f"segment-{len(self._segments) + 1}",
                 order=len(self._segments),
-                locator=TimeLocatorV1(start_ms=start_ms, end_ms=end_ms),
+                locator=TimeLocator(start_ms=start_ms, end_ms=end_ms),
                 text=segment.text.strip(),
             )
             self._segments.append(sealed)
@@ -400,23 +400,23 @@ def _overlaps(first_start: int, first_end: int, second_start: int, second_end: i
     return max(first_start, second_start) < min(first_end, second_end)
 
 
-def _segment_overlaps(segment: RawCaptureSegmentV1, start_ms: int, end_ms: int) -> bool:
+def _segment_overlaps(segment: RawCaptureSegment, start_ms: int, end_ms: int) -> bool:
     locator = segment.locator
-    return isinstance(locator, TimeLocatorV1) and _overlaps(
+    return isinstance(locator, TimeLocator) and _overlaps(
         locator.start_ms, locator.end_ms, start_ms, end_ms
     )
 
 
-def _segment_start(segment: RawCaptureSegmentV1) -> int:
+def _segment_start(segment: RawCaptureSegment) -> int:
     locator = segment.locator
-    if not isinstance(locator, TimeLocatorV1):
+    if not isinstance(locator, TimeLocator):
         raise ProgressiveAudioError("progressive audio segment locator is not time-based")
     return locator.start_ms
 
 
-def _segment_end(segment: RawCaptureSegmentV1) -> int:
+def _segment_end(segment: RawCaptureSegment) -> int:
     locator = segment.locator
-    if not isinstance(locator, TimeLocatorV1):
+    if not isinstance(locator, TimeLocator):
         raise ProgressiveAudioError("progressive audio segment locator is not time-based")
     return locator.end_ms
 

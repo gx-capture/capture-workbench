@@ -11,7 +11,7 @@ use crate::{
     manifest::SidecarManifest,
 };
 
-/// Readiness handshake returned by `/v1/health/ready`.
+/// Readiness handshake returned by `/v2/health/ready`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReadyHandshake {
     pub runtime_version: String,
@@ -159,15 +159,15 @@ mod tests {
     fn manifest() -> SidecarManifest {
         SidecarManifest {
             manifest_version: "1".into(),
-            runtime_version: "0.3.12".into(),
-            api_version: "1.0".into(),
-            capture_document_schema_version: "1".into(),
+            runtime_version: "0.4.0".into(),
+            api_version: "2.0".into(),
+            capture_document_schema_version: "2".into(),
             platform: "windows".into(),
             arch: "x86_64".into(),
             file_name: "capture-runtime.exe".into(),
             bytes: 1,
             sha256: "0".repeat(64),
-            schema_file_name: "capture-document-v1.schema.json".into(),
+            schema_file_name: "capture-document-v2.schema.json".into(),
             schema_sha256: "0".repeat(64),
         }
     }
@@ -182,7 +182,7 @@ mod tests {
             let mut request = [0_u8; 4096];
             let count = stream.read(&mut request).expect("request");
             sender.send(request[..count].to_vec()).expect("send");
-            let body = r#"{"ready":true,"runtimeVersion":"0.3.12","apiVersion":"1.0","captureDocumentSchemaVersion":"1","capabilities":{}}"#;
+            let body = r#"{"ready":true,"runtimeVersion":"0.4.0","apiVersion":"2.0","captureDocumentSchemaVersion":"2","capabilities":{}}"#;
             write!(
                 stream,
                 "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -201,7 +201,7 @@ mod tests {
 
     #[test]
     fn incompatible_handshake_does_not_echo_the_received_value() {
-        let body = br#"{"ready":true,"runtimeVersion":"0.3.12","apiVersion":"1.0","captureDocumentSchemaVersion":"99","capabilities":{}}"#;
+        let body = br#"{"ready":true,"runtimeVersion":"0.4.0","apiVersion":"2.0","captureDocumentSchemaVersion":"99","capabilities":{}}"#;
         let response = format!(
             "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{}",
             body.len(),

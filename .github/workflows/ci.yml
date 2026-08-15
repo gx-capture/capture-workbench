@@ -31,6 +31,13 @@ jobs:
           node-version: 24
           cache: pnpm
 
+      - name: Install Java 25 for the Maven SDK
+        uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+
       - name: Install uv and Python 3.12
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
@@ -58,12 +65,17 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
-          pnpm nx run capture-contracts:lint
-          pnpm nx run capture-contracts:typecheck
-          pnpm nx run capture-contracts:build
-          pnpm nx run capture-contracts:python-build
-          pnpm nx run capture-contracts:python-smoke
-          pnpm nx run capture-contracts:python-wheel-smoke
+          pnpm nx run capture-runtime:check-contracts
+          pnpm nx run capture-runtime-client:lint
+          pnpm nx run capture-runtime-client:typecheck
+          pnpm nx run capture-runtime-client:test
+          pnpm nx run capture-runtime-client:build
+          pnpm nx run capture-runtime-client-python:lint
+          pnpm nx run capture-runtime-client-python:typecheck
+          pnpm nx run capture-runtime-client-python:test
+          pnpm nx run capture-runtime-client-python:build
+          pnpm nx run capture-runtime-client-java:test
+          pnpm nx run capture-runtime-client-java:verify-contract-hash
           pnpm nx run capture-structuring:lint
           pnpm nx run capture-structuring:typecheck
           pnpm nx run capture-structuring:test
@@ -91,6 +103,21 @@ jobs:
           pnpm nx run capture-workbench:test
           pnpm nx run capture-workbench:build
           pnpm nx run capture-workbench:production-bundle-check
+
+      - name: Verify release and promotion tooling
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          pnpm nx run capture-tools:release-version-test
+          pnpm nx run capture-tools:release-candidate-test
+          pnpm nx run capture-tools:contract-impact-test
+          pnpm nx run capture-tools:release-contract-test
+          pnpm nx run capture-tools:consumer-gate-test
+          pnpm nx run capture-tools:promotion-evidence-test
+          pnpm nx run capture-tools:promotion-registry-test
+          pnpm nx run capture-tools:release-manifest-test
+          pnpm nx run capture-tools:release-index-test
 
       - name: Verify capture runtime
         shell: pwsh

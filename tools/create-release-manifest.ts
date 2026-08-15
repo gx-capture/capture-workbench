@@ -23,6 +23,7 @@ function parseArguments(args: readonly string[]): Map<string, string> {
         '--promotion-evidence',
         '--consumer-gate-ledger',
         '--registry-directory',
+        '--java-candidate-id',
         '--output',
       ].includes(name) ||
       !value ||
@@ -32,13 +33,20 @@ function parseArguments(args: readonly string[]): Map<string, string> {
     }
     values.set(name, value);
   }
-  if (values.size !== 6)
+  if (values.size !== 7)
     throw new Error('Release manifest arguments are incomplete.');
   return values;
 }
 
 function sha256(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex');
+}
+
+function requireSha256(value: unknown, label: string): string {
+  if (typeof value !== 'string' || !/^[0-9a-f]{64}$/u.test(value)) {
+    throw new Error(`${label} must be a lowercase SHA-256 digest.`);
+  }
+  return value;
 }
 
 async function digestFile(
@@ -107,6 +115,23 @@ async function main(): Promise<void> {
     await readFile(join(candidateRoot, 'candidate-manifest.json'), 'utf8'),
   ) as JsonRecord;
   const identity = requireCandidateIdentity(candidate, tag, evidence);
+  const releaseCandidateId = identity.candidateId;
+  const contractSetSha256 = requireSha256(
+    candidate.contractSetSha256,
+    'Candidate contract-set hash',
+  );
+  const packageCandidateId =
+    typeof candidate.packageCandidateId === 'string'
+      ? candidate.packageCandidateId
+      : undefined;
+  const runtimeCandidateId =
+    typeof candidate.runtimeCandidateId === 'string'
+      ? candidate.runtimeCandidateId
+      : undefined;
+  const javaCandidateId = requireSha256(
+    values.get('--java-candidate-id'),
+    'Java candidate ID',
+  );
   const snapshotPath = join(
     candidateRoot,
     'contracts',
@@ -139,22 +164,37 @@ async function main(): Promise<void> {
   }
   const registryDirectory = resolve(values.get('--registry-directory')!);
   const registryArtifacts: JsonRecord[] = [];
-  for (const registry of ['npm', 'pypi', 'crates.io']) {
+  for (const registry of ['npm', 'pypi', 'crates.io', 'maven']) {
     const ledger = JSON.parse(
       await readFile(
         join(registryDirectory, `registry-ledger-${registry}.json`),
         'utf8',
       ),
     ) as JsonRecord;
+    const expectedSourceCandidateId =
+      registry === 'npm'
+        ? packageCandidateId
+        : registry === 'maven'
+          ? javaCandidateId
+          : runtimeCandidateId;
+    if (!expectedSourceCandidateId) {
+      throw new Error(
+        `Release candidate is missing the ${registry} source candidate binding.`,
+      );
+    }
     if (
       ledger.schemaVersion !== '1' ||
       ledger.registry !== registry ||
-      ledger.candidateId !== identity.candidateId ||
+      ledger.candidateId !== expectedSourceCandidateId ||
+      ledger.releaseCandidateId !== releaseCandidateId ||
+      ledger.contractSetSha256 !== contractSetSha256 ||
+      typeof ledger.sourceCandidateManifestSha256 !== 'string' ||
+      !/^[0-9a-f]{64}$/u.test(ledger.sourceCandidateManifestSha256) ||
       ledger.releaseVersion !== identity.releaseVersion ||
       ledger.status !== 'published'
     ) {
       throw new Error(
-        `Registry ledger is not bound to the release manifest: ${registry}.`,
+        `Registry ledger is not bound to the release candidate and contract set: ${registry}.`,
       );
     }
     const items = Array.isArray(ledger.packages)

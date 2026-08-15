@@ -38,5 +38,5 @@ channels can be designed later with separate tags and evidence.
 
 The external endpoint and optional API key are process configuration. They are
 never accepted from capture requests and the key is never embedded in a URL or
-persisted as runtime job data. The runtime remains loopback-only and all `/v1`
+persisted as runtime job data. The runtime remains loopback-only and all `/v2`
 routes remain Bearer-authenticated.

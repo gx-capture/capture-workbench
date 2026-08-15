@@ -28,12 +28,13 @@ def test_ocr_run_prepares_native_runtime_before_cancellation_listener(monkeypatc
     assert calls == ["prepared"]
 
 
-def test_model_worker_pyinstaller_specs_include_contract_manifest_data() -> None:
+def test_model_worker_pyinstaller_specs_do_not_collect_public_contract_package_data() -> None:
     pyinstaller_root = Path(__file__).resolve().parents[1] / "pyinstaller"
 
     for name in ("capture-engine-ocr.spec", "capture-engine-whisper.spec"):
         spec = (pyinstaller_root / name).read_text(encoding="utf-8")
-        assert 'collect_data_files("capture_contracts")' in spec
+        retired_package = "capture_" + "contracts"
+        assert f'collect_data_files("{retired_package}")' not in spec
 
 
 def test_ocr_pdf_renders_one_page_at_a_time(
@@ -76,7 +77,7 @@ def test_ocr_pdf_renders_one_page_at_a_time(
             operation="run",
             payload={
                 "requirementId": "windowsml-ocr",
-                "artifactVersion": "0.3.12",
+                "artifactVersion": "0.4.0",
                 "modelPath": str(model_path),
                 "sourcePath": str(source),
                 "mediaType": "application/pdf",
@@ -129,7 +130,7 @@ def test_ocr_run_reports_empty_output_stage(
                 operation="run",
                 payload={
                     "requirementId": "windowsml-ocr",
-                    "artifactVersion": "0.3.12",
+                    "artifactVersion": "0.4.0",
                     "modelPath": str(model_path),
                     "sourcePath": str(source),
                     "mediaType": "application/pdf",

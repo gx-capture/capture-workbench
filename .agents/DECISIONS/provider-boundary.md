@@ -4,7 +4,8 @@
 - A host may supply `CaptureStructuringProvider`; the host mode pauses at `awaiting_structuring`, then commits a candidate document for runtime validation.
 - The standalone Workbench uses a runtime-owned isolated Ollama provider.
 - `cert-prep` and `law-prep` reuse their existing AI providers and must not launch a second semantic provider for capture.
-- Provider implementations are replaceable; `CaptureDocumentV1` is not.
+- Provider implementations are replaceable; `CaptureDocument` remains the
+  canonical validated result.
 
 ## Why the boundary is split here
 
@@ -15,8 +16,8 @@ it injectable prevents every host from running a second Ollama server while
 keeping extraction and validation identical across products.
 
 The host provider is not trusted to declare success. It receives an immutable
-`RawCaptureV1` plus the target schema, and returns a candidate
-`CaptureDocumentV1`. The runtime revalidates schema version, source digest,
+`RawCapture` plus the target schema, and returns a candidate
+`CaptureDocument`. The runtime revalidates schema version, source digest,
 locators, non-empty content, and block order before moving the job to
 `completed`. Invalid provider output moves the job to `failed/structuring`; it
 is never silently repaired.
@@ -60,4 +61,4 @@ candidate is still accepted only by the runtime's full-document validator.
 - A process configured for host structuring advertises only `host`, omits the
   isolated Ollama requirements, and rejects Ollama installation requests.
 - Domain-specific certification or legal analysis runs after capture and is not
-  part of `CaptureDocumentV1`.
+  part of `CaptureDocument`.

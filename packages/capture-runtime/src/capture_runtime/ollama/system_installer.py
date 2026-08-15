@@ -25,10 +25,10 @@ from capture_runtime.constants import (
     WINDOWSML_REQUIREMENT_ID,
 )
 from capture_runtime.contracts import (
-    RuntimeArtifactDescriptorV1,
-    RuntimeModelOptionV1,
+    RuntimeArtifactDescriptorV2,
+    RuntimeModelOptionV2,
     RuntimeRequirementStatus,
-    RuntimeRequirementV1,
+    RuntimeRequirementV2,
 )
 from capture_runtime.engine_catalog import EngineCatalogError
 from capture_runtime.engine_installation import EngineInstallationManager, sha256_file
@@ -92,7 +92,7 @@ class SystemRuntimeInstaller:
     def requirements(
         self,
         enabled_requirement_ids: Collection[str] | None = None,
-    ) -> list[RuntimeRequirementV1]:
+    ) -> list[RuntimeRequirementV2]:
         effective_requirement_ids = (
             self._enabled_requirement_ids
             if enabled_requirement_ids is None
@@ -104,7 +104,7 @@ class SystemRuntimeInstaller:
         def is_enabled(requirement_id: str) -> bool:
             return effective_requirement_ids is None or requirement_id in effective_requirement_ids
 
-        requirements: list[RuntimeRequirementV1] = []
+        requirements: list[RuntimeRequirementV2] = []
         for requirement_id, kind, display_name, required_for in (
             (WINDOWSML_REQUIREMENT_ID, "OCR", "WindowsML OCR", ["pdf", "image"]),
             (WHISPER_REQUIREMENT_ID, "transcription", "Whisper transcription", ["audio"]),
@@ -118,7 +118,7 @@ class SystemRuntimeInstaller:
                 active = self._engine_manager.active_engine(requirement_id)
                 worker = descriptor.worker_artifact() if descriptor.complete else None
                 artifact = (
-                    RuntimeArtifactDescriptorV1(
+                    RuntimeArtifactDescriptorV2(
                         artifact_url=worker.url,
                         artifact_file_name=worker.file_name,
                         bytes=worker.bytes,
@@ -146,7 +146,7 @@ class SystemRuntimeInstaller:
                 artifact = None
                 detail = "No downloadable model is published for this runtime release."
             requirements.append(
-                RuntimeRequirementV1(
+                RuntimeRequirementV2(
                     requirement_id=requirement_id,
                     kind=kind,
                     display_name=display_name,
@@ -167,7 +167,7 @@ class SystemRuntimeInstaller:
         )
         if ollama_runtime_enabled:
             requirements.append(
-                RuntimeRequirementV1(
+                RuntimeRequirementV2(
                     requirement_id=OLLAMA_RUNTIME_REQUIREMENT_ID,
                     kind="runtime",
                     display_name="Ollama application",
@@ -190,7 +190,7 @@ class SystemRuntimeInstaller:
             # when it actually needs the process.
             model_ready = self._recorded_model_profile_matches()
             requirements.append(
-                RuntimeRequirementV1(
+                RuntimeRequirementV2(
                     requirement_id=OLLAMA_MODEL_REQUIREMENT_ID,
                     kind="model",
                     display_name="Capture structuring model",
@@ -243,7 +243,7 @@ class SystemRuntimeInstaller:
             return
         raise ValueError(f"unknown requirementId: {requirement_id}")
 
-    def model_options(self) -> list[RuntimeModelOptionV1]:
+    def model_options(self) -> list[RuntimeModelOptionV2]:
         """Return the immutable allowlist with the local active status."""
 
         from capture_runtime.contracts import RuntimeModelOptionStatus
@@ -251,7 +251,7 @@ class SystemRuntimeInstaller:
         active = self._model_selection.load()
         active_option_id = active.get("optionId") if active is not None else None
         return [
-            RuntimeModelOptionV1(
+            RuntimeModelOptionV2(
                 option_id=option.option_id,
                 display_name=option.display_name,
                 model_reference=option.model_reference,
