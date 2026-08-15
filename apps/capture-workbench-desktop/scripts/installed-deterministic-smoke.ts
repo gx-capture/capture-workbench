@@ -58,6 +58,7 @@ import {
   dynamicWebViewCdpPort,
   exerciseInstalledUi,
   installedPage,
+  reserveLoopbackPort,
 } from './installed-browser.ts';
 import {
   createInstalledProcessCleanup,
@@ -357,9 +358,7 @@ function runInstalledSizeMeasurement() {
             installDirectory,
           ),
         );
-        installedBytes = await firstValueFrom(
-          directoryBytes(installDirectory),
-        );
+        installedBytes = await firstValueFrom(directoryBytes(installDirectory));
         if (!Number.isSafeInteger(installedBytes) || installedBytes < 1) {
           throw new Error(
             'Installed size measurement must be a positive non-boolean safe integer.',
@@ -429,12 +428,10 @@ function runInstalledSizeMeasurement() {
           // Diagnostic hygiene does not invalidate native-uninstall proof.
         }
         try {
-          await firstValueFrom(
-            lifecycle.safeRemoveTree(smokeRoot, runRoot),
-          );
-          hygiene.isolatedRunDataRemoved = !(
-            await firstValueFrom(pathExists(runRoot))
-          );
+          await firstValueFrom(lifecycle.safeRemoveTree(smokeRoot, runRoot));
+          hygiene.isolatedRunDataRemoved = !(await firstValueFrom(
+            pathExists(runRoot),
+          ));
         } catch {
           // Diagnostic hygiene does not invalidate native-uninstall proof.
         }
@@ -486,10 +483,7 @@ function runInstalledSizeMeasurement() {
 }
 
 export function runInstalledDeterministicSmoke(
-  {
-    expectedSource = 'deterministic',
-    measureOnly = false,
-  } = {},
+  { expectedSource = 'deterministic', measureOnly = false } = {},
   {
     runSizeMeasurement = runInstalledSizeMeasurement,
     createProcessCleanup = createInstalledProcessCleanup,
@@ -652,66 +646,72 @@ export function runInstalledDeterministicSmoke(
             installDirectory,
           ),
         ),
-        concatMap(() => {
-          const appEnvironment = buildInstalledAppEnvironment(
-            process.env,
-            {
-              root: runRoot,
-              appData: appDataDirectory,
-              localAppData: localAppDataDirectory,
-              temporary: temporaryDirectory,
-              webViewData: webViewDataDirectory,
-            },
-            dynamicWebViewCdpPort,
-          );
-          state.appProcess = spawn(
-            join(installDirectory, installedExecutableName),
-            [],
-            {
-              cwd: installDirectory,
-              env: appEnvironment,
-              stdio: 'ignore',
-              windowsHide: true,
-            },
-          );
-          state.appProcess.on('error', () => undefined);
-          return connectToInstalledWebView(
-            dynamicWebViewCdpPort,
-            state.appProcess,
-            webViewDataDirectory,
-          ).pipe(
-            tap(({ browser, port }) => {
-              state.browser = browser;
-              state.cdpPort = port;
+        concatMap(() =>
+          reserveLoopbackPort().pipe(
+            concatMap((cdpPort) => {
+              const appEnvironment = buildInstalledAppEnvironment(
+                process.env,
+                {
+                  root: runRoot,
+                  appData: appDataDirectory,
+                  localAppData: localAppDataDirectory,
+                  temporary: temporaryDirectory,
+                  webViewData: webViewDataDirectory,
+                },
+                cdpPort,
+              );
+              state.appProcess = spawn(
+                join(installDirectory, installedExecutableName),
+                [],
+                {
+                  cwd: installDirectory,
+                  env: appEnvironment,
+                  stdio: 'ignore',
+                  windowsHide: true,
+                },
+              );
+              state.appProcess.on('error', () => undefined);
+              return connectToInstalledWebView(
+                cdpPort,
+                state.appProcess,
+                webViewDataDirectory,
+              ).pipe(
+                tap(({ browser, port }) => {
+                  state.browser = browser;
+                  state.cdpPort = port;
+                }),
+                concatMap(() => installedPage(state.browser, state.appProcess)),
+                concatMap((page) =>
+                  expectedSource === 'release'
+                    ? of({
+                        productTitle: 'Capture Workbench',
+                        model: 'setup-pending',
+                        captures: [],
+                      })
+                    : exerciseInstalledUi(
+                        page,
+                        state.appProcess.pid,
+                        temporaryDirectory,
+                      ),
+                ),
+                tap(
+                  (exerciseResult) => (state.exerciseResult = exerciseResult),
+                ),
+                concatMap(() =>
+                  processCleanup.processesRunningUnder(installDirectory),
+                ),
+                tap((processes) => {
+                  state.cleanup.ownedProcessCount = processes.length;
+                  if (state.cleanup.ownedProcessCount < 2) {
+                    throw new Error(
+                      'Installed smoke did not observe both the owned Tauri app and runtime process.',
+                    );
+                  }
+                }),
+              );
             }),
-            concatMap(() => installedPage(state.browser, state.appProcess)),
-            concatMap((page) =>
-              expectedSource === 'release'
-                ? of({
-                    productTitle: 'Capture Workbench',
-                    model: 'setup-pending',
-                    captures: [],
-                  })
-                : exerciseInstalledUi(
-                    page,
-                    state.appProcess.pid,
-                    temporaryDirectory,
-                  ),
-            ),
-            tap((exerciseResult) => (state.exerciseResult = exerciseResult)),
-            concatMap(() =>
-              processCleanup.processesRunningUnder(installDirectory),
-            ),
-            tap((processes) => {
-              state.cleanup.ownedProcessCount = processes.length;
-              if (state.cleanup.ownedProcessCount < 2) {
-                throw new Error(
-                  'Installed smoke did not observe both the owned Tauri app and runtime process.',
-                );
-              }
-            }),
-          );
-        }),
+          ),
+        ),
         map(() => undefined),
         catchError((error) => {
           const diagnostics = state.appProcess
@@ -722,7 +722,10 @@ export function runInstalledDeterministicSmoke(
               )
             : undefined;
           state.exerciseError = diagnostics
-            ? new AggregateError([error, new Error(diagnostics)], 'Installed WebView2 startup failed.')
+            ? new AggregateError(
+                [error, new Error(diagnostics)],
+                'Installed WebView2 startup failed.',
+              )
             : error;
           return of(undefined);
         }),
@@ -996,8 +999,14 @@ function containsAbsoluteWindowsPath(value) {
 
 function redactAbsolutePathFragments(value) {
   return value
-    .replace(/[A-Za-z]:[\\/][^\s"'`<>|]+/gu, installedSmokeDiagnosticRedactionMarker)
-    .replace(/\\\\[^\\/\s]+[\\/][^\s"'`<>|]+/gu, installedSmokeDiagnosticRedactionMarker)
+    .replace(
+      /[A-Za-z]:[\\/][^\s"'`<>|]+/gu,
+      installedSmokeDiagnosticRedactionMarker,
+    )
+    .replace(
+      /\\\\[^\\/\s]+[\\/][^\s"'`<>|]+/gu,
+      installedSmokeDiagnosticRedactionMarker,
+    )
     .replace(
       /(?:^|[\s"'`()[\]{}<>,;=:])[\\/](?![\\/])[^\s"'`<>|]+/gu,
       (match) =>
