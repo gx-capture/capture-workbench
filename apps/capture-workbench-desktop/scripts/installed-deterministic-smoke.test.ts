@@ -144,7 +144,7 @@ test('installed app environment is process-scoped, isolated, and drops ambient s
   assert.equal(environment.CAPTURE_EXTRACTION_PROVIDER, undefined);
   assert.equal(
     environment.WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS,
-    '--remote-debugging-address=127.0.0.1 --remote-debugging-port=43219 --remote-allow-origins=*',
+    '--remote-debugging-port=43219',
   );
   assert.equal(environment.WEBVIEW2_USER_DATA_FOLDER, join(root, 'webview2'));
 
@@ -161,7 +161,7 @@ test('installed app environment is process-scoped, isolated, and drops ambient s
   );
   assert.equal(
     dynamicEnvironment.WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS,
-    '--remote-debugging-address=127.0.0.1 --remote-debugging-port=0 --remote-allow-origins=*',
+    '--remote-debugging-port=0',
   );
 });
 
