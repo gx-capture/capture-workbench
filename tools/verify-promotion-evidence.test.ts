@@ -59,9 +59,9 @@ function evidence(overrides: Record<string, unknown> = {}) {
     },
     producerJobs: [
       'build-candidate',
-      'windows-install',
-      'runtime-product',
-      'cross-framework-consumers',
+      'verify-windows-install',
+      'verify-runtime-product',
+      'verify-cross-framework-consumers',
     ].map((name) => ({ name, status: 'completed', conclusion: 'success' })),
     verificationReports: [
       passingReport('windows-install'),

@@ -42,6 +42,11 @@ const REQUIRED_VERIFICATIONS = [
   'runtime-product',
   'cross-framework-consumers',
 ] as const;
+const REQUIRED_PRODUCER_JOBS = [
+  'verify-windows-install',
+  'verify-runtime-product',
+  'verify-cross-framework-consumers',
+] as const;
 const CONTRACT_CLASSIFICATIONS = new Set<ContractClassification>([
   'no-impact',
   'additive',
@@ -137,13 +142,13 @@ function verifyCandidateSnapshotBinding(
   }
   const snapshot = value.artifacts.find(
     (artifact) =>
-      isRecord(artifact) && artifact.path === 'contracts/contract-snapshot.json',
+      isRecord(artifact) &&
+      artifact.path === 'contracts/contract-snapshot.json',
   );
-  if (
-    !isRecord(snapshot) ||
-    snapshot.sha256 !== candidateSnapshotSha256
-  ) {
-    throw new Error('Contract snapshot is not bound to the candidate manifest.');
+  if (!isRecord(snapshot) || snapshot.sha256 !== candidateSnapshotSha256) {
+    throw new Error(
+      'Contract snapshot is not bound to the candidate manifest.',
+    );
   }
 }
 
@@ -170,7 +175,7 @@ function verifyProducerJobs(
 ): void {
   const required = new Set<string>([
     'build-candidate',
-    ...REQUIRED_VERIFICATIONS,
+    ...REQUIRED_PRODUCER_JOBS,
     ...(releaseMode === 'model-enabled' ? ['model-enabled-runtime'] : []),
   ]);
   const jobs = new Map<string, JsonRecord>();
@@ -541,7 +546,11 @@ async function main(): Promise<void> {
       `Expected exactly one contract impact record; found ${contractImpactPaths.length}.`,
     );
   }
-  const snapshotPath = join(candidateRoot, 'contracts', 'contract-snapshot.json');
+  const snapshotPath = join(
+    candidateRoot,
+    'contracts',
+    'contract-snapshot.json',
+  );
   const candidateSnapshotSha256 = createHash('sha256')
     .update(await readFile(snapshotPath))
     .digest('hex');
