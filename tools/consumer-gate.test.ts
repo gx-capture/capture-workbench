@@ -99,7 +99,7 @@ test('downloaded candidate manifest is verified by exact digest and identity', a
           schemaVersion: '1',
           candidateId,
           sourceCommit: consumerCommit,
-          releaseVersion: '0.4.0',
+          releaseVersion: '0.4.1',
         },
         null,
         2,
@@ -111,14 +111,14 @@ test('downloaded candidate manifest is verified by exact digest and identity', a
       candidateId,
       candidateManifestSha256: createHash('sha256').update(bytes).digest('hex'),
       sourceCommit: consumerCommit,
-      releaseVersion: '0.4.0',
+      releaseVersion: '0.4.1',
     });
     await assert.rejects(
       verifyCandidateManifest(root, {
         candidateId,
         candidateManifestSha256: 'e'.repeat(64),
         sourceCommit: consumerCommit,
-        releaseVersion: '0.4.0',
+        releaseVersion: '0.4.1',
       }),
       /digest/u,
     );

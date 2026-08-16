@@ -26,7 +26,7 @@ describe('HttpCaptureClient SDK delegation', () => {
           return jsonResponse({
             ready: true,
             service: 'capture-runtime',
-            runtimeVersion: '0.4.0',
+            runtimeVersion: '0.4.1',
             apiVersion: '2.0',
             captureDocumentSchemaVersion: '2',
             captureDocumentSchemaSha256:
@@ -44,7 +44,7 @@ describe('HttpCaptureClient SDK delegation', () => {
         if (request.path === '/meta/v2/contracts') {
           return jsonResponse({
             catalogVersion: '2',
-            runtimeVersion: '0.4.0',
+            runtimeVersion: '0.4.1',
             contractSetVersion: '2',
             surfaces: [{ id: 'v2' }],
             sha256: CAPTURE_CONTRACT_SET_SHA256,

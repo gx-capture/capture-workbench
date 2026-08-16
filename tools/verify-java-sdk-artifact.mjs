@@ -5,7 +5,7 @@ import { execFileSync } from 'node:child_process';
 
 const root = resolve(import.meta.dirname, '..');
 const pom = await readFile(join(root, 'packages/capture-runtime-client-java/pom.xml'), 'utf8');
-const version = pom.match(/<version>(\d+\.\d+\.\d+(?:-[^<]+)?)<\/version>/u)?.[1] ?? '0.4.0';
+const version = pom.match(/<version>(\d+\.\d+\.\d+(?:-[^<]+)?)<\/version>/u)?.[1] ?? '0.4.1';
 const expected =
   process.env.CAPTURE_CONTRACT_SET_SHA256 ??
   (await readFile(join(root, 'packages/capture-runtime/src/capture_runtime/assets/contract-set.sha256'), 'utf8')).trim();

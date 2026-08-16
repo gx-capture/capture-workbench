@@ -6,7 +6,7 @@ import { createContractSnapshot } from './create-contract-snapshot.ts';
 test('contract snapshot captures the canonical v2 contract bundle and metadata', async () => {
   const snapshot = await createContractSnapshot(process.cwd());
   assert.equal(snapshot.schemaVersion, '1');
-  assert.equal(snapshot.releaseVersion, '0.4.0');
+  assert.equal(snapshot.releaseVersion, '0.4.1');
   assert.equal(
     (snapshot.runtimeApi as { apiVersion: string }).apiVersion,
     '2.0',

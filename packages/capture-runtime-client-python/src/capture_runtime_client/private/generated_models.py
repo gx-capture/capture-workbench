@@ -20,7 +20,7 @@ from pydantic.alias_generators import to_camel
 
 API_VERSION: Literal['2.0'] = '2.0'
 CAPTURE_DOCUMENT_SCHEMA_VERSION: Literal['2'] = '2'
-RUNTIME_VERSION: Literal['0.4.0'] = '0.4.0'
+RUNTIME_VERSION: Literal['0.4.1'] = '0.4.1'
 
 
 NonEmptyString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
@@ -683,7 +683,7 @@ class RuntimeReady(StrictModel):
     ready: bool
     service: Literal["capture-runtime"] = "capture-runtime"
     api_version: Literal["2.0"] = API_VERSION
-    runtime_version: Literal["0.4.0"] = RUNTIME_VERSION
+    runtime_version: Literal["0.4.1"] = RUNTIME_VERSION
     capture_document_schema_version: Literal["2"] = CAPTURE_DOCUMENT_SCHEMA_VERSION
     capture_document_schema_sha256: Sha256Hex | None = None
     schema_sha256: Sha256Hex | None = None

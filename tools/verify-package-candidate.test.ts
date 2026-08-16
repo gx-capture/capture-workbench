@@ -8,7 +8,7 @@ import test from 'node:test';
 import { verifyPackageCandidate } from './verify-package-candidate.ts';
 import { verifyPackageCandidateBinding } from './verify-package-candidate-binding.ts';
 
-const version = '0.4.0';
+const version = '0.4.1';
 const sourceCommit = 'a'.repeat(40);
 const producerRunId = 12345;
 const contractSetBytes = Buffer.from('{"catalogVersion":"2"}\n', 'utf8');
@@ -54,10 +54,10 @@ async function makeCandidate(): Promise<{
     await writeFile(join(root, archive), value);
   }
   for (const name of [
-    'capture_runtime_client-0.4.0-py3-none-any.whl',
-    'capture_runtime_client-0.4.0.tar.gz',
-    'capture_structuring-0.4.0-py3-none-any.whl',
-    'capture_structuring-0.4.0.tar.gz',
+    'capture_runtime_client-0.4.1-py3-none-any.whl',
+    'capture_runtime_client-0.4.1.tar.gz',
+    'capture_structuring-0.4.1-py3-none-any.whl',
+    'capture_structuring-0.4.1.tar.gz',
   ]) {
     const path = `python/${name}`;
     const value = Buffer.from(`${name}\n`, 'utf8');
@@ -205,7 +205,7 @@ test('package candidate verification rejects changed archive bytes', async () =>
       join(
         candidate.root,
         'package',
-        'gx-capture-capture-workbench-ui-0.4.0.tgz',
+        'gx-capture-capture-workbench-ui-0.4.1.tgz',
       ),
       'tampered',
     );
@@ -231,7 +231,7 @@ test('package candidate verification rejects changed Maven artifact bytes', asyn
   const candidate = await makeCandidate();
   try {
     await writeFile(
-      join(candidate.root, 'maven', 'capture-runtime-client-0.4.0.jar'),
+      join(candidate.root, 'maven', 'capture-runtime-client-0.4.1.jar'),
       'tampered',
     );
     await assert.rejects(

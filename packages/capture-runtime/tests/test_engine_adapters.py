@@ -814,7 +814,7 @@ def test_worker_backed_audio_forwards_strict_cuda_fallback_policy(tmp_path: Path
         async def resolve_active_engine(self, _requirement_id: str) -> InstalledEngine:
             return InstalledEngine(
                 requirement_id="whisper-primary",
-                artifact_version="0.4.0",
+                artifact_version="0.4.1",
                 executable=tmp_path / "whisper.exe",
                 model_dir=tmp_path / "models",
             )

@@ -24,8 +24,8 @@ test('local package publication is idempotent only for exact integrity', () => {
 
 test('local package paths preserve the scoped package identity', () => {
   assert.equal(
-    packageArchiveName('@gx-capture/capture-workbench-ui', '0.4.0'),
-    'gx-capture-capture-workbench-ui-0.4.0.tgz',
+    packageArchiveName('@gx-capture/capture-workbench-ui', '0.4.1'),
+    'gx-capture-capture-workbench-ui-0.4.1.tgz',
   );
   assert.equal(
     packageMetadataPath('@gx-capture/capture-workbench-ui'),

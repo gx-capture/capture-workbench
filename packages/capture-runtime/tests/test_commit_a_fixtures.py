@@ -47,7 +47,7 @@ def test_commit_a_generator_reproduces_exact_tracked_bytes() -> None:
 def test_commit_a_provenance_binds_bytes_and_fixed_revisions() -> None:
     provenance = json.loads((FIXTURE_ROOT / "provenance/commit-a.json").read_text("utf-8"))
     assert provenance == json.loads((FIXTURE_ROOT / "provenance/commit-a.json").read_text("utf-8"))
-    assert provenance["releaseVersion"] == "0.4.0"
+    assert provenance["releaseVersion"] == "0.4.1"
     assert provenance["stage"] == "commit-a"
     assert provenance["licensePath"] == "licenses/LICENSE.txt"
     assert provenance["noticePath"] == "licenses/NOTICE.txt"

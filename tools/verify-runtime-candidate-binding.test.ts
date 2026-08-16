@@ -36,7 +36,7 @@ async function makeCandidates() {
       candidateKind: 'runtime',
       candidateId,
       sourceCommit: 'a'.repeat(40),
-      releaseVersion: '0.4.0',
+      releaseVersion: '0.4.1',
       releaseMode: 'core-only',
       artifacts: artifacts.map(([path, value]) => ({
         path,
@@ -50,7 +50,7 @@ async function makeCandidates() {
     JSON.stringify({
       runtimeCandidateId: candidateId,
       sourceCommit: 'a'.repeat(40),
-      releaseVersion: '0.4.0',
+      releaseVersion: '0.4.1',
       releaseMode: 'core-only',
       artifacts: artifacts.map(([path, value]) => ({
         path,

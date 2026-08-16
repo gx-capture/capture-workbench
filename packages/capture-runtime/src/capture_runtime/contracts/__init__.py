@@ -678,7 +678,7 @@ class RuntimeReady(StrictModel):
     ready: bool
     service: Literal["capture-runtime"] = "capture-runtime"
     api_version: Literal["2.0"] = API_VERSION
-    runtime_version: Literal["0.4.0"] = RUNTIME_VERSION
+    runtime_version: Literal["0.4.1"] = RUNTIME_VERSION
     capture_document_schema_version: Literal["2"] = CAPTURE_DOCUMENT_SCHEMA_VERSION
     capture_document_schema_sha256: Sha256Hex | None = None
     schema_sha256: Sha256Hex | None = None

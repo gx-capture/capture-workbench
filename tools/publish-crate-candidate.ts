@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 
 const CRATES_API = 'https://crates.io/api/v1/crates/new';
-const CRATES_DOWNLOAD = 'https://static.crates.io/crates';
+const CRATES_REGISTRY = 'https://crates.io/api/v1/crates';
 
 type CargoPackage = {
   name?: unknown;
@@ -35,6 +35,16 @@ export function uploadBody(metadata: unknown, crate: Uint8Array): Uint8Array {
     header.subarray(4),
     crateBytes,
   ]);
+}
+
+export function registryChecksum(payload: unknown): string | undefined {
+  if (typeof payload !== 'object' || payload === null) return undefined;
+  const version = (payload as { version?: unknown }).version;
+  if (typeof version !== 'object' || version === null) return undefined;
+  const checksum = (version as { checksum?: unknown }).checksum;
+  return typeof checksum === 'string' && /^[0-9a-f]{64}$/u.test(checksum)
+    ? checksum
+    : undefined;
 }
 
 function run(command: string, args: readonly string[], allowFailure = false) {
@@ -135,7 +145,7 @@ async function existingRegistryDigest(
   version: string,
 ): Promise<string | undefined> {
   const response = await fetch(
-    `${CRATES_DOWNLOAD}/${name}/${name}-${version}.crate`,
+    `${CRATES_REGISTRY}/${encodeURIComponent(name)}/${encodeURIComponent(version)}`,
     {
       headers: { 'User-Agent': 'gx-capture-release-verifier' },
     },
@@ -143,7 +153,10 @@ async function existingRegistryDigest(
   if (response.status === 404) return undefined;
   if (!response.ok)
     throw new Error(`Unable to inspect crates.io ${name}@${version}.`);
-  return sha256(Buffer.from(await response.arrayBuffer()));
+  const checksum = registryChecksum(await response.json());
+  if (!checksum)
+    throw new Error(`crates.io returned no checksum for ${name}@${version}.`);
+  return checksum;
 }
 
 async function main(): Promise<void> {

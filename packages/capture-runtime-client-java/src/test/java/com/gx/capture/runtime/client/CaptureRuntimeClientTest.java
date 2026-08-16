@@ -36,7 +36,7 @@ class CaptureRuntimeClientTest {
                 "catalogVersion",
                 "2",
                 "runtimeVersion",
-                "0.4.0",
+                "0.4.1",
                 "contractSetVersion",
                 "2",
                 "surfaces",
@@ -67,7 +67,7 @@ class CaptureRuntimeClientTest {
                 "catalogVersion",
                 "2",
                 "runtimeVersion",
-                "0.4.0",
+                "0.4.1",
                 "contractSetVersion",
                 "2",
                 "surfaces",
@@ -251,7 +251,7 @@ class CaptureRuntimeClientTest {
         new ArrayList<InMemoryRuntimeTransport.Route>();
     routes.add(InMemoryRuntimeTransport.route("GET", "/meta/v2/contracts", ignored -> response(200, "application/json", index)));
     routes.add(InMemoryRuntimeTransport.route("GET", Pattern.compile("/meta/v2/contracts/sha256/.*"), ignored -> response(200, "application/json", bundle)));
-    routes.add(InMemoryRuntimeTransport.route("GET", "/v2/health/ready", ignored -> response(200, "application/json", "{\"ready\":true,\"service\":\"capture-runtime\",\"apiVersion\":\"2.0\",\"runtimeVersion\":\"0.4.0\",\"captureDocumentSchemaVersion\":\"2\",\"captureDocumentSchemaSha256\":null,\"schemaSha256\":null,\"contractSetVersion\":\"2\",\"capabilities\":{}}".getBytes(StandardCharsets.UTF_8))));
+    routes.add(InMemoryRuntimeTransport.route("GET", "/v2/health/ready", ignored -> response(200, "application/json", "{\"ready\":true,\"service\":\"capture-runtime\",\"apiVersion\":\"2.0\",\"runtimeVersion\":\"0.4.1\",\"captureDocumentSchemaVersion\":\"2\",\"captureDocumentSchemaSha256\":null,\"schemaSha256\":null,\"contractSetVersion\":\"2\",\"capabilities\":{}}".getBytes(StandardCharsets.UTF_8))));
     routes.add(InMemoryRuntimeTransport.route("GET", "/v2/streaming/health/ready", ignored -> response(200, "application/json", "{\"protocolVersion\":\"2\",\"captureKinds\":[\"pdf\"],\"supportsProgressiveAudio\":true,\"maxChunkBytes\":2,\"checkpointIntervalMs\":1000,\"heartbeatIntervalMs\":1000,\"stallTimeoutMs\":10000}".getBytes(StandardCharsets.UTF_8))));
     return routes;
   }
@@ -296,7 +296,7 @@ class CaptureRuntimeClientTest {
   }
 
   private static byte[] index(String digest) throws Exception {
-    return MAPPER.writeValueAsBytes(Map.of("catalogVersion", "2", "runtimeVersion", "0.4.0", "contractSetVersion", "2", "surfaces", List.of(Map.of("id", "v2")), "sha256", digest, "href", "/meta/v2/contracts/sha256/" + digest, "mediaType", "application/json"));
+    return MAPPER.writeValueAsBytes(Map.of("catalogVersion", "2", "runtimeVersion", "0.4.1", "contractSetVersion", "2", "surfaces", List.of(Map.of("id", "v2")), "sha256", digest, "href", "/meta/v2/contracts/sha256/" + digest, "mediaType", "application/json"));
   }
 
   private static RuntimeTransport.RuntimeResponse response(int status, String contentType, byte[] body) {

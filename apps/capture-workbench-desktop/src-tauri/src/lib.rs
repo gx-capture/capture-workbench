@@ -220,7 +220,7 @@ mod shared_sidecar_contract_tests {
     fn manifest() -> SidecarManifest {
         SidecarManifest {
             manifest_version: "1".into(),
-            runtime_version: "0.4.0".into(),
+            runtime_version: "0.4.1".into(),
             api_version: "2.0".into(),
             capture_document_schema_version: "2".into(),
             platform: "windows".into(),
@@ -245,7 +245,7 @@ mod shared_sidecar_contract_tests {
             sender
                 .send(request[..count].to_vec())
                 .expect("request bytes");
-            let body = r#"{"ready":true,"runtimeVersion":"0.4.0","apiVersion":"2.0","captureDocumentSchemaVersion":"2","capabilities":{}}"#;
+            let body = r#"{"ready":true,"runtimeVersion":"0.4.1","apiVersion":"2.0","captureDocumentSchemaVersion":"2","capabilities":{}}"#;
             write!(
                 stream,
                 "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",

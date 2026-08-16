@@ -21,7 +21,7 @@ const ready = {
   ready: true,
   service: 'capture-runtime',
   apiVersion: '2.0',
-  runtimeVersion: '0.4.0',
+  runtimeVersion: '0.4.1',
   captureDocumentSchemaVersion: '2',
   captureDocumentSchemaSha256: CAPTURE_DOCUMENT_SCHEMA_SHA256,
   capabilities: {
@@ -43,7 +43,7 @@ const canonicalBundleBytes = Uint8Array.from(
 );
 const canonicalContractIndex = {
   catalogVersion: '2',
-  runtimeVersion: '0.4.0',
+  runtimeVersion: '0.4.1',
   contractSetVersion: '2',
   surfaces: [{ id: 'v2' }],
   sha256: CAPTURE_CONTRACT_SET_SHA256,
@@ -216,7 +216,7 @@ describe('CaptureRuntimeClient', () => {
     ).join('');
     const index = {
       catalogVersion: '2',
-      runtimeVersion: '0.4.0',
+      runtimeVersion: '0.4.1',
       contractSetVersion: '2',
       surfaces: [{ id: 'v2' }],
       sha256: digest,
@@ -444,7 +444,7 @@ describe('CaptureRuntimeClient', () => {
     ).join('');
     const index = {
       catalogVersion: '2',
-      runtimeVersion: '0.4.0',
+      runtimeVersion: '0.4.1',
       contractSetVersion: '2',
       surfaces: [{ id: 'v2' }],
       sha256: digest,
@@ -472,7 +472,7 @@ describe('CaptureRuntimeClient', () => {
     const digest = 'a'.repeat(64);
     const index = {
       catalogVersion: '2',
-      runtimeVersion: '0.4.0',
+      runtimeVersion: '0.4.1',
       contractSetVersion: '2',
       surfaces: [{ id: 'v2' }],
       sha256: digest,

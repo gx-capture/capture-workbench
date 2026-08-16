@@ -751,7 +751,7 @@ mod tests {
             &BackendConfig {
                 base_url: format!("http://127.0.0.1:{port}"),
                 token: "secret-token".into(),
-                runtime_version: "0.4.0".into(),
+                runtime_version: "0.4.1".into(),
                 api_version: "2.0".into(),
                 capture_document_schema_version: "2".into(),
             },
@@ -821,7 +821,7 @@ mod tests {
             &BackendConfig {
                 base_url: format!("http://127.0.0.1:{port}"),
                 token: "secret-token".into(),
-                runtime_version: "0.4.0".into(),
+                runtime_version: "0.4.1".into(),
                 api_version: "2.0".into(),
                 capture_document_schema_version: "2".into(),
             },
@@ -883,7 +883,7 @@ mod tests {
             &BackendConfig {
                 base_url: format!("http://127.0.0.1:{port}"),
                 token: "token".into(),
-                runtime_version: "0.4.0".into(),
+                runtime_version: "0.4.1".into(),
                 api_version: "2.0".into(),
                 capture_document_schema_version: "2".into(),
             },

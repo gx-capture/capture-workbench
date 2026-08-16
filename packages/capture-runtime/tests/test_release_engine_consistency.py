@@ -47,7 +47,7 @@ def artifact(
     return {
         "role": "worker",
         "requirementId": requirement_id,
-        "artifactVersion": "0.4.0",
+        "artifactVersion": "0.4.1",
         "workerProtocolVersion": "1",
         "platform": "windows",
         "arch": "x86_64",
@@ -57,7 +57,7 @@ def artifact(
         "extractedBytes": extracted_bytes,
         "entryPoint": entry_point,
         "filesManifestSha256": hashlib.sha256(manifest).hexdigest(),
-        "url": f"https://example.invalid/v0.4.0/{file_name}",
+        "url": f"https://example.invalid/v0.4.1/{file_name}",
     }
 
 
@@ -115,7 +115,7 @@ def complete_catalog(engine_dir: Path, catalog_path: Path) -> None:
         canonical_json_bytes(
             {
                 "catalogVersion": "2",
-                "runtimeVersion": "0.4.0",
+                "runtimeVersion": "0.4.1",
                 "requirements": requirements,
             }
         )

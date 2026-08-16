@@ -7,7 +7,7 @@ import test from 'node:test';
 
 import { verifyJavaSdkCandidate } from './verify-java-sdk-candidate.ts';
 
-const version = '0.4.0';
+const version = '0.4.1';
 const sourceCommit = 'a'.repeat(40);
 const contractSetSha256 = 'b'.repeat(64);
 

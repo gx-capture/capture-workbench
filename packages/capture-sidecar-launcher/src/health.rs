@@ -159,7 +159,7 @@ mod tests {
     fn manifest() -> SidecarManifest {
         SidecarManifest {
             manifest_version: "1".into(),
-            runtime_version: "0.4.0".into(),
+            runtime_version: "0.4.1".into(),
             api_version: "2.0".into(),
             capture_document_schema_version: "2".into(),
             platform: "windows".into(),
@@ -182,7 +182,7 @@ mod tests {
             let mut request = [0_u8; 4096];
             let count = stream.read(&mut request).expect("request");
             sender.send(request[..count].to_vec()).expect("send");
-            let body = r#"{"ready":true,"runtimeVersion":"0.4.0","apiVersion":"2.0","captureDocumentSchemaVersion":"2","capabilities":{}}"#;
+            let body = r#"{"ready":true,"runtimeVersion":"0.4.1","apiVersion":"2.0","captureDocumentSchemaVersion":"2","capabilities":{}}"#;
             write!(
                 stream,
                 "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -201,7 +201,7 @@ mod tests {
 
     #[test]
     fn incompatible_handshake_does_not_echo_the_received_value() {
-        let body = br#"{"ready":true,"runtimeVersion":"0.4.0","apiVersion":"2.0","captureDocumentSchemaVersion":"99","capabilities":{}}"#;
+        let body = br#"{"ready":true,"runtimeVersion":"0.4.1","apiVersion":"2.0","captureDocumentSchemaVersion":"99","capabilities":{}}"#;
         let response = format!(
             "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{}",
             body.len(),

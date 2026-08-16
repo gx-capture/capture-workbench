@@ -15,6 +15,6 @@
       "source": "PaddlePaddle/PP-OCRv6_medium_rec_onnx"
     }
   },
-  "releaseVersion": "0.4.0",
+  "releaseVersion": "0.4.1",
   "schemaVersion": "1"
 }

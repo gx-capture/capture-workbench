@@ -48,7 +48,7 @@ def _ready(**overrides: object) -> dict[str, object]:
         "ready": True,
         "service": "capture-runtime",
         "apiVersion": "2.0",
-        "runtimeVersion": "0.4.0",
+        "runtimeVersion": "0.4.1",
         "captureDocumentSchemaVersion": "2",
         "capabilities": {
             "captureKinds": ["pdf"],
@@ -69,7 +69,7 @@ def _discovery_routes() -> dict[tuple[str, str], Callable[[httpx.Request], httpx
     href = f"/meta/v2/contracts/sha256/{digest}"
     index = {
         "catalogVersion": "2",
-        "runtimeVersion": "0.4.0",
+        "runtimeVersion": "0.4.1",
         "contractSetVersion": "2",
         "surfaces": [{"id": "v2"}],
         "sha256": digest,
@@ -194,7 +194,7 @@ def test_loopback_transport_and_handshake() -> None:
     digest = hashlib.sha256(bundle_bytes).hexdigest()
     index = {
         "catalogVersion": "2",
-        "runtimeVersion": "0.4.0",
+        "runtimeVersion": "0.4.1",
         "contractSetVersion": "2",
         "surfaces": [{"id": "v2"}],
         "sha256": digest,
@@ -258,7 +258,7 @@ def test_discovery_rejects_unknown_contract_set_hash() -> None:
     digest = hashlib.sha256(bundle).hexdigest()
     index = {
         "catalogVersion": "2",
-        "runtimeVersion": "0.4.0",
+        "runtimeVersion": "0.4.1",
         "contractSetVersion": "2",
         "surfaces": [{"id": "v2"}],
         "sha256": digest,
@@ -285,7 +285,7 @@ def test_discovery_rejects_wrong_content_addressed_href() -> None:
     digest = "a" * 64
     index = {
         "catalogVersion": "2",
-        "runtimeVersion": "0.4.0",
+        "runtimeVersion": "0.4.1",
         "contractSetVersion": "2",
         "surfaces": [{"id": "v2"}],
         "sha256": digest,

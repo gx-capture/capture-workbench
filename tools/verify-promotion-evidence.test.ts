@@ -41,7 +41,7 @@ function evidence(overrides: Record<string, unknown> = {}) {
       schemaVersion: '1',
       candidateId,
       sourceCommit,
-      releaseVersion: '0.4.0',
+      releaseVersion: '0.4.1',
       releaseMode: 'core-only',
       artifacts: [
         {
@@ -116,7 +116,7 @@ test('promotion evidence requires passing exact candidate, producer, and consume
     candidateId,
     candidateManifestSha256: manifestSha256,
     sourceCommit,
-    releaseVersion: '0.4.0',
+    releaseVersion: '0.4.1',
     releaseMode: 'core-only',
     contractClassification: 'no-impact',
   });
