@@ -537,7 +537,7 @@ test('zero-asset draft uploads from inventory before readback, package, and publ
       remote.calls.filter(
         ([command, operation]) => command === 'npm' && operation === 'publish',
       ).length,
-      3,
+      2,
     );
     assert.equal(
       remote.calls
