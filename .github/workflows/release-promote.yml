@@ -233,20 +233,117 @@ jobs:
   publish-pypi:
     if: ${{ inputs.publication_scope == 'all' || inputs.publication_scope == 'pypi' }}
     needs: prepare-candidate
-    uses: ./.github/workflows/_publish-pypi.yml
+    runs-on: ubuntu-latest
+    environment: capture-registry-pypi
     permissions:
       actions: read
       contents: read
       id-token: write
-    with:
-      candidate_id: ${{ inputs.candidate_id }}
-      source_commit: ${{ needs.prepare-candidate.outputs.source_commit }}
-      release_version: ${{ needs.prepare-candidate.outputs.release_version }}
-      release_candidate_id: ${{ inputs.candidate_id }}
-      contract_set_sha256: ${{ inputs.contract_set_sha256 }}
-      python_project: ${{ inputs.pypi_project }}
-      ledger_candidate_id: ${{ inputs.runtime_candidate_id }}
-    secrets: inherit
+    steps:
+      - name: Check out promotion tooling
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install uv and Python 3.12
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: '3.12'
+
+      - name: Download the prepared immutable candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: promotion-input-${{ inputs.candidate_id }}
+          path: promotion-input
+
+      - name: Select exact Python project artifacts
+        shell: bash
+        env:
+          PYTHON_PROJECT: ${{ inputs.pypi_project }}
+        run: |
+          set -euo pipefail
+          source_dir="$GITHUB_WORKSPACE/promotion-input/candidate/python"
+          target_dir="$RUNNER_TEMP/pypi-python"
+          rm -rf "$target_dir"
+          mkdir -p "$target_dir"
+          shopt -s nullglob
+          case "$PYTHON_PROJECT" in
+            both)
+              artifacts=("$source_dir"/capture_runtime_client-* "$source_dir"/capture_structuring-*)
+              expected_count=4
+              ;;
+            client)
+              artifacts=("$source_dir"/capture_runtime_client-*)
+              expected_count=2
+              ;;
+            *)
+              echo "Unsupported Python project lane: $PYTHON_PROJECT" >&2
+              exit 1
+              ;;
+          esac
+          test "${#artifacts[@]}" -eq "$expected_count"
+          cp -- "${artifacts[@]}" "$target_dir/"
+
+      - name: Publish exact Python distributions with Trusted Publishing
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: ${{ runner.temp }}/pypi-python
+          skip-existing: true
+
+      - name: Record the exact PyPI publication ledger
+        shell: bash
+        env:
+          PYTHON_PROJECT: ${{ inputs.pypi_project }}
+        run: |
+          set -euo pipefail
+          case "$PYTHON_PROJECT" in
+            both) projects='capture-runtime-client,capture-structuring' ;;
+            client) projects='capture-runtime-client' ;;
+            *) echo "Unsupported Python project lane: $PYTHON_PROJECT" >&2; exit 1 ;;
+          esac
+          node tools/record-pypi-candidate.ts \
+            --candidate promotion-input/candidate \
+            --python-directory "$RUNNER_TEMP/pypi-python" \
+            --projects "$projects" \
+            --candidate-id '${{ inputs.runtime_candidate_id }}' \
+            --version '${{ needs.prepare-candidate.outputs.release_version }}' \
+            --output registry-ledger-pypi.json
+
+      - name: Bind PyPI ledger to the release and runtime candidate
+        shell: bash
+        env:
+          RELEASE_CANDIDATE_ID: ${{ inputs.candidate_id }}
+          CONTRACT_SET_SHA256: ${{ inputs.contract_set_sha256 }}
+        run: |
+          set -euo pipefail
+          node --input-type=module -e "const fs=await import('node:fs/promises'); const crypto=await import('node:crypto'); const ledger=JSON.parse(await fs.readFile('registry-ledger-pypi.json','utf8')); if(!/^[0-9a-f]{64}$/.test(process.env.RELEASE_CANDIDATE_ID)||!/^[0-9a-f]{64}$/.test(process.env.CONTRACT_SET_SHA256)) throw new Error('Release candidate ledger binding is incomplete.'); const source=await fs.readFile('promotion-input/candidate/runtime-candidate-manifest.json'); ledger.releaseCandidateId=process.env.RELEASE_CANDIDATE_ID; ledger.contractSetSha256=process.env.CONTRACT_SET_SHA256; ledger.sourceCandidateManifestSha256=crypto.createHash('sha256').update(source).digest('hex'); await fs.writeFile('registry-ledger-pypi.json',JSON.stringify(ledger,null,2)+'\\n');"
+
+      - name: Verify clean Python installation from PyPI
+        shell: bash
+        run: |
+          set -euo pipefail
+          probe="$RUNNER_TEMP/capture-pypi-probe"
+          uv venv "$probe"
+          uv pip install --python "$probe/bin/python" --index-url https://pypi.org/simple \
+            $(case '${{ inputs.pypi_project }}' in
+              client) echo "capture-runtime-client==${{ needs.prepare-candidate.outputs.release_version }}" ;;
+              both) echo "capture-runtime-client==${{ needs.prepare-candidate.outputs.release_version }} capture-structuring==${{ needs.prepare-candidate.outputs.release_version }}" ;;
+              *) exit 1 ;;
+            esac)
+          case '${{ inputs.pypi_project }}' in
+            client) "$probe/bin/python" -c 'import capture_runtime_client; assert capture_runtime_client.__package__ == "capture_runtime_client"' ;;
+            both) "$probe/bin/python" -c 'import capture_runtime_client, capture_structuring; assert capture_runtime_client.__package__ == "capture_runtime_client"; assert capture_structuring.__package__ == "capture_structuring"' ;;
+            *) exit 1 ;;
+          esac
+
+      - name: Upload PyPI publication ledger
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: registry-ledger-pypi-${{ inputs.candidate_id }}
+          path: registry-ledger-pypi.json
+          if-no-files-found: error
+          retention-days: 14
 
   publish-crates:
     if: ${{ inputs.publication_scope == 'all' || inputs.publication_scope == 'crates' }}

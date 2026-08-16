@@ -78,6 +78,18 @@ test('package candidate workflow is independent from the desktop product lane', 
   assert.match(promoteWorkflow, /publish-maven/u);
   assert.match(promoteWorkflow, /publish-pypi/u);
   assert.match(releasePromoteWorkflow, /pypi_project/u);
+  assert.match(
+    releasePromoteWorkflow,
+    /publish-pypi:\n\s+if: \$\{\{ inputs\.publication_scope == 'all' \|\| inputs\.publication_scope == 'pypi' \}\}\n\s+needs: prepare-candidate\n\s+runs-on: ubuntu-latest\n\s+environment: capture-registry-pypi/u,
+  );
+  assert.match(
+    releasePromoteWorkflow,
+    /pypa\/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33/u,
+  );
+  assert.match(
+    releasePromoteWorkflow,
+    /--candidate-id '\$\{\{ inputs\.runtime_candidate_id \}\}'/u,
+  );
   assert.match(promoteWorkflow, /contract_set_sha256/u);
   assert.doesNotMatch(
     promoteWorkflow,
