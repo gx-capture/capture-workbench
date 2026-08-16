@@ -206,13 +206,13 @@ Run in or immediately after candidate assembly:
 * Install them in a clean temporary project.
 * Reject leaked `workspace:*` dependencies.
 * Verify exports and type declarations.
-* Import the runtime client, structuring, and Workbench packages.
+* Import the runtime client's typed structuring/session DTOs and the Workbench packages.
 
 ### Python
 
 * Install each wheel and source distribution in a clean virtual environment.
 * Import `capture_runtime_client`.
-* Import `capture_structuring`.
+* Import typed structuring/session DTOs from `capture_runtime_client`.
 * Validate packaged schema availability.
 * Verify inter-package dependencies.
 
