@@ -9,6 +9,11 @@ on:
       candidate_id:
         required: true
         type: string
+      source_candidate_id:
+        description: 'Underlying runtime candidate ID represented by the crate ledger'
+        required: false
+        default: ''
+        type: string
       source_commit:
         required: true
         type: string
@@ -61,10 +66,11 @@ jobs:
         shell: bash
         env:
           RELEASE_CANDIDATE_ID: ${{ inputs.release_candidate_id }}
+          SOURCE_CANDIDATE_ID: ${{ inputs.source_candidate_id }}
           CONTRACT_SET_SHA256: ${{ inputs.contract_set_sha256 }}
         run: |
           set -euo pipefail
-          node --input-type=module -e "const fs=await import('node:fs/promises'); const crypto=await import('node:crypto'); const path='registry-ledger-crates.io.json'; const ledger=JSON.parse(await fs.readFile(path,'utf8')); if(!/^[0-9a-f]{64}$/.test(process.env.RELEASE_CANDIDATE_ID)||!/^[0-9a-f]{64}$/.test(process.env.CONTRACT_SET_SHA256)) throw new Error('Release candidate ledger binding is incomplete.'); const source=await fs.readFile('promotion-input/candidate/runtime-candidate-manifest.json').catch(()=>fs.readFile('promotion-input/candidate/candidate-manifest.json')); ledger.releaseCandidateId=process.env.RELEASE_CANDIDATE_ID; ledger.contractSetSha256=process.env.CONTRACT_SET_SHA256; ledger.sourceCandidateManifestSha256=crypto.createHash('sha256').update(source).digest('hex'); await fs.writeFile(path,JSON.stringify(ledger,null,2)+'\\n');"
+          node --input-type=module -e "const fs=await import('node:fs/promises'); const crypto=await import('node:crypto'); const path='registry-ledger-crates.io.json'; const ledger=JSON.parse(await fs.readFile(path,'utf8')); if(!/^[0-9a-f]{64}$/.test(process.env.RELEASE_CANDIDATE_ID)||!/^[0-9a-f]{64}$/.test(process.env.CONTRACT_SET_SHA256)) throw new Error('Release candidate ledger binding is incomplete.'); const source=await fs.readFile('promotion-input/candidate/runtime-candidate-manifest.json').catch(()=>fs.readFile('promotion-input/candidate/candidate-manifest.json')); if(process.env.SOURCE_CANDIDATE_ID){ if(!/^[0-9a-f]{64}$/.test(process.env.SOURCE_CANDIDATE_ID)) throw new Error('Source candidate ledger binding is invalid.'); ledger.candidateId=process.env.SOURCE_CANDIDATE_ID; } ledger.releaseCandidateId=process.env.RELEASE_CANDIDATE_ID; ledger.contractSetSha256=process.env.CONTRACT_SET_SHA256; ledger.sourceCandidateManifestSha256=crypto.createHash('sha256').update(source).digest('hex'); await fs.writeFile(path,JSON.stringify(ledger,null,2)+'\\n');"
 
       - name: Verify clean Cargo installation from crates.io
         shell: bash
