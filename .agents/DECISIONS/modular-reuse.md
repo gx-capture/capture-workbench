@@ -10,10 +10,10 @@
 - The Python, TypeScript, and Java runtime-client SDKs expose typed public
   interfaces generated from that asset. Consumer applications do not copy
   wire DTOs or schemas.
-- The standalone `capture-structuring` TypeScript and Python packages remain
-  temporarily retained but frozen for consumers. They must remain available
-  until all consumer cutovers and same-digest gates pass; no new runtime
-  behavior is added to them.
+- The standalone `capture-structuring` TypeScript and Python packages were
+  deleted in the 0.4.1 migration after all named consumers moved to the
+  runtime-owned pull-session interface. No structuring-client packages are
+  published.
 - The Python, TypeScript, and Java `capture-runtime-client` packages remain the
   client SDKs. No structuring-client packages are created during this
   migration.
@@ -65,9 +65,8 @@ cutover work:
   runtime, SDKs, and consumers together to the last verified digest.
 - Keep a break-glass dependency path only until every in-scope consumer has
   passed the same-digest installation and integration checks.
-- Keep the frozen standalone `capture-structuring` packages on the release
-  train until those consumer and same-digest gates are complete; deletion is a
-  separately reviewed retirement action.
+- Standalone structuring package retirement is complete in 0.4.1; release
+  candidates contain only the runtime, typed SDKs, UI, and launcher artifacts.
 - Local verification covers deterministic generation, route/manifest parity,
   package integrity, and clean-consumer fixtures. Registry publication and
   staged-file integration remain fail-closed gates.

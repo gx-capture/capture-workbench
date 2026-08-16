@@ -21,7 +21,6 @@ const packageDirectory = join(candidate, 'package');
 const expected = new Set([
   '@gx-capture/capture-workbench-ui',
   '@gx-capture/capture-runtime-client',
-  '@gx-capture/capture-structuring',
 ]);
 const archives = readdirSync(packageDirectory).filter((name) =>
   name.endsWith('.tgz'),

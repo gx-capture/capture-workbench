@@ -76,15 +76,6 @@ jobs:
           pnpm nx run capture-runtime-client-python:build
           pnpm nx run capture-runtime-client-java:test
           pnpm nx run capture-runtime-client-java:verify-contract-hash
-          pnpm nx run capture-structuring:lint
-          pnpm nx run capture-structuring:typecheck
-          pnpm nx run capture-structuring:test
-          pnpm nx run capture-structuring:build
-          pnpm nx run capture-structuring-python:test
-          pnpm nx run capture-structuring-python:lint
-          pnpm nx run capture-structuring-python:typecheck
-          pnpm nx run capture-structuring-python:build
-          pnpm nx run capture-structuring-python:wheel-smoke
           pnpm nx run capture-sidecar-launcher:cargo-fmt-check
           pnpm nx run capture-sidecar-launcher:cargo-check
           pnpm nx run capture-sidecar-launcher:cargo-test

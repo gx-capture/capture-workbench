@@ -12,8 +12,6 @@ test('PyPI record lane can select one project without accepting the other packag
       [
         'capture_runtime_client-0.4.1-py3-none-any.whl',
         'capture_runtime_client-0.4.1.tar.gz',
-        'capture_structuring-0.4.1-py3-none-any.whl',
-        'capture_structuring-0.4.1.tar.gz',
       ],
       'capture-runtime-client',
     ),

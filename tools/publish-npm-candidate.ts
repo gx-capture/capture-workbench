@@ -8,7 +8,6 @@ const REGISTRY = 'https://npm.pkg.github.com';
 const PACKAGE_NAMES = new Set([
   '@gx-capture/capture-workbench-ui',
   '@gx-capture/capture-runtime-client',
-  '@gx-capture/capture-structuring',
 ]);
 
 export type NpmPublicationDecision = 'publish' | 'already-published';

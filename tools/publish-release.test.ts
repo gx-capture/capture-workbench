@@ -32,7 +32,6 @@ const engineCatalogName = 'capture-engine-catalog.json';
 const runtimeSizeReportName = 'runtime-size-report.json';
 const packageNames = [
   '@gx-capture/capture-runtime-client',
-  '@gx-capture/capture-structuring',
   '@gx-capture/capture-workbench-ui',
 ];
 

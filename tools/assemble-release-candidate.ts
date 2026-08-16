@@ -7,7 +7,7 @@ import {
   stat,
   writeFile,
 } from 'node:fs/promises';
-import { basename, join, resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { createContractSnapshot } from './create-contract-snapshot.ts';
@@ -131,33 +131,20 @@ async function main(): Promise<void> {
       ? join(resolve(packageCandidate), 'package')
       : resolve(root, 'dist/packs'),
     packages,
-    /^(?:gx-capture-capture-workbench-ui|gx-capture-capture-runtime-client|gx-capture-capture-structuring)-\d+\.\d+\.\d+(?:-[^/]+)?\.tgz$/u,
-    3,
+    /^(?:gx-capture-capture-workbench-ui|gx-capture-capture-runtime-client)-\d+\.\d+\.\d+(?:-[^/]+)?\.tgz$/u,
+    2,
   );
-  const pythonNames = [
-    ...(await copyMatching(
-      runtimeCandidate
-        ? join(resolve(runtimeCandidate), 'python')
-        : resolve(root, 'packages/capture-runtime-client-python/dist'),
-      python,
-      new RegExp(
-        `^capture_runtime_client-${version.replaceAll('.', '\\.')}(?:-[^/]+)?\\.(?:whl|tar\\.gz)$`,
-        'u',
-      ),
-      2,
-    )),
-    ...(await copyMatching(
-      runtimeCandidate
-        ? join(resolve(runtimeCandidate), 'python')
-        : resolve(root, 'packages/capture-structuring-python/dist'),
-      python,
-      new RegExp(
-        `^capture_structuring-${version.replaceAll('.', '\\.')}(?:-[^/]+)?\\.(?:whl|tar\\.gz)$`,
-        'u',
-      ),
-      2,
-    )),
-  ];
+  const pythonNames = await copyMatching(
+    runtimeCandidate
+      ? join(resolve(runtimeCandidate), 'python')
+      : resolve(root, 'packages/capture-runtime-client-python/dist'),
+    python,
+    new RegExp(
+      `^capture_runtime_client-${version.replaceAll('.', '\\.')}(?:-[^/]+)?\\.(?:whl|tar\\.gz)$`,
+      'u',
+    ),
+    2,
+  );
   const crateName = `capture-sidecar-launcher-${version}.crate`;
   await cp(
     runtimeCandidate

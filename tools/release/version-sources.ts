@@ -112,10 +112,6 @@ export function collectReleaseVersionEntries(
       'Capture Runtime client TypeScript package',
       'packages/capture-runtime-client/package.json',
     ],
-    [
-      'Capture structuring TypeScript package',
-      'packages/capture-structuring/package.json',
-    ],
   ] as const;
   for (const [label, path] of packagePaths)
     add(entries, label, json(root, path).version);
@@ -124,10 +120,6 @@ export function collectReleaseVersionEntries(
     [
       'Capture Runtime client Python wheel',
       'packages/capture-runtime-client-python/pyproject.toml',
-    ],
-    [
-      'Capture structuring Python wheel',
-      'packages/capture-structuring-python/pyproject.toml',
     ],
     ['Python runtime package', 'packages/capture-runtime/pyproject.toml'],
     [

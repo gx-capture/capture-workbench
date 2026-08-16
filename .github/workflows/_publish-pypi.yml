@@ -41,9 +41,9 @@ on:
         default: ''
         type: string
       python_project:
-        description: 'Python project lane: both, client, or structuring'
+        description: 'Python project lane: runtime client'
         required: false
-        default: both
+        default: client
         type: string
       ledger_candidate_id:
         description: 'Source registry ledger candidate ID when it differs from the promotion input'
@@ -121,14 +121,8 @@ jobs:
           rm -rf "$target_dir"
           mkdir -p "$target_dir"
           case "$PYTHON_PROJECT" in
-            both)
-              pattern='capture_*'
-              ;;
             client)
               pattern='capture_runtime_client-*'
-              ;;
-            structuring)
-              pattern='capture_structuring-*'
               ;;
             *)
               echo "Unsupported Python project lane: $PYTHON_PROJECT" >&2
@@ -137,11 +131,7 @@ jobs:
           esac
           shopt -s nullglob
           artifacts=("$source_dir"/$pattern)
-          if [[ "$PYTHON_PROJECT" == both ]]; then
-            artifacts=("$source_dir"/capture_runtime_client-* "$source_dir"/capture_structuring-*)
-          fi
           expected_count=2
-          if [[ "$PYTHON_PROJECT" == both ]]; then expected_count=4; fi
           test "${#artifacts[@]}" -eq "$expected_count"
           cp -- "${artifacts[@]}" "$target_dir/"
 
@@ -150,16 +140,6 @@ jobs:
         with:
           packages-dir: ${{ runner.temp }}/pypi-python
           skip-existing: true
-
-      - name: Record the exact PyPI publication ledger for both projects
-        if: ${{ inputs.python_project == 'both' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          node tools/record-pypi-candidate.ts \
-            --candidate promotion-input/candidate \
-            --version '${{ inputs.release_version }}' \
-            --output registry-ledger-pypi.json
 
       - name: Record the exact PyPI client bootstrap ledger
         if: ${{ inputs.python_project == 'client' }}
@@ -225,14 +205,10 @@ jobs:
           uv pip install --python "$probe/bin/python" --index-url https://pypi.org/simple \
             $(case '${{ inputs.python_project }}' in
               client) echo "capture-runtime-client==${{ inputs.release_version }}" ;;
-              structuring) echo "capture-structuring==${{ inputs.release_version }}" ;;
-              both) echo "capture-runtime-client==${{ inputs.release_version }} capture-structuring==${{ inputs.release_version }}" ;;
               *) exit 1 ;;
             esac)
           case '${{ inputs.python_project }}' in
             client) "$probe/bin/python" -c 'import capture_runtime_client; assert capture_runtime_client.__package__ == "capture_runtime_client"' ;;
-            structuring) "$probe/bin/python" -c 'import capture_structuring; assert capture_structuring.__package__ == "capture_structuring"' ;;
-            both) "$probe/bin/python" -c 'import capture_runtime_client, capture_structuring; assert capture_runtime_client.__package__ == "capture_runtime_client"; assert capture_structuring.__package__ == "capture_structuring"' ;;
           esac
 
       - name: Upload PyPI publication ledger

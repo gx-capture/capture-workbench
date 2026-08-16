@@ -15,7 +15,6 @@ const contractSetBytes = Buffer.from('{"catalogVersion":"2"}\n', 'utf8');
 const packages = [
   ['@gx-capture/capture-workbench-ui', 'gx-capture-capture-workbench-ui'],
   ['@gx-capture/capture-runtime-client', 'gx-capture-capture-runtime-client'],
-  ['@gx-capture/capture-structuring', 'gx-capture-capture-structuring'],
 ] as const;
 
 function digest(value: Buffer | string): string {
@@ -56,8 +55,6 @@ async function makeCandidate(): Promise<{
   for (const name of [
     'capture_runtime_client-0.4.1-py3-none-any.whl',
     'capture_runtime_client-0.4.1.tar.gz',
-    'capture_structuring-0.4.1-py3-none-any.whl',
-    'capture_structuring-0.4.1.tar.gz',
   ]) {
     const path = `python/${name}`;
     const value = Buffer.from(`${name}\n`, 'utf8');

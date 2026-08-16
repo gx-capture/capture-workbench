@@ -74,9 +74,7 @@ jobs:
         run: |
           set -euo pipefail
           pnpm nx run capture-angular:pack --skip-nx-cache
-          pnpm nx run capture-structuring:pack --skip-nx-cache
           pnpm nx run capture-runtime-client-python:build --skip-nx-cache
-          pnpm nx run capture-structuring-python:build --skip-nx-cache
           pnpm nx run capture-runtime-client-java:build --skip-nx-cache
 
       - name: Install Playwright Chromium for consumer evidence

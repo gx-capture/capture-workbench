@@ -5,13 +5,12 @@ import { lstat, mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { Observable, defer, from, map } from 'rxjs';
+import { defer, from, map } from 'rxjs';
 
 const packageName = '@gx-capture/capture-workbench-ui';
 const releasePackageNames = Object.freeze([
   packageName,
   '@gx-capture/capture-runtime-client',
-  '@gx-capture/capture-structuring',
 ]);
 const registry = 'https://npm.pkg.github.com';
 const coreRuntimeAssetNames = Object.freeze([

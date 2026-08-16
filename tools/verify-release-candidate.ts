@@ -8,7 +8,6 @@ const EXPECTED_SCHEMA_SHA256 =
 const EXPECTED_NPM_PACKAGES = new Set([
   '@gx-capture/capture-workbench-ui',
   '@gx-capture/capture-runtime-client',
-  '@gx-capture/capture-structuring',
 ]);
 
 function parseArguments(args: readonly string[]): {
@@ -264,7 +263,7 @@ async function main(): Promise<void> {
   const pythonArtifacts = await requireFiles(
     python,
     new RegExp(
-      `^(capture_runtime_client|capture_structuring)-${version.replaceAll('.', '\\.')}(?:-[^/]+)?\\.(?:whl|tar\\.gz)$`,
+      `^capture_runtime_client-${version.replaceAll('.', '\\.')}(?:-[^/]+)?\\.(?:whl|tar\\.gz)$`,
       'u',
     ),
     'Python package candidate',
@@ -275,13 +274,6 @@ async function main(): Promise<void> {
     )
   ) {
     throw new Error('capture-runtime-client Python artifact version is missing.');
-  }
-  if (
-    !pythonArtifacts.some((name) =>
-      name.startsWith(`capture_structuring-${version}`),
-    )
-  ) {
-    throw new Error('capture-structuring Python artifact version is missing.');
   }
 
   const crateArtifacts = await requireFiles(
@@ -295,7 +287,6 @@ async function main(): Promise<void> {
   const expectedNpmPackages = new Set([
     `gx-capture-capture-workbench-ui-${version}.tgz`,
     `gx-capture-capture-runtime-client-${version}.tgz`,
-    `gx-capture-capture-structuring-${version}.tgz`,
   ]);
   if (!npmPackages.every((name) => expectedNpmPackages.has(name))) {
     throw new Error(

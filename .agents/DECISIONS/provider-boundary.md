@@ -4,10 +4,9 @@
   retention, and the runtime-local `capture_runtime.structuring` parity
   implementation for batching, prompt/schema adaptation, minimal semantic
   validation, and provenance reconstruction.
-- The standalone `capture-structuring` TypeScript and Python packages are
-  temporarily retained but frozen for consumers. They remain available until
-  consumer cutover and same-digest gates pass; no new runtime behavior is added
-  to them.
+- The standalone `capture-structuring` TypeScript and Python packages were
+  retired in 0.4.1 after consumer cutover and same-digest gates passed. The
+  runtime-owned pull-session implementation is the sole structuring seam.
 - The Python, TypeScript, and Java `capture-runtime-client` packages remain the
   client SDKs. No structuring-client packages are created.
 - A host may supply `CaptureStructuringProvider`; the host mode pauses at `awaiting_structuring`, then commits a candidate document for runtime validation.

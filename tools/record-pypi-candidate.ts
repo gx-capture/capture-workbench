@@ -3,7 +3,7 @@ import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-const PROJECTS = ['capture-runtime-client', 'capture-structuring'] as const;
+const PROJECTS = ['capture-runtime-client'] as const;
 
 export function parseProjects(value = PROJECTS.join(',')): readonly string[] {
   const projects = value

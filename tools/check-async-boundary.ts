@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { relative, resolve } from 'node:path';
 
 const workspaceRoot = resolve(import.meta.dirname, '..');
@@ -168,9 +168,6 @@ function exceptionReason(relativePath) {
   }
   if (relativePath === 'tools/update-release-index.ts') {
     return 'release index transition CLI process boundary';
-  }
-  if (relativePath === 'packages/capture-structuring/src/structuring.ts') {
-    return 'host SDK LLM callable boundary';
   }
   return undefined;
 }

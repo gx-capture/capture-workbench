@@ -47,7 +47,7 @@ test('package candidate workflow is independent from the desktop product lane', 
   }
   assert.match(candidateWorkflow, /capture-runtime-client-java:build/u);
   assert.match(candidateWorkflow, /capture-runtime-client-python:build/u);
-  assert.match(candidateWorkflow, /capture-structuring-python:build/u);
+  assert.doesNotMatch(candidateWorkflow, /capture-structuring/u);
   assert.match(
     candidateWorkflow,
     /astral-sh\/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b/u,

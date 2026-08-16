@@ -134,7 +134,6 @@ jobs:
           $PSNativeCommandUseErrorActionPreference = $true
           pnpm nx run capture-runtime:build-release-artifacts
           pnpm nx run capture-runtime-client-python:build
-          pnpm nx run capture-structuring-python:build
           pnpm nx run capture-sidecar-launcher:cargo-package-dry-run
 
       - name: Verify standalone runtime consumer flow

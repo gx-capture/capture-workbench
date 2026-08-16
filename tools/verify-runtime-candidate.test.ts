@@ -46,8 +46,6 @@ async function createCandidate() {
   const packageFiles = [
     'capture_runtime_client-0.4.1-py3-none-any.whl',
     'capture_runtime_client-0.4.1.tar.gz',
-    'capture_structuring-0.4.1-py3-none-any.whl',
-    'capture_structuring-0.4.1.tar.gz',
   ];
   for (const name of packageFiles)
     await writeFile(join(root, 'python', name), name);

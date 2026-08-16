@@ -146,15 +146,6 @@ async function main(): Promise<void> {
     ),
     2,
   );
-  await copyMatching(
-    resolve(root, 'packages/capture-structuring-python/dist'),
-    python,
-    new RegExp(
-      `^capture_structuring-${version.replaceAll('.', '\\.')}(?:-[^/]+)?\\.(?:whl|tar\\.gz)$`,
-      'u',
-    ),
-    2,
-  );
   const crateName = `capture-sidecar-launcher-${version}.crate`;
   await cp(
     resolve(

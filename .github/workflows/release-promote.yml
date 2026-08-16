@@ -58,12 +58,11 @@ on:
           - crates
           - maven
       pypi_project:
-        description: 'PyPI project lane: both packages or the runtime client bootstrap'
+        description: 'PyPI project lane: runtime client'
         required: false
-        default: both
+        default: client
         type: choice
         options:
-          - both
           - client
       contract_set_sha256:
         description: 'Canonical v2 contract-set SHA-256 for the release train'
@@ -269,10 +268,6 @@ jobs:
           mkdir -p "$target_dir"
           shopt -s nullglob
           case "$PYTHON_PROJECT" in
-            both)
-              artifacts=("$source_dir"/capture_runtime_client-* "$source_dir"/capture_structuring-*)
-              expected_count=4
-              ;;
             client)
               artifacts=("$source_dir"/capture_runtime_client-*)
               expected_count=2
@@ -298,7 +293,6 @@ jobs:
         run: |
           set -euo pipefail
           case "$PYTHON_PROJECT" in
-            both) projects='capture-runtime-client,capture-structuring' ;;
             client) projects='capture-runtime-client' ;;
             *) echo "Unsupported Python project lane: $PYTHON_PROJECT" >&2; exit 1 ;;
           esac
@@ -328,12 +322,10 @@ jobs:
           uv pip install --python "$probe/bin/python" --index-url https://pypi.org/simple \
             $(case '${{ inputs.pypi_project }}' in
               client) echo "capture-runtime-client==${{ needs.prepare-candidate.outputs.release_version }}" ;;
-              both) echo "capture-runtime-client==${{ needs.prepare-candidate.outputs.release_version }} capture-structuring==${{ needs.prepare-candidate.outputs.release_version }}" ;;
               *) exit 1 ;;
             esac)
           case '${{ inputs.pypi_project }}' in
             client) "$probe/bin/python" -c 'import capture_runtime_client; assert capture_runtime_client.__package__ == "capture_runtime_client"' ;;
-            both) "$probe/bin/python" -c 'import capture_runtime_client, capture_structuring; assert capture_runtime_client.__package__ == "capture_runtime_client"; assert capture_structuring.__package__ == "capture_structuring"' ;;
             *) exit 1 ;;
           esac
 

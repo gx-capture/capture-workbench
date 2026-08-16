@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFile, readdir, stat } from 'node:fs/promises';
-import { join, relative, resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 type JsonRecord = Record<string, unknown>;
@@ -256,11 +256,6 @@ export async function verifyRuntimeCandidate(input: {
   assert(
     [...expectedArtifacts].some((path) =>
       /^python\/capture_runtime_client-.*\.(?:whl|tar\.gz)$/u.test(path),
-    ),
-  );
-  assert(
-    [...expectedArtifacts].some((path) =>
-      /^python\/capture_structuring-.*\.(?:whl|tar\.gz)$/u.test(path),
     ),
   );
   assert([...expectedArtifacts].some((path) => path.endsWith('.crate')));

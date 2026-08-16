@@ -2,9 +2,9 @@
 
 ## Purpose
 
-Keep the Capture Runtime, runtime-local structuring parity, frozen standalone
-structuring packages, desktop launcher, and named consumers independently
-releasable while preserving one canonical v2 wire contract. The runtime remains
+Keep the Capture Runtime, runtime-local structuring parity, desktop launcher,
+and named consumers independently releasable while preserving one canonical v2
+wire contract. The runtime remains
 the producer of models, validation, schemas, operation metadata, and problem
 definitions.
 
@@ -19,11 +19,7 @@ definitions.
    bundle. Their generated codecs are private; public transports, DTOs, error
    types, SSE helpers, retry/idempotency, and discovery methods are curated SDK
    interfaces.
-3. The standalone `capture-structuring` TypeScript and Python packages remain
-   temporarily available as frozen consumer compatibility surfaces. They do not
-   receive new runtime behavior and must not be deleted until every consumer
-   cutover and same-digest gate has passed.
-4. The Python, TypeScript, and Java `capture-runtime-client` packages remain the
+3. The Python, TypeScript, and Java `capture-runtime-client` packages remain the
    client SDK surfaces. No `capture-structuring-client` or other structuring
    client packages are created during this migration.
 5. The sidecar launcher crate owns process startup, health, launch policy, and
@@ -89,6 +85,5 @@ remain binding for subsequent review-overlay and consumer cutover work:
 - Cross-repository tests run only after the producer artifact and digest are
   explicitly recorded. Unavailable publication or engine evidence remains an
   explicit blocker rather than an inferred success.
-- Standalone `capture-structuring` package deletion is itself gated on completed
-  consumer cutover and same-digest evidence; it is not part of this runtime
-  parity closeout.
+- Standalone `capture-structuring` package deletion is complete in the 0.4.1
+  release train after consumer cutover and same-digest verification.

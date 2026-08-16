@@ -7,7 +7,7 @@ import {
   stat,
   writeFile,
 } from 'node:fs/promises';
-import { join, relative, resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { createContractSnapshot } from './create-contract-snapshot.ts';
@@ -15,7 +15,6 @@ import { createContractSnapshot } from './create-contract-snapshot.ts';
 const PACKAGE_FILES = new Map([
   ['gx-capture-capture-workbench-ui', '@gx-capture/capture-workbench-ui'],
   ['gx-capture-capture-runtime-client', '@gx-capture/capture-runtime-client'],
-  ['gx-capture-capture-structuring', '@gx-capture/capture-structuring'],
 ]);
 
 const MAVEN_FILES = [
@@ -146,20 +145,12 @@ async function main(): Promise<void> {
     ),
   );
 
-  const pythonArtifactNames = [
-    ...(await copyPythonArtifacts(
-      resolve(root, 'packages/capture-runtime-client-python/dist'),
-      pythonDirectory,
-      'capture_runtime_client',
-      version,
-    )),
-    ...(await copyPythonArtifacts(
-      resolve(root, 'packages/capture-structuring-python/dist'),
-      pythonDirectory,
-      'capture_structuring',
-      version,
-    )),
-  ];
+  const pythonArtifactNames = await copyPythonArtifacts(
+    resolve(root, 'packages/capture-runtime-client-python/dist'),
+    pythonDirectory,
+    'capture_runtime_client',
+    version,
+  );
 
   const packageManifest = {
     schemaVersion: '1',
@@ -273,7 +264,7 @@ async function main(): Promise<void> {
 async function copyPythonArtifacts(
   sourceDirectory: string,
   destinationDirectory: string,
-  distribution: 'capture_runtime_client' | 'capture_structuring',
+  distribution: 'capture_runtime_client',
   version: string,
 ): Promise<string[]> {
   const escapedVersion = version.replaceAll('.', '\\.');

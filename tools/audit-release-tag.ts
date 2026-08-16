@@ -7,7 +7,6 @@ import { pathToFileURL } from 'node:url';
 const NPM_PACKAGES = [
   '@gx-capture/capture-workbench-ui',
   '@gx-capture/capture-runtime-client',
-  '@gx-capture/capture-structuring',
 ];
 
 function run(command: string, args: readonly string[]) {
@@ -160,10 +159,6 @@ async function main(): Promise<void> {
   await assertPublished(
     `https://pypi.org/pypi/capture-runtime-client/${version}/json`,
     `PyPI capture-runtime-client ${version}`,
-  );
-  await assertPublished(
-    `https://pypi.org/pypi/capture-structuring/${version}/json`,
-    `PyPI capture-structuring ${version}`,
   );
   await assertPublished(
     `https://crates.io/api/v1/crates/capture-sidecar-launcher/${version}`,

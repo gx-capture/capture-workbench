@@ -42,9 +42,10 @@ agree on the same contract-set digest.
   provider-neutral batching, prompt/schema adaptation, minimal semantic
   validation, and provenance reconstruction.
 - The standalone `@gx-capture/capture-structuring` TypeScript package and
-  `capture-structuring` Python package remain temporarily retained but frozen
-  for consumers. They cannot be deleted until consumer cutover and same-digest
-  gates have passed.
+  `capture-structuring` Python package were deleted in 0.4.1 after consumer
+  cutover and same-digest gates passed. The runtime-owned pull-session module
+  is now the sole structuring implementation and no structuring-client package
+  is published.
 - The Python, TypeScript, and Java `capture-runtime-client` packages remain the
   client SDK surfaces. No `capture-structuring-client` or other structuring
   client packages are created.
@@ -106,6 +107,5 @@ review-overlay and consumer cutover work:
   shared-fixture tests.
 - Active producers, SDKs, consumers, release tools, and current documentation
   use the runtime-owned v2 contract source and its single digest.
-- The frozen standalone `capture-structuring` packages remain present until
-  consumer cutover and same-digest evidence are complete; deletion is not a
-  prerequisite of the runtime-local parity migration.
+- The standalone structuring packages are absent from current producer source,
+  candidate manifests, registry publication workflows, and consumer locks.

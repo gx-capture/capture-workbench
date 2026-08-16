@@ -7,7 +7,6 @@ import { pathToFileURL } from 'node:url';
 const PACKAGE_NAMES = new Map([
   ['gx-capture-capture-workbench-ui', '@gx-capture/capture-workbench-ui'],
   ['gx-capture-capture-runtime-client', '@gx-capture/capture-runtime-client'],
-  ['gx-capture-capture-structuring', '@gx-capture/capture-structuring'],
 ]);
 
 type JsonRecord = Record<string, unknown>;
@@ -15,6 +14,7 @@ type JsonRecord = Record<string, unknown>;
 export type PackageCandidateVerification = {
   readonly candidateId: string;
   readonly candidateManifestSha256: string;
+  readonly contractSetSha256: string;
   readonly sourceCommit: string;
   readonly releaseVersion: string;
   readonly producerRunId: number;
@@ -245,17 +245,13 @@ export async function verifyPackageCandidate(input: {
   const pythonNames = (await readdir(join(input.candidate, 'python'))).sort();
   assert.equal(
     pythonNames.length,
-    4,
-    'Package candidate must carry exactly four Python distributions.',
+    2,
+    'Package candidate must carry exactly two Python distributions.',
   );
   const escapedVersion = input.version.replaceAll('.', '\\.');
   const pythonPatterns = [
     new RegExp(
       `^capture_runtime_client-${escapedVersion}(?:-[^/]+)?\\.(?:whl|tar\\.gz)$`,
-      'u',
-    ),
-    new RegExp(
-      `^capture_structuring-${escapedVersion}(?:-[^/]+)?\\.(?:whl|tar\\.gz)$`,
       'u',
     ),
   ];
@@ -270,12 +266,6 @@ export async function verifyPackageCandidate(input: {
       .length,
     2,
     'Package candidate must carry both capture-runtime-client Python distributions.',
-  );
-  assert.equal(
-    pythonNames.filter((name) => name.startsWith('capture_structuring-'))
-      .length,
-    2,
-    'Package candidate must carry both capture-structuring Python distributions.',
   );
   const expectedArtifacts = new Set([
     ...[...PACKAGE_NAMES.keys()].map(
