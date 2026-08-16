@@ -94,47 +94,62 @@ async function assertRemoteAssetMatches(
   asset: string,
   temporary: string,
 ): Promise<'missing' | 'same'> {
+  const remoteTemporary = await mkdtemp(join(temporary, 'remote-'));
+  const repository =
+    process.env.GITHUB_REPOSITORY ?? 'gx-capture/capture-workbench';
   const download = run(
     'gh',
     [
       'release',
       'download',
       tag,
+      '--repo',
+      repository,
       '--pattern',
       basename(asset),
       '--dir',
-      temporary,
+      remoteTemporary,
     ],
     true,
   );
   if (download.status !== 0) {
-    if (
-      /no assets matched|not found|HTTP 404/iu.test(
-        download.stderr || download.stdout,
-      )
-    ) {
-      return 'missing';
+    try {
+      if (
+        /no assets matched|not found|HTTP 404/iu.test(
+          download.stderr || download.stdout,
+        )
+      ) {
+        return 'missing';
+      }
+      throw new Error(
+        `Unable to inspect GitHub Release asset ${basename(asset)}: ${(
+          download.stderr || download.stdout
+        ).trim()}`,
+      );
+    } finally {
+      await rm(remoteTemporary, { recursive: true, force: true });
     }
-    throw new Error(
-      `Unable to inspect GitHub Release asset ${basename(asset)}.`,
-    );
   }
-  const remote = join(temporary, basename(asset));
-  const [localBytes, remoteBytes, localStat, remoteStat] = await Promise.all([
-    readFile(asset),
-    readFile(remote),
-    stat(asset),
-    stat(remote),
-  ]);
-  if (
-    localStat.size !== remoteStat.size ||
-    sha256(localBytes) !== sha256(remoteBytes)
-  ) {
-    throw new Error(
-      `GitHub Release asset differs from the approved candidate: ${basename(asset)}.`,
-    );
+  try {
+    const remote = join(remoteTemporary, basename(asset));
+    const [localBytes, remoteBytes, localStat, remoteStat] = await Promise.all([
+      readFile(asset),
+      readFile(remote),
+      stat(asset),
+      stat(remote),
+    ]);
+    if (
+      localStat.size !== remoteStat.size ||
+      sha256(localBytes) !== sha256(remoteBytes)
+    ) {
+      throw new Error(
+        `GitHub Release asset differs from the approved candidate: ${basename(asset)}.`,
+      );
+    }
+    return 'same';
+  } finally {
+    await rm(remoteTemporary, { recursive: true, force: true });
   }
-  return 'same';
 }
 
 async function main(): Promise<void> {
