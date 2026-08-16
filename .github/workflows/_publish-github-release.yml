@@ -103,6 +103,8 @@ jobs:
 
       - name: Verify anonymous immutable release-manifest download
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           curl --fail --silent --show-error --location \
