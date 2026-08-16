@@ -427,6 +427,8 @@ jobs:
           set -euo pipefail
           tag="v${{ needs.prepare-candidate.outputs.release_version }}"
           source_commit='${{ needs.prepare-candidate.outputs.source_commit }}'
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           if git rev-parse --verify --quiet "refs/tags/$tag" >/dev/null; then
             test "$(git rev-list -n 1 "$tag^{}")" = "$source_commit"
           else
