@@ -672,6 +672,7 @@ test('consumer gate workflow dispatches exact candidates and records independent
       workflowPath: '.github/workflows/capture-contract-gate.yml',
       ref: 'main',
       requiredWhen: 'contract',
+      requiresPackageCandidateRunId: true,
     },
   ]);
   assert.match(workflow, /workflow_dispatch:[\s\S]*candidate_run_id:/u);
