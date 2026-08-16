@@ -80,7 +80,7 @@ test('package candidate workflow is independent from the desktop product lane', 
   assert.match(releasePromoteWorkflow, /pypi_project/u);
   assert.match(
     releasePromoteWorkflow,
-    /publish-pypi:\n\s+if: \$\{\{ inputs\.publication_scope == 'all' \|\| inputs\.publication_scope == 'pypi' \}\}\n\s+needs: prepare-candidate\n\s+runs-on: ubuntu-latest\n\s+environment: capture-registry-pypi/u,
+    /publish-pypi:\r?\n\s+if: \$\{\{ inputs\.publication_scope == 'all' \|\| inputs\.publication_scope == 'pypi' \}\}\r?\n\s+needs: prepare-candidate\r?\n\s+runs-on: ubuntu-latest\r?\n\s+environment: capture-registry-pypi/u,
   );
   assert.match(
     releasePromoteWorkflow,
@@ -124,7 +124,7 @@ test('Maven publication and registry verification use the Java candidate identit
   assert.match(publishMaven, /candidateId:process\.env\.JAVA_CANDIDATE_ID/u);
   assert.match(
     publishMaven,
-    /publish:\n\s+runs-on: ubuntu-latest\n\s+environment: capture-registry-maven\n\s+env:\n\s+MAVEN_USERNAME: \$\{\{ github\.actor \}\}\n\s+MAVEN_PASSWORD: \$\{\{ secrets\.MAVEN_TOKEN \}\}/u,
+    /publish:\r?\n\s+runs-on: ubuntu-latest\r?\n\s+environment: capture-registry-maven\r?\n\s+env:\r?\n\s+MAVEN_USERNAME: \$\{\{ github\.actor \}\}\r?\n\s+MAVEN_PASSWORD: \$\{\{ secrets\.MAVEN_TOKEN \}\}/u,
   );
   assert.match(publishMaven, /Probe GitHub Packages Maven authentication/u);
   assert.match(
