@@ -43,6 +43,9 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     environment: capture-registry-maven
+    env:
+      MAVEN_USERNAME: ${{ github.actor }}
+      MAVEN_PASSWORD: ${{ secrets.MAVEN_TOKEN }}
     steps:
       - name: Check out publication tooling at the candidate source commit
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -58,9 +61,6 @@ jobs:
 
       - name: Install Java and configure GitHub Packages credentials
         uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
-        env:
-          MAVEN_USERNAME: ${{ github.actor }}
-          MAVEN_PASSWORD: ${{ secrets.MAVEN_TOKEN }}
         with:
           distribution: temurin
           java-version: '25'
@@ -108,9 +108,6 @@ jobs:
 
       - name: Probe GitHub Packages Maven authentication
         shell: bash
-        env:
-          MAVEN_USERNAME: ${{ github.actor }}
-          MAVEN_PASSWORD: ${{ secrets.MAVEN_TOKEN }}
         run: |
           set -euo pipefail
           status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \

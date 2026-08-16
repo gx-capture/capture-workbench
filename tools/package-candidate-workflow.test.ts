@@ -110,6 +110,10 @@ test('Maven publication and registry verification use the Java candidate identit
     'utf8',
   );
   assert.match(publishMaven, /candidateId:process\.env\.JAVA_CANDIDATE_ID/u);
+  assert.match(
+    publishMaven,
+    /publish:\n\s+runs-on: ubuntu-latest\n\s+environment: capture-registry-maven\n\s+env:\n\s+MAVEN_USERNAME: \$\{\{ github\.actor \}\}\n\s+MAVEN_PASSWORD: \$\{\{ secrets\.MAVEN_TOKEN \}\}/u,
+  );
   assert.match(publishMaven, /Probe GitHub Packages Maven authentication/u);
   assert.match(
     publishMaven,
