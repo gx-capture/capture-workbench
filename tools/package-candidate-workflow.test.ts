@@ -110,6 +110,11 @@ test('Maven publication and registry verification use the Java candidate identit
     'utf8',
   );
   assert.match(publishMaven, /candidateId:process\.env\.JAVA_CANDIDATE_ID/u);
+  assert.match(publishMaven, /Probe GitHub Packages Maven authentication/u);
+  assert.match(
+    publishMaven,
+    /GitHub Packages Maven authentication failed \(HTTP 401\)/u,
+  );
   assert.match(verifyRegistries, /^\s{6}java_candidate_id:\s*$/mu);
   assert.match(
     verifyRegistries,

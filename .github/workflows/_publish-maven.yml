@@ -106,6 +106,34 @@ jobs:
             --candidate-manifest-sha256 "$java_manifest_sha256" \
             --contract-set-sha256 '${{ inputs.contract_set_sha256 }}'
 
+      - name: Probe GitHub Packages Maven authentication
+        shell: bash
+        env:
+          MAVEN_USERNAME: ${{ github.actor }}
+          MAVEN_PASSWORD: ${{ secrets.MAVEN_TOKEN }}
+        run: |
+          set -euo pipefail
+          status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+            --user "$MAVEN_USERNAME:$MAVEN_PASSWORD" \
+            "https://maven.pkg.github.com/gx-capture/capture-workbench/com/gx/capture/capture-runtime-client/${{ inputs.release_version }}/capture-runtime-client-${{ inputs.release_version }}.pom")"
+          case "$status" in
+            200|404)
+              echo "GitHub Packages Maven credentials accepted (HTTP $status)."
+              ;;
+            401)
+              echo "GitHub Packages Maven authentication failed (HTTP 401). Check that capture-registry-maven/MAVEN_TOKEN belongs to $MAVEN_USERNAME, is a classic PAT, and has write:packages plus required organization authorization." >&2
+              exit 1
+              ;;
+            403)
+              echo "GitHub Packages Maven authorization was denied (HTTP 403). Check gx-capture package-creation policy and the token owner's organization package permissions." >&2
+              exit 1
+              ;;
+            *)
+              echo "GitHub Packages Maven authentication probe returned unexpected HTTP $status." >&2
+              exit 1
+              ;;
+          esac
+
       - name: Publish exact Maven bytes to GitHub Packages
         shell: bash
         run: |
