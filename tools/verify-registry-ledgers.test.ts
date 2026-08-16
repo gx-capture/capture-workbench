@@ -7,7 +7,13 @@ import {
 } from './verify-registry-ledgers.ts';
 
 test('registry scope selects only the requested publication recovery lane', () => {
-  assert.deepEqual(requiredRegistries('all'), ['npm', 'pypi', 'crates.io', 'maven']);
+  assert.deepEqual(requiredRegistries('all'), [
+    'npm',
+    'pypi',
+    'crates.io',
+    'maven',
+  ]);
+  assert.deepEqual(requiredRegistries('pypi-client'), ['pypi']);
   assert.deepEqual(requiredRegistries('crates'), ['crates.io']);
   assert.deepEqual(requiredRegistries('maven'), ['maven']);
   assert.throws(() => requiredRegistries('unknown'), /invalid/u);
@@ -54,7 +60,11 @@ test('registry ledger requires the full-candidate and contract-set bindings', ()
         'maven',
         'b'.repeat(64),
         '0.4.0',
-        { sourceCandidateId: 'a'.repeat(64), releaseCandidateId: 'b'.repeat(64), contractSetSha256: hash },
+        {
+          sourceCandidateId: 'a'.repeat(64),
+          releaseCandidateId: 'b'.repeat(64),
+          contractSetSha256: hash,
+        },
       ),
     /passing/u,
   );
@@ -74,7 +84,11 @@ test('registry ledger requires the full-candidate and contract-set bindings', ()
         'maven',
         'b'.repeat(64),
         '0.4.0',
-        { sourceCandidateId: 'a'.repeat(64), releaseCandidateId: 'b'.repeat(64), contractSetSha256: hash },
+        {
+          sourceCandidateId: 'a'.repeat(64),
+          releaseCandidateId: 'b'.repeat(64),
+          contractSetSha256: hash,
+        },
       ),
     /contract set/u,
   );

@@ -35,6 +35,10 @@ test('package candidate workflow is independent from the desktop product lane', 
     join(root, '.github/workflows/_publish-pypi.yml'),
     'utf8',
   );
+  const releasePromoteWorkflow = await readFile(
+    join(root, '.github/workflows/release-promote.yml'),
+    'utf8',
+  );
   for (const content of [candidateWorkflow, promoteWorkflow]) {
     assert.doesNotMatch(
       content,
@@ -73,6 +77,7 @@ test('package candidate workflow is independent from the desktop product lane', 
   assert.match(promoteWorkflow, /candidate_kind: package/u);
   assert.match(promoteWorkflow, /publish-maven/u);
   assert.match(promoteWorkflow, /publish-pypi/u);
+  assert.match(releasePromoteWorkflow, /pypi_project/u);
   assert.match(promoteWorkflow, /contract_set_sha256/u);
   assert.doesNotMatch(
     promoteWorkflow,
@@ -83,8 +88,12 @@ test('package candidate workflow is independent from the desktop product lane', 
   assert.match(pypiWorkflow, /verify-package-candidate\.ts/u);
   assert.match(
     pypiWorkflow,
-    /packages-dir: promotion-input\/candidate\/python/u,
+    /packages-dir: \$\{\{ runner\.temp \}\}\/pypi-python/u,
   );
+  assert.match(pypiWorkflow, /python_project/u);
+  assert.match(pypiWorkflow, /capture_runtime_client/u);
+  assert.match(pypiWorkflow, /ledger_candidate_id/u);
+  assert.match(pypiWorkflow, /client bootstrap ledger/u);
 });
 
 test('Maven publication and registry verification use the Java candidate identity', async () => {

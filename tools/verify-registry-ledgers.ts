@@ -33,7 +33,7 @@ function parseArguments(args: readonly string[]): Map<string, string> {
       values.has(name)
     ) {
       throw new Error(
-        'Use --directory <path> --candidate-id <sha256> --release-version <semver> --scope <all|npm|pypi|crates|maven> --release-candidate-id <sha256> --package-candidate-id <sha256> --runtime-candidate-id <sha256> --java-candidate-id <sha256> --package-candidate-manifest-sha256 <sha256> --java-candidate-manifest-sha256 <sha256> --runtime-candidate-manifest-sha256 <sha256> --contract-set-sha256 <sha256>.',
+        'Use --directory <path> --candidate-id <sha256> --release-version <semver> --scope <all|npm|pypi|pypi-client|crates|maven> --release-candidate-id <sha256> --package-candidate-id <sha256> --runtime-candidate-id <sha256> --java-candidate-id <sha256> --package-candidate-manifest-sha256 <sha256> --java-candidate-manifest-sha256 <sha256> --runtime-candidate-manifest-sha256 <sha256> --contract-set-sha256 <sha256>.',
       );
     }
     values.set(name, value);
@@ -51,6 +51,7 @@ export function requiredRegistries(scope: string): readonly Registry[] {
   if (scope === 'all') return REGISTRIES;
   if (scope === 'npm') return ['npm'];
   if (scope === 'pypi') return ['pypi'];
+  if (scope === 'pypi-client') return ['pypi'];
   if (scope === 'crates') return ['crates.io'];
   if (scope === 'maven') return ['maven'];
   throw new Error('Publication scope is invalid.');

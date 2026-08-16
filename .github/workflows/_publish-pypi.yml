@@ -40,6 +40,16 @@ on:
         required: false
         default: ''
         type: string
+      python_project:
+        description: 'Python project lane: both, client, or structuring'
+        required: false
+        default: both
+        type: string
+      ledger_candidate_id:
+        description: 'Source registry ledger candidate ID when it differs from the promotion input'
+        required: false
+        default: ''
+        type: string
 
 permissions:
   actions: read
@@ -100,13 +110,49 @@ jobs:
             --contract-set-sha256 '${{ inputs.contract_set_sha256 }}' \
             --require-evidence
 
+      - name: Select exact Python project artifacts
+        shell: bash
+        env:
+          PYTHON_PROJECT: ${{ inputs.python_project }}
+        run: |
+          set -euo pipefail
+          source_dir="$GITHUB_WORKSPACE/promotion-input/candidate/python"
+          target_dir="$RUNNER_TEMP/pypi-python"
+          rm -rf "$target_dir"
+          mkdir -p "$target_dir"
+          case "$PYTHON_PROJECT" in
+            both)
+              pattern='capture_*'
+              ;;
+            client)
+              pattern='capture_runtime_client-*'
+              ;;
+            structuring)
+              pattern='capture_structuring-*'
+              ;;
+            *)
+              echo "Unsupported Python project lane: $PYTHON_PROJECT" >&2
+              exit 1
+              ;;
+          esac
+          shopt -s nullglob
+          artifacts=("$source_dir"/$pattern)
+          if [[ "$PYTHON_PROJECT" == both ]]; then
+            artifacts=("$source_dir"/capture_runtime_client-* "$source_dir"/capture_structuring-*)
+          fi
+          expected_count=2
+          if [[ "$PYTHON_PROJECT" == both ]]; then expected_count=4; fi
+          test "${#artifacts[@]}" -eq "$expected_count"
+          cp -- "${artifacts[@]}" "$target_dir/"
+
       - name: Publish exact Python distributions with Trusted Publishing
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
         with:
-          packages-dir: promotion-input/candidate/python
+          packages-dir: ${{ runner.temp }}/pypi-python
           skip-existing: true
 
-      - name: Record the exact PyPI publication ledger
+      - name: Record the exact PyPI publication ledger for both projects
+        if: ${{ inputs.python_project == 'both' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -114,6 +160,51 @@ jobs:
             --candidate promotion-input/candidate \
             --version '${{ inputs.release_version }}' \
             --output registry-ledger-pypi.json
+
+      - name: Record the exact PyPI client bootstrap ledger
+        if: ${{ inputs.python_project == 'client' }}
+        shell: bash
+        env:
+          CANDIDATE_DIR: ${{ github.workspace }}/promotion-input/candidate
+          PYTHON_DIR: ${{ runner.temp }}/pypi-python
+          RELEASE_VERSION: ${{ inputs.release_version }}
+          RELEASE_CANDIDATE_ID: ${{ inputs.release_candidate_id || inputs.candidate_id }}
+          RUNTIME_CANDIDATE_ID: ${{ inputs.ledger_candidate_id || inputs.candidate_id }}
+          CONTRACT_SET_SHA256: ${{ inputs.contract_set_sha256 }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { createHash } from 'node:crypto';
+          import { readdir, readFile, writeFile } from 'node:fs/promises';
+          import { join } from 'node:path';
+
+          const project = 'capture-runtime-client';
+          const version = process.env.RELEASE_VERSION;
+          const runtimeCandidateId = process.env.RUNTIME_CANDIDATE_ID;
+          const releaseCandidateId = process.env.RELEASE_CANDIDATE_ID;
+          const contractSetSha256 = process.env.CONTRACT_SET_SHA256;
+          const hex64 = (value) => typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
+          if (!hex64(runtimeCandidateId) || !hex64(releaseCandidateId) || !hex64(contractSetSha256)) {
+            throw new Error('PyPI client ledger identity is incomplete.');
+          }
+          const files = (await readdir(process.env.PYTHON_DIR)).filter((name) => /\.(?:whl|tar\.gz)$/.test(name)).sort();
+          if (files.length !== 2 || files.some((name) => !name.startsWith('capture_runtime_client-'))) {
+            throw new Error('PyPI client bootstrap artifact set is not exact.');
+          }
+          const response = await fetch(`https://pypi.org/pypi/${project}/${version}/json`, { headers: { Accept: 'application/json', 'User-Agent': 'gx-capture-release-verifier' } });
+          if (!response.ok) throw new Error(`PyPI ${project} ${version} is not available after publication.`);
+          const payload = await response.json();
+          const remote = new Map((payload.urls ?? []).flatMap((item) => typeof item.filename === 'string' && typeof item.digests?.sha256 === 'string' ? [[item.filename, item.digests.sha256]] : []));
+          const artifacts = [];
+          for (const name of files) {
+            const bytes = await readFile(join(process.env.PYTHON_DIR, name));
+            const sha256 = createHash('sha256').update(bytes).digest('hex');
+            if (remote.get(name) !== sha256) throw new Error(`PyPI artifact differs from the approved candidate: ${name}.`);
+            artifacts.push({ name, sha256 });
+          }
+          const sourceManifest = await readFile(join(process.env.CANDIDATE_DIR, 'runtime-candidate-manifest.json'));
+          await writeFile('registry-ledger-pypi.json', `${JSON.stringify({ schemaVersion: '1', registry: 'pypi', candidateId: runtimeCandidateId, releaseCandidateId, contractSetSha256, sourceCandidateManifestSha256: createHash('sha256').update(sourceManifest).digest('hex'), releaseVersion: version, status: 'published', artifacts }, null, 2)}\n`);
+          NODE
 
       - name: Bind PyPI ledger to the full release candidate and contract set
         if: ${{ inputs.release_candidate_id != '' || inputs.contract_set_sha256 != '' }}
@@ -132,9 +223,17 @@ jobs:
           probe="$RUNNER_TEMP/capture-pypi-probe"
           uv venv "$probe"
           uv pip install --python "$probe/bin/python" --index-url https://pypi.org/simple \
-            "capture-runtime-client==${{ inputs.release_version }}" \
-            "capture-structuring==${{ inputs.release_version }}"
-          "$probe/bin/python" -c 'import capture_runtime_client, capture_structuring; assert capture_runtime_client.__package__ == "capture_runtime_client"; assert capture_structuring.__package__ == "capture_structuring"'
+            $(case '${{ inputs.python_project }}' in
+              client) echo "capture-runtime-client==${{ inputs.release_version }}" ;;
+              structuring) echo "capture-structuring==${{ inputs.release_version }}" ;;
+              both) echo "capture-runtime-client==${{ inputs.release_version }} capture-structuring==${{ inputs.release_version }}" ;;
+              *) exit 1 ;;
+            esac)
+          case '${{ inputs.python_project }}' in
+            client) "$probe/bin/python" -c 'import capture_runtime_client; assert capture_runtime_client.__package__ == "capture_runtime_client"' ;;
+            structuring) "$probe/bin/python" -c 'import capture_structuring; assert capture_structuring.__package__ == "capture_structuring"' ;;
+            both) "$probe/bin/python" -c 'import capture_runtime_client, capture_structuring; assert capture_runtime_client.__package__ == "capture_runtime_client"; assert capture_structuring.__package__ == "capture_structuring"' ;;
+          esac
 
       - name: Upload PyPI publication ledger
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

@@ -3,13 +3,50 @@ import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+const PROJECTS = ['capture-runtime-client', 'capture-structuring'] as const;
+
+export function parseProjects(value = PROJECTS.join(',')): readonly string[] {
+  const projects = value
+    .split(',')
+    .map((project) => project.trim())
+    .filter(Boolean);
+  if (
+    projects.length === 0 ||
+    projects.some(
+      (project) => !(PROJECTS as readonly string[]).includes(project),
+    ) ||
+    new Set(projects).size !== projects.length
+  ) {
+    throw new Error(
+      `PyPI project selection is invalid: ${projects.join(',')}.`,
+    );
+  }
+  return projects;
+}
+
+export function projectArtifacts(
+  artifacts: readonly string[],
+  project: string,
+): readonly string[] {
+  return artifacts.filter((artifact) =>
+    artifact.startsWith(`${project.replaceAll('-', '_')}-`),
+  );
+}
+
 function parseArguments(args: readonly string[]): Map<string, string> {
   const values = new Map<string, string>();
   for (let index = 0; index < args.length; index += 2) {
     const name = args[index];
     const value = args[index + 1];
     if (
-      !['--candidate', '--version', '--output'].includes(name) ||
+      ![
+        '--candidate',
+        '--version',
+        '--output',
+        '--python-directory',
+        '--projects',
+        '--candidate-id',
+      ].includes(name) ||
       !value ||
       values.has(name)
     ) {
@@ -19,7 +56,7 @@ function parseArguments(args: readonly string[]): Map<string, string> {
     }
     values.set(name, value);
   }
-  if (values.size !== 3)
+  if (values.size < 3)
     throw new Error(
       'Use --candidate <directory> --version <semver> --output <file>.',
     );
@@ -31,25 +68,39 @@ async function main(): Promise<void> {
   const candidate = resolve(values.get('--candidate')!);
   const version = values.get('--version')!;
   const output = resolve(values.get('--output')!);
-  const manifestBytes = await readFile(join(candidate, 'candidate-manifest.json'));
-  const manifest = JSON.parse(manifestBytes.toString('utf8')) as { candidateId?: unknown };
+  const pythonDirectory = resolve(
+    values.get('--python-directory') ?? join(candidate, 'python'),
+  );
+  const projects = parseProjects(values.get('--projects'));
+  const manifestBytes = await readFile(
+    join(candidate, 'candidate-manifest.json'),
+  );
+  const manifest = JSON.parse(manifestBytes.toString('utf8')) as {
+    candidateId?: unknown;
+  };
   if (
     typeof manifest.candidateId !== 'string' ||
     !/^[0-9a-f]{64}$/u.test(manifest.candidateId)
   ) {
     throw new Error('PyPI candidate manifest has no valid candidate ID.');
   }
-  const artifacts = (await readdir(join(candidate, 'python')))
+  const candidateId = values.get('--candidate-id') ?? manifest.candidateId;
+  if (typeof candidateId !== 'string' || !/^[0-9a-f]{64}$/u.test(candidateId)) {
+    throw new Error('PyPI ledger candidate ID is invalid.');
+  }
+  const artifacts = (await readdir(pythonDirectory))
     .filter((name) => /\.(?:whl|tar\.gz)$/u.test(name))
     .sort();
   if (
-    artifacts.length !== 4 ||
+    artifacts.length !== projects.length * 2 ||
     artifacts.some(
       (name) =>
-        !new RegExp(
-        `^(?:capture_runtime_client|capture_structuring)-${version.replaceAll('.', '\\.')}(?:-[^/]+)?\\.(?:whl|tar\\.gz)$`,
-          'u',
-        ).test(name),
+        !projects.some((project) =>
+          new RegExp(
+            `^${project.replaceAll('-', '_')}-${version.replaceAll('.', '\\.')}(?:-[^/]+)?\\.(?:whl|tar\\.gz)$`,
+            'u',
+          ).test(name),
+        ),
     )
   ) {
     throw new Error(
@@ -57,7 +108,7 @@ async function main(): Promise<void> {
     );
   }
   const artifactRecords = [] as Array<{ name: string; sha256: string }>;
-  for (const project of ['capture-runtime-client', 'capture-structuring']) {
+  for (const project of projects) {
     const response = await fetch(
       `https://pypi.org/pypi/${project}/${version}/json`,
       {
@@ -86,11 +137,9 @@ async function main(): Promise<void> {
           : [],
       ),
     );
-    for (const name of artifacts.filter((artifact) =>
-      artifact.startsWith(`${project.replaceAll('-', '_')}_`),
-    )) {
+    for (const name of projectArtifacts(artifacts, project)) {
       const candidateDigest = createHash('sha256')
-        .update(await readFile(join(candidate, 'python', name)))
+        .update(await readFile(join(pythonDirectory, name)))
         .digest('hex');
       if (remote.get(name) !== candidateDigest) {
         throw new Error(
@@ -106,8 +155,10 @@ async function main(): Promise<void> {
       {
         schemaVersion: '1',
         registry: 'pypi',
-        candidateId: manifest.candidateId,
-        sourceCandidateManifestSha256: createHash('sha256').update(manifestBytes).digest('hex'),
+        candidateId,
+        sourceCandidateManifestSha256: createHash('sha256')
+          .update(manifestBytes)
+          .digest('hex'),
         releaseVersion: version,
         status: 'published',
         artifacts: artifactRecords.sort((left, right) =>
