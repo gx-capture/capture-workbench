@@ -176,10 +176,13 @@ jobs:
             "${release_candidate_args[@]}" \
             --require-ledger
 
+      - name: Stage Maven ledger for registry verification
+        run: cp promotion-input/candidate/maven-ledger.json registry-ledger-maven.json
+
       - name: Upload Maven publication ledger
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: registry-ledger-maven-${{ inputs.release_candidate_id || inputs.candidate_id }}
-          path: promotion-input/candidate/maven-ledger.json
+          path: registry-ledger-maven.json
           if-no-files-found: error
           retention-days: 14

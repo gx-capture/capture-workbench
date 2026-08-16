@@ -119,6 +119,11 @@ test('Maven publication and registry verification use the Java candidate identit
     publishMaven,
     /GitHub Packages Maven authentication failed \(HTTP 401\)/u,
   );
+  assert.match(
+    publishMaven,
+    /cp promotion-input\/candidate\/maven-ledger\.json registry-ledger-maven\.json/u,
+  );
+  assert.match(publishMaven, /path: registry-ledger-maven\.json/u);
   assert.match(verifyRegistries, /^\s{6}java_candidate_id:\s*$/mu);
   assert.match(
     verifyRegistries,
