@@ -396,7 +396,6 @@ jobs:
     with:
       candidate_id: ${{ inputs.candidate_id }}
       source_commit: ${{ needs.prepare-candidate.outputs.source_commit }}
-      tooling_commit: ${{ github.sha }}
       release_version: ${{ needs.prepare-candidate.outputs.release_version }}
       publication_scope: ${{ inputs.publication_scope }}
       release_candidate_id: ${{ inputs.candidate_id }}
@@ -449,6 +448,7 @@ jobs:
     with:
       candidate_id: ${{ inputs.candidate_id }}
       source_commit: ${{ needs.prepare-candidate.outputs.source_commit }}
+      tooling_commit: ${{ github.sha }}
       release_version: ${{ needs.prepare-candidate.outputs.release_version }}
       tag: v${{ needs.prepare-candidate.outputs.release_version }}
       java_candidate_id: ${{ needs.prepare-candidate.outputs.java_candidate_id }}
