@@ -119,6 +119,12 @@ test('Maven publication and registry verification use the Java candidate identit
     publishMaven,
     /GitHub Packages Maven authentication failed \(HTTP 401\)/u,
   );
+  assert.match(publishMaven, /--location/u);
+  assert.match(publishMaven, /MAVEN_ARTIFACT_EXISTS=true/u);
+  assert.match(
+    publishMaven,
+    /Maven version is already published with exact immutable bytes/u,
+  );
   assert.match(
     publishMaven,
     /cp promotion-input\/candidate\/maven-ledger\.json registry-ledger-maven\.json/u,

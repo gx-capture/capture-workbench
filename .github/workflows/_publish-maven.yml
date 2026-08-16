@@ -110,11 +110,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+          artifact_url="https://maven.pkg.github.com/gx-capture/capture-workbench/com/gx/capture/capture-runtime-client/${{ inputs.release_version }}/capture-runtime-client-${{ inputs.release_version }}.pom"
+          status="$(curl --location --silent --show-error --output /dev/null --write-out '%{http_code}' \
             --user "$MAVEN_USERNAME:$MAVEN_PASSWORD" \
-            "https://maven.pkg.github.com/gx-capture/capture-workbench/com/gx/capture/capture-runtime-client/${{ inputs.release_version }}/capture-runtime-client-${{ inputs.release_version }}.pom")"
+            "$artifact_url")"
           case "$status" in
-            200|404)
+            200)
+              echo "MAVEN_ARTIFACT_EXISTS=true" >> "$GITHUB_ENV"
+              echo "GitHub Packages Maven credentials accepted; this version already exists."
+              ;;
+            404)
+              echo "MAVEN_ARTIFACT_EXISTS=false" >> "$GITHUB_ENV"
               echo "GitHub Packages Maven credentials accepted (HTTP $status)."
               ;;
             401)
@@ -135,14 +141,36 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mvn -B -q -s "$GITHUB_WORKSPACE/settings.xml" \
-            org.apache.maven.plugins:maven-deploy-plugin:3.1.4:deploy-file \
-            -DrepositoryId=github \
-            -Durl=https://maven.pkg.github.com/gx-capture/capture-workbench \
-            -Dfile="promotion-input/candidate/maven/capture-runtime-client-${{ inputs.release_version }}.jar" \
-            -Dsources="promotion-input/candidate/maven/capture-runtime-client-${{ inputs.release_version }}-sources.jar" \
-            -DpomFile=promotion-input/candidate/maven/pom.xml \
-            -DgeneratePom=false
+          candidate_dir="promotion-input/candidate/maven"
+          repository_url="https://maven.pkg.github.com/gx-capture/capture-workbench/com/gx/capture/capture-runtime-client/${{ inputs.release_version }}"
+          if [[ "${MAVEN_ARTIFACT_EXISTS:-false}" == "true" ]]; then
+            existing_dir="$RUNNER_TEMP/capture-maven-existing"
+            rm -rf "$existing_dir"
+            mkdir -p "$existing_dir"
+            artifacts=(
+              "capture-runtime-client-${{ inputs.release_version }}.jar:capture-runtime-client-${{ inputs.release_version }}.jar"
+              "capture-runtime-client-${{ inputs.release_version }}-sources.jar:capture-runtime-client-${{ inputs.release_version }}-sources.jar"
+              "capture-runtime-client-${{ inputs.release_version }}.pom:pom.xml"
+            )
+            for artifact in "${artifacts[@]}"; do
+              IFS=: read -r remote_name candidate_name <<< "$artifact"
+              curl --fail --location --silent --show-error \
+                --user "$MAVEN_USERNAME:$MAVEN_PASSWORD" \
+                --output "$existing_dir/$remote_name" \
+                "$repository_url/$remote_name"
+              cmp --silent "$existing_dir/$remote_name" "$candidate_dir/$candidate_name"
+            done
+            echo "Maven version is already published with exact immutable bytes."
+          else
+            mvn -B -q -s "$GITHUB_WORKSPACE/settings.xml" \
+              org.apache.maven.plugins:maven-deploy-plugin:3.1.4:deploy-file \
+              -DrepositoryId=github \
+              -Durl=https://maven.pkg.github.com/gx-capture/capture-workbench \
+              -Dfile="$candidate_dir/capture-runtime-client-${{ inputs.release_version }}.jar" \
+              -Dsources="$candidate_dir/capture-runtime-client-${{ inputs.release_version }}-sources.jar" \
+              -DpomFile="$candidate_dir/pom.xml" \
+              -DgeneratePom=false
+          fi
 
       - name: Verify a clean Maven consumer installation and record the ledger
         shell: bash
