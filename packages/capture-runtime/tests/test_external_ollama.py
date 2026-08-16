@@ -24,7 +24,16 @@ class FixedClock(Clock):
         return COMPLETED_AT
 
 
-def _raw() -> RawCapture:
+def _raw(*, segment_count: int = 1, text_chars: int = 12) -> RawCapture:
+    segments = [
+        {
+            "segmentId": f"page-{index + 1}",
+            "order": index,
+            "locator": {"kind": "page", "page": index + 1},
+            "text": f"source text {index}-" + ("x" * text_chars),
+        }
+        for index in range(segment_count)
+    ]
     return RawCapture.model_validate(
         {
             "schemaVersion": "2",
@@ -35,15 +44,8 @@ def _raw() -> RawCapture:
                 "mediaType": "application/pdf",
                 "bytes": 42,
             },
-            "segments": [
-                {
-                    "segmentId": "page-1",
-                    "order": 0,
-                    "locator": {"kind": "page", "page": 1},
-                    "text": "source text",
-                }
-            ],
-            "sourceText": "source text",
+            "segments": segments,
+            "sourceText": "\n".join(segment["text"] for segment in segments),
             "extractionEngine": {
                 "engine": "windowsml-ocr",
                 "model": "capture-ocr-v1",
@@ -67,14 +69,14 @@ def _handler(requests: list[httpx.Request], *, digest: str) -> httpx.MockTranspo
             )
         payload = json.loads(request.content)
         prompt = json.loads(payload["prompt"])
-        segment = prompt["rawSegments"][0]
         candidate = {
             "blocks": [
                 {
                     "type": "paragraph",
-                    "sourceSegmentId": segment["segmentId"],
-                    "targetText": "translated text",
+                    "sourceSegmentId": segment.get("segmentId") or segment["sourceSegmentId"],
+                    **({"targetText": "translated text"} if "segmentId" in segment else {}),
                 }
+                for segment in prompt["rawSegments"]
             ]
         }
         return httpx.Response(
@@ -123,3 +125,95 @@ def test_external_ollama_rejects_invalid_model_digest() -> None:
 
     with pytest.raises(RuntimeUnavailableError, match="invalid model digest"):
         asyncio.run(provider.structure(_raw(), target_language=None, cancel_event=asyncio.Event()))
+
+
+def test_external_ollama_preserves_order_across_multiple_batches() -> None:
+    requests: list[httpx.Request] = []
+    provider = ExternalOllamaCaptureStructuringProvider(
+        ExternalOllamaConfig(
+            endpoint_url="https://ollama.internal",
+            model="qwen3.5:4b",
+        ),
+        clock=FixedClock(),
+        num_ctx=4_096,
+        num_predict=1_536,
+        transport=_handler(requests, digest="c" * 64),
+    )
+
+    document = asyncio.run(
+        provider.structure(
+            _raw(segment_count=5, text_chars=1_200),
+            target_language="zh-TW",
+            cancel_event=asyncio.Event(),
+        )
+    )
+
+    assert [block.order for block in document.blocks] == list(range(5))
+    assert len([request for request in requests if request.url.path == "/api/generate"]) == 3
+
+
+def test_external_ollama_cancels_in_flight_generation() -> None:
+    async def scenario() -> None:
+        request_started = asyncio.Event()
+        request_cancelled = asyncio.Event()
+
+        async def handle(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/api/tags":
+                return httpx.Response(
+                    200,
+                    json={"models": [{"name": "qwen3.5:4b", "digest": "c" * 64}]},
+                    request=request,
+                )
+            request_started.set()
+            try:
+                await asyncio.Future()
+            except asyncio.CancelledError:
+                request_cancelled.set()
+                raise
+            raise AssertionError("unreachable")
+
+        provider = ExternalOllamaCaptureStructuringProvider(
+            ExternalOllamaConfig(
+                endpoint_url="https://ollama.internal",
+                model="qwen3.5:4b",
+            ),
+            clock=FixedClock(),
+            transport=httpx.MockTransport(handle),
+        )
+        cancellation = asyncio.Event()
+        task = asyncio.create_task(
+            provider.structure(_raw(), target_language="zh-TW", cancel_event=cancellation)
+        )
+        await request_started.wait()
+        cancellation.set()
+
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert request_cancelled.is_set()
+
+    asyncio.run(scenario())
+
+
+def test_external_ollama_propagates_generation_http_failure() -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/tags":
+            return httpx.Response(
+                200,
+                json={"models": [{"name": "qwen3.5:4b", "digest": "c" * 64}]},
+                request=request,
+            )
+        return httpx.Response(503, request=request)
+
+    provider = ExternalOllamaCaptureStructuringProvider(
+        ExternalOllamaConfig(
+            endpoint_url="https://ollama.internal",
+            model="qwen3.5:4b",
+        ),
+        clock=FixedClock(),
+        transport=httpx.MockTransport(handle),
+    )
+
+    with pytest.raises(RuntimeUnavailableError, match="generation failed"):
+        asyncio.run(
+            provider.structure(_raw(), target_language="zh-TW", cancel_event=asyncio.Event())
+        )

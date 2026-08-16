@@ -21,6 +21,10 @@ import {
   type RuntimeTransport,
   type RuntimeTransportRequest,
   type CaptureUpload,
+  type OpenStructuringSession,
+  type StructuringBatch,
+  type StructuringSession,
+  type SubmitStructuringBatch,
 } from './contracts.js';
 import {
   CaptureRuntimeCompatibilityError,
@@ -32,6 +36,7 @@ import {
   decodeJson,
   decodeSse,
   parseJsonFrame,
+  assertStructuringBatchSubmission,
   type RuntimeResponseModel,
 } from './codec.js';
 import { HttpRuntimeTransport } from './transport.js';
@@ -393,6 +398,113 @@ export class CaptureRuntimeClient {
       message,
       idempotencyKey,
       signal,
+    );
+  }
+
+  /** Open an authenticated pull-based structuring session for one capture. */
+  openStructuringSession(
+    captureId: string,
+    request: OpenStructuringSession,
+    idempotencyKey = request.clientRequestId,
+    signal?: AbortSignal,
+  ): Promise<StructuringSession> {
+    if (request.captureId !== captureId) {
+      throw new CaptureRuntimeProtocolError(
+        'Structuring session captureId must match the route capture.',
+      );
+    }
+    if (!idempotencyKey || idempotencyKey !== request.clientRequestId) {
+      throw new CaptureRuntimeProtocolError(
+        'X-Idempotency-Key must match structuring session clientRequestId.',
+      );
+    }
+    return this.json(
+      {
+        path: `/v2/captures/${encodeURIComponent(captureId)}/structure/session`,
+        method: 'POST',
+        signal,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Idempotency-Key': idempotencyKey,
+        },
+        body: JSON.stringify(request),
+      },
+      'StructuringSession',
+    );
+  }
+
+  getStructuringSession(
+    captureId: string,
+    signal?: AbortSignal,
+  ): Promise<StructuringSession> {
+    return this.json(
+      {
+        path: `/v2/captures/${encodeURIComponent(captureId)}/structure/session`,
+        signal,
+      },
+      'StructuringSession',
+    );
+  }
+
+  getStructuringBatch(
+    captureId: string,
+    batchIndex: number,
+    signal?: AbortSignal,
+  ): Promise<StructuringBatch> {
+    if (!Number.isInteger(batchIndex) || batchIndex < 0) {
+      throw new CaptureRuntimeProtocolError(
+        'Structuring batch index must be a non-negative integer.',
+      );
+    }
+    return this.json(
+      {
+        path: `/v2/captures/${encodeURIComponent(captureId)}/structure/session/batches/${batchIndex}`,
+        signal,
+      },
+      'StructuringBatch',
+    );
+  }
+
+  /** Alias that makes the pull nature explicit for host coordinators. */
+  pullStructuringBatch(
+    captureId: string,
+    batchIndex: number,
+    signal?: AbortSignal,
+  ): Promise<StructuringBatch> {
+    return this.getStructuringBatch(captureId, batchIndex, signal);
+  }
+
+  submitStructuringBatch(
+    captureId: string,
+    batchIndex: number,
+    submission: SubmitStructuringBatch,
+    idempotencyKey: string,
+    signal?: AbortSignal,
+  ): Promise<StructuringSession> {
+    if (!Number.isInteger(batchIndex) || batchIndex < 0) {
+      throw new CaptureRuntimeProtocolError(
+        'Structuring batch index must be a non-negative integer.',
+      );
+    }
+    assertStructuringBatchSubmission(submission);
+    if (!idempotencyKey) {
+      throw new CaptureRuntimeProtocolError(
+        'Structuring batch submissions require X-Idempotency-Key.',
+      );
+    }
+    const body = { ...submission, protocolVersion: '2' as const };
+    return this.json(
+      {
+        path: `/v2/captures/${encodeURIComponent(captureId)}/structure/session/batches/${batchIndex}`,
+        method: 'PUT',
+        signal,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Idempotency-Key': idempotencyKey,
+        },
+        body: JSON.stringify(body),
+      },
+      'StructuringSession',
     );
   }
 
@@ -786,19 +898,24 @@ export class CaptureRuntimeClient {
       '/v2/captures/{capture_id}/events',
       '/v2/captures/{capture_id}/raw',
       '/v2/captures/{capture_id}/result',
+      '/v2/captures/{capture_id}/structure/session',
+      '/v2/captures/{capture_id}/structure/session/batches/{batch_index}',
     ]) {
       if (!paths.has(path))
         throw new CaptureRuntimeCompatibilityError(
           'Capture Runtime contract bundle does not advertise the required client surface.',
         );
     }
-    const requireOperation = (path: string) =>
+    const requireOperation = (path: string, method?: string) =>
       operations.find(
-        (operation) => (operation as { path?: unknown })?.path === path,
+        (operation) =>
+          (operation as { path?: unknown; method?: unknown })?.path === path &&
+          (method === undefined || (operation as { method?: unknown })?.method === method),
       ) as
         | {
             body?: { kind?: unknown };
             requiredHeaders?: unknown[];
+            idempotency?: { mode?: unknown; header?: unknown };
             mediaType?: unknown;
             streaming?: { kind?: unknown; lastEventIdHeader?: unknown };
           }
@@ -808,6 +925,18 @@ export class CaptureRuntimeClient {
       '/v2/ingestions/{ingestion_id}/chunks/{chunk_index}',
     );
     const events = requireOperation('/v2/captures/{capture_id}/events');
+    const sessionOpen = requireOperation(
+      '/v2/captures/{capture_id}/structure/session',
+      'POST',
+    );
+    const batchGet = requireOperation(
+      '/v2/captures/{capture_id}/structure/session/batches/{batch_index}',
+      'GET',
+    );
+    const batchSubmit = requireOperation(
+      '/v2/captures/{capture_id}/structure/session/batches/{batch_index}',
+      'PUT',
+    );
     if (
       !['json', 'none'].includes(String(upload?.body?.kind)) ||
       !upload?.requiredHeaders?.includes('X-Idempotency-Key')
@@ -833,6 +962,19 @@ export class CaptureRuntimeClient {
     ) {
       throw new CaptureRuntimeCompatibilityError(
         'Capture Runtime SSE metadata is incompatible.',
+      );
+    }
+    if (
+      sessionOpen?.body?.kind !== 'json' ||
+      !sessionOpen.requiredHeaders?.includes('X-Idempotency-Key') ||
+      sessionOpen.idempotency?.mode !== 'required' ||
+      batchGet?.body?.kind !== 'none' ||
+      batchSubmit?.body?.kind !== 'json' ||
+      !batchSubmit.requiredHeaders?.includes('X-Idempotency-Key') ||
+      batchSubmit.idempotency?.mode !== 'required'
+    ) {
+      throw new CaptureRuntimeCompatibilityError(
+        'Capture Runtime pull-session metadata is incompatible.',
       );
     }
     const documentSchema = bundle['schemas'].find(

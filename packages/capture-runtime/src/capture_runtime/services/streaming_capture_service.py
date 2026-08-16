@@ -8,7 +8,6 @@ import json
 from contextlib import suppress
 from pathlib import Path
 
-from capture_structuring import StructuringValidationError, validate_structuring_candidate
 from pydantic import ValidationError
 
 from capture_runtime.clock import Clock
@@ -49,6 +48,7 @@ from capture_runtime.storage import (
     StreamingTransitionError,
 )
 from capture_runtime.streaming import MAX_STREAM_CHUNK_BYTES
+from capture_runtime.structuring import StructuringValidationError, validate_structuring_candidate
 from capture_runtime.structuring_provider import CaptureStructuringProvider
 
 

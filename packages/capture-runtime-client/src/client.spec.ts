@@ -190,6 +190,21 @@ describe('CaptureRuntimeClient', () => {
         }),
         operation('/v2/captures/{capture_id}/raw'),
         operation('/v2/captures/{capture_id}/result'),
+        operation('/v2/captures/{capture_id}/structure/session', {
+          method: 'POST',
+          body: { kind: 'json' },
+          requiredHeaders: ['X-Idempotency-Key'],
+          idempotency: { mode: 'required', header: 'X-Idempotency-Key' },
+        }),
+        operation('/v2/captures/{capture_id}/structure/session/batches/{batch_index}', {
+          method: 'GET',
+        }),
+        operation('/v2/captures/{capture_id}/structure/session/batches/{batch_index}', {
+          method: 'PUT',
+          body: { kind: 'json' },
+          requiredHeaders: ['X-Idempotency-Key'],
+          idempotency: { mode: 'required', header: 'X-Idempotency-Key' },
+        }),
       ],
       problems: [],
       invariants: [],
@@ -611,5 +626,184 @@ describe('CaptureRuntimeClient', () => {
       events.push(event);
     expect(events.map((event) => event.sequence)).toEqual([1, 2]);
     expect(received).toEqual(['', '1']);
+  });
+
+  it('opens, pulls, and submits strict pull-session batches with matching idempotency', async () => {
+    const session = {
+      protocolVersion: '2',
+      sessionId: 'session-1',
+      captureId: 'cap',
+      rawSourceSha256: 'a'.repeat(64),
+      contractSetSha256: CAPTURE_CONTRACT_SET_SHA256,
+      providerCapability: {
+        provider: { engine: 'ollama', model: 'model-1', digest: `sha256:${'b'.repeat(64)}` },
+        capability: 'capture-structuring',
+        schemaDialect: 'https://json-schema.org/draft/2020-12/schema',
+      },
+      schemaDialect: 'https://json-schema.org/draft/2020-12/schema',
+      batchCount: 1,
+      nextBatchIndex: 0,
+      sessionDigest: 'c'.repeat(64),
+      status: 'open',
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z',
+      completedAt: null,
+    };
+    const batch = {
+      protocolVersion: '2',
+      sessionId: 'session-1',
+      captureId: 'cap',
+      batchIndex: 0,
+      batchCount: 1,
+      sourceSegmentIds: ['segment-1'],
+      providerPrompt: { rawSegments: [] },
+      providerSchema: { type: 'object' },
+      numCtx: 2048,
+      numPredict: 256,
+      batchDigest: 'd'.repeat(64),
+      status: 'ready',
+    };
+    let openHeaders: Headers | undefined;
+    let submitHeaders: Headers | undefined;
+    const transport = new InMemoryRuntimeTransport(
+      withDiscovery([
+        {
+          method: 'POST',
+          path: '/v2/captures/cap/structure/session',
+          handle: (request) => {
+            openHeaders = new Headers(request.headers);
+            return new Response(JSON.stringify(session), {
+              status: 201,
+              headers: { 'Content-Type': 'application/json' },
+            });
+          },
+        },
+        {
+          method: 'GET',
+          path: '/v2/captures/cap/structure/session',
+          handle: () => Response.json(session),
+        },
+        {
+          method: 'GET',
+          path: '/v2/captures/cap/structure/session/batches/0',
+          handle: () => Response.json(batch),
+        },
+        {
+          method: 'PUT',
+          path: '/v2/captures/cap/structure/session/batches/0',
+          handle: (request) => {
+            submitHeaders = new Headers(request.headers);
+            return Response.json({ ...session, nextBatchIndex: 1, status: 'completed' });
+          },
+        },
+      ]),
+    );
+    const client = new CaptureRuntimeClient({ baseUrl: 43123, transport });
+    const request = {
+      protocolVersion: '2' as const,
+      captureId: 'cap',
+      providerCapability: session.providerCapability,
+      schemaDialect: session.schemaDialect,
+      clientRequestId: 'session-key',
+    };
+    await client.openStructuringSession('cap', request);
+    expect((await client.openStructuringSession('cap', request)).sessionId).toBe('session-1');
+    expect(openHeaders?.get('X-Idempotency-Key')).toBe('session-key');
+    expect((await client.getStructuringSession('cap')).sessionId).toBe('session-1');
+    expect((await client.pullStructuringBatch('cap', 0)).batchDigest).toBe(batch.batchDigest);
+    await client.submitStructuringBatch(
+      'cap',
+      0,
+      { batchDigest: batch.batchDigest, blocks: [{ sourceSegmentId: 'segment-1', type: 'paragraph', targetText: 'translated' }] },
+      'batch-key',
+    );
+    await client.submitStructuringBatch(
+      'cap',
+      0,
+      { batchDigest: batch.batchDigest, blocks: [{ sourceSegmentId: 'segment-1', type: 'paragraph', targetText: 'translated' }] },
+      'batch-key',
+    );
+    expect(submitHeaders?.get('X-Idempotency-Key')).toBe('batch-key');
+    expect(() => client.openStructuringSession('other', request)).toThrow(
+      CaptureRuntimeProtocolError,
+    );
+  });
+
+  it('rejects extra semantic batch fields before transport and maps keyed conflicts', async () => {
+    const transport = new InMemoryRuntimeTransport(
+      withDiscovery([
+        {
+          method: 'PUT',
+          path: '/v2/captures/cap/structure/session/batches/0',
+          handle: () =>
+            new Response(
+              JSON.stringify({
+                error: { code: 'idempotency_conflict', message: 'same key, different body' },
+              }),
+              { status: 409, headers: { 'Content-Type': 'application/json' } },
+            ),
+        },
+      ]),
+    );
+    const client = new CaptureRuntimeClient({ baseUrl: 43123, transport });
+    await expect(
+      Promise.resolve().then(() =>
+        client.submitStructuringBatch(
+          'cap',
+          0,
+          {
+            batchDigest: 'e'.repeat(64),
+            blocks: [
+              {
+                sourceSegmentId: 'segment-1',
+                type: 'paragraph',
+                targetText: 'ok',
+                sourceText: 'must-not-cross-the-wire',
+              },
+            ],
+          } as never,
+          'batch-key',
+        ),
+      ),
+    ).rejects.toBeInstanceOf(CaptureRuntimeProtocolError);
+    await expect(
+      client.submitStructuringBatch(
+        'cap',
+        0,
+        { batchDigest: 'e'.repeat(64), blocks: [{ sourceSegmentId: 'segment-1', type: 'paragraph' }] },
+        'batch-key',
+      ),
+    ).rejects.toMatchObject({ code: 'idempotency_conflict', category: 'remote' });
+  });
+
+  it('rejects extra pull-session response fields before exposing decoded data', async () => {
+    const transport = new InMemoryRuntimeTransport(
+      withDiscovery([
+        {
+          method: 'GET',
+          path: '/v2/captures/cap/structure/session/batches/0',
+          handle: () =>
+            Response.json({
+              protocolVersion: '2',
+              sessionId: 'session-1',
+              captureId: 'cap',
+              batchIndex: 0,
+              batchCount: 1,
+              sourceSegmentIds: ['segment-1'],
+              providerPrompt: {},
+              providerSchema: {},
+              numCtx: 1,
+              numPredict: 1,
+              batchDigest: 'e'.repeat(64),
+              status: 'ready',
+              unexpected: true,
+            }),
+        },
+      ]),
+    );
+    const client = new CaptureRuntimeClient({ baseUrl: 43123, transport });
+    await expect(client.getStructuringBatch('cap', 0)).rejects.toBeInstanceOf(
+      CaptureRuntimeProtocolError,
+    );
   });
 });

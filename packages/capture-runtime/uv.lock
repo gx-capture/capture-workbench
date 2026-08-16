@@ -173,9 +173,9 @@ version = "0.4.0"
 source = { editable = "." }
 dependencies = [
     { name = "av" },
-    { name = "capture-structuring" },
     { name = "fastapi" },
     { name = "httpx" },
+    { name = "jsonschema" },
     { name = "pydantic" },
     { name = "pypdf" },
     { name = "python-multipart" },
@@ -204,17 +204,18 @@ dev = [
     { name = "pypdfium2" },
     { name = "pytest" },
     { name = "ruff" },
+    { name = "types-jsonschema" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "av", specifier = ">=18.0.0,<19.0.0" },
-    { name = "capture-structuring", directory = "../capture-structuring-python" },
     { name = "ctranslate2", marker = "extra == 'whisper'", specifier = "==4.8.1" },
     { name = "fastapi", specifier = ">=0.128.0,<1.0.0" },
     { name = "faster-whisper", marker = "extra == 'whisper'", specifier = "==1.2.1" },
     { name = "httpx", specifier = ">=0.28.0,<1.0.0" },
     { name = "huggingface-hub", marker = "extra == 'whisper'", specifier = ">=1.18.0,<2.0.0" },
+    { name = "jsonschema", specifier = ">=4.25.0,<5.0.0" },
     { name = "onnxruntime-directml", marker = "sys_platform == 'win32' and extra == 'windowsml'", specifier = "==1.24.4" },
     { name = "paddleocr", marker = "extra == 'windowsml'", specifier = "==3.7.0" },
     { name = "paddlex", extras = ["ocr-core"], marker = "extra == 'windowsml'", specifier = "==3.7.1" },
@@ -233,52 +234,6 @@ dev = [
     { name = "pillow", specifier = ">=11.0.0,<13.0.0" },
     { name = "pyinstaller", specifier = ">=6.19.0,<7.0.0" },
     { name = "pypdfium2", specifier = ">=5.0.0,<6.0.0" },
-    { name = "pytest", specifier = ">=8.3.0,<9.0.0" },
-    { name = "ruff", specifier = ">=0.9.0,<1.0.0" },
-]
-
-[[package]]
-name = "capture-runtime-client"
-version = "0.4.0"
-source = { directory = "../capture-runtime-client-python" }
-dependencies = [
-    { name = "httpx" },
-    { name = "pydantic" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "httpx", specifier = ">=0.27.0,<1.0.0" },
-    { name = "pydantic", specifier = ">=2.13.4,<3.0.0" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "mypy", specifier = ">=1.14.0,<2.0.0" },
-    { name = "pytest", specifier = ">=8.3.0,<9.0.0" },
-    { name = "ruff", specifier = ">=0.9.0,<1.0.0" },
-]
-
-[[package]]
-name = "capture-structuring"
-version = "0.4.0"
-source = { directory = "../capture-structuring-python" }
-dependencies = [
-    { name = "capture-runtime-client" },
-    { name = "jsonschema" },
-    { name = "pydantic" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "capture-runtime-client", directory = "../capture-runtime-client-python" },
-    { name = "jsonschema", specifier = ">=4.25.0,<5.0.0" },
-    { name = "pydantic", specifier = ">=2.12.0,<3.0.0" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "mypy", specifier = ">=1.14.0,<2.0.0" },
     { name = "pytest", specifier = ">=8.3.0,<9.0.0" },
     { name = "ruff", specifier = ">=0.9.0,<1.0.0" },
     { name = "types-jsonschema", specifier = ">=4.25.0,<5.0.0" },
@@ -1437,6 +1392,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/8c/69/40407dfc835517f058b603dbf37a6df094d8582b015a51eddc988febbcb7/tqdm-4.69.0.tar.gz", hash = "sha256:700c5e85dcd5f009dd6222588a29180a193a748247a5d855b4d67db93d79a53b", size = 792569, upload-time = "2026-07-17T18:09:06.2Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/fe/21/99a0cdaf54eb35e77623c41b5a2c9472ee4404bba687052791fe2aba6773/tqdm-4.69.0-py3-none-any.whl", hash = "sha256:9979978912be667a6ef21fd5d8abf54e324e63d82f7f43c360792ebc2bc4e622", size = 676680, upload-time = "2026-07-17T18:09:04.172Z" },
+]
+
+[[package]]
+name = "types-jsonschema"
+version = "4.26.0.20260518"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "referencing" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/dd/46/73b6a5d61a61015c4248030a8cb07e5bdddb4041430fae9e585a68692578/types_jsonschema-4.26.0.20260518.tar.gz", hash = "sha256:e1dd53dc97a64f5eccdd6fa9839666e09bb500a8ebba2db6fdaf1789faea81a6", size = 16638, upload-time = "2026-05-18T06:06:44.106Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/07/d5/134f8a147dcecda10db7f60cfc6af0578a25a5c53c87b3907a64385e0184/types_jsonschema-4.26.0.20260518-py3-none-any.whl", hash = "sha256:30b30a518c7fe335df85c919fcbcc631b69c03d4a4b5b632fa916bea03065307", size = 16072, upload-time = "2026-05-18T06:06:43.264Z" },
 ]
 
 [[package]]

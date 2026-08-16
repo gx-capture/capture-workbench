@@ -1,0 +1,43 @@
+{
+  "additionalProperties": false,
+  "description": "Minimal semantic block accepted from a pull-session provider.",
+  "properties": {
+    "sourceSegmentId": {
+      "minLength": 1,
+      "title": "Sourcesegmentid",
+      "type": "string"
+    },
+    "type": {
+      "enum": [
+        "heading",
+        "paragraph",
+        "list-item",
+        "table",
+        "quote",
+        "transcript"
+      ],
+      "title": "Type",
+      "type": "string"
+    },
+    "targetText": {
+      "anyOf": [
+        {
+          "maxLength": 2000000,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Targettext"
+    }
+  },
+  "required": [
+    "sourceSegmentId",
+    "type"
+  ],
+  "title": "StructuringSemanticBlockV2",
+  "type": "object"
+}

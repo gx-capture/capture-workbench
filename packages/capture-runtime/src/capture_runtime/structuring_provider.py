@@ -1,8 +1,8 @@
 """Runtime-owned provider protocol and deterministic providers.
 
-Batching, semantic validation, and provenance reconstruction intentionally live
-only in ``capture_structuring``; this module owns the sidecar's provider
-lifecycle boundary and test doubles.
+Batching, semantic validation, and provenance reconstruction live in the
+internal ``capture_runtime.structuring`` package. This module owns the
+sidecar's provider lifecycle boundary and test doubles.
 """
 
 from __future__ import annotations
@@ -11,8 +11,6 @@ import asyncio
 import hashlib
 from typing import Protocol
 
-from capture_structuring import StructuringValidationError
-
 from capture_runtime.clock import Clock
 from capture_runtime.contracts import (
     CaptureBlock,
@@ -20,6 +18,7 @@ from capture_runtime.contracts import (
     CaptureEngine,
     RawCapture,
 )
+from capture_runtime.structuring import StructuringValidationError
 
 
 class CaptureStructuringProvider(Protocol):

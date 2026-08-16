@@ -1,6 +1,15 @@
 # Structuring provider boundary
 
-- `capture-runtime` owns extraction, job state, canonical validation, and result retention.
+- `capture-runtime` owns extraction, job state, canonical validation, result
+  retention, and the runtime-local `capture_runtime.structuring` parity
+  implementation for batching, prompt/schema adaptation, minimal semantic
+  validation, and provenance reconstruction.
+- The standalone `capture-structuring` TypeScript and Python packages are
+  temporarily retained but frozen for consumers. They remain available until
+  consumer cutover and same-digest gates pass; no new runtime behavior is added
+  to them.
+- The Python, TypeScript, and Java `capture-runtime-client` packages remain the
+  client SDKs. No structuring-client packages are created.
 - A host may supply `CaptureStructuringProvider`; the host mode pauses at `awaiting_structuring`, then commits a candidate document for runtime validation.
 - The standalone Workbench uses a runtime-owned isolated Ollama provider.
 - `cert-prep` and `law-prep` reuse their existing AI providers and must not launch a second semantic provider for capture.
@@ -47,6 +56,23 @@ They may request strictly validated ordered block batches and deterministically
 assemble the immutable raw provenance into one candidate; invalid, missing, or
 reordered batch output is terminal and is never repaired. The completed
 candidate is still accepted only by the runtime's full-document validator.
+
+The legacy v2 full-document host commit route remains the compatibility path
+until the explicit v3 retirement gate. The additive pull-session contract must
+not replace or bypass that route before the gate.
+
+## Pull-session contract freeze
+
+The runtime and typed SDKs implement the additive pull-session contract with
+these frozen semantics:
+
+- provider capabilities advertise both provider capability and schema dialect;
+- each provider response contains only minimal semantic batch output;
+- a review overlay can annotate or revise presentation, but cannot modify raw
+  capture or reconstructed provenance;
+- every batch and session has a digest identity plus idempotency/conflict
+  handling; and
+- persisted checkpoints provide crash-safe recovery and deterministic replay.
 
 ## Security and compatibility rules
 

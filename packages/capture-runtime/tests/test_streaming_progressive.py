@@ -8,7 +8,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-from capture_structuring import StructuringValidationError
 
 from capture_runtime.clock import Clock
 from capture_runtime.contracts import (
@@ -33,6 +32,7 @@ from capture_runtime.progressive_capture import (
 from capture_runtime.progressive_decoder import ProgressiveDecoderError
 from capture_runtime.services import StreamingCaptureService
 from capture_runtime.storage import StreamingRepository
+from capture_runtime.structuring import StructuringValidationError
 from capture_runtime.structuring_provider import FakeCaptureStructuringProvider
 from capture_runtime.whisper_session import SessionFrameType
 

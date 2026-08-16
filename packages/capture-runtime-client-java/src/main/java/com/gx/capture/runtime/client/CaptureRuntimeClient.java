@@ -26,6 +26,10 @@ import com.gx.capture.runtime.client.CaptureRuntimeTypes.SourceKind;
 import com.gx.capture.runtime.client.CaptureRuntimeTypes.StartCapture;
 import com.gx.capture.runtime.client.CaptureRuntimeTypes.StreamingCapabilities;
 import com.gx.capture.runtime.client.CaptureRuntimeTypes.StructuringMode;
+import com.gx.capture.runtime.client.CaptureRuntimeTypes.OpenStructuringSession;
+import com.gx.capture.runtime.client.CaptureRuntimeTypes.StructuringBatch;
+import com.gx.capture.runtime.client.CaptureRuntimeTypes.StructuringSession;
+import com.gx.capture.runtime.client.CaptureRuntimeTypes.SubmitStructuringBatch;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
@@ -213,6 +217,61 @@ public final class CaptureRuntimeClient {
     return json("POST", "/v2/captures/" + pathPart(id) + "/structure/failure", object(Map.of("protocolVersion", "2", "code", code, "message", message)), CaptureOperation.class, headers("X-Idempotency-Key", requiredKey(idempotencyKey)));
   }
 
+  /** Open a typed, pull-based structuring session for one capture. */
+  public StructuringSession openStructuringSession(
+      String captureId, OpenStructuringSession request, String idempotencyKey) {
+    Objects.requireNonNull(request, "request");
+    if (!request.captureId().equals(captureId)) {
+      throw new IllegalArgumentException("structuring session captureId must match route capture");
+    }
+    var key = requiredKey(idempotencyKey);
+    if (!key.equals(request.clientRequestId())) {
+      throw new IllegalArgumentException("X-Idempotency-Key must match clientRequestId");
+    }
+    return json(
+        "POST",
+        "/v2/captures/" + pathPart(captureId) + "/structure/session",
+        object(request),
+        StructuringSession.class,
+        headers("X-Idempotency-Key", key));
+  }
+
+  public StructuringSession getStructuringSession(String captureId) {
+    return json(
+        "GET",
+        "/v2/captures/" + pathPart(captureId) + "/structure/session",
+        null,
+        StructuringSession.class,
+        Map.of());
+  }
+
+  public StructuringBatch getStructuringBatch(String captureId, int batchIndex) {
+    if (batchIndex < 0) throw new IllegalArgumentException("batchIndex must not be negative");
+    return json(
+        "GET",
+        "/v2/captures/" + pathPart(captureId) + "/structure/session/batches/" + batchIndex,
+        null,
+        StructuringBatch.class,
+        Map.of());
+  }
+
+  /** Alias that makes the pull nature explicit for host coordinators. */
+  public StructuringBatch pullStructuringBatch(String captureId, int batchIndex) {
+    return getStructuringBatch(captureId, batchIndex);
+  }
+
+  public StructuringSession submitStructuringBatch(
+      String captureId, int batchIndex, SubmitStructuringBatch submission, String idempotencyKey) {
+    if (batchIndex < 0) throw new IllegalArgumentException("batchIndex must not be negative");
+    Objects.requireNonNull(submission, "submission");
+    return json(
+        "PUT",
+        "/v2/captures/" + pathPart(captureId) + "/structure/session/batches/" + batchIndex,
+        object(submission),
+        StructuringSession.class,
+        headers("X-Idempotency-Key", requiredKey(idempotencyKey)));
+  }
+
   public List<CaptureEvent> captureEvents(String id) { return captureEvents(id, null); }
 
   public List<CaptureEvent> captureEvents(String id, Long lastEventId) {
@@ -293,10 +352,34 @@ public final class CaptureRuntimeClient {
         "/v2/captures",
         "/v2/captures/{capture_id}/events",
         "/v2/captures/{capture_id}/raw",
-        "/v2/captures/{capture_id}/result"))) {
+        "/v2/captures/{capture_id}/result",
+        "/v2/captures/{capture_id}/structure/session",
+        "/v2/captures/{capture_id}/structure/session/batches/{batch_index}"))) {
       throw new CaptureCompatibilityError("Capture Runtime contract bundle is missing a required client operation");
     }
+    var sessionOpen = operation(bundle, "/v2/captures/{capture_id}/structure/session", "POST");
+    var batchGet = operation(bundle, "/v2/captures/{capture_id}/structure/session/batches/{batch_index}", "GET");
+    var batchSubmit = operation(bundle, "/v2/captures/{capture_id}/structure/session/batches/{batch_index}", "PUT");
+    if (sessionOpen == null || batchGet == null || batchSubmit == null
+        || !"json".equals(sessionOpen.path("body").path("kind").asText())
+        || !"required".equals(sessionOpen.path("idempotency").path("mode").asText())
+        || !sessionOpen.path("requiredHeaders").toString().contains("X-Idempotency-Key")
+        || !"none".equals(batchGet.path("body").path("kind").asText())
+        || !"json".equals(batchSubmit.path("body").path("kind").asText())
+        || !"required".equals(batchSubmit.path("idempotency").path("mode").asText())
+        || !batchSubmit.path("requiredHeaders").toString().contains("X-Idempotency-Key")) {
+      throw new CaptureCompatibilityError("Capture Runtime pull-session operation metadata is incompatible");
+    }
     return new DiscoveredContractSet(index, bundle, bundleHash);
+  }
+
+  private static JsonNode operation(JsonNode bundle, String path, String method) {
+    for (var operation : bundle.path("operations")) {
+      if (path.equals(operation.path("path").asText()) && method.equals(operation.path("method").asText())) {
+        return operation;
+      }
+    }
+    return null;
   }
 
   private <T> T json(String method, String path, byte[] body, Class<T> type, Map<String, List<String>> headers) {

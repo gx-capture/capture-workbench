@@ -3,31 +3,23 @@
 import os
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_data_files
-
 root = Path(SPEC).resolve().parents[1]
 layout = os.environ.get("CAPTURE_PYINSTALLER_LAYOUT", "onefile")
 if layout not in {"onefile", "onedir"}:
     raise ValueError("CAPTURE_PYINSTALLER_LAYOUT must be onefile or onedir")
 catalog = Path(os.environ["CAPTURE_ENGINE_CATALOG_BUILD_PATH"])
 contract_assets = root / "src" / "capture_runtime" / "assets"
-runtime_client_assets = collect_data_files(
-    "capture_runtime_client",
-    includes=["private/assets/*", "private/schemas/*"],
-)
 
 a = Analysis(
     [str(root / "src" / "capture_runtime" / "__main__.py")],
     pathex=[str(root / "src")],
     binaries=[],
-    datas=runtime_client_assets + [
+    datas=[
         (str(catalog), "."),
         (str(contract_assets / "contract-set.json"), "capture_runtime/assets"),
         (str(contract_assets / "contract-set.sha256"), "capture_runtime/assets"),
     ],
     hiddenimports=[
-        "capture_runtime_client.private.assets",
-        "capture_runtime_client.private.schemas",
         "uvicorn.logging",
         "uvicorn.loops.asyncio",
         "uvicorn.loops.auto",

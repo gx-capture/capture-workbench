@@ -13,6 +13,7 @@ from capture_runtime.constants import (
     WHISPER_REQUIREMENT_ID,
     WINDOWSML_REQUIREMENT_ID,
 )
+from capture_runtime.contract_set import ContractSet, load_contract_set
 from capture_runtime.contracts import StructuringMode
 from capture_runtime.engine_catalog import load_engine_catalog
 from capture_runtime.engine_installation import EngineInstallationManager
@@ -34,12 +35,15 @@ from capture_runtime.services import (
     InstallationService,
     ModelInstallationService,
     StreamingCaptureService,
+    StructuringSessionService,
 )
 from capture_runtime.storage import (
     InstallationRepository,
     ModelInstallationRepository,
     StreamingRepository,
+    StructuringSessionRepository,
 )
+from capture_runtime.structuring import StructuringCoordinator
 from capture_runtime.structuring_provider import (
     CaptureStructuringProvider,
     FakeCaptureStructuringProvider,
@@ -62,6 +66,7 @@ class RuntimeDependencies:
     installation_repository: InstallationRepository
     streaming_repository: StreamingRepository
     streaming_capture_service: StreamingCaptureService
+    structuring_session_service: StructuringSessionService
     installation_service: InstallationService
     model_installation_repository: ModelInstallationRepository
     model_installation_service: ModelInstallationService
@@ -82,6 +87,7 @@ def build_runtime_dependencies(
     process_controller: ProcessController | None = None,
     installation_repository: InstallationRepository | None = None,
     model_installation_repository: ModelInstallationRepository | None = None,
+    contract_set: ContractSet | None = None,
 ) -> RuntimeDependencies:
     """Build one isolated dependency graph for a runtime application."""
 
@@ -189,6 +195,19 @@ def build_runtime_dependencies(
         extractor=active_extractor,
         structurer=active_structurer,
     )
+    runtime_contract_set = contract_set or load_contract_set()
+    structuring_session_repository = StructuringSessionRepository(
+        settings.app_data_dir / "jobs" / "structuring-sessions",
+        clock=runtime_clock,
+        retention_hours=settings.retention_hours,
+    )
+    structuring_session_service = StructuringSessionService(
+        structuring_session_repository,
+        streaming_repository,
+        coordinator=StructuringCoordinator(),
+        clock=runtime_clock,
+        contract_set_sha256=runtime_contract_set.sha256,
+    )
     installation_service = InstallationService(
         active_installation_repository,
         installer=active_installer,
@@ -209,6 +228,7 @@ def build_runtime_dependencies(
         installation_repository=active_installation_repository,
         streaming_repository=streaming_repository,
         streaming_capture_service=streaming_capture_service,
+        structuring_session_service=structuring_session_service,
         installation_service=installation_service,
         model_installation_repository=active_model_installation_repository,
         model_installation_service=model_installation_service,

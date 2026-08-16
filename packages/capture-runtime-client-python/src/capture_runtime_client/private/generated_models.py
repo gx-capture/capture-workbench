@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Annotated, Any, Final, Literal, Self
+from typing import Annotated, Any, Literal, Self
 
 from pydantic import (
     BaseModel,
@@ -18,9 +18,10 @@ from pydantic import (
 )
 from pydantic.alias_generators import to_camel
 
-API_VERSION: Final = "2.0"
-RUNTIME_VERSION: Final = "0.4.0"
-CAPTURE_DOCUMENT_SCHEMA_VERSION: Final = "2"
+API_VERSION: Literal['2.0'] = '2.0'
+CAPTURE_DOCUMENT_SCHEMA_VERSION: Literal['2'] = '2'
+RUNTIME_VERSION: Literal['0.4.0'] = '0.4.0'
+
 
 NonEmptyString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 CaptureText = Annotated[
@@ -128,6 +129,137 @@ class CaptureEngine(StrictModel):
     model: NonEmptyString
     digest: EngineDigest
     device: NonEmptyString | None = None
+
+
+class StructuringSessionStatus(StrEnum):
+    """Durable lifecycle states for a pull-based structuring session."""
+
+    OPEN = "open"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class StructuringBatchStatus(StrEnum):
+    """Durable lifecycle states for one provider-ready semantic batch."""
+
+    READY = "ready"
+    ACCEPTED = "accepted"
+    FAILED = "failed"
+
+
+class StructuringProviderCapabilityV2(StrictModel):
+    """Provider identity and schema dialect negotiated for one session."""
+
+    provider: CaptureEngine
+    capability: NonEmptyString
+    schema_dialect: NonEmptyString
+
+
+class OpenStructuringSessionV2(StrictModel):
+    """Authenticated request to open or replay a pull structuring session."""
+
+    protocol_version: Literal["2"] = "2"
+    capture_id: NonEmptyString
+    target_language: str | None = None
+    provider_capability: StructuringProviderCapabilityV2
+    schema_dialect: NonEmptyString
+    client_request_id: NonEmptyString
+
+    @field_validator("target_language")
+    @classmethod
+    def validate_target_language(cls, value: str | None) -> str | None:
+        if value is not None and not 1 <= len(value) <= 64:
+            raise ValueError("targetLanguage must be 1 to 64 characters")
+        return value
+
+    @model_validator(mode="after")
+    def validate_schema_dialect(self) -> Self:
+        if self.provider_capability.schema_dialect != self.schema_dialect:
+            raise ValueError("schemaDialect must match providerCapability.schemaDialect")
+        return self
+
+
+class StructuringSessionV2(StrictModel):
+    """Current durable pull-session snapshot."""
+
+    protocol_version: Literal["2"] = "2"
+    session_id: NonEmptyString
+    capture_id: NonEmptyString
+    raw_source_sha256: Sha256Hex
+    contract_set_sha256: Sha256Hex
+    target_language: str | None = None
+    provider_capability: StructuringProviderCapabilityV2
+    schema_dialect: NonEmptyString
+    batch_count: int = Field(ge=1)
+    next_batch_index: int = Field(ge=0)
+    session_digest: Sha256Hex
+    status: StructuringSessionStatus
+    created_at: datetime
+    updated_at: datetime
+    completed_at: datetime | None = None
+
+    _aware_times = field_validator("created_at", "updated_at", "completed_at")(
+        lambda value: None if value is None else _require_aware(value)
+    )
+
+    @model_validator(mode="after")
+    def validate_state(self) -> Self:
+        if self.provider_capability.schema_dialect != self.schema_dialect:
+            raise ValueError("schemaDialect must match providerCapability.schemaDialect")
+        if self.next_batch_index > self.batch_count:
+            raise ValueError("nextBatchIndex must not exceed batchCount")
+        terminal = {
+            StructuringSessionStatus.COMPLETED,
+            StructuringSessionStatus.FAILED,
+            StructuringSessionStatus.CANCELLED,
+        }
+        if (self.status in terminal) != (self.completed_at is not None):
+            raise ValueError("terminal structuring sessions must have completedAt")
+        if self.status is StructuringSessionStatus.COMPLETED and (
+            self.next_batch_index != self.batch_count
+        ):
+            raise ValueError("completed structuring sessions must accept every batch")
+        return self
+
+
+class StructuringBatchV2(StrictModel):
+    """Provider-ready prompt/schema projection for one ordered batch."""
+
+    protocol_version: Literal["2"] = "2"
+    session_id: NonEmptyString
+    capture_id: NonEmptyString
+    batch_index: int = Field(ge=0)
+    batch_count: int = Field(ge=1)
+    source_segment_ids: list[NonEmptyString] = Field(min_length=1)
+    provider_prompt: dict[str, object]
+    provider_schema: dict[str, object]
+    num_ctx: int = Field(gt=0)
+    num_predict: int = Field(gt=0)
+    batch_digest: Sha256Hex
+    status: StructuringBatchStatus
+
+    @model_validator(mode="after")
+    def validate_index(self) -> Self:
+        if self.batch_index >= self.batch_count:
+            raise ValueError("batchIndex must be less than batchCount")
+        return self
+
+
+class StructuringSemanticBlockV2(StrictModel):
+    """Minimal semantic block accepted from a pull-session provider."""
+
+    source_segment_id: NonEmptyString
+    type: Literal["heading", "paragraph", "list-item", "table", "quote", "transcript"]
+    target_text: CaptureText | None = None
+
+
+class SubmitStructuringBatchV2(StrictModel):
+    """Strict minimal semantic batch submission body."""
+
+    protocol_version: Literal["2"] = "2"
+    batch_digest: Sha256Hex
+    blocks: list[StructuringSemanticBlockV2] = Field(min_length=1)
 
 
 class RawCaptureSegment(StrictModel):
@@ -586,6 +718,12 @@ __all__ = [
     'TimeLocator',
     'CaptureSource',
     'CaptureEngine',
+    'StructuringProviderCapabilityV2',
+    'OpenStructuringSessionV2',
+    'StructuringSessionV2',
+    'StructuringBatchV2',
+    'StructuringSemanticBlockV2',
+    'SubmitStructuringBatchV2',
     'RawCaptureSegment',
     'RawCapture',
     'CaptureBlock',
@@ -620,6 +758,8 @@ __all__ = [
     'RuntimeInstallationStatus',
     'RuntimeModelOptionStatus',
     'RuntimeRequirementStatus',
+    'StructuringSessionStatus',
+    'StructuringBatchStatus',
     'StreamingIngestionMode',
     'StreamingIngestionStatus',
     'StreamingCaptureStatus',

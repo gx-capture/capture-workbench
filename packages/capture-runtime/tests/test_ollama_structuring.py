@@ -7,15 +7,6 @@ from pathlib import Path
 
 import httpx
 import pytest
-from capture_structuring import (
-    CAPTURE_BLOCK_BATCH_SCHEMA,
-    CAPTURE_IDENTITY_BLOCK_BATCH_SCHEMA,
-    OLLAMA_CAPTURE_BLOCK_BATCH_SCHEMA,
-    OLLAMA_IDENTITY_BLOCK_BATCH_SCHEMA,
-    StructuringValidationError,
-    ollama_structuring_batch_schema,
-    validate_structuring_candidate,
-)
 
 from capture_runtime.clock import Clock
 from capture_runtime.config import OllamaRuntimeConfig
@@ -23,6 +14,15 @@ from capture_runtime.contracts import CaptureDocument, RawCapture
 from capture_runtime.ollama import (
     OllamaCaptureStructuringProvider,
     RuntimeUnavailableError,
+)
+from capture_runtime.structuring import (
+    CAPTURE_BLOCK_BATCH_SCHEMA,
+    CAPTURE_IDENTITY_BLOCK_BATCH_SCHEMA,
+    OLLAMA_CAPTURE_BLOCK_BATCH_SCHEMA,
+    OLLAMA_IDENTITY_BLOCK_BATCH_SCHEMA,
+    StructuringValidationError,
+    ollama_structuring_batch_schema,
+    validate_structuring_candidate,
 )
 
 NOW = datetime(2026, 7, 20, 8, 0, tzinfo=UTC)
@@ -208,6 +208,40 @@ def test_isolated_ollama_structures_token_bounded_batches_and_releases_process(
     assert [block.block_id for block in document.blocks] == [
         f"block-{segment.segment_id}" for segment in raw.segments
     ]
+
+
+def test_isolated_ollama_preserves_order_across_multiple_batches(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    generate_calls: list[dict[str, object]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/tags":
+            return _tags(config)
+        payload = json.loads(request.content)
+        generate_calls.append(payload)
+        return httpx.Response(200, json={"response": _valid_candidate(payload)})
+
+    provider = OllamaCaptureStructuringProvider(
+        FakeLifecycle(config),  # type: ignore[arg-type]
+        clock=FixedClock(),
+        num_ctx=4_096,
+        num_predict=1_536,
+        transport=httpx.MockTransport(handler),
+    )
+
+    document = asyncio.run(
+        provider.structure(
+            _raw(count=5, text_chars=1_200),
+            target_language="zh-TW",
+            cancel_event=asyncio.Event(),
+        )
+    )
+
+    assert [block.order for block in document.blocks] == list(range(5))
+    assert [block.source_segment_id for block in document.blocks] == [
+        segment.segment_id for segment in _raw(count=5, text_chars=1_200).segments
+    ]
+    assert len(generate_calls) == 3
 
 
 def test_isolated_ollama_serializes_owned_process_leases(tmp_path: Path) -> None:

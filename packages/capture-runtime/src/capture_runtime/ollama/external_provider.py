@@ -7,26 +7,17 @@ import json
 import re
 
 import httpx
-from capture_structuring import (
-    DEFAULT_STRUCTURING_NUM_CTX,
-    DEFAULT_STRUCTURING_NUM_PREDICT,
-    assemble_structuring_document,
-    build_structuring_batch_prompt,
-    ollama_structuring_batch_schema,
-    plan_structuring_batches,
-    structuring_batch_generation_options,
-    validate_structuring_batch,
-)
 
 from capture_runtime.clock import Clock
 from capture_runtime.config import ExternalOllamaConfig
-from capture_runtime.contracts import (
-    CaptureBlock,
-    CaptureDocument,
-    CaptureEngine,
-    RawCapture,
-)
+from capture_runtime.contracts import CaptureEngine, RawCapture
 from capture_runtime.ollama.lifecycle_impl import RuntimeUnavailableError
+from capture_runtime.structuring import (
+    DEFAULT_STRUCTURING_NUM_CTX,
+    DEFAULT_STRUCTURING_NUM_PREDICT,
+    StructuringCoordinator,
+    StructuringGenerationRequest,
+)
 
 
 class ExternalOllamaCaptureStructuringProvider:
@@ -48,6 +39,11 @@ class ExternalOllamaCaptureStructuringProvider:
         self._num_ctx = num_ctx
         self._num_predict = num_predict
         self._transport = transport
+        self._coordinator = StructuringCoordinator(
+            num_ctx=num_ctx,
+            num_predict=num_predict,
+            single_segment_profile_id=None,
+        )
         self._engine_identity: CaptureEngine | None = None
 
     @property
@@ -63,13 +59,6 @@ class ExternalOllamaCaptureStructuringProvider:
     ) -> object:
         engine_identity = await self._wait_until_ready(cancel_event)
         self._engine_identity = engine_identity
-        plans = plan_structuring_batches(
-            raw.segments,
-            target_language=target_language,
-            num_ctx=self._num_ctx,
-            num_predict=self._num_predict,
-            schema=ollama_structuring_batch_schema(target_language=target_language),
-        )
         async with httpx.AsyncClient(
             base_url=self._config.endpoint_url,
             headers=self._headers(),
@@ -77,51 +66,31 @@ class ExternalOllamaCaptureStructuringProvider:
             follow_redirects=False,
             transport=self._transport,
         ) as client:
-            blocks: list[CaptureBlock] = []
-            for plan in plans:
-                if cancel_event.is_set():
-                    raise asyncio.CancelledError
-                num_ctx, num_predict = structuring_batch_generation_options(
-                    plan,
-                    max_num_ctx=self._num_ctx,
-                    max_num_predict=self._num_predict,
-                )
-                candidate = await self._generate_batch(
+
+            async def generate(request: StructuringGenerationRequest) -> str:
+                return await self._generate_batch(
                     client,
-                    plan.segments,
-                    target_language=target_language,
+                    request,
                     cancel_event=cancel_event,
-                    num_ctx=num_ctx,
-                    num_predict=num_predict,
                 )
-                blocks.extend(
-                    CaptureBlock.model_validate(block)
-                    for block in validate_structuring_batch(
-                        candidate,
-                        plan.segments,
-                        target_language=target_language,
-                    )
-                )
-        return CaptureDocument.model_validate(
-            assemble_structuring_document(
+
+            return await self._coordinator.structure(
                 raw,
-                blocks,
+                target_language=target_language,
+                cancel_event=cancel_event,
                 engine_identity=engine_identity,
-                completed_at=self._clock.now(),
+                completed_at=self._clock.now,
+                profile_id=self._config.model,
+                generate=generate,
             )
-        )
 
     async def _generate_batch(
         self,
         client: httpx.AsyncClient,
-        segments: tuple[object, ...],
+        generation_request: StructuringGenerationRequest,
         *,
-        target_language: str | None,
         cancel_event: asyncio.Event,
-        num_ctx: int,
-        num_predict: int,
     ) -> str:
-        prompt = build_structuring_batch_prompt(segments, target_language=target_language)
         request = asyncio.create_task(
             client.post(
                 "/api/generate",
@@ -129,9 +98,16 @@ class ExternalOllamaCaptureStructuringProvider:
                     "model": self._config.model,
                     "stream": False,
                     "think": False,
-                    "format": ollama_structuring_batch_schema(target_language=target_language),
-                    "prompt": json.dumps(prompt, ensure_ascii=False, separators=(",", ":")),
-                    "options": {"num_ctx": num_ctx, "num_predict": num_predict},
+                    "format": generation_request.schema,
+                    "prompt": json.dumps(
+                        generation_request.prompt,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ),
+                    "options": {
+                        "num_ctx": generation_request.num_ctx,
+                        "num_predict": generation_request.num_predict,
+                    },
                 },
             )
         )

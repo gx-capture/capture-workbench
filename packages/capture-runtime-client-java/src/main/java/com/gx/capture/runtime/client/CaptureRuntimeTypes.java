@@ -27,7 +27,7 @@ public final class CaptureRuntimeTypes {
   public static final String CONTRACT_SET_VERSION = "2";
   /** Updated only as part of a coordinated runtime/client release. */
   public static final String CONTRACT_SET_SHA256 =
-      "5b93bcb557acca034386b6e9e47502efec91210331ecebabd9c470196d35fec3";
+      "71fdcf02ac4c836cc758172312fc536657068a5d91180da76f35d6d3266f8e3c";
 
   private static final Pattern SHA256 = Pattern.compile("^[0-9a-f]{64}$");
   private static final Pattern FAILURE_CODE = Pattern.compile("^[a-z][a-z0-9_]{1,63}$");
@@ -258,6 +258,45 @@ public final class CaptureRuntimeTypes {
     public static BlockType fromWireValue(String value) {
       for (var item : values()) if (item.wireValue.equals(value)) return item;
       throw new IllegalArgumentException("unknown block type: " + value);
+    }
+  }
+
+  public enum StructuringSessionStatus {
+    OPEN("open"),
+    COMPLETED("completed"),
+    FAILED("failed"),
+    CANCELLED("cancelled");
+
+    private final String wireValue;
+
+    StructuringSessionStatus(String wireValue) { this.wireValue = wireValue; }
+
+    @JsonValue
+    public String wireValue() { return wireValue; }
+
+    @JsonCreator(mode = JsonCreator.Mode.DELEGATING)
+    public static StructuringSessionStatus fromWireValue(String value) {
+      for (var item : values()) if (item.wireValue.equals(value)) return item;
+      throw new IllegalArgumentException("unknown structuring session status: " + value);
+    }
+  }
+
+  public enum StructuringBatchStatus {
+    READY("ready"),
+    ACCEPTED("accepted"),
+    FAILED("failed");
+
+    private final String wireValue;
+
+    StructuringBatchStatus(String wireValue) { this.wireValue = wireValue; }
+
+    @JsonValue
+    public String wireValue() { return wireValue; }
+
+    @JsonCreator(mode = JsonCreator.Mode.DELEGATING)
+    public static StructuringBatchStatus fromWireValue(String value) {
+      for (var item : values()) if (item.wireValue.equals(value)) return item;
+      throw new IllegalArgumentException("unknown structuring batch status: " + value);
     }
   }
 
@@ -510,6 +549,119 @@ public final class CaptureRuntimeTypes {
       targetLanguage = targetLanguage == null ? null : bounded(targetLanguage, 64, "targetLanguage");
       startPolicy = startPolicy == null ? "eager" : text(startPolicy, "startPolicy");
       if (!"eager".equals(startPolicy)) throw new IllegalArgumentException("startPolicy must equal eager");
+    }
+  }
+
+  public record StructuringProviderCapability(
+      Engine provider, String capability, String schemaDialect) {
+    public StructuringProviderCapability {
+      provider = Objects.requireNonNull(provider, "provider");
+      capability = text(capability, "capability");
+      schemaDialect = text(schemaDialect, "schemaDialect");
+    }
+  }
+
+  public record OpenStructuringSession(
+      String captureId,
+      StructuringProviderCapability providerCapability,
+      String schemaDialect,
+      String clientRequestId,
+      String targetLanguage,
+      String protocolVersion) {
+    public OpenStructuringSession {
+      protocolVersion = protocolVersion == null ? PROTOCOL_VERSION : text(protocolVersion, "protocolVersion");
+      if (!PROTOCOL_VERSION.equals(protocolVersion)) throw new IllegalArgumentException("protocolVersion must equal 2");
+      captureId = text(captureId, "captureId");
+      providerCapability = Objects.requireNonNull(providerCapability, "providerCapability");
+      schemaDialect = text(schemaDialect, "schemaDialect");
+      clientRequestId = text(clientRequestId, "clientRequestId");
+      targetLanguage = targetLanguage == null ? null : bounded(targetLanguage, 64, "targetLanguage");
+    }
+  }
+
+  public record StructuringSession(
+      String protocolVersion,
+      String sessionId,
+      String captureId,
+      String rawSourceSha256,
+      String contractSetSha256,
+      StructuringProviderCapability providerCapability,
+      String schemaDialect,
+      int batchCount,
+      int nextBatchIndex,
+      String sessionDigest,
+      StructuringSessionStatus status,
+      String targetLanguage,
+      String createdAt,
+      String updatedAt,
+      String completedAt) {
+    public StructuringSession {
+      protocolVersion = protocolVersion == null ? PROTOCOL_VERSION : text(protocolVersion, "protocolVersion");
+      if (!PROTOCOL_VERSION.equals(protocolVersion)) throw new IllegalArgumentException("protocolVersion must equal 2");
+      sessionId = text(sessionId, "sessionId");
+      captureId = text(captureId, "captureId");
+      rawSourceSha256 = sha256(rawSourceSha256, "rawSourceSha256");
+      contractSetSha256 = sha256(contractSetSha256, "contractSetSha256");
+      providerCapability = Objects.requireNonNull(providerCapability, "providerCapability");
+      schemaDialect = text(schemaDialect, "schemaDialect");
+      if (batchCount < 1) throw new IllegalArgumentException("batchCount must be positive");
+      if (nextBatchIndex < 0 || nextBatchIndex > batchCount) throw new IllegalArgumentException("nextBatchIndex is invalid");
+      sessionDigest = sha256(sessionDigest, "sessionDigest");
+      status = Objects.requireNonNull(status, "status");
+      targetLanguage = targetLanguage == null ? null : bounded(targetLanguage, 64, "targetLanguage");
+      createdAt = timestamp(createdAt, "createdAt");
+      updatedAt = timestamp(updatedAt, "updatedAt");
+      completedAt = completedAt == null ? null : timestamp(completedAt, "completedAt");
+      boolean terminal = status != StructuringSessionStatus.OPEN;
+      if (terminal != (completedAt != null)) throw new IllegalArgumentException("terminal sessions require completedAt");
+    }
+  }
+
+  public record StructuringBatch(
+      String protocolVersion,
+      String sessionId,
+      String captureId,
+      int batchIndex,
+      int batchCount,
+      List<String> sourceSegmentIds,
+      Map<String, Object> providerPrompt,
+      Map<String, Object> providerSchema,
+      int numCtx,
+      int numPredict,
+      String batchDigest,
+      StructuringBatchStatus status) {
+    public StructuringBatch {
+      protocolVersion = protocolVersion == null ? PROTOCOL_VERSION : text(protocolVersion, "protocolVersion");
+      if (!PROTOCOL_VERSION.equals(protocolVersion)) throw new IllegalArgumentException("protocolVersion must equal 2");
+      sessionId = text(sessionId, "sessionId");
+      captureId = text(captureId, "captureId");
+      if (batchIndex < 0 || batchCount < 1 || batchIndex >= batchCount) throw new IllegalArgumentException("batch index/count is invalid");
+      sourceSegmentIds = sourceSegmentIds == null || sourceSegmentIds.isEmpty() ? List.of() : List.copyOf(sourceSegmentIds.stream().map(value -> text(value, "sourceSegmentId")).toList());
+      if (sourceSegmentIds.isEmpty()) throw new IllegalArgumentException("sourceSegmentIds must not be empty");
+      providerPrompt = providerPrompt == null ? Map.of() : Map.copyOf(providerPrompt);
+      providerSchema = providerSchema == null ? Map.of() : Map.copyOf(providerSchema);
+      if (numCtx < 1 || numPredict < 1) throw new IllegalArgumentException("batch budgets must be positive");
+      batchDigest = sha256(batchDigest, "batchDigest");
+      status = Objects.requireNonNull(status, "status");
+    }
+  }
+
+  public record StructuringSemanticBlock(String sourceSegmentId, BlockType type, String targetText) {
+    public StructuringSemanticBlock {
+      sourceSegmentId = text(sourceSegmentId, "sourceSegmentId");
+      type = Objects.requireNonNull(type, "type");
+      targetText = targetText == null ? null : bounded(targetText, 2_000_000, "targetText");
+    }
+  }
+
+  public record SubmitStructuringBatch(
+      String batchDigest, List<StructuringSemanticBlock> blocks, String protocolVersion) {
+    public SubmitStructuringBatch {
+      protocolVersion = protocolVersion == null ? PROTOCOL_VERSION : text(protocolVersion, "protocolVersion");
+      if (!PROTOCOL_VERSION.equals(protocolVersion)) throw new IllegalArgumentException("protocolVersion must equal 2");
+      batchDigest = sha256(batchDigest, "batchDigest");
+      if (blocks == null || blocks.isEmpty()) throw new IllegalArgumentException("blocks must not be empty");
+      blocks = List.copyOf(blocks.stream().map(value -> Objects.requireNonNull(value, "block")).toList());
     }
   }
 

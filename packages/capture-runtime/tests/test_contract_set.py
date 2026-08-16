@@ -28,7 +28,7 @@ def test_default_contract_set_is_deterministic_and_covers_v2() -> None:
     assert first.sha256 == hashlib.sha256(first.bundle_bytes).hexdigest()
     assert first.index["sha256"] == first.sha256
     assert {surface["id"] for surface in first.bundle["surfaces"]} == {"v2"}
-    assert len(first.bundle["operations"]) == 27
+    assert len(first.bundle["operations"]) == 31
     assert {operation["surface"] for operation in first.bundle["operations"]} == {"v2"}
     assert any(
         operation["path"] == "/v2/captures/{capture_id}/events"
@@ -65,7 +65,7 @@ def test_runtime_owned_schema_source_has_one_release_contract_identity() -> None
     assert document["schemaSha256"] == (
         "850afd212d049c25da41d3867ba5477451a6a2c6c7e41f116fe60f26b6a35335"
     )
-    assert contract_set.sha256 == "5b93bcb557acca034386b6e9e47502efec91210331ecebabd9c470196d35fec3"
+    assert contract_set.sha256 == "71fdcf02ac4c836cc758172312fc536657068a5d91180da76f35d6d3266f8e3c"
 
 
 def test_contract_set_index_bundle_loading_rejects_digest_drift() -> None:

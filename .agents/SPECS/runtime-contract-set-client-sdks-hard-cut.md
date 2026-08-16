@@ -38,8 +38,32 @@ agree on the same contract-set digest.
   errors through a shared `RuntimeTransport` port.
 - Generated models and codecs are private implementation details. Public DTOs,
   methods, and error mappings are intentional stable SDK interfaces.
-- `capture-structuring` remains a separate behavioral SDK and consumes the
-  matching client SDK rather than duplicating wire contracts.
+- `capture_runtime.structuring` is the current runtime-local parity owner for
+  provider-neutral batching, prompt/schema adaptation, minimal semantic
+  validation, and provenance reconstruction.
+- The standalone `@gx-capture/capture-structuring` TypeScript package and
+  `capture-structuring` Python package remain temporarily retained but frozen
+  for consumers. They cannot be deleted until consumer cutover and same-digest
+  gates have passed.
+- The Python, TypeScript, and Java `capture-runtime-client` packages remain the
+  client SDK surfaces. No `capture-structuring-client` or other structuring
+  client packages are created.
+
+## Structuring migration and pull-session freeze
+
+The legacy v2 full-document host commit route remains active and
+behavior-compatible until the explicit v3 retirement gate. The additive
+pull-session contract is implemented by the runtime and typed Python,
+TypeScript, and Java client SDKs; these semantics remain frozen for subsequent
+review-overlay and consumer cutover work:
+
+- provider capabilities advertise the provider capability and schema dialect;
+- provider responses contain minimal semantic batches only;
+- a review overlay may annotate or revise presentation, but cannot change raw
+  capture or reconstructed provenance;
+- every batch and session carries a digest identity with explicit
+  idempotency/conflict handling; and
+- persisted checkpoints support crash-safe recovery and deterministic replay.
 
 ## Compatibility identity and security
 
@@ -82,3 +106,6 @@ agree on the same contract-set digest.
   shared-fixture tests.
 - Active producers, SDKs, consumers, release tools, and current documentation
   use the runtime-owned v2 contract source and its single digest.
+- The frozen standalone `capture-structuring` packages remain present until
+  consumer cutover and same-digest evidence are complete; deletion is not a
+  prerequisite of the runtime-local parity migration.

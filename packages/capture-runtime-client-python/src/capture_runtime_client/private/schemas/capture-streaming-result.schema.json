@@ -1,0 +1,607 @@
+{
+  "$defs": {
+    "CaptureBlock": {
+      "additionalProperties": false,
+      "properties": {
+        "blockId": {
+          "minLength": 1,
+          "title": "Blockid",
+          "type": "string"
+        },
+        "order": {
+          "minimum": 0,
+          "title": "Order",
+          "type": "integer"
+        },
+        "type": {
+          "enum": [
+            "heading",
+            "paragraph",
+            "list-item",
+            "table",
+            "quote",
+            "transcript"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "sourceSegmentId": {
+          "minLength": 1,
+          "title": "Sourcesegmentid",
+          "type": "string"
+        },
+        "locator": {
+          "discriminator": {
+            "mapping": {
+              "page": "#/$defs/PageLocator",
+              "time": "#/$defs/TimeLocator"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/PageLocator"
+            },
+            {
+              "$ref": "#/$defs/TimeLocator"
+            }
+          ],
+          "title": "Locator"
+        },
+        "sourceText": {
+          "maxLength": 2000000,
+          "minLength": 1,
+          "title": "Sourcetext",
+          "type": "string"
+        },
+        "targetText": {
+          "maxLength": 2000000,
+          "minLength": 1,
+          "title": "Targettext",
+          "type": "string"
+        }
+      },
+      "required": [
+        "blockId",
+        "order",
+        "type",
+        "sourceSegmentId",
+        "locator",
+        "sourceText",
+        "targetText"
+      ],
+      "title": "CaptureBlock",
+      "type": "object"
+    },
+    "CaptureDocument": {
+      "additionalProperties": false,
+      "properties": {
+        "schemaVersion": {
+          "const": "2",
+          "default": "2",
+          "title": "Schemaversion",
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/CaptureSource"
+        },
+        "rawSegments": {
+          "items": {
+            "$ref": "#/$defs/RawCaptureSegment"
+          },
+          "maxItems": 10000,
+          "minItems": 1,
+          "title": "Rawsegments",
+          "type": "array"
+        },
+        "blocks": {
+          "items": {
+            "$ref": "#/$defs/CaptureBlock"
+          },
+          "maxItems": 10000,
+          "minItems": 1,
+          "title": "Blocks",
+          "type": "array"
+        },
+        "sourceText": {
+          "maxLength": 8000000,
+          "minLength": 1,
+          "title": "Sourcetext",
+          "type": "string"
+        },
+        "targetText": {
+          "maxLength": 8000000,
+          "minLength": 1,
+          "title": "Targettext",
+          "type": "string"
+        },
+        "extractionEngine": {
+          "$ref": "#/$defs/CaptureEngine"
+        },
+        "structuringEngine": {
+          "$ref": "#/$defs/CaptureEngine"
+        },
+        "warnings": {
+          "items": {
+            "maxLength": 500,
+            "type": "string"
+          },
+          "maxItems": 1000,
+          "title": "Warnings",
+          "type": "array"
+        },
+        "createdAt": {
+          "format": "date-time",
+          "title": "Createdat",
+          "type": "string"
+        },
+        "completedAt": {
+          "format": "date-time",
+          "title": "Completedat",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "rawSegments",
+        "blocks",
+        "sourceText",
+        "targetText",
+        "extractionEngine",
+        "structuringEngine",
+        "createdAt",
+        "completedAt"
+      ],
+      "title": "CaptureDocument",
+      "type": "object"
+    },
+    "CaptureEngine": {
+      "additionalProperties": false,
+      "properties": {
+        "engine": {
+          "minLength": 1,
+          "title": "Engine",
+          "type": "string"
+        },
+        "model": {
+          "minLength": 1,
+          "title": "Model",
+          "type": "string"
+        },
+        "digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Digest",
+          "type": "string"
+        },
+        "device": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Device"
+        }
+      },
+      "required": [
+        "engine",
+        "model",
+        "digest"
+      ],
+      "title": "CaptureEngine",
+      "type": "object"
+    },
+    "CaptureFailureV2": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "pattern": "^[a-z][a-z0-9_]{1,63}$",
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Message",
+          "type": "string"
+        },
+        "stage": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Stage"
+        },
+        "retryable": {
+          "default": false,
+          "title": "Retryable",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "CaptureFailureV2",
+      "type": "object"
+    },
+    "CaptureOperationV2": {
+      "additionalProperties": false,
+      "properties": {
+        "protocolVersion": {
+          "const": "2",
+          "default": "2",
+          "title": "Protocolversion",
+          "type": "string"
+        },
+        "captureId": {
+          "minLength": 1,
+          "title": "Captureid",
+          "type": "string"
+        },
+        "ingestionId": {
+          "minLength": 1,
+          "title": "Ingestionid",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/CaptureSourceKind",
+          "default": "audio"
+        },
+        "status": {
+          "$ref": "#/$defs/StreamingCaptureStatus"
+        },
+        "progress": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Progress"
+        },
+        "partialRevision": {
+          "minimum": 0,
+          "title": "Partialrevision",
+          "type": "integer"
+        },
+        "lastEventSequence": {
+          "minimum": 0,
+          "title": "Lasteventsequence",
+          "type": "integer"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CaptureSource"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CaptureFailureV2"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "createdAt": {
+          "format": "date-time",
+          "title": "Createdat",
+          "type": "string"
+        },
+        "updatedAt": {
+          "format": "date-time",
+          "title": "Updatedat",
+          "type": "string"
+        },
+        "completedAt": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Completedat"
+        }
+      },
+      "required": [
+        "captureId",
+        "ingestionId",
+        "status",
+        "partialRevision",
+        "lastEventSequence",
+        "createdAt",
+        "updatedAt"
+      ],
+      "title": "CaptureOperationV2",
+      "type": "object"
+    },
+    "CaptureSource": {
+      "additionalProperties": false,
+      "properties": {
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "fileName": {
+          "maxLength": 255,
+          "minLength": 1,
+          "title": "Filename",
+          "type": "string"
+        },
+        "mediaType": {
+          "minLength": 1,
+          "title": "Mediatype",
+          "type": "string"
+        },
+        "bytes": {
+          "minimum": 1,
+          "title": "Bytes",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "sha256",
+        "fileName",
+        "mediaType",
+        "bytes"
+      ],
+      "title": "CaptureSource",
+      "type": "object"
+    },
+    "CaptureSourceKind": {
+      "enum": [
+        "pdf",
+        "image",
+        "audio"
+      ],
+      "title": "CaptureSourceKind",
+      "type": "string"
+    },
+    "PageLocator": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "page",
+          "default": "page",
+          "title": "Kind",
+          "type": "string"
+        },
+        "page": {
+          "minimum": 1,
+          "title": "Page",
+          "type": "integer"
+        },
+        "boundingBox": {
+          "anyOf": [
+            {
+              "maxItems": 4,
+              "minItems": 4,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Boundingbox"
+        }
+      },
+      "required": [
+        "page"
+      ],
+      "title": "PageLocator",
+      "type": "object"
+    },
+    "RawCapture": {
+      "additionalProperties": false,
+      "properties": {
+        "schemaVersion": {
+          "const": "2",
+          "default": "2",
+          "title": "Schemaversion",
+          "type": "string"
+        },
+        "diagnosticOnly": {
+          "const": true,
+          "default": true,
+          "title": "Diagnosticonly",
+          "type": "boolean"
+        },
+        "source": {
+          "$ref": "#/$defs/CaptureSource"
+        },
+        "segments": {
+          "items": {
+            "$ref": "#/$defs/RawCaptureSegment"
+          },
+          "maxItems": 10000,
+          "minItems": 1,
+          "title": "Segments",
+          "type": "array"
+        },
+        "sourceText": {
+          "maxLength": 8000000,
+          "minLength": 1,
+          "title": "Sourcetext",
+          "type": "string"
+        },
+        "extractionEngine": {
+          "$ref": "#/$defs/CaptureEngine"
+        },
+        "warnings": {
+          "items": {
+            "maxLength": 500,
+            "type": "string"
+          },
+          "maxItems": 1000,
+          "title": "Warnings",
+          "type": "array"
+        },
+        "createdAt": {
+          "format": "date-time",
+          "title": "Createdat",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "segments",
+        "sourceText",
+        "extractionEngine",
+        "createdAt"
+      ],
+      "title": "RawCapture",
+      "type": "object"
+    },
+    "RawCaptureSegment": {
+      "additionalProperties": false,
+      "properties": {
+        "segmentId": {
+          "minLength": 1,
+          "title": "Segmentid",
+          "type": "string"
+        },
+        "order": {
+          "minimum": 0,
+          "title": "Order",
+          "type": "integer"
+        },
+        "locator": {
+          "discriminator": {
+            "mapping": {
+              "page": "#/$defs/PageLocator",
+              "time": "#/$defs/TimeLocator"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/PageLocator"
+            },
+            {
+              "$ref": "#/$defs/TimeLocator"
+            }
+          ],
+          "title": "Locator"
+        },
+        "text": {
+          "maxLength": 2000000,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "segmentId",
+        "order",
+        "locator",
+        "text"
+      ],
+      "title": "RawCaptureSegment",
+      "type": "object"
+    },
+    "StreamingCaptureStatus": {
+      "enum": [
+        "created",
+        "waiting_input",
+        "extracting",
+        "awaiting_structuring",
+        "structuring",
+        "completed",
+        "failed",
+        "cancelled"
+      ],
+      "title": "StreamingCaptureStatus",
+      "type": "string"
+    },
+    "TimeLocator": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "time",
+          "default": "time",
+          "title": "Kind",
+          "type": "string"
+        },
+        "startMs": {
+          "minimum": 0,
+          "title": "Startms",
+          "type": "integer"
+        },
+        "endMs": {
+          "exclusiveMinimum": 0,
+          "title": "Endms",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "startMs",
+        "endMs"
+      ],
+      "title": "TimeLocator",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "operation": {
+      "$ref": "#/$defs/CaptureOperationV2"
+    },
+    "raw": {
+      "$ref": "#/$defs/RawCapture"
+    },
+    "result": {
+      "$ref": "#/$defs/CaptureDocument"
+    }
+  },
+  "required": [
+    "operation",
+    "raw",
+    "result"
+  ],
+  "title": "CaptureStreamingResult",
+  "type": "object"
+}

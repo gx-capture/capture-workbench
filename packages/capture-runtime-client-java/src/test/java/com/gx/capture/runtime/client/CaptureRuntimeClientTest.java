@@ -180,6 +180,60 @@ class CaptureRuntimeClientTest {
     assertThat(model.completedAt()).isEqualTo("2026-08-14T00:02:00Z");
   }
 
+  @Test
+  void opensPullsAndSubmitsTypedStructuringSessionBatches() throws Exception {
+    var bundle = bundle();
+    var index = index(sha256(bundle));
+    var routes = new ArrayList<InMemoryRuntimeTransport.Route>(metadataRoutes(index, bundle));
+    var observedKeys = new ArrayList<String>();
+    routes.add(InMemoryRuntimeTransport.route("POST", "/v2/captures/cap/structure/session", request -> {
+      observedKeys.add(request.headers().get("X-Idempotency-Key").getFirst());
+      return response(201, "application/json", sessionJson(false));
+    }));
+    routes.add(InMemoryRuntimeTransport.route("GET", "/v2/captures/cap/structure/session", ignored -> response(200, "application/json", sessionJson(false))));
+    routes.add(InMemoryRuntimeTransport.route("GET", "/v2/captures/cap/structure/session/batches/0", ignored -> response(200, "application/json", batchJson())));
+    routes.add(InMemoryRuntimeTransport.route("PUT", "/v2/captures/cap/structure/session/batches/0", request -> {
+      observedKeys.add(request.headers().get("X-Idempotency-Key").getFirst());
+      return response(200, "application/json", sessionJson(true));
+    }));
+
+    var client = new CaptureRuntimeClient(new InMemoryRuntimeTransport(routes), options());
+    var provider = new CaptureRuntimeTypes.StructuringProviderCapability(
+        new CaptureRuntimeTypes.Engine("ollama", "qwen", "sha256:" + "a".repeat(64), null),
+        "identity", "capture-structuring-v2");
+    var request = new CaptureRuntimeTypes.OpenStructuringSession(
+        "cap", provider, "capture-structuring-v2", "open-key", null, "2");
+    assertThat(client.openStructuringSession("cap", request, "open-key").sessionId()).isEqualTo("session-1");
+    assertThat(client.getStructuringSession("cap").status()).isEqualTo(CaptureRuntimeTypes.StructuringSessionStatus.OPEN);
+    assertThat(client.pullStructuringBatch("cap", 0).batchDigest()).hasSize(64);
+    var submission = new CaptureRuntimeTypes.SubmitStructuringBatch(
+        "b".repeat(64),
+        List.of(new CaptureRuntimeTypes.StructuringSemanticBlock("segment-1", CaptureRuntimeTypes.BlockType.PARAGRAPH, null)),
+        "2");
+    assertThat(client.submitStructuringBatch("cap", 0, submission, "batch-key").status())
+        .isEqualTo(CaptureRuntimeTypes.StructuringSessionStatus.COMPLETED);
+    assertThat(observedKeys).containsExactly("open-key", "batch-key");
+  }
+
+  private static byte[] sessionJson(boolean completed) {
+    var status = completed ? "completed" : "open";
+    var completedAt = completed ? "\"2026-08-14T00:02:00Z\"" : "null";
+    return ("{\"protocolVersion\":\"2\",\"sessionId\":\"session-1\",\"captureId\":\"cap\","
+        + "\"rawSourceSha256\":\"" + "a".repeat(64) + "\",\"contractSetSha256\":\"" + "b".repeat(64) + "\","
+        + "\"providerCapability\":{\"provider\":{\"engine\":\"ollama\",\"model\":\"qwen\",\"digest\":\"sha256:"
+        + "a".repeat(64) + "\",\"device\":null},\"capability\":\"identity\",\"schemaDialect\":\"capture-structuring-v2\"},"
+        + "\"schemaDialect\":\"capture-structuring-v2\",\"batchCount\":1,\"nextBatchIndex\":"
+        + (completed ? "1" : "0") + ",\"sessionDigest\":\"" + "c".repeat(64) + "\",\"status\":\"" + status
+        + "\",\"targetLanguage\":null,\"createdAt\":\"2026-08-14T00:00:00Z\",\"updatedAt\":\"2026-08-14T00:02:00Z\",\"completedAt\":" + completedAt + "}")
+        .getBytes(StandardCharsets.UTF_8);
+  }
+
+  private static byte[] batchJson() {
+    return ("{\"protocolVersion\":\"2\",\"sessionId\":\"session-1\",\"captureId\":\"cap\",\"batchIndex\":0,\"batchCount\":1,"
+        + "\"sourceSegmentIds\":[\"segment-1\"],\"providerPrompt\":{},\"providerSchema\":{},\"numCtx\":1024,\"numPredict\":128,"
+        + "\"batchDigest\":\"" + "b".repeat(64) + "\",\"status\":\"ready\"}").getBytes(StandardCharsets.UTF_8);
+  }
+
   private static CaptureRuntimeClient.ClientOptions options() {
     try {
       return new CaptureRuntimeClient.ClientOptions("2", Set.of(sha256(bundle())), 1);
@@ -217,20 +271,27 @@ class CaptureRuntimeClientTest {
                 operation("/v2/captures"),
                 operation("/v2/captures/{capture_id}/events"),
                 operation("/v2/captures/{capture_id}/raw"),
-                operation("/v2/captures/{capture_id}/result")),
+                operation("/v2/captures/{capture_id}/result"),
+                operation("/v2/captures/{capture_id}/structure/session", "POST", "json", "required"),
+                operation("/v2/captures/{capture_id}/structure/session/batches/{batch_index}"),
+                operation("/v2/captures/{capture_id}/structure/session/batches/{batch_index}", "PUT", "json", "required")),
             "problems", List.of(),
             "invariants", List.of()));
   }
 
   private static Map<String, Object> operation(String path) {
+    return operation(path, "GET", "none", "none");
+  }
+
+  private static Map<String, Object> operation(String path, String method, String bodyKind, String idempotencyMode) {
     return Map.of(
         "id", path,
         "path", path,
-        "method", "GET",
+        "method", method,
         "surface", "v2",
-        "body", Map.of("kind", "none"),
-        "requiredHeaders", List.of(),
-        "idempotency", Map.of("mode", "none"),
+        "body", Map.of("kind", bodyKind),
+        "requiredHeaders", "required".equals(idempotencyMode) ? List.of("X-Idempotency-Key") : List.of(),
+        "idempotency", Map.of("mode", idempotencyMode),
         "responseStatusCodes", List.of(200));
   }
 

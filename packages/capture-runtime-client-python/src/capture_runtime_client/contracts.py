@@ -24,6 +24,12 @@ for _generated_name in (
     "CaptureOperationV2",
     "PartialCaptureV2",
     "CaptureEventV2",
+    "StructuringProviderCapabilityV2",
+    "OpenStructuringSessionV2",
+    "StructuringSessionV2",
+    "StructuringBatchV2",
+    "StructuringSemanticBlockV2",
+    "SubmitStructuringBatchV2",
 ):
     getattr(_generated, _generated_name).model_rebuild(
         force=True,
@@ -143,6 +149,30 @@ class CaptureEvent(_generated.CaptureEventV2):
     pass
 
 
+class StructuringProviderCapability(_generated.StructuringProviderCapabilityV2):
+    pass
+
+
+class OpenStructuringSession(_generated.OpenStructuringSessionV2):
+    pass
+
+
+class StructuringSession(_generated.StructuringSessionV2):
+    pass
+
+
+class StructuringBatch(_generated.StructuringBatchV2):
+    pass
+
+
+class StructuringSemanticBlock(_generated.StructuringSemanticBlockV2):
+    pass
+
+
+class SubmitStructuringBatch(_generated.SubmitStructuringBatchV2):
+    pass
+
+
 class RuntimeStreamingCapabilities(_generated.RuntimeStreamingCapabilitiesV2):
     pass
 
@@ -180,6 +210,8 @@ TimeLocator = _generated.TimeLocator
 
 CaptureSourceKind = _generated.CaptureSourceKind
 StructuringMode = _generated.StructuringMode
+StructuringSessionStatus = _generated.StructuringSessionStatus
+StructuringBatchStatus = _generated.StructuringBatchStatus
 RuntimeInstallationStatus = _generated.RuntimeInstallationStatus
 RuntimeModelOptionStatus = _generated.RuntimeModelOptionStatus
 RuntimeRequirementStatus = _generated.RuntimeRequirementStatus
@@ -253,6 +285,12 @@ __all__ = [
     "CaptureOperation",
     "PartialCapture",
     "CaptureEvent",
+    "StructuringProviderCapability",
+    "OpenStructuringSession",
+    "StructuringSession",
+    "StructuringBatch",
+    "StructuringSemanticBlock",
+    "SubmitStructuringBatch",
     "RuntimeStreamingCapabilities",
     "RuntimeReady",
     "ReportStructuringFailure",
@@ -260,6 +298,8 @@ __all__ = [
     "ErrorEnvelope",
     "CaptureSourceKind",
     "StructuringMode",
+    "StructuringSessionStatus",
+    "StructuringBatchStatus",
     "RuntimeInstallationStatus",
     "RuntimeModelOptionStatus",
     "RuntimeRequirementStatus",

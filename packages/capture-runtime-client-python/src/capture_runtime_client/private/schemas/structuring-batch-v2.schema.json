@@ -1,0 +1,96 @@
+{
+  "$defs": {
+    "StructuringBatchStatus": {
+      "description": "Durable lifecycle states for one provider-ready semantic batch.",
+      "enum": [
+        "ready",
+        "accepted",
+        "failed"
+      ],
+      "title": "StructuringBatchStatus",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Provider-ready prompt/schema projection for one ordered batch.",
+  "properties": {
+    "protocolVersion": {
+      "const": "2",
+      "default": "2",
+      "title": "Protocolversion",
+      "type": "string"
+    },
+    "sessionId": {
+      "minLength": 1,
+      "title": "Sessionid",
+      "type": "string"
+    },
+    "captureId": {
+      "minLength": 1,
+      "title": "Captureid",
+      "type": "string"
+    },
+    "batchIndex": {
+      "minimum": 0,
+      "title": "Batchindex",
+      "type": "integer"
+    },
+    "batchCount": {
+      "minimum": 1,
+      "title": "Batchcount",
+      "type": "integer"
+    },
+    "sourceSegmentIds": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Sourcesegmentids",
+      "type": "array"
+    },
+    "providerPrompt": {
+      "additionalProperties": true,
+      "title": "Providerprompt",
+      "type": "object"
+    },
+    "providerSchema": {
+      "additionalProperties": true,
+      "title": "Providerschema",
+      "type": "object"
+    },
+    "numCtx": {
+      "exclusiveMinimum": 0,
+      "title": "Numctx",
+      "type": "integer"
+    },
+    "numPredict": {
+      "exclusiveMinimum": 0,
+      "title": "Numpredict",
+      "type": "integer"
+    },
+    "batchDigest": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Batchdigest",
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/StructuringBatchStatus"
+    }
+  },
+  "required": [
+    "sessionId",
+    "captureId",
+    "batchIndex",
+    "batchCount",
+    "sourceSegmentIds",
+    "providerPrompt",
+    "providerSchema",
+    "numCtx",
+    "numPredict",
+    "batchDigest",
+    "status"
+  ],
+  "title": "StructuringBatchV2",
+  "type": "object"
+}

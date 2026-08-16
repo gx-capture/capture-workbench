@@ -249,6 +249,30 @@ DEFAULT_PROBLEM_REGISTRY = ProblemRegistry(
             "validation",
         ),
         _definition(
+            "structuring_session_not_found",
+            404,
+            "Structuring session was not found.",
+            "not_found",
+        ),
+        _definition(
+            "structuring_batch_not_found",
+            404,
+            "Structuring batch was not found.",
+            "not_found",
+        ),
+        _definition(
+            "structuring_batch_digest_conflict",
+            409,
+            "Structuring batch digest does not match the advertised batch.",
+            "conflict",
+        ),
+        _definition(
+            "structuring_session_corrupt",
+            500,
+            "Structuring session state is corrupt.",
+            "integrity",
+        ),
+        _definition(
             "contract_bundle_not_found", 404, "Contract bundle was not found.", "not_found"
         ),
         _definition(

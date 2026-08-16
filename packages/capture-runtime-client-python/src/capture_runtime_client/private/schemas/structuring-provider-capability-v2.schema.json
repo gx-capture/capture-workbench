@@ -1,0 +1,68 @@
+{
+  "$defs": {
+    "CaptureEngine": {
+      "additionalProperties": false,
+      "properties": {
+        "engine": {
+          "minLength": 1,
+          "title": "Engine",
+          "type": "string"
+        },
+        "model": {
+          "minLength": 1,
+          "title": "Model",
+          "type": "string"
+        },
+        "digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Digest",
+          "type": "string"
+        },
+        "device": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Device"
+        }
+      },
+      "required": [
+        "engine",
+        "model",
+        "digest"
+      ],
+      "title": "CaptureEngine",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Provider identity and schema dialect negotiated for one session.",
+  "properties": {
+    "provider": {
+      "$ref": "#/$defs/CaptureEngine"
+    },
+    "capability": {
+      "minLength": 1,
+      "title": "Capability",
+      "type": "string"
+    },
+    "schemaDialect": {
+      "minLength": 1,
+      "title": "Schemadialect",
+      "type": "string"
+    }
+  },
+  "required": [
+    "provider",
+    "capability",
+    "schemaDialect"
+  ],
+  "title": "StructuringProviderCapabilityV2",
+  "type": "object"
+}

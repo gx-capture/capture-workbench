@@ -36,6 +36,14 @@ export interface RuntimeModelOptions extends Generated.RuntimeModelOptionsV2 {}
 export interface RuntimeRequirement extends Generated.RuntimeRequirementV2 {}
 export interface RuntimeRequirements extends Generated.RuntimeRequirementsV2 {}
 export interface StartCapture extends Generated.StartCaptureV2 {}
+export interface StructuringProviderCapability
+  extends Generated.StructuringProviderCapabilityV2 {}
+export interface OpenStructuringSession extends Generated.OpenStructuringSessionV2 {}
+export interface StructuringSession extends Generated.StructuringSessionV2 {}
+export interface StructuringBatch extends Generated.StructuringBatchV2 {}
+export interface StructuringSemanticBlock
+  extends Generated.StructuringSemanticBlockV2 {}
+export interface SubmitStructuringBatch extends Generated.SubmitStructuringBatchV2 {}
 export interface RuntimeReady {
   readonly ready: boolean;
   readonly service: string;
@@ -55,6 +63,8 @@ export type TimeLocator = Generated.TimeLocator;
 export type CaptureRequirementId = Generated.CaptureRequirementId;
 export type CaptureSourceKind = Generated.CaptureSourceKind;
 export type StructuringMode = Generated.StructuringMode;
+export type StructuringSessionStatus = Generated.StructuringSessionStatus;
+export type StructuringBatchStatus = Generated.StructuringBatchStatus;
 export type StreamingCaptureStatus = Generated.StreamingCaptureStatus;
 export type StreamingEventType = Generated.StreamingEventType;
 export type StreamingIngestionStatus = Generated.StreamingIngestionStatus;
@@ -79,7 +89,7 @@ export {
 
 /** Approved current runtime contract-set identity; update only with a release. */
 export const CAPTURE_CONTRACT_SET_SHA256 =
-  '5b93bcb557acca034386b6e9e47502efec91210331ecebabd9c470196d35fec3';
+  '71fdcf02ac4c836cc758172312fc536657068a5d91180da76f35d6d3266f8e3c';
 
 export interface RuntimeDiscovery {
   readonly ready: RuntimeReady;

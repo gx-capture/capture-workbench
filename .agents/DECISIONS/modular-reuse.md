@@ -3,17 +3,39 @@
 ## Ownership
 
 - `capture-runtime` owns extraction, canonical validation, runtime lifecycle,
-  the contract models, and the embedded contract-set asset.
+  the contract models, the embedded contract-set asset, and
+  `capture_runtime.structuring` as the current runtime-local parity owner for
+  batching, prompt/schema adaptation, minimal semantic validation, and
+  provenance reconstruction.
 - The Python, TypeScript, and Java runtime-client SDKs expose typed public
   interfaces generated from that asset. Consumer applications do not copy
   wire DTOs or schemas.
-- `capture-structuring` owns shared prompt/batching and semantic assembly
-  behavior. Runtime providers and host adapters use the same implementation;
-  no consumer forks the validation rules.
+- The standalone `capture-structuring` TypeScript and Python packages remain
+  temporarily retained but frozen for consumers. They must remain available
+  until all consumer cutovers and same-digest gates pass; no new runtime
+  behavior is added to them.
+- The Python, TypeScript, and Java `capture-runtime-client` packages remain the
+  client SDKs. No structuring-client packages are created during this
+  migration.
 - The sidecar launcher crate owns process/health/launch-policy mechanics.
   Installers, persistence, and Tauri UI remain owned by each host.
 - Host LLM output is untrusted semantic input. Provenance is reconstructed from
   validated raw capture and the runtime accepts or rejects the complete result.
+- The legacy v2 full-document host commit route remains the compatibility path
+  until the explicit v3 retirement gate.
+
+## Pull-session freeze
+
+The additive pull-session contract is now implemented by the runtime and typed
+client SDKs. These semantics remain frozen before review-overlay or consumer
+cutover work:
+
+- provider capabilities include the provider capability and schema dialect;
+- each response is a minimal semantic batch, with no raw or provenance fields;
+- review overlays can change presentation only, never raw capture or
+  reconstructed provenance;
+- each batch and session has a digest plus idempotency/conflict semantics; and
+- persisted checkpoints make recovery crash-safe and replay deterministic.
 
 ## Release identity
 
@@ -43,6 +65,9 @@
   runtime, SDKs, and consumers together to the last verified digest.
 - Keep a break-glass dependency path only until every in-scope consumer has
   passed the same-digest installation and integration checks.
+- Keep the frozen standalone `capture-structuring` packages on the release
+  train until those consumer and same-digest gates are complete; deletion is a
+  separately reviewed retirement action.
 - Local verification covers deterministic generation, route/manifest parity,
   package integrity, and clean-consumer fixtures. Registry publication and
   staged-file integration remain fail-closed gates.

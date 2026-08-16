@@ -1,0 +1,118 @@
+{
+  "$defs": {
+    "CaptureEngine": {
+      "additionalProperties": false,
+      "properties": {
+        "engine": {
+          "minLength": 1,
+          "title": "Engine",
+          "type": "string"
+        },
+        "model": {
+          "minLength": 1,
+          "title": "Model",
+          "type": "string"
+        },
+        "digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Digest",
+          "type": "string"
+        },
+        "device": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Device"
+        }
+      },
+      "required": [
+        "engine",
+        "model",
+        "digest"
+      ],
+      "title": "CaptureEngine",
+      "type": "object"
+    },
+    "StructuringProviderCapabilityV2": {
+      "additionalProperties": false,
+      "description": "Provider identity and schema dialect negotiated for one session.",
+      "properties": {
+        "provider": {
+          "$ref": "#/$defs/CaptureEngine"
+        },
+        "capability": {
+          "minLength": 1,
+          "title": "Capability",
+          "type": "string"
+        },
+        "schemaDialect": {
+          "minLength": 1,
+          "title": "Schemadialect",
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "capability",
+        "schemaDialect"
+      ],
+      "title": "StructuringProviderCapabilityV2",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Authenticated request to open or replay a pull structuring session.",
+  "properties": {
+    "protocolVersion": {
+      "const": "2",
+      "default": "2",
+      "title": "Protocolversion",
+      "type": "string"
+    },
+    "captureId": {
+      "minLength": 1,
+      "title": "Captureid",
+      "type": "string"
+    },
+    "targetLanguage": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Targetlanguage"
+    },
+    "providerCapability": {
+      "$ref": "#/$defs/StructuringProviderCapabilityV2"
+    },
+    "schemaDialect": {
+      "minLength": 1,
+      "title": "Schemadialect",
+      "type": "string"
+    },
+    "clientRequestId": {
+      "minLength": 1,
+      "title": "Clientrequestid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "captureId",
+    "providerCapability",
+    "schemaDialect",
+    "clientRequestId"
+  ],
+  "title": "OpenStructuringSessionV2",
+  "type": "object"
+}

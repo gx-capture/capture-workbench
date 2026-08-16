@@ -27,6 +27,7 @@ from .contracts import (
     CaptureOperation,
     CaptureSourceKind,
     Ingestion,
+    OpenStructuringSession,
     PartialCapture,
     RawCapture,
     RuntimeInstallation,
@@ -35,7 +36,10 @@ from .contracts import (
     RuntimeReady,
     RuntimeRequirements,
     RuntimeStreamingCapabilities,
+    StructuringBatch,
     StructuringMode,
+    StructuringSession,
+    SubmitStructuringBatch,
 )
 from .errors import (
     CaptureRuntimeCompatibilityError,
@@ -281,6 +285,107 @@ class CaptureRuntimeClient:
 
     def get_result(self, capture_id: str) -> CaptureStreamingResult:
         return self.get_streaming_result(capture_id)
+
+    def open_structuring_session(
+        self,
+        capture_id: str,
+        request: OpenStructuringSession | Mapping[str, Any],
+        *,
+        idempotency_key: UUID | str | None = None,
+    ) -> StructuringSession:
+        """Open a pull-based structuring session with a matching idempotency key."""
+        try:
+            payload = (
+                request
+                if isinstance(request, OpenStructuringSession)
+                else OpenStructuringSession.model_validate(request)
+            )
+        except ValidationError as error:
+            raise CaptureRuntimeProtocolError(
+                "Structuring session request is invalid.", error.errors(include_url=False)
+            ) from error
+        if payload.capture_id != capture_id:
+            raise CaptureRuntimeProtocolError(
+                "Structuring session captureId must match the route capture."
+            )
+        key = (
+            payload.client_request_id
+            if idempotency_key is None
+            else str(idempotency_key)
+        )
+        if not key or key != payload.client_request_id:
+            raise CaptureRuntimeProtocolError(
+                "X-Idempotency-Key must match structuring session clientRequestId."
+            )
+        return decode_model(
+            self._request(
+                "POST",
+                f"/v2/captures/{_safe_id(capture_id)}/structure/session",
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Idempotency-Key": key,
+                },
+                json=payload.model_dump(mode="json", by_alias=True),
+            ),
+            StructuringSession,
+        )
+
+    def get_structuring_session(self, capture_id: str) -> StructuringSession:
+        return decode_model(
+            self._request(
+                "GET", f"/v2/captures/{_safe_id(capture_id)}/structure/session"
+            ),
+            StructuringSession,
+        )
+
+    def get_structuring_batch(self, capture_id: str, batch_index: int) -> StructuringBatch:
+        return decode_model(
+            self._request(
+                "GET",
+                f"/v2/captures/{_safe_id(capture_id)}/structure/session/batches/{_safe_batch_index(batch_index)}",
+            ),
+            StructuringBatch,
+        )
+
+    def pull_structuring_batch(self, capture_id: str, batch_index: int) -> StructuringBatch:
+        """Alias that makes the pull nature explicit for host coordinators."""
+        return self.get_structuring_batch(capture_id, batch_index)
+
+    def submit_structuring_batch(
+        self,
+        capture_id: str,
+        batch_index: int,
+        submission: SubmitStructuringBatch | Mapping[str, Any],
+        *,
+        idempotency_key: UUID | str,
+    ) -> StructuringSession:
+        try:
+            payload = (
+                submission
+                if isinstance(submission, SubmitStructuringBatch)
+                else SubmitStructuringBatch.model_validate(submission)
+            )
+        except ValidationError as error:
+            raise CaptureRuntimeProtocolError(
+                "Structuring batch submission is invalid.", error.errors(include_url=False)
+            ) from error
+        key = str(idempotency_key)
+        if not key:
+            raise CaptureRuntimeProtocolError(
+                "Structuring batch submissions require X-Idempotency-Key."
+            )
+        return decode_model(
+            self._request(
+                "PUT",
+                f"/v2/captures/{_safe_id(capture_id)}/structure/session/batches/{_safe_batch_index(batch_index)}",
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Idempotency-Key": key,
+                },
+                json=payload.model_dump(mode="json", by_alias=True),
+            ),
+            StructuringSession,
+        )
 
     def commit_structure(
         self,
@@ -743,18 +848,22 @@ class CaptureRuntimeClient:
             "/v2/captures/{capture_id}/events",
             "/v2/captures/{capture_id}/raw",
             "/v2/captures/{capture_id}/result",
+            "/v2/captures/{capture_id}/structure/session",
+            "/v2/captures/{capture_id}/structure/session/batches/{batch_index}",
         }
         if not required_paths.issubset(operation_paths):
             raise CaptureRuntimeCompatibilityError(
                 "Capture Runtime contract bundle does not advertise the required client surface."
             )
 
-        def find_operation(path: str) -> Mapping[str, Any] | None:
+        def find_operation(path: str, method: str | None = None) -> Mapping[str, Any] | None:
             return next(
                 (
                     item
                     for item in operations
-                    if isinstance(item, Mapping) and item.get("path") == path
+                    if isinstance(item, Mapping)
+                    and item.get("path") == path
+                    and (method is None or item.get("method") == method)
                 ),
                 None,
             )
@@ -762,6 +871,15 @@ class CaptureRuntimeClient:
         upload = find_operation("/v2/captures")
         chunk = find_operation("/v2/ingestions/{ingestion_id}/chunks/{chunk_index}")
         events = find_operation("/v2/captures/{capture_id}/events")
+        session_open = find_operation(
+            "/v2/captures/{capture_id}/structure/session", "POST"
+        )
+        batch_get = find_operation(
+            "/v2/captures/{capture_id}/structure/session/batches/{batch_index}", "GET"
+        )
+        batch_submit = find_operation(
+            "/v2/captures/{capture_id}/structure/session/batches/{batch_index}", "PUT"
+        )
         if (
             upload is None
             or not isinstance(upload.get("body"), Mapping)
@@ -792,6 +910,24 @@ class CaptureRuntimeClient:
             or streaming.get("lastEventIdHeader") != "Last-Event-ID"
         ):
             raise CaptureRuntimeCompatibilityError("Capture Runtime SSE metadata is incompatible.")
+        if (
+            session_open is None
+            or not isinstance(session_open.get("body"), Mapping)
+            or session_open["body"].get("kind") != "json"
+            or "X-Idempotency-Key" not in session_open.get("requiredHeaders", [])
+            or session_open.get("idempotency", {}).get("mode") != "required"
+            or batch_get is None
+            or not isinstance(batch_get.get("body"), Mapping)
+            or batch_get["body"].get("kind") != "none"
+            or batch_submit is None
+            or not isinstance(batch_submit.get("body"), Mapping)
+            or batch_submit["body"].get("kind") != "json"
+            or "X-Idempotency-Key" not in batch_submit.get("requiredHeaders", [])
+            or batch_submit.get("idempotency", {}).get("mode") != "required"
+        ):
+            raise CaptureRuntimeCompatibilityError(
+                "Capture Runtime pull-session metadata is incompatible."
+            )
         canonical_bundle = json.dumps(
             bundle,
             ensure_ascii=False,
@@ -836,6 +972,12 @@ def _safe_id(value: str) -> str:
         )
     ):
         raise ValueError("Capture Runtime identifier is invalid")
+    return value
+
+
+def _safe_batch_index(value: int) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise ValueError("Capture Runtime batch index is invalid")
     return value
 
 

@@ -265,12 +265,19 @@ def _python_models_source() -> bytes:
 
     source = inspect.getsource(contracts)
     source = re.sub(
-        r"from capture_runtime\.constants import \(.*?\)\n",
+        (
+            r"from capture_runtime\.constants import \(.*?\)\n"
+            r"|from capture_runtime\.constants import [^\n]+\n"
+        ),
         "\n".join(
             [
-                f"API_VERSION = {API_VERSION!r}",
-                f"CAPTURE_DOCUMENT_SCHEMA_VERSION = {CAPTURE_DOCUMENT_SCHEMA_VERSION!r}",
-                f"RUNTIME_VERSION = {RUNTIME_VERSION!r}",
+                f"API_VERSION: Literal[{API_VERSION!r}] = {API_VERSION!r}",
+                (
+                    "CAPTURE_DOCUMENT_SCHEMA_VERSION: "
+                    f"Literal[{CAPTURE_DOCUMENT_SCHEMA_VERSION!r}] = "
+                    f"{CAPTURE_DOCUMENT_SCHEMA_VERSION!r}"
+                ),
+                f"RUNTIME_VERSION: Literal[{RUNTIME_VERSION!r}] = {RUNTIME_VERSION!r}",
                 "",
             ]
         )

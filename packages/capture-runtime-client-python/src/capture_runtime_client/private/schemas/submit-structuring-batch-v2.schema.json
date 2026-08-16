@@ -1,0 +1,76 @@
+{
+  "$defs": {
+    "StructuringSemanticBlockV2": {
+      "additionalProperties": false,
+      "description": "Minimal semantic block accepted from a pull-session provider.",
+      "properties": {
+        "sourceSegmentId": {
+          "minLength": 1,
+          "title": "Sourcesegmentid",
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "heading",
+            "paragraph",
+            "list-item",
+            "table",
+            "quote",
+            "transcript"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "targetText": {
+          "anyOf": [
+            {
+              "maxLength": 2000000,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Targettext"
+        }
+      },
+      "required": [
+        "sourceSegmentId",
+        "type"
+      ],
+      "title": "StructuringSemanticBlockV2",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Strict minimal semantic batch submission body.",
+  "properties": {
+    "protocolVersion": {
+      "const": "2",
+      "default": "2",
+      "title": "Protocolversion",
+      "type": "string"
+    },
+    "batchDigest": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Batchdigest",
+      "type": "string"
+    },
+    "blocks": {
+      "items": {
+        "$ref": "#/$defs/StructuringSemanticBlockV2"
+      },
+      "minItems": 1,
+      "title": "Blocks",
+      "type": "array"
+    }
+  },
+  "required": [
+    "batchDigest",
+    "blocks"
+  ],
+  "title": "SubmitStructuringBatchV2",
+  "type": "object"
+}

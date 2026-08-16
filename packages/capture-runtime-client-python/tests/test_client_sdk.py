@@ -168,6 +168,24 @@ def test_loopback_transport_and_handshake() -> None:
             ),
             operation("/v2/captures/{capture_id}/raw"),
             operation("/v2/captures/{capture_id}/result"),
+            operation(
+                "/v2/captures/{capture_id}/structure/session",
+                method="POST",
+                body={"kind": "json"},
+                requiredHeaders=["X-Idempotency-Key"],
+                idempotency={"mode": "required", "header": "X-Idempotency-Key"},
+            ),
+            operation(
+                "/v2/captures/{capture_id}/structure/session/batches/{batch_index}",
+                method="GET",
+            ),
+            operation(
+                "/v2/captures/{capture_id}/structure/session/batches/{batch_index}",
+                method="PUT",
+                body={"kind": "json"},
+                requiredHeaders=["X-Idempotency-Key"],
+                idempotency={"mode": "required", "header": "X-Idempotency-Key"},
+            ),
         ],
         "problems": [],
         "invariants": [],
@@ -544,3 +562,171 @@ def test_sse_reconnects_with_last_event_id_cursor() -> None:
     assert [event.sequence for event in result] == [1, 2]
     assert calls[0].get("Last-Event-ID") is None
     assert calls[1].get("Last-Event-ID") == "1"
+
+
+def test_pull_session_methods_use_routes_and_matching_idempotency() -> None:
+    session = {
+        "protocolVersion": "2",
+        "sessionId": "session-1",
+        "captureId": "cap",
+        "rawSourceSha256": "a" * 64,
+        "contractSetSha256": CAPTURE_CONTRACT_SET_SHA256,
+        "providerCapability": {
+            "provider": {"engine": "ollama", "model": "model-1", "digest": "sha256:" + "b" * 64},
+            "capability": "capture-structuring",
+            "schemaDialect": "https://json-schema.org/draft/2020-12/schema",
+        },
+        "schemaDialect": "https://json-schema.org/draft/2020-12/schema",
+        "batchCount": 1,
+        "nextBatchIndex": 0,
+        "sessionDigest": "c" * 64,
+        "status": "open",
+        "createdAt": "2026-01-01T00:00:00+00:00",
+        "updatedAt": "2026-01-01T00:00:00+00:00",
+        "completedAt": None,
+    }
+    batch = {
+        "protocolVersion": "2",
+        "sessionId": "session-1",
+        "captureId": "cap",
+        "batchIndex": 0,
+        "batchCount": 1,
+        "sourceSegmentIds": ["segment-1"],
+        "providerPrompt": {"rawSegments": []},
+        "providerSchema": {"type": "object"},
+        "numCtx": 2048,
+        "numPredict": 256,
+        "batchDigest": "d" * 64,
+        "status": "ready",
+    }
+    seen: dict[str, str] = {}
+
+    def open_route(request: httpx.Request) -> httpx.Response:
+        seen["open-key"] = request.headers["x-idempotency-key"]
+        return httpx.Response(201, json=session, request=request)
+
+    def submit_route(request: httpx.Request) -> httpx.Response:
+        seen["submit-key"] = request.headers["x-idempotency-key"]
+        return httpx.Response(
+            200,
+            json={
+                **session,
+                "status": "completed",
+                "nextBatchIndex": 1,
+                "completedAt": "2026-01-01T00:00:01+00:00",
+            },
+            request=request,
+        )
+
+    transport = _transport(
+        {
+            ("POST", "/v2/captures/cap/structure/session"): open_route,
+            ("GET", "/v2/captures/cap/structure/session"): lambda request: httpx.Response(
+                200, json=session, request=request
+            ),
+            ("GET", "/v2/captures/cap/structure/session/batches/0"): lambda request: httpx.Response(
+                200, json=batch, request=request
+            ),
+            ("PUT", "/v2/captures/cap/structure/session/batches/0"): submit_route,
+        }
+    )
+    client = CaptureRuntimeClient(transport=transport)
+    request = {
+        "captureId": "cap",
+        "providerCapability": session["providerCapability"],
+        "schemaDialect": session["schemaDialect"],
+        "clientRequestId": "session-key",
+    }
+    assert client.open_structuring_session("cap", request).session_id == "session-1"
+    assert client.open_structuring_session("cap", request).session_id == "session-1"
+    assert client.get_structuring_session("cap").session_id == "session-1"
+    assert client.pull_structuring_batch("cap", 0).batch_digest == batch["batchDigest"]
+    client.submit_structuring_batch(
+        "cap",
+        0,
+        {
+            "batchDigest": batch["batchDigest"],
+            "blocks": [{"sourceSegmentId": "segment-1", "type": "paragraph"}],
+        },
+        idempotency_key="batch-key",
+    )
+    client.submit_structuring_batch(
+        "cap",
+        0,
+        {
+            "batchDigest": batch["batchDigest"],
+            "blocks": [{"sourceSegmentId": "segment-1", "type": "paragraph"}],
+        },
+        idempotency_key="batch-key",
+    )
+    assert seen == {"open-key": "session-key", "submit-key": "batch-key"}
+    with pytest.raises(CaptureProtocolError):
+        client.open_structuring_session("other", request)
+    with pytest.raises(CaptureProtocolError):
+        client.open_structuring_session("cap", request, idempotency_key="")
+
+
+def test_pull_session_rejects_extra_semantic_fields_and_maps_conflict() -> None:
+    def conflict(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            409,
+            json={"error": {"code": "idempotency_conflict", "message": "same key"}},
+            request=request,
+        )
+    transport = _transport(
+        {("PUT", "/v2/captures/cap/structure/session/batches/0"): conflict}
+    )
+    client = CaptureRuntimeClient(transport=transport)
+    with pytest.raises(CaptureProtocolError):
+        client.submit_structuring_batch(
+            "cap",
+            0,
+            {
+                "batchDigest": "e" * 64,
+                "blocks": [
+                    {
+                        "sourceSegmentId": "segment-1",
+                        "type": "paragraph",
+                        "sourceText": "must-not-cross-the-wire",
+                    }
+                ],
+            },
+            idempotency_key="batch-key",
+        )
+    with pytest.raises(CaptureRemoteError, match="idempotency_conflict"):
+        client.submit_structuring_batch(
+            "cap",
+            0,
+            {
+                "batchDigest": "e" * 64,
+                "blocks": [{"sourceSegmentId": "segment-1", "type": "paragraph"}],
+            },
+            idempotency_key="batch-key",
+        )
+
+
+def test_pull_session_rejects_extra_response_fields() -> None:
+    batch = {
+        "protocolVersion": "2",
+        "sessionId": "session-1",
+        "captureId": "cap",
+        "batchIndex": 0,
+        "batchCount": 1,
+        "sourceSegmentIds": ["segment-1"],
+        "providerPrompt": {},
+        "providerSchema": {},
+        "numCtx": 1,
+        "numPredict": 1,
+        "batchDigest": "e" * 64,
+        "status": "ready",
+        "unexpected": True,
+    }
+    transport = _transport(
+        {
+            ("GET", "/v2/captures/cap/structure/session/batches/0"): lambda request: httpx.Response(
+                200, json=batch, request=request
+            )
+        }
+    )
+    with pytest.raises(CaptureProtocolError):
+        CaptureRuntimeClient(transport=transport).get_structuring_batch("cap", 0)

@@ -82,7 +82,11 @@ class CandidateBodyLimitMiddleware:
 
 
 def _is_candidate_structure_path(path: str) -> bool:
-    return path.endswith("/structure") or path.endswith("/structure/commit")
+    return (
+        path.endswith("/structure")
+        or path.endswith("/structure/commit")
+        or "/structure/session/batches/" in path
+    )
 
 
 def _normalized_authority(value: str) -> str | None:
@@ -122,6 +126,7 @@ def create_app(
     """
 
     runtime_settings = settings or RuntimeSettings.from_env()
+    runtime_contract_set = contract_set or load_contract_set()
     runtime_dependencies = dependencies or build_runtime_dependencies(
         runtime_settings,
         clock=clock,
@@ -131,9 +136,9 @@ def create_app(
         process_controller=process_controller,
         installation_repository=installation_repository,
         model_installation_repository=model_installation_repository,
+        contract_set=runtime_contract_set,
     )
     runtime_settings = runtime_dependencies.settings
-    runtime_contract_set = contract_set or load_contract_set()
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -146,6 +151,7 @@ def create_app(
         runtime_dependencies.streaming_repository.initialize()
         runtime_dependencies.installation_repository.initialize()
         runtime_dependencies.model_installation_repository.initialize()
+        runtime_dependencies.structuring_session_service.initialize()
         # Re-check on every executable start.  A frozen binary must fail closed
         # if a route is added/removed without regenerating its contract set.
         validate_route_inventory(_app.routes, runtime_contract_set)
@@ -175,6 +181,7 @@ def create_app(
     app.state.installation_repository = runtime_dependencies.installation_repository
     app.state.streaming_repository = runtime_dependencies.streaming_repository
     app.state.streaming_capture_service = runtime_dependencies.streaming_capture_service
+    app.state.structuring_session_service = runtime_dependencies.structuring_session_service
     app.state.installation_service = runtime_dependencies.installation_service
     app.state.model_installation_repository = runtime_dependencies.model_installation_repository
     app.state.model_installation_service = runtime_dependencies.model_installation_service

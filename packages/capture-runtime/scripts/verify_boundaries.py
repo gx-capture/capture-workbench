@@ -26,10 +26,8 @@ CORE_REQUIRED = (
     "av.libs/avformat-",
     "av.libs/avutil-",
     "av.libs/swresample-",
-    "capture_runtime_client/private/assets/contract-set.json",
-    "capture_runtime_client/private/assets/contract-set.sha256",
-    "capture_runtime_client/private/schemas/capture-document.schema.json",
-    "capture_runtime_client/private/schemas/raw-capture.schema.json",
+    "capture_runtime/assets/contract-set.json",
+    "capture_runtime/assets/contract-set.sha256",
 )
 OCR_FORBIDDEN = ("faster_whisper", "ctranslate2", "huggingface_hub")
 WHISPER_FORBIDDEN = ("paddleocr", "paddlex", "pypdfium2", "cv2", "PIL")

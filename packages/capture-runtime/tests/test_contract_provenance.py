@@ -5,10 +5,10 @@ import hashlib
 from datetime import UTC, datetime
 
 import pytest
-from capture_structuring import StructuringValidationError, validate_structuring_candidate
 from pydantic import ValidationError
 
 from capture_runtime.contracts import CaptureDocument, RawCapture
+from capture_runtime.structuring import StructuringValidationError, validate_structuring_candidate
 
 
 def _engine(name: str) -> dict[str, str]:

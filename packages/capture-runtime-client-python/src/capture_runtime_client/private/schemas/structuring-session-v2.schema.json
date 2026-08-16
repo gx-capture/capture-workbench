@@ -1,0 +1,188 @@
+{
+  "$defs": {
+    "CaptureEngine": {
+      "additionalProperties": false,
+      "properties": {
+        "engine": {
+          "minLength": 1,
+          "title": "Engine",
+          "type": "string"
+        },
+        "model": {
+          "minLength": 1,
+          "title": "Model",
+          "type": "string"
+        },
+        "digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Digest",
+          "type": "string"
+        },
+        "device": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Device"
+        }
+      },
+      "required": [
+        "engine",
+        "model",
+        "digest"
+      ],
+      "title": "CaptureEngine",
+      "type": "object"
+    },
+    "StructuringProviderCapabilityV2": {
+      "additionalProperties": false,
+      "description": "Provider identity and schema dialect negotiated for one session.",
+      "properties": {
+        "provider": {
+          "$ref": "#/$defs/CaptureEngine"
+        },
+        "capability": {
+          "minLength": 1,
+          "title": "Capability",
+          "type": "string"
+        },
+        "schemaDialect": {
+          "minLength": 1,
+          "title": "Schemadialect",
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "capability",
+        "schemaDialect"
+      ],
+      "title": "StructuringProviderCapabilityV2",
+      "type": "object"
+    },
+    "StructuringSessionStatus": {
+      "description": "Durable lifecycle states for a pull-based structuring session.",
+      "enum": [
+        "open",
+        "completed",
+        "failed",
+        "cancelled"
+      ],
+      "title": "StructuringSessionStatus",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Current durable pull-session snapshot.",
+  "properties": {
+    "protocolVersion": {
+      "const": "2",
+      "default": "2",
+      "title": "Protocolversion",
+      "type": "string"
+    },
+    "sessionId": {
+      "minLength": 1,
+      "title": "Sessionid",
+      "type": "string"
+    },
+    "captureId": {
+      "minLength": 1,
+      "title": "Captureid",
+      "type": "string"
+    },
+    "rawSourceSha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Rawsourcesha256",
+      "type": "string"
+    },
+    "contractSetSha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Contractsetsha256",
+      "type": "string"
+    },
+    "targetLanguage": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Targetlanguage"
+    },
+    "providerCapability": {
+      "$ref": "#/$defs/StructuringProviderCapabilityV2"
+    },
+    "schemaDialect": {
+      "minLength": 1,
+      "title": "Schemadialect",
+      "type": "string"
+    },
+    "batchCount": {
+      "minimum": 1,
+      "title": "Batchcount",
+      "type": "integer"
+    },
+    "nextBatchIndex": {
+      "minimum": 0,
+      "title": "Nextbatchindex",
+      "type": "integer"
+    },
+    "sessionDigest": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Sessiondigest",
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/StructuringSessionStatus"
+    },
+    "createdAt": {
+      "format": "date-time",
+      "title": "Createdat",
+      "type": "string"
+    },
+    "updatedAt": {
+      "format": "date-time",
+      "title": "Updatedat",
+      "type": "string"
+    },
+    "completedAt": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Completedat"
+    }
+  },
+  "required": [
+    "sessionId",
+    "captureId",
+    "rawSourceSha256",
+    "contractSetSha256",
+    "providerCapability",
+    "schemaDialect",
+    "batchCount",
+    "nextBatchIndex",
+    "sessionDigest",
+    "status",
+    "createdAt",
+    "updatedAt"
+  ],
+  "title": "StructuringSessionV2",
+  "type": "object"
+}

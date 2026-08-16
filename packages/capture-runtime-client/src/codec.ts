@@ -4,7 +4,11 @@ import {
   CaptureRuntimeError,
   CaptureRuntimeProtocolError,
 } from './errors.js';
-import type { ErrorEnvelope, RuntimeTransport } from './contracts.js';
+import type {
+  ErrorEnvelope,
+  RuntimeTransport,
+  SubmitStructuringBatch,
+} from './contracts.js';
 
 /** Generated wire models whose top-level fields are checked before casting. */
 export type RuntimeResponseModel =
@@ -20,7 +24,9 @@ export type RuntimeResponseModel =
   | 'CaptureOperation'
   | 'Ingestion'
   | 'PartialCapture'
-  | 'StreamingResult';
+  | 'StreamingResult'
+  | 'StructuringSession'
+  | 'StructuringBatch';
 
 const MODEL_FIELDS: Record<RuntimeResponseModel, { readonly required: readonly string[]; readonly optional: readonly string[] }> = {
   RuntimeReady: { required: ['ready', 'service', 'apiVersion', 'runtimeVersion', 'captureDocumentSchemaVersion', 'capabilities'], optional: ['message', 'captureDocumentSchemaSha256', 'schemaSha256', 'contractSetVersion'] },
@@ -36,6 +42,8 @@ const MODEL_FIELDS: Record<RuntimeResponseModel, { readonly required: readonly s
   Ingestion: { required: ['protocolVersion', 'ingestionId', 'status', 'fileName', 'mediaType', 'totalBytes', 'receivedBytes', 'contiguousBytes', 'nextChunkIndex', 'nextOffset', 'expiresAt'], optional: ['kind', 'sourceSha256', 'finalizedSha256'] },
   PartialCapture: { required: ['protocolVersion', 'captureId', 'source', 'revision', 'coveredUntilMs', 'updatedAt'], optional: ['segments', 'sourceText', 'extractionEngine'] },
   StreamingResult: { required: ['operation', 'raw', 'result'], optional: [] },
+  StructuringSession: { required: ['protocolVersion', 'sessionId', 'captureId', 'rawSourceSha256', 'contractSetSha256', 'providerCapability', 'schemaDialect', 'batchCount', 'nextBatchIndex', 'sessionDigest', 'status', 'createdAt', 'updatedAt'], optional: ['targetLanguage', 'completedAt'] },
+  StructuringBatch: { required: ['protocolVersion', 'sessionId', 'captureId', 'batchIndex', 'batchCount', 'sourceSegmentIds', 'providerPrompt', 'providerSchema', 'numCtx', 'numPredict', 'batchDigest', 'status'], optional: [] },
 };
 
 export async function decodeJson<T>(response: Response, transport?: RuntimeTransport, model?: RuntimeResponseModel): Promise<T> {
@@ -66,6 +74,94 @@ function validateModelShape(value: unknown, model: RuntimeResponseModel): void {
   const missing = fields.required.find((key) => !(key in record));
   if (missing) {
     throw new CaptureRuntimeProtocolError(`Capture Runtime returned ${model} without required field: ${missing}.`);
+  }
+  if (model === 'StructuringSession') validateStructuringSession(record);
+  if (model === 'StructuringBatch') validateStructuringBatch(record);
+}
+
+function validateStructuringSession(record: Record<string, unknown>): void {
+  const provider = record['providerCapability'];
+  if (!provider || typeof provider !== 'object' || Array.isArray(provider)) {
+    throw new CaptureRuntimeProtocolError('Capture Runtime returned invalid StructuringSession provider capability.');
+  }
+  assertExactFields(provider as Record<string, unknown>, ['provider', 'capability', 'schemaDialect'], 'StructuringSession provider capability');
+  const engine = (provider as Record<string, unknown>)['provider'];
+  if (!engine || typeof engine !== 'object' || Array.isArray(engine)) {
+    throw new CaptureRuntimeProtocolError('Capture Runtime returned invalid StructuringSession provider.');
+  }
+  assertExactFields(
+    engine as Record<string, unknown>,
+    ['engine', 'model', 'digest'],
+    'StructuringSession provider',
+    ['device'],
+  );
+  const device = (engine as Record<string, unknown>)['device'];
+  if (
+    device !== undefined &&
+    device !== null &&
+    (typeof device !== 'string' || device.length < 1)
+  ) {
+    throw new CaptureRuntimeProtocolError(
+      'Capture Runtime returned invalid StructuringSession provider device.',
+    );
+  }
+}
+
+function validateStructuringBatch(record: Record<string, unknown>): void {
+  const sourceSegmentIds = record['sourceSegmentIds'];
+  if (!Array.isArray(sourceSegmentIds) || sourceSegmentIds.length < 1 || sourceSegmentIds.some((id) => typeof id !== 'string' || id.length === 0)) {
+    throw new CaptureRuntimeProtocolError('Capture Runtime returned invalid StructuringBatch sourceSegmentIds.');
+  }
+  for (const field of ['providerPrompt', 'providerSchema']) {
+    const value = record[field];
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new CaptureRuntimeProtocolError(`Capture Runtime returned invalid StructuringBatch ${field}.`);
+    }
+  }
+}
+
+function assertExactFields(record: Record<string, unknown>, required: readonly string[], label: string, optional: readonly string[] = []): void {
+  const allowed = new Set([...required, ...optional]);
+  const unknown = Object.keys(record).find((key) => !allowed.has(key));
+  if (unknown) throw new CaptureRuntimeProtocolError(`Capture Runtime returned unknown ${label} field: ${unknown}.`);
+  const missing = required.find((key) => !(key in record));
+  if (missing) throw new CaptureRuntimeProtocolError(`Capture Runtime returned ${label} without required field: ${missing}.`);
+}
+
+/** Validate the strict minimal semantic batch body before sending it. */
+export function assertStructuringBatchSubmission(value: unknown): asserts value is SubmitStructuringBatch {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new CaptureRuntimeProtocolError('Capture Runtime structuring batch submission must be an object.');
+  }
+  const body = value as Record<string, unknown>;
+  assertExactFields(body, ['batchDigest', 'blocks'], 'structuring batch submission', ['protocolVersion']);
+  if (body['protocolVersion'] !== undefined && body['protocolVersion'] !== '2') {
+    throw new CaptureRuntimeProtocolError('Capture Runtime structuring batch submission protocolVersion is invalid.');
+  }
+  if (typeof body['batchDigest'] !== 'string' || !/^[0-9a-f]{64}$/u.test(body['batchDigest'])) {
+    throw new CaptureRuntimeProtocolError('Capture Runtime structuring batch submission batchDigest is invalid.');
+  }
+  const blocks = body['blocks'];
+  if (!Array.isArray(blocks) || blocks.length < 1) {
+    throw new CaptureRuntimeProtocolError('Capture Runtime structuring batch submission blocks are invalid.');
+  }
+  const blockTypes = new Set(['heading', 'paragraph', 'list-item', 'table', 'quote', 'transcript']);
+  for (const block of blocks) {
+    if (!block || typeof block !== 'object' || Array.isArray(block)) {
+      throw new CaptureRuntimeProtocolError('Capture Runtime structuring batch submission block is invalid.');
+    }
+    const semantic = block as Record<string, unknown>;
+    assertExactFields(semantic, ['sourceSegmentId', 'type'], 'structuring semantic block', ['targetText']);
+    if (typeof semantic['sourceSegmentId'] !== 'string' || semantic['sourceSegmentId'].length === 0) {
+      throw new CaptureRuntimeProtocolError('Capture Runtime structuring semantic block sourceSegmentId is invalid.');
+    }
+    if (typeof semantic['type'] !== 'string' || !blockTypes.has(semantic['type'])) {
+      throw new CaptureRuntimeProtocolError('Capture Runtime structuring semantic block type is invalid.');
+    }
+    const targetText = semantic['targetText'];
+    if (targetText !== undefined && targetText !== null && (typeof targetText !== 'string' || targetText.length < 1 || targetText.length > 2_000_000)) {
+      throw new CaptureRuntimeProtocolError('Capture Runtime structuring semantic block targetText is invalid.');
+    }
   }
 }
 

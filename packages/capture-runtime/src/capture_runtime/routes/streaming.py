@@ -9,7 +9,6 @@ import time
 from collections.abc import AsyncIterator
 from typing import Annotated
 
-from capture_structuring import StructuringValidationError
 from fastapi import APIRouter, Header, Path, Request, Response, status
 from fastapi.responses import StreamingResponse
 
@@ -20,11 +19,15 @@ from capture_runtime.contracts import (
     FinalizeIngestionV2,
     IngestionV2,
     OpenIngestionV2,
+    OpenStructuringSessionV2,
     PartialCaptureV2,
     RawCapture,
     ReportStructuringFailureV2,
     RuntimeStreamingCapabilitiesV2,
     StartCaptureV2,
+    StructuringBatchV2,
+    StructuringSessionV2,
+    SubmitStructuringBatchV2,
 )
 from capture_runtime.dependencies import RuntimeDependencies
 from capture_runtime.progressive_audio import DEFAULT_CHECKPOINT_MS
@@ -35,7 +38,13 @@ from capture_runtime.storage import (
     StreamingPartialNotFoundError,
     StreamingRecordNotFoundError,
     StreamingTransitionError,
+    StructuringSessionDigestConflictError,
+    StructuringSessionIdempotencyConflictError,
+    StructuringSessionRecordCorruptError,
+    StructuringSessionRecordNotFoundError,
+    StructuringSessionTransitionError,
 )
+from capture_runtime.structuring import StructuringValidationError
 
 _CONTENT_RANGE = re.compile(r"^bytes ([0-9]+)-([0-9]+)/([0-9]+)$")
 _DIGEST = re.compile(r"^sha-256=([0-9a-f]{64})$")
@@ -43,6 +52,7 @@ _DIGEST = re.compile(r"^sha-256=([0-9a-f]{64})$")
 
 def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependencies) -> None:
     service = dependencies.streaming_capture_service
+    structuring_session_service = dependencies.structuring_session_service
 
     @router.get("/streaming/health/ready", response_model=RuntimeStreamingCapabilitiesV2)
     async def streaming_ready() -> RuntimeStreamingCapabilitiesV2:
@@ -286,6 +296,10 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
             raise ApiProblem(
                 409, "raw_unavailable", "Raw extraction is not available yet."
             ) from error
+        except StructuringSessionRecordCorruptError as error:
+            raise ApiProblem(
+                500, "structuring_session_corrupt", "Structuring session state is corrupt."
+            ) from error
         except StreamingRecordNotFoundError as error:
             raise ApiProblem(
                 404, "capture_not_found", "Streaming capture was not found."
@@ -309,6 +323,137 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
         except StreamingPartialNotFoundError as error:
             raise ApiProblem(
                 409, "raw_unavailable", "Raw progressive capture is not available."
+            ) from error
+        except StreamingRecordNotFoundError as error:
+            raise ApiProblem(
+                404, "capture_not_found", "Streaming capture was not found."
+            ) from error
+
+    @router.post(
+        "/captures/{capture_id}/structure/session",
+        response_model=StructuringSessionV2,
+        status_code=status.HTTP_201_CREATED,
+    )
+    async def open_structuring_session(
+        capture_id: str,
+        request: OpenStructuringSessionV2,
+        idempotency_key: Annotated[
+            str, Header(alias="X-Idempotency-Key", min_length=1, max_length=128)
+        ],
+    ) -> StructuringSessionV2:
+        if request.capture_id != capture_id:
+            raise ApiProblem(422, "validation_error", "captureId must match the route capture.")
+        _require_matching_idempotency_key(idempotency_key, request.client_request_id)
+        try:
+            return structuring_session_service.open(request)
+        except StructuringSessionIdempotencyConflictError as error:
+            raise ApiProblem(
+                409,
+                "idempotency_conflict",
+                "Structuring session request conflicts with an existing session.",
+            ) from error
+        except StreamingTransitionError as error:
+            raise ApiProblem(409, "invalid_capture_state", _safe_message(str(error))) from error
+        except StreamingPartialNotFoundError as error:
+            raise ApiProblem(
+                409, "raw_unavailable", "Raw extraction is not available yet."
+            ) from error
+        except StreamingRecordNotFoundError as error:
+            raise ApiProblem(
+                404, "capture_not_found", "Streaming capture was not found."
+            ) from error
+
+    @router.get(
+        "/captures/{capture_id}/structure/session",
+        response_model=StructuringSessionV2,
+    )
+    async def get_structuring_session(capture_id: str) -> StructuringSessionV2:
+        try:
+            session = structuring_session_service.get_for_capture(capture_id)
+            return session
+        except StructuringSessionRecordNotFoundError as error:
+            raise ApiProblem(
+                404, "structuring_session_not_found", "Structuring session was not found."
+            ) from error
+
+    @router.get(
+        "/captures/{capture_id}/structure/session/batches/{batch_index}",
+        response_model=StructuringBatchV2,
+    )
+    async def get_structuring_batch(
+        capture_id: str,
+        batch_index: Annotated[int, Path(ge=0)],
+    ) -> StructuringBatchV2:
+        try:
+            session = structuring_session_service.get_for_capture(capture_id)
+        except StructuringSessionRecordNotFoundError as error:
+            raise ApiProblem(
+                404, "structuring_session_not_found", "Structuring session was not found."
+            ) from error
+        try:
+            return structuring_session_service.batch(session.session_id, batch_index)
+        except StructuringSessionRecordNotFoundError as error:
+            raise ApiProblem(
+                404, "structuring_batch_not_found", "Structuring batch was not found."
+            ) from error
+
+    @router.put(
+        "/captures/{capture_id}/structure/session/batches/{batch_index}",
+        response_model=StructuringSessionV2,
+    )
+    async def submit_structuring_batch(
+        capture_id: str,
+        batch_index: Annotated[int, Path(ge=0)],
+        payload: SubmitStructuringBatchV2,
+        idempotency_key: Annotated[
+            str, Header(alias="X-Idempotency-Key", min_length=1, max_length=128)
+        ],
+    ) -> StructuringSessionV2:
+        try:
+            session = structuring_session_service.get_for_capture(capture_id)
+        except StructuringSessionRecordNotFoundError as error:
+            raise ApiProblem(
+                404, "structuring_session_not_found", "Structuring session was not found."
+            ) from error
+        try:
+            return structuring_session_service.submit(
+                session.session_id,
+                batch_index,
+                payload,
+                idempotency_key=idempotency_key,
+            )
+        except StructuringSessionIdempotencyConflictError as error:
+            raise ApiProblem(
+                409,
+                "idempotency_conflict",
+                "Structuring batch idempotency key conflicts.",
+            ) from error
+        except StructuringSessionDigestConflictError as error:
+            raise ApiProblem(
+                409,
+                "structuring_batch_digest_conflict",
+                "Structuring batch digest does not match the advertised batch.",
+            ) from error
+        except StructuringSessionTransitionError as error:
+            raise ApiProblem(409, "invalid_capture_state", _safe_message(str(error))) from error
+        except StructuringSessionRecordNotFoundError as error:
+            raise ApiProblem(
+                404, "structuring_batch_not_found", "Structuring batch was not found."
+            ) from error
+        except StructuringSessionRecordCorruptError as error:
+            raise ApiProblem(
+                500, "structuring_session_corrupt", "Structuring session state is corrupt."
+            ) from error
+        except StructuringValidationError as error:
+            raise ApiProblem(
+                422,
+                "structuring_invalid_output",
+                "Structuring batch failed strict semantic validation.",
+                details={"issues": error.issues},
+            ) from error
+        except StreamingPartialNotFoundError as error:
+            raise ApiProblem(
+                409, "raw_unavailable", "Raw extraction is not available yet."
             ) from error
         except StreamingRecordNotFoundError as error:
             raise ApiProblem(

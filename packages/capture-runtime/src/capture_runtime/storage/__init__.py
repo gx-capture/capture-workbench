@@ -20,6 +20,14 @@ from capture_runtime.storage.streaming_repository import (
     StreamingRepository,
     StreamingTransitionError,
 )
+from capture_runtime.storage.structuring_session_repository import (
+    StructuringSessionDigestConflictError,
+    StructuringSessionIdempotencyConflictError,
+    StructuringSessionRecordCorruptError,
+    StructuringSessionRecordNotFoundError,
+    StructuringSessionRepository,
+    StructuringSessionTransitionError,
+)
 
 __all__ = [
     "IdempotencyConflictError",
@@ -33,5 +41,11 @@ __all__ = [
     "StreamingRecordNotFoundError",
     "StreamingRepository",
     "StreamingTransitionError",
+    "StructuringSessionDigestConflictError",
+    "StructuringSessionIdempotencyConflictError",
+    "StructuringSessionRecordCorruptError",
+    "StructuringSessionRecordNotFoundError",
+    "StructuringSessionRepository",
+    "StructuringSessionTransitionError",
     "TransitionRejectedError",
 ]

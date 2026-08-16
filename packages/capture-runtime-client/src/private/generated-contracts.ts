@@ -34,7 +34,13 @@ export type StreamingIngestionMode = "file";
 export type StreamingIngestionStatus = "open" | "finalizing" | "ready" | "cancelled" | "failed" | "expired";
 
 /** Wire enum. */
+export type StructuringBatchStatus = "ready" | "accepted" | "failed";
+
+/** Wire enum. */
 export type StructuringMode = "runtime" | "host";
+
+/** Wire enum. */
+export type StructuringSessionStatus = "open" | "completed" | "failed" | "cancelled";
 
 export type CaptureLocator = PageLocator | TimeLocator;
 
@@ -110,17 +116,17 @@ export interface CaptureOperationV2 {
   readonly completedAt?: string | null;
 }
 
-export interface CaptureStreamingResult {
-  readonly operation: CaptureOperationV2;
-  readonly raw: RawCapture;
-  readonly result: CaptureDocument;
-}
-
 export interface CaptureSource {
   readonly sha256: string;
   readonly fileName: string;
   readonly mediaType: string;
   readonly bytes: number;
+}
+
+export interface CaptureStreamingResult {
+  readonly operation: CaptureOperationV2;
+  readonly raw: RawCapture;
+  readonly result: CaptureDocument;
 }
 
 export interface ErrorBodyV2 {
@@ -165,6 +171,15 @@ export interface OpenIngestionV2 {
   readonly mediaType: string;
   readonly totalBytes: number;
   readonly sourceSha256?: string | null;
+}
+
+export interface OpenStructuringSessionV2 {
+  readonly protocolVersion: "2";
+  readonly captureId: string;
+  readonly targetLanguage?: string | null;
+  readonly providerCapability: StructuringProviderCapabilityV2;
+  readonly schemaDialect: string;
+  readonly clientRequestId: string;
 }
 
 export interface PageLocator {
@@ -319,13 +334,64 @@ export interface StartRuntimeModelInstallationV2 {
   readonly consent: true;
 }
 
+export interface StructuringBatchV2 {
+  readonly protocolVersion: "2";
+  readonly sessionId: string;
+  readonly captureId: string;
+  readonly batchIndex: number;
+  readonly batchCount: number;
+  readonly sourceSegmentIds: readonly (string)[];
+  readonly providerPrompt: Record<string, unknown>;
+  readonly providerSchema: Record<string, unknown>;
+  readonly numCtx: number;
+  readonly numPredict: number;
+  readonly batchDigest: string;
+  readonly status: StructuringBatchStatus;
+}
+
+export interface StructuringProviderCapabilityV2 {
+  readonly provider: CaptureEngine;
+  readonly capability: string;
+  readonly schemaDialect: string;
+}
+
+export interface StructuringSemanticBlockV2 {
+  readonly sourceSegmentId: string;
+  readonly type: "heading" | "paragraph" | "list-item" | "table" | "quote" | "transcript";
+  readonly targetText?: string | null;
+}
+
+export interface StructuringSessionV2 {
+  readonly protocolVersion: "2";
+  readonly sessionId: string;
+  readonly captureId: string;
+  readonly rawSourceSha256: string;
+  readonly contractSetSha256: string;
+  readonly targetLanguage?: string | null;
+  readonly providerCapability: StructuringProviderCapabilityV2;
+  readonly schemaDialect: string;
+  readonly batchCount: number;
+  readonly nextBatchIndex: number;
+  readonly sessionDigest: string;
+  readonly status: StructuringSessionStatus;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly completedAt?: string | null;
+}
+
+export interface SubmitStructuringBatchV2 {
+  readonly protocolVersion: "2";
+  readonly batchDigest: string;
+  readonly blocks: readonly (StructuringSemanticBlockV2)[];
+}
+
 export interface TimeLocator {
   readonly kind: "time";
   readonly startMs: number;
   readonly endMs: number;
 }
 
-export type CaptureContractName = "CaptureBlock" | "CaptureDocument" | "CaptureEngine" | "CaptureEventV2" | "CaptureFailureV2" | "CaptureOperationV2" | "CaptureSource" | "CaptureStreamingResult" | "ErrorBodyV2" | "ErrorEnvelopeV2" | "FinalizeIngestionV2" | "IngestionV2" | "OpenIngestionV2" | "PageLocator" | "PartialCaptureV2" | "RawCapture" | "RawCaptureSegment" | "ReportStructuringFailureV2" | "RuntimeArtifactDescriptorV2" | "RuntimeInstallationV2" | "RuntimeInstallationsV2" | "RuntimeModelInstallationV2" | "RuntimeModelInstallationsV2" | "RuntimeModelOptionV2" | "RuntimeModelOptionsV2" | "RuntimeReady" | "RuntimeRequirementV2" | "RuntimeRequirementsV2" | "RuntimeStreamingCapabilitiesV2" | "StartCaptureV2" | "StartRuntimeInstallationV2" | "StartRuntimeModelInstallationV2" | "TimeLocator";
+export type CaptureContractName = "CaptureBlock" | "CaptureDocument" | "CaptureEngine" | "CaptureEventV2" | "CaptureFailureV2" | "CaptureOperationV2" | "CaptureSource" | "CaptureStreamingResult" | "ErrorBodyV2" | "ErrorEnvelopeV2" | "FinalizeIngestionV2" | "IngestionV2" | "OpenIngestionV2" | "OpenStructuringSessionV2" | "PageLocator" | "PartialCaptureV2" | "RawCapture" | "RawCaptureSegment" | "ReportStructuringFailureV2" | "RuntimeArtifactDescriptorV2" | "RuntimeInstallationV2" | "RuntimeInstallationsV2" | "RuntimeModelInstallationV2" | "RuntimeModelInstallationsV2" | "RuntimeModelOptionV2" | "RuntimeModelOptionsV2" | "RuntimeReady" | "RuntimeRequirementV2" | "RuntimeRequirementsV2" | "RuntimeStreamingCapabilitiesV2" | "StartCaptureV2" | "StartRuntimeInstallationV2" | "StartRuntimeModelInstallationV2" | "StructuringBatchV2" | "StructuringProviderCapabilityV2" | "StructuringSemanticBlockV2" | "StructuringSessionV2" | "SubmitStructuringBatchV2" | "TimeLocator";
 
 export type CaptureContractInvariant = {
   readonly id: string;
@@ -407,6 +473,7 @@ export const CAPTURE_CONTRACT_EXTRA_POLICIES = {
   "FinalizeIngestionV2": "forbid",
   "IngestionV2": "forbid",
   "OpenIngestionV2": "forbid",
+  "OpenStructuringSessionV2": "forbid",
   "PageLocator": "forbid",
   "PartialCaptureV2": "forbid",
   "RawCapture": "forbid",
@@ -426,5 +493,10 @@ export const CAPTURE_CONTRACT_EXTRA_POLICIES = {
   "StartCaptureV2": "forbid",
   "StartRuntimeInstallationV2": "forbid",
   "StartRuntimeModelInstallationV2": "forbid",
+  "StructuringBatchV2": "forbid",
+  "StructuringProviderCapabilityV2": "forbid",
+  "StructuringSemanticBlockV2": "forbid",
+  "StructuringSessionV2": "forbid",
+  "SubmitStructuringBatchV2": "forbid",
   "TimeLocator": "forbid",
 } as const satisfies Readonly<Record<CaptureContractName, CaptureContractExtraPolicy>>;

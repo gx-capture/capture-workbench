@@ -67,7 +67,10 @@ export class CaptureRemoteError extends CaptureRuntimeError {
     details?: unknown,
     metadata: CaptureRuntimeErrorMetadata = {},
   ) {
-    super(status, code, message, details, { category: 'remote', ...metadata });
+    super(status, code, message, details, {
+      ...metadata,
+      category: metadata.category ?? 'remote',
+    });
     this.name = 'CaptureRemoteError';
   }
 }
