@@ -1,4 +1,10 @@
 {
   "schemaVersion": "1",
-  "releases": {}
+  "releases": {
+    "v0.4.1": {
+      "status": "released",
+      "manifestSha256": "2f7f0294bc700883b92d37f167772f5a06772b005ce7c425fb3bf0583032d7ae",
+      "candidateId": "7aa902e347b69e1e1774f053e873ea27db12c4daa7c7c4d3aa56634e417d89f0"
+    }
+  }
 }

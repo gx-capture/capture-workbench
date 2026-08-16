@@ -1,8 +1,8 @@
 {
   "schemaVersion": "1",
   "channel": "stable",
-  "releaseTag": null,
-  "manifestSha256": null,
+  "releaseTag": "v0.4.1",
+  "manifestSha256": "2f7f0294bc700883b92d37f167772f5a06772b005ce7c425fb3bf0583032d7ae",
   "manifestAssetName": "capture-release-manifest-v1.json",
-  "updatedAt": null
+  "updatedAt": "2026-08-16T16:21:10.753Z"
 }
