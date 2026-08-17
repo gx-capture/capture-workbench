@@ -107,7 +107,7 @@ export function collectReleaseVersionEntries(
 ): VersionEntry[] {
   const entries: VersionEntry[] = [];
   const packagePaths = [
-    ['Capture Workbench package', 'packages/capture-angular/package.json'],
+    ['Capture Workbench package', 'packages/capture-workbench-ui/package.json'],
     [
       'Capture Runtime client TypeScript package',
       'packages/capture-runtime-client/package.json',

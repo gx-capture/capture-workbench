@@ -56,7 +56,7 @@ test('async boundary permits only the exact approved CLI paths', async () => {
   const angularSdkAdapterPath = join(
     workspaceRoot,
     'packages',
-    'capture-angular',
+    'capture-workbench-ui',
     'src',
     'lib',
     'http-capture-client.ts',

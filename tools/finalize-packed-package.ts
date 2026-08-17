@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 const packageDirectory = resolve(
-  process.argv[2] ?? 'dist/packages/capture-angular',
+  process.argv[2] ?? 'dist/packages/capture-workbench-ui',
 );
 const manifestPath = join(packageDirectory, 'package.json');
 const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));

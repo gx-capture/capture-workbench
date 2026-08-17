@@ -1,7 +1,7 @@
 # Capture Workbench and Cert Prep Dependency Boundary Decisions
 
 - Change mode: mixed.
-- Existing owner: `packages/capture-angular` owns the Workbench Angular
+- Existing owner: `packages/capture-workbench-ui` owns the Workbench Angular
   Elements adapter; cert-prep owns its host route and backend client.
 - Delete candidates: cert-prep's direct root `@angular/elements` dependency and
   the same direct dependency in generated trial fixtures.

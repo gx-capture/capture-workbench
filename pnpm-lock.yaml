@@ -193,7 +193,7 @@ importers:
         specifier: 3.5.40
         version: 3.5.40(typescript@6.0.3)
 
-  packages/capture-angular:
+  packages/capture-workbench-ui:
     dependencies:
       '@angular/compiler':
         specifier: 22.0.7

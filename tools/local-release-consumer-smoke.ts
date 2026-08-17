@@ -19,7 +19,7 @@ import { Readable } from 'node:stream';
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const packageManifest = JSON.parse(
   await readFile(
-    join(repoRoot, 'packages/capture-angular/package.json'),
+    join(repoRoot, 'packages/capture-workbench-ui/package.json'),
     'utf8',
   ),
 ) as { name: string; version: string };

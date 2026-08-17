@@ -37,7 +37,7 @@ function exceptionReason(relativePath) {
   }
   if (
     relativePath ===
-    'packages/capture-angular/src/lib/http-capture-client.ts'
+    'packages/capture-workbench-ui/src/lib/http-capture-client.ts'
   ) {
     return 'RxJS adapter over the framework-neutral Capture Runtime SDK boundary';
   }

@@ -6,7 +6,7 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/gx-capture/capture-workbench.git",
-    "directory": "packages/capture-angular"
+    "directory": "packages/capture-workbench-ui"
   },
   "homepage": "https://github.com/gx-capture/capture-workbench#readme",
   "publishConfig": {

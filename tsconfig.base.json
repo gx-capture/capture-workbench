@@ -15,7 +15,7 @@
     "skipDefaultLibCheck": true,
     "paths": {
       "@gx-capture/capture-workbench-ui": [
-        "./packages/capture-angular/src/index.ts"
+        "./packages/capture-workbench-ui/src/index.ts"
       ],
       "@gx-capture/capture-runtime-client": [
         "./packages/capture-runtime-client/src/index.ts"

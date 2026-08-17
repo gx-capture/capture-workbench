@@ -16,7 +16,7 @@ import { resolveNode24Corepack } from './node24-corepack.ts';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const sourcePackage = JSON.parse(
-  readFileSync(join(repoRoot, 'packages/capture-angular/package.json'), 'utf8'),
+  readFileSync(join(repoRoot, 'packages/capture-workbench-ui/package.json'), 'utf8'),
 );
 const archiveName = `${sourcePackage.name.replace(/^@/u, '').replace('/', '-')}-${sourcePackage.version}.tgz`;
 const archivePath = join(repoRoot, 'dist', 'packs', archiveName);

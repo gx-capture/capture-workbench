@@ -66,7 +66,7 @@ export function synchronizeReleaseVersion(
   const intent = loadReleaseIntent(root);
   const current = JSON.parse(
     readFileSync(
-      resolve(root, 'packages/capture-angular/package.json'),
+      resolve(root, 'packages/capture-workbench-ui/package.json'),
       'utf8',
     ),
   ).version as string;

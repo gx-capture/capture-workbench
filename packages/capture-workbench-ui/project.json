@@ -1,7 +1,7 @@
 {
   "name": "capture-angular",
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
-  "sourceRoot": "packages/capture-angular/src",
+  "sourceRoot": "packages/capture-workbench-ui/src",
   "prefix": "lib",
   "projectType": "library",
   "release": {
@@ -17,12 +17,12 @@
       "executor": "@nx/angular:package",
       "outputs": ["{workspaceRoot}/dist/{projectRoot}"],
       "options": {
-        "project": "packages/capture-angular/ng-package.json",
-        "tsConfig": "packages/capture-angular/tsconfig.lib.json"
+        "project": "packages/capture-workbench-ui/ng-package.json",
+        "tsConfig": "packages/capture-workbench-ui/tsconfig.lib.json"
       },
       "configurations": {
         "production": {
-          "tsConfig": "packages/capture-angular/tsconfig.lib.prod.json"
+          "tsConfig": "packages/capture-workbench-ui/tsconfig.lib.prod.json"
         },
         "development": {}
       },
@@ -39,7 +39,7 @@
       ],
       "outputs": ["{workspaceRoot}/dist/packs"],
       "options": {
-        "cwd": "dist/packages/capture-angular",
+        "cwd": "dist/packages/capture-workbench-ui",
         "commands": [
           "node ../../../tools/finalize-packed-package.ts .",
           "corepack pnpm pack --pack-destination ../../packs",
@@ -69,14 +69,14 @@
     "typecheck": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "pnpm exec tsc --noEmit -p packages/capture-angular/tsconfig.lib.json"
+        "command": "pnpm exec tsc --noEmit -p packages/capture-workbench-ui/tsconfig.lib.json"
       }
     },
     "lint": {
       "executor": "nx:run-commands",
       "dependsOn": ["async-boundary-check"],
       "options": {
-        "cwd": "packages/capture-angular",
+        "cwd": "packages/capture-workbench-ui",
         "command": "pnpm exec eslint src"
       }
     },

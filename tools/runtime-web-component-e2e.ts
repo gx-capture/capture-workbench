@@ -74,7 +74,7 @@ const embeddedTextPdfPath = join(
 );
 const packageManifest = JSON.parse(
   readFileSync(
-    join(repoRoot, 'packages', 'capture-angular', 'package.json'),
+    join(repoRoot, 'packages', 'capture-workbench-ui', 'package.json'),
     'utf8',
   ),
 ) as { name: string; version: string };

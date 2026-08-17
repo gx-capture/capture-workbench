@@ -1,7 +1,7 @@
 # Web Component and Runtime Baselines Decisions
 
 - Change mode: mixed.
-- Existing owner: `packages/capture-angular` owns the Angular component and its
+- Existing owner: `packages/capture-workbench-ui` owns the Angular component and its
   public package surface; root `tools/` owns release and consumer checks.
 - Delete candidates: the five root `tools/*.mjs` files, the nine desktop
   harness `scripts/*.mjs` files, and every reference to their old extensions;
