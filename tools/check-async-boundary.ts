@@ -88,9 +88,6 @@ function exceptionReason(relativePath) {
   if (relativePath === 'tools/runtime-web-component-e2e.ts') {
     return 'packaged runtime Web Component E2E process boundary';
   }
-  if (relativePath === 'tools/publish-release.ts') {
-    return 'release publication CLI process boundary';
-  }
   if (relativePath === 'tools/verify-release-candidate.ts') {
     return 'release candidate verification CLI process boundary';
   }

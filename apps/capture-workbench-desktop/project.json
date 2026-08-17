@@ -177,7 +177,7 @@
       "cache": true,
       "executor": "nx:run-commands",
       "options": {
-        "command": "node --test apps/capture-workbench-desktop/scripts/*.test.ts tools/*.test.ts"
+        "command": "node --test apps/capture-workbench-desktop/scripts/*.test.ts tools/check-async-boundary.test.ts tools/finalize-packed-package.test.ts tools/local-release-consumer-smoke.test.ts tools/node24-corepack.test.ts tools/record-candidate-verification.test.ts"
       }
     },
     "package-qa": {

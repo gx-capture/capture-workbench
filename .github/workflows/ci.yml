@@ -100,6 +100,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
+          pnpm nx run capture-tools:test
           pnpm nx run capture-tools:release-version-test
           pnpm nx run capture-tools:release-candidate-test
           pnpm nx run capture-tools:contract-impact-test

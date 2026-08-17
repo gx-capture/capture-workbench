@@ -99,7 +99,7 @@ Remove manual synchronization across npm, Python, Rust, runtime, Tauri, fixtures
 ```text
 release/version.json
 tools/release/sync-versions.ts
-tools/release/verify-generated-versions.ts
+tools/verify-release-version.ts
 ```
 
 Example:
