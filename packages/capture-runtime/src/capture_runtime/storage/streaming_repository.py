@@ -4,12 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
-import shutil
 import threading
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
@@ -32,6 +29,23 @@ from capture_runtime.contracts import (
     StreamingEventType,
     StreamingIngestionStatus,
     StructuringMode,
+)
+from capture_runtime.storage._streaming_persistence import (
+    _atomic_json,
+    _file_sha256,
+    _StreamingRepositoryPersistence,
+    datetime_from_text,
+)
+from capture_runtime.storage._streaming_records import _CaptureRecord, _IngestionRecord
+from capture_runtime.storage._streaming_transitions import (
+    _TERMINAL_CAPTURE_STATUSES,
+    _cancel_capture,
+    _complete_capture,
+    _create_capture_operation,
+    _fail_capture,
+    _mark_awaiting_structuring,
+    _mark_ingestion_ready,
+    _mark_structuring,
 )
 
 
@@ -66,38 +80,6 @@ def _identifier(value: str) -> str:
     return normalized
 
 
-def _atomic_json(path: Path, payload: object) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
-    temporary.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-    os.replace(temporary, path)
-
-
-@dataclass(slots=True)
-class _IngestionRecord:
-    request: OpenIngestionV2
-    ingestion_id: str
-    status: StreamingIngestionStatus
-    expires_at: datetime
-    next_chunk_index: int = 0
-    next_offset: int = 0
-    accepted_chunks: dict[int, tuple[int, int, str]] = field(default_factory=dict)
-    finalized_sha256: str | None = None
-
-
-@dataclass(slots=True)
-class _CaptureRecord:
-    operation: CaptureOperationV2
-    request: StartCaptureV2
-    commit_idempotency_key: str | None = None
-    commit_fingerprint: str | None = None
-    failure_idempotency_key: str | None = None
-    failure_fingerprint: str | None = None
-
-
 class StreamingRepository:
     """A bounded, recoverable repository behind the streaming service seam."""
 
@@ -109,13 +91,12 @@ class StreamingRepository:
         self._ingestion_idempotency: dict[str, str] = {}
         self._captures: dict[str, _CaptureRecord] = {}
         self._capture_idempotency: dict[str, str] = {}
+        self._persistence = _StreamingRepositoryPersistence(root)
         self._lock = threading.RLock()
 
     def initialize(self) -> None:
         with self._lock:
-            self.root.mkdir(parents=True, exist_ok=True)
-            (self.root / "ingestions").mkdir(exist_ok=True)
-            (self.root / "captures").mkdir(exist_ok=True)
+            self._persistence.initialize()
             self._ingestions.clear()
             self._ingestion_idempotency.clear()
             self._captures.clear()
@@ -139,9 +120,7 @@ class StreamingRepository:
                 status=StreamingIngestionStatus.OPEN,
                 expires_at=self._clock.now() + timedelta(hours=2),
             )
-            directory = self._ingestion_directory(ingestion_id)
-            directory.mkdir(parents=True, exist_ok=False)
-            (directory / "source.bin").touch()
+            self._persistence.create_ingestion_directory(ingestion_id)
             self._ingestions[ingestion_id] = record
             self._ingestion_idempotency[request.client_request_id] = ingestion_id
             self._persist_ingestion(record)
@@ -184,10 +163,9 @@ class StreamingRepository:
                 raise StreamingTransitionError("chunks must be contiguous and ordered")
             if record.next_offset + len(data) > record.request.total_bytes:
                 raise StreamingTransitionError("chunks exceed declared source size")
-            with (self._ingestion_directory(ingestion_id) / "source.bin").open("ab") as source:
-                source.write(data)
-                source.flush()
-                os.fsync(source.fileno())
+            self._persistence.append_source(
+                self._ingestion_directory(ingestion_id) / "source.bin", data
+            )
             record.accepted_chunks[chunk_index] = (byte_offset, len(data), sha256)
             record.next_chunk_index += 1
             record.next_offset += len(data)
@@ -237,26 +215,15 @@ class StreamingRepository:
                 if ingestion.status is StreamingIngestionStatus.READY
                 else None
             )
-            operation = CaptureOperationV2(
-                capture_id=capture_id,
-                ingestion_id=request.ingestion_id,
-                kind=ingestion.request.kind,
-                status=(
-                    StreamingCaptureStatus.EXTRACTING
-                    if source is not None
-                    else StreamingCaptureStatus.WAITING_INPUT
-                ),
-                progress=0,
-                partial_revision=0,
-                last_event_sequence=0,
+            operation = _create_capture_operation(
+                capture_id,
+                request,
+                ingestion,
                 source=source,
-                created_at=now,
-                updated_at=now,
+                now=now,
             )
             record = _CaptureRecord(operation=operation, request=request)
-            directory = self._capture_directory(capture_id)
-            directory.mkdir(parents=True, exist_ok=False)
-            (directory / "events.jsonl").touch()
+            self._persistence.create_capture_directory(capture_id)
             self._captures[capture_id] = record
             self._capture_idempotency[request.client_request_id] = capture_id
             self._persist_capture(record)
@@ -290,14 +257,11 @@ class StreamingRepository:
                 if record.operation.status is not StreamingCaptureStatus.WAITING_INPUT:
                     continue
                 now = self._clock.now()
-                record.operation = record.operation.model_copy(
-                    update={
-                        "status": StreamingCaptureStatus.EXTRACTING,
-                        "kind": ingestion.request.kind,
-                        "source": self._source_for(ingestion),
-                        "progress": 0.1,
-                        "updated_at": now,
-                    }
+                record.operation = _mark_ingestion_ready(
+                    record.operation,
+                    ingestion,
+                    source=self._source_for(ingestion),
+                    now=now,
                 )
                 self._persist_capture(record)
                 self.append_event(
@@ -337,12 +301,9 @@ class StreamingRepository:
                 error=error,
                 created_at=self._clock.now(),
             )
-            with (self._capture_directory(capture_id) / "events.jsonl").open(
-                "a", encoding="utf-8"
-            ) as events:
-                events.write(json.dumps(event.model_dump(mode="json", by_alias=True)) + "\n")
-                events.flush()
-                os.fsync(events.fileno())
+            self._persistence.append_event(
+                self._capture_directory(capture_id) / "events.jsonl", event
+            )
             now = self._clock.now()
             record.operation = record.operation.model_copy(
                 update={
@@ -368,7 +329,7 @@ class StreamingRepository:
                 raise ValueError("event cursor must not be less than -1")
             path = self._capture_directory(capture_id) / "events.jsonl"
             events: list[CaptureEventV2] = []
-            for line in path.read_text(encoding="utf-8").splitlines():
+            for line in self._persistence.read_event_lines(path):
                 if not line:
                     continue
                 try:
@@ -469,14 +430,7 @@ class StreamingRepository:
             record.commit_idempotency_key = idempotency_key
             record.commit_fingerprint = fingerprint
             now = result.completed_at
-            record.operation = record.operation.model_copy(
-                update={
-                    "status": StreamingCaptureStatus.COMPLETED,
-                    "progress": 1.0,
-                    "updated_at": now,
-                    "completed_at": now,
-                }
-            )
+            record.operation = _complete_capture(record.operation, now=now)
             self._persist_capture(record)
             self.append_event(
                 capture_id,
@@ -500,20 +454,10 @@ class StreamingRepository:
     def mark_awaiting_structuring(self, capture_id: str) -> CaptureOperationV2:
         with self._lock:
             record = self._get_capture(capture_id)
-            if record.operation.status in {
-                StreamingCaptureStatus.COMPLETED,
-                StreamingCaptureStatus.FAILED,
-                StreamingCaptureStatus.CANCELLED,
-            }:
+            if record.operation.status in _TERMINAL_CAPTURE_STATUSES:
                 return record.operation
             now = self._clock.now()
-            record.operation = record.operation.model_copy(
-                update={
-                    "status": StreamingCaptureStatus.AWAITING_STRUCTURING,
-                    "progress": 0.9,
-                    "updated_at": now,
-                }
-            )
+            record.operation = _mark_awaiting_structuring(record.operation, now=now)
             self._persist_capture(record)
             self.append_event(
                 capture_id,
@@ -531,13 +475,7 @@ class StreamingRepository:
             if record.operation.status is not StreamingCaptureStatus.AWAITING_STRUCTURING:
                 raise StreamingTransitionError("capture is not awaiting structuring")
             now = self._clock.now()
-            record.operation = record.operation.model_copy(
-                update={
-                    "status": StreamingCaptureStatus.STRUCTURING,
-                    "progress": 0.95,
-                    "updated_at": now,
-                }
-            )
+            record.operation = _mark_structuring(record.operation, now=now)
             self._persist_capture(record)
             return record.operation
 
@@ -575,14 +513,7 @@ class StreamingRepository:
             if record.operation.status is StreamingCaptureStatus.CANCELLED:
                 return record.operation
             now = self._clock.now()
-            record.operation = record.operation.model_copy(
-                update={
-                    "status": StreamingCaptureStatus.COMPLETED,
-                    "progress": 1.0,
-                    "updated_at": now,
-                    "completed_at": now,
-                }
-            )
+            record.operation = _complete_capture(record.operation, now=now)
             self._persist_capture(record)
             self.append_event(
                 capture_id,
@@ -598,22 +529,10 @@ class StreamingRepository:
     def _fail_capture_locked(
         self, record: _CaptureRecord, failure: CaptureFailureV2
     ) -> CaptureOperationV2:
-        if record.operation.status in {
-            StreamingCaptureStatus.COMPLETED,
-            StreamingCaptureStatus.FAILED,
-            StreamingCaptureStatus.CANCELLED,
-        }:
+        if record.operation.status in _TERMINAL_CAPTURE_STATUSES:
             return record.operation
         now = self._clock.now()
-        record.operation = record.operation.model_copy(
-            update={
-                "status": StreamingCaptureStatus.FAILED,
-                "progress": record.operation.progress,
-                "error": failure,
-                "updated_at": now,
-                "completed_at": now,
-            }
-        )
+        record.operation = _fail_capture(record.operation, failure, now=now)
         self._persist_capture(record)
         self.append_event(
             record.operation.capture_id,
@@ -638,21 +557,10 @@ class StreamingRepository:
     def cancel_capture(self, capture_id: str) -> CaptureOperationV2:
         with self._lock:
             record = self._get_capture(capture_id)
-            terminal = {
-                StreamingCaptureStatus.COMPLETED,
-                StreamingCaptureStatus.FAILED,
-                StreamingCaptureStatus.CANCELLED,
-            }
-            if record.operation.status in terminal:
+            if record.operation.status in _TERMINAL_CAPTURE_STATUSES:
                 return record.operation
             now = self._clock.now()
-            record.operation = record.operation.model_copy(
-                update={
-                    "status": StreamingCaptureStatus.CANCELLED,
-                    "updated_at": now,
-                    "completed_at": now,
-                }
-            )
+            record.operation = _cancel_capture(record.operation, now=now)
             self._persist_capture(record)
             self.append_event(
                 capture_id,
@@ -667,23 +575,19 @@ class StreamingRepository:
             self._captures.pop(capture_id, None)
             self._capture_idempotency.pop(record.request.client_request_id, None)
             directory = self._capture_directory(capture_id)
-            if directory.parent.resolve() != (self.root / "captures").resolve():
-                raise RuntimeError("capture directory escaped repository root")
-            shutil.rmtree(directory, ignore_errors=True)
+            self._persistence.delete_capture_directory(directory)
 
     def prune_expired(self) -> None:
         with self._lock:
             now = self._clock.now()
             cutoff = now - self._retention
-            terminal = {
-                StreamingCaptureStatus.COMPLETED,
-                StreamingCaptureStatus.FAILED,
-                StreamingCaptureStatus.CANCELLED,
-            }
             expired_captures = [
                 capture_id
                 for capture_id, record in self._captures.items()
-                if record.operation.status in terminal and record.operation.updated_at < cutoff
+                if (
+                    record.operation.status in _TERMINAL_CAPTURE_STATUSES
+                    and record.operation.updated_at < cutoff
+                )
             ]
             for capture_id in expired_captures:
                 self.delete_capture(capture_id)
@@ -691,7 +595,7 @@ class StreamingRepository:
             active_ingestions = {
                 record.operation.ingestion_id
                 for record in self._captures.values()
-                if record.operation.status not in terminal
+                if record.operation.status not in _TERMINAL_CAPTURE_STATUSES
             }
             expired_ingestions = [
                 ingestion_id
@@ -707,21 +611,14 @@ class StreamingRepository:
             record = self._get_ingestion(normalized)
             if any(
                 operation.ingestion_id == normalized
-                and operation.status
-                not in {
-                    StreamingCaptureStatus.COMPLETED,
-                    StreamingCaptureStatus.FAILED,
-                    StreamingCaptureStatus.CANCELLED,
-                }
+                and operation.status not in _TERMINAL_CAPTURE_STATUSES
                 for operation in (capture.operation for capture in self._captures.values())
             ):
                 raise StreamingTransitionError("ingestion has an active capture")
             self._ingestions.pop(normalized, None)
             self._ingestion_idempotency.pop(record.request.client_request_id, None)
             directory = self._ingestion_directory(normalized)
-            if directory.parent.resolve() != (self.root / "ingestions").resolve():
-                raise RuntimeError("ingestion directory escaped repository root")
-            shutil.rmtree(directory, ignore_errors=True)
+            self._persistence.delete_ingestion_directory(directory)
 
     def source_path(self, ingestion_id: str) -> Path:
         with self._lock:
@@ -753,131 +650,35 @@ class StreamingRepository:
         )
 
     def _ingestion_directory(self, ingestion_id: str) -> Path:
-        return self.root / "ingestions" / _identifier(ingestion_id)
+        return self._persistence.ingestion_directory(_identifier(ingestion_id))
 
     def _capture_directory(self, capture_id: str) -> Path:
-        return self.root / "captures" / _identifier(capture_id)
+        return self._persistence.capture_directory(_identifier(capture_id))
 
     @staticmethod
     def _ingestion_snapshot(record: _IngestionRecord) -> IngestionV2:
-        return IngestionV2(
-            ingestion_id=record.ingestion_id,
-            kind=record.request.kind,
-            status=record.status,
-            file_name=record.request.file_name,
-            media_type=record.request.media_type,
-            total_bytes=record.request.total_bytes,
-            received_bytes=record.next_offset,
-            contiguous_bytes=record.next_offset,
-            next_chunk_index=record.next_chunk_index,
-            next_offset=record.next_offset,
-            source_sha256=record.request.source_sha256,
-            finalized_sha256=record.finalized_sha256,
-            expires_at=record.expires_at,
-        )
+        return record.snapshot()
 
     def _persist_ingestion(self, record: _IngestionRecord) -> None:
-        _atomic_json(
-            self._ingestion_directory(record.ingestion_id) / "metadata.json",
-            {
-                "request": record.request.model_dump(mode="json", by_alias=True),
-                "ingestionId": record.ingestion_id,
-                "status": record.status.value,
-                "expiresAt": record.expires_at.isoformat(),
-                "nextChunkIndex": record.next_chunk_index,
-                "nextOffset": record.next_offset,
-                "acceptedChunks": {
-                    str(index): list(value) for index, value in record.accepted_chunks.items()
-                },
-                "finalizedSha256": record.finalized_sha256,
-            },
-        )
+        self._persistence.persist_ingestion(record)
 
     def _persist_capture(self, record: _CaptureRecord) -> None:
-        _atomic_json(
-            self._capture_directory(record.operation.capture_id) / "metadata.json",
-            {
-                "request": record.request.model_dump(mode="json", by_alias=True),
-                "operation": record.operation.model_dump(mode="json", by_alias=True),
-                "commitIdempotencyKey": record.commit_idempotency_key,
-                "commitFingerprint": record.commit_fingerprint,
-                "failureIdempotencyKey": record.failure_idempotency_key,
-                "failureFingerprint": record.failure_fingerprint,
-            },
-        )
+        self._persistence.persist_capture(record)
 
     def _load_ingestions(self) -> None:
-        for directory in (self.root / "ingestions").iterdir():
-            try:
-                payload = json.loads((directory / "metadata.json").read_text(encoding="utf-8"))
-                request = OpenIngestionV2.model_validate(payload["request"])
-                record = _IngestionRecord(
-                    request=request,
-                    ingestion_id=_identifier(str(payload["ingestionId"])),
-                    status=StreamingIngestionStatus(payload["status"]),
-                    expires_at=datetime_from_text(str(payload["expiresAt"])),
-                    next_chunk_index=int(payload["nextChunkIndex"]),
-                    next_offset=int(payload["nextOffset"]),
-                    accepted_chunks={
-                        int(index): (int(values[0]), int(values[1]), str(values[2]))
-                        for index, values in payload.get("acceptedChunks", {}).items()
-                    },
-                    finalized_sha256=payload.get("finalizedSha256"),
-                )
-            except (
-                OSError,
-                KeyError,
-                TypeError,
-                ValueError,
-                ValidationError,
-                json.JSONDecodeError,
-            ):
-                continue
+        for record in self._persistence.load_ingestions(
+            _identifier,
+            datetime_parser=datetime_from_text,
+        ):
             self._ingestions[record.ingestion_id] = record
             self._ingestion_idempotency[record.request.client_request_id] = record.ingestion_id
 
     def _load_captures(self) -> None:
-        for directory in (self.root / "captures").iterdir():
-            try:
-                payload = json.loads((directory / "metadata.json").read_text(encoding="utf-8"))
-                request = StartCaptureV2.model_validate(payload["request"])
-                operation_payload = payload["operation"]
-                operation = CaptureOperationV2.model_validate(operation_payload)
-                if "kind" not in operation_payload:
-                    ingestion = self._ingestions.get(operation.ingestion_id)
-                    if ingestion is not None:
-                        operation = operation.model_copy(update={"kind": ingestion.request.kind})
-                record = _CaptureRecord(
-                    operation=operation,
-                    request=request,
-                    commit_idempotency_key=payload.get("commitIdempotencyKey"),
-                    commit_fingerprint=payload.get("commitFingerprint"),
-                    failure_idempotency_key=payload.get("failureIdempotencyKey"),
-                    failure_fingerprint=payload.get("failureFingerprint"),
-                )
-            except (
-                OSError,
-                KeyError,
-                TypeError,
-                ValueError,
-                ValidationError,
-                json.JSONDecodeError,
-            ):
-                continue
-            self._captures[operation.capture_id] = record
-            self._capture_idempotency[request.client_request_id] = operation.capture_id
-
-
-def _file_sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as source:
-        while chunk := source.read(1024 * 1024):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def datetime_from_text(value: str) -> datetime:
-    return datetime.fromisoformat(value)
+        for record in self._persistence.load_captures(self._ingestions):
+            self._captures[record.operation.capture_id] = record
+            self._capture_idempotency[record.request.client_request_id] = (
+                record.operation.capture_id
+            )
 
 
 __all__ = [

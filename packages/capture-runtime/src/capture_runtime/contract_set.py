@@ -11,19 +11,18 @@ of the immutable payload served by the discovery routes.
 
 from __future__ import annotations
 
-import hashlib
 import inspect
 import json
 import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from types import MappingProxyType
 from typing import Any
 
 from pydantic import BaseModel
 
 import capture_runtime.contracts as contracts
+from capture_runtime import _contract_set_bundle as _bundle_support
 from capture_runtime.constants import RUNTIME_VERSION
 from capture_runtime.problem_registry import (
     DEFAULT_PROBLEM_REGISTRY,
@@ -51,64 +50,16 @@ class ContractSetError(ValueError):
 
 
 def _duplicate(values: Iterable[object]) -> list[object]:
-    seen: set[object] = set()
-    duplicates: set[object] = set()
-    for value in values:
-        if value in seen:
-            duplicates.add(value)
-        seen.add(value)
-    return sorted(duplicates, key=repr)
+    return _bundle_support.duplicate(values)
 
 
 def _validate_bundle_entries(bundle: Mapping[str, Any]) -> None:
     """Reject duplicate catalog entries and dangling references before serving bytes."""
-
-    surfaces = bundle["surfaces"]
-    schemas = bundle["schemas"]
-    operations = bundle["operations"]
-    problems = bundle["problems"]
-    surface_ids = [surface.get("id") for surface in surfaces if isinstance(surface, Mapping)]
-    schema_names = [schema.get("name") for schema in schemas if isinstance(schema, Mapping)]
-    operation_ids = [
-        operation.get("id") for operation in operations if isinstance(operation, Mapping)
-    ]
-    operation_routes = [
-        (operation.get("method"), operation.get("path"))
-        for operation in operations
-        if isinstance(operation, Mapping)
-    ]
-    problem_codes = [problem.get("code") for problem in problems if isinstance(problem, Mapping)]
-    checks = (
-        ("surface", surface_ids),
-        ("schema", schema_names),
-        ("operation", operation_ids),
-        ("operation route", operation_routes),
-        ("problem", problem_codes),
+    _bundle_support.validate_bundle_entries(
+        bundle,
+        error_type=ContractSetError,
+        duplicate_fn=_duplicate,
     )
-    for label, values in checks:
-        if any(value is None for value in values):
-            raise ContractSetError(f"contract bundle {label} entries must be objects with identity")
-        duplicates = _duplicate(values)
-        if duplicates:
-            raise ContractSetError(f"contract bundle has duplicate {label}: {duplicates[0]}")
-
-    known_surfaces = set(surface_ids)
-    known_schemas = set(schema_names)
-    known_problems = set(problem_codes)
-    for operation in operations:
-        if not isinstance(operation, Mapping):
-            raise ContractSetError("contract bundle operation entries must be objects")
-        if operation.get("surface") not in known_surfaces:
-            raise ContractSetError(f"operation has unknown surface: {operation.get('surface')!r}")
-        for field in ("requestSchema", "responseSchema"):
-            reference = operation.get(field)
-            if reference is not None and reference not in known_schemas:
-                raise ContractSetError(f"operation has unknown {field}: {reference!r}")
-        referenced_problems = operation.get("problems")
-        if not isinstance(referenced_problems, list) or any(
-            code not in known_problems for code in referenced_problems
-        ):
-            raise ContractSetError(f"operation {operation.get('id')!r} has unknown problem code")
 
 
 def _assert_secret_free(value: object, *, _path: str = "bundle") -> None:
@@ -120,24 +71,7 @@ def _assert_secret_free(value: object, *, _path: str = "bundle") -> None:
     tokens in the immutable executable bundle.
     """
 
-    forbidden_keys = {
-        "token",
-        "api_token",
-        "apiToken",
-        "authorization",
-        "password",
-        "secret",
-        "client_secret",
-        "clientSecret",
-    }
-    if isinstance(value, Mapping):
-        for key, item in value.items():
-            if str(key) in forbidden_keys:
-                raise ContractSetError(f"contract bundle contains secret field at {_path}.{key}")
-            _assert_secret_free(item, _path=f"{_path}.{key}")
-    elif isinstance(value, (list, tuple)):
-        for index, item in enumerate(value):
-            _assert_secret_free(item, _path=f"{_path}[{index}]")
+    _bundle_support.assert_secret_free(value, error_type=ContractSetError, path=_path)
 
 
 def route_inventory(routes: Iterable[object]) -> tuple[tuple[str, str], ...]:
@@ -150,48 +84,12 @@ def route_inventory(routes: Iterable[object]) -> tuple[tuple[str, str], ...]:
     as an explicit ``extra`` operation instead of silently disappearing.
     """
 
-    result: list[tuple[str, str]] = []
-    pending = list(routes)
-    while pending:
-        route = pending.pop()
-        original_router = getattr(route, "original_router", None)
-        if original_router is not None:
-            pending.extend(getattr(original_router, "routes", ()))
-            continue
-        children = getattr(route, "routes", None)
-        if children is not None and not isinstance(children, (str, bytes)):
-            pending.extend(children)
-            continue
-        path = getattr(route, "path", None)
-        methods = getattr(route, "methods", None)
-        if path is None or methods is None:
-            if not isinstance(route, (tuple, list)) or len(route) != 2:
-                continue
-            method, candidate_path = route
-            if not isinstance(method, str) or not isinstance(candidate_path, str):
-                continue
-            path, methods = candidate_path, {method}
-        public_prefixes = ("/v" + "1/", "/v2/")
-        if not isinstance(path, str) or not path.startswith(public_prefixes):
-            continue
-        if not isinstance(methods, Iterable):
-            continue
-        for method in methods:
-            if isinstance(method, str):
-                result.append((method.upper(), path))
-    return tuple(sorted(set(result)))
+    return _bundle_support.route_inventory(routes)
 
 
 def contract_operation_inventory(contract_set: ContractSet) -> tuple[tuple[str, str], ...]:
     """Return normalized v2 operation keys from a loaded contract set."""
-
-    return tuple(
-        sorted(
-            (str(operation["method"]).upper(), str(operation["path"]))
-            for operation in contract_set.bundle["operations"]
-            if operation.get("surface") == "v2"
-        )
-    )
+    return _bundle_support.contract_operation_inventory(contract_set.bundle)
 
 
 def validate_route_inventory(routes: Iterable[object], contract_set: ContractSet) -> None:
@@ -211,67 +109,25 @@ def validate_route_inventory(routes: Iterable[object], contract_set: ContractSet
 
 def canonical_json_bytes(value: object) -> bytes:
     """Serialize JSON deterministically for hashing and transport."""
-
-    try:
-        return json.dumps(
-            value,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-            allow_nan=False,
-        ).encode("utf-8")
-    except (TypeError, ValueError) as error:
-        raise ContractSetError("contract data is not canonical JSON") from error
+    return _bundle_support.canonical_json_bytes(value, error_type=ContractSetError)
 
 
 def sha256_hex(value: bytes) -> str:
     """Return the lowercase SHA-256 digest for exact bytes."""
-
-    return hashlib.sha256(value).hexdigest()
+    return _bundle_support.sha256_hex(value)
 
 
 def _deep_freeze(value: Any) -> Any:
     """Freeze nested contract data so served bytes cannot drift in-process."""
-
-    if isinstance(value, Mapping):
-        return MappingProxyType({key: _deep_freeze(item) for key, item in value.items()})
-    if isinstance(value, list):
-        return tuple(_deep_freeze(item) for item in value)
-    return value
+    return _bundle_support.deep_freeze(value)
 
 
 def _json_source(source: object) -> dict[str, Any]:
-    if isinstance(source, Mapping):
-        value = dict(source)
-    elif isinstance(source, bytes):
-        try:
-            value = json.loads(source.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as error:
-            raise ContractSetError("contract JSON is invalid UTF-8 or JSON") from error
-    elif isinstance(source, Path):
-        try:
-            return _json_source(source.read_bytes())
-        except OSError as error:
-            raise ContractSetError(f"unable to read contract JSON: {source}") from error
-    elif isinstance(source, str):
-        candidate = source.strip()
-        if candidate.startswith("{"):
-            try:
-                value = json.loads(candidate)
-            except json.JSONDecodeError as error:
-                raise ContractSetError("contract JSON is invalid") from error
-        else:
-            return _json_source(Path(source))
-    else:
-        raise ContractSetError("contract JSON must be a mapping, bytes, string, or path")
-    if not isinstance(value, dict):
-        raise ContractSetError("contract JSON root must be an object")
-    return value
+    return _bundle_support.json_source(source, error_type=ContractSetError)
 
 
 def load_contract_index(source: object) -> dict[str, Any]:
     """Load and validate the shape of a discovery index."""
-
     index = _json_source(source)
     required = {"catalogVersion", "runtimeVersion", "contractSetVersion", "surfaces", "sha256"}
     missing = required.difference(index)
@@ -289,7 +145,6 @@ def load_contract_index(source: object) -> dict[str, Any]:
 
 def load_contract_bundle(source: object) -> dict[str, Any]:
     """Load and validate the shape of an immutable contract bundle."""
-
     bundle = _json_source(source)
     required = {
         "contractSetVersion",

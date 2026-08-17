@@ -1,10 +1,5 @@
-use std::{
-    io::{Read, Write},
-    net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream},
-    time::Duration,
-};
+use std::io::Read;
 
-use rand::{rngs::OsRng, RngCore};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
@@ -19,14 +14,21 @@ use crate::{
     state::DesktopState,
 };
 
-const MAX_RUNTIME_RESPONSE_BYTES: u64 = 60 * 1024 * 1024;
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 const STREAM_CHUNK_BYTES: usize = 1024 * 1024;
 
-struct RequestBody {
-    bytes: Vec<u8>,
-    content_type: String,
-}
+mod multipart;
+mod sse;
+mod transport;
+mod validation;
+
+use multipart::multipart_capture_body;
+#[cfg(test)]
+use multipart::random_hex;
+use transport::{is_http_rejection, request, request_sse, request_with_headers, RequestBody};
+use validation::{
+    validate_client_request_id, validate_document_id, validate_model_option_id, validate_opaque_id,
+    validate_requirement_id, validate_structuring_mode,
+};
 
 pub(crate) fn requirements(state: &DesktopState) -> Result<Value, String> {
     request_json(state, "GET", "/v2/runtime/requirements", None, None)
@@ -426,307 +428,16 @@ fn request_json(
     request(&config, method, path, body, idempotency_key)
 }
 
-fn request(
-    config: &BackendConfig,
-    method: &str,
-    path: &str,
-    body: Option<RequestBody>,
-    idempotency_key: Option<&str>,
-) -> Result<Value, String> {
-    request_with_headers(config, method, path, body, idempotency_key, &[])
-}
-
-fn request_with_headers(
-    config: &BackendConfig,
-    method: &str,
-    path: &str,
-    body: Option<RequestBody>,
-    idempotency_key: Option<&str>,
-    extra_headers: &[(&str, String)],
-) -> Result<Value, String> {
-    let port = loopback_port(&config.base_url)?;
-    let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
-    let mut stream = TcpStream::connect_timeout(&address, REQUEST_TIMEOUT)
-        .map_err(|_| "Capture Runtime is unavailable.".to_string())?;
-    stream
-        .set_read_timeout(Some(REQUEST_TIMEOUT))
-        .map_err(|_| "Capture Runtime connection cannot be configured.".to_string())?;
-    stream
-        .set_write_timeout(Some(REQUEST_TIMEOUT))
-        .map_err(|_| "Capture Runtime connection cannot be configured.".to_string())?;
-
-    let (body_bytes, content_type) = match body {
-        Some(body) => (body.bytes, Some(body.content_type)),
-        None => (Vec::new(), None),
-    };
-    let mut headers = format!(
-        "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nOrigin: http://tauri.localhost\r\nAuthorization: Bearer {}\r\nAccept: application/json\r\nContent-Length: {}\r\nConnection: close\r\n",
-        config.token,
-        body_bytes.len()
-    );
-    if let Some(content_type) = content_type {
-        headers.push_str(&format!("Content-Type: {content_type}\r\n"));
-    }
-    if let Some(key) = idempotency_key {
-        headers.push_str(&format!("X-Idempotency-Key: {key}\r\n"));
-    }
-    for (name, value) in extra_headers {
-        headers.push_str(&format!("{name}: {value}\r\n"));
-    }
-    headers.push_str("\r\n");
-    stream
-        .write_all(headers.as_bytes())
-        .and_then(|_| stream.write_all(&body_bytes))
-        .map_err(|_| "Capture Runtime request could not be sent.".to_string())?;
-
-    let mut response = Vec::new();
-    stream
-        .take(MAX_RUNTIME_RESPONSE_BYTES + 1)
-        .read_to_end(&mut response)
-        .map_err(|_| "Capture Runtime response could not be read.".to_string())?;
-    if response.len() as u64 > MAX_RUNTIME_RESPONSE_BYTES {
-        return Err("Capture Runtime response exceeded the desktop safety limit.".into());
-    }
-    parse_response(&response, &config.token)
-}
-
-fn request_sse(
-    config: &BackendConfig,
-    path: &str,
-    last_event_id: Option<&str>,
-) -> Result<Value, String> {
-    let port = loopback_port(&config.base_url)?;
-    let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
-    let mut stream = TcpStream::connect_timeout(&address, REQUEST_TIMEOUT)
-        .map_err(|_| "Capture Runtime is unavailable.".to_string())?;
-    stream
-        .set_read_timeout(Some(REQUEST_TIMEOUT))
-        .map_err(|_| "Capture Runtime connection cannot be configured.".to_string())?;
-    stream
-        .set_write_timeout(Some(REQUEST_TIMEOUT))
-        .map_err(|_| "Capture Runtime connection cannot be configured.".to_string())?;
-    let mut headers = format!(
-        "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nOrigin: http://tauri.localhost\r\nAuthorization: Bearer {}\r\nAccept: text/event-stream\r\nConnection: close\r\n",
-        config.token
-    );
-    if let Some(cursor) = last_event_id {
-        headers.push_str(&format!("Last-Event-ID: {cursor}\r\n"));
-    }
-    headers.push_str("\r\n");
-    stream
-        .write_all(headers.as_bytes())
-        .map_err(|_| "Capture Runtime request could not be sent.".to_string())?;
-    let mut response = Vec::new();
-    stream
-        .take(MAX_RUNTIME_RESPONSE_BYTES + 1)
-        .read_to_end(&mut response)
-        .map_err(|_| "Capture Runtime response could not be read.".to_string())?;
-    if response.len() as u64 > MAX_RUNTIME_RESPONSE_BYTES {
-        return Err("Capture Runtime response exceeded the desktop safety limit.".into());
-    }
-    let separator = response
-        .windows(4)
-        .position(|window| window == b"\r\n\r\n")
-        .ok_or_else(|| "Capture Runtime response was malformed.".to_string())?;
-    let headers = std::str::from_utf8(&response[..separator])
-        .map_err(|_| "Capture Runtime response headers were invalid.".to_string())?;
-    let status = headers
-        .lines()
-        .next()
-        .and_then(|line| line.split_whitespace().nth(1))
-        .and_then(|value| value.parse::<u16>().ok())
-        .ok_or_else(|| "Capture Runtime response status was malformed.".to_string())?;
-    if !(200..300).contains(&status) {
-        return Err(format!(
-            "Capture Runtime request was rejected with HTTP {status}."
-        ));
-    }
-    let events = response[separator + 4..]
-        .split(|byte| *byte == b'\n')
-        .filter_map(|line| line.strip_prefix(b"data: "))
-        .filter(|line| !line.is_empty())
-        .map(|line| {
-            let mut value: Value = serde_json::from_slice(line)
-                .map_err(|_| "Capture Runtime SSE event was not valid JSON.".to_string())?;
-            redact_token(&mut value, &config.token);
-            Ok(value)
-        })
-        .collect::<Result<Vec<_>, String>>()?;
-    Ok(Value::Array(events))
-}
-
-fn parse_response(response: &[u8], token: &str) -> Result<Value, String> {
-    let separator = response
-        .windows(4)
-        .position(|window| window == b"\r\n\r\n")
-        .ok_or_else(|| "Capture Runtime response was malformed.".to_string())?;
-    let headers = std::str::from_utf8(&response[..separator])
-        .map_err(|_| "Capture Runtime response headers were invalid.".to_string())?;
-    let status = headers
-        .lines()
-        .next()
-        .and_then(|line| line.split_whitespace().nth(1))
-        .and_then(|value| value.parse::<u16>().ok())
-        .ok_or_else(|| "Capture Runtime response status was malformed.".to_string())?;
-    if !(200..300).contains(&status) {
-        return Err(format!(
-            "Capture Runtime request was rejected with HTTP {status}."
-        ));
-    }
-    if status == 204 {
-        return Ok(Value::Null);
-    }
-    let mut value: Value = serde_json::from_slice(&response[separator + 4..])
-        .map_err(|_| "Capture Runtime response was not valid JSON.".to_string())?;
-    redact_token(&mut value, token);
-    Ok(value)
-}
-
-fn is_http_rejection(error: &str, status: u16) -> bool {
-    error == format!("Capture Runtime request was rejected with HTTP {status}.")
-}
-
-fn multipart_capture_body(
-    file_name: &str,
-    media_type: &str,
-    source_kind: &str,
-    bytes: &[u8],
-) -> Result<RequestBody, String> {
-    if file_name.is_empty()
-        || file_name
-            .bytes()
-            .any(|byte| byte.is_ascii_control() || matches!(byte, b'"' | b'\\'))
-    {
-        return Err("Capture source file name is invalid.".into());
-    }
-    let boundary = format!("capture-workbench-{}", random_hex()?);
-    let mut body = Vec::with_capacity(bytes.len() + 1024);
-    multipart_field(
-        &mut body,
-        &boundary,
-        "file",
-        bytes,
-        Some((file_name, media_type)),
-    );
-    multipart_field(
-        &mut body,
-        &boundary,
-        "sourceKind",
-        source_kind.as_bytes(),
-        None,
-    );
-    multipart_field(&mut body, &boundary, "structuringMode", b"runtime", None);
-    body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
-    Ok(RequestBody {
-        bytes: body,
-        content_type: format!("multipart/form-data; boundary={boundary}"),
-    })
-}
-
-fn multipart_field(
-    body: &mut Vec<u8>,
-    boundary: &str,
-    name: &str,
-    value: &[u8],
-    file: Option<(&str, &str)>,
-) {
-    body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
-    if let Some((file_name, media_type)) = file {
-        body.extend_from_slice(
-            format!(
-                "Content-Disposition: form-data; name=\"{name}\"; filename=\"{file_name}\"\r\nContent-Type: {media_type}\r\n\r\n"
-            )
-            .as_bytes(),
-        );
-    } else {
-        body.extend_from_slice(
-            format!("Content-Disposition: form-data; name=\"{name}\"\r\n\r\n").as_bytes(),
-        );
-    }
-    body.extend_from_slice(value);
-    body.extend_from_slice(b"\r\n");
-}
-
-fn loopback_port(base_url: &str) -> Result<u16, String> {
-    base_url
-        .strip_prefix("http://127.0.0.1:")
-        .and_then(|value| value.parse::<u16>().ok())
-        .filter(|port| *port != 0)
-        .ok_or_else(|| "Capture Runtime connection is invalid.".to_string())
-}
-
-fn validate_document_id(value: &str) -> Result<(), String> {
-    if value.len() != 32 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return Err("Capture library document identifier is invalid.".into());
-    }
-    Ok(())
-}
-
-fn validate_opaque_id(value: &str) -> Result<(), String> {
-    if value.is_empty()
-        || value.len() > 128
-        || !value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
-    {
-        return Err("Capture Runtime identifier is invalid.".into());
-    }
-    Ok(())
-}
-
-fn validate_client_request_id(value: &str) -> Result<(), String> {
-    validate_opaque_id(value)
-        .map_err(|_| "Capture client request identifier is invalid.".to_string())
-}
-
-fn validate_requirement_id(value: &str) -> Result<(), String> {
-    if !matches!(
-        value,
-        "windowsml-ocr" | "whisper-primary" | "ollama-runtime" | "capture-ollama-model"
-    ) {
-        return Err("Capture Runtime requirement identifier is invalid.".into());
-    }
-    Ok(())
-}
-
-fn validate_model_option_id(value: &str) -> Result<(), String> {
-    if !matches!(value, "qwen3.5-0.8b-v1" | "qwen3.5-2b-v1" | "qwen3.5-4b-v1") {
-        return Err("Capture Runtime model option identifier is invalid.".into());
-    }
-    Ok(())
-}
-
-fn validate_structuring_mode(value: &str) -> Result<(), String> {
-    if matches!(value, "runtime" | "host") {
-        Ok(())
-    } else {
-        Err("Capture structuring mode is invalid.".into())
-    }
-}
-
-fn random_hex() -> Result<String, String> {
-    let mut bytes = [0_u8; 16];
-    OsRng
-        .try_fill_bytes(&mut bytes)
-        .map_err(|_| "Capture Runtime multipart boundary cannot be generated.".to_string())?;
-    Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
-}
-
-fn redact_token(value: &mut Value, token: &str) {
-    match value {
-        Value::String(text) => *text = text.replace(token, "[REDACTED]"),
-        Value::Array(values) => values.iter_mut().for_each(|item| redact_token(item, token)),
-        Value::Object(values) => values
-            .values_mut()
-            .for_each(|item| redact_token(item, token)),
-        _ => {}
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{fs, io::Read, net::TcpListener, path::PathBuf, thread};
+    use std::{
+        fs,
+        io::{Read, Write},
+        net::{Ipv4Addr, TcpListener, TcpStream},
+        path::PathBuf,
+        thread,
+    };
 
     #[test]
     fn authenticated_runtime_responses_are_redacted_before_returning_to_ipc() {

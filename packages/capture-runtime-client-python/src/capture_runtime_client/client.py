@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
-import time
 from collections.abc import Callable, Collection, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,13 +13,29 @@ from uuid import UUID
 import httpx
 from pydantic import ValidationError
 
-from .codec import decode_json, decode_model, iter_sse
+from ._discovery import (
+    RuntimeDiscovery,
+    assert_compatible,
+    assert_compatible_payload,
+    validate_contract_bundle,
+    validate_contract_index,
+)
+from ._discovery import (
+    discover as discover_runtime,
+)
+from ._discovery import (
+    handshake as handshake_runtime,
+)
+from ._error_mapping import (
+    decode_capture_operation,
+    decode_response,
+    decode_streaming_result,
+)
+from ._retry import RetryPolicy
+from ._transport import create_http_runtime_transport
+from .codec import decode_model, iter_sse
 from .contracts import (
-    CAPTURE_API_VERSION,
     CAPTURE_CONTRACT_SET_SHA256,
-    CAPTURE_DOCUMENT_SCHEMA_SHA256,
-    CAPTURE_DOCUMENT_SCHEMA_VERSION,
-    CAPTURE_RUNTIME_VERSION,
     CaptureDocument,
     CaptureEvent,
     CaptureOperation,
@@ -41,21 +55,8 @@ from .contracts import (
     StructuringSession,
     SubmitStructuringBatch,
 )
-from .errors import (
-    CaptureRuntimeCompatibilityError,
-    CaptureRuntimeProtocolError,
-    CaptureTransportError,
-)
-from .transport import HttpRuntimeTransport, RuntimeTransport
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeDiscovery:
-    ready: RuntimeReady
-    streaming: RuntimeStreamingCapabilities | None
-    schema_sha256: str
-    contract_index: Mapping[str, Any]
-    contract_bundle: Mapping[str, Any]
+from .errors import CaptureRuntimeProtocolError, CaptureTransportError
+from .transport import RuntimeTransport
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +77,12 @@ class CaptureStreamingResult:
 
 
 class CaptureRuntimeClient:
+    """Public synchronous facade for authenticated Capture Runtime v2 calls.
+
+    Discovery, retry, transport, and response mapping remain private so
+    consumers keep the established import path and method contracts.
+    """
+
     def __init__(
         self,
         *,
@@ -88,17 +95,17 @@ class CaptureRuntimeClient:
         max_retries: int = 2,
         retry_backoff_seconds: float = 0.0,
     ) -> None:
-        if max_retries < 0:
-            raise ValueError("max_retries must be non-negative")
-        if retry_backoff_seconds < 0:
-            raise ValueError("retry_backoff_seconds must be non-negative")
+        retry_policy = RetryPolicy(max_retries, retry_backoff_seconds)
         if transport is None:
             if base_url is None or bearer_token is None:
                 raise ValueError("base_url and bearer_token are required without a transport")
-            transport = HttpRuntimeTransport(
-                base_url=base_url, bearer_token=bearer_token, timeout_seconds=timeout_seconds
+            transport = create_http_runtime_transport(
+                base_url=base_url,
+                bearer_token=bearer_token,
+                timeout_seconds=timeout_seconds,
             )
         self._transport = transport
+        self._retry_policy = retry_policy
         self._allowed_contract_set_sha256 = frozenset(
             allowed_contract_set_sha256
             or (expected_contract_set_sha256 or CAPTURE_CONTRACT_SET_SHA256,)
@@ -109,16 +116,7 @@ class CaptureRuntimeClient:
         self._discovering = False
 
     def handshake(self) -> RuntimeReady:
-        response = self._request("GET", "/v2/health/ready")
-        payload = decode_json(response)
-        if not isinstance(payload, Mapping):
-            raise CaptureRuntimeProtocolError(
-                "Capture Runtime readiness response is not an object."
-            )
-        self._assert_compatible_payload(payload)
-        ready = decode_model(httpx.Response(200, json=payload), RuntimeReady)
-        self._assert_compatible(ready)
-        return ready
+        return handshake_runtime(self._request)
 
     def discover(self) -> RuntimeDiscovery:
         if self._discovery is not None:
@@ -127,60 +125,9 @@ class CaptureRuntimeClient:
             raise CaptureRuntimeProtocolError("Capture Runtime contract discovery re-entered.")
         self._discovering = True
         try:
-            ready = self.handshake()
-            index_response = self._request("GET", "/meta/v2/contracts")
-            index = decode_json(index_response)
-            if not isinstance(index, Mapping):
-                raise CaptureRuntimeProtocolError(
-                    "Capture Runtime contract index is not an object."
-                )
-            self._validate_contract_index(index, ready)
-            href = index.get("href")
-            if not isinstance(href, str) or not href.startswith(
-                "/meta/v2/contracts/sha256/"
-            ):
-                raise CaptureRuntimeProtocolError("Capture Runtime contract index href is invalid.")
-            href_digest = href.removeprefix("/meta/v2/contracts/sha256/")
-            if not re.fullmatch(r"[0-9a-f]{64}", href_digest) or href_digest != index.get(
-                "sha256"
-            ):
-                raise CaptureRuntimeCompatibilityError(
-                    "Capture Runtime contract index href digest does not match "
-                    "its advertised bundle hash."
-                )
-            bundle_response = self._request("GET", href)
-            bundle_bytes = bundle_response.content
-            digest = hashlib.sha256(bundle_bytes).hexdigest()
-            if digest not in self._allowed_contract_set_sha256:
-                raise CaptureRuntimeCompatibilityError(
-                    "Capture Runtime contract bundle identity is not allowlisted."
-                )
-            etag = bundle_response.headers.get("etag")
-            if (
-                digest != index.get("sha256")
-                or bundle_response.headers.get("x-contract-sha256") not in {None, digest}
-                or (etag is not None and etag not in {digest, f'"{digest}"'})
-            ):
-                raise CaptureRuntimeCompatibilityError(
-                    "Capture Runtime contract bundle hash is incompatible."
-                )
-            try:
-                bundle = json.loads(bundle_bytes)
-            except (UnicodeDecodeError, json.JSONDecodeError) as error:
-                raise CaptureRuntimeProtocolError(
-                    "Capture Runtime contract bundle is not valid JSON."
-                ) from error
-            schema_sha256 = self._validate_contract_bundle(bundle, digest)
-            streaming = decode_model(
-                self._request("GET", "/v2/streaming/health/ready"),
-                RuntimeStreamingCapabilities,
-            )
-            self._discovery = RuntimeDiscovery(
-                ready=ready,
-                streaming=streaming,
-                schema_sha256=schema_sha256,
-                contract_index=index,
-                contract_bundle=bundle,
+            self._discovery = discover_runtime(
+                self._request,
+                allowed_contract_set_sha256=self._allowed_contract_set_sha256,
             )
             return self._discovery
         finally:
@@ -203,7 +150,7 @@ class CaptureRuntimeClient:
         )
 
     def list_installations(self) -> list[RuntimeInstallation]:
-        payload = decode_json(self._request("GET", "/v2/runtime/installations"))
+        payload = decode_response(self._request("GET", "/v2/runtime/installations"))
         if not isinstance(payload, Mapping) or not isinstance(payload.get("items"), list):
             raise CaptureRuntimeProtocolError("Capture Runtime installations response is invalid.")
         try:
@@ -226,9 +173,7 @@ class CaptureRuntimeClient:
         )
 
     def get_model_options(self) -> RuntimeModelOptions:
-        return decode_model(
-            self._request("GET", "/v2/runtime/model-options"), RuntimeModelOptions
-        )
+        return decode_model(self._request("GET", "/v2/runtime/model-options"), RuntimeModelOptions)
 
     def get_model_installation(self, installation_id: str) -> RuntimeModelInstallation:
         return decode_model(
@@ -308,11 +253,7 @@ class CaptureRuntimeClient:
             raise CaptureRuntimeProtocolError(
                 "Structuring session captureId must match the route capture."
             )
-        key = (
-            payload.client_request_id
-            if idempotency_key is None
-            else str(idempotency_key)
-        )
+        key = payload.client_request_id if idempotency_key is None else str(idempotency_key)
         if not key or key != payload.client_request_id:
             raise CaptureRuntimeProtocolError(
                 "X-Idempotency-Key must match structuring session clientRequestId."
@@ -332,9 +273,7 @@ class CaptureRuntimeClient:
 
     def get_structuring_session(self, capture_id: str) -> StructuringSession:
         return decode_model(
-            self._request(
-                "GET", f"/v2/captures/{_safe_id(capture_id)}/structure/session"
-            ),
+            self._request("GET", f"/v2/captures/{_safe_id(capture_id)}/structure/session"),
             StructuringSession,
         )
 
@@ -512,26 +451,11 @@ class CaptureRuntimeClient:
         return partial
 
     def get_streaming_result(self, capture_id: str) -> CaptureStreamingResult:
-        payload = decode_json(self._request("GET", f"/v2/captures/{_safe_id(capture_id)}/result"))
-        try:
-            operation = CaptureOperation.model_validate(payload["operation"])
-            raw = RawCapture.model_validate(payload["raw"])
-            result = CaptureDocument.model_validate(payload["result"])
-            if operation.capture_id != capture_id:
-                raise ValueError("capture identity mismatch")
-            if raw.source != result.source or (
-                operation.source is not None and operation.source != raw.source
-            ):
-                raise ValueError("source identity mismatch")
-            return CaptureStreamingResult(
-                operation=operation,
-                raw=raw,
-                result=result,
-            )
-        except (KeyError, TypeError, ValueError, ValidationError) as error:
-            raise CaptureRuntimeProtocolError(
-                "Capture Runtime returned an invalid streaming result."
-            ) from error
+        operation, raw, result = decode_streaming_result(
+            self._request("GET", f"/v2/captures/{_safe_id(capture_id)}/result"),
+            capture_id,
+        )
+        return CaptureStreamingResult(operation=operation, raw=raw, result=result)
 
     def capture_events(
         self,
@@ -555,7 +479,7 @@ class CaptureRuntimeClient:
                     "GET", f"/v2/captures/{_safe_id(capture_id)}/events", headers=headers
                 ) as response:
                     if response.status_code >= 400:
-                        decode_json(response)
+                        decode_response(response)
                     content_type = response.headers.get("content-type", "")
                     if not content_type.lower().startswith("text/event-stream"):
                         raise CaptureRuntimeProtocolError(
@@ -615,16 +539,12 @@ class CaptureRuntimeClient:
             "X-Idempotency-Key": str(idempotency_key),
         }
         if isinstance(candidate, CaptureDocument):
-            kwargs: dict[str, Any] = {
-                "json": candidate.model_dump(mode="json", by_alias=True)
-            }
+            kwargs: dict[str, Any] = {"json": candidate.model_dump(mode="json", by_alias=True)}
         elif isinstance(candidate, Mapping):
             kwargs = {"json": dict(candidate)}
         else:
             kwargs = {
-                "content": candidate.encode("utf-8")
-                if isinstance(candidate, str)
-                else candidate
+                "content": candidate.encode("utf-8") if isinstance(candidate, str) else candidate
             }
         return self._decode_capture_operation(
             self._request(
@@ -650,7 +570,7 @@ class CaptureRuntimeClient:
         )
 
     def delete_streaming_capture(self, capture_id: str) -> None:
-        decode_json(self._request("DELETE", f"/v2/captures/{_safe_id(capture_id)}"))
+        decode_response(self._request("DELETE", f"/v2/captures/{_safe_id(capture_id)}"))
 
     def close(self) -> None:
         close = getattr(self._transport, "close", None)
@@ -664,42 +584,9 @@ class CaptureRuntimeClient:
         self.close()
 
     def _request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
-        if (
-            path.startswith("/v2/")
-            and path != "/v2/health/ready"
-            and not self._discovering
-        ):
+        if path.startswith("/v2/") and path != "/v2/health/ready" and not self._discovering:
             self._ensure_discovered()
-        normalized_method = method.upper()
-        headers = kwargs.get("headers") or {}
-        has_idempotency_key = any(
-            str(key).lower() == "x-idempotency-key" and bool(value)
-            for key, value in dict(headers).items()
-        )
-        retryable_request = normalized_method in {"GET", "HEAD", "DELETE"} or has_idempotency_key
-        retries = self._max_retries if retryable_request else 0
-        for attempt in range(retries + 1):
-            try:
-                response = self._transport.request(method, path, **kwargs)
-            except CaptureTransportError:
-                if attempt >= retries:
-                    raise
-                self._sleep_before_retry(attempt)
-                continue
-            except httpx.HTTPError as error:
-                if attempt >= retries:
-                    raise CaptureTransportError(
-                        "Capture Runtime transport request failed.", str(error)
-                    ) from error
-                self._sleep_before_retry(attempt)
-                continue
-            if response.status_code in {408, 425, 429, 500, 502, 503, 504} and attempt < retries:
-                retry_after = _retry_after_seconds(response)
-                response.close()
-                self._sleep_before_retry(attempt, retry_after)
-                continue
-            return response
-        raise AssertionError("retry loop must return or raise")
+        return self._retry_policy.request(self._transport, method, path, **kwargs)
 
     def _ensure_discovered(self) -> RuntimeDiscovery:
         if self._discovery is not None:
@@ -712,254 +599,23 @@ class CaptureRuntimeClient:
     def _decode_capture_operation(
         response: httpx.Response, requested_capture_id: str
     ) -> CaptureOperation:
-        operation = decode_model(response, CaptureOperation)
-        if operation.capture_id != requested_capture_id:
-            raise CaptureRuntimeProtocolError(
-                "Capture Runtime returned an invalid capture identity."
-            )
-        return operation
-
-    def _sleep_before_retry(self, attempt: int, retry_after: float | None = None) -> None:
-        delay = (
-            retry_after
-            if retry_after is not None
-            else self._retry_backoff_seconds * (2**attempt)
-        )
-        if delay > 0:
-            time.sleep(delay)
+        return decode_capture_operation(response, requested_capture_id)
 
     @staticmethod
     def _assert_compatible(ready: RuntimeReady) -> None:
-        failures: list[str] = []
-        if ready.api_version != CAPTURE_API_VERSION:
-            failures.append(f"API version {ready.api_version} is unsupported")
-        if ready.capture_document_schema_version != CAPTURE_DOCUMENT_SCHEMA_VERSION:
-            failures.append("CaptureDocument schema version is unsupported")
-        if ready.runtime_version != CAPTURE_RUNTIME_VERSION:
-            failures.append(
-                f"runtime version {ready.runtime_version} is incompatible with "
-                f"{CAPTURE_RUNTIME_VERSION}"
-            )
-        structuring_modes = ready.capabilities.get("structuringModes", [])
-        if (
-            StructuringMode.HOST.value not in structuring_modes
-            and StructuringMode.RUNTIME.value not in structuring_modes
-        ):
-            failures.append("runtime exposes no structuring mode")
-        if failures:
-            raise CaptureRuntimeCompatibilityError("; ".join(failures))
+        assert_compatible(ready)
 
     @staticmethod
     def _assert_compatible_payload(payload: Mapping[str, Any]) -> None:
-        failures: list[str] = []
-        if payload.get("apiVersion") != CAPTURE_API_VERSION:
-            failures.append("API version is unsupported")
-        if payload.get("captureDocumentSchemaVersion") != CAPTURE_DOCUMENT_SCHEMA_VERSION:
-            failures.append("CaptureDocument schema version is unsupported")
-        if failures:
-            raise CaptureRuntimeCompatibilityError("; ".join(failures))
+        assert_compatible_payload(payload)
 
     @staticmethod
     def _validate_contract_index(index: Mapping[str, Any], ready: RuntimeReady) -> None:
-        required = {
-            "catalogVersion",
-            "runtimeVersion",
-            "contractSetVersion",
-            "surfaces",
-            "sha256",
-            "href",
-        }
-        if not required.issubset(index):
-            raise CaptureRuntimeProtocolError(
-                "Capture Runtime contract index is missing required fields."
-            )
-        if index.get("catalogVersion") != "2" or index.get("contractSetVersion") != "2":
-            raise CaptureRuntimeCompatibilityError(
-                "Capture Runtime contract catalog version is unsupported."
-            )
-        if index.get("runtimeVersion") != ready.runtime_version:
-            raise CaptureRuntimeCompatibilityError(
-                "Capture Runtime contract catalog runtimeVersion is incompatible."
-            )
-        if not isinstance(index.get("sha256"), str) or not re.fullmatch(
-            r"[0-9a-f]{64}", index["sha256"]
-        ):
-            raise CaptureRuntimeProtocolError("Capture Runtime contract index hash is invalid.")
-        surfaces = index.get("surfaces")
-        if not isinstance(surfaces, list) or {
-            surface.get("id") for surface in surfaces if isinstance(surface, Mapping)
-        } != {"v2"}:
-            raise CaptureRuntimeCompatibilityError(
-                "Capture Runtime contract catalog does not expose the v2 surface."
-            )
+        validate_contract_index(index, ready)
 
     @staticmethod
     def _validate_contract_bundle(bundle: Any, digest: str) -> str:
-        if (
-            not isinstance(bundle, Mapping)
-            or bundle.get("contractSetVersion") != "2"
-            or bundle.get("schemaDialect") != "https://json-schema.org/draft/2020-12/schema"
-        ):
-            raise CaptureRuntimeProtocolError("Capture Runtime contract bundle is invalid.")
-        for field in ("surfaces", "schemas", "operations", "problems", "invariants"):
-            if not isinstance(bundle.get(field), list):
-                raise CaptureRuntimeProtocolError(
-                    f"Capture Runtime contract bundle {field} is invalid."
-                )
-        surfaces = bundle["surfaces"]
-        surface_ids = {surface.get("id") for surface in surfaces if isinstance(surface, Mapping)}
-        if surface_ids != {"v2"}:
-            raise CaptureRuntimeCompatibilityError(
-                "Capture Runtime contract bundle does not expose the v2 surface."
-            )
-        operations_value = bundle["operations"]
-        if not isinstance(operations_value, list):
-            raise CaptureRuntimeProtocolError(
-                "Capture Runtime contract bundle operations are invalid."
-            )
-        operations: list[Any] = operations_value
-        for operation in operations:
-            if not isinstance(operation, Mapping) or not all(
-                isinstance(operation.get(field), expected)
-                for field, expected in (
-                    ("path", str),
-                    ("method", str),
-                    ("surface", str),
-                    ("body", Mapping),
-                    ("requiredHeaders", list),
-                    ("idempotency", Mapping),
-                    ("responseStatusCodes", list),
-                )
-            ):
-                raise CaptureRuntimeProtocolError(
-                    "Capture Runtime contract operation metadata is invalid."
-                )
-        operation_paths = {
-            operation.get("path") for operation in operations if isinstance(operation, Mapping)
-        }
-        required_paths = {
-            "/v2/health/ready",
-            "/v2/streaming/health/ready",
-            "/v2/runtime/requirements",
-            "/v2/runtime/installations",
-            "/v2/runtime/model-options",
-            "/v2/runtime/model-installations",
-            "/v2/captures",
-            "/v2/captures/{capture_id}/events",
-            "/v2/captures/{capture_id}/raw",
-            "/v2/captures/{capture_id}/result",
-            "/v2/captures/{capture_id}/structure/session",
-            "/v2/captures/{capture_id}/structure/session/batches/{batch_index}",
-        }
-        if not required_paths.issubset(operation_paths):
-            raise CaptureRuntimeCompatibilityError(
-                "Capture Runtime contract bundle does not advertise the required client surface."
-            )
-
-        def find_operation(path: str, method: str | None = None) -> Mapping[str, Any] | None:
-            return next(
-                (
-                    item
-                    for item in operations
-                    if isinstance(item, Mapping)
-                    and item.get("path") == path
-                    and (method is None or item.get("method") == method)
-                ),
-                None,
-            )
-
-        upload = find_operation("/v2/captures")
-        chunk = find_operation("/v2/ingestions/{ingestion_id}/chunks/{chunk_index}")
-        events = find_operation("/v2/captures/{capture_id}/events")
-        session_open = find_operation(
-            "/v2/captures/{capture_id}/structure/session", "POST"
-        )
-        batch_get = find_operation(
-            "/v2/captures/{capture_id}/structure/session/batches/{batch_index}", "GET"
-        )
-        batch_submit = find_operation(
-            "/v2/captures/{capture_id}/structure/session/batches/{batch_index}", "PUT"
-        )
-        if (
-            upload is None
-            or not isinstance(upload.get("body"), Mapping)
-            or upload["body"].get("kind") not in {"json", "none"}
-            or "X-Idempotency-Key" not in upload.get("requiredHeaders", [])
-        ):
-            raise CaptureRuntimeCompatibilityError(
-                "Capture Runtime v2 capture metadata is incompatible."
-            )
-        if (
-            chunk is None
-            or not isinstance(chunk.get("body"), Mapping)
-            or chunk["body"].get("kind") != "binary"
-            or not all(
-                header in chunk.get("requiredHeaders", [])
-                for header in ("Content-Range", "Digest", "X-Idempotency-Key")
-            )
-        ):
-            raise CaptureRuntimeCompatibilityError(
-                "Capture Runtime v2 chunk metadata is incompatible."
-            )
-        streaming = events.get("streaming") if events is not None else None
-        if (
-            events is None
-            or events.get("mediaType") != "text/event-stream"
-            or not isinstance(streaming, Mapping)
-            or streaming.get("kind") != "sse"
-            or streaming.get("lastEventIdHeader") != "Last-Event-ID"
-        ):
-            raise CaptureRuntimeCompatibilityError("Capture Runtime SSE metadata is incompatible.")
-        if (
-            session_open is None
-            or not isinstance(session_open.get("body"), Mapping)
-            or session_open["body"].get("kind") != "json"
-            or "X-Idempotency-Key" not in session_open.get("requiredHeaders", [])
-            or session_open.get("idempotency", {}).get("mode") != "required"
-            or batch_get is None
-            or not isinstance(batch_get.get("body"), Mapping)
-            or batch_get["body"].get("kind") != "none"
-            or batch_submit is None
-            or not isinstance(batch_submit.get("body"), Mapping)
-            or batch_submit["body"].get("kind") != "json"
-            or "X-Idempotency-Key" not in batch_submit.get("requiredHeaders", [])
-            or batch_submit.get("idempotency", {}).get("mode") != "required"
-        ):
-            raise CaptureRuntimeCompatibilityError(
-                "Capture Runtime pull-session metadata is incompatible."
-            )
-        canonical_bundle = json.dumps(
-            bundle,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-            allow_nan=False,
-        ).encode("utf-8")
-        if hashlib.sha256(canonical_bundle).hexdigest() != digest:
-            raise CaptureRuntimeCompatibilityError(
-                "Capture Runtime contract bundle bytes are not canonical."
-            )
-        schemas = bundle.get("schemas")
-        document = (
-            next(
-                (
-                    item
-                    for item in schemas
-                    if isinstance(item, Mapping) and item.get("name") == "CaptureDocument"
-                ),
-                None,
-            )
-            if isinstance(schemas, list)
-            else None
-        )
-        if (
-            not isinstance(document, Mapping)
-            or document.get("schemaSha256") != CAPTURE_DOCUMENT_SCHEMA_SHA256
-        ):
-            raise CaptureRuntimeCompatibilityError(
-                "Capture Runtime document schema hash is incompatible."
-            )
-        return str(document["schemaSha256"])
+        return validate_contract_bundle(bundle, digest)
 
 
 def _safe_id(value: str) -> str:
@@ -979,16 +635,6 @@ def _safe_batch_index(value: int) -> int:
     if not isinstance(value, int) or isinstance(value, bool) or value < 0:
         raise ValueError("Capture Runtime batch index is invalid")
     return value
-
-
-def _retry_after_seconds(response: httpx.Response) -> float | None:
-    value = response.headers.get("retry-after")
-    if value is None:
-        return None
-    try:
-        return max(0.0, float(value))
-    except ValueError:
-        return None
 
 
 __all__ = ["CaptureRuntimeClient", "CaptureUpload", "CaptureStreamingResult", "RuntimeDiscovery"]
