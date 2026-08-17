@@ -202,8 +202,8 @@ Run in or immediately after candidate assembly:
 
 ### npm
 
-* Publish packages to local Verdaccio.
-* Install them in a clean temporary project.
+* Consume the immutable candidate from the configured package registry in a
+  clean temporary project; the retired local Verdaccio trial is not evidence.
 * Reject leaked `workspace:*` dependencies.
 * Verify exports and type declarations.
 * Import the runtime client's typed structuring/session DTOs and the Workbench packages.

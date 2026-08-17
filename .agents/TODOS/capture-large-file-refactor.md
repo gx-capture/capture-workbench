@@ -30,9 +30,8 @@
       checker remain green; evidence remains redacted and schema-compatible.
 
   Current decision: deferred. The existing smoke entrypoints have source-marker
-  tests that require a narrower extraction design. Package QA also has unrelated
-  baseline failures for the native source import assertion and a missing local
-  `packages/capture-angular/package.json`.
+  tests that require a narrower extraction design. The completed local registry
+  research trial and its stale local-registry test have been retired separately.
 
 - [ ] Complete public API documentation and advisory coverage report.
       Verify: public exports/classes/methods/tokens/commands have human-readable

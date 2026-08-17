@@ -1,5 +1,12 @@
 # Local NPM Registry Cert Prep Trial Spec
 
+> Status: Retired. This completed local research trial is no longer an active
+> package, consumer, or release verification path. Its runnable publisher,
+> Verdaccio configuration, and test were removed after the UI package directory
+> was renamed and the published-consumer gates became the canonical boundary.
+> The sections below preserve the historical design and evidence only; they are
+> not current commands or acceptance criteria.
+
 ## Purpose
 
 Provide a reproducible Windows-local workflow that publishes the packed

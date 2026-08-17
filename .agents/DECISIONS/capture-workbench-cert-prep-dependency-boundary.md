@@ -8,7 +8,7 @@
 - New owner needed: no. The published Workbench package remains the owner of
   custom-element creation and owns `@angular/elements` as a dependency.
 - Verification floor: Workbench package smoke plus cert-prep frozen install,
-  build/test, and local registry trial.
+  build/test, and the published-consumer smoke.
 
 ## Rationale
 

@@ -20,9 +20,7 @@
     "verify:smoke": "corepack pnpm nx run capture-workbench-desktop:smoke-deterministic && corepack pnpm nx run capture-workbench-e2e:e2e",
     "verify:release-version": "node tools/verify-release-version.ts",
     "sync:release-version": "node tools/release/sync-versions.ts",
-    "verify:modular-reuse:local": "corepack pnpm nx run capture-runtime:check-contracts && corepack pnpm nx run capture-runtime-client:build && corepack pnpm nx run capture-runtime-client-python:build && corepack pnpm nx run capture-sidecar-launcher:cargo-publish-dry-run",
-    "local-registry:start": "corepack pnpm exec verdaccio --config tools/local-registry/verdaccio.yaml",
-    "local-registry:publish": "node tools/local-registry/publish-local-registry.ts"
+    "verify:modular-reuse:local": "corepack pnpm nx run capture-runtime:check-contracts && corepack pnpm nx run capture-runtime-client:build && corepack pnpm nx run capture-runtime-client-python:build && corepack pnpm nx run capture-sidecar-launcher:cargo-publish-dry-run"
   },
   "private": true,
   "dependencies": {
@@ -85,7 +83,6 @@
     "tslib": "^2.3.0",
     "typescript": "6.0.3",
     "typescript-eslint": "^8.40.0",
-    "verdaccio": "^6.3.2",
     "vite": "7.3.6",
     "vitest": "^4.0.8",
     "vue": "3.5.40"

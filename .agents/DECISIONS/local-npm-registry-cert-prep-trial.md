@@ -1,5 +1,11 @@
 # Local NPM Registry Cert Prep Trial Decision
 
+> Status: Retired. The local Verdaccio trial is historical evidence only; its
+> publisher, configuration, and test have been removed after published-consumer
+> gates became the canonical verification path.
+> The sections below record the historical decision and are not current
+> implementation guidance.
+
 ## Accepted approach
 
 Use Verdaccio on `127.0.0.1:4873` as a local npm-compatible registry. Publish

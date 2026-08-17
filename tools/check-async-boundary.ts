@@ -82,9 +82,6 @@ function exceptionReason(relativePath) {
   if (relativePath === 'tools/capture-boundary-doctor.ts') {
     return 'read-only local boundary diagnostics CLI';
   }
-  if (relativePath === 'tools/local-registry/publish-local-registry.ts') {
-    return 'local registry CLI process boundary';
-  }
   if (relativePath === 'tools/local-release-consumer-smoke.ts') {
     return 'local release consumer process boundary';
   }
