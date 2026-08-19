@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "sourceFileName": "ocr_test_image.jpeg",
+  "rawTextIncludes": [
+    "snow man"
+  ]
+}

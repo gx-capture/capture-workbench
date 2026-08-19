@@ -49,7 +49,6 @@ export class DesktopWorkspaceInstallationService {
       concatMap((requirement) => this.installRequirement$(requirement)),
       finalize(() => {
         this.installing.set(false);
-        this.activeInstallation.set(null);
       }),
     );
   }

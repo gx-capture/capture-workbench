@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-use super::transport::redact_token;
+use super::transport::{decode_body, redact_token};
 
 /// Decodes the existing line-oriented SSE wire format into the IPC JSON array.
 /// Event ids, names, comments, and heartbeats remain transport framing details.
@@ -22,7 +22,8 @@ pub(super) fn parse_response(response: &[u8], token: &str) -> Result<Value, Stri
             "Capture Runtime request was rejected with HTTP {status}."
         ));
     }
-    let events = response[separator + 4..]
+    let body = decode_body(headers, &response[separator + 4..])?;
+    let events = body
         .split(|byte| *byte == b'\n')
         .filter_map(|line| line.strip_prefix(b"data: "))
         .filter(|line| !line.is_empty())

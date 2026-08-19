@@ -16,14 +16,10 @@ use crate::{
 
 const STREAM_CHUNK_BYTES: usize = 1024 * 1024;
 
-mod multipart;
 mod sse;
 mod transport;
 mod validation;
 
-use multipart::multipart_capture_body;
-#[cfg(test)]
-use multipart::random_hex;
 use transport::{is_http_rejection, request, request_sse, request_with_headers, RequestBody};
 use validation::{
     validate_client_request_id, validate_document_id, validate_model_option_id, validate_opaque_id,
@@ -116,26 +112,73 @@ pub(crate) fn create_capture(
 ) -> Result<Value, String> {
     validate_document_id(&input.document_id)?;
     validate_client_request_id(&input.client_request_id)?;
-    let source = library.runtime_source(&input.document_id)?;
+    let source = library.runtime_source_file(&input.document_id)?;
     let source_kind = match source.media_type.as_str() {
         "application/pdf" => "pdf",
         "image/png" | "image/jpeg" => "image",
         "audio/wav" | "audio/mpeg" | "audio/mp4" => "audio",
         _ => return Err("Capture source media type is unsupported.".into()),
     };
-    let body = multipart_capture_body(
-        &source.file_name,
-        &source.media_type,
-        source_kind,
-        &source.bytes,
-    )?;
-    request_json(
-        state,
+    let config = state.backend_config()?;
+    let ingestion_request_id = format!("{}-ingestion", input.client_request_id);
+    let ingestion = request(
+        &config,
         "POST",
-        "/v2/captures",
-        Some(body),
-        Some(&input.client_request_id),
-    )
+        "/v2/ingestions",
+        Some(json_body(json!({
+            "protocolVersion": "2",
+            "clientRequestId": ingestion_request_id,
+            "kind": source_kind,
+            "mode": "file",
+            "fileName": source.file_name,
+            "mediaType": source.media_type,
+            "totalBytes": source.bytes,
+        }))?),
+        Some(&ingestion_request_id),
+    )?;
+    let ingestion_id = ingestion
+        .get("ingestionId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "Capture Runtime ingestion response is invalid.".to_string())?;
+    validate_opaque_id(ingestion_id)?;
+    let result = (|| {
+        upload_source_chunks(&config, &source, ingestion_id, &input.client_request_id)?;
+        let source_digest = source_sha256(&source)?;
+        request(
+            &config,
+            "POST",
+            &format!("/v2/ingestions/{ingestion_id}/finalize"),
+            Some(json_body(json!({
+                "protocolVersion": "2",
+                "totalBytes": source.bytes,
+                "sha256": source_digest,
+            }))?),
+            None,
+        )?;
+        request(
+            &config,
+            "POST",
+            "/v2/captures",
+            Some(json_body(json!({
+                "protocolVersion": "2",
+                "clientRequestId": input.client_request_id,
+                "ingestionId": ingestion_id,
+                "structuringMode": "runtime",
+                "startPolicy": "eager",
+            }))?),
+            Some(&input.client_request_id),
+        )
+    })();
+    if result.is_err() {
+        let _ = request(
+            &config,
+            "DELETE",
+            &format!("/v2/ingestions/{ingestion_id}"),
+            None,
+            None,
+        );
+    }
+    result
 }
 
 pub(crate) fn start_streaming_capture(
@@ -325,6 +368,15 @@ fn upload_source_chunks(
     Ok(())
 }
 
+fn json_body(value: Value) -> Result<RequestBody, String> {
+    serde_json::to_vec(&value)
+        .map(|bytes| RequestBody {
+            bytes,
+            content_type: "application/json".into(),
+        })
+        .map_err(|_| "Capture Runtime JSON request cannot be encoded.".to_string())
+}
+
 fn source_sha256(source: &RuntimeSourceFile) -> Result<String, String> {
     let mut file = std::fs::File::open(&source.path)
         .map_err(|_| "Capture library source cannot be opened for finalization.".to_string())?;
@@ -437,6 +489,7 @@ mod tests {
         net::{Ipv4Addr, TcpListener, TcpStream},
         path::PathBuf,
         thread,
+        time::{SystemTime, UNIX_EPOCH},
     };
 
     #[test]
@@ -550,8 +603,12 @@ mod tests {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("listener");
         let port = listener.local_addr().expect("address").port();
         let source_path = PathBuf::from(std::env::temp_dir()).join(format!(
-            "capture-workbench-streaming-test-{}.mp3",
-            random_hex().expect("random id")
+            "capture-workbench-streaming-test-{}-{}.mp3",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
         ));
         let bytes = vec![0x41_u8; STREAM_CHUNK_BYTES + 17];
         let source_bytes = bytes.len() as u64;

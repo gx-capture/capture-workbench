@@ -381,8 +381,16 @@ class EngineInstallationManager:
             return
         staging = requirement_root / ".staging" / uuid4().hex
         version = requirement_root / "versions" / requirement.artifact_version
+        # On a first install there is no active version to preserve. Probe the
+        # candidate at its final path and activate by writing active.json only;
+        # this avoids a transient Windows directory rename denial when a native
+        # worker or endpoint scanner still holds a handle in the candidate tree.
+        # Upgrades retain the hidden-directory swap so the previous version can
+        # be rolled back atomically.
         new_version = (
-            requirement_root / "versions" / f".{requirement.artifact_version}.{uuid4().hex}"
+            version
+            if not version.exists()
+            else requirement_root / "versions" / f".{requirement.artifact_version}.{uuid4().hex}"
         )
         previous_version = requirement_root / f".previous-{uuid4().hex}"
         staging.mkdir(parents=True)
@@ -495,6 +503,10 @@ class EngineInstallationManager:
                 raise EngineInstallationError(f"engine post-install probe failed: {probe.detail}")
             if cancel_event.is_set():
                 raise asyncio.CancelledError
+            # The post-install probe may load native OCR DLLs in a packaged
+            # worker. Ensure every process handle is released before Windows
+            # attempts the atomic version swap below.
+            await self.worker_client.shutdown()
             state = ActiveEngineState(
                 requirement_id=requirement.requirement_id,
                 artifact_version=requirement.artifact_version,
@@ -510,13 +522,28 @@ class EngineInstallationManager:
                     ActivatedArtifact("model", model_descriptor.manifest_sha256),
                 ),
             )
-            _activate_version(
-                version=version,
-                new_version=new_version,
-                previous_version=previous_version,
-                active_state_path=requirement_root / "active.json",
-                state=state,
-            )
+            activation_error: OSError | None = None
+            for activation_attempt in range(3):
+                try:
+                    _activate_version(
+                        version=version,
+                        new_version=new_version,
+                        previous_version=previous_version,
+                        active_state_path=requirement_root / "active.json",
+                        state=state,
+                    )
+                    activation_error = None
+                    break
+                except OSError as error:
+                    activation_error = error
+                    operation = getattr(error, "activation_operation", None)
+                    if operation not in {"move_existing_version", "move_new_version"}:
+                        raise
+                    if activation_attempt == 2:
+                        raise
+                    await asyncio.sleep(1)
+            if activation_error is not None:
+                raise activation_error
             activated = True
             active_engine = InstalledEngine(
                 requirement_id=requirement.requirement_id,

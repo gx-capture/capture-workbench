@@ -27,6 +27,7 @@ from capture_runtime.contracts import (
     project_source_text,
 )
 from capture_runtime.engine_installation import EngineInstallationManager
+from capture_runtime.image_normalization import bounded_scaled_dimensions
 from capture_runtime.worker_client import WorkerRunResult
 from capture_runtime.worker_process import WorkerCancelledError
 
@@ -138,6 +139,7 @@ class StandaloneRuntimeCaptureExtractor:
                     {
                         "deviceId": self.config.windowsml_device_id,
                         "maxImagePixels": self.config.max_image_pixels,
+                        "renderScale": self.config.ocr_render_scale,
                     },
                     cancel_event,
                 )
@@ -503,7 +505,11 @@ class StandaloneRuntimeCaptureExtractor:
                         raise ValueError("Animated or multi-frame images are unsupported.")
                     image.seek(0)
                     image.load()
-                    normalized_png = _normalize_image_png(image)
+                    normalized_png = _normalize_image_png(
+                        image,
+                        scale=self.config.ocr_render_scale,
+                        max_pixels=self.config.max_image_pixels,
+                    )
         except (
             OSError,
             UnidentifiedImageError,
@@ -592,7 +598,12 @@ class StandaloneRuntimeCaptureExtractor:
             raise InterruptedError("Capture extraction was cancelled.")
 
 
-def _normalize_image_png(image: Image.Image) -> bytes:
+def _normalize_image_png(
+    image: Image.Image,
+    *,
+    scale: float = 1,
+    max_pixels: int | None = None,
+) -> bytes:
     from PIL import Image, ImageOps
 
     oriented = ImageOps.exif_transpose(image)
@@ -602,6 +613,14 @@ def _normalize_image_png(image: Image.Image) -> bytes:
         normalized.paste(rgba, mask=rgba.getchannel("A"))
     else:
         normalized = oriented.convert("RGB")
+    if scale != 1:
+        width, height = normalized.size
+        dimensions = (
+            bounded_scaled_dimensions(width, height, scale, max_pixels)
+            if max_pixels is not None
+            else (round(width * scale), round(height * scale))
+        )
+        normalized = normalized.resize(dimensions, Image.Resampling.LANCZOS)
     output = BytesIO()
     normalized.save(output, format="PNG")
     return output.getvalue()

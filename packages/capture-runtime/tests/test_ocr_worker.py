@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from io import BytesIO
 from pathlib import Path
 from threading import Event
 
 import pytest
+from PIL import Image
 
 import capture_runtime.workers.ocr_main as ocr_main
 from capture_runtime.engine_adapters import OcrTextResult
@@ -145,3 +147,18 @@ def test_ocr_run_reports_empty_output_stage(
         )
 
     assert "ocr-output-empty" in stages
+
+
+def test_ocr_image_scale_adapts_to_the_pixel_limit(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "large-image.jpg"
+    Image.new("RGB", (5_000, 3_000), "white").save(source, format="JPEG")
+
+    normalized = ocr_main._normalized_png(source, 50_000_000, scale=2)
+
+    with Image.open(BytesIO(normalized)) as image:
+        width, height = image.size
+        assert width * height <= 50_000_000
+        assert width > 5_000
+        assert height > 3_000

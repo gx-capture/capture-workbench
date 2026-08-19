@@ -22,7 +22,7 @@ function collectTypescriptFiles(directory) {
       }
     } else if (
       entry.isFile() &&
-      entry.name.endsWith('.ts') &&
+      /\.(?:m?ts)$/u.test(entry.name) &&
       !entry.name.endsWith('.d.ts')
     ) {
       files.push(path);
@@ -60,11 +60,26 @@ function exceptionReason(relativePath) {
       'apps/capture-workbench-desktop/scripts/real-ollama-smoke.ts' ||
     relativePath ===
       'apps/capture-workbench-desktop/scripts/real-media-smoke.ts' ||
-    relativePath ===
-      'apps/capture-workbench-desktop/scripts/real-media-model-smoke.ts' ||
-    relativePath ===
+      relativePath ===
+        'apps/capture-workbench-desktop/scripts/real-media-model-smoke.ts' ||
+      relativePath ===
       'apps/capture-workbench-desktop/scripts/progressive-audio-oracle.ts'
   ) {
+    return 'opt-in real-engine CLI boundary';
+  }
+  if (relativePath === 'apps/capture-workbench-desktop/scripts/real-ocr-result-assertions.ts') {
+    return 'opt-in real-engine CLI boundary';
+  }
+  if (relativePath === 'apps/capture-workbench-desktop/scripts/acceptance-real.ts') {
+    return 'opt-in real-engine process boundary';
+  }
+  if (relativePath === 'tools/acceptance-contract.ts') {
+    return 'acceptance artifact and process boundary';
+  }
+  if (relativePath === 'tools/three-project-acceptance.ts') {
+    return 'acceptance process boundary';
+  }
+  if (relativePath === 'tools/user-pdf-ocr-probe.ts') {
     return 'opt-in real-engine CLI boundary';
   }
   if (

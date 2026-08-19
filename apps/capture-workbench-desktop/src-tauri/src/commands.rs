@@ -1,5 +1,8 @@
 use std::sync::Arc;
 
+#[cfg(feature = "acceptance-app-data")]
+use serde::Serialize;
+
 use crate::{
     config::DesktopRuntimeStatus,
     contracts::{
@@ -21,6 +24,23 @@ use crate::model_smoke_fixtures::{ModelSmokeFixtureRegistry, ModelSmokeImportFix
 #[tauri::command]
 pub fn desktop_runtime_status(state: tauri::State<'_, DesktopState>) -> DesktopRuntimeStatus {
     state.status()
+}
+
+#[cfg(feature = "acceptance-app-data")]
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DesktopRuntimeProcessProbe {
+    pub process_id: Option<u32>,
+}
+
+#[cfg(feature = "acceptance-app-data")]
+#[tauri::command]
+pub fn desktop_runtime_process_probe(
+    state: tauri::State<'_, DesktopState>,
+) -> DesktopRuntimeProcessProbe {
+    DesktopRuntimeProcessProbe {
+        process_id: state.runtime_process_id(),
+    }
 }
 
 async fn run_blocking<T, F>(operation: F) -> Result<T, String>

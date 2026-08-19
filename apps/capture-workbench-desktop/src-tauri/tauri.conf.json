@@ -17,8 +17,8 @@
         "title": "Capture Workbench",
         "width": 1280,
         "height": 860,
-        "minWidth": 960,
-        "minHeight": 700,
+        "minWidth": 600,
+        "minHeight": 520,
         "resizable": true
       }
     ],

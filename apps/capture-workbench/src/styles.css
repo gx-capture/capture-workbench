@@ -4,6 +4,12 @@ html {
   font-family: 'Microsoft JhengHei UI', 'Microsoft JhengHei', ui-sans-serif, system-ui, sans-serif;
 }
 
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
 body {
   min-width: 20rem;
   min-height: 100vh;

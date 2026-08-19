@@ -42,6 +42,7 @@ from capture_runtime.engine_adapters import (
     _install_offline_aistudio_stubs,
     _install_offline_huggingface_stubs,
 )
+from capture_runtime.image_normalization import bounded_scaled_dimensions
 from capture_runtime.worker_contracts import WorkerRequest
 from capture_runtime.workers.server import serve
 
@@ -145,7 +146,7 @@ def _probe(request: WorkerRequest) -> dict[str, Any]:
     }
 
 
-def _normalized_png(source: Path, max_pixels: int) -> bytes:
+def _normalized_png(source: Path, max_pixels: int, scale: float = 1) -> bytes:
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("error", Image.DecompressionBombWarning)
@@ -166,6 +167,18 @@ def _normalized_png(source: Path, max_pixels: int) -> bytes:
                     normalized.paste(rgba, mask=rgba.getchannel("A"))
                 else:
                     normalized = oriented.convert("RGB")
+                if scale != 1:
+                    normalized_width, normalized_height = normalized.size
+                    scaled_width, scaled_height = bounded_scaled_dimensions(
+                        normalized_width,
+                        normalized_height,
+                        scale,
+                        max_pixels,
+                    )
+                    normalized = normalized.resize(
+                        (scaled_width, scaled_height),
+                        Image.Resampling.LANCZOS,
+                    )
                 output = BytesIO()
                 normalized.save(output, format="PNG")
                 return output.getvalue()
@@ -231,7 +244,7 @@ def _run(request: WorkerRequest, cancellation: Event) -> dict[str, Any]:
     images: Iterable[tuple[int, bytes]]
     if media_type == "application/pdf":
         pages = options.get("pages")
-        scale = options.get("renderScale")
+        render_scale = options.get("renderScale")
         if (
             not isinstance(pages, list)
             or not pages
@@ -240,9 +253,9 @@ def _run(request: WorkerRequest, cancellation: Event) -> dict[str, Any]:
                 not isinstance(page, int) or isinstance(page, bool) or page < 1 for page in pages
             )
             or len(set(pages)) != len(pages)
-            or not isinstance(scale, int | float)
-            or isinstance(scale, bool)
-            or not 0.5 <= float(scale) <= 8
+            or not isinstance(render_scale, int | float)
+            or isinstance(render_scale, bool)
+            or not 0.5 <= float(render_scale) <= 8
         ):
             raise ValueError("OCR PDF options are invalid")
 
@@ -251,16 +264,23 @@ def _run(request: WorkerRequest, cancellation: Event) -> dict[str, Any]:
                 if cancellation.is_set():
                     raise InterruptedError
                 _report_stage("ocr-pdf-render-start")
-                image = _render_page(source, page - 1, float(scale))
+                image = _render_page(source, page - 1, float(render_scale))
                 _report_stage("ocr-pdf-render-complete")
                 yield page, image
 
         images = render_pages()
     elif media_type in {"image/png", "image/jpeg", "image/webp"}:
         max_pixels = options.get("maxImagePixels")
+        scale = options.get("renderScale", 1)
         if not isinstance(max_pixels, int) or isinstance(max_pixels, bool) or max_pixels < 1:
             raise ValueError("OCR image pixel limit is invalid")
-        images = [(1, _normalized_png(source, max_pixels))]
+        if (
+            not isinstance(scale, int | float)
+            or isinstance(scale, bool)
+            or not 1 <= float(scale) <= 4
+        ):
+            raise ValueError("OCR image renderScale is invalid")
+        images = [(1, _normalized_png(source, max_pixels, float(scale)))]
     else:
         raise ValueError("OCR mediaType is unsupported")
     segments: list[dict[str, Any]] = []

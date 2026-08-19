@@ -38,6 +38,7 @@ import {
   type StreamingTerminalResultV2,
 } from './desktop-runtime-client.service';
 import {
+  captureJobStage,
   committedTerminalStatus,
   errorMessage,
   hasCommittedTerminalData,
@@ -201,12 +202,12 @@ export class DesktopWorkspaceCaptureService {
     return this.runtime.createCapture(documentId, crypto.randomUUID()).pipe(
       switchMap((job) => {
         active.captureId = job.captureId;
-        active.lastStage = job.stage;
+        active.lastStage = captureJobStage(job);
         return this.library.updateCapture({
           documentId,
           captureId: job.captureId,
           status: 'processing',
-          stage: job.stage,
+          stage: captureJobStage(job),
         }).pipe(
           tap(() => host.reloadDocumentState(documentId)),
           map(() => job),
@@ -383,7 +384,7 @@ export class DesktopWorkspaceCaptureService {
             )),
           )
           : this.runtime.getCapture(document.captureId).pipe(
-            tap((job) => active.lastStage = job.stage),
+            tap((job) => active.lastStage = captureJobStage(job)),
             switchMap((job) => this.waitForTerminal$(document.documentId, job, active, host)),
             switchMap((job) => this.persistTerminal$(document.documentId, job, active)),
           );
@@ -423,7 +424,7 @@ export class DesktopWorkspaceCaptureService {
   ): Observable<DesktopCaptureOperation> {
     return of(initial).pipe(
       switchMap((job) => this.persistRawDuringExtraction$(documentId, job, active, host)),
-      tap((job) => active.lastStage = job.stage),
+      tap((job) => active.lastStage = captureJobStage(job)),
       expand((job) => {
         if (!isActiveJob(job)) return EMPTY;
         return this.advanceCapture$(documentId, job, active, host);
@@ -443,7 +444,7 @@ export class DesktopWorkspaceCaptureService {
       documentId,
       captureId: job.captureId,
       status: 'processing',
-      stage: job.stage,
+      stage: captureJobStage(job),
     }).pipe(
       switchMap(() => {
         if (active.cancelRequested && !active.cancelSent) {
@@ -472,7 +473,7 @@ export class DesktopWorkspaceCaptureService {
   ): Observable<DesktopCaptureOperation> {
     if (
       active.rawPersisted
-      || (job.stage !== 'structuring' && job.stage !== 'awaiting_structuring')
+      || (captureJobStage(job) !== 'structuring' && captureJobStage(job) !== 'awaiting_structuring')
     ) {
       return of(job);
     }
@@ -483,7 +484,7 @@ export class DesktopWorkspaceCaptureService {
           documentId,
           captureId: job.captureId,
           status: 'processing',
-          stage: job.stage,
+          stage: captureJobStage(job),
           raw,
         }).pipe(
           tap(() => {
@@ -513,7 +514,7 @@ export class DesktopWorkspaceCaptureService {
       documentId,
       captureId: job.captureId,
       status: 'persisting',
-      stage: job.stage,
+      stage: captureJobStage(job),
     }).pipe(
       switchMap(() => this.persistTerminalData$(documentId, job, active)),
       tap(() => {
@@ -538,7 +539,7 @@ export class DesktopWorkspaceCaptureService {
             documentId,
             captureId: job.captureId,
             status: 'completed' as const,
-            stage: job.stage,
+            stage: captureJobStage(job),
             result,
           })),
         );
@@ -554,7 +555,7 @@ export class DesktopWorkspaceCaptureService {
                 documentId,
                 captureId: job.captureId,
                 status: 'completed' as const,
-                stage: job.stage,
+                stage: captureJobStage(job),
                 result,
                 ...(active.rawPersisted ? {} : { raw }),
               };
@@ -574,7 +575,7 @@ export class DesktopWorkspaceCaptureService {
           documentId,
           captureId: job.captureId,
           status: terminalLibraryStatus(job),
-          stage: job.stage,
+          stage: captureJobStage(job),
           errorCode: job.error?.code,
           errorMessage: job.error?.message,
         });
@@ -585,7 +586,7 @@ export class DesktopWorkspaceCaptureService {
             documentId,
             captureId: job.captureId,
             status: terminalLibraryStatus(job),
-            stage: job.stage,
+            stage: captureJobStage(job),
             errorCode: job.error?.code,
             errorMessage: job.error?.message,
             ...(active.rawPersisted || !raw ? {} : { raw }),
@@ -610,7 +611,7 @@ export class DesktopWorkspaceCaptureService {
       switchMap(() => this.library.updateCapture({
         documentId,
         status: terminalStatus,
-        stage: job.stage,
+        stage: captureJobStage(job),
         clearCaptureId: true,
         errorCode: job.error?.code,
         errorMessage: job.error?.message,
@@ -619,7 +620,7 @@ export class DesktopWorkspaceCaptureService {
         documentId,
         captureId: job.captureId,
         status: 'recovery_required',
-        stage: job.stage,
+        stage: captureJobStage(job),
         errorCode: job.error?.code,
         errorMessage: job.error?.message,
         recoveryCode: 'runtime_cleanup_failed',

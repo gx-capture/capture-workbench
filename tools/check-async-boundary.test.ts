@@ -66,6 +66,35 @@ test('async boundary permits only the exact approved CLI paths', async () => {
     'tools',
     'assemble-java-sdk-candidate.ts',
   );
+  const realOcrAssertionsPath = join(
+    workspaceRoot,
+    'apps',
+    'capture-workbench-desktop',
+    'scripts',
+    'real-ocr-result-assertions.ts',
+  );
+  const acceptanceRunnerPath = join(
+    workspaceRoot,
+    'apps',
+    'capture-workbench-desktop',
+    'scripts',
+    'acceptance-real.ts',
+  );
+  const acceptanceContractPath = join(
+    workspaceRoot,
+    'tools',
+    'acceptance-contract.ts',
+  );
+  const threeProjectAcceptancePath = join(
+    workspaceRoot,
+    'tools',
+    'three-project-acceptance.ts',
+  );
+  const escapedMtsPath = join(
+    workspaceRoot,
+    'tools',
+    'acceptance-contract.mts',
+  );
 
   try {
     await Promise.all([
@@ -77,6 +106,10 @@ test('async boundary permits only the exact approved CLI paths', async () => {
       mkdir(join(workspaceRoot, 'packages'), { recursive: true }),
       mkdir(dirname(runtimeClientPath), { recursive: true }),
       mkdir(dirname(angularSdkAdapterPath), { recursive: true }),
+      mkdir(dirname(realOcrAssertionsPath), { recursive: true }),
+      mkdir(dirname(acceptanceRunnerPath), { recursive: true }),
+      mkdir(dirname(acceptanceContractPath), { recursive: true }),
+      mkdir(dirname(threeProjectAcceptancePath), { recursive: true }),
     ]);
     await copyFile(checkerSource, checkerPath);
     await writeFile(
@@ -109,12 +142,32 @@ test('async boundary permits only the exact approved CLI paths', async () => {
       'export async function runJavaCandidateTool() { await Promise.resolve(); }\n',
       'utf8',
     );
+    for (const path of [
+      realOcrAssertionsPath,
+      acceptanceRunnerPath,
+      acceptanceContractPath,
+      threeProjectAcceptancePath,
+    ]) {
+      await writeFile(path, 'export async function runAcceptanceBoundary() { await Promise.resolve(); }\n', 'utf8');
+    }
 
     const installedCliResult = runChecker(checkerPath);
     assert.equal(installedCliResult.status, 0, installedCliResult.stderr);
     assert.match(
       installedCliResult.stdout,
       /Async-boundary check passed; [1-9]\d* approved framework\/test boundary occurrence\(s\)\./u,
+    );
+
+    await writeFile(
+      escapedMtsPath,
+      'export async function escapedMtsBoundary() { await Promise.resolve(); }\n',
+      'utf8',
+    );
+    const escapedMtsResult = runChecker(checkerPath);
+    assert.equal(escapedMtsResult.status, 1);
+    assert.match(
+      escapedMtsResult.stderr,
+      /tools\/acceptance-contract\.mts:1 async function/u,
     );
 
     await writeFile(

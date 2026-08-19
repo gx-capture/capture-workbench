@@ -192,6 +192,24 @@ class InstallationService:
                 message=str(error)[:500],
                 retryable=True,
             )
+        except OSError as error:
+            system_code = getattr(error, "winerror", None)
+            if not isinstance(system_code, int):
+                system_code = getattr(error, "errno", None)
+            operation = getattr(error, "activation_operation", None)
+            operation_detail = f":{operation}" if isinstance(operation, str) else ""
+            detail = (
+                f" ({type(error).__name__}:{system_code}{operation_detail})"
+                if isinstance(system_code, int)
+                else ""
+            )
+            self._fail(
+                installation_id,
+                status=RuntimeInstallationStatus.FAILED,
+                code="installation_filesystem",
+                message=f"Runtime requirement installation failed{detail}.",
+                retryable=True,
+            )
         except Exception as error:
             self._fail(
                 installation_id,

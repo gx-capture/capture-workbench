@@ -38,6 +38,7 @@ const defaultOwnedProcessExecutableNames = [
   'runtime.exe',
   'cmd.exe',
 ];
+type OwnedProcessSnapshot = { readonly pid: number };
 
 function diagnosticToken(value, fallback = 'none') {
   const candidate = value === undefined || value === null ? fallback : String(value);
@@ -332,7 +333,7 @@ if ($items.Count -eq 0) {
   // only when its executable is located below an exact registered private root.
   function processesRunningUnder(root) {
     const safeRoot = assertCurrentRunPrivateProcessRoot(root);
-    return observeExecutableProcessesUnder(safeRoot);
+    return observeExecutableProcessesUnder(safeRoot) as Observable<readonly OwnedProcessSnapshot[]>;
   }
 
   function taskkillOwnedPid(pid, ownedRoot, observeProcesses) {
@@ -352,7 +353,7 @@ if ($items.Count -eq 0) {
       concatMap((result) =>
         observeProcesses(ownedRoot).pipe(
           map((processes) => {
-            const stillOwned = processes.some((candidate) => candidate.pid === pid);
+            const stillOwned = (processes as readonly OwnedProcessSnapshot[]).some((candidate) => candidate.pid === pid);
             assertTaskkillResult(result, stillOwned);
           }),
         ),
@@ -366,18 +367,18 @@ if ($items.Count -eq 0) {
     }
     return observeProcesses(ownedRoot).pipe(
       concatMap((before) =>
-        pid !== undefined && before.some((process_) => process_.pid === pid)
+        pid !== undefined && (before as readonly OwnedProcessSnapshot[]).some((process_) => process_.pid === pid)
           ? taskkillOwnedPid(pid, ownedRoot, observeProcesses)
           : of(undefined),
       ),
       concatMap(() => timer(250)),
       concatMap(() => observeProcesses(ownedRoot)),
       concatMap((processes) =>
-        from(processes).pipe(
+        from(processes as readonly OwnedProcessSnapshot[]).pipe(
           concatMap((process_) =>
             observeProcesses(ownedRoot).pipe(
               concatMap((current) =>
-                current.some((candidate) => candidate.pid === process_.pid)
+                (current as readonly OwnedProcessSnapshot[]).some((candidate) => candidate.pid === process_.pid)
                   ? taskkillOwnedPid(
                       process_.pid,
                       ownedRoot,
@@ -394,7 +395,7 @@ if ($items.Count -eq 0) {
         waitUntil(
           () =>
             observeProcesses(ownedRoot).pipe(
-              map((processes) => processes.length === 0),
+              map((processes) => (processes as readonly OwnedProcessSnapshot[]).length === 0),
             ),
           20_000,
           'Owned installed app/runtime processes remained after tree cleanup.',

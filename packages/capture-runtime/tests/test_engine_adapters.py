@@ -792,6 +792,22 @@ def test_standalone_image_normalization_and_audio_provenance(tmp_path: Path) -> 
     assert whisper.paths and not whisper.paths[0].exists()
 
 
+def test_standalone_image_scale_adapts_to_the_pixel_limit() -> None:
+    image = Image.new("RGB", (5_000, 3_000), "white")
+
+    normalized_png = extractor_module._normalize_image_png(
+        image,
+        scale=2,
+        max_pixels=50_000_000,
+    )
+
+    with Image.open(BytesIO(normalized_png)) as normalized:
+        width, height = normalized.size
+        assert width * height <= 50_000_000
+        assert width > 5_000
+        assert height > 3_000
+
+
 def test_worker_backed_audio_forwards_strict_cuda_fallback_policy(tmp_path: Path) -> None:
     class RecordingWorkerClient:
         def __init__(self) -> None:

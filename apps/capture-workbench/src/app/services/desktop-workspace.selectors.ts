@@ -95,7 +95,18 @@ export function isAudioMediaType(mediaType: string): boolean {
 
 /** Identifies non-terminal one-shot capture jobs. */
 export function isActiveJob(job: DesktopCaptureOperation): boolean {
-  return job.status === 'queued' || job.status === 'running';
+  return job.status === 'queued'
+    || job.status === 'running'
+    || job.status === 'created'
+    || job.status === 'waiting_input'
+    || job.status === 'extracting'
+    || job.status === 'awaiting_structuring'
+    || job.status === 'structuring';
+}
+
+/** Returns the v2 stage while preserving the legacy desktop bridge field. */
+export function captureJobStage(job: DesktopCaptureOperation): string {
+  return job.stage ?? job.status;
 }
 
 /** Identifies non-terminal streaming operations. */

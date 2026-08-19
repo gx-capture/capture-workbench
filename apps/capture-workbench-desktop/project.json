@@ -177,7 +177,7 @@
       "cache": true,
       "executor": "nx:run-commands",
       "options": {
-        "command": "node --test apps/capture-workbench-desktop/scripts/*.test.ts tools/check-async-boundary.test.ts tools/finalize-packed-package.test.ts tools/local-release-consumer-smoke.test.ts tools/node24-corepack.test.ts tools/record-candidate-verification.test.ts"
+        "command": "node --test apps/capture-workbench-desktop/scripts/*.test.ts tools/acceptance-contract.test.ts tools/three-project-acceptance.test.ts tools/check-async-boundary.test.ts tools/finalize-packed-package.test.ts tools/local-release-consumer-smoke.test.ts tools/node24-corepack.test.ts tools/record-candidate-verification.test.ts"
       }
     },
     "package-qa": {
@@ -187,6 +187,28 @@
       "outputs": ["{workspaceRoot}/tmp/capture-workbench-desktop/package-qa"],
       "options": {
         "command": "node apps/capture-workbench-desktop/scripts/package-qa.ts"
+      }
+    },
+    "build-acceptance": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "outputs": [
+        "{projectRoot}/src-tauri/target/x86_64-pc-windows-msvc/release/capture-workbench-desktop.exe"
+      ],
+      "options": {
+        "command": "corepack pnpm exec tauri build --target x86_64-pc-windows-msvc --no-bundle --ci --features acceptance-app-data --config apps/capture-workbench-desktop/src-tauri/tauri.conf.json"
+      }
+    },
+    "typecheck-scripts": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "inputs": [
+        "default",
+        "{projectRoot}/tsconfig.json",
+        "{projectRoot}/scripts/tsconfig.json"
+      ],
+      "options": {
+        "command": "corepack pnpm exec tsc -p apps/capture-workbench-desktop/tsconfig.json --noEmit"
       }
     },
     "smoke-deterministic": {
@@ -282,6 +304,66 @@
           "node apps/capture-workbench-desktop/scripts/real-desktop-ocr-smoke.ts --expected-ocr-device windowsml-dml"
         ],
         "parallel": false
+      }
+    },
+    "acceptance-real": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "dependsOn": ["typecheck-scripts"],
+      "metadata": {
+        "description": "Fail-closed real Windows WebView2 golden journey: consent, supplied document OCR, semantic result verification, Ollama structuring, review, and cleanup."
+      },
+      "outputs": [
+        "{workspaceRoot}/output/playwright/capture-workbench"
+      ],
+      "options": {
+        "commands": [
+          "corepack pnpm nx run capture-workbench-desktop:stage-product-runtime",
+          "corepack pnpm nx run capture-workbench-desktop:build-acceptance",
+          "node apps/capture-workbench-desktop/scripts/acceptance-real.ts"
+        ],
+        "parallel": false
+      }
+    },
+    "acceptance-real-recorded": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "dependsOn": ["typecheck-scripts"],
+      "metadata": {
+        "description": "Recorded fail-closed real Windows WebView2 golden journey with WebM, screenshots, hashes, and cleanup manifest."
+      },
+      "outputs": [
+        "{workspaceRoot}/output/playwright/capture-workbench"
+      ],
+      "options": {
+        "commands": [
+          "corepack pnpm nx run capture-workbench-desktop:stage-product-runtime",
+          "corepack pnpm nx run capture-workbench-desktop:build-acceptance",
+          "node apps/capture-workbench-desktop/scripts/acceptance-real.ts --recorded"
+        ],
+        "parallel": false
+      }
+    },
+    "acceptance-three-projects": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "metadata": {
+        "description": "Sequentially runs the real acceptance target in Capture Workbench, Cert Prep, and gx.law-prep and verifies each child manifest."
+      },
+      "outputs": ["{workspaceRoot}/output/playwright/three-projects"],
+      "options": {
+        "command": "node tools/three-project-acceptance.ts"
+      }
+    },
+    "acceptance-three-projects-recorded": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "metadata": {
+        "description": "Recorded sequential real acceptance runner for all three products."
+      },
+      "outputs": ["{workspaceRoot}/output/playwright/three-projects"],
+      "options": {
+        "command": "node tools/three-project-acceptance.ts --recorded"
       }
     },
     "smoke-installed-deterministic": {

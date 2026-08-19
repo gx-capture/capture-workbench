@@ -13,7 +13,7 @@ mod state;
 
 use std::{fs, path::PathBuf, sync::Arc};
 
-#[cfg(feature = "model-smoke-app-data")]
+#[cfg(any(feature = "model-smoke-app-data", feature = "acceptance-app-data"))]
 use std::path::Path;
 
 use tauri::Manager;
@@ -123,11 +123,18 @@ pub fn run() {
             }
         });
 
-    #[cfg(feature = "model-smoke-app-data")]
+    #[cfg(feature = "acceptance-app-data")]
+    let builder = builder.invoke_handler(desktop_invoke_handler!(
+        commands::desktop_runtime_process_probe
+    ));
+    #[cfg(all(not(feature = "acceptance-app-data"), feature = "model-smoke-app-data"))]
     let builder = builder.invoke_handler(desktop_invoke_handler!(
         commands::model_smoke_import_fixture
     ));
-    #[cfg(not(feature = "model-smoke-app-data"))]
+    #[cfg(all(
+        not(feature = "acceptance-app-data"),
+        not(feature = "model-smoke-app-data")
+    ))]
     let builder = builder.invoke_handler(desktop_invoke_handler!());
 
     builder
@@ -135,11 +142,22 @@ pub fn run() {
         .expect("failed to run Capture Workbench desktop application");
 }
 
-#[cfg(not(feature = "model-smoke-app-data"))]
+#[cfg(not(any(feature = "model-smoke-app-data", feature = "acceptance-app-data")))]
 fn app_data_dir(app: &tauri::App) -> Result<PathBuf, String> {
     app.path()
         .app_data_dir()
         .map_err(|error| format!("Capture Workbench app data path is unavailable: {error}"))
+}
+
+#[cfg(feature = "acceptance-app-data")]
+fn app_data_dir(_app: &tauri::App) -> Result<PathBuf, String> {
+    let configured = std::env::var_os("CAPTURE_ACCEPTANCE_APP_DATA_ROOT").ok_or_else(|| {
+        "Capture Workbench acceptance app data root is not configured.".to_string()
+    })?;
+    let artifact_root = std::env::var_os("E2E_ARTIFACT_ROOT").ok_or_else(|| {
+        "Capture Workbench acceptance artifact root is not configured.".to_string()
+    })?;
+    validate_acceptance_app_data_dir(Path::new(&configured), Path::new(&artifact_root))
 }
 
 #[cfg(feature = "model-smoke-app-data")]
@@ -147,6 +165,29 @@ fn app_data_dir(_app: &tauri::App) -> Result<PathBuf, String> {
     let configured = std::env::var_os("CAPTURE_SMOKE_APP_DATA_ROOT")
         .ok_or_else(|| "Capture Workbench smoke app data root is not configured.".to_string())?;
     validate_model_smoke_app_data_dir(Path::new(&configured), &std::env::temp_dir())
+}
+
+#[cfg(feature = "acceptance-app-data")]
+fn validate_acceptance_app_data_dir(
+    configured: &Path,
+    artifact_root: &Path,
+) -> Result<PathBuf, String> {
+    if !configured.is_absolute() || !artifact_root.is_absolute() {
+        return Err("Capture Workbench acceptance app data paths must be absolute.".into());
+    }
+    let canonical_artifact_root = fs::canonicalize(artifact_root)
+        .map_err(|_| "Capture Workbench acceptance artifact root is unavailable.".to_string())?;
+    let canonical_configured = fs::canonicalize(configured)
+        .map_err(|_| "Capture Workbench acceptance app data root is unavailable.".to_string())?;
+    if canonical_configured == canonical_artifact_root
+        || !canonical_configured.starts_with(&canonical_artifact_root)
+    {
+        return Err(
+            "Capture Workbench acceptance app data root must be a strict artifact descendant."
+                .into(),
+        );
+    }
+    Ok(canonical_configured)
 }
 
 #[cfg(feature = "model-smoke-app-data")]

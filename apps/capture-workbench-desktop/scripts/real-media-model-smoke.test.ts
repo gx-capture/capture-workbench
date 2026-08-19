@@ -25,6 +25,7 @@ import {
   REAL_MODEL_SOURCE_IMPORT_MODE,
   modelSmokeInjectedDocumentId,
   modelSmokeFixtureEnvironment,
+  normalizedNativeClickPoint,
   normalizedOcrTextDigest,
   requirementCompletedAfterConsent,
   runtimeModelOptionActive,
@@ -436,10 +437,27 @@ test('native dialog helper resolves PowerShell without relying on PATH', () => {
   );
 });
 
+test('native click maps emulated CSS viewport coordinates to the real client rectangle', () => {
+  assert.deepEqual(
+    normalizedNativeClickPoint(
+      { x: 360, y: 290, width: 48, height: 46 },
+      { width: 1440, height: 900 },
+    ),
+    { xRatio: 0.26666666666666666, yRatio: 0.3477777777777778 },
+  );
+  assert.throws(
+    () => normalizedNativeClickPoint(
+      { x: 1_400, y: 0, width: 100, height: 20 },
+      { width: 1_440, height: 900 },
+    ),
+    /invalid viewport coordinates/u,
+  );
+});
+
 test('native dialog UIA script is process-owned, localization-independent, and metadata-only', () => {
   const script = nativeDialogUiAutomationScript();
   assert.deepEqual(NATIVE_SOURCE_DIALOG_CLASSES, ['#32770']);
-  assert.deepEqual(NATIVE_SOURCE_BROKER_DIALOG_CLASSES, ['CabinetWClass']);
+  assert.deepEqual(NATIVE_SOURCE_BROKER_DIALOG_CLASSES, ['CabinetWClass', 'ApplicationFrameWindow']);
   assert.match(script, /UIAutomationClient/u);
   assert.match(script, /GetWindowThreadProcessId/u);
   assert.match(script, /EnumWindows/u);
@@ -453,7 +471,9 @@ test('native dialog UIA script is process-owned, localization-independent, and m
   assert.match(script, /WindowPattern/u);
   assert.match(script, /IsModal/u);
   assert.match(script, /GetProcessById/u);
-  assert.match(script, /ProcessName -cne 'explorer'/u);
+  assert.match(script, /BrokerProcess/u);
+  assert.match(script, /'ApplicationFrameHost'/u);
+  assert.match(script, /'PickerHost'/u);
   assert.match(script, /UIA\|stage=ready\|code=activated/u);
   assert.match(script, /UIA\|stage=target-window\|code=count-invalid/u);
   assert.match(script, /UIA\|stage=target-activation\|code=failed/u);
@@ -464,7 +484,12 @@ test('native dialog UIA script is process-owned, localization-independent, and m
   assert.match(script, /(?:'1001'|'1148')/u);
   assert.match(script, /ValuePattern/u);
   assert.match(script, /InvokePattern/u);
-  assert.match(script, /SendMessageTimeoutText/u);
+  assert.match(script, /SelectionItemPattern/u);
+  assert.match(script, /NameProperty/u);
+  assert.match(script, /ConvertTo-SendKeysLiteral/u);
+  assert.match(script, /SendWait\(\(ConvertTo-SendKeysLiteral/u);
+  assert.doesNotMatch(script, /Clipboard/u);
+  assert.doesNotMatch(script, /SendMessageTimeoutText/u);
   assert.match(script, /Write-ElementDiagnostics 'TOP'/u);
   assert.match(script, /commonDialogClasses -contains/u);
   assert.match(script, /brokerDialogClasses -contains/u);
@@ -473,7 +498,8 @@ test('native dialog UIA script is process-owned, localization-independent, and m
   for (const criterion of [
     'ClassAllowed',
     'DifferentProcess',
-    'ExplorerProcess',
+    'BrokerProcess',
+    'PickerControls',
     'Foreground',
     'Modal',
     'NewWindow',
@@ -484,7 +510,7 @@ test('native dialog UIA script is process-owned, localization-independent, and m
   ]) {
     assert.match(eligibility, new RegExp(`\\$facts\\.${criterion}`, 'u'));
   }
-  assert.doesNotMatch(script, /Current\.Name|NameProperty/u);
+  assert.doesNotMatch(script, /Current\.Name/u);
   assert.doesNotMatch(script, /GetWindowText/u);
   assert.doesNotMatch(script, /(?:Open|\u958b\u555f|\u6253\u5f00|\u958b\u304f).*Button/iu);
 });
@@ -936,6 +962,8 @@ test('desktop model smoke uses generated release catalog and WebView selectors',
   assert.match(source, /AutomationIdProperty/u);
   assert.match(source, /ValuePattern/u);
   assert.match(source, /InvokePattern/u);
+  assert.match(source, /'TextBox'/u);
+  assert.match(source, /unrelated toolbar AddButton/u);
   assert.match(source, /CAPTURE_SMOKE_APP_PID/u);
   assert.match(source, /CAPTURE_WHISPER_PREFER_GPU/u);
   assert.doesNotMatch(source, /FindWindow\('#32770'/u);

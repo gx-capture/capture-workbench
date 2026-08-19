@@ -333,12 +333,6 @@ impl LibraryStore {
         })
     }
 
-    pub(crate) fn runtime_source(&self, document_id: &str) -> Result<LibrarySourcePayload, String> {
-        self.load_source(LibraryDocumentRequest {
-            document_id: document_id.into(),
-        })
-    }
-
     pub(crate) fn runtime_source_file(
         &self,
         document_id: &str,

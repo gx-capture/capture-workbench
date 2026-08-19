@@ -213,7 +213,7 @@ describe('DesktopWorkspaceStore', () => {
       expect(observedStatuses).toEqual(['queued', 'running', 'completed']);
       expect(getInstallation).toHaveBeenCalledTimes(2);
       expect(store.installing()).toBe(false);
-      expect(store.activeInstallation()).toBeNull();
+      expect(store.activeInstallation()?.status).toBe('completed');
     } finally {
       vi.useRealTimers();
     }
@@ -348,8 +348,7 @@ describe('DesktopWorkspaceStore', () => {
   it('publishes raw during structuring before the terminal result is committed', () => {
     const structuringJob = job({
       captureId: 'capture-1',
-      status: 'running',
-      stage: 'structuring',
+      status: 'structuring',
     });
     const updateCapture = vi.fn((update: Record<string, unknown>) =>
       of({ ...summary, ...update } as DesktopLibrarySummary));

@@ -124,6 +124,14 @@ impl DesktopState {
             })
     }
 
+    pub(crate) fn runtime_process_id(&self) -> Option<u32> {
+        self.inner
+            .child
+            .lock()
+            .ok()
+            .and_then(|child| child.as_ref().map(OwnedSidecarProcess::id))
+    }
+
     pub(crate) fn shutdown(&self) {
         self.inner.stopping.store(true, Ordering::Release);
         if let Ok(mut config) = self.inner.config.lock() {

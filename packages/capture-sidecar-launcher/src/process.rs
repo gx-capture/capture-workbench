@@ -122,8 +122,11 @@ impl OwnedSidecarProcess {
             .map_err(|error| format!("Owned runtime root process could not be reaped: {error}"))
     }
 
-    #[cfg(test)]
-    fn id(&self) -> u32 {
+    /// Returns the exact root PID held by this ownership boundary.
+    ///
+    /// Hosts use this only for bounded process-lifecycle verification; it does
+    /// not expose any connection credentials or runtime payload.
+    pub fn id(&self) -> u32 {
         self.child.id()
     }
 

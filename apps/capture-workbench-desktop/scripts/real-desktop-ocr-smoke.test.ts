@@ -19,10 +19,14 @@ test('real desktop OCR evidence requires real engines, Ollama provenance, cleanu
     realEnginesExercised: true,
     sourceKind: 'pdf',
     rawOcrVisible: true,
+    ocrResultVerified: true,
+    rawOcrSegmentCount: 2,
+    structuredBlockCount: 2,
+    expectedAnchorCount: 4,
+    matchedAnchorCount: 4,
     ocrDevice: 'windowsml-dml',
     structuringEngine: 'ollama',
     model: 'capture-workbench-qwen3.5-4b-structure-v1',
-    modelDigest: `sha256:${'a'.repeat(64)}`,
     documentDeletedAfterVerification: true,
   };
 
@@ -31,10 +35,7 @@ test('real desktop OCR evidence requires real engines, Ollama provenance, cleanu
     () => assertRealDesktopSmokeEvidence({ ...valid, structuringEngine: 'deterministic' }),
     /Expected values to be strictly equal/u,
   );
-  assert.throws(
-    () => assertRealDesktopSmokeEvidence({ ...valid, modelDigest: 'not-a-digest' }),
-    /did not match/u,
-  );
+  assert.doesNotThrow(() => assertRealDesktopSmokeEvidence({ ...valid, model: 'capture-workbench-qwen3.5-0.8b-structure-v1' }));
   assert.throws(
     () => assertRealDesktopSmokeEvidence({ ...valid, documentDeletedAfterVerification: false }),
     /Expected values to be strictly equal/u,
@@ -57,6 +58,12 @@ test('real desktop OCR cleanup owns only UUID-named smoke documents', () => {
   assert.equal(
     isOwnedSmokeDocumentName(
       'standalone-real-ocr-099eca42-23f6-42ca-a3f6-05da5afd00ba.pdf',
+    ),
+    true,
+  );
+  assert.equal(
+    isOwnedSmokeDocumentName(
+      'standalone-real-ocr-099eca42-23f6-42ca-a3f6-05da5afd00ba.jpeg',
     ),
     true,
   );

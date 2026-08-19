@@ -13,6 +13,18 @@ from capture_runtime.engine_catalog import ActiveEngineState, canonical_json_byt
 type InstalledFileSnapshot = tuple[tuple[str, int, int, int], ...]
 
 
+class ActivationFilesystemError(OSError):
+    """A filesystem failure with a safe activation operation label."""
+
+    def __init__(self, operation: str, cause: OSError) -> None:
+        super().__init__(f"activation_{operation}")
+        self.activation_operation = operation
+        if isinstance(cause.errno, int):
+            self.errno = cause.errno
+        if isinstance(getattr(cause, "winerror", None), int):
+            self.winerror = cause.winerror
+
+
 def installed_engine_snapshot(worker_root: Path, model_root: Path) -> InstalledFileSnapshot | None:
     files: list[tuple[str, int, int, int]] = []
     try:
@@ -61,10 +73,19 @@ def activate_version(
     state: ActiveEngineState,
     write_state: Callable[[Path, object], None],
 ) -> None:
+    if new_version == version:
+        write_state(active_state_path, state.to_dict())
+        return
     if version.exists():
-        os.replace(version, previous_version)
+        try:
+            os.replace(version, previous_version)
+        except OSError as error:
+            raise ActivationFilesystemError("move_existing_version", error) from error
     try:
-        os.replace(new_version, version)
+        try:
+            os.replace(new_version, version)
+        except OSError as error:
+            raise ActivationFilesystemError("move_new_version", error) from error
         write_state(active_state_path, state.to_dict())
     except BaseException:
         shutil.rmtree(version, ignore_errors=True)

@@ -173,7 +173,9 @@ export class DesktopRuntimeClientService {
   }
 
   getResult(captureId: string, signal?: AbortSignal): Observable<CaptureDocument> {
-    return this.commands.invoke('runtime_get_result', { input: { id: captureId } }, signal);
+    return this.commands
+      .invoke<StreamingTerminalResultV2>('runtime_get_result', { input: { id: captureId } }, signal)
+      .pipe(map(({ result }) => result));
   }
 
   deleteCapture(captureId: string, signal?: AbortSignal): Observable<void> {

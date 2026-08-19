@@ -177,6 +177,7 @@ function workspaceStub(selected: unknown = null, modelInstallation: RuntimeModel
     query: signal(''),
     statusFilter: signal(''),
     installing: signal(false),
+    activeInstallation: signal(null),
     activeModelInstallation: signal<RuntimeModelInstallation | null>(modelInstallation),
     modelInstallationPhase: signal(''),
     modelInstallationPercent: signal(0),

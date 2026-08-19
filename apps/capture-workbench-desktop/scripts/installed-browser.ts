@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import net from 'node:net';
 import { join } from 'node:path';
 
-import { chromium } from '@playwright/test';
+import { chromium, type Browser, type Locator, type Page } from '@playwright/test';
 import {
   catchError,
   concatMap,
@@ -25,7 +26,15 @@ import {
 } from 'rxjs';
 
 import { INSTALLED_FIXTURES } from './constants/installed.ts';
-import { nativeOpenDialogUiAutomation } from './real-media-model-smoke.ts';
+import {
+  nativeClickWebViewElement,
+  nativeOpenDialogUiAutomation,
+} from './real-media-model-smoke.ts';
+
+export {
+  nativeClickWebViewElement,
+  nativeOpenDialogUiAutomation,
+} from './real-media-model-smoke.ts';
 
 const fixtures = INSTALLED_FIXTURES;
 export const installedWebViewCdpReadyTimeoutMs = 180_000;
@@ -157,10 +166,10 @@ try {
 }
 
 export function connectToInstalledWebView(
-  port,
-  appProcess,
-  webViewDataDirectory,
-) {
+  port: number,
+  appProcess: ChildProcess,
+  webViewDataDirectory: string,
+): Observable<{ browser: Browser; port: number }> {
   const deadline = Date.now() + installedWebViewCdpReadyTimeoutMs;
   const processTerminated = race(
     fromEvent(appProcess, 'error'),
@@ -194,7 +203,7 @@ export function connectToInstalledWebView(
       ),
     ),
     processTerminated,
-  );
+  ) as Observable<{ browser: Browser; port: number }>;
 }
 
 function resolveCdpPort(
@@ -255,7 +264,7 @@ function resolveCdpPort(
   );
 }
 
-export function installedPage(browser, appProcess) {
+export function installedPage(browser: Browser, appProcess: ChildProcess): Observable<Page> {
   const deadline = Date.now() + 30_000;
   function findPage() {
     if (appProcess.exitCode !== null) {
@@ -281,7 +290,7 @@ export function installedPage(browser, appProcess) {
       );
     return timer(100).pipe(concatMap(() => findPage()));
   }
-  return defer(findPage);
+  return defer(findPage) as Observable<Page>;
 }
 
 function connectAttempt(endpoint, appProcess, deadline, lastError) {
@@ -320,7 +329,7 @@ function captureFixture(page, fixture, appPid, fixtureDirectory) {
       defer(() =>
         from(
           nativeOpenDialogUiAutomation(filePath, appPid, () =>
-            importButton.click(),
+            nativeClickWebViewElement(importButton, appPid),
           ),
         ),
       ).pipe(
@@ -360,7 +369,7 @@ function captureFixture(page, fixture, appPid, fixtureDirectory) {
         `Installed ${fixture.sourceKind} capture did not complete.`,
       ).pipe(map(() => card)),
     ),
-    concatMap((card) => defer(() => from(card.click())).pipe(map(() => card))),
+    concatMap((card) => defer(() => from((card as Locator).click())).pipe(map(() => card))),
     concatMap(() => {
       const result = page.locator('.review-block.result pre');
       return defer(() =>
@@ -368,7 +377,7 @@ function captureFixture(page, fixture, appPid, fixtureDirectory) {
       ).pipe(
         concatMap(() => defer(() => from(result.textContent()))),
         map((text) => {
-          assert.ok(text?.trim(), 'Installed result preview was empty.');
+          assert.ok(String(text ?? '').trim(), 'Installed result preview was empty.');
           return {
             sourceKind: fixture.sourceKind,
             fileName: fixture.fileName,
@@ -404,7 +413,7 @@ export function exerciseInstalledUi(page, appPid, fixtureDirectory) {
         );
       return defer(() => from(page.locator('.model-chip').textContent())).pipe(
         map((model) => {
-          assert.match(model ?? '', /qwen(?:3\.5:|\s+3\.5\s+)0\.8b/iu);
+          assert.match(String(model ?? ''), /qwen(?:3\.5:|\s+3\.5\s+)0\.8b/iu);
           return model;
         }),
       );

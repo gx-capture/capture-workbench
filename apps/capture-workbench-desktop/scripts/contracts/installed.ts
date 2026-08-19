@@ -79,11 +79,11 @@ export function assertInstallationCleanupAllowed(ownedProcessesStopped) {
   }
 }
 
-export function buildInstalledAppEnvironment(source, directories, cdpPort) {
+export function buildInstalledAppEnvironment(source, directories, cdpPort): Record<string, string> {
   if (!Number.isSafeInteger(cdpPort) || cdpPort < 0 || cdpPort > 65_535) {
     throw new Error('WebView2 CDP port must be 0 (dynamic) or from 1 through 65535.');
   }
-  const environment = {};
+  const environment: Record<string, string> = {};
   for (const allowedName of childEnvironmentAllowlist) {
     const sourceEntry = Object.entries(source).find(
       ([name, value]) =>
@@ -91,7 +91,7 @@ export function buildInstalledAppEnvironment(source, directories, cdpPort) {
         typeof value === 'string' &&
         value.length > 0,
     );
-    if (sourceEntry) environment[allowedName] = sourceEntry[1];
+    if (sourceEntry) environment[allowedName] = sourceEntry[1] as string;
   }
 
   const isolatedRoot = resolve(directories.root);
