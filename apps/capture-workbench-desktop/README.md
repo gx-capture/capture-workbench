@@ -19,8 +19,9 @@ diagnostic and is explicitly not D4. The future D4 target is proposed as
 it will accept externally supplied D3 root/id/digests and must never stage or
 build, import the source tree, or follow a mutable URL. That target is not
 present until its project metadata and schema are created and reviewed. The
-desktop host is a consumer and never writes producer scope, semantic-result,
-or acceptance-wire records.
+desktop host is a consumer: it imports the producer-defined acceptance
+contract version/hash, writes only its semantic result, and never mutates
+producer scope or writes the final acceptance wire.
 
 Run `corepack pnpm dev` for the product lane. It generates and stages release
 runtime assets before Tauri starts. `corepack pnpm dev:deterministic` remains a

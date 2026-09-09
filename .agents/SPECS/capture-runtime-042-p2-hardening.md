@@ -11,7 +11,7 @@ publication, or stable-pointer mutation.
 ## Current checkpoint: 2026-09-10
 
 - This closure starts from expected HEAD
-  `a51cd6876b2a4dc5eae378358a3aaa710d2cfce2`. The only pre-existing working
+  `31b1232ea9ef5b9bc32679323c8c28b9500b0bf0`. The only pre-existing working
   tree changes are untracked `.github/copilot-instructions.md` and
   `.github/instructions/`; they are preserved and are not part of this slice.
 - PR #39 is at `c6d2140e233de70734005713427f77f92414f415`; its deterministic CI
@@ -381,23 +381,68 @@ identity mismatch, and stale journal retention as well as process behavior.
 Interface shape:
 
 ```text
-OwnedRuntimeSession::open(plan) -> Result<OwnedRuntimeSession, LaunchError>
+OwnedRuntimeSession::open(
+    plan,
+    reconcile_ref_sink: &dyn ReconcileRefSink,
+) -> Result<OwnedRuntimeSession, LaunchError>
 session.prepare(role, spec) -> Result<PreparedRuntimeSession, LaunchError>
-PreparedRuntimeSession { ReconcileRef, generation }
-session.activate(prepared) -> Result<RootLease, LaunchError>
-session.start_one(spec) -> Result<RootLease, LaunchError>  // convenience
-session.start_root(role, spec) -> Result<RootLease, LaunchError>  // convenience
+PreparedRuntimeSession { ReconcileRef, refDigest, generation }
+ReconcileRefSink::persist(
+    reconcile_ref,
+    generation,
+) -> Result<ActivationPermit, PersistError>
+ActivationPermit { refDigest, generation, receiptDigest }
+session.activate(prepared, permit) -> Result<RootLease, LaunchError>
+session.start_one(spec, reconcile_ref_sink) -> Result<RootLease, LaunchError>
+session.start_root(role, spec, reconcile_ref_sink) -> Result<RootLease, LaunchError>
 session.observe(root) -> Result<RuntimeObservation, LifecycleError>
 session.close_root(root, reason) -> Result<RootProof, CleanupError>
 session.close_group(reason) -> Result<GroupProof, CleanupError>
 ```
 
 `open`/`prepare` durably writes the producer journal in `planned` before
-returning `PreparedRuntimeSession`. The producer host must durably persist the
-returned `ReconcileRef` and `generation` before calling `activate`; activation
-is rejected if that persistence is missing or stale. `start_one` and
-`start_root` are compatibility conveniences that perform the same prepare,
-persistence, and activate sequence; they do not bypass it.
+returning `PreparedRuntimeSession`. The injected `ReconcileRefSink` then
+durably persists that exact opaque ref and generation and returns the
+CAS-bound `ActivationPermit{refDigest, generation, receiptDigest}` only after
+its receipt is flushed. `activate` requires that permit and validates all three
+fields against the prepared ref, the current journal generation, and the
+sink's durable receipt before it can change `planned` to `launching`. A missing,
+stale, forged, or mismatched permit fails closed before any process, listener,
+staging, or model resource is acquired. There is no `activate(prepared)`
+overload. `start_one` and `start_root` are conveniences only when passed the
+injected sink (or remain private to the producer implementation); they perform
+the same prepare -> sink persist -> permit validation -> activate sequence and
+cannot bypass the host receipt.
+
+The sink interface is part of the R3 seam, not an optional test hook:
+
+```text
+trait ReconcileRefSink {
+  persist(
+    &self,
+    reconcile_ref: &ReconcileRef,
+    generation: u64,
+  ) -> Result<ActivationPermit, PersistError>
+}
+
+struct ActivationPermit {
+  refDigest: Sha256,
+  generation: u64,
+  receiptDigest: Sha256,
+}
+```
+
+The permit constructor is private to the producer/sink adapter. `refDigest` is
+the canonical digest of the opaque ref, `generation` is the exact journal
+generation persisted by the sink, and `receiptDigest` is the canonical digest
+of the durable receipt. Every activation CAS includes expected state
+`planned`, expected `generation`, and expected `refDigest`; the receipt digest
+must still be discoverable from the injected sink for that tuple. A sink error
+leaves the journal in `planned` and starts no resource. Tests must cover
+missing permit, wrong ref digest, wrong generation, wrong receipt digest,
+stale permit after a generation change, sink persistence failure, concurrent
+activation (one winner, one CAS failure), and the valid permit path. No public
+convenience method may accept a missing sink.
 
 `start_one` is the one-root convenience; `start_root` lets a producer put the
 Capture, Python, and Java roots used by LAW in one producer-owned Job/group.
@@ -470,6 +515,7 @@ schema is exactly versioned as `RuntimeSessionJournalV1`:
   "schemaVersion": "RuntimeSessionJournalV1",
   "producer": "capture-runtime",
   "sessionNonce": "128-bit-random-opaque-nonce",
+  "reconcileRefDigest": "<sha256-lower-hex>",
   "generation": 4,
   "state": "running",
   "createdAt": "2026-09-10T00:00:00Z",
@@ -494,13 +540,16 @@ schema is exactly versioned as `RuntimeSessionJournalV1`:
     }
   ],
   "proof": null,
-  "attempt": 1
+  "activationReceiptDigest": "<sha256-lower-hex>",
+  "recoveryEpoch": 0,
+  "attempt": 0
 }
 ```
 
-Required fields are the schema version, producer, session nonce, monotonic
-generation, state, timestamps, Job binding, staging binding, and one record per
-root. The Job binding records whether setup was durably committed before a root
+Required fields are the schema version, producer, session nonce, reconcile-ref
+digest, monotonic generation, state, timestamps, Job binding, staging binding,
+activation receipt digest, recovery epoch, bounded attempt counter, and one
+record per root. The Job binding records whether setup was durably committed before a root
 was resumed. Every root records role, root nonce, PID, process creation
 identity, state, listener bindings, and start time. A terminal record adds
 semantic proof:
@@ -513,9 +562,11 @@ The field constraints are normative: `schemaVersion` is the literal
 `RuntimeSessionJournalV1`; `producer`, `state`, root `role`, and Job
 `setupState` are closed enums; `setupState` is `pending` until the unnamed Job
 is configured and durably bound, then `committed` before any root is resumed;
+`reconcileRefDigest` and every digest field are lowercase SHA-256;
 `sessionNonce`, `jobNonce`, `rootNonce`, and every `bindingNonce` are 128-bit
-random values encoded as lowercase hexadecimal; `generation` and `attempt` are
-positive unsigned integers; timestamps are UTC RFC 3339 strings; `pid` is a
+random values encoded as lowercase hexadecimal; `generation` and `recoveryEpoch`
+are monotonic unsigned integers; `attempt` is an unsigned integer in `0..=3`;
+timestamps are UTC RFC 3339 strings; `pid` is a
 positive Windows process id; `creationIdentity` is the native creation-time
 value captured at launch and is compared exactly; and `loopbackPort` is an
 integer from 1 through 65535. `rootDigest` is lowercase SHA-256 over the
@@ -527,19 +578,51 @@ binding has been checked. The JSON example uses opaque placeholders to avoid
 recording real identifiers; an implementation must validate these types and
 closed values before accepting a journal.
 
-The cleanup policy is also fixed: one journal generation receives at most three
+The cleanup policy is also fixed: one recovery epoch receives at most three
 identity-scoped automatic reconciliation attempts within a 60-second monotonic
-budget. Each self retry increments `attempt` and `generation` atomically. A
-later full observe-only proof may take the guarded
-`reconcile-required -> terminal` transition only when the expected
-state/generation compare-and-swap succeeds and that self retry attempt update
-is committed in the same producer record. A timeout or third failed automatic
+budget. A reconciliation attempt is one producer-observed timeout, failed
+proof, or complete proof. With expected
+`{state: "reconcile-required", generation: G, attempt: A, recoveryEpoch: E}`,
+the writer increments `attempt` and `generation` together in the same CAS
+record. A complete observe-only proof may transition to `terminal` with
+`{attempt: A + 1, generation: G + 1, recoveryEpoch: E}`. A timeout or failed
+proof may remain `reconcile-required` with the same increment while `A + 1 <
+3`; the third timeout or failed proof must transition to `manual-review` with
+`attempt: 3` and `generation: G + 1`. Thus `reconcile-required -> terminal` is
+possible only on a later complete observe-only proof, never on timeout, failure,
+stale data, or a boolean-only claim. A timeout or third failed automatic
 attempt transitions to `manual-review`, remains promotion-blocked, and never
 pretends to be terminal or starts a replacement root. A terminal `proof` must
 contain `rootReaped`, `descendantsTerminated`, `listenersReleased`,
 `stagingReleased`, and the committed `proofGeneration`, all true and tied to
 the same session/root nonces. A boolean without matching identity evidence is
 invalid proof.
+
+`manual-review` is a blocked nonterminal state. It has no automatic recovery
+and cannot transition directly to `terminal`, `launching`, `running`, or
+`closing`. Only an explicitly producer-authorized operator recovery may move
+it to `reconcile-required`: the recovery record must carry a fresh opaque
+`recoveryNonce`, a durable `recoveryAuthorizationDigest`, and expected
+`{state: "manual-review", generation: G, attempt: 3, recoveryEpoch: E}`. That
+CAS increments `generation`, increments `recoveryEpoch`, resets `attempt` to
+`0`, and records no resource mutation. The recovery operation cannot launch a
+replacement, terminate a process, delete staging, or claim terminal proof;
+the next automatic attempt must still pass the full observe-only checks. A
+stale, reused, or missing recovery receipt leaves `manual-review` unchanged.
+After another three timed/failed attempts, the record returns to
+`manual-review` under the same rules. There is no direct `manual-review ->
+terminal` path.
+
+The focused journal regression set includes
+`reconcile_attempt_and_generation_increment_atomically`,
+`reconcile_rejects_stale_state_generation_attempt_or_epoch`,
+`reconcile_failure_attempt_three_enters_manual_review`,
+`reconcile_complete_observe_only_proof_to_terminal`,
+`manual_review_requires_explicit_recovery_receipt`, and
+`manual_review_recovery_resets_attempt_window_without_resource_mutation`.
+The tests assert the exact expected state, generation, attempt, and recovery
+epoch on every compare-and-swap; they also assert that an attempt cannot
+increment one counter without the other.
 
 `pid` and native creation identity are private producer data. Evidence and host
 responses emit only a stable digest or boolean proof. A listener port is not an
@@ -580,21 +663,36 @@ be removed; one ambiguous root blocks the entire group.
 
 ### Atomic transitions and reconciler
 
-Only the producer writer may transition a journal. Valid transitions are
-`planned -> launching -> running -> closing -> terminal`,
-`planned -> reconcile-required`, and
-`launching|running|closing -> reconcile-required`. A later
-`reconcile-required -> terminal` is guarded: a full observe-only proof must
-succeed, the producer must CAS the expected state/generation, and the same
-record must commit the self retry attempt update. After three automatic
-failures, `manual-review` is the blocked state and no automatic terminal
-transition is allowed. A direct `planned -> terminal` is valid only with
+Only the producer writer may transition a journal. The exhaustive transition
+graph is:
+
+```text
+planned -> launching -> running -> closing -> terminal
+planned -> terminal                         (no-resource proof only)
+planned -> reconcile-required
+launching|running|closing -> reconcile-required
+reconcile-required -> reconcile-required    (timed/failed attempt 1 or 2)
+reconcile-required -> terminal              (later complete observe-only proof)
+reconcile-required -> manual-review         (timed/failed attempt 3)
+manual-review -> reconcile-required         (explicit producer recovery only)
+```
+
+Every transition carries expected `state`, `generation`, `attempt`, and
+`recoveryEpoch`; the writer rejects any mismatch and never merges concurrent
+updates. A later `reconcile-required -> terminal` requires a complete,
+identity-bound observe-only proof, increments `attempt` and `generation` in the
+same record, and succeeds only when the expected CAS matches. A timed or failed
+attempt increments `attempt` and `generation` atomically; attempts one and two
+remain `reconcile-required`, while attempt three takes the guarded
+`reconcile-required -> manual-review` transition. No automatic transition from
+`manual-review` is allowed. A direct `planned -> terminal` is valid only with
 durable proof that no resource could ever have existed: Job setup was not
 committed, no root was resumed or launched, no listener was bound, no staging
 was acquired, and no resource acquisition was attempted. If any one of those
 facts is unknown, the journal must take `planned -> reconcile-required`
-instead. A transition uses compare-and-swap on the expected generation and
-state, writes a temporary file in the same producer directory, flushes it,
+instead. A transition uses compare-and-swap on the expected state, generation,
+attempt, and recovery epoch, writes a temporary file in the same producer
+directory, flushes it,
 atomically replaces the journal, and flushes the directory/file according to
 the platform adapter. A torn or unknown-generation write is a hard failure;
 the previous valid journal is retained. There is no best-effort terminal
@@ -686,29 +784,62 @@ red/green test seams until the replacement is implemented.
 
 ### Canonical producer/consumer acceptance protocol (V1)
 
-This is the producer-owned design contract for the future D2/D3/D4 and D7
-implementation. There is exactly one writer for each record and exactly one
-serial producer flow. The path names are producer-private process inputs (for
-example environment variables), not evidence fields or child-visible paths:
+This is one producer-owned `ProducerAcceptanceContractV1` for the future
+D2/D3/D4 and D7 implementation. Its immutable contract version is `"1"` and
+its `contractSha256` is the lowercase SHA-256 of the producer's canonical
+schema bytes. D3 records the literal digest and D4/D6/D7 bind it; until that
+digest is recorded, no consumer may choose a value or claim compatibility.
+This acceptance-contract identity is distinct from the runtime contract-set
+identity (`contractSetVersion: "2"`,
+`contractSetSha256: d293a3de26114f1b4fd65ea6d6d3f157fa2f93109b31e1e30d5d15ef0dfdeb40`).
+Cert and LAW import/reference the producer's exact generated
+`ProducerAcceptanceContractV1` version and hash; they do not restate names,
+fields, cleanup policy, or validation rules in their own docs or schemas.
+There is exactly one writer for each record and exactly one serial producer
+flow. The paths below are distinct, producer-scoped transport records:
 
 | Record | Owner, mutability, path | Visibility and order |
 | --- | --- | --- |
 | `ProducerChildScopeV1` | Producer only; mutable until the child is closed; `CAPTURE_ACCEPTANCE_SCOPE_PATH` | The producer durably writes `planned`, then may refresh the same scope while preparing/launching. The child receives only the read-only invocation input. |
-| `ConsumerSemanticResultV1` | The current child only; write-once; `CAPTURE_ACCEPTANCE_SEMANTIC_RESULT_PATH` | The child writes one complete semantic result after its assertion. The producer reads and validates it; a second write, overwrite, or partial record fails closed. |
+| `ProducerChildInvocationV1` | Producer only; immutable after freeze; `CAPTURE_ACCEPTANCE_INVOCATION_PATH` or an equivalent read-only handle/pipe transport | The producer publishes the canonical input before launch. The child receives only this frozen read-only transport and its digest; it never receives scope or wire. |
+| `ConsumerSemanticResultV1` | The current child only; write-once; separate `CAPTURE_ACCEPTANCE_SEMANTIC_RESULT_PATH` | The child writes one complete semantic result after its assertion. The producer reads and validates it; a second write, overwrite, or partial record fails closed. |
 | `AcceptanceChildWireV1` | Producer only; immutable after cleanup; `CAPTURE_ACCEPTANCE_WIRE_PATH` | The producer validates the result, completes cleanup, and only then emits the wire. The child never receives or writes this path. |
 
 The producer flow is: (1) create the scope and durably record `planned`; (2)
-prepare the runtime session and persist its opaque reconcile reference and
-generation before activation; (3) derive a `ProducerChildInvocationV1` with
-`readyState: "ready"` and pass only that read-only input to the child; (4) let
-the child write its one `ConsumerSemanticResultV1`; (5) validate the semantic
-result against the private oracle, exact fixture/media/artifact identity, and
-the applicable D3 or D6 ledger; (6) close/reconcile and prove producer-owned
-process, listener, staging, capture, and model-memory cleanup; and (7) emit
-one immutable `AcceptanceChildWireV1`. A failed validation or cleanup emits no
-wire and blocks the next sequence item. A read-only invocation snapshot may be
-nested in `scope.input` or the child input; it never includes a future result,
-wire, or output digest.
+prepare the runtime session, obtain the injected sink's activation permit, and
+activate only after the ref receipt is durable; (3) derive a
+`ProducerChildInvocationV1`, canonicalize it, freeze it, apply a read-only ACL,
+and pass only its read-only path/handle/pipe plus canonical digest to the child;
+(4) let the child create exactly one `ConsumerSemanticResultV1`; (5) validate
+the semantic result against the ordered fixture assignments, private oracle,
+exact fixture/media/artifact identity, and applicable D3 or D6 ledger; (6)
+close/reconcile and prove producer-owned process, listener, staging, capture,
+and model-memory cleanup; and (7) emit one immutable `AcceptanceChildWireV1`.
+A failed validation or cleanup emits no wire and blocks the next sequence item.
+The mutable scope is never exposed to the child. The invocation contains no
+future result, wire, or output digest.
+
+The invocation transport is a distinct immutable input channel. The producer
+writes canonical compact UTF-8 bytes to a same-directory temporary file,
+flushes it, publishes the final invocation with atomic create-new semantics,
+computes its self-excluded `invocationSha256`, closes the write handle, and
+freezes the final file before launch. The ACL denies the child write, delete,
+rename, and reparse operations; the child receives a read-only handle/pipe or
+read-only path and must recompute the canonical digest before doing work. A
+missing ACL, writable handle, symlink/reparse target, digest mismatch, or
+post-freeze replacement fails closed before launch. The invocation path and
+result path are different from scope and wire paths and are unique to the
+child/output nonce.
+
+The child result uses a separate write-once output channel. The producer first
+proves the final result path is absent and grants only the child create/write
+permission. The child writes canonical bytes to a unique same-directory
+temporary file using `CREATE_NEW`, flushes and closes it, then publishes the
+final result using `CREATE_NEW` (never replace/overwrite). The producer opens
+the final result read-only only after the child exits and validates the
+self-excluded `semanticResultSha256`; a pre-existing final path, second
+create, partial record, replacement, or digest mismatch fails closed. Only
+after this validation and producer cleanup can the producer create the wire.
 
 `ProducerChildScopeV1` is mutable producer state, not consumer evidence. Its
 minimum shape is:
@@ -716,6 +847,8 @@ minimum shape is:
 ```json
 {
   "schemaVersion": "ProducerChildScopeV1",
+  "contractVersion": "1",
+  "contractSha256": "<D3-bound-producer-contract-sha256>",
   "producer": "capture-runtime",
   "parentGate": "D4",
   "tier": "candidate",
@@ -727,17 +860,18 @@ minimum shape is:
   "root": "<sha256-lower-hex>",
   "artifactIds": ["<sha256-lower-hex>"],
   "readyState": "planned",
-  "input": { "invocationSnapshot": "read-only-ProducerChildInvocationV1" },
+  "input": { "invocationSha256": "<sha256-lower-hex>" },
   "predecessorCleanupProofSha256": null,
   "outputPathNonce": "<random-opaque-nonce>"
 }
 ```
 
 The scope may contain private resolved paths and the private oracle reference
-in memory, but neither is serialized into a child wire. The output path nonce
-is separate from the input/session nonce and is used to reject stale or
-cross-child output. The producer must not put any child-result digest or wire
-digest in this scope before the child runs.
+in memory, but neither is serialized into a child wire or exposed to the child.
+Only the invocation digest, never a mutable invocation snapshot, is recorded in
+scope. The output path nonce is separate from the input/session nonce and is
+used to reject stale or cross-child output. The producer must not put any
+child-result digest or wire digest in this scope before the child runs.
 
 `ConsumerSemanticResultV1` is the child's one write-once semantic handoff. It
 contains no scope or wire path and no native/process identity:
@@ -745,6 +879,8 @@ contains no scope or wire path and no native/process identity:
 ```json
 {
   "schemaVersion": "ConsumerSemanticResultV1",
+  "contractVersion": "1",
+  "contractSha256": "<D3-bound-producer-contract-sha256>",
   "consumer": "cert-or-law-adapter",
   "parentGate": "D4",
   "tier": "candidate",
@@ -754,23 +890,37 @@ contains no scope or wire path and no native/process identity:
   "childId": "<sha256-lower-hex>",
   "artifactIds": ["<sha256-lower-hex>"],
   "fixtureResults": [{
-    "fixtureId": "private-fixture-1",
+    "fixtureIndex": 0,
+    "fixtureKey": "private-fixture-1",
+    "fixtureIdentitySha256": "<sha256-lower-hex>",
+    "mediaKind": "jpeg",
+    "page": null,
+    "mediaSha256": "<sha256-lower-hex>",
+    "oracleSha256": "<sha256-lower-hex>",
     "actualNormalizedOutputSha256": "<sha256-lower-hex>",
+    "expectedNormalizedTruthSha256": "<sha256-lower-hex>",
+    "expectedAnchorSetSha256": "<sha256-lower-hex>",
     "cer": 0.0,
     "anchorOmissions": 0,
+    "cerThreshold": 0.03,
     "outcome": "passed",
-    "projectionSha256": "<sha256-lower-hex>"
+    "projectionSha256": "<sha256-lower-hex>",
+    "artifactId": "<sha256-lower-hex>"
   }],
   "semanticResultSha256": "<sha256-lower-hex>"
 }
 ```
 
-The producer validates the child result's schema, scope identity, ledger
-binding, fixture cardinality/order, actual normalized output digest, CER,
-anchor omissions, outcome, projection digest, artifact IDs, and self-excluded
-semantic digest. Cert and LAW consume this exact semantic result and never
-redefine `AcceptanceChildWireV1`, `ProducerChildScopeV1`, or a competing truth
-contract.
+The producer validates the child result's producer contract version/hash,
+scope identity, ledger binding, fixture cardinality/order, exact per-fixture
+identity/digest binding, actual normalized output digest, CER, anchor omissions,
+outcome, projection digest, artifact IDs, and self-excluded semantic digest.
+`ConsumerSemanticResultV1` deliberately has no `producerCleanup`, journal,
+reconcile-ref, generation, attempt, process/listener/staging, capture-delete,
+model-memory, or wire fields. Cert and LAW import/reference the exact
+producer-generated contract version/hash and emit only this semantic result;
+they never redefine `AcceptanceChildWireV1`, `ProducerChildScopeV1`, or a
+competing truth contract.
 
 `AcceptanceChildWireV1` is the only canonical acceptance evidence envelope.
 Its exact producer schema is:
@@ -778,6 +928,8 @@ Its exact producer schema is:
 ```json
 {
   "schemaVersion": "AcceptanceChildWireV1",
+  "contractVersion": "1",
+  "contractSha256": "<D3-bound-producer-contract-sha256>",
   "producer": "capture-runtime",
   "parentGate": "D4",
   "tier": "candidate",
@@ -796,10 +948,27 @@ Its exact producer schema is:
     "artifactDigests": [{ "artifactKey": "runtime", "sha256": "<sha256-lower-hex>" }]
   },
   "invocationSha256": "<sha256-lower-hex>",
-  "media": { "kind": "jpeg", "sha256": "<sha256-lower-hex>" },
-  "fixtureResults": [{
-    "fixtureId": "private-jpeg-1",
+  "fixtureAssignments": [{
+    "fixtureIndex": 0,
+    "fixtureKey": "private-jpeg-1",
+    "fixtureIdentitySha256": "<sha256-lower-hex>",
+    "mediaKind": "jpeg",
     "page": null,
+    "mediaSha256": "<sha256-lower-hex>",
+    "oracleSha256": "<sha256-lower-hex>",
+    "expectedNormalizedTruthSha256": "<sha256-lower-hex>",
+    "expectedAnchorSetSha256": "<sha256-lower-hex>",
+    "cerThreshold": 0.03,
+    "artifactId": "<sha256-lower-hex>"
+  }],
+  "fixtureResults": [{
+    "fixtureIndex": 0,
+    "fixtureKey": "private-jpeg-1",
+    "fixtureIdentitySha256": "<sha256-lower-hex>",
+    "mediaKind": "jpeg",
+    "page": null,
+    "mediaSha256": "<sha256-lower-hex>",
+    "oracleSha256": "<sha256-lower-hex>",
     "actualNormalizedOutputSha256": "<sha256-lower-hex>",
     "expectedNormalizedTruthSha256": "<sha256-lower-hex>",
     "expectedAnchorSetSha256": "<sha256-lower-hex>",
@@ -841,6 +1010,12 @@ Its exact producer schema is:
 }
 ```
 
+The producer creates this wire by binding the validated semantic result and
+then adding `producerCleanup` only after terminal process/listener/staging,
+capture, and model-memory proof. Cleanup fields are never required from or
+accepted in `ConsumerSemanticResultV1`; a consumer cannot manufacture a final
+wire by adding them locally.
+
 For D4, `ledgerBinding.sourceGate` is `D3` and binds the immutable candidate
 id, `ledgerSha256`, manifest digest, and every raw artifact digest. For D7, the
 same exact schema uses `parentGate: "D7"`, `tier: "published"`, and
@@ -852,24 +1027,27 @@ the ledger fields. `parentGate` is closed to `D4`/`D7`, `tier` is closed to
 `candidate`/`published`, and the binding is fail-closed unless D4 pairs with
 D3/candidate or D7 pairs with D6/published.
 
-`fixtureResults[]` is mandatory and is never a summary average. Every entry
-records the actual normalized output digest, CER, anchor omissions, outcome,
-projection digest, and fixture artifact id. Every wire also includes the
-child semantic-result digest, top-level artifact IDs, detailed producer
-cleanup, privacy booleans, parent gate/tier, invocation digest, and the
-self-excluded canonical JSON digest. Raw OCR/truth/media, bearer tokens,
-private paths, and native identifiers stay producer-private.
+`fixtureAssignments[]` and `fixtureResults[]` are mandatory, ordered, and
+equal-cardinality; neither is a summary average. Every result entry records
+its assignment identity plus the actual normalized output digest, CER, anchor
+omissions, outcome, projection digest, and per-fixture artifact id. Every wire
+also includes the child semantic-result digest, top-level artifact IDs,
+detailed producer cleanup, privacy booleans, parent gate/tier, invocation
+digest, and the self-excluded canonical JSON digest. Raw OCR/truth/media,
+bearer tokens, private paths, and native identifiers stay producer-private.
 
 `ProducerChildInvocationV1` is an input, not an evidence record. It has a
 ready state, child/sequence identity, and exactly one of the two immutable
 binding forms: D4 input bound to the D3 candidate ledger, or D7 input bound to
 the D6 download/publication ledger. It also has predecessor cleanup-proof
-digests, private oracle assignment, media assignment, a separate output path
+digests, one ordered `fixtureAssignments[]` array, a separate output path
 nonce, and its self-excluded invocation digest:
 
 ```json
 {
   "schemaVersion": "ProducerChildInvocationV1",
+  "contractVersion": "1",
+  "contractSha256": "<D3-bound-producer-contract-sha256>",
   "producer": "capture-runtime",
   "parentGate": "D4",
   "tier": "candidate",
@@ -882,8 +1060,19 @@ nonce, and its self-excluded invocation digest:
   "artifactIds": ["<sha256-lower-hex>"],
   "ledgerBinding": { "sourceGate": "D3", "ledgerSha256": "<sha256-lower-hex>" },
   "predecessorCleanupProofSha256": null,
-  "oracleAssignment": { "oracleSha256": "<sha256-lower-hex>", "fixtureId": "private-jpeg-1", "page": null },
-  "mediaAssignment": { "kind": "jpeg", "sha256": "<sha256-lower-hex>" },
+  "fixtureAssignments": [{
+    "fixtureIndex": 0,
+    "fixtureKey": "private-jpeg-1",
+    "fixtureIdentitySha256": "<sha256-lower-hex>",
+    "mediaKind": "jpeg",
+    "page": null,
+    "mediaSha256": "<sha256-lower-hex>",
+    "oracleSha256": "<sha256-lower-hex>",
+    "expectedNormalizedTruthSha256": "<sha256-lower-hex>",
+    "expectedAnchorSetSha256": "<sha256-lower-hex>",
+    "cerThreshold": 0.03,
+    "artifactId": "<sha256-lower-hex>"
+  }],
   "outputPathNonce": "<random-opaque-nonce>",
   "invocationSha256": "<sha256-lower-hex>"
 }
@@ -894,19 +1083,44 @@ closed ledger binding is `{ "sourceGate": "D6", "ledgerSha256": "<sha256>",
 "publicationLedgerSha256": "<sha256>", "downloadBundleSha256": "<sha256>" }`;
 there is no D3/D7 ledger mixing and no mutable URL input.
 
+`fixtureAssignments[]` is ordered producer input, never a consumer-selected
+summary. Each assignment has exactly `fixtureIndex`, `fixtureKey`,
+`fixtureIdentitySha256`, `mediaKind`, `page`, `mediaSha256`, `oracleSha256`,
+`expectedNormalizedTruthSha256`, `expectedAnchorSetSha256`, `cerThreshold`,
+and its per-fixture `artifactId`. The producer rejects duplicate keys, gaps,
+reordering, unknown media/page combinations, or any assignment whose
+`fixtureIdentitySha256` is not the canonical digest of those fields. The
+corresponding `fixtureResults[]` must have exactly the same cardinality and
+array order. For every index `i`, result `fixtureIndex`, `fixtureKey`,
+`fixtureIdentitySha256`, `mediaKind`, `page`, `mediaSha256`, `oracleSha256`,
+expected truth/anchor digests, threshold, and `artifactId` must equal
+assignment `i`; actual output, CER, omission count, outcome, and projection
+digest are the only child-produced measurements. The top-level `artifactIds`
+must contain every per-fixture artifact exactly once.
+
+The Capture JPEG child and Capture PDF page-1 child each have exactly one
+assignment: `capture-private-jpeg-1` with `mediaKind: "jpeg"` and `page: null`,
+or `capture-scanned-pdf-page1-1` with `mediaKind: "pdf"` and `page: 1`,
+respectively. Cert and LAW may have multiple assignments, but they use the
+same ordered cardinality/key/digest rules. A child cannot add, remove, reorder,
+or substitute a fixture, and a wire carries the same per-fixture identity
+fields rather than a singular media or oracle field.
+
 The invocation never contains a future result/wire digest, raw truth, raw
 media, source/model path, bearer token, process handle, PID, or mutable URL.
 The private `PrivateOcrTruthOracleV1` remains producer-local and may contain
 raw normalized reference text and critical anchors; only its digest and the
 per-fixture semantic measurements cross the wire. D4 and D7 require the full
 private normalized reference plus critical anchors. An anchor-only fixture is
-invalid. The formal Cert migration must delete/prohibit the `anchorOnly` flag
-and the `parseOcrAnchorExpectation` parser in
-`cert-prep/apps/cert-prep-desktop/scripts/ocr-truth-contract.mts` and
-`cert-prep/apps/cert-prep-desktop/scripts/acceptance-real-options.mts`; a
-red test leaves an anchor-only expectation or parser and must be rejected,
-while green requires full private normalized reference text and anchors with
-no anchor-only success path.
+invalid. The formal Cert migration deletes the `anchorOnly` field/flag and the
+`parseOcrAnchorExpectation` parser from
+`${CERT_PREP_CHECKOUT}/apps/cert-prep-desktop/scripts/ocr-truth-contract.mts`
+and `${CERT_PREP_CHECKOUT}/apps/cert-prep-desktop/scripts/acceptance-real-options.mts`;
+the final D4/D7 schema, config, and producer contract contain no `anchorOnly`
+name. A supplied legacy `anchorOnly` field is rejected as an unknown field,
+never ignored or treated as a successful anchor-only mode. The red test fails
+if the formal path still accepts the flag or parser; green requires full
+private normalized reference text and anchors with no anchor-only success path.
 
 The private oracle's closed fields remain `schemaVersion`, `producer`,
 `mediaKind`, `page`, `mediaDigest`, raw `truthText`, private `anchorTexts`,
@@ -937,8 +1151,9 @@ tests are green.
 Identity derivation is deterministic and scope-bound: `runIdDigest` is the
 lowercase SHA-256 of the private run id; `childId` is the SHA-256 of canonical
 JSON containing schema, producer, run digest, sequence/leg identity, ledger
-candidate identity, and media digest; `root` includes the opaque session-ref
-digest; and each artifact id includes its raw-byte digest. A candidate/prior
+candidate identity, and the ordered fixture-assignment identity digests;
+`root` includes the opaque session-ref digest; and each per-fixture artifact id
+includes its raw-byte digest. A candidate/prior
 session or another leg cannot reuse an identity while raw run ids, paths, and
 native refs remain private.
 
@@ -947,9 +1162,9 @@ BOM or trailing newline; recursively sort object keys lexicographically;
 preserve arrays in semantic order (sort set-like digest lists by their stated
 digest/artifact key); and emit SHA-256 as lowercase hex. Compute each self
 digest over canonical JSON with its own self-digest field omitted.
-`media.sha256` and every artifact digest cover exact raw JPEG/PDF or artifact
-bytes, never decoded/re-encoded text or path bytes. The expected truth digest
-is SHA-256 of the UTF-8 normalized raw truth; the expected anchor-set digest is
+Each `fixtureAssignments[i].mediaSha256` and its artifact digest cover exact
+raw JPEG/PDF or artifact bytes, never decoded/re-encoded text or path bytes.
+The expected truth digest is SHA-256 of the UTF-8 normalized raw truth; the expected anchor-set digest is
 SHA-256 of canonical UTF-8 JSON of the ordered normalized anchor set.
 
 `nfkc-whitespace-v1` is exactly: apply Unicode NFKC; convert CRLF, CR, LF,
@@ -964,33 +1179,52 @@ when both normalized values are empty; otherwise it is distance divided by
 pages, fixtures, products, or anchors.
 
 The exact Cert migration seams are
-`cert-prep/apps/cert-prep-desktop/scripts/ocr-truth-contract.mts:evaluateOcrTruth`,
+`${CERT_PREP_CHECKOUT}/apps/cert-prep-desktop/scripts/ocr-truth-contract.mts:evaluateOcrTruth`,
 `normalizeOcrText`, `parseOcrTruthManifest`, and `levenshtein`,
-`cert-prep/apps/cert-prep-desktop/scripts/acceptance-real-options.mts:parseOcrAnchorExpectation`,
-`cert-prep/apps/cert-prep-desktop/scripts/phase1-acceptance-evidence.mts:buildPhase1AcceptanceEvidence`,
-and `cert-prep/apps/cert-prep-desktop/scripts/ocr-semantic-evidence.mts:serializePrivacySafeOcrSemanticEvidence` /
+`${CERT_PREP_CHECKOUT}/apps/cert-prep-desktop/scripts/acceptance-real-options.mts:parseOcrAnchorExpectation`,
+`${CERT_PREP_CHECKOUT}/apps/cert-prep-desktop/scripts/phase1-acceptance-evidence.mts:buildPhase1AcceptanceEvidence`,
+and `${CERT_PREP_CHECKOUT}/apps/cert-prep-desktop/scripts/ocr-semantic-evidence.mts:serializePrivacySafeOcrSemanticEvidence` /
 `OCR_NORMALIZATION_VERSION`. The exact LAW Java seams are
-`gx.law-prep/apps/law-prep-engine/src/main/java/com/gx/lawprep/engine/capture/FoundryCaptureStructuringProvider.java:FoundryCaptureStructuringProvider`,
-`gx.law-prep/apps/law-prep-engine/src/main/java/com/gx/lawprep/engine/extraction/EvidenceTextExtractionService.java:EvidenceTextExtractionService`,
-`gx.law-prep/apps/law-prep-web-e2e/src/e2e/support/acceptance-expectations.ts:loadLawAcceptanceExpectation`,
-and `gx.law-prep/apps/law-prep-web-e2e/src/e2e/support/acceptance-artifacts.ts:writeAcceptanceManifest`.
+`${GX_LAW_PREP_CHECKOUT}/apps/law-prep-engine/src/main/java/com/gx/lawprep/engine/capture/FoundryCaptureStructuringProvider.java:FoundryCaptureStructuringProvider`,
+`${GX_LAW_PREP_CHECKOUT}/apps/law-prep-engine/src/main/java/com/gx/lawprep/engine/extraction/EvidenceTextExtractionService.java:EvidenceTextExtractionService`,
+`${GX_LAW_PREP_CHECKOUT}/apps/law-prep-web-e2e/src/e2e/support/acceptance-expectations.ts:loadLawAcceptanceExpectation`,
+and `${GX_LAW_PREP_CHECKOUT}/apps/law-prep-web-e2e/src/e2e/support/acceptance-artifacts.ts:writeAcceptanceManifest`.
 These are migration seams, not claims that Cert or LAW already emit the
 producer records.
 
 ### Python LAW adapter capture lifecycle
 
 The current Python adapter is
-`gx.law-prep/apps/law-prep-ai-service/src/app/ocr/service.py:OcrExtractionService.extract`,
+`${GX_LAW_PREP_CHECKOUT}/apps/law-prep-ai-service/src/app/ocr/service.py:OcrExtractionService.extract`,
 with its `CaptureRuntimeClient` construction in `_client`, readiness wait in
-`_wait_for_ocr_ready`, and cleanup in `_cleanup`. The future adapter adds
-producer-authenticated `start(requestRef)`, `get(requestRef)`,
-`cancel(requestRef)`, and `delete(requestRef)` operations using one opaque,
-random request reference. The producer atomically journals the request
-reference and operation intent before the first capture side effect; only then
-does it call the existing authenticated v2 capture lifecycle. The journal maps
-the opaque request reference to the private capture id, and get/cancel/delete
-resolve that mapping without exposing a token, path, capture id, or native id
-to the child or domain host. Cleanup retention is bounded and sanitized.
+`_wait_for_ocr_ready`, and cleanup in `_cleanup`. The producer defines the
+RequestRef format and semantics. `RequestRefV1` is exactly `rr1_` followed by
+64 lowercase hexadecimal characters (32 bytes), generated by Python with a
+CSPRNG (`secrets.token_bytes(32)`); it is opaque and must not be a
+deterministic hash, UUID5, source/path digest, or value derived from the
+request. `requestDigest` is the lowercase SHA-256 of the producer's canonical
+request bytes and is a separate identity.
+
+Before any network or capture side effect, the Python adapter durably writes a
+`start_pending` record containing the generated ref, request digest, and
+producer-contract version/hash. It then calls the producer's idempotent
+`start-or-get(requestRef, requestDigest)`. The producer atomically creates or
+discovers the same ref/digest tuple and journals the operation intent before
+calling the existing authenticated v2 capture lifecycle. A first tuple returns
+`created`; the same tuple on retry returns `discovered` (or the current
+producer state) without starting a duplicate operation. A ref already bound to
+a different request digest is a conflict and performs no mutation. Only a
+producer `created`/`discovered` acknowledgement with a durable producer
+receipt permits Python to change `start_pending` to `running`; a timeout,
+dropped response, malformed acknowledgement, or absent receipt leaves it
+`start_pending` and is retried with the same ref/digest. No pre-start operation
+may be forgotten or replaced by a newly generated ref.
+
+`get(requestRef)`, `cancel(requestRef)`, and `delete(requestRef)` all resolve
+the producer's private mapping by that same opaque ref. They never accept a
+capture id, path, token, alternate ref, or request-derived substitute. The
+producer returns only semantic state/receipts; capture ids, native ids, paths,
+and tokens remain private. Cleanup retention is bounded and sanitized.
 
 This is the same `/v2/captures` operation and lifecycle already represented by
 `packages/capture-runtime/src/capture_runtime/routes/streaming.py` and
@@ -999,13 +1233,20 @@ This is the same `/v2/captures` operation and lifecycle already represented by
 not a second OCR route or engine. The public floor remains API `2.0`, raw and
 structured schema `2`, and `CaptureOcrProjectionV3` schema `3`. The exact
 LAW config seam is
-`gx.law-prep/apps/law-prep-ai-service/src/app/common/config.py:AiServiceConfig`.
-Migration red: a request reference is not journaled before POST, cleanup is
-unbounded, or a new route/engine is introduced; green: authenticated opaque
-start/get/cancel/delete uses one capture operation, bounded retention, and
-privacy-safe terminal proof. Discovery stop: confirm the LAW adapter's
-resolved client/config and current route metadata before assigning an Nx or
-workflow target; no such target is claimed by this docs checkpoint.
+`${GX_LAW_PREP_CHECKOUT}/apps/law-prep-ai-service/src/app/common/config.py:AiServiceConfig`.
+Migration red: Python does not use CSPRNG bytes, `start_pending` is not
+durable before `start-or-get`, the producer starts before journaling, a changed
+digest is accepted, running is marked without a producer ACK/discovery
+receipt, a timeout loses the ref, lookup/cancel/delete accept another
+identity, cleanup is unbounded, or a new route/engine is introduced. Required
+green cases are `same_ref_same_digest_discovers_without_duplicate`,
+`same_ref_changed_digest_conflicts_without_mutation`,
+`start_pending_survives_timeout_and_retries_same_tuple`,
+`running_requires_producer_ack_or_discovery`, `lookup_cancel_delete_use_same_ref`,
+and `request_refs_are_csprng_and_not_request_derived`. Discovery stop: confirm
+the LAW adapter's resolved client/config and current route metadata before
+assigning an Nx or workflow target; no such target is claimed by this docs
+checkpoint.
 
 Any schema, producer, sequence/leg/child/root/artifact, candidate/D3/D6
 root/id/digest, media/truth digest, normalization, distance, threshold,
@@ -1038,6 +1279,52 @@ The target and script do not exist at this checkpoint. Discovery begins with
 creation is a separate authorized implementation task and a
 discovery-and-stop until its metadata and schema tests exist. No made-up target
 invocation or installed-candidate claim is valid before that stop clears.
+
+## D2.5 cross-repository contract handoff
+
+D2.5 is a cross-repository design/contract gate, not permission to edit sibling
+worktrees from Capture. Its only checkout inputs are the environment variables
+`${CERT_PREP_CHECKOUT}` and `${GX_LAW_PREP_CHECKOUT}` (PowerShell spelling:
+`${env:CERT_PREP_CHECKOUT}` and `${env:GX_LAW_PREP_CHECKOUT}`). The D2
+authorization record must name, for each checkout, the resolved Git root,
+authorized branch, authorized `HEAD`, and exact path set. No sibling-relative
+fallback, current-directory inference, or mutable package install is allowed.
+
+Before assigning any D2.5 implementation work, the worker resolves each
+variable and verifies:
+
+```powershell
+$certCheckout = (Resolve-Path -LiteralPath ${env:CERT_PREP_CHECKOUT} -ErrorAction Stop).Path
+$lawCheckout = (Resolve-Path -LiteralPath ${env:GX_LAW_PREP_CHECKOUT} -ErrorAction Stop).Path
+git -C $certCheckout rev-parse --show-toplevel
+git -C $certCheckout rev-parse --abbrev-ref HEAD
+git -C $certCheckout rev-parse HEAD
+git -C $lawCheckout rev-parse --show-toplevel
+git -C $lawCheckout rev-parse --abbrev-ref HEAD
+git -C $lawCheckout rev-parse HEAD
+```
+
+The returned roots must equal the resolved variables, and branch/`HEAD` must
+equal the values authorized by D2. For every exact path, `git -C <root>
+ls-files --error-unmatch -- <path>` and a path-scoped
+`git -C <root> status --short --untracked-files=all -- <path>` check ownership
+and pre-existing dirt before editing. The Cert path set is the four OCR truth/
+evidence scripts named above; the LAW path set is the Java provider/extraction,
+web-E2E expectation/artifact, Python OCR service, and config paths named above.
+Missing variables, root mismatch, branch/`HEAD` drift, a missing path, or an
+extra path is discovery-and-stop.
+
+Cert and LAW consumer docs and schemas import/reference the exact generated
+`ProducerAcceptanceContractV1` version `"1"` and the literal producer
+`contractSha256` recorded by D3/D6. They do not redefine producer record names,
+fields, fixture assignment rules, cleanup fields, or validation. If a consumer
+needs a field, the producer contract changes first and receives a new hash;
+consumer-local edits cannot fork the protocol. Capture, Cert, and LAW have
+separate commit boundaries: a Capture commit contains only Capture paths, a
+Cert commit contains only paths below `${CERT_PREP_CHECKOUT}`, and a LAW commit
+contains only paths below `${GX_LAW_PREP_CHECKOUT}`. Each repository reports its
+own commit SHA and checks; no one Capture commit stages or commits sibling
+files, and no cross-repository push is implied by D2.5.
 
 ## Version, schema, projection, and release-channel inventory
 

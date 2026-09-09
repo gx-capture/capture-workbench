@@ -10,7 +10,7 @@ not alternate Phase 2 policy.
 ## Checkpoint first: 2026-09-10
 
 This closure starts from expected HEAD
-a51cd6876b2a4dc5eae378358a3aaa710d2cfce2. D0 is complete for the documentation
+31b1232ea9ef5b9bc32679323c8c28b9500b0bf0. D0 is complete for the documentation
 commit, but its SHA is intentionally external: record git rev-parse HEAD after
 commit. D1 is pending fresh Standards and Specification review at that exact
 head. Preserve untracked .github/copilot-instructions.md and
@@ -153,24 +153,77 @@ explicit target/schema creation; do not invoke the proposed name early. The
 existing `capture-workbench-desktop:acceptance-real` target remains a local
 installed diagnostic and is non-D4.
 
-The producer-owned V1 protocol has three distinct records and paths:
+## D2.5 cross-repository handoff
+
+Use only `${CERT_PREP_CHECKOUT}` and `${GX_LAW_PREP_CHECKOUT}` for sibling
+checkouts (PowerShell: `${env:CERT_PREP_CHECKOUT}` and
+`${env:GX_LAW_PREP_CHECKOUT}`). The D2 authorization record must name each
+resolved Git root, authorized branch, authorized `HEAD`, and exact path set.
+Before a sibling worker edits anything, run and compare:
+
+~~~powershell
+$certCheckout = (Resolve-Path -LiteralPath ${env:CERT_PREP_CHECKOUT} -ErrorAction Stop).Path
+$lawCheckout = (Resolve-Path -LiteralPath ${env:GX_LAW_PREP_CHECKOUT} -ErrorAction Stop).Path
+git -C $certCheckout rev-parse --show-toplevel
+git -C $certCheckout rev-parse --abbrev-ref HEAD
+git -C $certCheckout rev-parse HEAD
+git -C $lawCheckout rev-parse --show-toplevel
+git -C $lawCheckout rev-parse --abbrev-ref HEAD
+git -C $lawCheckout rev-parse HEAD
+~~~
+
+Each root must equal its resolved variable, and branch/`HEAD` must equal the
+D2 authorization. For every exact path, run
+`git -C <root> ls-files --error-unmatch -- <path>` and
+`git -C <root> status --short --untracked-files=all -- <path>` before and
+after edits. Missing variables, root/branch/`HEAD` drift, missing or extra
+paths, or unresolved ownership is discovery-and-stop. Cert and LAW import the
+producer-generated `ProducerAcceptanceContractV1` version `"1"` and literal
+D3/D6 `contractSha256`; they do not redefine its names or fields. Commit each
+sibling repository separately below its own resolved root and report its own
+SHA/checks. A Capture commit never stages sibling paths, and no
+cross-repository push is implied.
+
+The one producer-owned `ProducerAcceptanceContractV1` has contract version
+`"1"` and a producer-assigned canonical `contractSha256`, recorded by D3 and
+bound by D4/D6/D7. Cert and LAW import/reference that exact generated version
+and hash; they do not redefine any producer record name, field, cleanup rule,
+or validation. Its records have distinct paths:
 `ProducerChildScopeV1` is producer-mutable at
-`CAPTURE_ACCEPTANCE_SCOPE_PATH`; the child writes one
-`ConsumerSemanticResultV1` at `CAPTURE_ACCEPTANCE_SEMANTIC_RESULT_PATH`; and
-the producer validates that result, proves cleanup, then writes immutable
-`AcceptanceChildWireV1` at `CAPTURE_ACCEPTANCE_WIRE_PATH`. The child never
-receives or writes the scope or wire. A read-only invocation snapshot may be
-nested in the scope/input, but it contains no future result/wire/output digest.
+`CAPTURE_ACCEPTANCE_SCOPE_PATH`; `ProducerChildInvocationV1` is frozen at the
+separate `CAPTURE_ACCEPTANCE_INVOCATION_PATH` (or an equivalent read-only
+handle/pipe); the child writes one `ConsumerSemanticResultV1` at the separate
+`CAPTURE_ACCEPTANCE_SEMANTIC_RESULT_PATH`; and the producer validates that
+result, proves cleanup, then writes immutable `AcceptanceChildWireV1` at
+`CAPTURE_ACCEPTANCE_WIRE_PATH`. The child receives only the frozen invocation
+transport and its canonical digest; it never receives or writes the mutable
+scope or final wire.
+
+The producer writes canonical invocation bytes to a same-directory temporary,
+flushes and publishes them with atomic create-new, computes the
+self-excluded digest, closes the write handle, and applies an ACL that denies
+child write/delete/rename/reparse. The child opens only a read-only path,
+handle, or pipe and recomputes the digest before work. The producer proves the
+semantic-result path is absent; the child writes a temporary result with
+`CREATE_NEW`, flushes/closes, and publishes the separate final result with
+`CREATE_NEW`, never replace/overwrite. The producer reads it only after child
+exit. A second create, writable invocation, pre-existing output, partial
+record, or digest mismatch fails closed. Cleanup fields are absent from the
+consumer semantic result and are added only by the producer to the final wire.
+
 The wire includes parentGate/tier, the D3 or D6 ledger binding, invocation
-digest, `fixtureResults[]` with actual normalized-output digest/CER/anchor
-omissions/outcome/projection digest, expected normalized-truth and anchor-set
-digests, child semantic-result digest, artifact IDs, detailed producer cleanup,
-privacy flags, and its self-excluded canonical JSON digest. The invocation has
-ready state, child/sequence identity, D4/D3 or
-D7/D6 download/publication binding, predecessor cleanup-proof digests,
-oracle/media assignment, a separate output path nonce, and no future result or
-wire digest. Cert and LAW reference this exact producer schema; they do not
-redefine it.
+digest, ordered `fixtureAssignments[]` and equal-cardinality/order-bound
+`fixtureResults[]` with per-fixture identity/media/oracle/artifact digests,
+actual normalized-output digest/CER/anchor omissions/outcome/projection digest,
+expected normalized-truth and anchor-set digests, child semantic-result digest,
+top-level artifact IDs, detailed producer cleanup, privacy flags, and its
+self-excluded canonical JSON digest. For Capture JPEG the assignment list has
+exactly `capture-private-jpeg-1`; for Capture PDF page 1 it has exactly
+`capture-scanned-pdf-page1-1`; Cert and LAW use the same ordered binding rules.
+The invocation has ready state, child/sequence identity, D4/D3 or D7/D6
+download/publication binding, predecessor cleanup-proof digests, ordered
+fixture assignments, a separate output path nonce, and no future result or
+wire digest.
 
 Serialize canonical compact UTF-8 JSON with sorted object keys, semantic array
 ordering, self-digest omission, and lowercase SHA-256. Hash exact raw bytes;
@@ -180,31 +233,48 @@ ASCII space, collapse, trim; preserve case/punctuation/traditional-simplified)
 and `code-point-levenshtein-v1`; thresholds are PDF `0.01`, JPEG `0.03`,
 anchor omissions `0`, with no average. Schema/scope mismatch fails closed.
 Cert migrates from
-`cert-prep/apps/cert-prep-desktop/scripts/ocr-truth-contract.mts:evaluateOcrTruth`,
-`cert-prep/apps/cert-prep-desktop/scripts/ocr-truth-contract.mts:normalizeOcrText`,
-`cert-prep/apps/cert-prep-desktop/scripts/ocr-truth-contract.mts:parseOcrTruthManifest`,
-`cert-prep/apps/cert-prep-desktop/scripts/ocr-truth-contract.mts:levenshtein`,
-`cert-prep/apps/cert-prep-desktop/scripts/acceptance-real-options.mts:parseOcrAnchorExpectation`,
-`cert-prep/apps/cert-prep-desktop/scripts/phase1-acceptance-evidence.mts:buildPhase1AcceptanceEvidence`,
-and `cert-prep/apps/cert-prep-desktop/scripts/ocr-semantic-evidence.mts:serializePrivacySafeOcrSemanticEvidence`.
+`${CERT_PREP_CHECKOUT}/apps/cert-prep-desktop/scripts/ocr-truth-contract.mts:evaluateOcrTruth`,
+`${CERT_PREP_CHECKOUT}/apps/cert-prep-desktop/scripts/ocr-truth-contract.mts:normalizeOcrText`,
+`${CERT_PREP_CHECKOUT}/apps/cert-prep-desktop/scripts/ocr-truth-contract.mts:parseOcrTruthManifest`,
+`${CERT_PREP_CHECKOUT}/apps/cert-prep-desktop/scripts/ocr-truth-contract.mts:levenshtein`,
+`${CERT_PREP_CHECKOUT}/apps/cert-prep-desktop/scripts/acceptance-real-options.mts:parseOcrAnchorExpectation`,
+`${CERT_PREP_CHECKOUT}/apps/cert-prep-desktop/scripts/phase1-acceptance-evidence.mts:buildPhase1AcceptanceEvidence`,
+and `${CERT_PREP_CHECKOUT}/apps/cert-prep-desktop/scripts/ocr-semantic-evidence.mts:serializePrivacySafeOcrSemanticEvidence`.
 The formal D4/D7 Cert path deletes/prohibits `anchorOnly` and
 `parseOcrAnchorExpectation`; a full private normalized reference plus critical
-anchors is required.
+anchors is required. The final schema/config has no `anchorOnly` name; a
+legacy field is rejected as unknown, never ignored or accepted as an
+anchor-only success path.
 LAW migrates from
-`gx.law-prep/apps/law-prep-engine/src/main/java/com/gx/lawprep/engine/capture/FoundryCaptureStructuringProvider.java:FoundryCaptureStructuringProvider`,
-`gx.law-prep/apps/law-prep-engine/src/main/java/com/gx/lawprep/engine/extraction/EvidenceTextExtractionService.java:EvidenceTextExtractionService`,
-`gx.law-prep/apps/law-prep-web-e2e/src/e2e/support/acceptance-expectations.ts:loadLawAcceptanceExpectation`,
-`gx.law-prep/apps/law-prep-web-e2e/src/e2e/support/acceptance-artifacts.ts:writeAcceptanceManifest`,
-and `gx.law-prep/apps/law-prep-ai-service/src/app/ocr/service.py:OcrExtractionService.extract`.
-The Python adapter uses producer-authenticated opaque `requestRef` start/get/
-cancel/delete, atomically journals the ref before the capture side effect,
-retains sanitized cleanup state for a bounded period, and uses the existing
-v2 capture operation/lifecycle. It adds no OCR route or engine, exposes no
+`${GX_LAW_PREP_CHECKOUT}/apps/law-prep-engine/src/main/java/com/gx/lawprep/engine/capture/FoundryCaptureStructuringProvider.java:FoundryCaptureStructuringProvider`,
+`${GX_LAW_PREP_CHECKOUT}/apps/law-prep-engine/src/main/java/com/gx/lawprep/engine/extraction/EvidenceTextExtractionService.java:EvidenceTextExtractionService`,
+`${GX_LAW_PREP_CHECKOUT}/apps/law-prep-web-e2e/src/e2e/support/acceptance-expectations.ts:loadLawAcceptanceExpectation`,
+`${GX_LAW_PREP_CHECKOUT}/apps/law-prep-web-e2e/src/e2e/support/acceptance-artifacts.ts:writeAcceptanceManifest`,
+and `${GX_LAW_PREP_CHECKOUT}/apps/law-prep-ai-service/src/app/ocr/service.py:OcrExtractionService.extract`.
+The Python adapter uses the producer-defined opaque `RequestRefV1`, exactly
+`rr1_` plus 64 lowercase hex characters generated with CSPRNG
+`secrets.token_bytes(32)`, never a deterministic request-derived value. It
+durably writes `start_pending` with `requestRef`, `requestDigest`, and the
+producer contract version/hash before idempotent
+`start-or-get(requestRef, requestDigest)`. Same tuple creates/discovers
+without a duplicate; changed digest conflicts without mutation. Only a
+producer ACK/discovery receipt permits `running`; timeout or dropped ACK stays
+`start_pending` and retries the same tuple. `get`, `cancel`, and `delete` use
+that same ref and private mapping. The adapter uses the existing v2
+capture operation/lifecycle, adds no OCR route or engine, exposes no
 token/path/native id, and retains API `2.0` plus `CaptureOcrProjectionV3`
 schema `3`. The standalone
 `real-jpeg-acceptance-coordinator.ts:runRealJpegAcceptance`/CLI migrates into
 the sole producer runner, then is deleted with its test and async-boundary
 allowance after residual scans and replacement tests pass.
+
+The required RequestRef red/green cases are
+`same_ref_same_digest_discovers_without_duplicate`,
+`same_ref_changed_digest_conflicts_without_mutation`,
+`start_pending_survives_timeout_and_retries_same_tuple`,
+`running_requires_producer_ack_or_discovery`, `lookup_cancel_delete_use_same_ref`,
+and `request_refs_are_csprng_and_not_request_derived`. A missing resolved LAW
+test owner or target is discovery-and-stop; do not invent an Nx target.
 
 ## First implementation slice
 
@@ -303,9 +373,15 @@ paths, command lines, or machine names. A PID, port, parent process,
 executable name, or directory name alone is not ownership proof.
 
 R3 `open`/`prepare` durably writes `planned` and returns
-`PreparedRuntimeSession { ReconcileRef, generation }` before activation. The
-producer host persists both values before `activate`. Reconciliation returns
-semantic cleanup and `proofSha256`; candidate and prior refs are distinct. For
+`PreparedRuntimeSession { ReconcileRef, refDigest, generation }` before
+activation. An injected `ReconcileRefSink` durably persists that exact ref and
+generation and returns the CAS-bound
+`ActivationPermit{refDigest, generation, receiptDigest}` only after its receipt
+is flushed. `activate(prepared, permit)` validates all three values against the
+prepared journal and sink receipt before any resource acquisition; there is no
+activation overload without a permit. One-root convenience methods require the
+sink or remain private and use the same order. Reconciliation returns semantic
+cleanup and `proofSha256`; candidate and prior refs are distinct. For
 `prior=null`, the prior ref and predecessor proof digest are null and no proof
 is implied. A non-null prior requires its exact proof digest and generation.
 
@@ -330,18 +406,37 @@ proof, but cannot write/mutate the journal or Job. The addressable observe-only
 API is `RuntimeSessionJournal::reconcile(ReconcileRef) -> ReconcileResult`.
 `ReconcileRef` is an opaque journal index/address, not a PID, Job handle,
 process id, path, or takeover lease; candidate and prior sessions each receive
-a distinct ref. The journal graph is
-`planned -> launching -> running -> closing -> terminal`, with
-`planned -> reconcile-required` and
-`launching|running|closing -> reconcile-required`. A later
-`reconcile-required -> terminal` is guarded by full observe-only proof,
-expected state/generation CAS, and a committed self retry attempt update. After
-three automatic failures, the record stays `manual-review` blocked, never
-terminal, and cannot launch a replacement. Direct
-`planned -> terminal` is permitted only when durable proof shows no resource
-could have existed before setup/root/listener/staging acquisition and no
-resource acquisition was attempted; otherwise
-the ref is `reconcile-required`.
+a distinct ref. The exhaustive graph is
+`planned -> launching -> running -> closing -> terminal`, plus
+`planned -> terminal` only for a durable no-resource proof,
+`planned -> reconcile-required`,
+`launching|running|closing -> reconcile-required`,
+`reconcile-required -> reconcile-required` for timed/failed attempts one or
+two, `reconcile-required -> terminal` only after a later complete
+observe-only proof, `reconcile-required -> manual-review` after timed/failed
+attempt three, and `manual-review -> reconcile-required` only by explicit
+producer-authorized recovery. Every transition CAS-guards expected state,
+generation, attempt, and recovery epoch and increments generation/attempt
+atomically where an attempt is recorded. `manual-review` has no automatic
+recovery, cannot launch a replacement, and cannot transition directly to
+terminal. Recovery requires a fresh opaque nonce and durable authorization
+receipt, increments recovery epoch/generation, resets the attempt window, and
+performs no resource mutation; the next full observe-only attempt remains
+mandatory. A stale guard or receipt leaves the record untouched.
+
+Required journal tests in the existing launcher/desktop Cargo owners are
+`reconcile_attempt_and_generation_increment_atomically`,
+`reconcile_complete_observe_only_proof_to_terminal`,
+`reconcile_timeout_attempt_one_stays_required`,
+`reconcile_failure_attempt_two_stays_required`,
+`reconcile_failure_attempt_three_enters_manual_review`,
+`reconcile_rejects_stale_state_generation_attempt_or_epoch`,
+`manual_review_requires_explicit_recovery_receipt`,
+`manual_review_recovery_resets_attempt_window_without_resource_mutation`,
+`manual_review_cannot_transition_directly_to_terminal_or_running`, and
+`recovery_retry_enters_manual_review_again_after_three_failures`. Keep them in
+existing targets after `nx show project`; a missing focused target is a
+creation stop, not permission to call an invented command.
 
 ## Verification floor
 
