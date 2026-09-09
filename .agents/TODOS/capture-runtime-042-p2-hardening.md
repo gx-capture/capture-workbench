@@ -32,7 +32,7 @@ slice does not edit workflows, rerun CI, or claim that deterministic CI proves
 OCR, GPU, cleanup, installation, publication, or pointer state.
 
 The expected starting HEAD for this closure is
-`b7fed18bb25cdb52df02e6ccd76eb82cdc44f621`. Preserve unrelated untracked
+`a51cd6876b2a4dc5eae378358a3aaa710d2cfce2`. Preserve unrelated untracked
 `.github/copilot-instructions.md` and `.github/instructions/`; never stage them.
 
 ## D0 - DocsCommitted
@@ -201,6 +201,12 @@ candidate root/id/digests through its separately named target. Existing local
   `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`; named Job takeover and weakened
   close/crash cleanup are forbidden.
 
+  R3 `open`/`prepare` must durably write the producer journal as `planned`
+  and return `PreparedRuntimeSession { ReconcileRef, generation }` before
+  activation. The producer host persists both values before `activate`; the
+  one-root convenience methods use the same ordering. Reconciliation returns
+  semantic cleanup and `proofSha256`; no native identity crosses the seam.
+
   Prerequisite: D1-approved R3 choice, D2 authorization, and a red lifecycle
   test. RED proof: a raw Job/handle/PID crosses the seam, a descendant escapes,
   baseline processes are killed, a multi-root close is partial, or live
@@ -251,13 +257,20 @@ candidate root/id/digests through its separately named target. Existing local
   `RuntimeSessionJournal::reconcile(ReconcileRef) -> ReconcileResult`.
   `ReconcileRef` is an opaque journal index/address, never a PID, Job handle,
   process id, path, or takeover lease; candidate and prior sessions receive
-  distinct refs. A semantic `ReconcileResult` may terminalize only the exact
-  ref with complete absence/listener/staging proof; present, reused,
-  unqueryable, or ambiguous observations return `reconcile-required` and
-  touch nothing. The journal graph is
+  distinct refs. A semantic `ReconcileResult` returns cleanup and
+  `proofSha256`, and may terminalize only the exact ref with complete
+  absence/listener/staging proof. For `prior=null`, the prior ref and
+  predecessor proof digest are null and no cleanup proof is implied; a
+  non-null prior requires its exact proof digest and generation. Present,
+  reused, unqueryable, or ambiguous observations return `reconcile-required`
+  and touch nothing. The journal graph is
   `planned -> launching -> running -> closing -> terminal`, with
   `planned -> reconcile-required` and
-  `launching|running|closing -> reconcile-required`; direct
+  `launching|running|closing -> reconcile-required`. A later
+  `reconcile-required -> terminal` requires a full observe-only proof, an
+  expected state/generation CAS, and a committed self retry attempt update.
+  After three automatic failures, the record stays `manual-review` blocked,
+  never terminal, and cannot launch a replacement. Direct
   `planned -> terminal` is allowed only when durable proof shows no resource
   could have existed before setup/root/listener/staging acquisition and no
   resource acquisition was attempted.
@@ -288,36 +301,63 @@ candidate root/id/digests through its separately named target. Existing local
 
 ### D2.5 Acceptance evidence and measured baseline slice
 
-- [ ] **Extend the existing acceptance owners without adding a coordinator.**
-  Owner paths/symbols:
+- [ ] **Converge the producer/consumer acceptance protocol without adding a
+  coordinator.** Current owner paths/symbols are
   `tools/three-project-acceptance.ts:runAcceptanceSequence`,
   `runCaptureWorkbenchAcceptance`, `validateChildManifest`,
-  `validateTerminalManifest`, and `verifyRecordedCleanupScope`;
-  `tools/acceptance-contract.ts:writeAcceptanceManifest` and
-  `readAcceptanceManifestTolerant`; its manifest validators remain in
-  `tools/three-project-acceptance.ts`;
-  `apps/capture-workbench-desktop/scripts/acceptance-real.ts:waitForChildClose`;
-  `apps/capture-workbench-desktop/scripts/acceptance-orchestration.ts:runCaptureWorkbenchAcceptanceOrchestration`;
-  `apps/capture-workbench-desktop/scripts/real-ocr-result-assertions.ts:assertRealOcrResult`;
-  proposed producer wires `AcceptanceChildWireV1`,
-  `ProducerChildInvocationV1`, and `PrivateOcrTruthOracleV1` are serialized by
-  these producer owners. The exact Cert adapter migration paths are
+  `validateTerminalManifest`, `validateCleanupEvidence`,
+  `verifyRecordedCleanupScope`,
+  `tools/acceptance-contract.ts:writeAcceptanceManifest`,
+  `readAcceptanceManifestTolerant`,
+  `apps/capture-workbench-desktop/scripts/acceptance-real.ts:waitForChildClose`,
+  `apps/capture-workbench-desktop/scripts/acceptance-orchestration.ts:runCaptureWorkbenchAcceptanceOrchestration`,
+  and `apps/capture-workbench-desktop/scripts/real-ocr-result-assertions.ts:assertRealOcrResult`.
+  These current child/terminal manifests are migration surfaces. The future
+  producer is the sole writer of mutable `ProducerChildScopeV1` at
+  `CAPTURE_ACCEPTANCE_SCOPE_PATH`; the current child writes exactly one
+  `ConsumerSemanticResultV1` at
+  `CAPTURE_ACCEPTANCE_SEMANTIC_RESULT_PATH`; only after validation and
+  producer cleanup does the producer write immutable `AcceptanceChildWireV1`
+  at `CAPTURE_ACCEPTANCE_WIRE_PATH`. The child receives a read-only
+  `ProducerChildInvocationV1` and never receives or writes scope or wire
+  records. A read-only invocation snapshot may be nested in scope/input, but
+  it must not contain a future result/wire/output digest.
+
+  The exact wire includes `parentGate`, `tier`, a D3 (D4) or D6 (D7) ledger
+  binding, invocation digest, `fixtureResults[]` containing actual normalized
+  output digest/CER/anchor omissions/outcome/projection digest, expected
+  normalized-truth and anchor-set digests, the child semantic-result digest,
+  artifact IDs, detailed producer cleanup, privacy flags, and its self-excluded
+  canonical JSON digest. The invocation has
+  `readyState`, child/sequence identity, D4/D3 or D7/D6
+  download/publication binding, predecessor cleanup proof digests,
+  oracle/media assignment, a separate output path nonce, and its own
+  self-excluded digest. D4 requires full private normalized reference text
+  plus critical anchors, as does D7; explicitly delete/prohibit Cert's
+  `anchorOnly` and `parseOcrAnchorExpectation` formal paths. Cert and LAW
+  reference this exact producer schema and do not redefine it. Preserve the
+  existing per-fixture thresholds (PDF page 1 `0.01`, JPEG `0.03`), zero
+  critical-anchor omissions, and no averaging.
+
+  The exact Cert adapter migration paths are
   `cert-prep/apps/cert-prep-desktop/scripts/ocr-truth-contract.mts:evaluateOcrTruth`,
   `cert-prep/apps/cert-prep-desktop/scripts/ocr-truth-contract.mts:normalizeOcrText`,
   `cert-prep/apps/cert-prep-desktop/scripts/ocr-truth-contract.mts:parseOcrTruthManifest`,
   `cert-prep/apps/cert-prep-desktop/scripts/ocr-truth-contract.mts:levenshtein`,
+  `cert-prep/apps/cert-prep-desktop/scripts/acceptance-real-options.mts:parseOcrAnchorExpectation`,
   `cert-prep/apps/cert-prep-desktop/scripts/phase1-acceptance-evidence.mts:buildPhase1AcceptanceEvidence`,
   and `cert-prep/apps/cert-prep-desktop/scripts/ocr-semantic-evidence.mts:serializePrivacySafeOcrSemanticEvidence` /
   `OCR_NORMALIZATION_VERSION`. The exact LAW adapter migration paths are
   `gx.law-prep/apps/law-prep-engine/src/main/java/com/gx/lawprep/engine/capture/FoundryCaptureStructuringProvider.java:FoundryCaptureStructuringProvider`,
   `gx.law-prep/apps/law-prep-engine/src/main/java/com/gx/lawprep/engine/extraction/EvidenceTextExtractionService.java:EvidenceTextExtractionService`,
   `gx.law-prep/apps/law-prep-web-e2e/src/e2e/support/acceptance-expectations.ts:loadLawAcceptanceExpectation`,
-  and `gx.law-prep/apps/law-prep-web-e2e/src/e2e/support/acceptance-artifacts.ts:writeAcceptanceManifest`.
+  `gx.law-prep/apps/law-prep-web-e2e/src/e2e/support/acceptance-artifacts.ts:writeAcceptanceManifest`,
+  and `gx.law-prep/apps/law-prep-ai-service/src/app/ocr/service.py:OcrExtractionService.extract`.
   D4 and D7 use the same producer-owned serial runner with four distinct legs:
   `(1, capture-private-jpeg, capture-private-jpeg-v1)`,
   `(2, capture-scanned-pdf-page1, capture-scanned-pdf-page1-v1)`,
   `(3, cert, cert-v1)`, and `(4, law, law-v1)`. Every leg receives a unique
-  `sequenceIndex`, `childKey`, `legId`, `childId`, `root`, and `artifactId`,
+  `sequenceIndex`, `childKey`, `legId`, `childId`, `root`, and `artifactIds`,
   plus its own artifact and cleanup proof; no identity is reused by another
   leg, candidate, or prior session. CER is <= 3% for every real private JPEG,
   <= 1% for every real scanned PDF page 1, and critical-anchor omissions are
@@ -330,19 +370,20 @@ candidate root/id/digests through its separately named target. Existing local
   as the sole producer runner, then delete only after residual scans and
   replacement tests pass.
 
-  `AcceptanceChildWireV1` carries schema/producer/run digest, the six unique
-  leg identity fields, candidate id/manifest digest/D3 artifact digest set,
-  media kind/digest, raw-byte artifact digest records, expected
-  normalized-truth and anchor-set digests, CER threshold,
-  `nfkc-whitespace-v1`, `code-point-levenshtein-v1`, cleanup proof, and a
-  self-excluded wire digest. `ProducerChildInvocationV1` carries the same leg
-  identities plus externally supplied D3 candidate id, manifest digest, root,
-  and artifact digest set, media digest, truth-oracle digest, child-wire
-  digest, and its self-excluded invocation digest. `PrivateOcrTruthOracleV1`
-  is local/private and carries raw truth/anchors only beside their expected
-  digests, media/page identity, normalization/distance, threshold, omission
-  count, and self-excluded oracle digest. Raw truth remains local; evidence
-  exports digests only.
+  `AcceptanceChildWireV1` is the producer's only canonical evidence envelope.
+  It carries `parentGate`, `tier`, D3/D6 ledger binding, invocation digest,
+  `fixtureResults[]` with actual normalized-output digest/CER/anchor omissions/
+  outcome/projection digest, child semantic-result digest, artifact IDs,
+  detailed producer cleanup, privacy flags, and a self-excluded canonical JSON
+  digest. `ProducerChildInvocationV1` carries ready state, the same
+  child/sequence identity, exactly one D4/D3 or D7/D6 download/publication
+  binding, predecessor cleanup-proof digests, private oracle/media assignment,
+  a separate output path nonce, and its own self-excluded digest. It carries
+  no future result or wire digest. `PrivateOcrTruthOracleV1` is local/private
+  and carries raw normalized reference text and critical anchors beside their
+  expected digests, media/page identity, normalization/distance, threshold,
+  omission count, and self-excluded oracle digest. Raw truth remains local;
+  evidence exports digests and semantic measurements only.
 
   Serialization is canonical compact UTF-8 JSON with no BOM/trailing newline,
   recursively lexicographically sorted object keys, deterministic semantic
@@ -357,15 +398,42 @@ candidate root/id/digests through its separately named target. Existing local
   Record numeric memory/latency/resource evidence before any single-metric
   optimization; never change two metrics in one commit.
 
+  Cert's formal D4/D7 migration is anchored at
+  `cert-prep/apps/cert-prep-desktop/scripts/ocr-truth-contract.mts:evaluateOcrTruth`,
+  `normalizeOcrText`, `parseOcrTruthManifest`, and `levenshtein`, plus
+  `cert-prep/apps/cert-prep-desktop/scripts/acceptance-real-options.mts:parseOcrAnchorExpectation`.
+  RED: an `anchorOnly` expectation or the anchor-expectation parser is accepted
+  by the formal path. GREEN: both are deleted/prohibited there, full private
+  normalized reference text is required, and critical anchors are checked in
+  the producer-owned semantic result. Cert consumes the exact producer
+  `ConsumerSemanticResultV1`/`AcceptanceChildWireV1` fields and does not define
+  a substitute wire.
+
+  The Python LAW adapter is anchored at
+  `gx.law-prep/apps/law-prep-ai-service/src/app/ocr/service.py:OcrExtractionService.extract`,
+  with its runtime client, readiness, and cleanup seams in that module and
+  configuration at `gx.law-prep/apps/law-prep-ai-service/src/app/common/config.py:AiServiceConfig`.
+  Add producer-authenticated opaque `requestRef` operations for start, get,
+  cancel, and delete. Atomically journal the request ref and operation intent
+  before any capture side effect; resolve later operations through that private
+  mapping; retain sanitized cleanup state for a bounded period. RED: a missing
+  pre-side-effect journal, unbounded retention, token/path exposure, or a
+  second OCR route/engine. GREEN: the adapter uses the existing authenticated
+  `/v2/captures` operation and lifecycle and keeps API `2.0` plus
+  `CaptureOcrProjectionV3` schema `3`. Discovery stop: verify the resolved LAW
+  client/config and route metadata before assigning a new target; this
+  checkout does not claim such a target exists.
+
   Prerequisite: D2.3/D2.4 lifecycle design, D2 authorization, explicit
-  fixture/anchor manifest, current owner discovery, and the proposed wire
+  fixture/anchor manifest, current owner discovery, and the exact producer
   schema review. This D2.5 slice is design/contract/red infrastructure only:
   no installed candidate is a prerequisite and it must not install, stage,
   build, launch, or accept a candidate before D3. RED proof: a missing/invalid
-  schema or manifest, private evidence leak, non-canonical serialization,
-  raw-byte digest mismatch, non-unique leg identity, unknown cleanup, anchor
-  omission, threshold violation, or child started before prior cleanup must
-  stop the sequence. GREEN verification:
+  scope/result/wire or manifest, private evidence leak, non-canonical
+  serialization, raw-byte digest mismatch, non-unique leg identity, unknown
+  cleanup, anchor omission, threshold violation, request-ref journal failure,
+  or child started before prior cleanup must stop the sequence. GREEN
+  verification:
 
   ~~~powershell
   corepack pnpm nx run capture-tools:lint --skip-nx-cache
@@ -562,7 +630,8 @@ candidate root/id/digests through its separately named target. Existing local
   made-up target. The existing `acceptance-real` and
   `acceptance-three-projects` targets remain non-D4 until their producer-wire
   migration is authorized. Stop on the first semantic, identity, process,
-  listener, journal, or cleanup failure and retain that child manifest.
+  listener, journal, or cleanup failure and retain the sanitized failed
+  semantic-result/legacy manifest record.
   Rollback: stop the chain and retain D3/failed D4 evidence; no publication or
   pointer action is allowed. Commit boundary: D4 acceptance evidence is
   separate from D3 candidate bytes and D5 publication.

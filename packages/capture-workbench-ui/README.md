@@ -16,8 +16,10 @@ the same `.npmrc.example`):
 //npm.pkg.github.com/:_authToken=${GITHUB_PACKAGES_TOKEN}
 ```
 
-> Phase 2 checkpoint (2026-09-09): this checkout is documentation/design-only.
+> Phase 2 checkpoint (2026-09-10): this checkout is documentation/design-only.
 > It does not assert that any release is published or that registry bytes exist.
+> D4/D7 acceptance records are producer-owned; a consumer never writes the
+> producer scope, semantic-result, or acceptance-wire paths.
 > D6 immutable public downloads are permitted and required for D7 verification:
 > D7 installs/uses only the exact bytes bound by the D6 ledger, before D8.
 > Ordinary stable or mutable-pointer consumer installation waits until D8

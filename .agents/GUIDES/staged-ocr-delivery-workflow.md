@@ -7,10 +7,10 @@ records rationale, and the [TODO](../TODOS/capture-runtime-042-p2-hardening.md)
 is the executable checklist. P1/PDF/acceptance/contract documents are context,
 not alternate Phase 2 policy.
 
-## Checkpoint first: 2026-09-09
+## Checkpoint first: 2026-09-10
 
 This closure starts from expected HEAD
-b7fed18bb25cdb52df02e6ccd76eb82cdc44f621. D0 is complete for the documentation
+a51cd6876b2a4dc5eae378358a3aaa710d2cfce2. D0 is complete for the documentation
 commit, but its SHA is intentionally external: record git rev-parse HEAD after
 commit. D1 is pending fresh Standards and Specification review at that exact
 head. Preserve untracked .github/copilot-instructions.md and
@@ -153,15 +153,25 @@ explicit target/schema creation; do not invoke the proposed name early. The
 existing `capture-workbench-desktop:acceptance-real` target remains a local
 installed diagnostic and is non-D4.
 
-The producer's canonical V1 wires are
-`AcceptanceChildWireV1`, `ProducerChildInvocationV1`, and private
-`PrivateOcrTruthOracleV1`, owned by
-`tools/three-project-acceptance.ts:runAcceptanceSequence` and
-`tools/acceptance-contract.ts:writeAcceptanceManifest`. Child wires use unique
-`sequenceIndex`, `childKey`, `legId`, `childId`, `root`, and `artifactId`, bind
-the D3 candidate id/manifest/artifact digests, and carry media/artifact
-digests; the four legs are Capture private JPEG, Capture scanned PDF page 1,
-Cert, and LAW.
+The producer-owned V1 protocol has three distinct records and paths:
+`ProducerChildScopeV1` is producer-mutable at
+`CAPTURE_ACCEPTANCE_SCOPE_PATH`; the child writes one
+`ConsumerSemanticResultV1` at `CAPTURE_ACCEPTANCE_SEMANTIC_RESULT_PATH`; and
+the producer validates that result, proves cleanup, then writes immutable
+`AcceptanceChildWireV1` at `CAPTURE_ACCEPTANCE_WIRE_PATH`. The child never
+receives or writes the scope or wire. A read-only invocation snapshot may be
+nested in the scope/input, but it contains no future result/wire/output digest.
+The wire includes parentGate/tier, the D3 or D6 ledger binding, invocation
+digest, `fixtureResults[]` with actual normalized-output digest/CER/anchor
+omissions/outcome/projection digest, expected normalized-truth and anchor-set
+digests, child semantic-result digest, artifact IDs, detailed producer cleanup,
+privacy flags, and its self-excluded canonical JSON digest. The invocation has
+ready state, child/sequence identity, D4/D3 or
+D7/D6 download/publication binding, predecessor cleanup-proof digests,
+oracle/media assignment, a separate output path nonce, and no future result or
+wire digest. Cert and LAW reference this exact producer schema; they do not
+redefine it.
+
 Serialize canonical compact UTF-8 JSON with sorted object keys, semantic array
 ordering, self-digest omission, and lowercase SHA-256. Hash exact raw bytes;
 keep raw truth local and export expected normalized-truth/anchor digests only.
@@ -174,13 +184,24 @@ Cert migrates from
 `cert-prep/apps/cert-prep-desktop/scripts/ocr-truth-contract.mts:normalizeOcrText`,
 `cert-prep/apps/cert-prep-desktop/scripts/ocr-truth-contract.mts:parseOcrTruthManifest`,
 `cert-prep/apps/cert-prep-desktop/scripts/ocr-truth-contract.mts:levenshtein`,
+`cert-prep/apps/cert-prep-desktop/scripts/acceptance-real-options.mts:parseOcrAnchorExpectation`,
 `cert-prep/apps/cert-prep-desktop/scripts/phase1-acceptance-evidence.mts:buildPhase1AcceptanceEvidence`,
 and `cert-prep/apps/cert-prep-desktop/scripts/ocr-semantic-evidence.mts:serializePrivacySafeOcrSemanticEvidence`.
+The formal D4/D7 Cert path deletes/prohibits `anchorOnly` and
+`parseOcrAnchorExpectation`; a full private normalized reference plus critical
+anchors is required.
 LAW migrates from
 `gx.law-prep/apps/law-prep-engine/src/main/java/com/gx/lawprep/engine/capture/FoundryCaptureStructuringProvider.java:FoundryCaptureStructuringProvider`,
 `gx.law-prep/apps/law-prep-engine/src/main/java/com/gx/lawprep/engine/extraction/EvidenceTextExtractionService.java:EvidenceTextExtractionService`,
 `gx.law-prep/apps/law-prep-web-e2e/src/e2e/support/acceptance-expectations.ts:loadLawAcceptanceExpectation`,
-and `gx.law-prep/apps/law-prep-web-e2e/src/e2e/support/acceptance-artifacts.ts:writeAcceptanceManifest`. The standalone
+`gx.law-prep/apps/law-prep-web-e2e/src/e2e/support/acceptance-artifacts.ts:writeAcceptanceManifest`,
+and `gx.law-prep/apps/law-prep-ai-service/src/app/ocr/service.py:OcrExtractionService.extract`.
+The Python adapter uses producer-authenticated opaque `requestRef` start/get/
+cancel/delete, atomically journals the ref before the capture side effect,
+retains sanitized cleanup state for a bounded period, and uses the existing
+v2 capture operation/lifecycle. It adds no OCR route or engine, exposes no
+token/path/native id, and retains API `2.0` plus `CaptureOcrProjectionV3`
+schema `3`. The standalone
 `real-jpeg-acceptance-coordinator.ts:runRealJpegAcceptance`/CLI migrates into
 the sole producer runner, then is deleted with its test and async-boundary
 allowance after residual scans and replacement tests pass.
@@ -254,16 +275,20 @@ The four children are unique within one run: sequence/child-key/leg-id are
 `(1, capture-private-jpeg, capture-private-jpeg-v1)`,
 `(2, capture-scanned-pdf-page1, capture-scanned-pdf-page1-v1)`,
 `(3, cert, cert-v1)`, and `(4, law, law-v1)`. Each also receives a distinct
-`childId`, `root`, and `artifactId`, plus exact artifact and cleanup proof;
-none may be reused by another leg, candidate, or prior session. The cleanup
-proof and model-memory release are committed before the next child begins.
+`childId`, `root`, and `artifactIds`, plus exact artifact and cleanup proof;
+none may be reused by another leg, candidate, or prior session. The child
+writes only its write-once semantic result; the producer validates it, proves
+cleanup and model-memory release, and emits the immutable wire before the next
+child begins.
 The standalone `apps/capture-workbench-desktop/scripts/real-jpeg-acceptance-coordinator.ts:runRealJpegAcceptance`
 and CLI are migrated into `tools/three-project-acceptance.ts:runAcceptanceSequence`
 as the sole producer runner, then deleted with their test and async-boundary
 allowance only after residual scans and replacement tests pass.
 
 Stop at the first semantic, identity, process, listener, or cleanup failure.
-The completed local-probe Phase 1 result does not satisfy D3-D8.
+The completed local-probe Phase 1 result does not satisfy D3-D8. Cert and LAW
+adapt the exact producer result/wire and never own a competing scope, truth, or
+wire schema.
 
 ## Journal and lifecycle boundary
 
@@ -276,6 +301,13 @@ the current unnamed no-breakaway Job with
 never weakens close/crash cleanup. Never persist raw tokens, OCR, source/model
 paths, command lines, or machine names. A PID, port, parent process,
 executable name, or directory name alone is not ownership proof.
+
+R3 `open`/`prepare` durably writes `planned` and returns
+`PreparedRuntimeSession { ReconcileRef, generation }` before activation. The
+producer host persists both values before `activate`. Reconciliation returns
+semantic cleanup and `proofSha256`; candidate and prior refs are distinct. For
+`prior=null`, the prior ref and predecessor proof digest are null and no proof
+is implied. A non-null prior requires its exact proof digest and generation.
 
 Live in-memory `terminate_and_prove` has the private Job handle, membership,
 and root/session nonce, so it may terminate only that live producer-owned group
@@ -301,7 +333,11 @@ process id, path, or takeover lease; candidate and prior sessions each receive
 a distinct ref. The journal graph is
 `planned -> launching -> running -> closing -> terminal`, with
 `planned -> reconcile-required` and
-`launching|running|closing -> reconcile-required`. Direct
+`launching|running|closing -> reconcile-required`. A later
+`reconcile-required -> terminal` is guarded by full observe-only proof,
+expected state/generation CAS, and a committed self retry attempt update. After
+three automatic failures, the record stays `manual-review` blocked, never
+terminal, and cannot launch a replacement. Direct
 `planned -> terminal` is permitted only when durable proof shows no resource
 could have existed before setup/root/listener/staging acquisition and no
 resource acquisition was attempted; otherwise

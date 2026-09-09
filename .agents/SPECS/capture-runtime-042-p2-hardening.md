@@ -8,10 +8,10 @@ fresh Standards and Specification review at that exact head. This document is
 design and delivery policy; it does not authorize implementation, packaging,
 publication, or stable-pointer mutation.
 
-## Current checkpoint: 2026-09-09
+## Current checkpoint: 2026-09-10
 
 - This closure starts from expected HEAD
-  `b7fed18bb25cdb52df02e6ccd76eb82cdc44f621`. The only pre-existing working
+  `a51cd6876b2a4dc5eae378358a3aaa710d2cfce2`. The only pre-existing working
   tree changes are untracked `.github/copilot-instructions.md` and
   `.github/instructions/`; they are preserved and are not part of this slice.
 - PR #39 is at `c6d2140e233de70734005713427f77f92414f415`; its deterministic CI
@@ -382,12 +382,22 @@ Interface shape:
 
 ```text
 OwnedRuntimeSession::open(plan) -> Result<OwnedRuntimeSession, LaunchError>
-session.start_one(spec) -> Result<RootLease, LaunchError>
-session.start_root(role, spec) -> Result<RootLease, LaunchError>
+session.prepare(role, spec) -> Result<PreparedRuntimeSession, LaunchError>
+PreparedRuntimeSession { ReconcileRef, generation }
+session.activate(prepared) -> Result<RootLease, LaunchError>
+session.start_one(spec) -> Result<RootLease, LaunchError>  // convenience
+session.start_root(role, spec) -> Result<RootLease, LaunchError>  // convenience
 session.observe(root) -> Result<RuntimeObservation, LifecycleError>
 session.close_root(root, reason) -> Result<RootProof, CleanupError>
 session.close_group(reason) -> Result<GroupProof, CleanupError>
 ```
+
+`open`/`prepare` durably writes the producer journal in `planned` before
+returning `PreparedRuntimeSession`. The producer host must durably persist the
+returned `ReconcileRef` and `generation` before calling `activate`; activation
+is rejected if that persistence is missing or stale. `start_one` and
+`start_root` are compatibility conveniences that perform the same prepare,
+persistence, and activate sequence; they do not bypass it.
 
 `start_one` is the one-root convenience; `start_root` lets a producer put the
 Capture, Python, and Java roots used by LAW in one producer-owned Job/group.
@@ -432,11 +442,17 @@ The R3 journal seam is addressable and observe-only after restart:
 `RuntimeSessionJournal::reconcile(ReconcileRef) -> ReconcileResult`. The
 producer allocates a distinct opaque `ReconcileRef` for every candidate or
 prior session; it is a journal index/address only, not a job, process, PID,
-path, or takeover lease. `ReconcileResult` contains semantic state and a
-sanitized reason/proof digest, never native identifiers. A restart observer may
-terminalize only the exact ref whose absence/listener/staging proof is complete;
-present, reused, unqueryable, or ambiguous observations return
-`reconcile-required` and do not touch resources.
+path, or takeover lease. `ReconcileResult` contains semantic state, a
+sanitized cleanup result, and `proofSha256` when proof exists, never native
+identifiers. A restart observer may terminalize only the exact ref whose full
+absence/listener/staging proof is complete; present, reused, unqueryable, or
+ambiguous observations return `reconcile-required` and do not touch resources.
+Candidate and prior refs are always distinct. If `prior=null` (the first
+sequence item), `priorSessionRef` and `predecessorCleanupProofSha256` are both
+null: null means no predecessor, never that cleanup was already proven. If a
+prior ref is present, its cleanup-proof digest and generation are mandatory and
+must bind that exact prior record; a candidate may not borrow a different
+candidate's or prior session's proof.
 
 ## RuntimeSessionJournalV1 and reconciliation
 
@@ -456,8 +472,8 @@ schema is exactly versioned as `RuntimeSessionJournalV1`:
   "sessionNonce": "128-bit-random-opaque-nonce",
   "generation": 4,
   "state": "running",
-  "createdAt": "2026-09-09T00:00:00Z",
-  "updatedAt": "2026-09-09T00:00:02Z",
+  "createdAt": "2026-09-10T00:00:00Z",
+  "updatedAt": "2026-09-10T00:00:02Z",
   "jobBinding": { "setupState": "committed", "jobNonce": "opaque-native-binding" },
   "stagingBinding": {
     "runNonce": "same-session-nonce",
@@ -474,7 +490,7 @@ schema is exactly versioned as `RuntimeSessionJournalV1`:
       "listenerBindings": [
         { "kind": "sidecar-http", "loopbackPort": 43123, "bindingNonce": "opaque-listener-binding" }
       ],
-      "startedAt": "2026-09-09T00:00:01Z"
+      "startedAt": "2026-09-10T00:00:01Z"
     }
   ],
   "proof": null,
@@ -504,20 +520,26 @@ positive Windows process id; `creationIdentity` is the native creation-time
 value captured at launch and is compared exactly; and `loopbackPort` is an
 integer from 1 through 65535. `rootDigest` is lowercase SHA-256 over the
 producer-resolved run-staging identity, not a source path. `state` is one of
-`planned`, `launching`, `running`, `closing`, `terminal`, or
-`reconcile-required`; proof booleans may be true only after the corresponding
+`planned`, `launching`, `running`, `closing`, `terminal`,
+`reconcile-required`, or `manual-review`; `manual-review` is a blocked,
+nonterminal state. Proof booleans may be true only after the corresponding
 binding has been checked. The JSON example uses opaque placeholders to avoid
 recording real identifiers; an implementation must validate these types and
 closed values before accepting a journal.
 
 The cleanup policy is also fixed: one journal generation receives at most three
-identity-scoped reconciliation attempts within a 60-second monotonic budget.
-Each attempt increments `attempt` atomically; a timeout or third failed attempt
-transitions to `reconcile-required` and does not start a replacement root. A
-terminal `proof` must contain `rootReaped`, `descendantsTerminated`,
-`listenersReleased`, `stagingReleased`, and the committed `proofGeneration`,
-all true and tied to the same session/root nonces. A boolean without matching
-identity evidence is invalid proof.
+identity-scoped automatic reconciliation attempts within a 60-second monotonic
+budget. Each self retry increments `attempt` and `generation` atomically. A
+later full observe-only proof may take the guarded
+`reconcile-required -> terminal` transition only when the expected
+state/generation compare-and-swap succeeds and that self retry attempt update
+is committed in the same producer record. A timeout or third failed automatic
+attempt transitions to `manual-review`, remains promotion-blocked, and never
+pretends to be terminal or starts a replacement root. A terminal `proof` must
+contain `rootReaped`, `descendantsTerminated`, `listenersReleased`,
+`stagingReleased`, and the committed `proofGeneration`, all true and tied to
+the same session/root nonces. A boolean without matching identity evidence is
+invalid proof.
 
 `pid` and native creation identity are private producer data. Evidence and host
 responses emit only a stable digest or boolean proof. A listener port is not an
@@ -561,17 +583,22 @@ be removed; one ambiguous root blocks the entire group.
 Only the producer writer may transition a journal. Valid transitions are
 `planned -> launching -> running -> closing -> terminal`,
 `planned -> reconcile-required`, and
-`launching|running|closing -> reconcile-required`. A direct
-`planned -> terminal` is valid only with durable proof that no resource could
-ever have existed: Job setup was not committed, no root was resumed or
-launched, no listener was bound, no staging was acquired, and no resource
-acquisition was attempted. If any one of those facts is unknown, the journal
-must take `planned -> reconcile-required` instead. A transition uses
-compare-and-swap on the expected generation and state, writes a temporary file
-in the same producer directory, flushes it, atomically replaces the journal,
-and flushes the directory/file according to the platform adapter. A torn or
-unknown-generation write is a hard failure; the previous valid journal is
-retained. There is no best-effort terminal state.
+`launching|running|closing -> reconcile-required`. A later
+`reconcile-required -> terminal` is guarded: a full observe-only proof must
+succeed, the producer must CAS the expected state/generation, and the same
+record must commit the self retry attempt update. After three automatic
+failures, `manual-review` is the blocked state and no automatic terminal
+transition is allowed. A direct `planned -> terminal` is valid only with
+durable proof that no resource could ever have existed: Job setup was not
+committed, no root was resumed or launched, no listener was bound, no staging
+was acquired, and no resource acquisition was attempted. If any one of those
+facts is unknown, the journal must take `planned -> reconcile-required`
+instead. A transition uses compare-and-swap on the expected generation and
+state, writes a temporary file in the same producer directory, flushes it,
+atomically replaces the journal, and flushes the directory/file according to
+the platform adapter. A torn or unknown-generation write is a hard failure;
+the previous valid journal is retained. There is no best-effort terminal
+state.
 
 On a live producer close, the reconciler reads only producer-owned journals and
 validates schema, producer, session nonce, state, generation, private Job
@@ -651,139 +678,246 @@ GX Law Prep
 ```
 
 The runner stops on the first semantic, identity, process, listener, or
-cleanup failure. It records a child manifest and an overall terminal manifest
-only after the child journal reaches terminal proof. `tools/three-project-
-acceptance.ts` owns sequence orchestration and
-`tools/acceptance-contract.ts:writeAcceptanceManifest` owns manifest shape;
-the installed app and consumer assertion adapters are production seams.
+cleanup failure. The current `tools/three-project-acceptance.ts` child
+manifest is a legacy migration surface; the future producer contract below
+replaces it without adding a second runner. Its current validators and
+`tools/acceptance-contract.ts:writeAcceptanceManifest` remain useful only as
+red/green test seams until the replacement is implemented.
 
-### Canonical acceptance wires (proposed V1)
+### Canonical producer/consumer acceptance protocol (V1)
 
-These are producer-owned design/contract surfaces for the future D2/D3/D4
-implementation. The sole producer runner is
-`tools/three-project-acceptance.ts:runAcceptanceSequence` and
-`runCaptureWorkbenchAcceptance`; its validators are
-`validateChildManifest`, `validateTerminalManifest`,
-`validateCleanupEvidence`, and `verifyRecordedCleanupScope`, with manifest
-serialization at `tools/acceptance-contract.ts:writeAcceptanceManifest` and
-`readAcceptanceManifestTolerant`. The standalone
-`apps/capture-workbench-desktop/scripts/real-jpeg-acceptance-coordinator.ts:runRealJpegAcceptance`
-and `runRealJpegAcceptanceCli` are migration/deletion surfaces, not a second
-runner. Deletion waits for residual-caller, async-boundary, and replacement
-tests to pass.
+This is the producer-owned design contract for the future D2/D3/D4 and D7
+implementation. There is exactly one writer for each record and exactly one
+serial producer flow. The path names are producer-private process inputs (for
+example environment variables), not evidence fields or child-visible paths:
 
-`AcceptanceChildWireV1` is the privacy-safe child evidence envelope. Its
-canonical fields are schema/producer/run digest, sequence/leg/child/root/
-artifact identity, candidate id/manifest digest/D3 artifact digest set, media
-kind/digest, artifact records, expected truth/anchor digests, thresholds,
-normalization/distance, cleanup proof, and self digest:
+| Record | Owner, mutability, path | Visibility and order |
+| --- | --- | --- |
+| `ProducerChildScopeV1` | Producer only; mutable until the child is closed; `CAPTURE_ACCEPTANCE_SCOPE_PATH` | The producer durably writes `planned`, then may refresh the same scope while preparing/launching. The child receives only the read-only invocation input. |
+| `ConsumerSemanticResultV1` | The current child only; write-once; `CAPTURE_ACCEPTANCE_SEMANTIC_RESULT_PATH` | The child writes one complete semantic result after its assertion. The producer reads and validates it; a second write, overwrite, or partial record fails closed. |
+| `AcceptanceChildWireV1` | Producer only; immutable after cleanup; `CAPTURE_ACCEPTANCE_WIRE_PATH` | The producer validates the result, completes cleanup, and only then emits the wire. The child never receives or writes this path. |
+
+The producer flow is: (1) create the scope and durably record `planned`; (2)
+prepare the runtime session and persist its opaque reconcile reference and
+generation before activation; (3) derive a `ProducerChildInvocationV1` with
+`readyState: "ready"` and pass only that read-only input to the child; (4) let
+the child write its one `ConsumerSemanticResultV1`; (5) validate the semantic
+result against the private oracle, exact fixture/media/artifact identity, and
+the applicable D3 or D6 ledger; (6) close/reconcile and prove producer-owned
+process, listener, staging, capture, and model-memory cleanup; and (7) emit
+one immutable `AcceptanceChildWireV1`. A failed validation or cleanup emits no
+wire and blocks the next sequence item. A read-only invocation snapshot may be
+nested in `scope.input` or the child input; it never includes a future result,
+wire, or output digest.
+
+`ProducerChildScopeV1` is mutable producer state, not consumer evidence. Its
+minimum shape is:
 
 ```json
 {
-  "schemaVersion": "AcceptanceChildWireV1",
+  "schemaVersion": "ProducerChildScopeV1",
   "producer": "capture-runtime",
+  "parentGate": "D4",
+  "tier": "candidate",
   "runIdDigest": "<sha256-lower-hex>",
   "sequenceIndex": 1,
   "childKey": "capture-private-jpeg",
   "legId": "capture-private-jpeg-v1",
   "childId": "<sha256-lower-hex>",
   "root": "<sha256-lower-hex>",
-  "artifactId": "<sha256-lower-hex>",
-  "candidateId": "<sha256-lower-hex>",
-  "candidateManifestSha256": "<sha256-lower-hex>",
-  "d3ArtifactDigests": [{ "artifactKey": "runtime", "sha256": "<sha256-lower-hex>" }],
-  "mediaKind": "jpeg",
-  "mediaDigest": "<sha256-lower-hex>",
-  "artifactDigests": [{ "artifactKey": "output-0", "bytes": 0, "sha256": "<sha256-lower-hex>" }],
-  "expectedNormalizedTruthSha256": "<sha256-lower-hex>",
-  "expectedAnchorSetSha256": "<sha256-lower-hex>",
-  "cerThreshold": 0.03,
-  "normalization": "nfkc-whitespace-v1",
-  "distance": "code-point-levenshtein-v1",
-  "cleanupProof": {
-    "journalTerminal": true,
-    "processesAbsent": true,
-    "listenersAbsent": true,
-    "stagingAbsent": true,
-    "proofSha256": "<sha256-lower-hex>"
-  },
-  "wireSha256": "<sha256-lower-hex>"
+  "artifactIds": ["<sha256-lower-hex>"],
+  "readyState": "planned",
+  "input": { "invocationSnapshot": "read-only-ProducerChildInvocationV1" },
+  "predecessorCleanupProofSha256": null,
+  "outputPathNonce": "<random-opaque-nonce>"
 }
 ```
 
-`ProducerChildInvocationV1` is the producer-to-child invocation envelope. It
-contains `schemaVersion`, `producer`, `sequenceIndex`, `childKey`, `legId`,
-`childId`, `root`, `artifactId`, `candidateId`, `candidateManifestSha256`,
-`d3ArtifactDigests`, `mediaDigest`, `truthOracleSha256`, `childWireSha256`,
-and `invocationSha256`. Candidate identity and every D3 artifact digest are
-supplied from the immutable D3 ledger; no raw process handle, path, source
-tree, or mutable URL is an invocation input.
+The scope may contain private resolved paths and the private oracle reference
+in memory, but neither is serialized into a child wire. The output path nonce
+is separate from the input/session nonce and is used to reject stale or
+cross-child output. The producer must not put any child-result digest or wire
+digest in this scope before the child runs.
+
+`ConsumerSemanticResultV1` is the child's one write-once semantic handoff. It
+contains no scope or wire path and no native/process identity:
 
 ```json
 {
-  "schemaVersion": "ProducerChildInvocationV1",
+  "schemaVersion": "ConsumerSemanticResultV1",
+  "consumer": "cert-or-law-adapter",
+  "parentGate": "D4",
+  "tier": "candidate",
+  "sequenceIndex": 3,
+  "childKey": "cert",
+  "legId": "cert-v1",
+  "childId": "<sha256-lower-hex>",
+  "artifactIds": ["<sha256-lower-hex>"],
+  "fixtureResults": [{
+    "fixtureId": "private-fixture-1",
+    "actualNormalizedOutputSha256": "<sha256-lower-hex>",
+    "cer": 0.0,
+    "anchorOmissions": 0,
+    "outcome": "passed",
+    "projectionSha256": "<sha256-lower-hex>"
+  }],
+  "semanticResultSha256": "<sha256-lower-hex>"
+}
+```
+
+The producer validates the child result's schema, scope identity, ledger
+binding, fixture cardinality/order, actual normalized output digest, CER,
+anchor omissions, outcome, projection digest, artifact IDs, and self-excluded
+semantic digest. Cert and LAW consume this exact semantic result and never
+redefine `AcceptanceChildWireV1`, `ProducerChildScopeV1`, or a competing truth
+contract.
+
+`AcceptanceChildWireV1` is the only canonical acceptance evidence envelope.
+Its exact producer schema is:
+
+```json
+{
+  "schemaVersion": "AcceptanceChildWireV1",
   "producer": "capture-runtime",
+  "parentGate": "D4",
+  "tier": "candidate",
+  "runIdDigest": "<sha256-lower-hex>",
   "sequenceIndex": 1,
   "childKey": "capture-private-jpeg",
   "legId": "capture-private-jpeg-v1",
   "childId": "<sha256-lower-hex>",
   "root": "<sha256-lower-hex>",
-  "artifactId": "<sha256-lower-hex>",
-  "candidateId": "<sha256-lower-hex>",
-  "candidateManifestSha256": "<sha256-lower-hex>",
-  "d3ArtifactDigests": [{ "artifactKey": "runtime", "sha256": "<sha256-lower-hex>" }],
-  "mediaDigest": "<sha256-lower-hex>",
-  "truthOracleSha256": "<sha256-lower-hex>",
-  "childWireSha256": "<sha256-lower-hex>",
+  "artifactIds": ["<sha256-lower-hex>"],
+  "ledgerBinding": {
+    "sourceGate": "D3",
+    "ledgerSha256": "<sha256-lower-hex>",
+    "candidateId": "<sha256-lower-hex>",
+    "candidateManifestSha256": "<sha256-lower-hex>",
+    "artifactDigests": [{ "artifactKey": "runtime", "sha256": "<sha256-lower-hex>" }]
+  },
+  "invocationSha256": "<sha256-lower-hex>",
+  "media": { "kind": "jpeg", "sha256": "<sha256-lower-hex>" },
+  "fixtureResults": [{
+    "fixtureId": "private-jpeg-1",
+    "page": null,
+    "actualNormalizedOutputSha256": "<sha256-lower-hex>",
+    "expectedNormalizedTruthSha256": "<sha256-lower-hex>",
+    "expectedAnchorSetSha256": "<sha256-lower-hex>",
+    "cer": 0.0,
+    "anchorOmissions": 0,
+    "cerThreshold": 0.03,
+    "normalization": "nfkc-whitespace-v1",
+    "distance": "code-point-levenshtein-v1",
+    "outcome": "passed",
+    "projectionSha256": "<sha256-lower-hex>",
+    "artifactId": "<sha256-lower-hex>"
+  }],
+  "childSemanticResultSha256": "<sha256-lower-hex>",
+  "producerCleanup": {
+    "journalState": "terminal",
+    "reconcileRefSha256": "<sha256-lower-hex>",
+    "generation": 4,
+    "automaticAttempts": 1,
+    "rootReaped": true,
+    "descendantsTerminated": true,
+    "listenersReleased": true,
+    "stagingReleased": true,
+    "captureDeleted": true,
+    "modelMemoryReleased": true,
+    "processesAbsent": true,
+    "listenersAbsent": true,
+    "stagingAbsent": true,
+    "proofSha256": "<sha256-lower-hex>"
+  },
+  "privacy": {
+    "rawOcr": false,
+    "rawTruth": false,
+    "rawMedia": false,
+    "tokens": false,
+    "paths": false,
+    "nativeIds": false
+  },
+  "wireSha256": "<sha256-lower-hex>"
+}
+```
+
+For D4, `ledgerBinding.sourceGate` is `D3` and binds the immutable candidate
+id, `ledgerSha256`, manifest digest, and every raw artifact digest. For D7, the
+same exact schema uses `parentGate: "D7"`, `tier: "published"`, and
+`ledgerBinding.sourceGate: "D6"`; its closed D6 variant carries
+`ledgerSha256`, `publicationLedgerSha256`, `downloadBundleSha256`, and every
+downloaded-byte digest. Cert and LAW must reference this exact producer schema
+and its `fixtureResults[]`; they may not create a local child wire or redefine
+the ledger fields. `parentGate` is closed to `D4`/`D7`, `tier` is closed to
+`candidate`/`published`, and the binding is fail-closed unless D4 pairs with
+D3/candidate or D7 pairs with D6/published.
+
+`fixtureResults[]` is mandatory and is never a summary average. Every entry
+records the actual normalized output digest, CER, anchor omissions, outcome,
+projection digest, and fixture artifact id. Every wire also includes the
+child semantic-result digest, top-level artifact IDs, detailed producer
+cleanup, privacy booleans, parent gate/tier, invocation digest, and the
+self-excluded canonical JSON digest. Raw OCR/truth/media, bearer tokens,
+private paths, and native identifiers stay producer-private.
+
+`ProducerChildInvocationV1` is an input, not an evidence record. It has a
+ready state, child/sequence identity, and exactly one of the two immutable
+binding forms: D4 input bound to the D3 candidate ledger, or D7 input bound to
+the D6 download/publication ledger. It also has predecessor cleanup-proof
+digests, private oracle assignment, media assignment, a separate output path
+nonce, and its self-excluded invocation digest:
+
+```json
+{
+  "schemaVersion": "ProducerChildInvocationV1",
+  "producer": "capture-runtime",
+  "parentGate": "D4",
+  "tier": "candidate",
+  "readyState": "ready",
+  "sequenceIndex": 1,
+  "childKey": "capture-private-jpeg",
+  "legId": "capture-private-jpeg-v1",
+  "childId": "<sha256-lower-hex>",
+  "root": "<sha256-lower-hex>",
+  "artifactIds": ["<sha256-lower-hex>"],
+  "ledgerBinding": { "sourceGate": "D3", "ledgerSha256": "<sha256-lower-hex>" },
+  "predecessorCleanupProofSha256": null,
+  "oracleAssignment": { "oracleSha256": "<sha256-lower-hex>", "fixtureId": "private-jpeg-1", "page": null },
+  "mediaAssignment": { "kind": "jpeg", "sha256": "<sha256-lower-hex>" },
+  "outputPathNonce": "<random-opaque-nonce>",
   "invocationSha256": "<sha256-lower-hex>"
 }
 ```
 
-`PrivateOcrTruthOracleV1` stays in the producer's local/private fixture scope.
-It contains `schemaVersion`, `producer`, `mediaKind`, `page`, `mediaDigest`,
-raw `truthText`, private `anchorTexts`,
-`expectedNormalizedTruthSha256`, `expectedAnchorSetSha256`,
-`normalization`, `distance`, `cerThreshold`, `anchorOmissionsAllowed`, and
-`oracleSha256`. Raw truth and anchors never enter a child wire, manifest,
-uploaded evidence artifact, or host response; only their evidence digests are
-exported. The Cert and LAW consumers adapt to this producer wire rather than
-owning a competing truth oracle:
+The D7 invocation uses the same identity fields and ready-state rules but its
+closed ledger binding is `{ "sourceGate": "D6", "ledgerSha256": "<sha256>",
+"publicationLedgerSha256": "<sha256>", "downloadBundleSha256": "<sha256>" }`;
+there is no D3/D7 ledger mixing and no mutable URL input.
 
-```json
-{
-  "schemaVersion": "PrivateOcrTruthOracleV1",
-  "producer": "capture-runtime",
-  "mediaKind": "jpeg",
-  "page": null,
-  "mediaDigest": "<sha256-lower-hex>",
-  "truthText": "<local-private-raw-truth>",
-  "anchorTexts": ["<local-private-anchor>"],
-  "expectedNormalizedTruthSha256": "<sha256-lower-hex>",
-  "expectedAnchorSetSha256": "<sha256-lower-hex>",
-  "normalization": "nfkc-whitespace-v1",
-  "distance": "code-point-levenshtein-v1",
-  "cerThreshold": 0.03,
-  "anchorOmissionsAllowed": 0,
-  "oracleSha256": "<sha256-lower-hex>"
-}
-```
+The invocation never contains a future result/wire digest, raw truth, raw
+media, source/model path, bearer token, process handle, PID, or mutable URL.
+The private `PrivateOcrTruthOracleV1` remains producer-local and may contain
+raw normalized reference text and critical anchors; only its digest and the
+per-fixture semantic measurements cross the wire. D4 and D7 require the full
+private normalized reference plus critical anchors. An anchor-only fixture is
+invalid. The formal Cert migration must delete/prohibit the `anchorOnly` flag
+and the `parseOcrAnchorExpectation` parser in
+`cert-prep/apps/cert-prep-desktop/scripts/ocr-truth-contract.mts` and
+`cert-prep/apps/cert-prep-desktop/scripts/acceptance-real-options.mts`; a
+red test leaves an anchor-only expectation or parser and must be rejected,
+while green requires full private normalized reference text and anchors with
+no anchor-only success path.
 
-* Cert adapter migration: `cert-prep/apps/cert-prep-desktop/scripts/ocr-truth-contract.mts:evaluateOcrTruth`,
-  `cert-prep/apps/cert-prep-desktop/scripts/ocr-truth-contract.mts:normalizeOcrText`,
-  `cert-prep/apps/cert-prep-desktop/scripts/ocr-truth-contract.mts:parseOcrTruthManifest`,
-  `cert-prep/apps/cert-prep-desktop/scripts/ocr-truth-contract.mts:levenshtein`,
-  `cert-prep/apps/cert-prep-desktop/scripts/phase1-acceptance-evidence.mts:buildPhase1AcceptanceEvidence`,
-  and `cert-prep/apps/cert-prep-desktop/scripts/ocr-semantic-evidence.mts:serializePrivacySafeOcrSemanticEvidence` /
-  `OCR_NORMALIZATION_VERSION`.
-* LAW adapter migration: `gx.law-prep/apps/law-prep-engine/src/main/java/com/gx/lawprep/engine/capture/FoundryCaptureStructuringProvider.java:FoundryCaptureStructuringProvider`,
-  `gx.law-prep/apps/law-prep-engine/src/main/java/com/gx/lawprep/engine/extraction/EvidenceTextExtractionService.java:EvidenceTextExtractionService`,
-  `gx.law-prep/apps/law-prep-web-e2e/src/e2e/support/acceptance-expectations.ts:loadLawAcceptanceExpectation`,
-  and `gx.law-prep/apps/law-prep-web-e2e/src/e2e/support/acceptance-artifacts.ts:writeAcceptanceManifest`.
+The private oracle's closed fields remain `schemaVersion`, `producer`,
+`mediaKind`, `page`, `mediaDigest`, raw `truthText`, private `anchorTexts`,
+`expectedNormalizedTruthSha256`, `expectedAnchorSetSha256`, `normalization`,
+`distance`, `cerThreshold`, `anchorOmissionsAllowed`, and its self-excluded
+`oracleSha256`. It is never sent to Cert, LAW, a child, an uploaded artifact,
+or a host response.
 
 The four producer legs are fixed and independently addressable. Their
-`sequenceIndex`, `childKey`, `legId`, `childId`, `root`, and `artifactId` must
-all be unique within a run and must not be reused across candidate/prior
-sessions:
+`sequenceIndex`, `childKey`, `legId`, `childId`, `root`, and `artifactIds` are
+unique within a run and never reused across candidate/prior sessions:
 
 | sequenceIndex | childKey | legId | media/adapter |
 | ---: | --- | --- | --- |
@@ -792,33 +926,31 @@ sessions:
 | 3 | `cert` | `cert-v1` | Cert adapter |
 | 4 | `law` | `law-v1` | LAW adapter |
 
-Each child emits its own artifact and exact cleanup proof before the next
-`sequenceIndex` starts. The existing standalone real-JPEG coordinator is
-migrated into the sole `runAcceptanceSequence` producer runner, then deleted
-along with its CLI/test and its special async-boundary allowance after
-`tools/check-async-boundary.ts` and residual caller scans are clean.
+Each child writes only its semantic result. The producer validates it, proves
+cleanup, then writes the immutable wire before the next `sequenceIndex`.
+The standalone
+`apps/capture-workbench-desktop/scripts/real-jpeg-acceptance-coordinator.ts:runRealJpegAcceptance`
+and `runRealJpegAcceptanceCli` are migration/deletion surfaces, not a second
+runner. Delete them only after residual-caller, async-boundary, and replacement
+tests are green.
 
 Identity derivation is deterministic and scope-bound: `runIdDigest` is the
 lowercase SHA-256 of the private run id; `childId` is the SHA-256 of canonical
-JSON containing `schemaVersion`, `producer`, `runIdDigest`, `sequenceIndex`,
-`childKey`, `legId`, `candidateId`, and `mediaDigest`; `root` is the SHA-256 of
-canonical JSON containing `producer`, `runIdDigest`, `childId`, the root role,
-and the opaque session-ref digest; and each `artifactId` is the SHA-256 of
-canonical JSON containing `producer`, `childId`, `artifactKey`, and its raw-byte
-artifact digest. The session-ref digest is not a native identifier. A
-candidate/prior session or another leg therefore cannot accidentally reuse an
-identity while raw run ids, paths, and native refs remain private.
+JSON containing schema, producer, run digest, sequence/leg identity, ledger
+candidate identity, and media digest; `root` includes the opaque session-ref
+digest; and each artifact id includes its raw-byte digest. A candidate/prior
+session or another leg cannot reuse an identity while raw run ids, paths, and
+native refs remain private.
 
 Serialization is deterministic: encode canonical compact UTF-8 JSON without a
 BOM or trailing newline; recursively sort object keys lexicographically;
 preserve arrays in semantic order (sort set-like digest lists by their stated
-digest/artifact-key); and emit SHA-256 as lowercase hex. Compute each self digest
-over the canonical JSON with its own `wireSha256`, `invocationSha256`, or
-`oracleSha256` field omitted. `mediaDigest` and every `artifactDigests.sha256`
-are SHA-256 over the exact raw JPEG/PDF or artifact bytes, never decoded,
-re-encoded, text, or path bytes. The expected truth digest is SHA-256 of the
-UTF-8 normalized raw truth; the expected anchor-set digest is SHA-256 of the
-canonical UTF-8 JSON of the deterministically ordered normalized anchor set.
+digest/artifact key); and emit SHA-256 as lowercase hex. Compute each self
+digest over canonical JSON with its own self-digest field omitted.
+`media.sha256` and every artifact digest cover exact raw JPEG/PDF or artifact
+bytes, never decoded/re-encoded text or path bytes. The expected truth digest
+is SHA-256 of the UTF-8 normalized raw truth; the expected anchor-set digest is
+SHA-256 of canonical UTF-8 JSON of the ordered normalized anchor set.
 
 `nfkc-whitespace-v1` is exactly: apply Unicode NFKC; convert CRLF, CR, LF,
 newlines, and every Unicode whitespace code point to ASCII U+0020; collapse
@@ -826,15 +958,59 @@ consecutive ASCII spaces to one; then trim. Preserve case, punctuation, and
 traditional/simplified characters: no lowercasing, transliteration, or
 punctuation stripping. `code-point-levenshtein-v1` compares Unicode code-point
 arrays with insertion, deletion, and substitution cost one. CER is zero only
-when both normalized values are empty; otherwise it is the distance divided by
-`max(expectedCodePointCount, 1)`, evaluated per fixture/page. Thresholds are
-PDF page 1 `0.01`, JPEG `0.03`, and required anchor omissions `0`; there is no
-average across pages, fixtures, products, or anchors.
+when both normalized values are empty; otherwise it is distance divided by
+`max(expectedCodePointCount, 1)`, per fixture/page. Thresholds are PDF page 1
+`0.01`, JPEG `0.03`, and anchor omissions `0`; there is no average across
+pages, fixtures, products, or anchors.
 
-Any schema, producer, sequence/leg/child/root/artifact, candidate/D3
-root/id/digest, media/truth digest, normalization, distance, threshold, raw
-artifact-byte, or cleanup-proof mismatch fails closed: emit no evidence, do
-not promote, and retain the sanitized failure record.
+The exact Cert migration seams are
+`cert-prep/apps/cert-prep-desktop/scripts/ocr-truth-contract.mts:evaluateOcrTruth`,
+`normalizeOcrText`, `parseOcrTruthManifest`, and `levenshtein`,
+`cert-prep/apps/cert-prep-desktop/scripts/acceptance-real-options.mts:parseOcrAnchorExpectation`,
+`cert-prep/apps/cert-prep-desktop/scripts/phase1-acceptance-evidence.mts:buildPhase1AcceptanceEvidence`,
+and `cert-prep/apps/cert-prep-desktop/scripts/ocr-semantic-evidence.mts:serializePrivacySafeOcrSemanticEvidence` /
+`OCR_NORMALIZATION_VERSION`. The exact LAW Java seams are
+`gx.law-prep/apps/law-prep-engine/src/main/java/com/gx/lawprep/engine/capture/FoundryCaptureStructuringProvider.java:FoundryCaptureStructuringProvider`,
+`gx.law-prep/apps/law-prep-engine/src/main/java/com/gx/lawprep/engine/extraction/EvidenceTextExtractionService.java:EvidenceTextExtractionService`,
+`gx.law-prep/apps/law-prep-web-e2e/src/e2e/support/acceptance-expectations.ts:loadLawAcceptanceExpectation`,
+and `gx.law-prep/apps/law-prep-web-e2e/src/e2e/support/acceptance-artifacts.ts:writeAcceptanceManifest`.
+These are migration seams, not claims that Cert or LAW already emit the
+producer records.
+
+### Python LAW adapter capture lifecycle
+
+The current Python adapter is
+`gx.law-prep/apps/law-prep-ai-service/src/app/ocr/service.py:OcrExtractionService.extract`,
+with its `CaptureRuntimeClient` construction in `_client`, readiness wait in
+`_wait_for_ocr_ready`, and cleanup in `_cleanup`. The future adapter adds
+producer-authenticated `start(requestRef)`, `get(requestRef)`,
+`cancel(requestRef)`, and `delete(requestRef)` operations using one opaque,
+random request reference. The producer atomically journals the request
+reference and operation intent before the first capture side effect; only then
+does it call the existing authenticated v2 capture lifecycle. The journal maps
+the opaque request reference to the private capture id, and get/cancel/delete
+resolve that mapping without exposing a token, path, capture id, or native id
+to the child or domain host. Cleanup retention is bounded and sanitized.
+
+This is the same `/v2/captures` operation and lifecycle already represented by
+`packages/capture-runtime/src/capture_runtime/routes/streaming.py` and
+`packages/capture-runtime-client-python/src/capture_runtime_client/client.py`
+(`start_capture`, `get_capture`, `cancel_capture`, `delete_capture`); it is
+not a second OCR route or engine. The public floor remains API `2.0`, raw and
+structured schema `2`, and `CaptureOcrProjectionV3` schema `3`. The exact
+LAW config seam is
+`gx.law-prep/apps/law-prep-ai-service/src/app/common/config.py:AiServiceConfig`.
+Migration red: a request reference is not journaled before POST, cleanup is
+unbounded, or a new route/engine is introduced; green: authenticated opaque
+start/get/cancel/delete uses one capture operation, bounded retention, and
+privacy-safe terminal proof. Discovery stop: confirm the LAW adapter's
+resolved client/config and current route metadata before assigning an Nx or
+workflow target; no such target is claimed by this docs checkpoint.
+
+Any schema, producer, sequence/leg/child/root/artifact, candidate/D3/D6
+root/id/digest, media/truth digest, normalization, distance, threshold,
+raw-byte, semantic-result, or cleanup-proof mismatch fails closed: emit no
+evidence, do not promote, and retain only the sanitized failure record.
 
 ### D3/D4 immutable-byte boundary (proposed target)
 

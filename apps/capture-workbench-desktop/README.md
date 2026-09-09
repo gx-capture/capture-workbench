@@ -8,7 +8,8 @@ The desktop host starts one verified `capture-runtime` sidecar on a random loopb
 
 ## Phase 2 checkpoint
 
-The current Capture Runtime 0.4.2 Phase 2 material is a docs/design checkpoint;
+The current Capture Runtime 0.4.2 Phase 2 material is a docs/design checkpoint
+(2026-09-10);
 it does not claim a published package, immutable candidate, installed
 acceptance result, or release. The existing
 `capture-workbench-desktop:acceptance-real` target is a local installed-runtime
@@ -17,7 +18,9 @@ diagnostic and is explicitly not D4. The future D4 target is proposed as
 `apps/capture-workbench-desktop/scripts/acceptance-d3-candidate.ts:runD3CandidateAcceptance`;
 it will accept externally supplied D3 root/id/digests and must never stage or
 build, import the source tree, or follow a mutable URL. That target is not
-present until its project metadata and schema are created and reviewed.
+present until its project metadata and schema are created and reviewed. The
+desktop host is a consumer and never writes producer scope, semantic-result,
+or acceptance-wire records.
 
 Run `corepack pnpm dev` for the product lane. It generates and stages release
 runtime assets before Tauri starts. `corepack pnpm dev:deterministic` remains a

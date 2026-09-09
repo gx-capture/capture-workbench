@@ -1,7 +1,7 @@
 # Capture Runtime 0.4.2 Phase 2 hardening decisions
 
 Status: canonical rationale record for the documentation checkpoint dated
-2026-09-09. The [Phase 2 SPEC](../SPECS/capture-runtime-042-p2-hardening.md)
+2026-09-10. The [Phase 2 SPEC](../SPECS/capture-runtime-042-p2-hardening.md)
 owns policy, actual owner paths, interface alternatives, journal schema,
 compute truth, acceptance, identity, and D0-D8 gates. The
 [TODO](../TODOS/capture-runtime-042-p2-hardening.md) owns executable work; the
@@ -10,7 +10,7 @@ compute truth, acceptance, identity, and D0-D8 gates. The
 ## Checkpoint and authority
 
 This closure starts from expected HEAD
-b7fed18bb25cdb52df02e6ccd76eb82cdc44f621. The four canonical docs and the two
+a51cd6876b2a4dc5eae378358a3aaa710d2cfce2. The four canonical docs and the two
 active READMEs are the modified scope. Untracked
 .github/copilot-instructions.md and .github/instructions/ are preserved and are
 not staged. The exact resulting SHA is not embedded in this
@@ -93,14 +93,23 @@ the current unnamed no-breakaway Job with
    explicit convergence/deletion surface, not a reason to add another
    coordinator.
 
+   R3 `open`/`prepare` durably writes `planned` and returns
+   `PreparedRuntimeSession { ReconcileRef, generation }` before activation. The
+   producer host must persist that ref and generation before calling `activate`;
+   one-root convenience methods cannot bypass this ordering. Reconciliation
+   returns semantic cleanup and `proofSha256`, never native identifiers.
+
    The addressable restart seam is the exact producer API
    `RuntimeSessionJournal::reconcile(ReconcileRef) -> ReconcileResult`.
    `ReconcileRef` is an opaque journal index/address, never a PID, Job handle,
    path, process id, or takeover lease. Candidate and prior sessions each get a
    distinct ref. `ReconcileResult` is semantic and observe-only after restart:
-   only exact absence/listener/staging proof may terminalize that ref;
+   only exact full absence/listener/staging proof may terminalize that ref;
    present, reused, unqueryable, or ambiguous observations return
-   `reconcile-required` and touch nothing.
+   `reconcile-required` and touch nothing. Candidate and prior refs are
+   distinct. For `prior=null`, both the prior ref and predecessor proof digest
+   are null and no cleanup proof is implied; a non-null prior requires its
+   exact proof digest and generation.
 
 5. **Existing native exports and callers are the migration boundary.**
    src/lib.rs exports OwnedRuntimeSession and its current error/proof types;
@@ -140,7 +149,11 @@ the current unnamed no-breakaway Job with
 
    The journal graph is `planned -> launching -> running -> closing -> terminal`,
    plus `planned -> reconcile-required` and
-   `launching|running|closing -> reconcile-required`. A direct
+   `launching|running|closing -> reconcile-required`. A later
+   `reconcile-required -> terminal` is guarded by a full observe-only proof,
+   expected state/generation CAS, and a committed self retry attempt update.
+   After three automatic failures the record stays `manual-review` blocked,
+   never terminal, and cannot launch a replacement. A direct
    `planned -> terminal` is allowed only when durable proof shows no resource
    could have existed before Job setup/root resume/listener/staging/resource
    acquisition was attempted; otherwise it is `reconcile-required`.
@@ -169,22 +182,36 @@ the current unnamed no-breakaway Job with
 9. **Acceptance is per fixture and serial.** Every real scanned PDF page 1
    must have CER <= 1%; every real private JPEG must have CER <= 3%; no
    critical-anchor omissions are allowed; CER is never averaged. The producer
-   owns proposed `AcceptanceChildWireV1`, `ProducerChildInvocationV1`, and
-   private `PrivateOcrTruthOracleV1`; canonical compact UTF-8 JSON excludes
-   each self digest, hashes exact raw media/artifact bytes, and exports truth
-   digests only. `nfkc-whitespace-v1` is NFKC then newline/Unicode-whitespace
-   collapse to ASCII space and trim, preserving case/punctuation and
-   traditional/simplified characters; distance is code-point Levenshtein v1.
-   D4 consumes only D3 candidate bytes and runs four unique legs:
-   `(1, capture-private-jpeg, capture-private-jpeg-v1)`,
-   `(2, capture-scanned-pdf-page1, capture-scanned-pdf-page1-v1)`,
-   `(3, cert, cert-v1)`, `(4, law, law-v1)`, each with unique childId/root/
-   artifactId and cleanup proof before the next. D7 consumes only D6
-   download-back bytes and repeats that sequence. Model memory and
-   journal/process/listener/staging cleanup must be proven before each next
-   child. Cert and LAW adapter migration paths are named in the SPEC; the
-   standalone real-JPEG coordinator is migrated/deleted in favor of the sole
+   is the sole writer of mutable `ProducerChildScopeV1` at
+   `CAPTURE_ACCEPTANCE_SCOPE_PATH`, validates the child's write-once
+   `ConsumerSemanticResultV1` at
+   `CAPTURE_ACCEPTANCE_SEMANTIC_RESULT_PATH`, performs cleanup, and then emits
+   immutable `AcceptanceChildWireV1` at `CAPTURE_ACCEPTANCE_WIRE_PATH`. A child
+   never receives or writes scope or wire records. The exact wire includes
+   parentGate/tier, D3 or D6 ledger binding, invocation digest,
+   `fixtureResults[]` with actual normalized-output digest/CER/anchor omissions/
+   outcome/projection digest, expected normalized-truth and anchor-set digests,
+   child semantic-result digest, artifact IDs, detailed producer cleanup,
+   privacy flags, and its self-excluded canonical JSON digest. The invocation includes ready state, child/sequence identity,
+   either D4/D3 or D7/D6 download/publication binding, predecessor cleanup
+   proof digests, oracle/media assignment, and a separate output path nonce;
+   it contains no future result/wire digest. D4 consumes only D3 candidate
+   bytes and runs four unique legs; D7 consumes only D6 download-back bytes and
+   repeats that sequence. Cert and LAW reference this exact producer schema and
+   do not redefine it. D4/D7 require full private normalized reference text
+   plus critical anchors; the formal Cert migration deletes/prohibits the
+   `anchorOnly` flag and `parseOcrAnchorExpectation` parser. The standalone
+   real-JPEG coordinator is migrated/deleted in favor of the sole
    `tools/three-project-acceptance.ts:runAcceptanceSequence` runner.
+
+   The Python LAW adapter migration is anchored at
+   `gx.law-prep/apps/law-prep-ai-service/src/app/ocr/service.py:OcrExtractionService.extract`
+   and its `CaptureRuntimeClient` seam. Producer-authenticated opaque
+   `requestRef` owns start/get/cancel/delete; the producer journals the ref
+   atomically before capture side effect, retains cleanup state for a bounded
+   period, and uses the same v2 capture operation/lifecycle, not another OCR
+   route or engine. Tokens, paths, and native ids never cross the seam. API
+   `2.0` and `CaptureOcrProjectionV3` schema `3` remain unchanged.
 
 10. **Release gates do not collapse.** D0 DocsCommitted is the current docs
     commit and has no self-hash. D1 is pending exact-head review. D2 is
