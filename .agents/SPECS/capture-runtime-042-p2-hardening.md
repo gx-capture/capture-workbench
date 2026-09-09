@@ -1,8 +1,9 @@
 # Capture Runtime 0.4.2 Phase 2 hardening (canonical design)
 
 Status: design-only. This file is the canonical Phase 2 policy and acceptance
-source for a fresh Luna xhigh worker. It does not grant implementation,
-candidate, release, or publication authority.
+source for a fresh worker. It does not grant implementation, candidate,
+release, or publication authority. The DECISION, TODO, and GUIDE link here;
+they do not restate this policy.
 
 ## Current checkpoint: 2026-09-09
 
@@ -16,13 +17,14 @@ candidate, release, or publication authority.
   evidence is recorded here. There is no immutable candidate and no published
   `0.4.2`. PR #39 and current heads are engineering/release freshness facts;
   they do not negate Phase 1 completion.
-- Only these four documents may be edited in this task. Phase 2 entry is allowed
-  at documentation/design/review; implementation slices follow the approved
-  TODO gates.
+- This task edits the four canonical Phase 2 documents and may add only the
+  narrowly scoped historical banners named in the TODO. Phase 2 entry is
+  allowed at documentation/design/review; implementation slices follow the
+  recorded TODO gates.
 
 The exact implementation-slice gate is: current-HEAD design review by Standards and
 Specification axes, the serious grill questions resolved one at a time, an
-approved small vertical slice, and a fresh worker/checkpoint. Until then, do
+authorized small vertical slice, and a fresh worker/checkpoint. Until then, do
 not write feature code, run a model-enabled journey, build a candidate, publish
 an artifact, or alter Cert/Law. A green deterministic CI run is not real OCR,
 GPU, cleanup, install, or release evidence.
@@ -60,8 +62,8 @@ Change mode: **mixed**.
 | Decision | Rule for this Phase 2 design |
 | --- | --- |
 | Edit | Edit the four existing owner files: this SPEC, its DECISION, its TODO, and the staged OCR delivery GUIDE. Preserve their stable paths. |
-| Delete/supersede | Name obsolete policy and documents as candidates below. A later implementation worker may remove them only after ownership, replacement tests, and an additive commit are proven. No other file is edited here. |
-| Create | Create a file only when no existing owner can hold the lifecycle or seam. A new module, schema, fixture, or command requires a separate approved vertical slice. |
+| Delete/supersede | Name obsolete policy and documents as candidates below. A later implementation worker may remove them only after ownership, replacement tests, and an additive commit are proven. The only historical edits in this checkpoint are the banners listed in the TODO. |
+| Create | Create a file only when no existing owner can hold the lifecycle or seam. A new module, schema, fixture, or command requires a separate authorized vertical slice. |
 
 ### Supersession map
 
@@ -75,7 +77,7 @@ Change mode: **mixed**.
 
 These are candidates, not permission to edit those files now. Existing P1,
 PDF, acceptance, and contract documents remain historical/contextual owners
-until a focused supersession commit updates them. Their relevant constraints
+until a named supersession commit updates them. Their constraints
 are [P1 OCR and lifecycle](../SPECS/capture-runtime-042-p1-ocr-and-lifecycle.md),
 [P1 compute preflight](../SPECS/capture-runtime-042-p1-ocr-compute-preflight.md),
 [PDF OCR-only](../SPECS/pdf-ocr-only-extraction.md),
@@ -120,54 +122,180 @@ does not create a second wire policy.
 
 ## Phase 2 deep modules
 
-Each module has a small external interface. Its interface includes the type
-shape plus invariants, ordering, error modes, required configuration, and
-performance behavior. Internal seams are private test seams; they are not
-promoted to callers merely to make tests convenient.
+Each module has one external interface. Interface means inputs and results plus
+invariants, ordering, typed errors, required configuration, performance and
+resource behavior. Internal seams are private test seams; they are not
+promoted to callers merely to make tests convenient. The established modules
+below have a concrete contract. `OcrPipeline` and `OwnedRuntimeSession` are
+deliberately interface-neutral until the Design-It-Twice gate completes.
 
-| Module and interface | Hidden policy and invariants | Dependencies and adapters | Deletion test |
+| Module | Interface state | Dependency category and adapters | Deletion test |
 | --- | --- | --- | --- |
-| `OcrPipeline.run(request) -> CaptureOcrProjectionV3` | One source request in, one ordered page-complete projection out. PDFium/Pillow rasterize before worker dispatch; predictor initializes once; inference is serialized; malformed or incomplete pages fail atomically; all-pages is the default. Errors are typed and sanitized. Baseline is measured per fixture before optimization. | In-process normalization; local-substitutable page planner; producer-owned worker is a remote-but-owned transport adapter; in-memory behavior adapter is the test adapter. | If deleted, raster/page policy, Paddle normalization, projection and failure logic must not reappear in every route/host. |
-| `OcrComputePlan.select(input) -> immutable OcrComputeSelection` | One automatic decision reaches readiness and every session. Priority is usable dGPU, then usable iGPU, then noticed CPU only under the truth table. Unknown is not unavailable; selected DML failure is terminal and has no retry. | Native DXGI/D3D12/DirectML is a true external/platform seam with production adapter; in-memory snapshot is test adapter. | If deleted, hosts or worker paths would have to rank devices and diverge; if they do, the module was not replaced deeply enough. |
-| `ModelSourceSnapshot.capture(source) -> immutable snapshot` | Binds runtime/worker/model/profile/catalog/contract bytes and provenance at the point of use; no raw OCR, tokens, local paths, or machine names. Identity mismatch blocks. | Local filesystem/package boundary is local-substitutable; catalog/download is remote-but-owned adapter; immutable in-memory manifest is test adapter. | If deletion scatters hash and provenance rules through runner, worker, and hosts, this module earns depth. |
-| `OwnedRuntimeSession.launch/observe/finish -> RuntimeTerminationProof` | One launch attempt owns suspended root, Job assignment before resume, no-breakaway, root events, descendants, idempotent finish, retry, and terminal cleanup proof. Baseline external processes survive. | Windows native process/Job APIs are true external; a narrow native test adapter/injected clock is required. Hosts receive semantic events only. | If deleting it leaves raw handles, name-kill, and cleanup policy in hosts, the replacement is invalid. |
-| `AcceptanceRunner.run(plan) -> AcceptanceManifest` | Owns build/install boundary, runtime event scope, source fixture, evidence, exact deletion, cleanup, and terminalization. Runs Capture then Cert then LAW serially and stops on failure. | Installed executable is remote-but-owned; private app probe is production adapter; deterministic installed test double is test adapter. | If every app still duplicates event/cleanup/terminalization, the runner is pass-through. |
-| `VersionInventory.check/upgrade(input) -> VersionReport` | One source drives runtime/API/schema, all SDKs, desktop metadata, catalogs/manifests, locks, and consumer expectations. Stale literals and mixed 0.4.1/0.4.2 fail. | In-process canonical serialization; repository files are local-substitutable; a checked-in generated report is production artifact and fixture input is test adapter. | If a version is still hand-edited in a consumer or manifest, inventory has not replaced the old source. |
+| `OcrPipeline` | Candidate interface is not chosen. It must accept the existing source request and return either an ordered page-complete OCR projection or a sanitized typed terminal failure. | In-process normalization and local-substitutable raster/page planning; producer-owned worker is a remote-but-owned adapter; deterministic in-memory behavior is the test adapter. | Removing the module must not scatter PDFium/page policy, Paddle normalization, projection, and failure logic across routes or hosts. |
+| `OcrComputePlan` | Concrete selection contract is `select(input) -> immutable OcrComputeSelection`: a compute snapshot in, one immutable selection/readiness result out. | DXGI/D3D12/DirectML is a true external/platform seam with a native production adapter; an immutable in-memory snapshot is the test adapter. | Removing it must not make hosts or worker paths rank devices or derive divergent selections. |
+| `ModelSourceSnapshot` | Concrete provenance contract is `capture(source) -> immutable snapshot`: source manifests in, bound runtime/worker/model/profile/catalog/contract hashes out. | Package/filesystem is local-substitutable; catalog/download is a remote-but-owned adapter; an immutable manifest is the test adapter. | Removing it must not scatter hash/provenance checks across runners, workers, and hosts. |
+| `OwnedRuntimeSession` | Candidate interface is not chosen. It must accept one launch description and expose semantic lifecycle observation plus one terminal `RuntimeTerminationProof`, without OS handles or process identifiers. | Windows process/Job APIs are a true external seam with a native production adapter and deterministic failure-injection adapter for tests. | Removing it must not leave raw handles, name-kill, or cleanup policy in hosts. |
+| `AcceptanceRunner` | Concrete contract is `run(plan) -> AcceptanceManifest`: an acceptance plan in, terminal manifest out only after evidence and cleanup. | Installed executable is remote-but-owned; private app probing is the production adapter; deterministic installed probing is the test adapter. | Removing it must not leave each app duplicating event scope, cleanup, and terminalization. |
+| `VersionInventory` | Concrete check/upgrade contract is `check/upgrade(input) -> VersionReport`: one canonical version input in, a complete report or typed stale/mixed-version error out. | Canonical serialization is in-process; repository files are local-substitutable; a generated report is the production artifact and fixture input is the test adapter. | Removing it must not leave hand-edited versions in consumers or manifests. |
 
-### Required interface detail
+#### Interface-neutral records
 
-Before implementation, each module's review record must explicitly state:
+These two records describe the behaviour that any chosen interface must carry;
+they intentionally do not name a method, callback, port, or type signature.
 
-- invariants and ordering (including terminal events and idempotency);
-- typed errors and which details are deliberately omitted;
-- performance behavior and bounded resources (especially one-page memory and
-  serialized inference);
-- internal seam location and at least one production and one test adapter;
-- dependency category using the codebase-design vocabulary; and
-- the deletion test plus the old paths/tests that will be replaced.
+##### `OcrPipeline`
 
-Tests cross the external interface. Tests of private Paddle calls, private
-methods, call counts, raw Job handles, or adapter indexes are not acceptance
-surfaces.
+- Inputs/results: the existing capture source request, including source kind
+  and page scope, in; an ordered page-complete OCR projection or a sanitized
+  typed terminal failure out.
+- Invariants/order: image bytes and every selected PDF page are normalized or
+  rasterized before worker dispatch; pages remain in source order; empty and
+  failed pages remain represented; predictor/model initialization is bounded;
+  inference is serialized; no embedded PDF text is read.
+- Errors/configuration: unsupported media, malformed page, worker/provider
+  failure, cancellation, and incomplete projection are typed and sanitized;
+  profile/model/contract identity is required and host-specific Paddle options
+  are not accepted.
+- Performance/resources: one-page raster and inference buffers are released
+  before the next page/app where possible; model initialization is reused only
+  within the owned session; memory, latency, and first-page measurements are
+  recorded as bounded numeric evidence before optimization.
+- Internal seam/adapters: the rasterizer, normalizer, and worker transport stay
+  behind private seams; the producer worker is the production adapter and a
+  deterministic in-memory engine is the test adapter.
+- Deletion test: removing the module must not force routes or hosts to repeat
+  page planning, rasterization, normalization, projection, or failure policy.
 
-### Design-It-Twice gates
+##### `OwnedRuntimeSession`
 
-No actual implementation of `OcrPipeline` or `OwnedRuntimeSession` starts
-until a fresh worker records three materially different interface alternatives
-for each module and compares depth, locality, seam placement, failure
-readability, cancellation/termination, and migration cost. The accepted
-option must include usage, hidden implementation, dependency category,
-production/test adapters, invariants, and deletion test.
+- Inputs/results: one producer-owned launch description and semantic close or
+  cancellation request in; lifecycle observations and one terminal
+  `RuntimeTerminationProof` out, with no OS handle, PID, or raw native error in
+  the external interface.
+- Invariants/order: create the root suspended, assign it to a fresh
+  no-breakaway Job before resume, observe root/descendant events, make finish
+  idempotent, and terminalize only after owned descendants/listeners are absent;
+  baseline processes survive.
+- Errors/configuration: launch, readiness, root-crash, host-termination,
+  descendant, timeout, and cleanup failures are typed; retry is bounded and
+  identity-scoped; durable runtime/model cache configuration is never treated
+  as run-scoped residue.
+- Performance/resources: one owned root/session at a time for model journeys;
+  bounded event/journal state; native handles and descendant enumeration are
+  released at terminalization; reconciliation never broad-kills names.
+- Internal seam/adapters: native Windows process/Job operations stay behind a
+  private seam; the native launcher is the production adapter and a
+  deterministic failure-injection lifecycle adapter is the test adapter.
+- Deletion test: removing the module must not leave hosts holding OS handles,
+  guessing ownership from names, or duplicating cleanup/reconciliation policy.
 
-The required alternatives are intentionally distinct, not cosmetic renames:
+### Established-module interface records
 
-| Module | Alternative A: minimal | Alternative B: staged | Alternative C: port/event |
-| --- | --- | --- | --- |
-| `OcrPipeline` | One `run(request)` command returning the terminal projection. | `plan(request)` then `execute(plan)` with the plan private to the producer. | One semantic `capture(request, progressPort)` command with a cancellation/progress port. |
-| `OwnedRuntimeSession` | `launch()` plus idempotent `finish(reason) -> proof`. | A session state machine exposing `observe()` and `finish()` while hiding OS handles. | A lifecycle port that consumes root events and returns one terminal proof, with adapters for native and deterministic failure injection. |
+The following records are the minimum design record for the established
+modules. They name the full interface, not merely a type signature.
 
-The comparison may combine ideas only after the three alternatives are public
-to the reviewer. It must not add a second coordinator around the old policy.
+#### `OcrComputePlan`
+
+- Inputs/results: an immutable hardware/provider snapshot; an immutable
+  `OcrComputeSelection` containing mode, reason, exact LUID join, ordinary ORT
+  ordinal, and sanitized readiness notice where applicable.
+- Invariants/order: usable dGPU, then usable iGPU, then noticed CPU only under
+  the truth table; the same selection is used by readiness and the session;
+  no selection is emitted from an incomplete snapshot.
+- Errors/configuration: timeout, exception, unknown adapter class, incomplete
+  LUID map, or provider discovery failure is typed indeterminate/unavailable;
+  selected DML construction/assignment/graph/inference failure is terminal and
+  carries no fallback detail or retry.
+- Performance/resources: one bounded snapshot and one selection per readiness
+  generation; no repeated probe or unbounded device diagnostics.
+- Internal seam/adapters: `ocr_preflight.py` keeps the native probe seam
+  private; `engine_adapters.py` is the production execution adapter and an
+  immutable snapshot is the test adapter.
+- Deletion test: remove the module and verify no host or worker can choose a
+  device, persist an ordinal, or retry a failed selected provider.
+
+#### `ModelSourceSnapshot`
+
+- Inputs/results: package/catalog/source-lock bytes and contract identity in;
+  an immutable snapshot of runtime, worker, model, profile, catalog, contract,
+  and artifact hashes out.
+- Invariants/order: capture occurs at point of use before model start; every
+  consumed byte is hashed once; any mismatch blocks before execution; raw OCR,
+  tokens, local paths, and machine names are excluded.
+- Errors/configuration: malformed lock, stale version, checksum mismatch, or
+  catalog drift is a typed identity error; the error exposes only sanitized
+  labels and digests.
+- Performance/resources: bounded streaming hashes and retained durable model
+  caches; no raw source or model bytes are copied into evidence.
+- Internal seam/adapters: `model_source_lock.py` validation and
+  `engine_catalog.py` parsing stay private; release/package readers are the
+  production adapter and an immutable manifest fixture is the test adapter.
+- Deletion test: delete the snapshot and prove identity checks do not reappear
+  independently in the runner, worker, and host adapters.
+
+#### `AcceptanceRunner`
+
+- Inputs/results: a candidate, fixture, app sequence, and cleanup scope in;
+  one terminal `AcceptanceManifest` with artifact hashes, semantic counts,
+  provenance, and cleanup booleans out.
+- Invariants/order: Capture JPEG, Capture PDF page 1, Cert, and LAW are
+  strictly serial; each child persists its evidence, releases model memory,
+  closes its journal, and proves cleanup before the next starts; first failure
+  stops the chain.
+- Errors/configuration: missing identity, semantic failure, child failure,
+  cleanup unknown, or journal-not-closed is typed terminal failure; raw OCR,
+  secrets, paths, and machine names are omitted. Candidate and fixture roots
+  are explicit and never inferred from a source tree.
+- Performance/resources: one model process at a time; bounded fixture and
+  journal scope; no parallel child or unbounded diagnostic retention.
+- Internal seam/adapters: `tools/three-project-acceptance.ts` owns sequence
+  orchestration and `tools/acceptance-contract.ts` owns manifest validation;
+  the installed app probe is the production adapter and a deterministic
+  installed probe is the test adapter.
+- Deletion test: remove the runner and show that no consumer script can still
+  produce a terminal manifest without independently duplicating all sequence,
+  evidence, and cleanup policy.
+
+#### `VersionInventory`
+
+- Inputs/results: canonical runtime/API/schema/client/tooling versions and
+  generated artifact inventory in; a complete `VersionReport` or a typed
+  stale/mixed-version report out.
+- Invariants/order: check is read-only; upgrade is explicit; generated values
+  and locks are updated together; no 0.3/0.4.1 and 0.4.2 mixture passes.
+- Errors/configuration: missing owner, stale literal, mixed lock, or unknown
+  consumer is a typed stop with the path and value class, never a secret or
+  private path.
+- Performance/resources: bounded repository scan from declared roots and one
+  deterministic report; no network, model, or installer side effect in check.
+- Internal seam/adapters: `constants/versions.py`, `release.py`, and
+  `scripts/model_source_lock.py` remain source-specific seams; repository
+  readers are the production adapter and fixture trees are test adapters.
+- Deletion test: remove the inventory and prove a stale version cannot be
+  detected only by a subset of package, lock, catalog, or consumer checks.
+
+### Design-It-Twice gate for the two unresolved interfaces
+
+No implementation of `OcrPipeline` or `OwnedRuntimeSession` starts until at
+least three independent fresh reviewers, working under materially different
+constraints, each publish a complete alternative for each module. The
+constraints must differ in interface shape, not cosmetic naming: for example,
+minimum surface area, maximum extension flexibility, common-caller
+simplicity, and (when selected) explicit ports and adapters.
+
+Every reviewer record must contain the interface (inputs, results, invariants,
+ordering, errors, cancellation/termination, configuration, performance, and
+bounded resources), a usage example, the hidden implementation, dependency
+categories with production and test adapters, trade-offs, and the deletion
+test. No method name or signature is selected in this SPEC before that record.
+
+Root then grills the alternatives one question at a time. The comparison must
+cover depth/leverage, locality, seam placement, failure readability,
+cancellation/termination, adapter count, and migration cost. Only after that
+comparison may Root choose a contract, commit the chosen contract, and request
+fresh Standards and Specification reviews bound to the exact new HEAD. Any
+content commit invalidates earlier review artifacts. The chosen contract must
+not add a second coordinator around existing policy.
 
 ## OCR-only execution and acceptance
 
@@ -329,7 +457,7 @@ The canonical flow is:
 ```text
 design docs
   -> serious grill + Standards/Specification review
-  -> approved exact-HEAD slice
+  -> authorized exact-HEAD slice
   -> sprint backlog
   -> TDD red public-seam test
   -> implementation + replacement cleanup
@@ -340,9 +468,9 @@ design docs
 ```
 
 Each arrow is a gate, not a claim that this checkpoint has run. A fresh worker
-starts from its checkpoint commit, reads only the relevant design and owner
-files, and commits one closed vertical slice. Any commit invalidates previous
-exact-HEAD review approval. Root coordinates review and does not edit this
+starts from its checkpoint commit, reads the design and named owner files, and
+commits one closed vertical slice. Any content commit invalidates previous
+exact-HEAD review artifacts. Root coordinates review and does not edit this
 slice. Sol Ultra is read-only and may be activated only when the same blocker
 has failed more than three consecutive times; it may provide diagnosis,
 options, and tests, but never edit, commit, push, publish, or own the slice.
@@ -352,10 +480,33 @@ hardening; an immutable candidate is then built; only after that are Capture ->
 Cert -> LAW tested sequentially with a formal/published `0.4.2` package. The
 package and promotion are future gates, not claims made by this design.
 
+## Release promotion gates D0-D8
+
+Release promotion is one fail-closed state machine. The current documentation
+checkpoint is before D0 and claims none of these gates. Each transition records
+the exact source/manifest/evidence identity; a failure stops the sequence,
+preserves the failed evidence and rollback pointer, and prevents later gates.
+
+| Gate | Required transition and proof |
+| --- | --- |
+| D0 `DocsCommitted` | Commit the canonical SPEC/DECISION/TODO/GUIDE and any named historical banners. Record the commit SHA and explicit cached path set. |
+| D1 `DesignReviewed` | Standards and Specification external review artifacts both record `git rev-parse HEAD` after D0 and the external check/PR metadata. A later content commit invalidates both artifacts. |
+| D2 `ImplementationAuthorized` | Root records the bounded slice, owner paths/symbols, red proof, prerequisites, stop condition, verification, rollback, and commit message. There is no handoff commit and no feature-code authority in this gate. |
+| D3 `CandidateBuilt` | Build from the exact source HEAD and record SHA-256 identities for runtime, worker, model, profile, contract set, manifests, locks, and every candidate artifact. Any missing or mismatched hash stops promotion. |
+| D4 `CandidateAccepted` | Use those same candidate bytes in strict serial order: Capture JPEG -> cleanup/model-memory release -> Capture original PDF page 1 -> cleanup/model-memory release -> Cert -> cleanup/model-memory release -> LAW -> cleanup. Every child must produce semantic evidence and a terminal cleanup proof. |
+| D5 `PublishedImmutable` | Publish the D3 bytes and manifests without moving the stable pointer. The published artifact identity is immutable and must equal the candidate ledger byte-for-byte. |
+| D6 `DownloadBackVerified` | Download each published artifact and manifest through the public path, hash the bytes, and compare them to D3/D5; reject mutable URLs, version drift, missing locks, or manifest mismatch. |
+| D7 `PublishedAccepted` | Repeat the sequential Capture JPEG -> Capture PDF page 1 -> Cert -> LAW journey using only D6 download-back bytes; retain per-child cleanup and semantic evidence. |
+| D8 `StablePointerMoved` | Move the stable pointer only after D7 is terminal-success and all ledgers, hashes, cleanup proofs, and rollback references are preserved. |
+
+No gate may infer proof from a green deterministic CI run, local package,
+older manifest, screenshot, or historical Phase 1 result. Phase 1 remains
+complete only at the local-probe tier and is not D3-D8 evidence.
+
 ## Acceptance and rollback definition
 
 Phase 2 is not complete until each slice has its red public-interface tests,
-focused and `--skip-nx-cache` verification, both review axes on the exact
+slice-scoped and `--skip-nx-cache` verification, both review axes on the exact
 commit, privacy/path/secret audit, and a recorded rollback. Promotion is not
 complete until architecture/version/performance/lifecycle hardening is done,
 an immutable candidate is built, and Capture JPEG -> Capture PDF page 1 -> Cert
@@ -363,7 +514,7 @@ an immutable candidate is built, and Capture JPEG -> Capture PDF page 1 -> Cert
 with a formal/published `0.4.2` package whose published download-back identity
 is exact.
 
-Rollback is additive: revert the focused slice to its prior reviewed
+Rollback is additive: revert the named slice to its prior reviewed
 checkpoint, preserve durable caches and historical manifests, and never mix
 0.4.1/0.4.2 assets or rewrite shared history. This design claims no new Phase 2
 verification, candidate, release, or publication; the completed Phase 1

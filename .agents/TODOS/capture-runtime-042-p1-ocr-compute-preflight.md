@@ -1,5 +1,10 @@
 # Capture Runtime 0.4.2 P1 OCR compute preflight TODO
 
+> Historical status: this P1 checklist records the completed local-probe slice
+> only. Its older compute wording is superseded by the [canonical Phase 2
+> compute truth](../SPECS/capture-runtime-042-p2-hardening.md); do not use this
+> file as current GPU, candidate, or release policy.
+
 - [x] Add red probe/decision tests for dedicated, integrated, and software-only
   adapter snapshots plus DML availability/fallback reasons.
 - [x] Add the typed `RuntimeReady.ocrCompute` contract and runtime-owned
