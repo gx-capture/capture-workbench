@@ -9,8 +9,8 @@ not alternate Phase 2 policy.
 
 ## Checkpoint first: 2026-09-09
 
-The documentation correction starts from
-1df7eecccd4097c172c9338a7f584f9489e5ae78. D0 is complete for the documentation
+This closure starts from expected HEAD
+586423c1c7faa213b68a6f53ee346ac8035e5723. D0 is complete for the documentation
 commit, but its SHA is intentionally external: record git rev-parse HEAD after
 commit. D1 is pending fresh Standards and Specification review at that exact
 head. Preserve untracked .github/copilot-instructions.md and
@@ -23,9 +23,11 @@ order. This is not candidate, published, or release evidence. No current-HEAD
 Phase 2 JPEG/PDF, GPU, cleanup, candidate, download-back, or publication result
 is claimed.
 
-CI repair is paused and has no authority in this workflow. Do not edit,
+CI repair is paused and has no authority in this workflow. Do not repair,
 rerun/retry, or reconfigure CI, and do not treat deterministic CI as real OCR,
-GPU, cleanup, installation, publication, or pointer proof.
+GPU, cleanup, installation, publication, or pointer proof. The future D5-D8
+implementation slice is explicitly allowed to edit the named publication
+workflow contracts; this docs-only checkpoint does not.
 
 ## Fresh-worker procedure
 
@@ -75,10 +77,55 @@ D0 DocsCommitted
 
 Each is a separate item and evidence/commit checkpoint. A failed state stops
 later work. D4 consumes only D3 candidate bytes. D5 publishes identical D3
-bytes. D6 downloads back D5 public bytes. D7 repeats acceptance using D6
-downloads only. D8 is producer-only stable-pointer mutation by the existing
-publish workflow/tool. Never combine D4 and D7 identity ledgers or make a
+bytes after D4 and has no stable-pointer call. D6 downloads back D5 public
+bytes through a fresh-download dispatch. D7 repeats acceptance using D6
+downloads only. D8 is a separate protected producer dispatch that consumes the
+D7 chain and a current-pointer CAS guard before calling the stable-pointer
+workflow/tool. Never combine D4 and D7 identity ledgers or make a
 self-dependent gate.
+
+## Future D5-D8 workflow contract
+
+The checked-in workflow owners are real, but their current graph is not yet the
+required state machine: `.github/workflows/release-promote.yml` currently puts
+`promotion-ledger` after `publish-stable-pointer`. After D1/D2, one explicit
+workflow slice owns and may edit:
+
+* `.github/workflows/release-promote.yml` for D5 orchestration and the D6
+  download-back/D7 published-acceptance dispatch contracts;
+* `.github/workflows/_publish-github-release.yml` for exact candidate assets and
+  the immutable release manifest;
+* `.github/workflows/_verify-registries.yml` for complete registry-ledger
+  validation;
+* `.github/workflows/_publish-runtime-github-release.yml` for the existing
+  runtime-release asset lane when it is part of the D5 train;
+* `.github/workflows/_publish-promotion-ledger.yml` for the D5 publication
+  ledger, before D6 and before any stable-pointer operation; and
+* `.github/workflows/_publish-stable-pointer.yml` as the D8 implementation
+  adapter, called only by a separate protected dispatch;
+* `tools/create-promotion-ledger.ts` and `tools/update-release-index.ts` for
+  the D5 ledger and producer-only D8 CAS operation; and
+* `tools/three-project-acceptance.ts` and `tools/acceptance-contract.ts` for
+  the D7 downloaded-byte acceptance contract.
+
+D5 consumes D4, publishes every D3 byte through all required registry and
+GitHub Release lanes, verifies them, and emits a publication ledger. A
+single-lane retry may repair publication, but D5 cannot terminalize or dispatch
+D6 until the complete required set passes. It must remove the direct
+stable-pointer edge and call. D6 consumes only that ledger
+and immutable public references, performs fresh cache-bypassed downloads, and
+emits a hash-equality ledger. D7 consumes only the D6 downloads and invokes the
+serial installed acceptance owner. D8 is a separate protected dispatch, not an
+automatic D5 dependency: it re-reads the D7 chain, checks the expected current
+stable-pointer generation/tag/manifest digest with CAS, and only then calls
+`tools/update-release-index.ts` in the protected environment.
+
+No separate D8 dispatch workflow or D6/D7 workflow-contract Nx target exists at
+this head. The implementation worker must discover an existing protected
+dispatch owner or create/name one, and discover or create a focused target in
+the existing `capture-tools` project before invoking it. Until that discovery
+and creation is recorded, stop; do not write a fake current target or claim
+that the dispatch contract is already implemented.
 
 ## First implementation slice
 
@@ -86,6 +133,8 @@ After D1 review and D2 authorization, the first code slice owns the existing
 version sources and lock:
 
 - Upgrade Nx 23.1.0 to 23.1.2 in root package.json and pnpm-lock.yaml.
+- Retain the repository's Node 24 requirement and exact pnpm 12.0.0 package
+  manager.
 - Extend tools/release/version-sources.ts and its existing
   tools/release/version-sources.test.ts. Verify with
   corepack pnpm nx run capture-tools:release-version-test --skip-nx-cache.
@@ -101,8 +150,11 @@ The next authorized commits converge OcrPipeline and OwnedRuntimeSession in
 their existing owners, add the producer-owned RuntimeSessionJournalV1 and
 reconciler, then extend the existing acceptance runner. The native design may
 add an opaque multi-root group so LAW can put Capture/Python/Java roots in one
-producer Job; Capture/Cert/candidate single-root calls remain supported. Tauri
-never owns or mutates a journal or Job.
+producer-owned unnamed no-breakaway Job configured with
+`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`; Capture/Cert/candidate single-root calls
+remain supported. Tauri never owns or mutates a journal or Job. A later
+workflow-contract slice also edits the named D5-D8 publication workflows; CI
+repair remains paused.
 
 ## Real OCR acceptance
 
@@ -138,16 +190,31 @@ The completed local-probe Phase 1 result does not satisfy D3-D8.
 RuntimeSessionJournalV1 is producer-owned durable cleanup state, not host
 domain persistence. Only the producer may write atomic
 state/generation transitions, retain PID plus process creation identity/nonce,
-and bind the producer Job, run staging, and listener nonce. Never persist raw
-tokens, OCR, source/model paths, command lines, or machine names. A PID, port,
-parent process, executable name, or directory name alone is not ownership proof.
+and bind the producer Job, run staging, and listener nonce. The live owner uses
+the current unnamed no-breakaway Job with
+`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`; it never names a Job for takeover and
+never weakens close/crash cleanup. Never persist raw tokens, OCR, source/model
+paths, command lines, or machine names. A PID, port, parent process,
+executable name, or directory name alone is not ownership proof.
 
-The producer reconciler may kill/delete only after every identity binding matches.
-Ambiguity, PID reuse, malformed/torn journal, access denial, or an unproven
-listener records reconcile-required and leaves residue. Retry is bounded and
-identity-scoped; do not launch a replacement root while cleanup is unresolved.
-Tauri can request close and receive semantic proof, but cannot write/mutate the
-journal or Job.
+Live in-memory `terminate_and_prove` has the private Job handle, membership,
+and root/session nonce, so it may terminate only that live producer-owned group
+and then prove root, descendant, listener, and staging cleanup. After restart,
+the observer has no Job handle, membership query, or nonce claim and is
+observe-only. It may terminalize a stale journal and remove only its exact
+run-scoped staging when Job setup was durably committed, every root's exact PID
+plus creation identity is absent, every listener is proven absent, and the
+staging binding is exact. PID reuse/presence/unqueryability, listener
+ambiguity, root/staging mismatch, uncommitted setup, or any unknown binding
+means `reconcile-required`: touch nothing and block promotion. No
+process-name, PID-only, or port-only kill is valid. In a multi-root group all
+roots must pass; one ambiguous root blocks group terminalization.
+
+The producer reconciler may terminate/delete only on the live exact-identity
+path, or remove exact stale staging under the restart observe-only conditions
+above. Retry is bounded and identity-scoped; do not launch a replacement root
+while cleanup is unresolved. Tauri can request close and receive semantic
+proof, but cannot write/mutate the journal or Job.
 
 ## Verification floor
 
@@ -190,13 +257,21 @@ met.
 ## Publication and handoff
 
 D3 creates one immutable candidate ledger. D4 accepts only that ledger. D5 uses
-the existing producer workflows for npm/GitHub Packages, PyPI,
-Maven/GitHub Packages, crates.io, and GitHub Releases and publishes identical
-bytes. D6 obtains fresh public downloads and compares every hash. D7 repeats
-the serial journey using D6 downloads only. D8 may mutate the stable pointer
-only through .github/workflows/_publish-stable-pointer.yml invoking
-tools/update-release-index.ts. No worker, host, Tauri process, local script,
-or source-tree command may mutate release-index/stable.json.
+the future contract in the named producer workflows for npm/GitHub Packages,
+PyPI, Maven/GitHub Packages, crates.io, and GitHub Releases and publishes
+identical bytes after D4; it never calls the stable-pointer workflow. D6
+obtains fresh public downloads and compares every hash. D7 repeats the serial
+journey using D6 downloads only. D8 is a separate protected dispatch that
+consumes the D7 chain and CAS-guards the current pointer before invoking
+`.github/workflows/_publish-stable-pointer.yml` and
+`tools/update-release-index.ts`. No worker, host, Tauri process, local script,
+or source-tree command may mutate `release-index/stable.json`.
+
+If D5-D7 fails, stop and retain the candidate/publication/download ledgers. If
+published `0.4.2` bytes are later defective, rollback is producer supersession
+only: publish a corrected successor and mark `0.4.2` superseded through the
+protected producer index operation. Never overwrite or rebuild the published
+`0.4.2` bytes or directly revert the stable pointer.
 
 Commit only explicitly named paths after git diff --cached --check and
 git diff --cached --name-only. Record SHA, paths, commands/results, evidence

@@ -10,8 +10,8 @@ publication, or stable-pointer mutation.
 
 ## Current checkpoint: 2026-09-09
 
-- The documentation correction starts from
-  `1df7eecccd4097c172c9338a7f584f9489e5ae78`. The only pre-existing working
+- This closure starts from expected HEAD
+  `586423c1c7faa213b68a6f53ee346ac8035e5723`. The only pre-existing working
   tree changes are untracked `.github/copilot-instructions.md` and
   `.github/instructions/`; they are preserved and are not part of this slice.
 - PR #39 is at `c6d2140e233de70734005713427f77f92414f415`; its deterministic CI
@@ -22,9 +22,11 @@ publication, or stable-pointer mutation.
   candidate, download-back, or publication result is claimed. Source files
   currently contain release value `0.4.2`; that does not establish that an
   official `0.4.2` package is published.
-- CI repair is paused and has no authority in this checkpoint. This docs slice
-  does not edit workflows, rerun or retry CI, alter CI policy, or treat a green
-  deterministic run as OCR, GPU, cleanup, install, or release proof.
+- CI repair is paused and has no authority in this checkpoint. The named D5-D8
+  implementation slice below explicitly owns publication-workflow contract
+  edits; this documentation checkpoint makes no workflow changes, reruns no
+  CI, and treats no deterministic run as OCR, GPU, cleanup, install, or release
+  proof.
 - The only completed state-machine gate in this docs commit is D0. D1 remains
   pending until a fresh external review names the post-commit `HEAD`, exact
   paths, and external check/PR metadata. Any later content commit returns the
@@ -48,7 +50,8 @@ Non-goals:
   durable domain data; runtime jobs and run-scoped staging are ephemeral.
 - No feature code, consumer source, CI repair, release publication, stable
   pointer update, or destructive cleanup is authorized by this document-only
-  checkpoint.
+  checkpoint. Publication workflow edits are reserved for the explicit future
+  D5-D8 slice; they are not forbidden by Phase 2 policy.
 - Package QA, fake OCR, snapshots, screenshots, local source-tree imports, and
   successful exit codes are not substitutes for real installed or published
   acceptance.
@@ -60,7 +63,9 @@ Non-goals:
 
 Change mode is mixed with edit-first ownership. This correction edits the four
 existing Phase 2 owner files and the two active README banners named below. It
-does not create a second coordinator or a replacement repository owner.
+does not create a second coordinator or a replacement repository owner. A
+later authorized D5-D8 slice may edit the named publication workflows because
+their contracts are part of the release owner, not CI repair.
 
 | Action | Rule |
 | --- | --- |
@@ -320,11 +325,14 @@ wait_until_ready(root)?
 proof = session.close(root, Shutdown)?
 ```
 
-The hidden module creates a suspended process, assigns a fresh no-breakaway Job,
-verifies identity, resumes, observes descendants, retries bounded cleanup, and
-keeps native handles private. Dependencies are the Windows process/Job adapter,
-sidecar readiness adapter, journal adapter, and deterministic failure-injection
-adapter. The trade-off is a very deep and easy common path, but it cannot place
+The hidden module creates a suspended process, assigns it to the current
+unnamed no-breakaway Job configured with
+`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, verifies identity, resumes, observes
+descendants, retries bounded cleanup, and keeps native handles private. It never
+opens a named Job for takeover and never weakens close/crash cleanup.
+Dependencies are the Windows process/Job adapter, sidecar readiness adapter,
+journal adapter, and deterministic failure-injection adapter. The trade-off is
+a very deep and easy common path, but it cannot place
 Capture/Python/Java roots in one Job without a second coordination layer. The
 deletion surface is desktop `OwnedRuntime` cleanup/monitor logic and direct
 `id()`/`try_wait()` use; tests cover normal close, crash, descendants, baseline
@@ -379,8 +387,10 @@ Capture, Cert, and candidate journeys continue to use one root. A `RootLease`
 is an opaque semantic lease; no raw `Job`, process handle, PID, native error,
 or child object crosses the seam.
 
-The hidden module owns the group Job, root identity, readiness, listener
+The hidden module owns one current unnamed no-breakaway Job configured with
+`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, root identity, readiness, listener
 bindings, descendants, journal/reconciler, bounded retry, and terminal proof.
+It never uses a named Job takeover and never weakens close/crash cleanup.
 Dependencies are the existing native launcher/process adapter, the existing
 `SidecarLaunchSpec`/readiness adapter, and a deterministic native failure
 adapter. The trade-off is slightly more state than R1, but it avoids a second
@@ -430,7 +440,7 @@ schema is exactly versioned as `RuntimeSessionJournalV1`:
   "state": "running",
   "createdAt": "2026-09-09T00:00:00Z",
   "updatedAt": "2026-09-09T00:00:02Z",
-  "jobBinding": { "jobNonce": "opaque-native-binding" },
+  "jobBinding": { "setupState": "committed", "jobNonce": "opaque-native-binding" },
   "stagingBinding": {
     "runNonce": "same-session-nonce",
     "rootDigest": "sha256:...",
@@ -456,23 +466,27 @@ schema is exactly versioned as `RuntimeSessionJournalV1`:
 
 Required fields are the schema version, producer, session nonce, monotonic
 generation, state, timestamps, Job binding, staging binding, and one record per
-root. Every root records role, root nonce, PID, process creation identity,
-state, listener bindings, and start time. A terminal record adds semantic proof:
+root. The Job binding records whether setup was durably committed before a root
+was resumed. Every root records role, root nonce, PID, process creation
+identity, state, listener bindings, and start time. A terminal record adds
+semantic proof:
 root reaped, descendants terminated, listeners released, staging released, and
 the proof generation. `exitCode` is optional and sanitized; raw command lines,
 environment, source paths, bearer tokens, OCR, model bytes, user names, machine
 names, and arbitrary diagnostics are forbidden.
 
 The field constraints are normative: `schemaVersion` is the literal
-`RuntimeSessionJournalV1`; `producer`, `state`, and root `role` are closed
-enums; `sessionNonce`, `jobNonce`, `rootNonce`, and every `bindingNonce` are
-128-bit random values encoded as lowercase hexadecimal; `generation` and
-`attempt` are positive unsigned integers; timestamps are UTC RFC 3339 strings;
-`pid` is a positive Windows process id; `creationIdentity` is the native
-creation-time value captured at launch and is compared exactly; and
-`loopbackPort` is an integer from 1 through 65535. `rootDigest` is lowercase
-SHA-256 over the producer-resolved run-staging identity, not a source path.
-`state` is one of `planned`, `launching`, `running`, `closing`, `terminal`, or
+`RuntimeSessionJournalV1`; `producer`, `state`, root `role`, and Job
+`setupState` are closed enums; `setupState` is `pending` until the unnamed Job
+is configured and durably bound, then `committed` before any root is resumed;
+`sessionNonce`, `jobNonce`, `rootNonce`, and every `bindingNonce` are 128-bit
+random values encoded as lowercase hexadecimal; `generation` and `attempt` are
+positive unsigned integers; timestamps are UTC RFC 3339 strings; `pid` is a
+positive Windows process id; `creationIdentity` is the native creation-time
+value captured at launch and is compared exactly; and `loopbackPort` is an
+integer from 1 through 65535. `rootDigest` is lowercase SHA-256 over the
+producer-resolved run-staging identity, not a source path. `state` is one of
+`planned`, `launching`, `running`, `closing`, `terminal`, or
 `reconcile-required`; proof booleans may be true only after the corresponding
 binding has been checked. The JSON example uses opaque placeholders to avoid
 recording real identifiers; an implementation must validate these types and
@@ -491,8 +505,38 @@ identity evidence is invalid proof.
 responses emit only a stable digest or boolean proof. A listener port is not an
 ownership proof: the producer must also validate the binding nonce and a
 producer-owned readiness/close handshake. If the current launcher cannot prove
-that binding, the implementation must reduce the claim to “listener ownership
-unknown; no kill/delete” and must not infer ownership from a port alone.
+that binding, the implementation must reduce the claim to listener ownership
+unknown; no kill/delete is allowed and ownership must not be inferred from a
+port alone.
+
+### Live in-memory close versus restart observation
+
+While the producer process is alive, `OwnedRuntimeSession` keeps the private
+handle for the current unnamed no-breakaway Job, its in-memory membership
+proof, and the root/session nonces. Its `terminate_and_prove` path may close
+only that live session: it requests termination through the private Job handle,
+reaps the roots and descendants, checks listener/staging bindings, and commits
+terminal proof. `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` remains enabled for normal
+close, crash, and handle-loss cleanup; no named takeover or weakened cleanup
+path is permitted.
+
+After a producer restart, the observer has only the committed journal. It has
+no Job handle, no live membership query, and no right to claim or adopt the old
+Job or any recorded nonce. Restart reconciliation is therefore observe-only.
+It may terminalize a stale record and remove only that record's exact
+run-scoped staging when, and only when, the journal has a trustworthy committed
+Job setup, every root's exact PID plus process-creation identity is absent (not
+reused and not unqueryable), every recorded listener is proven absent, and the
+staging binding resolves inside the same producer-owned run scope. It never
+terminates a process during this observe-only path.
+
+If a PID is reused, present, or unqueryable; a listener is ambiguous; a root or
+staging identity mismatches; the Job setup was not durably committed; or any
+other binding is unknown, the whole session becomes `reconcile-required`, the
+observer touches nothing, and promotion is blocked. No process-name, PID-only,
+or port-only kill is ever valid. For a multi-root group, all roots must satisfy
+the observe-only rule before the group may terminalize or its exact staging may
+be removed; one ambiguous root blocks the entire group.
 
 ### Atomic transitions and reconciler
 
@@ -503,18 +547,20 @@ compare-and-swap on the expected generation and state, writes a temporary file
 in the same producer directory, flushes it, atomically replaces the journal,
 and flushes the directory/file according to the platform adapter. A torn or
 unknown-generation write is a hard failure; the previous valid journal is
-retained. There is no “best effort terminal” state.
+retained. There is no best-effort terminal state.
 
-On producer startup or bounded cleanup retry, the reconciler reads only
-producer-owned journals and validates schema, producer, session nonce, state,
-and generation. For each root it proves the PID and creation identity still
-match, the root nonce is present in the producer launch context, and the root
-belongs to the recorded producer Job. It then checks listener binding nonce and
-the run-scoped staging nonce. Only an exact identity match permits termination
-or deletion. PID reuse, missing creation identity, Job ambiguity, listener
-ambiguity, access denial, or malformed journal sets `reconcile-required` and
-leaves the process/listener/staging in place for an operator or later bounded
-attempt. It never kills by executable name, port alone, parent PID alone, or
+On a live producer close, the reconciler reads only producer-owned journals and
+validates schema, producer, session nonce, state, generation, private Job
+handle/membership, root identity, listener binding nonce, and run-scoped
+staging nonce before terminating the current group. On producer startup after a
+restart it reads only committed journals and performs the observe-only checks
+above; it does not reconstruct, claim, or query Job membership. Exact PID plus
+creation identity being absent, listener absence, and an exact staging binding
+may permit stale-record terminalization and cleanup of that staging only. PID
+reuse, a present or unqueryable PID, missing creation identity, root/staging
+mismatch, Job-setup ambiguity, listener ambiguity, access denial, or malformed
+journal sets `reconcile-required` and leaves process/listener/staging in place.
+It never kills by executable name, PID alone, port alone, parent PID alone, or
 directory name.
 
 Cleanup retry is bounded and identity-scoped. The producer does not launch a
@@ -607,15 +653,106 @@ distribution); Maven/GitHub Packages for the Java client; crates.io for
 assets and immutable release manifests. The existing producer workflows are
 the only publication owners: `_publish-npm.yml`, `_publish-pypi.yml`,
 `_publish-maven.yml`, `_publish-crates.yml`, `_publish-github-release.yml`,
-`_publish-runtime-github-release.yml`, and `_publish-stable-pointer.yml`.
-`tools/update-release-index.ts` may mutate the stable pointer only when invoked
-by the existing producer stable-pointer workflow at D8. No local script or
-consumer may mutate it.
+`_publish-runtime-github-release.yml`, `_verify-registries.yml`,
+`_publish-promotion-ledger.yml`, and `_publish-stable-pointer.yml`, with
+`release-promote.yml` owning their orchestration. `tools/update-release-index.ts`
+may mutate the stable pointer only when invoked by the separately protected D8
+stable-pointer dispatch. No local script or consumer may mutate it.
+
+## D5-D8 workflow contract (future implementation slice)
+
+These workflow files exist at this head, but their current job graph is not yet
+the D5-D8 state machine. In particular, `release-promote.yml` currently has
+`prepare-candidate`, registry publication jobs, `verify-registries`,
+`tag-release`, `publish-github-release`, `publish-stable-pointer`, and
+`promotion-ledger`; the current graph makes `promotion-ledger` depend on
+`publish-stable-pointer`. That direct stable-pointer edge is the defect to
+remove. The documentation checkpoint does not edit the workflows, but the
+future implementation slice explicitly owns and may edit these contracts:
+
+* `.github/workflows/release-promote.yml` owns the D5 publication orchestration
+  and the D6 download-back/D7 published-acceptance dispatch inputs and outputs.
+* `.github/workflows/_publish-github-release.yml` owns the immutable GitHub
+  Release assets and manifest created from the exact D3 candidate after D4 and
+  registry verification; it must not rebuild or rewrite candidate bytes.
+* `.github/workflows/_verify-registries.yml` owns the complete registry-ledger
+  check bound to the D3 candidate and D4 acceptance record.
+* `.github/workflows/_publish-runtime-github-release.yml` remains the existing
+  runtime-release asset lane when that lane is included in the D5 train.
+* `.github/workflows/_publish-promotion-ledger.yml` owns the D5 publication
+  ledger assembled by `tools/create-promotion-ledger.ts`; it runs before D6
+  and is never a prerequisite edge from D5 to the stable pointer.
+* `.github/workflows/_publish-stable-pointer.yml` remains the implementation
+  adapter for the protected D8 operation. It is called only by the separate
+  D8 dispatch after D7, never directly by the D5 promotion graph.
+* `tools/create-promotion-ledger.ts:main` and its argument/ledger validation
+  own the D5 ledger input contract. The future schema must bind D3 candidate
+  and D4 acceptance digests, every publication URL/byte digest, the GitHub
+  Release ledger, and the producer source/version/contract identity.
+* `tools/update-release-index.ts:updateReleaseIndex` and `main` own the
+  producer-only pointer operation. The future D8 invocation must carry the
+  D7 chain digest and expected current pointer generation/digest, and reject a
+  compare-and-swap (CAS) mismatch before changing either index file.
+* `tools/three-project-acceptance.ts:runAcceptanceSequence`,
+  `runCaptureWorkbenchAcceptance`, `validateChildManifest`,
+  `validateTerminalManifest`, and `validateCleanupEvidence`, together with
+  `tools/acceptance-contract.ts:writeAcceptanceManifest` and
+  `readAcceptanceManifestTolerant`, own the D7 downloaded-byte acceptance
+  contract.
+  They must accept a D6 download bundle, not a source tree or local candidate,
+  and retain the same serial child/cleanup proof as D4.
+
+The required future dispatch contract is explicit:
+
+1. **D5.** After D4, `release-promote.yml` verifies the D4 record and dispatches
+   every applicable registry publisher from the one immutable D3 candidate.
+   `_verify-registries.yml` then verifies all required publication ledgers;
+   `tag-release` and `_publish-github-release.yml` publish the same candidate
+   bytes and immutable manifest; `_publish-promotion-ledger.yml` records the
+   complete D5 ledger. D5 has no `_publish-stable-pointer.yml` call, direct or
+   transitive. The current `publication_scope` retry input may repair a failed
+   lane, but it cannot terminalize D5 or dispatch D6 until every required lane
+   is complete. Any missing channel, byte mismatch, rebuilt artifact, or
+   conflicting immutable version stops the chain.
+2. **D6.** A new or changed download-back dispatch contract, owned by
+   `release-promote.yml` unless D2 discovery assigns a separate existing owner,
+   takes only the D5 publication ledger, immutable public references, expected
+   D3/D5 hashes, and source/version/contract identity. It performs fresh
+   downloads with caches bypassed, writes a D6 download ledger, and fails on a
+   redirect ambiguity, missing asset, inaccessible manifest, or hash mismatch.
+   No stable pointer or mutable channel is an input.
+3. **D7.** A new or changed published-acceptance dispatch contract, also owned
+   by `release-promote.yml` unless D2 discovery assigns a separate existing
+   owner, takes only the D6 download ledger and downloaded bundle. It invokes
+   the existing acceptance owner sequentially in the order Capture JPEG,
+   cleanup, Capture PDF page 1, cleanup, Cert, cleanup, LAW, cleanup, and
+   writes an independent D7 ledger. It cannot rebuild, republish, substitute
+   local bytes, or average CER/anchors.
+4. **D8.** A separate protected `workflow_dispatch` is a required creation task;
+   no separate D8 dispatch workflow exists at this head. D2 must discover an
+   existing protected owner or create and name one before implementation
+   proceeds, then wire it to `_publish-stable-pointer.yml`. The dispatch takes
+   the D7 run/ledger identifiers and digest chain, D5 publication ledger,
+   expected current `stable.json` generation/tag/manifest digest, and the
+   candidate manifest digest. The protected job re-reads all records, checks
+   the expected pointer with a CAS guard, and only then invokes
+   `tools/update-release-index.ts` in the `capture-release-index` environment.
+   A changed pointer, missing D7 record, or chain mismatch aborts without
+   touching the protected branch.
+
+There is no checked-in Nx target for D6/D7 workflow-contract validation or the
+new D8 dispatch. D2 must run `corepack pnpm nx show project capture-tools --json`
+and either discover an existing target or create/record a target in the
+existing `capture-tools` owner before calling it; until then, target creation
+is a discovery-and-stop condition, not an implied command. Existing
+`capture-tools:promotion-evidence-test`, `promotion-registry-test`,
+`release-manifest-test`, and `release-index-test` remain useful GREEN checks but
+do not prove the future dispatch contracts by themselves.
 
 ## D0 -> D8 delivery state machine
 
 The gates are strict, linear, and separate. A gate consumes only the preceding
-gate’s immutable record. No gate is allowed to build a new candidate while
+gate's immutable record. No gate is allowed to build a new candidate while
 accepting an earlier one, and no gate depends on itself or on a later gate.
 
 | Gate | State and exact dependency | Required terminal record |
@@ -625,25 +762,30 @@ accepting an earlier one, and no gate depends on itself or on a later gate.
 | D2 | `ImplementationAuthorized`: consumes D1 approval and no later record. | Root authorization, owner paths, first-slice plan, and bounded implementation queue; no handoff commit is implied |
 | D3 | `CandidateBuilt`: consumes D2 authorization and the exact implementation source. | Immutable candidate bytes, manifest, source/version/schema/contract/model hashes, and byte ledger |
 | D4 | `CandidateAccepted`: consumes only the D3 candidate bytes. | Sequential real acceptance manifest, per-fixture CER/anchor results, cleanup/journal proofs, and candidate identity ledger |
-| D5 | `PublishedImmutable`: consumes D4 success and publishes byte-for-byte identical D3 artifacts through existing producer workflows. | Public artifact URLs, immutable publication metadata, and equality ledger; stable pointer remains unmoved |
-| D6 | `DownloadBackVerified`: consumes only D5 public artifacts. | Fresh downloads and hashes equal the D3/D5 ledger for every channel; no local path or cache is accepted |
-| D7 | `PublishedAccepted`: consumes only D6 downloads and repeats the D4 sequence. | Published/downloaded acceptance manifest with the same thresholds, anchors, cleanup, and no averaging |
-| D8 | `StablePointerMoved`: consumes D7 success only. | Existing `_publish-stable-pointer.yml` plus `tools/update-release-index.ts` records the additive pointer mutation and prior-pointer rollback |
+| D5 | `PublishedImmutable`: consumes D4 success and publishes all D3 candidate bytes through the future workflow contract above; it does not call the stable-pointer workflow. | Public artifact URLs, immutable publication metadata, and equality ledger; stable pointer remains unmoved |
+| D6 | `DownloadBackVerified`: consumes only D5 public artifacts through a fresh-download dispatch. | Fresh downloads and hashes equal the D3/D5 ledger for every channel; no local path, cache, or mutable pointer is accepted |
+| D7 | `PublishedAccepted`: consumes only D6 downloads through the published-acceptance dispatch and repeats the D4 sequence. | Published/downloaded acceptance manifest with the same thresholds, anchors, cleanup, and no averaging |
+| D8 | `StablePointerMoved`: consumes D7 success only through a separate protected dispatch and CAS guard. | D7 chain, expected/current pointer guard, and producer-owned `tools/update-release-index.ts` receipt are retained before the additive pointer mutation |
 
-D4 never consumes a “D4/D6 identity ledger”: it consumes the one D3
-candidate ledger. D5 never rebuilds or changes bytes. D6 is the download-back
-proof. D7 never accepts a local candidate. D8 is producer-only stable-pointer
-mutation; a worker, host, or local script has no authority to edit
+D4 never consumes a D4/D6 identity ledger: it consumes the one D3 candidate
+ledger. D5 never rebuilds or changes bytes and never calls the stable-pointer
+workflow. D6 is the fresh download-back proof. D7 never accepts a local
+candidate. D8 is a separate producer-only protected dispatch with a CAS guard;
+a worker, host, or local script has no authority to edit
 `release-index/stable.json`.
 
 ## Rollback and review rules
 
 A failed gate stops all later gates and preserves its sanitized evidence,
-journal, byte ledger, and rollback reference. Rollback is additive: revert the
-named slice or use the release-index additive revert procedure; never reset,
-rebase, amend, broad-delete, or mix `0.4.1` and `0.4.2` assets. Any content
-commit invalidates prior D1 review. Local package evidence remains local-tier
-evidence, and an old executable cannot prove a fresh installer or publication.
+journal, byte ledger, and rollback reference. Before any registry accepts bytes,
+stop and retain the failed candidate. After publication, rollback is producer
+supersession only: publish a corrected successor through the same immutable
+candidate/D5-D8 path, then mark the defective release superseded through the
+protected producer index operation. Never rewrite or overwrite published
+`0.4.2` bytes, directly revert the stable pointer, reset/rebase/amend, or mix
+`0.4.1` and `0.4.2` assets. Any content commit invalidates prior D1 review.
+Local package evidence remains local-tier evidence, and an old executable
+cannot prove a fresh installer or publication.
 
 The canonical documents are reviewed for current-code grounding, links,
 anchors, fenced blocks, privacy, staged scope, and truthfulness. This docs

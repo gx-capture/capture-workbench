@@ -18,9 +18,11 @@ the same `.npmrc.example`):
 
 > Phase 2 checkpoint (2026-09-09): this checkout is documentation/design-only.
 > It does not assert that any release is published or that registry bytes exist.
-> Use a concrete registry install only after D6 download-back verification and
-> D8 stable-pointer promotion in the canonical Phase 2 delivery state machine.
-> Until then, do not install from a mutable pointer or infer release identity
+> D6 immutable public downloads are permitted and required for D7 verification:
+> D7 installs/uses only the exact bytes bound by the D6 ledger, before D8.
+> Ordinary stable or mutable-pointer consumer installation waits until D8
+> stable-pointer promotion in the canonical Phase 2 delivery state machine.
+> Until D6, do not install from a mutable pointer or infer release identity
 > from this source tree.
 
 ## Angular integration contract
@@ -224,10 +226,12 @@ later registration attempt may retry after the underlying error is corrected.
 
 The framework-neutral fixture is
 [`fixtures/web-component/index.html`](./fixtures/web-component/index.html).
-After D6 download-back verification and D8 stable-pointer promotion supply an
-exact immutable version, install `@gx-capture/capture-workbench-ui` from the
-configured NPM-compatible registry and import it from your bundler. The package
-does not publish a standalone browser
+For D7 published acceptance, install the exact immutable package version and
+runtime bytes identified by the D6 download-back ledger; this exact install is
+required before D8 and must not resolve through `stable`, `latest`, or another
+mutable pointer. After D8 stable-pointer promotion, ordinary consumers may
+follow the stable channel and install from the configured NPM-compatible
+registry. The package does not publish a standalone browser
 bundle or CDN entry.
 
 React and Vue consumers can assign the object properties through a DOM ref and

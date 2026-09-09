@@ -9,11 +9,12 @@ compute truth, acceptance, identity, and D0-D8 gates. The
 
 ## Checkpoint and authority
 
-The documentation correction starts from
-1df7eecccd4097c172c9338a7f584f9489e5ae78. The four canonical docs, the UI
-README banner, and the desktop README fixture example are the owned edit scope.
-Untracked .github/copilot-instructions.md and .github/instructions/ are
-preserved and are not staged. The exact resulting SHA is not embedded in this
+This closure starts from expected HEAD
+586423c1c7faa213b68a6f53ee346ac8035e5723. The four canonical docs and UI
+README are the modified scope; the desktop README remains in the preserved D0
+documentation set and is unchanged here. Untracked
+.github/copilot-instructions.md and .github/instructions/ are preserved and are
+not staged. The exact resulting SHA is not embedded in this
 record; the D0 handoff reports git rev-parse HEAD externally.
 
 PR #39 remains an engineering checkpoint at
@@ -24,9 +25,11 @@ That is not candidate, published, or release evidence. No current-HEAD Phase 2
 real JPEG/PDF, GPU, cleanup, candidate, download-back, or publication result is
 claimed. Source version 0.4.2 is not proof of a published package.
 
-CI repair is paused and has no authority in this checkpoint. This task does not
-edit workflows, rerun or retry CI, or treat CI as model, GPU, cleanup,
-installation, publication, or stable-pointer evidence.
+CI repair is paused and has no authority in this checkpoint. The future D5-D8
+implementation slice explicitly owns publication-workflow contract edits; this
+documentation task makes no workflow changes, reruns no CI, and treats no CI
+result as model, GPU, cleanup, installation, publication, or stable-pointer
+evidence.
 
 ## Change-mode checkpoint
 
@@ -35,7 +38,8 @@ Change mode: mixed, edit-first
 Existing owners: Phase 2 SPEC/DECISION/TODO/GUIDE and two active READMEs
 Delete/supersede: old policy only after replacement tests and an additive commit
 New coordinator: prohibited; converge existing OcrPipeline and OwnedRuntimeSession
-Feature/code authority: none in this documentation checkpoint
+Feature/code authority: none in this documentation checkpoint; future D5-D8
+workflow-contract edits are explicitly reserved for their named owner slice
 Verification floor: read-only owner/target/link/fence/diff checks
 ~~~
 
@@ -77,15 +81,18 @@ worker may delete superseded policy only after residual scans and deletion tests
    - R2 is a journal-first opaque lease/reconciler protocol.
    - R3 is a producer-owned group/session with one-root convenience.
 
-   Choose R3 in the existing Rust owner
-   packages/capture-sidecar-launcher/src/process.rs::OwnedRuntimeSession.
-   Its native implementation may add start_one and start_root(role, spec)
-   capability. Capture, Cert, and candidate journeys use one root; LAW may
-   place Capture/Python/Java roots in one producer-owned Job/group. Root leases,
-   proofs, errors, Jobs, process handles, PIDs, and native diagnostics do not
-   cross the external seam. The current spawn/id/try_wait API and PID-bearing
-   RuntimeTerminationProof are explicit convergence/deletion surface, not a
-   reason to add another coordinator.
+Choose R3 in the existing Rust owner
+packages/capture-sidecar-launcher/src/process.rs::OwnedRuntimeSession.
+Its native implementation may add start_one and start_root(role, spec)
+capability. Capture, Cert, and candidate journeys use one root; LAW may
+place Capture/Python/Java roots in one producer-owned group. That group uses
+the current unnamed no-breakaway Job with
+`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`; it never uses a named Job takeover and
+never weakens normal close or crash cleanup. Root leases, proofs, errors, Jobs,
+process handles, PIDs, and native diagnostics do not cross the external seam.
+The current spawn/id/try_wait API and PID-bearing RuntimeTerminationProof are
+explicit convergence/deletion surface, not a reason to add another
+coordinator.
 
 5. **Existing native exports and callers are the migration boundary.**
    src/lib.rs exports OwnedRuntimeSession and its current error/proof types;
@@ -98,25 +105,30 @@ worker may delete superseded policy only after residual scans and deletion tests
 6. **RuntimeSessionJournalV1 is producer-owned cleanup state.** The journal is
    not host/domain persistence and is never created, mutated, deleted, or
    reconciled by Tauri. Its required schema includes schemaVersion, producer,
-   sessionNonce, monotonic generation, state, timestamps, Job binding, staging
-   binding, root records, listener bindings, and semantic terminal proof.
-   Each root records role, root nonce, PID, process creation identity, state,
-   listener bindings, and start time. Raw command lines, paths, bearer tokens,
-   OCR, model bytes, user names, machine names, and arbitrary diagnostics are
-   forbidden. PID and creation identity stay in the private producer journal;
-   evidence emits only digests or booleans.
+   sessionNonce, monotonic generation, state, Job binding (including a
+   durably committed setup state), staging binding, root records, listener
+   bindings, and semantic terminal proof. Each root records role, root nonce,
+   PID, process creation identity, state, listener bindings, and start time.
+   Raw command lines, paths, bearer tokens, OCR, model bytes, user names,
+   machine names, and arbitrary diagnostics are forbidden. PID and creation
+   identity stay in the private producer journal; evidence emits only digests
+   or booleans.
 
 7. **Reconciliation is atomic and fail-closed.** Only the producer writer may
    compare-and-swap a state/generation, flush a same-directory temporary
    record, atomically replace it, and flush the file/directory through the
-   platform adapter. A reconciler may terminate or delete only after exact
-   PID plus creation identity, root/session nonce, producer Job membership,
-   listener binding nonce, and run-scoped staging nonce all match. PID reuse,
-   missing identity, port-only evidence, ambiguity, access denial, malformed
-   journal, or a torn write leaves residue and records
-   reconcile-required. The current launcher cannot yet prove every listener
-   binding, so implementation must reduce the claim to unknown ownership and
-   no kill/delete until it can.
+   platform adapter. During a live in-memory close, the private Job handle,
+   membership, root/session nonce, exact PID plus creation identity, listener
+   binding nonce, and run-scoped staging nonce must match before the producer
+   terminates and proves the current group. `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`
+   remains enabled. After restart the observer has no Job handle, membership
+   query, or nonce claim and is observe-only: only a trustworthy committed Job
+   setup plus every root's absent exact PID/creation identity, absent listeners,
+   and exact staging binding may terminalize the stale record and clean that
+   staging. PID reuse, a present or unqueryable PID, root mismatch, listener
+   ambiguity, missing identity, port-only evidence, access denial, malformed
+   journal, or a torn write leaves all residue untouched and records
+   reconcile-required. No process-name, PID-only, or port-only kill is valid.
 
 8. **Contract identity remains fixed.** API 2.0, raw/structured schema 2,
    CaptureOcrProjectionV3 schema 3, and contract hash
@@ -131,7 +143,7 @@ worker may delete superseded policy only after residual scans and deletion tests
    capture-runtime:version-check is discovery-and-stop, not a new target.
 
 9. **Acceptance is per fixture and serial.** Every real scanned PDF page 1
-   must have CER <= 1%; every real private JPEG must have CER <= 3%; zero
+   must have CER <= 1%; every real private JPEG must have CER <= 3%; no
    critical-anchor omissions are allowed; CER is never averaged. D4 consumes
    only D3 candidate bytes and runs Capture JPEG -> cleanup -> Capture original
    PDF page 1 -> cleanup -> Cert -> cleanup -> LAW -> cleanup. D7 consumes only
@@ -142,11 +154,48 @@ worker may delete superseded policy only after residual scans and deletion tests
 10. **Release gates do not collapse.** D0 DocsCommitted is the current docs
     commit and has no self-hash. D1 is pending exact-head review. D2 is
     authorization only. D3 builds one candidate. D4 accepts only D3. D5
-    publishes identical D3 bytes. D6 downloads those public bytes back. D7
-    accepts only D6. D8 permits only the existing producer
-    .github/workflows/_publish-stable-pointer.yml and
-    tools/update-release-index.ts to mutate the stable pointer. A worker,
-    host, Tauri, or local script has no pointer authority.
+    publishes every D3 byte after D4 and removes the current direct stable
+    pointer edge from `.github/workflows/release-promote.yml`. D6 fresh-downloads
+    those public bytes. D7 accepts only D6 and runs the same serial journey.
+    D8 is a separate protected dispatch consuming the D7 digest chain and a
+    current-pointer CAS guard, then invokes the producer
+    `.github/workflows/_publish-stable-pointer.yml` adapter and
+    `tools/update-release-index.ts`. A worker, host, Tauri, or local script has
+    no pointer authority.
+
+## Future D5-D8 workflow slice
+
+The workflow files are existing producer owners, not untouchable CI files. A
+future D2-authorized slice owns the contract correction across
+`.github/workflows/release-promote.yml`,
+`.github/workflows/_publish-stable-pointer.yml`,
+`.github/workflows/_publish-promotion-ledger.yml`,
+`.github/workflows/_publish-github-release.yml`, and
+`.github/workflows/_verify-registries.yml`,
+`.github/workflows/_publish-runtime-github-release.yml` for the existing
+runtime-release lane where applicable,
+`tools/create-promotion-ledger.ts`, `tools/update-release-index.ts`,
+`tools/three-project-acceptance.ts`, and `tools/acceptance-contract.ts`. The
+existing symbols are `parseArguments`/`main`, `updateReleaseIndex`/`main`,
+`runAcceptanceSequence`/`runCaptureWorkbenchAcceptance` and the three
+manifest validators, plus `writeAcceptanceManifest`/
+`readAcceptanceManifestTolerant`. D5 must consume D4, publish every exact D3
+artifact through the registry and GitHub Release jobs, write its publication
+ledger, and remove the direct stable-pointer call/edge; no D5 path may invoke it
+transitively. A single-lane retry cannot terminalize D5 or dispatch D6 until all
+required lanes pass. D6 must be a fresh public
+download-back dispatch. D7 must be a separate
+downloaded-byte acceptance dispatch that runs the existing serial Capture ->
+Cert -> LAW owner. D8 must be a separate protected dispatch that consumes the
+D7 chain and expected pointer generation / digest, checks CAS, and only then
+invokes the stable-pointer adapter.
+
+No D6/D7 workflow-contract target or separate D8 dispatch exists in the current
+checkout. Their target/file creation is a discovery task in D2: inspect the
+resolved `capture-tools` project, create or assign the owner, then add focused
+contract tests before marking the slice GREEN. Existing publication, manifest,
+registry, and release-index tests are supporting checks, not proof that the
+future dispatch contracts already exist.
 
 ## Rejected framings
 
@@ -162,6 +211,8 @@ worker may delete superseded policy only after residual scans and deletion tests
   process handles.
 - Treating a PID, parent process, executable name, port, or directory name as
   ownership proof.
+- Naming a Job for restart takeover, adopting a Job after restart, or weakening
+  `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` to make recovery easier.
 - Rebuilding or republishing between D3/D4/D5, accepting a local candidate in
   D7, or moving the stable pointer before D7.
 
@@ -176,9 +227,12 @@ publication byte equality, and rollback. Neither report is a gate until it
 names the exact post-D0 HEAD and external check/PR metadata.
 
 A failed gate stops later work and preserves sanitized evidence, journals,
-ledgers, and rollback references. Rollback is additive: revert the named
-slice or use the producer release-index revert procedure; never reset, rebase,
-amend, broad-delete, or overwrite an immutable artifact. Any later content
-commit invalidates D1 and requires a fresh exact-head review. This record
-claims no feature code, model run, candidate, publication, download-back,
-published acceptance, or stable-pointer mutation.
+ledgers, and rollback references. Before publication, retain the failed
+candidate and stop. After publication, rollback is producer supersession only:
+publish a corrected successor through the immutable candidate/D5-D8 chain and
+mark the defective release superseded through the protected producer index
+operation. Never overwrite published `0.4.2` bytes or directly revert the
+stable pointer; never reset, rebase, amend, or broad-delete. Any later content
+commit invalidates D1 and requires a fresh exact-head review. This record claims
+no feature code, model run, candidate, publication, download-back, published
+acceptance, or stable-pointer mutation.
