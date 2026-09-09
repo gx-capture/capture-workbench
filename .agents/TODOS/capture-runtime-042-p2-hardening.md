@@ -1,207 +1,178 @@
-# Capture Runtime 0.4.2 reopened Phase 1 GPU blocker and deferred Phase 2 TODO
+# Capture Runtime 0.4.2 Phase 2 hardening TODO
 
-## Transition checkpoint
+Status: all items below are planned and unchecked. No item is claimed as
+executed by this documentation checkpoint. The [canonical SPEC](../SPECS/capture-runtime-042-p2-hardening.md)
+owns policy; the [DECISION](../DECISIONS/capture-runtime-042-p2-hardening.md)
+owns rationale. Every item is a small vertical slice with one owner and one
+checkpoint commit.
 
-### Session boundary and current status
+## Entry gate and shared rules
 
-- [x] Retain the Phase 1 and deferred Phase 2 SPEC/DECISION/TODO documents in
-  this repository for fresh-worker resumption. This session performs no Phase 2
-  implementation.
-- [ ] Close the ordered Phase 1 gate. Capture Workbench remains in the minimum
-  CDP target-loss harness repair/recheck; Cert Prep has one prior real-OCR pass
-  but needs the producer-change minimum recheck; GX Law Prep source integration
-  is committed but real installed OCR is pending.
+- [ ] **Exact-head design gate.** Owner: Root + fresh Luna reviewer. Red proof:
+  a review record identifies `c6d2140e233de70734005713427f77f92414f415`, the
+  2026-09-09 checkpoint, current missing real evidence, blocked Cert/Law, and
+  unresolved findings. Owned files: the four Phase 2 docs only. Verify:
+  `git diff --check -- .agents/SPECS/capture-runtime-042-p2-hardening.md .agents/DECISIONS/capture-runtime-042-p2-hardening.md .agents/TODOS/capture-runtime-042-p2-hardening.md .agents/GUIDES/staged-ocr-delivery-workflow.md`.
+  Rollback: additive revert of the docs commit. Commit checkpoint: docs-only
+  commit below.
+- [ ] **Design-It-Twice review for OCR and session.** Owner: fresh Luna xhigh.
+  Red proof: three materially different alternatives per module, compared on
+  depth, locality, seam, failure, cancellation/termination, migration, and
+  deletion test; no code. Owned files: DECISION/SPEC review notes. Verify:
+  `rg -n "Design-It-Twice|Alternative A|Alternative B|Alternative C" .agents/SPECS/capture-runtime-042-p2-hardening.md .agents/DECISIONS/capture-runtime-042-p2-hardening.md`.
+  Rollback: discard the uncommitted review note only. Commit checkpoint: the
+  approved design commit, before implementation.
+- [ ] **Fresh worker checkpoint.** Owner: Root. Red proof: worker records the
+  approved exact HEAD and reads the four owner docs plus linked P1/PDF/
+  acceptance/contract docs. Owned files: no new files. Verify read-only Git
+  status and current SHA; do not run a model. Rollback: return to the approved
+  checkpoint. Commit checkpoint: worker handoff note in its own slice.
 
-- [x] Pin comparison base
-  `92572ded5d33963e6405b986e2b9f617a8ac2989` and inventory the 232 committed
-  changed paths by responsibility cluster.
-- [x] Prove shared-worktree ownership before cleanup. Remove only the
-  uncommitted LAW-specific candidate-test hunk; preserve line-ending-only
-  tracked state, user/unknown PNGs, proofshot artifacts, and older evidence.
-- [x] Repair the pnpm 12 multi-document lockfile in bounded commit `9813d57`.
-  Verify exact pnpm `12.0.0`, a single main dependency document, unchanged main
-  dependency graph semantics, frozen offline install, and `capture-tools`
-  lint/test with `--skip-nx-cache`.
-- [x] Rehash the immutable Capture Phase 1 aggregate and on-disk reviewed
-  runtime/archive/worker identities without loading PaddleOCR. Confirm the
-  aggregate SHA and bound tuple in this specification.
-- [ ] Obtain independent Standards and Specification transition reviews for
-  the exact reopened-Phase-1/deferred-Phase-2 documentation HEAD. Root grills
-  findings one at a time. Approval unlocks only the active lane below.
+## Slice 1 — canonical version identity (first implementation slice)
 
-## Reopened Phase 1 blocker: only executable lane
-
-- [x] Freeze the canonical compute-selection interface: `OcrComputePlan`
-  returns one immutable internal execution plan, existing public readiness
-  projection, and private selection proof; a separate immutable execution
-  receipt owns post-session facts. Define per-adapter usability, dGPU -> iGPU
-  -> noticed CPU priority, compatibility-only override behavior,
-  post-selection fail-closed semantics, RTX 4060 oracle, private evidence seam,
-  privacy fields, a truth table separating positive-unavailable,
-  indeterminate, structurally-invalid, and post-selection failure, and
-  contract/hash impact without loading Paddle/model assets.
-  Verify before commit: `git diff --cached --check -- .agents/SPECS/capture-runtime-042-p2-hardening.md .agents/DECISIONS/capture-runtime-042-p2-hardening.md .agents/TODOS/capture-runtime-042-p2-hardening.md`.
-  Verify automatic default: `rg -n --fixed-strings "There is no implicit value" .agents/SPECS/capture-runtime-042-p2-hardening.md`.
-  Verify machine oracle: `rg -n --fixed-strings "NVIDIA GeForce RTX 4060" .agents/SPECS/capture-runtime-042-p2-hardening.md`.
-  Verify private seam: `rg -n --fixed-strings "OcrExecutionEvidenceSink" .agents/SPECS/capture-runtime-042-p2-hardening.md`.
-  Verify uncertainty rule: `rg -n --fixed-strings "Unknown is not unavailable" .agents/DECISIONS/capture-runtime-042-p2-hardening.md`.
-  Verify truth table: `rg -n --fixed-strings "### Canonical compute decision truth table" .agents/SPECS/capture-runtime-042-p2-hardening.md`.
-  Verify execution binding: `rg -n --fixed-strings "executionSha256" .agents/SPECS/capture-runtime-042-p2-hardening.md`.
-  Verify ordinal contract: `rg -n --fixed-strings "Official ordinal and LUID contract" .agents/SPECS/capture-runtime-042-p2-hardening.md`.
-  Verify contract identity: `rg -n --fixed-strings "d293a3de26114f1b4fd65ea6d6d3f157fa2f93109b31e1e30d5d15ef0dfdeb40" .agents/SPECS/capture-runtime-042-p2-hardening.md`.
-  Verify installed order: `rg -n --fixed-strings "canonical JPEG then the original PDF page 1" .agents/SPECS/capture-runtime-042-p2-hardening.md`.
-- [ ] **Compute-plan slice:** red vertical tests at the canonical interface
-  prove enumeration-order-independent usable dGPU -> usable iGPU -> noticed
-  CPU priority; RTX 4060 automatic selection on this machine; deterministic
-  same-class identity tie-breaking; software positive-unavailable versus
-  unknown indeterminate evidence;
-  positive-unavailable evidence continuing to the next candidate;
-  indeterminate evidence blocking any result it could change; total/
-  structurally invalid inventory as unavailable; retired ordinal/deviceId
-  compatibility requests as unavailable; a complete bijective LUID join between high-performance
-  rank and ordinary `EnumAdapters1` ordinal; and identical plan/identity
-  reaching readiness and every session configuration. Red cases must include
-  iGPU at ordinary ordinal `0` plus RTX 4060 at ordinary ordinal `1` while the
-  RTX has high-performance rank `0` (ORT must receive `device_id: 1`), unequal
-  or duplicate LUID sets, a false `IDXGIFactory1::IsCurrent`, an ordinal/LUID
-  or complete-map-digest change across pipeline construction, a lazy/
-  unobservable session, a later worker map mismatch, an ORT version/mapping-
-  contract mismatch, a missing/
-  mismatched per-session provider `device_id`, missing/failed fallback
-  disablement, and DML profile evidence from a session whose binding did not
-  validate. They must also include dGPU indeterminate + iGPU usable,
-  both adapter probes timeout/throw, all adapters positive-unavailable, and
-  structurally-invalid inventory, with CPU emitted only for the explicit
-  all-positive-unavailable/no-hardware or authoritative-provider-absent rows.
-  DML construction and inference failure after selection must fail closed
-  without another GPU or CPU retry.
-  Prove retired override rejection, any identity/mapping drift, DML construction, zero
-  assigned DML nodes, and inference failure never reselect another GPU or CPU.
-  Replace both independent settings-to-worker numeric paths with one retained
-  plan; reject the retired `CAPTURE_WINDOWSML_DEVICE_ID` and worker `deviceId`
-  paths; pin `ort-directml-1.24.4-enumadapters1-v1` and the complete adapter-map
-  digest; remove implicit device `0`; run
-  runtime lint/typecheck/unit/integration with `--skip-nx-cache`, and prove the
-  generated contract set remains byte-identical. Residual-scan runtime config,
-  installer/model probes, worker requests, journeys, and packaging for implicit
-  `deviceId: 0`/`CAPTURE_WINDOWSML_DEVICE_ID=0` policy. Review exact HEAD and
+- [ ] **Inventory and check command.** Owner: runtime release/tooling owner. Red
+  proof: a fixture with one stale runtime/client/catalog/lock value fails and a
+  complete fixture reports all required identities. Owned files: existing
+  version/catalog/manifest owners plus only a new command file if no owner
+  fits. Verify: `corepack pnpm nx run capture-runtime:version-check --skip-nx-cache`;
+  also `corepack pnpm --version` (pnpm 12), and the resolved Capture/Cert Nx
+  project metadata must report Nx `23.1.2`. Rollback: revert the focused
+  inventory commit; leave unrelated locks untouched. Commit checkpoint: one
+  version inventory commit.
+- [ ] **Upgrade mode and stale-literal guard.** Owner: same release/tooling
+  owner. Red proof: explicit next-version input updates generated values only,
+  refuses mixed 0.4.1/0.4.2 locks and stale hand-written literals, and check
+  mode is read-only. Owned files: inventory generator, tests, generated report.
+  Verify: `corepack pnpm nx run capture-runtime:version-check --skip-nx-cache`
+  plus its focused test with `--skip-nx-cache`. Rollback: additive revert.
+  Commit checkpoint: upgrade/check guard commit.
+- [ ] **Tiered identity contract.** Owner: acceptance/release tooling. Red
+  proof: local E2E distinguishes URL/port transport from contract hash,
+  package boundary, provenance, and loaded executable identity; published
+  checks require strict immutable download-back bytes and reject local paths/
+  direct URLs. Owned files: existing acceptance manifest readers/tests. Verify:
+  `corepack pnpm nx run capture-workbench-desktop:typecheck-scripts --skip-nx-cache`.
+  Rollback: revert acceptance-only changes. Commit checkpoint: identity policy
   commit.
-  Verify: `corepack pnpm nx run capture-runtime:lint --skip-nx-cache`.
-  Verify: `corepack pnpm nx run capture-runtime:typecheck --skip-nx-cache`.
-  Verify: `corepack pnpm nx run capture-runtime:test-unit --skip-nx-cache`.
-  Verify: `corepack pnpm nx run capture-runtime:test-integration --skip-nx-cache`.
-  Verify: `corepack pnpm nx run capture-runtime:check-contracts --skip-nx-cache`.
-- [ ] **Compute real-proof slice:** on the Capture Workbench app, prove the
-  automatic GPU-DML plan selects the dedicated RTX 4060 and is used first by
-  the canonical JPEG, then by the original PDF page 1. Preserve semantic
-  anchors, the exact sanitized LUID/PCI identity joined to its ordinary ORT
-  `device_id`, per-session provider-option and DML-node evidence, unchanged
-  before/after pipeline-construction ordinary LUID maps and map digests,
-  observational RTX 4060 label, successful per-session fallback disablement,
-  plan/identity digests, runtime/worker/model/profile/contract hashes, and
-  cleanup. Class-only
-  readiness,
-  `windowsml-dml` alone, and prior LAW integrated-GPU evidence are insufficient.
-  Keep the receipt free of tokens, OCR/truth text, user/host names, local paths,
-  environment dumps, and arbitrary diagnostics. Validate
-  `ocr-device-proof-v1.json` through its private evidence schema and bind its
-  relative artifact/digest in acceptance manifest schema `2`. Stop the model
-  before any consumer model starts; review and commit evidence tooling
-  separately from generated evidence.
-  Add the fail-closed Nx target
-  `capture-workbench-desktop:acceptance-real-ocr-gpu-selection` to orchestrate
-  the two ordered installed runs and validate each private receipt.
-  Verify: `corepack pnpm nx run capture-tools:test --skip-nx-cache`.
-  Verify: `corepack pnpm nx run capture-workbench-desktop:typecheck-scripts --skip-nx-cache`.
-  Verify: `corepack pnpm nx run capture-workbench-desktop:acceptance-real-ocr-gpu-selection --skip-nx-cache`.
 
-The two unchecked slices above are one reopened Phase 1 gate and the only work
-authorized after exact-HEAD design approval. They run in order and end only
-when the installed Capture Workbench canonical JPEG then original PDF page 1
-both prove the automatic dedicated RTX 4060 selection and cleanup. No Cert or
-LAW model process may start before that result. Prior LAW integrated-adapter
-evidence cannot satisfy it. A later fresh worker must build one exact candidate
-before model acceptance; source changes invalidate prior Capture and Cert Phase
-1 manifests, so old manifests or receipts cannot be reused. The required
-sequence is Capture Workbench installed RTX4060 JPEG, then original PDF page 1
-and cleanup; Cert Prep with the identical candidate bytes and cleanup; then
-LAW. None of those model gates may run in this implementation checkpoint. No
-item below may be claimed or executed first or combined with this lane.
+## Slice 2 — deterministic staging and canonical acceptance
 
-## Deferred Phase 2 design checkpoints and implementation slices
+- [ ] **Candidate staging isolation.** Owner: desktop/release tooling. Red proof:
+  a local candidate cannot import a source tree, sibling artifact, or mutable
+  stable pointer; all bytes have manifest hashes. Owned files: stage/manifest
+  owner and tests. Verify: relevant desktop packaging/contract targets with
+  `--skip-nx-cache`. Rollback: delete only the focused staging change and retain
+  user evidence. Commit checkpoint: isolated local-candidate commit.
+- [ ] **AcceptanceRunner seam.** Owner: producer acceptance owner. Red proof:
+  one runner owns build/install/event scope/model transport/uninstall and
+  terminalizes only after child journal close; Capture JPEG then PDF page 1,
+  Cert, and Law are serial and stop on first failure. Owned files: existing
+  acceptance runner plus public-seam tests. Verify:
+  `corepack pnpm nx run capture-workbench-desktop:typecheck-scripts --skip-nx-cache`
+  and the focused runner tests with `--skip-nx-cache`. Rollback: additive
+  revert; do not edit consumers. Commit checkpoint: runner seam commit.
+- [ ] **Private evidence sanitizer.** Owner: acceptance tooling. Red proof:
+  output has hashes, numeric CER, stable anchor IDs/counts, provenance, and
+  cleanup only; secret/token/raw OCR/truth/path/machine-name injection fails.
+  Owned files: existing manifest/proof reader and tests. Verify the focused
+  privacy tests and `typecheck-scripts --skip-nx-cache`. Rollback: revert
+  sanitizer change. Commit checkpoint: privacy evidence commit.
 
-Everything in this section is blocked until `P1-GPU-SELECTION-PROOF` passes.
+## Slice 3 — model provenance and OCR deepening
 
-- [ ] **Canonical version inventory (first Phase 2 slice):** declare one source
-  for runtime, contract/schema, Python/npm/Java/Rust clients, desktop metadata,
-  catalogs, manifests, and consumer expectations. Generate and verify a
-  next-version upgrade/check command; reject stale literals and mixed
-  0.4.1/0.4.2 locks. Local package E2E keeps tiered identity (URL/port are
-  transport; contract/provenance/package-boundary identity remains required),
-  while published release gates retain strict byte/version/hash identity.
-- [ ] Isolate deterministic candidate staging and shared resources so local
-  package E2E cannot accidentally import a source tree or sibling artifact.
-- [ ] Replace duplicated app journey setup with one canonical acceptance runner
-  for build/install/event scope/model transport/uninstall, retaining the
-  sequential Capture Workbench -> Cert Prep -> GX Law Prep OCR semaphore.
-- [ ] Design and implement the deep `ModelSourceSnapshot` module for immutable
-  model/profile/digest provenance without raw OCR, tokens, or machine paths.
-- [ ] Run Design It Twice for canonical OCR deepening with at least three
-  materially different interfaces. Compare depth, locality, worker seam,
-  failure projection, cancellation, migration cost, and deletion test.
-- [ ] Run Design It Twice for native owned-session deepening. The accepted
-  interface must hide OS handles and converge close, crash, readiness failure,
-  and cleanup retry on one terminal proof.
-- [ ] Record the deferred public TDD seams before writing Phase 2 implementation
-  tests: OCR projection, owned-session proof, and installed-app close journey.
-- [ ] **Canonical OCR slice:** replace the accepted policy cluster with the
-  deepened `OcrPipeline`; delete superseded shallow paths/tests. Prove predictor
-  initialization once, serialized inference, page scope/all-pages default,
-  ordering, empty/failed/malformed pages, polygons/confidence, provenance, and
-  fail-closed DML behavior through the canonical interface. Review and commit.
-- [ ] **Performance baseline slice:** add privacy-safe internal measurement for
-  cold initialization, raster, inference, first page, total elapsed, peak
-  worker/Job memory, and cleanup. Record real JPEG/PDF page-1 baseline with
-  exact identities; do not change production behavior. Review and commit.
-- [ ] **Evidence-led optimization slices:** one metric and one vertical change
-  per fresh worker. Declare comparison/noise rules before coding, preserve
-  per-fixture semantic and cleanup gates, then review and commit each slice.
-- [ ] **Owned-session slice:** deepen native lifecycle ownership and remove
-  duplicated host cleanup mechanics. Prove suspended assign/verify/resume,
-  no-breakaway, readiness failure, root crash, normal/window close, host
-  termination, descendant cleanup, retry after failed proof, and baseline
-  process survival. Run Rust and desktop gates with `--skip-nx-cache`; review
-  and commit.
-- [ ] **Next-start reconciliation slice:** preserve durable runtime/model
-  assets; remove only identity-proven stale PIDs/listeners/run data/staging.
-  Never kill by name. Failure injection, review, and focused commit required.
+- [ ] **ModelSourceSnapshot.** Owner: runtime packaging owner. Red proof:
+  runtime/worker/model/profile/catalog/contract hashes are captured at use,
+  byte mismatch fails closed, and durable model caches are not deleted. Owned
+  files: runtime model/catalog owner and public-seam tests. Verify runtime
+  lint/typecheck/unit/integration/check-contracts, each with `--skip-nx-cache`.
+  Rollback: revert snapshot commit and retain prior catalog. Commit checkpoint:
+  provenance commit.
+- [ ] **OcrPipeline Design-It-Twice implementation.** Owner: runtime OCR owner.
+  Red proof: approved alternative becomes one deep `run` seam; production
+  worker and in-memory adapters exist; old raster/planning/normalization
+  policy and implementation-coupled tests are deleted after replacement tests.
+  Verify red/green public-seam tests, then `corepack pnpm nx run capture-runtime:lint --skip-nx-cache`,
+  `typecheck`, `test-unit`, `test-integration`, and `check-contracts` with
+  `--skip-nx-cache`. Rollback: additive revert of the OCR slice only. Commit
+  checkpoint: OCR replacement commit.
+- [ ] **OCR semantic vertical proof.** Owner: runtime OCR + acceptance owner.
+  Red proof: private JPEG and PDF page 1 are each rasterized and sent to
+  PaddleOCR; embedded text cannot affect output; ordering, empty/failed pages,
+  polygons, confidence, provenance, and typed failure gates pass independently.
+  Verify only through the approved installed/local-real target with
+  `--skip-nx-cache` after implementation entry approval. Rollback: revert the
+  focused acceptance/code slice. Commit checkpoint: semantic proof commit.
 
-## Release and cross-project gates
+## Slice 4 — compute truth and lifecycle hardening
 
-- [ ] Keep this entire section blocked until the installed Capture Workbench
-  `P1-GPU-SELECTION-PROOF` gate passes. Consumer validation may then run Cert
-  Prep followed by GX Law Prep; no consumer model starts before the producer
-  gate, and no consumer evidence substitutes for it.
-- [ ] Before generating a new candidate, audit Phase 2 changes again and
-  remove unnecessary agent-owned code with additive cleanup commits.
-- [ ] Regenerate contract/schema/SDK/release assets only from an accepted
-  public contract change. The compute-selection implementation is expected to
-  leave API `2.0`, `OcrComputePreflightV2` schema `1`, OCR schema `3`, generated
-  SDKs, and `contractSetSha256` byte-identical; fail this checkpoint if they
-  drift. Bind changed runtime/worker/private-proof bytes to exact HEAD and
-  rerun their no-cache gates.
-  Verify: `corepack pnpm nx run capture-runtime:check-contracts --skip-nx-cache`.
-- [ ] Run installed model-enabled acceptance separately in order:
-  Capture Workbench canonical JPEG -> Capture Workbench original PDF page 1 ->
-  Cert Prep -> GX Law Prep. A child must finish cleanup and release model
-  memory before the next starts. Do not add Cert/LAW source or consumer-specific
-  producer logic from this repository. Update the existing producer-owned
-  `acceptance-three-projects` target to require the two-run Capture Workbench
-  GPU-selection target before it invokes either unchanged consumer target.
-  Verify: `corepack pnpm nx run capture-workbench-desktop:acceptance-three-projects --skip-nx-cache`.
-- [ ] Keep stable release promotion blocked until all three Phase 1 journeys,
-  Phase 2 lifecycle gates, published-byte identity checks, repository PRs, and
-  SHA-specific CI runs are green.
-- [ ] Open a focused Capture Workbench PR only after the final exact HEAD has
-  both review axes, privacy/path/secret audit, evidence identities, and rollback
-  recorded.
+- [ ] **OcrComputePlan replacement.** Owner: runtime compute owner. Red proof:
+  dGPU -> iGPU -> noticed CPU truth table, positive-unavailable versus
+  indeterminate, exact LUID join, ORT ordinary ordinal, RTX 4060 oracle,
+  selected-DML fail-closed/no CPU retry, and identical plan from readiness to
+  sessions all pass at the public seam. Verify runtime lint/typecheck/unit/
+  integration/check-contracts with `--skip-nx-cache`; confirm API `2.0`, schema
+  `3`, and contract hash are byte-identical. Rollback: additive revert and
+  invalidate affected evidence. Commit checkpoint: compute-plan commit.
+- [ ] **Capture GPU real proof.** Owner: Capture Workbench acceptance owner.
+  Red proof: current candidate-installed Capture Workbench proves automatic
+  NVIDIA GeForce RTX 4060 on JPEG first, original PDF page 1 second, with
+  private device proof, semantic anchors, cleanup, and model release. Verify:
+  `corepack pnpm nx run capture-workbench-desktop:acceptance-real-ocr-gpu-selection --skip-nx-cache`.
+  Rollback: preserve failed manifest and revert only tooling/code slice. Commit
+  checkpoint: GPU acceptance commit; no Cert/Law start before it.
+- [ ] **OwnedRuntimeSession implementation.** Owner: Rust sidecar owner. Red
+  proof: suspended assign-before-resume/no-breakaway, normal/window close,
+  startup/readiness failure, root crash, host terminate, descendants, cleanup
+  retry, and baseline survival pass through the semantic interface. Verify the
+  Rust and desktop lifecycle targets with `--skip-nx-cache`. Rollback: additive
+  revert to prior reviewed launcher. Commit checkpoint: session ownership
+  commit.
+- [ ] **Next-start reconciliation.** Owner: desktop lifecycle owner. Red proof:
+  failure injection removes only identity-proven stale PIDs/listeners/run
+  state/staging, retains durable runtime/model caches, and never name-kills.
+  Verify lifecycle/reconciliation tests and all relevant Nx targets with
+  `--skip-nx-cache`. Rollback: revert reconciliation commit; preserve durable
+  caches. Commit checkpoint: reconciliation commit.
+
+## Slice 5 — evidence-led performance
+
+- [ ] **Baseline only.** Owner: runtime performance owner. Red proof: per-fixture
+  memory, latency, raster, model init, serialized inference, first-page, and
+  cleanup measurements are recorded as bounded numeric/hash evidence with no
+  behavior change. Verify the approved local-real JPEG/PDF page-1 lane with
+  `--skip-nx-cache`. Rollback: remove only run-scoped measurement artifacts;
+  retain no raw OCR. Commit checkpoint: baseline tooling commit.
+- [ ] **One-metric optimization.** Owner: fresh worker per metric. Red proof:
+  comparison/noise rule is recorded before code, target metric improves without
+  semantic/provenance/cleanup regression, and no average hides a fixture fail.
+  Verify affected runtime and acceptance targets with `--skip-nx-cache`.
+  Rollback: additive revert to the baseline commit. Commit checkpoint: one
+  metric per commit.
+
+## Slice 6 — consumer and release gates (last)
+
+- [ ] **Sequential consumer acceptance.** Owner: Root/coordinators in the three
+  repositories. Red proof: same immutable candidate bytes run Capture JPEG ->
+  Capture PDF page 1 -> Cert -> Law; each child cleans up and releases model
+  memory before the next. Verify the producer-owned three-project target with
+  `--skip-nx-cache`; do not claim from old evidence. Rollback: stop sequence,
+  retain failed evidence, and revert only the affected repository slice.
+  Commit checkpoint: per-repository acceptance commits.
+- [ ] **Immutable candidate/release.** Owner: release owner. Red proof: exact
+  source HEAD, artifact bytes, manifests, contract/model/profile/worker hashes,
+  frozen locks, download-back bytes, and consumer package boundaries match;
+  stable pointer remains unmoved until every gate is green. Verify release
+  targets and SHA-specific CI with `--skip-nx-cache`/approved CI commands.
+  Rollback: additive revert or pin prior reviewed 0.4.1 train consistently;
+  never mix versions. Commit checkpoint: candidate then publication commits.
+
+## Documentation checkpoint (this task)
+
+- [ ] **Documentation checkpoint audit.** Owner: docs worker + Root. Red proof:
+  the canonical design is limited to the four owner files and the read-only
+  Markdown/relative-link checks plus `git diff --check` are recorded. This item
+  does not claim implementation, model acceptance, candidate, or release.
+- [ ] Obtain Standards and Specification review on the exact documentation
+  commit. Owner: Root. Red proof: both reports identify current SHA and no
+  unapproved scope. Rollback: additive docs revert. Commit checkpoint: the
+  docs commit `docs(phase2): consolidate capture hardening design`.
