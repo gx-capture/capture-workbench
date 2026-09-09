@@ -6,6 +6,19 @@ Capture Runtime sidecar with a memory-only bearer token.
 
 The desktop host starts one verified `capture-runtime` sidecar on a random loopback port with a memory-only 256-bit bearer token. Its product provider is an isolated Ollama lane with dedicated app data, model storage, port, profile, and PID file.
 
+## Phase 2 checkpoint
+
+The current Capture Runtime 0.4.2 Phase 2 material is a docs/design checkpoint;
+it does not claim a published package, immutable candidate, installed
+acceptance result, or release. The existing
+`capture-workbench-desktop:acceptance-real` target is a local installed-runtime
+diagnostic and is explicitly not D4. The future D4 target is proposed as
+`capture-workbench-desktop:acceptance-d3-candidate`, owned by
+`apps/capture-workbench-desktop/scripts/acceptance-d3-candidate.ts:runD3CandidateAcceptance`;
+it will accept externally supplied D3 root/id/digests and must never stage or
+build, import the source tree, or follow a mutable URL. That target is not
+present until its project metadata and schema are created and reviewed.
+
 Run `corepack pnpm dev` for the product lane. It generates and stages release
 runtime assets before Tauri starts. `corepack pnpm dev:deterministic` remains a
 diagnostic-only test lane and never proves real engines or Ollama.
@@ -106,7 +119,7 @@ The installed deterministic smoke is intentionally opt-in because it performs a
 silent, current-user NSIS install and uninstall:
 
 ```powershell
-corepack pnpm nx run capture-workbench-desktop:smoke-installed-deterministic --skipNxCache
+corepack pnpm nx run capture-workbench-desktop:smoke-installed-deterministic --skip-nx-cache
 ```
 
 It refuses to run over an existing Capture Workbench install,

@@ -11,7 +11,7 @@ publication, or stable-pointer mutation.
 ## Current checkpoint: 2026-09-09
 
 - This closure starts from expected HEAD
-  `586423c1c7faa213b68a6f53ee346ac8035e5723`. The only pre-existing working
+  `b7fed18bb25cdb52df02e6ccd76eb82cdc44f621`. The only pre-existing working
   tree changes are untracked `.github/copilot-instructions.md` and
   `.github/instructions/`; they are preserved and are not part of this slice.
 - PR #39 is at `c6d2140e233de70734005713427f77f92414f415`; its deterministic CI
@@ -107,10 +107,12 @@ symbols and paths, not proposed placeholders.
 | Owner | Current symbol/surface | Callers or targets to migrate |
 | --- | --- | --- |
 | `packages/capture-runtime/src/capture_runtime/ocr_projection.py` | `OcrPipeline` at the class definition; current `extract`, `normalize_observation`, `serialize_page`, `serialize_manifest`, `failed_page`, and `failure` methods | `packages/capture-runtime/src/capture_runtime/extractors.py` (`StandaloneRuntimeCaptureExtractor` and `_WorkerOcrEngineAdapter`), `packages/capture-runtime/src/capture_runtime/services/streaming_capture_service.py`, `packages/capture-runtime/src/capture_runtime/workers/ocr_main.py`, `packages/capture-runtime/tests/unit/test_ocr_projection.py`, `packages/capture-runtime/tests/integration/test_streaming_api.py`, and `packages/capture-runtime/tests/integration/test_streaming_ocr_failure_evidence.py` |
+| `packages/capture-runtime/src/capture_runtime/ocr_preflight.py` | `OcrComputePlan.select` and `OcrGpuCapabilitySnapshot` | `packages/capture-runtime/tests/unit/test_ocr_compute_plan.py:test_positive_unavailable_dgpu_selects_usable_igpu` (focused regression to add); the existing full `capture-runtime:test-unit` target remains the verification owner |
 | `packages/capture-sidecar-launcher/src/process.rs` | `OwnedRuntimeSession`, `OwnedRuntimeSessionState`, `RuntimeTerminationProof`, and `RuntimeCleanupError` | `src/launcher.rs` (`LaunchedSidecar`, `launch_sidecar`, `launch_sidecar_with_observer`), `src/lib.rs` public exports, desktop Tauri `src/state.rs` (`OwnedRuntime` and cleanup/monitor paths), desktop Tauri `src/launcher.rs` (`LaunchedRuntime`), and desktop `src/commands.rs` shutdown path |
 | `packages/capture-sidecar-launcher/src/launcher.rs` | `SidecarLaunchSpec`, `LaunchOptions`, `LaunchedSidecar`, readiness/retry/observer launchers | `capture-sidecar-launcher:cargo-fmt-check`, `cargo-check`, `cargo-test`, plus desktop launcher integration |
 | `tools/release/version-sources.ts` | `collectReleaseVersionEntries()` and its existing version-source inventory | `tools/release/version-sources.test.ts`, target `capture-tools:release-version-test`; first implementation slice owns the inventory extension and Nx upgrade |
-| `tools/three-project-acceptance.ts` | `runAcceptanceSequence`, `runCaptureWorkbenchAcceptance`, `validateChildManifest`, `validateTerminalManifest` | `tools/acceptance-contract.ts:writeAcceptanceManifest`, desktop `acceptance-three-projects`, and consumer assertion adapters |
+| `tools/three-project-acceptance.ts` | `runAcceptanceSequence`, `runCaptureWorkbenchAcceptance`, `validateChildManifest`, `validateTerminalManifest`, `validateCleanupEvidence`, and `verifyRecordedCleanupScope` | Sole producer runner for Capture private JPEG, Capture scanned PDF page 1, Cert, and LAW; `tools/acceptance-contract.ts:writeAcceptanceManifest`/`readAcceptanceManifestTolerant`; consumer adapter migrations |
+| `apps/capture-workbench-desktop/scripts/real-jpeg-acceptance-coordinator.ts` | `runRealJpegAcceptance` and `runRealJpegAcceptanceCli` | Standalone coordinator to migrate into `tools/three-project-acceptance.ts:runAcceptanceSequence`, then delete only after residual callers, async-boundary exceptions, and replacement tests are proven |
 
 Before an implementation slice, run these read-only discovery commands and
 record the resolved targets. A missing target is discovery-and-stop; it is not
@@ -346,22 +348,28 @@ Interface shape:
 RuntimeSessionJournal.open(plan) -> SessionKey
 producer.launch(key, root_spec) -> RootKey
 producer.observe(key, root) -> RuntimeObservation
-producer.reconcile(key) -> ReconcileResult
+RuntimeSessionJournal::reconcile(ReconcileRef) -> ReconcileResult
 producer.close(key, root) -> RootProof
 ```
 
 Usage gives the host only opaque keys and semantic observations:
 
 ```text
-key = journal.open(plan)
-root = producer.launch(key, spec)
-producer.close(key, root)
+journal = RuntimeSessionJournal.open(plan)
+ref = journal.reconcile_ref(journal_index)
+result = RuntimeSessionJournal::reconcile(ref)
 ```
 
-The hidden implementation makes the journal the primary state machine and
-reconstructs native identity from PID, creation identity, nonce, Job, listener,
-and staging bindings. Dependencies are the durable journal writer, native
-adapter, and a startup reconciler; a fake journal/native adapter tests crashes.
+`ReconcileRef` is an opaque producer-issued journal index/address, never a PID,
+Job handle, process takeover token, path, or lease. `ReconcileResult` is a
+semantic result only: it can report a narrowly proven terminalization or
+`reconcile-required` with a closed reason code; it cannot expose native
+identifiers. Candidate and prior sessions receive distinct refs and a ref can
+address only its exact journal record. The hidden implementation makes the
+journal the primary state machine and reconstructs native identity from PID,
+creation identity, nonce, Job, listener, and staging bindings. Dependencies are
+the durable journal writer, native adapter, and a startup reconciler; a fake
+journal/native adapter tests crashes.
 The trade-off is strongest crash recovery and explicit durable evidence, but
 the journal becomes a high-churn protocol and still needs a group relationship
 for multi-root consumers. The deletion surface is current desktop state
@@ -419,6 +427,16 @@ semantic adapters. The current `spawn`/`id`/`try_wait` methods and PID-bearing
 proof are convergence surface, not a second public contract. A future
 implementation may retain an internal PID for native verification, but public
 proof and errors are opaque and privacy-safe.
+
+The R3 journal seam is addressable and observe-only after restart:
+`RuntimeSessionJournal::reconcile(ReconcileRef) -> ReconcileResult`. The
+producer allocates a distinct opaque `ReconcileRef` for every candidate or
+prior session; it is a journal index/address only, not a job, process, PID,
+path, or takeover lease. `ReconcileResult` contains semantic state and a
+sanitized reason/proof digest, never native identifiers. A restart observer may
+terminalize only the exact ref whose absence/listener/staging proof is complete;
+present, reused, unqueryable, or ambiguous observations return
+`reconcile-required` and do not touch resources.
 
 ## RuntimeSessionJournalV1 and reconciliation
 
@@ -541,8 +559,14 @@ be removed; one ambiguous root blocks the entire group.
 ### Atomic transitions and reconciler
 
 Only the producer writer may transition a journal. Valid transitions are
-`planned -> launching -> running -> closing -> terminal` and
-`launching|running|closing -> reconcile-required`. A transition uses
+`planned -> launching -> running -> closing -> terminal`,
+`planned -> reconcile-required`, and
+`launching|running|closing -> reconcile-required`. A direct
+`planned -> terminal` is valid only with durable proof that no resource could
+ever have existed: Job setup was not committed, no root was resumed or
+launched, no listener was bound, no staging was acquired, and no resource
+acquisition was attempted. If any one of those facts is unknown, the journal
+must take `planned -> reconcile-required` instead. A transition uses
 compare-and-swap on the expected generation and state, writes a temporary file
 in the same producer directory, flushes it, atomically replaces the journal,
 and flushes the directory/file according to the platform adapter. A torn or
@@ -580,6 +604,15 @@ unknown ownership, not cleanup success.
 and returns one immutable selection. The readiness result and engine session
 use that same selection; hosts never select or persist an ordinal.
 
+The exact implementation owner is
+`packages/capture-runtime/src/capture_runtime/ocr_preflight.py:OcrComputePlan.select`
+with `OcrGpuCapabilitySnapshot`; the focused regression owner is
+`packages/capture-runtime/tests/unit/test_ocr_compute_plan.py:test_positive_unavailable_dgpu_selects_usable_igpu`.
+The regression must model a dGPU that is positively unavailable (not
+indeterminate) alongside a usable, fully mapped iGPU and assert DirectML on
+that iGPU, including its LUID/ORT mapping, never CPU. The existing
+indeterminate-dGPU test remains a separate fail-closed case.
+
 | Snapshot | Selection | Failure/fallback rule |
 | --- | --- | --- |
 | A usable discrete GPU with complete LUID/ORT mapping | DirectML on the selected dGPU, with exact LUID join and ordinary ORT ordinal | No CPU fallback after selected construction or inference failure |
@@ -596,8 +629,9 @@ for provenance only.
 Acceptance is semantic, per fixture, and fail-closed. For each real scanned
 PDF fixture, every required page-1 result has character error rate (CER) `<=
 1%`. For each real private JPEG fixture, CER is `<= 3%`. CER is computed per
-fixture/page as normalized edit distance divided by the expected character
-count; results are not averaged across pages, fixtures, or products. Every
+fixture/page as code-point edit distance divided by
+`max(expectedCodePointCount, 1)`; results are not averaged across pages,
+fixtures, or products. Every
 critical anchor must be present; one omitted critical anchor fails even when
 the overall CER is below threshold. Raw OCR, source bytes, bearer tokens,
 private paths, and machine names never enter the evidence artifact.
@@ -618,10 +652,216 @@ GX Law Prep
 
 The runner stops on the first semantic, identity, process, listener, or
 cleanup failure. It records a child manifest and an overall terminal manifest
-only after the child’s journal reaches terminal proof. `tools/three-project-
+only after the child journal reaches terminal proof. `tools/three-project-
 acceptance.ts` owns sequence orchestration and
 `tools/acceptance-contract.ts:writeAcceptanceManifest` owns manifest shape;
 the installed app and consumer assertion adapters are production seams.
+
+### Canonical acceptance wires (proposed V1)
+
+These are producer-owned design/contract surfaces for the future D2/D3/D4
+implementation. The sole producer runner is
+`tools/three-project-acceptance.ts:runAcceptanceSequence` and
+`runCaptureWorkbenchAcceptance`; its validators are
+`validateChildManifest`, `validateTerminalManifest`,
+`validateCleanupEvidence`, and `verifyRecordedCleanupScope`, with manifest
+serialization at `tools/acceptance-contract.ts:writeAcceptanceManifest` and
+`readAcceptanceManifestTolerant`. The standalone
+`apps/capture-workbench-desktop/scripts/real-jpeg-acceptance-coordinator.ts:runRealJpegAcceptance`
+and `runRealJpegAcceptanceCli` are migration/deletion surfaces, not a second
+runner. Deletion waits for residual-caller, async-boundary, and replacement
+tests to pass.
+
+`AcceptanceChildWireV1` is the privacy-safe child evidence envelope. Its
+canonical fields are schema/producer/run digest, sequence/leg/child/root/
+artifact identity, candidate id/manifest digest/D3 artifact digest set, media
+kind/digest, artifact records, expected truth/anchor digests, thresholds,
+normalization/distance, cleanup proof, and self digest:
+
+```json
+{
+  "schemaVersion": "AcceptanceChildWireV1",
+  "producer": "capture-runtime",
+  "runIdDigest": "<sha256-lower-hex>",
+  "sequenceIndex": 1,
+  "childKey": "capture-private-jpeg",
+  "legId": "capture-private-jpeg-v1",
+  "childId": "<sha256-lower-hex>",
+  "root": "<sha256-lower-hex>",
+  "artifactId": "<sha256-lower-hex>",
+  "candidateId": "<sha256-lower-hex>",
+  "candidateManifestSha256": "<sha256-lower-hex>",
+  "d3ArtifactDigests": [{ "artifactKey": "runtime", "sha256": "<sha256-lower-hex>" }],
+  "mediaKind": "jpeg",
+  "mediaDigest": "<sha256-lower-hex>",
+  "artifactDigests": [{ "artifactKey": "output-0", "bytes": 0, "sha256": "<sha256-lower-hex>" }],
+  "expectedNormalizedTruthSha256": "<sha256-lower-hex>",
+  "expectedAnchorSetSha256": "<sha256-lower-hex>",
+  "cerThreshold": 0.03,
+  "normalization": "nfkc-whitespace-v1",
+  "distance": "code-point-levenshtein-v1",
+  "cleanupProof": {
+    "journalTerminal": true,
+    "processesAbsent": true,
+    "listenersAbsent": true,
+    "stagingAbsent": true,
+    "proofSha256": "<sha256-lower-hex>"
+  },
+  "wireSha256": "<sha256-lower-hex>"
+}
+```
+
+`ProducerChildInvocationV1` is the producer-to-child invocation envelope. It
+contains `schemaVersion`, `producer`, `sequenceIndex`, `childKey`, `legId`,
+`childId`, `root`, `artifactId`, `candidateId`, `candidateManifestSha256`,
+`d3ArtifactDigests`, `mediaDigest`, `truthOracleSha256`, `childWireSha256`,
+and `invocationSha256`. Candidate identity and every D3 artifact digest are
+supplied from the immutable D3 ledger; no raw process handle, path, source
+tree, or mutable URL is an invocation input.
+
+```json
+{
+  "schemaVersion": "ProducerChildInvocationV1",
+  "producer": "capture-runtime",
+  "sequenceIndex": 1,
+  "childKey": "capture-private-jpeg",
+  "legId": "capture-private-jpeg-v1",
+  "childId": "<sha256-lower-hex>",
+  "root": "<sha256-lower-hex>",
+  "artifactId": "<sha256-lower-hex>",
+  "candidateId": "<sha256-lower-hex>",
+  "candidateManifestSha256": "<sha256-lower-hex>",
+  "d3ArtifactDigests": [{ "artifactKey": "runtime", "sha256": "<sha256-lower-hex>" }],
+  "mediaDigest": "<sha256-lower-hex>",
+  "truthOracleSha256": "<sha256-lower-hex>",
+  "childWireSha256": "<sha256-lower-hex>",
+  "invocationSha256": "<sha256-lower-hex>"
+}
+```
+
+`PrivateOcrTruthOracleV1` stays in the producer's local/private fixture scope.
+It contains `schemaVersion`, `producer`, `mediaKind`, `page`, `mediaDigest`,
+raw `truthText`, private `anchorTexts`,
+`expectedNormalizedTruthSha256`, `expectedAnchorSetSha256`,
+`normalization`, `distance`, `cerThreshold`, `anchorOmissionsAllowed`, and
+`oracleSha256`. Raw truth and anchors never enter a child wire, manifest,
+uploaded evidence artifact, or host response; only their evidence digests are
+exported. The Cert and LAW consumers adapt to this producer wire rather than
+owning a competing truth oracle:
+
+```json
+{
+  "schemaVersion": "PrivateOcrTruthOracleV1",
+  "producer": "capture-runtime",
+  "mediaKind": "jpeg",
+  "page": null,
+  "mediaDigest": "<sha256-lower-hex>",
+  "truthText": "<local-private-raw-truth>",
+  "anchorTexts": ["<local-private-anchor>"],
+  "expectedNormalizedTruthSha256": "<sha256-lower-hex>",
+  "expectedAnchorSetSha256": "<sha256-lower-hex>",
+  "normalization": "nfkc-whitespace-v1",
+  "distance": "code-point-levenshtein-v1",
+  "cerThreshold": 0.03,
+  "anchorOmissionsAllowed": 0,
+  "oracleSha256": "<sha256-lower-hex>"
+}
+```
+
+* Cert adapter migration: `cert-prep/apps/cert-prep-desktop/scripts/ocr-truth-contract.mts:evaluateOcrTruth`,
+  `cert-prep/apps/cert-prep-desktop/scripts/ocr-truth-contract.mts:normalizeOcrText`,
+  `cert-prep/apps/cert-prep-desktop/scripts/ocr-truth-contract.mts:parseOcrTruthManifest`,
+  `cert-prep/apps/cert-prep-desktop/scripts/ocr-truth-contract.mts:levenshtein`,
+  `cert-prep/apps/cert-prep-desktop/scripts/phase1-acceptance-evidence.mts:buildPhase1AcceptanceEvidence`,
+  and `cert-prep/apps/cert-prep-desktop/scripts/ocr-semantic-evidence.mts:serializePrivacySafeOcrSemanticEvidence` /
+  `OCR_NORMALIZATION_VERSION`.
+* LAW adapter migration: `gx.law-prep/apps/law-prep-engine/src/main/java/com/gx/lawprep/engine/capture/FoundryCaptureStructuringProvider.java:FoundryCaptureStructuringProvider`,
+  `gx.law-prep/apps/law-prep-engine/src/main/java/com/gx/lawprep/engine/extraction/EvidenceTextExtractionService.java:EvidenceTextExtractionService`,
+  `gx.law-prep/apps/law-prep-web-e2e/src/e2e/support/acceptance-expectations.ts:loadLawAcceptanceExpectation`,
+  and `gx.law-prep/apps/law-prep-web-e2e/src/e2e/support/acceptance-artifacts.ts:writeAcceptanceManifest`.
+
+The four producer legs are fixed and independently addressable. Their
+`sequenceIndex`, `childKey`, `legId`, `childId`, `root`, and `artifactId` must
+all be unique within a run and must not be reused across candidate/prior
+sessions:
+
+| sequenceIndex | childKey | legId | media/adapter |
+| ---: | --- | --- | --- |
+| 1 | `capture-private-jpeg` | `capture-private-jpeg-v1` | Capture private JPEG, CER `0.03` |
+| 2 | `capture-scanned-pdf-page1` | `capture-scanned-pdf-page1-v1` | Capture scanned PDF page 1, CER `0.01` |
+| 3 | `cert` | `cert-v1` | Cert adapter |
+| 4 | `law` | `law-v1` | LAW adapter |
+
+Each child emits its own artifact and exact cleanup proof before the next
+`sequenceIndex` starts. The existing standalone real-JPEG coordinator is
+migrated into the sole `runAcceptanceSequence` producer runner, then deleted
+along with its CLI/test and its special async-boundary allowance after
+`tools/check-async-boundary.ts` and residual caller scans are clean.
+
+Identity derivation is deterministic and scope-bound: `runIdDigest` is the
+lowercase SHA-256 of the private run id; `childId` is the SHA-256 of canonical
+JSON containing `schemaVersion`, `producer`, `runIdDigest`, `sequenceIndex`,
+`childKey`, `legId`, `candidateId`, and `mediaDigest`; `root` is the SHA-256 of
+canonical JSON containing `producer`, `runIdDigest`, `childId`, the root role,
+and the opaque session-ref digest; and each `artifactId` is the SHA-256 of
+canonical JSON containing `producer`, `childId`, `artifactKey`, and its raw-byte
+artifact digest. The session-ref digest is not a native identifier. A
+candidate/prior session or another leg therefore cannot accidentally reuse an
+identity while raw run ids, paths, and native refs remain private.
+
+Serialization is deterministic: encode canonical compact UTF-8 JSON without a
+BOM or trailing newline; recursively sort object keys lexicographically;
+preserve arrays in semantic order (sort set-like digest lists by their stated
+digest/artifact-key); and emit SHA-256 as lowercase hex. Compute each self digest
+over the canonical JSON with its own `wireSha256`, `invocationSha256`, or
+`oracleSha256` field omitted. `mediaDigest` and every `artifactDigests.sha256`
+are SHA-256 over the exact raw JPEG/PDF or artifact bytes, never decoded,
+re-encoded, text, or path bytes. The expected truth digest is SHA-256 of the
+UTF-8 normalized raw truth; the expected anchor-set digest is SHA-256 of the
+canonical UTF-8 JSON of the deterministically ordered normalized anchor set.
+
+`nfkc-whitespace-v1` is exactly: apply Unicode NFKC; convert CRLF, CR, LF,
+newlines, and every Unicode whitespace code point to ASCII U+0020; collapse
+consecutive ASCII spaces to one; then trim. Preserve case, punctuation, and
+traditional/simplified characters: no lowercasing, transliteration, or
+punctuation stripping. `code-point-levenshtein-v1` compares Unicode code-point
+arrays with insertion, deletion, and substitution cost one. CER is zero only
+when both normalized values are empty; otherwise it is the distance divided by
+`max(expectedCodePointCount, 1)`, evaluated per fixture/page. Thresholds are
+PDF page 1 `0.01`, JPEG `0.03`, and required anchor omissions `0`; there is no
+average across pages, fixtures, products, or anchors.
+
+Any schema, producer, sequence/leg/child/root/artifact, candidate/D3
+root/id/digest, media/truth digest, normalization, distance, threshold, raw
+artifact-byte, or cleanup-proof mismatch fails closed: emit no evidence, do
+not promote, and retain the sanitized failure record.
+
+### D3/D4 immutable-byte boundary (proposed target)
+
+D2 and D2.5 authorize only design, contract, and red infrastructure. They do
+not install or require an installed candidate. D3 is the first construction
+gate: the existing release/candidate owners build one immutable byte ledger
+containing a bounded candidate root, candidate id, manifest digest, every raw
+artifact digest, and all source/version/schema/contract/model/profile/catalog
+identity. D4 must consume that ledger, not reconstruct it.
+
+The proposed future D4 owner is a new
+`capture-workbench-desktop:acceptance-d3-candidate` target in
+`apps/capture-workbench-desktop/project.json`, backed by
+`apps/capture-workbench-desktop/scripts/acceptance-d3-candidate.ts:runD3CandidateAcceptance`.
+It accepts externally supplied `D3_CANDIDATE_ROOT`, `D3_CANDIDATE_ID`,
+`D3_LEDGER_SHA256`, and `D3_ARTIFACT_DIGESTS`, validates exact equality, and
+passes only those prebuilt bytes to the producer runner. It must never invoke
+`capture-workbench-desktop:stage-product-runtime`, any build target or build
+script, a source-tree import, or a mutable URL. The current
+`capture-workbench-desktop:acceptance-real` target remains a local installed
+diagnostic and is explicitly not D4.
+
+The target and script do not exist at this checkpoint. Discovery begins with
+`corepack pnpm nx show project capture-workbench-desktop --json`; target/script
+creation is a separate authorized implementation task and a
+discovery-and-stop until its metadata and schema tests exist. No made-up target
+invocation or installed-candidate claim is valid before that stop clears.
 
 ## Version, schema, projection, and release-channel inventory
 
@@ -760,8 +1000,8 @@ accepting an earlier one, and no gate depends on itself or on a later gate.
 | D0 | `DocsCommitted`: this documentation correction is committed. The exact SHA is external, not self-embedded. | Exact path set, diff/anchor/fence checks, and commit SHA reported by the worker |
 | D1 | `DesignReviewed`: consumes D0 `HEAD` only. Pending now. | Fresh Standards and Specification reports naming `git rev-parse HEAD`, paths, and external check/PR metadata |
 | D2 | `ImplementationAuthorized`: consumes D1 approval and no later record. | Root authorization, owner paths, first-slice plan, and bounded implementation queue; no handoff commit is implied |
-| D3 | `CandidateBuilt`: consumes D2 authorization and the exact implementation source. | Immutable candidate bytes, manifest, source/version/schema/contract/model hashes, and byte ledger |
-| D4 | `CandidateAccepted`: consumes only the D3 candidate bytes. | Sequential real acceptance manifest, per-fixture CER/anchor results, cleanup/journal proofs, and candidate identity ledger |
+| D3 | `CandidateBuilt`: consumes D2 authorization and the exact implementation source. | One immutable byte ledger containing candidate bytes, root/id, manifest, source/version/schema/contract/model hashes, and every raw artifact digest |
+| D4 | `CandidateAccepted`: consumes only externally supplied D3 root/id/digests through the future `acceptance-d3-candidate` target. | Sequential four-leg acceptance manifest, per-fixture CER/anchor results, cleanup/journal proofs, and D3 identity equality |
 | D5 | `PublishedImmutable`: consumes D4 success and publishes all D3 candidate bytes through the future workflow contract above; it does not call the stable-pointer workflow. | Public artifact URLs, immutable publication metadata, and equality ledger; stable pointer remains unmoved |
 | D6 | `DownloadBackVerified`: consumes only D5 public artifacts through a fresh-download dispatch. | Fresh downloads and hashes equal the D3/D5 ledger for every channel; no local path, cache, or mutable pointer is accepted |
 | D7 | `PublishedAccepted`: consumes only D6 downloads through the published-acceptance dispatch and repeats the D4 sequence. | Published/downloaded acceptance manifest with the same thresholds, anchors, cleanup, and no averaging |

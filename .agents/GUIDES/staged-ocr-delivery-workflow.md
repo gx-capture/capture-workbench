@@ -10,7 +10,7 @@ not alternate Phase 2 policy.
 ## Checkpoint first: 2026-09-09
 
 This closure starts from expected HEAD
-586423c1c7faa213b68a6f53ee346ac8035e5723. D0 is complete for the documentation
+b7fed18bb25cdb52df02e6ccd76eb82cdc44f621. D0 is complete for the documentation
 commit, but its SHA is intentionally external: record git rev-parse HEAD after
 commit. D1 is pending fresh Standards and Specification review at that exact
 head. Preserve untracked .github/copilot-instructions.md and
@@ -76,7 +76,14 @@ D0 DocsCommitted
 ~~~
 
 Each is a separate item and evidence/commit checkpoint. A failed state stops
-later work. D4 consumes only D3 candidate bytes. D5 publishes identical D3
+later work. D2 and D2.5 are design, contract, and red-infrastructure gates
+only: they do not install or require an installed candidate. D3 is the first
+gate that builds an immutable byte ledger. D4 consumes only externally
+supplied D3 candidate root/id/digests through the future
+`capture-workbench-desktop:acceptance-d3-candidate` target, never by staging,
+building, importing source, or following a mutable URL. The current
+`capture-workbench-desktop:acceptance-real` target remains a local diagnostic,
+not D4. D5 publishes identical D3
 bytes after D4 and has no stable-pointer call. D6 downloads back D5 public
 bytes through a fresh-download dispatch. D7 repeats acceptance using D6
 downloads only. D8 is a separate protected producer dispatch that consumes the
@@ -127,6 +134,57 @@ the existing `capture-tools` project before invoking it. Until that discovery
 and creation is recorded, stop; do not write a fake current target or claim
 that the dispatch contract is already implemented.
 
+## D3 ledger and D4 candidate target boundary
+
+D3 builds one immutable byte ledger: a bounded candidate root, candidate id,
+manifest digest, every raw artifact SHA-256, and source/version/schema/
+contract/model/profile/catalog identity. It does not require an installed
+candidate. The future D4 target is proposed as
+`capture-workbench-desktop:acceptance-d3-candidate` in
+`apps/capture-workbench-desktop/project.json`, with
+`apps/capture-workbench-desktop/scripts/acceptance-d3-candidate.ts:runD3CandidateAcceptance`
+as its script owner. It accepts externally supplied `D3_CANDIDATE_ROOT`,
+`D3_CANDIDATE_ID`, `D3_LEDGER_SHA256`, and `D3_ARTIFACT_DIGESTS`, validates
+exact equality, and opens only the prebuilt D3 bytes. It must never call
+`stage-product-runtime`, any build target/script, a source-tree import, or a
+mutable URL. The target/script are absent at this head: first run
+`corepack pnpm nx show project capture-workbench-desktop --json`, then stop for
+explicit target/schema creation; do not invoke the proposed name early. The
+existing `capture-workbench-desktop:acceptance-real` target remains a local
+installed diagnostic and is non-D4.
+
+The producer's canonical V1 wires are
+`AcceptanceChildWireV1`, `ProducerChildInvocationV1`, and private
+`PrivateOcrTruthOracleV1`, owned by
+`tools/three-project-acceptance.ts:runAcceptanceSequence` and
+`tools/acceptance-contract.ts:writeAcceptanceManifest`. Child wires use unique
+`sequenceIndex`, `childKey`, `legId`, `childId`, `root`, and `artifactId`, bind
+the D3 candidate id/manifest/artifact digests, and carry media/artifact
+digests; the four legs are Capture private JPEG, Capture scanned PDF page 1,
+Cert, and LAW.
+Serialize canonical compact UTF-8 JSON with sorted object keys, semantic array
+ordering, self-digest omission, and lowercase SHA-256. Hash exact raw bytes;
+keep raw truth local and export expected normalized-truth/anchor digests only.
+Use exactly `nfkc-whitespace-v1` (NFKC, all newlines/Unicode whitespace to one
+ASCII space, collapse, trim; preserve case/punctuation/traditional-simplified)
+and `code-point-levenshtein-v1`; thresholds are PDF `0.01`, JPEG `0.03`,
+anchor omissions `0`, with no average. Schema/scope mismatch fails closed.
+Cert migrates from
+`cert-prep/apps/cert-prep-desktop/scripts/ocr-truth-contract.mts:evaluateOcrTruth`,
+`cert-prep/apps/cert-prep-desktop/scripts/ocr-truth-contract.mts:normalizeOcrText`,
+`cert-prep/apps/cert-prep-desktop/scripts/ocr-truth-contract.mts:parseOcrTruthManifest`,
+`cert-prep/apps/cert-prep-desktop/scripts/ocr-truth-contract.mts:levenshtein`,
+`cert-prep/apps/cert-prep-desktop/scripts/phase1-acceptance-evidence.mts:buildPhase1AcceptanceEvidence`,
+and `cert-prep/apps/cert-prep-desktop/scripts/ocr-semantic-evidence.mts:serializePrivacySafeOcrSemanticEvidence`.
+LAW migrates from
+`gx.law-prep/apps/law-prep-engine/src/main/java/com/gx/lawprep/engine/capture/FoundryCaptureStructuringProvider.java:FoundryCaptureStructuringProvider`,
+`gx.law-prep/apps/law-prep-engine/src/main/java/com/gx/lawprep/engine/extraction/EvidenceTextExtractionService.java:EvidenceTextExtractionService`,
+`gx.law-prep/apps/law-prep-web-e2e/src/e2e/support/acceptance-expectations.ts:loadLawAcceptanceExpectation`,
+and `gx.law-prep/apps/law-prep-web-e2e/src/e2e/support/acceptance-artifacts.ts:writeAcceptanceManifest`. The standalone
+`real-jpeg-acceptance-coordinator.ts:runRealJpegAcceptance`/CLI migrates into
+the sole producer runner, then is deleted with its test and async-boundary
+allowance after residual scans and replacement tests pass.
+
 ## First implementation slice
 
 After D1 review and D2 authorization, the first code slice owns the existing
@@ -156,6 +214,16 @@ remain supported. Tauri never owns or mutates a journal or Job. A later
 workflow-contract slice also edits the named D5-D8 publication workflows; CI
 repair remains paused.
 
+The compute proof remains in the existing producer owner
+`packages/capture-runtime/src/capture_runtime/ocr_preflight.py:OcrComputePlan.select`
+and snapshot type. Add the focused regression
+`packages/capture-runtime/tests/unit/test_ocr_compute_plan.py:test_positive_unavailable_dgpu_selects_usable_igpu`
+for a positively unavailable dGPU plus usable mapped iGPU selecting DirectML
+on the iGPU, never CPU; the existing full command is
+`corepack pnpm nx run capture-runtime:test-unit --skip-nx-cache`. If the owner,
+symbol, or target is absent, `corepack pnpm nx show project capture-runtime --json`
+is discovery-and-stop.
+
 ## Real OCR acceptance
 
 The producer rasterizes every requested PDF page with PDFium and sends the
@@ -181,6 +249,18 @@ Cert Prep
 GX Law Prep
   -> cleanup proof
 ~~~
+
+The four children are unique within one run: sequence/child-key/leg-id are
+`(1, capture-private-jpeg, capture-private-jpeg-v1)`,
+`(2, capture-scanned-pdf-page1, capture-scanned-pdf-page1-v1)`,
+`(3, cert, cert-v1)`, and `(4, law, law-v1)`. Each also receives a distinct
+`childId`, `root`, and `artifactId`, plus exact artifact and cleanup proof;
+none may be reused by another leg, candidate, or prior session. The cleanup
+proof and model-memory release are committed before the next child begins.
+The standalone `apps/capture-workbench-desktop/scripts/real-jpeg-acceptance-coordinator.ts:runRealJpegAcceptance`
+and CLI are migrated into `tools/three-project-acceptance.ts:runAcceptanceSequence`
+as the sole producer runner, then deleted with their test and async-boundary
+allowance only after residual scans and replacement tests pass.
 
 Stop at the first semantic, identity, process, listener, or cleanup failure.
 The completed local-probe Phase 1 result does not satisfy D3-D8.
@@ -214,7 +294,18 @@ The producer reconciler may terminate/delete only on the live exact-identity
 path, or remove exact stale staging under the restart observe-only conditions
 above. Retry is bounded and identity-scoped; do not launch a replacement root
 while cleanup is unresolved. Tauri can request close and receive semantic
-proof, but cannot write/mutate the journal or Job.
+proof, but cannot write/mutate the journal or Job. The addressable observe-only
+API is `RuntimeSessionJournal::reconcile(ReconcileRef) -> ReconcileResult`.
+`ReconcileRef` is an opaque journal index/address, not a PID, Job handle,
+process id, path, or takeover lease; candidate and prior sessions each receive
+a distinct ref. The journal graph is
+`planned -> launching -> running -> closing -> terminal`, with
+`planned -> reconcile-required` and
+`launching|running|closing -> reconcile-required`. Direct
+`planned -> terminal` is permitted only when durable proof shows no resource
+could have existed before setup/root/listener/staging acquisition and no
+resource acquisition was attempted; otherwise
+the ref is `reconcile-required`.
 
 ## Verification floor
 
@@ -248,6 +339,11 @@ corepack pnpm nx run capture-workbench-desktop:smoke-real-desktop-ocr-directml -
 corepack pnpm nx run capture-workbench-desktop:acceptance-real --skip-nx-cache
 corepack pnpm nx run capture-workbench-desktop:acceptance-three-projects --skip-nx-cache
 ~~~
+
+The existing `capture-workbench-desktop:acceptance-real` and
+`acceptance-three-projects` targets are local installed diagnostics under the
+current graph, not D4 or D7 proof; D4/D7 must use their separately authorized
+immutable-byte/downloaded-byte producer dispatches.
 
 The target capture-workbench-desktop:acceptance-real-ocr-gpu-selection is
 absent; do not invent it. Package QA and local package evidence remain

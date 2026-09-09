@@ -32,7 +32,7 @@ slice does not edit workflows, rerun CI, or claim that deterministic CI proves
 OCR, GPU, cleanup, installation, publication, or pointer state.
 
 The expected starting HEAD for this closure is
-`586423c1c7faa213b68a6f53ee346ac8035e5723`. Preserve unrelated untracked
+`b7fed18bb25cdb52df02e6ccd76eb82cdc44f621`. Preserve unrelated untracked
 `.github/copilot-instructions.md` and `.github/instructions/`; never stage them.
 
 ## D0 - DocsCommitted
@@ -69,6 +69,13 @@ The expected starting HEAD for this closure is
   review artifacts are external.
 
 ## D2 - ImplementationAuthorized
+
+D2 and D2.5 in this checklist are design, contract, and red-infrastructure
+authorization only. They do not install, stage, build, launch, or accept a
+candidate and do not require an installed candidate before D3. D3 first builds
+the immutable byte ledger; D4 later consumes only externally supplied D3
+candidate root/id/digests through its separately named target. Existing local
+`capture-workbench-desktop:acceptance-real` remains a diagnostic and is not D4.
 
 - [ ] **Authorize one bounded implementation queue after D1.** Consume only the
   approved D1 head. The root authorization records owner paths/symbols, the
@@ -240,6 +247,21 @@ The expected starting HEAD for this closure is
   reuse/presence/unqueryability, listener ambiguity, root mismatch, or unknown
   identity means `reconcile-required`, touch nothing, and block promotion.
 
+  The producer exposes the exact addressable observe-only API
+  `RuntimeSessionJournal::reconcile(ReconcileRef) -> ReconcileResult`.
+  `ReconcileRef` is an opaque journal index/address, never a PID, Job handle,
+  process id, path, or takeover lease; candidate and prior sessions receive
+  distinct refs. A semantic `ReconcileResult` may terminalize only the exact
+  ref with complete absence/listener/staging proof; present, reused,
+  unqueryable, or ambiguous observations return `reconcile-required` and
+  touch nothing. The journal graph is
+  `planned -> launching -> running -> closing -> terminal`, with
+  `planned -> reconcile-required` and
+  `launching|running|closing -> reconcile-required`; direct
+  `planned -> terminal` is allowed only when durable proof shows no resource
+  could have existed before setup/root/listener/staging acquisition and no
+  resource acquisition was attempted.
+
   Prerequisite: D2.3 lifecycle owner and its native failure adapters. RED proof:
   torn/unknown-generation writes, uncommitted setup, PID reuse, present or
   unqueryable PID, listener ambiguity, staging mismatch, or a restart attempt
@@ -276,21 +298,74 @@ The expected starting HEAD for this closure is
   `tools/three-project-acceptance.ts`;
   `apps/capture-workbench-desktop/scripts/acceptance-real.ts:waitForChildClose`;
   `apps/capture-workbench-desktop/scripts/acceptance-orchestration.ts:runCaptureWorkbenchAcceptanceOrchestration`;
-  and `apps/capture-workbench-desktop/scripts/real-ocr-result-assertions.ts:assertRealOcrResult`.
-  D4 and D7 use the same producer-owned serial runner: Capture private JPEG,
-  cleanup, Capture original scanned PDF page 1, cleanup, Cert Prep, cleanup,
-  GX Law Prep, cleanup. Each fixture/page is independent: CER <= 3% for every
-  real private JPEG, CER <= 1% for every real scanned PDF page 1, and zero
-  critical-anchor omissions; no averaging. Model memory and journal/process/
-  listener/staging cleanup must be proven before the next child.
+  `apps/capture-workbench-desktop/scripts/real-ocr-result-assertions.ts:assertRealOcrResult`;
+  proposed producer wires `AcceptanceChildWireV1`,
+  `ProducerChildInvocationV1`, and `PrivateOcrTruthOracleV1` are serialized by
+  these producer owners. The exact Cert adapter migration paths are
+  `cert-prep/apps/cert-prep-desktop/scripts/ocr-truth-contract.mts:evaluateOcrTruth`,
+  `cert-prep/apps/cert-prep-desktop/scripts/ocr-truth-contract.mts:normalizeOcrText`,
+  `cert-prep/apps/cert-prep-desktop/scripts/ocr-truth-contract.mts:parseOcrTruthManifest`,
+  `cert-prep/apps/cert-prep-desktop/scripts/ocr-truth-contract.mts:levenshtein`,
+  `cert-prep/apps/cert-prep-desktop/scripts/phase1-acceptance-evidence.mts:buildPhase1AcceptanceEvidence`,
+  and `cert-prep/apps/cert-prep-desktop/scripts/ocr-semantic-evidence.mts:serializePrivacySafeOcrSemanticEvidence` /
+  `OCR_NORMALIZATION_VERSION`. The exact LAW adapter migration paths are
+  `gx.law-prep/apps/law-prep-engine/src/main/java/com/gx/lawprep/engine/capture/FoundryCaptureStructuringProvider.java:FoundryCaptureStructuringProvider`,
+  `gx.law-prep/apps/law-prep-engine/src/main/java/com/gx/lawprep/engine/extraction/EvidenceTextExtractionService.java:EvidenceTextExtractionService`,
+  `gx.law-prep/apps/law-prep-web-e2e/src/e2e/support/acceptance-expectations.ts:loadLawAcceptanceExpectation`,
+  and `gx.law-prep/apps/law-prep-web-e2e/src/e2e/support/acceptance-artifacts.ts:writeAcceptanceManifest`.
+  D4 and D7 use the same producer-owned serial runner with four distinct legs:
+  `(1, capture-private-jpeg, capture-private-jpeg-v1)`,
+  `(2, capture-scanned-pdf-page1, capture-scanned-pdf-page1-v1)`,
+  `(3, cert, cert-v1)`, and `(4, law, law-v1)`. Every leg receives a unique
+  `sequenceIndex`, `childKey`, `legId`, `childId`, `root`, and `artifactId`,
+  plus its own artifact and cleanup proof; no identity is reused by another
+  leg, candidate, or prior session. CER is <= 3% for every real private JPEG,
+  <= 1% for every real scanned PDF page 1, and critical-anchor omissions are
+  zero; no averaging. Model memory and journal/process/listener/staging
+  cleanup must be proven before the next child.
+  `apps/capture-workbench-desktop/scripts/real-jpeg-acceptance-coordinator.ts:runRealJpegAcceptance`
+  and `runRealJpegAcceptanceCli`, its test, and its special
+  `tools/check-async-boundary.ts` allowance are migration/deletion surfaces;
+  migrate them into `tools/three-project-acceptance.ts:runAcceptanceSequence`
+  as the sole producer runner, then delete only after residual scans and
+  replacement tests pass.
+
+  `AcceptanceChildWireV1` carries schema/producer/run digest, the six unique
+  leg identity fields, candidate id/manifest digest/D3 artifact digest set,
+  media kind/digest, raw-byte artifact digest records, expected
+  normalized-truth and anchor-set digests, CER threshold,
+  `nfkc-whitespace-v1`, `code-point-levenshtein-v1`, cleanup proof, and a
+  self-excluded wire digest. `ProducerChildInvocationV1` carries the same leg
+  identities plus externally supplied D3 candidate id, manifest digest, root,
+  and artifact digest set, media digest, truth-oracle digest, child-wire
+  digest, and its self-excluded invocation digest. `PrivateOcrTruthOracleV1`
+  is local/private and carries raw truth/anchors only beside their expected
+  digests, media/page identity, normalization/distance, threshold, omission
+  count, and self-excluded oracle digest. Raw truth remains local; evidence
+  exports digests only.
+
+  Serialization is canonical compact UTF-8 JSON with no BOM/trailing newline,
+  recursively lexicographically sorted object keys, deterministic semantic
+  arrays/set ordering, and lowercase SHA-256. Exclude the self digest field
+  before hashing. Hash exact raw media/artifact bytes. Normalize exactly
+  `nfkc-whitespace-v1`: NFKC, then newlines and all Unicode whitespace to ASCII
+  space, collapse ASCII spaces, trim; preserve case, punctuation, and
+  traditional/simplified characters. `code-point-levenshtein-v1` uses Unicode
+  code points, and CER is per fixture/page with PDF `0.01`, JPEG `0.03`,
+  anchors `0`, and no average. Any schema or scope/identity mismatch fails
+  closed without evidence or promotion.
   Record numeric memory/latency/resource evidence before any single-metric
   optimization; never change two metrics in one commit.
 
-  Prerequisite: D2.3/D2.4 lifecycle proof, D2 authorization, explicit
-  fixture/anchor manifest, and the installed-boundary acceptance owner. RED proof:
-  a missing/invalid manifest, private evidence leak, unknown cleanup,
-  anchor omission, threshold violation, or child started before prior cleanup
-  must stop the sequence. GREEN verification:
+  Prerequisite: D2.3/D2.4 lifecycle design, D2 authorization, explicit
+  fixture/anchor manifest, current owner discovery, and the proposed wire
+  schema review. This D2.5 slice is design/contract/red infrastructure only:
+  no installed candidate is a prerequisite and it must not install, stage,
+  build, launch, or accept a candidate before D3. RED proof: a missing/invalid
+  schema or manifest, private evidence leak, non-canonical serialization,
+  raw-byte digest mismatch, non-unique leg identity, unknown cleanup, anchor
+  omission, threshold violation, or child started before prior cleanup must
+  stop the sequence. GREEN verification:
 
   ~~~powershell
   corepack pnpm nx run capture-tools:lint --skip-nx-cache
@@ -298,16 +373,69 @@ The expected starting HEAD for this closure is
   corepack pnpm nx run capture-tools:test --skip-nx-cache
   corepack pnpm nx run capture-workbench-desktop:typecheck-scripts --skip-nx-cache
   corepack pnpm nx run capture-workbench-desktop:package-qa-test --skip-nx-cache
-  corepack pnpm nx run capture-workbench-desktop:acceptance-real --skip-nx-cache
-  corepack pnpm nx run capture-workbench-desktop:acceptance-three-projects --skip-nx-cache
   ~~~
 
-  The two real acceptance targets require the approved Windows fixtures,
-  installed candidate, three repository roots, and `E2E_ACCEPTANCE_RUN_ID`; if
-  any prerequisite is unavailable, stop and report the missing evidence rather
-  than converting local/package QA into D4/D7 proof. Rollback: additive revert
-  of acceptance changes and retain failed manifests. Commit boundary:
+  These existing checks cover contract/red infrastructure only; they do not
+  prove D3, D4, OCR, GPU, or installed acceptance. If the schema owner, wire
+  target, or existing acceptance owner cannot be resolved, stop and report the
+  missing discovery rather than inventing a coordinator. Rollback: additive
+  revert of acceptance changes and retain failed manifests. Commit boundary:
   `feat(acceptance): centralize producer acceptance runner`.
+
+### D2.5.1 Compute real-proof slice
+
+- [ ] **Compute real-proof slice: preserve usable iGPU selection when dGPU is
+  positively unavailable.** The exact owner is
+  `packages/capture-runtime/src/capture_runtime/ocr_preflight.py:OcrComputePlan.select`
+  with `OcrGpuCapabilitySnapshot`; the focused regression owner is
+  `packages/capture-runtime/tests/unit/test_ocr_compute_plan.py:test_positive_unavailable_dgpu_selects_usable_igpu`.
+  Model a dGPU with the positive `unavailable` assessment and a usable,
+  fully mapped iGPU. The plan must select DirectML on the iGPU with its exact
+  LUID/ORT mapping, never CPU; retain the separate indeterminate-dGPU
+  fail-closed regression.
+
+  Prerequisite: D1/D2 design approval, current owner discovery, and the
+  existing `capture-runtime:test-unit` target. RED proof: the focused test is
+  absent or a positively unavailable dGPU incorrectly blocks the usable iGPU,
+  selects CPU, or loses the mapping. GREEN verification:
+
+  ~~~powershell
+  corepack pnpm nx run capture-runtime:test-unit --skip-nx-cache
+  ~~~
+
+  If the owner, symbol, or existing target is absent, record discovery-and-stop
+  after `corepack pnpm nx show project capture-runtime --json`; do not invent a
+  focused Nx target. Rollback: additive revert of the compute design/test
+  slice only. Commit boundary: `test(runtime): cover positive unavailable dGPU`.
+
+### D2.5.2 D3-supplied candidate acceptance target design
+
+- [ ] **Name the future D4 target without invoking it early.** The proposed
+  owner is a new target in
+  `apps/capture-workbench-desktop/project.json` named
+  `capture-workbench-desktop:acceptance-d3-candidate`, backed by the future
+  script `apps/capture-workbench-desktop/scripts/acceptance-d3-candidate.ts:runD3CandidateAcceptance`.
+  It accepts externally supplied `D3_CANDIDATE_ROOT`, `D3_CANDIDATE_ID`,
+  `D3_LEDGER_SHA256`, and `D3_ARTIFACT_DIGESTS` (or equivalent explicit CLI
+  values), validates exact root/id/ledger/artifact digests, and consumes only
+  the prebuilt D3 bytes. It must never call
+  `capture-workbench-desktop:stage-product-runtime`, any build target/script,
+  a source-tree import, or a mutable URL. The existing
+  `capture-workbench-desktop:acceptance-real` target remains a local installed
+  diagnostic and is explicitly non-D4.
+
+  Prerequisite: D2.5 wire schemas and D3's immutable byte ledger. RED proof:
+  the target derives bytes from source, stages/builds them, follows a mutable
+  URL, accepts missing/mismatched D3 identity, or reuses a candidate/prior
+  session ref. GREEN verification is an explicit target/schema-creation stop:
+  first run `corepack pnpm nx show project capture-workbench-desktop --json`,
+  then create the target and script in a separate authorized implementation
+  slice; until they exist, do not invoke the proposed target name. After
+  creation, use the existing full `corepack pnpm nx ... --skip-nx-cache`
+  checks for the resolved project and the new target only after its metadata is
+  recorded. Rollback: additive revert of the target/script/wire slice and
+  retain the D3 ledger. Commit boundary:
+  `feat(acceptance): consume externally supplied D3 candidate`.
 
 ### D2.6 Native verification and deletion slice
 
@@ -353,7 +481,7 @@ The expected starting HEAD for this closure is
 
 ## D3 - CandidateBuilt
 
-- [ ] **Build one immutable candidate from the authorized implementation.**
+- [ ] **Build one immutable byte ledger from the authorized implementation.**
   Owner paths/symbols:
   `packages/capture-runtime/src/capture_runtime/release.py:build_release_artifacts,sha256_file`,
   `packages/capture-runtime/project.json:build-release-artifacts`,
@@ -362,13 +490,16 @@ The expected starting HEAD for this closure is
   `tools/verify-release-candidate.ts:computeCandidateId`,
   `tools/create-release-manifest.ts:main`, and the existing candidate manifest,
   source-lock, catalog, and generated-contract owners. Consume D2 authorization
-  and the exact implementation source only. D3 owns candidate construction;
+  and the exact implementation source only. D3 builds one immutable byte ledger
+  that records candidate root, candidate id, manifest digest, every raw artifact
+  SHA-256, and source/version/schema/contract/model/profile/catalog identity;
+  it does not require an installed candidate. D3 owns candidate construction;
   the separately authorized D5-D8 workflow slice owns publication-workflow
   contract changes.
 
   Prerequisite: all authorized D2 implementation commits, Nx 23.1.2/pnpm 12
   identity checks, and the exact 0.4.2/API 2.0/schema/contract inventory. RED proof:
-  every candidate byte has a SHA-256 and the manifest binds source
+  every candidate byte has a SHA-256 and the immutable ledger binds source
   commit, version, schema/projection, contract, runtime/worker/model/profile/
   catalog, channel, and build provenance; a source-tree, mutable URL, stale
   version, or mixed artifact fails. GREEN verification:
@@ -385,29 +516,37 @@ The expected starting HEAD for this closure is
   ~~~
 
   Stop if any required target, manifest identity, source lock, or staged asset
-  is absent. Rollback: retain the failed candidate ledger and additively revert
+  is absent. Rollback: retain the failed byte ledger and additively revert
   only the implementation slice. Commit boundary: candidate bytes/ledger are
   separate from D4 acceptance and D5 publication commits.
 
 ## D4 - CandidateAccepted
 
-- [ ] **Accept only the D3 candidate bytes.** Owner paths/symbols are the
-  existing installed-boundary `capture-workbench-desktop:acceptance-real` and
-  `acceptance-three-projects` targets, their
-  `apps/capture-workbench-desktop/scripts/acceptance-real.ts` and
-  `acceptance-orchestration.ts` owners, and
-  `tools/three-project-acceptance.ts:runAcceptanceSequence,
-  runCaptureWorkbenchAcceptance, validateChildManifest,
-  validateTerminalManifest, validateCleanupEvidence` plus
-  `tools/acceptance-contract.ts:writeAcceptanceManifest,
-  readAcceptanceManifestTolerant`. Do not rebuild, reinstall from a source
-  tree, or consume a D6 ledger.
+ - [ ] **Accept only externally supplied D3 candidate bytes.** The proposed
+  future owner is `apps/capture-workbench-desktop/project.json` target
+  `capture-workbench-desktop:acceptance-d3-candidate`, backed by
+  `apps/capture-workbench-desktop/scripts/acceptance-d3-candidate.ts:runD3CandidateAcceptance`.
+  It accepts externally supplied `D3_CANDIDATE_ROOT`, `D3_CANDIDATE_ID`,
+  `D3_LEDGER_SHA256`, and `D3_ARTIFACT_DIGESTS`, validates exact root/id/ledger/
+  artifact identity, and passes the prebuilt bytes to the producer-owned
+  `tools/three-project-acceptance.ts:runAcceptanceSequence` and
+  `runCaptureWorkbenchAcceptance`, whose validators are
+  `validateChildManifest`, `validateTerminalManifest`,
+  `validateCleanupEvidence`, and `verifyRecordedCleanupScope`. Manifest
+  serialization remains at `tools/acceptance-contract.ts:writeAcceptanceManifest`
+  and `readAcceptanceManifestTolerant`. The target must never call
+  `capture-workbench-desktop:stage-product-runtime`, any build target/script,
+  source-tree import, or mutable URL, and must not consume a D6 ledger. The
+  existing `capture-workbench-desktop:acceptance-real` target remains a local
+  installed diagnostic and is explicitly non-D4.
 
-  Prerequisite: D3 candidate ledger, candidate-installed boundary, real
-  private JPEG and scanned PDF page-1 fixtures with critical anchors, model
-  memory release, and lifecycle/journal proof. RED proof: the exact D3 byte
-  hashes are not present in each child, the order is changed, CER/anchors fail,
-  or any process/listener/staging cleanup is unknown. GREEN verification:
+  Prerequisite: D3 immutable byte ledger, the future target's created and
+  resolved metadata, real private JPEG and scanned PDF page-1 fixtures with
+  critical anchors, model memory release, and lifecycle/journal proof. RED
+  proof: the exact externally supplied D3 byte hashes are not present in each
+  child, a target derives bytes from source or stages/builds them, a mutable URL
+  is used, leg identity/order or CER/anchors fail, or any
+  process/listener/staging cleanup is unknown. GREEN verification:
 
   ~~~powershell
   corepack pnpm nx run capture-tools:lint --skip-nx-cache
@@ -415,14 +554,18 @@ The expected starting HEAD for this closure is
   corepack pnpm nx run capture-tools:test --skip-nx-cache
   corepack pnpm nx run capture-workbench-desktop:typecheck-scripts --skip-nx-cache
   corepack pnpm nx run capture-workbench-desktop:package-qa-test --skip-nx-cache
-  corepack pnpm nx run capture-workbench-desktop:acceptance-real --skip-nx-cache
-  corepack pnpm nx run capture-workbench-desktop:acceptance-three-projects --skip-nx-cache
+  corepack pnpm nx show project capture-workbench-desktop --json
   ~~~
 
-  Stop on the first semantic, identity, process, listener, journal, or cleanup
-  failure and retain that child manifest. Rollback: stop the chain and retain
-  D3/failed D4 evidence; no publication or pointer action is allowed. Commit boundary:
-  D4 acceptance evidence is separate from D3 candidate bytes and D5 publication.
+  The proposed target is absent at this head. Its target/script creation is a
+  discovery-and-stop prerequisite after `nx show project`; do not invoke a
+  made-up target. The existing `acceptance-real` and
+  `acceptance-three-projects` targets remain non-D4 until their producer-wire
+  migration is authorized. Stop on the first semantic, identity, process,
+  listener, journal, or cleanup failure and retain that child manifest.
+  Rollback: stop the chain and retain D3/failed D4 evidence; no publication or
+  pointer action is allowed. Commit boundary: D4 acceptance evidence is
+  separate from D3 candidate bytes and D5 publication.
 
 ## D5 - PublishedImmutable
 
@@ -535,14 +678,13 @@ The expected starting HEAD for this closure is
   corepack pnpm nx run capture-tools:test --skip-nx-cache
   corepack pnpm nx run capture-workbench-desktop:typecheck-scripts --skip-nx-cache
   corepack pnpm nx run capture-workbench-desktop:package-qa-test --skip-nx-cache
-  corepack pnpm nx run capture-workbench-desktop:acceptance-real --skip-nx-cache
-  corepack pnpm nx run capture-workbench-desktop:acceptance-three-projects --skip-nx-cache
   ~~~
 
   No D7 published-acceptance workflow or Nx contract target exists at this
   head. Discover/create the owner and focused target before invoking it; do not
-  mark existing local/package checks as D7. Stop on the first failure and block
-  D8. Rollback: retain D6/D7 ledgers; after publication, producer supersession
+  mark existing local/package checks, including non-D4 `acceptance-real`, as
+  D7. Stop on the first failure and block D8. Rollback: retain D6/D7 ledgers;
+  after publication, producer supersession
   is the only correction path and published 0.4.2 bytes remain immutable.
   Commit boundary: D7 acceptance evidence is separate from D6 downloads.
 

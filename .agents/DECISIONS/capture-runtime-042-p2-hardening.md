@@ -10,9 +10,8 @@ compute truth, acceptance, identity, and D0-D8 gates. The
 ## Checkpoint and authority
 
 This closure starts from expected HEAD
-586423c1c7faa213b68a6f53ee346ac8035e5723. The four canonical docs and UI
-README are the modified scope; the desktop README remains in the preserved D0
-documentation set and is unchanged here. Untracked
+b7fed18bb25cdb52df02e6ccd76eb82cdc44f621. The four canonical docs and the two
+active READMEs are the modified scope. Untracked
 .github/copilot-instructions.md and .github/instructions/ are preserved and are
 not staged. The exact resulting SHA is not embedded in this
 record; the D0 handoff reports git rev-parse HEAD externally.
@@ -88,11 +87,20 @@ capability. Capture, Cert, and candidate journeys use one root; LAW may
 place Capture/Python/Java roots in one producer-owned group. That group uses
 the current unnamed no-breakaway Job with
 `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`; it never uses a named Job takeover and
-never weakens normal close or crash cleanup. Root leases, proofs, errors, Jobs,
-process handles, PIDs, and native diagnostics do not cross the external seam.
-The current spawn/id/try_wait API and PID-bearing RuntimeTerminationProof are
-explicit convergence/deletion surface, not a reason to add another
-coordinator.
+   never weakens normal close or crash cleanup. Root leases, proofs, errors, Jobs,
+   process handles, PIDs, and native diagnostics do not cross the external seam.
+   The current spawn/id/try_wait API and PID-bearing RuntimeTerminationProof are
+   explicit convergence/deletion surface, not a reason to add another
+   coordinator.
+
+   The addressable restart seam is the exact producer API
+   `RuntimeSessionJournal::reconcile(ReconcileRef) -> ReconcileResult`.
+   `ReconcileRef` is an opaque journal index/address, never a PID, Job handle,
+   path, process id, or takeover lease. Candidate and prior sessions each get a
+   distinct ref. `ReconcileResult` is semantic and observe-only after restart:
+   only exact absence/listener/staging proof may terminalize that ref;
+   present, reused, unqueryable, or ambiguous observations return
+   `reconcile-required` and touch nothing.
 
 5. **Existing native exports and callers are the migration boundary.**
    src/lib.rs exports OwnedRuntimeSession and its current error/proof types;
@@ -130,6 +138,13 @@ coordinator.
    journal, or a torn write leaves all residue untouched and records
    reconcile-required. No process-name, PID-only, or port-only kill is valid.
 
+   The journal graph is `planned -> launching -> running -> closing -> terminal`,
+   plus `planned -> reconcile-required` and
+   `launching|running|closing -> reconcile-required`. A direct
+   `planned -> terminal` is allowed only when durable proof shows no resource
+   could have existed before Job setup/root resume/listener/staging/resource
+   acquisition was attempted; otherwise it is `reconcile-required`.
+
 8. **Contract identity remains fixed.** API 2.0, raw/structured schema 2,
    CaptureOcrProjectionV3 schema 3, and contract hash
    d293a3de26114f1b4fd65ea6d6d3f157fa2f93109b31e1e30d5d15ef0dfdeb40 remain
@@ -142,18 +157,44 @@ coordinator.
    crates.io, and GitHub channels. A missing target such as
    capture-runtime:version-check is discovery-and-stop, not a new target.
 
+   The compute real-proof owner is
+   `packages/capture-runtime/src/capture_runtime/ocr_preflight.py:OcrComputePlan.select`
+   with `OcrGpuCapabilitySnapshot`. Its focused regression is
+   `packages/capture-runtime/tests/unit/test_ocr_compute_plan.py:test_positive_unavailable_dgpu_selects_usable_igpu`:
+   a positively unavailable dGPU plus a usable mapped iGPU selects the iGPU
+   DirectML mapping, not CPU; an indeterminate dGPU remains fail-closed. The
+   existing full verification is
+   `corepack pnpm nx run capture-runtime:test-unit --skip-nx-cache`.
+
 9. **Acceptance is per fixture and serial.** Every real scanned PDF page 1
    must have CER <= 1%; every real private JPEG must have CER <= 3%; no
-   critical-anchor omissions are allowed; CER is never averaged. D4 consumes
-   only D3 candidate bytes and runs Capture JPEG -> cleanup -> Capture original
-   PDF page 1 -> cleanup -> Cert -> cleanup -> LAW -> cleanup. D7 consumes only
-   D6 download-back bytes and repeats that same sequence. Model memory and
+   critical-anchor omissions are allowed; CER is never averaged. The producer
+   owns proposed `AcceptanceChildWireV1`, `ProducerChildInvocationV1`, and
+   private `PrivateOcrTruthOracleV1`; canonical compact UTF-8 JSON excludes
+   each self digest, hashes exact raw media/artifact bytes, and exports truth
+   digests only. `nfkc-whitespace-v1` is NFKC then newline/Unicode-whitespace
+   collapse to ASCII space and trim, preserving case/punctuation and
+   traditional/simplified characters; distance is code-point Levenshtein v1.
+   D4 consumes only D3 candidate bytes and runs four unique legs:
+   `(1, capture-private-jpeg, capture-private-jpeg-v1)`,
+   `(2, capture-scanned-pdf-page1, capture-scanned-pdf-page1-v1)`,
+   `(3, cert, cert-v1)`, `(4, law, law-v1)`, each with unique childId/root/
+   artifactId and cleanup proof before the next. D7 consumes only D6
+   download-back bytes and repeats that sequence. Model memory and
    journal/process/listener/staging cleanup must be proven before each next
-   child.
+   child. Cert and LAW adapter migration paths are named in the SPEC; the
+   standalone real-JPEG coordinator is migrated/deleted in favor of the sole
+   `tools/three-project-acceptance.ts:runAcceptanceSequence` runner.
 
 10. **Release gates do not collapse.** D0 DocsCommitted is the current docs
     commit and has no self-hash. D1 is pending exact-head review. D2 is
-    authorization only. D3 builds one candidate. D4 accepts only D3. D5
+    authorization only. D2/D2.5 are design/contract/red infrastructure and do
+    not require an installed candidate. D3 builds one immutable byte ledger.
+    D4 accepts only externally supplied D3 root/id/digests through the future
+    `capture-workbench-desktop:acceptance-d3-candidate` target owned by
+    `apps/capture-workbench-desktop/scripts/acceptance-d3-candidate.ts:runD3CandidateAcceptance`;
+    that target never stages/builds, imports source, or follows a mutable URL.
+    The current `capture-workbench-desktop:acceptance-real` remains non-D4. D5
     publishes every D3 byte after D4 and removes the current direct stable
     pointer edge from `.github/workflows/release-promote.yml`. D6 fresh-downloads
     those public bytes. D7 accepts only D6 and runs the same serial journey.
@@ -213,6 +254,14 @@ future dispatch contracts already exist.
   ownership proof.
 - Naming a Job for restart takeover, adopting a Job after restart, or weakening
   `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` to make recovery easier.
+- Treating D2/D2.5 as an installed-candidate gate, or letting D4 call
+  `stage-product-runtime`, a build/source path, or a mutable URL. The future
+  D4 target must accept externally supplied D3 root/id/digests; the existing
+  `acceptance-real` target is non-D4.
+- Keeping `apps/capture-workbench-desktop/scripts/real-jpeg-acceptance-coordinator.ts`
+  as a parallel producer; its `runRealJpegAcceptance`/CLI migrates into the
+  sole `tools/three-project-acceptance.ts:runAcceptanceSequence` runner and is
+  deleted only after residual and async-boundary checks.
 - Rebuilding or republishing between D3/D4/D5, accepting a local candidate in
   D7, or moving the stable pointer before D7.
 
