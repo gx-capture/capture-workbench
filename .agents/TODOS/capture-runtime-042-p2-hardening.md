@@ -32,7 +32,7 @@ slice does not edit workflows, rerun CI, or claim that deterministic CI proves
 OCR, GPU, cleanup, installation, publication, or pointer state.
 
 The expected starting HEAD for this closure is
-`31b1232ea9ef5b9bc32679323c8c28b9500b0bf0`. Preserve unrelated untracked
+`78c8fe2718daa25ccf4b509a18598b4a710db47b`; stop if `HEAD` drifts. Preserve unrelated untracked
 `.github/copilot-instructions.md` and `.github/instructions/`; never stage them.
 
 ## D0 - DocsCommitted
@@ -178,7 +178,81 @@ candidate root/id/digests through its separately named target. Existing local
   revert of the OCR slice only; preserve failed evidence. Commit boundary:
   `feat(runtime): replace OCR pipeline behind chosen interface`.
 
-### D2.3 OwnedRuntimeSession convergence slice
+### D2.3 RuntimeSessionJournalV1 and acceptance-contract foundation
+
+- [ ] **Establish the producer journal and canonical acceptance contract before
+  consumer convergence.** Owner paths/symbols are the existing producer
+  lifecycle owner at
+  `packages/capture-sidecar-launcher/src/process.rs:OwnedRuntimeSession`, its
+  private state/proof/error types, and
+  `tools/acceptance-checkpoint-journal.ts` (`openAcceptanceCheckpointWriter`,
+  `readAcceptanceCheckpointJournal`, `writeAcceptanceTerminal`) as acceptance
+  evidence only, never a second native lifecycle owner. The future canonical
+  package/bundle is `@capture-runtime/acceptance-contract` at the proposed
+  `packages/capture-acceptance-contract/` root with
+  `schemas/producer-child-scope-v1.schema.json`,
+  `schemas/producer-child-invocation-v1.schema.json`,
+  `schemas/consumer-semantic-result-v1.schema.json`,
+  `schemas/acceptance-child-wire-v1.schema.json`,
+  `src/canonical-json.ts`, `src/codecs.ts`,
+  `src/hash.ts`, `src/manifest.ts`, `src/index.ts`, `tools/generate.ts`,
+  `contract-manifest.json`, `contract-sha256.txt`, `package.json`, and
+  `project.json`. The package/bundle bytes and hash are D3/D6 artifacts and its
+  hash is distinct from runtime `contractSetSha256`; the existing
+  `tools/acceptance-contract.ts` is only a consumer adapter.
+
+  Implement `RuntimeSessionJournalV1` with state-discriminated variants:
+  `planned_unbound` contains plan identity only, with no activation receipt or
+  bound root refs/generations; `prepared_bound` and all descendants contain the
+  complete group/root ref and generation bindings and require a verified
+  `activationReceiptDigest`. The exhaustive graph is
+  `planned_unbound -> prepared_bound -> ready -> launching -> running ->
+  closing -> terminal`, with only the SPEC's no-resource, reconcile-required,
+  and manual-review edges. Every CAS binds state, group/root generations,
+  attempt, recovery epoch, plan/ref tuple, and receipt; recovery remains
+  observe-only and fail-closed with bounded three-attempt/60-second policy.
+  The journal records no raw paths, tokens, OCR, model bytes, or native
+  diagnostics. R3's injected `ReconcileRefSink.persist_group_refs` must flush
+  one complete group/per-root receipt and `verify_group_receipt` must reopen
+  and verify it before the producer writes `prepared_bound`.
+
+  Prerequisite: D1-approved journal/contract design and the resolved existing
+  launcher, desktop, and tools Nx owners. RED proof: a `planned_unbound` record has a
+  receipt or bound refs, a bound record lacks a receipt/ref/generation, the
+  group graph permits per-root activation, a torn/stale/unknown-generation
+  journal mutates resources, manual review auto-recovers, or a consumer/tool
+  copies schema/codec/hash authority. Required focused cases include
+  `planned_unbound_omits_activation_receipt_digest`,
+  `sink_persists_and_verifies_complete_group_receipt`,
+  `reconcile_rejects_stale_state_generation_attempt_or_epoch`,
+  `reconcile_failure_attempt_three_enters_manual_review`, and
+  `manual_review_recovery_resets_attempt_window_without_resource_mutation`.
+  GREEN verification uses only resolved existing owners:
+
+  ~~~powershell
+  corepack pnpm nx show project capture-sidecar-launcher --json
+  corepack pnpm nx show project capture-tools --json
+  corepack pnpm nx show project capture-workbench-desktop --json
+  corepack pnpm nx run capture-sidecar-launcher:cargo-fmt-check --skip-nx-cache
+  corepack pnpm nx run capture-sidecar-launcher:cargo-check --skip-nx-cache
+  corepack pnpm nx run capture-sidecar-launcher:cargo-test --skip-nx-cache
+  corepack pnpm nx run capture-workbench-desktop:cargo-test --skip-nx-cache
+  corepack pnpm nx run capture-tools:lint --skip-nx-cache
+  corepack pnpm nx run capture-tools:typecheck --skip-nx-cache
+  corepack pnpm nx run capture-tools:test --skip-nx-cache
+  ~~~
+
+  Creation stop: `packages/capture-acceptance-contract/`, its Nx project, and
+  any journal-specific target do not exist at this checkpoint; discovery must
+  confirm the owner and then separately authorize package/schema/target
+  creation. Never invoke a made-up target or let `tools/acceptance-contract.ts`
+  become authority. If a current owner cannot prove atomic create-new bytes,
+  receipt durability, group/root identity, or recovery guards, stop. Rollback:
+  additive revert of this foundation only, retaining failed journals and
+  manifests without cleanup guesses. Commit boundary:
+  `feat(runtime): add fail-closed session journal and acceptance contract foundation`.
+
+### D2.4 OwnedRuntimeSession convergence slice
 
 - [ ] **Converge the producer lifecycle owner and preserve its exports.** Owner
   paths/symbols:
@@ -202,21 +276,28 @@ candidate root/id/digests through its separately named target. Existing local
   `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`; named Job takeover and weakened
   close/crash cleanup are forbidden.
 
-  R3 `open`/`prepare` must durably write the producer journal as `planned`
-  and return `PreparedRuntimeSession { ReconcileRef, refDigest, generation }`
-  before activation. Inject the required `ReconcileRefSink`; it durably
-  persists that exact ref/generation and returns the CAS-bound
-  `ActivationPermit{refDigest, generation, receiptDigest}` only after its
-  receipt is flushed. `activate(prepared, permit)` must validate all three
-  fields against the prepared journal and sink receipt before any process,
-  listener, staging, or model resource is acquired. There is no activation
-  overload without a permit. The one-root convenience methods require the
-  sink or remain private and must use the same ordering. Reconciliation
-  returns semantic cleanup and `proofSha256`; no native identity crosses the
-  seam.
+  R3 is whole-group: `prepare_group(immutable_plan, ReconcileRefSink)` first
+  journals `planned_unbound` with plan identity only. The sink's
+  `persist_group_refs` durably stores one group ref and every ordered per-root
+  ref/generation, flushes a `ReconcileRefReceiptV1`, and
+  `verify_group_receipt` reopens and verifies all refs, generations, roles,
+  ordinals, and plan digest. Only then does the producer write
+  `prepared_bound` (where `activationReceiptDigest` becomes required) and
+  privately construct one `ActivationPermitV1` containing permit version, plan
+  digest, group-ref digest/generation, the complete root-ref digest/generation
+  set, and receipt digest.
 
-  Prerequisite: D1-approved R3 choice, D2 authorization, the injected
-  `ReconcileRefSink` adapter, and red lifecycle tests. RED proof: a raw
+  `activate_group(prepared, permit)` is the only activation operation. It
+  assigns and verifies every root suspended before resuming any root; a
+  partial/failed assignment resumes none and closes/reconciles the suspended
+  set. The host cannot construct a permit, activate first, or activate one
+  root of a group. Single-root convenience is group size one and only wraps
+  this same path; no per-root activation exists. Reconciliation returns
+  semantic cleanup and `proofSha256`; no native identity crosses the seam.
+
+  Prerequisite: the D2.3 journal/contract foundation, D1-approved R3 choice,
+  D2 authorization, the injected `ReconcileRefSink` adapter, and red lifecycle
+  tests. RED proof: a raw
   Job/handle/PID crosses the seam, a descendant escapes, baseline processes are
   killed, a multi-root close is partial, a sink receipt is missing, a stale or
   forged permit activates, or live `terminate_and_prove` does not produce
@@ -234,11 +315,13 @@ candidate root/id/digests through its separately named target. Existing local
   ~~~
 
   Required focused cases in the existing launcher/desktop Cargo test owners:
-  `prepare_writes_planned_before_sink`,
-  `activation_requires_matching_ref_generation_and_receipt_permit`,
+  `prepare_group_writes_planned_unbound_before_sink`,
+  `activation_requires_complete_group_receipt_and_permit`,
   `activation_rejects_missing_or_stale_permit_without_resource_acquisition`,
-  `sink_failure_leaves_planned_without_resource_acquisition`,
-  `concurrent_activation_has_one_cas_winner`, and
+  `sink_failure_leaves_planned_unbound_without_resource_acquisition`,
+  `partial_group_assignment_resumes_no_root`,
+  `concurrent_group_activation_has_one_cas_winner`,
+  `group_size_one_uses_the_same_path`, and
   `convenience_start_requires_reconcile_ref_sink`. No new lifecycle target is
   implied; if the current test owner cannot host these cases, run `nx show
   project` and record a target-creation stop before adding one.
@@ -248,107 +331,6 @@ candidate root/id/digests through its separately named target. Existing local
   prior launcher and retain failed cleanup proof. Commit boundary:
   `feat(desktop): own runtime session lifecycle`.
 
-### D2.4 RuntimeSessionJournalV1 and reconciler slice
-
-- [ ] **Add the durable cleanup record only inside the existing producer
-  lifecycle owner.** Owner paths/symbols are
-  `packages/capture-sidecar-launcher/src/process.rs:OwnedRuntimeSession` and
-  its private state/proof/error types,
-  `packages/capture-sidecar-launcher/src/launcher.rs` launch/readiness adapter,
-  `packages/capture-sidecar-launcher/src/lib.rs` semantic exports, and desktop
-  semantic callers in `apps/capture-workbench-desktop/src-tauri/src/state.rs`,
-  `src/launcher.rs`, and `src/commands.rs`. The existing
-  `tools/acceptance-checkpoint-journal.ts` (`openAcceptanceCheckpointWriter`,
-  `readAcceptanceCheckpointJournal`, and `writeAcceptanceTerminal`) is an
-  acceptance evidence journal, not a second native lifecycle owner.
-
-  Implement the exact `RuntimeSessionJournalV1` schema, atomic
-  compare-and-swap transitions, setup-committed marker, root/session/staging/
-  listener bindings, privacy, and bounded three-attempt/60-second policy from
-  the SPEC. Live in-memory close uses the private current unnamed Job handle,
-  membership, and nonce and preserves `KILL_ON_JOB_CLOSE`. Restart is
-  observe-only: it has no Job handle, membership, or nonce claim; only a
-  trustworthy committed setup plus absent exact PID/creation identities,
-  absent listeners, and exact staging may terminalize stale state. PID
-  reuse/presence/unqueryability, listener ambiguity, root mismatch, or unknown
-  identity means `reconcile-required`, touch nothing, and block promotion.
-
-  The producer exposes the exact addressable observe-only API
-  `RuntimeSessionJournal::reconcile(ReconcileRef) -> ReconcileResult`.
-  `ReconcileRef` is an opaque journal index/address, never a PID, Job handle,
-  process id, path, or takeover lease; candidate and prior sessions receive
-  distinct refs. A semantic `ReconcileResult` returns cleanup and
-  `proofSha256`, and may terminalize only the exact ref with complete
-  absence/listener/staging proof. For `prior=null`, the prior ref and
-  predecessor proof digest are null and no cleanup proof is implied; a
-  non-null prior requires its exact proof digest and generation. Present,
-  reused, unqueryable, or ambiguous observations return `reconcile-required`
-  and touch nothing.
-
-  The exhaustive graph is
-  `planned -> launching -> running -> closing -> terminal`, plus
-  `planned -> terminal` only for a durable no-resource proof,
-  `planned -> reconcile-required`,
-  `launching|running|closing -> reconcile-required`,
-  `reconcile-required -> reconcile-required` for timed/failed attempts one or
-  two, `reconcile-required -> terminal` only after a later complete
-  observe-only proof, `reconcile-required -> manual-review` after timed/failed
-  attempt three, and `manual-review -> reconcile-required` only by explicit
-  producer-authorized recovery. Every transition CAS-guards expected state,
-  generation, attempt, and recovery epoch. A successful or failed attempt
-  increments attempt and generation in one record; stale guards never merge.
-  `manual-review` cannot auto-recover, launch a replacement, or transition
-  directly to terminal. Recovery requires a fresh opaque recovery nonce and
-  durable authorization receipt, CASes the expected `manual-review` record,
-  increments recovery epoch and generation, resets the attempt window to zero,
-  and performs no resource mutation. The next observe-only attempt is still
-  required. Direct `planned -> terminal` is allowed only when durable proof
-  shows no resource could have existed before setup/root/listener/staging
-  acquisition and no resource acquisition was attempted.
-
-  Prerequisite: D2.3 lifecycle owner and its native failure adapters. RED proof:
-  torn/unknown-generation writes, uncommitted setup, PID reuse, present or
-  unqueryable PID, listener ambiguity, staging mismatch, a restart attempt to
-  adopt a Job, a third timed/failed attempt that does not enter
-  `manual-review`, a terminal transition without a complete later
-  observe-only proof, a stale attempt/generation/recovery-epoch guard, or an
-  unauthorized manual-review recovery must fail closed without touching
-  process/listener/staging.
-  GREEN verification:
-
-  ~~~powershell
-  corepack pnpm nx run capture-sidecar-launcher:cargo-fmt-check --skip-nx-cache
-  corepack pnpm nx run capture-sidecar-launcher:cargo-check --skip-nx-cache
-  corepack pnpm nx run capture-sidecar-launcher:cargo-test --skip-nx-cache
-  corepack pnpm nx run capture-workbench-desktop:cargo-fmt-check --skip-nx-cache
-  corepack pnpm nx run capture-workbench-desktop:cargo-check --skip-nx-cache
-  corepack pnpm nx run capture-workbench-desktop:cargo-test --skip-nx-cache
-  corepack pnpm nx run capture-workbench-desktop:package-qa-test --skip-nx-cache
-  ~~~
-
-  Required focused journal cases in the existing launcher/desktop Cargo test
-  owners are `reconcile_attempt_and_generation_increment_atomically`,
-  `reconcile_complete_observe_only_proof_to_terminal`,
-  `reconcile_timeout_attempt_one_stays_required`,
-  `reconcile_failure_attempt_two_stays_required`,
-  `reconcile_failure_attempt_three_enters_manual_review`,
-  `reconcile_rejects_stale_state_generation_attempt_or_epoch`,
-  `manual_review_requires_explicit_recovery_receipt`,
-  `manual_review_recovery_resets_attempt_window_without_resource_mutation`,
-  `manual_review_cannot_transition_directly_to_terminal_or_running`, and
-  `recovery_retry_enters_manual_review_again_after_three_failures`. The
-  existing Cargo/package-QA targets remain the verification owners; a missing
-  focused target is a `nx show project` discovery-and-creation stop, never an
-  invented command.
-
-  There is no dedicated RuntimeSessionJournal Nx target at this head. Add
-  focused tests to the existing Cargo/package-QA targets, or record a
-  target-creation task after `nx show project`; do not invoke an invented
-  `journal-test` target. Stop if native creation identity, Job setup commit,
-  or listener binding cannot be proven. Rollback: additive revert of the
-  journal/reconciler slice; leave unresolved residue untouched. Commit boundary:
-  `feat(runtime): add fail-closed session journal`.
-
 ### D2.5 Acceptance evidence and measured baseline slice
 
 - [ ] **Converge the producer/consumer acceptance protocol without adding a
@@ -357,7 +339,12 @@ candidate root/id/digests through its separately named target. Existing local
   `runCaptureWorkbenchAcceptance`, `validateChildManifest`,
   `validateTerminalManifest`, `validateCleanupEvidence`,
   `verifyRecordedCleanupScope`,
-  `tools/acceptance-contract.ts:writeAcceptanceManifest`,
+  proposed canonical package `@capture-runtime/acceptance-contract` at
+  `packages/capture-acceptance-contract/` (`schemas/*.schema.json`,
+  `src/codecs.ts`, `tools/generate.ts`, `src/manifest.ts`, `src/hash.ts`,
+  `contract-manifest.json`, `contract-sha256.txt`, `package.json`,
+  `project.json`), and `tools/acceptance-contract.ts:writeAcceptanceManifest`
+  (consumer adapter only),
   `readAcceptanceManifestTolerant`,
   `apps/capture-workbench-desktop/scripts/acceptance-real.ts:waitForChildClose`,
   `apps/capture-workbench-desktop/scripts/acceptance-orchestration.ts:runCaptureWorkbenchAcceptanceOrchestration`,
@@ -388,10 +375,18 @@ candidate root/id/digests through its separately named target. Existing local
   self-excluded digest. D4 requires full private normalized reference text
   plus critical anchors, as does D7; explicitly delete/prohibit Cert's
   `anchorOnly` field/flag and `parseOcrAnchorExpectation` parser formal paths.
-  Cert and LAW import/reference producer `ProducerAcceptanceContractV1` exact
-  version `"1"` and D3/D6-bound `contractSha256`; they do not redefine it.
+  Cert and LAW consume the exact generated `@capture-runtime/acceptance-contract`
+  package/bundle bytes, version `"1"`, and D3/D6-bound `contractSha256`; they
+  do not copy schemas, redefine it, or create local validators. The package
+  hash is distinct from runtime `contractSetSha256`.
   Preserve the existing per-fixture thresholds (PDF page 1 `0.01`, JPEG
   `0.03`), zero critical-anchor omissions, and no averaging.
+
+  `ProducerChildScopeV1` is state-discriminated: `planned` contains only
+  child/plan identity; `prepared` adds complete group/root refs and
+  generations; `ready` adds the verified invocation digest and output nonce.
+  A planned scope cannot carry activation receipt/root/ref/generation fields,
+  and only ready can be sent to the child.
 
   `ConsumerSemanticResultV1` is the consumer's complete but cleanup-free
   result: it carries producer contract version `"1"` and the D3/D6-bound
@@ -403,10 +398,12 @@ candidate root/id/digests through its separately named target. Existing local
   `AcceptanceChildWireV1`.
 
   The producer canonicalizes invocation bytes (compact UTF-8, sorted object
-  keys, semantic array order), writes a same-directory temporary file, flushes
-  it, publishes `CAPTURE_ACCEPTANCE_INVOCATION_PATH` with atomic create-new,
-  computes the self-excluded `invocationSha256`, closes the write handle, and
-  freezes the file before launching the child. Its ACL denies child write,
+  keys, semantic array order), computes the self-excluded `invocationSha256`
+  before final bytes, writes the final bytes to a secure same-directory
+  temporary file, flushes and closes it, publishes
+  `CAPTURE_ACCEPTANCE_INVOCATION_PATH` with atomic create-new, then reopens the
+  final file read-only to verify exact bytes/digest and freezes it before
+  `activate_group`/launch. Its ACL denies child write,
   delete, rename, and reparse operations; a read-only handle/pipe or read-only
   path is the only invocation transport. The child recomputes the digest before
   work. The scope path is producer-only and is never passed to the child.
@@ -420,8 +417,12 @@ candidate root/id/digests through its separately named target. Existing local
 
   `fixtureAssignments[]` is ordered producer input. Every assignment has
   `fixtureIndex`, `fixtureKey`, `fixtureIdentitySha256`, `mediaKind`, `page`,
-  `mediaSha256`, `oracleSha256`, expected truth/anchor digests, threshold, and
-  per-fixture `artifactId`. `fixtureResults[]` must have identical cardinality
+  opaque `mediaCapabilityHandle` plus its digest, opaque
+  `oracleCapabilityHandle` plus its digest, `mediaSha256`, `oracleSha256`,
+  expected truth/anchor digests, threshold, and per-fixture `artifactId`.
+  Consumer-private resolvers/stores retrieve read-only real media/full truth
+  and verify handle/content digests; raw paths/text/store locations never enter
+  invocation or wire. `fixtureResults[]` must have identical cardinality
   and order; each result's key, index, media/page, identity, oracle/media,
   expected digests, threshold, and artifact id must equal the assignment at
   the same index. JPEG and PDF page-1 Capture children each have exactly one
@@ -471,11 +472,13 @@ candidate root/id/digests through its separately named target. Existing local
   child/sequence identity, exactly one D4/D3 or D7/D6 download/publication
   binding, predecessor cleanup-proof digests, ordered `fixtureAssignments[]`,
   a separate output path nonce, and its own self-excluded digest. It carries
-  no future result or wire digest. `PrivateOcrTruthOracleV1` is local/private
-  and carries raw normalized reference text and critical anchors beside their
-  expected digests, media/page identity, normalization/distance, threshold,
-  omission count, and self-excluded oracle digest. Raw truth remains local;
-  evidence exports digests and semantic measurements only.
+  no future result or wire digest. `PrivateOcrTruthOracleV1` is consumer-private
+  resolver/store state and carries raw normalized reference text and critical
+  anchors beside their expected digests, media/page identity,
+  normalization/distance, threshold, omission count, and self-excluded oracle
+  digest. Only its opaque capability handle and digest bindings enter the
+  invocation; raw truth remains local, and evidence exports digests and
+  semantic measurements only.
 
   Serialization is canonical compact UTF-8 JSON with no BOM/trailing newline,
   recursively lexicographically sorted object keys, deterministic semantic
@@ -506,24 +509,47 @@ candidate root/id/digests through its separately named target. Existing local
   with its runtime client, readiness, and cleanup seams in that module and
   configuration at `${GX_LAW_PREP_CHECKOUT}/apps/law-prep-ai-service/src/app/common/config.py:AiServiceConfig`.
   Use the producer-defined `RequestRefV1` format `rr1_` plus 64 lowercase hex
-  characters. Python generates it with `secrets.token_bytes(32)`; it is
-  opaque, never deterministic, and never derived from the request. Before any
-  network/capture side effect Python durably writes `start_pending` with the ref,
-  request digest, and producer contract version/hash, then calls idempotent
-  `start-or-get(requestRef, requestDigest)`. The producer atomically creates or
-  discovers the same tuple and journals intent before the existing v2 capture
-  side effect. Same ref plus same digest returns created/discovered without a
-  duplicate; same ref plus a changed digest conflicts without mutation. Only a
-  producer created/discovered ACK with a durable receipt permits `running`;
-  timeout, dropped/malformed ACK, or missing receipt remains `start_pending` and
-  retries the same tuple. `get`, `cancel`, and `delete` all use the same ref and
-  private mapping; no capture id/path/token/alternate ref crosses the seam.
+  characters generated from 32 CSPRNG bytes (`secrets.token_bytes(32)`); it is
+  opaque, never deterministic, and never derived from the request. The exact
+  producer operation is
+  `start_or_get(RequestRefV1, StartCaptureByRequestRefV1 metadata, source byte
+  stream)`. Metadata is canonical compact UTF-8 JSON with sorted keys and the
+  closed API-2.0 shape: source kind/name/type, byte length, expected source
+  SHA-256, structuring mode, target language, and eager start policy. The
+  producer recomputes request metadata and source byte count/digest from the
+  stream and uses `(requestRef, requestDigest, sourceSha256)` as its tuple.
+  Before any network/capture side effect Python durably writes `start_pending`
+  with ref, canonical request digest, source digest/length, and contract
+  version/hash; the producer journals the ref intent before create/scheduling.
+  Same ref plus same metadata and bytes returns created/discovered without a
+  duplicate. Changed metadata, length, or source bytes conflicts without
+  mutation; timeout/dropped ACK stays pending and retries the same tuple. Only
+  a producer created/discovered ACK with a durable receipt permits `running`;
+  `get`, `cancel`, and `delete` all use the same ref and private mapping. No
+  capture id/path/token/alternate ref crosses the seam.
+
+  Future owner seams are exact: current nested `start_capture` in
+  `packages/capture-runtime/src/capture_runtime/routes/streaming.py:register_streaming_routes`
+  gets same-route `start_capture_by_request_ref`; service
+  `packages/capture-runtime/src/capture_runtime/services/streaming_capture_service.py:StreamingCaptureService.start_capture`
+  gets `StreamingCaptureService.start_or_get`; storage
+  `packages/capture-runtime/src/capture_runtime/storage/streaming_repository.py:StreamingRepository.create_capture`
+  and `storage/_streaming_persistence.py:_StreamingRepositoryPersistence.persist_capture`
+  gets `StreamingRepository.start_or_get_by_request_ref` plus a durable ref
+  index; Python
+  `packages/capture-runtime-client-python/src/capture_runtime_client/client.py:CaptureRuntimeClient.start_capture`
+  gets `CaptureRuntimeClient.start_or_get`; TypeScript
+  `packages/capture-runtime-client/src/private/streaming.ts:startStreamingCapture`
+  and `packages/capture-runtime-client/src/client.ts:CaptureRuntimeClient.startStreamingCapture`
+  get private/public `startCaptureByRequestRef` adapters. No new route or
+  engine is implied.
   Retain sanitized cleanup state for a bounded period. RED: missing CSPRNG,
   pre-side-effect journal, idempotency conflict, lost timeout, running without
   ACK/discovery, unbounded retention, token/path exposure, or a second OCR
   route/engine. Required green cases are
-  `same_ref_same_digest_discovers_without_duplicate`,
-  `same_ref_changed_digest_conflicts_without_mutation`,
+  `same_ref_same_bytes_discovers_without_duplicate`,
+  `same_ref_changed_metadata_conflicts_without_mutation`,
+  `same_ref_changed_source_conflicts_without_mutation`,
   `start_pending_survives_timeout_and_retries_same_tuple`,
   `running_requires_producer_ack_or_discovery`, `lookup_cancel_delete_use_same_ref`,
   and `request_refs_are_csprng_and_not_request_derived`. The adapter uses the
@@ -532,7 +558,8 @@ candidate root/id/digests through its separately named target. Existing local
   LAW client/config and route metadata before assigning a new target; this
   checkout does not claim such a target exists.
 
-  Prerequisite: D2.3/D2.4 lifecycle design, D2 authorization, explicit
+  Prerequisite: D2.3 journal/contract foundation, D2.4 lifecycle design, D2
+  authorization, explicit
   fixture/anchor manifest, current owner discovery, and the exact producer
   schema review. This D2.5 slice is design/contract/red infrastructure only:
   no installed candidate is a prerequisite and it must not install, stage,
@@ -552,9 +579,11 @@ candidate root/id/digests through its separately named target. Existing local
   ~~~
 
   These existing checks cover contract/red infrastructure only; they do not
-  prove D3, D4, OCR, GPU, or installed acceptance. If the schema owner, wire
+  prove D3, D4, OCR, GPU, or installed acceptance. If the proposed
+  `packages/capture-acceptance-contract/` owner, package project, schema/wire
   target, or existing acceptance owner cannot be resolved, stop and report the
-  missing discovery rather than inventing a coordinator. Rollback: additive
+  missing discovery rather than inventing a coordinator or treating
+  `tools/acceptance-contract.ts` as authority. Rollback: additive
   revert of acceptance changes and retain failed manifests. Commit boundary:
   `feat(acceptance): centralize producer acceptance runner`.
 
@@ -581,9 +610,10 @@ candidate root/id/digests through its separately named target. Existing local
   `git -C <root> status --short --untracked-files=all -- <path>` before and
   after the slice. Missing variables, root/branch/`HEAD` drift, missing path,
   extra path, or unresolved ownership is discovery-and-stop; never fall back
-  to a sibling-relative path. Cert and LAW import/reference producer
-  `ProducerAcceptanceContractV1` version `"1"` plus the literal D3/D6
-  `contractSha256` and do not redefine names or fields. Commit Cert changes
+  to a sibling-relative path. Cert and LAW consume the exact generated
+  `@capture-runtime/acceptance-contract` package bytes, version `"1"`, plus
+  the literal D3/D6 `contractSha256`; they do not copy schemas or redefine
+  names/fields/codecs/validators. Commit Cert changes
   separately below `${CERT_PREP_CHECKOUT}` and LAW changes separately below
   `${GX_LAW_PREP_CHECKOUT}`; each reports its own SHA/checks. No Capture commit
   stages sibling paths, and no cross-repository push is implied.
@@ -698,7 +728,10 @@ candidate root/id/digests through its separately named target. Existing local
   source-lock, catalog, and generated-contract owners. Consume D2 authorization
   and the exact implementation source only. D3 builds one immutable byte ledger
   that records candidate root, candidate id, manifest digest, every raw artifact
-  SHA-256, and source/version/schema/contract/model/profile/catalog identity;
+  SHA-256, the exact generated `@capture-runtime/acceptance-contract`
+  package/bundle bytes and canonical `contractSha256`, and
+  source/version/schema/runtime-contract/model/profile/catalog identity. The
+  acceptance-package hash is distinct from runtime `contractSetSha256`;
   it does not require an installed candidate. D3 owns candidate construction;
   the separately authorized D5-D8 workflow slice owns publication-workflow
   contract changes.
@@ -738,9 +771,11 @@ candidate root/id/digests through its separately named target. Existing local
   `tools/three-project-acceptance.ts:runAcceptanceSequence` and
   `runCaptureWorkbenchAcceptance`, whose validators are
   `validateChildManifest`, `validateTerminalManifest`,
-  `validateCleanupEvidence`, and `verifyRecordedCleanupScope`. Manifest
-  serialization remains at `tools/acceptance-contract.ts:writeAcceptanceManifest`
-  and `readAcceptanceManifestTolerant`. The target must never call
+  `validateCleanupEvidence`, and `verifyRecordedCleanupScope`. The
+  `@capture-runtime/acceptance-contract` package is the schema/codec/generator/
+  manifest/hash authority; `tools/acceptance-contract.ts:writeAcceptanceManifest`
+  and `readAcceptanceManifestTolerant` are consumer-adapter seams only. The
+  target must never call
   `capture-workbench-desktop:stage-product-runtime`, any build target/script,
   source-tree import, or mutable URL, and must not consume a D6 ledger. The
   existing `capture-workbench-desktop:acceptance-real` target remains a local
@@ -829,9 +864,12 @@ candidate root/id/digests through its separately named target. Existing local
   child workflow must be discovered/named under that orchestration owner. Its
   inputs are the D5 publication-ledger artifact/run, immutable public URLs or
   release tag,
-  expected D3/D5 byte and manifest hashes, candidate/source/version/schema/
-  contract identity, and no stable or mutable pointer. Its output is an
-  independently hashed D6 download bundle/ledger that records the source URL,
+  expected D3/D5 byte and manifest hashes, the exact
+  `@capture-runtime/acceptance-contract` package/bundle bytes and
+  `contractSha256` (distinct from runtime `contractSetSha256`),
+  candidate/source/version/schema/contract identity, and no stable or mutable
+  pointer. Its output is an independently hashed D6 download bundle/ledger that
+  records the source URL,
   final immutable reference, bytes, and SHA-256 for every channel.
 
   Prerequisite: D5 terminal publication ledger and public references. RED proof:
@@ -865,8 +903,9 @@ candidate root/id/digests through its separately named target. Existing local
   independent D7 published-acceptance ledger. It invokes
   `tools/three-project-acceptance.ts:runAcceptanceSequence` and
   `runCaptureWorkbenchAcceptance` plus
-  `tools/acceptance-contract.ts:writeAcceptanceManifest,
-  readAcceptanceManifestTolerant`; its validators are
+  exact D6 `@capture-runtime/acceptance-contract` package/bundle bytes and
+  `contractSha256`; `tools/acceptance-contract.ts` is only a consumer adapter;
+  its validators are
   `validateChildManifest`, `validateTerminalManifest`, and
   `validateCleanupEvidence` in `tools/three-project-acceptance.ts`. Run in
   strict serial order: Capture JPEG -> cleanup -> Capture original PDF page 1

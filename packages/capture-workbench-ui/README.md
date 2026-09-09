@@ -18,8 +18,10 @@ the same `.npmrc.example`):
 
 > Phase 2 checkpoint (2026-09-10): this checkout is documentation/design-only.
 > It does not assert that any release is published or that registry bytes exist.
-> D4/D7 acceptance records use the producer's exact
-> `ProducerAcceptanceContractV1` version/hash. A consumer writes only its
+> D4/D7 acceptance records use the exact bytes/hash of the producer's
+> `@capture-runtime/acceptance-contract` package (proposed at
+> `packages/capture-acceptance-contract`), version `"1"`; its hash is distinct
+> from the runtime contract-set hash. A consumer writes only its
 > `ConsumerSemanticResultV1`; the producer owns mutable scope and the final
 > `AcceptanceChildWireV1`.
 > D6 immutable public downloads are permitted and required for D7 verification:
@@ -31,10 +33,13 @@ the same `.npmrc.example`):
 
 ## Phase 2 acceptance handoff
 
-When this package participates as a consumer, it imports/references the exact
-producer-generated `ProducerAcceptanceContractV1` version `"1"` and the literal
-`contractSha256` bound by D3/D6. It does not redefine producer record names,
-fields, fixture rules, or cleanup policy. The consumer receives only a frozen,
+When this package participates as a consumer, it consumes the exact generated
+`@capture-runtime/acceptance-contract` package bytes, `ProducerAcceptanceContractV1`
+version `"1"`, and literal `contractSha256` bound by D3/D6. The package is the
+canonical schema/codec/generator/manifest/hash authority;
+`tools/acceptance-contract.ts` is only a consumer adapter. This UI package does
+not copy or redefine producer record names, fields, fixture rules, or cleanup
+policy. The consumer receives only a frozen,
 read-only `ProducerChildInvocationV1` and writes exactly one
 `ConsumerSemanticResultV1` to the separate semantic-result output. It never
 receives or mutates `ProducerChildScopeV1` and never writes the final
@@ -45,6 +50,10 @@ staging, capture-delete, model-memory, or wire fields. Its
 `fixtureResults[]` must preserve the producer's ordered
 `fixtureAssignments[]` cardinality, keys, and per-fixture media/oracle/artifact
 digests; the consumer cannot add, remove, reorder, or substitute a fixture.
+Assignments carry opaque media/oracle capability handles plus handle digests;
+the consumer's private read-only resolver/store binds those handles to real
+media and full oracle truth using `mediaSha256`/`oracleSha256`. Raw paths/text
+never enter the invocation or semantic result.
 
 ## Angular integration contract
 

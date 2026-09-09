@@ -10,7 +10,7 @@ compute truth, acceptance, identity, and D0-D8 gates. The
 ## Checkpoint and authority
 
 This closure starts from expected HEAD
-31b1232ea9ef5b9bc32679323c8c28b9500b0bf0. The four canonical docs and the two
+78c8fe2718daa25ccf4b509a18598b4a710db47b; stop if `HEAD` drifts. The four canonical docs and the two
 active READMEs are the modified scope. Untracked
 .github/copilot-instructions.md and .github/instructions/ are preserved and are
 not staged. The exact resulting SHA is not embedded in this
@@ -82,8 +82,8 @@ worker may delete superseded policy only after residual scans and deletion tests
 
 Choose R3 in the existing Rust owner
 packages/capture-sidecar-launcher/src/process.rs::OwnedRuntimeSession.
-Its native implementation may add start_one and start_root(role, spec)
-capability. Capture, Cert, and candidate journeys use one root; LAW may
+Its native implementation may retain a private size-one `start_one` helper
+that delegates to the group path. Capture, Cert, and candidate journeys use one root; LAW may
 place Capture/Python/Java roots in one producer-owned group. That group uses
 the current unnamed no-breakaway Job with
 `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`; it never uses a named Job takeover and
@@ -93,19 +93,30 @@ The current spawn/id/try_wait API and PID-bearing RuntimeTerminationProof are
 explicit convergence/deletion surface, not a reason to add another
 coordinator.
 
-R3 injects a required `ReconcileRefSink`. `open(plan, sink)`/`prepare` durably
-writes `planned` and returns `PreparedRuntimeSession { ReconcileRef,
-refDigest, generation }` before activation. The sink durably persists that
-exact opaque ref/generation and returns the CAS-bound
-`ActivationPermit{refDigest, generation, receiptDigest}` only after its receipt
-is flushed. `activate(prepared, permit)` validates the three fields against
-the prepared journal and the sink's durable receipt before any process,
-listener, staging, or model resource is acquired. There is no activation
-overload without a permit. One-root convenience methods require the injected
-sink or remain private and use the same sequence. Reconciliation returns
-semantic cleanup and `proofSha256`, never native identifiers. Focused red/green
-cases cover missing/forged/stale permits, sink failure, generation/ref/receipt
-mismatch, and concurrent activation with one CAS winner.
+R3 is a whole-group protocol with a required `ReconcileRefSink`:
+`prepare_group(immutable_plan, sink)` first journals `planned_unbound` with the
+complete immutable plan identity but no bound refs and no
+`activationReceiptDigest`. The sink's `persist_group_refs` durably persists one
+group ref plus every ordered per-root ref/generation and flushes a
+`ReconcileRefReceiptV1`; its `verify_group_receipt` reopens, re-hashes, and
+verifies the group/root refs, generations, roles, ordinals, and plan digest.
+Only after that verification does the producer write `prepared_bound` and
+construct one private `ActivationPermitV1` containing the permit version,
+plan digest, group-ref digest/generation, complete root-ref digest/generation
+bindings, and receipt digest. A missing, stale, forged, partial, or mismatched
+permit fails closed.
+
+`activate_group(prepared, permit)` is the only activation operation. It
+assigns and verifies every root suspended before resuming any root. A failed or
+partial assignment resumes none and closes/reconciles the suspended set. The
+host cannot construct the permit, activate first, or activate an individual
+root against a group `planned_unbound`/`prepared_bound` record. Single-root
+convenience is group size one and may only wrap this same prepare/activate path;
+there is no per-root activation seam. Reconciliation returns semantic cleanup
+and `proofSha256`, never native identifiers. Focused red/green cases cover
+planned-unbound receipt absence, sink failure, every group/root ref and
+generation mismatch, stale permits, partial assignment with zero resumes, and
+concurrent activation with one CAS winner.
 
    The addressable restart seam is the exact producer API
    `RuntimeSessionJournal::reconcile(ReconcileRef) -> ReconcileResult`.
@@ -129,13 +140,17 @@ mismatch, and concurrent activation with one CAS winner.
 
 6. **RuntimeSessionJournalV1 is producer-owned cleanup state.** The journal is
    not host/domain persistence and is never created, mutated, deleted, or
-   reconciled by Tauri. Its required schema includes schemaVersion, producer,
-   sessionNonce, reconcile-ref digest, monotonic generation, state, Job
-   binding (including a durably committed setup state), staging binding,
-   activation receipt digest, recovery epoch, bounded attempt counter, root
-   records, listener bindings, and semantic terminal proof. Each root records
-   role, root nonce, PID, process creation identity, state, listener bindings,
-   and start time.
+   reconciled by Tauri. Its state-discriminated schema includes
+   `planned_unbound` (plan identity only, with no activation receipt, group-ref
+   digest/generation, or bound root refs/generations) and `prepared_bound` plus
+   its descendants (complete group/root ref and generation bindings and a
+   required verified activation receipt). The required base fields include
+   schemaVersion, producer, sessionNonce, plan digest, state, timestamps,
+   recovery epoch, and bounded attempt counter; bound states add group-ref
+   digest/generation, Job/staging bindings, root records, listener bindings,
+   and semantic terminal proof. Each bound root records role, root
+   nonce, PID, process creation identity, state, listener bindings, and start
+   time; `ready` means every root is assigned and verified suspended.
    Raw command lines, paths, bearer tokens, OCR, model bytes, user names,
    machine names, and arbitrary diagnostics are forbidden. PID and creation
    identity stay in the private producer journal; evidence emits only digests
@@ -159,10 +174,10 @@ mismatch, and concurrent activation with one CAS winner.
    reconcile-required. No process-name, PID-only, or port-only kill is valid.
 
    The exhaustive journal graph is
-   `planned -> launching -> running -> closing -> terminal`, plus
-   `planned -> terminal` only for a durable no-resource proof,
-   `planned -> reconcile-required`,
-   `launching|running|closing -> reconcile-required`,
+   `planned_unbound -> prepared_bound -> ready -> launching -> running ->
+   closing -> terminal`, plus `planned_unbound -> terminal` only for a durable
+   no-resource proof, `planned_unbound -> reconcile-required`,
+   `prepared_bound|ready|launching|running|closing -> reconcile-required`,
    `reconcile-required -> reconcile-required` for timed/failed attempts one or
    two, `reconcile-required -> terminal` only after a later complete
    observe-only proof, `reconcile-required -> manual-review` after timed/failed
@@ -175,9 +190,11 @@ mismatch, and concurrent activation with one CAS winner.
    increments recovery epoch/generation, resets the attempt window, and makes
    no resource mutation; the next full observe-only attempt remains required.
    A stale guard/receipt leaves the record untouched. A direct
-   `planned -> terminal` is allowed only when durable proof shows no resource
-   could have existed before Job setup/root resume/listener/staging/resource
-   acquisition was attempted; otherwise it is `reconcile-required`.
+   `planned_unbound -> terminal` is allowed only when durable proof shows no
+   resource could have existed before sink binding, Job setup, root
+   resume/listener/staging/resource acquisition was attempted; otherwise it is
+   `reconcile-required`. A bound state always carries the complete group/root
+   ref tuple, generation tuple, plan digest, and receipt digest.
    The focused guard cases are
    `reconcile_attempt_and_generation_increment_atomically`,
    `reconcile_rejects_stale_state_generation_attempt_or_epoch`,
@@ -187,9 +204,17 @@ mismatch, and concurrent activation with one CAS winner.
    `manual_review_recovery_resets_attempt_window_without_resource_mutation`.
 
 8. **Contract identity remains fixed.** API 2.0, raw/structured schema 2,
-   CaptureOcrProjectionV3 schema 3, and contract hash
+   CaptureOcrProjectionV3 schema 3, and runtime contract-set hash
    d293a3de26114f1b4fd65ea6d6d3f157fa2f93109b31e1e30d5d15ef0dfdeb40 remain
-   the floor. The first implementation slice upgrades Nx 23.1.0 to 23.1.2 in
+   the floor. The acceptance contract has a separate generated package/hash:
+   `@capture-runtime/acceptance-contract` under the proposed
+   `packages/capture-acceptance-contract/` owner, with JSON schemas,
+   `src/codecs.ts`, `tools/generate.ts`, `src/manifest.ts`, `src/hash.ts`,
+   `contract-manifest.json`, `contract-sha256.txt`, `package.json`, and
+   `project.json`. This package/bundle hash is distinct from the runtime
+   contract-set hash and is the only acceptance schema/codec authority; the
+   existing `tools/acceptance-contract.ts` is a consumer adapter only. The
+   first implementation slice upgrades Nx 23.1.0 to 23.1.2 in
    package.json and pnpm-lock.yaml and extends
    tools/release/version-sources.ts plus its existing
    capture-tools:release-version-test regression test. It enumerates runtime,
@@ -210,11 +235,13 @@ mismatch, and concurrent activation with one CAS winner.
 9. **Acceptance is one producer contract, per fixture, and serial.** Every
     real scanned PDF page 1 must have CER <= 1%; every real private JPEG must
     have CER <= 3%; no critical-anchor omissions are allowed; CER is never
-    averaged. The producer owns one generated `ProducerAcceptanceContractV1`,
-    version `"1"`, with a D3/D6-bound canonical `contractSha256`. Cert and LAW
-    import/reference that exact version/hash and may not redefine any producer
-    record name or field. The producer is the sole writer of mutable
-    `ProducerChildScopeV1` at `CAPTURE_ACCEPTANCE_SCOPE_PATH`; it publishes a
+    averaged. The producer owns one generated `ProducerAcceptanceContractV1`
+    from `@capture-runtime/acceptance-contract`, version `"1"`, with a
+    D3/D6-bound canonical package/bundle `contractSha256`. Cert and LAW consume
+    the exact package bytes/hash and may not copy schemas, redefine producer
+    record names or fields, or create local validators. The producer is the sole
+    writer of mutable `ProducerChildScopeV1` at
+    `CAPTURE_ACCEPTANCE_SCOPE_PATH`; it publishes a
     frozen `ProducerChildInvocationV1` through the distinct
     `CAPTURE_ACCEPTANCE_INVOCATION_PATH` (or read-only handle/pipe); the child
     writes exactly one `ConsumerSemanticResultV1` at the separate
@@ -227,6 +254,15 @@ mismatch, and concurrent activation with one CAS winner.
     any second create, overwrite, partial record, or digest mismatch fails
     closed. `ConsumerSemanticResultV1` contains no cleanup fields; the producer
     adds `producerCleanup` only to the final wire.
+
+    Scope is a state-discriminated union: `planned` contains only child/plan
+    identity; `prepared` adds the complete group/root ref and generation
+    bindings; `ready` adds the invocation digest and output nonce. The producer
+    computes the self-excluded invocation digest before the final bytes exist,
+    writes canonical bytes to a secure same-directory temporary, flushes and
+    closes it, atomically creates the final file, reopens it read-only to verify
+    bytes/digest, and freezes/ACL-checks it before `activate_group`. No root is
+    resumed before that verification.
 
     The wire carries parentGate/tier, D3 or D6 ledger binding, invocation
     digest, ordered `fixtureAssignments[]`, equal-cardinality/order-bound
@@ -246,16 +282,28 @@ mismatch, and concurrent activation with one CAS winner.
     coordinator is migrated/deleted in favor of the sole
     `tools/three-project-acceptance.ts:runAcceptanceSequence` runner.
 
+    `fixtureAssignments[]` include opaque media and oracle capability handles
+    plus their handle digests, media digest, and oracle digest. The producer
+    defines the generic capability shape; Cert and LAW own private resolvers and
+    read-only stores that verify the handle and `mediaSha256`/`oracleSha256`
+    bindings. Raw paths, text, and store locations never enter the invocation,
+    wire, or host response; exact normalized CER executes against the resolved
+    real media/full truth.
+
     The Python LAW adapter migration is anchored at
     `${GX_LAW_PREP_CHECKOUT}/apps/law-prep-ai-service/src/app/ocr/service.py:OcrExtractionService.extract`
     and its `CaptureRuntimeClient` seam. The producer defines `RequestRefV1`
     as `rr1_` plus 64 lowercase hex characters; Python generates it with
     CSPRNG `secrets.token_bytes(32)`, never from request data. Python persists
     `start_pending` with ref/digest/contract identity before idempotent
-    `start-or-get(requestRef, requestDigest)`. Same tuple creates/discovers
-    without duplication; changed digest conflicts without mutation; only a
-    producer ACK/discovery receipt permits `running`; timeout/dropped ACK stays
-    pending and retries the same tuple. Lookup/cancel/delete use the same ref.
+    `start_or_get(RequestRefV1, StartCaptureByRequestRefV1 metadata, source byte
+    stream)`. The producer recomputes the canonical request digest and source
+    byte count/digest. Same ref plus same metadata and bytes creates/discovers
+    without duplication; changed metadata, length, or source bytes conflicts
+    without mutation; only a producer ACK/discovery receipt permits `running`;
+    timeout/dropped ACK stays pending and retries the same tuple.
+    `RequestRefV1` is exactly `rr1_` plus 64 lowercase hex characters from 32
+    CSPRNG bytes. Lookup/cancel/delete use the same ref.
     The producer journals before capture side effect, retains sanitized cleanup
     state for a bounded period, and uses the same v2 operation/lifecycle. Tokens,
     paths, and native ids never cross the seam; API `2.0` and
@@ -270,9 +318,11 @@ mismatch, and concurrent activation with one CAS winner.
     `ls-files --error-unmatch -- <exact-path>`, and a path-scoped
     `status --short --untracked-files=all -- <exact-path>`. Root mismatch,
     branch/`HEAD` drift, missing/extra path, missing variable, or unresolved
-    owner is discovery-and-stop. Consumer docs/schemas import/reference the
-    producer-generated `ProducerAcceptanceContractV1` version `"1"` and
-    literal D3/D6 `contractSha256`; they do not fork its names or fields.
+    owner is discovery-and-stop. Consumer docs/adapters import/reference only
+    the exact generated `@capture-runtime/acceptance-contract` package bytes,
+    version `"1"`, and literal D3/D6 `contractSha256`; they do not fork
+    schemas, names, fields, codecs, or validators. `tools/acceptance-contract.ts`
+    remains a consumer adapter and is not contract authority.
     Capture, Cert, and LAW each commit only inside their own resolved root and
     report separate SHAs/checks; no one Capture commit stages sibling files.
 
@@ -306,11 +356,14 @@ future D2-authorized slice owns the contract correction across
 `.github/workflows/_publish-runtime-github-release.yml` for the existing
 runtime-release lane where applicable,
 `tools/create-promotion-ledger.ts`, `tools/update-release-index.ts`,
-`tools/three-project-acceptance.ts`, and `tools/acceptance-contract.ts`. The
-existing symbols are `parseArguments`/`main`, `updateReleaseIndex`/`main`,
+`tools/three-project-acceptance.ts`, the proposed
+`packages/capture-acceptance-contract/` package/bundle, and
+`tools/acceptance-contract.ts` as its consumer adapter. The existing symbols
+are `parseArguments`/`main`, `updateReleaseIndex`/`main`,
 `runAcceptanceSequence`/`runCaptureWorkbenchAcceptance` and the three
 manifest validators, plus `writeAcceptanceManifest`/
-`readAcceptanceManifestTolerant`. D5 must consume D4, publish every exact D3
+`readAcceptanceManifestTolerant`; the adapter may consume the canonical package
+but is not schema/codec/generator/manifest/hash authority. D5 must consume D4, publish every exact D3
 artifact through the registry and GitHub Release jobs, write its publication
 ledger, and remove the direct stable-pointer call/edge; no D5 path may invoke it
 transitively. A single-lane retry cannot terminalize D5 or dispatch D6 until all

@@ -19,9 +19,14 @@ diagnostic and is explicitly not D4. The future D4 target is proposed as
 it will accept externally supplied D3 root/id/digests and must never stage or
 build, import the source tree, or follow a mutable URL. That target is not
 present until its project metadata and schema are created and reviewed. The
-desktop host is a consumer: it imports the producer-defined acceptance
-contract version/hash, writes only its semantic result, and never mutates
-producer scope or writes the final acceptance wire.
+desktop host is a consumer: it consumes the exact bytes/hash of the producer's
+`@capture-runtime/acceptance-contract` package (proposed at
+`packages/capture-acceptance-contract`), version `"1"`, and writes only its
+semantic result. `tools/acceptance-contract.ts` is a consumer adapter, not
+contract authority. Fixture assignments use opaque media/oracle capability
+handles and digests; consumer-private read-only resolvers bind them to real
+media/full truth, while raw paths/text never enter the invocation or result.
+The desktop never mutates producer scope or writes the final acceptance wire.
 
 Run `corepack pnpm dev` for the product lane. It generates and stages release
 runtime assets before Tauri starts. `corepack pnpm dev:deterministic` remains a
