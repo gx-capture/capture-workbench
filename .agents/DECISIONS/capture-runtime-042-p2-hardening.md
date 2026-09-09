@@ -8,10 +8,18 @@ without creating a second GPU/OCR policy.
 ## Checkpoint and authority
 
 PR #39 at `c6d2140e233de70734005713427f77f92414f415` has deterministic CI green
-but is not merged. There is no current-HEAD real JPEG/PDF OCR, GPU, cleanup,
-immutable candidate, or `0.4.2` publish evidence. Cert Prep and GX Law Prep are
-blocked. Only Phase 2 documentation/review is allowed; implementation entry
-gate approval has not passed.
+but is not merged. Phase 1 is **complete at the local-probe tier**: all three
+projects passed real local-package OCR in the ordered Capture -> Cert -> LAW
+sequence. This is not published/release evidence and does not mean an official
+`0.4.2` package exists. No current-HEAD Phase 2 real JPEG/PDF OCR, GPU, or
+cleanup evidence is recorded here; there is no immutable candidate or `0.4.2`
+publish evidence. PR #39 and current heads are engineering/release freshness
+facts only and do not negate Phase 1 completion. Phase 2 entry is allowed at
+documentation/design/review; implementation slices follow the approved TODO
+gates. Phase 2 promotion requires architecture, version, performance, and
+lifecycle hardening, then an immutable candidate, then sequential Capture ->
+Cert -> LAW tests with a formal/published `0.4.2` package. Promotion waits for
+all of those gates; no package or promotion is claimed here.
 
 The current task uses existing owner files only. It does not write feature
 code, alter P1/PDF/acceptance/contract files, run model-enabled acceptance, or
@@ -58,7 +66,8 @@ tests, and an additive focused commit. No broad cleanup is implied.
    policy: usable dGPU, usable iGPU, then noticed CPU only after affirmative
    positive-unavailable/provider-absent evidence. Indeterminate is unavailable,
    not CPU. Selected DML construction/assignment/inference failure has no CPU
-   retry. Capture's RTX 4060 must be proven first; Cert/Law remain blocked.
+   retry. Capture's RTX 4060 proof precedes the final Phase 2 Cert/Law run; the ordered
+   Phase 1 local-probe acceptance does not replace the Phase 2 release gates.
 5. **Deepening is replacement, not layering.** Each module has a small
    interface containing invariants, ordering, error, and performance behavior;
    private internal seams; justified production and test adapters; dependency
@@ -96,8 +105,9 @@ tests, and an additive focused commit. No broad cleanup is implied.
 
 ## Rejected decisions
 
-- **Treating this as a release or Phase 1 closeout:** deterministic CI is not
-  current-head real OCR/GPU/cleanup evidence; no candidate or publish exists.
+- **Confusing local-probe completion with release:** Phase 1 is complete at the
+  local-probe tier, but deterministic CI/current-head facts are not published
+  real OCR/GPU/cleanup evidence; no immutable candidate or publish exists.
 - **Host-side GPU selection or default ordinal 0:** policy can diverge from
   actual inference. The producer's `OcrComputePlan` owns dGPU -> iGPU -> CPU.
 - **Treating timeout/exception/unknown as unavailable:** absence of evidence is
@@ -131,5 +141,6 @@ time. Neither review is approval until tied to the exact documentation commit.
 
 Rollback is an additive revert of the focused slice to the prior reviewed
 checkpoint. Never reset/checkout shared work, rewrite historical evidence, or
-mix 0.4.1 and 0.4.2 identities. This decision record intentionally claims no
-test, model run, candidate, release, or publication has been executed.
+mix 0.4.1 and 0.4.2 identities. This decision record claims no new Phase 2
+test/model run, candidate, release, or publication; it records the completed
+Phase 1 local-probe result without promoting it to release evidence.

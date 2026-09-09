@@ -6,12 +6,22 @@ owns policy; the [DECISION](../DECISIONS/capture-runtime-042-p2-hardening.md)
 owns rationale. Every item is a small vertical slice with one owner and one
 checkpoint commit.
 
+Phase 1 status: **complete at the local-probe tier**. All three projects passed
+real local-package OCR in the ordered Capture -> Cert -> LAW sequence. This is
+not published/release evidence and does not mean an official `0.4.2` package
+exists. Phase 2 entry is allowed at documentation/design/review; implementation
+slices follow the approved TODO gates. Phase 2 promotion requires architecture,
+version, performance, and lifecycle hardening, then an immutable candidate, then
+sequential Capture -> Cert -> LAW tests with a formal/published `0.4.2` package.
+Promotion waits for all of those gates; no package or promotion is claimed here.
+
 ## Entry gate and shared rules
 
 - [ ] **Exact-head design gate.** Owner: Root + fresh Luna reviewer. Red proof:
   a review record identifies `c6d2140e233de70734005713427f77f92414f415`, the
-  2026-09-09 checkpoint, current missing real evidence, blocked Cert/Law, and
-  unresolved findings. Owned files: the four Phase 2 docs only. Verify:
+  2026-09-09 checkpoint, completed Phase 1 local-probe evidence, current
+  Phase 2 checkpoint's missing current-head/release evidence, and unresolved
+  findings. Owned files: the four Phase 2 docs only. Verify:
   `git diff --check -- .agents/SPECS/capture-runtime-042-p2-hardening.md .agents/DECISIONS/capture-runtime-042-p2-hardening.md .agents/TODOS/capture-runtime-042-p2-hardening.md .agents/GUIDES/staged-ocr-delivery-workflow.md`.
   Rollback: additive revert of the docs commit. Commit checkpoint: docs-only
   commit below.
@@ -119,7 +129,7 @@ checkpoint commit.
   private device proof, semantic anchors, cleanup, and model release. Verify:
   `corepack pnpm nx run capture-workbench-desktop:acceptance-real-ocr-gpu-selection --skip-nx-cache`.
   Rollback: preserve failed manifest and revert only tooling/code slice. Commit
-  checkpoint: GPU acceptance commit; no Cert/Law start before it.
+  checkpoint: GPU acceptance commit; no Phase 2 Cert/Law start before it.
 - [ ] **OwnedRuntimeSession implementation.** Owner: Rust sidecar owner. Red
   proof: suspended assign-before-resume/no-breakaway, normal/window close,
   startup/readiness failure, root crash, host terminate, descendants, cleanup
@@ -151,13 +161,6 @@ checkpoint commit.
 
 ## Slice 6 — consumer and release gates (last)
 
-- [ ] **Sequential consumer acceptance.** Owner: Root/coordinators in the three
-  repositories. Red proof: same immutable candidate bytes run Capture JPEG ->
-  Capture PDF page 1 -> Cert -> Law; each child cleans up and releases model
-  memory before the next. Verify the producer-owned three-project target with
-  `--skip-nx-cache`; do not claim from old evidence. Rollback: stop sequence,
-  retain failed evidence, and revert only the affected repository slice.
-  Commit checkpoint: per-repository acceptance commits.
 - [ ] **Immutable candidate/release.** Owner: release owner. Red proof: exact
   source HEAD, artifact bytes, manifests, contract/model/profile/worker hashes,
   frozen locks, download-back bytes, and consumer package boundaries match;
@@ -165,14 +168,25 @@ checkpoint commit.
   targets and SHA-specific CI with `--skip-nx-cache`/approved CI commands.
   Rollback: additive revert or pin prior reviewed 0.4.1 train consistently;
   never mix versions. Commit checkpoint: candidate then publication commits.
+- [ ] **Sequential consumer acceptance.** Owner: Root/coordinators in the three
+  repositories. Red proof: same immutable candidate bytes run Capture JPEG ->
+  Capture PDF page 1 -> Cert -> Law; each child cleans up and releases model
+  memory before the next. This is the Phase 2 post-hardening gate; the completed
+  Phase 1 local-probe result is not candidate or published evidence. Verify the
+  producer-owned three-project target with `--skip-nx-cache`; do not claim from
+  old evidence. Rollback: stop sequence, retain failed evidence, and revert
+  only the affected repository slice.
+  Commit checkpoint: per-repository acceptance commits.
 
 ## Documentation checkpoint (this task)
 
 - [ ] **Documentation checkpoint audit.** Owner: docs worker + Root. Red proof:
   the canonical design is limited to the four owner files and the read-only
   Markdown/relative-link checks plus `git diff --check` are recorded. This item
-  does not claim implementation, model acceptance, candidate, or release.
+  does not claim Phase 2 implementation, candidate, or release; the completed
+  Phase 1 local-probe acceptance is recorded above without promotion to release
+  evidence.
 - [ ] Obtain Standards and Specification review on the exact documentation
   commit. Owner: Root. Red proof: both reports identify current SHA and no
   unapproved scope. Rollback: additive docs revert. Commit checkpoint: the
-  docs commit `docs(phase2): consolidate capture hardening design`.
+  docs commit `docs(phase2): record phase1 local-probe completion`.

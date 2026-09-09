@@ -12,11 +12,16 @@ records why. P1, PDF, acceptance, and contract details remain linked context:
 ## Checkpoint first: 2026-09-09
 
 PR #39 is deterministic-CI green at `c6d2140e233de70734005713427f77f92414f415`,
-but unmerged. Current-HEAD real JPEG/PDF OCR, GPU, and cleanup evidence is
-absent. No immutable candidate or published `0.4.2` exists. Cert Prep and GX
-Law Prep are blocked. Only Phase 2 docs/review is allowed; implementation entry
-gate approval has not passed. Do not infer completed work from a green CI job,
-older manifest, local package, or a consumer's historical evidence.
+but unmerged. Phase 1 is **complete at the local-probe tier**: all three
+projects passed real local-package OCR in the ordered Capture -> Cert -> LAW
+sequence. This is not published/release evidence and does not mean an official
+`0.4.2` package exists. No current-HEAD Phase 2 real JPEG/PDF OCR, GPU, or
+cleanup evidence is recorded here. No immutable candidate or published `0.4.2`
+exists. PR #39 and current heads are engineering/release freshness facts only;
+they do not negate Phase 1 completion. Phase 2 entry is allowed at
+documentation/design/review; implementation slices follow the approved TODO
+gates. Do not infer release evidence from a green CI job, older manifest, local
+package, or a consumer's historical evidence.
 
 This documentation checkpoint preserves untracked `.github/copilot-instructions.md`
 and `.github/instructions/`. It does not edit other docs, code, CI, consumers,
@@ -34,8 +39,10 @@ candidate bytes, release pointers, or published artifacts.
    command, rollback, and checkpoint commit before touching code.
 4. If `OcrPipeline` or `OwnedRuntimeSession` is involved, complete the
    three-alternative Design-It-Twice record and serious grill/review first.
-5. Stop if the implementation entry gate, exact-HEAD review, or required real
-   artifact is missing. Ask Root for a new bounded authorization.
+5. Phase 2 entry is permitted for documentation, design, and review. For an
+   implementation slice, stop unless its approved TODO gate, exact-HEAD review,
+   and required real artifact are present; ask Root for a new bounded
+   authorization when any is missing.
 
 ## Change mode: mixed
 
@@ -66,6 +73,11 @@ design docs
   -> immutable candidate
   -> published release only after consumer gates
 ```
+
+Phase 2 promotion requires architecture, version, performance, and lifecycle
+hardening first; then an immutable candidate is built; then Capture -> Cert ->
+LAW are tested sequentially with a formal/published `0.4.2` package. This is a
+future release gate, not a claim that the package exists at this checkpoint.
 
 Every slice has one observable outcome. Tests cross the module interface and
 survive implementation replacement. Internal seams are injectable only for
@@ -104,8 +116,8 @@ platform/transport/test adapters; they are not a second public contract.
 ## OCR-only real journey
 
 Every PDF page is rasterized and sent to PaddleOCR. Embedded text is ignored:
-it is never read, returned, or used to reject an input. The real model-enabled order
-is exactly:
+it is never read, returned, or used to reject an input. The order accepted for
+Phase 1 local-probe and required again for the Phase 2 final gate is exactly:
 
 ```text
 Capture Workbench: private JPEG

@@ -8,14 +8,19 @@ candidate, release, or publication authority.
 
 - PR #39 is at `c6d2140e233de70734005713427f77f92414f415`; its deterministic CI
   is green, but the PR is not merged.
-- There is no current-HEAD real JPEG OCR, PDF page-1 OCR, GPU proof, or cleanup
-  evidence. There is no immutable candidate and no published `0.4.2`.
-- Cert Prep and GX Law Prep are blocked behind the producer gate. Historical
-  consumer or earlier-package evidence does not unlock this checkpoint.
-- Only these four documents may be edited in this task. Phase 2 may enter
-  review/design work only; the implementation entry gate has not passed.
+- Phase 1 is **complete at the local-probe tier**: all three projects passed
+  real local-package OCR in the ordered Capture -> Cert -> LAW sequence. This
+  is not published/release evidence and does not mean an official `0.4.2`
+  package exists.
+- No current-HEAD Phase 2 real JPEG OCR, PDF page-1 OCR, GPU proof, or cleanup
+  evidence is recorded here. There is no immutable candidate and no published
+  `0.4.2`. PR #39 and current heads are engineering/release freshness facts;
+  they do not negate Phase 1 completion.
+- Only these four documents may be edited in this task. Phase 2 entry is allowed
+  at documentation/design/review; implementation slices follow the approved
+  TODO gates.
 
-The exact entry gate is: current-HEAD design review by Standards and
+The exact implementation-slice gate is: current-HEAD design review by Standards and
 Specification axes, the serious grill questions resolved one at a time, an
 approved small vertical slice, and a fresh worker/checkpoint. Until then, do
 not write feature code, run a model-enabled journey, build a candidate, publish
@@ -24,10 +29,12 @@ GPU, cleanup, install, or release evidence.
 
 ## Purpose and non-goals
 
-Phase 2 hardens the existing OCR-only producer after Phase 1 is reproducible.
-It concentrates policy, provenance, process ownership, measurements, and
-acceptance evidence behind deep modules while preserving the current public
-contracts.
+Phase 2 hardens the existing OCR-only producer after the completed Phase 1
+local-probe checkpoint. Phase 1 accepted real local-package OCR in the ordered
+Capture -> Cert -> LAW sequence; that local tier does not imply published or
+release evidence. Phase 2 concentrates policy, provenance, process ownership,
+measurements, and acceptance evidence behind deep modules while preserving the
+current public contracts.
 
 Non-goals:
 
@@ -38,8 +45,9 @@ Non-goals:
   indexes, or private diagnostics to hosts.
 - Do not change Cert Prep or GX Law Prep source from this repository, and do
   not add consumer-specific producer policy.
-- Do not treat package QA, fake OCR, snapshots, screenshots, a local package,
-  or a successful exit code as real installed or published acceptance.
+- Do not treat package QA, fake OCR, snapshots, screenshots, or a successful
+  exit code as formal installed or published acceptance. Local-package OCR may
+  establish the completed Phase 1 local-probe tier, but it is not release proof.
 - Do not optimize before a reproducible baseline. Do not retry CPU after a
   selected DirectML construction or inference failure.
 - Do not delete user/unknown files, rewrite shared history, push, merge,
@@ -197,7 +205,8 @@ decision truth table](#canonical-compute-decision-truth-table). In short:
 - a selected DML construction, assignment, graph-proof, or inference failure is
   fail-closed for that operation, with no other GPU or CPU retry; and
 - Capture Workbench must first prove the automatic usable NVIDIA GeForce RTX
-  4060 on the acceptance machine, including the real JPEG then PDF page 1.
+  4060 on the acceptance machine, including the real JPEG then PDF page 1,
+  before the Phase 2 Cert/Law run.
 
 ### Canonical compute decision truth table
 
@@ -338,16 +347,24 @@ slice. Sol Ultra is read-only and may be activated only when the same blocker
 has failed more than three consecutive times; it may provide diagnosis,
 options, and tests, but never edit, commit, push, publish, or own the slice.
 
+Phase 2 promotion requires architecture, version, performance, and lifecycle
+hardening; an immutable candidate is then built; only after that are Capture ->
+Cert -> LAW tested sequentially with a formal/published `0.4.2` package. The
+package and promotion are future gates, not claims made by this design.
+
 ## Acceptance and rollback definition
 
 Phase 2 is not complete until each slice has its red public-interface tests,
 focused and `--skip-nx-cache` verification, both review axes on the exact
-commit, privacy/path/secret audit, and a recorded rollback. Release is not
-complete until Capture JPEG -> Capture PDF page 1 -> Cert -> Law all use the
-same immutable candidate bytes, clean up serially, and published download-back
-identity is exact.
+commit, privacy/path/secret audit, and a recorded rollback. Promotion is not
+complete until architecture/version/performance/lifecycle hardening is done,
+an immutable candidate is built, and Capture JPEG -> Capture PDF page 1 -> Cert
+-> Law all use the same immutable candidate bytes, clean up serially, and pass
+with a formal/published `0.4.2` package whose published download-back identity
+is exact.
 
 Rollback is additive: revert the focused slice to its prior reviewed
 checkpoint, preserve durable caches and historical manifests, and never mix
-0.4.1/0.4.2 assets or rewrite shared history. This design itself does not
-claim any verification has been executed.
+0.4.1/0.4.2 assets or rewrite shared history. This design claims no new Phase 2
+verification, candidate, release, or publication; the completed Phase 1
+local-probe result is recorded above.
