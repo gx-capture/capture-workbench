@@ -1,521 +1,651 @@
 # Capture Runtime 0.4.2 Phase 2 hardening (canonical design)
 
-Status: design-only. This file is the canonical Phase 2 policy and acceptance
-source for a fresh worker. It does not grant implementation, candidate,
-release, or publication authority. The DECISION, TODO, and GUIDE link here;
-they do not restate this policy.
+Status: canonical Phase 2 policy and acceptance source. `D0 DocsCommitted` is
+complete for the commit that contains this documentation correction. The exact
+commit id is intentionally not written here: external review binds the result
+with `git rev-parse HEAD` after the commit. `D1 DesignReviewed` is pending a
+fresh Standards and Specification review at that exact head. This document is
+design and delivery policy; it does not authorize implementation, packaging,
+publication, or stable-pointer mutation.
 
 ## Current checkpoint: 2026-09-09
 
+- The documentation correction starts from
+  `1df7eecccd4097c172c9338a7f584f9489e5ae78`. The only pre-existing working
+  tree changes are untracked `.github/copilot-instructions.md` and
+  `.github/instructions/`; they are preserved and are not part of this slice.
 - PR #39 is at `c6d2140e233de70734005713427f77f92414f415`; its deterministic CI
-  is green, but the PR is not merged.
-- Phase 1 is **complete at the local-probe tier**: all three projects passed
-  real local-package OCR in the ordered Capture -> Cert -> LAW sequence. This
-  is not published/release evidence and does not mean an official `0.4.2`
-  package exists.
-- No current-HEAD Phase 2 real JPEG OCR, PDF page-1 OCR, GPU proof, or cleanup
-  evidence is recorded here. There is no immutable candidate and no published
-  `0.4.2`. PR #39 and current heads are engineering/release freshness facts;
-  they do not negate Phase 1 completion.
-- This task edits the four canonical Phase 2 documents and may add only the
-  narrowly scoped historical banners named in the TODO. Phase 2 entry is
-  allowed at documentation/design/review; implementation slices follow the
-  recorded TODO gates.
-
-The exact implementation-slice gate is: current-HEAD design review by Standards and
-Specification axes, the serious grill questions resolved one at a time, an
-authorized small vertical slice, and a fresh worker/checkpoint. Until then, do
-not write feature code, run a model-enabled journey, build a candidate, publish
-an artifact, or alter Cert/Law. A green deterministic CI run is not real OCR,
-GPU, cleanup, install, or release evidence.
+  is green, but the PR is not merged. Phase 1 is complete only at the
+  local-probe tier: Capture, Cert Prep, and GX Law Prep passed real
+  local-package OCR in that order. That is not published or release evidence.
+- No current-HEAD Phase 2 real JPEG, PDF page-1, GPU, cleanup, immutable
+  candidate, download-back, or publication result is claimed. Source files
+  currently contain release value `0.4.2`; that does not establish that an
+  official `0.4.2` package is published.
+- CI repair is paused and has no authority in this checkpoint. This docs slice
+  does not edit workflows, rerun or retry CI, alter CI policy, or treat a green
+  deterministic run as OCR, GPU, cleanup, install, or release proof.
+- The only completed state-machine gate in this docs commit is D0. D1 remains
+  pending until a fresh external review names the post-commit `HEAD`, exact
+  paths, and external check/PR metadata. Any later content commit returns the
+  state to D1.
 
 ## Purpose and non-goals
 
-Phase 2 hardens the existing OCR-only producer after the completed Phase 1
-local-probe checkpoint. Phase 1 accepted real local-package OCR in the ordered
-Capture -> Cert -> LAW sequence; that local tier does not imply published or
-release evidence. Phase 2 concentrates policy, provenance, process ownership,
-measurements, and acceptance evidence behind deep modules while preserving the
-current public contracts.
+Phase 2 hardens the existing producer-owned OCR and runtime lifecycle behind
+deep modules, then proves the same bytes through candidate, publication,
+download-back, and repeated consumer acceptance. It preserves the public
+contract floor while making ownership, identity, cleanup, and evidence
+mechanically checkable.
 
 Non-goals:
 
-- Never read or arbitrate embedded PDF text. PDFium rasterizes PDF pages and
-  PaddleOCR is the only extraction source; embedded text is ignored.
-- Do not add hybrid, embedded, LLM-routed, host-specific, or language-selected
-  OCR paths. Do not expose Paddle kwargs, model paths, process handles, device
-  indexes, or private diagnostics to hosts.
-- Do not change Cert Prep or GX Law Prep source from this repository, and do
-  not add consumer-specific producer policy.
-- Do not treat package QA, fake OCR, snapshots, screenshots, or a successful
-  exit code as formal installed or published acceptance. Local-package OCR may
-  establish the completed Phase 1 local-probe tier, but it is not release proof.
-- Do not optimize before a reproducible baseline. Do not retry CPU after a
-  selected DirectML construction or inference failure.
-- Do not delete user/unknown files, rewrite shared history, push, merge,
-  release, or move a stable pointer in a documentation checkpoint.
+- PDFium rasterizes every requested PDF page; PaddleOCR is the only extraction
+  source. Embedded PDF text is never read, and no hybrid or LLM-routed path is
+  introduced.
+- Hosts do not create Paddle engines, choose devices, persist model paths,
+  hold process handles, or name-kill processes. Cert Prep and GX Law Prep own
+  durable domain data; runtime jobs and run-scoped staging are ephemeral.
+- No feature code, consumer source, CI repair, release publication, stable
+  pointer update, or destructive cleanup is authorized by this document-only
+  checkpoint.
+- Package QA, fake OCR, snapshots, screenshots, local source-tree imports, and
+  successful exit codes are not substitutes for real installed or published
+  acceptance.
+- A selected DirectML construction or inference failure never retries another
+  device or silently falls back to CPU. Indeterminate hardware remains
+  indeterminate/unavailable.
 
 ## Change mode and supersession
 
-Change mode: **mixed**.
+Change mode is mixed with edit-first ownership. This correction edits the four
+existing Phase 2 owner files and the two active README banners named below. It
+does not create a second coordinator or a replacement repository owner.
 
-| Decision | Rule for this Phase 2 design |
+| Action | Rule |
 | --- | --- |
-| Edit | Edit the four existing owner files: this SPEC, its DECISION, its TODO, and the staged OCR delivery GUIDE. Preserve their stable paths. |
-| Delete/supersede | Name obsolete policy and documents as candidates below. A later implementation worker may remove them only after ownership, replacement tests, and an additive commit are proven. The only historical edits in this checkpoint are the banners listed in the TODO. |
-| Create | Create a file only when no existing owner can hold the lifecycle or seam. A new module, schema, fixture, or command requires a separate authorized vertical slice. |
+| Edit | Preserve the SPEC, DECISION, TODO, GUIDE, UI README, and desktop README paths. |
+| Supersede | Replace duplicate cleanup, stale version, embedded-text, adapter-ordinal, and split acceptance policy only through a later authorized implementation slice with replacement tests. |
+| Create | A new module, schema, fixture, or command requires discovery proving that no existing owner fits and a separate authorized slice. |
+| Delete | Delete only after residual scans, replacement tests, an additive commit, and exact-owner review prove that the old policy is unused. |
 
-### Supersession map
+Historical GPU/P1 documents already carry their superseded banners at this
+checkpoint. Their bodies remain historical evidence and are not rewritten here:
 
-| Candidate to retire or supersede | Canonical replacement | When deletion is allowed |
-| --- | --- | --- |
-| Default adapter `0` and `CAPTURE_WINDOWSML_DEVICE_ID` policy in old GPU notes | The GPU truth table in this SPEC and runtime-owned `OcrComputePlan` | After residual scan, red tests, and a replacement commit prove no caller derives or persists an ordinal. |
-| `pdf-embedded-text`, embedded-only, and hybrid extraction paths | `OcrPipeline` PDFium-raster-to-Paddle path | After page-complete projection tests and deletion test pass. See [P1 OCR](../SPECS/capture-runtime-042-p1-ocr-and-lifecycle.md) and [PDF OCR-only](../SPECS/pdf-ocr-only-extraction.md). |
-| v0.3/v0.4.1 runtime, worker, SDK, lock, catalog, or manifest literals | One generated version inventory and `version-check` command | After the inventory generates every owned value and strict stale-literal checks are green. Never mix 0.4.1 and 0.4.2. |
-| Duplicate session-status, host process-cleanup, `taskkill`/name-kill, and parallel lifecycle helpers | `OwnedRuntimeSession` plus its semantic host adapters | After normal-close, failure, crash, termination, descendant, baseline, and next-start tests pass. |
-| Acceptance runners that independently build/install/scope events/cleanup | Producer-owned `AcceptanceRunner` | After the canonical runner proves the same installed boundary and sequential semaphore. |
-
-These are candidates, not permission to edit those files now. Existing P1,
-PDF, acceptance, and contract documents remain historical/contextual owners
-until a named supersession commit updates them. Their constraints
-are [P1 OCR and lifecycle](../SPECS/capture-runtime-042-p1-ocr-and-lifecycle.md),
-[P1 compute preflight](../SPECS/capture-runtime-042-p1-ocr-compute-preflight.md),
-[PDF OCR-only](../SPECS/pdf-ocr-only-extraction.md),
-[real OCR acceptance](../SPECS/real-ocr-result-acceptance.md),
-[contract set](../SPECS/runtime-contract-set-client-sdks-hard-cut.md), and
-[packaged import boundary](../SPECS/packaged-ocr-import-boundary.md).
+- [GPU OCR decision](gpu-ocr-directml.md)
+- [GPU OCR decision record](../DECISIONS/gpu-ocr-directml.md)
+- [P1 compute preflight TODO](../TODOS/capture-runtime-042-p1-ocr-compute-preflight.md)
 
 ## Responsibility map
 
-The producer is the only owner of runtime policy and execution truth.
+The producer owns runtime policy and execution truth. A host receives semantic
+results and owns domain persistence only.
 
-| Responsibility | Producer (`capture-runtime` / desktop harness) | Cert Prep and GX Law Prep hosts |
+| Responsibility | Producer (`capture-runtime`, launcher, desktop harness) | Cert Prep / GX Law Prep |
 | --- | --- | --- |
-| OCR | Owns `OcrPipeline`, PDFium rasterization, Paddle profile, normalization, page order, confidence, provenance, and typed failures. | Call the public capture/ocr seam through an adapter. Never create Paddle or choose a route. |
-| Compute | Owns `OcrComputePlan` and GPU truth; `OcrComputePreflightV2` is a projection, not a host policy. | Render the existing readiness/notice; never probe, rank, select, or persist GPU indexes. |
-| Model identity | Owns `ModelSourceSnapshot` and model/profile/catalog hashes. | Persist only domain records needed by the host; no model path or private token. |
-| Process lifecycle | Owns `OwnedRuntimeSession`, Job/descendant cleanup, failure proof, and reconciliation. | Request graceful close and persist domain state; never hold OS handles or name-kill. |
-| Acceptance | Owns `AcceptanceRunner`, installed boundary, fixture scope, evidence, cleanup, and sequence. | Supply consumer-specific domain assertions in their own repositories. |
-| Version/release | Owns one version inventory, candidate bytes, manifests, and immutable release identity. | Pin the exact candidate/published bytes and verify before model start. |
+| OCR | `OcrPipeline`, PDFium rasterization, Paddle profile, normalization, page order, confidence, provenance, and typed failures | Invoke the public capture/ocr seam through an adapter; never create or route an OCR engine |
+| Compute | `OcrComputePlan`, hardware truth, model/profile/catalog identity | Render readiness/notice; never probe, rank, select, or persist a GPU ordinal |
+| Process lifecycle | `OwnedRuntimeSession`, native Job ownership, descendant cleanup, journal/reconciliation, and semantic proof | Request close/cancellation; never hold OS handles or name-kill |
+| Acceptance | Producer-owned `AcceptanceRunner`, installed boundary, fixture scope, evidence, cleanup, and serial semaphore | Supply consumer assertions in the consumer repository |
+| Version/release | One inventory, candidate bytes, manifests, publication ledgers, download-back, and stable-pointer policy | Pin exact bytes and verify before model start |
 
-Runtime jobs are ephemeral; hosts own durable source and domain persistence.
-Durable runtime/model caches are retained, while run-scoped staging and stale
-identity-proven state are reconciled by the owner.
+Runtime/model caches are durable only where explicitly declared. Run-scoped
+staging, listeners, and owned processes are ephemeral and are reconciled by the
+producer. Tauri may request a semantic operation but never owns or mutates a
+runtime journal or native Job.
 
-## Public contract floor
+## Repository-grounded discovery
 
-Phase 2 preserves API `2.0`, `CaptureOcrProjectionV3` schema `3`, existing raw
-and structured schema `2`, and the current contract-set identity
-`d293a3de26114f1b4fd65ea6d6d3f157fa2f93109b31e1e30d5d15ef0dfdeb40`. The existing
-authenticated `GET /v2/captures/{capture_id}/ocr` remains the typed projection
-seam. No private device, process, path, token, or performance field is added
-to an HTTP route, SDK, public document, or UI property. A public contract
-change is a separate design and regeneration decision, never an incidental
-hardening change.
+The following facts are the implementation boundary. The names are checked-in
+symbols and paths, not proposed placeholders.
 
-The current projection rules remain: every requested page (all pages by
-default) is ordered and represented, empty pages are retained, recognized
-regions have bounded polygons and scores, failed pages have sanitized typed
-failures, and schema-2 raw segments are composed only from the normalized
-recognized projection. See the P1 and PDF documents linked above; this SPEC
-does not create a second wire policy.
-
-## Phase 2 deep modules
-
-Each module has one external interface. Interface means inputs and results plus
-invariants, ordering, typed errors, required configuration, performance and
-resource behavior. Internal seams are private test seams; they are not
-promoted to callers merely to make tests convenient. The established modules
-below have a concrete contract. `OcrPipeline` and `OwnedRuntimeSession` are
-deliberately interface-neutral until the Design-It-Twice gate completes.
-
-| Module | Interface state | Dependency category and adapters | Deletion test |
-| --- | --- | --- | --- |
-| `OcrPipeline` | Candidate interface is not chosen. It must accept the existing source request and return either an ordered page-complete OCR projection or a sanitized typed terminal failure. | In-process normalization and local-substitutable raster/page planning; producer-owned worker is a remote-but-owned adapter; deterministic in-memory behavior is the test adapter. | Removing the module must not scatter PDFium/page policy, Paddle normalization, projection, and failure logic across routes or hosts. |
-| `OcrComputePlan` | Concrete selection contract is `select(input) -> immutable OcrComputeSelection`: a compute snapshot in, one immutable selection/readiness result out. | DXGI/D3D12/DirectML is a true external/platform seam with a native production adapter; an immutable in-memory snapshot is the test adapter. | Removing it must not make hosts or worker paths rank devices or derive divergent selections. |
-| `ModelSourceSnapshot` | Concrete provenance contract is `capture(source) -> immutable snapshot`: source manifests in, bound runtime/worker/model/profile/catalog/contract hashes out. | Package/filesystem is local-substitutable; catalog/download is a remote-but-owned adapter; an immutable manifest is the test adapter. | Removing it must not scatter hash/provenance checks across runners, workers, and hosts. |
-| `OwnedRuntimeSession` | Candidate interface is not chosen. It must accept one launch description and expose semantic lifecycle observation plus one terminal `RuntimeTerminationProof`, without OS handles or process identifiers. | Windows process/Job APIs are a true external seam with a native production adapter and deterministic failure-injection adapter for tests. | Removing it must not leave raw handles, name-kill, or cleanup policy in hosts. |
-| `AcceptanceRunner` | Concrete contract is `run(plan) -> AcceptanceManifest`: an acceptance plan in, terminal manifest out only after evidence and cleanup. | Installed executable is remote-but-owned; private app probing is the production adapter; deterministic installed probing is the test adapter. | Removing it must not leave each app duplicating event scope, cleanup, and terminalization. |
-| `VersionInventory` | Concrete check/upgrade contract is `check/upgrade(input) -> VersionReport`: one canonical version input in, a complete report or typed stale/mixed-version error out. | Canonical serialization is in-process; repository files are local-substitutable; a generated report is the production artifact and fixture input is the test adapter. | Removing it must not leave hand-edited versions in consumers or manifests. |
-
-#### Interface-neutral records
-
-These two records describe the behaviour that any chosen interface must carry;
-they intentionally do not name a method, callback, port, or type signature.
-
-##### `OcrPipeline`
-
-- Inputs/results: the existing capture source request, including source kind
-  and page scope, in; an ordered page-complete OCR projection or a sanitized
-  typed terminal failure out.
-- Invariants/order: image bytes and every selected PDF page are normalized or
-  rasterized before worker dispatch; pages remain in source order; empty and
-  failed pages remain represented; predictor/model initialization is bounded;
-  inference is serialized; no embedded PDF text is read.
-- Errors/configuration: unsupported media, malformed page, worker/provider
-  failure, cancellation, and incomplete projection are typed and sanitized;
-  profile/model/contract identity is required and host-specific Paddle options
-  are not accepted.
-- Performance/resources: one-page raster and inference buffers are released
-  before the next page/app where possible; model initialization is reused only
-  within the owned session; memory, latency, and first-page measurements are
-  recorded as bounded numeric evidence before optimization.
-- Internal seam/adapters: the rasterizer, normalizer, and worker transport stay
-  behind private seams; the producer worker is the production adapter and a
-  deterministic in-memory engine is the test adapter.
-- Deletion test: removing the module must not force routes or hosts to repeat
-  page planning, rasterization, normalization, projection, or failure policy.
-
-##### `OwnedRuntimeSession`
-
-- Inputs/results: one producer-owned launch description and semantic close or
-  cancellation request in; lifecycle observations and one terminal
-  `RuntimeTerminationProof` out, with no OS handle, PID, or raw native error in
-  the external interface.
-- Invariants/order: create the root suspended, assign it to a fresh
-  no-breakaway Job before resume, observe root/descendant events, make finish
-  idempotent, and terminalize only after owned descendants/listeners are absent;
-  baseline processes survive.
-- Errors/configuration: launch, readiness, root-crash, host-termination,
-  descendant, timeout, and cleanup failures are typed; retry is bounded and
-  identity-scoped; durable runtime/model cache configuration is never treated
-  as run-scoped residue.
-- Performance/resources: one owned root/session at a time for model journeys;
-  bounded event/journal state; native handles and descendant enumeration are
-  released at terminalization; reconciliation never broad-kills names.
-- Internal seam/adapters: native Windows process/Job operations stay behind a
-  private seam; the native launcher is the production adapter and a
-  deterministic failure-injection lifecycle adapter is the test adapter.
-- Deletion test: removing the module must not leave hosts holding OS handles,
-  guessing ownership from names, or duplicating cleanup/reconciliation policy.
-
-### Established-module interface records
-
-The following records are the minimum design record for the established
-modules. They name the full interface, not merely a type signature.
-
-#### `OcrComputePlan`
-
-- Inputs/results: an immutable hardware/provider snapshot; an immutable
-  `OcrComputeSelection` containing mode, reason, exact LUID join, ordinary ORT
-  ordinal, and sanitized readiness notice where applicable.
-- Invariants/order: usable dGPU, then usable iGPU, then noticed CPU only under
-  the truth table; the same selection is used by readiness and the session;
-  no selection is emitted from an incomplete snapshot.
-- Errors/configuration: timeout, exception, unknown adapter class, incomplete
-  LUID map, or provider discovery failure is typed indeterminate/unavailable;
-  selected DML construction/assignment/graph/inference failure is terminal and
-  carries no fallback detail or retry.
-- Performance/resources: one bounded snapshot and one selection per readiness
-  generation; no repeated probe or unbounded device diagnostics.
-- Internal seam/adapters: `ocr_preflight.py` keeps the native probe seam
-  private; `engine_adapters.py` is the production execution adapter and an
-  immutable snapshot is the test adapter.
-- Deletion test: remove the module and verify no host or worker can choose a
-  device, persist an ordinal, or retry a failed selected provider.
-
-#### `ModelSourceSnapshot`
-
-- Inputs/results: package/catalog/source-lock bytes and contract identity in;
-  an immutable snapshot of runtime, worker, model, profile, catalog, contract,
-  and artifact hashes out.
-- Invariants/order: capture occurs at point of use before model start; every
-  consumed byte is hashed once; any mismatch blocks before execution; raw OCR,
-  tokens, local paths, and machine names are excluded.
-- Errors/configuration: malformed lock, stale version, checksum mismatch, or
-  catalog drift is a typed identity error; the error exposes only sanitized
-  labels and digests.
-- Performance/resources: bounded streaming hashes and retained durable model
-  caches; no raw source or model bytes are copied into evidence.
-- Internal seam/adapters: `model_source_lock.py` validation and
-  `engine_catalog.py` parsing stay private; release/package readers are the
-  production adapter and an immutable manifest fixture is the test adapter.
-- Deletion test: delete the snapshot and prove identity checks do not reappear
-  independently in the runner, worker, and host adapters.
-
-#### `AcceptanceRunner`
-
-- Inputs/results: a candidate, fixture, app sequence, and cleanup scope in;
-  one terminal `AcceptanceManifest` with artifact hashes, semantic counts,
-  provenance, and cleanup booleans out.
-- Invariants/order: Capture JPEG, Capture PDF page 1, Cert, and LAW are
-  strictly serial; each child persists its evidence, releases model memory,
-  closes its journal, and proves cleanup before the next starts; first failure
-  stops the chain.
-- Errors/configuration: missing identity, semantic failure, child failure,
-  cleanup unknown, or journal-not-closed is typed terminal failure; raw OCR,
-  secrets, paths, and machine names are omitted. Candidate and fixture roots
-  are explicit and never inferred from a source tree.
-- Performance/resources: one model process at a time; bounded fixture and
-  journal scope; no parallel child or unbounded diagnostic retention.
-- Internal seam/adapters: `tools/three-project-acceptance.ts` owns sequence
-  orchestration and `tools/acceptance-contract.ts` owns manifest validation;
-  the installed app probe is the production adapter and a deterministic
-  installed probe is the test adapter.
-- Deletion test: remove the runner and show that no consumer script can still
-  produce a terminal manifest without independently duplicating all sequence,
-  evidence, and cleanup policy.
-
-#### `VersionInventory`
-
-- Inputs/results: canonical runtime/API/schema/client/tooling versions and
-  generated artifact inventory in; a complete `VersionReport` or a typed
-  stale/mixed-version report out.
-- Invariants/order: check is read-only; upgrade is explicit; generated values
-  and locks are updated together; no 0.3/0.4.1 and 0.4.2 mixture passes.
-- Errors/configuration: missing owner, stale literal, mixed lock, or unknown
-  consumer is a typed stop with the path and value class, never a secret or
-  private path.
-- Performance/resources: bounded repository scan from declared roots and one
-  deterministic report; no network, model, or installer side effect in check.
-- Internal seam/adapters: `constants/versions.py`, `release.py`, and
-  `scripts/model_source_lock.py` remain source-specific seams; repository
-  readers are the production adapter and fixture trees are test adapters.
-- Deletion test: remove the inventory and prove a stale version cannot be
-  detected only by a subset of package, lock, catalog, or consumer checks.
-
-### Design-It-Twice gate for the two unresolved interfaces
-
-No implementation of `OcrPipeline` or `OwnedRuntimeSession` starts until at
-least three independent fresh reviewers, working under materially different
-constraints, each publish a complete alternative for each module. The
-constraints must differ in interface shape, not cosmetic naming: for example,
-minimum surface area, maximum extension flexibility, common-caller
-simplicity, and (when selected) explicit ports and adapters.
-
-Every reviewer record must contain the interface (inputs, results, invariants,
-ordering, errors, cancellation/termination, configuration, performance, and
-bounded resources), a usage example, the hidden implementation, dependency
-categories with production and test adapters, trade-offs, and the deletion
-test. No method name or signature is selected in this SPEC before that record.
-
-Root then grills the alternatives one question at a time. The comparison must
-cover depth/leverage, locality, seam placement, failure readability,
-cancellation/termination, adapter count, and migration cost. Only after that
-comparison may Root choose a contract, commit the chosen contract, and request
-fresh Standards and Specification reviews bound to the exact new HEAD. Any
-content commit invalidates earlier review artifacts. The chosen contract must
-not add a second coordinator around existing policy.
-
-## OCR-only execution and acceptance
-
-The producer always executes **PDF raster -> PaddleOCR**; embedded text is
-ignored even if present or misleading. Real private acceptance uses a JPEG and
-PDF page 1. The required model-enabled order is:
-
-```text
-Capture Workbench JPEG
-  -> cleanup + model-memory release
-Capture Workbench original PDF page 1
-  -> cleanup + model-memory release
-Cert Prep (same candidate bytes)
-  -> cleanup + model-memory release
-GX Law Prep (same candidate bytes)
-```
-
-Only one OCR/model process may run at a time. A failed child stops the chain and
-must still complete its cleanup proof before the runner returns. Full-document
-OCR is a targeted test only when the risk is page accumulation, order, or
-memory; it is not a default iteration cost.
-
-### GPU truth (single policy)
-
-The full decision table is here and is the only GPU policy: [canonical compute
-decision truth table](#canonical-compute-decision-truth-table). In short:
-
-- automatic selection is usable dedicated GPU (dGPU) -> usable integrated GPU
-  (iGPU) -> noticed CPU;
-- CPU is allowed only when authoritative evidence proves every hardware
-  candidate unavailable/no hardware, or a completed provider query positively
-  proves `DmlExecutionProvider` absent;
-- timeout, exception, unknown architecture, incomplete mapping, or structural
-  inconsistency is **indeterminate/unavailable**, never CPU fallback;
-- a selected DML construction, assignment, graph-proof, or inference failure is
-  fail-closed for that operation, with no other GPU or CPU retry; and
-- Capture Workbench must first prove the automatic usable NVIDIA GeForce RTX
-  4060 on the acceptance machine, including the real JPEG then PDF page 1,
-  before the Phase 2 Cert/Law run.
-
-### Canonical compute decision truth table
-
-| Situation | Required evidence | Result |
+| Owner | Current symbol/surface | Callers or targets to migrate |
 | --- | --- | --- |
-| Usable dGPU exists | Complete positive-usable dGPU snapshot | Select highest-priority dGPU, `gpu-dml`, no CPU. |
-| No usable dGPU and usable iGPU exists | Every dGPU that could outrank it is positively unavailable or authoritatively absent | Select iGPU, `gpu-dml`, no CPU. |
-| All hardware positive-unavailable or authoritative empty hardware inventory | Complete affirmative snapshot | Explicit `cpu-fallback`, `no_compatible_gpu`, user notice. |
-| Completed provider query proves DML absent | Authoritative provider list without `DmlExecutionProvider` | Explicit `cpu-fallback`, `dml_provider_unavailable`, user notice. |
-| Any evidence that could change the choice is indeterminate/structurally invalid | Timeout, exception, unknown class, incomplete LUID map, failed provider discovery | Readiness unavailable; no plan and no CPU notice. |
-| Selected GPU later fails | DML construction/identity/assignment/graph/inference failure | Capture fails; plan invalidated; fresh readiness required later; no retry. |
+| `packages/capture-runtime/src/capture_runtime/ocr_projection.py` | `OcrPipeline` at the class definition; current `extract`, `normalize_observation`, `serialize_page`, `serialize_manifest`, `failed_page`, and `failure` methods | `packages/capture-runtime/src/capture_runtime/extractors.py` (`StandaloneRuntimeCaptureExtractor` and `_WorkerOcrEngineAdapter`), `packages/capture-runtime/src/capture_runtime/services/streaming_capture_service.py`, `packages/capture-runtime/src/capture_runtime/workers/ocr_main.py`, `packages/capture-runtime/tests/unit/test_ocr_projection.py`, `packages/capture-runtime/tests/integration/test_streaming_api.py`, and `packages/capture-runtime/tests/integration/test_streaming_ocr_failure_evidence.py` |
+| `packages/capture-sidecar-launcher/src/process.rs` | `OwnedRuntimeSession`, `OwnedRuntimeSessionState`, `RuntimeTerminationProof`, and `RuntimeCleanupError` | `src/launcher.rs` (`LaunchedSidecar`, `launch_sidecar`, `launch_sidecar_with_observer`), `src/lib.rs` public exports, desktop Tauri `src/state.rs` (`OwnedRuntime` and cleanup/monitor paths), desktop Tauri `src/launcher.rs` (`LaunchedRuntime`), and desktop `src/commands.rs` shutdown path |
+| `packages/capture-sidecar-launcher/src/launcher.rs` | `SidecarLaunchSpec`, `LaunchOptions`, `LaunchedSidecar`, readiness/retry/observer launchers | `capture-sidecar-launcher:cargo-fmt-check`, `cargo-check`, `cargo-test`, plus desktop launcher integration |
+| `tools/release/version-sources.ts` | `collectReleaseVersionEntries()` and its existing version-source inventory | `tools/release/version-sources.test.ts`, target `capture-tools:release-version-test`; first implementation slice owns the inventory extension and Nx upgrade |
+| `tools/three-project-acceptance.ts` | `runAcceptanceSequence`, `runCaptureWorkbenchAcceptance`, `validateChildManifest`, `validateTerminalManifest` | `tools/acceptance-contract.ts:writeAcceptanceManifest`, desktop `acceptance-three-projects`, and consumer assertion adapters |
 
-`highPerformanceRank` and ordinary `EnumAdapters1` `dmlDeviceId` are different
-coordinates joined by exact run-scoped LUID. ORT receives the ordinary ordinal,
-never the preference rank. The implementation pins
-`ort-directml-1.24.4-enumadapters1-v1`; a changed ORT mapping requires a new
-reviewed mapping contract. No implicit device `0`, old ordinal override,
-display-name selection, or host-derived numeric setting survives.
-
-The private proof may contain sanitized class, LUID, PCI identity, bounded
-observational label, plan/execution digests, map digest, worker/model/profile/
-contract hashes, provider order, fallback-disabled result, and positive DML
-node evidence. It must never contain raw OCR/truth text, token, path, user or
-machine name, environment dump, or arbitrary diagnostics. Private proof is
-validated through the existing installed-evidence seam and is not an API/SDK
-field.
-
-## Lifecycle, background ownership, and reconciliation
-
-`OwnedRuntimeSession` is the only process-tree owner. Every root is created
-suspended, assigned to a fresh no-breakaway Job, verified, then resumed. Native
-handles, PIDs, process creation identity, descendant enumeration, retry
-details, and OS errors remain behind its interface. Hosts express graceful
-close and persist domain status; they do not duplicate cleanup.
-
-| Event | Required behavior | Forbidden shortcut |
-| --- | --- | --- |
-| Normal close/window close | Request graceful termination, observe root, finish and prove descendants/listener cleanup. | Treating renderer reload as lifecycle proof. |
-| Startup failure/readiness failure | Finish the launch attempt and emit typed failed cleanup; no model success evidence. | Starting a consumer or silently retrying another process. |
-| Root crash | Observe unexpected exit, run the same idempotent finish/proof path. | Assuming the OS callback means cleanup succeeded. |
-| Host terminate/app exit | Join the owned session, close descendants, then terminalize. | Letting descendants outlive the owner or broad-killing names. |
-| App child process/descendant | Track exact ownership identity and prove absence at terminalization. | `taskkill /IM`, name-kill, or matching an unrelated process. |
-| Baseline external process | Preserve it, even if it has the same executable name. | Counting baseline as owned residue. |
-| Next start after crash/power loss | Reconcile only identity-proven stale PIDs/listeners/run staging; retain durable runtime/model caches. | Deleting durable caches or guessing identity from a PID/name alone. |
-
-Cleanup is fail-closed: no `clean=true` or completed acceptance manifest is
-written until app, sidecar, CDP port, temporary app data, owned PIDs,
-listeners, workers, errors, and page errors satisfy the manifest contract.
-
-## Version-first phase and identity
-
-The first implementation slice is `VersionInventory`, before OCR/session
-refactors. The intended single check/upgrade entrypoint is:
+Before an implementation slice, run these read-only discovery commands and
+record the resolved targets. A missing target is discovery-and-stop; it is not
+permission to invent a target or alter CI:
 
 ```powershell
-corepack pnpm nx run capture-runtime:version-check --skip-nx-cache
+corepack pnpm nx show project capture-runtime --json
+corepack pnpm nx show project capture-sidecar-launcher --json
+corepack pnpm nx show project capture-tools --json
+corepack pnpm nx show project capture-workbench-desktop --json
+rg -n "class OcrPipeline|OwnedRuntimeSession|RuntimeTerminationProof|launch_sidecar_with_observer|collectReleaseVersionEntries|runAcceptanceSequence" packages apps tools
 ```
 
-Its upgrade mode is explicit and reviewable; the check mode is read-only. It
-must inventory and bind:
+The resolved runtime version target is `capture-runtime:python-version-check`;
+a target named `capture-runtime:version-check` is absent and remains
+discovery-and-stop. The relevant native targets are the existing launcher and
+desktop Cargo targets: `capture-sidecar-launcher:cargo-fmt-check`,
+`:cargo-check`, and `:cargo-test`, and
+`capture-workbench-desktop:cargo-fmt-check`, `:cargo-check`, and `:cargo-test`.
+The release-version regression target is the existing
+`capture-tools:release-version-test`, whose command is
+`node --test tools/release/version-sources.test.ts`.
 
-| Inventory group | Required identity |
+The current `packages/capture-sidecar-launcher/src/lib.rs` export boundary
+re-exports `OwnedRuntimeSession`, `OwnedSidecarProcess`,
+`RuntimeCleanupError`, `RuntimeCleanupErrorKind`, and `RuntimeTerminationProof`
+from `process`, plus `generate_bearer_token`, `launch_sidecar`,
+`launch_sidecar_with_observer`, `reserve_distinct_loopback_port`,
+`reserve_loopback_port`, `LaunchOptions`, `LaunchedSidecar`, and
+`SidecarLaunchSpec` from `launcher`. The convergence slice must migrate these
+exports and their callers together; it must not leave a shadow process owner in
+desktop state.
+
+## Public contract floor and identity
+
+Phase 2 preserves API `2.0`, raw and structured document schema `2`,
+`CaptureOcrProjectionV3` schema `3`, and contract-set SHA-256
+`d293a3de26114f1b4fd65ea6d6d3f157fa2f93109b31e1e30d5d15ef0dfdeb40`. The
+authenticated `GET /v2/captures/{capture_id}/ocr` route remains the typed
+projection seam. No private process, device, path, bearer token, model, or
+performance field is added to an HTTP route, SDK, public document, or UI
+property.
+
+Every requested page is represented in source order. Empty and failed pages
+remain present, recognized regions have bounded polygons and scores, and raw
+schema-2 segments are composed only from the normalized projection. A public
+contract change requires a separate design, regeneration, and review.
+
+The exact identity rule is tiered, not relaxed:
+
+| Tier | Required identity |
 | --- | --- |
-| Runtime and contracts | Runtime `0.4.2`, API `2.0`, OCR schema `3`, raw/structured schema `2`, contract-set version/hash. |
-| Languages and clients | TypeScript/npm, Python, Java, Rust client/runtime versions and generated artifacts. |
-| Desktop and package | Capture desktop metadata, runtime/worker/model catalogs, installer manifests, profile/model digests. |
-| Repository/tooling | pnpm 12, Capture Workbench Nx `23.1.2`, Cert Prep Nx `23.1.2`, and lockfile main dependency documents. |
-| Consumers | Cert/Law expected runtime and contract identity, local direct URL metadata, and published URL restrictions. |
+| Local E2E | The selected local package, runtime, worker, model/profile, catalog, and contract identities are bound at their declared local tier. A local path or package build is not a release identity. |
+| Candidate/release | The manifest binds exact source HEAD, version, artifact bytes, runtime/worker/model/profile/catalog hashes, schema versions, and contract hash. Every consumer uses those bytes, not a source tree or mutable URL. |
+| Published acceptance | D6 downloads the public artifacts and manifest, then D7 accepts the downloaded bytes. The release hard identity is exact SHA-256 equality, not a semantic version or average of checks. |
 
-No stale 0.3/0.4.1 literal or mixed lock may pass. Local E2E uses tiered
-identity: URL/port identify transport only; contract hash, package boundary,
-provenance, and loaded executable identity remain required. Release/published
-acceptance restores strict immutable-byte identity: exact candidate bytes,
-version, every manifest/hash entry, frozen locks, and download-back hashes;
-local paths/direct URLs are rejected there. There is currently no immutable
-candidate or publish authorization.
+## Deep-module design discipline
 
-## Measure first, then optimize
+An external interface is the smallest stable seam that carries inputs, results,
+ordering, invariants, typed errors, cancellation, configuration, and resource
+proof. Platform, transport, and failure-injection seams are internal adapters;
+they are not promoted merely to make tests convenient. Deepening means
+convergence/replacement of the existing owner, followed by deletion tests. It
+does not mean adding a coordinator around the current shallow paths.
 
-The first performance slice records a no-behavior-change baseline for each
-real private fixture, independently:
+### `OcrPipeline`: three Design-It-Twice alternatives
 
-- cold model/predictor initialization and model memory;
-- PDF rasterization time/dimensions;
-- serialized per-page inference and total elapsed time;
-- time to first completed page;
-- peak worker/Job memory and close/reconciliation time; and
-- compute mode and exact runtime/worker/model/profile/contract identities.
+All three alternatives below are materially different and are complete enough
+for an independent review. Each keeps PDFium/Paddle ownership in the producer
+and preserves schema 2/3 output.
 
-Evidence is bounded numeric data plus hashes, never OCR text, truth text,
-tokens, local paths, machine names, or arbitrary diagnostics. Every later
-optimization names one metric, comparison cohort, noise rule, and rollback
-before coding. Each JPEG and PDF page-1 fixture must independently pass
-semantic anchors, page/provenance, and cleanup gates; a mean cannot hide one
-failed fixture or missing critical anchor. Inference stays serialized and
-model memory is released before the next app.
+#### Alternative O1: one terminal operation
 
-## Privacy-safe evidence and acceptance
-
-Evidence may record artifact/HEAD/model/profile/worker/contract hashes, CER
-numeric summaries, stable anchor IDs and matched counts (not anchor text), page
-counts, provenance categories, provider/compute decision, and cleanup booleans.
-It must not record raw OCR/truth text, bearer tokens, local paths, user names,
-machine names, or unbounded environment/diagnostic values. Screenshots are
-secondary and must be reviewed for leakage; their content is not a substitute
-for semantic assertions.
-
-The installed acceptance manifest is a terminal artifact only after the exact
-fixture is deleted, the app and owned descendants/listeners are absent, the
-baseline process survives, and the child journal is closed. OCR execution proof
-and host structuring success remain separate terminals: proof follows raw and
-OCR projection persistence plus `awaiting_structuring`, and does not wait for
-LLM structuring or release. A host commit failure does not retroactively make
-the OCR proof a structuring success.
-
-## Delivery flow and gates
-
-The canonical flow is:
+Interface shape:
 
 ```text
-design docs
-  -> serious grill + Standards/Specification review
-  -> authorized exact-HEAD slice
-  -> sprint backlog
-  -> TDD red public-seam test
-  -> implementation + replacement cleanup
-  -> two review axes
-  -> local staging / local-real evidence
-  -> immutable candidate
-  -> published release (only after consumer gates)
+OcrPipeline.extract(request: OcrRequest, engine: OcrEnginePort)
+  -> OcrTerminalOutcome
+OcrTerminalOutcome = Projection(CaptureOcrProjectionV3)
+                   | Failure(SanitizedOcrFailure)
 ```
 
-Each arrow is a gate, not a claim that this checkpoint has run. A fresh worker
-starts from its checkpoint commit, reads the design and named owner files, and
-commits one closed vertical slice. Any content commit invalidates previous
-exact-HEAD review artifacts. Root coordinates review and does not edit this
-slice. Sol Ultra is read-only and may be activated only when the same blocker
-has failed more than three consecutive times; it may provide diagnosis,
-options, and tests, but never edit, commit, push, publish, or own the slice.
+`OcrRequest` carries capture id, source kind, page scope, validated manifest,
+creation time, warnings, and cancellation. `OcrEnginePort` accepts the
+producer-owned normalized/raster page request and returns a bounded observation
+or typed engine error. The host-facing usage is one call:
 
-Phase 2 promotion requires architecture, version, performance, and lifecycle
-hardening; an immutable candidate is then built; only after that are Capture ->
-Cert -> LAW tested sequentially with a formal/published `0.4.2` package. The
-package and promotion are future gates, not claims made by this design.
+```text
+outcome = pipeline.extract(request, producer_engine)
+return outcome.to_public_projection_or_failure()
+```
 
-## Release promotion gates D0-D8
+Hidden internals own source/page planning, PDFium rasterization, normalization,
+ordered projection, provenance, serialization, cancellation, and sanitized
+terminalization. At the current head, the producer extractor's `_extract_pdf`
+and `_render_pdf_page` are the PDFium adapter to migrate behind this seam; the
+current split is not a reason to add another coordinator. Dependencies are the
+private PDFium adapter, worker transport adapter, `OcrEnginePort`, and schema
+validators; deterministic in-memory engine and raster fixtures are test
+adapters. The advantage is a deep common-caller
+seam and one terminal proof. The trade-off is less convenient streaming and a
+bounded in-memory/page-result policy must be explicit. Its deletion surface is
+the current public normalization/serialization/failure helpers in
+`ocr_projection.py`; tests migrate to terminal outcomes and deletion tests
+prove callers no longer duplicate page policy. Tests cover every-page order,
+empty/failed pages, cancellation, malformed manifests, worker failure, and
+schema/contract identity.
 
-Release promotion is one fail-closed state machine. The current documentation
-checkpoint is before D0 and claims none of these gates. Each transition records
-the exact source/manifest/evidence identity; a failure stops the sequence,
-preserves the failed evidence and rollback pointer, and prevents later gates.
+#### Alternative O2: progressive page session
 
-| Gate | Required transition and proof |
+Interface shape:
+
+```text
+OcrPipeline.open(request: OcrRequest, engine: OcrEnginePort) -> OcrPageSession
+OcrPageSession.next_page() -> PageResult | End
+OcrPageSession.finish() -> OcrTerminalOutcome
+```
+
+Usage is an explicit producer loop:
+
+```text
+session = pipeline.open(request, producer_engine)
+while (page = session.next_page()) is PageResult: consume(page)
+outcome = session.finish()
+```
+
+The hidden session owns the page cursor, bounded page buffers, rasterization,
+normalization, cancellation, and terminal projection. Dependencies are the
+same native/worker adapters as O1, plus a session scheduler and back-pressure
+adapter. The trade-off is excellent progressive delivery and memory locality,
+but callers must handle a stateful protocol, early close, and partial output;
+multiple consumers could accidentally recreate terminalization. The deletion
+surface is current direct calls to `normalize_observation`, `serialize_page`,
+and `failed_page`, plus ad hoc worker loops. Tests cover next/finish ordering,
+double finish, cancellation between pages, back-pressure, and terminal
+failure after partial observations.
+
+#### Alternative O3: pure projection reducer
+
+Interface shape:
+
+```text
+OcrProjectionReducer.project(manifest: OcrPageManifest,
+                             observations: Sequence[OcrObservation])
+  -> CaptureOcrProjectionV3 | SanitizedOcrFailure
+```
+
+The caller first owns source planning, PDFium rasterization, engine dispatch,
+and observation collection, then calls the reducer:
+
+```text
+observations = producer_ocr_orchestrator.collect(request)
+projection = reducer.project(request.manifest, observations)
+```
+
+The hidden reducer owns only validation, ordering, normalization, provenance,
+schema projection, and typed failures. It depends on no native process or
+worker adapter; observations and manifests are test fixtures and the producer
+orchestrator is the production adapter. The trade-off is highly deterministic
+unit testing and a small pure seam, but it moves page planning, rasterization,
+cancellation, and engine failure policy into every caller. The deletion surface
+would remove `OcrPipeline` and force consolidation of the current extractor,
+streaming service, and OCR worker loops; deletion tests must prove those
+callers share one orchestrator rather than copy the policy. Tests cover reducer
+properties and malformed observations, but separate orchestration tests are
+required for resource and process behavior.
+
+| Comparison | O1 terminal operation | O2 progressive session | O3 pure reducer |
+| --- | --- | --- | --- |
+| Depth/locality | Deepest common seam; page and resource policy stays local | Deep seam with explicit page back-pressure | Deep only for projection; lifecycle policy remains in callers |
+| Failure/cancellation | One sanitized terminal outcome; cancellation is owned once | Partial-page and early-close states require a protocol | Every orchestrator must define its own cancellation/failure mapping |
+| Test seam | Engine/raster adapters and terminal fixtures | Session scheduler, back-pressure, and engine adapters | Pure property tests plus separate orchestration tests |
+| Migration | Aligns with current extract callers and deletes helper surface | Requires all callers to adopt a stateful loop | Repartitions current extractor/worker policy and has the largest deletion risk |
+
+#### Chosen O1, constrained by repository facts
+
+Choose O1. The repository already has `OcrPipeline.extract`, an
+`OcrEnginePort`, producer-owned worker and extractor adapters, and three caller
+families. A terminal operation hides page policy and lets those callers cross
+one deep seam. The implementation is convergence/replacement: retain a
+compatibility adapter only while callers migrate, then make page normalization,
+serialization, and failure helpers private or delete them. The chosen method
+does not expose Paddle kwargs, source paths, model paths, process handles, or
+private diagnostics. It is a design decision, not evidence that the code has
+already been changed.
+
+### `OwnedRuntimeSession`: three Design-It-Twice alternatives
+
+The current native owner is concrete and must be converged, not wrapped by a
+second coordinator. In `packages/capture-sidecar-launcher/src/process.rs`,
+`OwnedRuntimeSession::spawn`, `id`, `try_wait`, `monitor_root_exit`,
+`terminate_and_prove`, and `terminate` currently expose a one-root process
+surface. `RuntimeTerminationProof` currently includes `root_pid`, and cleanup
+errors can format a PID. Those are facts to replace; this document does not
+pretend the current API is already opaque.
+
+#### Alternative R1: opaque single-root semantic facade
+
+Interface shape:
+
+```text
+OwnedRuntimeSession::start_one(spec: LaunchSpec) -> Result<RootLease, LaunchError>
+session.observe(root: &RootLease) -> RuntimeObservation
+session.close(root: RootLease, reason: CloseReason) -> Result<RootProof, CleanupError>
+```
+
+Usage is simple for Capture, Cert, and a candidate:
+
+```text
+root = session.start_one(spec)?
+wait_until_ready(root)?
+proof = session.close(root, Shutdown)?
+```
+
+The hidden module creates a suspended process, assigns a fresh no-breakaway Job,
+verifies identity, resumes, observes descendants, retries bounded cleanup, and
+keeps native handles private. Dependencies are the Windows process/Job adapter,
+sidecar readiness adapter, journal adapter, and deterministic failure-injection
+adapter. The trade-off is a very deep and easy common path, but it cannot place
+Capture/Python/Java roots in one Job without a second coordination layer. The
+deletion surface is desktop `OwnedRuntime` cleanup/monitor logic and direct
+`id()`/`try_wait()` use; tests cover normal close, crash, descendants, baseline
+survival, and retry.
+
+#### Alternative R2: journal-first opaque lease
+
+Interface shape:
+
+```text
+RuntimeSessionJournal.open(plan) -> SessionKey
+producer.launch(key, root_spec) -> RootKey
+producer.observe(key, root) -> RuntimeObservation
+producer.reconcile(key) -> ReconcileResult
+producer.close(key, root) -> RootProof
+```
+
+Usage gives the host only opaque keys and semantic observations:
+
+```text
+key = journal.open(plan)
+root = producer.launch(key, spec)
+producer.close(key, root)
+```
+
+The hidden implementation makes the journal the primary state machine and
+reconstructs native identity from PID, creation identity, nonce, Job, listener,
+and staging bindings. Dependencies are the durable journal writer, native
+adapter, and a startup reconciler; a fake journal/native adapter tests crashes.
+The trade-off is strongest crash recovery and explicit durable evidence, but
+the journal becomes a high-churn protocol and still needs a group relationship
+for multi-root consumers. The deletion surface is current desktop state
+ownership and ad hoc cleanup ledgers. Tests must include torn writes, replay,
+identity mismatch, and stale journal retention as well as process behavior.
+
+#### Alternative R3: producer-owned group/session (chosen shape)
+
+Interface shape:
+
+```text
+OwnedRuntimeSession::open(plan) -> Result<OwnedRuntimeSession, LaunchError>
+session.start_one(spec) -> Result<RootLease, LaunchError>
+session.start_root(role, spec) -> Result<RootLease, LaunchError>
+session.observe(root) -> Result<RuntimeObservation, LifecycleError>
+session.close_root(root, reason) -> Result<RootProof, CleanupError>
+session.close_group(reason) -> Result<GroupProof, CleanupError>
+```
+
+`start_one` is the one-root convenience; `start_root` lets a producer put the
+Capture, Python, and Java roots used by LAW in one producer-owned Job/group.
+Capture, Cert, and candidate journeys continue to use one root. A `RootLease`
+is an opaque semantic lease; no raw `Job`, process handle, PID, native error,
+or child object crosses the seam.
+
+The hidden module owns the group Job, root identity, readiness, listener
+bindings, descendants, journal/reconciler, bounded retry, and terminal proof.
+Dependencies are the existing native launcher/process adapter, the existing
+`SidecarLaunchSpec`/readiness adapter, and a deterministic native failure
+adapter. The trade-off is slightly more state than R1, but it avoids a second
+coordinator and provides one owner for the LAW multi-root case. The deletion
+surface is `OwnedRuntimeSession`'s current direct process methods, desktop
+`OwnedRuntime`/`LaunchedRuntime` raw-child assumptions, and host cleanup helpers.
+Tests cover one-root compatibility, multi-root atomic group close, partial
+launch, root crash, descendant escape, listener/staging proof, baseline
+survival, journal replay, and idempotent close.
+
+| Comparison | R1 single root | R2 journal-first lease | R3 producer-owned group |
+| --- | --- | --- | --- |
+| Depth/locality | Deep one-root lifecycle, but group policy has nowhere to live | Deep recovery state, but protocol churn becomes the public seam | Deep group, root, journal, and proof policy in the existing native owner |
+| Failure/cancellation | Simple semantic close and bounded retry | Strong replay/recovery, with more journal transition failures | Group close can prove partial launch and cancellation without a second coordinator |
+| Test seam | Native process adapter plus failure injection | Journal/native replay adapters plus failure injection | Native launcher, listener, journal, and failure adapters in one owner |
+| Migration | Easiest Capture/Cert migration; cannot satisfy LAW multi-root | Replaces desktop state but still needs group semantics | Keeps one-root convenience and adds LAW capability while deleting raw-child assumptions |
+
+#### Chosen R3, with explicit convergence limits
+
+Choose R3 because the actual native crate already owns launch and Job lifecycle,
+and the LAW journey needs Capture/Python/Java roots under one producer Job.
+Extend that owner rather than adding a desktop coordinator. `src/lib.rs` keeps
+the crate export boundary; `src/launcher.rs` adapts `SidecarLaunchSpec` and
+`LaunchedSidecar`; desktop `src/state.rs` and `src/launcher.rs` become
+semantic adapters. The current `spawn`/`id`/`try_wait` methods and PID-bearing
+proof are convergence surface, not a second public contract. A future
+implementation may retain an internal PID for native verification, but public
+proof and errors are opaque and privacy-safe.
+
+## RuntimeSessionJournalV1 and reconciliation
+
+The journal is a producer-owned durable cleanup record, not host/domain state.
+It exists to make crash recovery fail closed. Tauri never creates, writes,
+mutates, deletes, or reconciles it, and Tauri never owns or mutates a Job.
+
+### Schema
+
+The file is one JSON object written under a producer-owned run directory. Its
+schema is exactly versioned as `RuntimeSessionJournalV1`:
+
+```json
+{
+  "schemaVersion": "RuntimeSessionJournalV1",
+  "producer": "capture-runtime",
+  "sessionNonce": "128-bit-random-opaque-nonce",
+  "generation": 4,
+  "state": "running",
+  "createdAt": "2026-09-09T00:00:00Z",
+  "updatedAt": "2026-09-09T00:00:02Z",
+  "jobBinding": { "jobNonce": "opaque-native-binding" },
+  "stagingBinding": {
+    "runNonce": "same-session-nonce",
+    "rootDigest": "sha256:...",
+    "scope": "run"
+  },
+  "roots": [
+    {
+      "role": "capture",
+      "rootNonce": "128-bit-random-opaque-nonce",
+      "pid": 1234,
+      "creationIdentity": { "kind": "windows-process-creation", "value": "opaque-native-value" },
+      "state": "running",
+      "listenerBindings": [
+        { "kind": "sidecar-http", "loopbackPort": 43123, "bindingNonce": "opaque-listener-binding" }
+      ],
+      "startedAt": "2026-09-09T00:00:01Z"
+    }
+  ],
+  "proof": null,
+  "attempt": 1
+}
+```
+
+Required fields are the schema version, producer, session nonce, monotonic
+generation, state, timestamps, Job binding, staging binding, and one record per
+root. Every root records role, root nonce, PID, process creation identity,
+state, listener bindings, and start time. A terminal record adds semantic proof:
+root reaped, descendants terminated, listeners released, staging released, and
+the proof generation. `exitCode` is optional and sanitized; raw command lines,
+environment, source paths, bearer tokens, OCR, model bytes, user names, machine
+names, and arbitrary diagnostics are forbidden.
+
+The field constraints are normative: `schemaVersion` is the literal
+`RuntimeSessionJournalV1`; `producer`, `state`, and root `role` are closed
+enums; `sessionNonce`, `jobNonce`, `rootNonce`, and every `bindingNonce` are
+128-bit random values encoded as lowercase hexadecimal; `generation` and
+`attempt` are positive unsigned integers; timestamps are UTC RFC 3339 strings;
+`pid` is a positive Windows process id; `creationIdentity` is the native
+creation-time value captured at launch and is compared exactly; and
+`loopbackPort` is an integer from 1 through 65535. `rootDigest` is lowercase
+SHA-256 over the producer-resolved run-staging identity, not a source path.
+`state` is one of `planned`, `launching`, `running`, `closing`, `terminal`, or
+`reconcile-required`; proof booleans may be true only after the corresponding
+binding has been checked. The JSON example uses opaque placeholders to avoid
+recording real identifiers; an implementation must validate these types and
+closed values before accepting a journal.
+
+The cleanup policy is also fixed: one journal generation receives at most three
+identity-scoped reconciliation attempts within a 60-second monotonic budget.
+Each attempt increments `attempt` atomically; a timeout or third failed attempt
+transitions to `reconcile-required` and does not start a replacement root. A
+terminal `proof` must contain `rootReaped`, `descendantsTerminated`,
+`listenersReleased`, `stagingReleased`, and the committed `proofGeneration`,
+all true and tied to the same session/root nonces. A boolean without matching
+identity evidence is invalid proof.
+
+`pid` and native creation identity are private producer data. Evidence and host
+responses emit only a stable digest or boolean proof. A listener port is not an
+ownership proof: the producer must also validate the binding nonce and a
+producer-owned readiness/close handshake. If the current launcher cannot prove
+that binding, the implementation must reduce the claim to “listener ownership
+unknown; no kill/delete” and must not infer ownership from a port alone.
+
+### Atomic transitions and reconciler
+
+Only the producer writer may transition a journal. Valid transitions are
+`planned -> launching -> running -> closing -> terminal` and
+`launching|running|closing -> reconcile-required`. A transition uses
+compare-and-swap on the expected generation and state, writes a temporary file
+in the same producer directory, flushes it, atomically replaces the journal,
+and flushes the directory/file according to the platform adapter. A torn or
+unknown-generation write is a hard failure; the previous valid journal is
+retained. There is no “best effort terminal” state.
+
+On producer startup or bounded cleanup retry, the reconciler reads only
+producer-owned journals and validates schema, producer, session nonce, state,
+and generation. For each root it proves the PID and creation identity still
+match, the root nonce is present in the producer launch context, and the root
+belongs to the recorded producer Job. It then checks listener binding nonce and
+the run-scoped staging nonce. Only an exact identity match permits termination
+or deletion. PID reuse, missing creation identity, Job ambiguity, listener
+ambiguity, access denial, or malformed journal sets `reconcile-required` and
+leaves the process/listener/staging in place for an operator or later bounded
+attempt. It never kills by executable name, port alone, parent PID alone, or
+directory name.
+
+Cleanup retry is bounded and identity-scoped. The producer does not launch a
+replacement root while an old root is unresolved. A terminal proof requires
+the root reaped, all owned descendants absent, exact listeners released, and
+run-scoped staging removed; durable runtime/model caches are retained. The
+journal remains until terminal proof is committed, then follows a producer
+retention policy. Failed proofs and retry history are retained as sanitized
+metadata. This is implementable with the current native process owner only
+after the implementation slice adds a private creation-identity/nonce and
+listener-binding seam; until then, the documented reduced claim is fail-closed
+unknown ownership, not cleanup success.
+
+## Canonical compute decision truth table
+
+`OcrComputePlan.select(input)` consumes one immutable producer hardware snapshot
+and returns one immutable selection. The readiness result and engine session
+use that same selection; hosts never select or persist an ordinal.
+
+| Snapshot | Selection | Failure/fallback rule |
+| --- | --- | --- |
+| A usable discrete GPU with complete LUID/ORT mapping | DirectML on the selected dGPU, with exact LUID join and ordinary ORT ordinal | No CPU fallback after selected construction or inference failure |
+| No usable dGPU and a usable integrated GPU with complete mapping | DirectML on the selected iGPU | Same terminal failure rule |
+| No usable GPU and policy permits CPU notice | CPU with an explicit noticed readiness result | CPU is not a recovery path after a selected GPU failure |
+| Probe timeout, exception, unknown adapter, incomplete mapping, or indeterminate state | Indeterminate/unavailable | Do not guess, rank, or persist an ordinal |
+
+The historical adapter-`0` and `CAPTURE_WINDOWSML_DEVICE_ID` notes are
+superseded by this table. See the [historical GPU decision](gpu-ocr-directml.md)
+for provenance only.
+
+## Acceptance and evidence contract
+
+Acceptance is semantic, per fixture, and fail-closed. For each real scanned
+PDF fixture, every required page-1 result has character error rate (CER) `<=
+1%`. For each real private JPEG fixture, CER is `<= 3%`. CER is computed per
+fixture/page as normalized edit distance divided by the expected character
+count; results are not averaged across pages, fixtures, or products. Every
+critical anchor must be present; one omitted critical anchor fails even when
+the overall CER is below threshold. Raw OCR, source bytes, bearer tokens,
+private paths, and machine names never enter the evidence artifact.
+
+D4 candidate acceptance and D7 published acceptance use this exact serial
+sequence, with cleanup and model-memory release after every child:
+
+```text
+Capture Workbench private JPEG
+  -> cleanup proof
+Capture Workbench original scanned PDF, page 1
+  -> cleanup proof
+Cert Prep
+  -> cleanup proof
+GX Law Prep
+  -> cleanup proof
+```
+
+The runner stops on the first semantic, identity, process, listener, or
+cleanup failure. It records a child manifest and an overall terminal manifest
+only after the child’s journal reaches terminal proof. `tools/three-project-
+acceptance.ts` owns sequence orchestration and
+`tools/acceptance-contract.ts:writeAcceptanceManifest` owns manifest shape;
+the installed app and consumer assertion adapters are production seams.
+
+## Version, schema, projection, and release-channel inventory
+
+The first implementation slice owns the Nx upgrade and version-source
+extension before a candidate is built. It updates `package.json` and
+`pnpm-lock.yaml` from Nx `23.1.0` to `23.1.2`, then extends the existing
+`tools/release/version-sources.ts` collector and
+`tools/release/version-sources.test.ts` regression target
+`capture-tools:release-version-test`. It does not invent
+`capture-runtime:version-check`; that target is absent and remains
+discovery-and-stop until an authorized owner is found.
+
+| Inventory family | Current owner/path to enumerate |
 | --- | --- |
-| D0 `DocsCommitted` | Commit the canonical SPEC/DECISION/TODO/GUIDE and any named historical banners. Record the commit SHA and explicit cached path set. |
-| D1 `DesignReviewed` | Standards and Specification external review artifacts both record `git rev-parse HEAD` after D0 and the external check/PR metadata. A later content commit invalidates both artifacts. |
-| D2 `ImplementationAuthorized` | Root records the bounded slice, owner paths/symbols, red proof, prerequisites, stop condition, verification, rollback, and commit message. There is no handoff commit and no feature-code authority in this gate. |
-| D3 `CandidateBuilt` | Build from the exact source HEAD and record SHA-256 identities for runtime, worker, model, profile, contract set, manifests, locks, and every candidate artifact. Any missing or mismatched hash stops promotion. |
-| D4 `CandidateAccepted` | Use those same candidate bytes in strict serial order: Capture JPEG -> cleanup/model-memory release -> Capture original PDF page 1 -> cleanup/model-memory release -> Cert -> cleanup/model-memory release -> LAW -> cleanup. Every child must produce semantic evidence and a terminal cleanup proof. |
-| D5 `PublishedImmutable` | Publish the D3 bytes and manifests without moving the stable pointer. The published artifact identity is immutable and must equal the candidate ledger byte-for-byte. |
-| D6 `DownloadBackVerified` | Download each published artifact and manifest through the public path, hash the bytes, and compare them to D3/D5; reject mutable URLs, version drift, missing locks, or manifest mismatch. |
-| D7 `PublishedAccepted` | Repeat the sequential Capture JPEG -> Capture PDF page 1 -> Cert -> LAW journey using only D6 download-back bytes; retain per-child cleanup and semantic evidence. |
-| D8 `StablePointerMoved` | Move the stable pointer only after D7 is terminal-success and all ledgers, hashes, cleanup proofs, and rollback references are preserved. |
+| Workspace/tooling | Root `package.json`, `pnpm-lock.yaml`, all Nx packages, and resolved project metadata; the first slice must detect 23.1.2 consistency |
+| Release identity | `release/version.json`: release `0.4.2`, runtime API `2.0`, document schema `2` |
+| Runtime and projection | `packages/capture-runtime/pyproject.toml`, generated raw/structured schema 2, `CaptureOcrProjectionV3` schema 3, runtime constants, manifests, catalogs, model/source locks, `apps/capture-workbench-desktop/src-tauri/resources/capture-document-v2.schema.json`, and `packages/capture-runtime/src/capture_runtime/assets/contract-set.sha256` |
+| TypeScript clients and Workbench | `packages/capture-runtime-client/package.json`, `packages/capture-workbench-ui/package.json`, generated contracts, loader/assets, and desktop staged runtime/assets/configuration (including the TypeScript contract-hash resource) |
+| Python client | `packages/capture-runtime-client-python/pyproject.toml`, generated schemas, and its contract-hash resource |
+| Java client | `packages/capture-runtime-client-java/pom.xml`, generated schema/contract resource, and build/install/contract-hash targets |
+| Rust launcher/crates | `packages/capture-sidecar-launcher/Cargo.toml`, `src/process.rs`, `src/launcher.rs`, `src/lib.rs`, generated/embedded manifest and contract identity |
+| Acceptance/release tooling | `tools/release/version-sources.ts`, its test, `tools/three-project-acceptance.ts`, `tools/acceptance-contract.ts`, candidate/release manifests and locks |
 
-No gate may infer proof from a green deterministic CI run, local package,
-older manifest, screenshot, or historical Phase 1 result. Phase 1 remains
-complete only at the local-probe tier and is not D3-D8 evidence.
+The channels are distinct and all must be represented by a candidate/release
+manifest: npm/GitHub Packages for the Workbench UI and TypeScript runtime
+client; PyPI for the Python runtime client (and any explicitly assembled Python
+distribution); Maven/GitHub Packages for the Java client; crates.io for
+`capture-sidecar-launcher`; and GitHub Releases for runtime/desktop/installable
+assets and immutable release manifests. The existing producer workflows are
+the only publication owners: `_publish-npm.yml`, `_publish-pypi.yml`,
+`_publish-maven.yml`, `_publish-crates.yml`, `_publish-github-release.yml`,
+`_publish-runtime-github-release.yml`, and `_publish-stable-pointer.yml`.
+`tools/update-release-index.ts` may mutate the stable pointer only when invoked
+by the existing producer stable-pointer workflow at D8. No local script or
+consumer may mutate it.
 
-## Acceptance and rollback definition
+## D0 -> D8 delivery state machine
 
-Phase 2 is not complete until each slice has its red public-interface tests,
-slice-scoped and `--skip-nx-cache` verification, both review axes on the exact
-commit, privacy/path/secret audit, and a recorded rollback. Promotion is not
-complete until architecture/version/performance/lifecycle hardening is done,
-an immutable candidate is built, and Capture JPEG -> Capture PDF page 1 -> Cert
--> Law all use the same immutable candidate bytes, clean up serially, and pass
-with a formal/published `0.4.2` package whose published download-back identity
-is exact.
+The gates are strict, linear, and separate. A gate consumes only the preceding
+gate’s immutable record. No gate is allowed to build a new candidate while
+accepting an earlier one, and no gate depends on itself or on a later gate.
 
-Rollback is additive: revert the named slice to its prior reviewed
-checkpoint, preserve durable caches and historical manifests, and never mix
-0.4.1/0.4.2 assets or rewrite shared history. This design claims no new Phase 2
-verification, candidate, release, or publication; the completed Phase 1
-local-probe result is recorded above.
+| Gate | State and exact dependency | Required terminal record |
+| --- | --- | --- |
+| D0 | `DocsCommitted`: this documentation correction is committed. The exact SHA is external, not self-embedded. | Exact path set, diff/anchor/fence checks, and commit SHA reported by the worker |
+| D1 | `DesignReviewed`: consumes D0 `HEAD` only. Pending now. | Fresh Standards and Specification reports naming `git rev-parse HEAD`, paths, and external check/PR metadata |
+| D2 | `ImplementationAuthorized`: consumes D1 approval and no later record. | Root authorization, owner paths, first-slice plan, and bounded implementation queue; no handoff commit is implied |
+| D3 | `CandidateBuilt`: consumes D2 authorization and the exact implementation source. | Immutable candidate bytes, manifest, source/version/schema/contract/model hashes, and byte ledger |
+| D4 | `CandidateAccepted`: consumes only the D3 candidate bytes. | Sequential real acceptance manifest, per-fixture CER/anchor results, cleanup/journal proofs, and candidate identity ledger |
+| D5 | `PublishedImmutable`: consumes D4 success and publishes byte-for-byte identical D3 artifacts through existing producer workflows. | Public artifact URLs, immutable publication metadata, and equality ledger; stable pointer remains unmoved |
+| D6 | `DownloadBackVerified`: consumes only D5 public artifacts. | Fresh downloads and hashes equal the D3/D5 ledger for every channel; no local path or cache is accepted |
+| D7 | `PublishedAccepted`: consumes only D6 downloads and repeats the D4 sequence. | Published/downloaded acceptance manifest with the same thresholds, anchors, cleanup, and no averaging |
+| D8 | `StablePointerMoved`: consumes D7 success only. | Existing `_publish-stable-pointer.yml` plus `tools/update-release-index.ts` records the additive pointer mutation and prior-pointer rollback |
+
+D4 never consumes a “D4/D6 identity ledger”: it consumes the one D3
+candidate ledger. D5 never rebuilds or changes bytes. D6 is the download-back
+proof. D7 never accepts a local candidate. D8 is producer-only stable-pointer
+mutation; a worker, host, or local script has no authority to edit
+`release-index/stable.json`.
+
+## Rollback and review rules
+
+A failed gate stops all later gates and preserves its sanitized evidence,
+journal, byte ledger, and rollback reference. Rollback is additive: revert the
+named slice or use the release-index additive revert procedure; never reset,
+rebase, amend, broad-delete, or mix `0.4.1` and `0.4.2` assets. Any content
+commit invalidates prior D1 review. Local package evidence remains local-tier
+evidence, and an old executable cannot prove a fresh installer or publication.
+
+The canonical documents are reviewed for current-code grounding, links,
+anchors, fenced blocks, privacy, staged scope, and truthfulness. This docs
+checkpoint claims no feature change, model journey, candidate, publication,
+download-back, D7 acceptance, or D8 pointer movement.

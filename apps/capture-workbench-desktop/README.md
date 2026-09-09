@@ -85,10 +85,13 @@ The report is redacted by construction and records
 `consumerE2e=false`; it is not exact-candidate release evidence.
 
 ```powershell
-$env:CAPTURE_REAL_MEDIA_MODEL_PDF = 'C:\software-dev\cert-prep\pdfs\private-exam.pdf'
-$env:CAPTURE_REAL_MEDIA_MODEL_AUDIO = 'C:\software-dev\cert-prep\audio\private-listening.mp3'
+$env:CAPTURE_REAL_MEDIA_MODEL_PDF = '<cert-prep-root>\pdfs\private-exam.pdf'
+$env:CAPTURE_REAL_MEDIA_MODEL_AUDIO = '<cert-prep-root>\audio\private-listening.mp3'
 corepack pnpm nx run capture-workbench-desktop:smoke-real-media-model
 ```
+
+Replace `<cert-prep-root>` with the local cert-prep checkout; the example is
+intentionally portable and contains no repository-specific absolute path.
 
 The cert-prep PDF and audio are copied only into the owned temporary run and
 must not be committed or uploaded. The image remains a lock-pinned project
