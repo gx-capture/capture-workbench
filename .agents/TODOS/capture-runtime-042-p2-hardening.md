@@ -760,7 +760,11 @@ diagnostic and is not D4.
   `capture-workbench-desktop:acceptance-real` target remains a local installed
   diagnostic and is explicitly non-D4.
 
-  Prerequisite: D2.5 wire schemas and D3's immutable byte ledger. RED proof:
+  D2 construction prerequisites: D2.5 wire schemas and the D2.3 synthetic
+  schema/codec foundation. Construct the runner and verify its ledger contract
+  with synthetic fixtures before D3; no real candidate or immutable D3 ledger
+  is required for those tests. D3 first builds the real immutable byte ledger;
+  D4 invokes the runner against the exact bytes bound by that ledger. RED proof:
   the target derives bytes from source, stages/builds them, follows a mutable
   URL, accepts missing/mismatched D3 identity, or reuses a candidate/prior
   session ref. GREEN verification is an explicit target/schema-creation stop:
@@ -768,9 +772,10 @@ diagnostic and is not D4.
   then create the target and script in a separate authorized implementation
   slice; until they exist, do not invoke the proposed target name. After
   creation, use the existing full `corepack pnpm nx ... --skip-nx-cache`
-  checks for the resolved project and the new target only after its metadata is
-  recorded. Rollback: additive revert of the target/script/wire slice and
-  retain the D3 ledger. Commit boundary:
+  checks for the resolved project, including synthetic ledger contract tests.
+  Invoke the new acceptance target only at D4, after its metadata is recorded
+  and D3 supplies the real ledger and bytes. Rollback: additive revert of the
+  target/script/wire slice and retain any D3 ledger already produced. Commit boundary:
   `feat(acceptance): consume externally supplied D3 candidate`.
 
 ### D2.6 Native verification and deletion slice
@@ -841,7 +846,9 @@ diagnostic and is not D4.
   package construction; the separately authorized D5-D8 workflow slice owns
   publication-workflow contract changes.
 
-  Prerequisite: all authorized D2 implementation commits, Nx 23.1.2/pnpm 12
+  Prerequisite: all authorized D2 implementation commits, including D2.5.2 runner
+  construction and synthetic ledger contract tests (not a real candidate run),
+  Nx 23.1.2/pnpm 12
   identity checks, and the exact 0.4.2/API 2.0/schema/contract inventory. RED proof:
   every candidate and acceptance-package byte has a SHA-256 and the immutable
   ledger binds source commit, version, schema/projection, both acceptance
