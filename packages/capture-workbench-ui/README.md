@@ -20,8 +20,14 @@ the same `.npmrc.example`):
 > It does not assert that any release is published or that registry bytes exist.
 > D4/D7 acceptance records use the exact bytes/hash of the producer's
 > `@capture-runtime/acceptance-contract` package (proposed at
-> `packages/capture-acceptance-contract`), version `"1"`; its hash is distinct
-> from the runtime contract-set hash. A consumer writes only its
+> `packages/capture-acceptance-contract`), version `"1"`. Its semantic manifest
+> excludes itself, any hash file, archive, and delivery metadata;
+> `contractSha256` hashes that canonical manifest, while the external archive
+> has a separate `acceptanceContractArchiveSha256`. Both are distinct from the
+> runtime contract-set hash; no generated embedded self-hash is accepted. D2
+> owns only schemas/codecs and synthetic RED/GREEN cases; D3 creates the
+> immutable package/bundle and ledger; D4 consumes real D3 bytes; D6 rehashes
+> fresh public bytes for D7. A consumer writes only its
 > `ConsumerSemanticResultV1`; the producer owns mutable scope and the final
 > `AcceptanceChildWireV1`.
 > D6 immutable public downloads are permitted and required for D7 verification:
@@ -46,14 +52,38 @@ receives or mutates `ProducerChildScopeV1` and never writes the final
 `AcceptanceChildWireV1`; the producer validates the ordered fixture results,
 proves cleanup, and adds cleanup fields only to that final wire. A semantic
 result has no journal, reconcile-ref, generation, attempt, process/listener/
-staging, capture-delete, model-memory, or wire fields. Its
+staging, capture-delete, model-memory, or wire fields. The producer scope is
+state-discriminated: `planned` is unbound, `prepared` carries the complete
+ordered group/root `rootBindings`, and `ready` adds only the verified frozen
+invocation digest; ready scope is not nested in the invocation. Its
+`ProducerChildInvocationV1` is immutable, read-only, and carries the complete
+ordered `rootBindings` itself. Its
 `fixtureResults[]` must preserve the producer's ordered
 `fixtureAssignments[]` cardinality, keys, and per-fixture media/oracle/artifact
 digests; the consumer cannot add, remove, reorder, or substitute a fixture.
 Assignments carry opaque media/oracle capability handles plus handle digests;
 the consumer's private read-only resolver/store binds those handles to real
 media and full oracle truth using `mediaSha256`/`oracleSha256`. Raw paths/text
-never enter the invocation or semantic result.
+never enter the invocation or semantic result. Each capability is issued for
+one named child/leg, gate, and invocation, atomically consumed on first open,
+revoked on cancel/mismatch/freeze/activation/cleanup/close, and unusable after
+expiry or reconcile; raw handles, media, truth, paths, tokens, PIDs, and native
+diagnostics are never logged or persisted outside the private resolver/store.
+
+The proposed package delivery owners are `schemas/*.schema.json`,
+`src/codecs.ts`, `src/export.ts`, `src/index.ts`, `src/canonical-json.ts`,
+`src/manifest.ts`, `src/hash.ts`, `tools/generate.ts`, and
+`tools/create-bundle.ts`; package/Nx metadata owns the delivery target.
+
+The producer's native R3 boundary is whole-group: public
+`prepare_group(plan, sink) -> PreparedGroup` returns an opaque, move-only,
+nonserializable value containing a producer-private activation permit, and
+`activate_group(PreparedGroup) -> GroupLease` consumes it once. Sink
+`persist`/`read_back`/`verify` uses `bindingAttemptId` for the complete ordered
+root binding; activation CASes `ready -> launching` before resume. A partial
+resume or listener-readiness failure closes the whole Job, returns no lease,
+and reconciles the group. This UI package exposes no permit, native identity,
+or per-root activation API.
 
 ## Angular integration contract
 

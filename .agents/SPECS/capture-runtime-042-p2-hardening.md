@@ -11,7 +11,7 @@ publication, or stable-pointer mutation.
 ## Current checkpoint: 2026-09-10
 
 - This closure starts from expected HEAD
-  `78c8fe2718daa25ccf4b509a18598b4a710db47b`; stop if `HEAD` drifts. The only pre-existing working
+  `f4ab9518d3d23c280791b90b8590fd0f1262500e`; stop if `HEAD` drifts. The only pre-existing working
   tree changes are untracked `.github/copilot-instructions.md` and
   `.github/instructions/`; they are preserved and are not part of this slice.
 - PR #39 is at `c6d2140e233de70734005713427f77f92414f415`; its deterministic CI
@@ -112,7 +112,7 @@ symbols and paths, not proposed placeholders.
 | `packages/capture-sidecar-launcher/src/launcher.rs` | `SidecarLaunchSpec`, `LaunchOptions`, `LaunchedSidecar`, readiness/retry/observer launchers | `capture-sidecar-launcher:cargo-fmt-check`, `cargo-check`, `cargo-test`, plus desktop launcher integration |
 | `tools/release/version-sources.ts` | `collectReleaseVersionEntries()` and its existing version-source inventory | `tools/release/version-sources.test.ts`, target `capture-tools:release-version-test`; first implementation slice owns the inventory extension and Nx upgrade |
 | `tools/three-project-acceptance.ts` | `runAcceptanceSequence`, `runCaptureWorkbenchAcceptance`, `validateChildManifest`, `validateTerminalManifest`, `validateCleanupEvidence`, and `verifyRecordedCleanupScope` | Sole producer runner for Capture private JPEG, Capture scanned PDF page 1, Cert, and LAW; it consumes the proposed `@capture-runtime/acceptance-contract` package; `tools/acceptance-contract.ts:writeAcceptanceManifest`/`readAcceptanceManifestTolerant` are consumer-adapter migration seams only |
-| `packages/capture-acceptance-contract/` (proposed) | `schemas/*.schema.json`, `src/codecs.ts`, `tools/generate.ts`, `src/manifest.ts`, `src/hash.ts`, and `project.json` | Canonical generated acceptance package/bundle, manifest, and hash authority; creation is D2 discovery-and-stop and its exact bytes/hash are D3/D6 artifacts |
+| `packages/capture-acceptance-contract/` (proposed) | `schemas/*.schema.json`, `src/canonical-json.ts`, `src/codecs.ts`, `src/export.ts`, `src/hash.ts`, `src/manifest.ts`, `src/index.ts`, `tools/generate.ts`, `tools/create-bundle.ts`, `package.json`, and `project.json` | Canonical generated acceptance package/bundle, semantic manifest, and hash authority; creation is D2 discovery-and-stop and its exact bytes/digests are D3/D6 artifacts |
 | `apps/capture-workbench-desktop/scripts/real-jpeg-acceptance-coordinator.ts` | `runRealJpegAcceptance` and `runRealJpegAcceptanceCli` | Standalone coordinator to migrate into `tools/three-project-acceptance.ts:runAcceptanceSequence`, then delete only after residual callers, async-boundary exceptions, and replacement tests are proven |
 
 Before an implementation slice, run these read-only discovery commands and
@@ -379,113 +379,107 @@ identity mismatch, and stale journal retention as well as process behavior.
 
 #### Alternative R3: producer-owned group/session (chosen shape)
 
-Interface shape:
+Interface shape (the only public R3 lifecycle seam):
 
 ```text
 OwnedRuntimeSession::prepare_group(
-    immutable_plan: &ImmutableGroupPlan,
-    reconcile_ref_sink: &dyn ReconcileRefSink,
-) -> Result<PreparedGroupRuntimeSession, LaunchError>
-PreparedGroupRuntimeSession {
-  state: "prepared_bound",
-  groupRef: ReconcileRef,
-  groupRefDigest: Sha256,
-  groupGeneration: u64,
-  planDigest: Sha256,
-  roots: [PreparedRootBinding],
-}
-PreparedRootBinding {
-  ordinal: u32,
-  role: RootRole,
-  rootRef: ReconcileRef,
-  rootRefDigest: Sha256,
-  rootGeneration: u64,
-  specDigest: Sha256,
-}
-ReconcileRefSink::persist_group_refs(
-    group_ref,
-    group_generation,
-    plan_digest,
-    roots,
-) -> Result<ReconcileRefReceiptV1, PersistError>
-ReconcileRefSink::verify_group_receipt(
-    receipt,
-    expected_group_and_roots,
-) -> Result<VerifiedReconcileRefReceipt, PersistError>
-ReconcileRefReceiptV1 {
-  receiptDigest: Sha256,
-  groupRefDigest: Sha256,
-  groupGeneration: u64,
-  planDigest: Sha256,
-  roots: [{ ordinal, role, rootRefDigest, rootGeneration }],
-}
-ActivationPermit {
-  permitVersion: "ActivationPermitV1",
-  state: "prepared_bound",
-  planDigest: Sha256,
-  groupRefDigest: Sha256,
-  groupGeneration: u64,
-  rootBindings: [{ ordinal, role, rootRefDigest, rootGeneration }],
-  receiptDigest: Sha256,
-}
-session.activate_group(prepared, permit) -> Result<GroupLease, LaunchError>
-session.observe(root: &RootLease) -> Result<RuntimeObservation, LifecycleError>
-session.close_root(root, reason) -> Result<RootProof, CleanupError>
-session.close_group(reason) -> Result<GroupProof, CleanupError>
+    plan: &ImmutableGroupPlan,
+    sink: &dyn ReconcileRefSink,
+) -> Result<PreparedGroup, PrepareError>
+
+PreparedGroup // opaque, move-only, nonserializable; contains a private ActivationPermit
+
+OwnedRuntimeSession::activate_group(
+    prepared: PreparedGroup,
+) -> Result<GroupLease, LaunchError>
+
+GroupLease // opaque, move-only, one-use live lease
+session.observe(lease: &GroupLease) -> Result<GroupObservation, LifecycleError>
+session.close(lease: GroupLease, reason: CloseReason) -> Result<GroupProof, CleanupError>
 ```
+
+`PreparedGroup` has no public fields, serializer, clone, debug projection, or
+permit constructor. Its producer-private contents include the complete plan,
+verified binding receipt, binding-attempt identity, and exactly one
+`ActivationPermitV1`. `activate_group` consumes the value, so the permit and
+the prepared state cannot be replayed or passed to a second activation call.
+`GroupLease` is likewise opaque and move-only; it is issued only after the
+whole group is live and ready. There is no public per-root activation, permit,
+or serialized lease interface.
 
 R3 is a whole-group protocol. `prepare_group` receives one immutable plan whose
 ordered roots are complete before any journal or resource mutation. It first
 durably writes one group journal record in `planned_unbound`; that state has the
-group plan identity but no bound root references and no
-`activationReceiptDigest`. The injected `ReconcileRefSink` then persists the
-group ref and every per-root ref/generation as one exact binding set. Its
-`persist_group_refs` operation flushes the durable receipt before returning;
-`verify_group_receipt` reopens that receipt, recomputes its canonical digest,
-and proves that group ref, group generation, plan digest, root ordinals/roles,
-root ref digests, and root generations all match the prepared group. A sink
-failure leaves `planned_unbound` and acquires no process, listener, staging, or
-model resource.
+group plan identity but an `unbound` binding and no bound root references or
+receipt. The producer then creates a fresh `bindingAttemptId` for this binding
+attempt and asks the injected `ReconcileRefSink` to persist the complete group
+binding. The sink must flush the binding, read it back by that exact
+`bindingAttemptId`, and verify the read-back against the complete expected
+group/root tuple before returning. The tuple includes the plan digest, group
+ref, immutable group generation, every ordered root ref/role/ordinal, immutable
+root generation, root spec digest, reserved listener identity, and receipt
+digest. A sink failure or incomplete read-back leaves `planned_unbound` and
+acquires no process, listener, staging, or model resource.
 
-Only after sink persistence and verification does the producer atomically write
-`prepared_bound`, require `activationReceiptDigest`, and construct one private
-`ActivationPermit`. The permit binds the permit version, plan digest, group ref
-digest, group generation, the complete ordered group/per-root ref and generation
-set, and the receipt digest. The producer re-verifies that permit against the
-current journal and the sink receipt; a missing, stale, forged, partial, or
-mismatched permit fails closed. Permit construction is not exposed to a host,
-and a host cannot call activation first or activate an individual root. There
-is no per-root `activate` operation against a group-level `planned_unbound` or
-`prepared_bound` record.
+Only after sink persistence, read-back, and verification does the producer
+atomically write `prepared_bound`, replacing the `unbound` binding with one
+complete `bound` binding and storing the verified `bindingAttemptId`. The
+producer privately constructs exactly one `ActivationPermitV1` inside the
+opaque `PreparedGroup`; the permit binds the permit version, plan digest,
+binding-attempt identity, group-ref digest, immutable group generation, the
+complete ordered root-binding set, and receipt digest. The producer re-verifies
+that private permit against the current journal and sink binding. A missing,
+stale, forged, partial, or mismatched binding fails closed. Permit construction
+is not exposed to a host, and a host cannot call activation first or activate an
+individual root. There is no per-root activation operation against a group
+record.
 
-`activate_group(prepared, permit)` is the only activation operation. It
-validates the whole group, creates/assigns every planned root while suspended,
-and verifies every Job membership, creation identity, root nonce, listener
-binding, and staging binding before resuming any root. If any assignment or
-verification fails, no root is resumed; the producer closes/reconciles the
-partial suspended set and records the group failure. Only a complete suspended
-set may advance the journal to `ready`, after which the group is resumed and
-the normal `launching -> running` transitions continue. One root is represented
-by this same protocol with a group size of one. A private `start_one` helper,
-if retained during migration, is only a call to `prepare_group([spec])` and
-`activate_group`; it is not a second public activation seam.
+`activate_group(prepared)` is the only activation operation and consumes the
+opaque `PreparedGroup`. It validates the whole plan and binding, creates and
+assigns every planned root while suspended, and verifies every Job membership,
+creation identity, root nonce, reserved-listener identity, and staging binding.
+The journal CAS advances `ready -> launching` with the expected
+`journalRevision` and complete immutable binding before any root is resumed.
+The producer then resumes roots and waits for live readiness. Reserved listener
+identity before resume is deliberately distinct from the live listener
+readiness binding after resume; a port or reservation alone is not readiness or
+ownership proof. If assignment is partial, a root resumes unexpectedly, or any
+listener/readiness check fails, the producer closes the entire Job, issues no
+`GroupLease`, marks the whole group for reconciliation, and never continues one
+root independently. Only a complete group may produce one live lease and enter
+`running`. One root is represented by this same protocol with group size one. A
+private `start_one` helper, if retained during migration, only calls
+`prepare_group([spec], sink)` and then `activate_group`; it is not a second
+public activation seam.
 
 The sink interface is part of the R3 seam, not an optional test hook:
 
 ```text
 trait ReconcileRefSink {
-  persist_group_refs(
+  persist(
     &self,
-    group_ref: &ReconcileRef,
-    group_generation: u64,
-    plan_digest: Sha256,
-    roots: &[RootRefBinding],
-  ) -> Result<ReconcileRefReceiptV1, PersistError>;
-  verify_group_receipt(
+    binding_attempt_id: &BindingAttemptId,
+    binding: &CompleteGroupBinding,
+  ) -> Result<(), PersistError>;
+  read_back(
     &self,
-    receipt: &ReconcileRefReceiptV1,
-    expected: &GroupRefBinding,
-  ) -> Result<VerifiedReconcileRefReceipt, PersistError>;
+    binding_attempt_id: &BindingAttemptId,
+  ) -> Result<CompleteGroupBindingReceiptV1, PersistError>;
+  verify(
+    &self,
+    binding_attempt_id: &BindingAttemptId,
+    expected: &CompleteGroupBinding,
+    read_back: &CompleteGroupBindingReceiptV1,
+  ) -> Result<VerifiedGroupBinding, PersistError>;
+}
+
+struct CompleteGroupBinding {
+  bindingAttemptId: BindingAttemptId,
+  planDigest: Sha256,
+  groupRef: ReconcileRef,
+  groupRefDigest: Sha256,
+  groupGeneration: u64, // immutable binding identity
+  rootBindings: Vec<RootRefBinding>, // complete ordered set
 }
 
 struct RootRefBinding {
@@ -493,10 +487,20 @@ struct RootRefBinding {
   role: RootRole,
   rootRef: ReconcileRef,
   rootRefDigest: Sha256,
-  rootGeneration: u64,
+  rootGeneration: u64, // immutable binding identity
+  specDigest: Sha256,
+  reservedListenerIdentity: ReservedListenerIdentity,
+}
+
+struct CompleteGroupBindingReceiptV1 {
+  bindingAttemptId: BindingAttemptId,
+  binding: CompleteGroupBinding,
+  receiptDigest: Sha256,
 }
 
 struct ActivationPermitV1 {
+  // This type and its constructor exist only inside PreparedGroup.
+  bindingAttemptId: BindingAttemptId,
   planDigest: Sha256,
   groupRefDigest: Sha256,
   groupGeneration: u64,
@@ -505,26 +509,29 @@ struct ActivationPermitV1 {
 }
 ```
 
-The permit constructor is private to the producer. `groupRefDigest` is the
-canonical digest of the opaque group ref, `groupGeneration` is the exact
-group generation persisted by the sink, each `rootRefDigest` and
-`rootGeneration` is the exact per-root binding, and `receiptDigest` is the
-canonical digest of the flushed receipt. Every activation CAS includes
-expected state `prepared_bound`, expected plan/group generation, expected group
-ref digest, and the complete root binding set; the sink must still verify the
-receipt for that tuple. The prepared record cannot be activated with a subset
-of roots. Tests must cover planned-unbound absence of the receipt digest, sink
-persistence failure, wrong group/root ref digest, wrong group/root generation,
-wrong plan digest, wrong receipt digest, stale permit after any generation
-change, partial suspended assignment with zero resumes, concurrent group
-activation with one CAS winner, and the valid group-size-one and multi-root
-paths.
+The permit constructor is private to the producer and the permit is not a
+public parameter. `groupRefDigest` is the canonical digest of the opaque group
+ref, `groupGeneration` is immutable binding identity, each `rootRefDigest` and
+`rootGeneration` is the exact immutable per-root binding, and
+`bindingAttemptId` identifies this one sink persist/read-back/verify attempt.
+`journalRevision` (defined below) is the only mutable journal revision and is
+incremented by a successful journal CAS; it never changes the group or root
+generation. Every activation CAS includes expected state `ready`, expected
+`journalRevision`, the binding-attempt identity, and the complete immutable
+binding set; the sink must still verify the receipt for that tuple. The
+prepared value cannot be activated with a subset of roots or twice. Tests must
+cover unbound absence of receipt/bindings, sink persist/read-back/verify
+failure, wrong binding-attempt id, wrong group/root ref digest, wrong immutable
+group/root generation, wrong plan digest, wrong receipt digest, stale permit
+after a journal revision change, partial suspended assignment with zero
+resumes, listener readiness failure after partial resume, concurrent group
+activation with one CAS winner, and valid group-size-one/multi-root paths.
 
 Capture, Cert, and candidate journeys use the same group protocol with one
 root. The LAW journey may put Capture, Python, and Java roots in one
-producer-owned group. A `RootLease` is an opaque semantic lease returned only
-after group activation; no raw `Job`, process handle, PID, native error, or
-child object crosses the seam.
+producer-owned group. A `GroupLease` is an opaque, move-only, one-use semantic
+lease returned only after whole-group activation; no raw `Job`, process handle,
+PID, native error, child object, or activation permit crosses the seam.
 
 The hidden module owns one current unnamed no-breakaway Job configured with
 `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, root identity, readiness, listener
@@ -537,9 +544,11 @@ coordinator and provides one owner for the LAW multi-root case. The deletion
 surface is `OwnedRuntimeSession`'s current direct process methods, desktop
 `OwnedRuntime`/`LaunchedRuntime` raw-child assumptions, and host cleanup helpers.
 Tests cover one-root group-size-one compatibility, all-roots-suspended-before-
-resume activation, multi-root atomic group close, partial assignment with zero
-resumes, root crash, descendant escape, listener/staging proof, baseline
-survival, journal replay, and idempotent close.
+resume activation, CAS-to-`launching` before resume, reserved-versus-live
+listener identity, multi-root atomic group close, partial assignment with zero
+resumes, listener readiness failure after partial resume, root crash, descendant
+escape, listener/staging proof, baseline survival, journal replay, and one-use
+lease close/replay rejection.
 
 | Comparison | R1 single root | R2 journal-first lease | R3 producer-owned group |
 | --- | --- | --- | --- |
@@ -593,13 +602,29 @@ variants prevent an unbound plan from being mistaken for an activated group:
   "schemaVersion": "RuntimeSessionJournalV1",
   "producer": "capture-runtime",
   "sessionNonce": "128-bit-random-opaque-nonce",
-  "groupRefDigest": "<sha256-lower-hex>",
-  "groupGeneration": 4,
+  "journalRevision": 7,
   "planDigest": "<sha256-lower-hex>",
   "state": "ready",
   "createdAt": "2026-09-10T00:00:00Z",
   "updatedAt": "2026-09-10T00:00:02Z",
   "jobBinding": { "setupState": "committed", "jobNonce": "opaque-native-binding" },
+  "binding": {
+    "kind": "bound",
+    "bindingAttemptId": "binding-attempt-opaque-id",
+    "groupRefDigest": "<sha256-lower-hex>",
+    "groupGeneration": 4,
+    "rootBindings": [
+      {
+        "ordinal": 0,
+        "role": "capture",
+        "rootRefDigest": "<sha256-lower-hex>",
+        "rootGeneration": 1,
+        "specDigest": "<sha256-lower-hex>",
+        "reservedListenerIdentity": "opaque-reservation-identity"
+      }
+    ],
+    "activationReceiptDigest": "<sha256-lower-hex>"
+  },
   "stagingBinding": {
     "runNonce": "same-session-nonce",
     "rootDigest": "sha256:...",
@@ -615,61 +640,83 @@ variants prevent an unbound plan from being mistaken for an activated group:
       "pid": 1234,
       "creationIdentity": { "kind": "windows-process-creation", "value": "opaque-native-value" },
       "state": "suspended",
-      "listenerBindings": [
-        { "kind": "sidecar-http", "loopbackPort": 43123, "bindingNonce": "opaque-listener-binding" }
-      ],
+      "reservedListenerIdentity": "opaque-reservation-identity",
+      "liveListenerReadiness": null,
       "startedAt": "2026-09-10T00:00:01Z"
     }
   ],
   "proof": null,
-  "activationReceiptDigest": "<sha256-lower-hex>",
   "recoveryEpoch": 0,
   "attempt": 0
 }
 ```
 
 Required base fields are the schema version, producer, session nonce, immutable
-plan digest, state, timestamps, recovery epoch, and bounded attempt counter.
-`planned_unbound` intentionally has no `activationReceiptDigest`, group-ref
-digest, group generation, or bound per-root ref/generation records: it is the
-only pre-binding variant and carries only the complete plan identity. The
-`prepared_bound` variant adds the group-ref digest/generation and complete
-ordered per-root ref/generation bindings, and requires a non-null,
-receipt-verified `activationReceiptDigest`; every state derived from it
-(`ready`, `launching`, `running`, `closing`, `terminal`, `reconcile-required`,
-and `manual-review`) retains that complete binding set and receipt. Job and
+plan digest, state, timestamps, `journalRevision`, recovery epoch, and bounded
+attempt counter. `binding` is an explicit state-independent union:
+
+```text
+Binding =
+  { kind: "unbound" }
+  | {
+      kind: "bound",
+      bindingAttemptId: BindingAttemptId,
+      groupRefDigest: Sha256,
+      groupGeneration: u64,
+      rootBindings: CompleteOrderedRootBindings,
+      activationReceiptDigest: Sha256,
+    }
+```
+
+`planned_unbound` carries the `unbound` variant only: it has no
+`bindingAttemptId`, receipt, group-ref digest/generation, or bound per-root
+ref/generation records, and carries only the complete plan identity.
+`prepared_bound` and every resource-bearing descendant carry one complete
+`bound` value; the group and root generations in that value are immutable
+binding identity, not journal counters. A retry uses a fresh
+`bindingAttemptId`; it never edits an existing group/root generation. A bound
+`reconcile-required` or `manual-review` record reached from a bound state
+retains the complete ordered binding set and verified receipt; a
+`reconcile-required` record reached directly from `planned_unbound` remains
+unbound when durable proof shows that no binding/resource was attempted.
+`journalRevision` is the monotonic revision of the
+durable journal and is incremented on every successful CAS, including a
+reconciliation attempt or manual-review recovery. It is the mutable CAS guard;
+it never substitutes for or increments a group/root generation. Job and
 staging bindings are added only as their producer resources are acquired; the
 Job binding records whether setup was durably committed before a root was
 resumed. A `ready` record means every root has been assigned and verified
 suspended; no root may be resumed from a partial record. Once a root is bound
 to a native resource, it records ordinal, role, root-ref digest, root
-generation, root nonce, PID, process creation identity, state, listener
-bindings, and start time. A terminal record adds semantic proof:
+generation, root nonce, PID, process creation identity, state, reserved
+listener identity, live listener-readiness identity when available, and start
+time. A terminal record adds semantic proof:
 root reaped, descendants terminated, listeners released, staging released, and
 the proof generation. `exitCode` is optional and sanitized; raw command lines,
 environment, source paths, bearer tokens, OCR, model bytes, user names, machine
 names, and arbitrary diagnostics are forbidden.
 
 The field constraints are normative: `schemaVersion` is the literal
-`RuntimeSessionJournalV1`; `producer`, `state`, root `role`, root `state`, and
-Job `setupState` are closed enums; `setupState` is `pending` until the unnamed
-Job is configured and durably bound, then `committed` before any root is resumed;
-`groupRefDigest`, `rootRefDigest`, `planDigest`,
-`activationReceiptDigest`, and every other digest field are lowercase SHA-256;
-`sessionNonce`, `jobNonce`, `rootNonce`, and every `bindingNonce` are 128-bit
-random values encoded as lowercase hexadecimal; `groupGeneration`,
-`rootGeneration`, and `recoveryEpoch` are monotonic unsigned integers;
-`attempt` is an unsigned integer in `0..=3`;
-timestamps are UTC RFC 3339 strings; `pid` is a
-positive Windows process id; `creationIdentity` is the native creation-time
-value captured at launch and is compared exactly; and `loopbackPort` is an
-integer from 1 through 65535. `rootDigest` is lowercase SHA-256 over the
-producer-resolved run-staging identity, not a source path. `state` is one of
-`planned_unbound`, `prepared_bound`, `ready`, `launching`, `running`, `closing`,
-`terminal`, `reconcile-required`, or `manual-review`; `manual-review` is a
-blocked, nonterminal state. `activationReceiptDigest` is absent, not null, in
-`planned_unbound`; it is required and receipt-verified in `prepared_bound` and
-all later bound variants. Proof booleans may be true only after the corresponding
+`RuntimeSessionJournalV1`; `producer`, `state`, binding `kind`, root `role`,
+root `state`, and Job `setupState` are closed enums; `setupState` is `pending`
+until the unnamed Job is configured and durably bound, then `committed` before
+any root is resumed; `bindingAttemptId`, `groupRefDigest`, `rootRefDigest`,
+`planDigest`, `activationReceiptDigest`, and every other digest/identity field
+are lowercase SHA-256 or producer-issued opaque values as their type declares;
+`sessionNonce`, `jobNonce`, `rootNonce`, and listener identities are 128-bit
+random values or opaque native bindings; `groupGeneration` and
+`rootGeneration` are immutable unsigned binding generations;
+`journalRevision`, `recoveryEpoch`, and `attempt` are mutable unsigned
+counters, with `attempt` in `0..=3`; timestamps are UTC RFC 3339 strings;
+`pid` is a positive Windows process id; `creationIdentity` is the native
+creation-time value captured at launch and is compared exactly; and
+`loopbackPort` is an integer from 1 through 65535. `rootDigest` is lowercase
+SHA-256 over the producer-resolved run-staging identity, not a source path.
+`state` is one of `planned_unbound`, `prepared_bound`, `ready`, `launching`,
+`running`, `closing`, `terminal`, `reconcile-required`, or `manual-review`;
+`manual-review` is a blocked, nonterminal state. The `unbound` binding has no
+receipt or root bindings; the `bound` binding has a complete ordered binding
+set and receipt. Proof booleans may be true only after the corresponding
 binding has been checked. The JSON example uses opaque placeholders to avoid
 recording real identifiers; an implementation must validate these types and
 closed values before accepting a journal.
@@ -678,17 +725,18 @@ The cleanup policy is also fixed: one recovery epoch receives at most three
 identity-scoped automatic reconciliation attempts within a 60-second monotonic
 budget. A reconciliation attempt is one producer-observed timeout, failed
 proof, or complete proof. With expected
-`{state: "reconcile-required", groupGeneration: G, attempt: A, recoveryEpoch: E}`,
-the writer increments `attempt` and `groupGeneration` together in the same CAS
-record. A complete observe-only proof may transition to `terminal` with
-`{attempt: A + 1, groupGeneration: G + 1, recoveryEpoch: E}`. A timeout or failed
-proof may remain `reconcile-required` with the same increment while `A + 1 <
-3`; the third timeout or failed proof must transition to `manual-review` with
-`attempt: 3` and `groupGeneration: G + 1`. Thus `reconcile-required -> terminal` is
-possible only on a later complete observe-only proof, never on timeout, failure,
-stale data, or a boolean-only claim. A timeout or third failed automatic
-attempt transitions to `manual-review`, remains promotion-blocked, and never
-pretends to be terminal or starts a replacement root. A terminal `proof` must
+`{state: "reconcile-required", journalRevision: J, attempt: A, recoveryEpoch: E}`,
+the writer increments `attempt` and `journalRevision` together in the same CAS
+record. The immutable group/root generations and binding-attempt identity do
+not change. A complete observe-only proof may transition to `terminal` with
+`{attempt: A + 1, journalRevision: J + 1, recoveryEpoch: E}`. A timeout or failed
+proof may remain `reconcile-required` with the same binding while `A + 1 < 3`;
+the third timeout or failed proof must transition to `manual-review` with
+`attempt: 3` and `journalRevision: J + 1`. Thus `reconcile-required -> terminal`
+is possible only on a later complete observe-only proof, never on timeout,
+failure, stale data, or a boolean-only claim. A timeout or third failed
+automatic attempt transitions to `manual-review`, remains promotion-blocked,
+and never pretends to be terminal or starts a replacement root. A terminal `proof` must
 contain `rootReaped`, `descendantsTerminated`, `listenersReleased`,
 `stagingReleased`, and the committed `proofGeneration`, all true and tied to
 the same session/root nonces. A boolean without matching identity evidence is
@@ -699,9 +747,10 @@ and cannot transition directly to `terminal`, `launching`, `running`, or
 `closing`. Only an explicitly producer-authorized operator recovery may move
 it to `reconcile-required`: the recovery record must carry a fresh opaque
 `recoveryNonce`, a durable `recoveryAuthorizationDigest`, and expected
-`{state: "manual-review", groupGeneration: G, attempt: 3, recoveryEpoch: E}`. That
-CAS increments `groupGeneration`, increments `recoveryEpoch`, resets `attempt` to
-`0`, and records no resource mutation. The recovery operation cannot launch a
+`{state: "manual-review", journalRevision: J, attempt: 3, recoveryEpoch: E}`. That
+CAS increments `journalRevision` and `recoveryEpoch`, resets `attempt` to
+`0`, and records no resource mutation. Immutable group/root generations and
+the binding-attempt identity remain unchanged. The recovery operation cannot launch a
 replacement, terminate a process, delete staging, or claim terminal proof;
 the next automatic attempt must still pass the full observe-only checks. A
 stale, reused, or missing recovery receipt leaves `manual-review` unchanged.
@@ -710,15 +759,16 @@ After another three timed/failed attempts, the record returns to
 terminal` path.
 
 The focused journal regression set includes
-`reconcile_attempt_and_generation_increment_atomically`,
+`reconcile_attempt_and_revision_increment_atomically`,
 `reconcile_rejects_stale_state_generation_attempt_or_epoch`,
 `reconcile_failure_attempt_three_enters_manual_review`,
 `reconcile_complete_observe_only_proof_to_terminal`,
 `manual_review_requires_explicit_recovery_receipt`, and
 `manual_review_recovery_resets_attempt_window_without_resource_mutation`.
-The tests assert the exact expected state, generation, attempt, and recovery
-epoch on every compare-and-swap; they also assert that an attempt cannot
-increment one counter without the other.
+The tests assert the exact expected state, immutable binding generations,
+`journalRevision`, attempt, and recovery epoch on every compare-and-swap; they
+also assert that an attempt cannot increment one mutable counter without the
+other and can never mutate a group/root generation.
 
 `pid` and native creation identity are private producer data. Evidence and host
 responses emit only a stable digest or boolean proof. A listener port is not an
@@ -734,10 +784,14 @@ While the producer process is alive, `OwnedRuntimeSession` keeps the private
 handle for the current unnamed no-breakaway Job, its in-memory membership
 proof, and the root/session nonces. Its `terminate_and_prove` path may close
 only that live session: it requests termination through the private Job handle,
-reaps the roots and descendants, checks listener/staging bindings, and commits
+reaps the roots and descendants, checks each reserved listener identity and
+post-resume live-readiness identity, checks staging bindings, and commits
 terminal proof. `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` remains enabled for normal
 close, crash, and handle-loss cleanup; no named takeover or weakened cleanup
-path is permitted.
+path is permitted. A successful activation consumes the prepared value and
+returns one `GroupLease` carrying a private one-use live lease token. The token
+is invalidated on close, cancellation, readiness failure, or lease drop; a
+replayed token or a second close cannot operate on the group.
 
 After a producer restart, the observer has only the committed journal. It has
 no Job handle, no live membership query, and no right to claim or adopt the old
@@ -773,14 +827,15 @@ reconcile-required -> manual-review         (timed/failed attempt 3)
 manual-review -> reconcile-required         (explicit producer recovery only)
 ```
 
-Every transition carries expected `state`, `groupGeneration`, `attempt`, and
+Every transition carries expected `state`, `journalRevision`, `attempt`, and
 `recoveryEpoch`; bound transitions also carry the complete plan/group/root
-reference and `activationReceiptDigest` tuple. The writer rejects any mismatch
+reference, immutable generation, binding-attempt, and `activationReceiptDigest`
+tuple. The writer rejects any mismatch
 and never merges concurrent updates. A later `reconcile-required -> terminal`
 requires a complete, identity-bound observe-only proof, increments `attempt`
-and `groupGeneration` in the same record, and succeeds only when the expected
+and `journalRevision` in the same record, and succeeds only when the expected
 CAS matches. A timed or failed attempt increments `attempt` and
-`groupGeneration` atomically; attempts one and two
+`journalRevision` atomically; attempts one and two
 remain `reconcile-required`, while attempt three takes the guarded
 `reconcile-required -> manual-review` transition. No automatic transition from
 `manual-review` is allowed. A direct `planned_unbound -> terminal` is valid only with
@@ -789,10 +844,10 @@ committed, no root was resumed or launched, no listener was bound, no staging
 was acquired, and no resource acquisition was attempted. If any one of those
 facts is unknown, the journal must take `planned_unbound -> reconcile-required`
 instead. A transition uses compare-and-swap on the expected state,
-groupGeneration, attempt, recovery epoch, and bound ref tuple, writes a temporary file in the same producer
+journalRevision, attempt, recovery epoch, and bound ref tuple, writes a temporary file in the same producer
 directory, flushes it,
 atomically replaces the journal, and flushes the directory/file according to
-the platform adapter. A torn or unknown-generation write is a hard failure;
+the platform adapter. A torn or unknown-revision write is a hard failure;
 the previous valid journal is retained. There is no best-effort terminal
 state.
 
@@ -887,7 +942,7 @@ This is one producer-owned `ProducerAcceptanceContractV1` for the future
 D2/D3/D4 and D7 implementation. Its canonical producer package/bundle name is
 `@capture-runtime/acceptance-contract`; the package is proposed at
 `packages/capture-acceptance-contract` and does not exist at this checkpoint.
-The proposed package layout is:
+The concrete ownership and delivery layout is:
 
 ```text
 packages/capture-acceptance-contract/
@@ -897,30 +952,44 @@ packages/capture-acceptance-contract/
   schemas/acceptance-child-wire-v1.schema.json
   src/canonical-json.ts
   src/codecs.ts
+  src/export.ts
   src/hash.ts
   src/manifest.ts
   src/index.ts
   tools/generate.ts
+  tools/create-bundle.ts
   contract-manifest.json
-  contract-sha256.txt
   package.json
   project.json
 ```
 
-`src/codecs.ts` and `tools/generate.ts` are the proposed TypeScript codec and
-schema-generator owners; `src/manifest.ts`, `src/hash.ts`,
-`contract-manifest.json`, and `contract-sha256.txt` are the proposed manifest
-and hash owners; `project.json` is the proposed Nx package owner. Target
-creation and package generation require D2 discovery and a creation stop; no
-target or package is claimed to exist now. The generated package/bundle bytes
-and manifest are first-class D3 candidate artifacts and are included in the
-D3 ledger; D6 downloads and hashes those exact public package/bundle bytes and
-includes them in the D6 ledger before D7.
+`schemas/*.schema.json` are the schema owners; `src/codecs.ts` owns strict
+codecs; `src/export.ts` and `src/index.ts` own the public package exports;
+`src/canonical-json.ts`, `src/manifest.ts`, and `src/hash.ts` own canonical
+serialization, semantic manifest construction, and digest domains;
+`tools/generate.ts` creates generated schema/codec material and
+`tools/create-bundle.ts` creates the external archive; `package.json` and
+`project.json` own package metadata and the Nx delivery target. The package
+root, its Nx project, and these owner files do not exist at this checkpoint;
+their exact creation is a D2 discovery/creation stop. D2 may add only the
+schemas, codecs, and synthetic RED cases after that stop. D3 is the first gate
+that runs the generator, emits the immutable package/bundle and semantic
+manifest, computes their hashes, and records them in one candidate ledger. D6
+downloads and hashes those exact public bytes before D7.
 
-Its immutable contract version is `"1"` and its `contractSha256` is the
-lowercase SHA-256 of the canonical package/bundle bytes. D3 records the literal
-digest and D4/D6/D7 bind it; until that digest is recorded, no consumer may
-choose a value or claim compatibility. This acceptance-contract identity is
+Its immutable contract version is `"1"`. The semantic manifest entry set is a
+canonical, ordered set of `{ path, byteLength, sha256 }` entries for the
+contract's schema/codec/export/canonical-json files; it excludes the manifest
+file itself, any hash file, generated archive, and delivery metadata. Each
+entry digest is SHA-256 of the exact file bytes. `contractSha256` is SHA-256 of
+the canonical compact UTF-8 bytes of that semantic manifest, not of the package
+archive and not of a manifest containing its own digest. No generated
+standalone hash file or embedded self-hash is permitted. D3 records the
+literal `contractSha256` plus a separate external
+`acceptanceContractArchiveSha256` for the exact archive bytes; D4 binds both to
+the candidate ledger. D6 recomputes `contractSha256` from the downloaded
+manifest and separately hashes the downloaded archive, requiring equality to
+the D3 values; D7 binds the D6 values. This acceptance-contract identity is
 distinct from the runtime contract-set identity (`contractSetVersion: "2"`,
 `contractSetSha256: d293a3de26114f1b4fd65ea6d6d3f157fa2f93109b31e1e30d5d15ef0dfdeb40`);
 the two hashes must never be compared as if they were one contract. Cert and
@@ -931,29 +1000,52 @@ consumer adapter: its `writeAcceptanceManifest` and
 `readAcceptanceManifestTolerant` paths may import the canonical package later,
 but they are not schema, codec, generator, manifest, or hash authority.
 
+The digest DAG is exact and acyclic:
+
+| Digest | Domain | May not include or substitute |
+| --- | --- | --- |
+| entry `sha256` | Exact bytes of one listed schema/codec/export/canonical-json file | Manifest bytes, archive bytes, paths encoded as content, or a self-entry |
+| `contractSha256` | Canonical compact UTF-8 bytes of `contract-manifest.json` whose entry set excludes the manifest, hash file, archive, and delivery metadata | The archive, runtime `contractSetSha256`, or an embedded self-hash field |
+| `acceptanceContractArchiveSha256` | Exact external archive/bundle bytes emitted by `tools/create-bundle.ts` | `contractSha256`, a source tree, mutable URL, or a hash file embedded in the archive |
+| D3/D6 ledger digest | Canonical bytes of that gate's immutable ledger | A later acceptance result or mutable publication pointer |
+| media/oracle digest | Exact private media bytes or canonical normalized oracle bytes | A path, decoded/re-encoded media, raw truth in evidence, or an anchor-only substitute |
+| invocation/result/wire digest | Canonical record bytes with only that record's own self-digest field omitted | Scope nesting, producer cleanup invented by a consumer, or another record's digest |
+| runtime `contractSetSha256` | Existing generated runtime contract-set bytes | Acceptance package/manifest/archive identity |
+
+D3 is therefore the parent of the acceptance-package artifact and its ledger;
+D4 consumes those exact D3 bytes and digests; D5 publishes them without
+rebuilding; D6 downloads and independently hashes them; and D7 consumes only
+the D6 ledger. D2 has no package/archive/hash-delivery edge, D3 has no
+acceptance-consumer edge that reconstructs its inputs, and no later gate points
+back to D2 or D3. No digest domain contains a later result that would make the
+graph cyclic.
+
 There is exactly one writer for each record and exactly one serial producer
 flow. The paths below are distinct, producer-scoped transport records:
 
 | Record | Owner, mutability, path | Visibility and order |
 | --- | --- | --- |
-| `ProducerChildScopeV1` | Producer only; mutable until the child is closed; `CAPTURE_ACCEPTANCE_SCOPE_PATH` | State-discriminated: `planned` has only child/plan identity; `prepared` adds the bound root/ref and generations; `ready` adds the verified invocation digest. The child receives only the read-only invocation input. |
-| `ProducerChildInvocationV1` | Producer only; immutable after freeze; `CAPTURE_ACCEPTANCE_INVOCATION_PATH` or an equivalent read-only handle/pipe transport | The producer publishes the canonical input before launch. The child receives only this frozen read-only transport and its digest; it never receives scope or wire. |
+| `ProducerChildScopeV1` | Producer only; mutable until the child is closed; `CAPTURE_ACCEPTANCE_SCOPE_PATH` | State-discriminated: `planned` has only child/plan identity; `prepared` adds the complete ordered `rootBindings` and immutable generations; `ready` adds the verified invocation digest. The ready scope is not nested in the invocation and is never sent to the child. |
+| `ProducerChildInvocationV1` | Producer only; immutable after freeze; `CAPTURE_ACCEPTANCE_INVOCATION_PATH` or an equivalent read-only handle/pipe transport | The producer publishes the canonical input before launch. The child receives only this frozen read-only transport, its digest, and complete ordered `rootBindings`; it never receives scope or wire. |
 | `ConsumerSemanticResultV1` | The current child only; write-once; separate `CAPTURE_ACCEPTANCE_SEMANTIC_RESULT_PATH` | The child writes one complete semantic result after its assertion. The producer reads and validates it; a second write, overwrite, or partial record fails closed. |
 | `AcceptanceChildWireV1` | Producer only; immutable after cleanup; `CAPTURE_ACCEPTANCE_WIRE_PATH` | The producer validates the result, completes cleanup, and only then emits the wire. The child never receives or writes this path. |
 
 The producer flow is: (1) create the scope and durably record its `planned`
-variant, which has only child/plan identity; (2) call `prepare_group` with the
-complete immutable plan, journal `planned_unbound`, persist and verify the
-complete group/per-root receipt through the injected sink, write
-`prepared_bound`, and construct one private group activation permit; (3) derive
+variant, which has only child/plan identity; (2) call `prepare_group(plan, sink)`
+with the complete immutable plan, journal `planned_unbound`, persist/read back/
+verify the complete group/per-root receipt through the sink by
+`bindingAttemptId`, write `prepared_bound`, and construct the permit inside the
+opaque `PreparedGroup`; (3) derive
 a `ProducerChildInvocationV1` from that immutable plan and its capability
 assignments; (4) compute its self-excluded canonical digest before writing the
 final bytes, write those exact bytes to a secure same-directory temporary,
 flush and close the temporary, publish the final invocation with atomic
 create-new semantics, reopen it read-only to verify canonical bytes and digest,
 then freeze/apply its ACL; (5) update the scope to `ready` with the verified
-invocation digest and call `activate_group(prepared, permit)`, which assigns
-and verifies every root suspended before resuming any root; (6) pass only the
+invocation digest and complete `rootBindings`, then call
+`activate_group(prepared)`, which assigns and verifies every root suspended,
+CASes `launching` before resume, and returns one use-once lease only after live
+readiness; (6) pass only the
 frozen read-only invocation transport and canonical digest to the child; (7)
 let the child create exactly one `ConsumerSemanticResultV1`; (8) validate the
 semantic result against the ordered fixture assignments, resolver-verified
@@ -993,10 +1085,12 @@ after this validation and producer cleanup can the producer create the wire.
 
 `ProducerChildScopeV1` is mutable producer state, not consumer evidence, and is
 a state-discriminated union. The `planned` variant contains only child/plan
-identity; it has no root, reconcile ref, generation, invocation digest, output
-path nonce, result digest, or wire digest. The `prepared` variant adds the
-producer-bound group/root refs and generations. The `ready` variant adds the
-verified invocation digest and output path nonce:
+identity and an `unbound` binding; it has no root, reconcile ref, generation,
+invocation digest, output path nonce, result digest, or wire digest. The
+`prepared` variant adds one complete producer-bound group/root binding set and
+its receipt. The `ready` variant adds the verified invocation digest and output
+path nonce. The `ready` scope is a producer-side state record, not a nested
+object in `ProducerChildInvocationV1`:
 
 ```text
 ProducerChildScopeV1 =
@@ -1014,14 +1108,19 @@ ProducerChildScopeV1 =
     childId: Sha256,
     childPlanDigest: Sha256,
     readyState: "planned",
+    binding: { kind: "unbound" },
   }
   | PreparedScope {
     ...PlannedScope,
     readyState: "prepared",
+    bindingAttemptId: BindingAttemptId,
     groupRefDigest: Sha256,
     groupGeneration: u64,
-    rootRefDigest: Sha256,
-    rootGeneration: u64,
+    rootBindings: [
+      { ordinal, role, rootRefDigest, rootGeneration, specDigest,
+        reservedListenerIdentity }
+    ],
+    activationReceiptDigest: Sha256,
   }
   | ReadyScope {
     ...PreparedScope,
@@ -1031,14 +1130,18 @@ ProducerChildScopeV1 =
   }
 ```
 
-The producer writes the variants in order with a CAS over child/plan identity
-and the applicable group/root generations. A `planned` scope cannot carry a
-root/ref or invocation field, and a `prepared` scope cannot be sent to a child;
-only `ready` may be used after invocation publication/reopen verification. The
-scope may retain private resolved paths and capability handles in memory, but
-neither is serialized into a child wire or exposed as a raw path/text value to
-the child. The producer must not put any child-result or wire digest in any
-scope variant before the child runs.
+The producer writes the variants in order with a CAS over child/plan identity,
+scope revision, and the complete applicable binding tuple. A `planned` scope
+cannot carry a root/ref, generation, receipt, or invocation field, and a
+`prepared` scope cannot be sent to a child; only `ready` may be used after
+invocation publication/reopen verification. `rootBindings` is always the
+complete ordered group set, never the current child root alone. The scope may
+retain private resolved paths and capability handles in memory, but neither is
+serialized into a child wire or exposed as a raw path/text value to the child.
+The producer must not put any child-result or wire digest in any scope variant
+before the child runs. The invocation contains the scalar scope identity and
+its own complete `rootBindings`, never a nested `ProducerChildScopeV1` object
+or its mutable `ready` record.
 
 `ConsumerSemanticResultV1` is the child's one write-once semantic handoff. It
 contains no scope or wire path and no native/process identity:
@@ -1208,13 +1311,15 @@ digest, and the self-excluded canonical JSON digest. Raw OCR/truth/media,
 bearer tokens, private paths, and native identifiers stay producer-private.
 
 `ProducerChildInvocationV1` is an input, not an evidence record. It has a
-ready state, child/sequence identity, and exactly one of the two immutable
-binding forms: D4 input bound to the D3 candidate ledger, or D7 input bound to
-the D6 download/publication ledger. It also has predecessor cleanup-proof
-digests, the bound group/root ref digests and generations, one ordered
-`fixtureAssignments[]` array, a separate output path nonce, and its
-self-excluded invocation digest. Its fixture capability values are opaque
-handles, never source paths or raw truth:
+frozen input state, child/sequence identity, and exactly one of the two
+immutable binding forms: D4 input bound to the D3 candidate ledger, or D7 input
+bound to the D6 download/publication ledger. It also has predecessor
+cleanup-proof digests, the complete ordered group/root `rootBindings` and
+immutable generations, one ordered `fixtureAssignments[]` array, a separate
+output path nonce, and its self-excluded invocation digest. It never nests or
+serializes the mutable `ProducerChildScopeV1` (including the scope's `ready`
+variant). Its fixture capability values are opaque handles, never source paths
+or raw truth:
 
 ```json
 {
@@ -1224,7 +1329,7 @@ handles, never source paths or raw truth:
   "producer": "capture-runtime",
   "parentGate": "D4",
   "tier": "candidate",
-  "readyState": "ready",
+  "invocationState": "frozen",
   "sequenceIndex": 1,
   "childKey": "capture-private-jpeg",
   "legId": "capture-private-jpeg-v1",
@@ -1232,8 +1337,16 @@ handles, never source paths or raw truth:
   "root": "<sha256-lower-hex>",
   "groupRefDigest": "<sha256-lower-hex>",
   "groupGeneration": 4,
-  "rootRefDigest": "<sha256-lower-hex>",
-  "rootGeneration": 1,
+  "bindingAttemptId": "binding-attempt-opaque-id",
+  "rootBindings": [{
+    "ordinal": 0,
+    "role": "capture",
+    "rootRefDigest": "<sha256-lower-hex>",
+    "rootGeneration": 1,
+    "specDigest": "<sha256-lower-hex>",
+    "reservedListenerIdentity": "opaque-reservation-identity"
+  }],
+  "activationReceiptDigest": "<sha256-lower-hex>",
   "artifactIds": ["<sha256-lower-hex>"],
   "ledgerBinding": { "sourceGate": "D3", "ledgerSha256": "<sha256-lower-hex>" },
   "predecessorCleanupProofSha256": null,
@@ -1352,6 +1465,23 @@ in the invocation, wire, uploaded artifact, or host response. Cert and LAW
 receive only the opaque handle, handle digest, `oracleSha256`, and resulting
 semantic measurements.
 
+Capability lifetime and audience are normative. A media or oracle capability
+is producer-issued for exactly one child/leg, one gate (`D4` or `D7`), and one
+invocation. Its audience is the named consumer child, not the host, another
+product, another leg, a retry, or a later gate. The resolver atomically marks a
+capability consumed on its first successful open; a second open, replayed
+invocation, or copied handle is rejected and requires a newly bound child
+identity. The producer durably revokes a capability before launch on cancel,
+identity mismatch, failed freeze/activation, or failed cleanup, and revokes it
+at child close; expiry, revocation, or a terminal/reconcile transition makes
+the handle unusable. Revocation cannot be bypassed by reopening a path or
+reconstructing a handle from a digest. Raw handle values, media, truth, paths,
+tokens, PIDs, and native diagnostics are never logged or persisted outside the
+private invocation/resolver store; logs, errors, reports, and wires may contain
+only capability digests and sanitized reason codes. A missing lifetime,
+audience, single-use, revocation, or log prohibition is a fail-closed contract
+failure.
+
 The four producer legs are fixed and independently addressable. Their
 `sequenceIndex`, `childKey`, `legId`, `childId`, `root`, and `artifactIds` are
 unique within a run and never reused across candidate/prior sessions:
@@ -1406,12 +1536,26 @@ The exact Cert migration seams are
 `normalizeOcrText`, `parseOcrTruthManifest`, and `levenshtein`,
 `${CERT_PREP_CHECKOUT}/apps/cert-prep-desktop/scripts/acceptance-real-options.mts:parseOcrAnchorExpectation`,
 `${CERT_PREP_CHECKOUT}/apps/cert-prep-desktop/scripts/phase1-acceptance-evidence.mts:buildPhase1AcceptanceEvidence`,
-and `${CERT_PREP_CHECKOUT}/apps/cert-prep-desktop/scripts/ocr-semantic-evidence.mts:serializePrivacySafeOcrSemanticEvidence` /
-`OCR_NORMALIZATION_VERSION`. The exact LAW Java seams are
+`${CERT_PREP_CHECKOUT}/apps/cert-prep-desktop/scripts/ocr-semantic-evidence.mts:serializePrivacySafeOcrSemanticEvidence` /
+`OCR_NORMALIZATION_VERSION`, and the actual acceptance artifact owner
+`${CERT_PREP_CHECKOUT}/apps/cert-prep-desktop/scripts/acceptance-artifacts.mts:writeAcceptanceManifest`,
+`sanitizeAcceptanceFixtureMetadata`, `collectAcceptanceArtifactInputs`, and
+`redact`, plus
+`${CERT_PREP_CHECKOUT}/apps/cert-prep-desktop/scripts/acceptance-artifacts.test.mts`.
+The exact LAW Java seams are
 `${GX_LAW_PREP_CHECKOUT}/apps/law-prep-engine/src/main/java/com/gx/lawprep/engine/capture/FoundryCaptureStructuringProvider.java:FoundryCaptureStructuringProvider`,
 `${GX_LAW_PREP_CHECKOUT}/apps/law-prep-engine/src/main/java/com/gx/lawprep/engine/extraction/EvidenceTextExtractionService.java:EvidenceTextExtractionService`,
 `${GX_LAW_PREP_CHECKOUT}/apps/law-prep-web-e2e/src/e2e/support/acceptance-expectations.ts:loadLawAcceptanceExpectation`,
-and `${GX_LAW_PREP_CHECKOUT}/apps/law-prep-web-e2e/src/e2e/support/acceptance-artifacts.ts:writeAcceptanceManifest`.
+`${GX_LAW_PREP_CHECKOUT}/apps/law-prep-web-e2e/src/e2e/support/acceptance-artifacts.ts:createAcceptanceRun`,
+`writeAcceptanceManifest`, and `redact`, the contract owner
+`${GX_LAW_PREP_CHECKOUT}/apps/law-prep-web-e2e/src/e2e/local-package/acceptance-artifacts.contract.mts`,
+and the real runner
+`${GX_LAW_PREP_CHECKOUT}/apps/law-prep-web-e2e/scripts/acceptance-real.mts`.
+LAW's current capability/fixture owners are
+`${GX_LAW_PREP_CHECKOUT}/apps/law-prep-web-e2e/src/e2e/support/evidence-workbench.scenario-types.ts:createDefaultFixtureBundle`,
+`${GX_LAW_PREP_CHECKOUT}/apps/law-prep-web-e2e/src/e2e/local-package/evidence-workbench.real.acceptance.spec.ts`,
+`${GX_LAW_PREP_CHECKOUT}/apps/law-prep-engine/src/main/java/com/gx/lawprep/engine/capture/FoundryCaptureStructuringProvider.java:StructuringProviderCapability`,
+and `${GX_LAW_PREP_CHECKOUT}/apps/law-prep-ai-service/src/app/ocr/service.py:OcrExtractionService.extract`.
 These are migration seams, not claims that Cert or LAW already emit the
 producer records.
 
@@ -1432,6 +1576,7 @@ The idempotent producer operation is exactly:
 ```text
 start_or_get(
   request_ref: RequestRefV1,
+  request_digest: Sha256,
   metadata: StartCaptureByRequestRefV1,
   source: ReadonlyByteStream,
 ) -> StartCaptureByRequestRefResult
@@ -1439,26 +1584,46 @@ start_or_get(
 
 `StartCaptureByRequestRefV1` is canonical metadata, not a free-form map. Its
 closed shape is `protocolVersion: "2"`, `sourceKind`, `fileName`, `mediaType`,
-`totalBytes`, expected `sourceSha256`, `structuringMode`, `targetLanguage`,
-and `startPolicy: "eager"`; `requestRef` and `requestDigest` are separate
-identity arguments/outputs. The producer canonicalizes compact UTF-8 JSON with
-sorted keys and computes `requestDigest` over those exact metadata bytes. It
-consumes the source stream once into producer-owned staging while recomputing
-byte count and `sourceSha256`; it never trusts a caller-provided digest. The
-idempotency tuple is `(requestRef, requestDigest, sourceSha256)`.
+`totalBytes`, expected `sourceSha256`, `pdfPageNumbers`, `structuringMode`,
+`targetLanguage`, and `startPolicy: "eager"`. Every field is present in the
+canonical metadata (nullable `targetLanguage` and `pdfPageNumbers` are explicit);
+`pdfPageNumbers` is `null` for non-PDF input and an ordered, duplicate-free
+prefix `[1, ..., N]` for PDF input. `requestRef` and `requestDigest` are
+separate identity arguments/outputs. The producer canonicalizes compact UTF-8
+JSON with sorted keys and computes `requestDigest` over those exact metadata
+bytes. It consumes the source stream once into producer-owned staging while
+recomputing byte count and `sourceSha256`; it never trusts a caller-provided
+digest. The idempotency tuple is `(requestRef, requestDigest, sourceSha256)`.
+The legacy `StartCaptureV2.clientRequestId` is represented by the opaque
+`requestRef`, not duplicated in metadata; `ingestionId` is producer-created
+and private, becoming known only at `ingestion_bound`. Thus no start field is
+silently dropped, while no capture/ingestion/native identity crosses the seam.
 
-Before any network or capture side effect, the Python adapter durably writes a
-`start_pending` record containing the generated ref, canonical request digest,
-source digest/length, and producer-contract version/hash. The producer then
-atomically journals that request-ref intent before `create_capture`, scheduling,
-or any other operation side effect. A first tuple creates the existing v2
-capture and returns `created`; the same ref with the same metadata and
-identical source bytes returns `discovered`/the existing operation without a
-duplicate. The same ref with changed metadata, length, or source bytes is a
-conflict and performs no mutation. A timeout or dropped acknowledgement
-retains the ref and retries the same tuple; it never generates a replacement
-ref. A producer durable ACK/discovery receipt is required before Python marks
-the operation `running`.
+The durable request-ref progression is closed and ordered:
+
+```text
+reserved -> source_verified -> ingestion_bound -> started -> terminal
+         -> cleanup -> deleted
+```
+
+Before any network or capture side effect, the Python adapter durably writes
+`reserved` with the generated ref, canonical request digest, complete metadata,
+and producer-contract version/hash. The producer then atomically journals the
+same request-ref intent before ingestion creation, scheduling, or any other
+operation side effect. It verifies the source bytes and length before
+`source_verified`, binds the idempotent ingestion before `ingestion_bound`, and
+only a producer-created/discovered ACK with a durable receipt advances to
+`started`. A first tuple creates the existing v2 capture and returns `created`;
+the same ref with the same metadata and identical source bytes returns
+`discovered`/the existing operation without a duplicate. The same ref with
+changed metadata, page ordering, length, or source bytes is a conflict and
+performs no mutation. A client timeout or dropped response leaves the last
+durable progression unchanged and does not imply that the producer did not
+start; retry uses the same tuple and ref to discover the existing state. It
+never generates a replacement ref, marks `terminal`, or deletes on timeout.
+Only a producer durable ACK/discovery receipt permits `started`; explicit
+terminal result/failure/cancellation, cleanup proof, and deletion receipt are
+required for the later stages.
 
 The future Capture Runtime route/service/storage ownership is explicit:
 
@@ -1467,7 +1632,7 @@ The future Capture Runtime route/service/storage ownership is explicit:
 | HTTP route | `packages/capture-runtime/src/capture_runtime/routes/streaming.py:register_streaming_routes` nested `start_capture` on `POST /v2/captures` | `start_capture_by_request_ref` adapter on the same API-2.0 route; it passes a verified source stream to `start_or_get` |
 | Runtime service | `packages/capture-runtime/src/capture_runtime/services/streaming_capture_service.py:StreamingCaptureService.start_capture` | `StreamingCaptureService.start_or_get` with the pre-side-effect journal/receipt ordering |
 | Durable storage | `packages/capture-runtime/src/capture_runtime/storage/streaming_repository.py:StreamingRepository.create_capture` and `storage/_streaming_persistence.py:_StreamingRepositoryPersistence.persist_capture` | `StreamingRepository.start_or_get_by_request_ref` plus its durable request-ref index/record; ref lookup is the sole later identity |
-| Python SDK | `packages/capture-runtime-client-python/src/capture_runtime_client/client.py:CaptureRuntimeClient.start_capture` | `CaptureRuntimeClient.start_or_get` with `RequestRefV1` generation and durable `start_pending` adapter state |
+| Python SDK | `packages/capture-runtime-client-python/src/capture_runtime_client/client.py:CaptureRuntimeClient.start_capture` | `CaptureRuntimeClient.start_or_get` with `RequestRefV1` generation and durable `reserved` adapter state |
 | TypeScript SDK | `packages/capture-runtime-client/src/private/streaming.ts:startStreamingCapture` and `packages/capture-runtime-client/src/client.ts:CaptureRuntimeClient.startStreamingCapture` | `startCaptureByRequestRef` in the private streaming adapter and `CaptureRuntimeClient.startCaptureByRequestRef` in the public framework-neutral client |
 
 `get(requestRef)`, `cancel(requestRef)`, and `delete(requestRef)` all resolve
@@ -1484,7 +1649,7 @@ not a second OCR route or engine. The public floor remains API `2.0`, raw and
 structured schema `2`, and `CaptureOcrProjectionV3` schema `3`. The exact
 LAW config seam is
 `${GX_LAW_PREP_CHECKOUT}/apps/law-prep-ai-service/src/app/common/config.py:AiServiceConfig`.
-Migration red: Python does not use CSPRNG bytes, `start_pending` is not
+Migration red: Python does not use CSPRNG bytes, `reserved` is not
 durable before `start_or_get`, the producer starts before journaling, changed
 metadata, length, or source bytes are accepted for an existing ref, running is
 marked without a producer ACK/discovery receipt, a timeout loses the ref,
@@ -1493,7 +1658,7 @@ route/engine is introduced. Required green cases are
 `same_ref_same_bytes_discovers_without_duplicate`,
 `same_ref_changed_metadata_conflicts_without_mutation`,
 `same_ref_changed_source_conflicts_without_mutation`,
-`start_pending_survives_timeout_and_retries_same_tuple`,
+`reserved_survives_timeout_and_retries_same_tuple`,
 `running_requires_producer_ack_or_discovery`, `lookup_cancel_delete_use_same_ref`,
 and `request_refs_are_csprng_and_not_request_derived`. Discovery stop: confirm
 the LAW adapter's resolved client/config and current route metadata before
@@ -1509,10 +1674,12 @@ evidence, do not promote, and retain only the sanitized failure record.
 
 D2 and D2.5 authorize only design, contract, and red infrastructure. They do
 not install or require an installed candidate. D3 is the first construction
-gate: the existing release/candidate owners build one immutable byte ledger
-containing a bounded candidate root, candidate id, manifest digest, every raw
-artifact digest, and all source/version/schema/contract/model/profile/catalog
-identity. D4 must consume that ledger, not reconstruct it.
+gate: the existing release/candidate owners create one immutable acceptance
+package/bundle, semantic manifest, and byte ledger containing a bounded
+candidate root, candidate id, manifest digest, every raw artifact digest,
+literal `contractSha256`, separate external `acceptanceContractArchiveSha256`,
+and all source/version/schema/contract/model/profile/catalog identity. D4 must
+consume those real D3 bytes and digests, not reconstruct them.
 
 The proposed future D4 owner is a new
 `capture-workbench-desktop:acceptance-d3-candidate` target in
@@ -1520,7 +1687,8 @@ The proposed future D4 owner is a new
 `apps/capture-workbench-desktop/scripts/acceptance-d3-candidate.ts:runD3CandidateAcceptance`.
 It accepts externally supplied `D3_CANDIDATE_ROOT`, `D3_CANDIDATE_ID`,
 `D3_LEDGER_SHA256`, and `D3_ARTIFACT_DIGESTS`, validates exact equality, and
-passes only those prebuilt bytes to the producer runner. It must never invoke
+passes only those prebuilt D3 package/candidate bytes to the producer runner.
+It must never create a D2 package/manifest/archive/hash, invoke
 `capture-workbench-desktop:stage-product-runtime`, any build target or build
 script, a source-tree import, or a mutable URL. The current
 `capture-workbench-desktop:acceptance-real` target remains a local installed
@@ -1560,11 +1728,17 @@ The returned roots must equal the resolved variables, and branch/`HEAD` must
 equal the values authorized by D2. For every exact path, `git -C <root>
 ls-files --error-unmatch -- <path>` and a path-scoped
 `git -C <root> status --short --untracked-files=all -- <path>` check ownership
-and pre-existing dirt before editing. The Cert path set is the four OCR truth/
-evidence scripts named above; the LAW path set is the Java provider/extraction,
-web-E2E expectation/artifact, Python OCR service, and config paths named above.
-Missing variables, root mismatch, branch/`HEAD` drift, a missing path, or an
-extra path is discovery-and-stop.
+and pre-existing dirt before editing. The Cert path set includes the OCR truth/
+evidence scripts, the actual
+`${CERT_PREP_CHECKOUT}/apps/cert-prep-desktop/scripts/acceptance-artifacts.mts`
+exports, and its focused test. The LAW path set includes the Java
+`FoundryCaptureStructuringProvider` capability construction, Python
+`OcrExtractionService.extract`, web-E2E `acceptance-real.mts`, support
+`acceptance-artifacts.ts` and `acceptance-expectations.ts`, the focused
+`src/e2e/local-package/acceptance-artifacts.contract.mts`, and the fixture
+consumer `evidence-workbench.real.acceptance.spec.ts`. Missing variables, root
+mismatch, branch/`HEAD` drift, a missing path, or an extra path is
+discovery-and-stop.
 
 Cert and LAW consumer docs and schemas import/reference the exact generated
 `ProducerAcceptanceContractV1` version `"1"` and the literal producer
@@ -1715,8 +1889,8 @@ accepting an earlier one, and no gate depends on itself or on a later gate.
 | D0 | `DocsCommitted`: this documentation correction is committed. The exact SHA is external, not self-embedded. | Exact path set, diff/anchor/fence checks, and commit SHA reported by the worker |
 | D1 | `DesignReviewed`: consumes D0 `HEAD` only. Pending now. | Fresh Standards and Specification reports naming `git rev-parse HEAD`, paths, and external check/PR metadata |
 | D2 | `ImplementationAuthorized`: consumes D1 approval and no later record. | Root authorization, owner paths, first-slice plan, and bounded implementation queue; no handoff commit is implied |
-| D3 | `CandidateBuilt`: consumes D2 authorization and the exact implementation source. | One immutable byte ledger containing candidate bytes, root/id, manifest, source/version/schema/contract/model hashes, and every raw artifact digest |
-| D4 | `CandidateAccepted`: consumes only externally supplied D3 root/id/digests through the future `acceptance-d3-candidate` target. | Sequential four-leg acceptance manifest, per-fixture CER/anchor results, cleanup/journal proofs, and D3 identity equality |
+| D3 | `CandidateBuilt`: consumes D2 authorization and the exact implementation source. | Creates the immutable acceptance package/bundle and semantic manifest, then one byte ledger containing candidate/package bytes, root/id, `contractSha256`, separate external archive SHA, source/version/schema/contract/model hashes, and every raw artifact digest |
+| D4 | `CandidateAccepted`: consumes only real externally supplied D3 root/id/digests and package/bundle bytes through the future `acceptance-d3-candidate` target. | Sequential four-leg acceptance manifest, per-fixture CER/anchor results, cleanup/journal proofs, and D3 identity equality; it never builds or hashes a source tree |
 | D5 | `PublishedImmutable`: consumes D4 success and publishes all D3 candidate bytes through the future workflow contract above; it does not call the stable-pointer workflow. | Public artifact URLs, immutable publication metadata, and equality ledger; stable pointer remains unmoved |
 | D6 | `DownloadBackVerified`: consumes only D5 public artifacts through a fresh-download dispatch. | Fresh downloads and hashes equal the D3/D5 ledger for every channel; no local path, cache, or mutable pointer is accepted |
 | D7 | `PublishedAccepted`: consumes only D6 downloads through the published-acceptance dispatch and repeats the D4 sequence. | Published/downloaded acceptance manifest with the same thresholds, anchors, cleanup, and no averaging |

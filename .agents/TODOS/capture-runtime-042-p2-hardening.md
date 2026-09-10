@@ -32,7 +32,7 @@ slice does not edit workflows, rerun CI, or claim that deterministic CI proves
 OCR, GPU, cleanup, installation, publication, or pointer state.
 
 The expected starting HEAD for this closure is
-`78c8fe2718daa25ccf4b509a18598b4a710db47b`; stop if `HEAD` drifts. Preserve unrelated untracked
+`f4ab9518d3d23c280791b90b8590fd0f1262500e`; stop if `HEAD` drifts. Preserve unrelated untracked
 `.github/copilot-instructions.md` and `.github/instructions/`; never stage them.
 
 ## D0 - DocsCommitted
@@ -71,11 +71,15 @@ The expected starting HEAD for this closure is
 ## D2 - ImplementationAuthorized
 
 D2 and D2.5 in this checklist are design, contract, and red-infrastructure
-authorization only. They do not install, stage, build, launch, or accept a
-candidate and do not require an installed candidate before D3. D3 first builds
-the immutable byte ledger; D4 later consumes only externally supplied D3
-candidate root/id/digests through its separately named target. Existing local
-`capture-workbench-desktop:acceptance-real` remains a diagnostic and is not D4.
+authorization only. For the acceptance contract, D2 is limited to schemas,
+codecs, and synthetic RED/GREEN cases; it does not generate an archive,
+manifest/hash delivery, launch a child, use real media, or consume D3. No D2
+step installs, stages, builds, launches, or accepts a candidate, and no D2 step
+requires an installed candidate. D3 is the first gate that creates the
+immutable acceptance package/bundle and byte ledger; D4 later consumes only
+externally supplied D3 candidate root/id/digests through its separately named
+target. Existing local `capture-workbench-desktop:acceptance-real` remains a
+diagnostic and is not D4.
 
 - [ ] **Authorize one bounded implementation queue after D1.** Consume only the
   approved D1 head. The root authorization records owner paths/symbols, the
@@ -178,79 +182,55 @@ candidate root/id/digests through its separately named target. Existing local
   revert of the OCR slice only; preserve failed evidence. Commit boundary:
   `feat(runtime): replace OCR pipeline behind chosen interface`.
 
-### D2.3 RuntimeSessionJournalV1 and acceptance-contract foundation
+### D2.3 Acceptance schema/codec synthetic RED foundation
 
-- [ ] **Establish the producer journal and canonical acceptance contract before
-  consumer convergence.** Owner paths/symbols are the existing producer
-  lifecycle owner at
-  `packages/capture-sidecar-launcher/src/process.rs:OwnedRuntimeSession`, its
-  private state/proof/error types, and
-  `tools/acceptance-checkpoint-journal.ts` (`openAcceptanceCheckpointWriter`,
-  `readAcceptanceCheckpointJournal`, `writeAcceptanceTerminal`) as acceptance
-  evidence only, never a second native lifecycle owner. The future canonical
-  package/bundle is `@capture-runtime/acceptance-contract` at the proposed
-  `packages/capture-acceptance-contract/` root with
+- [ ] **Define only the acceptance schemas, codecs, and synthetic RED/GREEN
+  cases.** The proposed producer package is
+  `@capture-runtime/acceptance-contract` at
+  `packages/capture-acceptance-contract/`. D2 may create or update only
   `schemas/producer-child-scope-v1.schema.json`,
   `schemas/producer-child-invocation-v1.schema.json`,
   `schemas/consumer-semantic-result-v1.schema.json`,
-  `schemas/acceptance-child-wire-v1.schema.json`,
-  `src/canonical-json.ts`, `src/codecs.ts`,
-  `src/hash.ts`, `src/manifest.ts`, `src/index.ts`, `tools/generate.ts`,
-  `contract-manifest.json`, `contract-sha256.txt`, `package.json`, and
-  `project.json`. The package/bundle bytes and hash are D3/D6 artifacts and its
-  hash is distinct from runtime `contractSetSha256`; the existing
-  `tools/acceptance-contract.ts` is only a consumer adapter.
+  `schemas/acceptance-child-wire-v1.schema.json`, `src/codecs.ts`, and the
+  synthetic contract cases owned by the resolved package/test owner. Synthetic
+  cases must prove closed fields, the unbound/bound journal binding union,
+  complete ordered scope/invocation `rootBindings`, exact binding union
+  `unbound | bound`, canonical record decoding,
+  one-use capability rules, and rejection of nested ready scope. D2 does not
+  create a semantic manifest, archive/bundle, export delivery, hash delivery,
+  real fixture, child process, installed candidate, or D3 ledger. The existing
+  `tools/acceptance-contract.ts` remains a consumer adapter and never becomes
+  authority.
 
-  Implement `RuntimeSessionJournalV1` with state-discriminated variants:
-  `planned_unbound` contains plan identity only, with no activation receipt or
-  bound root refs/generations; `prepared_bound` and all descendants contain the
-  complete group/root ref and generation bindings and require a verified
-  `activationReceiptDigest`. The exhaustive graph is
-  `planned_unbound -> prepared_bound -> ready -> launching -> running ->
-  closing -> terminal`, with only the SPEC's no-resource, reconcile-required,
-  and manual-review edges. Every CAS binds state, group/root generations,
-  attempt, recovery epoch, plan/ref tuple, and receipt; recovery remains
-  observe-only and fail-closed with bounded three-attempt/60-second policy.
-  The journal records no raw paths, tokens, OCR, model bytes, or native
-  diagnostics. R3's injected `ReconcileRefSink.persist_group_refs` must flush
-  one complete group/per-root receipt and `verify_group_receipt` must reopen
-  and verify it before the producer writes `prepared_bound`.
-
-  Prerequisite: D1-approved journal/contract design and the resolved existing
-  launcher, desktop, and tools Nx owners. RED proof: a `planned_unbound` record has a
-  receipt or bound refs, a bound record lacks a receipt/ref/generation, the
-  group graph permits per-root activation, a torn/stale/unknown-generation
-  journal mutates resources, manual review auto-recovers, or a consumer/tool
-  copies schema/codec/hash authority. Required focused cases include
-  `planned_unbound_omits_activation_receipt_digest`,
-  `sink_persists_and_verifies_complete_group_receipt`,
-  `reconcile_rejects_stale_state_generation_attempt_or_epoch`,
-  `reconcile_failure_attempt_three_enters_manual_review`, and
-  `manual_review_recovery_resets_attempt_window_without_resource_mutation`.
-  GREEN verification uses only resolved existing owners:
+  Prerequisite: D1-approved contract design and a resolved Nx/package/test
+  owner. RED proof: a schema accepts an unknown field, lets an unbound record
+  carry bindings, accepts incomplete/reordered root bindings, nests mutable
+  `ready` scope in an invocation, replays a capability, or accepts a
+  consumer-produced cleanup/wire field. GREEN verification, after the owner is
+  resolved, is limited to the owning schema/codec synthetic tests plus:
 
   ~~~powershell
-  corepack pnpm nx show project capture-sidecar-launcher --json
   corepack pnpm nx show project capture-tools --json
-  corepack pnpm nx show project capture-workbench-desktop --json
-  corepack pnpm nx run capture-sidecar-launcher:cargo-fmt-check --skip-nx-cache
-  corepack pnpm nx run capture-sidecar-launcher:cargo-check --skip-nx-cache
-  corepack pnpm nx run capture-sidecar-launcher:cargo-test --skip-nx-cache
-  corepack pnpm nx run capture-workbench-desktop:cargo-test --skip-nx-cache
   corepack pnpm nx run capture-tools:lint --skip-nx-cache
   corepack pnpm nx run capture-tools:typecheck --skip-nx-cache
   corepack pnpm nx run capture-tools:test --skip-nx-cache
   ~~~
 
-  Creation stop: `packages/capture-acceptance-contract/`, its Nx project, and
-  any journal-specific target do not exist at this checkpoint; discovery must
-  confirm the owner and then separately authorize package/schema/target
-  creation. Never invoke a made-up target or let `tools/acceptance-contract.ts`
-  become authority. If a current owner cannot prove atomic create-new bytes,
-  receipt durability, group/root identity, or recovery guards, stop. Rollback:
-  additive revert of this foundation only, retaining failed journals and
-  manifests without cleanup guesses. Commit boundary:
-  `feat(runtime): add fail-closed session journal and acceptance contract foundation`.
+  Creation stop: `packages/capture-acceptance-contract/` and its Nx project do
+  not exist at this checkpoint. First run `corepack pnpm nx show project
+  capture-tools --json` and record the owner; do not invoke a made-up package,
+  schema, or contract target. D2 creation is limited to schemas/codecs and
+  synthetic RED/GREEN tests. `src/export.ts`, `src/hash.ts`, `src/manifest.ts`,
+  `tools/generate.ts`, `tools/create-bundle.ts`, `contract-manifest.json`, and
+  any archive/hash delivery are D3 creation and must stop here. Rollback:
+  additive revert of schema/codec synthetic cases only; preserve unrelated
+  worktree files. Commit boundary:
+  `test(acceptance): add schema and codec synthetic reds`.
+
+  The producer journal/lifecycle queue remains the existing
+  `OwnedRuntimeSession`/`RuntimeSessionJournalV1` owner described in the SPEC;
+  it is not implemented by this acceptance-only D2.3 item and is consumed by
+  later bounded implementation slices after D2 authorization.
 
 ### D2.4 OwnedRuntimeSession convergence slice
 
@@ -276,32 +256,56 @@ candidate root/id/digests through its separately named target. Existing local
   `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`; named Job takeover and weakened
   close/crash cleanup are forbidden.
 
-  R3 is whole-group: `prepare_group(immutable_plan, ReconcileRefSink)` first
-  journals `planned_unbound` with plan identity only. The sink's
-  `persist_group_refs` durably stores one group ref and every ordered per-root
-  ref/generation, flushes a `ReconcileRefReceiptV1`, and
-  `verify_group_receipt` reopens and verifies all refs, generations, roles,
-  ordinals, and plan digest. Only then does the producer write
-  `prepared_bound` (where `activationReceiptDigest` becomes required) and
-  privately construct one `ActivationPermitV1` containing permit version, plan
-  digest, group-ref digest/generation, the complete root-ref digest/generation
-  set, and receipt digest.
+  R3 is whole-group and its public seam is exactly
+  `prepare_group(plan, sink) -> PreparedGroup` followed by
+  `activate_group(PreparedGroup) -> GroupLease`. `PreparedGroup` is opaque,
+  move-only, nonserializable, exposes no fields or permit constructor, and
+  contains the producer-private `ActivationPermitV1`. `GroupLease` is likewise
+  opaque, move-only, live only after whole-group activation, and one-use. The
+  sink's `persist(bindingAttemptId, binding)`, `read_back(bindingAttemptId)`,
+  and `verify(bindingAttemptId, expected, readBack)` durably bind the complete
+  group: plan/group identity, immutable group generation, and every ordered
+  root binding (root ref, immutable root generation, role/ordinal/spec digest,
+  and reserved listener identity). Only a verified binding permits the
+  producer to write `prepared_bound` and construct the private permit.
 
-  `activate_group(prepared, permit)` is the only activation operation. It
-  assigns and verifies every root suspended before resuming any root; a
-  partial/failed assignment resumes none and closes/reconciles the suspended
-  set. The host cannot construct a permit, activate first, or activate one
-  root of a group. Single-root convenience is group size one and only wraps
-  this same path; no per-root activation exists. Reconciliation returns
-  semantic cleanup and `proofSha256`; no native identity crosses the seam.
+  `activate_group(prepared)` consumes the prepared value. It assigns and
+  verifies every root suspended before resuming any root, then CASes
+  `ready -> launching` using `journalRevision` and the complete binding before
+  the first resume. A reserved listener identity before resume is distinct
+  from live listener readiness after resume. A `ready` group means every root
+  is assigned, suspended, and verified. A partial assignment, partial
+  resume, or listener-readiness failure closes the entire Job, returns no
+  `GroupLease`, and reconciles the whole group. The host cannot construct a
+  permit, activate first, replay a prepared value, or activate one root. A
+  single-root convenience call is group size one and uses this same path; no
+  per-root activation exists. Reconciliation returns semantic cleanup and
+  `proofSha256`; no native identity crosses the seam. The live `GroupLease`
+  carries a private one-use token invalidated on close, cancel, readiness
+  failure, or drop; replay and a second close are rejected.
 
-  Prerequisite: the D2.3 journal/contract foundation, D1-approved R3 choice,
-  D2 authorization, the injected `ReconcileRefSink` adapter, and red lifecycle
-  tests. RED proof: a raw
-  Job/handle/PID crosses the seam, a descendant escapes, baseline processes are
-  killed, a multi-root close is partial, a sink receipt is missing, a stale or
-  forged permit activates, or live `terminate_and_prove` does not produce
-  terminal proof. GREEN verification:
+  The producer journal graph is exhaustive:
+  `planned_unbound -> prepared_bound -> ready -> launching -> running ->
+  closing -> terminal`, plus no-resource `planned_unbound -> terminal`,
+  `planned_unbound -> reconcile-required`, every bound live state to
+  `reconcile-required`, timed/failed reconcile attempts one and two back to
+  `reconcile-required`, attempt three to `manual-review`, and explicit
+  producer-authorized `manual-review -> reconcile-required`. A later complete
+  observe-only proof alone may move `reconcile-required -> terminal`.
+  Every CAS guards state, `journalRevision`, attempt, recovery epoch, and the
+  complete binding; journal revision/attempt increment together, while
+  immutable group/root generations never change. Manual review never launches
+  a replacement or transitions directly to terminal; recovery is a fresh
+  authorization nonce with no resource mutation.
+
+  Prerequisite: the D2.3 schema/codec synthetic foundation, D1-approved R3
+  choice, D2 authorization, the injected `ReconcileRefSink` adapter, and red
+  lifecycle tests. RED proof: a raw Job/handle/PID crosses the seam, a
+  descendant escapes, baseline processes are killed, a multi-root close is
+  partial, a sink persist/read-back/verify step is missing, a stale or forged
+  prepared value activates, a partial resume or listener readiness failure
+  leaves a lease, or live `terminate_and_prove` does not produce terminal
+  proof. GREEN verification:
 
   ~~~powershell
   corepack pnpm nx run capture-sidecar-launcher:cargo-fmt-check --skip-nx-cache
@@ -315,16 +319,18 @@ candidate root/id/digests through its separately named target. Existing local
   ~~~
 
   Required focused cases in the existing launcher/desktop Cargo test owners:
-  `prepare_group_writes_planned_unbound_before_sink`,
-  `activation_requires_complete_group_receipt_and_permit`,
-  `activation_rejects_missing_or_stale_permit_without_resource_acquisition`,
-  `sink_failure_leaves_planned_unbound_without_resource_acquisition`,
+  `prepare_group_writes_unbound_before_sink`,
+  `sink_persists_reads_back_and_verifies_complete_binding`,
+  `activation_requires_complete_group_binding`,
+  `activation_rejects_replay_or_stale_prepared_without_resource_acquisition`,
+  `sink_failure_leaves_unbound_without_resource_acquisition`,
   `partial_group_assignment_resumes_no_root`,
+  `listener_readiness_failure_closes_entire_group_without_lease`,
   `concurrent_group_activation_has_one_cas_winner`,
   `group_size_one_uses_the_same_path`, and
-  `convenience_start_requires_reconcile_ref_sink`. No new lifecycle target is
-  implied; if the current test owner cannot host these cases, run `nx show
-  project` and record a target-creation stop before adding one.
+  `convenience_start_requires_sink`. No new lifecycle target is implied; if
+  the current test owner cannot host these cases, run `nx show project` and
+  record a target-creation stop before adding one.
 
   Stop if the existing native owner/export/caller cannot be resolved or a
   desktop coordinator would be required. Rollback: additive revert to the
@@ -341,14 +347,42 @@ candidate root/id/digests through its separately named target. Existing local
   `verifyRecordedCleanupScope`,
   proposed canonical package `@capture-runtime/acceptance-contract` at
   `packages/capture-acceptance-contract/` (`schemas/*.schema.json`,
-  `src/codecs.ts`, `tools/generate.ts`, `src/manifest.ts`, `src/hash.ts`,
-  `contract-manifest.json`, `contract-sha256.txt`, `package.json`,
-  `project.json`), and `tools/acceptance-contract.ts:writeAcceptanceManifest`
-  (consumer adapter only),
+  `src/canonical-json.ts`, `src/codecs.ts`, `src/export.ts`, `src/hash.ts`,
+  `src/manifest.ts`, `src/index.ts`, `tools/generate.ts`,
+  `tools/create-bundle.ts`, `contract-manifest.json`, `package.json`,
+  `project.json`), with schema owners, strict codec owners, public export/
+  index owners, canonical-json/manifest/hash owners, generator/bundle
+  delivery owners, and package/Nx owners kept distinct.
+  `tools/acceptance-contract.ts:writeAcceptanceManifest` (consumer adapter
+  only),
   `readAcceptanceManifestTolerant`,
   `apps/capture-workbench-desktop/scripts/acceptance-real.ts:waitForChildClose`,
   `apps/capture-workbench-desktop/scripts/acceptance-orchestration.ts:runCaptureWorkbenchAcceptanceOrchestration`,
   and `apps/capture-workbench-desktop/scripts/real-ocr-result-assertions.ts:assertRealOcrResult`.
+  `schemas/*.schema.json` own the record schemas; `src/codecs.ts` owns strict
+  codecs; `src/export.ts` and `src/index.ts` own public exports;
+  `src/canonical-json.ts`, `src/manifest.ts`, and `src/hash.ts` own canonical
+  serialization, semantic manifest construction, and digest domains;
+  `tools/generate.ts` owns generated material and `tools/create-bundle.ts`
+  owns external archive creation. D2.3 may add only schemas/codecs and
+  synthetic RED/GREEN cases. D3 is the first gate that creates the immutable
+  package/bundle, semantic manifest, and ledger. D4 consumes exact D3 bytes;
+  D6 rehashes those bytes after fresh download. The acceptance package hash is
+  distinct from runtime `contractSetSha256`.
+
+  The semantic manifest is the canonical ordered entry set of
+  `{path, byteLength, sha256}` for the schema/codec/export/canonical-json
+  files. It excludes itself, any hash file, generated archive, and delivery
+  metadata. Each entry hash covers exact file bytes. `contractSha256` is
+  SHA-256 of the manifest's canonical compact UTF-8 bytes, not the archive and
+  not a manifest containing its own digest. No generated standalone hash file
+  or embedded self-hash is allowed. D3 records the
+  literal `contractSha256` and separate external
+  `acceptanceContractArchiveSha256` over the exact archive bytes; D4 binds
+  both, and D6 recomputes both independently. The digest domains remain
+  acyclic: entry bytes -> semantic manifest -> contract hash; external archive
+  bytes -> archive hash; each gate ledger hashes its own canonical bytes; media,
+  oracle, invocation, result, and wire hashes never include a later record.
   These current child/terminal manifests are migration surfaces. The future
   producer is the sole writer of mutable `ProducerChildScopeV1` at
   `CAPTURE_ACCEPTANCE_SCOPE_PATH`; the producer publishes an immutable
@@ -369,10 +403,11 @@ candidate root/id/digests through its separately named target. Existing local
   expected normalized-truth and anchor-set digests, the child semantic-result
   digest, artifact IDs, detailed producer cleanup, privacy flags, and its
   self-excluded canonical JSON digest. The invocation has
-  `readyState`, child/sequence identity, D4/D3 or D7/D6
-  download/publication binding, predecessor cleanup proof digests,
-  ordered fixture assignments, a separate output path nonce, and its own
-  self-excluded digest. D4 requires full private normalized reference text
+  `invocationState: "frozen"`, child/sequence identity, D4/D3 or D7/D6
+  download/publication binding, predecessor cleanup proof digests, the
+  complete ordered group/root `rootBindings`, ordered fixture assignments, a
+  separate output path nonce, and its own self-excluded digest. D4 requires
+  full private normalized reference text
   plus critical anchors, as does D7; explicitly delete/prohibit Cert's
   `anchorOnly` field/flag and `parseOcrAnchorExpectation` parser formal paths.
   Cert and LAW consume the exact generated `@capture-runtime/acceptance-contract`
@@ -383,10 +418,12 @@ candidate root/id/digests through its separately named target. Existing local
   `0.03`), zero critical-anchor omissions, and no averaging.
 
   `ProducerChildScopeV1` is state-discriminated: `planned` contains only
-  child/plan identity; `prepared` adds complete group/root refs and
+  child/plan identity plus an unbound binding; `prepared` adds a complete
+  ordered `rootBindings` set, binding-attempt identity, and immutable
   generations; `ready` adds the verified invocation digest and output nonce.
-  A planned scope cannot carry activation receipt/root/ref/generation fields,
-  and only ready can be sent to the child.
+  A planned/unbound scope cannot carry binding receipt/root-ref/generation
+  fields. The ready scope is not nested in the invocation and only its frozen
+  invocation transport can be sent to the child.
 
   `ConsumerSemanticResultV1` is the consumer's complete but cleanup-free
   result: it carries producer contract version `"1"` and the D3/D6-bound
@@ -434,17 +471,27 @@ candidate root/id/digests through its separately named target. Existing local
 
   The exact Cert adapter migration paths are
   `${CERT_PREP_CHECKOUT}/apps/cert-prep-desktop/scripts/ocr-truth-contract.mts:evaluateOcrTruth`,
-  `${CERT_PREP_CHECKOUT}/apps/cert-prep-desktop/scripts/ocr-truth-contract.mts:normalizeOcrText`,
-  `${CERT_PREP_CHECKOUT}/apps/cert-prep-desktop/scripts/ocr-truth-contract.mts:parseOcrTruthManifest`,
-  `${CERT_PREP_CHECKOUT}/apps/cert-prep-desktop/scripts/ocr-truth-contract.mts:levenshtein`,
+  `normalizeOcrText`, `parseOcrTruthManifest`, and `levenshtein`,
   `${CERT_PREP_CHECKOUT}/apps/cert-prep-desktop/scripts/acceptance-real-options.mts:parseOcrAnchorExpectation`,
   `${CERT_PREP_CHECKOUT}/apps/cert-prep-desktop/scripts/phase1-acceptance-evidence.mts:buildPhase1AcceptanceEvidence`,
-  and `${CERT_PREP_CHECKOUT}/apps/cert-prep-desktop/scripts/ocr-semantic-evidence.mts:serializePrivacySafeOcrSemanticEvidence` /
-  `OCR_NORMALIZATION_VERSION`. The exact LAW adapter migration paths are
+  `${CERT_PREP_CHECKOUT}/apps/cert-prep-desktop/scripts/ocr-semantic-evidence.mts:serializePrivacySafeOcrSemanticEvidence` /
+  `OCR_NORMALIZATION_VERSION`, and the actual acceptance artifact owner
+  `${CERT_PREP_CHECKOUT}/apps/cert-prep-desktop/scripts/acceptance-artifacts.mts:writeAcceptanceManifest`,
+  `sanitizeAcceptanceFixtureMetadata`, `collectAcceptanceArtifactInputs`, and
+  `redact`, plus its focused acceptance-artifacts contract test. The exact LAW
+  adapter migration paths are
   `${GX_LAW_PREP_CHECKOUT}/apps/law-prep-engine/src/main/java/com/gx/lawprep/engine/capture/FoundryCaptureStructuringProvider.java:FoundryCaptureStructuringProvider`,
   `${GX_LAW_PREP_CHECKOUT}/apps/law-prep-engine/src/main/java/com/gx/lawprep/engine/extraction/EvidenceTextExtractionService.java:EvidenceTextExtractionService`,
   `${GX_LAW_PREP_CHECKOUT}/apps/law-prep-web-e2e/src/e2e/support/acceptance-expectations.ts:loadLawAcceptanceExpectation`,
-  `${GX_LAW_PREP_CHECKOUT}/apps/law-prep-web-e2e/src/e2e/support/acceptance-artifacts.ts:writeAcceptanceManifest`,
+  `${GX_LAW_PREP_CHECKOUT}/apps/law-prep-web-e2e/src/e2e/support/acceptance-artifacts.ts:createAcceptanceRun`,
+  `writeAcceptanceManifest`, and `redact`, the focused contract owner
+  `${GX_LAW_PREP_CHECKOUT}/apps/law-prep-web-e2e/src/e2e/local-package/acceptance-artifacts.contract.mts`,
+  and real runner
+  `${GX_LAW_PREP_CHECKOUT}/apps/law-prep-web-e2e/scripts/acceptance-real.mts`.
+  LAW capability/fixture owners are
+  `${GX_LAW_PREP_CHECKOUT}/apps/law-prep-web-e2e/src/e2e/support/evidence-workbench.scenario-types.ts:createDefaultFixtureBundle`,
+  `${GX_LAW_PREP_CHECKOUT}/apps/law-prep-web-e2e/src/e2e/local-package/evidence-workbench.real.acceptance.spec.ts`,
+  `${GX_LAW_PREP_CHECKOUT}/apps/law-prep-engine/src/main/java/com/gx/lawprep/engine/capture/FoundryCaptureStructuringProvider.java:StructuringProviderCapability`,
   and `${GX_LAW_PREP_CHECKOUT}/apps/law-prep-ai-service/src/app/ocr/service.py:OcrExtractionService.extract`.
   D4 and D7 use the same producer-owned serial runner with four distinct legs:
   `(1, capture-private-jpeg, capture-private-jpeg-v1)`,
@@ -480,6 +527,22 @@ candidate root/id/digests through its separately named target. Existing local
   invocation; raw truth remains local, and evidence exports digests and
   semantic measurements only.
 
+  Capability lifetime and audience are part of the acceptance contract. Each
+  media or oracle capability is issued for exactly one named child/leg, one
+  gate (`D4` or `D7`), and one frozen invocation. Its audience is that child,
+  never the host, another product/leg, a retry, or a later gate. The resolver
+  atomically consumes it on the first successful open; a second open, copied
+  handle, or replayed invocation is rejected and requires a new binding. The
+  producer revokes it before launch on cancel, identity mismatch, failed
+  freeze/activation, or failed cleanup, and revokes it at child close.
+  Expiry, revocation, and terminal/reconcile state make it unusable; reopening
+  a path or reconstructing a digest cannot bypass revocation. Raw handles,
+  media, truth, paths, bearer tokens, PIDs, and native diagnostics are never
+  logged or persisted outside the private resolver/invocation store. Logs,
+  errors, reports, and wires contain only capability digests and sanitized
+  reason codes. Missing lifetime, audience, single-use, revocation, or log
+  prohibition is a fail-closed RED.
+
   Serialization is canonical compact UTF-8 JSON with no BOM/trailing newline,
   recursively lexicographically sorted object keys, deterministic semantic
   arrays/set ordering, and lowercase SHA-256. Exclude the self digest field
@@ -512,21 +575,34 @@ candidate root/id/digests through its separately named target. Existing local
   characters generated from 32 CSPRNG bytes (`secrets.token_bytes(32)`); it is
   opaque, never deterministic, and never derived from the request. The exact
   producer operation is
-  `start_or_get(RequestRefV1, StartCaptureByRequestRefV1 metadata, source byte
-  stream)`. Metadata is canonical compact UTF-8 JSON with sorted keys and the
-  closed API-2.0 shape: source kind/name/type, byte length, expected source
-  SHA-256, structuring mode, target language, and eager start policy. The
-  producer recomputes request metadata and source byte count/digest from the
-  stream and uses `(requestRef, requestDigest, sourceSha256)` as its tuple.
-  Before any network/capture side effect Python durably writes `start_pending`
-  with ref, canonical request digest, source digest/length, and contract
-  version/hash; the producer journals the ref intent before create/scheduling.
+  `start_or_get(request_ref, request_digest, canonical metadata, source bytes)`.
+  The closed `StartCaptureByRequestRefV1` metadata is canonical compact UTF-8
+  JSON with sorted keys and all fields present: `protocolVersion: "2"`,
+  `sourceKind`, `fileName`, `mediaType`, `totalBytes`, expected `sourceSha256`,
+  ordered `pdfPageNumbers` (`null` for non-PDF or duplicate-free prefix
+  `[1, ..., N]` for PDF), `structuringMode`, `targetLanguage` (nullable), and
+  `startPolicy: "eager"`. `requestRef` and `requestDigest` are separate. The
+  producer recomputes canonical metadata, source byte count, and source digest
+  from the one-pass source stream. Legacy `StartCaptureV2.clientRequestId` is
+  represented by the opaque `requestRef`, not duplicated; `ingestionId` is
+  producer-created/private and first known at `ingestion_bound`, so no start
+  field is silently dropped and no native identity crosses the seam. It uses
+  `(requestRef, requestDigest, sourceSha256)` as its idempotency tuple.
+  Before any network/capture side effect, it durably writes `reserved` with
+  the ref, request digest, complete metadata, source digest/length, and
+  contract version/hash; it then journals the same intent before
+  create/scheduling. Durable progression is exactly
+  `reserved -> source_verified -> ingestion_bound -> started -> terminal ->
+  cleanup -> deleted`. Only a producer created/discovered ACK with a durable
+  receipt permits `started`.
   Same ref plus same metadata and bytes returns created/discovered without a
-  duplicate. Changed metadata, length, or source bytes conflicts without
-  mutation; timeout/dropped ACK stays pending and retries the same tuple. Only
-  a producer created/discovered ACK with a durable receipt permits `running`;
-  `get`, `cancel`, and `delete` all use the same ref and private mapping. No
-  capture id/path/token/alternate ref crosses the seam.
+  duplicate. Changed metadata, page ordering, length, or source bytes is a
+  conflict without mutation. A timeout/dropped response leaves the last
+  durable stage unchanged, does not imply the producer did not start, and
+  retries the same tuple/ref for discovery; it never invents a replacement
+  ref, marks terminal, or deletes. `get`, `cancel`, and `delete` all use the
+  same ref and private mapping. No capture id/path/token/alternate ref crosses
+  the seam.
 
   Future owner seams are exact: current nested `start_capture` in
   `packages/capture-runtime/src/capture_runtime/routes/streaming.py:register_streaming_routes`
@@ -550,7 +626,7 @@ candidate root/id/digests through its separately named target. Existing local
   `same_ref_same_bytes_discovers_without_duplicate`,
   `same_ref_changed_metadata_conflicts_without_mutation`,
   `same_ref_changed_source_conflicts_without_mutation`,
-  `start_pending_survives_timeout_and_retries_same_tuple`,
+  `reserved_survives_timeout_and_retries_same_tuple`,
   `running_requires_producer_ack_or_discovery`, `lookup_cancel_delete_use_same_ref`,
   and `request_refs_are_csprng_and_not_request_derived`. The adapter uses the
   existing authenticated `/v2/captures` operation/lifecycle and keeps API `2.0`
@@ -558,7 +634,7 @@ candidate root/id/digests through its separately named target. Existing local
   LAW client/config and route metadata before assigning a new target; this
   checkout does not claim such a target exists.
 
-  Prerequisite: D2.3 journal/contract foundation, D2.4 lifecycle design, D2
+  Prerequisite: D2.3 schema/codec synthetic foundation, D2.4 lifecycle design, D2
   authorization, explicit
   fixture/anchor manifest, current owner discovery, and the exact producer
   schema review. This D2.5 slice is design/contract/red infrastructure only:
@@ -617,6 +693,30 @@ candidate root/id/digests through its separately named target. Existing local
   separately below `${CERT_PREP_CHECKOUT}` and LAW changes separately below
   `${GX_LAW_PREP_CHECKOUT}`; each reports its own SHA/checks. No Capture commit
   stages sibling paths, and no cross-repository push is implied.
+
+  The D2 path inventory must include the actual Cert acceptance artifact owner
+  `${CERT_PREP_CHECKOUT}/apps/cert-prep-desktop/scripts/acceptance-artifacts.mts`
+  (`createAcceptanceRun`, `assertWebmArtifact`, `sha256File`,
+  `writeAcceptanceManifest`, `sanitizeAcceptanceFixtureMetadata`,
+  `collectAcceptanceArtifactInputs`, and `redact`) and its real runner
+  `${CERT_PREP_CHECKOUT}/apps/cert-prep-desktop/scripts/acceptance-real.mts`,
+  plus focused test
+  `${CERT_PREP_CHECKOUT}/apps/cert-prep-desktop/scripts/acceptance-artifacts.test.mts`.
+  The LAW inventory must include
+  `${GX_LAW_PREP_CHECKOUT}/apps/law-prep-web-e2e/src/e2e/support/acceptance-artifacts.ts`
+  (`createAcceptanceRun`, `writeAcceptanceManifest`, and `redact`), its
+  focused `${GX_LAW_PREP_CHECKOUT}/apps/law-prep-web-e2e/src/e2e/local-package/acceptance-artifacts.contract.mts`
+  test, real runner
+  `${GX_LAW_PREP_CHECKOUT}/apps/law-prep-web-e2e/scripts/acceptance-real.mts`,
+  expectation owner
+  `${GX_LAW_PREP_CHECKOUT}/apps/law-prep-web-e2e/src/e2e/support/acceptance-expectations.ts:loadLawAcceptanceExpectation`,
+  fixture/real-spec owner
+  `${GX_LAW_PREP_CHECKOUT}/apps/law-prep-web-e2e/src/e2e/support/evidence-workbench.scenario-types.ts:createDefaultFixtureBundle`
+  and `${GX_LAW_PREP_CHECKOUT}/apps/law-prep-web-e2e/src/e2e/local-package/evidence-workbench.real.acceptance.spec.ts`,
+  Java capability owner
+  `${GX_LAW_PREP_CHECKOUT}/apps/law-prep-engine/src/main/java/com/gx/lawprep/engine/capture/FoundryCaptureStructuringProvider.java:StructuringProviderCapability`,
+  and Python adapter
+  `${GX_LAW_PREP_CHECKOUT}/apps/law-prep-ai-service/src/app/ocr/service.py:OcrExtractionService.extract`.
 
 ### D2.5.1 Compute real-proof slice
 
@@ -724,24 +824,31 @@ candidate root/id/digests through its separately named target. Existing local
   `apps/capture-workbench-desktop/scripts/stage-runtime.ts:stageRuntime,validateRuntime,sha256File`,
   `apps/capture-workbench-desktop/scripts/assert-staged-runtime.ts:assertStagedRuntime`,
   `tools/verify-release-candidate.ts:computeCandidateId`,
-  `tools/create-release-manifest.ts:main`, and the existing candidate manifest,
-  source-lock, catalog, and generated-contract owners. Consume D2 authorization
-  and the exact implementation source only. D3 builds one immutable byte ledger
-  that records candidate root, candidate id, manifest digest, every raw artifact
-  SHA-256, the exact generated `@capture-runtime/acceptance-contract`
-  package/bundle bytes and canonical `contractSha256`, and
+  `tools/create-release-manifest.ts:main`, the existing candidate manifest,
+  source-lock, catalog, and generated-contract owners, and the future
+  `packages/capture-acceptance-contract/` package owners:
+  `src/canonical-json.ts`, `src/codecs.ts`, `src/export.ts`, `src/hash.ts`,
+  `src/manifest.ts`, `src/index.ts`, `tools/generate.ts`, and
+  `tools/create-bundle.ts`. Consume D2 authorization and the exact
+  implementation source only. D3 is the first construction gate: it creates
+  one immutable acceptance package/bundle, semantic manifest, and candidate
+  byte ledger. The ledger records candidate root/id, manifest digest, every
+  raw artifact SHA-256, the exact package/bundle bytes, literal
+  `contractSha256`, separate external `acceptanceContractArchiveSha256`, and
   source/version/schema/runtime-contract/model/profile/catalog identity. The
-  acceptance-package hash is distinct from runtime `contractSetSha256`;
-  it does not require an installed candidate. D3 owns candidate construction;
-  the separately authorized D5-D8 workflow slice owns publication-workflow
-  contract changes.
+  acceptance-package hash is distinct from runtime `contractSetSha256`; D3
+  does not require a pre-existing installed candidate. D3 owns candidate and
+  package construction; the separately authorized D5-D8 workflow slice owns
+  publication-workflow contract changes.
 
   Prerequisite: all authorized D2 implementation commits, Nx 23.1.2/pnpm 12
   identity checks, and the exact 0.4.2/API 2.0/schema/contract inventory. RED proof:
-  every candidate byte has a SHA-256 and the immutable ledger binds source
-  commit, version, schema/projection, contract, runtime/worker/model/profile/
-  catalog, channel, and build provenance; a source-tree, mutable URL, stale
-  version, or mixed artifact fails. GREEN verification:
+  every candidate and acceptance-package byte has a SHA-256 and the immutable
+  ledger binds source commit, version, schema/projection, both acceptance
+  contract digests, runtime/worker/model/profile/catalog, channel, and build
+  provenance; a source-tree, mutable URL, stale version, mixed artifact,
+  embedded self-hash, or contract/archive digest mismatch fails. GREEN
+  verification:
 
   ~~~powershell
   corepack pnpm nx run capture-runtime:build-release-artifacts --skip-nx-cache
@@ -781,12 +888,21 @@ candidate root/id/digests through its separately named target. Existing local
   existing `capture-workbench-desktop:acceptance-real` target remains a local
   installed diagnostic and is explicitly non-D4.
 
-  Prerequisite: D3 immutable byte ledger, the future target's created and
-  resolved metadata, real private JPEG and scanned PDF page-1 fixtures with
-  critical anchors, model memory release, and lifecycle/journal proof. RED
-  proof: the exact externally supplied D3 byte hashes are not present in each
-  child, a target derives bytes from source or stages/builds them, a mutable URL
-  is used, leg identity/order or CER/anchors fail, or any
+  The target receives the real D3 package/bundle bytes and immutable candidate
+  ledger, including both literal `contractSha256` and external
+  `acceptanceContractArchiveSha256`; it must not create a D2 package, manifest,
+  archive, or ledger and must not build from the source tree. The canonical
+  package at `packages/capture-acceptance-contract/` owns schemas, codecs,
+  exports, canonical JSON, manifest, and hash delivery; the existing
+  `tools/acceptance-contract.ts` remains a consumer adapter only.
+
+  Prerequisite: D3 immutable package/bundle and candidate byte ledger, the
+  future target's created and resolved metadata, real private JPEG and scanned
+  PDF page-1 fixtures with critical anchors, model memory release, and
+  lifecycle/journal proof. RED proof: the exact externally supplied D3 byte
+  hashes are not present in each child, D4 derives bytes from source or
+  stages/builds them, a mutable URL is used, either contract digest is absent
+  or mismatched, leg identity/order or CER/anchors fail, or any
   process/listener/staging cleanup is unknown. GREEN verification:
 
   ~~~powershell
@@ -865,8 +981,9 @@ candidate root/id/digests through its separately named target. Existing local
   inputs are the D5 publication-ledger artifact/run, immutable public URLs or
   release tag,
   expected D3/D5 byte and manifest hashes, the exact
-  `@capture-runtime/acceptance-contract` package/bundle bytes and
-  `contractSha256` (distinct from runtime `contractSetSha256`),
+  `@capture-runtime/acceptance-contract` package/bundle bytes,
+  `contractSha256`, and separate external `acceptanceContractArchiveSha256`
+  (all distinct from runtime `contractSetSha256`),
   candidate/source/version/schema/contract identity, and no stable or mutable
   pointer. Its output is an independently hashed D6 download bundle/ledger that
   records the source URL,
@@ -903,8 +1020,9 @@ candidate root/id/digests through its separately named target. Existing local
   independent D7 published-acceptance ledger. It invokes
   `tools/three-project-acceptance.ts:runAcceptanceSequence` and
   `runCaptureWorkbenchAcceptance` plus
-  exact D6 `@capture-runtime/acceptance-contract` package/bundle bytes and
-  `contractSha256`; `tools/acceptance-contract.ts` is only a consumer adapter;
+  exact D6 `@capture-runtime/acceptance-contract` package/bundle bytes,
+  `contractSha256`, and `acceptanceContractArchiveSha256`;
+  `tools/acceptance-contract.ts` is only a consumer adapter;
   its validators are
   `validateChildManifest`, `validateTerminalManifest`, and
   `validateCleanupEvidence` in `tools/three-project-acceptance.ts`. Run in

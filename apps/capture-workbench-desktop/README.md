@@ -27,6 +27,29 @@ contract authority. Fixture assignments use opaque media/oracle capability
 handles and digests; consumer-private read-only resolvers bind them to real
 media/full truth, while raw paths/text never enter the invocation or result.
 The desktop never mutates producer scope or writes the final acceptance wire.
+The package semantic manifest excludes itself, hash files, archives, and
+delivery metadata; `contractSha256` hashes only that canonical manifest, while
+the external archive has separate `acceptanceContractArchiveSha256`. This
+acceptance identity is distinct from runtime `contractSetSha256`; D2 is limited
+to schemas/codecs and synthetic RED/GREEN cases, D3 creates the immutable
+package/bundle and ledger, and D4 consumes real D3 bytes. Each capability is
+single-use and audience-bound to one child/leg/gate/invocation, revoked on
+cancel, mismatch, failed freeze/activation/cleanup, or close, and never logged
+as a raw handle/path/token/PID.
+The proposed package delivery owners are `schemas/*.schema.json`,
+`src/codecs.ts`, `src/export.ts`, `src/index.ts`, `src/canonical-json.ts`,
+`src/manifest.ts`, `src/hash.ts`, `tools/generate.ts`, and
+`tools/create-bundle.ts`; package/Nx metadata owns delivery.
+
+The producer's native R3 boundary is whole-group:
+`prepare_group(plan, sink) -> PreparedGroup` returns an opaque, move-only,
+nonserializable value containing a producer-private `ActivationPermit`, and
+`activate_group(PreparedGroup) -> GroupLease` consumes it once. Complete
+ordered root bindings are persisted/read back/verified by `bindingAttemptId`;
+activation CASes `ready -> launching` before resume. Reserved listener identity
+before resume is distinct from live readiness after resume. Partial assignment,
+resume, or listener readiness closes the entire Job, returns no lease, and
+reconciles the whole group. Capture remains the size-one path.
 
 Run `corepack pnpm dev` for the product lane. It generates and stages release
 runtime assets before Tauri starts. `corepack pnpm dev:deterministic` remains a
