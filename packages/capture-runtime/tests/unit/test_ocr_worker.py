@@ -22,7 +22,7 @@ from capture_runtime.ocr_preflight import (
     OcrGpuAdapter,
     OcrGpuCapabilitySnapshot,
 )
-from capture_runtime.ocr_projection import OcrPageInput, OcrPageManifest, _OcrEngineRequest
+from capture_runtime.ocr_projection import OcrEngineRequest, OcrPageInput, OcrPageManifest
 from capture_runtime.worker_client import (
     WorkerResultError,
     _assert_ocr_progress_matches_final,
@@ -599,7 +599,7 @@ def test_ocr_worker_does_not_emit_header_or_pages_before_dml_evidence(
                 },
             ),
             Event(),
-            progress,
+            None,
         )
 
     assert progress == []
@@ -664,7 +664,7 @@ def test_ocr_worker_rejects_unproven_dml_result_before_emitting_header(
                 },
             ),
             Event(),
-            progress,
+            None,
         )
 
     assert progress == []
@@ -753,8 +753,8 @@ def _engine_request_for_worker_adapter(
     manifest: tuple[OcrPageManifest, ...],
     cancellation: Event,
     observe: Callable[[OcrPageManifest, object, OcrProvenanceV3], OcrPageInput],
-) -> _OcrEngineRequest:
-    return _OcrEngineRequest(
+) -> OcrEngineRequest:
+    return OcrEngineRequest(
         manifest=manifest,
         is_cancelled=cancellation.is_set,
         observe=observe,
@@ -1592,7 +1592,7 @@ def test_ocr_worker_records_requested_scope_before_selection_manifest_mismatch(
 
     monkeypatch.setattr(ocr_main, "WindowsMLOcrAdapter", RecordingAdapter)
 
-    with pytest.raises(ValueError, match="OCR worker did not complete the page manifest"):
+    with pytest.raises(ValueError, match="OCR request page scope must exactly match"):
         ocr_main.handle(
             WorkerRequest(
                 request_id="ocr-selection-manifest-mismatch-test",

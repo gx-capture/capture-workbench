@@ -38,14 +38,14 @@ from capture_runtime.ocr_execution_proof import (
 from capture_runtime.ocr_profile import EngineRuntimeUnavailableError
 from capture_runtime.ocr_projection import (
     OcrEngineFailure,
+    OcrEngineRequest,
     OcrEngineRun,
     OcrExtractionFailure,
     OcrPageInput,
     OcrPageManifest,
     OcrPipeline,
+    OcrRequest,
     OcrTerminalOutcome,
-    _OcrEngineRequest,
-    _OcrRequest,
 )
 from capture_runtime.worker_client import (
     OcrWorkerFailure,
@@ -119,7 +119,7 @@ class _SyncOcrEngineAdapter:
         self._source_kind = source_kind
         self._raster_pages = raster_pages
 
-    def recognize(self, request: _OcrEngineRequest) -> OcrEngineRun:
+    def recognize(self, request: OcrEngineRequest) -> OcrEngineRun:
         adapter = self._extractor.ocr_adapter
         if adapter is None:
             raise OcrEngineFailure(kind="unavailable", completed_pages=())
@@ -189,7 +189,7 @@ class _SyncOcrEngineAdapter:
         return self._extractor.ocr_pipeline.observation_provenance(result)
 
     @staticmethod
-    def _check_cancelled(request: _OcrEngineRequest) -> None:
+    def _check_cancelled(request: OcrEngineRequest) -> None:
         if request.is_cancelled():
             raise InterruptedError("Capture extraction was cancelled.")
 
@@ -205,7 +205,7 @@ class _WorkerOcrEngineAdapter:
         self._result = result
         self._engine = engine
 
-    def recognize(self, request: _OcrEngineRequest) -> OcrEngineRun:
+    def recognize(self, request: OcrEngineRequest) -> OcrEngineRun:
         self._check_cancelled(request)
         try:
             self._validate_terminal_result(request.manifest)
@@ -242,7 +242,7 @@ class _WorkerOcrEngineAdapter:
         )
 
     @staticmethod
-    def _check_cancelled(request: _OcrEngineRequest) -> None:
+    def _check_cancelled(request: OcrEngineRequest) -> None:
         if request.is_cancelled():
             raise InterruptedError("Capture extraction was cancelled.")
 
@@ -525,7 +525,7 @@ class StandaloneRuntimeCaptureExtractor:
         cancel_event: asyncio.Event,
         expected_pages: tuple[OcrPageManifest, ...],
     ) -> CaptureOcrProjectionV3:
-        request = _OcrRequest(
+        request = OcrRequest(
             capture_id=source.sha256,
             source=source,
             page_scope=tuple(page.page for page in expected_pages),
@@ -534,7 +534,7 @@ class StandaloneRuntimeCaptureExtractor:
             warnings=(),
             is_cancelled=cancel_event.is_set,
         )
-        outcome = self.ocr_pipeline._execute(
+        outcome = self.ocr_pipeline.extract(
             request,
             _WorkerOcrEngineAdapter(result, engine),
         )
@@ -992,7 +992,7 @@ class StandaloneRuntimeCaptureExtractor:
             cancel_event,
             page_numbers=page_numbers,
         )
-        request = _OcrRequest(
+        request = OcrRequest(
             capture_id=source.sha256,
             source=source,
             page_scope=tuple(page.page for page in manifest),
@@ -1002,7 +1002,7 @@ class StandaloneRuntimeCaptureExtractor:
             is_cancelled=cancel_event.is_set,
             use_manifest_raster=True,
         )
-        outcome = self.ocr_pipeline._execute(
+        outcome = self.ocr_pipeline.extract(
             request,
             _SyncOcrEngineAdapter(
                 self,
@@ -1076,7 +1076,7 @@ class StandaloneRuntimeCaptureExtractor:
             cancel_event,
             raster_cache=raster_pages,
         )
-        request = _OcrRequest(
+        request = OcrRequest(
             capture_id=source.sha256,
             source=source,
             page_scope=tuple(page.page for page in manifest),
@@ -1086,7 +1086,7 @@ class StandaloneRuntimeCaptureExtractor:
             is_cancelled=cancel_event.is_set,
             use_manifest_raster=True,
         )
-        outcome = self.ocr_pipeline._execute(
+        outcome = self.ocr_pipeline.extract(
             request,
             _SyncOcrEngineAdapter(
                 self,

@@ -12,7 +12,7 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import Literal, Protocol, cast, overload
 
 from capture_runtime.constants import API_VERSION, RUNTIME_VERSION
 from capture_runtime.contracts import (
@@ -115,13 +115,13 @@ class OcrEngineRun:
 
 
 class OcrEnginePort(Protocol):
-    """Internal engine seam; transport and Paddle configuration stay behind it."""
+    """Legacy manifest-based engine seam retained for compatibility."""
 
     def recognize(self, manifest: tuple[OcrPageManifest, ...]) -> OcrEngineRun: ...
 
 
 @dataclass(frozen=True, slots=True)
-class _OcrRequest:
+class OcrRequest:
     """Metadata-only request owned by the canonical OCR execution seam."""
 
     capture_id: str
@@ -136,7 +136,7 @@ class _OcrRequest:
 
 
 @dataclass(frozen=True, slots=True)
-class _OcrEngineRequest:
+class OcrEngineRequest:
     """Bounded callbacks an adapter uses for one-page observations."""
 
     manifest: tuple[OcrPageManifest, ...]
@@ -145,8 +145,15 @@ class _OcrEngineRequest:
     fail_page: Callable[[OcrPageManifest], None]
 
 
-class _OcrEnginePort(Protocol):
-    def recognize(self, request: _OcrEngineRequest) -> OcrEngineRun: ...
+class OcrRequestEnginePort(Protocol):
+    def recognize(self, request: OcrEngineRequest) -> OcrEngineRun: ...
+
+
+# Temporary aliases keep the adapter migration source-compatible until the
+# separate helper/deletion slice removes private imports.
+_OcrRequest = OcrRequest
+_OcrEngineRequest = OcrEngineRequest
+_OcrEnginePort = OcrRequestEnginePort
 
 
 class _LegacyOcrEngineAdapter:
@@ -155,7 +162,7 @@ class _LegacyOcrEngineAdapter:
     def __init__(self, engine: OcrEnginePort) -> None:
         self._engine = engine
 
-    def recognize(self, request: _OcrEngineRequest) -> OcrEngineRun:
+    def recognize(self, request: OcrEngineRequest) -> OcrEngineRun:
         return self._engine.recognize(request.manifest)
 
 
@@ -195,6 +202,9 @@ class OcrTerminalOutcome:
 
     failure: CaptureFailureV2
     projection: CaptureOcrProjectionV3
+
+
+type OcrTerminalResult = CaptureOcrProjectionV3 | OcrTerminalOutcome
 
 
 def _coerce_polygon(
@@ -249,9 +259,10 @@ class OcrPipeline:
     Callers provide only the source identity, a preflight manifest, and an
     engine port.  This module owns ordering, metadata trust, box/confidence
     normalization, empty-page semantics, and sanitized terminal failures.
-    ``OcrEnginePort`` is deliberately transport-neutral so the synchronous
-    rasterizer, remote worker adapter, and in-memory test adapter exercise the
-    same policy.
+    ``OcrRequestEnginePort`` is deliberately transport-neutral so the
+    synchronous rasterizer, remote worker adapter, and in-memory test adapter
+    exercise the same policy.  The older ``OcrEnginePort`` remains available
+    through the keyword compatibility form.
     """
 
     def __init__(
@@ -273,6 +284,15 @@ class OcrPipeline:
     def default_provenance(self) -> OcrProvenanceV3:
         return self._builder.default_provenance
 
+    @overload
+    def extract(
+        self,
+        request: OcrRequest,
+        engine: OcrRequestEnginePort,
+        /,
+    ) -> OcrTerminalResult: ...
+
+    @overload
     def extract(
         self,
         *,
@@ -282,27 +302,102 @@ class OcrPipeline:
         engine: OcrEnginePort,
         created_at: datetime,
         warnings: Sequence[str] = (),
-    ) -> CaptureOcrProjectionV3:
-        request = _OcrRequest(
-            capture_id=capture_id,
-            source=source,
-            page_scope=None,
-            manifest=self._validate_manifest(manifest),
-            created_at=created_at,
-            warnings=tuple(warnings),
-            is_cancelled=lambda: False,
-        )
+    ) -> CaptureOcrProjectionV3: ...
+
+    def extract(self, *args: object, **kwargs: object) -> OcrTerminalResult:
+        """Run OCR through the canonical request seam or legacy keyword API.
+
+        The two forms intentionally have disjoint call shapes.  Canonical
+        callers pass exactly ``(request, engine)`` positionally and receive a
+        typed terminal union; compatibility callers keep the old keyword-only
+        arguments and receive a projection or ``OcrExtractionFailure``.
+        """
+
+        if len(args) == 2:
+            if kwargs:
+                raise TypeError("canonical OCR extraction does not accept keyword arguments")
+            request, engine = args
+            if not isinstance(request, OcrRequest):
+                raise OcrProjectionError("OCR request is invalid")
+            if not callable(getattr(engine, "recognize", None)):
+                raise OcrProjectionError("OCR request engine port is invalid")
+            return self._execute(request, cast(OcrRequestEnginePort, engine))
+        if args:
+            raise TypeError("OCR extraction requires either two positional arguments or keywords")
+        return self._extract_legacy(kwargs)
+
+    def _extract_legacy(self, kwargs: dict[str, object]) -> CaptureOcrProjectionV3:
+        required = {"capture_id", "source", "manifest", "engine", "created_at"}
+        allowed = required | {"warnings"}
+        missing = required - kwargs.keys()
+        unknown = kwargs.keys() - allowed
+        if missing or unknown:
+            raise TypeError("legacy OCR extraction requires its existing keyword arguments")
+        try:
+            manifest_value = kwargs["manifest"]
+            warnings_value = kwargs.get("warnings", ())
+            request = OcrRequest(
+                capture_id=cast(str, kwargs["capture_id"]),
+                source=cast(CaptureSource, kwargs["source"]),
+                page_scope=None,
+                manifest=self._validate_manifest(cast(Sequence[OcrPageManifest], manifest_value)),
+                created_at=cast(datetime, kwargs["created_at"]),
+                warnings=tuple(cast(Sequence[str], warnings_value)),
+                is_cancelled=lambda: False,
+            )
+        except OcrProjectionError:
+            raise
+        except (AttributeError, TypeError, ValueError) as error:
+            raise OcrProjectionError("OCR request is invalid") from error
+        self._validate_request(request)
+        engine = cast(OcrEnginePort, kwargs["engine"])
+        if not callable(getattr(engine, "recognize", None)):
+            raise OcrProjectionError("OCR engine port is invalid")
         outcome = self._execute(request, _LegacyOcrEngineAdapter(engine))
         if isinstance(outcome, OcrTerminalOutcome):
             raise OcrExtractionFailure(failure=outcome.failure, projection=outcome.projection)
         return outcome
 
+    def _validate_request(self, request: OcrRequest) -> tuple[OcrPageManifest, ...]:
+        """Validate request metadata and scope before engine or progress effects."""
+
+        if not isinstance(request.capture_id, str) or not isinstance(request.source, CaptureSource):
+            raise OcrProjectionError("OCR request identity is invalid")
+        if not isinstance(request.created_at, datetime):
+            raise OcrProjectionError("OCR request timestamp is invalid")
+        if not isinstance(request.manifest, tuple):
+            raise OcrProjectionError("OCR request manifest is invalid")
+        if not isinstance(request.warnings, tuple) or any(
+            not isinstance(warning, str) for warning in request.warnings
+        ):
+            raise OcrProjectionError("OCR request warnings are invalid")
+        if not callable(request.is_cancelled):
+            raise OcrProjectionError("OCR request cancellation callback is invalid")
+        if not isinstance(request.use_manifest_raster, bool):
+            raise OcrProjectionError("OCR request raster policy is invalid")
+        if request.progress is not None and not callable(request.progress):
+            raise OcrProjectionError("OCR request progress callback is invalid")
+        expected_manifest = self._validate_manifest(request.manifest)
+        expected_scope = tuple(item.page for item in expected_manifest)
+        if request.page_scope is not None:
+            if not isinstance(request.page_scope, tuple) or any(
+                type(page) is not int or page < 1 for page in request.page_scope
+            ):
+                raise OcrProjectionError("OCR request page scope is invalid")
+            if request.page_scope != expected_scope:
+                raise OcrProjectionError(
+                    "OCR request page scope must exactly match the manifest pages"
+                )
+        if request.is_cancelled():
+            raise InterruptedError
+        return expected_manifest
+
     def _execute(
         self,
-        request: _OcrRequest,
-        engine: _OcrEnginePort,
-    ) -> CaptureOcrProjectionV3 | OcrTerminalOutcome:
-        expected_manifest = self._validate_manifest(request.manifest)
+        request: OcrRequest,
+        engine: OcrRequestEnginePort,
+    ) -> OcrTerminalResult:
+        expected_manifest = self._validate_request(request)
         expected_pages = tuple(self._manifest_input(item) for item in expected_manifest)
         observed_pages: list[OcrPageInput] = []
         observed_provenance: OcrProvenanceV3 | None = None
@@ -362,7 +457,7 @@ class OcrPipeline:
                 }
             )
 
-        engine_request = _OcrEngineRequest(
+        engine_request = OcrEngineRequest(
             manifest=expected_manifest,
             is_cancelled=request.is_cancelled,
             observe=observe,
@@ -727,9 +822,34 @@ class OcrPipeline:
     def _validate_manifest(
         manifest: Sequence[OcrPageManifest],
     ) -> tuple[OcrPageManifest, ...]:
-        values = tuple(manifest)
-        if not values or [item.page for item in values] != list(range(1, len(values) + 1)):
+        try:
+            values = tuple(manifest)
+        except Exception as error:
+            raise OcrProjectionError("OCR manifest is invalid") from error
+        if not values:
             raise OcrProjectionError("OCR manifest must be complete and ordered")
+        for expected_page, item in enumerate(values, 1):
+            if not isinstance(item, OcrPageManifest):
+                raise OcrProjectionError("OCR manifest items are invalid")
+            if type(item.page) is not int or item.page != expected_page:
+                raise OcrProjectionError("OCR manifest must be complete and ordered")
+            if (
+                type(item.raster_width) is not int
+                or item.raster_width <= 0
+                or type(item.raster_height) is not int
+                or item.raster_height <= 0
+            ):
+                raise OcrProjectionError("OCR manifest raster dimensions are invalid")
+            if isinstance(item.raster_scale, bool) or not isinstance(
+                item.raster_scale, int | float
+            ):
+                raise OcrProjectionError("OCR manifest raster scale is invalid")
+            try:
+                raster_scale = float(item.raster_scale)
+            except (TypeError, ValueError, OverflowError) as error:
+                raise OcrProjectionError("OCR manifest raster scale is invalid") from error
+            if not math.isfinite(raster_scale) or raster_scale <= 0:
+                raise OcrProjectionError("OCR manifest raster scale is invalid")
         return values
 
     @staticmethod
@@ -1284,11 +1404,15 @@ __all__ = [
     "OcrEngineFailure",
     "OcrEnginePort",
     "OcrEngineRun",
+    "OcrEngineRequest",
     "OcrExtractionFailure",
     "OcrBoxInput",
     "OcrPageInput",
     "OcrPageManifest",
     "OcrPipeline",
     "OcrProjectionError",
+    "OcrRequest",
+    "OcrRequestEnginePort",
+    "OcrTerminalResult",
     "OcrTerminalOutcome",
 ]

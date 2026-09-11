@@ -62,12 +62,12 @@ from capture_runtime.ocr_preflight import (
 )
 from capture_runtime.ocr_projection import (
     OcrEngineRun,
+    OcrEngineRequest,
     OcrPageInput,
     OcrPageManifest,
     OcrPipeline,
+    OcrRequest,
     OcrTerminalOutcome,
-    _OcrEngineRequest,
-    _OcrRequest,
 )
 from capture_runtime.worker_contracts import WorkerRequest
 from capture_runtime.workers.server import serve
@@ -92,7 +92,7 @@ class _WorkerOcrEngineAdapter:
         self.last_error: Exception | None = None
         self.last_pages: tuple[OcrPageInput, ...] = ()
 
-    def recognize(self, request: _OcrEngineRequest) -> OcrEngineRun:
+    def recognize(self, request: OcrEngineRequest) -> OcrEngineRun:
         pages: list[OcrPageInput] = []
         warnings: list[str] = []
         provenance = None
@@ -590,7 +590,7 @@ def _run(
         requested_page_scope=requested_page_scope,
         runtime_sha256=runtime_sha256,
     )
-    ocr_request = _OcrRequest(
+    ocr_request = OcrRequest(
         capture_id=source_sha256,
         source=CaptureSource(
             sha256=source_sha256,
@@ -606,7 +606,7 @@ def _run(
         progress=progress,
     )
     worker_engine = _WorkerOcrEngineAdapter(adapter, images)
-    outcome = _OCR_PIPELINE._execute(ocr_request, worker_engine)
+    outcome = _OCR_PIPELINE.extract(ocr_request, worker_engine)
     if isinstance(outcome, OcrTerminalOutcome):
         if worker_engine.last_error is not None:
             raise worker_engine.last_error

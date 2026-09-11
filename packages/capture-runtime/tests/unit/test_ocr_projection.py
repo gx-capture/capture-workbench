@@ -24,15 +24,15 @@ from capture_runtime.engine_adapters import OcrRegion, OcrTextResult
 from capture_runtime.extractors import CaptureExtractionOutcome
 from capture_runtime.ocr_projection import (
     OcrEngineFailure,
+    OcrEngineRequest,
     OcrEngineRun,
     OcrExtractionFailure,
     OcrPageInput,
     OcrPageManifest,
     OcrPipeline,
     OcrProjectionError,
+    OcrRequest,
     OcrTerminalOutcome,
-    _OcrEngineRequest,
-    _OcrRequest,
 )
 
 
@@ -355,11 +355,12 @@ def _streaming_request(
     manifest: tuple[OcrPageManifest, ...],
     progress: list[dict[str, object]],
     is_cancelled: Callable[[], bool],
-) -> _OcrRequest:
-    return _OcrRequest(
+    page_scope: tuple[int, ...] | None = None,
+) -> OcrRequest:
+    return OcrRequest(
         capture_id="capture-streaming-seam",
         source=_source(),
-        page_scope=None,
+        page_scope=page_scope,
         manifest=manifest,
         created_at=datetime.now(UTC),
         warnings=(),
@@ -368,7 +369,180 @@ def _streaming_request(
     )
 
 
-def test_private_execution_stops_before_second_page_after_cancellation() -> None:
+def test_canonical_request_accepts_explicit_manifest_scope() -> None:
+    manifest = (
+        OcrPageManifest(page=1, raster_width=640, raster_height=480, raster_scale=1),
+        OcrPageManifest(page=2, raster_width=640, raster_height=480, raster_scale=1),
+    )
+    progress: list[dict[str, object]] = []
+    seen_manifests: list[tuple[OcrPageManifest, ...]] = []
+
+    class ScopedEngine:
+        def recognize(self, request: OcrEngineRequest) -> OcrEngineRun:
+            seen_manifests.append(request.manifest)
+            pages = tuple(
+                request.observe(
+                    expected,
+                    OcrPageInput(
+                        page=expected.page,
+                        text="page text",
+                        raster_width=expected.raster_width,
+                        raster_height=expected.raster_height,
+                        raster_scale=expected.raster_scale,
+                        provenance=_engine(),
+                    ),
+                    _engine(),
+                )
+                for expected in request.manifest
+            )
+            return OcrEngineRun(pages=pages, provenance=_engine())
+
+    outcome = OcrPipeline().extract(
+        _streaming_request(manifest, progress, lambda: False, page_scope=(1, 2)),
+        ScopedEngine(),
+    )
+
+    assert isinstance(outcome, CaptureOcrProjectionV3)
+    assert seen_manifests == [manifest]
+    assert [page.page for page in outcome.pages] == [1, 2]
+
+
+@pytest.mark.parametrize(
+    "page_scope",
+    [(2, 1), (1, 1), (1,), (1, 2, 3), (True, 2)],
+)
+def test_canonical_request_rejects_scope_before_engine_or_progress(
+    page_scope: tuple[object, ...],
+) -> None:
+    manifest = (
+        OcrPageManifest(page=1, raster_width=640, raster_height=480, raster_scale=1),
+        OcrPageManifest(page=2, raster_width=640, raster_height=480, raster_scale=1),
+    )
+    progress: list[dict[str, object]] = []
+    engine_calls = 0
+
+    class NeverEngine:
+        def recognize(self, _request: OcrEngineRequest) -> OcrEngineRun:
+            nonlocal engine_calls
+            engine_calls += 1
+            raise AssertionError("invalid page scope must stop before the engine")
+
+    with pytest.raises(OcrProjectionError, match="page scope"):
+        OcrPipeline().extract(
+            _streaming_request(
+                manifest,
+                progress,
+                lambda: False,
+                page_scope=page_scope,  # type: ignore[arg-type]
+            ),
+            NeverEngine(),
+        )
+
+    assert engine_calls == 0
+    assert progress == []
+
+
+def test_canonical_request_cancellation_stops_before_engine_or_progress() -> None:
+    manifest = (OcrPageManifest(page=1, raster_width=640, raster_height=480, raster_scale=1),)
+    progress: list[dict[str, object]] = []
+    engine_calls = 0
+
+    class NeverEngine:
+        def recognize(self, _request: OcrEngineRequest) -> OcrEngineRun:
+            nonlocal engine_calls
+            engine_calls += 1
+            raise AssertionError("pre-cancelled request must stop before the engine")
+
+    with pytest.raises(InterruptedError):
+        OcrPipeline().extract(
+            _streaming_request(manifest, progress, lambda: True),
+            NeverEngine(),
+        )
+
+    assert engine_calls == 0
+    assert progress == []
+
+
+def _malformed_manifest_item(**changes: object) -> OcrPageManifest:
+    item = object.__new__(OcrPageManifest)
+    values: dict[str, object] = {
+        "page": 1,
+        "raster_width": 640,
+        "raster_height": 480,
+        "raster_scale": 1,
+    }
+    values.update(changes)
+    for name, value in values.items():
+        object.__setattr__(item, name, value)
+    return item
+
+
+@pytest.mark.parametrize(
+    "manifest",
+    [
+        object(),
+        (object(),),
+        (_malformed_manifest_item(page=True),),
+        (_malformed_manifest_item(raster_width=0),),
+        (_malformed_manifest_item(raster_width=-1),),
+        (_malformed_manifest_item(raster_height=float("inf")),),
+        (_malformed_manifest_item(raster_scale=float("nan")),),
+    ],
+)
+@pytest.mark.parametrize("legacy", [False, True])
+def test_public_extract_rejects_malformed_manifest_before_engine_or_progress(
+    manifest: object,
+    legacy: bool,
+) -> None:
+    progress: list[dict[str, object]] = []
+    engine_calls = 0
+
+    class NeverEngine:
+        def recognize(self, _request: object) -> OcrEngineRun:
+            nonlocal engine_calls
+            engine_calls += 1
+            raise AssertionError("invalid manifest must stop before the engine")
+
+    pipeline = OcrPipeline()
+    if legacy:
+        with pytest.raises(OcrProjectionError):
+            pipeline.extract(
+                capture_id="capture-malformed-manifest",
+                source=_source(),
+                manifest=manifest,  # type: ignore[arg-type]
+                engine=NeverEngine(),  # type: ignore[arg-type]
+                created_at=datetime.now(UTC),
+            )
+    else:
+        request = OcrRequest(
+            capture_id="capture-malformed-manifest",
+            source=_source(),
+            page_scope=None,
+            manifest=manifest,  # type: ignore[arg-type]
+            created_at=datetime.now(UTC),
+            warnings=(),
+            is_cancelled=lambda: False,
+            progress=progress.append,
+        )
+        with pytest.raises(OcrProjectionError):
+            pipeline.extract(request, NeverEngine())  # type: ignore[arg-type]
+
+    assert engine_calls == 0
+    assert progress == []
+
+
+def test_extract_dispatch_rejects_mixed_and_request_keyword_forms() -> None:
+    manifest = (OcrPageManifest(page=1, raster_width=640, raster_height=480, raster_scale=1),)
+    request = _streaming_request(manifest, [], lambda: False)
+    pipeline = OcrPipeline()
+
+    with pytest.raises(TypeError):
+        pipeline.extract(request, object(), warnings=())
+    with pytest.raises(TypeError):
+        pipeline.extract(request=request, engine=object())
+
+
+def test_canonical_execution_stops_before_second_page_after_cancellation() -> None:
     manifest = (
         OcrPageManifest(page=1, raster_width=640, raster_height=480, raster_scale=1),
         OcrPageManifest(page=2, raster_width=640, raster_height=480, raster_scale=1),
@@ -378,7 +552,7 @@ def test_private_execution_stops_before_second_page_after_cancellation() -> None
     recognized_pages: list[int] = []
 
     class StreamingEngine:
-        def recognize(self, request: _OcrEngineRequest) -> OcrEngineRun:
+        def recognize(self, request: OcrEngineRequest) -> OcrEngineRun:
             nonlocal cancelled
             first = request.observe(
                 manifest[0],
@@ -399,7 +573,7 @@ def test_private_execution_stops_before_second_page_after_cancellation() -> None
             raise AssertionError("second page recognition must not start")
 
     with pytest.raises(InterruptedError):
-        OcrPipeline()._execute(
+        OcrPipeline().extract(
             _streaming_request(manifest, progress, lambda: cancelled),
             StreamingEngine(),
         )
@@ -408,7 +582,7 @@ def test_private_execution_stops_before_second_page_after_cancellation() -> None
     assert [event["type"] for event in progress] == ["ocr-header", "ocr-page"]
 
 
-def test_private_execution_emits_failed_page_and_no_success_on_provenance_change() -> None:
+def test_canonical_execution_emits_failed_page_and_no_success_on_provenance_change() -> None:
     manifest = (
         OcrPageManifest(page=1, raster_width=640, raster_height=480, raster_scale=1),
         OcrPageManifest(page=2, raster_width=640, raster_height=480, raster_scale=1),
@@ -425,7 +599,7 @@ def test_private_execution_emits_failed_page_and_no_success_on_provenance_change
     )
 
     class ChangingEngine:
-        def recognize(self, request: _OcrEngineRequest) -> OcrEngineRun:
+        def recognize(self, request: OcrEngineRequest) -> OcrEngineRun:
             request.observe(
                 manifest[0],
                 OcrPageInput(
@@ -456,7 +630,7 @@ def test_private_execution_emits_failed_page_and_no_success_on_provenance_change
                 raise
             raise AssertionError("provenance drift must fail")
 
-    outcome = OcrPipeline()._execute(
+    outcome = OcrPipeline().extract(
         _streaming_request(manifest, progress, lambda: False),
         ChangingEngine(),
     )
@@ -476,7 +650,7 @@ def test_private_execution_emits_failed_page_and_no_success_on_provenance_change
     assert progress[-1]["page"]["status"] == "failed"  # type: ignore[index]
 
 
-def test_private_execution_keeps_empty_pages_and_returns_typed_no_text_outcome() -> None:
+def test_canonical_execution_keeps_empty_pages_and_returns_typed_no_text_outcome() -> None:
     manifest = (
         OcrPageManifest(page=1, raster_width=640, raster_height=480, raster_scale=1),
         OcrPageManifest(page=2, raster_width=640, raster_height=480, raster_scale=1),
@@ -484,7 +658,7 @@ def test_private_execution_keeps_empty_pages_and_returns_typed_no_text_outcome()
     progress: list[dict[str, object]] = []
 
     class EmptyEngine:
-        def recognize(self, request: _OcrEngineRequest) -> OcrEngineRun:
+        def recognize(self, request: OcrEngineRequest) -> OcrEngineRun:
             pages = tuple(
                 request.observe(
                     expected,
@@ -502,7 +676,7 @@ def test_private_execution_keeps_empty_pages_and_returns_typed_no_text_outcome()
             )
             return OcrEngineRun(pages=pages, provenance=_engine())
 
-    outcome = OcrPipeline()._execute(
+    outcome = OcrPipeline().extract(
         _streaming_request(manifest, progress, lambda: False),
         EmptyEngine(),
     )
@@ -520,15 +694,15 @@ def test_private_execution_keeps_empty_pages_and_returns_typed_no_text_outcome()
     ]
 
 
-def test_private_execution_emits_no_progress_before_early_dml_failure() -> None:
+def test_canonical_execution_emits_no_progress_before_early_dml_failure() -> None:
     manifest = (OcrPageManifest(page=1, raster_width=640, raster_height=480, raster_scale=1),)
     progress: list[dict[str, object]] = []
 
     class UnavailableEngine:
-        def recognize(self, _request: _OcrEngineRequest) -> OcrEngineRun:
+        def recognize(self, _request: OcrEngineRequest) -> OcrEngineRun:
             raise OcrEngineFailure(kind="unavailable")
 
-    outcome = OcrPipeline()._execute(
+    outcome = OcrPipeline().extract(
         _streaming_request(manifest, progress, lambda: False),
         UnavailableEngine(),
     )
@@ -549,7 +723,7 @@ def test_private_execution_rejects_out_of_order_or_duplicate_pages(
     progress: list[dict[str, object]] = []
 
     class InvalidOrderEngine:
-        def recognize(self, request: _OcrEngineRequest) -> OcrEngineRun:
+        def recognize(self, request: OcrEngineRequest) -> OcrEngineRun:
             pages = []
             for page_number in page_sequence:
                 expected = manifest[page_number - 1]
@@ -569,7 +743,7 @@ def test_private_execution_rejects_out_of_order_or_duplicate_pages(
                 )
             return OcrEngineRun(pages=tuple(pages), provenance=_engine())
 
-    outcome = OcrPipeline()._execute(
+    outcome = OcrPipeline().extract(
         _streaming_request(manifest, progress, lambda: False),
         InvalidOrderEngine(),
     )
