@@ -1,5 +1,6 @@
 mod constants;
 mod health;
+mod journal;
 mod launcher;
 mod manifest;
 mod process;

@@ -641,6 +641,7 @@ variants prevent an unbound plan from being mistaken for an activated group:
       "creationIdentity": { "kind": "windows-process-creation", "value": "opaque-native-value" },
       "state": "suspended",
       "reservedListenerIdentity": "opaque-reservation-identity",
+      "loopbackPort": 43123,
       "liveListenerReadiness": null,
       "startedAt": "2026-09-10T00:00:01Z"
     }
@@ -692,7 +693,16 @@ generation, root nonce, PID, process creation identity, state, reserved
 listener identity, live listener-readiness identity when available, and start
 time. A terminal record adds semantic proof:
 root reaped, descendants terminated, listeners released, staging released, and
-the proof generation. `exitCode` is optional and sanitized; raw command lines,
+the proof generation. A terminal proof also carries the required
+`unacquiredRootBindings` array. It is empty when every planned root has an
+observed terminal record; otherwise it contains the exact ordered bound-root
+identities for planned roots that were never acquired. The observed terminal
+roots and this absent-root array must be disjoint and together cover every
+planned ordinal exactly once. An absent entry is an identity-bound observation
+of non-acquisition, not a fabricated PID or cleanup claim. `loopbackPort` is a
+private nonzero `u16` recorded with each acquired root and compared across CAS
+observations; it is a listener detail and never ownership or terminal-proof
+evidence by itself. `exitCode` is optional and sanitized; raw command lines,
 environment, source paths, bearer tokens, OCR, model bytes, user names, machine
 names, and arbitrary diagnostics are forbidden.
 
@@ -720,6 +730,30 @@ set and receipt. Proof booleans may be true only after the corresponding
 binding has been checked. The JSON example uses opaque placeholders to avoid
 recording real identifiers; an implementation must validate these types and
 closed values before accepting a journal.
+The concrete `RootRole` vocabulary is owned by the producer's immutable root
+plan. The current private value foundation has no authoritative role enum, so
+it preserves and compares the producer-supplied role exactly and rejects empty
+roles; production lifecycle wiring must validate the resolved closed
+vocabulary at that plan owner rather than inventing an allowlist here.
+
+For example, the terminal proof shape is closed and explicit even when no
+planned root was left unacquired:
+
+```json
+{
+  "rootReaped": true,
+  "descendantsTerminated": true,
+  "listenersReleased": true,
+  "stagingReleased": true,
+  "proofGeneration": 8,
+  "unacquiredRootBindings": []
+}
+```
+
+The producer rejects a missing array, unordered or duplicate absent entries,
+overlap with observed roots, and any partition that does not cover the complete
+ordered binding. The value foundation records this relation; later durable
+observe-only code supplies the native evidence that justifies each proof.
 
 The cleanup policy is also fixed: one recovery epoch receives at most three
 identity-scoped automatic reconciliation attempts within a 60-second monotonic

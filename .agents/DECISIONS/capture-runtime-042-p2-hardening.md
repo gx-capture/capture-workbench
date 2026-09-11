@@ -221,6 +221,22 @@ rejected.
    `manual_review_requires_explicit_recovery_receipt`, and
    `manual_review_recovery_resets_attempt_window_without_resource_mutation`.
 
+   The initial private journal foundation makes the terminal proof partition
+   explicit: `unacquiredRootBindings` is required, ordered, disjoint from
+   observed terminal roots, and must complete the bound ordinal set. This is an
+   unreleased `RuntimeSessionJournalV1` foundation extension, so there is no
+   compatibility reader for a missing field. A missing or malformed partition
+   fails closed; an absent entry records a planned root that was never acquired
+   and does not invent native identity. `JournalRoot.loopbackPort` is a
+   required nonzero private observation and is compared across CAS updates, but
+   a port is never accepted as ownership or cleanup proof. No authoritative
+   `RootRole` enum or closed role vocabulary was found in the
+   current `packages/capture-sidecar-launcher/src` owner (the journal's role
+   fields are `String`); the value layer therefore retains the producer's role
+   string and enforces nonempty exact role identity, while the later
+   producer plan owner must supply and validate the closed vocabulary from its
+   actual root plan rather than an invented allowlist here.
+
 8. **Contract identity remains fixed.** API 2.0, raw/structured schema 2,
    CaptureOcrProjectionV3 schema 3, and runtime contract-set hash
    d293a3de26114f1b4fd65ea6d6d3f157fa2f93109b31e1e30d5d15ef0dfdeb40 remain
