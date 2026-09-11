@@ -3007,6 +3007,7 @@ def test_worker_backed_pdf_dispatches_every_page_to_ocr(tmp_path: Path) -> None:
                         text="Rendered page one",
                         boxes=((2, 3, 40, 20),),
                         confidence=0.97,
+                        region_confidences=(0.83,),
                         raster_width=120,
                         raster_height=80,
                         raster_scale=2,
@@ -3095,6 +3096,7 @@ def test_worker_backed_pdf_dispatches_every_page_to_ocr(tmp_path: Path) -> None:
         "recognized",
         "empty",
     ]
+    assert extraction.ocr_projection.pages[0].confidence == pytest.approx(0.83)
     assert extraction.ocr_projection.pages[0].boxes[0].width == 40
 
 
@@ -3384,7 +3386,7 @@ def test_worker_terminal_cardinality_is_rejected_before_raw_segments(
         return WorkerOcrPage(
             page=number,
             status="recognized",
-            text=f"Page {number}",
+            text="SECRET-PREFIX" if number == 1 else f"Page {number}",
             boxes=(),
             confidence=0.5,
             raster_width=120,
@@ -3491,6 +3493,86 @@ def test_worker_terminal_cardinality_is_rejected_before_raw_segments(
     assert [item.status.value for item in projection.pages] == ["failed", "failed"]
     assert all(item.text == "" for item in projection.pages)
     assert "SECRET" not in projection.model_dump_json()
+
+
+@pytest.mark.parametrize(
+    "cancel_check",
+    (3, 4, 6),
+    ids=("before-validation", "after-validation", "after-observation"),
+)
+def test_worker_projection_cancellation_does_not_become_success_or_protocol(
+    tmp_path: Path,
+    cancel_check: int,
+) -> None:
+    class ScriptedCancellation:
+        def __init__(self) -> None:
+            self.checks = 0
+
+        def is_set(self) -> bool:
+            self.checks += 1
+            return self.checks >= cancel_check
+
+    class ValidWorkerClient:
+        async def run(self, _engine: InstalledEngine, **_kwargs: object) -> WorkerRunResult:
+            return WorkerRunResult(
+                segments=(WorkerSegment(0, "Rendered page one", page=1),),
+                engine="windowsml-ocr",
+                model="pp-ocrv6-medium-windowsml",
+                digest=f"sha256:{'1' * 64}",
+                device="windowsml-dml",
+                warnings=(),
+                pages=(
+                    WorkerOcrPage(
+                        page=1,
+                        status="recognized",
+                        text="Rendered page one",
+                        boxes=((2, 3, 40, 20),),
+                        confidence=0.83,
+                        region_confidences=(0.83,),
+                        raster_width=120,
+                        raster_height=80,
+                        raster_scale=2,
+                    ),
+                ),
+            )
+
+    class EngineManager:
+        worker_client = ValidWorkerClient()
+
+        async def ocr_compute_selection(self, *, contract_sha256: str) -> object:
+            del contract_sha256
+            return _worker_ocr_plan_selection()
+
+        async def resolve_active_engine(self, _requirement_id: str) -> InstalledEngine:
+            return InstalledEngine(
+                requirement_id="windowsml-ocr",
+                artifact_version="0.4.2",
+                executable=tmp_path / "ocr.exe",
+                model_dir=tmp_path / "models",
+            )
+
+    extractor = StandaloneRuntimeCaptureExtractor(
+        SystemClock(),
+        _config(tmp_path),
+        engine_manager=EngineManager(),  # type: ignore[arg-type]
+    )
+    page_png = BytesIO()
+    Image.new("RGB", (120, 80), "white").save(page_png, format="PNG")
+    extractor._pdf_page_count = lambda _content: 1  # type: ignore[method-assign]
+    extractor._render_pdf_page = lambda _content, _index: page_png.getvalue()  # type: ignore[method-assign]
+    content = b"%PDF-1.7 worker projection cancellation fixture"
+    cancellation = ScriptedCancellation()
+
+    with pytest.raises(InterruptedError):
+        asyncio.run(
+            extractor.extract(
+                content,
+                _source(content, "cancelled.pdf", "application/pdf"),
+                cancellation,  # type: ignore[arg-type]
+            )
+        )
+
+    assert cancellation.checks == cancel_check
 
 
 def test_worker_all_empty_terminal_is_failed_with_readable_no_text_projection(

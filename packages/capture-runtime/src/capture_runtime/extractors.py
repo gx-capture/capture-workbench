@@ -42,6 +42,9 @@ from capture_runtime.ocr_projection import (
     OcrPageInput,
     OcrPageManifest,
     OcrPipeline,
+    OcrTerminalOutcome,
+    _OcrEngineRequest,
+    _OcrRequest,
 )
 from capture_runtime.worker_client import (
     OcrWorkerFailure,
@@ -179,43 +182,52 @@ class _WorkerOcrEngineAdapter:
 
     def __init__(
         self,
-        extractor: StandaloneRuntimeCaptureExtractor,
         result: WorkerRunResult,
         engine: OcrProvenanceV3,
     ) -> None:
-        self._extractor = extractor
         self._result = result
         self._engine = engine
 
-    def recognize(self, manifest: tuple[OcrPageManifest, ...]) -> OcrEngineRun:
+    def recognize(self, request: _OcrEngineRequest) -> OcrEngineRun:
+        self._check_cancelled(request)
         try:
-            self._validate_terminal_result(manifest)
+            self._validate_terminal_result(request.manifest)
+        except InterruptedError:
+            raise
         except Exception as error:
             # Validate the complete terminal envelope before normalizing a page so
             # an extra/unknown locator cannot become raw capture text first.
+            if request.is_cancelled():
+                raise InterruptedError("Capture extraction was cancelled.") from error
             raise OcrEngineFailure(
                 kind="protocol",
                 completed_pages=(),
                 provenance=self._engine,
             ) from error
+        self._check_cancelled(request)
 
         pages: list[OcrPageInput] = []
         try:
-            for expected, actual in zip(manifest, self._result.pages, strict=True):
-                pages.append(
-                    self._extractor.ocr_pipeline.normalize_observation(
-                        expected,
-                        actual,
-                        provenance_override=self._engine,
-                    )
-                )
+            for expected, actual in zip(request.manifest, self._result.pages, strict=True):
+                self._check_cancelled(request)
+                pages.append(request.observe(expected, actual, self._engine))
+        except InterruptedError:
+            raise
         except Exception as error:
+            if request.is_cancelled():
+                raise InterruptedError("Capture extraction was cancelled.") from error
             raise OcrEngineFailure(kind="protocol", completed_pages=pages) from error
+        self._check_cancelled(request)
         return OcrEngineRun(
             pages=tuple(pages),
             provenance=self._engine,
             warnings=tuple(self._result.warnings),
         )
+
+    @staticmethod
+    def _check_cancelled(request: _OcrEngineRequest) -> None:
+        if request.is_cancelled():
+            raise InterruptedError("Capture extraction was cancelled.")
 
     def _validate_terminal_result(self, manifest: tuple[OcrPageManifest, ...]) -> None:
         expected_numbers = tuple(item.page for item in manifest)
@@ -361,6 +373,7 @@ class StandaloneRuntimeCaptureExtractor:
                         source,
                         result,
                         ocr_provenance,
+                        cancel_event=cancel_event,
                         expected_pages=expected_ocr_pages,
                     )
                 except OcrExtractionFailure:
@@ -410,6 +423,7 @@ class StandaloneRuntimeCaptureExtractor:
                         source,
                         result,
                         ocr_provenance,
+                        cancel_event=cancel_event,
                         expected_pages=expected_ocr_pages,
                     )
                 except OcrExtractionFailure:
@@ -491,15 +505,25 @@ class StandaloneRuntimeCaptureExtractor:
         result: WorkerRunResult,
         engine: OcrProvenanceV3,
         *,
+        cancel_event: asyncio.Event,
         expected_pages: tuple[OcrPageManifest, ...],
     ) -> CaptureOcrProjectionV3:
-        return self.ocr_pipeline.extract(
+        request = _OcrRequest(
             capture_id=source.sha256,
             source=source,
+            page_scope=tuple(page.page for page in expected_pages),
             manifest=expected_pages,
-            engine=_WorkerOcrEngineAdapter(self, result, engine),
             created_at=self._clock.now(),
+            warnings=(),
+            is_cancelled=cancel_event.is_set,
         )
+        outcome = self.ocr_pipeline._execute(
+            request,
+            _WorkerOcrEngineAdapter(result, engine),
+        )
+        if isinstance(outcome, OcrTerminalOutcome):
+            raise OcrExtractionFailure(failure=outcome.failure, projection=outcome.projection)
+        return outcome
 
     async def _run_worker(
         self,
