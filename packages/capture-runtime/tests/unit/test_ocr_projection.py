@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -776,16 +777,19 @@ def test_polygon_round_trip_preserves_each_predictor_point_in_wire_order() -> No
         provenance=_engine(),
     )
     pipeline = OcrPipeline()
-    manifest = OcrPageManifest(page=1, raster_width=120, raster_height=80, raster_scale=1)
+    manifest = (OcrPageManifest(page=1, raster_width=120, raster_height=80, raster_scale=1),)
+    progress: list[dict[str, object]] = []
 
-    normalized = pipeline.normalize_observation(manifest, observation)
-    projection = pipeline.build(
-        capture_id="capture-polygon",
-        source=_source(),
-        pages=[normalized],
-        provenance=_engine(),
-        created_at=datetime.now(UTC),
+    class PolygonEngine:
+        def recognize(self, request: OcrEngineRequest) -> OcrEngineRun:
+            page = request.observe(manifest[0], observation, _engine())
+            return OcrEngineRun(pages=(page,), provenance=_engine())
+
+    projection = pipeline.extract(
+        _streaming_request(manifest, progress, lambda: False),
+        PolygonEngine(),
     )
+    assert isinstance(projection, CaptureOcrProjectionV3)
     wire = projection.model_dump(mode="json", by_alias=True)
 
     assert wire["pages"][0]["boxes"][0] == {
@@ -794,7 +798,8 @@ def test_polygon_round_trip_preserves_each_predictor_point_in_wire_order() -> No
         "confidence": 0.93,
     }
 
-    worker_wire = pipeline.serialize_page(normalized)
+    worker_wire = progress[-1]["page"]
+    assert isinstance(worker_wire, dict)
     assert worker_wire["boxes"] == [
         {
             "polygon": [{"x": x, "y": y} for x, y in polygon],
@@ -817,11 +822,43 @@ def test_pipeline_rejects_polygon_outside_manifest_raster() -> None:
         raster_scale=1,
         provenance=_engine(),
     )
-    with pytest.raises(OcrProjectionError, match="polygon"):
-        OcrPipeline().normalize_observation(
-            OcrPageManifest(page=1, raster_width=120, raster_height=80, raster_scale=1),
-            observation,
-        )
+    manifest = (OcrPageManifest(page=1, raster_width=120, raster_height=80, raster_scale=1),)
+    progress: list[dict[str, object]] = []
+
+    class InvalidPolygonEngine:
+        def recognize(self, request: OcrEngineRequest) -> OcrEngineRun:
+            request.observe(manifest[0], observation, _engine())
+            raise AssertionError("invalid polygon must fail during observation")
+
+    outcome = OcrPipeline().extract(
+        _streaming_request(manifest, progress, lambda: False),
+        InvalidPolygonEngine(),
+    )
+
+    assert isinstance(outcome, OcrTerminalOutcome)
+    assert outcome.failure.code == "ocr_worker_protocol"
+    assert outcome.projection.pages[0].status is OcrPageStatus.FAILED
+    assert outcome.projection.pages[0].failure == outcome.failure
+    assert progress == []
+
+
+def test_public_pipeline_boundary_retired_helpers_are_absent() -> None:
+    pipeline = OcrPipeline()
+
+    for helper in ("normalize_observation", "serialize_page", "failed_page"):
+        assert not hasattr(pipeline, helper)
+    for private_alias in ("_OcrRequest", "_OcrEngineRequest", "_OcrEnginePort"):
+        assert not hasattr(ocr_projection_module, private_alias)
+
+
+def test_public_adapters_do_not_call_private_pipeline_execution() -> None:
+    runtime_root = Path(__file__).resolve().parents[2]
+    for relative_path in (
+        Path("src/capture_runtime/extractors.py"),
+        Path("src/capture_runtime/workers/ocr_main.py"),
+    ):
+        source = (runtime_root / relative_path).read_text(encoding="utf-8")
+        assert "._execute(" not in source
 
 
 def test_pipeline_failure_keeps_a_readable_typed_projection() -> None:

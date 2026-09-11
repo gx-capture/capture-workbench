@@ -149,13 +149,6 @@ class OcrRequestEnginePort(Protocol):
     def recognize(self, request: OcrEngineRequest) -> OcrEngineRun: ...
 
 
-# Temporary aliases keep the adapter migration source-compatible until the
-# separate helper/deletion slice removes private imports.
-_OcrRequest = OcrRequest
-_OcrEngineRequest = OcrEngineRequest
-_OcrEnginePort = OcrRequestEnginePort
-
-
 class _LegacyOcrEngineAdapter:
     """Keep the existing synchronous engine port compatible during convergence."""
 
@@ -671,30 +664,8 @@ class OcrPipeline:
         )
         return candidate
 
-    def normalize_observation(
-        self,
-        expected: OcrPageManifest,
-        observation: object,
-        *,
-        use_manifest_raster: bool = False,
-        raster_scale_override: float | None = None,
-        provenance_override: OcrProvenanceV3 | None = None,
-    ) -> OcrPageInput:
-        """Normalize one adapter page through the canonical OCR seam."""
-
-        return self._normalize_observation(
-            expected,
-            observation,
-            use_manifest_raster=use_manifest_raster,
-            raster_scale_override=raster_scale_override,
-            provenance_override=provenance_override,
-        )
-
     def observation_provenance(self, observation: object) -> OcrProvenanceV3:
         return self._builder.observation_provenance(observation)
-
-    def serialize_page(self, item: OcrPageInput) -> dict[str, object]:
-        return self._serialize_page(item)
 
     def serialize_manifest(self, manifest: Sequence[OcrPageManifest]) -> list[dict[str, object]]:
         return self._serialize_manifest(manifest)
@@ -720,13 +691,6 @@ class OcrPipeline:
             }
             for order, page in enumerate(page for page in projection.pages if page.text.strip())
         ]
-
-    def failed_page(
-        self,
-        expected: OcrPageManifest,
-        failure: CaptureFailureV2,
-    ) -> OcrPageInput:
-        return self._failed_page(expected, failure)
 
     def failure(
         self,
