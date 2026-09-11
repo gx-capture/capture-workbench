@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import math
 import tempfile
 from dataclasses import dataclass
 from io import BytesIO
@@ -127,48 +128,54 @@ class _SyncOcrEngineAdapter:
         provenance: OcrProvenanceV3 | None = None
         for expected in request.manifest:
             self._check_cancelled(request)
-            if self._raster_pages is not None:
-                image_png = self._raster_pages[expected.page - 1]
-            elif self._source_kind is CaptureSourceKind.PDF:
-                image_png = self._extractor._render_pdf_page(self._content, expected.page - 1)
-            else:
-                image_png = _normalize_image_content(
-                    self._content,
-                    scale=self._extractor.config.ocr_render_scale,
-                    max_pixels=self._extractor.config.max_image_pixels,
-                )
-            self._check_cancelled(request)
+            image_png: bytes | None = None
             try:
-                result = adapter.extract_png(image_png)
-            except PaddleResultNormalizationError:
-                if request.is_cancelled():
-                    raise InterruptedError("Capture extraction was cancelled.") from None
-                raise
-            except RuntimeError as error:
-                if request.is_cancelled():
-                    raise InterruptedError("Capture extraction was cancelled.") from error
-                raise OcrEngineFailure(
-                    kind="unavailable",
-                    completed_pages=pages,
-                    provenance=provenance,
-                ) from error
-            self._check_cancelled(request)
-            pages.append(
-                request.observe(
-                    expected,
-                    result,
-                    result.provenance or self._provenance(result),
+                if self._raster_pages is not None:
+                    image_png = self._raster_pages[expected.page - 1]
+                elif self._source_kind is CaptureSourceKind.PDF:
+                    image_png = self._extractor._render_pdf_page(self._content, expected.page - 1)
+                else:
+                    image_png = _normalize_image_content(
+                        self._content,
+                        scale=self._extractor.config.ocr_render_scale,
+                        max_pixels=self._extractor.config.max_image_pixels,
+                    )
+                self._check_cancelled(request)
+                try:
+                    result = adapter.extract_png(image_png)
+                except PaddleResultNormalizationError:
+                    if request.is_cancelled():
+                        raise InterruptedError("Capture extraction was cancelled.") from None
+                    raise
+                except RuntimeError as error:
+                    if request.is_cancelled():
+                        raise InterruptedError("Capture extraction was cancelled.") from error
+                    raise OcrEngineFailure(
+                        kind="unavailable",
+                        completed_pages=pages,
+                        provenance=provenance,
+                    ) from error
+                self._check_cancelled(request)
+                pages.append(
+                    request.observe(
+                        expected,
+                        result,
+                        result.provenance or self._provenance(result),
+                    )
                 )
-            )
-            if result.warning:
-                warnings.append(result.warning)
-            current = result.provenance or self._provenance(result)
-            if provenance is None:
-                provenance = current
-            elif provenance != current:
-                raise OcrEngineFailure(
-                    kind="protocol", completed_pages=pages, provenance=provenance
-                )
+                if result.warning:
+                    warnings.append(result.warning)
+                current = result.provenance or self._provenance(result)
+                if provenance is None:
+                    provenance = current
+                elif provenance != current:
+                    raise OcrEngineFailure(
+                        kind="protocol", completed_pages=pages, provenance=provenance
+                    )
+            finally:
+                # Do not leave a completed page raster in an exception traceback
+                # while the next page is being rendered.
+                image_png = None
         self._check_cancelled(request)
         if provenance is None:
             raise OcrEngineFailure(kind="worker", completed_pages=pages)
@@ -634,7 +641,6 @@ class StandaloneRuntimeCaptureExtractor:
         content: bytes,
         cancel_event: asyncio.Event,
         *,
-        raster_cache: list[bytes] | None = None,
         page_numbers: tuple[int, ...] | None = None,
     ) -> tuple[OcrPageManifest, ...]:
         page_count = self._pdf_page_count(content)
@@ -649,20 +655,43 @@ class StandaloneRuntimeCaptureExtractor:
             or selected_page_numbers[-1] > page_count
         ):
             raise ValueError("OCR PDF page selection must be an ordered prefix in the source.")
+        raster_dimensions = self._pdf_page_raster_dimensions(
+            content,
+            cancel_event,
+            selected_page_numbers,
+        )
+        if len(raster_dimensions) != len(selected_page_numbers):
+            raise ValueError("OCR PDF page metadata cardinality is invalid.")
         pages: list[OcrPageManifest] = []
-        for page_number in selected_page_numbers:
+        for page_number, (width, height) in zip(
+            selected_page_numbers, raster_dimensions, strict=True
+        ):
             self._checkpoint(cancel_event)
-            raster = self._render_pdf_page(content, page_number - 1)
-            if raster_cache is not None:
-                raster_cache.append(raster)
-            width, height = _raster_dimensions(raster)
-            if width is None or height is None:
-                raise ValueError(f"OCR raster metadata is unavailable for PDF page {page_number}.")
+            if (
+                isinstance(width, bool)
+                or isinstance(height, bool)
+                or not isinstance(width, int | float)
+                or not isinstance(height, int | float)
+                or not math.isfinite(float(width))
+                or not math.isfinite(float(height))
+                or width <= 0
+                or height <= 0
+            ):
+                raise ValueError(f"OCR raster metadata is invalid for PDF page {page_number}.")
+            try:
+                raster_width = math.ceil(float(width) * self.config.ocr_render_scale)
+                raster_height = math.ceil(float(height) * self.config.ocr_render_scale)
+            except (OverflowError, ValueError) as error:
+                raise ValueError(
+                    f"OCR raster metadata is invalid for PDF page {page_number}."
+                ) from error
+            if raster_width <= 0 or raster_height <= 0:
+                raise ValueError(f"OCR raster metadata is invalid for PDF page {page_number}.")
             pages.append(
                 OcrPageManifest(
                     page=page_number,
-                    raster_width=width,
-                    raster_height=height,
+                    raster_width=raster_width,
+                    raster_height=raster_height,
                     raster_scale=self.config.ocr_render_scale,
                 )
             )
@@ -673,20 +702,53 @@ class StandaloneRuntimeCaptureExtractor:
         content: bytes,
         cancel_event: asyncio.Event,
         *,
-        raster_cache: list[bytes] | None = None,
         page_numbers: tuple[int, ...] | None = None,
     ) -> tuple[OcrPageManifest, ...]:
         try:
             return self._ocr_pdf_page_manifest(
                 content,
                 cancel_event,
-                raster_cache=raster_cache,
                 page_numbers=page_numbers,
             )
         except (InterruptedError, OcrSourcePreflightError):
             raise
         except Exception as error:
             raise OcrSourcePreflightError from error
+
+    def _pdf_page_raster_dimensions(
+        self,
+        content: bytes,
+        cancel_event: asyncio.Event,
+        page_numbers: tuple[int, ...],
+    ) -> tuple[tuple[float, float], ...]:
+        """Read PDFium's effective page sizes without creating raster bytes.
+
+        ``get_size`` is the size PDFium will use for a default render.  It
+        already reflects the page's crop box and intrinsic rotation, so the
+        metadata path must not reconstruct geometry from the media box.
+        """
+
+        import pypdfium2 as pdfium  # type: ignore[import-untyped]
+
+        document = None
+        try:
+            document = pdfium.PdfDocument(BytesIO(content))
+            dimensions: list[tuple[float, float]] = []
+            for page_number in page_numbers:
+                self._checkpoint(cancel_event)
+                page = None
+                try:
+                    page = document[page_number - 1]
+                    width, height = page.get_size()
+                    dimensions.append((width, height))
+                finally:
+                    if page is not None:
+                        page.close()
+                self._checkpoint(cancel_event)
+            return tuple(dimensions)
+        finally:
+            if document is not None:
+                document.close()
 
     def _ocr_image_page_manifest(
         self,
@@ -925,11 +987,9 @@ class StandaloneRuntimeCaptureExtractor:
         *,
         page_numbers: tuple[int, ...] | None = None,
     ) -> tuple[list[RawCaptureSegment], CaptureOcrProjectionV3]:
-        raster_pages: list[bytes] = []
         manifest = self._preflight_pdf_manifest(
             content,
             cancel_event,
-            raster_cache=raster_pages,
             page_numbers=page_numbers,
         )
         request = _OcrRequest(
@@ -948,7 +1008,6 @@ class StandaloneRuntimeCaptureExtractor:
                 self,
                 content,
                 CaptureSourceKind.PDF,
-                raster_pages=tuple(raster_pages),
             ),
         )
         if isinstance(outcome, OcrTerminalOutcome):
@@ -958,7 +1017,7 @@ class StandaloneRuntimeCaptureExtractor:
 
     @staticmethod
     def _pdf_page_count(content: bytes) -> int:
-        import pypdfium2 as pdfium  # type: ignore[import-untyped]
+        import pypdfium2 as pdfium
 
         document = None
         try:
@@ -978,6 +1037,8 @@ class StandaloneRuntimeCaptureExtractor:
 
         document = None
         bitmap = None
+        image = None
+        output = None
         try:
             document = pdfium.PdfDocument(BytesIO(content))
             bitmap = document[page_index].render(scale=self.config.ocr_render_scale)
@@ -988,10 +1049,20 @@ class StandaloneRuntimeCaptureExtractor:
         except Exception as error:
             raise ValueError(f"Could not render PDF page {page_index + 1}.") from error
         finally:
-            if bitmap is not None:
-                bitmap.close()
-            if document is not None:
-                document.close()
+            # Clear conversion locals as well as native handles so a raised
+            # traceback cannot retain a completed page buffer.
+            image = None
+            output = None
+            try:
+                if bitmap is not None:
+                    bitmap.close()
+            finally:
+                bitmap = None
+                try:
+                    if document is not None:
+                        document.close()
+                finally:
+                    document = None
 
     def _extract_image(
         self,

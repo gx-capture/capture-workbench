@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import hashlib
 import json
 from dataclasses import replace
@@ -2601,6 +2602,490 @@ def _source(content: bytes, name: str, media_type: str) -> CaptureSource:
     )
 
 
+@pytest.fixture(autouse=True)
+def _stub_legacy_pdf_manifest_dimensions(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep existing marker-only PDF adapter tests focused on their seam."""
+
+    original = getattr(StandaloneRuntimeCaptureExtractor, "_pdf_page_raster_dimensions", None)
+
+    def dimensions(
+        extractor: StandaloneRuntimeCaptureExtractor,
+        content: bytes,
+        cancel_event: asyncio.Event,
+        page_numbers: tuple[int, ...],
+    ) -> tuple[tuple[int, int], ...]:
+        if content.startswith(b"%PDF-1.7") and b"1 0 obj" not in content:
+            extractor._checkpoint(cancel_event)
+            return tuple((60, 40) for _ in page_numbers)
+        if original is None:
+            raise AssertionError("PDF metadata dimension seam is not implemented")
+        return original(extractor, content, cancel_event, page_numbers)
+
+    monkeypatch.setattr(
+        StandaloneRuntimeCaptureExtractor,
+        "_pdf_page_raster_dimensions",
+        dimensions,
+        raising=False,
+    )
+
+
+def _geometry_pdf(*, rotation: int, crop: tuple[float, float, float, float]) -> bytes:
+    width, height = 123.4, 56.7
+    left, bottom, right, top = crop
+    cropbox = (left, bottom, width - right, height - top)
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        (
+            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {width} {height}] "
+            f"/CropBox [{cropbox[0]} {cropbox[1]} {cropbox[2]} {cropbox[3]}] "
+            f"/Rotate {rotation} /Resources << >> /Contents 4 0 R >>"
+        ).encode(),
+        b"<< /Length 0 >>\nstream\nendstream",
+    ]
+    content = bytearray(b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n")
+    offsets = [0]
+    for index, value in enumerate(objects, 1):
+        offsets.append(len(content))
+        content.extend(f"{index} 0 obj\n".encode())
+        content.extend(value)
+        content.extend(b"\nendobj\n")
+    xref_offset = len(content)
+    content.extend(f"xref\n0 {len(objects) + 1}\n0000000000 65535 f \n".encode())
+    for offset in offsets[1:]:
+        content.extend(f"{offset:010d} 00000 n \n".encode())
+    content.extend(
+        f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\n"
+        f"startxref\n{xref_offset}\n%%EOF\n".encode()
+    )
+    return bytes(content)
+
+
+def test_pdf_preflight_uses_metadata_without_png_render(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    extractor = StandaloneRuntimeCaptureExtractor(
+        SystemClock(),
+        replace(_config(tmp_path), ocr_render_scale=1.25),
+        ocr_adapter=FakeOcrAdapter(),
+    )
+    content = _geometry_pdf(rotation=0, crop=(0, 0, 0, 0))
+
+    def render_should_not_run(*_args: object, **_kwargs: object) -> bytes:
+        raise AssertionError("PDF preflight must not render PNG bytes")
+
+    monkeypatch.setattr(extractor, "_render_pdf_page", render_should_not_run)
+    manifest = extractor._ocr_pdf_page_manifest(content, asyncio.Event())
+
+    assert len(manifest) == 1
+    assert (manifest[0].raster_width, manifest[0].raster_height) == (155, 71)
+
+
+@pytest.mark.parametrize(
+    ("rotation", "crop"),
+    [
+        (0, (10, 5, 20, 7)),
+        (90, (10, 5, 20, 7)),
+        (180, (0, 0, 0, 0)),
+        (270, (10, 5, 20, 7)),
+    ],
+)
+def test_pdf_manifest_geometry_matches_pdfium_render(
+    tmp_path: Path,
+    rotation: int,
+    crop: tuple[float, float, float, float],
+) -> None:
+    import pypdfium2 as pdfium
+
+    scale = 1.25
+    extractor = StandaloneRuntimeCaptureExtractor(
+        SystemClock(),
+        replace(_config(tmp_path), ocr_render_scale=scale),
+        ocr_adapter=FakeOcrAdapter(),
+    )
+    content = _geometry_pdf(rotation=rotation, crop=crop)
+    manifest = extractor._ocr_pdf_page_manifest(content, asyncio.Event())
+
+    document = pdfium.PdfDocument(content)
+    try:
+        page = document[0]
+        try:
+            width, height = page.get_size()
+            assert (width, height) == (page.get_width(), page.get_height())
+            bitmap = page.render(scale=scale)
+            try:
+                rendered_dimensions = (bitmap.width, bitmap.height)
+            finally:
+                bitmap.close()
+        finally:
+            page.close()
+    finally:
+        document.close()
+
+    assert (manifest[0].raster_width, manifest[0].raster_height) == rendered_dimensions
+
+
+@pytest.mark.parametrize("outcome", ["success", "page-failure", "cancel"])
+def test_pdf_metadata_closes_page_and_document_on_all_outcomes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    outcome: str,
+) -> None:
+    import pypdfium2 as pdfium
+
+    events: list[str] = []
+    cancel_event = asyncio.Event()
+
+    class Page:
+        def get_size(self) -> tuple[float, float]:
+            events.append("page-size")
+            if outcome == "page-failure":
+                raise ValueError("page metadata failed")
+            if outcome == "cancel":
+                cancel_event.set()
+            return (10.5, 20.5)
+
+        def close(self) -> None:
+            events.append("page-close")
+
+    class Document:
+        def __init__(self, _source: object) -> None:
+            events.append("document-open")
+
+        def __getitem__(self, _index: int) -> Page:
+            return Page()
+
+        def close(self) -> None:
+            events.append("document-close")
+
+    monkeypatch.setattr(pdfium, "PdfDocument", Document)
+    extractor = StandaloneRuntimeCaptureExtractor(SystemClock(), _config(tmp_path))
+
+    if outcome == "success":
+        assert extractor._pdf_page_raster_dimensions(b"source", cancel_event, (1,)) == (
+            (10.5, 20.5),
+        )
+    elif outcome == "page-failure":
+        with pytest.raises(ValueError, match="page metadata failed"):
+            extractor._pdf_page_raster_dimensions(b"source", cancel_event, (1,))
+    else:
+        with pytest.raises(InterruptedError):
+            extractor._pdf_page_raster_dimensions(b"source", cancel_event, (1,))
+
+    assert events == ["document-open", "page-size", "page-close", "document-close"]
+
+
+def test_pdf_render_failure_closes_native_handles_and_releases_bitmap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import pypdfium2 as pdfium
+
+    events: list[str] = []
+
+    class Bitmap:
+        live = 0
+
+        def __init__(self) -> None:
+            self.closed = False
+            type(self).live += 1
+
+        def to_pil(self) -> None:
+            raise ValueError("pixel conversion failed")
+
+        def close(self) -> None:
+            if not self.closed:
+                self.closed = True
+                type(self).live -= 1
+                events.append("bitmap-close")
+
+        def __del__(self) -> None:
+            if not self.closed:
+                type(self).live -= 1
+
+    class Page:
+        def render(self, **_kwargs: object) -> Bitmap:
+            return Bitmap()
+
+    class Document:
+        def __init__(self, _source: object) -> None:
+            events.append("document-open")
+
+        def __getitem__(self, _index: int) -> Page:
+            return Page()
+
+        def close(self) -> None:
+            events.append("document-close")
+
+    monkeypatch.setattr(pdfium, "PdfDocument", Document)
+    extractor = StandaloneRuntimeCaptureExtractor(SystemClock(), _config(tmp_path))
+
+    with pytest.raises(ValueError, match="Could not render PDF page 1") as raised:
+        extractor._render_pdf_page(b"source", 0)
+
+    assert events == ["document-open", "bitmap-close", "document-close"]
+    assert Bitmap.live == 0
+    del raised
+    gc.collect()
+    assert Bitmap.live == 0
+
+
+@pytest.mark.parametrize("dimensions", [(0, 100), (float("nan"), 100), (100, float("inf"))])
+def test_pdf_preflight_rejects_invalid_metadata_before_engine(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    dimensions: tuple[float, float],
+) -> None:
+    adapter = FakeOcrAdapter()
+    extractor = StandaloneRuntimeCaptureExtractor(
+        SystemClock(), _config(tmp_path), ocr_adapter=adapter
+    )
+    content = b"%PDF-1.7 invalid metadata"
+    monkeypatch.setattr(extractor, "_pdf_page_count", lambda _content: 1)
+    monkeypatch.setattr(
+        extractor,
+        "_pdf_page_raster_dimensions",
+        lambda _content, _cancel_event, _page_numbers: (dimensions,),
+    )
+
+    with pytest.raises(OcrSourcePreflightError):
+        asyncio.run(
+            extractor.extract(
+                content, _source(content, "invalid.pdf", "application/pdf"), asyncio.Event()
+            )
+        )
+    assert adapter.images == []
+
+
+class _TrackedRaster(bytes):
+    live = 0
+    peak = 0
+
+    def __new__(cls, value: bytes) -> _TrackedRaster:
+        raster = super().__new__(cls, value)
+        cls.live += 1
+        cls.peak = max(cls.peak, cls.live)
+        return raster
+
+    def __del__(self) -> None:
+        type(self).live -= 1
+
+
+def _reset_tracked_raster() -> None:
+    gc.collect()
+    assert _TrackedRaster.live == 0
+    _TrackedRaster.peak = 0
+
+
+def _stub_pdf_source(
+    extractor: StandaloneRuntimeCaptureExtractor,
+    monkeypatch: pytest.MonkeyPatch,
+    page_count: int,
+) -> None:
+    monkeypatch.setattr(extractor, "_pdf_page_count", lambda _content: page_count)
+    monkeypatch.setattr(
+        extractor,
+        "_pdf_page_raster_dimensions",
+        lambda _content, _cancel_event, page_numbers: tuple((60, 40) for _ in page_numbers),
+    )
+
+
+def _tracked_result(text: str) -> OcrTextResult:
+    return OcrTextResult(
+        text=text,
+        device="windowsml-dml",
+        model="pp-ocrv6-medium-windowsml",
+        digest=f"sha256:{'1' * 64}",
+        raster_width=1,
+        raster_height=1,
+    )
+
+
+def test_pdf_sync_raster_lifetime_is_bounded_across_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _reset_tracked_raster()
+    calls: list[int] = []
+
+    class RecordingAdapter:
+        def extract_png(self, image_png: bytes) -> OcrTextResult:
+            assert isinstance(image_png, _TrackedRaster)
+            calls.append(len(calls) + 1)
+            return _tracked_result(f"page {calls[-1]}")
+
+    extractor = StandaloneRuntimeCaptureExtractor(
+        SystemClock(),
+        _config(tmp_path),
+        ocr_adapter=RecordingAdapter(),  # type: ignore[arg-type]
+    )
+    _stub_pdf_source(extractor, monkeypatch, page_count=3)
+
+    rendered: list[int] = []
+
+    def render(_content: bytes, page: int) -> bytes:
+        rendered.append(page)
+        return _TrackedRaster(f"raster-{page}".encode())
+
+    monkeypatch.setattr(
+        extractor,
+        "_render_pdf_page",
+        render,
+    )
+    content = b"%PDF-1.7 bounded raster success"
+
+    extraction = asyncio.run(
+        extractor.extract(
+            content, _source(content, "bounded.pdf", "application/pdf"), asyncio.Event()
+        )
+    )
+    del extraction
+    gc.collect()
+
+    assert calls == [1, 2, 3]
+    assert rendered == [0, 1, 2]
+    assert _TrackedRaster.peak == 1
+    assert _TrackedRaster.live == 0
+
+
+def test_pdf_sync_raster_lifetime_is_bounded_after_render_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _reset_tracked_raster()
+
+    class RecordingAdapter:
+        def extract_png(self, image_png: bytes) -> OcrTextResult:
+            assert isinstance(image_png, _TrackedRaster)
+            return _tracked_result("trusted page")
+
+    extractor = StandaloneRuntimeCaptureExtractor(
+        SystemClock(),
+        _config(tmp_path),
+        ocr_adapter=RecordingAdapter(),  # type: ignore[arg-type]
+    )
+    _stub_pdf_source(extractor, monkeypatch, page_count=2)
+
+    def render(_content: bytes, page: int) -> bytes:
+        if page == 1:
+            raise ValueError("render conversion failed")
+        return _TrackedRaster(b"raster")
+
+    monkeypatch.setattr(extractor, "_render_pdf_page", render)
+    content = b"%PDF-1.7 bounded raster render failure"
+
+    with pytest.raises(OcrExtractionFailure) as raised:
+        asyncio.run(
+            extractor.extract(
+                content, _source(content, "render-failure.pdf", "application/pdf"), asyncio.Event()
+            )
+        )
+
+    projection = raised.value.projection
+    assert [page.status.value for page in projection.pages] == ["recognized", "failed"]
+    assert projection.failure is not None
+    assert projection.failure.code == "ocr_worker_protocol"
+    assert _TrackedRaster.live == 0
+    del raised
+    gc.collect()
+    assert _TrackedRaster.peak == 1
+    assert _TrackedRaster.live == 0
+
+
+def test_pdf_sync_raster_lifetime_is_bounded_after_inference_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _reset_tracked_raster()
+
+    class FailingAdapter:
+        calls = 0
+
+        def extract_png(self, image_png: bytes) -> OcrTextResult:
+            assert isinstance(image_png, _TrackedRaster)
+            self.calls += 1
+            if self.calls == 2:
+                raise PaddleResultNormalizationError("inference failed")
+            return _tracked_result("trusted page")
+
+    adapter = FailingAdapter()
+    extractor = StandaloneRuntimeCaptureExtractor(
+        SystemClock(),
+        _config(tmp_path),
+        ocr_adapter=adapter,  # type: ignore[arg-type]
+    )
+    _stub_pdf_source(extractor, monkeypatch, page_count=2)
+    monkeypatch.setattr(
+        extractor,
+        "_render_pdf_page",
+        lambda _content, _page: _TrackedRaster(b"raster"),
+    )
+    content = b"%PDF-1.7 bounded raster inference failure"
+
+    with pytest.raises(OcrExtractionFailure) as raised:
+        asyncio.run(
+            extractor.extract(
+                content,
+                _source(content, "inference-failure.pdf", "application/pdf"),
+                asyncio.Event(),
+            )
+        )
+
+    projection = raised.value.projection
+    assert [page.status.value for page in projection.pages] == ["recognized", "failed"]
+    assert projection.failure is not None
+    assert projection.failure.code == "ocr_worker_protocol"
+    assert adapter.calls == 2
+    assert _TrackedRaster.live == 0
+    del raised
+    gc.collect()
+    assert _TrackedRaster.peak == 1
+    assert _TrackedRaster.live == 0
+
+
+def test_pdf_sync_raster_lifetime_is_bounded_after_cancellation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _reset_tracked_raster()
+    cancel_event = asyncio.Event()
+
+    class CancellingAdapter:
+        calls = 0
+
+        def extract_png(self, image_png: bytes) -> OcrTextResult:
+            assert isinstance(image_png, _TrackedRaster)
+            self.calls += 1
+            cancel_event.set()
+            return _tracked_result("cancelled page")
+
+    adapter = CancellingAdapter()
+    extractor = StandaloneRuntimeCaptureExtractor(
+        SystemClock(),
+        _config(tmp_path),
+        ocr_adapter=adapter,  # type: ignore[arg-type]
+    )
+    _stub_pdf_source(extractor, monkeypatch, page_count=2)
+    rendered: list[int] = []
+
+    def render(_content: bytes, page: int) -> bytes:
+        rendered.append(page)
+        return _TrackedRaster(b"raster")
+
+    monkeypatch.setattr(extractor, "_render_pdf_page", render)
+    content = b"%PDF-1.7 bounded raster cancellation"
+
+    with pytest.raises(asyncio.CancelledError) as raised:
+        asyncio.run(
+            extractor.extract(
+                content, _source(content, "cancelled.pdf", "application/pdf"), cancel_event
+            )
+        )
+
+    assert adapter.calls == 1
+    assert rendered == [0]
+    assert _TrackedRaster.live == 0
+    del raised
+    gc.collect()
+    assert _TrackedRaster.peak == 1
+    assert _TrackedRaster.live == 0
+
+
 def test_standalone_image_normalization_and_audio_provenance(tmp_path: Path) -> None:
     ocr = FakeOcrAdapter()
     whisper = FakeWhisperAdapter()
@@ -3172,7 +3657,7 @@ def test_worker_backed_pdf_page_scope_dispatches_only_page_one_and_records_scope
         )
     )
 
-    assert rendered == [0]
+    assert rendered == []
     assert worker_client.options is not None
     assert worker_client.options["pageNumbers"] == [1]
     assert len(worker_client.options["pageManifest"]) == 1  # type: ignore[arg-type]

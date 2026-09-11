@@ -45,6 +45,30 @@ from capture_runtime.ocr_projection import OcrPageInput, OcrPipeline
 from tests.conftest import TOKEN
 
 
+@pytest.fixture(autouse=True)
+def _stub_legacy_pdf_manifest_dimensions(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep marker-only service tests independent of PDFium source geometry."""
+
+    original = StandaloneRuntimeCaptureExtractor._pdf_page_raster_dimensions
+
+    def dimensions(
+        extractor: StandaloneRuntimeCaptureExtractor,
+        content: bytes,
+        cancel_event: asyncio.Event,
+        page_numbers: tuple[int, ...],
+    ) -> tuple[tuple[int, int], ...]:
+        if content.startswith(b"%PDF-1.7") and b"1 0 obj" not in content:
+            extractor._checkpoint(cancel_event)
+            return tuple((60, 40) for _ in page_numbers)
+        return original(extractor, content, cancel_event, page_numbers)
+
+    monkeypatch.setattr(
+        StandaloneRuntimeCaptureExtractor,
+        "_pdf_page_raster_dimensions",
+        dimensions,
+    )
+
+
 def _source() -> bytes:
     return b"abcdef"
 
