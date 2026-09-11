@@ -524,6 +524,22 @@ function ratio(value: unknown, context: string): number {
   return value;
 }
 
+function nonNegativeFinite(value: unknown, context: string): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    fail(`${context} must be a finite non-negative number`);
+  }
+  return value;
+}
+
+function cerThreshold(value: unknown, mediaKind: MediaKind, context: string): number {
+  const threshold = ratio(value, context);
+  const expected = mediaKind === 'jpeg' ? 0.03 : 0.01;
+  if (threshold !== expected) {
+    fail(`${context} must be ${expected} for ${mediaKind}`);
+  }
+  return threshold;
+}
+
 function arrayValue(value: unknown, context: string): readonly unknown[] {
   if (!Array.isArray(value) || value.length === 0) {
     fail(`${context} must be a non-empty array`);
@@ -757,7 +773,7 @@ function fixtureAssignment(value: unknown, context: string): FixtureAssignment {
       item.expectedAnchorSetSha256,
       `${context}.expectedAnchorSetSha256`,
     ),
-    cerThreshold: ratio(item.cerThreshold, `${context}.cerThreshold`),
+    cerThreshold: cerThreshold(item.cerThreshold, mediaKind, `${context}.cerThreshold`),
     artifactId: assertSha256(item.artifactId, `${context}.artifactId`),
   } satisfies FixtureAssignment;
   if (selfExcludedDigest(item, 'fixtureIdentitySha256') !== result.fixtureIdentitySha256) {
@@ -1143,7 +1159,7 @@ function semanticFixtureResult(value: unknown, context: string): SemanticFixture
   const item = record(value, context);
   exactKeys(item, SEMANTIC_RESULT_KEYS, context);
   const mediaKind = enumValue(item.mediaKind, ['jpeg', 'pdf'] as const, `${context}.mediaKind`);
-  return {
+  const result = {
     fixtureIndex: integer(item.fixtureIndex, `${context}.fixtureIndex`),
     fixtureKey: stringValue(item.fixtureKey, `${context}.fixtureKey`),
     fixtureIdentitySha256: assertSha256(item.fixtureIdentitySha256, `${context}.fixtureIdentitySha256`),
@@ -1171,13 +1187,24 @@ function semanticFixtureResult(value: unknown, context: string): SemanticFixture
       item.expectedAnchorSetSha256,
       `${context}.expectedAnchorSetSha256`,
     ),
-    cer: ratio(item.cer, `${context}.cer`),
+    cer: nonNegativeFinite(item.cer, `${context}.cer`),
     anchorOmissions: integer(item.anchorOmissions, `${context}.anchorOmissions`),
-    cerThreshold: ratio(item.cerThreshold, `${context}.cerThreshold`),
+    cerThreshold: cerThreshold(item.cerThreshold, mediaKind, `${context}.cerThreshold`),
     outcome: enumValue(item.outcome, ['passed', 'failed'] as const, `${context}.outcome`),
     projectionSha256: assertSha256(item.projectionSha256, `${context}.projectionSha256`),
     artifactId: assertSha256(item.artifactId, `${context}.artifactId`),
   };
+  const passes = result.cer <= result.cerThreshold && result.anchorOmissions === 0;
+  if ((result.outcome === 'passed') !== passes) {
+    fail(`${context}.outcome does not match CER threshold and anchor omissions`);
+  }
+  if (
+    (result.cer === 0 && result.actualNormalizedOutputSha256 !== result.expectedNormalizedTruthSha256) ||
+    (result.cer > 0 && result.actualNormalizedOutputSha256 === result.expectedNormalizedTruthSha256)
+  ) {
+    fail(`${context}.cer does not match normalized output and truth identity`);
+  }
+  return result;
 }
 
 function orderedSemanticResults(value: unknown, context: string): readonly SemanticFixtureResult[] {

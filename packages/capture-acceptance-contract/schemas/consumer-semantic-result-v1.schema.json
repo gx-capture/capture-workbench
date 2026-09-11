@@ -63,7 +63,7 @@
         "actualNormalizedOutputSha256": { "$ref": "#/$defs/sha256" },
         "expectedNormalizedTruthSha256": { "$ref": "#/$defs/sha256" },
         "expectedAnchorSetSha256": { "$ref": "#/$defs/sha256" },
-        "cer": { "type": "number", "minimum": 0, "maximum": 1 },
+        "cer": { "type": "number", "minimum": 0 },
         "anchorOmissions": { "type": "integer", "minimum": 0 },
         "cerThreshold": { "type": "number", "minimum": 0, "maximum": 1 },
         "outcome": { "enum": ["passed", "failed"] },
@@ -89,6 +89,82 @@
         "outcome",
         "projectionSha256",
         "artifactId"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": { "mediaKind": { "const": "jpeg" } },
+            "required": ["mediaKind"]
+          },
+          "then": { "properties": { "cerThreshold": { "const": 0.03 } } }
+        },
+        {
+          "if": {
+            "properties": { "mediaKind": { "const": "pdf" } },
+            "required": ["mediaKind"]
+          },
+          "then": { "properties": { "cerThreshold": { "const": 0.01 } } }
+        },
+        {
+          "if": {
+            "properties": {
+              "mediaKind": { "const": "jpeg" },
+              "outcome": { "const": "passed" }
+            },
+            "required": ["mediaKind", "outcome"]
+          },
+          "then": {
+            "properties": {
+              "cer": { "type": "number", "maximum": 0.03 },
+              "anchorOmissions": { "const": 0 }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "mediaKind": { "const": "pdf" },
+              "outcome": { "const": "passed" }
+            },
+            "required": ["mediaKind", "outcome"]
+          },
+          "then": {
+            "properties": {
+              "cer": { "type": "number", "maximum": 0.01 },
+              "anchorOmissions": { "const": 0 }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "mediaKind": { "const": "jpeg" },
+              "outcome": { "const": "failed" }
+            },
+            "required": ["mediaKind", "outcome"]
+          },
+          "then": {
+            "anyOf": [
+              { "properties": { "cer": { "type": "number", "exclusiveMinimum": 0.03 } } },
+              { "properties": { "anchorOmissions": { "type": "integer", "minimum": 1 } } }
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "mediaKind": { "const": "pdf" },
+              "outcome": { "const": "failed" }
+            },
+            "required": ["mediaKind", "outcome"]
+          },
+          "then": {
+            "anyOf": [
+              { "properties": { "cer": { "type": "number", "exclusiveMinimum": 0.01 } } },
+              { "properties": { "anchorOmissions": { "type": "integer", "minimum": 1 } } }
+            ]
+          }
+        }
       ]
     }
   }

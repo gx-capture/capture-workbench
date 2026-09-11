@@ -170,6 +170,22 @@
         "expectedAnchorSetSha256",
         "cerThreshold",
         "artifactId"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": { "mediaKind": { "const": "jpeg" } },
+            "required": ["mediaKind"]
+          },
+          "then": { "properties": { "cerThreshold": { "const": 0.03 } } }
+        },
+        {
+          "if": {
+            "properties": { "mediaKind": { "const": "pdf" } },
+            "required": ["mediaKind"]
+          },
+          "then": { "properties": { "cerThreshold": { "const": 0.01 } } }
+        }
       ]
     }
   }

@@ -1678,6 +1678,181 @@ test('semantic and wire codecs reject consumer-owned cleanup fields and preserve
   );
 });
 
+test('semantic codecs enforce fixed OCR thresholds and measurement outcomes', () => {
+  const base = syntheticSemanticWithoutDigest();
+  const baseResult = (base.fixtureResults as Array<Record<string, unknown>>)[0];
+  const semanticWith = (overrides: Record<string, unknown>): Record<string, unknown> => {
+    const body = {
+      ...base,
+      fixtureResults: [{ ...baseResult, ...overrides }],
+    };
+    return { ...body, semanticResultSha256: sha256Canonical(body) };
+  };
+
+  assert.throws(
+    () =>
+      decodeConsumerSemanticResult(
+        canonicalJson(semanticWith({ cerThreshold: 0.99 })),
+      ),
+    AcceptanceContractCodecError,
+  );
+  assert.throws(
+    () =>
+      decodeConsumerSemanticResult(
+        canonicalJson(
+          semanticWith({
+            actualNormalizedOutputSha256: 'a'.repeat(64),
+            cer: 0.04,
+            outcome: 'passed',
+          }),
+        ),
+      ),
+    AcceptanceContractCodecError,
+  );
+  assert.throws(
+    () =>
+      decodeConsumerSemanticResult(
+        canonicalJson(semanticWith({ outcome: 'failed' })),
+      ),
+    AcceptanceContractCodecError,
+  );
+  assert.throws(
+    () =>
+      decodeConsumerSemanticResult(
+        canonicalJson(
+          semanticWith({ actualNormalizedOutputSha256: 'a'.repeat(64), cer: 0 }),
+        ),
+      ),
+    AcceptanceContractCodecError,
+  );
+  assert.throws(
+    () =>
+      decodeConsumerSemanticResult(
+        canonicalJson(semanticWith({ cer: 0.01 })),
+      ),
+    AcceptanceContractCodecError,
+  );
+  assert.doesNotThrow(() =>
+    decodeConsumerSemanticResult(
+      canonicalJson(
+        semanticWith({
+          actualNormalizedOutputSha256: 'a'.repeat(64),
+          cer: 2,
+          outcome: 'failed',
+        }),
+      ),
+    ),
+  );
+
+  const pdfSemanticWith = (overrides: Record<string, unknown>): Record<string, unknown> => {
+    const body = {
+      ...base,
+      fixtureResults: [
+        {
+          ...baseResult,
+          mediaKind: 'pdf',
+          page: 2,
+          cerThreshold: 0.01,
+          ...overrides,
+        },
+      ],
+    };
+    return { ...body, semanticResultSha256: sha256Canonical(body) };
+  };
+  assert.throws(
+    () =>
+      decodeConsumerSemanticResult(
+        canonicalJson(pdfSemanticWith({ cerThreshold: 0.99 })),
+      ),
+    AcceptanceContractCodecError,
+  );
+  assert.doesNotThrow(() =>
+    decodeConsumerSemanticResult(
+      canonicalJson(
+        pdfSemanticWith({
+          actualNormalizedOutputSha256: 'a'.repeat(64),
+          cer: 0.005,
+          outcome: 'passed',
+        }),
+      ),
+    ),
+  );
+});
+
+test('acceptance schemas encode fixed thresholds and allow finite CER above one', async () => {
+  const schemaRoot = join(process.cwd(), 'packages', 'capture-acceptance-contract', 'schemas');
+  const ajv = strictAjv2020();
+  const semanticSchema = JSON.parse(
+    await readFile(join(schemaRoot, 'consumer-semantic-result-v1.schema.json'), 'utf8'),
+  );
+  const wireSchema = JSON.parse(
+    await readFile(join(schemaRoot, 'acceptance-child-wire-v1.schema.json'), 'utf8'),
+  );
+  const semanticValidator = ajv.compile(semanticSchema);
+  const wireValidator = ajv.compile(wireSchema);
+  const base = syntheticSemanticWithoutDigest();
+  const baseResult = (base.fixtureResults as Array<Record<string, unknown>>)[0];
+  const semanticWith = (overrides: Record<string, unknown>): Record<string, unknown> => {
+    const body = {
+      ...base,
+      fixtureResults: [{ ...baseResult, ...overrides }],
+    };
+    return { ...body, semanticResultSha256: sha256Canonical(body) };
+  };
+
+  assert.equal(
+    semanticValidator(semanticWith({
+      actualNormalizedOutputSha256: 'a'.repeat(64),
+      cer: 2,
+      outcome: 'failed',
+    })),
+    true,
+  );
+  assert.equal(
+    semanticValidator(
+      semanticWith({
+        actualNormalizedOutputSha256: 'a'.repeat(64),
+        cer: 0.04,
+        outcome: 'passed',
+      }),
+    ),
+    false,
+  );
+  assert.equal(semanticValidator(semanticWith({ outcome: 'failed' })), false);
+
+  const wireResult = {
+    ...baseResult,
+    normalization: 'nfkc-whitespace-v1',
+    distance: 'code-point-levenshtein-v1',
+  };
+  const wireWithoutDigest = syntheticWireWithoutDigest(wireResult, 'a'.repeat(64));
+  const wire = {
+    ...wireWithoutDigest,
+    wireSha256: sha256Canonical(wireWithoutDigest),
+  };
+  assert.equal(
+    wireValidator({
+      ...wire,
+      fixtureResults: [
+        {
+          ...wireResult,
+          actualNormalizedOutputSha256: 'a'.repeat(64),
+          cer: 2,
+          outcome: 'failed',
+        },
+      ],
+    }),
+    true,
+  );
+  assert.equal(
+    wireValidator({
+      ...wire,
+      fixtureResults: [{ ...wireResult, cerThreshold: 0.99 }],
+    }),
+    false,
+  );
+});
+
 function invocationLedger(): Record<string, string> {
   return {
     sourceGate: 'D3',
