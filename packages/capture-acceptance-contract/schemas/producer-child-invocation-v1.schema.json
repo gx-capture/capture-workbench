@@ -1,0 +1,176 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://capture-workbench.dev/contracts/producer-child-invocation-v1.schema.json",
+  "title": "ProducerChildInvocationV1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "const": "ProducerChildInvocationV1" },
+    "contractVersion": { "const": "1" },
+    "contractSha256": { "$ref": "#/$defs/sha256" },
+    "producer": { "const": "capture-runtime" },
+    "parentGate": { "enum": ["D4", "D7"] },
+    "tier": { "enum": ["candidate", "published"] },
+    "invocationState": { "const": "frozen" },
+    "sequenceIndex": { "type": "integer", "minimum": 1 },
+    "childKey": { "type": "string", "minLength": 1 },
+    "legId": { "type": "string", "minLength": 1 },
+    "childId": { "$ref": "#/$defs/sha256" },
+    "root": { "$ref": "#/$defs/sha256" },
+    "groupRefDigest": { "$ref": "#/$defs/sha256" },
+    "groupGeneration": { "type": "integer", "minimum": 0 },
+    "bindingAttemptId": { "$ref": "#/$defs/opaque" },
+    "rootBindings": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/rootBinding" }
+    },
+    "activationReceiptDigest": { "$ref": "#/$defs/sha256" },
+    "artifactIds": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/sha256" },
+      "uniqueItems": true
+    },
+    "ledgerBinding": { "$ref": "#/$defs/ledgerBinding" },
+    "predecessorCleanupProofSha256": {
+      "anyOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }]
+    },
+    "fixtureAssignments": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/fixtureAssignment" }
+    },
+    "outputPathNonce": { "$ref": "#/$defs/opaque" },
+    "invocationSha256": { "$ref": "#/$defs/sha256" }
+  },
+  "required": [
+    "schemaVersion",
+    "contractVersion",
+    "contractSha256",
+    "producer",
+    "parentGate",
+    "tier",
+    "invocationState",
+    "sequenceIndex",
+    "childKey",
+    "legId",
+    "childId",
+    "root",
+    "groupRefDigest",
+    "groupGeneration",
+    "bindingAttemptId",
+    "rootBindings",
+    "activationReceiptDigest",
+    "artifactIds",
+    "ledgerBinding",
+    "predecessorCleanupProofSha256",
+    "fixtureAssignments",
+    "outputPathNonce",
+    "invocationSha256"
+  ],
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "opaque": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "rootBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ordinal": { "type": "integer", "minimum": 0 },
+        "role": { "type": "string", "minLength": 1 },
+        "rootRefDigest": { "$ref": "#/$defs/sha256" },
+        "rootGeneration": { "type": "integer", "minimum": 0 },
+        "specDigest": { "$ref": "#/$defs/sha256" },
+        "reservedListenerIdentity": { "$ref": "#/$defs/opaque" }
+      },
+      "required": [
+        "ordinal",
+        "role",
+        "rootRefDigest",
+        "rootGeneration",
+        "specDigest",
+        "reservedListenerIdentity"
+      ]
+    },
+    "ledgerBinding": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "sourceGate": { "const": "D3" },
+            "ledgerSha256": { "$ref": "#/$defs/sha256" },
+            "candidateId": { "$ref": "#/$defs/sha256" },
+            "candidateManifestSha256": { "$ref": "#/$defs/sha256" }
+          },
+          "required": [
+            "sourceGate",
+            "ledgerSha256",
+            "candidateId",
+            "candidateManifestSha256"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "sourceGate": { "const": "D6" },
+            "ledgerSha256": { "$ref": "#/$defs/sha256" },
+            "publicationLedgerSha256": { "$ref": "#/$defs/sha256" },
+            "downloadBundleSha256": { "$ref": "#/$defs/sha256" }
+          },
+          "required": [
+            "sourceGate",
+            "ledgerSha256",
+            "publicationLedgerSha256",
+            "downloadBundleSha256"
+          ]
+        }
+      ]
+    },
+    "fixtureAssignment": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "fixtureIndex": { "type": "integer", "minimum": 0 },
+        "fixtureKey": { "type": "string", "minLength": 1 },
+        "fixtureIdentitySha256": { "$ref": "#/$defs/sha256" },
+        "mediaKind": { "enum": ["jpeg", "pdf"] },
+        "page": {
+          "anyOf": [{ "type": "null" }, { "type": "integer", "minimum": 1 }]
+        },
+        "mediaCapabilityHandle": { "$ref": "#/$defs/opaque" },
+        "mediaCapabilityHandleSha256": { "$ref": "#/$defs/sha256" },
+        "oracleCapabilityHandle": { "$ref": "#/$defs/opaque" },
+        "oracleCapabilityHandleSha256": { "$ref": "#/$defs/sha256" },
+        "mediaSha256": { "$ref": "#/$defs/sha256" },
+        "oracleSha256": { "$ref": "#/$defs/sha256" },
+        "expectedNormalizedTruthSha256": { "$ref": "#/$defs/sha256" },
+        "expectedAnchorSetSha256": { "$ref": "#/$defs/sha256" },
+        "cerThreshold": { "type": "number", "minimum": 0, "maximum": 1 },
+        "artifactId": { "$ref": "#/$defs/sha256" }
+      },
+      "required": [
+        "fixtureIndex",
+        "fixtureKey",
+        "fixtureIdentitySha256",
+        "mediaKind",
+        "page",
+        "mediaCapabilityHandle",
+        "mediaCapabilityHandleSha256",
+        "oracleCapabilityHandle",
+        "oracleCapabilityHandleSha256",
+        "mediaSha256",
+        "oracleSha256",
+        "expectedNormalizedTruthSha256",
+        "expectedAnchorSetSha256",
+        "cerThreshold",
+        "artifactId"
+      ]
+    }
+  }
+}

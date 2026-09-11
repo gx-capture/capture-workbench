@@ -1,0 +1,153 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://capture-workbench.dev/contracts/producer-child-scope-v1.schema.json",
+  "title": "ProducerChildScopeV1",
+  "oneOf": [
+    { "$ref": "#/$defs/planned" },
+    { "$ref": "#/$defs/prepared" },
+    { "$ref": "#/$defs/ready" }
+  ],
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "opaque": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "rootBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ordinal": { "type": "integer", "minimum": 0 },
+        "role": { "type": "string", "minLength": 1 },
+        "rootRefDigest": { "$ref": "#/$defs/sha256" },
+        "rootGeneration": { "type": "integer", "minimum": 0 },
+        "specDigest": { "$ref": "#/$defs/sha256" },
+        "reservedListenerIdentity": { "$ref": "#/$defs/opaque" }
+      },
+      "required": [
+        "ordinal",
+        "role",
+        "rootRefDigest",
+        "rootGeneration",
+        "specDigest",
+        "reservedListenerIdentity"
+      ]
+    },
+    "unbound": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "kind": { "const": "unbound" } },
+      "required": ["kind"]
+    },
+    "bound": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "const": "bound" },
+        "bindingAttemptId": { "$ref": "#/$defs/opaque" },
+        "groupRefDigest": { "$ref": "#/$defs/sha256" },
+        "groupGeneration": { "type": "integer", "minimum": 0 },
+        "rootBindings": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/rootBinding" }
+        },
+        "activationReceiptDigest": { "$ref": "#/$defs/sha256" }
+      },
+      "required": [
+        "kind",
+        "bindingAttemptId",
+        "groupRefDigest",
+        "groupGeneration",
+        "rootBindings",
+        "activationReceiptDigest"
+      ]
+    },
+    "baseProperties": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": { "const": "ProducerChildScopeV1" },
+        "contractVersion": { "const": "1" },
+        "contractSha256": { "$ref": "#/$defs/sha256" },
+        "producer": { "const": "capture-runtime" },
+        "parentGate": { "enum": ["D4", "D7"] },
+        "tier": { "enum": ["candidate", "published"] },
+        "runIdDigest": { "$ref": "#/$defs/sha256" },
+        "sequenceIndex": { "type": "integer", "minimum": 1 },
+        "childKey": { "type": "string", "minLength": 1 },
+        "legId": { "type": "string", "minLength": 1 },
+        "childId": { "$ref": "#/$defs/sha256" },
+        "childPlanDigest": { "$ref": "#/$defs/sha256" },
+        "readyState": { "enum": ["planned", "prepared", "ready"] },
+        "binding": {
+          "oneOf": [
+            { "$ref": "#/$defs/unbound" },
+            { "$ref": "#/$defs/bound" }
+          ]
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "contractVersion",
+        "contractSha256",
+        "producer",
+        "parentGate",
+        "tier",
+        "runIdDigest",
+        "sequenceIndex",
+        "childKey",
+        "legId",
+        "childId",
+        "childPlanDigest",
+        "readyState",
+        "binding"
+      ]
+    },
+    "planned": {
+      "type": "object",
+      "allOf": [
+        { "$ref": "#/$defs/baseProperties" },
+        {
+          "type": "object",
+          "properties": {
+            "readyState": { "const": "planned" },
+            "binding": { "$ref": "#/$defs/unbound" }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "prepared": {
+      "type": "object",
+      "allOf": [
+        { "$ref": "#/$defs/baseProperties" },
+        {
+          "type": "object",
+          "properties": {
+            "readyState": { "const": "prepared" },
+            "binding": { "$ref": "#/$defs/bound" }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "ready": {
+      "type": "object",
+      "allOf": [
+        { "$ref": "#/$defs/baseProperties" },
+        {
+          "type": "object",
+          "properties": {
+            "readyState": { "const": "ready" },
+            "binding": { "$ref": "#/$defs/bound" },
+            "invocationSha256": { "$ref": "#/$defs/sha256" },
+            "outputPathNonce": { "$ref": "#/$defs/opaque" }
+          },
+          "required": ["invocationSha256", "outputPathNonce"]
+        }
+      ],
+      "unevaluatedProperties": false
+    }
+  }
+}

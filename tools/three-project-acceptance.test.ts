@@ -5,6 +5,8 @@ import test from 'node:test';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { Ajv2020 } from 'ajv/dist/2020.js';
+
 import {
   acceptanceScopeContractFor,
   buildCaptureWorkbenchAcceptancePlan,
@@ -22,6 +24,21 @@ import {
   type AcceptanceProjectPlan,
   validateChildManifest,
 } from './three-project-acceptance.ts';
+// The resolved capture-tools owner runs these synthetic codec tests before the contract package has a project boundary.
+// eslint-disable-next-line @nx/enforce-module-boundaries -- D2.3 keeps the existing capture-tools test owner.
+import {
+  AcceptanceContractCodecError,
+  CapabilityReplayError,
+  CapabilityUseRegistry,
+  canonicalJson,
+  decodeAcceptanceChildWire,
+  decodeConsumerSemanticResult,
+  decodeProducerChildInvocation,
+  decodeProducerChildScope,
+  sha256Canonical,
+  type ExpectedBindingContext,
+  type RootBinding,
+} from '../packages/capture-acceptance-contract/src/codecs.ts';
 
 const capturePrivateBindings = {
   ocrInput: 'C:\\private\\j49-ocr-input-8f4b2c71e6a90d3f5b7c1e2a4d8f6c9b.pdf',
@@ -996,3 +1013,683 @@ test('prepared scope recovery rejects a replayed or unlaunched scope', async () 
   assert.equal(unchanged.status, 'prepared');
   assert.equal(unchanged.evidenceComplete, false);
 });
+
+const contractDigest = 'a'.repeat(64);
+
+function syntheticRootBinding(ordinal: number): RootBinding {
+  return {
+    ordinal,
+    role: ordinal === 0 ? 'capture' : 'python',
+    rootRefDigest: `${String.fromCharCode(98 + ordinal)}${'b'.repeat(63)}`,
+    rootGeneration: ordinal + 1,
+    specDigest: `${String.fromCharCode(99 + ordinal)}${'c'.repeat(63)}`,
+    reservedListenerIdentity: `listener-${ordinal}`,
+  };
+}
+
+function syntheticFixtureAssignment(): Record<string, unknown> {
+  const withoutIdentity = {
+    fixtureIndex: 0,
+    fixtureKey: 'capture-private-jpeg-1',
+    mediaKind: 'jpeg',
+    page: null,
+    mediaCapabilityHandle: 'media-handle-1',
+    mediaCapabilityHandleSha256: 'e'.repeat(64),
+    oracleCapabilityHandle: 'oracle-handle-1',
+    oracleCapabilityHandleSha256: 'f'.repeat(64),
+    mediaSha256: '1'.repeat(64),
+    oracleSha256: '2'.repeat(64),
+    expectedNormalizedTruthSha256: '3'.repeat(64),
+    expectedAnchorSetSha256: '4'.repeat(64),
+    cerThreshold: 0.03,
+    artifactId: '5'.repeat(64),
+  };
+  return {
+    ...withoutIdentity,
+    fixtureIdentitySha256: sha256Canonical(withoutIdentity),
+  };
+}
+
+function syntheticPlannedScope(): Record<string, unknown> {
+  return {
+    schemaVersion: 'ProducerChildScopeV1',
+    contractVersion: '1',
+    contractSha256: contractDigest,
+    producer: 'capture-runtime',
+    parentGate: 'D4',
+    tier: 'candidate',
+    runIdDigest: '6'.repeat(64),
+    sequenceIndex: 1,
+    childKey: 'capture-private-jpeg',
+    legId: 'capture-private-jpeg-v1',
+    childId: '7'.repeat(64),
+    childPlanDigest: '8'.repeat(64),
+    readyState: 'planned',
+    binding: { kind: 'unbound' },
+  };
+}
+
+function syntheticInvocationWithoutDigest(): Record<string, unknown> {
+  return {
+    schemaVersion: 'ProducerChildInvocationV1',
+    contractVersion: '1',
+    contractSha256: contractDigest,
+    producer: 'capture-runtime',
+    parentGate: 'D4',
+    tier: 'candidate',
+    invocationState: 'frozen',
+    sequenceIndex: 1,
+    childKey: 'capture-private-jpeg',
+    legId: 'capture-private-jpeg-v1',
+    childId: '7'.repeat(64),
+    root: '9'.repeat(64),
+    groupRefDigest: 'a'.repeat(64),
+    groupGeneration: 1,
+    bindingAttemptId: 'binding-attempt-1',
+    rootBindings: [syntheticRootBinding(0), syntheticRootBinding(1)],
+    activationReceiptDigest: 'b'.repeat(64),
+    artifactIds: ['5'.repeat(64)],
+    ledgerBinding: {
+      sourceGate: 'D3',
+      ledgerSha256: 'c'.repeat(64),
+      candidateId: 'd'.repeat(64),
+      candidateManifestSha256: 'e'.repeat(64),
+    },
+    predecessorCleanupProofSha256: null,
+    fixtureAssignments: [syntheticFixtureAssignment()],
+    outputPathNonce: 'output-nonce-1',
+  };
+}
+
+function syntheticSemanticWithoutDigest(): Record<string, unknown> {
+  const assignment = syntheticFixtureAssignment();
+  const semanticAssignment = Object.fromEntries(
+    Object.entries(assignment).filter(
+      ([key]) => key !== 'mediaCapabilityHandle' && key !== 'oracleCapabilityHandle',
+    ),
+  );
+  return {
+    schemaVersion: 'ConsumerSemanticResultV1',
+    contractVersion: '1',
+    contractSha256: contractDigest,
+    consumer: 'cert-or-law-adapter',
+    parentGate: 'D4',
+    tier: 'candidate',
+    sequenceIndex: 1,
+    childKey: 'capture-private-jpeg',
+    legId: 'capture-private-jpeg-v1',
+    childId: '7'.repeat(64),
+    artifactIds: ['5'.repeat(64)],
+    fixtureResults: [
+      {
+        ...semanticAssignment,
+        mediaCapabilityHandleSha256: 'e'.repeat(64),
+        oracleCapabilityHandleSha256: 'f'.repeat(64),
+        mediaSha256: '1'.repeat(64),
+        oracleSha256: '2'.repeat(64),
+        actualNormalizedOutputSha256: '3'.repeat(64),
+        expectedNormalizedTruthSha256: '3'.repeat(64),
+        expectedAnchorSetSha256: '4'.repeat(64),
+        cer: 0,
+        anchorOmissions: 0,
+        cerThreshold: 0.03,
+        outcome: 'passed',
+        projectionSha256: '6'.repeat(64),
+        artifactId: '5'.repeat(64),
+      },
+    ],
+  };
+}
+
+function syntheticWireWithoutDigest(
+  wireResult: Record<string, unknown>,
+  semanticResultSha256: string,
+): Record<string, unknown> {
+  return {
+    schemaVersion: 'AcceptanceChildWireV1',
+    contractVersion: '1',
+    contractSha256: contractDigest,
+    producer: 'capture-runtime',
+    parentGate: 'D4',
+    tier: 'candidate',
+    runIdDigest: '6'.repeat(64),
+    sequenceIndex: 1,
+    childKey: 'capture-private-jpeg',
+    legId: 'capture-private-jpeg-v1',
+    childId: '7'.repeat(64),
+    root: '9'.repeat(64),
+    artifactIds: ['5'.repeat(64)],
+    ledgerBinding: wireLedger(),
+    invocationSha256: 'c'.repeat(64),
+    fixtureAssignments: [syntheticFixtureAssignment()],
+    fixtureResults: [wireResult],
+    childSemanticResultSha256: semanticResultSha256,
+    producerCleanup: {
+      journalState: 'terminal',
+      reconcileRefSha256: '1'.repeat(64),
+      generation: 1,
+      automaticAttempts: 1,
+      rootReaped: true,
+      descendantsTerminated: true,
+      listenersReleased: true,
+      stagingReleased: true,
+      captureDeleted: true,
+      modelMemoryReleased: true,
+      processesAbsent: true,
+      listenersAbsent: true,
+      stagingAbsent: true,
+      proofSha256: '2'.repeat(64),
+    },
+    privacy: {
+      rawOcr: false,
+      rawTruth: false,
+      rawMedia: false,
+      tokens: false,
+      paths: false,
+      nativeIds: false,
+    },
+  };
+}
+
+test('acceptance schema documents keep each record boundary closed', async () => {
+  const schemaRoot = join(process.cwd(), 'packages', 'capture-acceptance-contract', 'schemas');
+  const schemaNames = [
+    'producer-child-scope-v1.schema.json',
+    'producer-child-invocation-v1.schema.json',
+    'consumer-semantic-result-v1.schema.json',
+    'acceptance-child-wire-v1.schema.json',
+  ] as const;
+  for (const schemaName of schemaNames) {
+    const schema = JSON.parse(await readFile(join(schemaRoot, schemaName), 'utf8')) as {
+      title?: unknown;
+      oneOf?: readonly unknown[];
+      additionalProperties?: unknown;
+      $defs?: Record<string, { unevaluatedProperties?: unknown }>;
+    };
+    assert.equal(typeof schema.title, 'string');
+    if (schemaName === 'producer-child-scope-v1.schema.json') {
+      assert.equal(schema.oneOf?.length, 3);
+      assert.ok(schema.$defs);
+      for (const variant of ['planned', 'prepared', 'ready']) {
+        assert.equal(schema.$defs[variant]?.unevaluatedProperties, false);
+      }
+    } else {
+      assert.equal(schema.additionalProperties, false);
+    }
+  }
+});
+
+type StrictValidator = ((value: unknown) => boolean) & { errors?: readonly unknown[] | null };
+type StrictAjv = { compile(schema: unknown): StrictValidator };
+type ContractSchemaName =
+  | 'producer-child-scope-v1.schema.json'
+  | 'producer-child-invocation-v1.schema.json'
+  | 'consumer-semantic-result-v1.schema.json'
+  | 'acceptance-child-wire-v1.schema.json';
+
+function strictAjv2020(): StrictAjv {
+  return new Ajv2020({ strict: true, allErrors: true }) as unknown as StrictAjv;
+}
+
+function decodeSharedContractVector(
+  schemaName: ContractSchemaName,
+  value: Record<string, unknown>,
+  expectedBinding: ExpectedBindingContext,
+): unknown {
+  switch (schemaName) {
+    case 'producer-child-scope-v1.schema.json':
+      return decodeProducerChildScope(canonicalJson(value), expectedBinding);
+    case 'producer-child-invocation-v1.schema.json':
+      return decodeProducerChildInvocation(canonicalJson(value), expectedBinding);
+    case 'consumer-semantic-result-v1.schema.json':
+      return decodeConsumerSemanticResult(canonicalJson(value));
+    case 'acceptance-child-wire-v1.schema.json':
+      return decodeAcceptanceChildWire(canonicalJson(value));
+  }
+}
+
+test('strict Ajv 2020 and codecs agree on shared structural vectors', async () => {
+  const schemaRoot = join(process.cwd(), 'packages', 'capture-acceptance-contract', 'schemas');
+  const schemaNames = [
+    'producer-child-scope-v1.schema.json',
+    'producer-child-invocation-v1.schema.json',
+    'consumer-semantic-result-v1.schema.json',
+    'acceptance-child-wire-v1.schema.json',
+  ] as const;
+  const ajv = strictAjv2020();
+  const validators = new Map(
+    await Promise.all(
+      schemaNames.map(async (schemaName) => {
+        const schema = JSON.parse(
+          await readFile(join(schemaRoot, schemaName), 'utf8'),
+        ) as Record<string, unknown>;
+        return [schemaName, ajv.compile(schema)] as const;
+      }),
+    ),
+  );
+  const expectedBinding = syntheticExpectedBinding();
+  const planned = syntheticPlannedScope();
+  const prepared = {
+    ...planned,
+    readyState: 'prepared',
+    binding: { kind: 'bound', ...expectedBinding },
+  };
+  const invocationWithoutDigest = syntheticInvocationWithoutDigest();
+  const invocation: Record<string, unknown> = {
+    ...invocationWithoutDigest,
+    invocationSha256: sha256Canonical(invocationWithoutDigest),
+  };
+  const semanticWithoutDigest = syntheticSemanticWithoutDigest();
+  const semantic: Record<string, unknown> = {
+    ...semanticWithoutDigest,
+    semanticResultSha256: sha256Canonical(semanticWithoutDigest),
+  };
+  const wireResult = {
+    ...(semanticWithoutDigest.fixtureResults as Array<Record<string, unknown>>)[0],
+    normalization: 'nfkc-whitespace-v1',
+    distance: 'code-point-levenshtein-v1',
+  };
+  const wireWithoutDigest = syntheticWireWithoutDigest(
+    wireResult,
+    semantic.semanticResultSha256 as string,
+  );
+  const wire: Record<string, unknown> = {
+    ...wireWithoutDigest,
+    wireSha256: sha256Canonical(wireWithoutDigest),
+  };
+  const ready = {
+    ...prepared,
+    readyState: 'ready',
+    invocationSha256: 'c'.repeat(64),
+    outputPathNonce: 'output-nonce-1',
+  };
+  const scopeNestedUnknown = {
+    ...planned,
+    binding: { kind: 'unbound', unexpected: true },
+  };
+  const scopeMissingRequired = { ...planned };
+  delete scopeMissingRequired.childPlanDigest;
+  const invocationNestedUnknown = {
+    ...invocation,
+    ledgerBinding: {
+      ...(invocation.ledgerBinding as Record<string, unknown>),
+      unexpected: true,
+    },
+  };
+  const invocationMissingRequired = { ...invocation };
+  delete invocationMissingRequired.outputPathNonce;
+  const semanticResult = (semantic.fixtureResults as Array<Record<string, unknown>>)[0];
+  const semanticNestedUnknown = {
+    ...semantic,
+    fixtureResults: [{ ...semanticResult, unexpected: true }],
+  };
+  const semanticMissingRequired = { ...semantic };
+  delete semanticMissingRequired.fixtureResults;
+  const wireNestedUnknown = {
+    ...wire,
+    privacy: { ...(wire.privacy as Record<string, unknown>), unexpected: true },
+  };
+  const wireMissingRequired = { ...wire };
+  delete wireMissingRequired.privacy;
+  // Structural rows are validated identically by strict Ajv and each public decoder.
+  // Gate/tier rows deliberately remain schema-valid: the relation is a codec-only
+  // check because JSON Schema expresses the two enum domains but not their pairing.
+  const sharedVectors: readonly [ContractSchemaName, Record<string, unknown>, boolean, boolean][] = [
+    ['producer-child-scope-v1.schema.json', planned, true, true],
+    ['producer-child-scope-v1.schema.json', prepared, true, true],
+    ['producer-child-scope-v1.schema.json', ready, true, true],
+    ['producer-child-scope-v1.schema.json', scopeMissingRequired, false, false],
+    ['producer-child-scope-v1.schema.json', scopeNestedUnknown, false, false],
+    ['producer-child-scope-v1.schema.json', { ...planned, sequenceIndex: '1' }, false, false],
+    [
+      'producer-child-scope-v1.schema.json',
+      { ...ready, binding: { kind: 'unbound' } },
+      false,
+      false,
+    ],
+    ['producer-child-scope-v1.schema.json', { ...planned, parentGate: 'D7' }, true, false],
+    ['producer-child-invocation-v1.schema.json', invocation, true, true],
+    ['producer-child-invocation-v1.schema.json', invocationMissingRequired, false, false],
+    ['producer-child-invocation-v1.schema.json', invocationNestedUnknown, false, false],
+    [
+      'producer-child-invocation-v1.schema.json',
+      { ...invocation, groupGeneration: '1' },
+      false,
+      false,
+    ],
+    ['producer-child-invocation-v1.schema.json', { ...invocation, parentGate: 'D7' }, true, false],
+    ['consumer-semantic-result-v1.schema.json', semantic, true, true],
+    ['consumer-semantic-result-v1.schema.json', semanticMissingRequired, false, false],
+    ['consumer-semantic-result-v1.schema.json', semanticNestedUnknown, false, false],
+    ['consumer-semantic-result-v1.schema.json', { ...semantic, sequenceIndex: '1' }, false, false],
+    ['consumer-semantic-result-v1.schema.json', { ...semantic, parentGate: 'D7' }, true, false],
+    ['acceptance-child-wire-v1.schema.json', wire, true, true],
+    ['acceptance-child-wire-v1.schema.json', wireMissingRequired, false, false],
+    ['acceptance-child-wire-v1.schema.json', wireNestedUnknown, false, false],
+    ['acceptance-child-wire-v1.schema.json', { ...wire, sequenceIndex: '1' }, false, false],
+    ['acceptance-child-wire-v1.schema.json', { ...wire, parentGate: 'D7' }, true, false],
+  ];
+  for (const [schemaName, value, schemaValid, codecValid] of sharedVectors) {
+    const validator = validators.get(schemaName);
+    assert.ok(validator);
+    assert.equal(validator(value), schemaValid, `${schemaName}: ${JSON.stringify(validator.errors)}`);
+    if (codecValid) {
+      assert.doesNotThrow(() => decodeSharedContractVector(schemaName, value, expectedBinding));
+    } else {
+      assert.throws(
+        () => decodeSharedContractVector(schemaName, value, expectedBinding),
+        AcceptanceContractCodecError,
+      );
+    }
+  }
+  assert.equal(decodeProducerChildScope(canonicalJson(prepared), expectedBinding).readyState, 'prepared');
+  assert.equal(decodeProducerChildScope(canonicalJson(ready), expectedBinding).readyState, 'ready');
+  assert.equal(decodeProducerChildInvocation(canonicalJson(invocation), expectedBinding).invocationState, 'frozen');
+  assert.equal(decodeConsumerSemanticResult(canonicalJson(semantic)).fixtureResults.length, 1);
+  assert.equal(decodeAcceptanceChildWire(canonicalJson(wire)).fixtureResults.length, 1);
+});
+
+test('canonical codecs reject non-JSON values, cycles, BOMs, and invalid UTF-8', () => {
+  const getter = {} as { value?: number };
+  Object.defineProperty(getter, 'value', { enumerable: true, get: () => 1 });
+  const sparse: unknown[] = [];
+  sparse.length = 1;
+  const cycle: Record<string, unknown> = {};
+  cycle.self = cycle;
+  assert.throws(() => canonicalJson(new Date()), AcceptanceContractCodecError);
+  assert.throws(() => canonicalJson(getter), AcceptanceContractCodecError);
+  assert.throws(() => canonicalJson(sparse), AcceptanceContractCodecError);
+  assert.throws(() => canonicalJson(cycle), AcceptanceContractCodecError);
+  const plannedText = canonicalJson(syntheticPlannedScope());
+  assert.throws(
+    () => decodeProducerChildScope(new TextEncoder().encode(`\uFEFF${plannedText}`)),
+    /BOM/u,
+  );
+  assert.throws(
+    () => decodeProducerChildScope(new Uint8Array([0xff, 0xfe, 0xfd])),
+    /UTF-8/u,
+  );
+});
+
+// These relational checks are intentionally codec-only: the JSON Schemas close each
+// record structurally, while the codec owns expected binding context, self-digests,
+// ordered root/fixture identity, gate/ledger pairing, and capability consumption.
+test('acceptance schemas and codecs close state, binding, and capability boundaries', () => {
+  const expectedBinding = syntheticExpectedBinding();
+  const planned = syntheticPlannedScope();
+  assert.deepEqual(
+    decodeProducerChildScope(canonicalJson(planned)).readyState,
+    'planned',
+  );
+  assert.throws(
+    () => decodeProducerChildScope(canonicalJson({ ...planned, unknownField: true })),
+    AcceptanceContractCodecError,
+  );
+  assert.throws(
+    () =>
+      decodeProducerChildScope(
+        canonicalJson({ ...planned, binding: { kind: 'unbound', rootBindings: [] } }),
+      ),
+    AcceptanceContractCodecError,
+  );
+  const prepared = {
+    ...planned,
+    readyState: 'prepared',
+    binding: {
+      kind: 'bound',
+      bindingAttemptId: 'binding-attempt-1',
+      groupRefDigest: 'a'.repeat(64),
+      groupGeneration: 1,
+      rootBindings: [syntheticRootBinding(0), syntheticRootBinding(1)],
+      activationReceiptDigest: 'b'.repeat(64),
+    },
+  };
+  assert.throws(
+    () => decodeProducerChildScope(canonicalJson(prepared)),
+    AcceptanceContractCodecError,
+  );
+  assert.equal(
+    decodeProducerChildScope(canonicalJson(prepared), expectedBinding).readyState,
+    'prepared',
+  );
+  assert.throws(
+    () =>
+      decodeProducerChildScope(
+        canonicalJson({
+          ...prepared,
+          binding: { ...prepared.binding, rootBindings: [syntheticRootBinding(0)] },
+        }),
+        expectedBinding,
+      ),
+    AcceptanceContractCodecError,
+  );
+  assert.throws(
+    () =>
+      decodeProducerChildScope(
+        canonicalJson({
+          ...prepared,
+          binding: {
+            ...prepared.binding,
+            rootBindings: [
+              { ...syntheticRootBinding(0), rootGeneration: 99 },
+              syntheticRootBinding(1),
+            ],
+          },
+        }),
+        expectedBinding,
+      ),
+    AcceptanceContractCodecError,
+  );
+  assert.throws(
+    () =>
+      decodeProducerChildScope(
+        canonicalJson({
+          ...prepared,
+          binding: { ...prepared.binding, rootBindings: [syntheticRootBinding(0), syntheticRootBinding(2)] },
+        }),
+      ),
+    AcceptanceContractCodecError,
+  );
+  assert.throws(
+    () =>
+      decodeProducerChildScope(
+        canonicalJson({
+          ...prepared,
+          binding: {
+            ...prepared.binding,
+            rootBindings: [syntheticRootBinding(1), syntheticRootBinding(0)],
+          },
+        }),
+        expectedBinding,
+      ),
+    AcceptanceContractCodecError,
+  );
+
+  const ready = {
+    ...prepared,
+    readyState: 'ready',
+    invocationSha256: 'c'.repeat(64),
+    outputPathNonce: 'output-nonce-1',
+  };
+  const invocationWithoutDigest = syntheticInvocationWithoutDigest();
+  const invocation = {
+    ...invocationWithoutDigest,
+    invocationSha256: sha256Canonical(invocationWithoutDigest),
+  };
+  assert.equal(
+    decodeProducerChildInvocation(canonicalJson(invocation), expectedBinding).invocationState,
+    'frozen',
+  );
+  assert.throws(
+    () => {
+      const truncatedInvocation = { ...invocation, rootBindings: [syntheticRootBinding(0)] };
+      const truncatedWithoutDigest: Record<string, unknown> = { ...truncatedInvocation };
+      delete truncatedWithoutDigest.invocationSha256;
+      decodeProducerChildInvocation(
+        canonicalJson({
+          ...truncatedWithoutDigest,
+          invocationSha256: sha256Canonical(truncatedWithoutDigest),
+        }),
+        expectedBinding,
+      );
+    },
+    AcceptanceContractCodecError,
+  );
+  assert.throws(
+    () => {
+      const reorderedInvocation = {
+        ...invocation,
+        rootBindings: [syntheticRootBinding(1), syntheticRootBinding(0)],
+      };
+      const reorderedWithoutDigest: Record<string, unknown> = { ...reorderedInvocation };
+      delete reorderedWithoutDigest.invocationSha256;
+      decodeProducerChildInvocation(
+        canonicalJson({
+          ...reorderedWithoutDigest,
+          invocationSha256: sha256Canonical(reorderedWithoutDigest),
+        }),
+        expectedBinding,
+      );
+    },
+    AcceptanceContractCodecError,
+  );
+  const substitutedInvocation = {
+    ...invocation,
+    rootBindings: [
+      { ...syntheticRootBinding(0), rootGeneration: 99 },
+      syntheticRootBinding(1),
+    ],
+  };
+  assert.throws(
+    () => {
+      const substitutedWithoutDigest: Record<string, unknown> = { ...substitutedInvocation };
+      delete substitutedWithoutDigest.invocationSha256;
+      decodeProducerChildInvocation(
+        canonicalJson({
+          ...substitutedWithoutDigest,
+          invocationSha256: sha256Canonical(substitutedWithoutDigest),
+        }),
+        expectedBinding,
+      );
+    },
+    AcceptanceContractCodecError,
+  );
+  assert.throws(
+    () =>
+      decodeProducerChildInvocation(canonicalJson({ ...invocation, scope: ready }), expectedBinding),
+    AcceptanceContractCodecError,
+  );
+  assert.throws(
+    () => decodeProducerChildInvocation(JSON.stringify(invocation), expectedBinding),
+    /canonical/u,
+  );
+
+  const capabilities = new CapabilityUseRegistry();
+  const capabilityContext = {
+    childId: '7'.repeat(64),
+    legId: 'capture-private-jpeg-v1',
+    parentGate: 'D4' as const,
+    invocationSha256: 'c'.repeat(64),
+  };
+  capabilities.issue('e'.repeat(64), capabilityContext);
+  assert.throws(
+    () => capabilities.consume('e'.repeat(64), { ...capabilityContext, legId: 'other-leg' }),
+    AcceptanceContractCodecError,
+  );
+  capabilities.consume('e'.repeat(64), capabilityContext);
+  assert.equal(capabilities.isConsumed('e'.repeat(64), capabilityContext), true);
+  assert.throws(
+    () => capabilities.consume('e'.repeat(64), capabilityContext),
+    CapabilityReplayError,
+  );
+  assert.throws(
+    () => capabilities.consume('f'.repeat(64), capabilityContext),
+    AcceptanceContractCodecError,
+  );
+});
+
+function syntheticExpectedBinding(): ExpectedBindingContext {
+  return {
+    bindingAttemptId: 'binding-attempt-1',
+    groupRefDigest: 'a'.repeat(64),
+    groupGeneration: 1,
+    rootBindings: [syntheticRootBinding(0), syntheticRootBinding(1)],
+    activationReceiptDigest: 'b'.repeat(64),
+  };
+}
+
+test('semantic and wire codecs reject consumer-owned cleanup fields and preserve ordered results', () => {
+  const semanticWithoutDigest = syntheticSemanticWithoutDigest();
+  const semantic = {
+    ...semanticWithoutDigest,
+    semanticResultSha256: sha256Canonical(semanticWithoutDigest),
+  };
+  const decoded = decodeConsumerSemanticResult(canonicalJson(semantic));
+  assert.equal(decoded.fixtureResults[0].fixtureKey, 'capture-private-jpeg-1');
+  assert.throws(
+    () =>
+      decodeConsumerSemanticResult(
+        canonicalJson({ ...semantic, producerCleanup: { journalState: 'terminal' } }),
+      ),
+    AcceptanceContractCodecError,
+  );
+
+  const wireResult = {
+    ...(semanticWithoutDigest.fixtureResults as Array<Record<string, unknown>>)[0],
+    normalization: 'nfkc-whitespace-v1',
+    distance: 'code-point-levenshtein-v1',
+  };
+  const wireWithoutDigest = syntheticWireWithoutDigest(wireResult, semantic.semanticResultSha256 as string);
+  const wire = { ...wireWithoutDigest, wireSha256: sha256Canonical(wireWithoutDigest) };
+  assert.equal(decodeAcceptanceChildWire(canonicalJson(wire)).privacy.paths, false);
+  for (const [field, value] of [
+    ['fixtureIndex', 1],
+    ['fixtureKey', 'other-fixture'],
+    ['fixtureIdentitySha256', '0'.repeat(64)],
+    ['mediaKind', 'pdf'],
+    ['page', 1],
+    ['mediaCapabilityHandleSha256', 'a'.repeat(64)],
+    ['oracleCapabilityHandleSha256', 'b'.repeat(64)],
+    ['mediaSha256', '0'.repeat(64)],
+    ['oracleSha256', 'c'.repeat(64)],
+    ['expectedNormalizedTruthSha256', 'd'.repeat(64)],
+    ['expectedAnchorSetSha256', 'e'.repeat(64)],
+    ['cerThreshold', 0.02],
+    ['artifactId', 'f'.repeat(64)],
+  ] as const) {
+    const mutatedWithoutDigest = {
+      ...wireWithoutDigest,
+      fixtureResults: [{ ...wireResult, [field]: value }],
+    };
+    assert.throws(
+      () =>
+        decodeAcceptanceChildWire(
+          canonicalJson({
+            ...mutatedWithoutDigest,
+            wireSha256: sha256Canonical(mutatedWithoutDigest),
+          }),
+        ),
+      AcceptanceContractCodecError,
+    );
+  }
+  assert.throws(
+    () => decodeAcceptanceChildWire(canonicalJson({ ...wire, consumerCleanup: true })),
+    AcceptanceContractCodecError,
+  );
+});
+
+function invocationLedger(): Record<string, string> {
+  return {
+    sourceGate: 'D3',
+    ledgerSha256: 'c'.repeat(64),
+    candidateId: 'd'.repeat(64),
+    candidateManifestSha256: 'e'.repeat(64),
+  };
+}
+
+function wireLedger(): Record<string, unknown> {
+  return {
+    ...invocationLedger(),
+    artifactDigests: [{ artifactKey: 'runtime', sha256: 'f'.repeat(64) }],
+  };
+}
