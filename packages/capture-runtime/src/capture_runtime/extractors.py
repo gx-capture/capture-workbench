@@ -9,7 +9,7 @@ import tempfile
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
 
 from capture_runtime.clock import Clock
 from capture_runtime.config import ExtractionRuntimeConfig
@@ -272,6 +272,30 @@ class _WorkerOcrEngineAdapter:
             previous_page = page_number
 
 
+class _OcrWorkerFailureEngineAdapter:
+    """Re-enter the canonical pipeline for a worker's sanitized terminal error."""
+
+    def __init__(
+        self,
+        *,
+        kind: Literal["timeout", "protocol", "worker", "unavailable"],
+        completed_pages: tuple[OcrPageInput, ...],
+        provenance: OcrProvenanceV3 | None,
+    ) -> None:
+        self._kind = kind
+        self._completed_pages = completed_pages
+        self._provenance = provenance
+
+    def recognize(self, request: OcrEngineRequest) -> OcrEngineRun:
+        if request.is_cancelled():
+            raise InterruptedError("Capture extraction was cancelled.")
+        raise OcrEngineFailure(
+            kind=self._kind,
+            completed_pages=self._completed_pages,
+            provenance=self._provenance,
+        )
+
+
 def sniff_source(content: bytes) -> SniffedSource:
     if content.startswith(b"%PDF-"):
         return SniffedSource(CaptureSourceKind.PDF, "application/pdf")
@@ -474,7 +498,12 @@ class StandaloneRuntimeCaptureExtractor:
         except OcrWorkerFailure as error:
             if expected_ocr_pages is None:
                 raise
-            raise self._ocr_extraction_failure(source, expected_ocr_pages, error) from error
+            raise self._ocr_extraction_failure(
+                source,
+                expected_ocr_pages,
+                error,
+                cancel_event=cancel_event,
+            ) from error
         self._checkpoint(cancel_event)
         if not segments:
             raise ValueError("Extraction produced no non-empty content.")
@@ -802,16 +831,29 @@ class StandaloneRuntimeCaptureExtractor:
         source: CaptureSource,
         expected_pages: tuple[OcrPageManifest, ...],
         error: OcrWorkerFailure,
+        *,
+        cancel_event: asyncio.Event,
     ) -> OcrExtractionFailure:
-        return self.ocr_pipeline.failure(
+        request = OcrRequest(
             capture_id=source.sha256,
             source=source,
+            page_scope=tuple(page.page for page in expected_pages),
             manifest=expected_pages,
-            kind=error.kind,
-            completed_pages=self._worker_progress_inputs(error.progress),
-            provenance=error.provenance,
             created_at=self._clock.now(),
+            warnings=(),
+            is_cancelled=cancel_event.is_set,
         )
+        outcome = self.ocr_pipeline.extract(
+            request,
+            _OcrWorkerFailureEngineAdapter(
+                kind=error.kind,
+                completed_pages=self._worker_progress_inputs(error.progress),
+                provenance=error.provenance,
+            ),
+        )
+        if not isinstance(outcome, OcrTerminalOutcome):
+            raise AssertionError("worker failure adapter must produce a terminal failure")
+        return OcrExtractionFailure(failure=outcome.failure, projection=outcome.projection)
 
     def _worker_progress_inputs(
         self,

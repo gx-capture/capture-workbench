@@ -692,30 +692,6 @@ class OcrPipeline:
             for order, page in enumerate(page for page in projection.pages if page.text.strip())
         ]
 
-    def failure(
-        self,
-        *,
-        capture_id: str,
-        source: CaptureSource,
-        manifest: Sequence[OcrPageManifest],
-        kind: Literal["timeout", "protocol", "worker", "unavailable"],
-        completed_pages: Iterable[OcrPageInput] = (),
-        provenance: OcrProvenanceV3 | CaptureEngine | None = None,
-        created_at: datetime,
-        warnings: Sequence[str] = (),
-    ) -> OcrExtractionFailure:
-        expected_manifest = self._validate_manifest(manifest)
-        return self._terminal_failure(
-            capture_id=capture_id,
-            source=source,
-            expected_pages=tuple(self._manifest_input(item) for item in expected_manifest),
-            kind=kind,
-            completed_pages=completed_pages,
-            provenance=provenance,
-            created_at=created_at,
-            warnings=warnings,
-        )
-
     @staticmethod
     def _serialize_page(item: OcrPageInput) -> dict[str, object]:
         """Serialize a normalized page for the internal worker wire adapter."""
@@ -854,30 +830,6 @@ class OcrPipeline:
         ):
             raise OcrProjectionError("OCR engine confidence is invalid")
         return float(value)
-
-    def _terminal_failure(
-        self,
-        *,
-        capture_id: str,
-        source: CaptureSource,
-        expected_pages: Sequence[OcrPageInput],
-        kind: Literal["timeout", "protocol", "worker", "unavailable"],
-        completed_pages: Iterable[OcrPageInput] = (),
-        provenance: OcrProvenanceV3 | CaptureEngine | None = None,
-        created_at: datetime,
-        warnings: Sequence[str],
-    ) -> OcrExtractionFailure:
-        outcome = self._builder.worker_failure(
-            capture_id=capture_id,
-            source=source,
-            kind=kind,
-            expected_pages=expected_pages,
-            completed_pages=completed_pages,
-            provenance=provenance,
-            created_at=created_at,
-            warnings=warnings,
-        )
-        return OcrExtractionFailure(failure=outcome.failure, projection=outcome.projection)
 
     def build(
         self,

@@ -4213,24 +4213,29 @@ def test_worker_provenance_mismatch_discards_untrusted_progress_prefix(
 
 
 @pytest.mark.parametrize(
-    ("kind", "with_progress", "expected_code"),
+    ("kind", "with_progress", "empty_progress", "expected_code", "expected_statuses"),
     [
-        ("timeout", True, "ocr_worker_timeout"),
-        ("protocol", False, "ocr_worker_protocol"),
-        ("worker", True, "ocr_worker_failed"),
+        ("timeout", True, False, "ocr_worker_timeout", ("recognized", "failed")),
+        ("protocol", False, False, "ocr_worker_protocol", ("failed", "failed")),
+        ("worker", True, False, "ocr_worker_failed", ("recognized", "failed")),
+        ("unavailable", True, False, "ocr_runtime_unavailable", ("failed", "failed")),
+        ("worker", True, True, "ocr_no_text", ("empty", "empty")),
     ],
 )
 def test_worker_failure_projection_is_page_complete_and_sanitized(
     tmp_path: Path,
     kind: str,
     with_progress: bool,
+    empty_progress: bool,
     expected_code: str,
+    expected_statuses: tuple[str, str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     page_png = BytesIO()
     Image.new("RGB", (120, 80), "white").save(page_png, format="PNG")
     content = b"%PDF-1.7 page-count is read before worker launch"
 
-    def page_manifest() -> WorkerOcrProgress:
+    def page_manifest(*, empty: bool) -> WorkerOcrProgress:
         manifest = tuple(
             WorkerOcrPage(
                 page=page,
@@ -4245,16 +4250,20 @@ def test_worker_failure_projection_is_page_complete_and_sanitized(
             for page in (1, 2)
         )
         completed = (
-            manifest[0].__class__(
-                page=1,
-                status="recognized",
-                text="completed page",
-                boxes=((2, 3, 40, 20),),
-                confidence=0.97,
-                raster_width=120,
-                raster_height=80,
-                raster_scale=2,
-            ),
+            manifest
+            if empty
+            else (
+                manifest[0].__class__(
+                    page=1,
+                    status="recognized",
+                    text="completed page",
+                    boxes=((2, 3, 40, 20),),
+                    confidence=0.97,
+                    raster_width=120,
+                    raster_height=80,
+                    raster_scale=2,
+                ),
+            )
         )
         return WorkerOcrProgress(
             page_count=2,
@@ -4267,7 +4276,7 @@ def test_worker_failure_projection_is_page_complete_and_sanitized(
         async def run(self, _engine: InstalledEngine, **_kwargs: object) -> WorkerRunResult:
             raise OcrWorkerFailure(
                 kind=kind,  # type: ignore[arg-type]
-                progress=page_manifest() if with_progress else None,
+                progress=page_manifest(empty=empty_progress) if with_progress else None,
             )
 
     class EngineManager:
@@ -4292,6 +4301,15 @@ def test_worker_failure_projection_is_page_complete_and_sanitized(
     )
     extractor._pdf_page_count = lambda _content: 2  # type: ignore[method-assign]
     extractor._render_pdf_page = lambda _content, _index: page_png.getvalue()  # type: ignore[method-assign]
+    canonical_calls = 0
+    original_extract = extractor.ocr_pipeline.extract
+
+    def spy_extract(*args: object, **kwargs: object) -> object:
+        nonlocal canonical_calls
+        canonical_calls += 1
+        return original_extract(*args, **kwargs)
+
+    monkeypatch.setattr(extractor.ocr_pipeline, "extract", spy_extract)
 
     with pytest.raises(OcrExtractionFailure) as raised:
         asyncio.run(
@@ -4303,13 +4321,56 @@ def test_worker_failure_projection_is_page_complete_and_sanitized(
     projection = raised.value.projection
     assert projection.status.value == "failed"
     assert [page.page for page in projection.pages] == [1, 2]
-    assert [page.status.value for page in projection.pages] == (
-        ["recognized", "failed"] if with_progress else ["failed", "failed"]
-    )
+    assert [page.status.value for page in projection.pages] == list(expected_statuses)
     assert projection.failure is not None
     assert projection.failure.code == expected_code
     assert "private" not in projection.failure.message.lower()
     assert "worker detail" not in projection.failure.message.lower()
+    assert canonical_calls == 1
+
+
+def test_worker_failure_preserves_cancellation_priority(tmp_path: Path) -> None:
+    cancellation = asyncio.Event()
+
+    class FailingWorkerClient:
+        async def run(self, _engine: InstalledEngine, **_kwargs: object) -> WorkerRunResult:
+            cancellation.set()
+            raise OcrWorkerFailure(kind="worker", progress=None)
+
+    class EngineManager:
+        worker_client = FailingWorkerClient()
+
+        async def ocr_compute_selection(self, *, contract_sha256: str) -> object:
+            del contract_sha256
+            return _worker_ocr_plan_selection()
+
+        async def resolve_active_engine(self, _requirement_id: str) -> InstalledEngine:
+            return InstalledEngine(
+                requirement_id="windowsml-ocr",
+                artifact_version="0.4.2",
+                executable=tmp_path / "ocr.exe",
+                model_dir=tmp_path / "models",
+            )
+
+    extractor = StandaloneRuntimeCaptureExtractor(
+        SystemClock(),
+        _config(tmp_path),
+        engine_manager=EngineManager(),  # type: ignore[arg-type]
+    )
+    page_png = BytesIO()
+    Image.new("RGB", (120, 80), "white").save(page_png, format="PNG")
+    extractor._pdf_page_count = lambda _content: 1  # type: ignore[method-assign]
+    extractor._render_pdf_page = lambda _content, _index: page_png.getvalue()  # type: ignore[method-assign]
+    content = b"%PDF-1.7 cancellation wins over worker failure"
+
+    with pytest.raises(InterruptedError):
+        asyncio.run(
+            extractor.extract(
+                content,
+                _source(content, "cancelled-worker.pdf", "application/pdf"),
+                cancellation,
+            )
+        )
 
 
 def test_sync_ocr_manifest_raster_authority_ignores_adapter_dimensions(

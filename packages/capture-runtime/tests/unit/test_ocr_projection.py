@@ -953,33 +953,48 @@ def test_all_empty_terminal_projection_is_failed_with_stable_no_text_failure() -
 
 
 def test_worker_failure_preserves_only_trusted_completed_pages() -> None:
-    outcome = OcrPipeline().failure(
-        capture_id="capture-protocol",
-        source=_source(),
-        manifest=(
-            OcrPageManifest(page=1, raster_width=640, raster_height=480, raster_scale=1),
-            OcrPageManifest(page=2, raster_width=640, raster_height=480, raster_scale=1),
-        ),
-        kind="protocol",
-        completed_pages=(
-            OcrPageInput(
-                page=1,
-                text="trusted page",
-                raster_width=640,
-                raster_height=480,
-                raster_scale=1,
-                provenance=_engine(),
-            ),
-            OcrPageInput(
-                page=2,
-                text="untrusted raster",
-                raster_width=641,
-                raster_height=480,
-                raster_scale=1,
-            ),
-        ),
-        created_at=datetime.now(UTC),
+    manifest = (
+        OcrPageManifest(page=1, raster_width=640, raster_height=480, raster_scale=1),
+        OcrPageManifest(page=2, raster_width=640, raster_height=480, raster_scale=1),
     )
+    completed_pages = (
+        OcrPageInput(
+            page=1,
+            text="trusted page",
+            raster_width=640,
+            raster_height=480,
+            raster_scale=1,
+            provenance=_engine(),
+        ),
+        OcrPageInput(
+            page=2,
+            text="untrusted raster",
+            raster_width=641,
+            raster_height=480,
+            raster_scale=1,
+        ),
+    )
+
+    class FailingEngine:
+        def recognize(self, _request: OcrEngineRequest) -> OcrEngineRun:
+            raise OcrEngineFailure(
+                kind="protocol",
+                completed_pages=completed_pages,
+            )
+
+    outcome = OcrPipeline().extract(
+        OcrRequest(
+            capture_id="capture-protocol",
+            source=_source(),
+            page_scope=(1, 2),
+            manifest=manifest,
+            created_at=datetime.now(UTC),
+            warnings=(),
+            is_cancelled=lambda: False,
+        ),
+        FailingEngine(),
+    )
+    assert isinstance(outcome, OcrTerminalOutcome)
 
     assert outcome.failure.code == "ocr_worker_protocol"
     assert outcome.failure.message == "OCR worker returned an invalid response."
