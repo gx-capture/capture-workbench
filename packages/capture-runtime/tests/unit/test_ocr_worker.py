@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from io import BytesIO
 from pathlib import Path
 from threading import Event
@@ -16,14 +16,16 @@ from capture_runtime.contracts import (
     OcrComputePreflightV2,
     OcrProvenanceV3,
 )
-from capture_runtime.engine_adapters import OcrTextResult
+from capture_runtime.engine_adapters import OcrRegion, OcrTextResult
 from capture_runtime.ocr_preflight import (
     OcrComputePlan,
     OcrGpuAdapter,
     OcrGpuCapabilitySnapshot,
 )
+from capture_runtime.ocr_projection import OcrPageInput, OcrPageManifest, _OcrEngineRequest
 from capture_runtime.worker_client import (
     WorkerResultError,
+    _assert_ocr_progress_matches_final,
     parse_ocr_compute_preflight,
     parse_ocr_progress,
     parse_run_result,
@@ -546,6 +548,8 @@ def test_ocr_worker_does_not_emit_header_or_pages_before_dml_evidence(
     source = tmp_path / "public-fixture.pdf"
     source.write_bytes(b"public test fixture")
     progress: list[dict[str, object]] = []
+    constructions = 0
+    inference_calls = 0
 
     monkeypatch.setattr(
         ocr_main,
@@ -555,9 +559,12 @@ def test_ocr_worker_does_not_emit_header_or_pages_before_dml_evidence(
 
     class FailingAdapter:
         def __init__(self, *_args: object, **_kwargs: object) -> None:
-            pass
+            nonlocal constructions
+            constructions += 1
 
         def extract_png(self, _image: bytes) -> OcrTextResult:
+            nonlocal inference_calls
+            inference_calls += 1
             raise RuntimeError("DML inference failed")
 
     monkeypatch.setattr(ocr_main, "WindowsMLOcrAdapter", FailingAdapter)
@@ -596,6 +603,8 @@ def test_ocr_worker_does_not_emit_header_or_pages_before_dml_evidence(
         )
 
     assert progress == []
+    assert constructions == 1
+    assert inference_calls == 1
 
 
 def test_ocr_worker_rejects_unproven_dml_result_before_emitting_header(
@@ -659,6 +668,562 @@ def test_ocr_worker_rejects_unproven_dml_result_before_emitting_header(
         )
 
     assert progress == []
+
+
+def test_ocr_worker_cancellation_after_page_one_prevents_second_recognition(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_path = tmp_path / "model"
+    model_path.mkdir()
+    source = tmp_path / "public-fixture.pdf"
+    source.write_bytes(b"public test fixture")
+    cancellation = Event()
+    progress: list[dict[str, object]] = []
+    calls: list[bytes] = []
+
+    def emit_progress(frame: dict[str, object]) -> None:
+        progress.append(frame)
+        if frame["type"] == "ocr-page" and frame["page"]["page"] == 1:  # type: ignore[index]
+            cancellation.set()
+
+    monkeypatch.setattr(
+        ocr_main,
+        "_pdf_page_images",
+        lambda *_args: iter([(1, b"page-one"), (2, b"page-two")]),
+    )
+
+    class CancellingAdapter:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def extract_png(self, image: bytes) -> OcrTextResult:
+            calls.append(image)
+            return OcrTextResult(
+                text="first page",
+                model="test-model",
+                digest="1" * 64,
+                device="windowsml-dml",
+                raster_width=1,
+                raster_height=1,
+                provenance=_resolved_test_provenance(),
+            )
+
+    monkeypatch.setattr(ocr_main, "WindowsMLOcrAdapter", CancellingAdapter)
+
+    with pytest.raises(InterruptedError):
+        ocr_main.handle(
+            WorkerRequest(
+                request_id="ocr-cancel-after-page-one-test",
+                operation="run",
+                payload={
+                    "requirementId": "windowsml-ocr",
+                    "artifactVersion": "0.4.2",
+                    "modelPath": str(model_path),
+                    "sourcePath": str(source),
+                    "mediaType": "application/pdf",
+                    "options": {
+                        "computePlan": _gpu_plan_dict(),
+                        "maxPages": 2,
+                        "renderScale": 1,
+                        "pageManifest": [
+                            {
+                                "page": page,
+                                "raster": {
+                                    "width": 1,
+                                    "height": 1,
+                                    "scale": 1,
+                                    "coordinateSystem": "pixel",
+                                },
+                            }
+                            for page in (1, 2)
+                        ],
+                    },
+                },
+            ),
+            cancellation,
+            emit_progress,
+        )
+
+    assert calls == [b"page-one"]
+    assert [event["type"] for event in progress] == ["ocr-header", "ocr-page"]
+
+
+def _engine_request_for_worker_adapter(
+    manifest: tuple[OcrPageManifest, ...],
+    cancellation: Event,
+    observe: Callable[[OcrPageManifest, object, OcrProvenanceV3], OcrPageInput],
+) -> _OcrEngineRequest:
+    return _OcrEngineRequest(
+        manifest=manifest,
+        is_cancelled=cancellation.is_set,
+        observe=observe,
+        fail_page=lambda _expected: None,
+    )
+
+
+def test_worker_engine_checks_cancellation_before_advancing_the_image_iterator() -> None:
+    cancellation = Event()
+    manifest = (
+        OcrPageManifest(1, 1, 1, 1),
+        OcrPageManifest(2, 1, 1, 1),
+    )
+    provenance = _resolved_test_provenance()
+    observed: list[int] = []
+
+    class CountingIterator:
+        def __init__(self) -> None:
+            self.next_calls = 0
+            self.page = 0
+
+        def __iter__(self) -> CountingIterator:
+            return self
+
+        def __next__(self) -> tuple[int, bytes]:
+            self.next_calls += 1
+            if self.page == 0:
+                self.page += 1
+                return 1, b"page-one"
+            raise AssertionError("page two iterator work must be suppressed")
+
+    images = CountingIterator()
+
+    class Adapter:
+        def __init__(self) -> None:
+            self.calls: list[bytes] = []
+
+        def extract_png(self, image: bytes) -> OcrTextResult:
+            self.calls.append(image)
+            return OcrTextResult(
+                text="first",
+                model="test-model",
+                digest="1" * 64,
+                device="windowsml-dml",
+                raster_width=1,
+                raster_height=1,
+                provenance=provenance,
+            )
+
+    adapter = Adapter()
+
+    def observe(
+        expected: OcrPageManifest,
+        _result: object,
+        page_provenance: OcrProvenanceV3,
+    ) -> OcrPageInput:
+        observed.append(expected.page)
+        cancellation.set()
+        return OcrPageInput(
+            page=expected.page,
+            text="first",
+            raster_width=1,
+            raster_height=1,
+            raster_scale=1,
+            provenance=page_provenance,
+        )
+
+    with pytest.raises(InterruptedError):
+        ocr_main._WorkerOcrEngineAdapter(adapter, images).recognize(
+            _engine_request_for_worker_adapter(manifest, cancellation, observe)
+        )
+
+    assert images.next_calls == 1
+    assert adapter.calls == [b"page-one"]
+    assert observed == [1]
+
+
+def test_worker_engine_rejects_cancellation_after_iterator_exhaustion_before_terminal_success() -> (
+    None
+):
+    cancellation = Event()
+    manifest = (OcrPageManifest(1, 1, 1, 1),)
+    provenance = _resolved_test_provenance()
+
+    class FinalPageIterator:
+        def __init__(self) -> None:
+            self.next_calls = 0
+
+        def __iter__(self) -> FinalPageIterator:
+            return self
+
+        def __next__(self) -> tuple[int, bytes]:
+            self.next_calls += 1
+            if self.next_calls == 1:
+                return 1, b"page-one"
+            cancellation.set()
+            raise StopIteration
+
+    class Adapter:
+        def extract_png(self, _image: bytes) -> OcrTextResult:
+            return OcrTextResult(
+                text="final page",
+                model="test-model",
+                digest="1" * 64,
+                device="windowsml-dml",
+                raster_width=1,
+                raster_height=1,
+                provenance=provenance,
+            )
+
+    def observe(
+        expected: OcrPageManifest,
+        _result: object,
+        page_provenance: OcrProvenanceV3,
+    ) -> OcrPageInput:
+        return OcrPageInput(
+            page=expected.page,
+            text="final page",
+            raster_width=1,
+            raster_height=1,
+            raster_scale=1,
+            provenance=page_provenance,
+        )
+
+    with pytest.raises(InterruptedError):
+        ocr_main._WorkerOcrEngineAdapter(Adapter(), FinalPageIterator()).recognize(
+            _engine_request_for_worker_adapter(manifest, cancellation, observe)
+        )
+
+
+def test_worker_engine_rejects_cancellation_after_inference_before_observation() -> None:
+    cancellation = Event()
+    manifest = (OcrPageManifest(1, 1, 1, 1),)
+    provenance = _resolved_test_provenance()
+    inference_calls = 0
+    observed: list[int] = []
+
+    class Adapter:
+        def extract_png(self, _image: bytes) -> OcrTextResult:
+            nonlocal inference_calls
+            inference_calls += 1
+            cancellation.set()
+            return OcrTextResult(
+                text="final page",
+                model="test-model",
+                digest="1" * 64,
+                device="windowsml-dml",
+                raster_width=1,
+                raster_height=1,
+                provenance=provenance,
+            )
+
+    def observe(
+        expected: OcrPageManifest,
+        _result: object,
+        page_provenance: OcrProvenanceV3,
+    ) -> OcrPageInput:
+        observed.append(expected.page)
+        return OcrPageInput(
+            page=expected.page,
+            text="final page",
+            raster_width=1,
+            raster_height=1,
+            raster_scale=1,
+            provenance=page_provenance,
+        )
+
+    with pytest.raises(InterruptedError):
+        ocr_main._WorkerOcrEngineAdapter(Adapter(), iter([(1, b"page-one")])).recognize(
+            _engine_request_for_worker_adapter(manifest, cancellation, observe)
+        )
+
+    assert inference_calls == 1
+    assert observed == []
+
+
+def test_ocr_pdf_page_stream_checks_cancellation_before_next_pdfium_render(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cancellation = Event()
+    accessed_pages: list[int] = []
+
+    class TestImage:
+        def convert(self, _mode: str) -> TestImage:
+            return self
+
+        def save(self, output: BytesIO, format: str) -> None:
+            assert format == "PNG"
+            output.write(b"page-png")
+            cancellation.set()
+
+    class TestBitmap:
+        def to_pil(self) -> TestImage:
+            return TestImage()
+
+        def close(self) -> None:
+            pass
+
+    class TestPage:
+        def render(self, *, scale: float) -> TestBitmap:
+            assert scale == 1
+            return TestBitmap()
+
+    class TestDocument:
+        def __len__(self) -> int:
+            return 2
+
+        def __getitem__(self, index: int) -> TestPage:
+            accessed_pages.append(index)
+            return TestPage()
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(ocr_main.pdfium, "PdfDocument", lambda _source: TestDocument())
+    stream = ocr_main._pdf_page_images(tmp_path / "source.pdf", 2, 1, cancellation)
+
+    assert next(stream)[0] == 1
+    with pytest.raises(InterruptedError):
+        next(stream)
+    assert accessed_pages == [0]
+
+
+def test_ocr_worker_provenance_change_emits_failed_page_without_success(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_path = tmp_path / "model"
+    model_path.mkdir()
+    source = tmp_path / "public-fixture.pdf"
+    source.write_bytes(b"public test fixture")
+    progress: list[dict[str, object]] = []
+    changed = OcrProvenanceV3(
+        status="resolved",
+        engine="windowsml-ocr",
+        model="different-model",
+        model_digest="sha256:" + "2" * 64,
+        device="windowsml-dml",
+        profile_id="capture-workbench-ocr-pipeline-v1",
+        profile_spec_sha256="c" * 64,
+    )
+
+    monkeypatch.setattr(
+        ocr_main,
+        "_pdf_page_images",
+        lambda *_args: iter([(1, b"page-one"), (2, b"page-two")]),
+    )
+
+    class ChangingAdapter:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            self.calls = 0
+
+        def extract_png(self, _image: bytes) -> OcrTextResult:
+            self.calls += 1
+            return OcrTextResult(
+                text=f"page {self.calls}",
+                model="test-model",
+                digest="1" * 64,
+                device="windowsml-dml",
+                raster_width=1,
+                raster_height=1,
+                provenance=_resolved_test_provenance() if self.calls == 1 else changed,
+            )
+
+    monkeypatch.setattr(ocr_main, "WindowsMLOcrAdapter", ChangingAdapter)
+
+    with pytest.raises(ValueError, match="changing provenance"):
+        ocr_main.handle(
+            WorkerRequest(
+                request_id="ocr-changing-provenance-test",
+                operation="run",
+                payload={
+                    "requirementId": "windowsml-ocr",
+                    "artifactVersion": "0.4.2",
+                    "modelPath": str(model_path),
+                    "sourcePath": str(source),
+                    "mediaType": "application/pdf",
+                    "options": {
+                        "computePlan": _gpu_plan_dict(),
+                        "maxPages": 2,
+                        "renderScale": 1,
+                        "pageManifest": [
+                            {
+                                "page": page,
+                                "raster": {
+                                    "width": 1,
+                                    "height": 1,
+                                    "scale": 1,
+                                    "coordinateSystem": "pixel",
+                                },
+                            }
+                            for page in (1, 2)
+                        ],
+                    },
+                },
+            ),
+            Event(),
+            progress.append,
+        )
+
+    assert [event["type"] for event in progress] == [
+        "ocr-header",
+        "ocr-page",
+        "ocr-page",
+    ]
+    assert progress[-1]["page"]["status"] == "failed"  # type: ignore[index]
+
+
+def test_ocr_worker_handle_output_round_trips_mixed_pages_and_progress_consistency(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_path = tmp_path / "model"
+    model_path.mkdir()
+    source = tmp_path / "public-fixture.pdf"
+    source.write_bytes(b"public test fixture")
+    progress: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        ocr_main,
+        "_pdf_page_images",
+        lambda *_args: iter([(1, b"page-one"), (2, b"page-two"), (3, b"page-three")]),
+    )
+
+    class MixedAdapter:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            self.calls = 0
+
+        def extract_png(self, _image: bytes) -> OcrTextResult:
+            self.calls += 1
+            if self.calls == 2:
+                return OcrTextResult(
+                    text="   ",
+                    model="test-model",
+                    digest="1" * 64,
+                    device="windowsml-dml",
+                    raster_width=1,
+                    raster_height=1,
+                    provenance=_resolved_test_provenance(),
+                )
+            text = "one" if self.calls == 1 else "three"
+            confidence = 0.91 if self.calls == 1 else 0.77
+            return OcrTextResult(
+                text=text,
+                model="test-model",
+                digest="1" * 64,
+                device="windowsml-dml",
+                regions=(
+                    OcrRegion(
+                        text=text,
+                        confidence=confidence,
+                        polygon=((0, 0), (1, 0), (1, 1), (0, 1)),
+                    ),
+                ),
+                raster_width=1,
+                raster_height=1,
+                provenance=_resolved_test_provenance(),
+            )
+
+    monkeypatch.setattr(ocr_main, "WindowsMLOcrAdapter", MixedAdapter)
+    result = ocr_main.handle(
+        WorkerRequest(
+            request_id="ocr-mixed-page-wire-test",
+            operation="run",
+            payload={
+                "requirementId": "windowsml-ocr",
+                "artifactVersion": "0.4.2",
+                "modelPath": str(model_path),
+                "sourcePath": str(source),
+                "mediaType": "application/pdf",
+                "options": {
+                    "computePlan": _gpu_plan_dict(),
+                    "maxPages": 3,
+                    "renderScale": 1,
+                    "pageManifest": [
+                        {
+                            "page": page,
+                            "raster": {
+                                "width": 1,
+                                "height": 1,
+                                "scale": 1,
+                                "coordinateSystem": "pixel",
+                            },
+                        }
+                        for page in (1, 2, 3)
+                    ],
+                },
+            },
+        ),
+        Event(),
+        progress.append,
+    )
+
+    parsed = parse_run_result(result)
+    parsed_progress = parse_ocr_progress(progress)
+    assert parsed_progress is not None
+    _assert_ocr_progress_matches_final(parsed_progress, parsed)
+    assert [page.status for page in parsed.pages] == ["recognized", "empty", "recognized"]
+    assert [segment.page for segment in parsed.segments] == [1, 3]
+    assert parsed.pages[0].region_confidences == (0.91,)
+    assert parsed.pages[2].region_confidences == (0.77,)
+    assert len(progress) == 4
+
+
+@pytest.mark.parametrize("page_sequence", [(2, 1), (1, 1)])
+def test_ocr_worker_rejects_out_of_order_or_duplicate_page_stream(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    page_sequence: tuple[int, int],
+) -> None:
+    model_path = tmp_path / "model"
+    model_path.mkdir()
+    source = tmp_path / "public-fixture.pdf"
+    source.write_bytes(b"public test fixture")
+    monkeypatch.setattr(
+        ocr_main,
+        "_pdf_page_images",
+        lambda *_args: iter((page, b"page") for page in page_sequence),
+    )
+
+    class StaticAdapter:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def extract_png(self, _image: bytes) -> OcrTextResult:
+            return OcrTextResult(
+                text="page",
+                model="test-model",
+                digest="1" * 64,
+                device="windowsml-dml",
+                raster_width=1,
+                raster_height=1,
+                provenance=_resolved_test_provenance(),
+            )
+
+    monkeypatch.setattr(ocr_main, "WindowsMLOcrAdapter", StaticAdapter)
+    with pytest.raises(ValueError):
+        ocr_main.handle(
+            WorkerRequest(
+                request_id="ocr-invalid-page-stream-test",
+                operation="run",
+                payload={
+                    "requirementId": "windowsml-ocr",
+                    "artifactVersion": "0.4.2",
+                    "modelPath": str(model_path),
+                    "sourcePath": str(source),
+                    "mediaType": "application/pdf",
+                    "options": {
+                        "computePlan": _gpu_plan_dict(),
+                        "maxPages": 2,
+                        "renderScale": 1,
+                        "pageManifest": [
+                            {
+                                "page": page,
+                                "raster": {
+                                    "width": 1,
+                                    "height": 1,
+                                    "scale": 1,
+                                    "coordinateSystem": "pixel",
+                                },
+                            }
+                            for page in (1, 2)
+                        ],
+                    },
+                },
+            ),
+            Event(),
+        )
 
 
 def test_model_worker_pyinstaller_specs_do_not_collect_public_contract_package_data() -> None:

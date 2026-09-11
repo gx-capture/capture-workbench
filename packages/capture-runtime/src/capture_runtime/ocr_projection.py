@@ -8,7 +8,7 @@ semantics, and typed failure conversion that consumers bind to.
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
@@ -118,6 +118,44 @@ class OcrEnginePort(Protocol):
     """Internal engine seam; transport and Paddle configuration stay behind it."""
 
     def recognize(self, manifest: tuple[OcrPageManifest, ...]) -> OcrEngineRun: ...
+
+
+@dataclass(frozen=True, slots=True)
+class _OcrRequest:
+    """Metadata-only request owned by the canonical OCR execution seam."""
+
+    capture_id: str
+    source: CaptureSource
+    page_scope: tuple[int, ...] | None
+    manifest: tuple[OcrPageManifest, ...]
+    created_at: datetime
+    warnings: tuple[str, ...]
+    is_cancelled: Callable[[], bool]
+    progress: Callable[[dict[str, object]], None] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _OcrEngineRequest:
+    """Bounded callbacks an adapter uses for one-page observations."""
+
+    manifest: tuple[OcrPageManifest, ...]
+    is_cancelled: Callable[[], bool]
+    observe: Callable[[OcrPageManifest, object, OcrProvenanceV3], OcrPageInput]
+    fail_page: Callable[[OcrPageManifest], None]
+
+
+class _OcrEnginePort(Protocol):
+    def recognize(self, request: _OcrEngineRequest) -> OcrEngineRun: ...
+
+
+class _LegacyOcrEngineAdapter:
+    """Keep the existing synchronous engine port compatible during convergence."""
+
+    def __init__(self, engine: OcrEnginePort) -> None:
+        self._engine = engine
+
+    def recognize(self, request: _OcrEngineRequest) -> OcrEngineRun:
+        return self._engine.recognize(request.manifest)
 
 
 class OcrEngineFailure(RuntimeError):
@@ -244,30 +282,116 @@ class OcrPipeline:
         created_at: datetime,
         warnings: Sequence[str] = (),
     ) -> CaptureOcrProjectionV3:
-        expected_manifest = self._validate_manifest(manifest)
+        request = _OcrRequest(
+            capture_id=capture_id,
+            source=source,
+            page_scope=None,
+            manifest=self._validate_manifest(manifest),
+            created_at=created_at,
+            warnings=tuple(warnings),
+            is_cancelled=lambda: False,
+        )
+        outcome = self._execute(request, _LegacyOcrEngineAdapter(engine))
+        if isinstance(outcome, OcrTerminalOutcome):
+            raise OcrExtractionFailure(failure=outcome.failure, projection=outcome.projection)
+        return outcome
+
+    def _execute(
+        self,
+        request: _OcrRequest,
+        engine: _OcrEnginePort,
+    ) -> CaptureOcrProjectionV3 | OcrTerminalOutcome:
+        expected_manifest = self._validate_manifest(request.manifest)
         expected_pages = tuple(self._manifest_input(item) for item in expected_manifest)
+        observed_pages: list[OcrPageInput] = []
+        observed_provenance: OcrProvenanceV3 | None = None
+        header_emitted = False
+        failed_pages: set[int] = set()
+
+        def observe(
+            expected: OcrPageManifest,
+            observation: object,
+            provenance: OcrProvenanceV3,
+        ) -> OcrPageInput:
+            nonlocal observed_provenance, header_emitted
+            if expected.page != len(observed_pages) + 1:
+                raise OcrProjectionError("OCR page results must be complete and ordered")
+            if not provenance.is_resolved or provenance.engine != "windowsml-ocr":
+                raise OcrProjectionError("OCR engine provenance is incompatible")
+            if observed_provenance is None:
+                observed_provenance = provenance
+            elif observed_provenance != provenance:
+                raise OcrProjectionError("OCR worker returned changing provenance across pages")
+            normalized = self._normalize_observation(
+                expected,
+                observation,
+                raster_scale_override=expected.raster_scale,
+                provenance_override=provenance,
+            )
+            observed_pages.append(normalized)
+            if request.progress is not None and not header_emitted:
+                request.progress(
+                    {
+                        "type": "ocr-header",
+                        "pageCount": len(expected_manifest),
+                        "pages": self._serialize_manifest(expected_manifest),
+                        "provenance": provenance.model_dump(mode="json", by_alias=True),
+                    }
+                )
+                header_emitted = True
+            if request.progress is not None:
+                request.progress({"type": "ocr-page", "page": self._serialize_page(normalized)})
+            return normalized
+
+        def fail_page(expected: OcrPageManifest) -> None:
+            if request.progress is None or not header_emitted or expected.page in failed_pages:
+                return
+            failed_pages.add(expected.page)
+            failure = CaptureFailureV2(
+                code="ocr_page_failed",
+                message="OCR page processing failed.",
+                stage="extraction",
+                retryable=True,
+            )
+            request.progress(
+                {
+                    "type": "ocr-page",
+                    "page": self._serialize_page(self._failed_page(expected, failure)),
+                }
+            )
+
+        engine_request = _OcrEngineRequest(
+            manifest=expected_manifest,
+            is_cancelled=request.is_cancelled,
+            observe=observe,
+            fail_page=fail_page,
+        )
         try:
-            run = engine.recognize(expected_manifest)
+            run = engine.recognize(engine_request)
+        except InterruptedError:
+            raise
         except OcrEngineFailure as error:
-            raise self._terminal_failure(
-                capture_id=capture_id,
-                source=source,
+            return self._builder.worker_failure(
+                capture_id=request.capture_id,
+                source=request.source,
                 expected_pages=expected_pages,
                 kind=error.kind,
                 completed_pages=error.completed_pages,
                 provenance=error.provenance,
-                created_at=created_at,
-                warnings=warnings,
-            ) from error
-        except Exception as error:
-            raise self._terminal_failure(
-                capture_id=capture_id,
-                source=source,
+                created_at=request.created_at,
+                warnings=request.warnings,
+            )
+        except Exception:
+            return self._builder.worker_failure(
+                capture_id=request.capture_id,
+                source=request.source,
                 expected_pages=expected_pages,
                 kind="protocol",
-                created_at=created_at,
-                warnings=warnings,
-            ) from error
+                completed_pages=observed_pages,
+                provenance=observed_provenance,
+                created_at=request.created_at,
+                warnings=request.warnings,
+            )
 
         try:
             if not isinstance(run, OcrEngineRun):
@@ -278,39 +402,45 @@ class OcrPipeline:
             pages = tuple(
                 replace(page, provenance=page.provenance or provenance) for page in run.pages
             )
+            if observed_pages and pages != tuple(observed_pages):
+                raise OcrProjectionError("OCR engine observations do not match its terminal run")
             self._validate_run(expected_manifest, pages)
             projection = self._builder.build(
-                capture_id=capture_id,
-                source=source,
+                capture_id=request.capture_id,
+                source=request.source,
                 pages=pages,
                 provenance=provenance,
-                warnings=(*warnings, *run.warnings),
-                created_at=created_at,
+                warnings=(*request.warnings, *run.warnings),
+                created_at=request.created_at,
             )
-        except Exception as error:
-            completed_pages = tuple(run.pages) if isinstance(run, OcrEngineRun) else ()
+        except Exception:
+            completed_pages = (
+                tuple(run.pages) if isinstance(run, OcrEngineRun) else tuple(observed_pages)
+            )
             failed_provenance: OcrProvenanceV3 | None = None
             if isinstance(run, OcrEngineRun):
                 try:
-                    coerced = self._builder.coerce_provenance(run.provenance)
+                    failed_provenance = self._builder.coerce_provenance(run.provenance)
                 except (OcrProjectionError, ValueError):
                     # An invalid model identity is a protocol failure, not a
                     # reason to leak a sentinel or mask the readable terminal
                     # projection with a second coercion exception.
-                    failed_provenance = None
-                else:
-                    failed_provenance = coerced
-            raise self._terminal_failure(
-                capture_id=capture_id,
-                source=source,
+                    failed_provenance = observed_provenance
+            else:
+                failed_provenance = observed_provenance
+            return self._builder.worker_failure(
+                capture_id=request.capture_id,
+                source=request.source,
                 expected_pages=expected_pages,
                 kind="protocol",
                 completed_pages=completed_pages,
                 provenance=failed_provenance,
-                created_at=created_at,
-                warnings=warnings,
-            ) from error
-        return self._builder.require_success(projection)
+                created_at=request.created_at,
+                warnings=request.warnings,
+            )
+        if projection.failure is not None:
+            return OcrTerminalOutcome(failure=projection.failure, projection=projection)
+        return projection
 
     def _normalize_observation(
         self,
@@ -471,6 +601,28 @@ class OcrPipeline:
 
     def serialize_manifest(self, manifest: Sequence[OcrPageManifest]) -> list[dict[str, object]]:
         return self._serialize_manifest(manifest)
+
+    def _serialize_pages(
+        self,
+        pages: Sequence[OcrPageInput],
+    ) -> list[dict[str, object]]:
+        """Serialize normalized pages using the private worker wire contract."""
+
+        return [self._serialize_page(page) for page in pages]
+
+    def _segments(self, projection: CaptureOcrProjectionV3) -> list[dict[str, object]]:
+        """Derive the worker segment envelope from canonical page projections."""
+
+        return [
+            {
+                "order": order,
+                "text": page.text,
+                "page": page.page,
+                "startMs": None,
+                "endMs": None,
+            }
+            for order, page in enumerate(page for page in projection.pages if page.text.strip())
+        ]
 
     def failed_page(
         self,

@@ -12,6 +12,7 @@ import re
 import sys
 import warnings
 from collections.abc import Callable, Iterable, Iterator
+from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
 from threading import Event
@@ -52,14 +53,22 @@ from capture_runtime.engine_adapters import (
     _install_offline_aistudio_stubs,
     _install_offline_huggingface_stubs,
 )
-from capture_runtime.contracts import CaptureFailureV2
+from capture_runtime.contracts import CaptureSource
 from capture_runtime.image_normalization import bounded_scaled_dimensions
 from capture_runtime.ocr_preflight import (
     NativeOcrGpuCapabilityProbe,
     OcrComputePlan,
     OcrExecutionPlan,
 )
-from capture_runtime.ocr_projection import OcrPageManifest, OcrPipeline
+from capture_runtime.ocr_projection import (
+    OcrEngineRun,
+    OcrPageInput,
+    OcrPageManifest,
+    OcrPipeline,
+    OcrTerminalOutcome,
+    _OcrEngineRequest,
+    _OcrRequest,
+)
 from capture_runtime.worker_contracts import WorkerRequest
 from capture_runtime.workers.server import serve
 
@@ -67,6 +76,93 @@ _report_stage("python-import-capture-runtime-complete")
 
 MAX_SOURCE_BYTES = 50 * 1024 * 1024
 _OCR_PIPELINE = OcrPipeline()
+
+
+class _WorkerOcrEngineAdapter:
+    """Keep PDFium/Paddle mechanics behind the shared pipeline request seam."""
+
+    def __init__(
+        self,
+        adapter: WindowsMLOcrAdapter,
+        images: Iterable[tuple[int, bytes]],
+    ) -> None:
+        self._adapter = adapter
+        self._images = images
+        self.execution_proof = None
+        self.last_error: Exception | None = None
+        self.last_pages: tuple[OcrPageInput, ...] = ()
+
+    def recognize(self, request: _OcrEngineRequest) -> OcrEngineRun:
+        pages: list[OcrPageInput] = []
+        warnings: list[str] = []
+        provenance = None
+        images = iter(self._images)
+        while True:
+            if request.is_cancelled():
+                raise InterruptedError
+            try:
+                page, image = next(images)
+            except StopIteration:
+                break
+            if request.is_cancelled():
+                raise InterruptedError
+            if page > len(request.manifest):
+                mismatch = ValueError("OCR worker returned a page outside the manifest")
+                self.last_error = mismatch
+                raise mismatch
+            expected = request.manifest[page - 1]
+            try:
+                result = self._adapter.extract_png(image)
+                if request.is_cancelled():
+                    raise InterruptedError
+                current_provenance = getattr(result, "provenance", None)
+                if current_provenance is None:
+                    provenance_method = getattr(self._adapter, "provenance", None)
+                    if not callable(provenance_method):
+                        raise ValueError("OCR worker result is missing resolved provenance")
+                    current_provenance = provenance_method()
+                proof_reader = getattr(self._adapter, "execution_proof", None)
+                current_execution_proof = proof_reader() if callable(proof_reader) else None
+                if current_execution_proof is not None:
+                    if (
+                        self.execution_proof is not None
+                        and current_execution_proof != self.execution_proof
+                    ):
+                        raise ValueError("OCR worker returned changing execution proof")
+                    self.execution_proof = current_execution_proof
+                if request.is_cancelled():
+                    raise InterruptedError
+                pages.append(request.observe(expected, result, current_provenance))
+                if provenance is None:
+                    provenance = current_provenance
+            except Exception as error:
+                self.last_error = error
+                if not isinstance(error, InterruptedError):
+                    request.fail_page(expected)
+                raise
+            warning = getattr(result, "warning", None)
+            if warning:
+                warnings.append(warning)
+        if len(pages) != len(request.manifest):
+            mismatch = ValueError("OCR worker did not complete the page manifest")
+            self.last_error = mismatch
+            raise mismatch
+        if not pages:
+            mismatch = ValueError("OCR produced no results")
+            self.last_error = mismatch
+            raise mismatch
+        if provenance is None:
+            mismatch = ValueError("OCR worker result requires resolved provenance")
+            self.last_error = mismatch
+            raise mismatch
+        if request.is_cancelled():
+            raise InterruptedError
+        self.last_pages = tuple(pages)
+        return OcrEngineRun(
+            pages=tuple(pages),
+            provenance=provenance,
+            warnings=tuple(dict.fromkeys(warnings)),
+        )
 
 
 def _import_ocr_runtime() -> None:
@@ -494,115 +590,38 @@ def _run(
         requested_page_scope=requested_page_scope,
         runtime_sha256=runtime_sha256,
     )
-    segments: list[dict[str, Any]] = []
-    pages: list[dict[str, Any]] = []
-    results = []
-    warning_values: list[str] = []
-    result_provenance = None
-    execution_proof = None
-    header_emitted = False
-    for page, image in images:
-        if cancellation.is_set():
-            raise InterruptedError
-        if page > len(manifest):
-            raise ValueError("OCR worker returned a page outside the manifest")
-        expected = manifest[page - 1]
-        try:
-            result = adapter.extract_png(image)
-            current_provenance = getattr(result, "provenance", None)
-            if current_provenance is None:
-                provenance_method = getattr(adapter, "provenance", None)
-                if not callable(provenance_method):
-                    raise ValueError("OCR worker result is missing resolved provenance")
-                current_provenance = provenance_method()
-            if not current_provenance.is_resolved:
-                raise ValueError("OCR worker result requires resolved provenance")
-            if result_provenance is None:
-                result_provenance = current_provenance
-            elif current_provenance != result_provenance:
-                raise ValueError("OCR worker returned changing provenance across pages")
-            normalized = _OCR_PIPELINE.normalize_observation(
-                expected,
-                result,
-                raster_scale_override=expected.raster_scale,
-                provenance_override=result_provenance,
-            )
-            page_payload = _OCR_PIPELINE.serialize_page(normalized)
-            proof_reader = getattr(adapter, "execution_proof", None)
-            current_execution_proof = proof_reader() if callable(proof_reader) else None
-            if current_execution_proof is not None:
-                if execution_proof is not None and current_execution_proof != execution_proof:
-                    raise ValueError("OCR worker returned changing execution proof")
-                execution_proof = current_execution_proof
-            if progress is not None and not header_emitted:
-                progress(
-                    {
-                        "type": "ocr-header",
-                        "pageCount": len(manifest),
-                        "pages": _OCR_PIPELINE.serialize_manifest(manifest),
-                        "provenance": result_provenance.model_dump(mode="json", by_alias=True),
-                    }
-                )
-                header_emitted = True
-        except Exception:
-            if progress is not None and header_emitted:
-                failure = CaptureFailureV2(
-                    code="ocr_page_failed",
-                    message="OCR page processing failed.",
-                    stage="extraction",
-                    retryable=True,
-                )
-                progress(
-                    {
-                        "type": "ocr-page",
-                        "page": _OCR_PIPELINE.serialize_page(
-                            _OCR_PIPELINE.failed_page(expected, failure)
-                        ),
-                    }
-                )
-            raise
-        results.append(result)
-        text = normalized.text
-        if text:
-            segments.append(
-                {
-                    "order": len(segments),
-                    "text": result.text.strip(),
-                    "page": page,
-                    "startMs": None,
-                    "endMs": None,
-                }
-            )
-        pages.append(page_payload)
-        if progress is not None:
-            progress({"type": "ocr-page", "page": page_payload})
-        if result.warning:
-            warning_values.append(result.warning)
-    if len(results) != len(manifest):
-        raise ValueError("OCR worker did not complete the page manifest")
-    if not results:
-        raise ValueError("OCR produced no results")
-    if not segments:
-        _report_stage("ocr-output-empty")
-        raise ValueError("OCR produced no non-empty segments")
-    if result_provenance is None or not result_provenance.is_resolved:
-        raise ValueError("OCR worker result requires resolved provenance")
+    ocr_request = _OcrRequest(
+        capture_id=source_sha256,
+        source=CaptureSource(
+            sha256=source_sha256,
+            file_name=source.name,
+            media_type=media_type,
+            bytes=source.stat().st_size,
+        ),
+        page_scope=page_numbers,
+        manifest=manifest,
+        created_at=datetime.now(UTC),
+        warnings=(),
+        is_cancelled=cancellation.is_set,
+        progress=progress,
+    )
+    worker_engine = _WorkerOcrEngineAdapter(adapter, images)
+    outcome = _OCR_PIPELINE._execute(ocr_request, worker_engine)
+    if isinstance(outcome, OcrTerminalOutcome):
+        if worker_engine.last_error is not None:
+            raise worker_engine.last_error
+        if outcome.failure.code == "ocr_no_text":
+            _report_stage("ocr-output-empty")
+            raise ValueError("OCR produced no non-empty segments")
+        raise ValueError(outcome.failure.message)
     final_payload: dict[str, Any] = {
-        "segments": segments,
-        "pages": pages,
-        "provenance": {
-            "status": "resolved",
-            "engine": result_provenance.engine,
-            "model": result_provenance.model,
-            "modelDigest": result_provenance.model_digest,
-            "device": result_provenance.device,
-            "profileId": result_provenance.profile_id,
-            "profileSpecSha256": result_provenance.profile_spec_sha256,
-        },
-        "warnings": list(dict.fromkeys(warning_values)),
+        "segments": _OCR_PIPELINE._segments(outcome),
+        "pages": _OCR_PIPELINE._serialize_pages(worker_engine.last_pages),
+        "provenance": outcome.provenance.model_dump(mode="json", by_alias=True),
+        "warnings": list(outcome.warnings),
     }
-    if execution_proof is not None:
-        final_payload["executionProof"] = execution_proof.to_dict()
+    if worker_engine.execution_proof is not None:
+        final_payload["executionProof"] = worker_engine.execution_proof.to_dict()
     return final_payload
 
 
