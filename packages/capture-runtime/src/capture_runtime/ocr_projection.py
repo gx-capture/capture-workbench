@@ -131,6 +131,7 @@ class _OcrRequest:
     created_at: datetime
     warnings: tuple[str, ...]
     is_cancelled: Callable[[], bool]
+    use_manifest_raster: bool = False
     progress: Callable[[dict[str, object]], None] | None = None
 
 
@@ -325,6 +326,7 @@ class OcrPipeline:
             normalized = self._normalize_observation(
                 expected,
                 observation,
+                use_manifest_raster=request.use_manifest_raster,
                 raster_scale_override=expected.raster_scale,
                 provenance_override=provenance,
             )

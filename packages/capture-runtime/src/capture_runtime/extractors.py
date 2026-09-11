@@ -111,24 +111,22 @@ class _SyncOcrEngineAdapter:
         extractor: StandaloneRuntimeCaptureExtractor,
         content: bytes,
         source_kind: CaptureSourceKind,
-        cancel_event: asyncio.Event,
         raster_pages: tuple[bytes, ...] | None = None,
     ) -> None:
         self._extractor = extractor
         self._content = content
         self._source_kind = source_kind
-        self._cancel_event = cancel_event
         self._raster_pages = raster_pages
 
-    def recognize(self, manifest: tuple[OcrPageManifest, ...]) -> OcrEngineRun:
+    def recognize(self, request: _OcrEngineRequest) -> OcrEngineRun:
         adapter = self._extractor.ocr_adapter
         if adapter is None:
             raise OcrEngineFailure(kind="unavailable", completed_pages=())
         pages: list[OcrPageInput] = []
         warnings: list[str] = []
         provenance: OcrProvenanceV3 | None = None
-        for expected in manifest:
-            self._extractor._checkpoint(self._cancel_event)
+        for expected in request.manifest:
+            self._check_cancelled(request)
             if self._raster_pages is not None:
                 image_png = self._raster_pages[expected.page - 1]
             elif self._source_kind is CaptureSourceKind.PDF:
@@ -139,35 +137,39 @@ class _SyncOcrEngineAdapter:
                     scale=self._extractor.config.ocr_render_scale,
                     max_pixels=self._extractor.config.max_image_pixels,
                 )
-            self._extractor._checkpoint(self._cancel_event)
+            self._check_cancelled(request)
             try:
                 result = adapter.extract_png(image_png)
             except PaddleResultNormalizationError:
+                if request.is_cancelled():
+                    raise InterruptedError("Capture extraction was cancelled.") from None
                 raise
             except RuntimeError as error:
+                if request.is_cancelled():
+                    raise InterruptedError("Capture extraction was cancelled.") from error
                 raise OcrEngineFailure(
                     kind="unavailable",
                     completed_pages=pages,
                     provenance=provenance,
                 ) from error
+            self._check_cancelled(request)
             pages.append(
-                self._extractor.ocr_pipeline.normalize_observation(
+                request.observe(
                     expected,
                     result,
-                    use_manifest_raster=True,
+                    result.provenance or self._provenance(result),
                 )
             )
             if result.warning:
                 warnings.append(result.warning)
-            current = result.provenance or self._extractor.ocr_pipeline.observation_provenance(
-                result
-            )
+            current = result.provenance or self._provenance(result)
             if provenance is None:
                 provenance = current
             elif provenance != current:
                 raise OcrEngineFailure(
                     kind="protocol", completed_pages=pages, provenance=provenance
                 )
+        self._check_cancelled(request)
         if provenance is None:
             raise OcrEngineFailure(kind="worker", completed_pages=pages)
         return OcrEngineRun(
@@ -175,6 +177,14 @@ class _SyncOcrEngineAdapter:
             provenance=provenance,
             warnings=tuple(_unique_warnings(warnings)),
         )
+
+    def _provenance(self, result: object) -> OcrProvenanceV3:
+        return self._extractor.ocr_pipeline.observation_provenance(result)
+
+    @staticmethod
+    def _check_cancelled(request: _OcrEngineRequest) -> None:
+        if request.is_cancelled():
+            raise InterruptedError("Capture extraction was cancelled.")
 
 
 class _WorkerOcrEngineAdapter:
@@ -922,19 +932,28 @@ class StandaloneRuntimeCaptureExtractor:
             raster_cache=raster_pages,
             page_numbers=page_numbers,
         )
-        projection = self.ocr_pipeline.extract(
+        request = _OcrRequest(
             capture_id=source.sha256,
             source=source,
+            page_scope=tuple(page.page for page in manifest),
             manifest=manifest,
-            engine=_SyncOcrEngineAdapter(
+            created_at=self._clock.now(),
+            warnings=(),
+            is_cancelled=cancel_event.is_set,
+            use_manifest_raster=True,
+        )
+        outcome = self.ocr_pipeline._execute(
+            request,
+            _SyncOcrEngineAdapter(
                 self,
                 content,
                 CaptureSourceKind.PDF,
-                cancel_event,
                 raster_pages=tuple(raster_pages),
             ),
-            created_at=self._clock.now(),
         )
+        if isinstance(outcome, OcrTerminalOutcome):
+            raise OcrExtractionFailure(failure=outcome.failure, projection=outcome.projection)
+        projection = outcome
         return _projection_segments(projection), projection
 
     @staticmethod
@@ -986,19 +1005,28 @@ class StandaloneRuntimeCaptureExtractor:
             cancel_event,
             raster_cache=raster_pages,
         )
-        projection = self.ocr_pipeline.extract(
+        request = _OcrRequest(
             capture_id=source.sha256,
             source=source,
+            page_scope=tuple(page.page for page in manifest),
             manifest=manifest,
-            engine=_SyncOcrEngineAdapter(
+            created_at=self._clock.now(),
+            warnings=(),
+            is_cancelled=cancel_event.is_set,
+            use_manifest_raster=True,
+        )
+        outcome = self.ocr_pipeline._execute(
+            request,
+            _SyncOcrEngineAdapter(
                 self,
                 content,
                 CaptureSourceKind.IMAGE,
-                cancel_event,
                 raster_pages=tuple(raster_pages),
             ),
-            created_at=self._clock.now(),
         )
+        if isinstance(outcome, OcrTerminalOutcome):
+            raise OcrExtractionFailure(failure=outcome.failure, projection=outcome.projection)
+        projection = outcome
         return _projection_segments(projection), projection
 
     def _extract_audio(

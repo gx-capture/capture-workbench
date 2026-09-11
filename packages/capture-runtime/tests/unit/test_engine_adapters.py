@@ -21,6 +21,7 @@ from capture_runtime.engine_adapters import (
     EngineRuntimeUnavailableError,
     FasterWhisperAdapter,
     OcrExecutionEvidence,
+    OcrRegion,
     OcrTextResult,
     PaddleResultNormalizationError,
     WhisperTextSegment,
@@ -3010,7 +3011,7 @@ def test_worker_backed_pdf_dispatches_every_page_to_ocr(tmp_path: Path) -> None:
                         region_confidences=(0.83,),
                         raster_width=120,
                         raster_height=80,
-                        raster_scale=2,
+                        raster_scale=1,
                     ),
                     WorkerOcrPage(
                         page=2,
@@ -3020,7 +3021,7 @@ def test_worker_backed_pdf_dispatches_every_page_to_ocr(tmp_path: Path) -> None:
                         confidence=None,
                         raster_width=120,
                         raster_height=80,
-                        raster_scale=2,
+                        raster_scale=1,
                     ),
                 ),
             )
@@ -3097,6 +3098,7 @@ def test_worker_backed_pdf_dispatches_every_page_to_ocr(tmp_path: Path) -> None:
         "empty",
     ]
     assert extraction.ocr_projection.pages[0].confidence == pytest.approx(0.83)
+    assert extraction.ocr_projection.pages[0].raster.scale == 2
     assert extraction.ocr_projection.pages[0].boxes[0].width == 40
 
 
@@ -3823,6 +3825,178 @@ def test_worker_failure_projection_is_page_complete_and_sanitized(
     assert projection.failure.code == expected_code
     assert "private" not in projection.failure.message.lower()
     assert "worker detail" not in projection.failure.message.lower()
+
+
+def test_sync_ocr_manifest_raster_authority_ignores_adapter_dimensions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class MismatchedRasterAdapter(FakeOcrAdapter):
+        def extract_png(self, _image_png: bytes) -> OcrTextResult:
+            return OcrTextResult(
+                text="Manifest raster wins",
+                device="windowsml-dml",
+                model="pp-ocrv6-medium-windowsml",
+                digest=f"sha256:{'1' * 64}",
+                regions=(
+                    OcrRegion(
+                        text="Manifest raster wins",
+                        confidence=0.87,
+                        polygon=((5, 5), (45, 5), (45, 25), (5, 25)),
+                    ),
+                ),
+                raster_width=1,
+                raster_height=1,
+                raster_scale=1,
+            )
+
+    extractor = StandaloneRuntimeCaptureExtractor(
+        SystemClock(),
+        _config(tmp_path),
+        ocr_adapter=MismatchedRasterAdapter(),
+    )
+    page_png = BytesIO()
+    Image.new("RGB", (120, 80), "white").save(page_png, format="PNG")
+    monkeypatch.setattr(extractor, "_pdf_page_count", lambda _content: 1)
+    monkeypatch.setattr(
+        extractor,
+        "_render_pdf_page",
+        lambda _content, _index: page_png.getvalue(),
+    )
+    content = b"%PDF-1.7 sync manifest raster authority"
+
+    extraction = asyncio.run(
+        extractor.extract(
+            content,
+            _source(content, "manifest-raster.pdf", "application/pdf"),
+            asyncio.Event(),
+        )
+    )
+
+    assert extraction.ocr_projection is not None
+    page = extraction.ocr_projection.pages[0]
+    assert (page.raster.width, page.raster.height, page.raster.scale) == (120, 80, 2)
+    assert page.confidence == pytest.approx(0.87)
+    assert [segment.text for segment in extraction.raw.segments] == ["Manifest raster wins"]
+
+
+def test_sync_ocr_cancellation_after_inference_stops_before_next_page(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cancel_event = asyncio.Event()
+
+    class CancellingOcrAdapter(FakeOcrAdapter):
+        calls = 0
+
+        def extract_png(self, _image_png: bytes) -> OcrTextResult:
+            self.calls += 1
+            cancel_event.set()
+            return OcrTextResult(
+                text="Cancelled after inference",
+                device="windowsml-dml",
+                model="pp-ocrv6-medium-windowsml",
+                digest=f"sha256:{'1' * 64}",
+                raster_width=120,
+                raster_height=80,
+            )
+
+    adapter = CancellingOcrAdapter()
+    extractor = StandaloneRuntimeCaptureExtractor(
+        SystemClock(),
+        _config(tmp_path),
+        ocr_adapter=adapter,
+    )
+    page_png = BytesIO()
+    Image.new("RGB", (120, 80), "white").save(page_png, format="PNG")
+    monkeypatch.setattr(extractor, "_pdf_page_count", lambda _content: 2)
+    monkeypatch.setattr(
+        extractor,
+        "_render_pdf_page",
+        lambda _content, _index: page_png.getvalue(),
+    )
+    content = b"%PDF-1.7 sync cancellation after inference"
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(
+            extractor.extract(
+                content,
+                _source(content, "sync-cancelled.pdf", "application/pdf"),
+                cancel_event,
+            )
+        )
+
+    assert adapter.calls == 1
+
+
+@pytest.mark.parametrize("dimension", ("width", "height"))
+def test_worker_ocr_manifest_dimensions_remain_strict(
+    tmp_path: Path,
+    dimension: str,
+) -> None:
+    dimensions = {"width": 121, "height": 81}
+
+    class MismatchedWorkerClient:
+        async def run(self, _engine: InstalledEngine, **_kwargs: object) -> WorkerRunResult:
+            return WorkerRunResult(
+                segments=(WorkerSegment(0, "Rendered page one", page=1),),
+                engine="windowsml-ocr",
+                model="pp-ocrv6-medium-windowsml",
+                digest=f"sha256:{'1' * 64}",
+                device="windowsml-dml",
+                warnings=(),
+                pages=(
+                    WorkerOcrPage(
+                        page=1,
+                        status="recognized",
+                        text="Rendered page one",
+                        boxes=((2, 3, 40, 20),),
+                        confidence=0.83,
+                        region_confidences=(0.83,),
+                        raster_width=dimensions["width"] if dimension == "width" else 120,
+                        raster_height=dimensions["height"] if dimension == "height" else 80,
+                        raster_scale=1,
+                    ),
+                ),
+            )
+
+    class EngineManager:
+        worker_client = MismatchedWorkerClient()
+
+        async def ocr_compute_selection(self, *, contract_sha256: str) -> object:
+            del contract_sha256
+            return _worker_ocr_plan_selection()
+
+        async def resolve_active_engine(self, _requirement_id: str) -> InstalledEngine:
+            return InstalledEngine(
+                requirement_id="windowsml-ocr",
+                artifact_version="0.4.2",
+                executable=tmp_path / "ocr.exe",
+                model_dir=tmp_path / "models",
+            )
+
+    extractor = StandaloneRuntimeCaptureExtractor(
+        SystemClock(),
+        _config(tmp_path),
+        engine_manager=EngineManager(),  # type: ignore[arg-type]
+    )
+    page_png = BytesIO()
+    Image.new("RGB", (120, 80), "white").save(page_png, format="PNG")
+    extractor._pdf_page_count = lambda _content: 1  # type: ignore[method-assign]
+    extractor._render_pdf_page = lambda _content, _index: page_png.getvalue()  # type: ignore[method-assign]
+    content = b"%PDF-1.7 worker raster dimensions"
+
+    with pytest.raises(OcrExtractionFailure) as raised:
+        asyncio.run(
+            extractor.extract(
+                content,
+                _source(content, f"worker-{dimension}.pdf", "application/pdf"),
+                asyncio.Event(),
+            )
+        )
+
+    projection = raised.value.projection
+    assert projection.failure is not None
+    assert projection.failure.code == "ocr_worker_protocol"
+    assert [page.status.value for page in projection.pages] == ["failed"]
 
 
 def test_pdf_pages_always_use_ocr_and_preserve_page_provenance(
