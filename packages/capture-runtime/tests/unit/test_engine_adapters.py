@@ -3449,6 +3449,53 @@ def test_sync_malformed_paddle_result_remains_protocol_failure(
     assert projection.provenance.reason.value == "protocol_failure"
 
 
+def test_sync_provenance_mismatch_is_sanitized_by_public_pipeline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class MismatchedProvenanceAdapter(FakeOcrAdapter):
+        def __init__(self) -> None:
+            super().__init__("first page")
+            self.calls = 0
+
+        def extract_png(self, image_png: bytes) -> OcrTextResult:
+            self.calls += 1
+            result = super().extract_png(image_png)
+            if self.calls == 2:
+                return replace(result, digest=f"sha256:{'2' * 64}")
+            return result
+
+    adapter = MismatchedProvenanceAdapter()
+    extractor = StandaloneRuntimeCaptureExtractor(
+        SystemClock(), _config(tmp_path), ocr_adapter=adapter
+    )
+    page_png = BytesIO()
+    Image.new("RGB", (120, 80), "white").save(page_png, format="PNG")
+    monkeypatch.setattr(extractor, "_pdf_page_count", lambda _content: 2)
+    monkeypatch.setattr(
+        extractor,
+        "_render_pdf_page",
+        lambda _content, _index: page_png.getvalue(),
+    )
+    content = b"%PDF-1.7 sync provenance mismatch"
+
+    with pytest.raises(OcrExtractionFailure) as raised:
+        asyncio.run(
+            extractor.extract(
+                content,
+                _source(content, "sync-provenance-mismatch.pdf", "application/pdf"),
+                asyncio.Event(),
+            )
+        )
+
+    projection = raised.value.projection
+    assert adapter.calls == 2
+    assert projection.failure is not None
+    assert projection.failure.code == "ocr_worker_protocol"
+    assert [page.status.value for page in projection.pages] == ["recognized", "failed"]
+    assert projection.pages[0].text == "first page"
+    assert projection.pages[1].failure == projection.failure
+
+
 def test_manifest_build_failure_is_typed_before_page_count_is_known(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

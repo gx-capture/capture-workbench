@@ -156,22 +156,12 @@ class _SyncOcrEngineAdapter:
                         provenance=provenance,
                     ) from error
                 self._check_cancelled(request)
-                pages.append(
-                    request.observe(
-                        expected,
-                        result,
-                        result.provenance or self._provenance(result),
-                    )
-                )
+                current = result.provenance or self._provenance(result)
+                pages.append(request.observe(expected, result, current))
                 if result.warning:
                     warnings.append(result.warning)
-                current = result.provenance or self._provenance(result)
                 if provenance is None:
                     provenance = current
-                elif provenance != current:
-                    raise OcrEngineFailure(
-                        kind="protocol", completed_pages=pages, provenance=provenance
-                    )
             finally:
                 # Do not leave a completed page raster in an exception traceback
                 # while the next page is being rendered.
