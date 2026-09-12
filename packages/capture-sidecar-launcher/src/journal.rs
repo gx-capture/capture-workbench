@@ -50,7 +50,7 @@ pub(crate) struct PlannedRoot {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ImmutableGroupPlan {
+pub(crate) struct JournalPlanValue {
     pub(crate) plan_digest: String,
     pub(crate) group_ref_digest: String,
     pub(crate) group_generation: u64,
@@ -450,7 +450,7 @@ impl RecoveryAuthorization {
     }
 }
 
-impl ImmutableGroupPlan {
+impl JournalPlanValue {
     pub(crate) fn validate(&self) -> Result<(), JournalError> {
         digest(&self.plan_digest, "planDigest")?;
         digest(&self.group_ref_digest, "groupRefDigest")?;
@@ -463,7 +463,7 @@ impl ImmutableGroupPlan {
 
 impl RuntimeSessionJournalV1 {
     pub(crate) fn planned(
-        plan: &ImmutableGroupPlan,
+        plan: &JournalPlanValue,
         session_nonce: String,
         timestamp: String,
     ) -> Result<Self, JournalError> {
@@ -491,7 +491,7 @@ impl RuntimeSessionJournalV1 {
 
     pub(crate) fn validate_against_plan(
         &self,
-        plan: &ImmutableGroupPlan,
+        plan: &JournalPlanValue,
     ) -> Result<(), JournalError> {
         self.validate()?;
         plan.validate()?;
@@ -759,7 +759,7 @@ impl RuntimeSessionJournalV1 {
 
     pub(crate) fn cas_prepare_bound(
         &mut self,
-        plan: &ImmutableGroupPlan,
+        plan: &JournalPlanValue,
         expected: &CasSnapshot,
         binding: JournalBinding,
         timestamp: String,
@@ -1034,7 +1034,7 @@ fn validate_binding(binding: &JournalBinding) -> Result<(), JournalError> {
 
 fn validate_binding_against_plan(
     binding: &JournalBinding,
-    plan: &ImmutableGroupPlan,
+    plan: &JournalPlanValue,
 ) -> Result<(), JournalError> {
     let JournalBinding::Bound {
         group_ref_digest,
@@ -1536,8 +1536,8 @@ mod tests {
     const DIGEST_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const DIGEST_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
-    fn plan() -> ImmutableGroupPlan {
-        ImmutableGroupPlan {
+    fn plan() -> JournalPlanValue {
+        JournalPlanValue {
             plan_digest: DIGEST_A.into(),
             group_ref_digest: DIGEST_B.into(),
             group_generation: 4,
@@ -1554,7 +1554,7 @@ mod tests {
         }
     }
 
-    fn two_root_plan() -> ImmutableGroupPlan {
+    fn two_root_plan() -> JournalPlanValue {
         let mut plan = plan();
         plan.roots.push(PlannedRoot {
             ordinal: 1,
@@ -1572,7 +1572,7 @@ mod tests {
         bound_for(&plan())
     }
 
-    fn bound_for(plan: &ImmutableGroupPlan) -> JournalBinding {
+    fn bound_for(plan: &JournalPlanValue) -> JournalBinding {
         JournalBinding::Bound {
             binding_attempt_id: "binding-attempt-1".into(),
             group_ref_digest: plan.group_ref_digest.clone(),

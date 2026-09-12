@@ -23,7 +23,7 @@ use std::sync::atomic::AtomicBool;
 use sha2::{Digest, Sha256};
 
 use crate::journal::{
-    CasSnapshot, ImmutableGroupPlan, JournalBinding, JournalError, JournalState, ReconcileAttempt,
+    CasSnapshot, JournalBinding, JournalError, JournalPlanValue, JournalState, ReconcileAttempt,
     RecoveryAuthorization, ResourceObservation, RuntimeSessionJournalV1, TerminalObservation,
     TerminalProof,
 };
@@ -149,6 +149,7 @@ struct TestFaults {
     fail_before_flush: AtomicBool,
     fail_before_replace: AtomicBool,
     fail_after_replace_before_flush: AtomicBool,
+    fail_durability_recheck: AtomicBool,
     forced_temp_path: std::sync::Mutex<Option<PathBuf>>,
     forced_payload: std::sync::Mutex<Option<Vec<u8>>>,
 }
@@ -177,7 +178,7 @@ impl JournalStore {
 
     pub(crate) fn create_initial(
         &self,
-        plan: &ImmutableGroupPlan,
+        plan: &JournalPlanValue,
         journal: &RuntimeSessionJournalV1,
     ) -> Result<(), JournalStoreError> {
         self.validate_plan_identity(plan)?;
@@ -210,7 +211,7 @@ impl JournalStore {
 
     pub(crate) fn read(
         &self,
-        plan: &ImmutableGroupPlan,
+        plan: &JournalPlanValue,
     ) -> Result<RuntimeSessionJournalV1, JournalStoreError> {
         self.validate_plan_identity(plan)?;
         self.with_lock(|store| store.read_unlocked(plan))
@@ -218,7 +219,7 @@ impl JournalStore {
 
     pub(crate) fn compare_and_swap(
         &self,
-        plan: &ImmutableGroupPlan,
+        plan: &JournalPlanValue,
         expected: &CasSnapshot,
         command: JournalStoreCommand,
     ) -> Result<RuntimeSessionJournalV1, JournalStoreError> {
@@ -238,7 +239,19 @@ impl JournalStore {
             let bytes = current
                 .encode_private()
                 .map_err(JournalStoreError::Journal)?;
-            store.write_atomic_unlocked(&bytes, true)?;
+            if let Err(write_error) = store.write_atomic_unlocked(&bytes, true) {
+                // The replacement may have happened before a durability error
+                // was reported. Re-establish the final-file and directory
+                // barriers while this same lock is held, then accept only an
+                // exact complete candidate read-back. A stale/old record, a
+                // corrupt record, or another candidate never becomes success.
+                if let Ok(read_back) =
+                    store.reestablish_candidate_durability_unlocked(plan, &current)
+                {
+                    return Ok(read_back);
+                }
+                return Err(write_error);
+            }
             let read_back = store.read_unlocked(plan)?;
             if read_back != current {
                 return Err(JournalStoreError::CorruptJournal);
@@ -247,7 +260,7 @@ impl JournalStore {
         })
     }
 
-    fn validate_plan_identity(&self, plan: &ImmutableGroupPlan) -> Result<(), JournalStoreError> {
+    fn validate_plan_identity(&self, plan: &JournalPlanValue) -> Result<(), JournalStoreError> {
         plan.validate().map_err(JournalStoreError::Journal)?;
         if plan.plan_digest != self.config.plan_digest {
             return Err(JournalStoreError::Journal(JournalError::InvalidBinding(
@@ -269,7 +282,7 @@ impl JournalStore {
 
     fn read_unlocked(
         &self,
-        plan: &ImmutableGroupPlan,
+        plan: &JournalPlanValue,
     ) -> Result<RuntimeSessionJournalV1, JournalStoreError> {
         ensure_regular_file(&self.journal_path)?;
         let file = File::open(&self.journal_path).map_err(|error| {
@@ -304,6 +317,35 @@ impl JournalStore {
             .validate_against_plan(plan)
             .map_err(JournalStoreError::Journal)?;
         Ok(journal)
+    }
+
+    fn reestablish_candidate_durability_unlocked(
+        &self,
+        plan: &JournalPlanValue,
+        candidate: &RuntimeSessionJournalV1,
+    ) -> Result<RuntimeSessionJournalV1, JournalStoreError> {
+        let final_file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&self.journal_path)
+            .map_err(|_| JournalStoreError::AtomicReplace)?;
+        #[cfg(test)]
+        if self
+            .faults
+            .fail_durability_recheck
+            .swap(false, Ordering::AcqRel)
+        {
+            return Err(JournalStoreError::Injected("durabilityRecheck"));
+        }
+        final_file
+            .sync_all()
+            .map_err(|_| JournalStoreError::Durability("recoveryFinalFlush"))?;
+        sync_directory(&self.config.producer_root)?;
+        let read_back = self.read_unlocked(plan)?;
+        if read_back != *candidate {
+            return Err(JournalStoreError::CorruptJournal);
+        }
+        Ok(read_back)
     }
 
     fn write_atomic_unlocked(
@@ -361,10 +403,11 @@ impl JournalStore {
                 .open(&self.journal_path)
                 .map_err(|_| JournalStoreError::AtomicReplace)?;
             #[cfg(test)]
-            if self
-                .faults
-                .fail_after_replace_before_flush
-                .swap(false, Ordering::AcqRel)
+            if replace_existing
+                && self
+                    .faults
+                    .fail_after_replace_before_flush
+                    .swap(false, Ordering::AcqRel)
             {
                 return Err(JournalStoreError::Injected("afterReplaceBeforeFlush"));
             }
@@ -414,9 +457,19 @@ impl JournalStore {
     }
 
     #[cfg(test)]
-    fn fail_next_after_replace_before_flush(&self) {
+    pub(crate) fn fail_next_after_replace_before_flush(&self) {
         self.faults
             .fail_after_replace_before_flush
+            .store(true, Ordering::Release);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fail_after_replace_and_durability_recheck(&self) {
+        self.faults
+            .fail_after_replace_before_flush
+            .store(true, Ordering::Release);
+        self.faults
+            .fail_durability_recheck
             .store(true, Ordering::Release);
     }
 
@@ -433,7 +486,7 @@ impl JournalStore {
 
 fn apply_command(
     journal: &mut RuntimeSessionJournalV1,
-    plan: &ImmutableGroupPlan,
+    plan: &JournalPlanValue,
     expected: &CasSnapshot,
     command: JournalStoreCommand,
 ) -> Result<(), JournalError> {
@@ -712,7 +765,7 @@ mod tests {
 
     use super::*;
     use crate::journal::{
-        BoundRoot, ImmutableGroupPlan, JournalBinding, JournalState, PlannedRoot, ReconcileAttempt,
+        BoundRoot, JournalBinding, JournalPlanValue, JournalState, PlannedRoot, ReconcileAttempt,
         RuntimeSessionJournalV1,
     };
 
@@ -722,8 +775,8 @@ mod tests {
     const SPEC_DIGEST: &str = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
     const LARGE_ROOT_COUNT: u32 = 5_000;
 
-    fn plan() -> ImmutableGroupPlan {
-        ImmutableGroupPlan {
+    fn plan() -> JournalPlanValue {
+        JournalPlanValue {
             plan_digest: DIGEST_A.into(),
             group_ref_digest: DIGEST_B.into(),
             group_generation: 4,
@@ -758,7 +811,7 @@ mod tests {
             .expect("initial journal");
     }
 
-    fn large_plan() -> ImmutableGroupPlan {
+    fn large_plan() -> JournalPlanValue {
         let mut plan = plan();
         plan.roots = (0..LARGE_ROOT_COUNT)
             .map(|ordinal| PlannedRoot {
@@ -773,7 +826,7 @@ mod tests {
         plan
     }
 
-    fn large_binding(plan: &ImmutableGroupPlan) -> JournalBinding {
+    fn large_binding(plan: &JournalPlanValue) -> JournalBinding {
         JournalBinding::Bound {
             binding_attempt_id: "attempt-1".into(),
             group_ref_digest: plan.group_ref_digest.clone(),
@@ -1054,22 +1107,23 @@ mod tests {
     }
 
     #[test]
-    fn replacement_flush_failure_leaves_a_complete_old_or_new_record() {
+    fn replacement_flush_failure_is_reflushed_before_success() {
         let directory = tempdir().expect("tempdir");
         let store = store(directory.path());
         create_initial(&store);
         let before = store.read(&plan()).expect("initial record");
         store.fail_next_after_replace_before_flush();
+        let result = store.compare_and_swap(
+            &plan(),
+            &before.cas_snapshot(),
+            JournalStoreCommand::Transition {
+                next_state: JournalState::ReconcileRequired,
+                timestamp: "2026-09-11T00:00:01Z".into(),
+            },
+        );
         assert_eq!(
-            store.compare_and_swap(
-                &plan(),
-                &before.cas_snapshot(),
-                JournalStoreCommand::Transition {
-                    next_state: JournalState::ReconcileRequired,
-                    timestamp: "2026-09-11T00:00:01Z".into(),
-                },
-            ),
-            Err(JournalStoreError::Injected("afterReplaceBeforeFlush"))
+            result.as_ref().map(|journal| journal.state),
+            Ok(JournalState::ReconcileRequired)
         );
         let after = store.read(&plan()).expect("complete replacement");
         assert_eq!(after.state, JournalState::ReconcileRequired);

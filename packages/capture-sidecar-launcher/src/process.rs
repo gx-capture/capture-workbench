@@ -4,6 +4,8 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use crate::prepare::{ImmutableGroupPlan, PrepareError, PreparedGroup, ReconcileRefSink};
+
 #[cfg(windows)]
 use std::collections::HashMap;
 
@@ -395,6 +397,16 @@ pub struct OwnedRuntimeSession {
 }
 
 impl OwnedRuntimeSession {
+    /// Persists and verifies a complete group binding before any native root
+    /// acquisition. The returned value is consumed by the later activation
+    /// seam; external plan construction is intentionally still producer-only.
+    pub fn prepare_group(
+        plan: &ImmutableGroupPlan,
+        sink: &dyn ReconcileRefSink,
+    ) -> Result<PreparedGroup, PrepareError> {
+        crate::prepare::prepare_group(plan, sink)
+    }
+
     pub fn spawn(command: &mut Command) -> Result<Self, String> {
         Ok(Self {
             inner: Arc::new(Mutex::new(OwnedRuntimeSessionState {

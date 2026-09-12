@@ -4,6 +4,7 @@ mod journal;
 mod journal_store;
 mod launcher;
 mod manifest;
+mod prepare;
 mod process;
 
 use std::fmt;
@@ -17,6 +18,11 @@ pub use launcher::{
 pub use manifest::{
     load_manifest, validate_manifest_contract, verify_sidecar, ManifestExpectations,
     SidecarManifest, VerifiedSidecar,
+};
+pub use prepare::{
+    BindingAttemptId, CompleteGroupBinding, CompleteGroupBindingReceiptV1, ImmutableGroupPlan,
+    PersistError, PrepareError, PreparedGroup, ReconcileRef, ReconcileRefSink, RootRefBinding,
+    VerifiedGroupBinding,
 };
 pub use process::{
     OwnedRuntimeSession, OwnedSidecarProcess, RuntimeCleanupError, RuntimeCleanupErrorKind,
