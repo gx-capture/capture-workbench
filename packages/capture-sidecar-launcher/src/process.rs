@@ -7,7 +7,10 @@ use std::{
 use crate::prepare::{ImmutableGroupPlan, PrepareError, PreparedGroup, ReconcileRefSink};
 
 #[cfg(windows)]
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
+
+#[cfg(windows)]
+use rand::{rngs::OsRng, RngCore};
 
 #[cfg(windows)]
 use std::{
@@ -80,6 +83,15 @@ const GROUP_CLEANUP_BUDGET_MS: u32 = 5_000;
 const DROP_CLEANUP_WAIT_MS: u32 = 250;
 
 #[cfg(windows)]
+const NATIVE_NONCE_BYTES: usize = 16;
+
+#[cfg(windows)]
+type NativeNonce = [u8; NATIVE_NONCE_BYTES];
+
+#[cfg(windows)]
+const NATIVE_NONCE_ATTEMPTS: usize = 32;
+
+#[cfg(windows)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
 enum GroupNativeFailureKind {
@@ -108,7 +120,11 @@ enum SuspendedRootState {
 #[allow(dead_code)]
 struct SuspendedGroup {
     job: Option<WindowsJob>,
+    job_nonce: NativeNonce,
     roots: Vec<SuspendedGroupRoot>,
+    // Only planned roots that have not acquired a Child are retained here.
+    // Once a root exists, its nonce moves into that root's owner record.
+    unacquired_root_nonces: VecDeque<NativeNonce>,
     cleanup_complete: bool,
 }
 
@@ -116,9 +132,90 @@ struct SuspendedGroup {
 #[allow(dead_code)]
 struct SuspendedGroupRoot {
     child: Child,
+    root_nonce: NativeNonce,
     identity: Option<OwnedProcessIdentity>,
     ordinal: u32,
     state: SuspendedRootState,
+}
+
+#[cfg(windows)]
+#[allow(dead_code)]
+struct PreallocatedNativeNonces {
+    job_nonce: NativeNonce,
+    root_nonces: Vec<NativeNonce>,
+}
+
+/// A private observation produced only after the existing native ownership
+/// checks pass. It carries binding evidence for the future activation seam;
+/// it is deliberately not a readiness or terminal proof and has no
+/// serialization or Debug authority.
+#[cfg(windows)]
+#[allow(dead_code)]
+struct NativeBindingSnapshot {
+    job_nonce: NativeNonce,
+    roots: Vec<NativeRootObservation>,
+}
+
+#[cfg(windows)]
+#[allow(dead_code)]
+struct NativeRootObservation {
+    ordinal: u32,
+    root_nonce: NativeNonce,
+    identity: OwnedProcessIdentity,
+}
+
+#[cfg(windows)]
+fn generate_group_nonces(root_count: usize) -> Result<PreallocatedNativeNonces, String> {
+    generate_group_nonces_with_filler(root_count, |nonce| {
+        OsRng.try_fill_bytes(nonce).map_err(|_| ())
+    })
+}
+
+#[cfg(windows)]
+fn generate_group_nonces_with_filler<F>(
+    root_count: usize,
+    mut fill: F,
+) -> Result<PreallocatedNativeNonces, String>
+where
+    F: FnMut(&mut NativeNonce) -> Result<(), ()>,
+{
+    if root_count == 0 {
+        return Err("A runtime group must contain at least one root.".into());
+    }
+
+    let mut used = HashSet::with_capacity(root_count.saturating_add(1));
+    let job_nonce = generate_unique_nonce(&mut used, &mut fill, "Job")?;
+    let mut root_nonces = Vec::with_capacity(root_count);
+    while root_nonces.len() < root_count {
+        root_nonces.push(generate_unique_nonce(&mut used, &mut fill, "root")?);
+    }
+    Ok(PreallocatedNativeNonces {
+        job_nonce,
+        root_nonces,
+    })
+}
+
+#[cfg(windows)]
+fn generate_unique_nonce<F>(
+    used: &mut HashSet<NativeNonce>,
+    fill: &mut F,
+    subject: &str,
+) -> Result<NativeNonce, String>
+where
+    F: FnMut(&mut NativeNonce) -> Result<(), ()>,
+{
+    for _ in 0..NATIVE_NONCE_ATTEMPTS {
+        let mut nonce = [0_u8; NATIVE_NONCE_BYTES];
+        fill(&mut nonce).map_err(|_| {
+            format!("Runtime group {subject} nonce generation failed before native acquisition.")
+        })?;
+        if nonce != [0_u8; NATIVE_NONCE_BYTES] && used.insert(nonce) {
+            return Ok(nonce);
+        }
+    }
+    Err(format!(
+        "Runtime group {subject} nonce generation exceeded its bounded retry budget before native acquisition."
+    ))
 }
 
 #[cfg(windows)]
@@ -230,10 +327,13 @@ impl SuspendedGroup {
                 "A runtime group must contain at least one root.",
             ));
         }
+        let nonces = generate_group_nonces(commands.len()).map_err(|error| {
+            GroupNativeFailure::without_owner(GroupNativeFailureKind::Setup, error)
+        })?;
         let job = WindowsJob::new().map_err(|error| {
             GroupNativeFailure::without_owner(GroupNativeFailureKind::Setup, error)
         })?;
-        Self::spawn_with_job(commands, job)
+        Self::spawn_with_job(commands, job, nonces)
     }
 
     #[cfg(test)]
@@ -247,22 +347,40 @@ impl SuspendedGroup {
                 "A runtime group must contain at least one root.",
             ));
         }
+        #[cfg(test)]
+        if faults.nonce_generation_failure {
+            return Err(GroupNativeFailure::without_owner(
+                GroupNativeFailureKind::Setup,
+                "Runtime group nonce generation failed before native acquisition.",
+            ));
+        }
+        let nonces = generate_group_nonces(commands.len()).map_err(|error| {
+            GroupNativeFailure::without_owner(GroupNativeFailureKind::Setup, error)
+        })?;
         let job = WindowsJob::new_with_faults(faults).map_err(|error| {
             GroupNativeFailure::without_owner(GroupNativeFailureKind::Setup, error)
         })?;
-        Self::spawn_with_job(commands, job)
+        Self::spawn_with_job(commands, job, nonces)
     }
 
     fn spawn_with_job(
         commands: &mut [Command],
         job: WindowsJob,
+        nonces: PreallocatedNativeNonces,
     ) -> Result<Self, GroupNativeFailure> {
+        debug_assert_eq!(commands.len(), nonces.root_nonces.len());
         let mut group = Self {
             job: Some(job),
+            job_nonce: nonces.job_nonce,
             roots: Vec::with_capacity(commands.len()),
+            unacquired_root_nonces: VecDeque::from(nonces.root_nonces),
             cleanup_complete: false,
         };
         for (ordinal, command) in commands.iter_mut().enumerate() {
+            let root_nonce = *group
+                .unacquired_root_nonces
+                .front()
+                .expect("pre-generated root nonce");
             command.creation_flags(CREATE_NO_WINDOW | CREATE_SUSPENDED);
             let child = match command.spawn() {
                 Ok(child) => child,
@@ -273,8 +391,13 @@ impl SuspendedGroup {
                     ));
                 }
             };
+            group
+                .unacquired_root_nonces
+                .pop_front()
+                .expect("pre-generated root nonce");
             group.roots.push(SuspendedGroupRoot {
                 child,
+                root_nonce,
                 identity: None,
                 ordinal: ordinal as u32,
                 state: SuspendedRootState::Unassigned,
@@ -373,6 +496,47 @@ impl SuspendedGroup {
             .as_mut()
             .expect("group Job")
             .verify_membership_set(&expected)
+    }
+
+    #[allow(dead_code)]
+    fn binding_snapshot(&mut self) -> Result<NativeBindingSnapshot, String> {
+        self.verify_all_assigned_suspended()?;
+        if !self.unacquired_root_nonces.is_empty() {
+            return Err("Runtime group has planned roots without acquired owners.".into());
+        }
+
+        let mut seen_nonces = HashSet::with_capacity(self.roots.len().saturating_add(1));
+        if !seen_nonces.insert(self.job_nonce) {
+            return Err("Runtime group Job nonce was duplicated.".into());
+        }
+        let mut roots = Vec::with_capacity(self.roots.len());
+        for (index, root) in self.roots.iter().enumerate() {
+            let expected_ordinal = u32::try_from(index)
+                .map_err(|_| "Runtime group root ordinal exceeded its native binding range.")?;
+            if root.ordinal != expected_ordinal {
+                return Err(format!(
+                    "Runtime group root ordinal {} was out of order.",
+                    root.ordinal
+                ));
+            }
+            if !seen_nonces.insert(root.root_nonce) {
+                return Err(format!(
+                    "Runtime group root {expected_ordinal} nonce was duplicated."
+                ));
+            }
+            let identity = root.identity.ok_or_else(|| {
+                format!("Runtime group root {expected_ordinal} has no captured identity.")
+            })?;
+            roots.push(NativeRootObservation {
+                ordinal: expected_ordinal,
+                root_nonce: root.root_nonce,
+                identity,
+            });
+        }
+        Ok(NativeBindingSnapshot {
+            job_nonce: self.job_nonce,
+            roots,
+        })
     }
 
     /// Consumes the owner. On failure the returned error contains the same
@@ -1304,6 +1468,7 @@ struct GroupTestFaults {
     membership_failure_at: Option<usize>,
     resume_failure_at: Option<usize>,
     identity_failure_at: Option<usize>,
+    nonce_generation_failure: bool,
 }
 
 #[cfg(windows)]
@@ -2154,8 +2319,28 @@ mod tests {
             marker_command(&first_marker, true),
             marker_command(&second_marker, true),
         ];
-        let group = SuspendedGroup::spawn(&mut commands)
+        let mut group = SuspendedGroup::spawn(&mut commands)
             .expect("group roots should be assigned while suspended");
+        wait_for_marker(&first_marker, false);
+        wait_for_marker(&second_marker, false);
+        let snapshot = group
+            .binding_snapshot()
+            .expect("verified suspended group binding snapshot");
+        assert_eq!(snapshot.roots.len(), 2);
+        assert_eq!(snapshot.roots[0].ordinal, 0);
+        assert_eq!(snapshot.roots[1].ordinal, 1);
+        assert_ne!(snapshot.job_nonce, [0_u8; NATIVE_NONCE_BYTES]);
+        assert_ne!(snapshot.roots[0].root_nonce, snapshot.roots[1].root_nonce);
+        assert_ne!(snapshot.job_nonce, snapshot.roots[0].root_nonce);
+        assert_ne!(snapshot.job_nonce, snapshot.roots[1].root_nonce);
+        assert_eq!(
+            snapshot.roots[0].identity,
+            group.roots[0].identity.expect("identity")
+        );
+        assert_eq!(
+            snapshot.roots[1].identity,
+            group.roots[1].identity.expect("identity")
+        );
         wait_for_marker(&first_marker, false);
         wait_for_marker(&second_marker, false);
         let group = group
@@ -2170,6 +2355,78 @@ mod tests {
         assert!(proof.descendants_terminated);
         let _ = std::fs::remove_file(first_marker);
         let _ = std::fs::remove_file(second_marker);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn nonce_generation_failure_happens_before_job_or_child_acquisition() {
+        let first_marker = group_marker_path("nonce-failure-first");
+        let second_marker = group_marker_path("nonce-failure-second");
+        let mut commands = [
+            marker_command(&first_marker, true),
+            marker_command(&second_marker, true),
+        ];
+        let failure = SuspendedGroup::spawn_with_faults(
+            &mut commands,
+            GroupTestFaults {
+                nonce_generation_failure: true,
+                ..Default::default()
+            },
+        )
+        .expect_err("nonce generation failure");
+        assert_eq!(failure.kind(), GroupNativeFailureKind::Setup);
+        assert!(failure.owner.is_none());
+        wait_for_marker(&first_marker, false);
+        wait_for_marker(&second_marker, false);
+        let _ = std::fs::remove_file(first_marker);
+        let _ = std::fs::remove_file(second_marker);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn nonce_generation_retries_transient_zero_and_duplicate_values() {
+        let values = [
+            [1_u8; NATIVE_NONCE_BYTES],
+            [1_u8; NATIVE_NONCE_BYTES],
+            [0_u8; NATIVE_NONCE_BYTES],
+            [2_u8; NATIVE_NONCE_BYTES],
+        ];
+        let mut values = values.into_iter();
+        let nonces = generate_group_nonces_with_filler(1, |nonce| {
+            *nonce = values.next().expect("test nonce filler value");
+            Ok(())
+        })
+        .expect("transient invalid nonce values should be retried");
+        assert_eq!(nonces.job_nonce, [1_u8; NATIVE_NONCE_BYTES]);
+        assert_eq!(nonces.root_nonces, [[2_u8; NATIVE_NONCE_BYTES]]);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn nonce_generation_exhaustion_is_bounded_for_zero_and_duplicate_values() {
+        let mut zero_attempts = 0;
+        let zero_failure = match generate_group_nonces_with_filler(1, |nonce| {
+            zero_attempts += 1;
+            *nonce = [0_u8; NATIVE_NONCE_BYTES];
+            Ok(())
+        }) {
+            Ok(_) => panic!("repeated zero nonce must fail closed"),
+            Err(error) => error,
+        };
+        assert!(zero_failure.contains("bounded retry budget"));
+        assert_eq!(zero_attempts, NATIVE_NONCE_ATTEMPTS);
+
+        let mut duplicate_attempts = 0;
+        let duplicate_failure = match generate_group_nonces_with_filler(1, |nonce| {
+            duplicate_attempts += 1;
+            *nonce = [1_u8; NATIVE_NONCE_BYTES];
+            Ok(())
+        }) {
+            Ok(_) => panic!("repeated duplicate nonce must fail closed"),
+            Err(error) => error,
+        };
+        assert!(duplicate_failure.contains("bounded retry budget"));
+        assert_eq!(duplicate_attempts, NATIVE_NONCE_ATTEMPTS + 1);
     }
 
     #[cfg(windows)]
@@ -2314,6 +2571,7 @@ mod tests {
         assert_eq!(failure.kind(), GroupNativeFailureKind::Assignment);
         let owner = failure.owner.as_ref().expect("complete group owner");
         assert_eq!(owner.roots.len(), 2);
+        assert!(owner.unacquired_root_nonces.is_empty());
         wait_for_marker(&first_marker, false);
         wait_for_marker(&second_marker, false);
         let proof = cleanup_group_failure(failure);
@@ -2344,6 +2602,7 @@ mod tests {
         let owner = failure.owner.as_ref().expect("complete group owner");
         assert_eq!(owner.roots.len(), 2);
         assert_eq!(owner.roots[1].state, SuspendedRootState::AssignedSuspended);
+        assert!(owner.unacquired_root_nonces.is_empty());
         wait_for_marker(&first_marker, false);
         wait_for_marker(&second_marker, false);
         let proof = cleanup_group_failure(failure);
@@ -2367,7 +2626,9 @@ mod tests {
         }];
         let failure = SuspendedGroup::spawn(&mut commands).expect_err("second spawn failure");
         assert_eq!(failure.kind(), GroupNativeFailureKind::Spawn);
-        assert_eq!(failure.owner.as_ref().expect("prior owner").roots.len(), 1);
+        let owner = failure.owner.as_ref().expect("prior owner");
+        assert_eq!(owner.roots.len(), 1);
+        assert_eq!(owner.unacquired_root_nonces.len(), 1);
         wait_for_marker(&first_marker, false);
         let proof = cleanup_group_failure(failure);
         assert!(proof.roots_reaped);
@@ -2392,6 +2653,7 @@ mod tests {
         let owner = failure.owner.as_ref().expect("owner with child handle");
         assert_eq!(owner.roots.len(), 1);
         assert!(owner.roots[0].identity.is_none());
+        assert!(owner.unacquired_root_nonces.is_empty());
         wait_for_marker(&marker, false);
         let proof = cleanup_group_failure(failure);
         assert!(proof.roots_reaped);
@@ -2447,6 +2709,9 @@ mod tests {
             .active_processes()
             .expect("active roots");
         let mut group = group;
+        let job_nonce = group.job_nonce;
+        let root_nonce = group.roots[0].root_nonce;
+        let root_identity = group.roots[0].identity.expect("root identity");
         group
             .job
             .as_mut()
@@ -2461,6 +2726,9 @@ mod tests {
             .cleanup_and_prove()
             .expect_err("injected cleanup failure");
         assert_eq!(cleanup_failure.kind, GroupNativeFailureKind::Cleanup);
+        assert_eq!(cleanup_failure.owner.job_nonce, job_nonce);
+        assert_eq!(cleanup_failure.owner.roots[0].root_nonce, root_nonce);
+        assert_eq!(cleanup_failure.owner.roots[0].identity, Some(root_identity));
         let proof = cleanup_failure.retry().expect("cleanup retry proof");
         assert!(proof.roots_reaped);
         assert!(proof.descendants_terminated);
