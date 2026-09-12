@@ -13,6 +13,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(all(test, windows))]
+use std::{io::Write, net::TcpStream};
+
 use rand::{rngs::OsRng, RngCore};
 use serde::de::{Error as DeError, IgnoredAny, MapAccess, Visitor};
 
@@ -1321,6 +1324,9 @@ mod tests {
     #[cfg(windows)]
     use sha2::{Digest, Sha256};
 
+    #[cfg(windows)]
+    const ACTIVATION_HTTP_TOKEN: &str = "fixture-bearer-token-0123456789abcdef";
+
     fn manifest() -> crate::SidecarManifest {
         crate::SidecarManifest {
             manifest_version: "1".into(),
@@ -1572,6 +1578,105 @@ mod tests {
     }
 
     #[cfg(windows)]
+    fn held_distinct_loopback_ports(count: usize) -> (Vec<TcpListener>, Vec<u16>) {
+        assert!(count > 0);
+        let mut reservations = Vec::with_capacity(count);
+        let mut ports = HashSet::with_capacity(count);
+        for _ in 0..128 {
+            if reservations.len() == count {
+                break;
+            }
+            let listener = TcpListener::bind((LOOPBACK_HOST, 0)).expect("ephemeral port");
+            let port = listener.local_addr().expect("ephemeral address").port();
+            if ports.insert(port) {
+                reservations.push(listener);
+            }
+        }
+        assert_eq!(reservations.len(), count, "distinct loopback ports");
+        (reservations, ports.into_iter().collect())
+    }
+
+    #[cfg(windows)]
+    fn activation_http_test_descriptor(
+        producer_root: &Path,
+        ports: &[u16],
+    ) -> (FrozenActivationDescriptor, Vec<PathBuf>) {
+        let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("activation-probe")
+            .join("target")
+            .join("debug")
+            .join("capture-activation-probe.exe");
+        assert!(
+            source.is_file(),
+            "activation probe must be built by cargo-fixture-build: {}",
+            source.display()
+        );
+        let executable_path = producer_root.join("capture-runtime.exe");
+        fs::copy(&source, &executable_path).expect("copy activation probe fixture");
+        let release_directory = producer_root.join("release");
+        fs::create_dir_all(&release_directory).expect("readiness release directory");
+        let manifest_path =
+            write_canonical_readiness_manifest(&release_directory, &executable_path);
+        let manifest = crate::manifest::load_manifest(&manifest_path).expect("readiness manifest");
+        let journal_path = producer_root
+            .to_str()
+            .expect("producer root is UTF-8")
+            .to_owned();
+        let marker_paths = ports
+            .iter()
+            .enumerate()
+            .map(|(ordinal, _)| producer_root.join(format!("activation-http-{ordinal}.marker")))
+            .collect::<Vec<_>>();
+        let descriptor = FrozenActivationDescriptor::from_activation_inputs(
+            producer_root.to_path_buf(),
+            "session-1".into(),
+            4,
+            ports
+                .iter()
+                .enumerate()
+                .map(|(ordinal, port)| {
+                    let marker_path = marker_paths[ordinal]
+                        .to_str()
+                        .expect("marker path is UTF-8")
+                        .to_owned();
+                    ActivationRootInput {
+                        ordinal: ordinal as u32,
+                        role: if ordinal == 0 {
+                            "capture".into()
+                        } else {
+                            format!("worker-{ordinal}")
+                        },
+                        root_generation: ordinal as u64 + 1,
+                        verified: VerifiedSidecar {
+                            manifest: manifest.clone(),
+                            executable_path: executable_path.clone(),
+                        },
+                        spec: SidecarLaunchSpec::new(
+                            executable_path.clone(),
+                            *port,
+                            ACTIVATION_HTTP_TOKEN.into(),
+                            vec![
+                                ("CAPTURE_API_TOKEN".into(), ACTIVATION_HTTP_TOKEN.into()),
+                                ("CAPTURE_TEST_JOURNAL_PATH".into(), journal_path.clone()),
+                                ("CAPTURE_TEST_MARKER_PATH".into(), marker_path),
+                                ("CAPTURE_TEST_SESSION_NONCE".into(), "session-1".into()),
+                                ("CAPTURE_TEST_ROOT_ORDINAL".into(), ordinal.to_string()),
+                                ("CAPTURE_TEST_HTTP_MODE".into(), "ready".into()),
+                            ],
+                            vec!["SystemRoot".into()],
+                        ),
+                        readiness_manifest_path: Some(manifest_path.clone()),
+                    }
+                })
+                .collect(),
+        )
+        .expect("HTTP activation probe descriptor");
+        (descriptor, marker_paths)
+    }
+
+    #[cfg(windows)]
     fn wait_for_activation_probe_marker(
         marker_path: &Path,
         ordinal: usize,
@@ -1597,6 +1702,69 @@ mod tests {
             expected,
             last_observation.unwrap_or_else(|| "absent".into())
         );
+    }
+
+    #[cfg(windows)]
+    fn wait_for_activation_probe_http_status(
+        port: u16,
+        authorization: Option<&str>,
+        host: &str,
+        expected_status: u16,
+        expect_bearer_challenge: bool,
+    ) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let authorization = authorization
+            .map(|token| format!("Authorization: Bearer {token}\r\n"))
+            .unwrap_or_default();
+        let request = format!(
+            "GET /v2/health/ready HTTP/1.1\r\nHost: {host}\r\n{authorization}Connection: close\r\n\r\n"
+        );
+        while Instant::now() < deadline {
+            let Ok(mut stream) = TcpStream::connect_timeout(
+                &format!("{LOOPBACK_HOST}:{port}")
+                    .parse()
+                    .expect("loopback address"),
+                Duration::from_millis(250),
+            ) else {
+                thread::sleep(Duration::from_millis(10));
+                continue;
+            };
+            stream
+                .set_read_timeout(Some(Duration::from_millis(250)))
+                .expect("HTTP test read timeout");
+            if stream.write_all(request.as_bytes()).is_err() {
+                continue;
+            }
+            let mut response = Vec::new();
+            let mut chunk = [0_u8; 512];
+            while !response.windows(4).any(|window| window == b"\r\n\r\n") {
+                match std::io::Read::read(&mut stream, &mut chunk) {
+                    Ok(0) | Err(_) => break,
+                    Ok(count) => response.extend_from_slice(&chunk[..count]),
+                }
+                if response.len() > 4096 {
+                    break;
+                }
+            }
+            let status = response
+                .split(|byte| *byte == b'\n')
+                .next()
+                .and_then(|line| std::str::from_utf8(line).ok())
+                .and_then(|line| line.split_whitespace().nth(1))
+                .and_then(|value| value.parse::<u16>().ok());
+            if status == Some(expected_status) {
+                if expect_bearer_challenge
+                    && !response
+                        .windows(b"WWW-Authenticate: Bearer\r\n".len())
+                        .any(|window| window == b"WWW-Authenticate: Bearer\r\n")
+                {
+                    panic!("activation probe omitted the Bearer challenge");
+                }
+                return;
+            }
+            panic!("activation probe returned an unexpected HTTP status");
+        }
+        panic!("activation probe HTTP server did not become reachable");
     }
 
     fn command_environment(command: &Command) -> BTreeMap<String, String> {
@@ -2910,6 +3078,143 @@ mod tests {
             .cleanup_without_terminal_proof()
             .expect_err("Launching cleanup retains staging for reconciliation");
         assert!(cleanup.into_owner().native_cleanup_proven_for_test());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn activation_probe_http_readiness_and_native_listener_use_the_same_launched_roots() {
+        for root_count in [1_usize, 2] {
+            let directory = tempfile::tempdir().expect("tempdir");
+            let (reservations, ports) = held_distinct_loopback_ports(root_count);
+            let (descriptor, marker_paths) =
+                activation_http_test_descriptor(directory.path(), &ports);
+            let plan = build_activation_plan(descriptor).expect("HTTP activation plan");
+            let activation_descriptor = plan
+                .context
+                .activation_descriptor
+                .as_ref()
+                .expect("schema-aware activation descriptor")
+                .clone();
+            for ordinal in 0..root_count {
+                assert!(
+                    activation_descriptor
+                        .readiness_schema_context(ordinal)
+                        .is_some(),
+                    "schema context must be frozen for root {ordinal}"
+                );
+                assert_eq!(
+                    command_environment(&activation_descriptor.roots[ordinal].command.command())
+                        .get("capture_test_http_mode")
+                        .map(String::as_str),
+                    Some("ready")
+                );
+            }
+            let sink = DescriptorSink {
+                binding: Mutex::new(None),
+                fail_persist: false,
+                persist_calls: AtomicUsize::new(0),
+            };
+            let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
+            let activation = prepared
+                .consume_for_activation()
+                .expect("validated activation context");
+            let owner = crate::process::acquire_suspended_for_activation(activation)
+                .expect("suspended owner");
+            let ready = owner.persist_ready().expect("durable Ready");
+            assert!(marker_paths.iter().all(|path| !path.exists()));
+            drop(reservations);
+
+            let mut launching = match ready.launch_with_cancellation(None) {
+                Ok(owner) => owner,
+                Err(_) => panic!("fixture roots should launch"),
+            };
+            let journal = plan
+                .context
+                .store
+                .read(&plan.value)
+                .expect("Launching journal");
+            assert_eq!(journal.state, crate::journal::JournalState::Launching);
+            for (ordinal, marker_path) in marker_paths.iter().enumerate() {
+                wait_for_activation_probe_marker(
+                    marker_path,
+                    ordinal,
+                    journal.roots[ordinal].pid,
+                    journal.journal_revision,
+                );
+            }
+            for (ordinal, port) in ports.iter().copied().enumerate() {
+                let root = &activation_descriptor.roots[ordinal];
+                let schema = activation_descriptor
+                    .readiness_schema_context(ordinal)
+                    .expect("frozen readiness schema");
+                assert_eq!(root.command.port, port);
+                assert!(
+                    root.command.token == ACTIVATION_HTTP_TOKEN,
+                    "frozen readiness token binding mismatch"
+                );
+                wait_for_activation_probe_http_status(
+                    port,
+                    Some("wrong-token"),
+                    &format!("{LOOPBACK_HOST}:{port}"),
+                    401,
+                    true,
+                );
+                wait_for_activation_probe_http_status(
+                    port,
+                    None,
+                    &format!("{LOOPBACK_HOST}:{port}"),
+                    401,
+                    true,
+                );
+                wait_for_activation_probe_http_status(
+                    port,
+                    Some(ACTIVATION_HTTP_TOKEN),
+                    "localhost",
+                    400,
+                    false,
+                );
+                wait_for_activation_probe_http_status(
+                    port,
+                    Some(ACTIVATION_HTTP_TOKEN),
+                    &format!("{LOOPBACK_HOST}:{port}"),
+                    200,
+                    false,
+                );
+                let readiness = crate::health::probe_service_ready(
+                    port,
+                    root.command.token.as_str(),
+                    &root.command.manifest,
+                    schema.schema(),
+                    Instant::now() + Duration::from_secs(5),
+                    &AtomicBool::new(false),
+                )
+                .unwrap_or_else(|error| panic!("strict HTTP readiness probe failed: {error}"));
+                match readiness {
+                    crate::health::StrictProbeResult::Ready(_) => {}
+                    crate::health::StrictProbeResult::NotReady => {
+                        panic!("root {ordinal} did not report strict RuntimeReady")
+                    }
+                    crate::health::StrictProbeResult::Cancelled => {
+                        panic!("root {ordinal} readiness probe was cancelled")
+                    }
+                }
+            }
+            assert_eq!(
+                launching
+                    .observe_native_listeners_for_test(
+                        &ports,
+                        Instant::now() + Duration::from_secs(5),
+                        None,
+                    )
+                    .expect("direct-root listener observation"),
+                root_count
+            );
+
+            let cleanup = launching
+                .cleanup_without_terminal_proof()
+                .expect_err("Launching cleanup retains staging for reconciliation");
+            assert!(cleanup.into_owner().native_cleanup_proven_for_test());
+        }
     }
 
     #[cfg(windows)]

@@ -856,6 +856,23 @@ impl LaunchingActivationOwner {
     pub(crate) fn native_is_suspended_for_test(&mut self) -> bool {
         self.owner.native_is_suspended_for_test()
     }
+
+    #[cfg(test)]
+    pub(crate) fn observe_native_listeners_for_test(
+        &mut self,
+        ports: &[u16],
+        deadline: std::time::Instant,
+        cancellation: Option<&AtomicBool>,
+    ) -> Result<usize, String> {
+        let native = self
+            .owner
+            .native
+            .as_mut()
+            .ok_or_else(|| "Capture runtime native owner was missing.".to_string())?;
+        Ok(native
+            .observe_root_listeners(ports, deadline, cancellation)?
+            .root_count())
+    }
 }
 
 #[cfg(windows)]

@@ -5,6 +5,7 @@ use std::{
     fmt,
     fs::{self, File, OpenOptions},
     io::{self, Read, Write},
+    net::{Ipv4Addr, TcpListener, TcpStream},
     path::{Component, Path, PathBuf},
     thread,
     time::{Duration, Instant},
@@ -22,10 +23,21 @@ const JOURNAL_ENV: &str = "CAPTURE_TEST_JOURNAL_PATH";
 const MARKER_ENV: &str = "CAPTURE_TEST_MARKER_PATH";
 const SESSION_ENV: &str = "CAPTURE_TEST_SESSION_NONCE";
 const ORDINAL_ENV: &str = "CAPTURE_TEST_ROOT_ORDINAL";
+const TOKEN_ENV: &str = "CAPTURE_API_TOKEN";
+const HTTP_MODE_ENV: &str = "CAPTURE_TEST_HTTP_MODE";
 const MAX_JOURNAL_BYTES: u64 = 1024 * 1024;
 const MARKER_RETRY: Duration = Duration::from_millis(10);
 const MARKER_TIMEOUT: Duration = Duration::from_secs(2);
 const HOLD_TIMEOUT: Duration = Duration::from_secs(30);
+const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
+const HTTP_SUCCESS_HOLD: Duration = Duration::from_secs(2);
+const HTTP_IO_TIMEOUT: Duration = Duration::from_millis(250);
+const HTTP_RETRY: Duration = Duration::from_millis(5);
+const MAX_HTTP_REQUEST_BYTES: usize = 16 * 1024;
+const MIN_HTTP_TOKEN_BYTES: usize = 32;
+#[cfg_attr(not(test), allow(dead_code))]
+const RUNTIME_READY_SCHEMA_SHA256: &str =
+    "850afd212d049c25da41d3867ba5477451a6a2c6c7e41f116fe60f26b6a35335";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ProbeError {
@@ -34,6 +46,9 @@ enum ProbeError {
     JournalRead,
     JournalRejected,
     MarkerWrite,
+    HttpNonblocking,
+    HttpServer,
+    HttpRequest,
 }
 
 impl fmt::Display for ProbeError {
@@ -44,18 +59,32 @@ impl fmt::Display for ProbeError {
             Self::JournalRead => "activation probe journal could not be read",
             Self::JournalRejected => "activation probe journal was rejected",
             Self::MarkerWrite => "activation probe marker could not be written",
+            Self::HttpNonblocking => "activation probe HTTP listener could not be configured",
+            Self::HttpServer => "activation probe HTTP server failed",
+            Self::HttpRequest => "activation probe HTTP request was invalid",
         };
         formatter.write_str(message)
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 struct ProbeConfig {
     journal_path: PathBuf,
     journal_path_is_directory: bool,
     marker_path: PathBuf,
     session_nonce: String,
     root_ordinal: u32,
+    port: u16,
+    http_mode: Option<HttpMode>,
+    token: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HttpMode {
+    Ready,
+    Status503,
+    Partial,
+    Silent,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -75,7 +104,11 @@ fn main() {
 fn run_probe(config: Result<ProbeConfig, ProbeError>, process_id: u32) -> Result<(), ProbeError> {
     let config = config?;
     let record = read_launching_record(&config, process_id)?;
-    write_marker(&config, process_id, &record)
+    write_marker(&config, process_id, &record)?;
+    if config.http_mode.is_some() {
+        serve_http(&config)?;
+    }
+    Ok(())
 }
 
 fn parse_config<I>(arguments: I) -> Result<ProbeConfig, ProbeError>
@@ -115,13 +148,48 @@ where
     if ordinal_text != root_ordinal.to_string() {
         return Err(ProbeError::Environment);
     }
+    let http_mode = match env::var(HTTP_MODE_ENV) {
+        Ok(value) => Some(parse_http_mode(&value)?),
+        Err(env::VarError::NotPresent) => None,
+        Err(env::VarError::NotUnicode(_)) => return Err(ProbeError::Environment),
+    };
+    let token = if http_mode.is_some() {
+        let token = required_text(TOKEN_ENV)?;
+        if !valid_http_token(&token) {
+            return Err(ProbeError::Environment);
+        }
+        Some(token)
+    } else {
+        None
+    };
     Ok(ProbeConfig {
         journal_path_is_directory: journal_path.is_dir(),
         journal_path,
         marker_path,
         session_nonce,
         root_ordinal,
+        port,
+        http_mode,
+        token,
     })
+}
+
+fn parse_http_mode(value: &str) -> Result<HttpMode, ProbeError> {
+    match value {
+        "ready" => Ok(HttpMode::Ready),
+        "status503" => Ok(HttpMode::Status503),
+        "partial" => Ok(HttpMode::Partial),
+        "silent" => Ok(HttpMode::Silent),
+        _ => Err(ProbeError::Environment),
+    }
+}
+
+fn valid_http_token(value: &str) -> bool {
+    value.len() >= MIN_HTTP_TOKEN_BYTES
+        && value.len() <= 4096
+        && value
+            .bytes()
+            .all(|byte| byte >= 0x21 && byte <= 0x7e && byte != b'\r' && byte != b'\n')
 }
 
 fn required_path(name: &str) -> Result<PathBuf, ProbeError> {
@@ -252,6 +320,7 @@ fn validate_journal(
     let mut seen_nonces = HashSet::with_capacity(roots.len());
     let mut seen_listeners = HashSet::with_capacity(roots.len());
     let mut selected_pid = None;
+    let mut selected_port = None;
     for (index, value) in roots.iter().enumerate() {
         let root = exact_object(
             value,
@@ -289,9 +358,12 @@ fn validate_journal(
         validate_creation_identity(root.get("creationIdentity"))?;
         if index == config.root_ordinal as usize {
             selected_pid = Some(number_field(root, "pid")?);
+            selected_port = Some(number_field(root, "loopbackPort")?);
         }
     }
-    if selected_pid != Some(u64::from(process_id)) {
+    if selected_pid != Some(u64::from(process_id))
+        || (config.http_mode.is_some() && selected_port != Some(u64::from(config.port)))
+    {
         return Err(ProbeError::JournalRejected);
     }
     Ok(LaunchingRecord { journal_revision })
@@ -430,6 +502,286 @@ fn valid_digest(value: &str) -> bool {
             .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
 }
 
+fn serve_http(config: &ProbeConfig) -> Result<(), ProbeError> {
+    serve_http_until(config, Instant::now() + HTTP_TIMEOUT)
+}
+
+fn serve_http_until(config: &ProbeConfig, overall_deadline: Instant) -> Result<(), ProbeError> {
+    let listener = loop {
+        match TcpListener::bind((Ipv4Addr::LOCALHOST, config.port)) {
+            Ok(listener) => break listener,
+            Err(error)
+                if error.kind() == io::ErrorKind::AddrInUse
+                    && Instant::now() < overall_deadline =>
+            {
+                thread::sleep(HTTP_RETRY);
+            }
+            Err(_) => return Err(ProbeError::HttpServer),
+        }
+    };
+    listener
+        .set_nonblocking(true)
+        .map_err(|_| ProbeError::HttpNonblocking)?;
+    let mut idle_deadline = overall_deadline;
+    let mut served_authorized_request = false;
+    loop {
+        let deadline = overall_deadline.min(idle_deadline);
+        if Instant::now() >= deadline {
+            return if served_authorized_request {
+                Ok(())
+            } else {
+                Err(ProbeError::HttpServer)
+            };
+        }
+        match listener.accept() {
+            Ok((mut stream, _)) => {
+                if handle_http_connection(&mut stream, config, deadline)? {
+                    served_authorized_request = true;
+                    idle_deadline = Instant::now() + HTTP_SUCCESS_HOLD;
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                thread::sleep(HTTP_RETRY);
+            }
+            Err(_) => return Err(ProbeError::HttpServer),
+        }
+    }
+}
+
+fn handle_http_connection(
+    stream: &mut TcpStream,
+    config: &ProbeConfig,
+    deadline: Instant,
+) -> Result<bool, ProbeError> {
+    let request = read_http_request(stream, deadline)?;
+    let expected_host = format!("{HOST}:{}", config.port);
+    match parse_http_request(
+        &request,
+        config.token.as_deref().unwrap_or_default(),
+        &expected_host,
+    ) {
+        HttpRequestKind::Authorized => match config.http_mode {
+            Some(HttpMode::Ready) => {
+                let body = ready_body();
+                write_http_response(stream, 200, "OK", &body, deadline)?;
+                Ok(true)
+            }
+            Some(HttpMode::Status503) => {
+                write_http_response(
+                    stream,
+                    503,
+                    "Service Unavailable",
+                    br#"{"ready":false}"#,
+                    deadline,
+                )?;
+                Ok(true)
+            }
+            Some(HttpMode::Partial) => {
+                let body = ready_body();
+                write_http_partial_response(stream, &body, deadline)?;
+                Ok(true)
+            }
+            Some(HttpMode::Silent) => {
+                if let Some(remaining) = remaining_http_budget(deadline) {
+                    thread::sleep(remaining.min(HTTP_IO_TIMEOUT));
+                }
+                Ok(true)
+            }
+            None => Err(ProbeError::HttpServer),
+        },
+        HttpRequestKind::Unauthorized => {
+            write_http_response_with_headers(
+                stream,
+                401,
+                "Unauthorized",
+                "WWW-Authenticate: Bearer\r\n",
+                b"unauthorized",
+                deadline,
+            )?;
+            Ok(false)
+        }
+        HttpRequestKind::Invalid => {
+            write_http_response(stream, 400, "Bad Request", b"bad request", deadline)?;
+            Ok(false)
+        }
+    }
+}
+
+fn read_http_request(stream: &mut TcpStream, deadline: Instant) -> Result<Vec<u8>, ProbeError> {
+    let mut request = Vec::new();
+    let mut chunk = [0_u8; 1024];
+    loop {
+        let remaining = remaining_http_budget(deadline).ok_or(ProbeError::HttpRequest)?;
+        stream
+            .set_read_timeout(Some(remaining.min(HTTP_IO_TIMEOUT)))
+            .map_err(|_| ProbeError::HttpRequest)?;
+        match stream.read(&mut chunk) {
+            Ok(0) => return Err(ProbeError::HttpRequest),
+            Ok(count) => {
+                request.extend_from_slice(&chunk[..count]);
+                if request.len() > MAX_HTTP_REQUEST_BYTES {
+                    return Err(ProbeError::HttpRequest);
+                }
+                if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    return Ok(request);
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(_) => return Err(ProbeError::HttpRequest),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HttpRequestKind {
+    Authorized,
+    Unauthorized,
+    Invalid,
+}
+
+fn parse_http_request(request: &[u8], token: &str, expected_host: &str) -> HttpRequestKind {
+    let Ok(request) = std::str::from_utf8(request) else {
+        return HttpRequestKind::Invalid;
+    };
+    let Some(separator) = request.find("\r\n\r\n") else {
+        return HttpRequestKind::Invalid;
+    };
+    if !request[separator + 4..].is_empty() {
+        return HttpRequestKind::Invalid;
+    }
+    let mut lines = request[..separator].split("\r\n");
+    if lines.next() != Some("GET /v2/health/ready HTTP/1.1") {
+        return HttpRequestKind::Invalid;
+    }
+    let mut host = None;
+    let mut authorization = None;
+    for line in lines {
+        let Some((name, value)) = line.split_once(':') else {
+            return HttpRequestKind::Invalid;
+        };
+        if name.is_empty()
+            || !name
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+            || value
+                .bytes()
+                .any(|byte| (byte < 0x20 && byte != b'\t') || byte == 0x7f)
+        {
+            return HttpRequestKind::Invalid;
+        }
+        if name.eq_ignore_ascii_case("authorization") {
+            if authorization.is_some() {
+                return HttpRequestKind::Invalid;
+            }
+            authorization = Some(value.trim());
+        } else if name.eq_ignore_ascii_case("host") {
+            if host.is_some() {
+                return HttpRequestKind::Invalid;
+            }
+            host = Some(value.trim());
+        }
+    }
+    if host != Some(expected_host) {
+        return HttpRequestKind::Invalid;
+    }
+    let Some(authorization) = authorization else {
+        return HttpRequestKind::Unauthorized;
+    };
+    let expected = format!("Bearer {token}");
+    if authorization == expected {
+        HttpRequestKind::Authorized
+    } else {
+        HttpRequestKind::Unauthorized
+    }
+}
+
+fn ready_body() -> Vec<u8> {
+    let mut body = br#"{"ready":true,"service":"capture-runtime","apiVersion":"2.0","runtimeVersion":"0.4.2","captureDocumentSchemaVersion":"2","captureDocumentSchemaSha256":""#
+        .to_vec();
+    body.extend_from_slice(RUNTIME_READY_SCHEMA_SHA256.as_bytes());
+    body.extend_from_slice(
+        br#"","schemaSha256":null,"contractSetVersion":"2","capabilities":{},"ocrCompute":null,"message":null}"#,
+    );
+    body
+}
+
+fn write_http_response(
+    stream: &mut TcpStream,
+    status: u16,
+    reason: &str,
+    body: &[u8],
+    deadline: Instant,
+) -> Result<(), ProbeError> {
+    write_http_response_with_headers(stream, status, reason, "", body, deadline)
+}
+
+fn write_http_response_with_headers(
+    stream: &mut TcpStream,
+    status: u16,
+    reason: &str,
+    extra_headers: &str,
+    body: &[u8],
+    deadline: Instant,
+) -> Result<(), ProbeError> {
+    let response = format!(
+        "HTTP/1.1 {status} {reason}\r\n{extra_headers}Content-Type: application/json; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    );
+    write_http_bytes(stream, response.as_bytes(), deadline)?;
+    write_http_bytes(stream, body, deadline)
+}
+
+fn write_http_partial_response(
+    stream: &mut TcpStream,
+    body: &[u8],
+    deadline: Instant,
+) -> Result<(), ProbeError> {
+    let response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    );
+    write_http_bytes(stream, response.as_bytes(), deadline)?;
+    let partial = body.len().saturating_sub(1);
+    write_http_bytes(stream, &body[..partial], deadline)
+}
+
+fn write_http_bytes(
+    stream: &mut TcpStream,
+    bytes: &[u8],
+    deadline: Instant,
+) -> Result<(), ProbeError> {
+    let mut written = 0;
+    while written < bytes.len() {
+        let remaining = remaining_http_budget(deadline).ok_or(ProbeError::HttpServer)?;
+        stream
+            .set_write_timeout(Some(remaining.min(HTTP_IO_TIMEOUT)))
+            .map_err(|_| ProbeError::HttpServer)?;
+        match stream.write(&bytes[written..]) {
+            Ok(0) => return Err(ProbeError::HttpServer),
+            Ok(count) => written += count,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(_) => return Err(ProbeError::HttpServer),
+        }
+    }
+    loop {
+        let remaining = remaining_http_budget(deadline).ok_or(ProbeError::HttpServer)?;
+        stream
+            .set_write_timeout(Some(remaining.min(HTTP_IO_TIMEOUT)))
+            .map_err(|_| ProbeError::HttpServer)?;
+        match stream.flush() {
+            Ok(()) => return Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(_) => return Err(ProbeError::HttpServer),
+        }
+    }
+}
+
+fn remaining_http_budget(deadline: Instant) -> Option<Duration> {
+    deadline
+        .checked_duration_since(Instant::now())
+        .filter(|remaining| !remaining.is_zero())
+}
+
 fn write_marker(
     config: &ProbeConfig,
     process_id: u32,
@@ -474,6 +826,9 @@ mod tests {
             marker_path: directory.join(format!("marker-{ordinal}.txt")),
             session_nonce: session.into(),
             root_ordinal: ordinal,
+            port: 49152 + ordinal as u16,
+            http_mode: None,
+            token: None,
         }
     }
 
@@ -564,6 +919,27 @@ mod tests {
         .expect("journal");
     }
 
+    fn exchange_http(port: u16, request: &str) -> Vec<u8> {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if Instant::now() >= deadline {
+                panic!("HTTP fixture did not become reachable");
+            }
+            match TcpStream::connect((HOST, port)) {
+                Ok(mut stream) => {
+                    stream.write_all(request.as_bytes()).expect("HTTP request");
+                    stream
+                        .set_read_timeout(Some(Duration::from_secs(1)))
+                        .expect("HTTP test read timeout");
+                    let mut response = Vec::new();
+                    stream.read_to_end(&mut response).expect("HTTP response");
+                    return response;
+                }
+                Err(_) => thread::sleep(HTTP_RETRY),
+            }
+        }
+    }
+
     fn run_with(config: &ProbeConfig, process_id: u32) -> Result<(), ProbeError> {
         run_probe(Ok(config.clone()), process_id)
     }
@@ -612,6 +988,24 @@ mod tests {
         let mut journal = valid_journal(&config.session_nonce, std::process::id(), 1);
         journal["state"] = json!("ready");
         write_configured_journal(&config, &journal);
+        assert_eq!(
+            run_with(&config, std::process::id()),
+            Err(ProbeError::JournalRejected)
+        );
+        assert!(!config.marker_path.exists());
+    }
+
+    #[test]
+    fn http_mode_rejects_journal_port_mismatch_before_marker_or_listener() {
+        let directory = tempdir();
+        let mut config = config(&directory.path, "session-1", 0);
+        config.http_mode = Some(HttpMode::Ready);
+        config.token = Some("fixture-bearer-token-0123456789abcdef".into());
+        config.port = 49153;
+        write_configured_journal(
+            &config,
+            &valid_journal(&config.session_nonce, std::process::id(), 1),
+        );
         assert_eq!(
             run_with(&config, std::process::id()),
             Err(ProbeError::JournalRejected)
@@ -687,21 +1081,226 @@ mod tests {
 
     #[test]
     fn invocation_requires_the_exact_serve_host_port_shape() {
-        assert_eq!(
+        assert!(matches!(
             parse_config(
                 ["serve", "--host", "localhost", "--port", "49152"]
                     .into_iter()
                     .map(OsString::from),
             ),
             Err(ProbeError::Invocation)
-        );
-        assert_eq!(
+        ));
+        assert!(matches!(
             parse_config(
                 ["serve", "--host", HOST, "--port", "0"]
                     .into_iter()
                     .map(OsString::from),
             ),
             Err(ProbeError::Invocation)
+        ));
+    }
+
+    #[test]
+    fn optional_http_mode_is_closed_and_marker_default_has_no_listener_mode() {
+        assert_eq!(parse_http_mode("ready"), Ok(HttpMode::Ready));
+        assert_eq!(parse_http_mode("status503"), Ok(HttpMode::Status503));
+        assert_eq!(parse_http_mode("partial"), Ok(HttpMode::Partial));
+        assert_eq!(parse_http_mode("silent"), Ok(HttpMode::Silent));
+        assert_eq!(
+            parse_http_mode("anything-else"),
+            Err(ProbeError::Environment)
         );
+        assert_eq!(
+            config(Path::new("C:\\capture"), "session-1", 0).http_mode,
+            None
+        );
+    }
+
+    #[test]
+    fn http_request_requires_exact_route_and_single_bearer_header() {
+        const TOKEN: &str = "fixture-bearer-token-0123456789abcdef";
+        const HOST: &str = "127.0.0.1:49152";
+        let valid = format!(
+            "GET /v2/health/ready HTTP/1.1\r\nHost: {HOST}\r\nAuthorization: Bearer {TOKEN}\r\n\r\n"
+        );
+        assert_eq!(
+            parse_http_request(valid.as_bytes(), TOKEN, HOST),
+            HttpRequestKind::Authorized
+        );
+        assert_eq!(
+            parse_http_request(
+                format!(
+                    "GET /v2/health/ready HTTP/1.1\r\nHost: {HOST}\r\nAuthorization: Bearer wrong\r\n\r\n"
+                )
+                .as_bytes(),
+                TOKEN,
+                HOST
+            ),
+            HttpRequestKind::Unauthorized
+        );
+        assert_eq!(
+            parse_http_request(
+                format!(
+                    "GET /v2/health/ready HTTP/1.1\r\nHost: {HOST}\r\nAuthorization: Bearer {TOKEN}\r\nAuthorization: Bearer {TOKEN}\r\n\r\n"
+                )
+                .as_bytes(),
+                TOKEN,
+                HOST
+            ),
+            HttpRequestKind::Invalid
+        );
+        assert_eq!(
+            parse_http_request(
+                format!(
+                    "GET /health HTTP/1.1\r\nHost: {HOST}\r\nAuthorization: Bearer {TOKEN}\r\n\r\n"
+                )
+                .as_bytes(),
+                TOKEN,
+                HOST
+            ),
+            HttpRequestKind::Invalid
+        );
+        assert_eq!(
+            parse_http_request(
+                format!("GET /v2/health/ready HTTP/1.1\r\nHost: {HOST}\r\n\r\n").as_bytes(),
+                TOKEN,
+                HOST
+            ),
+            HttpRequestKind::Unauthorized
+        );
+        assert_eq!(
+            parse_http_request(
+                format!(
+                    "GET /v2/health/ready HTTP/1.1\r\nHost: localhost:49152\r\nAuthorization: Bearer {TOKEN}\r\n\r\n"
+                )
+                .as_bytes(),
+                TOKEN,
+                HOST
+            ),
+            HttpRequestKind::Invalid
+        );
+        assert_eq!(
+            parse_http_request(
+                format!(
+                    "GET /v2/health/ready HTTP/1.1\r\nHost: {HOST}\r\nHost: {HOST}\r\nAuthorization: Bearer {TOKEN}\r\n\r\n"
+                )
+                .as_bytes(),
+                TOKEN,
+                HOST
+            ),
+            HttpRequestKind::Invalid
+        );
+    }
+
+    #[test]
+    fn http_tokens_match_runtime_minimum() {
+        assert!(!valid_http_token("short-token"));
+        assert!(valid_http_token("fixture-bearer-token-0123456789abcdef"));
+    }
+
+    #[test]
+    fn ready_body_has_source_pinned_service_identity_and_nullable_compute() {
+        let body: Value = serde_json::from_slice(&ready_body()).expect("ready JSON");
+        assert_eq!(body["ready"], json!(true));
+        assert_eq!(body["service"], json!("capture-runtime"));
+        assert_eq!(
+            body["captureDocumentSchemaSha256"],
+            json!(RUNTIME_READY_SCHEMA_SHA256)
+        );
+        assert!(body["ocrCompute"].is_null());
+    }
+
+    #[test]
+    fn opt_in_http_mode_binds_the_canonical_port_and_serves_ready() {
+        let directory = tempdir();
+        let reservation = TcpListener::bind((HOST, 0)).expect("HTTP test port");
+        let port = reservation.local_addr().expect("HTTP test address").port();
+        drop(reservation);
+        let mut config = config(&directory.path, "session-1", 0);
+        config.port = port;
+        config.http_mode = Some(HttpMode::Ready);
+        config.token = Some("fixture-bearer-token-0123456789abcdef".into());
+        let mut journal = valid_journal(&config.session_nonce, std::process::id(), 1);
+        journal["roots"][0]["loopbackPort"] = json!(port);
+        write_configured_journal(&config, &journal);
+        let server_config = config.clone();
+        let server = thread::spawn(move || run_with(&server_config, std::process::id()));
+        let wrong = exchange_http(
+            port,
+            &format!(
+                "GET /v2/health/ready HTTP/1.1\r\nHost: {HOST}:{port}\r\nAuthorization: Bearer wrong-token\r\n\r\n"
+            ),
+        );
+        assert!(wrong.starts_with(b"HTTP/1.1 401 Unauthorized\r\n"));
+        assert!(wrong
+            .windows(b"WWW-Authenticate: Bearer\r\n".len())
+            .any(|window| window == b"WWW-Authenticate: Bearer\r\n"));
+        let missing = exchange_http(
+            port,
+            &format!("GET /v2/health/ready HTTP/1.1\r\nHost: {HOST}:{port}\r\n\r\n"),
+        );
+        assert!(missing.starts_with(b"HTTP/1.1 401 Unauthorized\r\n"));
+        assert!(missing
+            .windows(b"WWW-Authenticate: Bearer\r\n".len())
+            .any(|window| window == b"WWW-Authenticate: Bearer\r\n"));
+        let bad_host = exchange_http(
+            port,
+            "GET /v2/health/ready HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer fixture-bearer-token-0123456789abcdef\r\n\r\n",
+        );
+        assert!(bad_host.starts_with(b"HTTP/1.1 400 Bad Request\r\n"));
+        let response = exchange_http(
+            port,
+            &format!(
+                "GET /v2/health/ready HTTP/1.1\r\nHost: {HOST}:{port}\r\nAuthorization: Bearer fixture-bearer-token-0123456789abcdef\r\n\r\n"
+            ),
+        );
+        assert!(response.starts_with(b"HTTP/1.1 200 OK\r\n"));
+        assert_eq!(server.join().expect("HTTP fixture thread"), Ok(()));
+    }
+
+    #[test]
+    fn http_server_authorized_requests_cannot_extend_the_overall_deadline() {
+        let directory = tempdir();
+        let reservation = TcpListener::bind((HOST, 0)).expect("HTTP test port");
+        let port = reservation.local_addr().expect("HTTP test address").port();
+        drop(reservation);
+        let mut config = config(&directory.path, "session-1", 0);
+        config.port = port;
+        config.http_mode = Some(HttpMode::Ready);
+        config.token = Some("fixture-bearer-token-0123456789abcdef".into());
+        let server_config = config.clone();
+        let started = Instant::now();
+        let overall_deadline = started + Duration::from_millis(350);
+        let server = thread::spawn(move || serve_http_until(&server_config, overall_deadline));
+        let request = format!(
+            "GET /v2/health/ready HTTP/1.1\r\nHost: {HOST}:{port}\r\nAuthorization: Bearer fixture-bearer-token-0123456789abcdef\r\n\r\n"
+        );
+        let polling_deadline = started + Duration::from_millis(900);
+        let mut successful_requests = 0;
+        while !server.is_finished() && Instant::now() < polling_deadline {
+            if let Ok(mut stream) = TcpStream::connect_timeout(
+                &format!("{HOST}:{port}").parse().expect("loopback address"),
+                Duration::from_millis(50),
+            ) {
+                stream
+                    .set_read_timeout(Some(Duration::from_millis(100)))
+                    .expect("HTTP test read timeout");
+                if stream.write_all(request.as_bytes()).is_ok() {
+                    let mut response = Vec::new();
+                    if stream.read_to_end(&mut response).is_ok()
+                        && response.starts_with(b"HTTP/1.1 200 OK\r\n")
+                    {
+                        successful_requests += 1;
+                    }
+                }
+            }
+            thread::sleep(HTTP_RETRY);
+        }
+        assert!(server.is_finished(), "HTTP server exceeded hard deadline");
+        assert!(
+            successful_requests >= 2,
+            "authorized request loop was not exercised"
+        );
+        assert_eq!(server.join().expect("HTTP fixture thread"), Ok(()));
+        assert!(started.elapsed() < Duration::from_secs(1));
     }
 }
