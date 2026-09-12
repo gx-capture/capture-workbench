@@ -10,6 +10,7 @@ homepage = "https://github.com/gx-capture/capture-workbench"
 readme = "README.md"
 keywords = ["capture", "sidecar", "launcher", "windows"]
 categories = ["os"]
+exclude = ["tests/fixtures/activation-probe/**"]
 
 [dependencies]
 rand = "0.8"
