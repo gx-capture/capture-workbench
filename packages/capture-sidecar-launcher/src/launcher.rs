@@ -143,9 +143,20 @@ struct FrozenLaunchCommand {
 /// nonce values identify planned bindings; they do not claim that a listener
 /// or staging resource has already been acquired.
 pub(crate) struct FrozenActivationDescriptor {
+    producer_root: PathBuf,
+    session_nonce: String,
     group_generation: u64,
     group_staging_identity: String,
     roots: Vec<FrozenActivationRoot>,
+}
+
+#[allow(dead_code)]
+struct ActivationRootInput {
+    ordinal: u32,
+    role: String,
+    root_generation: u64,
+    verified: VerifiedSidecar,
+    spec: SidecarLaunchSpec,
 }
 
 pub(crate) struct FrozenActivationRoot {
@@ -153,29 +164,42 @@ pub(crate) struct FrozenActivationRoot {
     role: String,
     root_generation: u64,
     reserved_listener_identity: String,
+    planned_staging_path: PathBuf,
     command: FrozenLaunchCommand,
 }
 
+const RUN_STAGING_ENVIRONMENT_NAME: &str = "CAPTURE_RUN_STAGING_DIR";
+const PRIVATE_RUN_STAGING_DIRECTORY: &str = "private-run-staging";
+
 impl FrozenActivationDescriptor {
     #[allow(dead_code)]
-    fn from_frozen_commands(
+    fn from_activation_inputs(
+        producer_root: PathBuf,
+        session_nonce: String,
         group_generation: u64,
-        roots: Vec<(u32, String, u64, FrozenLaunchCommand)>,
+        roots: Vec<ActivationRootInput>,
     ) -> Result<Self, String> {
+        validate_activation_scope(&producer_root, &session_nonce)?;
+        if group_generation == 0 {
+            return Err("Capture runtime activation generation was invalid.".into());
+        }
+        validate_activation_root_inputs(&roots)?;
+        let captured_environment: Vec<_> = std::env::vars_os().collect();
         let group_staging_identity = fresh_private_nonce()?;
         let roots = roots
             .into_iter()
-            .map(|(ordinal, role, root_generation, command)| {
-                Ok(FrozenActivationRoot {
-                    ordinal,
-                    role,
-                    root_generation,
-                    reserved_listener_identity: fresh_private_nonce()?,
-                    command,
-                })
+            .map(|input| {
+                freeze_activation_root(
+                    &producer_root,
+                    &group_staging_identity,
+                    input,
+                    &captured_environment,
+                )
             })
             .collect::<Result<Vec<_>, String>>()?;
         let descriptor = Self {
+            producer_root,
+            session_nonce,
             group_generation,
             group_staging_identity,
             roots,
@@ -185,6 +209,7 @@ impl FrozenActivationDescriptor {
     }
 
     fn validate(&self) -> Result<(), String> {
+        validate_activation_scope(&self.producer_root, &self.session_nonce)?;
         if self.group_generation == 0 {
             return Err("Capture runtime activation generation was invalid.".into());
         }
@@ -213,8 +238,26 @@ impl FrozenActivationDescriptor {
             if !is_lower_sha256(&root.command.digest) {
                 return Err("Capture runtime frozen command identity was invalid.".into());
             }
+            let expected_staging_path = planned_root_staging_path(
+                &self.producer_root,
+                &self.group_staging_identity,
+                root.ordinal,
+            )?;
+            if root.planned_staging_path != expected_staging_path
+                || !frozen_command_has_staging_path(&root.command, &expected_staging_path)?
+            {
+                return Err("Capture runtime planned staging identity was invalid.".into());
+            }
         }
         Ok(())
+    }
+
+    pub(crate) fn producer_root(&self) -> &Path {
+        &self.producer_root
+    }
+
+    pub(crate) fn session_nonce(&self) -> &str {
+        &self.session_nonce
     }
 
     pub(crate) fn to_prepare_draft(&self) -> Result<crate::prepare::PreparePlanDraft, String> {
@@ -236,20 +279,133 @@ impl FrozenActivationDescriptor {
     }
 }
 
+fn validate_activation_scope(producer_root: &Path, session_nonce: &str) -> Result<(), String> {
+    crate::journal_store::JournalStoreConfig::new(
+        producer_root.to_path_buf(),
+        session_nonce.to_owned(),
+        "0".repeat(64),
+    )
+    .map(|_| ())
+    .map_err(|_| "Capture runtime activation producer context was invalid.".to_string())
+}
+
+#[allow(dead_code)]
+fn validate_activation_root_inputs(roots: &[ActivationRootInput]) -> Result<(), String> {
+    if roots.is_empty() {
+        return Err("Capture runtime activation roots were incomplete.".into());
+    }
+    let mut ports = HashSet::with_capacity(roots.len());
+    for (index, root) in roots.iter().enumerate() {
+        if root.ordinal != index as u32
+            || root.root_generation == 0
+            || root.role.is_empty()
+            || root.role.len() > 256
+            || root.spec.port == 0
+        {
+            return Err("Capture runtime activation roots were invalid.".into());
+        }
+        if !ports.insert(root.spec.port) {
+            return Err("Capture runtime activation ports were not distinct.".into());
+        }
+    }
+    Ok(())
+}
+
+fn planned_root_staging_path(
+    producer_root: &Path,
+    group_staging_identity: &str,
+    ordinal: u32,
+) -> Result<PathBuf, String> {
+    validate_private_nonce(group_staging_identity)?;
+    Ok(producer_root
+        .join(PRIVATE_RUN_STAGING_DIRECTORY)
+        .join(group_staging_identity)
+        .join(format!("root-{ordinal:08}")))
+}
+
+#[allow(dead_code)]
+fn freeze_activation_root(
+    producer_root: &Path,
+    group_staging_identity: &str,
+    input: ActivationRootInput,
+    captured_environment: &[(OsString, OsString)],
+) -> Result<FrozenActivationRoot, String> {
+    let planned_staging_path =
+        planned_root_staging_path(producer_root, group_staging_identity, input.ordinal)?;
+    let staging_path = planned_staging_path
+        .to_str()
+        .ok_or_else(|| "Capture runtime planned staging path was invalid.".to_string())?;
+    let spec = bind_planned_staging_environment(input.spec, staging_path)?;
+    let command =
+        freeze_launch_command_from_environment(&input.verified, &spec, captured_environment)?;
+    Ok(FrozenActivationRoot {
+        ordinal: input.ordinal,
+        role: input.role,
+        root_generation: input.root_generation,
+        reserved_listener_identity: fresh_private_nonce()?,
+        planned_staging_path,
+        command,
+    })
+}
+
+#[allow(dead_code)]
+fn bind_planned_staging_environment(
+    mut spec: SidecarLaunchSpec,
+    expected_path: &str,
+) -> Result<SidecarLaunchSpec, String> {
+    if spec
+        .inherited_environment_allowlist
+        .iter()
+        .any(|name| name.eq_ignore_ascii_case(RUN_STAGING_ENVIRONMENT_NAME))
+    {
+        return Err("Capture runtime planned staging environment was inherited.".into());
+    }
+    let mut found = false;
+    for (name, value) in &spec.environment {
+        if name.eq_ignore_ascii_case(RUN_STAGING_ENVIRONMENT_NAME) {
+            if found || value != expected_path {
+                return Err("Capture runtime planned staging environment conflicted.".into());
+            }
+            found = true;
+        }
+    }
+    if !found {
+        spec.environment.push((
+            RUN_STAGING_ENVIRONMENT_NAME.to_owned(),
+            expected_path.to_owned(),
+        ));
+    }
+    Ok(spec)
+}
+
+fn frozen_command_has_staging_path(
+    command: &FrozenLaunchCommand,
+    expected_path: &Path,
+) -> Result<bool, String> {
+    let expected_path = expected_path
+        .to_str()
+        .ok_or_else(|| "Capture runtime planned staging path was invalid.".to_string())?;
+    let staging_key = environment_key(OsStr::new(RUN_STAGING_ENVIRONMENT_NAME));
+    let mut value = None;
+    for (name, candidate) in &command.environment {
+        if environment_key(name) == staging_key {
+            if value.is_some() {
+                return Ok(false);
+            }
+            value = Some(candidate);
+        }
+    }
+    Ok(value.is_some_and(|candidate| candidate == OsStr::new(expected_path)))
+}
+
 /// Builds the prepare plan through the typed activation descriptor. The
 /// value-only draft builder remains available for its existing foundation
 /// fixtures and is not an activation input path.
 #[allow(dead_code)]
 fn build_activation_plan(
     descriptor: FrozenActivationDescriptor,
-    producer_root: PathBuf,
-    session_nonce: String,
 ) -> Result<crate::prepare::ImmutableGroupPlan, crate::prepare::PrepareError> {
-    crate::prepare::build_immutable_group_plan_from_activation(
-        std::sync::Arc::new(descriptor),
-        producer_root,
-        session_nonce,
-    )
+    crate::prepare::build_immutable_group_plan_from_activation(std::sync::Arc::new(descriptor))
 }
 
 #[allow(dead_code)]
@@ -829,41 +985,53 @@ mod tests {
         vec![("CAPTURE_API_TOKEN".into(), token.into())]
     }
 
-    fn frozen_test_command(executable_path: &Path, port: u16) -> FrozenLaunchCommand {
-        freeze_launch_command_from_environment(
-            &verified(executable_path.to_path_buf()),
-            &SidecarLaunchSpec::new(
-                executable_path.to_path_buf(),
-                port,
-                "secret-token".into(),
-                token_environment("secret-token"),
-                Vec::new(),
-            ),
-            &[],
+    fn spec_from_frozen_command(command: &FrozenLaunchCommand, port: u16) -> SidecarLaunchSpec {
+        SidecarLaunchSpec::new(
+            command.executable_path.clone(),
+            port,
+            command.token.clone(),
+            command
+                .environment
+                .iter()
+                .map(|(name, value)| {
+                    (
+                        name.to_string_lossy().into_owned(),
+                        value.to_string_lossy().into_owned(),
+                    )
+                })
+                .collect(),
+            Vec::new(),
         )
-        .expect("frozen command")
     }
 
     fn activation_test_descriptor(
+        producer_root: &Path,
         executable_path: &Path,
         ports: &[u16],
     ) -> FrozenActivationDescriptor {
-        FrozenActivationDescriptor::from_frozen_commands(
+        FrozenActivationDescriptor::from_activation_inputs(
+            producer_root.to_path_buf(),
+            "session-1".into(),
             4,
             ports
                 .iter()
                 .enumerate()
-                .map(|(index, port)| {
-                    (
-                        index as u32,
-                        if index == 0 {
-                            "capture".into()
-                        } else {
-                            format!("worker-{index}")
-                        },
-                        index as u64 + 1,
-                        frozen_test_command(executable_path, *port),
-                    )
+                .map(|(index, port)| ActivationRootInput {
+                    ordinal: index as u32,
+                    role: if index == 0 {
+                        "capture".into()
+                    } else {
+                        format!("worker-{index}")
+                    },
+                    root_generation: index as u64 + 1,
+                    verified: verified(executable_path.to_path_buf()),
+                    spec: SidecarLaunchSpec::new(
+                        executable_path.to_path_buf(),
+                        *port,
+                        "secret-token".into(),
+                        token_environment("secret-token"),
+                        Vec::new(),
+                    ),
                 })
                 .collect(),
         )
@@ -1187,7 +1355,8 @@ mod tests {
         let directory = tempfile::tempdir().expect("tempdir");
         let executable_path = directory.path().join("capture-runtime.exe");
         fs::write(&executable_path, b"runtime").expect("executable");
-        let descriptor = activation_test_descriptor(&executable_path, &[42123, 42124]);
+        let descriptor =
+            activation_test_descriptor(directory.path(), &executable_path, &[42123, 42124]);
         let draft = descriptor.to_prepare_draft().expect("activation draft");
 
         assert_eq!(draft.group_generation, 4);
@@ -1201,6 +1370,21 @@ mod tests {
             draft.roots[1].reserved_listener_identity,
             draft.roots[0].reserved_listener_identity
         );
+        for (ordinal, root) in descriptor.roots.iter().enumerate() {
+            let expected_path = planned_root_staging_path(
+                directory.path(),
+                &descriptor.group_staging_identity,
+                ordinal as u32,
+            )
+            .expect("planned staging path");
+            assert_eq!(root.planned_staging_path, expected_path);
+            assert_eq!(
+                command_environment(&root.command.command())
+                    .get("capture_run_staging_dir")
+                    .map(String::as_str),
+                expected_path.to_str()
+            );
+        }
         assert_eq!(
             fs::read_dir(directory.path())
                 .expect("read directory")
@@ -1214,29 +1398,132 @@ mod tests {
         let directory = tempfile::tempdir().expect("tempdir");
         let executable_path = directory.path().join("capture-runtime.exe");
         fs::write(&executable_path, b"runtime").expect("executable");
-        let first = frozen_test_command(&executable_path, 42123);
-        let second = frozen_test_command(&executable_path, 42124);
-        assert!(FrozenActivationDescriptor::from_frozen_commands(
+        let mut descriptor =
+            activation_test_descriptor(directory.path(), &executable_path, &[42123, 42124]);
+        descriptor.roots[1].ordinal = 2;
+        assert!(descriptor.validate().is_err());
+
+        let mut descriptor =
+            activation_test_descriptor(directory.path(), &executable_path, &[42123, 42124]);
+        descriptor.roots[1].command.port = descriptor.roots[0].command.port;
+        assert!(descriptor.validate().is_err());
+
+        let mut descriptor =
+            activation_test_descriptor(directory.path(), &executable_path, &[42123]);
+        descriptor.roots[0].role.clear();
+        assert!(descriptor.validate().is_err());
+    }
+
+    #[test]
+    fn activation_descriptor_rejects_conflicting_or_inherited_reserved_staging_environment() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let executable_path = directory.path().join("capture-runtime.exe");
+        fs::write(&executable_path, b"runtime").expect("executable");
+
+        let mut conflicting = ActivationRootInput {
+            ordinal: 0,
+            role: "capture".into(),
+            root_generation: 1,
+            verified: verified(executable_path.clone()),
+            spec: SidecarLaunchSpec::new(
+                executable_path.clone(),
+                42123,
+                "secret-token".into(),
+                token_environment("secret-token"),
+                Vec::new(),
+            ),
+        };
+        conflicting
+            .spec
+            .environment
+            .push((RUN_STAGING_ENVIRONMENT_NAME.into(), "C:\\other-run".into()));
+        assert!(FrozenActivationDescriptor::from_activation_inputs(
+            directory.path().to_path_buf(),
+            "session-1".into(),
             4,
-            vec![
-                (0, "capture".into(), 1, first),
-                (2, "worker".into(), 2, second)
-            ]
+            vec![conflicting],
+        )
+        .is_err());
+        assert_eq!(
+            fs::read_dir(directory.path())
+                .expect("producer root")
+                .count(),
+            1
+        );
+
+        let inherited = ActivationRootInput {
+            ordinal: 0,
+            role: "capture".into(),
+            root_generation: 1,
+            verified: verified(executable_path.clone()),
+            spec: SidecarLaunchSpec::new(
+                executable_path,
+                42123,
+                "secret-token".into(),
+                token_environment("secret-token"),
+                vec![RUN_STAGING_ENVIRONMENT_NAME.into()],
+            ),
+        };
+        assert!(FrozenActivationDescriptor::from_activation_inputs(
+            directory.path().to_path_buf(),
+            "session-1".into(),
+            4,
+            vec![inherited],
         )
         .is_err());
 
-        let first = frozen_test_command(&executable_path, 42123);
-        let second = frozen_test_command(&executable_path, 42123);
-        assert!(FrozenActivationDescriptor::from_frozen_commands(
-            4,
-            vec![
-                (0, "capture".into(), 1, first),
-                (1, "worker".into(), 2, second)
+        let duplicate = SidecarLaunchSpec::new(
+            directory.path().join("capture-runtime.exe"),
+            42123,
+            "secret-token".into(),
+            [
+                token_environment("secret-token"),
+                vec![
+                    (
+                        RUN_STAGING_ENVIRONMENT_NAME.into(),
+                        "C:\\planned-run".into(),
+                    ),
+                    ("capture_run_staging_dir".into(), "C:\\planned-run".into()),
+                ],
             ]
+            .concat(),
+            Vec::new(),
+        );
+        assert!(bind_planned_staging_environment(duplicate, "C:\\planned-run").is_err());
+    }
+
+    #[test]
+    fn activation_descriptor_rejects_invalid_scope_before_freezing_commands() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let executable_path = directory.path().join("capture-runtime.exe");
+        fs::write(&executable_path, b"runtime").expect("executable");
+        let input = ActivationRootInput {
+            ordinal: 0,
+            role: "capture".into(),
+            root_generation: 1,
+            verified: verified(executable_path.clone()),
+            spec: SidecarLaunchSpec::new(
+                executable_path,
+                42123,
+                "secret-token".into(),
+                token_environment("secret-token"),
+                Vec::new(),
+            ),
+        };
+
+        assert!(FrozenActivationDescriptor::from_activation_inputs(
+            PathBuf::from("relative-root"),
+            "session-1".into(),
+            4,
+            vec![input],
         )
         .is_err());
-
-        assert!(FrozenActivationDescriptor::from_frozen_commands(4, Vec::new()).is_err());
+        assert_eq!(
+            fs::read_dir(directory.path())
+                .expect("producer root")
+                .count(),
+            1
+        );
     }
 
     #[test]
@@ -1244,37 +1531,71 @@ mod tests {
         let directory = tempfile::tempdir().expect("tempdir");
         let executable_path = directory.path().join("capture-runtime.exe");
         fs::write(&executable_path, b"runtime").expect("executable");
-        let mut descriptor = activation_test_descriptor(&executable_path, &[42123, 42124]);
+        let mut descriptor =
+            activation_test_descriptor(directory.path(), &executable_path, &[42123, 42124]);
         let baseline = descriptor.to_prepare_draft().expect("baseline draft");
-        let original_group_identity = descriptor.group_staging_identity.clone();
-        let original_listener_identity = descriptor.roots[0].reserved_listener_identity.clone();
-
-        descriptor.group_staging_identity = "11".repeat(16);
-        let changed_staging = descriptor.to_prepare_draft().expect("staging draft");
-        assert_ne!(
-            baseline.roots[0].spec_digest,
-            changed_staging.roots[0].spec_digest
-        );
-
-        descriptor.group_staging_identity = original_group_identity.clone();
-        descriptor.roots[0].reserved_listener_identity = "22".repeat(16);
-        let changed_listener = descriptor.to_prepare_draft().expect("listener draft");
-        assert_ne!(
-            baseline.roots[0].spec_digest,
-            changed_listener.roots[0].spec_digest
-        );
-
-        let mut changed_command = activation_test_descriptor(&executable_path, &[42125, 42124]);
-        changed_command.group_staging_identity = original_group_identity;
-        changed_command.roots[0].reserved_listener_identity = original_listener_identity;
-        changed_command.roots[1].reserved_listener_identity =
-            descriptor.roots[1].reserved_listener_identity.clone();
-        let changed_command_draft = changed_command
-            .to_prepare_draft()
-            .expect("changed command draft");
+        let original_command = &descriptor.roots[0].command;
+        let changed_command = freeze_launch_command_from_environment(
+            &verified(original_command.executable_path.clone()),
+            &spec_from_frozen_command(original_command, original_command.port + 2),
+            &[],
+        )
+        .expect("changed command");
+        descriptor.roots[0].command = changed_command;
+        let changed_command_draft = descriptor.to_prepare_draft().expect("command draft");
         assert_ne!(
             baseline.roots[0].spec_digest,
             changed_command_draft.roots[0].spec_digest
+        );
+
+        let mut changed_staging =
+            activation_test_descriptor(directory.path(), &executable_path, &[42123, 42124]);
+        let staging_baseline = changed_staging
+            .to_prepare_draft()
+            .expect("staging baseline draft");
+        let listener_identities: Vec<_> = changed_staging
+            .roots
+            .iter()
+            .map(|root| root.reserved_listener_identity.clone())
+            .collect();
+        changed_staging.group_staging_identity = "33".repeat(16);
+        for (index, root) in changed_staging.roots.iter_mut().enumerate() {
+            let staging_path = planned_root_staging_path(
+                directory.path(),
+                &changed_staging.group_staging_identity,
+                index as u32,
+            )
+            .expect("changed staging path");
+            let mut spec = spec_from_frozen_command(&root.command, root.command.port);
+            let staging_value = staging_path
+                .to_str()
+                .expect("UTF-8 staging path")
+                .to_owned();
+            for (name, value) in &mut spec.environment {
+                if name.eq_ignore_ascii_case(RUN_STAGING_ENVIRONMENT_NAME) {
+                    *value = staging_value.clone();
+                }
+            }
+            root.command = freeze_launch_command_from_environment(
+                &verified(root.command.executable_path.clone()),
+                &spec,
+                &[],
+            )
+            .expect("changed staging command");
+            root.planned_staging_path = staging_path;
+        }
+        let changed_staging_draft = changed_staging.to_prepare_draft().expect("staging draft");
+        assert_eq!(
+            listener_identities,
+            changed_staging
+                .roots
+                .iter()
+                .map(|root| root.reserved_listener_identity.clone())
+                .collect::<Vec<_>>()
+        );
+        assert_ne!(
+            staging_baseline.roots[0].spec_digest,
+            changed_staging_draft.roots[0].spec_digest
         );
     }
 
@@ -1330,13 +1651,10 @@ mod tests {
         let directory = tempfile::tempdir().expect("tempdir");
         let executable_path = directory.path().join("capture-runtime.exe");
         fs::write(&executable_path, b"runtime").expect("executable");
-        let descriptor = activation_test_descriptor(&executable_path, &[42123, 42124]);
-        let plan = build_activation_plan(
-            descriptor,
-            directory.path().to_path_buf(),
-            "session-1".into(),
-        )
-        .expect("activation plan");
+        let descriptor =
+            activation_test_descriptor(directory.path(), &executable_path, &[42123, 42124]);
+        let plan = build_activation_plan(descriptor).expect("activation plan");
+        assert_eq!(plan.context.session_nonce, "session-1");
         let sink = DescriptorSink {
             binding: Mutex::new(None),
             fail_persist: false,
@@ -1357,13 +1675,8 @@ mod tests {
         let directory = tempfile::tempdir().expect("tempdir");
         let executable_path = directory.path().join("capture-runtime.exe");
         fs::write(&executable_path, b"runtime").expect("executable");
-        let descriptor = activation_test_descriptor(&executable_path, &[42123]);
-        let plan = build_activation_plan(
-            descriptor,
-            directory.path().to_path_buf(),
-            "session-1".into(),
-        )
-        .expect("activation plan");
+        let descriptor = activation_test_descriptor(directory.path(), &executable_path, &[42123]);
+        let plan = build_activation_plan(descriptor).expect("activation plan");
         let sink = DescriptorSink {
             binding: Mutex::new(None),
             fail_persist: true,

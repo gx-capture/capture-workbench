@@ -155,16 +155,14 @@ pub(crate) fn build_immutable_group_plan(
 
 pub(crate) fn build_immutable_group_plan_from_activation(
     descriptor: Arc<crate::launcher::FrozenActivationDescriptor>,
-    producer_root: PathBuf,
-    session_nonce: String,
 ) -> Result<ImmutableGroupPlan, PrepareError> {
     let draft = descriptor
         .to_prepare_draft()
         .map_err(|_| PrepareError::InvalidPlan)?;
     build_immutable_group_plan_with_clock_and_activation(
         draft,
-        producer_root,
-        session_nonce,
+        descriptor.producer_root().to_path_buf(),
+        descriptor.session_nonce().to_owned(),
         Arc::new(SystemPrepareClock),
         Some(descriptor),
     )
