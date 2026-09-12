@@ -21,7 +21,8 @@ use crate::{
     },
     health::{probe_ready_once, ProbeResult},
     manifest::{
-        validate_manifest_contract, verify_artifact, ManifestExpectations, VerifiedSidecar,
+        validate_manifest_contract, verify_artifact, ManifestExpectations, SidecarManifest,
+        VerifiedSidecar,
     },
     process::OwnedRuntimeSession,
     SidecarConnection,
@@ -136,6 +137,7 @@ struct FrozenLaunchCommand {
     port: u16,
     token: String,
     environment: Vec<(OsString, OsString)>,
+    manifest: SidecarManifest,
     digest: String,
 }
 
@@ -444,6 +446,29 @@ impl FrozenLaunchCommand {
         }
         command
     }
+
+    /// Revalidates the frozen executable immediately before command creation.
+    /// All launch values remain from this immutable snapshot; no ambient
+    /// environment or mutable launch specification is consulted here.
+    #[allow(dead_code)]
+    fn checked_command(&self) -> Result<Command, String> {
+        let canonical_path = fs::canonicalize(&self.executable_path)
+            .map_err(|_| "Capture runtime frozen executable was unavailable.".to_string())?;
+        if canonical_path != self.executable_path {
+            return Err("Capture runtime frozen executable path changed.".into());
+        }
+        let executable_name = canonical_path
+            .file_name()
+            .and_then(OsStr::to_str)
+            .ok_or_else(|| "Capture runtime frozen executable name was invalid.".to_string())?;
+        if executable_name != self.manifest.file_name {
+            return Err("Capture runtime frozen executable name changed.".into());
+        }
+        verify_artifact(&canonical_path, &self.manifest).map_err(|_| {
+            "Capture runtime frozen executable no longer matched its manifest.".to_string()
+        })?;
+        Ok(self.command())
+    }
 }
 
 /// Captures ambient environment values once and binds the resulting command
@@ -489,6 +514,7 @@ fn freeze_launch_command_from_environment(
         port: spec.port,
         token: spec.token.clone(),
         environment,
+        manifest: verified.manifest.clone(),
         digest,
     })
 }
@@ -1130,6 +1156,40 @@ mod tests {
         let changed = freeze_launch_command_from_environment(&verified, &spec, &captured)
             .expect("changed frozen command");
         assert_ne!(frozen.digest, changed.digest);
+    }
+
+    #[test]
+    fn checked_frozen_command_revalidates_path_and_artifact_before_creation() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let executable_path = directory.path().join("capture-runtime.exe");
+        fs::write(&executable_path, b"runtime").expect("executable");
+        let verified = verified(executable_path.clone());
+        let spec = SidecarLaunchSpec::new(
+            executable_path.clone(),
+            42123,
+            "secret-token".into(),
+            token_environment("secret-token"),
+            Vec::new(),
+        );
+        let frozen =
+            freeze_launch_command_from_environment(&verified, &spec, &[]).expect("frozen command");
+
+        assert!(frozen.checked_command().is_ok());
+        fs::write(&executable_path, b"changed").expect("same-length replacement");
+        assert!(frozen.checked_command().is_err());
+        fs::write(&executable_path, b"runtime").expect("restore executable");
+        assert!(frozen.checked_command().is_ok());
+
+        let moved_path = directory.path().join("moved-runtime.exe");
+        fs::rename(&executable_path, &moved_path).expect("move executable");
+        fs::create_dir(&executable_path).expect("replace with directory");
+        assert!(frozen.checked_command().is_err());
+        fs::remove_dir(&executable_path).expect("remove replacement");
+        fs::rename(&moved_path, &executable_path).expect("restore executable path");
+        assert!(frozen.checked_command().is_ok());
+
+        fs::remove_file(&executable_path).expect("delete executable");
+        assert!(frozen.checked_command().is_err());
     }
 
     #[test]
