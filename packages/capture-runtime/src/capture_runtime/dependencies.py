@@ -188,7 +188,7 @@ def build_runtime_dependencies(
         clock=runtime_clock,
         retention_hours=settings.retention_hours,
     )
-    staging_root = settings.app_data_dir / "jobs" / "staging"
+    staging_root = settings.staging_root
     progressive_processor = (
         None
         if settings.extraction_provider == "fake"

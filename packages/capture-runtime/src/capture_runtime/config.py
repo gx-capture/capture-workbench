@@ -74,6 +74,18 @@ def _default_app_data(env: Mapping[str, str]) -> Path:
     return Path.cwd() / ".capture-workbench-runtime"
 
 
+def _staging_root(env: Mapping[str, str], app_data_dir: Path) -> Path:
+    configured = env.get("CAPTURE_RUN_STAGING_DIR")
+    if configured is None:
+        return app_data_dir / "jobs" / "staging"
+    if not configured.strip():
+        raise ValueError("CAPTURE_RUN_STAGING_DIR must be an absolute path when set")
+    staging_root = Path(configured)
+    if not staging_root.is_absolute():
+        raise ValueError("CAPTURE_RUN_STAGING_DIR must be an absolute path when set")
+    return staging_root
+
+
 @dataclass(frozen=True, slots=True)
 class OllamaRuntimeConfig:
     host_url: str
@@ -176,6 +188,7 @@ class RuntimeSettings:
     allowed_origins: tuple[str, ...]
     enable_api_docs: bool
     app_data_dir: Path
+    staging_root: Path
     retention_hours: int
     max_upload_bytes: int
     max_candidate_bytes: int
@@ -189,6 +202,7 @@ class RuntimeSettings:
     def from_env(cls, environ: Mapping[str, str] | None = None) -> RuntimeSettings:
         env = dict(os.environ if environ is None else environ)
         app_data_dir = Path(env.get("CAPTURE_APP_DATA_DIR") or _default_app_data(env))
+        staging_root = _staging_root(env, app_data_dir)
         ollama_app_data = Path(env.get("CAPTURE_OLLAMA_APP_DATA") or app_data_dir / "ollama")
         host = env.get("CAPTURE_HOST", "127.0.0.1")
         if host != "127.0.0.1":
@@ -330,6 +344,7 @@ class RuntimeSettings:
             allowed_origins=allowed_origins,
             enable_api_docs=_bool(env.get("CAPTURE_ENABLE_API_DOCS"), False),
             app_data_dir=app_data_dir,
+            staging_root=staging_root,
             retention_hours=retention_hours,
             max_upload_bytes=max_upload_bytes,
             max_candidate_bytes=max_candidate_bytes,
