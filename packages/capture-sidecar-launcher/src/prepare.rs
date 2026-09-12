@@ -126,7 +126,7 @@ impl PreparePlanContext {
     }
 }
 
-trait PrepareClock {
+pub(crate) trait PrepareClock {
     fn now(&self) -> Result<String, PrepareError>;
 }
 
@@ -157,6 +157,13 @@ pub(crate) fn build_immutable_group_plan(
 pub(crate) fn build_immutable_group_plan_from_activation(
     descriptor: Arc<crate::launcher::FrozenActivationDescriptor>,
 ) -> Result<ImmutableGroupPlan, PrepareError> {
+    build_immutable_group_plan_from_activation_with_clock(descriptor, Arc::new(SystemPrepareClock))
+}
+
+pub(crate) fn build_immutable_group_plan_from_activation_with_clock(
+    descriptor: Arc<crate::launcher::FrozenActivationDescriptor>,
+    clock: Arc<dyn PrepareClock + Send + Sync>,
+) -> Result<ImmutableGroupPlan, PrepareError> {
     let draft = descriptor
         .to_prepare_draft()
         .map_err(|_| PrepareError::InvalidPlan)?;
@@ -164,7 +171,7 @@ pub(crate) fn build_immutable_group_plan_from_activation(
         draft,
         descriptor.producer_root().to_path_buf(),
         descriptor.session_nonce().to_owned(),
-        Arc::new(SystemPrepareClock),
+        clock,
         Some(descriptor),
     )
 }
@@ -815,6 +822,21 @@ pub(crate) struct ValidatedActivationContext {
     permit: ActivationPermitV1,
 }
 
+impl ValidatedActivationContext {
+    pub(crate) fn next_timestamp(&self) -> Result<String, String> {
+        self.context
+            .clock
+            .now()
+            .map_err(|_| "Capture runtime producer clock failed during activation.".into())
+    }
+
+    pub(crate) fn revalidate_address_index(&self) -> Result<(), String> {
+        reopen_activation_index(&self.context, &self.descriptor, &self.journal_plan)
+            .map(|_| ())
+            .map_err(|_| "Capture runtime activation address index changed.".into())
+    }
+}
+
 impl ActivationPermitV1 {
     fn validate_against(
         &self,
@@ -910,25 +932,7 @@ impl PreparedGroup {
         }
         permit.validate_against(&journal_plan, &binding, verified.receipt())?;
 
-        let reopened = crate::index::reopen_from_ref(
-            descriptor.producer_root().to_path_buf(),
-            context.group_ref.as_str(),
-        )
-        .map_err(map_address_index_error)?;
-
-        if reopened.index.group_ref != context.group_ref.as_str()
-            || reopened.index.session_nonce != descriptor.session_nonce()
-            || reopened.plan != journal_plan
-            || reopened.index.roots.len() != context.root_refs.len()
-            || reopened
-                .index
-                .roots
-                .iter()
-                .zip(context.root_refs.iter())
-                .any(|(indexed, expected)| indexed.root_ref != expected.as_str())
-        {
-            return Err(PrepareError::InvalidBinding);
-        }
+        let reopened = reopen_activation_index(&context, &descriptor, &journal_plan)?;
 
         if reopened.journal.state != JournalState::PreparedBound
             || reopened.journal.cas_snapshot() != expected
@@ -952,6 +956,32 @@ impl PreparedGroup {
             permit,
         })
     }
+}
+
+fn reopen_activation_index(
+    context: &PreparePlanContext,
+    descriptor: &crate::launcher::FrozenActivationDescriptor,
+    journal_plan: &JournalPlanValue,
+) -> Result<crate::index::ReopenedAddress, PrepareError> {
+    let reopened = crate::index::reopen_from_ref(
+        descriptor.producer_root().to_path_buf(),
+        context.group_ref.as_str(),
+    )
+    .map_err(map_address_index_error)?;
+    if reopened.index.group_ref != context.group_ref.as_str()
+        || reopened.index.session_nonce != descriptor.session_nonce()
+        || reopened.plan != *journal_plan
+        || reopened.index.roots.len() != context.root_refs.len()
+        || reopened
+            .index
+            .roots
+            .iter()
+            .zip(context.root_refs.iter())
+            .any(|(indexed, expected)| indexed.root_ref != expected.as_str())
+    {
+        return Err(PrepareError::InvalidBinding);
+    }
+    Ok(reopened)
 }
 
 struct ActivationPermitV1 {

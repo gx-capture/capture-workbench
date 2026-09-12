@@ -30,7 +30,11 @@ use std::cell::Cell;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::{journal::JournalState, prepare::ValidatedActivationContext};
+use crate::{
+    journal::{JournalState, ResourceObservation, StagingBinding},
+    journal_store::JournalStoreCommand,
+    prepare::ValidatedActivationContext,
+};
 
 const MARKER_FILE_NAME: &str = ".capture-run-staging-v1";
 const MARKER_SCHEMA_VERSION: &str = "RunStagingMarkerV1";
@@ -159,6 +163,8 @@ pub(crate) struct RunStagingOwner {
     scope_state: StagingScopeState,
     #[cfg(test)]
     journal_drift_before_root: Cell<Option<usize>>,
+    #[cfg(test)]
+    journal_drift_before_ready: Cell<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -286,6 +292,8 @@ pub(crate) fn materialize(
         scope_state: StagingScopeState::Partial,
         #[cfg(test)]
         journal_drift_before_root: Cell::new(None),
+        #[cfg(test)]
+        journal_drift_before_ready: Cell::new(false),
     };
     if owner.group.identity.is_none() {
         return Err(StagingFailure::Owned {
@@ -396,6 +404,94 @@ impl RunStagingOwner {
 
     pub(crate) fn journal_is_still_prepared(&self) -> bool {
         journal_is_exactly_prepared(&self.activation)
+    }
+
+    pub(crate) fn planned_roots(&self) -> &[crate::journal::PlannedRoot] {
+        &self.activation.journal_plan.roots
+    }
+
+    pub(crate) fn planned_root_port(&self, ordinal: usize) -> Option<u16> {
+        self.activation.descriptor.planned_root_port(ordinal)
+    }
+
+    pub(crate) fn next_timestamp(&self) -> Result<String, String> {
+        self.activation.next_timestamp()
+    }
+
+    pub(crate) fn revalidate_address_index(&self) -> Result<(), String> {
+        self.activation.revalidate_address_index()
+    }
+
+    pub(crate) fn staging_binding_for_ready(&self) -> Result<StagingBinding, String> {
+        self.validate_complete_materialized_scope()
+            .map_err(|error| format!("Capture runtime staging admission failed: {error:?}."))?;
+        let marker = self
+            .marker
+            .as_ref()
+            .ok_or_else(|| "Capture runtime staging marker was not complete.".to_string())?;
+        let mut hasher = Sha256::new();
+        hasher.update(b"capture-runtime/run-staging-scope/v1\0");
+        put_string(
+            &mut hasher,
+            self.activation.descriptor.group_staging_identity(),
+        );
+        hasher.update((marker.bytes.len() as u64).to_be_bytes());
+        hasher.update(&marker.bytes);
+        for (ordinal, root) in self.roots.iter().enumerate() {
+            hasher.update((ordinal as u64).to_be_bytes());
+            let identity = root
+                .identity
+                .ok_or_else(|| "Capture runtime staging root identity was missing.".to_string())?;
+            hasher.update(identity.first.to_be_bytes());
+            hasher.update(identity.second.to_be_bytes());
+        }
+        Ok(StagingBinding {
+            run_nonce: self.activation.descriptor.session_nonce().to_owned(),
+            root_digest: hex_lower(&hasher.finalize()),
+            scope: "run".into(),
+        })
+    }
+
+    pub(crate) fn persist_ready(
+        &self,
+        observation: ResourceObservation,
+        timestamp: String,
+    ) -> Result<crate::journal::RuntimeSessionJournalV1, String> {
+        if !journal_is_exactly_prepared(&self.activation) {
+            return Err("Capture runtime prepared binding changed before Ready CAS.".into());
+        }
+        let expected_revision = self
+            .activation
+            .expected
+            .journal_revision
+            .checked_add(1)
+            .ok_or_else(|| "Capture runtime journal revision overflowed.".to_string())?;
+        #[cfg(test)]
+        self.maybe_inject_journal_drift_before_ready();
+        let ready = self
+            .activation
+            .context
+            .store
+            .compare_and_swap(
+                &self.activation.journal_plan,
+                &self.activation.expected,
+                JournalStoreCommand::TransitionWithObservation {
+                    next_state: JournalState::Ready,
+                    observation: observation.clone(),
+                    timestamp,
+                },
+            )
+            .map_err(|_| "Capture runtime Ready journal CAS failed.".to_string())?;
+        if ready.state != JournalState::Ready
+            || ready.journal_revision != expected_revision
+            || ready.binding != self.activation.binding
+            || ready.job_binding.as_ref() != Some(&observation.job_binding)
+            || ready.staging_binding.as_ref() != observation.staging_binding.as_ref()
+            || ready.roots != observation.roots
+        {
+            return Err("Capture runtime Ready journal read-back was not exact.".into());
+        }
+        Ok(ready)
     }
 
     /// Revalidate the journal and replace the command with a freshly checked
@@ -573,11 +669,39 @@ impl RunStagingOwner {
     }
 
     #[cfg(test)]
+    pub(crate) fn inject_journal_drift_before_ready_for_test(&self) {
+        self.journal_drift_before_ready.set(true);
+    }
+
+    #[cfg(test)]
     fn maybe_inject_journal_drift_before_root(&self, ordinal: usize) {
         if self.journal_drift_before_root.get() != Some(ordinal) {
             return;
         }
         self.journal_drift_before_root.set(None);
+        let Ok(current) = self
+            .activation
+            .context
+            .store
+            .read(&self.activation.journal_plan)
+        else {
+            return;
+        };
+        let _ = self.activation.context.store.compare_and_swap(
+            &self.activation.journal_plan,
+            &current.cas_snapshot(),
+            crate::journal_store::JournalStoreCommand::Transition {
+                next_state: JournalState::ReconcileRequired,
+                timestamp: current.updated_at,
+            },
+        );
+    }
+
+    #[cfg(test)]
+    fn maybe_inject_journal_drift_before_ready(&self) {
+        if !self.journal_drift_before_ready.replace(false) {
+            return;
+        }
         let Ok(current) = self
             .activation
             .context

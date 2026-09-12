@@ -8,6 +8,10 @@ use crate::prepare::{ImmutableGroupPlan, PrepareError, PreparedGroup, ReconcileR
 
 #[cfg(windows)]
 use crate::{
+    journal::{
+        CreationIdentity, JobBinding, JobSetupState, JournalRoot, ResourceObservation, RootState,
+        RuntimeSessionJournalV1,
+    },
     prepare::ValidatedActivationContext,
     staging::{RunStagingOwner, StagingFailure},
 };
@@ -228,6 +232,18 @@ where
 
 #[cfg(windows)]
 #[allow(dead_code)]
+fn native_nonce_text(nonce: &NativeNonce) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut text = String::with_capacity(nonce.len() * 2);
+    for byte in nonce {
+        text.push(HEX[(byte >> 4) as usize] as char);
+        text.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    text
+}
+
+#[cfg(windows)]
+#[allow(dead_code)]
 struct GroupNativeFailure {
     kind: GroupNativeFailureKind,
     #[allow(dead_code)]
@@ -262,6 +278,7 @@ pub(crate) struct SuspendedActivationOwner {
 enum SuspendedActivationFailureKind {
     Staging,
     Native(GroupNativeFailureKind),
+    Journal,
 }
 
 #[cfg(windows)]
@@ -277,6 +294,13 @@ pub(crate) struct SuspendedActivationFailure {
 pub(crate) struct SuspendedActivationCleanupFailure {
     detail: String,
     owner: SuspendedActivationOwner,
+}
+
+#[cfg(windows)]
+#[allow(dead_code)]
+pub(crate) struct ReadySuspendedActivationOwner {
+    owner: SuspendedActivationOwner,
+    ready_journal: RuntimeSessionJournalV1,
 }
 
 #[cfg(windows)]
@@ -297,6 +321,121 @@ impl SuspendedActivationCleanupFailure {
 
 #[cfg(windows)]
 impl SuspendedActivationOwner {
+    #[allow(dead_code)]
+    pub(crate) fn persist_ready(
+        mut self,
+    ) -> Result<ReadySuspendedActivationOwner, SuspendedActivationFailure> {
+        let observation = match self.resource_observation() {
+            Ok(observation) => observation,
+            Err(detail) => {
+                return Err(SuspendedActivationFailure {
+                    kind: SuspendedActivationFailureKind::Native(
+                        GroupNativeFailureKind::Membership,
+                    ),
+                    detail,
+                    owner: Some(self),
+                });
+            }
+        };
+        let timestamp = match self.staging.next_timestamp() {
+            Ok(timestamp) => timestamp,
+            Err(detail) => {
+                return Err(SuspendedActivationFailure {
+                    kind: SuspendedActivationFailureKind::Journal,
+                    detail,
+                    owner: Some(self),
+                });
+            }
+        };
+        // `started_at` records when the producer observed the native root
+        // identity, while this separate timestamp records the Ready CAS.  A
+        // producer clock may advance equally, but it must not move backwards
+        // between those two observations.
+        if observation
+            .roots
+            .iter()
+            .any(|root| timestamp < root.started_at)
+        {
+            return Err(SuspendedActivationFailure {
+                kind: SuspendedActivationFailureKind::Journal,
+                detail: "Capture runtime producer clock moved backwards before Ready CAS.".into(),
+                owner: Some(self),
+            });
+        }
+        let ready_journal = match self.staging.persist_ready(observation, timestamp) {
+            Ok(ready_journal) => ready_journal,
+            Err(detail) => {
+                return Err(SuspendedActivationFailure {
+                    kind: SuspendedActivationFailureKind::Journal,
+                    detail,
+                    owner: Some(self),
+                });
+            }
+        };
+        Ok(ReadySuspendedActivationOwner {
+            owner: self,
+            ready_journal,
+        })
+    }
+
+    fn resource_observation(&mut self) -> Result<ResourceObservation, String> {
+        if !self.staging.journal_is_still_prepared() {
+            return Err(
+                "Capture runtime prepared binding changed before Ready observation.".into(),
+            );
+        }
+        self.staging.revalidate_address_index()?;
+        let _checked_commands = self.staging.checked_commands()?;
+        let snapshot = self
+            .native
+            .as_mut()
+            .ok_or_else(|| "Capture runtime native owner was missing before Ready.".to_string())?
+            .binding_snapshot()?;
+        let staging_binding = self.staging.staging_binding_for_ready()?;
+        let planned_roots = self.staging.planned_roots();
+        if planned_roots.len() != snapshot.roots.len() {
+            return Err("Capture runtime native root observation was incomplete.".into());
+        }
+        let started_at = self.staging.next_timestamp()?;
+        let mut roots = Vec::with_capacity(planned_roots.len());
+        for (planned, actual) in planned_roots.iter().zip(snapshot.roots) {
+            let ordinal = usize::try_from(planned.ordinal)
+                .map_err(|_| "Capture runtime root ordinal was invalid.")?;
+            if actual.ordinal != planned.ordinal {
+                return Err("Capture runtime native root order changed before Ready.".into());
+            }
+            let loopback_port = self
+                .staging
+                .planned_root_port(ordinal)
+                .ok_or_else(|| "Capture runtime frozen root port was missing.".to_string())?;
+            roots.push(JournalRoot {
+                ordinal: planned.ordinal,
+                role: planned.role.clone(),
+                root_ref_digest: planned.root_ref_digest.clone(),
+                root_generation: planned.root_generation,
+                root_nonce: native_nonce_text(&actual.root_nonce),
+                pid: actual.identity.pid,
+                creation_identity: CreationIdentity {
+                    kind: "windows-process-creation".into(),
+                    value: format!("{:016x}", actual.identity.creation_time),
+                },
+                state: RootState::Suspended,
+                reserved_listener_identity: planned.reserved_listener_identity.clone(),
+                loopback_port,
+                live_listener_readiness: None,
+                started_at: started_at.clone(),
+            });
+        }
+        Ok(ResourceObservation {
+            job_binding: JobBinding {
+                setup_state: JobSetupState::Committed,
+                job_nonce: native_nonce_text(&snapshot.job_nonce),
+            },
+            staging_binding: Some(staging_binding),
+            roots,
+        })
+    }
+
     #[cfg(test)]
     pub(crate) fn native_root_count_for_test(&self) -> Option<usize> {
         self.native.as_ref().map(|native| native.roots.len())
@@ -318,6 +457,39 @@ impl SuspendedActivationOwner {
     pub(crate) fn inject_native_cleanup_failure_for_test(&mut self) {
         let native = self.native.as_mut().expect("native owner");
         native.inject_cleanup_failure_after_first_for_test();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn inject_journal_drift_before_ready_for_test(&self) {
+        self.staging.inject_journal_drift_before_ready_for_test();
+    }
+}
+
+#[cfg(windows)]
+impl ReadySuspendedActivationOwner {
+    /// Failure cleanup is native-first and never claims terminal proof. The
+    /// Ready journal remains for the later reconciliation transition when the
+    /// pre-native staging cleanup rejects its PreparedBound-only boundary.
+    #[allow(dead_code)]
+    pub(crate) fn cleanup_without_terminal_proof(
+        self,
+    ) -> Result<(), SuspendedActivationCleanupFailure> {
+        self.owner.cleanup()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn ready_journal_for_test(&self) -> &RuntimeSessionJournalV1 {
+        &self.ready_journal
+    }
+
+    #[cfg(test)]
+    pub(crate) fn native_root_count_for_test(&self) -> Option<usize> {
+        self.owner.native_root_count_for_test()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn native_is_suspended_for_test(&mut self) -> bool {
+        self.owner.native_is_suspended_for_test()
     }
 }
 

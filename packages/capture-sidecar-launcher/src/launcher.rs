@@ -278,6 +278,10 @@ impl FrozenActivationDescriptor {
             .map(|root| root.planned_staging_path.as_path())
     }
 
+    pub(crate) fn planned_root_port(&self, ordinal: usize) -> Option<u16> {
+        self.roots.get(ordinal).map(|root| root.command.port)
+    }
+
     /// Revalidate and materialize every frozen command before a resource is
     /// acquired.  This remains crate-private so an activation caller cannot
     /// replace the producer-owned command source with arbitrary input.
@@ -1801,6 +1805,46 @@ mod tests {
     }
 
     #[cfg(windows)]
+    struct ReadyClock {
+        values: Mutex<Vec<Result<String, crate::prepare::PrepareError>>>,
+    }
+
+    #[cfg(windows)]
+    impl ReadyClock {
+        fn new(
+            values: impl IntoIterator<Item = Result<String, crate::prepare::PrepareError>>,
+        ) -> Self {
+            Self {
+                values: Mutex::new(values.into_iter().collect()),
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    impl crate::prepare::PrepareClock for ReadyClock {
+        fn now(&self) -> Result<String, crate::prepare::PrepareError> {
+            let mut values = self.values.lock().unwrap();
+            if values.is_empty() {
+                Err(crate::prepare::PrepareError::JournalUnavailable)
+            } else {
+                values.remove(0)
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    fn build_activation_plan_with_clock(
+        descriptor: FrozenActivationDescriptor,
+        values: impl IntoIterator<Item = Result<String, crate::prepare::PrepareError>>,
+    ) -> crate::prepare::ImmutableGroupPlan {
+        crate::prepare::build_immutable_group_plan_from_activation_with_clock(
+            Arc::new(descriptor),
+            Arc::new(ReadyClock::new(values)),
+        )
+        .expect("activation plan")
+    }
+
+    #[cfg(windows)]
     #[test]
     fn activation_descriptor_reaches_prepared_result_only_after_durable_binding() {
         let directory = tempfile::tempdir().expect("tempdir");
@@ -2009,6 +2053,343 @@ mod tests {
             owner.cleanup().expect("native then empty staging cleanup");
             assert!(!group_path.exists());
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn suspended_group_persists_complete_ready_observation_without_resuming() {
+        for ports in [&[42146_u16][..], &[42147_u16, 42148_u16][..]] {
+            let directory = tempfile::tempdir().expect("tempdir");
+            let (descriptor, _) = real_activation_test_descriptor(directory.path(), ports);
+            let group_path = descriptor.planned_group_staging_path();
+            let plan = build_activation_plan(descriptor).expect("activation plan");
+            let sink = DescriptorSink {
+                binding: Mutex::new(None),
+                fail_persist: false,
+                persist_calls: AtomicUsize::new(0),
+            };
+            let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
+            let activation = prepared
+                .consume_for_activation()
+                .expect("validated activation context");
+            let owner = crate::process::acquire_suspended_for_activation(activation)
+                .expect("suspended owner");
+            let mut ready = owner.persist_ready().expect("durable Ready observation");
+
+            let journal = plan.context.store.read(&plan.value).expect("Ready journal");
+            assert_eq!(journal.state, crate::journal::JournalState::Ready);
+            assert_eq!(ready.ready_journal_for_test(), &journal);
+            assert_eq!(ready.ready_journal_for_test().journal_revision, 2);
+            assert_eq!(
+                journal.job_binding.as_ref().map(|job| job.setup_state),
+                Some(crate::journal::JobSetupState::Committed,)
+            );
+            let staging_binding = journal
+                .staging_binding
+                .as_ref()
+                .expect("Ready staging binding");
+            assert_eq!(staging_binding.run_nonce, "session-1");
+            assert_eq!(staging_binding.scope, "run");
+            assert_eq!(staging_binding.root_digest.len(), 64);
+            assert_eq!(journal.roots.len(), ports.len());
+            let crate::journal::JournalBinding::Bound { root_bindings, .. } = &journal.binding
+            else {
+                panic!("Ready journal binding");
+            };
+            assert_eq!(root_bindings.len(), ports.len());
+            for (ordinal, ((root, binding), port)) in journal
+                .roots
+                .iter()
+                .zip(root_bindings)
+                .zip(ports)
+                .enumerate()
+            {
+                assert_eq!(root.ordinal, ordinal as u32);
+                assert_eq!(root.role, binding.role);
+                assert_eq!(root.root_ref_digest, binding.root_ref_digest);
+                assert_eq!(root.root_generation, binding.root_generation);
+                assert_eq!(
+                    root.reserved_listener_identity,
+                    binding.reserved_listener_identity
+                );
+                assert_eq!(root.loopback_port, *port);
+                assert_eq!(root.state, crate::journal::RootState::Suspended);
+                assert!(root.live_listener_readiness.is_none());
+                assert!(root.pid > 0);
+                assert_eq!(root.creation_identity.value.len(), 16);
+            }
+            assert_eq!(ready.native_root_count_for_test(), Some(ports.len()));
+            assert!(ready.native_is_suspended_for_test());
+
+            let cleanup_failure = ready
+                .cleanup_without_terminal_proof()
+                .expect_err("Ready cleanup must retain staging for reconciliation");
+            let owner = cleanup_failure.into_owner();
+            assert_eq!(owner.native_root_count_for_test(), None);
+            assert!(owner.native_cleanup_proven_for_test());
+            assert!(group_path.exists());
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn ready_cas_durability_error_retains_suspended_owner_without_resume() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (descriptor, _) = real_activation_test_descriptor(directory.path(), &[42149]);
+        let group_path = descriptor.planned_group_staging_path();
+        let plan = build_activation_plan(descriptor).expect("activation plan");
+        let sink = DescriptorSink {
+            binding: Mutex::new(None),
+            fail_persist: false,
+            persist_calls: AtomicUsize::new(0),
+        };
+        let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
+        let activation = prepared
+            .consume_for_activation()
+            .expect("validated activation context");
+        let owner =
+            crate::process::acquire_suspended_for_activation(activation).expect("suspended owner");
+        plan.context
+            .store
+            .fail_after_replace_and_durability_recheck();
+
+        let failure = match owner.persist_ready() {
+            Ok(_) => panic!("durability failure must not issue Ready owner"),
+            Err(failure) => failure,
+        };
+        let mut owner = failure.into_owner().expect("native owner retained");
+        assert_eq!(owner.native_root_count_for_test(), Some(1));
+        assert!(owner.native_is_suspended_for_test());
+        let journal = plan
+            .context
+            .store
+            .read(&plan.value)
+            .expect("candidate remains a valid journal");
+        assert_eq!(journal.state, crate::journal::JournalState::Ready);
+
+        let cleanup_failure = owner
+            .cleanup()
+            .expect_err("ambiguous Ready write retains staging for reconciliation");
+        let owner = cleanup_failure.into_owner();
+        assert_eq!(owner.native_root_count_for_test(), None);
+        assert!(group_path.exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn ready_cas_post_replace_readback_recovery_returns_exact_owner_snapshot() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (descriptor, _) = real_activation_test_descriptor(directory.path(), &[42154]);
+        let plan = build_activation_plan(descriptor).expect("activation plan");
+        let sink = DescriptorSink {
+            binding: Mutex::new(None),
+            fail_persist: false,
+            persist_calls: AtomicUsize::new(0),
+        };
+        let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
+        let activation = prepared
+            .consume_for_activation()
+            .expect("validated activation context");
+        let owner =
+            crate::process::acquire_suspended_for_activation(activation).expect("suspended owner");
+        plan.context.store.fail_next_after_replace_before_flush();
+
+        let mut ready = owner
+            .persist_ready()
+            .expect("exact Ready readback should recover post-replace failure");
+        let journal = plan.context.store.read(&plan.value).expect("Ready journal");
+        assert_eq!(journal.state, crate::journal::JournalState::Ready);
+        assert_eq!(ready.ready_journal_for_test(), &journal);
+        assert_eq!(ready.native_root_count_for_test(), Some(1));
+        assert!(ready.native_is_suspended_for_test());
+        let cleanup_failure = ready
+            .cleanup_without_terminal_proof()
+            .expect_err("Ready cleanup retains the staging owner");
+        assert!(cleanup_failure
+            .into_owner()
+            .native_cleanup_proven_for_test());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn ready_revalidation_rejects_index_mutation_after_native_acquisition() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (descriptor, _) = real_activation_test_descriptor(directory.path(), &[42150]);
+        let group_path = descriptor.planned_group_staging_path();
+        let plan = build_activation_plan(descriptor).expect("activation plan");
+        let sink = DescriptorSink {
+            binding: Mutex::new(None),
+            fail_persist: false,
+            persist_calls: AtomicUsize::new(0),
+        };
+        let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
+        let activation = prepared
+            .consume_for_activation()
+            .expect("validated activation context");
+        let owner =
+            crate::process::acquire_suspended_for_activation(activation).expect("suspended owner");
+
+        let index_path = fs::read_dir(directory.path())
+            .expect("producer root")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .find(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| {
+                        name.starts_with("runtime-ref-index-v1-") && name.ends_with(".json")
+                    })
+            })
+            .expect("address index");
+        fs::remove_file(index_path).expect("remove index after native acquisition");
+
+        let failure = match owner.persist_ready() {
+            Ok(_) => panic!("index mutation must block durable Ready"),
+            Err(failure) => failure,
+        };
+        let mut owner = failure.into_owner().expect("owner retained");
+        assert_eq!(owner.native_root_count_for_test(), Some(1));
+        assert!(owner.native_is_suspended_for_test());
+        let journal = plan
+            .context
+            .store
+            .read(&plan.value)
+            .expect("prepared journal");
+        assert_eq!(journal.state, crate::journal::JournalState::PreparedBound);
+        assert!(group_path.exists());
+
+        owner.cleanup().expect("cleanup retained owner");
+        assert!(!group_path.exists());
+    }
+
+    #[cfg(windows)]
+    fn assert_ready_clock_failure(
+        values: impl IntoIterator<Item = Result<String, crate::prepare::PrepareError>>,
+    ) {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (descriptor, _) = real_activation_test_descriptor(directory.path(), &[42151]);
+        let group_path = descriptor.planned_group_staging_path();
+        let plan = build_activation_plan_with_clock(descriptor, values);
+        let sink = DescriptorSink {
+            binding: Mutex::new(None),
+            fail_persist: false,
+            persist_calls: AtomicUsize::new(0),
+        };
+        let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
+        let activation = prepared
+            .consume_for_activation()
+            .expect("validated activation context");
+        let owner =
+            crate::process::acquire_suspended_for_activation(activation).expect("suspended owner");
+        let failure = match owner.persist_ready() {
+            Ok(_) => panic!("clock failure must block durable Ready"),
+            Err(failure) => failure,
+        };
+        let mut owner = failure.into_owner().expect("owner retained");
+        assert_eq!(owner.native_root_count_for_test(), Some(1));
+        assert!(owner.native_is_suspended_for_test());
+        assert_eq!(
+            plan.context.store.read(&plan.value).expect("journal").state,
+            crate::journal::JournalState::PreparedBound
+        );
+        owner.cleanup().expect("cleanup after clock failure");
+        assert!(!group_path.exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn ready_clock_failure_and_backward_time_retain_suspended_owner() {
+        assert_ready_clock_failure([
+            Ok("2026-01-01T00:00:01Z".into()),
+            Ok("2026-01-01T00:00:01Z".into()),
+            Ok("2026-01-01T00:00:02Z".into()),
+            Err(crate::prepare::PrepareError::JournalUnavailable),
+        ]);
+        assert_ready_clock_failure([
+            Ok("2026-01-01T00:00:01Z".into()),
+            Ok("2026-01-01T00:00:01Z".into()),
+            Ok("2026-01-01T00:00:02Z".into()),
+            Ok("2026-01-01T00:00:01Z".into()),
+        ]);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn ready_revalidation_rejects_staging_drift_after_native_acquisition() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (descriptor, _) = real_activation_test_descriptor(directory.path(), &[42152]);
+        let group_path = descriptor.planned_group_staging_path();
+        let plan = build_activation_plan(descriptor).expect("activation plan");
+        let sink = DescriptorSink {
+            binding: Mutex::new(None),
+            fail_persist: false,
+            persist_calls: AtomicUsize::new(0),
+        };
+        let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
+        let activation = prepared
+            .consume_for_activation()
+            .expect("validated activation context");
+        let owner =
+            crate::process::acquire_suspended_for_activation(activation).expect("suspended owner");
+        let marker_path = group_path.join(".capture-run-staging-v1");
+        let marker = fs::read(&marker_path).expect("owned marker");
+        fs::write(&marker_path, b"foreign-marker-after-acquisition")
+            .expect("mutate marker after acquisition");
+
+        let failure = match owner.persist_ready() {
+            Ok(_) => panic!("staging drift must block durable Ready"),
+            Err(failure) => failure,
+        };
+        let mut owner = failure.into_owner().expect("owner retained");
+        assert_eq!(owner.native_root_count_for_test(), Some(1));
+        assert!(owner.native_is_suspended_for_test());
+        assert_eq!(
+            plan.context.store.read(&plan.value).expect("journal").state,
+            crate::journal::JournalState::PreparedBound
+        );
+        fs::write(&marker_path, marker).expect("restore owned marker");
+        owner.cleanup().expect("cleanup after staging drift");
+        assert!(!group_path.exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn ready_stale_cas_retains_suspended_owner_without_mutation() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (descriptor, _) = real_activation_test_descriptor(directory.path(), &[42153]);
+        let group_path = descriptor.planned_group_staging_path();
+        let plan = build_activation_plan(descriptor).expect("activation plan");
+        let sink = DescriptorSink {
+            binding: Mutex::new(None),
+            fail_persist: false,
+            persist_calls: AtomicUsize::new(0),
+        };
+        let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
+        let activation = prepared
+            .consume_for_activation()
+            .expect("validated activation context");
+        let owner =
+            crate::process::acquire_suspended_for_activation(activation).expect("suspended owner");
+        owner.inject_journal_drift_before_ready_for_test();
+
+        let failure = match owner.persist_ready() {
+            Ok(_) => panic!("stale CAS must block durable Ready"),
+            Err(failure) => failure,
+        };
+        let mut owner = failure.into_owner().expect("owner retained");
+        assert_eq!(owner.native_root_count_for_test(), Some(1));
+        assert!(owner.native_is_suspended_for_test());
+        assert_eq!(
+            plan.context.store.read(&plan.value).expect("journal").state,
+            crate::journal::JournalState::ReconcileRequired
+        );
+        assert!(group_path.exists());
+        let cleanup_failure = owner
+            .cleanup()
+            .expect_err("changed journal retains staging after native cleanup");
+        let owner = cleanup_failure.into_owner();
+        assert_eq!(owner.native_root_count_for_test(), None);
+        assert!(group_path.exists());
     }
 
     #[cfg(windows)]
