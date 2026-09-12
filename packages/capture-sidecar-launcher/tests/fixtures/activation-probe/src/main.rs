@@ -25,6 +25,7 @@ const SESSION_ENV: &str = "CAPTURE_TEST_SESSION_NONCE";
 const ORDINAL_ENV: &str = "CAPTURE_TEST_ROOT_ORDINAL";
 const TOKEN_ENV: &str = "CAPTURE_API_TOKEN";
 const HTTP_MODE_ENV: &str = "CAPTURE_TEST_HTTP_MODE";
+const HTTP_CHECKPOINT_ENV: &str = "CAPTURE_TEST_HTTP_CHECKPOINT_PATH";
 const MAX_JOURNAL_BYTES: u64 = 1024 * 1024;
 const MARKER_RETRY: Duration = Duration::from_millis(10);
 const MARKER_TIMEOUT: Duration = Duration::from_secs(2);
@@ -72,6 +73,7 @@ struct ProbeConfig {
     journal_path: PathBuf,
     journal_path_is_directory: bool,
     marker_path: PathBuf,
+    http_checkpoint_path: Option<PathBuf>,
     session_nonce: String,
     root_ordinal: u32,
     port: u16,
@@ -134,7 +136,16 @@ where
 
     let journal_path = required_path(JOURNAL_ENV)?;
     let marker_path = required_path(MARKER_ENV)?;
+    let http_checkpoint_path = env::var_os(HTTP_CHECKPOINT_ENV)
+        .map(|_| required_path(HTTP_CHECKPOINT_ENV))
+        .transpose()?;
     if journal_path == marker_path || !journal_path.is_absolute() || !marker_path.is_absolute() {
+        return Err(ProbeError::Environment);
+    }
+    if http_checkpoint_path
+        .as_ref()
+        .is_some_and(|path| path == &journal_path || path == &marker_path || !path.is_absolute())
+    {
         return Err(ProbeError::Environment);
     }
     let session_nonce = required_text(SESSION_ENV)?;
@@ -166,6 +177,7 @@ where
         journal_path_is_directory: journal_path.is_dir(),
         journal_path,
         marker_path,
+        http_checkpoint_path,
         session_nonce,
         root_ordinal,
         port,
@@ -562,11 +574,13 @@ fn handle_http_connection(
     ) {
         HttpRequestKind::Authorized => match config.http_mode {
             Some(HttpMode::Ready) => {
+                write_http_checkpoint(config)?;
                 let body = ready_body();
                 write_http_response(stream, 200, "OK", &body, deadline)?;
                 Ok(true)
             }
             Some(HttpMode::Status503) => {
+                write_http_checkpoint(config)?;
                 write_http_response(
                     stream,
                     503,
@@ -577,13 +591,15 @@ fn handle_http_connection(
                 Ok(true)
             }
             Some(HttpMode::Partial) => {
+                write_http_checkpoint(config)?;
                 let body = ready_body();
                 write_http_partial_response(stream, &body, deadline)?;
                 Ok(true)
             }
             Some(HttpMode::Silent) => {
+                write_http_checkpoint(config)?;
                 if let Some(remaining) = remaining_http_budget(deadline) {
-                    thread::sleep(remaining.min(HTTP_IO_TIMEOUT));
+                    thread::sleep(remaining);
                 }
                 Ok(true)
             }
@@ -604,6 +620,35 @@ fn handle_http_connection(
             write_http_response(stream, 400, "Bad Request", b"bad request", deadline)?;
             Ok(false)
         }
+    }
+}
+
+fn write_http_checkpoint(config: &ProbeConfig) -> Result<(), ProbeError> {
+    let Some(path) = config.http_checkpoint_path.as_ref() else {
+        return Ok(());
+    };
+    const CHECKPOINT: &[u8] = b"authorized\n";
+    if path.exists() {
+        return if fs::read(path).ok().as_deref() == Some(CHECKPOINT) {
+            Ok(())
+        } else {
+            Err(ProbeError::MarkerWrite)
+        };
+    }
+    let mut file = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(path)
+        .map_err(|_| ProbeError::MarkerWrite)?;
+    file.write_all(CHECKPOINT)
+        .map_err(|_| ProbeError::MarkerWrite)?;
+    file.flush().map_err(|_| ProbeError::MarkerWrite)?;
+    file.sync_all().map_err(|_| ProbeError::MarkerWrite)?;
+    drop(file);
+    if fs::read(path).ok().as_deref() == Some(CHECKPOINT) {
+        Ok(())
+    } else {
+        Err(ProbeError::MarkerWrite)
     }
 }
 
@@ -824,6 +869,7 @@ mod tests {
             journal_path: directory.join("runtime-session.json"),
             journal_path_is_directory: false,
             marker_path: directory.join(format!("marker-{ordinal}.txt")),
+            http_checkpoint_path: None,
             session_nonce: session.into(),
             root_ordinal: ordinal,
             port: 49152 + ordinal as u16,

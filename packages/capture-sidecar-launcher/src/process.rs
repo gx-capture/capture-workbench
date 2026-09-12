@@ -8,10 +8,12 @@ use crate::prepare::{ImmutableGroupPlan, PrepareError, PreparedGroup, ReconcileR
 
 #[cfg(windows)]
 use crate::{
+    health::{probe_service_ready, StrictProbeResult},
     journal::{
         CreationIdentity, JobBinding, JobSetupState, JournalRoot, ResourceObservation, RootState,
         RuntimeSessionJournalV1,
     },
+    journal_store::{RunningCasError, RunningCasResult},
     prepare::ValidatedActivationContext,
     staging::{RunStagingOwner, StagingFailure},
 };
@@ -21,6 +23,9 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 #[cfg(windows)]
 use rand::{rngs::OsRng, RngCore};
+
+#[cfg(windows)]
+use sha2::{Digest, Sha256};
 
 #[cfg(windows)]
 use std::{
@@ -33,7 +38,10 @@ use std::{
 };
 
 #[cfg(all(test, windows))]
-use std::cell::Cell;
+use std::{
+    cell::Cell,
+    sync::mpsc::{Receiver, SyncSender},
+};
 
 #[cfg(all(test, windows))]
 thread_local! {
@@ -154,6 +162,14 @@ struct SuspendedGroup {
     cleanup_failure_at: Option<usize>,
     #[cfg(test)]
     listener_query_failure: bool,
+    #[cfg(test)]
+    listener_identity_mutation_after_first: bool,
+    #[cfg(test)]
+    listener_identity_mutation_at_last: bool,
+    #[cfg(test)]
+    listener_observation_count: usize,
+    #[cfg(test)]
+    root_exit_after_first: bool,
 }
 
 #[cfg(windows)]
@@ -197,12 +213,14 @@ struct NativeRootObservation {
 /// table contributes only the listener port; neither a PID supplied by a
 /// caller nor Job membership alone can create this value.
 #[cfg(windows)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(dead_code)]
 struct NativeListenerObservation {
     roots: Vec<NativeListenerRootObservation>,
 }
 
 #[cfg(windows)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
 struct NativeListenerRootObservation {
     ordinal: u32,
@@ -366,6 +384,63 @@ pub(crate) struct ReadySuspendedActivationOwner {
 pub(crate) struct LaunchingActivationOwner {
     owner: SuspendedActivationOwner,
     launching_journal: RuntimeSessionJournalV1,
+    #[cfg(all(test, windows))]
+    running_admission_hook: Option<RunningAdmissionTestHook>,
+}
+
+#[cfg(all(test, windows))]
+struct RunningAdmissionTestHook {
+    reached: SyncSender<()>,
+    acquired: Receiver<()>,
+}
+
+/// Private move-only authority after service readiness has been observed for
+/// every resumed root and the exact Running CAS has been durably read back.
+/// The native and staging owners remain together for the later lifecycle
+/// slices; no public lease or terminal proof is created here.
+#[cfg(windows)]
+pub(crate) struct RunningActivationOwner {
+    owner: SuspendedActivationOwner,
+    running_journal: RuntimeSessionJournalV1,
+}
+
+/// Every promotion failure retains the Launching owner.  In particular, a
+/// store error after an atomic replacement is never inferred to have produced
+/// a valid Running authority from a later read.
+#[cfg(windows)]
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RunningPromotionFailureKind {
+    Cancelled,
+    Deadline,
+    NotReady,
+    Storage,
+    Validation,
+}
+
+#[cfg(windows)]
+#[allow(dead_code)]
+pub(crate) struct RunningPromotionFailure {
+    kind: RunningPromotionFailureKind,
+    detail: String,
+    owner: LaunchingActivationOwner,
+}
+
+#[cfg(windows)]
+impl RunningPromotionFailure {
+    pub(crate) fn into_owner(self) -> LaunchingActivationOwner {
+        self.owner
+    }
+
+    #[cfg(test)]
+    pub(crate) fn detail_for_test(&self) -> &str {
+        &self.detail
+    }
+
+    #[cfg(test)]
+    pub(crate) fn kind_for_test(&self) -> RunningPromotionFailureKind {
+        self.kind
+    }
 }
 
 #[cfg(windows)]
@@ -752,6 +827,8 @@ impl ReadySuspendedActivationOwner {
         let mut launching = LaunchingActivationOwner {
             owner: ready.owner,
             launching_journal,
+            #[cfg(all(test, windows))]
+            running_admission_hook: None,
         };
         if cancellation_requested(cancellation) {
             return Err(ActivationLaunchFailure {
@@ -830,6 +907,456 @@ impl ReadySuspendedActivationOwner {
 
 #[cfg(windows)]
 impl LaunchingActivationOwner {
+    /// Promote an already-resumed Launching owner after strict service and
+    /// native listener observations for every root.  The caller supplies one
+    /// absolute deadline for the whole operation; no root receives a fresh
+    /// timeout.  Running authority is returned only after the exact CAS value
+    /// has been durably written and read back by the staging/store owner.
+    pub(crate) fn promote_running_with_cancellation(
+        mut self,
+        deadline: std::time::Instant,
+        cancellation: Option<Arc<AtomicBool>>,
+    ) -> Result<RunningActivationOwner, RunningPromotionFailure> {
+        let local_cancellation = Arc::new(AtomicBool::new(false));
+        let cancellation = cancellation.unwrap_or_else(|| Arc::clone(&local_cancellation));
+        if cancellation.load(Ordering::Acquire) {
+            return Err(running_promotion_failure(
+                self,
+                "Capture runtime Running promotion was cancelled before validation.",
+            ));
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(running_promotion_failure(
+                self,
+                "Capture runtime Running promotion expired before validation.",
+            ));
+        }
+
+        if let Err(detail) = self
+            .owner
+            .staging
+            .validate_launching_journal(&self.launching_journal)
+        {
+            return Err(running_promotion_failure(
+                self,
+                format!("Capture runtime Launching journal validation failed: {detail}"),
+            ));
+        }
+        if let Err(detail) = self
+            .owner
+            .staging
+            .revalidate_address_index_for_running(deadline, Arc::clone(&cancellation))
+        {
+            return Err(running_promotion_failure_for_bounded_error(
+                self,
+                detail,
+                deadline,
+                cancellation.as_ref(),
+            ));
+        }
+        let descriptor = self.owner.staging.activation_descriptor();
+        if let Err(detail) = self.owner.staging.checked_commands_for_running() {
+            return Err(running_promotion_failure(self, detail));
+        }
+        // Schema context is a required input for this service-only Running
+        // promotion.  Validate all roots before touching the native listener
+        // table so a value-only or partially described descriptor cannot be
+        // mistaken for a live service proof.
+        for ordinal in 0..self.launching_journal.roots.len() {
+            let (_, manifest, schema_context, _) = match descriptor.strict_readiness_inputs(ordinal)
+            {
+                Ok(inputs) => inputs,
+                Err(detail) => return Err(running_promotion_failure(self, detail)),
+            };
+            if let Err(detail) = schema_context.revalidate(manifest) {
+                return Err(running_promotion_failure(
+                    self,
+                    format!("Capture runtime readiness schema revalidation failed: {detail}"),
+                ));
+            }
+        }
+        let expected_staging = match self.owner.staging.staging_binding_for_running() {
+            Ok(binding) => binding,
+            Err(detail) => return Err(running_promotion_failure(self, detail)),
+        };
+        if self.launching_journal.staging_binding.as_ref() != Some(&expected_staging) {
+            return Err(running_promotion_failure(
+                self,
+                "Capture runtime staging identity changed before Running promotion.",
+            ));
+        }
+        let launching_snapshot = self.launching_journal.clone();
+        let first_listener_observation = match self.observe_native_listeners_for_running(
+            &launching_snapshot,
+            deadline,
+            Some(cancellation.as_ref()),
+        ) {
+            Ok(observation) => observation,
+            Err(detail) => return Err(running_promotion_failure(self, detail)),
+        };
+        let mut readiness = Vec::with_capacity(self.launching_journal.roots.len());
+        for ordinal in 0..self.launching_journal.roots.len() {
+            if let Err(detail) = check_running_promotion_budget(deadline, cancellation.as_ref()) {
+                return Err(running_promotion_failure(self, detail));
+            }
+            // A fresh checked command revalidates the frozen executable and
+            // its manifest/schema context at this root's probe boundary.  It
+            // is deliberately discarded because the native child already
+            // owns the command used for Launching.
+            if let Err(detail) = descriptor.checked_command(ordinal) {
+                return Err(running_promotion_failure(self, detail));
+            }
+            let (token, manifest, schema_context, port) =
+                match descriptor.strict_readiness_inputs(ordinal) {
+                    Ok(inputs) => inputs,
+                    Err(detail) => return Err(running_promotion_failure(self, detail)),
+                };
+            if let Err(detail) = schema_context.revalidate(manifest) {
+                return Err(running_promotion_failure(
+                    self,
+                    format!("Capture runtime readiness schema revalidation failed: {detail}"),
+                ));
+            }
+            match probe_service_ready(
+                port,
+                token,
+                manifest,
+                schema_context.schema(),
+                deadline,
+                cancellation.as_ref(),
+            ) {
+                Ok(StrictProbeResult::Ready(facts)) => readiness.push(facts),
+                Ok(StrictProbeResult::NotReady) => {
+                    return Err(running_promotion_failure(
+                        self,
+                        format!(
+                            "Capture runtime root {ordinal} did not report strict service readiness."
+                        ),
+                    ));
+                }
+                Ok(StrictProbeResult::Cancelled) => {
+                    return Err(running_promotion_failure(
+                        self,
+                        "Capture runtime Running promotion was cancelled during readiness.",
+                    ));
+                }
+                Err(detail) => return Err(running_promotion_failure(self, detail)),
+            }
+        }
+        if readiness.len() != self.launching_journal.roots.len() {
+            return Err(running_promotion_failure(
+                self,
+                "Capture runtime readiness observations were incomplete.",
+            ));
+        }
+
+        // Acquire the journal lock before the final validation pass.  The
+        // guard remains held through the typed Running CAS; a cancellation or
+        // deadline during contention therefore cannot promote an old snapshot.
+        #[cfg(all(test, windows))]
+        if let Some(hook) = self.running_admission_hook.take() {
+            if hook.reached.send(()).is_err() {
+                return Err(running_promotion_failure(
+                    self,
+                    "Capture runtime Running admission test rendezvous closed.",
+                ));
+            }
+            if hook
+                .acquired
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .is_err()
+            {
+                return Err(running_promotion_failure(
+                    self,
+                    "Capture runtime Running admission test rendezvous timed out.",
+                ));
+            }
+        }
+        let admission = match self.owner.staging.begin_running_admission(
+            &self.launching_journal,
+            deadline,
+            Arc::clone(&cancellation),
+        ) {
+            Ok(admission) => admission,
+            Err(cause) => {
+                return Err(running_promotion_failure_for_cas(
+                    self,
+                    cause,
+                    "Capture runtime Running admission failed.",
+                ));
+            }
+        };
+        if admission.current() != &self.launching_journal {
+            return Err(running_promotion_failure(
+                self,
+                "Capture runtime Launching journal changed during Running admission.",
+            ));
+        }
+        if let Err(detail) = check_running_promotion_budget(deadline, cancellation.as_ref()) {
+            return Err(running_promotion_failure(self, detail));
+        }
+        // Reopening the immutable address index also reopens the journal to
+        // cross-check its plan, so it cannot run while this journal lock is
+        // held.  Release only this read-only admission, revalidate the index,
+        // and reacquire an exact snapshot before any native observation.
+        drop(admission);
+        if let Err(detail) = self
+            .owner
+            .staging
+            .revalidate_address_index_for_running(deadline, Arc::clone(&cancellation))
+        {
+            return Err(running_promotion_failure_for_bounded_error(
+                self,
+                detail,
+                deadline,
+                cancellation.as_ref(),
+            ));
+        }
+        let admission = match self.owner.staging.begin_running_admission(
+            &self.launching_journal,
+            deadline,
+            Arc::clone(&cancellation),
+        ) {
+            Ok(admission) => admission,
+            Err(cause) => {
+                return Err(running_promotion_failure_for_cas(
+                    self,
+                    cause,
+                    "Capture runtime Running admission failed.",
+                ));
+            }
+        };
+        if admission.current() != &self.launching_journal {
+            return Err(running_promotion_failure(
+                self,
+                "Capture runtime Launching journal changed during Running admission.",
+            ));
+        }
+        if let Err(detail) = check_running_promotion_budget(deadline, cancellation.as_ref()) {
+            return Err(running_promotion_failure(self, detail));
+        }
+        let launching_snapshot = self.launching_journal.clone();
+        let final_listener_observation = match self.observe_native_listeners_for_running(
+            &launching_snapshot,
+            deadline,
+            Some(cancellation.as_ref()),
+        ) {
+            Ok(observation) => observation,
+            Err(detail) => return Err(running_promotion_failure(self, detail)),
+        };
+        if first_listener_observation != final_listener_observation {
+            return Err(running_promotion_failure(
+                self,
+                "Capture runtime native listener identity changed during readiness.",
+            ));
+        }
+        if let Err(detail) = self.owner.staging.checked_commands_for_running() {
+            return Err(running_promotion_failure(self, detail));
+        }
+        // Revalidate the frozen schema bytes after the lock wait and before
+        // the last native observation.  The readiness facts must still be
+        // anchored to the same producer manifest at the commit boundary.
+        for ordinal in 0..self.launching_journal.roots.len() {
+            let (_, manifest, schema_context, _) = match descriptor.strict_readiness_inputs(ordinal)
+            {
+                Ok(inputs) => inputs,
+                Err(detail) => return Err(running_promotion_failure(self, detail)),
+            };
+            if let Err(detail) = schema_context.revalidate(manifest) {
+                return Err(running_promotion_failure(
+                    self,
+                    format!("Capture runtime readiness schema revalidation failed: {detail}"),
+                ));
+            }
+        }
+        let final_staging = match self.owner.staging.staging_binding_for_running() {
+            Ok(binding) => binding,
+            Err(detail) => return Err(running_promotion_failure(self, detail)),
+        };
+        if final_staging != expected_staging {
+            return Err(running_promotion_failure(
+                self,
+                "Capture runtime staging identity changed before Running CAS.",
+            ));
+        }
+        if let Err(detail) = check_running_promotion_budget(deadline, cancellation.as_ref()) {
+            return Err(running_promotion_failure(self, detail));
+        }
+
+        let mut roots = self.launching_journal.roots.clone();
+        for (index, ((root, facts), listener)) in roots
+            .iter_mut()
+            .zip(&readiness)
+            .zip(&final_listener_observation)
+            .enumerate()
+        {
+            if root.ordinal != index as u32 || listener.ordinal != root.ordinal {
+                return Err(running_promotion_failure(
+                    self,
+                    "Capture runtime Running root order changed before CAS.",
+                ));
+            }
+            root.state = RootState::Running;
+            root.live_listener_readiness = Some(running_readiness_digest(
+                &self.launching_journal,
+                root,
+                listener,
+                facts,
+            ));
+        }
+        let job_binding = match self.launching_journal.job_binding.clone() {
+            Some(binding) => binding,
+            None => {
+                return Err(running_promotion_failure(
+                    self,
+                    "Capture runtime Running Job binding was missing.",
+                ));
+            }
+        };
+        let timestamp = match self.owner.staging.next_timestamp() {
+            Ok(timestamp) => timestamp,
+            Err(detail) => return Err(running_promotion_failure(self, detail)),
+        };
+        if timestamp < self.launching_journal.updated_at {
+            return Err(running_promotion_failure(
+                self,
+                "Capture runtime producer clock moved backwards before Running CAS.",
+            ));
+        }
+        if let Err(detail) = check_running_promotion_budget(deadline, cancellation.as_ref()) {
+            return Err(running_promotion_failure(self, detail));
+        }
+        // Recheck native root/liveness identity at the last possible point
+        // before the typed CAS.  The lock is still held, so a root that dies
+        // while earlier validation or lock contention is in progress cannot
+        // produce Running authority from a stale observation.
+        let precommit_listener_observation = match self.observe_native_listeners_for_running(
+            &self.launching_journal.clone(),
+            deadline,
+            Some(cancellation.as_ref()),
+        ) {
+            Ok(observation) => observation,
+            Err(detail) => return Err(running_promotion_failure(self, detail)),
+        };
+        if precommit_listener_observation != final_listener_observation {
+            return Err(running_promotion_failure(
+                self,
+                "Capture runtime native listener identity changed before Running CAS.",
+            ));
+        }
+        let observation = ResourceObservation {
+            job_binding,
+            staging_binding: Some(final_staging),
+            roots,
+        };
+        let result = match self.owner.staging.persist_running_admission(
+            admission,
+            &self.launching_journal,
+            observation,
+            timestamp,
+        ) {
+            Ok(result) => result,
+            Err(cause) => {
+                return Err(running_promotion_failure_for_cas(
+                    self,
+                    cause,
+                    "Capture runtime Running journal CAS failed.",
+                ));
+            }
+        };
+        let running_journal = match result {
+            RunningCasResult::Committed(journal) => journal,
+            RunningCasResult::CommittedAfterBudget(_) => {
+                // The exact Running record is durable, but cancellation or
+                // deadline was observed before authority issuance.  Keep the
+                // Launching owner and leave the disk record for reconciliation;
+                // never fabricate a Running owner after the boundary.
+                let detail = if cancellation.load(Ordering::Acquire) {
+                    "Capture runtime Running CAS completed after cancellation."
+                } else {
+                    "Capture runtime Running CAS completed after its deadline."
+                };
+                return Err(running_promotion_failure(self, detail));
+            }
+        };
+        if let Err(detail) = check_running_promotion_budget(deadline, cancellation.as_ref()) {
+            // The disk record remains the exact durable Running candidate;
+            // cancellation observed before this owner is issued leaves it for
+            // reconciliation rather than rolling it back or issuing authority.
+            return Err(running_promotion_failure(self, detail));
+        }
+        Ok(RunningActivationOwner {
+            owner: self.owner,
+            running_journal,
+        })
+    }
+
+    fn observe_native_listeners_for_running(
+        &mut self,
+        expected: &RuntimeSessionJournalV1,
+        deadline: std::time::Instant,
+        cancellation: Option<&AtomicBool>,
+    ) -> Result<Vec<NativeListenerRootObservation>, String> {
+        let expected_job = expected
+            .job_binding
+            .as_ref()
+            .ok_or_else(|| "Capture runtime Launching Job binding was missing.".to_string())?;
+        let native = self
+            .owner
+            .native
+            .as_mut()
+            .ok_or_else(|| "Capture runtime native owner was missing.".to_string())?;
+        if native_nonce_text(&native.job_nonce) != expected_job.job_nonce {
+            return Err(
+                "Capture runtime native Job nonce changed during Running promotion.".into(),
+            );
+        }
+        let ports = expected
+            .roots
+            .iter()
+            .map(|root| root.loopback_port)
+            .collect::<Vec<_>>();
+        let observation = native.observe_root_listeners(&ports, deadline, cancellation)?;
+        if observation.roots.len() != expected.roots.len()
+            || native.roots.len() != expected.roots.len()
+            || !native.unacquired_root_nonces.is_empty()
+        {
+            return Err("Capture runtime native listener observation was incomplete.".into());
+        }
+        for (index, ((expected_root, observed), native_root)) in expected
+            .roots
+            .iter()
+            .zip(&observation.roots)
+            .zip(&native.roots)
+            .enumerate()
+        {
+            if expected_root.ordinal != index as u32
+                || observed.ordinal != expected_root.ordinal
+                || observed.port != expected_root.loopback_port
+                || native_root.ordinal != expected_root.ordinal
+                || native_nonce_text(&native_root.root_nonce) != expected_root.root_nonce
+            {
+                return Err(
+                    "Capture runtime native root binding changed during Running promotion.".into(),
+                );
+            }
+            let creation_time = parse_creation_identity(expected_root)?;
+            let expected_identity = OwnedProcessIdentity {
+                pid: expected_root.pid,
+                creation_time,
+            };
+            if observed.identity != expected_identity
+                || native_root.identity != Some(expected_identity)
+            {
+                return Err(
+                    "Capture runtime native process identity changed during Running promotion."
+                        .into(),
+                );
+            }
+        }
+        Ok(observation.roots)
+    }
+
     /// Cleanup remains native-first.  Staging is deliberately retained for
     /// reconciliation because the current journal is Launching, not
     /// PreparedBound, and this slice has no terminal proof.
@@ -873,6 +1400,203 @@ impl LaunchingActivationOwner {
             .observe_root_listeners(ports, deadline, cancellation)?
             .root_count())
     }
+
+    #[cfg(test)]
+    pub(crate) fn inject_listener_query_failure_for_test(&mut self) {
+        let native = self.owner.native.as_mut().expect("native owner");
+        native.inject_listener_query_failure_for_test();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn inject_listener_identity_mutation_after_first_for_test(&mut self) {
+        let native = self.owner.native.as_mut().expect("native owner");
+        native.inject_listener_identity_mutation_after_first_for_test();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn inject_root_exit_after_first_for_test(&mut self) {
+        let native = self.owner.native.as_mut().expect("native owner");
+        native.inject_root_exit_after_first_for_test();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn inject_listener_identity_mutation_at_last_observation_for_test(&mut self) {
+        let native = self.owner.native.as_mut().expect("native owner");
+        native.inject_listener_identity_mutation_at_last_observation_for_test();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn listener_observation_count_for_test(&self) -> usize {
+        self.owner
+            .native
+            .as_ref()
+            .map_or(0, |native| native.listener_observation_count)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn coordinate_running_admission_for_test(
+        &mut self,
+        reached: SyncSender<()>,
+        acquired: Receiver<()>,
+    ) {
+        self.running_admission_hook = Some(RunningAdmissionTestHook { reached, acquired });
+    }
+}
+
+#[cfg(windows)]
+impl RunningActivationOwner {
+    /// The Running owner keeps the exact durable CAS value for the next
+    /// lifecycle slice.  Cleanup is still native-first; staging is retained
+    /// for reconciliation because this slice has no Closing/Terminal proof.
+    #[allow(dead_code)]
+    pub(crate) fn cleanup_without_terminal_proof(
+        self,
+    ) -> Result<(), SuspendedActivationCleanupFailure> {
+        self.owner.cleanup()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn running_journal_for_test(&self) -> &RuntimeSessionJournalV1 {
+        &self.running_journal
+    }
+
+    #[cfg(test)]
+    pub(crate) fn native_root_count_for_test(&self) -> Option<usize> {
+        self.owner.native_root_count_for_test()
+    }
+}
+
+#[cfg(windows)]
+fn running_promotion_failure(
+    owner: LaunchingActivationOwner,
+    detail: impl Into<String>,
+) -> RunningPromotionFailure {
+    let detail = detail.into();
+    let lower = detail.to_ascii_lowercase();
+    let kind = if lower.contains("cancel") {
+        RunningPromotionFailureKind::Cancelled
+    } else if lower.contains("deadline") || lower.contains("expired") {
+        RunningPromotionFailureKind::Deadline
+    } else if lower.contains("did not report strict service readiness") {
+        RunningPromotionFailureKind::NotReady
+    } else if lower.contains("journal cas") || lower.contains("admission failed") {
+        RunningPromotionFailureKind::Storage
+    } else {
+        RunningPromotionFailureKind::Validation
+    };
+    RunningPromotionFailure {
+        kind,
+        detail,
+        owner,
+    }
+}
+
+#[cfg(windows)]
+fn running_promotion_failure_for_cas(
+    owner: LaunchingActivationOwner,
+    cause: RunningCasError,
+    detail: &str,
+) -> RunningPromotionFailure {
+    let kind = match cause {
+        RunningCasError::Cancelled => RunningPromotionFailureKind::Cancelled,
+        RunningCasError::Deadline => RunningPromotionFailureKind::Deadline,
+        RunningCasError::Conflict => RunningPromotionFailureKind::Storage,
+        RunningCasError::Storage => RunningPromotionFailureKind::Storage,
+    };
+    let detail = match cause {
+        RunningCasError::Cancelled => format!("{detail} AdmissionCancelled."),
+        RunningCasError::Deadline => format!("{detail} AdmissionDeadline."),
+        RunningCasError::Conflict => format!("{detail} Conflict."),
+        RunningCasError::Storage => detail.to_owned(),
+    };
+    RunningPromotionFailure {
+        kind,
+        detail,
+        owner,
+    }
+}
+
+#[cfg(windows)]
+fn running_promotion_failure_for_bounded_error(
+    owner: LaunchingActivationOwner,
+    detail: String,
+    deadline: std::time::Instant,
+    cancellation: &AtomicBool,
+) -> RunningPromotionFailure {
+    if cancellation.load(Ordering::Acquire) {
+        return running_promotion_failure_for_cas(owner, RunningCasError::Cancelled, &detail);
+    }
+    if std::time::Instant::now() >= deadline {
+        return running_promotion_failure_for_cas(owner, RunningCasError::Deadline, &detail);
+    }
+    running_promotion_failure(owner, detail)
+}
+
+#[cfg(windows)]
+fn check_running_promotion_budget(
+    deadline: std::time::Instant,
+    cancellation: &AtomicBool,
+) -> Result<(), String> {
+    if cancellation.load(Ordering::Acquire) {
+        return Err("Capture runtime Running promotion was cancelled.".into());
+    }
+    if std::time::Instant::now() >= deadline {
+        return Err("Capture runtime Running promotion exceeded its group deadline.".into());
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn parse_creation_identity(root: &JournalRoot) -> Result<u64, String> {
+    if root.creation_identity.kind != "windows-process-creation" {
+        return Err("Capture runtime root creation identity had an unsupported kind.".into());
+    }
+    if root.creation_identity.value.len() != 16
+        || !root
+            .creation_identity
+            .value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err("Capture runtime root creation identity was malformed.".into());
+    }
+    u64::from_str_radix(&root.creation_identity.value, 16)
+        .map_err(|_| "Capture runtime root creation identity was malformed.".into())
+}
+
+#[cfg(windows)]
+fn running_readiness_digest(
+    journal: &RuntimeSessionJournalV1,
+    root: &JournalRoot,
+    listener: &NativeListenerRootObservation,
+    facts: &crate::health::ServiceReadinessFacts,
+) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"capture-runtime/running-readiness/v1\0");
+    digest_field(&mut hasher, journal.session_nonce.as_bytes());
+    digest_field(&mut hasher, journal.plan_digest.as_bytes());
+    digest_field(&mut hasher, &root.ordinal.to_be_bytes());
+    digest_field(&mut hasher, root.role.as_bytes());
+    digest_field(&mut hasher, root.root_ref_digest.as_bytes());
+    digest_field(&mut hasher, &root.root_generation.to_be_bytes());
+    digest_field(&mut hasher, root.root_nonce.as_bytes());
+    digest_field(&mut hasher, &root.pid.to_be_bytes());
+    digest_field(&mut hasher, root.creation_identity.kind.as_bytes());
+    digest_field(&mut hasher, root.creation_identity.value.as_bytes());
+    digest_field(&mut hasher, root.reserved_listener_identity.as_bytes());
+    digest_field(&mut hasher, &root.loopback_port.to_be_bytes());
+    digest_field(&mut hasher, root.started_at.as_bytes());
+    digest_field(&mut hasher, &listener.identity.pid.to_be_bytes());
+    digest_field(&mut hasher, &listener.identity.creation_time.to_be_bytes());
+    digest_field(&mut hasher, &listener.port.to_be_bytes());
+    digest_field(&mut hasher, facts.facts_digest().as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+#[cfg(windows)]
+fn digest_field(hasher: &mut Sha256, value: &[u8]) {
+    hasher.update((value.len() as u64).to_be_bytes());
+    hasher.update(value);
 }
 
 #[cfg(windows)]
@@ -1052,6 +1776,14 @@ impl SuspendedGroup {
             cleanup_failure_at: None,
             #[cfg(test)]
             listener_query_failure: false,
+            #[cfg(test)]
+            listener_identity_mutation_after_first: false,
+            #[cfg(test)]
+            listener_identity_mutation_at_last: false,
+            #[cfg(test)]
+            listener_observation_count: 0,
+            #[cfg(test)]
+            root_exit_after_first: false,
         };
         for (ordinal, command) in commands.iter_mut().enumerate() {
             let root_nonce = *group
@@ -1298,7 +2030,28 @@ impl SuspendedGroup {
             return Err("Injected listener table query failure.".into());
         }
         let table = query_listener_table(deadline, cancellation)?;
-        let observation = parse_listener_table(&table, &before, ports)?;
+        let mut observation = parse_listener_table(&table, &before, ports)?;
+        #[cfg(test)]
+        {
+            let mutate = (self.listener_identity_mutation_after_first
+                && self.listener_observation_count > 0)
+                || (self.listener_identity_mutation_at_last
+                    && self.listener_observation_count >= 2);
+            self.listener_observation_count = self.listener_observation_count.saturating_add(1);
+            if mutate {
+                if let Some(root) = observation.roots.first_mut() {
+                    root.port = root.port.wrapping_add(1);
+                }
+            }
+        }
+        #[cfg(test)]
+        if self.root_exit_after_first && self.listener_observation_count > 0 {
+            let root = self
+                .roots
+                .first_mut()
+                .ok_or_else(|| "Injected root exit had no root owner.".to_string())?;
+            terminate_child_by_exact_handle(&mut root.child, remaining_timeout_ms(deadline))?;
+        }
         let after = self.verify_listener_roots(deadline, cancellation)?;
         if before != after {
             return Err(
@@ -1439,6 +2192,21 @@ impl SuspendedGroup {
     #[cfg(test)]
     fn inject_listener_query_failure_for_test(&mut self) {
         self.listener_query_failure = true;
+    }
+
+    #[cfg(test)]
+    fn inject_listener_identity_mutation_after_first_for_test(&mut self) {
+        self.listener_identity_mutation_after_first = true;
+    }
+
+    #[cfg(test)]
+    fn inject_listener_identity_mutation_at_last_observation_for_test(&mut self) {
+        self.listener_identity_mutation_at_last = true;
+    }
+
+    #[cfg(test)]
+    fn inject_root_exit_after_first_for_test(&mut self) {
+        self.root_exit_after_first = true;
     }
 }
 

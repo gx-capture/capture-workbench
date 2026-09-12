@@ -1130,6 +1130,9 @@ fn map_store_error(error: JournalStoreError) -> PrepareError {
         | JournalStoreError::Durability(_)
         | JournalStoreError::AtomicReplace
         | JournalStoreError::Injected(_) => PrepareError::JournalUnavailable,
+        JournalStoreError::AdmissionCancelled | JournalStoreError::AdmissionDeadline => {
+            PrepareError::JournalUnavailable
+        }
     }
 }
 

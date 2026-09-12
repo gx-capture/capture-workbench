@@ -353,6 +353,29 @@ impl FrozenActivationDescriptor {
             .and_then(|root| root.command.readiness_schema.as_ref())
     }
 
+    /// Return the producer-frozen inputs needed by the private strict service
+    /// readiness adapter.  The manifest, schema receipt, token, and port all
+    /// come from the same immutable command; callers cannot substitute a
+    /// readiness value after the plan identity was derived.
+    pub(crate) fn strict_readiness_inputs(
+        &self,
+        ordinal: usize,
+    ) -> Result<(&str, &SidecarManifest, &FrozenReadinessContext, u16), String> {
+        let root = self
+            .roots
+            .get(ordinal)
+            .ok_or_else(|| "Capture runtime activation root was missing.".to_string())?;
+        let schema = root.command.readiness_schema.as_ref().ok_or_else(|| {
+            "Capture runtime activation root had no frozen readiness schema context.".to_string()
+        })?;
+        Ok((
+            root.command.token.as_str(),
+            &root.command.manifest,
+            schema,
+            root.command.port,
+        ))
+    }
+
     /// Revalidate and materialize every frozen command before a resource is
     /// acquired.  This remains crate-private so an activation caller cannot
     /// replace the producer-owned command source with arbitrary input.
@@ -1313,7 +1336,11 @@ mod tests {
         ffi::OsString,
         fs,
         path::{Path, PathBuf},
-        sync::{atomic::AtomicUsize, Arc, Mutex},
+        sync::{
+            atomic::{AtomicBool, AtomicUsize},
+            mpsc::sync_channel,
+            Arc, Mutex,
+        },
     };
 
     use crate::prepare::{
@@ -1578,17 +1605,23 @@ mod tests {
     }
 
     #[cfg(windows)]
+    static TEST_PORT_ALLOCATIONS: std::sync::OnceLock<Mutex<HashSet<u16>>> =
+        std::sync::OnceLock::new();
+
+    #[cfg(windows)]
     fn held_distinct_loopback_ports(count: usize) -> (Vec<TcpListener>, Vec<u16>) {
         assert!(count > 0);
         let mut reservations = Vec::with_capacity(count);
         let mut ports = HashSet::with_capacity(count);
+        let allocated = TEST_PORT_ALLOCATIONS.get_or_init(|| Mutex::new(HashSet::new()));
         for _ in 0..128 {
             if reservations.len() == count {
                 break;
             }
             let listener = TcpListener::bind((LOOPBACK_HOST, 0)).expect("ephemeral port");
             let port = listener.local_addr().expect("ephemeral address").port();
-            if ports.insert(port) {
+            if allocated.lock().unwrap().insert(port) {
+                ports.insert(port);
                 reservations.push(listener);
             }
         }
@@ -1601,6 +1634,26 @@ mod tests {
         producer_root: &Path,
         ports: &[u16],
     ) -> (FrozenActivationDescriptor, Vec<PathBuf>) {
+        activation_http_test_descriptor_with_mode(producer_root, ports, "ready")
+    }
+
+    #[cfg(windows)]
+    fn activation_http_test_descriptor_with_mode(
+        producer_root: &Path,
+        ports: &[u16],
+        http_mode: &str,
+    ) -> (FrozenActivationDescriptor, Vec<PathBuf>) {
+        let modes = vec![http_mode; ports.len()];
+        activation_http_test_descriptor_with_modes(producer_root, ports, &modes)
+    }
+
+    #[cfg(windows)]
+    fn activation_http_test_descriptor_with_modes(
+        producer_root: &Path,
+        ports: &[u16],
+        http_modes: &[&str],
+    ) -> (FrozenActivationDescriptor, Vec<PathBuf>) {
+        assert_eq!(ports.len(), http_modes.len());
         let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests")
             .join("fixtures")
@@ -1661,9 +1714,17 @@ mod tests {
                                 ("CAPTURE_API_TOKEN".into(), ACTIVATION_HTTP_TOKEN.into()),
                                 ("CAPTURE_TEST_JOURNAL_PATH".into(), journal_path.clone()),
                                 ("CAPTURE_TEST_MARKER_PATH".into(), marker_path),
+                                (
+                                    "CAPTURE_TEST_HTTP_CHECKPOINT_PATH".into(),
+                                    producer_root
+                                        .join(format!("activation-http-{ordinal}.checkpoint"))
+                                        .to_str()
+                                        .expect("HTTP checkpoint path is UTF-8")
+                                        .to_owned(),
+                                ),
                                 ("CAPTURE_TEST_SESSION_NONCE".into(), "session-1".into()),
                                 ("CAPTURE_TEST_ROOT_ORDINAL".into(), ordinal.to_string()),
-                                ("CAPTURE_TEST_HTTP_MODE".into(), "ready".into()),
+                                ("CAPTURE_TEST_HTTP_MODE".into(), http_modes[ordinal].into()),
                             ],
                             vec!["SystemRoot".into()],
                         ),
@@ -1674,6 +1735,78 @@ mod tests {
         )
         .expect("HTTP activation probe descriptor");
         (descriptor, marker_paths)
+    }
+
+    #[cfg(windows)]
+    fn launch_http_owner_for_test(
+        producer_root: &Path,
+        ports: &[u16],
+    ) -> (
+        crate::prepare::ImmutableGroupPlan,
+        Vec<PathBuf>,
+        crate::process::LaunchingActivationOwner,
+    ) {
+        let modes = vec!["ready"; ports.len()];
+        launch_http_owner_with_modes_for_test(producer_root, ports, &modes)
+    }
+
+    #[cfg(windows)]
+    fn launch_http_owner_with_modes_for_test(
+        producer_root: &Path,
+        ports: &[u16],
+        http_modes: &[&str],
+    ) -> (
+        crate::prepare::ImmutableGroupPlan,
+        Vec<PathBuf>,
+        crate::process::LaunchingActivationOwner,
+    ) {
+        let (reservations, ports) = {
+            let mut reservations = Vec::new();
+            let mut distinct = HashSet::new();
+            for port in ports {
+                let listener =
+                    TcpListener::bind((LOOPBACK_HOST, *port)).expect("test port reservation");
+                distinct.insert(*port);
+                reservations.push(listener);
+            }
+            assert_eq!(distinct.len(), ports.len());
+            (reservations, ports.to_vec())
+        };
+        let (descriptor, marker_paths) =
+            activation_http_test_descriptor_with_modes(producer_root, &ports, http_modes);
+        let plan = build_activation_plan(descriptor).expect("HTTP activation plan");
+        let sink = DescriptorSink {
+            binding: Mutex::new(None),
+            fail_persist: false,
+            persist_calls: AtomicUsize::new(0),
+        };
+        let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
+        let activation = prepared
+            .consume_for_activation()
+            .expect("validated activation context");
+        let owner =
+            crate::process::acquire_suspended_for_activation(activation).expect("suspended owner");
+        let ready = owner.persist_ready().expect("durable Ready");
+        drop(reservations);
+        let launching = match ready.launch_with_cancellation(None) {
+            Ok(owner) => owner,
+            Err(_) => panic!("durable Launching and native resume"),
+        };
+        let journal = plan
+            .context
+            .store
+            .read(&plan.value)
+            .expect("Launching journal");
+        for (ordinal, marker_path) in marker_paths.iter().enumerate() {
+            wait_for_activation_probe_marker(
+                marker_path,
+                ordinal,
+                journal.roots[ordinal].pid,
+                journal.journal_revision,
+            );
+            wait_for_activation_probe_http_checkpoint(ports[ordinal], marker_path);
+        }
+        (plan, marker_paths, launching)
     }
 
     #[cfg(windows)]
@@ -1765,6 +1898,39 @@ mod tests {
             panic!("activation probe returned an unexpected HTTP status");
         }
         panic!("activation probe HTTP server did not become reachable");
+    }
+
+    #[cfg(windows)]
+    fn wait_for_activation_probe_http_checkpoint(port: u16, marker_path: &Path) {
+        let checkpoint_path = marker_path.with_extension("checkpoint");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let request = format!(
+            "GET /v2/health/ready HTTP/1.1\r\nHost: {LOOPBACK_HOST}:{port}\r\nAuthorization: Bearer {ACTIVATION_HTTP_TOKEN}\r\nConnection: close\r\n\r\n"
+        );
+        while Instant::now() < deadline {
+            if !checkpoint_path.exists() {
+                if let Ok(mut stream) = TcpStream::connect_timeout(
+                    &format!("{LOOPBACK_HOST}:{port}")
+                        .parse()
+                        .expect("loopback address"),
+                    Duration::from_millis(250),
+                ) {
+                    if stream.write_all(request.as_bytes()).is_ok() {
+                        let _ = stream.set_read_timeout(Some(Duration::from_millis(100)));
+                        let mut response = Vec::new();
+                        let _ = stream.read_to_end(&mut response);
+                    }
+                }
+            }
+            if fs::read(&checkpoint_path).ok().as_deref() == Some(b"authorized\n") {
+                return;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        panic!(
+            "activation probe HTTP server did not confirm an authorized request checkpoint: {}",
+            checkpoint_path.display()
+        );
     }
 
     fn command_environment(command: &Command) -> BTreeMap<String, String> {
@@ -3215,6 +3381,1107 @@ mod tests {
                 .expect_err("Launching cleanup retains staging for reconciliation");
             assert!(cleanup.into_owner().native_cleanup_proven_for_test());
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn activation_probe_promotes_one_and_many_roots_only_after_durable_running_cas() {
+        for root_count in [1_usize, 2] {
+            let directory = tempfile::tempdir().expect("tempdir");
+            let (reservations, ports) = held_distinct_loopback_ports(root_count);
+            let (descriptor, marker_paths) =
+                activation_http_test_descriptor(directory.path(), &ports);
+            let plan = build_activation_plan(descriptor).expect("HTTP activation plan");
+            let sink = DescriptorSink {
+                binding: Mutex::new(None),
+                fail_persist: false,
+                persist_calls: AtomicUsize::new(0),
+            };
+            let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
+            let activation = prepared
+                .consume_for_activation()
+                .expect("validated activation context");
+            let owner = crate::process::acquire_suspended_for_activation(activation)
+                .expect("suspended owner");
+            let ready = owner.persist_ready().expect("durable Ready");
+            drop(reservations);
+
+            let launching = match ready.launch_with_cancellation(None) {
+                Ok(owner) => owner,
+                Err(_) => panic!("durable Launching and native resume"),
+            };
+            let launching_journal = plan
+                .context
+                .store
+                .read(&plan.value)
+                .expect("Launching journal");
+            for (ordinal, marker_path) in marker_paths.iter().enumerate() {
+                wait_for_activation_probe_marker(
+                    marker_path,
+                    ordinal,
+                    launching_journal.roots[ordinal].pid,
+                    launching_journal.journal_revision,
+                );
+            }
+            for port in ports.iter().copied() {
+                wait_for_activation_probe_http_status(
+                    port,
+                    Some(ACTIVATION_HTTP_TOKEN),
+                    &format!("{LOOPBACK_HOST}:{port}"),
+                    200,
+                    false,
+                );
+            }
+
+            // Runtime activity may legitimately add files after resume.  The
+            // Running admission validates ownership/identity, rather than
+            // reusing the pre-native empty-scope cleanup proof.
+            let activation_descriptor = plan
+                .context
+                .activation_descriptor
+                .as_ref()
+                .expect("activation descriptor")
+                .clone();
+            let group_staging_path = activation_descriptor.planned_group_staging_path();
+            let root_staging_paths = activation_descriptor
+                .planned_root_staging_paths()
+                .map(PathBuf::from)
+                .collect::<Vec<_>>();
+            for (ordinal, root_staging_path) in root_staging_paths.iter().enumerate() {
+                fs::write(
+                    root_staging_path.join(format!("runtime-{ordinal}.spool")),
+                    b"runtime activity",
+                )
+                .expect("post-resume runtime staging file");
+            }
+
+            let running = launching
+                .promote_running_with_cancellation(Instant::now() + Duration::from_secs(15), None)
+                .unwrap_or_else(|_| panic!("roots should reach Running with an exact durable CAS"));
+            let running_journal = plan
+                .context
+                .store
+                .read(&plan.value)
+                .expect("Running journal");
+            assert_eq!(running.running_journal_for_test(), &running_journal);
+            assert_eq!(running_journal.state, crate::journal::JournalState::Running);
+            assert_eq!(running_journal.journal_revision, 4);
+            assert!(running_journal
+                .roots
+                .iter()
+                .all(|root| root.state == crate::journal::RootState::Running));
+            assert!(running_journal
+                .roots
+                .iter()
+                .all(|root| root.live_listener_readiness.is_some()));
+            assert_eq!(
+                running_journal
+                    .roots
+                    .iter()
+                    .filter_map(|root| root.live_listener_readiness.as_ref())
+                    .collect::<HashSet<_>>()
+                    .len(),
+                root_count
+            );
+            assert_eq!(running.native_root_count_for_test(), Some(root_count));
+
+            let cleanup = running
+                .cleanup_without_terminal_proof()
+                .expect_err("Running cleanup retains staging for reconciliation");
+            let retained = cleanup.into_owner();
+            assert!(retained.native_cleanup_proven_for_test());
+            assert!(group_staging_path.is_dir());
+            for (ordinal, root_staging_path) in root_staging_paths.iter().enumerate() {
+                assert!(root_staging_path.is_dir());
+                assert!(root_staging_path
+                    .join(format!("runtime-{ordinal}.spool"))
+                    .is_file());
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn activation_probe_readiness_failures_retain_launching_owner_without_running_authority() {
+        for (http_mode, expected_status, expected_kind, expected_detail) in [
+            (
+                "status503",
+                503_u16,
+                crate::process::RunningPromotionFailureKind::NotReady,
+                "did not report strict",
+            ),
+            (
+                "partial",
+                200_u16,
+                crate::process::RunningPromotionFailureKind::Validation,
+                "body length",
+            ),
+        ] {
+            let directory = tempfile::tempdir().expect("tempdir");
+            let (reservations, ports) = held_distinct_loopback_ports(1);
+            let (descriptor, marker_paths) =
+                activation_http_test_descriptor_with_mode(directory.path(), &ports, http_mode);
+            let plan = build_activation_plan(descriptor).expect("HTTP activation plan");
+            let sink = DescriptorSink {
+                binding: Mutex::new(None),
+                fail_persist: false,
+                persist_calls: AtomicUsize::new(0),
+            };
+            let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
+            let activation = prepared
+                .consume_for_activation()
+                .expect("validated activation context");
+            let owner = crate::process::acquire_suspended_for_activation(activation)
+                .expect("suspended owner");
+            let ready = owner.persist_ready().expect("durable Ready");
+            drop(reservations);
+            let launching = match ready.launch_with_cancellation(None) {
+                Ok(owner) => owner,
+                Err(_) => panic!("durable Launching and native resume"),
+            };
+            let journal = plan
+                .context
+                .store
+                .read(&plan.value)
+                .expect("Launching journal");
+            wait_for_activation_probe_marker(
+                &marker_paths[0],
+                0,
+                journal.roots[0].pid,
+                journal.journal_revision,
+            );
+            wait_for_activation_probe_http_status(
+                ports[0],
+                Some(ACTIVATION_HTTP_TOKEN),
+                &format!("{LOOPBACK_HOST}:{}", ports[0]),
+                expected_status,
+                false,
+            );
+
+            let failure = match launching
+                .promote_running_with_cancellation(Instant::now() + Duration::from_secs(3), None)
+            {
+                Ok(_) => panic!("non-ready service must retain Launching owner"),
+                Err(failure) => failure,
+            };
+            assert_eq!(
+                failure.kind_for_test(),
+                expected_kind,
+                "{}",
+                failure.detail_for_test()
+            );
+            assert!(
+                failure.detail_for_test().contains(expected_detail),
+                "{}",
+                failure.detail_for_test()
+            );
+            let launching = failure.into_owner();
+            assert_eq!(
+                plan.context.store.read(&plan.value).expect("journal").state,
+                crate::journal::JournalState::Launching
+            );
+            let cleanup = launching
+                .cleanup_without_terminal_proof()
+                .expect_err("Launching cleanup retains staging for reconciliation");
+            assert!(cleanup.into_owner().native_cleanup_proven_for_test());
+        }
+
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (reservations, ports) = held_distinct_loopback_ports(1);
+        let (descriptor, marker_paths) =
+            activation_http_test_descriptor_with_mode(directory.path(), &ports, "silent");
+        let plan = build_activation_plan(descriptor).expect("silent HTTP activation plan");
+        let sink = DescriptorSink {
+            binding: Mutex::new(None),
+            fail_persist: false,
+            persist_calls: AtomicUsize::new(0),
+        };
+        let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
+        let activation = prepared
+            .consume_for_activation()
+            .expect("validated activation context");
+        let owner =
+            crate::process::acquire_suspended_for_activation(activation).expect("suspended owner");
+        let ready = owner.persist_ready().expect("durable Ready");
+        drop(reservations);
+        let launching = match ready.launch_with_cancellation(None) {
+            Ok(owner) => owner,
+            Err(_) => panic!("durable Launching and native resume"),
+        };
+        let journal = plan
+            .context
+            .store
+            .read(&plan.value)
+            .expect("Launching journal");
+        wait_for_activation_probe_marker(
+            &marker_paths[0],
+            0,
+            journal.roots[0].pid,
+            journal.journal_revision,
+        );
+        wait_for_activation_probe_http_checkpoint(ports[0], &marker_paths[0]);
+        let failure = match launching
+            .promote_running_with_cancellation(Instant::now() + Duration::from_secs(1), None)
+        {
+            Ok(_) => panic!("silent service must be bounded and retain owner"),
+            Err(failure) => failure,
+        };
+        assert_eq!(
+            failure.kind_for_test(),
+            crate::process::RunningPromotionFailureKind::NotReady
+        );
+        assert!(failure.detail_for_test().contains("did not report strict"));
+        let launching = failure.into_owner();
+        assert_eq!(
+            plan.context.store.read(&plan.value).expect("journal").state,
+            crate::journal::JournalState::Launching
+        );
+        let cleanup = launching
+            .cleanup_without_terminal_proof()
+            .expect_err("Launching cleanup retains staging for reconciliation");
+        assert!(cleanup.into_owner().native_cleanup_proven_for_test());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn activation_probe_second_root_failure_retains_the_complete_native_owner() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (reservations, ports) = held_distinct_loopback_ports(2);
+        drop(reservations);
+        let modes = ["ready", "status503"];
+        let (plan, marker_paths, launching) =
+            launch_http_owner_with_modes_for_test(directory.path(), &ports, &modes);
+        wait_for_activation_probe_http_status(
+            ports[0],
+            Some(ACTIVATION_HTTP_TOKEN),
+            &format!("{LOOPBACK_HOST}:{}", ports[0]),
+            200,
+            false,
+        );
+        wait_for_activation_probe_http_status(
+            ports[1],
+            Some(ACTIVATION_HTTP_TOKEN),
+            &format!("{LOOPBACK_HOST}:{}", ports[1]),
+            503,
+            false,
+        );
+        let group_staging_path = plan
+            .context
+            .activation_descriptor
+            .as_ref()
+            .expect("activation descriptor")
+            .planned_group_staging_path();
+        let failure = match launching
+            .promote_running_with_cancellation(Instant::now() + Duration::from_secs(5), None)
+        {
+            Ok(_) => panic!("a second-root readiness failure must retain the Launching owner"),
+            Err(failure) => failure,
+        };
+        assert_eq!(
+            failure.kind_for_test(),
+            crate::process::RunningPromotionFailureKind::NotReady
+        );
+        assert!(
+            failure
+                .detail_for_test()
+                .contains("root 1 did not report strict"),
+            "{}",
+            failure.detail_for_test()
+        );
+        let launching = failure.into_owner();
+        assert_eq!(launching.native_root_count_for_test(), Some(2));
+        assert_eq!(
+            plan.context.store.read(&plan.value).expect("journal").state,
+            crate::journal::JournalState::Launching
+        );
+        let cleanup = launching
+            .cleanup_without_terminal_proof()
+            .expect_err("partial readiness retains staging for reconciliation");
+        let retained = cleanup.into_owner();
+        assert!(retained.native_cleanup_proven_for_test());
+        assert!(group_staging_path.is_dir());
+        assert!(marker_paths.iter().all(|path| path.is_file()));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn activation_probe_requires_schema_context_and_cancellation_before_running() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (descriptor, _) = activation_probe_test_descriptor(directory.path(), &[42169]);
+        let plan = build_activation_plan(descriptor).expect("marker-only activation plan");
+        let sink = DescriptorSink {
+            binding: Mutex::new(None),
+            fail_persist: false,
+            persist_calls: AtomicUsize::new(0),
+        };
+        let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
+        let activation = prepared
+            .consume_for_activation()
+            .expect("validated activation context");
+        let owner =
+            crate::process::acquire_suspended_for_activation(activation).expect("suspended owner");
+        let ready = owner.persist_ready().expect("durable Ready");
+        let launching = match ready.launch_with_cancellation(None) {
+            Ok(owner) => owner,
+            Err(_) => panic!("durable Launching and native resume"),
+        };
+        let failure = match launching
+            .promote_running_with_cancellation(Instant::now() + Duration::from_secs(3), None)
+        {
+            Ok(_) => panic!("value-only descriptor cannot produce service readiness"),
+            Err(failure) => failure,
+        };
+        let launching = failure.into_owner();
+        assert_eq!(
+            plan.context.store.read(&plan.value).expect("journal").state,
+            crate::journal::JournalState::Launching
+        );
+        let cleanup = launching
+            .cleanup_without_terminal_proof()
+            .expect_err("Launching cleanup retains staging for reconciliation");
+        assert!(cleanup.into_owner().native_cleanup_proven_for_test());
+
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (reservations, ports) = held_distinct_loopback_ports(1);
+        let (descriptor, marker_paths) =
+            activation_http_test_descriptor_with_mode(directory.path(), &ports, "silent");
+        let plan = build_activation_plan(descriptor).expect("HTTP activation plan");
+        let sink = DescriptorSink {
+            binding: Mutex::new(None),
+            fail_persist: false,
+            persist_calls: AtomicUsize::new(0),
+        };
+        let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
+        let activation = prepared
+            .consume_for_activation()
+            .expect("validated activation context");
+        let owner =
+            crate::process::acquire_suspended_for_activation(activation).expect("suspended owner");
+        let ready = owner.persist_ready().expect("durable Ready");
+        drop(reservations);
+        let launching = match ready.launch_with_cancellation(None) {
+            Ok(owner) => owner,
+            Err(_) => panic!("durable Launching and native resume"),
+        };
+        let journal = plan
+            .context
+            .store
+            .read(&plan.value)
+            .expect("Launching journal");
+        wait_for_activation_probe_marker(
+            &marker_paths[0],
+            0,
+            journal.roots[0].pid,
+            journal.journal_revision,
+        );
+        wait_for_activation_probe_http_checkpoint(ports[0], &marker_paths[0]);
+        let cancellation = Arc::new(AtomicBool::new(false));
+        let cancellation_signal = Arc::clone(&cancellation);
+        let canceller = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(100));
+            cancellation_signal.store(true, std::sync::atomic::Ordering::Release);
+        });
+        let failure = match launching.promote_running_with_cancellation(
+            Instant::now() + Duration::from_secs(15),
+            Some(Arc::clone(&cancellation)),
+        ) {
+            Ok(_) => panic!("cancelled promotion must retain Launching owner"),
+            Err(failure) => failure,
+        };
+        assert_eq!(
+            failure.kind_for_test(),
+            crate::process::RunningPromotionFailureKind::Cancelled,
+            "{}",
+            failure.detail_for_test()
+        );
+        assert!(failure.detail_for_test().contains("cancelled"));
+        canceller.join().expect("cancellation thread");
+        let launching = failure.into_owner();
+        assert_eq!(
+            plan.context.store.read(&plan.value).expect("journal").state,
+            crate::journal::JournalState::Launching
+        );
+        let cleanup = launching
+            .cleanup_without_terminal_proof()
+            .expect_err("Launching cleanup retains staging for reconciliation");
+        assert!(cleanup.into_owner().native_cleanup_proven_for_test());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn running_promotion_rejects_native_or_staging_drift_and_ambiguous_cas() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (reservations, ports) = held_distinct_loopback_ports(1);
+        let (descriptor, marker_paths) = activation_http_test_descriptor(directory.path(), &ports);
+        let plan = build_activation_plan(descriptor).expect("HTTP activation plan");
+        let sink = DescriptorSink {
+            binding: Mutex::new(None),
+            fail_persist: false,
+            persist_calls: AtomicUsize::new(0),
+        };
+        let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
+        let activation = prepared
+            .consume_for_activation()
+            .expect("validated activation context");
+        let owner =
+            crate::process::acquire_suspended_for_activation(activation).expect("suspended owner");
+        let ready = owner.persist_ready().expect("durable Ready");
+        drop(reservations);
+        let mut launching = match ready.launch_with_cancellation(None) {
+            Ok(owner) => owner,
+            Err(_) => panic!("durable Launching and native resume"),
+        };
+        let journal = plan
+            .context
+            .store
+            .read(&plan.value)
+            .expect("Launching journal");
+        wait_for_activation_probe_marker(
+            &marker_paths[0],
+            0,
+            journal.roots[0].pid,
+            journal.journal_revision,
+        );
+        wait_for_activation_probe_http_status(
+            ports[0],
+            Some(ACTIVATION_HTTP_TOKEN),
+            &format!("{LOOPBACK_HOST}:{}", ports[0]),
+            200,
+            false,
+        );
+        launching.inject_listener_query_failure_for_test();
+        let failure = match launching
+            .promote_running_with_cancellation(Instant::now() + Duration::from_secs(5), None)
+        {
+            Ok(_) => panic!("listener query failure must retain Launching owner"),
+            Err(failure) => failure,
+        };
+        assert_eq!(
+            failure.kind_for_test(),
+            crate::process::RunningPromotionFailureKind::Validation
+        );
+        assert!(
+            failure
+                .detail_for_test()
+                .contains("Injected listener table query failure."),
+            "{}",
+            failure.detail_for_test()
+        );
+        let launching = failure.into_owner();
+        assert_eq!(
+            plan.context.store.read(&plan.value).expect("journal").state,
+            crate::journal::JournalState::Launching
+        );
+        let cleanup = launching
+            .cleanup_without_terminal_proof()
+            .expect_err("Launching cleanup retains staging for reconciliation");
+        assert!(cleanup.into_owner().native_cleanup_proven_for_test());
+
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (reservations, ports) = held_distinct_loopback_ports(1);
+        let (descriptor, marker_paths) = activation_http_test_descriptor(directory.path(), &ports);
+        let plan = build_activation_plan(descriptor).expect("HTTP activation plan");
+        let sink = DescriptorSink {
+            binding: Mutex::new(None),
+            fail_persist: false,
+            persist_calls: AtomicUsize::new(0),
+        };
+        let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
+        let activation = prepared
+            .consume_for_activation()
+            .expect("validated activation context");
+        let owner =
+            crate::process::acquire_suspended_for_activation(activation).expect("suspended owner");
+        let ready = owner.persist_ready().expect("durable Ready");
+        drop(reservations);
+        let launching = match ready.launch_with_cancellation(None) {
+            Ok(owner) => owner,
+            Err(_) => panic!("durable Launching and native resume"),
+        };
+        let journal = plan
+            .context
+            .store
+            .read(&plan.value)
+            .expect("Launching journal");
+        wait_for_activation_probe_marker(
+            &marker_paths[0],
+            0,
+            journal.roots[0].pid,
+            journal.journal_revision,
+        );
+        // The scope validator observes the actual planned marker through the
+        // owner; a foreign marker mutation must stop before any Running CAS.
+        let group_path = plan
+            .context
+            .activation_descriptor
+            .as_ref()
+            .expect("descriptor")
+            .planned_group_staging_path();
+        let marker_path = group_path.join(".capture-run-staging-v1");
+        let marker = fs::read(&marker_path).expect("owned marker");
+        fs::write(&marker_path, b"foreign running marker").expect("mutate marker");
+        let failure = match launching
+            .promote_running_with_cancellation(Instant::now() + Duration::from_secs(5), None)
+        {
+            Ok(_) => panic!("staging drift must retain Launching owner"),
+            Err(failure) => failure,
+        };
+        assert_eq!(
+            failure.kind_for_test(),
+            crate::process::RunningPromotionFailureKind::Validation
+        );
+        assert!(
+            failure
+                .detail_for_test()
+                .contains("staging marker identity changed"),
+            "{}",
+            failure.detail_for_test()
+        );
+        let launching = failure.into_owner();
+        assert_eq!(
+            plan.context.store.read(&plan.value).expect("journal").state,
+            crate::journal::JournalState::Launching
+        );
+        fs::write(&marker_path, marker).expect("restore marker");
+        let cleanup = launching
+            .cleanup_without_terminal_proof()
+            .expect_err("Launching cleanup retains staging for reconciliation");
+        assert!(cleanup.into_owner().native_cleanup_proven_for_test());
+
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (reservations, ports) = held_distinct_loopback_ports(1);
+        let (descriptor, marker_paths) = activation_http_test_descriptor(directory.path(), &ports);
+        let plan = build_activation_plan(descriptor).expect("HTTP activation plan");
+        let sink = DescriptorSink {
+            binding: Mutex::new(None),
+            fail_persist: false,
+            persist_calls: AtomicUsize::new(0),
+        };
+        let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
+        let activation = prepared
+            .consume_for_activation()
+            .expect("validated activation context");
+        let owner =
+            crate::process::acquire_suspended_for_activation(activation).expect("suspended owner");
+        let ready = owner.persist_ready().expect("durable Ready");
+        drop(reservations);
+        let launching = match ready.launch_with_cancellation(None) {
+            Ok(owner) => owner,
+            Err(_) => panic!("durable Launching and native resume"),
+        };
+        let journal = plan
+            .context
+            .store
+            .read(&plan.value)
+            .expect("Launching journal");
+        wait_for_activation_probe_marker(
+            &marker_paths[0],
+            0,
+            journal.roots[0].pid,
+            journal.journal_revision,
+        );
+        wait_for_activation_probe_http_status(
+            ports[0],
+            Some(ACTIVATION_HTTP_TOKEN),
+            &format!("{LOOPBACK_HOST}:{}", ports[0]),
+            200,
+            false,
+        );
+        plan.context
+            .store
+            .fail_after_replace_and_durability_recheck();
+        let failure = match launching
+            .promote_running_with_cancellation(Instant::now() + Duration::from_secs(5), None)
+        {
+            Ok(_) => panic!("ambiguous Running CAS must retain Launching owner"),
+            Err(failure) => failure,
+        };
+        assert_eq!(
+            failure.kind_for_test(),
+            crate::process::RunningPromotionFailureKind::Storage
+        );
+        assert!(
+            failure
+                .detail_for_test()
+                .contains("Running journal CAS failed"),
+            "{}",
+            failure.detail_for_test()
+        );
+        let launching = failure.into_owner();
+        assert_eq!(
+            plan.context.store.read(&plan.value).expect("journal").state,
+            crate::journal::JournalState::Running
+        );
+        let cleanup = launching
+            .cleanup_without_terminal_proof()
+            .expect_err("ambiguous Running CAS retains staging for reconciliation");
+        assert!(cleanup.into_owner().native_cleanup_proven_for_test());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn running_promotion_clock_failure_retains_launching_owner_without_running_authority() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (reservations, ports) = held_distinct_loopback_ports(1);
+        let (descriptor, marker_paths) = activation_http_test_descriptor(directory.path(), &ports);
+        let plan = build_activation_plan_with_clock(
+            descriptor,
+            [
+                Ok("2026-01-01T00:00:01Z".into()),
+                Ok("2026-01-01T00:00:01Z".into()),
+                Ok("2026-01-01T00:00:01Z".into()),
+                Ok("2026-01-01T00:00:01Z".into()),
+                Ok("2026-01-01T00:00:01Z".into()),
+                Err(crate::prepare::PrepareError::JournalUnavailable),
+            ],
+        );
+        let sink = DescriptorSink {
+            binding: Mutex::new(None),
+            fail_persist: false,
+            persist_calls: AtomicUsize::new(0),
+        };
+        let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
+        let activation = prepared
+            .consume_for_activation()
+            .expect("validated activation context");
+        let owner =
+            crate::process::acquire_suspended_for_activation(activation).expect("suspended owner");
+        let ready = owner.persist_ready().expect("durable Ready");
+        drop(reservations);
+        let launching = match ready.launch_with_cancellation(None) {
+            Ok(owner) => owner,
+            Err(_) => panic!("durable Launching and native resume"),
+        };
+        let journal = plan
+            .context
+            .store
+            .read(&plan.value)
+            .expect("Launching journal");
+        wait_for_activation_probe_marker(
+            &marker_paths[0],
+            0,
+            journal.roots[0].pid,
+            journal.journal_revision,
+        );
+        wait_for_activation_probe_http_status(
+            ports[0],
+            Some(ACTIVATION_HTTP_TOKEN),
+            &format!("{LOOPBACK_HOST}:{}", ports[0]),
+            200,
+            false,
+        );
+        let failure = match launching
+            .promote_running_with_cancellation(Instant::now() + Duration::from_secs(5), None)
+        {
+            Ok(_) => panic!("clock failure must retain Launching owner"),
+            Err(failure) => failure,
+        };
+        assert_eq!(
+            failure.kind_for_test(),
+            crate::process::RunningPromotionFailureKind::Validation
+        );
+        assert!(
+            failure.detail_for_test().contains("producer clock failed"),
+            "{}",
+            failure.detail_for_test()
+        );
+        let launching = failure.into_owner();
+        assert_eq!(
+            plan.context.store.read(&plan.value).expect("journal").state,
+            crate::journal::JournalState::Launching
+        );
+        let cleanup = launching
+            .cleanup_without_terminal_proof()
+            .expect_err("Launching cleanup retains staging for reconciliation");
+        assert!(cleanup.into_owner().native_cleanup_proven_for_test());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn running_admission_honors_deadline_and_cancellation_while_lock_is_held() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (reservations, ports) = held_distinct_loopback_ports(1);
+        drop(reservations);
+        let (plan, _marker_paths, mut launching) =
+            launch_http_owner_for_test(directory.path(), &ports);
+        let (reached_sender, reached_receiver) = sync_channel(1);
+        let (acquired_sender, acquired_receiver) = sync_channel(1);
+        launching.coordinate_running_admission_for_test(reached_sender, acquired_receiver);
+        let contention = Arc::new(AtomicBool::new(false));
+        plan.context
+            .store
+            .set_running_lock_deadline_after_contention_for_test(Arc::clone(&contention));
+        let holder_active = Arc::new(AtomicBool::new(false));
+        let release = Arc::new(AtomicBool::new(false));
+        let (release_done_sender, release_done_receiver) = sync_channel(1);
+        let contention_signal = Arc::clone(&contention);
+        let holder_active_signal = Arc::clone(&holder_active);
+        let release_signal = Arc::clone(&release);
+        let lock_store = Arc::clone(&plan.context.store);
+        let holder = std::thread::spawn(move || {
+            if reached_receiver
+                .recv_timeout(Duration::from_secs(5))
+                .is_err()
+            {
+                let _ = release_done_sender.send(false);
+                return;
+            }
+            let lock = match lock_store.lock_for_test() {
+                Ok(lock) => lock,
+                Err(_) => {
+                    let _ = release_done_sender.send(false);
+                    return;
+                }
+            };
+            holder_active_signal.store(true, Ordering::Release);
+            if acquired_sender.send(()).is_err() {
+                drop(lock);
+                holder_active_signal.store(false, Ordering::Release);
+                let _ = release_done_sender.send(false);
+                return;
+            }
+            let wait_deadline = Instant::now() + Duration::from_secs(5);
+            while !contention_signal.load(Ordering::Acquire) && Instant::now() < wait_deadline {
+                thread::yield_now();
+            }
+            while !release_signal.load(Ordering::Acquire) && Instant::now() < wait_deadline {
+                thread::yield_now();
+            }
+            let released_by_test = release_signal.load(Ordering::Acquire);
+            drop(lock);
+            holder_active_signal.store(false, Ordering::Release);
+            let _ = release_done_sender.send(released_by_test);
+        });
+        let failure = match launching
+            .promote_running_with_cancellation(Instant::now() + Duration::from_secs(5), None)
+        {
+            Ok(_) => panic!("expired admission must retain the Launching owner"),
+            Err(failure) => failure,
+        };
+        let attempted = contention.load(Ordering::Acquire);
+        let owner_was_held = holder_active.load(Ordering::Acquire);
+        release.store(true, Ordering::Release);
+        let released_by_test = release_done_receiver
+            .recv_timeout(Duration::from_secs(5))
+            .expect("lock holder release rendezvous");
+        holder.join().expect("lock holder cleanup");
+        plan.context
+            .store
+            .set_running_lock_contention_signal_for_test(None);
+        assert!(attempted, "admission never observed ERROR_LOCK_VIOLATION");
+        assert!(owner_was_held, "admission contention lacked a live holder");
+        assert!(
+            !holder_active.load(Ordering::Acquire),
+            "lock holder did not release"
+        );
+        assert!(
+            released_by_test,
+            "lock holder used its timeout fallback instead of the test release"
+        );
+        assert_eq!(
+            failure.kind_for_test(),
+            crate::process::RunningPromotionFailureKind::Deadline
+        );
+        assert!(
+            failure.detail_for_test().contains("AdmissionDeadline"),
+            "{}",
+            failure.detail_for_test()
+        );
+        let launching = failure.into_owner();
+        assert_eq!(
+            plan.context.store.read(&plan.value).expect("journal").state,
+            crate::journal::JournalState::Launching
+        );
+        let cleanup = launching
+            .cleanup_without_terminal_proof()
+            .expect_err("Launching cleanup retains staging for reconciliation");
+        assert!(cleanup.into_owner().native_cleanup_proven_for_test());
+
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (reservations, ports) = held_distinct_loopback_ports(1);
+        drop(reservations);
+        let (plan, _marker_paths, mut launching) =
+            launch_http_owner_for_test(directory.path(), &ports);
+        let cancellation = Arc::new(AtomicBool::new(false));
+        let cancellation_signal = Arc::clone(&cancellation);
+        let (reached_sender, reached_receiver) = sync_channel(1);
+        let (acquired_sender, acquired_receiver) = sync_channel(1);
+        launching.coordinate_running_admission_for_test(reached_sender, acquired_receiver);
+        let contention = Arc::new(AtomicBool::new(false));
+        plan.context
+            .store
+            .set_running_lock_contention_signal_for_test(Some(Arc::clone(&contention)));
+        let holder_active = Arc::new(AtomicBool::new(false));
+        let release = Arc::new(AtomicBool::new(false));
+        let (release_done_sender, release_done_receiver) = sync_channel(1);
+        let contention_signal = Arc::clone(&contention);
+        let holder_active_signal = Arc::clone(&holder_active);
+        let release_signal = Arc::clone(&release);
+        let lock_store = Arc::clone(&plan.context.store);
+        let cancel = std::thread::spawn(move || {
+            if reached_receiver
+                .recv_timeout(Duration::from_secs(5))
+                .is_err()
+            {
+                let _ = release_done_sender.send(false);
+                return;
+            }
+            let lock = match lock_store.lock_for_test() {
+                Ok(lock) => lock,
+                Err(_) => {
+                    let _ = release_done_sender.send(false);
+                    return;
+                }
+            };
+            holder_active_signal.store(true, Ordering::Release);
+            if acquired_sender.send(()).is_err() {
+                drop(lock);
+                holder_active_signal.store(false, Ordering::Release);
+                let _ = release_done_sender.send(false);
+                return;
+            }
+            let wait_deadline = Instant::now() + Duration::from_secs(5);
+            while !contention_signal.load(Ordering::Acquire) && Instant::now() < wait_deadline {
+                thread::yield_now();
+            }
+            cancellation_signal.store(true, Ordering::Release);
+            while !release_signal.load(Ordering::Acquire) && Instant::now() < wait_deadline {
+                thread::yield_now();
+            }
+            let released_by_test = release_signal.load(Ordering::Acquire);
+            drop(lock);
+            holder_active_signal.store(false, Ordering::Release);
+            let _ = release_done_sender.send(released_by_test);
+        });
+        let failure = match launching.promote_running_with_cancellation(
+            Instant::now() + Duration::from_secs(5),
+            Some(Arc::clone(&cancellation)),
+        ) {
+            Ok(_) => panic!("cancelled admission must retain the Launching owner"),
+            Err(failure) => failure,
+        };
+        let attempted = contention.load(Ordering::Acquire);
+        let owner_was_held = holder_active.load(Ordering::Acquire);
+        release.store(true, Ordering::Release);
+        let released_by_test = release_done_receiver
+            .recv_timeout(Duration::from_secs(5))
+            .expect("cancellation holder release rendezvous");
+        cancel.join().expect("cancellation holder cleanup");
+        plan.context
+            .store
+            .set_running_lock_contention_signal_for_test(None);
+        assert!(attempted, "admission never observed ERROR_LOCK_VIOLATION");
+        assert!(owner_was_held, "admission contention lacked a live holder");
+        assert!(
+            !holder_active.load(Ordering::Acquire),
+            "lock holder did not release"
+        );
+        assert!(
+            released_by_test,
+            "lock holder used its timeout fallback instead of the test release"
+        );
+        assert_eq!(
+            failure.kind_for_test(),
+            crate::process::RunningPromotionFailureKind::Cancelled
+        );
+        assert!(
+            failure.detail_for_test().contains("AdmissionCancelled"),
+            "{}",
+            failure.detail_for_test()
+        );
+        let launching = failure.into_owner();
+        assert_eq!(
+            plan.context.store.read(&plan.value).expect("journal").state,
+            crate::journal::JournalState::Launching
+        );
+        let cleanup = launching
+            .cleanup_without_terminal_proof()
+            .expect_err("Launching cleanup retains staging for reconciliation");
+        assert!(cleanup.into_owner().native_cleanup_proven_for_test());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn running_post_cas_cancellation_keeps_owner_without_issuing_running_authority() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (reservations, ports) = held_distinct_loopback_ports(1);
+        drop(reservations);
+        let (plan, _marker_paths, launching) = launch_http_owner_for_test(directory.path(), &ports);
+        let cancellation = Arc::new(AtomicBool::new(false));
+        plan.context
+            .store
+            .cancel_after_running_replace_for_test(Arc::clone(&cancellation));
+        let failure = match launching.promote_running_with_cancellation(
+            Instant::now() + Duration::from_secs(5),
+            Some(Arc::clone(&cancellation)),
+        ) {
+            Ok(_) => panic!("post-CAS cancellation must not issue Running authority"),
+            Err(failure) => failure,
+        };
+        assert_eq!(
+            failure.kind_for_test(),
+            crate::process::RunningPromotionFailureKind::Cancelled,
+            "{}",
+            failure.detail_for_test()
+        );
+        assert!(failure
+            .detail_for_test()
+            .contains("completed after cancellation"));
+        let launching = failure.into_owner();
+        assert_eq!(
+            plan.context.store.read(&plan.value).expect("journal").state,
+            crate::journal::JournalState::Running
+        );
+        let cleanup = launching
+            .cleanup_without_terminal_proof()
+            .expect_err("ambiguous post-CAS owner retains staging for reconciliation");
+        assert!(cleanup.into_owner().native_cleanup_proven_for_test());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn running_pre_cas_cancellation_under_lock_keeps_launching_owner() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (reservations, ports) = held_distinct_loopback_ports(1);
+        drop(reservations);
+        let (plan, _marker_paths, launching) = launch_http_owner_for_test(directory.path(), &ports);
+        let cancellation = Arc::new(AtomicBool::new(false));
+        plan.context
+            .store
+            .cancel_before_running_replace_for_test(Arc::clone(&cancellation));
+        let failure = match launching.promote_running_with_cancellation(
+            Instant::now() + Duration::from_secs(5),
+            Some(Arc::clone(&cancellation)),
+        ) {
+            Ok(_) => panic!("pre-CAS cancellation must not issue Running authority"),
+            Err(failure) => failure,
+        };
+        assert_eq!(
+            failure.kind_for_test(),
+            crate::process::RunningPromotionFailureKind::Cancelled
+        );
+        assert!(
+            failure.detail_for_test().contains("AdmissionCancelled"),
+            "{}",
+            failure.detail_for_test()
+        );
+        let launching = failure.into_owner();
+        assert_eq!(
+            plan.context.store.read(&plan.value).expect("journal").state,
+            crate::journal::JournalState::Launching
+        );
+        let cleanup = launching
+            .cleanup_without_terminal_proof()
+            .expect_err("pre-CAS cancellation retains staging for reconciliation");
+        assert!(cleanup.into_owner().native_cleanup_proven_for_test());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn running_final_native_observation_change_retains_launching_owner() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (reservations, ports) = held_distinct_loopback_ports(1);
+        drop(reservations);
+        let (plan, _marker_paths, mut launching) =
+            launch_http_owner_for_test(directory.path(), &ports);
+        launching.inject_listener_identity_mutation_after_first_for_test();
+        let failure = match launching
+            .promote_running_with_cancellation(Instant::now() + Duration::from_secs(5), None)
+        {
+            Ok(_) => panic!("changed final listener observation must fail closed"),
+            Err(failure) => failure,
+        };
+        assert!(
+            failure
+                .detail_for_test()
+                .contains("native root binding changed"),
+            "{}",
+            failure.detail_for_test()
+        );
+        let launching = failure.into_owner();
+        assert_eq!(
+            plan.context.store.read(&plan.value).expect("journal").state,
+            crate::journal::JournalState::Launching
+        );
+        let cleanup = launching
+            .cleanup_without_terminal_proof()
+            .expect_err("Launching cleanup retains staging for reconciliation");
+        assert!(cleanup.into_owner().native_cleanup_proven_for_test());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn running_last_native_observation_change_retains_launching_owner() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (reservations, ports) = held_distinct_loopback_ports(1);
+        drop(reservations);
+        let (plan, _marker_paths, mut launching) =
+            launch_http_owner_for_test(directory.path(), &ports);
+        launching.inject_listener_identity_mutation_at_last_observation_for_test();
+        let failure = match launching
+            .promote_running_with_cancellation(Instant::now() + Duration::from_secs(5), None)
+        {
+            Ok(_) => panic!("the last native observation must guard the Running CAS"),
+            Err(failure) => failure,
+        };
+        assert_eq!(
+            failure.kind_for_test(),
+            crate::process::RunningPromotionFailureKind::Validation
+        );
+        assert!(
+            failure
+                .detail_for_test()
+                .contains("native root binding changed during Running promotion"),
+            "{}",
+            failure.detail_for_test()
+        );
+        let launching = failure.into_owner();
+        assert_eq!(launching.listener_observation_count_for_test(), 3);
+        assert_eq!(
+            plan.context.store.read(&plan.value).expect("journal").state,
+            crate::journal::JournalState::Launching
+        );
+        let cleanup = launching
+            .cleanup_without_terminal_proof()
+            .expect_err("last observation failure retains staging for reconciliation");
+        assert!(cleanup.into_owner().native_cleanup_proven_for_test());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn running_final_root_exit_retains_launching_owner() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (reservations, ports) = held_distinct_loopback_ports(1);
+        drop(reservations);
+        let (plan, _marker_paths, mut launching) =
+            launch_http_owner_for_test(directory.path(), &ports);
+        launching.inject_root_exit_after_first_for_test();
+        let failure = match launching
+            .promote_running_with_cancellation(Instant::now() + Duration::from_secs(5), None)
+        {
+            Ok(_) => panic!("root exit during final observation must fail closed"),
+            Err(failure) => failure,
+        };
+        assert_eq!(
+            failure.kind_for_test(),
+            crate::process::RunningPromotionFailureKind::Validation
+        );
+        assert!(
+            failure
+                .detail_for_test()
+                .contains("Runtime root 0 was no longer live during listener observation."),
+            "{}",
+            failure.detail_for_test()
+        );
+        let launching = failure.into_owner();
+        assert_eq!(
+            plan.context.store.read(&plan.value).expect("journal").state,
+            crate::journal::JournalState::Launching
+        );
+        let cleanup = launching
+            .cleanup_without_terminal_proof()
+            .expect_err("Launching cleanup retains staging for reconciliation");
+        assert!(cleanup.into_owner().native_cleanup_proven_for_test());
     }
 
     #[cfg(windows)]

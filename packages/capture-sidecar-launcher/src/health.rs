@@ -18,6 +18,7 @@ use crate::{
 
 const PROBE_TIMEOUT: Duration = Duration::from_secs(1);
 const CONNECT_TIMEOUT: Duration = Duration::from_millis(250);
+const STRICT_IO_POLL: Duration = Duration::from_millis(25);
 const MAX_READINESS_SCHEMA_BYTES: u64 = 4 * 1024 * 1024;
 const R3_SERVICE: &str = "capture-runtime";
 const R3_API_VERSION: &str = "2.0";
@@ -57,6 +58,25 @@ pub(crate) struct ServiceReadinessFacts {
     capabilities_sha256: String,
     ocr_compute_sha256: Option<String>,
     message_sha256: Option<String>,
+}
+
+impl ServiceReadinessFacts {
+    /// A bounded digest of the validated service-only facts.  The response
+    /// body and bearer token never cross this private lifecycle boundary.
+    pub(crate) fn facts_digest(&self) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(b"capture-runtime/service-readiness-facts/v1\0");
+        digest_string(&mut hasher, &self.runtime_version);
+        digest_string(&mut hasher, &self.api_version);
+        digest_string(&mut hasher, &self.capture_document_schema_version);
+        digest_string(&mut hasher, &self.capture_document_schema_sha256);
+        digest_optional_string(&mut hasher, self.schema_sha256.as_deref());
+        digest_string(&mut hasher, &self.contract_set_version);
+        digest_string(&mut hasher, &self.capabilities_sha256);
+        digest_optional_string(&mut hasher, self.ocr_compute_sha256.as_deref());
+        digest_optional_string(&mut hasher, self.message_sha256.as_deref());
+        format!("{:x}", hasher.finalize())
+    }
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -359,7 +379,7 @@ fn read_strict_response(
             return Ok(StrictIoResult::NotReady);
         };
         stream
-            .set_read_timeout(Some(remaining.min(PROBE_TIMEOUT)))
+            .set_read_timeout(Some(remaining.min(PROBE_TIMEOUT).min(STRICT_IO_POLL)))
             .map_err(|_| "Capture runtime readiness socket could not be configured.".to_string())?;
         let available = (max_bytes + 1 - response.len()).min(chunk.len());
         match stream.read(&mut chunk[..available]) {
@@ -381,7 +401,14 @@ fn read_strict_response(
                     );
                 }
             }
-            Err(error) if error.kind() == ErrorKind::Interrupted => continue,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    ErrorKind::Interrupted | ErrorKind::TimedOut | ErrorKind::WouldBlock
+                ) =>
+            {
+                continue;
+            }
             Err(_) => return Ok(StrictIoResult::NotReady),
         }
     }
@@ -817,6 +844,23 @@ fn valid_sha256(value: &str) -> bool {
 
 fn digest_bytes(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
+}
+
+fn digest_string(hasher: &mut Sha256, value: &str) {
+    hasher.update((value.len() as u64).to_be_bytes());
+    hasher.update(value.as_bytes());
+}
+
+fn digest_optional_string(hasher: &mut Sha256, value: Option<&str>) {
+    match value {
+        Some(value) => {
+            hasher.update([1]);
+            digest_string(hasher, value);
+        }
+        None => {
+            hasher.update([0]);
+        }
+    }
 }
 
 fn digest_json(value: &Value) -> String {

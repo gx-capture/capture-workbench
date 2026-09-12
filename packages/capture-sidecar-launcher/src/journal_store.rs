@@ -12,13 +12,22 @@ use std::{
     fs::{self, File, Metadata, OpenOptions},
     io::{Read, Write},
     path::{Component, Path, PathBuf},
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc,
+    },
     thread,
     time::{Duration, Instant},
 };
 
-#[cfg(test)]
-use std::sync::atomic::AtomicBool;
+#[cfg(all(test, windows))]
+use std::collections::HashMap;
+
+#[cfg(windows)]
+use std::cell::RefCell;
+
+#[cfg(all(test, windows))]
+use std::sync::{Mutex, OnceLock};
 
 use sha2::{Digest, Sha256};
 
@@ -44,6 +53,9 @@ use windows_sys::Win32::{
     System::IO::OVERLAPPED,
 };
 
+#[cfg(all(test, windows))]
+use windows_sys::Win32::Foundation::{GetLastError, ERROR_LOCK_VIOLATION};
+
 const JOURNAL_PREFIX: &str = "runtime-session-";
 const JOURNAL_SUFFIX: &str = ".json";
 const LOCK_SUFFIX: &str = ".lock";
@@ -55,6 +67,17 @@ const MAX_JOURNAL_BYTES: usize = 1024 * 1024;
 const LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(10);
 const LOCK_TIMEOUT: Duration = Duration::from_secs(5);
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(all(test, windows))]
+struct RunningLockContentionRegistration {
+    signal: Arc<AtomicBool>,
+    force_deadline_after_contention: bool,
+}
+
+#[cfg(all(test, windows))]
+static RUNNING_LOCK_CONTENTION_SIGNALS: OnceLock<
+    Mutex<HashMap<PathBuf, RunningLockContentionRegistration>>,
+> = OnceLock::new();
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum JournalStoreError {
@@ -73,6 +96,17 @@ pub(crate) enum JournalStoreError {
     Injected(&'static str),
     TooLarge,
     UnsupportedPlatform,
+    AdmissionCancelled,
+    AdmissionDeadline,
+}
+
+#[cfg(windows)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RunningCasError {
+    Cancelled,
+    Deadline,
+    Conflict,
+    Storage,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -145,6 +179,66 @@ pub(crate) struct JournalStore {
     faults: TestFaults,
 }
 
+#[cfg(windows)]
+#[derive(Clone)]
+struct RunningReadBudget {
+    deadline: Instant,
+    cancellation: Arc<AtomicBool>,
+}
+
+#[cfg(windows)]
+thread_local! {
+    static RUNNING_READ_BUDGET: RefCell<Option<RunningReadBudget>> = const { RefCell::new(None) };
+}
+
+#[cfg(windows)]
+pub(crate) struct RunningReadBudgetScope {
+    previous: Option<RunningReadBudget>,
+}
+
+#[cfg(windows)]
+pub(crate) fn install_running_read_budget(
+    deadline: Instant,
+    cancellation: Arc<AtomicBool>,
+) -> RunningReadBudgetScope {
+    RUNNING_READ_BUDGET.with(|slot| RunningReadBudgetScope {
+        previous: slot.replace(Some(RunningReadBudget {
+            deadline,
+            cancellation,
+        })),
+    })
+}
+
+#[cfg(windows)]
+impl Drop for RunningReadBudgetScope {
+    fn drop(&mut self) {
+        RUNNING_READ_BUDGET.with(|slot| {
+            slot.replace(self.previous.take());
+        });
+    }
+}
+
+/// The only journal mutation seam for the Running promotion.  The lock and
+/// the expected Launching value stay together while the native owner performs
+/// its final observations; callers cannot replace the journal command or
+/// unlock/reopen the store between validation and the typed Running CAS.
+#[cfg(windows)]
+pub(crate) struct RunningCasAdmission {
+    store: Arc<JournalStore>,
+    plan: JournalPlanValue,
+    expected: CasSnapshot,
+    current: RuntimeSessionJournalV1,
+    deadline: Instant,
+    cancellation: Arc<AtomicBool>,
+    _lock: JournalFileLock,
+}
+
+#[cfg(windows)]
+pub(crate) enum RunningCasResult {
+    Committed(RuntimeSessionJournalV1),
+    CommittedAfterBudget(RuntimeSessionJournalV1),
+}
+
 #[cfg(test)]
 #[derive(Default)]
 struct TestFaults {
@@ -157,6 +251,8 @@ struct TestFaults {
     fail_auxiliary_durability_recheck: AtomicBool,
     forced_temp_path: std::sync::Mutex<Option<PathBuf>>,
     forced_payload: std::sync::Mutex<Option<Vec<u8>>>,
+    cancel_before_running_replace: std::sync::Mutex<Option<Arc<AtomicBool>>>,
+    cancel_after_running_replace: std::sync::Mutex<Option<Arc<AtomicBool>>>,
 }
 
 impl JournalStore {
@@ -230,7 +326,7 @@ impl JournalStore {
         let index_path = auxiliary_index_path(&self.config.producer_root, address_key)?;
         let index_lock_path = auxiliary_lock_path(&self.config.producer_root, address_key)?;
         self.with_lock(|store| {
-            let _index_lock = JournalFileLock::acquire(&index_lock_path)?;
+            let _index_lock = acquire_scoped_lock(&index_lock_path)?;
             if path_exists(&index_path)? {
                 // An existing index is immutable.  Re-apply the final-file and
                 // directory barriers before handing its bytes to the codec so
@@ -258,9 +354,107 @@ impl JournalStore {
         validate_producer_root(producer_root)?;
         let index_path = auxiliary_index_path(producer_root, address_key)?;
         let index_lock_path = auxiliary_lock_path(producer_root, address_key)?;
-        let _index_lock = JournalFileLock::acquire(&index_lock_path)?;
+        let _index_lock = acquire_scoped_lock(&index_lock_path)?;
         validate_producer_root(producer_root)?;
         read_bounded_record_path(&index_path)
+    }
+
+    /// Acquire the journal lock for the private Running admission.  The
+    /// expected Launching value is read while that lock is held and retained
+    /// in the guard until the typed Running command commits.  This lets the
+    /// native owner repeat its final checks after lock contention without a
+    /// read-then-write gap.
+    #[cfg(windows)]
+    pub(crate) fn begin_running_admission(
+        self: &Arc<Self>,
+        plan: &JournalPlanValue,
+        expected: &CasSnapshot,
+        deadline: Instant,
+        cancellation: Arc<AtomicBool>,
+    ) -> Result<RunningCasAdmission, JournalStoreError> {
+        self.validate_plan_identity(plan)?;
+        check_running_admission_budget(deadline, cancellation.as_ref())?;
+        validate_producer_root(&self.config.producer_root)?;
+        let lock =
+            JournalFileLock::acquire_until(&self.lock_path, deadline, cancellation.as_ref())?;
+        validate_producer_root(&self.config.producer_root)?;
+        let current = self.read_unlocked(plan)?;
+        if current.cas_snapshot() != *expected {
+            return Err(JournalStoreError::Conflict);
+        }
+        check_running_admission_budget(deadline, cancellation.as_ref())?;
+        Ok(RunningCasAdmission {
+            store: Arc::clone(self),
+            plan: plan.clone(),
+            expected: expected.clone(),
+            current,
+            deadline,
+            cancellation,
+            _lock: lock,
+        })
+    }
+
+    #[cfg(all(test, windows))]
+    pub(crate) fn lock_for_test(&self) -> Result<JournalFileLock, JournalStoreError> {
+        JournalFileLock::acquire(&self.lock_path)
+    }
+
+    #[cfg(all(test, windows))]
+    pub(crate) fn set_running_lock_contention_signal_for_test(
+        &self,
+        signal: Option<Arc<AtomicBool>>,
+    ) {
+        self.set_running_lock_contention_signal_for_path_for_test(self.lock_path.clone(), signal);
+    }
+
+    #[cfg(all(test, windows))]
+    pub(crate) fn set_running_auxiliary_contention_signal_for_test(
+        &self,
+        address_key: &str,
+        signal: Option<Arc<AtomicBool>>,
+    ) {
+        let path = auxiliary_lock_path(&self.config.producer_root, address_key)
+            .expect("valid auxiliary lock path");
+        self.set_running_lock_contention_signal_for_path_for_test(path, signal);
+    }
+
+    #[cfg(all(test, windows))]
+    fn set_running_lock_contention_signal_for_path_for_test(
+        &self,
+        path: PathBuf,
+        signal: Option<Arc<AtomicBool>>,
+    ) {
+        let slot = RUNNING_LOCK_CONTENTION_SIGNALS.get_or_init(|| Mutex::new(HashMap::new()));
+        let mut registrations = slot.lock().unwrap();
+        match signal {
+            Some(signal) => {
+                registrations.insert(
+                    path,
+                    RunningLockContentionRegistration {
+                        signal,
+                        force_deadline_after_contention: false,
+                    },
+                );
+            }
+            None => {
+                registrations.remove(&path);
+            }
+        }
+    }
+
+    #[cfg(all(test, windows))]
+    pub(crate) fn set_running_lock_deadline_after_contention_for_test(
+        &self,
+        signal: Arc<AtomicBool>,
+    ) {
+        let slot = RUNNING_LOCK_CONTENTION_SIGNALS.get_or_init(|| Mutex::new(HashMap::new()));
+        slot.lock().unwrap().insert(
+            self.lock_path.clone(),
+            RunningLockContentionRegistration {
+                signal,
+                force_deadline_after_contention: true,
+            },
+        );
     }
 
     pub(crate) fn compare_and_swap(
@@ -321,7 +515,7 @@ impl JournalStore {
         F: FnOnce(&Self) -> Result<T, JournalStoreError>,
     {
         validate_producer_root(&self.config.producer_root)?;
-        let _lock = JournalFileLock::acquire(&self.lock_path)?;
+        let _lock = acquire_scoped_lock(&self.lock_path)?;
         validate_producer_root(&self.config.producer_root)?;
         operation(self)
     }
@@ -580,6 +774,16 @@ impl JournalStore {
             .store(true, Ordering::Release);
     }
 
+    #[cfg(all(test, windows))]
+    pub(crate) fn cancel_before_running_replace_for_test(&self, cancellation: Arc<AtomicBool>) {
+        *self.faults.cancel_before_running_replace.lock().unwrap() = Some(cancellation);
+    }
+
+    #[cfg(all(test, windows))]
+    pub(crate) fn cancel_after_running_replace_for_test(&self, cancellation: Arc<AtomicBool>) {
+        *self.faults.cancel_after_running_replace.lock().unwrap() = Some(cancellation);
+    }
+
     #[cfg(test)]
     pub(crate) fn fail_auxiliary_after_replace_and_durability_recheck(&self) {
         self.faults
@@ -613,6 +817,146 @@ impl JournalStore {
     fn force_next_payload(&self, payload: Vec<u8>) {
         *self.faults.forced_payload.lock().unwrap() = Some(payload);
     }
+}
+
+#[cfg(windows)]
+fn acquire_scoped_lock(path: &Path) -> Result<JournalFileLock, JournalStoreError> {
+    RUNNING_READ_BUDGET.with(|slot| {
+        let budget = slot.borrow().clone();
+        match budget {
+            Some(budget) => {
+                JournalFileLock::acquire_until(path, budget.deadline, budget.cancellation.as_ref())
+            }
+            None => JournalFileLock::acquire(path),
+        }
+    })
+}
+
+#[cfg(not(windows))]
+fn acquire_scoped_lock(path: &Path) -> Result<JournalFileLock, JournalStoreError> {
+    JournalFileLock::acquire(path)
+}
+
+#[cfg(all(test, windows))]
+fn signal_running_lock_contention_for_test(path: &Path) -> bool {
+    let Some(slot) = RUNNING_LOCK_CONTENTION_SIGNALS.get() else {
+        return false;
+    };
+    slot.lock()
+        .unwrap()
+        .get(path)
+        .map(|registration| {
+            registration.signal.store(true, Ordering::Release);
+            registration.force_deadline_after_contention
+        })
+        .unwrap_or(false)
+}
+
+#[cfg(windows)]
+impl RunningCasAdmission {
+    pub(crate) fn current(&self) -> &RuntimeSessionJournalV1 {
+        &self.current
+    }
+
+    /// Apply only the canonical Launching -> Running transition while the
+    /// admission lock is still held.  The deadline/cancellation check directly
+    /// before the replacement is intentionally duplicated after encoding: it
+    /// closes the last pre-write window without changing other journal APIs.
+    pub(crate) fn commit_running(
+        mut self,
+        observation: ResourceObservation,
+        timestamp: String,
+    ) -> Result<RunningCasResult, JournalStoreError> {
+        check_running_admission_budget(self.deadline, self.cancellation.as_ref())?;
+        if self.current.cas_snapshot() != self.expected {
+            return Err(JournalStoreError::Conflict);
+        }
+        apply_command(
+            &mut self.current,
+            &self.plan,
+            &self.expected,
+            JournalStoreCommand::TransitionWithObservation {
+                next_state: JournalState::Running,
+                observation,
+                timestamp,
+            },
+        )
+        .map_err(|error| match error {
+            JournalError::StaleCas => JournalStoreError::Conflict,
+            error => JournalStoreError::Journal(error),
+        })?;
+        self.current
+            .validate_against_plan(&self.plan)
+            .map_err(JournalStoreError::Journal)?;
+        let candidate = self.current.clone();
+        let bytes = candidate
+            .encode_private()
+            .map_err(JournalStoreError::Journal)?;
+        #[cfg(test)]
+        if let Some(cancellation) = self
+            .store
+            .faults
+            .cancel_before_running_replace
+            .lock()
+            .unwrap()
+            .take()
+        {
+            cancellation.store(true, Ordering::Release);
+        }
+        check_running_admission_budget(self.deadline, self.cancellation.as_ref())?;
+        let read_back = match self.store.write_atomic_unlocked(&bytes, true) {
+            Ok(()) => self.store.read_unlocked(&self.plan)?,
+            Err(write_error) => {
+                // A replacement can have happened before a durability error.
+                // Re-establish and accept only the complete exact candidate;
+                // an apparently Running disk record alone grants no authority.
+                match self
+                    .store
+                    .reestablish_candidate_durability_unlocked(&self.plan, &candidate)
+                {
+                    Ok(read_back) => read_back,
+                    Err(_) => return Err(write_error),
+                }
+            }
+        };
+        if read_back != candidate {
+            return Err(JournalStoreError::CorruptJournal);
+        }
+        #[cfg(test)]
+        if let Some(cancellation) = self
+            .store
+            .faults
+            .cancel_after_running_replace
+            .lock()
+            .unwrap()
+            .take()
+        {
+            cancellation.store(true, Ordering::Release);
+        }
+        if cancellation_requested(self.cancellation.as_ref()) || Instant::now() >= self.deadline {
+            return Ok(RunningCasResult::CommittedAfterBudget(read_back));
+        }
+        Ok(RunningCasResult::Committed(read_back))
+    }
+}
+
+#[cfg(windows)]
+fn cancellation_requested(cancellation: &AtomicBool) -> bool {
+    cancellation.load(Ordering::Acquire)
+}
+
+#[cfg(windows)]
+fn check_running_admission_budget(
+    deadline: Instant,
+    cancellation: &AtomicBool,
+) -> Result<(), JournalStoreError> {
+    if cancellation_requested(cancellation) {
+        return Err(JournalStoreError::AdmissionCancelled);
+    }
+    if Instant::now() >= deadline {
+        return Err(JournalStoreError::AdmissionDeadline);
+    }
+    Ok(())
 }
 
 fn apply_command(
@@ -867,7 +1211,7 @@ fn sync_directory(path: &Path) -> Result<(), JournalStoreError> {
         .map_err(|_| JournalStoreError::Durability("directorySync"))
 }
 
-struct JournalFileLock {
+pub(crate) struct JournalFileLock {
     file: File,
     #[cfg(windows)]
     overlapped: OVERLAPPED,
@@ -876,6 +1220,18 @@ struct JournalFileLock {
 impl JournalFileLock {
     #[cfg(windows)]
     fn acquire(path: &Path) -> Result<Self, JournalStoreError> {
+        match Self::acquire_until(path, Instant::now() + LOCK_TIMEOUT, &AtomicBool::new(false)) {
+            Err(JournalStoreError::AdmissionDeadline) => Err(JournalStoreError::LockTimeout),
+            result => result,
+        }
+    }
+
+    #[cfg(windows)]
+    fn acquire_until(
+        path: &Path,
+        deadline: Instant,
+        cancellation: &AtomicBool,
+    ) -> Result<Self, JournalStoreError> {
         if path_exists(path)? {
             ensure_regular_file(path)?;
         }
@@ -885,8 +1241,13 @@ impl JournalFileLock {
             .write(true)
             .open(path)
             .map_err(|_| JournalStoreError::Lock)?;
-        let deadline = Instant::now() + LOCK_TIMEOUT;
         loop {
+            if cancellation_requested(cancellation) {
+                return Err(JournalStoreError::AdmissionCancelled);
+            }
+            if Instant::now() >= deadline {
+                return Err(JournalStoreError::AdmissionDeadline);
+            }
             let mut overlapped = OVERLAPPED::default();
             let locked = unsafe {
                 LockFileEx(
@@ -901,10 +1262,14 @@ impl JournalFileLock {
             if locked {
                 return Ok(Self { file, overlapped });
             }
-            if Instant::now() >= deadline {
-                return Err(JournalStoreError::LockTimeout);
+            #[cfg(all(test, windows))]
+            if unsafe { GetLastError() } == ERROR_LOCK_VIOLATION {
+                if signal_running_lock_contention_for_test(path) {
+                    return Err(JournalStoreError::AdmissionDeadline);
+                }
             }
-            thread::sleep(LOCK_RETRY_INTERVAL);
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            thread::sleep(LOCK_RETRY_INTERVAL.min(remaining));
         }
     }
 
@@ -935,7 +1300,7 @@ mod tests {
         env, fs,
         path::Path,
         process::Command,
-        sync::{Arc, Barrier},
+        sync::{atomic::AtomicBool, Arc, Barrier},
         thread,
         time::{Duration, Instant},
     };
@@ -1430,6 +1795,68 @@ mod tests {
             store.read(&plan()).expect("holder cleanup read").state,
             JournalState::PlannedUnbound
         );
+    }
+
+    #[test]
+    fn running_read_budget_bounds_journal_and_index_contention_and_restores_scope() {
+        let directory = tempdir().expect("tempdir");
+        let store = store(directory.path());
+        create_initial(&store);
+
+        let contention = Arc::new(AtomicBool::new(false));
+        store.set_running_lock_contention_signal_for_test(Some(Arc::clone(&contention)));
+        let journal_holder = JournalFileLock::acquire(&store.lock_path).expect("journal holder");
+        {
+            let _budget = install_running_read_budget(
+                Instant::now() + Duration::from_millis(100),
+                Arc::new(AtomicBool::new(false)),
+            );
+            assert_eq!(
+                store.read(&plan()),
+                Err(JournalStoreError::AdmissionDeadline)
+            );
+        }
+        assert!(
+            contention.swap(false, Ordering::AcqRel),
+            "bounded journal read did not observe ERROR_LOCK_VIOLATION"
+        );
+        drop(journal_holder);
+        assert_eq!(
+            store.read(&plan()).expect("journal after scope").state,
+            JournalState::PlannedUnbound
+        );
+
+        store
+            .create_or_read_immutable_auxiliary(DIGEST_B, b"index")
+            .expect("index record");
+        let index_lock_path = auxiliary_lock_path(directory.path(), DIGEST_B).expect("index lock");
+        let index_holder = JournalFileLock::acquire(&index_lock_path).expect("index holder");
+        store.set_running_auxiliary_contention_signal_for_test(
+            DIGEST_B,
+            Some(Arc::clone(&contention)),
+        );
+        {
+            let _budget = install_running_read_budget(
+                Instant::now() + Duration::from_millis(100),
+                Arc::new(AtomicBool::new(false)),
+            );
+            assert_eq!(
+                JournalStore::read_immutable_auxiliary(directory.path(), DIGEST_B),
+                Err(JournalStoreError::AdmissionDeadline)
+            );
+        }
+        assert!(
+            contention.swap(false, Ordering::AcqRel),
+            "bounded index read did not observe ERROR_LOCK_VIOLATION"
+        );
+        drop(index_holder);
+        assert_eq!(
+            JournalStore::read_immutable_auxiliary(directory.path(), DIGEST_B)
+                .expect("index after scope"),
+            b"index"
+        );
+        store.set_running_auxiliary_contention_signal_for_test(DIGEST_B, None);
+        store.set_running_lock_contention_signal_for_test(None);
     }
 
     #[test]

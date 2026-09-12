@@ -22,6 +22,7 @@ use std::{
     io::{Read, Write},
     path::{Path, PathBuf},
     process::Command,
+    sync::Arc,
 };
 
 #[cfg(test)]
@@ -35,6 +36,14 @@ use crate::{
     journal_store::JournalStoreCommand,
     prepare::ValidatedActivationContext,
 };
+
+#[cfg(windows)]
+use crate::journal_store::{
+    install_running_read_budget, RunningCasAdmission, RunningCasError, RunningCasResult,
+};
+
+#[cfg(windows)]
+use std::{sync::atomic::AtomicBool, time::Instant};
 
 const MARKER_FILE_NAME: &str = ".capture-run-staging-v1";
 const MARKER_SCHEMA_VERSION: &str = "RunStagingMarkerV1";
@@ -441,6 +450,47 @@ impl RunStagingOwner {
         Ok(())
     }
 
+    pub(crate) fn validate_launching_journal(
+        &self,
+        journal: &RuntimeSessionJournalV1,
+    ) -> Result<(), String> {
+        journal
+            .validate_against_plan(&self.activation.journal_plan)
+            .map_err(|_| {
+                "Capture runtime Launching journal did not match its immutable plan.".to_string()
+            })?;
+        if journal.state != JournalState::Launching
+            || journal.session_nonce != self.activation.descriptor.session_nonce()
+            || journal.plan_digest != self.activation.journal_plan.plan_digest
+        {
+            return Err(
+                "Capture runtime retained journal was not the exact Launching binding.".into(),
+            );
+        }
+        Ok(())
+    }
+
+    pub(crate) fn revalidate_launching_snapshot(
+        &self,
+        expected: &RuntimeSessionJournalV1,
+    ) -> Result<(), String> {
+        self.validate_launching_journal(expected)?;
+        let current = self
+            .activation
+            .context
+            .store
+            .read(&self.activation.journal_plan)
+            .map_err(|_| "Capture runtime Launching journal could not be re-read.".to_string())?;
+        if current != *expected {
+            return Err("Capture runtime Launching journal changed before Running.".into());
+        }
+        Ok(())
+    }
+
+    pub(crate) fn activation_descriptor(&self) -> Arc<crate::launcher::FrozenActivationDescriptor> {
+        Arc::clone(&self.activation.descriptor)
+    }
+
     pub(crate) fn planned_roots(&self) -> &[crate::journal::PlannedRoot] {
         &self.activation.journal_plan.roots
     }
@@ -457,9 +507,33 @@ impl RunStagingOwner {
         self.activation.revalidate_address_index()
     }
 
+    #[cfg(windows)]
+    pub(crate) fn revalidate_address_index_for_running(
+        &self,
+        deadline: Instant,
+        cancellation: Arc<AtomicBool>,
+    ) -> Result<(), String> {
+        let _budget = install_running_read_budget(deadline, cancellation);
+        self.activation.revalidate_address_index()
+    }
+
+    pub(crate) fn checked_commands_for_running(&self) -> Result<Vec<Command>, String> {
+        self.validate_running_scope()?;
+        self.activation.descriptor.checked_commands()
+    }
+
     pub(crate) fn staging_binding_for_ready(&self) -> Result<StagingBinding, String> {
         self.validate_complete_materialized_scope()
             .map_err(|error| format!("Capture runtime staging admission failed: {error:?}."))?;
+        self.staging_binding_from_owned_scope()
+    }
+
+    pub(crate) fn staging_binding_for_running(&self) -> Result<StagingBinding, String> {
+        self.validate_running_scope()?;
+        self.staging_binding_from_owned_scope()
+    }
+
+    fn staging_binding_from_owned_scope(&self) -> Result<StagingBinding, String> {
         let marker = self
             .marker
             .as_ref()
@@ -599,6 +673,84 @@ impl RunStagingOwner {
         Ok(launching)
     }
 
+    #[cfg(windows)]
+    pub(crate) fn begin_running_admission(
+        &self,
+        expected_launching: &RuntimeSessionJournalV1,
+        deadline: Instant,
+        cancellation: Arc<AtomicBool>,
+    ) -> Result<RunningCasAdmission, RunningCasError> {
+        self.activation
+            .context
+            .store
+            .begin_running_admission(
+                &self.activation.journal_plan,
+                &expected_launching.cas_snapshot(),
+                deadline,
+                cancellation,
+            )
+            .map_err(|error| match error {
+                crate::journal_store::JournalStoreError::AdmissionCancelled => {
+                    RunningCasError::Cancelled
+                }
+                crate::journal_store::JournalStoreError::AdmissionDeadline => {
+                    RunningCasError::Deadline
+                }
+                crate::journal_store::JournalStoreError::Conflict => RunningCasError::Conflict,
+                _ => RunningCasError::Storage,
+            })
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn persist_running_admission(
+        &self,
+        admission: RunningCasAdmission,
+        expected_launching: &RuntimeSessionJournalV1,
+        observation: ResourceObservation,
+        timestamp: String,
+    ) -> Result<RunningCasResult, RunningCasError> {
+        let result = admission
+            .commit_running(observation.clone(), timestamp.clone())
+            .map_err(|error| match error {
+                crate::journal_store::JournalStoreError::AdmissionCancelled => {
+                    RunningCasError::Cancelled
+                }
+                crate::journal_store::JournalStoreError::AdmissionDeadline => {
+                    RunningCasError::Deadline
+                }
+                crate::journal_store::JournalStoreError::Conflict => RunningCasError::Conflict,
+                _ => RunningCasError::Storage,
+            })?;
+        let running = match &result {
+            RunningCasResult::Committed(journal)
+            | RunningCasResult::CommittedAfterBudget(journal) => journal,
+        };
+        let expected_revision = expected_launching
+            .journal_revision
+            .checked_add(1)
+            .ok_or(RunningCasError::Storage)?;
+        let expected_updated_at = timestamp;
+        if running.state != JournalState::Running
+            || running.journal_revision != expected_revision
+            || running.schema_version != expected_launching.schema_version
+            || running.producer != expected_launching.producer
+            || running.session_nonce != expected_launching.session_nonce
+            || running.plan_digest != expected_launching.plan_digest
+            || running.created_at != expected_launching.created_at
+            || running.updated_at != expected_updated_at
+            || running.attempt != expected_launching.attempt
+            || running.recovery_epoch != expected_launching.recovery_epoch
+            || running.binding != expected_launching.binding
+            || running.job_binding.as_ref() != Some(&observation.job_binding)
+            || running.staging_binding.as_ref() != observation.staging_binding.as_ref()
+            || running.roots != observation.roots
+            || running.proof.is_some()
+        {
+            return Err(RunningCasError::Storage);
+        }
+        Ok(result)
+    }
+
     /// Revalidate the journal and replace the command with a freshly checked
     /// frozen command immediately before the native spawn call.
     pub(crate) fn check_before_root_spawn(
@@ -681,6 +833,39 @@ impl RunStagingOwner {
             }
         }
         self.validate_empty_scope()
+    }
+
+    fn validate_running_scope(&self) -> Result<(), String> {
+        if self.scope_state != StagingScopeState::Complete {
+            return Err("Capture runtime staging scope was not completely materialized.".into());
+        }
+        if self.marker.is_none() || self.roots.len() != self.expected_root_paths.len() {
+            return Err("Capture runtime staging scope ownership was incomplete.".into());
+        }
+        self.validate_scope_chain()
+            .map_err(|error| format!("Capture runtime staging scope changed: {error:?}."))?;
+        let marker = self.marker.as_ref().expect("marker checked above");
+        if !path_exists(&marker.path)
+            || !same_identity(&marker.path, marker.identity)
+            || path_is_reparse(&marker.path).unwrap_or(true)
+            || read_bounded(&marker.path)
+                .map_err(|_| "Capture runtime staging marker could not be read.".to_string())?
+                != marker.bytes
+        {
+            return Err("Capture runtime staging marker identity changed.".into());
+        }
+        for (root, expected_path) in self.roots.iter().zip(&self.expected_root_paths) {
+            if root.path != *expected_path
+                || root.identity.is_none()
+                || !path_exists(expected_path)
+                || !same_identity(expected_path, root.identity)
+                || path_is_reparse(expected_path).unwrap_or(true)
+                || !ensure_existing_directory(expected_path).is_ok()
+            {
+                return Err("Capture runtime staging root identity changed.".into());
+            }
+        }
+        Ok(())
     }
 
     fn validate_empty_scope(&self) -> Result<(), StagingCleanupError> {
