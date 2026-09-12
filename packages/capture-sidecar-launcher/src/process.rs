@@ -10,8 +10,8 @@ use crate::prepare::{ImmutableGroupPlan, PrepareError, PreparedGroup, ReconcileR
 use crate::{
     health::{probe_service_ready, StrictProbeResult},
     journal::{
-        CreationIdentity, JobBinding, JobSetupState, JournalRoot, ResourceObservation, RootState,
-        RuntimeSessionJournalV1,
+        CreationIdentity, JobBinding, JobSetupState, JournalRoot, JournalState,
+        ResourceObservation, RootState, RuntimeSessionJournalV1,
     },
     journal_store::{ClosingCasError, ClosingCasResult, RunningCasError, RunningCasResult},
     prepare::ValidatedActivationContext,
@@ -170,6 +170,10 @@ struct SuspendedGroup {
     listener_observation_count: usize,
     #[cfg(test)]
     root_exit_after_first: bool,
+    #[cfg(test)]
+    cleanup_attempts: usize,
+    #[cfg(test)]
+    cancel_after_cleanup_root: Option<usize>,
 }
 
 #[cfg(windows)]
@@ -419,6 +423,88 @@ pub(crate) struct RunningActivationOwner {
 pub(crate) struct ClosingActivationOwner {
     owner: SuspendedActivationOwner,
     closing_journal: RuntimeSessionJournalV1,
+    native_cleanup_proof: Option<NativeCleanupProof>,
+    listener_release_proof: Option<NativeListenerReleaseProof>,
+}
+
+/// Private proof retained after the exact Job and root handles have proved
+/// termination.  It deliberately retains the native identities needed by a
+/// later listener-release observation; it is not a TerminalProof.
+#[cfg(windows)]
+#[derive(Clone, PartialEq, Eq)]
+#[allow(dead_code)]
+struct NativeCleanupProof {
+    job_nonce: NativeNonce,
+    roots: Vec<NativeCleanupRootProof>,
+}
+
+#[cfg(windows)]
+#[derive(Clone, PartialEq, Eq)]
+#[allow(dead_code)]
+struct NativeCleanupRootProof {
+    ordinal: u32,
+    root_nonce: NativeNonce,
+    identity: OwnedProcessIdentity,
+}
+
+/// Private listener-release evidence bound to the Closing journal identity
+/// and to the same retained native cleanup proof.  Absence of a target row is
+/// the only successful observation; a foreign row remains ambiguous and is
+/// never touched.
+#[cfg(windows)]
+#[allow(dead_code)]
+struct NativeListenerReleaseProof {
+    session_nonce: String,
+    plan_digest: String,
+    closing_revision: u64,
+    native: NativeCleanupProof,
+    roots: Vec<NativeListenerReleaseRootProof>,
+}
+
+#[cfg(windows)]
+#[derive(Clone, PartialEq, Eq)]
+#[allow(dead_code)]
+struct NativeListenerReleaseRootProof {
+    ordinal: u32,
+    root_nonce: String,
+    creation_identity: CreationIdentity,
+    reserved_listener_identity: String,
+    readiness: String,
+    port: u16,
+}
+
+#[cfg(windows)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ClosingCleanupFailureKind {
+    Cancelled,
+    Deadline,
+    Native,
+    Listener,
+    Validation,
+}
+
+#[cfg(windows)]
+pub(crate) struct ClosingCleanupFailure {
+    kind: ClosingCleanupFailureKind,
+    detail: String,
+    owner: ClosingActivationOwner,
+}
+
+#[cfg(windows)]
+impl ClosingCleanupFailure {
+    pub(crate) fn into_owner(self) -> ClosingActivationOwner {
+        self.owner
+    }
+
+    #[cfg(test)]
+    pub(crate) fn kind_for_test(&self) -> ClosingCleanupFailureKind {
+        self.kind
+    }
+
+    #[cfg(test)]
+    pub(crate) fn detail_for_test(&self) -> &str {
+        &self.detail
+    }
 }
 
 #[cfg(windows)]
@@ -1661,6 +1747,8 @@ impl RunningActivationOwner {
         Ok(ClosingActivationOwner {
             owner: self.owner,
             closing_journal,
+            native_cleanup_proof: None,
+            listener_release_proof: None,
         })
     }
 
@@ -1707,6 +1795,241 @@ impl RunningActivationOwner {
 
 #[cfg(windows)]
 impl ClosingActivationOwner {
+    /// Consume the Closing owner through the native teardown boundary.  The
+    /// current Closing journal/index and every retained native identity are
+    /// checked before the first destructive operation.  A successful native
+    /// proof stays inside this same owner so a later listener-query failure
+    /// can be retried without reacquiring or reconstructing native state.
+    #[allow(dead_code)]
+    pub(crate) fn cleanup_native_and_observe_listener_release(
+        mut self,
+        deadline: std::time::Instant,
+        cancellation: Option<Arc<AtomicBool>>,
+    ) -> Result<Self, ClosingCleanupFailure> {
+        // A release proof is valid only for the observation that produced it.
+        // Clear it before every retry, including validation and cancellation
+        // exits, so a rebound or failed listener query can never inherit an
+        // earlier absence observation.
+        self.listener_release_proof = None;
+        let local_cancellation = Arc::new(AtomicBool::new(false));
+        let cancellation = cancellation.unwrap_or_else(|| Arc::clone(&local_cancellation));
+        if let Err(detail) = check_native_cleanup_budget(deadline, Some(cancellation.as_ref())) {
+            return Err(closing_cleanup_failure(self, detail));
+        }
+        if let Err(detail) = self.owner.staging.revalidate_closing_index_for_cleanup(
+            &self.closing_journal,
+            deadline,
+            Arc::clone(&cancellation),
+        ) {
+            return Err(closing_cleanup_failure(self, detail));
+        }
+
+        // Keep the exact Closing journal snapshot locked through native
+        // termination and listener-release observation.  A reconciler may
+        // still read the filesystem, but it cannot advance this journal and
+        // leave an older owner acting on a stale teardown intent.
+        let cleanup_admission = match self.owner.staging.begin_closing_cleanup_admission(
+            &self.closing_journal,
+            deadline,
+            Arc::clone(&cancellation),
+        ) {
+            Ok(admission) => admission,
+            Err(cause) => {
+                return Err(closing_cleanup_failure_for_admission(self, cause));
+            }
+        };
+        if cleanup_admission.current() != &self.closing_journal {
+            return Err(closing_cleanup_failure(
+                self,
+                "Capture runtime Closing journal changed before native cleanup admission.",
+            ));
+        }
+        if let Err(cause) = cleanup_admission.check_budget() {
+            return Err(closing_cleanup_failure(
+                self,
+                format!("Capture runtime Closing cleanup admission budget ended: {cause:?}."),
+            ));
+        }
+
+        if self.native_cleanup_proof.is_none() {
+            let expected = match self
+                .owner
+                .native
+                .as_mut()
+                .ok_or_else(|| {
+                    "Capture runtime native owner was missing before Closing cleanup.".to_string()
+                })
+                .and_then(|native| native.validate_closing_binding(&self.closing_journal))
+            {
+                Ok(expected) => expected,
+                Err(detail) => return Err(closing_cleanup_failure(self, detail)),
+            };
+            let proof = match self
+                .owner
+                .cleanup_native_for_closing(deadline, Some(cancellation.as_ref()))
+            {
+                Ok(proof) => proof,
+                Err(detail) => return Err(closing_cleanup_failure(self, detail)),
+            };
+            if proof != expected {
+                return Err(closing_cleanup_failure(
+                    self,
+                    "Capture runtime native cleanup proof did not retain the Closing identity tuple.",
+                ));
+            }
+            self.native_cleanup_proof = Some(proof);
+        } else {
+            // A retry after a failed listener observation must still bind the
+            // retained native proof to this exact Closing tuple.  The journal
+            // admission is unchanged, but the retained handles and all root
+            // identities are rechecked before another table observation.
+            let expected = match self
+                .owner
+                .native
+                .as_mut()
+                .ok_or_else(|| {
+                    "Capture runtime native owner was missing before listener retry.".to_string()
+                })
+                .and_then(|native| native.validate_closing_binding(&self.closing_journal))
+            {
+                Ok(expected) => expected,
+                Err(detail) => return Err(closing_cleanup_failure(self, detail)),
+            };
+            if self.native_cleanup_proof.as_ref() != Some(&expected) {
+                return Err(closing_cleanup_failure(
+                    self,
+                    "Capture runtime retained native cleanup proof no longer matched Closing.",
+                ));
+            }
+        }
+        if let Err(detail) = check_native_cleanup_budget(deadline, Some(cancellation.as_ref())) {
+            return Err(closing_cleanup_failure(self, detail));
+        }
+        if let Err(cause) = cleanup_admission.check_budget() {
+            return Err(closing_cleanup_failure(
+                self,
+                format!("Capture runtime Closing cleanup admission budget ended: {cause:?}."),
+            ));
+        }
+
+        let native = match self.owner.native.as_mut() {
+            Some(native) => native,
+            None => {
+                return Err(closing_cleanup_failure(
+                    self,
+                    "Capture runtime native owner was lost after cleanup proof.",
+                ));
+            }
+        };
+        let native_proof = self
+            .native_cleanup_proof
+            .as_ref()
+            .expect("native cleanup proof after successful cleanup")
+            .clone();
+        if let Err(cause) = cleanup_admission.check_budget() {
+            return Err(closing_cleanup_failure(
+                self,
+                format!("Capture runtime Closing listener proof budget ended: {cause:?}."),
+            ));
+        }
+        let release_roots = match self
+            .closing_journal
+            .roots
+            .iter()
+            .zip(&native_proof.roots)
+            .map(|(journal_root, native_root)| {
+                if journal_root.ordinal != native_root.ordinal
+                    || journal_root.root_nonce != native_nonce_text(&native_root.root_nonce)
+                    || journal_root.loopback_port == 0
+                    || journal_root.reserved_listener_identity.is_empty()
+                    || journal_root.live_listener_readiness.is_none()
+                {
+                    return None;
+                }
+                Some(NativeListenerReleaseRootProof {
+                    ordinal: journal_root.ordinal,
+                    root_nonce: journal_root.root_nonce.clone(),
+                    creation_identity: journal_root.creation_identity.clone(),
+                    reserved_listener_identity: journal_root.reserved_listener_identity.clone(),
+                    readiness: journal_root.live_listener_readiness.clone()?,
+                    port: journal_root.loopback_port,
+                })
+            })
+            .collect::<Option<Vec<_>>>()
+        {
+            Some(roots) if roots.len() == self.closing_journal.roots.len() => roots,
+            _ => {
+                return Err(closing_cleanup_failure(
+                    self,
+                    "Capture runtime listener release tuple was incomplete or reordered.",
+                ));
+            }
+        };
+        let release = match native.observe_listener_release_for_closing(
+            &self.closing_journal,
+            &native_proof,
+            deadline,
+            Some(cancellation.as_ref()),
+        ) {
+            Ok(()) => NativeListenerReleaseProof {
+                session_nonce: self.closing_journal.session_nonce.clone(),
+                plan_digest: self.closing_journal.plan_digest.clone(),
+                closing_revision: self.closing_journal.journal_revision,
+                native: native_proof,
+                roots: release_roots,
+            },
+            Err(detail) => return Err(closing_cleanup_failure(self, detail)),
+        };
+        if let Err(cause) = cleanup_admission.check_budget() {
+            return Err(closing_cleanup_failure(
+                self,
+                format!("Capture runtime Closing listener proof budget ended: {cause:?}."),
+            ));
+        }
+        self.listener_release_proof = Some(release);
+        drop(cleanup_admission);
+        Ok(self)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn native_cleanup_proven_for_test(&self) -> bool {
+        self.native_cleanup_proof.is_some()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn listener_release_proven_for_test(&self) -> bool {
+        self.listener_release_proof.is_some()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn native_cleanup_attempts_for_test(&self) -> usize {
+        self.owner
+            .native
+            .as_ref()
+            .map_or(0, |native| native.cleanup_attempts)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn inject_listener_query_failure_for_test(&mut self) {
+        let native = self.owner.native.as_mut().expect("native owner");
+        native.inject_listener_query_failure_for_test();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn inject_native_cleanup_failure_for_test(&mut self) {
+        let native = self.owner.native.as_mut().expect("native owner");
+        native.inject_cleanup_failure_after_first_for_test();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn inject_cancellation_after_native_cleanup_root_for_test(
+        &mut self,
+        ordinal: usize,
+    ) {
+        let native = self.owner.native.as_mut().expect("native owner");
+        native.inject_cancellation_after_cleanup_root_for_test(ordinal);
+    }
+
     #[cfg(test)]
     pub(crate) fn closing_journal_for_test(&self) -> &RuntimeSessionJournalV1 {
         &self.closing_journal
@@ -1715,6 +2038,70 @@ impl ClosingActivationOwner {
     #[cfg(test)]
     pub(crate) fn native_root_count_for_test(&self) -> Option<usize> {
         self.owner.native_root_count_for_test()
+    }
+}
+
+#[cfg(windows)]
+fn closing_cleanup_failure(
+    owner: ClosingActivationOwner,
+    detail: impl Into<String>,
+) -> ClosingCleanupFailure {
+    let detail = detail.into();
+    let lower = detail.to_ascii_lowercase();
+    let kind = if lower.contains("cancel") {
+        ClosingCleanupFailureKind::Cancelled
+    } else if lower.contains("deadline") || lower.contains("expired") {
+        ClosingCleanupFailureKind::Deadline
+    } else if lower.contains("listener") {
+        ClosingCleanupFailureKind::Listener
+    } else if lower.contains("native")
+        || lower.contains("job")
+        || lower.contains("process")
+        || lower.contains("cleanup")
+    {
+        ClosingCleanupFailureKind::Native
+    } else {
+        ClosingCleanupFailureKind::Validation
+    };
+    ClosingCleanupFailure {
+        kind,
+        detail,
+        owner,
+    }
+}
+
+#[cfg(windows)]
+fn closing_cleanup_failure_for_admission(
+    owner: ClosingActivationOwner,
+    cause: ClosingCasError,
+) -> ClosingCleanupFailure {
+    let kind = match cause {
+        ClosingCasError::Cancelled => ClosingCleanupFailureKind::Cancelled,
+        ClosingCasError::Deadline => ClosingCleanupFailureKind::Deadline,
+        // A conflict means the exact Closing tuple was stale before any
+        // native operation.  Keep this distinct from native cleanup/storage
+        // failures so callers can reconcile the foreign journal safely.
+        ClosingCasError::Conflict => ClosingCleanupFailureKind::Validation,
+        ClosingCasError::Storage => ClosingCleanupFailureKind::Native,
+    };
+    let detail = match cause {
+        ClosingCasError::Cancelled => {
+            "Capture runtime Closing cleanup admission was cancelled before native cleanup."
+        }
+        ClosingCasError::Deadline => {
+            "Capture runtime Closing cleanup admission expired before native cleanup."
+        }
+        ClosingCasError::Conflict => {
+            "Capture runtime Closing cleanup admission found a stale journal snapshot."
+        }
+        ClosingCasError::Storage => {
+            "Capture runtime Closing cleanup admission could not read its exact snapshot."
+        }
+    };
+    ClosingCleanupFailure {
+        kind,
+        detail: detail.into(),
+        owner,
     }
 }
 
@@ -2102,6 +2489,10 @@ impl SuspendedGroup {
             listener_observation_count: 0,
             #[cfg(test)]
             root_exit_after_first: false,
+            #[cfg(test)]
+            cleanup_attempts: 0,
+            #[cfg(test)]
+            cancel_after_cleanup_root: None,
         };
         for (ordinal, command) in commands.iter_mut().enumerate() {
             let root_nonce = *group
@@ -2272,6 +2663,138 @@ impl SuspendedGroup {
         })
     }
 
+    /// Validate the retained native identities against the exact Closing
+    /// journal without requiring the roots or listeners to remain live.  This
+    /// is the last non-destructive gate before Job termination.
+    fn validate_closing_binding(
+        &mut self,
+        expected: &RuntimeSessionJournalV1,
+    ) -> Result<NativeCleanupProof, String> {
+        if expected.state != JournalState::Closing {
+            return Err("Capture runtime native cleanup required a Closing journal.".into());
+        }
+        let job = expected
+            .job_binding
+            .as_ref()
+            .ok_or_else(|| "Capture runtime Closing Job binding was missing.".to_string())?;
+        if job.setup_state != JobSetupState::Committed
+            || native_nonce_text(&self.job_nonce) != job.job_nonce
+            || self.job.is_none()
+        {
+            return Err("Capture runtime Closing Job identity changed before cleanup.".into());
+        }
+        if self.roots.len() != expected.roots.len()
+            || self.roots.is_empty()
+            || !self.unacquired_root_nonces.is_empty()
+        {
+            return Err("Capture runtime Closing native root set was incomplete.".into());
+        }
+        let mut seen_nonces = HashSet::with_capacity(self.roots.len().saturating_add(1));
+        if !seen_nonces.insert(self.job_nonce) {
+            return Err("Capture runtime Closing Job nonce was duplicated.".into());
+        }
+        let mut roots = Vec::with_capacity(self.roots.len());
+        for (index, (native_root, journal_root)) in
+            self.roots.iter_mut().zip(&expected.roots).enumerate()
+        {
+            let ordinal = u32::try_from(index)
+                .map_err(|_| "Capture runtime Closing root ordinal exceeded its range.")?;
+            if native_root.ordinal != ordinal
+                || journal_root.ordinal != ordinal
+                || native_root.state != SuspendedRootState::Resumed
+                || journal_root.state != RootState::Closing
+                || journal_root.live_listener_readiness.is_none()
+                || journal_root.loopback_port == 0
+            {
+                return Err(
+                    "Capture runtime Closing root binding was incomplete or reordered.".into(),
+                );
+            }
+            if !seen_nonces.insert(native_root.root_nonce) {
+                return Err("Capture runtime Closing root nonce was duplicated.".into());
+            }
+            let expected_identity = parse_creation_identity(journal_root).map(|creation_time| {
+                OwnedProcessIdentity {
+                    pid: journal_root.pid,
+                    creation_time,
+                }
+            })?;
+            let retained_identity = native_root.identity.ok_or_else(|| {
+                format!("Capture runtime Closing root {ordinal} identity was missing.")
+            })?;
+            if retained_identity != expected_identity
+                || native_nonce_text(&native_root.root_nonce) != journal_root.root_nonce
+            {
+                return Err(
+                    "Capture runtime Closing native root identity changed before cleanup.".into(),
+                );
+            }
+            let observed = process_identity_from_handle(
+                native_root.child.as_raw_handle() as *mut c_void,
+                native_root.child.id(),
+            )?;
+            if observed != retained_identity {
+                return Err(
+                    "Capture runtime Closing retained root handle identity changed before cleanup."
+                        .into(),
+                );
+            }
+            roots.push(NativeCleanupRootProof {
+                ordinal,
+                root_nonce: native_root.root_nonce,
+                identity: retained_identity,
+            });
+        }
+        Ok(NativeCleanupProof {
+            job_nonce: self.job_nonce,
+            roots,
+        })
+    }
+
+    /// Stop and prove the exact retained Job while leaving this group in the
+    /// owner.  A subsequent listener observation can therefore use the same
+    /// root handles and cannot accidentally reacquire by PID.
+    fn cleanup_and_retain_proof(
+        &mut self,
+        deadline: std::time::Instant,
+        cancellation: Option<&AtomicBool>,
+    ) -> Result<NativeCleanupProof, String> {
+        if self.cleanup_complete {
+            return self
+                .retained_cleanup_proof()
+                .ok_or_else(|| "Capture runtime native cleanup proof was incomplete.".into());
+        }
+        let _proof = self.cleanup_inner_with_budget(deadline, cancellation)?;
+        self.cleanup_complete = true;
+        self.retained_cleanup_proof()
+            .ok_or_else(|| "Capture runtime native cleanup proof was incomplete.".into())
+    }
+
+    fn retained_cleanup_proof(&self) -> Option<NativeCleanupProof> {
+        if !self.cleanup_complete
+            || self.roots.is_empty()
+            || !self.unacquired_root_nonces.is_empty()
+        {
+            return None;
+        }
+        let roots = self
+            .roots
+            .iter()
+            .enumerate()
+            .map(|(index, root)| {
+                Some(NativeCleanupRootProof {
+                    ordinal: u32::try_from(index).ok()?,
+                    root_nonce: root.root_nonce,
+                    identity: root.identity?,
+                })
+            })
+            .collect::<Option<Vec<_>>>()?;
+        Some(NativeCleanupProof {
+            job_nonce: self.job_nonce,
+            roots,
+        })
+    }
+
     fn verify_listener_roots(
         &mut self,
         deadline: std::time::Instant,
@@ -2348,7 +2871,10 @@ impl SuspendedGroup {
             return Err("Injected listener table query failure.".into());
         }
         let table = query_listener_table(deadline, cancellation)?;
+        #[cfg(test)]
         let mut observation = parse_listener_table(&table, &before, ports)?;
+        #[cfg(not(test))]
+        let observation = parse_listener_table(&table, &before, ports)?;
         #[cfg(test)]
         {
             let mutate = (self.listener_identity_mutation_after_first
@@ -2386,6 +2912,93 @@ impl SuspendedGroup {
         }
         check_listener_budget(deadline, cancellation)?;
         Ok(observation)
+    }
+
+    /// Prove that every listener reserved by the exact Closing roots is gone.
+    /// This runs after native termination and never opens, terminates, or
+    /// otherwise acts on a PID from the table.  Any row on a reserved port,
+    /// including a foreign or wildcard row, remains ambiguous and fails
+    /// closed.
+    fn observe_listener_release(
+        &mut self,
+        expected: &NativeCleanupProof,
+        ports: &[u16],
+        deadline: std::time::Instant,
+        cancellation: Option<&AtomicBool>,
+    ) -> Result<(), String> {
+        check_listener_budget(deadline, cancellation)?;
+        if !self.cleanup_complete
+            || self.retained_cleanup_proof().as_ref() != Some(expected)
+            || expected.roots.len() != ports.len()
+            || ports.is_empty()
+        {
+            return Err(
+                "Capture runtime listener release lacked the exact native cleanup proof.".into(),
+            );
+        }
+        let mut seen_ports = HashSet::with_capacity(ports.len());
+        for (index, (&port, root)) in ports.iter().zip(&expected.roots).enumerate() {
+            let ordinal = u32::try_from(index)
+                .map_err(|_| "Capture runtime listener release root ordinal exceeded its range.")?;
+            if root.ordinal != ordinal || port == 0 || !seen_ports.insert(port) {
+                return Err(
+                    "Capture runtime listener release ports were incomplete or reordered.".into(),
+                );
+            }
+        }
+        #[cfg(test)]
+        if self.listener_query_failure {
+            self.listener_query_failure = false;
+            return Err("Injected listener release table query failure.".into());
+        }
+        let table = query_listener_table(deadline, cancellation)?;
+        let rows = listener_table_rows(&table)?;
+        for row in rows {
+            let port = u16::from_be(row.dwLocalPort as u16);
+            if ports.contains(&port) {
+                return Err(format!(
+                    "A listener remained on reserved port {port}; release was ambiguous."
+                ));
+            }
+        }
+        check_listener_budget(deadline, cancellation)?;
+        Ok(())
+    }
+
+    /// Closing's production caller supplies the already admitted journal
+    /// tuple; ports are projected here rather than accepted as an unrelated
+    /// helper argument.  The lower-level function remains useful for the
+    /// native parser tests, but the lifecycle owner cannot ask it to inspect
+    /// arbitrary caller-selected ports.
+    fn observe_listener_release_for_closing(
+        &mut self,
+        closing: &RuntimeSessionJournalV1,
+        expected: &NativeCleanupProof,
+        deadline: std::time::Instant,
+        cancellation: Option<&AtomicBool>,
+    ) -> Result<(), String> {
+        if closing.state != JournalState::Closing
+            || closing.roots.len() != expected.roots.len()
+            || closing.roots.is_empty()
+        {
+            return Err("Capture runtime Closing listener tuple was incomplete.".into());
+        }
+        let ports = closing
+            .roots
+            .iter()
+            .zip(&expected.roots)
+            .map(|(journal_root, native_root)| {
+                if journal_root.ordinal != native_root.ordinal
+                    || journal_root.loopback_port == 0
+                    || journal_root.root_nonce != native_nonce_text(&native_root.root_nonce)
+                {
+                    return None;
+                }
+                Some(journal_root.loopback_port)
+            })
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(|| "Capture runtime Closing listener tuple was reordered.".to_string())?;
+        self.observe_listener_release(expected, &ports, deadline, cancellation)
     }
 
     #[cfg(test)]
@@ -2447,9 +3060,23 @@ impl SuspendedGroup {
     fn cleanup_inner(&mut self) -> Result<GroupCleanupProof, String> {
         let deadline = std::time::Instant::now()
             + std::time::Duration::from_millis(u64::from(GROUP_CLEANUP_BUDGET_MS));
+        self.cleanup_inner_with_budget(deadline, None)
+    }
+
+    fn cleanup_inner_with_budget(
+        &mut self,
+        deadline: std::time::Instant,
+        cancellation: Option<&AtomicBool>,
+    ) -> Result<GroupCleanupProof, String> {
+        check_native_cleanup_budget(deadline, cancellation)?;
+        #[cfg(test)]
+        {
+            self.cleanup_attempts = self.cleanup_attempts.saturating_add(1);
+        }
         let job = self.job.as_mut().expect("group Job");
         let _job_terminated = job.terminate().is_ok();
         for (index, root) in self.roots.iter_mut().enumerate() {
+            check_native_cleanup_budget(deadline, cancellation)?;
             #[cfg(not(test))]
             let _ = index;
             #[cfg(test)]
@@ -2470,7 +3097,15 @@ impl SuspendedGroup {
             } else {
                 terminate_child_by_exact_handle(&mut root.child, remaining_timeout_ms(deadline))?;
             }
+            #[cfg(test)]
+            if self.cancel_after_cleanup_root == Some(index) {
+                self.cancel_after_cleanup_root = None;
+                if let Some(cancellation) = cancellation {
+                    cancellation.store(true, Ordering::Release);
+                }
+            }
         }
+        check_native_cleanup_budget(deadline, cancellation)?;
         if self.job.as_ref().expect("group Job").active_processes()? != 0 {
             self.job
                 .as_mut()
@@ -2503,6 +3138,11 @@ impl SuspendedGroup {
     #[cfg(test)]
     fn inject_cleanup_failure_after_first_for_test(&mut self) {
         self.cleanup_failure_at = Some(1);
+    }
+
+    #[cfg(test)]
+    fn inject_cancellation_after_cleanup_root_for_test(&mut self, ordinal: usize) {
+        self.cancel_after_cleanup_root = Some(ordinal);
     }
 
     #[cfg(test)]
@@ -2547,6 +3187,20 @@ fn check_listener_budget(
     }
     if std::time::Instant::now() >= deadline {
         return Err("Runtime listener observation exceeded its group deadline.".into());
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn check_native_cleanup_budget(
+    deadline: std::time::Instant,
+    cancellation: Option<&AtomicBool>,
+) -> Result<(), String> {
+    if cancellation.is_some_and(|flag| flag.load(Ordering::Acquire)) {
+        return Err("Capture runtime native cleanup was cancelled.".into());
+    }
+    if std::time::Instant::now() >= deadline {
+        return Err("Capture runtime native cleanup exceeded its group deadline.".into());
     }
     Ok(())
 }
@@ -2668,33 +3322,13 @@ fn parse_listener_table(
     expected_identities: &[OwnedProcessIdentity],
     ports: &[u16],
 ) -> Result<NativeListenerObservation, String> {
-    if table.len() < size_of::<u32>() || expected_identities.len() != ports.len() {
+    if expected_identities.len() != ports.len() {
         return Err("The Windows listener table result was too short or incomplete.".into());
     }
-    let count = u32::from_ne_bytes(
-        table[..size_of::<u32>()]
-            .try_into()
-            .map_err(|_| "The Windows listener table row count was malformed.")?,
-    );
-    let count = usize::try_from(count)
-        .map_err(|_| "The Windows listener table row count exceeded the platform range.")?;
-    let row_size = size_of::<MIB_TCPROW_OWNER_PID>();
-    let rows_bytes = count
-        .checked_mul(row_size)
-        .ok_or_else(|| "The Windows listener table row count overflowed.".to_string())?;
-    let required = size_of::<u32>()
-        .checked_add(rows_bytes)
-        .ok_or_else(|| "The Windows listener table size overflowed.".to_string())?;
-    if required > table.len() || required > MAX_TCP_TABLE_BYTES {
-        return Err("The Windows listener table row count exceeded its buffer.".into());
-    }
+    let rows = listener_table_rows(table)?;
 
     let mut observed = (0..ports.len()).map(|_| None).collect::<Vec<_>>();
-    for row_index in 0..count {
-        let offset = size_of::<u32>() + row_index * row_size;
-        let row = unsafe {
-            ptr::read_unaligned(table.as_ptr().add(offset).cast::<MIB_TCPROW_OWNER_PID>())
-        };
+    for row in rows {
         let port = u16::from_be(row.dwLocalPort as u16);
         let target = ports.iter().position(|expected| *expected == port);
         let Some(target) = target else {
@@ -2733,6 +3367,38 @@ fn parse_listener_table(
         })
         .collect::<Result<Vec<_>, _>>()?;
     Ok(NativeListenerObservation { roots })
+}
+
+#[cfg(windows)]
+fn listener_table_rows(table: &[u8]) -> Result<Vec<MIB_TCPROW_OWNER_PID>, String> {
+    if table.len() < size_of::<u32>() || table.len() > MAX_TCP_TABLE_BYTES {
+        return Err("The Windows listener table result was too short or too large.".into());
+    }
+    let count = u32::from_ne_bytes(
+        table[..size_of::<u32>()]
+            .try_into()
+            .map_err(|_| "The Windows listener table row count was malformed.")?,
+    );
+    let count = usize::try_from(count)
+        .map_err(|_| "The Windows listener table row count exceeded the platform range.")?;
+    let row_size = size_of::<MIB_TCPROW_OWNER_PID>();
+    let rows_bytes = count
+        .checked_mul(row_size)
+        .ok_or_else(|| "The Windows listener table row count overflowed.".to_string())?;
+    let required = size_of::<u32>()
+        .checked_add(rows_bytes)
+        .ok_or_else(|| "The Windows listener table size overflowed.".to_string())?;
+    if required > table.len() || required > MAX_TCP_TABLE_BYTES {
+        return Err("The Windows listener table row count exceeded its buffer.".into());
+    }
+    (0..count)
+        .map(|row_index| {
+            let offset = size_of::<u32>() + row_index * row_size;
+            Ok(unsafe {
+                ptr::read_unaligned(table.as_ptr().add(offset).cast::<MIB_TCPROW_OWNER_PID>())
+            })
+        })
+        .collect()
 }
 
 #[cfg(windows)]
@@ -2864,6 +3530,26 @@ pub(crate) fn acquire_suspended_from_staging(
 
 #[cfg(windows)]
 impl SuspendedActivationOwner {
+    fn cleanup_native_for_closing(
+        &mut self,
+        deadline: std::time::Instant,
+        cancellation: Option<&AtomicBool>,
+    ) -> Result<NativeCleanupProof, String> {
+        if self.native_cleanup_proven {
+            return self
+                .native
+                .as_ref()
+                .and_then(SuspendedGroup::retained_cleanup_proof)
+                .ok_or_else(|| "Capture runtime native cleanup proof was incomplete.".into());
+        }
+        let native = self.native.as_mut().ok_or_else(|| {
+            "Capture runtime native owner was missing before Closing cleanup.".to_string()
+        })?;
+        let proof = native.cleanup_and_retain_proof(deadline, cancellation)?;
+        self.native_cleanup_proven = true;
+        Ok(proof)
+    }
+
     /// Cleanup is native-first.  A staging retry after successful native
     /// proof retains only the staging owner and never recreates the group.
     #[allow(dead_code)]
@@ -4787,6 +5473,34 @@ mod tests {
             .cleanup_and_prove()
             .expect("foreign listener group cleanup");
         assert!(proof.roots_reaped);
+        drop(foreign);
+        let _ = std::fs::remove_file(marker);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn listener_release_foreign_row_is_ambiguous_without_touching_foreign_listener() {
+        let foreign = TcpListener::bind(("127.0.0.1", 0)).expect("foreign listener");
+        let port = foreign.local_addr().expect("foreign address").port();
+        let marker = group_marker_path("listener-release-foreign");
+        let mut commands = [marker_command(&marker, true)];
+        let mut group = SuspendedGroup::spawn(&mut commands)
+            .expect("suspended group")
+            .resume_all()
+            .expect("resumed group");
+        let cleanup_proof = group
+            .cleanup_and_retain_proof(std::time::Instant::now() + Duration::from_secs(5), None)
+            .expect("native cleanup proof");
+        let error = group
+            .observe_listener_release(
+                &cleanup_proof,
+                &[port],
+                std::time::Instant::now() + Duration::from_secs(5),
+                None,
+            )
+            .expect_err("foreign listener must block release proof");
+        assert!(error.contains("reserved port"));
+        assert!(TcpStream::connect(("127.0.0.1", port)).is_ok());
         drop(foreign);
         let _ = std::fs::remove_file(marker);
     }

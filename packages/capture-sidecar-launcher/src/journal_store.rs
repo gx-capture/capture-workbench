@@ -254,6 +254,18 @@ pub(crate) struct ClosingCasAdmission {
     _lock: JournalFileLock,
 }
 
+/// A read-only teardown admission.  The journal lock is intentionally held
+/// while the native owner performs its destructive cleanup and listener
+/// observation; a reconciler therefore cannot advance the Closing record
+/// after preflight and leave an older owner acting on it.
+#[cfg(windows)]
+pub(crate) struct ClosingCleanupAdmission {
+    current: RuntimeSessionJournalV1,
+    deadline: Instant,
+    cancellation: Arc<AtomicBool>,
+    _lock: JournalFileLock,
+}
+
 #[cfg(windows)]
 pub(crate) enum RunningCasResult {
     Committed(RuntimeSessionJournalV1),
@@ -455,6 +467,46 @@ impl JournalStore {
             plan: plan.clone(),
             expected: expected.cas_snapshot(),
             expected_journal: expected.clone(),
+            current,
+            deadline,
+            cancellation,
+            _lock: lock,
+        })
+    }
+
+    /// Acquire the journal lock and retain the exact Closing value for the
+    /// entire native cleanup observation.  The caller validates the immutable
+    /// address index before entering this method; this method is the single
+    /// full journal snapshot check under the lock and performs no nested read.
+    #[cfg(windows)]
+    pub(crate) fn begin_closing_cleanup_admission(
+        self: &Arc<Self>,
+        plan: &JournalPlanValue,
+        expected: &RuntimeSessionJournalV1,
+        deadline: Instant,
+        cancellation: Arc<AtomicBool>,
+    ) -> Result<ClosingCleanupAdmission, JournalStoreError> {
+        self.validate_plan_identity(plan)?;
+        expected
+            .validate_against_plan(plan)
+            .map_err(JournalStoreError::Journal)?;
+        if expected.state != JournalState::Closing
+            || expected.session_nonce != self.config.session_nonce
+            || expected.plan_digest != self.config.plan_digest
+        {
+            return Err(JournalStoreError::Conflict);
+        }
+        check_running_admission_budget(deadline, cancellation.as_ref())?;
+        validate_producer_root(&self.config.producer_root)?;
+        let lock =
+            JournalFileLock::acquire_until(&self.lock_path, deadline, cancellation.as_ref())?;
+        validate_producer_root(&self.config.producer_root)?;
+        let current = self.read_unlocked(plan)?;
+        if current != *expected || current.cas_snapshot() != expected.cas_snapshot() {
+            return Err(JournalStoreError::Conflict);
+        }
+        check_running_admission_budget(deadline, cancellation.as_ref())?;
+        Ok(ClosingCleanupAdmission {
             current,
             deadline,
             cancellation,
@@ -1123,6 +1175,17 @@ impl ClosingCasAdmission {
 }
 
 #[cfg(windows)]
+impl ClosingCleanupAdmission {
+    pub(crate) fn current(&self) -> &RuntimeSessionJournalV1 {
+        &self.current
+    }
+
+    pub(crate) fn check_budget(&self) -> Result<(), JournalStoreError> {
+        check_running_admission_budget(self.deadline, self.cancellation.as_ref())
+    }
+}
+
+#[cfg(windows)]
 fn cancellation_requested(cancellation: &AtomicBool) -> bool {
     cancellation.load(Ordering::Acquire)
 }
@@ -1482,7 +1545,11 @@ mod tests {
         env, fs,
         path::Path,
         process::Command,
-        sync::{atomic::AtomicBool, Arc, Barrier},
+        sync::{
+            atomic::AtomicBool,
+            mpsc::{channel, TryRecvError},
+            Arc, Barrier,
+        },
         thread,
         time::{Duration, Instant},
     };
@@ -1898,6 +1965,124 @@ mod tests {
             Err(JournalStoreError::Conflict)
         ));
         assert_eq!(store.read(&plan).expect("foreign drift remains"), drifted);
+    }
+
+    #[test]
+    fn closing_cleanup_admission_holds_journal_lock_for_destructive_window() {
+        let directory = tempdir().expect("tempdir");
+        let plan = plan();
+        let store = Arc::new(JournalStore::new(config(directory.path())).expect("store"));
+        let initial = RuntimeSessionJournalV1::planned(
+            &plan,
+            "session-1".into(),
+            "2026-09-11T00:00:00Z".into(),
+        )
+        .expect("planned journal");
+        store
+            .create_initial(&plan, &initial)
+            .expect("initial journal");
+        let prepared = store
+            .compare_and_swap(
+                &plan,
+                &initial.cas_snapshot(),
+                JournalStoreCommand::PrepareBound {
+                    binding: large_binding(&plan),
+                    timestamp: "2026-09-11T00:00:01Z".into(),
+                },
+            )
+            .expect("prepared journal");
+        let ready = store
+            .compare_and_swap(
+                &plan,
+                &prepared.cas_snapshot(),
+                JournalStoreCommand::TransitionWithObservation {
+                    next_state: JournalState::Ready,
+                    observation: running_observation(None, RootState::Suspended),
+                    timestamp: "2026-09-11T00:00:01Z".into(),
+                },
+            )
+            .expect("Ready journal");
+        let launching = store
+            .compare_and_swap(
+                &plan,
+                &ready.cas_snapshot(),
+                JournalStoreCommand::TransitionWithObservation {
+                    next_state: JournalState::Launching,
+                    observation: running_observation(None, RootState::Suspended),
+                    timestamp: "2026-09-11T00:00:01Z".into(),
+                },
+            )
+            .expect("Launching journal");
+        let running = store
+            .compare_and_swap(
+                &plan,
+                &launching.cas_snapshot(),
+                JournalStoreCommand::TransitionWithObservation {
+                    next_state: JournalState::Running,
+                    observation: running_observation(
+                        Some("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+                        RootState::Running,
+                    ),
+                    timestamp: "2026-09-11T00:00:01Z".into(),
+                },
+            )
+            .expect("Running journal");
+        let closing = store
+            .compare_and_swap(
+                &plan,
+                &running.cas_snapshot(),
+                JournalStoreCommand::TransitionWithObservation {
+                    next_state: JournalState::Closing,
+                    observation: running_observation(
+                        Some("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+                        RootState::Closing,
+                    ),
+                    timestamp: "2026-09-11T00:00:01Z".into(),
+                },
+            )
+            .expect("Closing journal");
+
+        let contention = Arc::new(AtomicBool::new(false));
+        store.set_running_lock_contention_signal_for_test(Some(Arc::clone(&contention)));
+        let admission = store
+            .begin_closing_cleanup_admission(
+                &plan,
+                &closing,
+                Instant::now() + Duration::from_secs(5),
+                Arc::new(AtomicBool::new(false)),
+            )
+            .expect("cleanup admission");
+        let (result_sender, result_receiver) = channel();
+        let contender_store = Arc::clone(&store);
+        let contender = thread::spawn(move || {
+            let result = contender_store.lock_for_test();
+            let _ = result_sender.send(result.is_ok());
+            result.map(drop)
+        });
+        let contention_deadline = Instant::now() + Duration::from_secs(2);
+        while !contention.load(Ordering::Acquire) && Instant::now() < contention_deadline {
+            thread::yield_now();
+        }
+        assert!(
+            contention.load(Ordering::Acquire),
+            "a concurrent writer must observe the held cleanup lock"
+        );
+        assert!(matches!(
+            result_receiver.try_recv(),
+            Err(TryRecvError::Empty)
+        ));
+        drop(admission);
+        assert_eq!(
+            result_receiver
+                .recv_timeout(Duration::from_secs(5))
+                .expect("contender result"),
+            true
+        );
+        contender
+            .join()
+            .expect("contender must terminate")
+            .expect("lock acquired");
+        store.set_running_lock_contention_signal_for_test(None);
     }
 
     #[test]

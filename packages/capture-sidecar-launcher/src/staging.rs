@@ -40,7 +40,7 @@ use crate::{
 #[cfg(windows)]
 use crate::journal_store::{
     install_running_read_budget, ClosingCasAdmission, ClosingCasError, ClosingCasResult,
-    RunningCasAdmission, RunningCasError, RunningCasResult,
+    ClosingCleanupAdmission, RunningCasAdmission, RunningCasError, RunningCasResult,
 };
 
 #[cfg(windows)]
@@ -554,6 +554,53 @@ impl RunStagingOwner {
             return Err("Capture runtime Running journal changed before Closing CAS.".into());
         }
         Ok(())
+    }
+
+    /// Revalidate the immutable address index and its journal binding before
+    /// the destructive Closing admission.  The full journal snapshot is
+    /// checked again under the admission lock, so this preflight does not
+    /// create a read-then-cleanup authority gap of its own.
+    #[cfg(windows)]
+    pub(crate) fn revalidate_closing_index_for_cleanup(
+        &self,
+        expected: &RuntimeSessionJournalV1,
+        deadline: Instant,
+        cancellation: Arc<AtomicBool>,
+    ) -> Result<(), String> {
+        expected
+            .validate_against_plan(&self.activation.journal_plan)
+            .map_err(|_| {
+                "Capture runtime Closing journal was invalid before native cleanup.".to_string()
+            })?;
+        if expected.state != JournalState::Closing
+            || expected.session_nonce != self.activation.descriptor.session_nonce()
+            || expected.plan_digest != self.activation.journal_plan.plan_digest
+        {
+            return Err(
+                "Capture runtime retained journal was not the exact Closing binding.".into(),
+            );
+        }
+        let _budget = install_running_read_budget(deadline, Arc::clone(&cancellation));
+        self.activation.revalidate_address_index()
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn begin_closing_cleanup_admission(
+        &self,
+        expected: &RuntimeSessionJournalV1,
+        deadline: Instant,
+        cancellation: Arc<AtomicBool>,
+    ) -> Result<ClosingCleanupAdmission, ClosingCasError> {
+        self.activation
+            .context
+            .store
+            .begin_closing_cleanup_admission(
+                &self.activation.journal_plan,
+                expected,
+                deadline,
+                cancellation,
+            )
+            .map_err(map_closing_cas_error)
     }
 
     pub(crate) fn checked_commands_for_running(&self) -> Result<Vec<Command>, String> {

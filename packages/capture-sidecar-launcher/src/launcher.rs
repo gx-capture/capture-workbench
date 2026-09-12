@@ -3819,7 +3819,386 @@ mod tests {
             .iter()
             .all(|root| root.state == crate::journal::RootState::Closing));
         assert_eq!(closing.native_root_count_for_test(), Some(1));
-        drop(closing);
+        let cleaned = closing
+            .cleanup_native_and_observe_listener_release(
+                Instant::now() + Duration::from_secs(10),
+                None,
+            )
+            .unwrap_or_else(|_| {
+                panic!("dead root should still prove native cleanup and listener release")
+            });
+        assert!(cleaned.native_cleanup_proven_for_test());
+        assert!(cleaned.listener_release_proven_for_test());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn closing_native_cleanup_proves_listener_release_for_one_and_many_roots() {
+        for root_count in [1_usize, 2] {
+            let directory = tempfile::tempdir().expect("tempdir");
+            let (plan, _marker_paths, running, running_journal) =
+                running_http_owner_for_test(directory.path(), root_count);
+            let closing = running
+                .begin_closing_with_cancellation(Instant::now() + Duration::from_secs(10), None)
+                .unwrap_or_else(|_| panic!("Running owner should enter Closing"));
+            let group_path = plan
+                .context
+                .activation_descriptor
+                .as_ref()
+                .expect("activation descriptor")
+                .planned_group_staging_path();
+
+            let cleaned = closing
+                .cleanup_native_and_observe_listener_release(
+                    Instant::now() + Duration::from_secs(10),
+                    None,
+                )
+                .unwrap_or_else(|_| panic!("native cleanup and listener absence proof"));
+            assert!(cleaned.native_cleanup_proven_for_test());
+            assert!(cleaned.listener_release_proven_for_test());
+            assert_eq!(cleaned.native_root_count_for_test(), Some(root_count));
+            assert_eq!(cleaned.native_cleanup_attempts_for_test(), 1);
+            assert!(group_path.is_dir(), "Closing cleanup must retain staging");
+            let disk = plan
+                .context
+                .store
+                .read(&plan.value)
+                .expect("Closing journal");
+            assert_eq!(&disk, cleaned.closing_journal_for_test());
+            assert_eq!(disk.state, crate::journal::JournalState::Closing);
+            assert_eq!(disk.journal_revision, running_journal.journal_revision + 1);
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn closing_listener_query_failure_retains_native_proof_for_retry() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (plan, _marker_paths, running, _running_journal) =
+            running_http_owner_for_test(directory.path(), 1);
+        let mut closing = running
+            .begin_closing_with_cancellation(Instant::now() + Duration::from_secs(10), None)
+            .unwrap_or_else(|_| panic!("Running owner should enter Closing"));
+        closing.inject_listener_query_failure_for_test();
+
+        let failure = match closing.cleanup_native_and_observe_listener_release(
+            Instant::now() + Duration::from_secs(10),
+            None,
+        ) {
+            Ok(_) => panic!("listener query failure must retain Closing owner"),
+            Err(failure) => failure,
+        };
+        assert_eq!(
+            failure.kind_for_test(),
+            crate::process::ClosingCleanupFailureKind::Listener
+        );
+        assert!(failure
+            .detail_for_test()
+            .contains("listener release table query failure"));
+        let retained = failure.into_owner();
+        assert!(retained.native_cleanup_proven_for_test());
+        assert!(!retained.listener_release_proven_for_test());
+        assert_eq!(retained.native_cleanup_attempts_for_test(), 1);
+
+        let retried = retained
+            .cleanup_native_and_observe_listener_release(
+                Instant::now() + Duration::from_secs(10),
+                None,
+            )
+            .unwrap_or_else(|_| panic!("listener release retry"));
+        assert!(retried.native_cleanup_proven_for_test());
+        assert!(retried.listener_release_proven_for_test());
+        assert_eq!(retried.native_cleanup_attempts_for_test(), 1);
+        assert_eq!(
+            plan.context
+                .store
+                .read(&plan.value)
+                .expect("Closing journal")
+                .state,
+            crate::journal::JournalState::Closing
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn closing_listener_release_rejects_rebound_reserved_port_and_reobserves_after_release() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (_plan, _marker_paths, running, _running_journal) =
+            running_http_owner_for_test(directory.path(), 1);
+        let closing = running
+            .begin_closing_with_cancellation(Instant::now() + Duration::from_secs(10), None)
+            .unwrap_or_else(|_| panic!("Running owner should enter Closing"));
+        let port = closing.closing_journal_for_test().roots[0].loopback_port;
+        let cleaned = closing
+            .cleanup_native_and_observe_listener_release(
+                Instant::now() + Duration::from_secs(10),
+                None,
+            )
+            .unwrap_or_else(|_| panic!("first listener-release observation"));
+        assert!(cleaned.listener_release_proven_for_test());
+        assert_eq!(cleaned.native_cleanup_attempts_for_test(), 1);
+
+        let foreign = TcpListener::bind((LOOPBACK_HOST, port))
+            .expect("foreign listener can rebind the released port");
+        let failure = match cleaned.cleanup_native_and_observe_listener_release(
+            Instant::now() + Duration::from_secs(10),
+            None,
+        ) {
+            Ok(_) => panic!("a rebound reserved port must clear release authority"),
+            Err(failure) => failure,
+        };
+        assert_eq!(
+            failure.kind_for_test(),
+            crate::process::ClosingCleanupFailureKind::Listener
+        );
+        assert!(failure
+            .detail_for_test()
+            .contains("listener remained on reserved port"));
+        let retained = failure.into_owner();
+        assert!(retained.native_cleanup_proven_for_test());
+        assert!(!retained.listener_release_proven_for_test());
+        assert_eq!(retained.native_cleanup_attempts_for_test(), 1);
+        assert!(
+            TcpStream::connect_timeout(
+                &format!("{LOOPBACK_HOST}:{port}")
+                    .parse()
+                    .expect("foreign address"),
+                Duration::from_secs(1),
+            )
+            .is_ok(),
+            "cleanup must never touch a foreign listener"
+        );
+        drop(foreign);
+
+        let retried = retained
+            .cleanup_native_and_observe_listener_release(
+                Instant::now() + Duration::from_secs(10),
+                None,
+            )
+            .unwrap_or_else(|_| panic!("release should reobserve after foreign listener exits"));
+        assert!(retried.listener_release_proven_for_test());
+        assert_eq!(retried.native_cleanup_attempts_for_test(), 1);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn closing_native_cleanup_failure_retains_same_owner_for_retry() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (plan, _marker_paths, running, _running_journal) =
+            running_http_owner_for_test(directory.path(), 2);
+        let mut closing = running
+            .begin_closing_with_cancellation(Instant::now() + Duration::from_secs(10), None)
+            .unwrap_or_else(|_| panic!("Running owner should enter Closing"));
+        closing.inject_native_cleanup_failure_for_test();
+
+        let failure = match closing.cleanup_native_and_observe_listener_release(
+            Instant::now() + Duration::from_secs(10),
+            None,
+        ) {
+            Ok(_) => panic!("native cleanup failure must retain Closing owner"),
+            Err(failure) => failure,
+        };
+        assert_eq!(
+            failure.kind_for_test(),
+            crate::process::ClosingCleanupFailureKind::Native
+        );
+        let retained = failure.into_owner();
+        assert!(!retained.native_cleanup_proven_for_test());
+        assert!(!retained.listener_release_proven_for_test());
+        assert_eq!(retained.native_root_count_for_test(), Some(2));
+        assert_eq!(
+            plan.context
+                .store
+                .read(&plan.value)
+                .expect("Closing journal")
+                .state,
+            crate::journal::JournalState::Closing
+        );
+        let retried = retained
+            .cleanup_native_and_observe_listener_release(
+                Instant::now() + Duration::from_secs(10),
+                None,
+            )
+            .unwrap_or_else(|_| panic!("native cleanup retry"));
+        assert!(retried.native_cleanup_proven_for_test());
+        assert!(retried.listener_release_proven_for_test());
+        assert_eq!(retried.native_cleanup_attempts_for_test(), 2);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn closing_mid_cleanup_cancellation_retains_partial_owner_without_false_proof() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (_plan, _marker_paths, running, _running_journal) =
+            running_http_owner_for_test(directory.path(), 2);
+        let closing = running
+            .begin_closing_with_cancellation(Instant::now() + Duration::from_secs(10), None)
+            .unwrap_or_else(|_| panic!("Running owner should enter Closing"));
+        let mut closing = closing;
+        closing.inject_cancellation_after_native_cleanup_root_for_test(0);
+        let cancellation = Arc::new(AtomicBool::new(false));
+        let failure = match closing.cleanup_native_and_observe_listener_release(
+            Instant::now() + Duration::from_secs(10),
+            Some(Arc::clone(&cancellation)),
+        ) {
+            Ok(_) => panic!("cancellation after the first root must retain the owner"),
+            Err(failure) => failure,
+        };
+        assert_eq!(
+            failure.kind_for_test(),
+            crate::process::ClosingCleanupFailureKind::Cancelled
+        );
+        assert!(failure.detail_for_test().contains("cancel"));
+        let retained = failure.into_owner();
+        assert!(cancellation.load(Ordering::Acquire));
+        assert_eq!(retained.native_cleanup_attempts_for_test(), 1);
+        assert!(!retained.native_cleanup_proven_for_test());
+        assert!(!retained.listener_release_proven_for_test());
+        assert_eq!(retained.native_root_count_for_test(), Some(2));
+
+        let retried = retained
+            .cleanup_native_and_observe_listener_release(
+                Instant::now() + Duration::from_secs(10),
+                None,
+            )
+            .unwrap_or_else(|_| panic!("partial cleanup owner must be retryable"));
+        assert!(retried.native_cleanup_proven_for_test());
+        assert!(retried.listener_release_proven_for_test());
+        assert_eq!(retried.native_cleanup_attempts_for_test(), 2);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn closing_cleanup_cancellation_before_native_cleanup_retains_owner() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (plan, _marker_paths, running, _running_journal) =
+            running_http_owner_for_test(directory.path(), 1);
+        let closing = running
+            .begin_closing_with_cancellation(Instant::now() + Duration::from_secs(10), None)
+            .unwrap_or_else(|_| panic!("Running owner should enter Closing"));
+        let cancellation = Arc::new(AtomicBool::new(true));
+        let failure = match closing.cleanup_native_and_observe_listener_release(
+            Instant::now() + Duration::from_secs(10),
+            Some(Arc::clone(&cancellation)),
+        ) {
+            Ok(_) => panic!("pre-cancelled cleanup must retain Closing owner"),
+            Err(failure) => failure,
+        };
+        assert_eq!(
+            failure.kind_for_test(),
+            crate::process::ClosingCleanupFailureKind::Cancelled
+        );
+        let retained = failure.into_owner();
+        assert_eq!(retained.native_cleanup_attempts_for_test(), 0);
+        assert!(!retained.native_cleanup_proven_for_test());
+        assert!(!retained.listener_release_proven_for_test());
+        assert_eq!(
+            plan.context
+                .store
+                .read(&plan.value)
+                .expect("Closing journal")
+                .state,
+            crate::journal::JournalState::Closing
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn closing_cleanup_revalidates_address_index_before_native_termination() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (plan, _marker_paths, running, _running_journal) =
+            running_http_owner_for_test(directory.path(), 1);
+        let closing = running
+            .begin_closing_with_cancellation(Instant::now() + Duration::from_secs(10), None)
+            .unwrap_or_else(|_| panic!("Running owner should enter Closing"));
+        let index_path = fs::read_dir(directory.path())
+            .expect("producer root")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .find(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| {
+                        name.starts_with("runtime-ref-index-v1-") && name.ends_with(".json")
+                    })
+            })
+            .expect("address index");
+        fs::remove_file(index_path).expect("remove index before close cleanup");
+
+        let failure = match closing.cleanup_native_and_observe_listener_release(
+            Instant::now() + Duration::from_secs(10),
+            None,
+        ) {
+            Ok(_) => panic!("missing address index must stop native cleanup"),
+            Err(failure) => failure,
+        };
+        assert_eq!(
+            failure.kind_for_test(),
+            crate::process::ClosingCleanupFailureKind::Validation
+        );
+        let retained = failure.into_owner();
+        assert_eq!(retained.native_cleanup_attempts_for_test(), 0);
+        assert!(!retained.native_cleanup_proven_for_test());
+        assert_eq!(
+            plan.context
+                .store
+                .read(&plan.value)
+                .expect("Closing journal")
+                .state,
+            crate::journal::JournalState::Closing
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn closing_cleanup_rejects_stale_journal_before_native_termination() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (plan, _marker_paths, running, _running_journal) =
+            running_http_owner_for_test(directory.path(), 1);
+        let closing = running
+            .begin_closing_with_cancellation(Instant::now() + Duration::from_secs(10), None)
+            .unwrap_or_else(|_| panic!("Running owner should enter Closing"));
+        let current = plan
+            .context
+            .store
+            .read(&plan.value)
+            .expect("Closing journal");
+        plan.context
+            .store
+            .compare_and_swap(
+                &plan.value,
+                &current.cas_snapshot(),
+                crate::journal_store::JournalStoreCommand::Transition {
+                    next_state: crate::journal::JournalState::ReconcileRequired,
+                    timestamp: current.updated_at.clone(),
+                },
+            )
+            .expect("reconciliation drift");
+
+        let failure = match closing.cleanup_native_and_observe_listener_release(
+            Instant::now() + Duration::from_secs(10),
+            None,
+        ) {
+            Ok(_) => panic!("stale Closing owner must not terminate native roots"),
+            Err(failure) => failure,
+        };
+        assert_eq!(
+            failure.kind_for_test(),
+            crate::process::ClosingCleanupFailureKind::Validation
+        );
+        assert!(failure.detail_for_test().contains("admission"));
+        let retained = failure.into_owner();
+        assert_eq!(retained.native_cleanup_attempts_for_test(), 0);
+        assert!(!retained.native_cleanup_proven_for_test());
+        assert!(!retained.listener_release_proven_for_test());
+        assert_eq!(
+            plan.context
+                .store
+                .read(&plan.value)
+                .expect("drifted journal")
+                .state,
+            crate::journal::JournalState::ReconcileRequired
+        );
     }
 
     #[cfg(windows)]
