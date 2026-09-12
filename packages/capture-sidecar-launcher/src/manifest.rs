@@ -145,7 +145,7 @@ fn validate_sha256(name: &str, value: &str) -> Result<(), String> {
     }
 }
 
-fn verify_artifact(path: &Path, manifest: &SidecarManifest) -> Result<(), String> {
+pub(crate) fn verify_artifact(path: &Path, manifest: &SidecarManifest) -> Result<(), String> {
     let metadata = fs::metadata(path).map_err(|error| {
         format!(
             "Capture runtime executable is unavailable at {}: {error}",
