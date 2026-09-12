@@ -39,7 +39,8 @@ use crate::{
 
 #[cfg(windows)]
 use crate::journal_store::{
-    install_running_read_budget, RunningCasAdmission, RunningCasError, RunningCasResult,
+    install_running_read_budget, ClosingCasAdmission, ClosingCasError, ClosingCasResult,
+    RunningCasAdmission, RunningCasError, RunningCasResult,
 };
 
 #[cfg(windows)]
@@ -517,6 +518,44 @@ impl RunStagingOwner {
         self.activation.revalidate_address_index()
     }
 
+    /// Revalidate the immutable plan/index and the complete retained Running
+    /// journal without consulting native liveness or the staging filesystem.
+    /// Closing is teardown intent, so dead roots and missing listeners remain
+    /// eligible; their cleanup proof belongs to a later owner.
+    #[cfg(windows)]
+    pub(crate) fn revalidate_running_snapshot_for_closing(
+        &self,
+        expected: &RuntimeSessionJournalV1,
+        deadline: Instant,
+        cancellation: Arc<AtomicBool>,
+    ) -> Result<(), String> {
+        expected
+            .validate_against_plan(&self.activation.journal_plan)
+            .map_err(|_| {
+                "Capture runtime Running journal was invalid before Closing.".to_string()
+            })?;
+        if expected.state != JournalState::Running
+            || expected.session_nonce != self.activation.descriptor.session_nonce()
+            || expected.plan_digest != self.activation.journal_plan.plan_digest
+        {
+            return Err(
+                "Capture runtime retained journal was not the exact Running binding.".into(),
+            );
+        }
+        let _budget = install_running_read_budget(deadline, Arc::clone(&cancellation));
+        self.activation.revalidate_address_index()?;
+        let current = self
+            .activation
+            .context
+            .store
+            .read(&self.activation.journal_plan)
+            .map_err(|_| "Capture runtime Running journal could not be re-read.".to_string())?;
+        if current != *expected {
+            return Err("Capture runtime Running journal changed before Closing CAS.".into());
+        }
+        Ok(())
+    }
+
     pub(crate) fn checked_commands_for_running(&self) -> Result<Vec<Command>, String> {
         self.validate_running_scope()?;
         self.activation.descriptor.checked_commands()
@@ -702,6 +741,25 @@ impl RunStagingOwner {
     }
 
     #[cfg(windows)]
+    pub(crate) fn begin_closing_admission(
+        &self,
+        expected_running: &RuntimeSessionJournalV1,
+        deadline: Instant,
+        cancellation: Arc<AtomicBool>,
+    ) -> Result<ClosingCasAdmission, ClosingCasError> {
+        self.activation
+            .context
+            .store
+            .begin_closing_admission(
+                &self.activation.journal_plan,
+                expected_running,
+                deadline,
+                cancellation,
+            )
+            .map_err(map_closing_cas_error)
+    }
+
+    #[cfg(windows)]
     pub(crate) fn persist_running_admission(
         &self,
         admission: RunningCasAdmission,
@@ -747,6 +805,59 @@ impl RunStagingOwner {
             || running.proof.is_some()
         {
             return Err(RunningCasError::Storage);
+        }
+        Ok(result)
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn persist_closing_admission(
+        &self,
+        admission: ClosingCasAdmission,
+        expected_running: &RuntimeSessionJournalV1,
+        observation: ResourceObservation,
+        timestamp: String,
+    ) -> Result<ClosingCasResult, ClosingCasError> {
+        let result = admission
+            .commit_closing(observation.clone(), timestamp.clone())
+            .map_err(map_closing_cas_error)?;
+        let closing = match &result {
+            ClosingCasResult::Committed(journal)
+            | ClosingCasResult::CommittedAfterBudget(journal) => journal,
+        };
+        let expected_revision = expected_running
+            .journal_revision
+            .checked_add(1)
+            .ok_or(ClosingCasError::Storage)?;
+        if closing.state != JournalState::Closing
+            || closing.journal_revision != expected_revision
+            || closing.schema_version != expected_running.schema_version
+            || closing.producer != expected_running.producer
+            || closing.session_nonce != expected_running.session_nonce
+            || closing.plan_digest != expected_running.plan_digest
+            || closing.created_at != expected_running.created_at
+            || closing.updated_at != timestamp
+            || closing.attempt != expected_running.attempt
+            || closing.recovery_epoch != expected_running.recovery_epoch
+            || closing.binding != expected_running.binding
+            || closing.job_binding.as_ref() != Some(&observation.job_binding)
+            || closing.staging_binding.as_ref() != observation.staging_binding.as_ref()
+            || closing.roots != observation.roots
+            || closing.proof.is_some()
+        {
+            return Err(ClosingCasError::Storage);
+        }
+        #[cfg(test)]
+        if let Some(cancellation) = self
+            .activation
+            .context
+            .store
+            .take_cancel_after_closing_readback_for_test()
+        {
+            // This test-only rendezvous is deliberately after the complete
+            // candidate readback and wrapper validation.  The process owner
+            // must still perform its final egress check before issuing a
+            // Closing authority.
+            cancellation.store(true, std::sync::atomic::Ordering::Release);
         }
         Ok(result)
     }
@@ -1019,6 +1130,16 @@ fn journal_is_exactly_prepared(activation: &ValidatedActivationContext) -> bool 
         && journal.cas_snapshot() == activation.expected
         && journal.session_nonce == activation.descriptor.session_nonce()
         && journal.plan_digest == activation.journal_plan.plan_digest
+}
+
+#[cfg(windows)]
+fn map_closing_cas_error(error: crate::journal_store::JournalStoreError) -> ClosingCasError {
+    match error {
+        crate::journal_store::JournalStoreError::AdmissionCancelled => ClosingCasError::Cancelled,
+        crate::journal_store::JournalStoreError::AdmissionDeadline => ClosingCasError::Deadline,
+        crate::journal_store::JournalStoreError::Conflict => ClosingCasError::Conflict,
+        _ => ClosingCasError::Storage,
+    }
 }
 
 fn marker_bytes(owner: &RunStagingOwner) -> Result<Vec<u8>, StagingFailureKind> {

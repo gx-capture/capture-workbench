@@ -13,7 +13,7 @@ use crate::{
         CreationIdentity, JobBinding, JobSetupState, JournalRoot, ResourceObservation, RootState,
         RuntimeSessionJournalV1,
     },
-    journal_store::{RunningCasError, RunningCasResult},
+    journal_store::{ClosingCasError, ClosingCasResult, RunningCasError, RunningCasResult},
     prepare::ValidatedActivationContext,
     staging::{RunStagingOwner, StagingFailure},
 };
@@ -394,6 +394,12 @@ struct RunningAdmissionTestHook {
     acquired: Receiver<()>,
 }
 
+#[cfg(all(test, windows))]
+struct ClosingAdmissionTestHook {
+    reached: SyncSender<()>,
+    acquired: Receiver<()>,
+}
+
 /// Private move-only authority after service readiness has been observed for
 /// every resumed root and the exact Running CAS has been durably read back.
 /// The native and staging owners remain together for the later lifecycle
@@ -402,6 +408,51 @@ struct RunningAdmissionTestHook {
 pub(crate) struct RunningActivationOwner {
     owner: SuspendedActivationOwner,
     running_journal: RuntimeSessionJournalV1,
+    #[cfg(all(test, windows))]
+    closing_admission_hook: Option<ClosingAdmissionTestHook>,
+}
+
+/// Private teardown-intent owner after the durable Running -> Closing CAS.
+/// It retains the exact native and staging owners; cleanup proof and terminal
+/// authority are deliberately later lifecycle steps.
+#[cfg(windows)]
+pub(crate) struct ClosingActivationOwner {
+    owner: SuspendedActivationOwner,
+    closing_journal: RuntimeSessionJournalV1,
+}
+
+#[cfg(windows)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ClosingTransitionFailureKind {
+    Cancelled,
+    Deadline,
+    Conflict,
+    Storage,
+    Validation,
+}
+
+#[cfg(windows)]
+pub(crate) struct ClosingTransitionFailure {
+    kind: ClosingTransitionFailureKind,
+    detail: String,
+    owner: RunningActivationOwner,
+}
+
+#[cfg(windows)]
+impl ClosingTransitionFailure {
+    pub(crate) fn into_owner(self) -> RunningActivationOwner {
+        self.owner
+    }
+
+    #[cfg(test)]
+    pub(crate) fn detail_for_test(&self) -> &str {
+        &self.detail
+    }
+
+    #[cfg(test)]
+    pub(crate) fn kind_for_test(&self) -> ClosingTransitionFailureKind {
+        self.kind
+    }
 }
 
 /// Every promotion failure retains the Launching owner.  In particular, a
@@ -697,6 +748,15 @@ impl SuspendedActivationOwner {
     #[cfg(test)]
     pub(crate) fn inject_journal_drift_before_ready_for_test(&self) {
         self.staging.inject_journal_drift_before_ready_for_test();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn terminate_root_for_test(&mut self, ordinal: usize) -> Result<(), String> {
+        let native = self
+            .native
+            .as_mut()
+            .ok_or_else(|| "Capture runtime native owner was missing.".to_string())?;
+        native.terminate_root_for_test(ordinal)
     }
 }
 
@@ -1288,6 +1348,8 @@ impl LaunchingActivationOwner {
         Ok(RunningActivationOwner {
             owner: self.owner,
             running_journal,
+            #[cfg(all(test, windows))]
+            closing_admission_hook: None,
         })
     }
 
@@ -1445,6 +1507,163 @@ impl LaunchingActivationOwner {
 
 #[cfg(windows)]
 impl RunningActivationOwner {
+    /// Consume the Running owner and persist only teardown intent.  This
+    /// boundary deliberately does not require a live root, listener, HTTP
+    /// readiness, or unchanged executable/schema bytes: those observations
+    /// belong to cleanup proof.  The retained Running journal and immutable
+    /// address index still have to match before the typed CAS.
+    #[allow(unused_mut)]
+    pub(crate) fn begin_closing_with_cancellation(
+        mut self,
+        deadline: std::time::Instant,
+        cancellation: Option<Arc<AtomicBool>>,
+    ) -> Result<ClosingActivationOwner, ClosingTransitionFailure> {
+        let local_cancellation = Arc::new(AtomicBool::new(false));
+        let cancellation = cancellation.unwrap_or_else(|| Arc::clone(&local_cancellation));
+        if let Err(detail) = check_running_promotion_budget(deadline, cancellation.as_ref()) {
+            return Err(closing_transition_failure(self, detail));
+        }
+
+        if let Err(detail) = self.owner.staging.revalidate_running_snapshot_for_closing(
+            &self.running_journal,
+            deadline,
+            Arc::clone(&cancellation),
+        ) {
+            return Err(closing_transition_failure_for_bounded_error(
+                self,
+                detail,
+                deadline,
+                cancellation.as_ref(),
+            ));
+        }
+
+        #[cfg(all(test, windows))]
+        if let Some(hook) = self.closing_admission_hook.take() {
+            if hook.reached.send(()).is_err() {
+                return Err(closing_transition_failure(
+                    self,
+                    "Capture runtime Closing admission test rendezvous closed.",
+                ));
+            }
+            if hook
+                .acquired
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .is_err()
+            {
+                return Err(closing_transition_failure(
+                    self,
+                    "Capture runtime Closing admission test rendezvous timed out.",
+                ));
+            }
+        }
+        let admission = match self.owner.staging.begin_closing_admission(
+            &self.running_journal,
+            deadline,
+            Arc::clone(&cancellation),
+        ) {
+            Ok(admission) => admission,
+            Err(cause) => {
+                return Err(closing_transition_failure_for_cas(
+                    self,
+                    cause,
+                    "Capture runtime Closing admission failed before CAS.",
+                ));
+            }
+        };
+        if admission.current() != &self.running_journal {
+            return Err(closing_transition_failure(
+                self,
+                "Capture runtime Running journal changed before Closing CAS.",
+            ));
+        }
+        if let Err(detail) = check_running_promotion_budget(deadline, cancellation.as_ref()) {
+            return Err(closing_transition_failure(self, detail));
+        }
+
+        let mut roots = self.running_journal.roots.clone();
+        for root in &mut roots {
+            if root.state != RootState::Running || root.live_listener_readiness.is_none() {
+                return Err(closing_transition_failure(
+                    self,
+                    "Capture runtime Running journal did not contain complete live observations before Closing CAS.",
+                ));
+            }
+            root.state = RootState::Closing;
+        }
+        let job_binding = match self.running_journal.job_binding.clone() {
+            Some(binding) => binding,
+            None => {
+                return Err(closing_transition_failure(
+                    self,
+                    "Capture runtime Running Job binding was missing before Closing CAS.",
+                ));
+            }
+        };
+        let staging_binding = match self.running_journal.staging_binding.clone() {
+            Some(binding) => Some(binding),
+            None => {
+                return Err(closing_transition_failure(
+                    self,
+                    "Capture runtime Running staging binding was missing before Closing CAS.",
+                ));
+            }
+        };
+        let observation = ResourceObservation {
+            job_binding,
+            staging_binding,
+            roots,
+        };
+        let timestamp = match self.owner.staging.next_timestamp() {
+            Ok(timestamp) => timestamp,
+            Err(detail) => return Err(closing_transition_failure(self, detail)),
+        };
+        if timestamp < self.running_journal.updated_at {
+            return Err(closing_transition_failure(
+                self,
+                "Capture runtime producer clock moved backwards before Closing CAS.",
+            ));
+        }
+
+        let result = match self.owner.staging.persist_closing_admission(
+            admission,
+            &self.running_journal,
+            observation,
+            timestamp,
+        ) {
+            Ok(result) => result,
+            Err(cause) => {
+                return Err(closing_transition_failure_for_cas(
+                    self,
+                    cause,
+                    "Capture runtime Closing journal CAS was ambiguous; no Closing authority was issued and the disk state (possibly Closing) requires reconciliation.",
+                ));
+            }
+        };
+        let closing_journal = match result {
+            ClosingCasResult::Committed(journal) => journal,
+            ClosingCasResult::CommittedAfterBudget(_) => {
+                let detail = if cancellation.load(Ordering::Acquire) {
+                    "Capture runtime Closing CAS completed after cancellation; the durable Closing record remains for reconciliation."
+                } else {
+                    "Capture runtime Closing CAS completed after its deadline; the durable Closing record remains for reconciliation."
+                };
+                return Err(closing_transition_failure(self, detail));
+            }
+        };
+        if let Err(detail) = check_running_promotion_budget(deadline, cancellation.as_ref()) {
+            // The complete Closing candidate is already durable, but the
+            // owner boundary has not been issued.  Keep the original Running
+            // owner so reconciliation can account for the disk Closing
+            // intent without fabricating a typed Closing authority.
+            return Err(closing_transition_failure(self, detail));
+        }
+
+        Ok(ClosingActivationOwner {
+            owner: self.owner,
+            closing_journal,
+        })
+    }
+
     /// The Running owner keeps the exact durable CAS value for the next
     /// lifecycle slice.  Cleanup is still native-first; staging is retained
     /// for reconciliation because this slice has no Closing/Terminal proof.
@@ -1464,6 +1683,105 @@ impl RunningActivationOwner {
     pub(crate) fn native_root_count_for_test(&self) -> Option<usize> {
         self.owner.native_root_count_for_test()
     }
+
+    #[cfg(test)]
+    pub(crate) fn inject_listener_query_failure_for_test(&mut self) {
+        let native = self.owner.native.as_mut().expect("native owner");
+        native.inject_listener_query_failure_for_test();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn terminate_root_for_test(&mut self, ordinal: usize) -> Result<(), String> {
+        self.owner.terminate_root_for_test(ordinal)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn coordinate_closing_admission_for_test(
+        &mut self,
+        reached: SyncSender<()>,
+        acquired: Receiver<()>,
+    ) {
+        self.closing_admission_hook = Some(ClosingAdmissionTestHook { reached, acquired });
+    }
+}
+
+#[cfg(windows)]
+impl ClosingActivationOwner {
+    #[cfg(test)]
+    pub(crate) fn closing_journal_for_test(&self) -> &RuntimeSessionJournalV1 {
+        &self.closing_journal
+    }
+
+    #[cfg(test)]
+    pub(crate) fn native_root_count_for_test(&self) -> Option<usize> {
+        self.owner.native_root_count_for_test()
+    }
+}
+
+#[cfg(windows)]
+fn closing_transition_failure(
+    owner: RunningActivationOwner,
+    detail: impl Into<String>,
+) -> ClosingTransitionFailure {
+    let detail = detail.into();
+    let lower = detail.to_ascii_lowercase();
+    let kind = if lower.contains("cancel") {
+        ClosingTransitionFailureKind::Cancelled
+    } else if lower.contains("deadline") || lower.contains("expired") {
+        ClosingTransitionFailureKind::Deadline
+    } else if lower.contains("conflict") || lower.contains("changed") {
+        ClosingTransitionFailureKind::Conflict
+    } else if lower.contains("cas") || lower.contains("storage") {
+        ClosingTransitionFailureKind::Storage
+    } else {
+        ClosingTransitionFailureKind::Validation
+    };
+    ClosingTransitionFailure {
+        kind,
+        detail,
+        owner,
+    }
+}
+
+#[cfg(windows)]
+fn closing_transition_failure_for_cas(
+    owner: RunningActivationOwner,
+    cause: ClosingCasError,
+    detail: &str,
+) -> ClosingTransitionFailure {
+    let kind = match cause {
+        ClosingCasError::Cancelled => ClosingTransitionFailureKind::Cancelled,
+        ClosingCasError::Deadline => ClosingTransitionFailureKind::Deadline,
+        ClosingCasError::Conflict => ClosingTransitionFailureKind::Conflict,
+        ClosingCasError::Storage => ClosingTransitionFailureKind::Storage,
+    };
+    ClosingTransitionFailure {
+        kind,
+        detail: detail.to_owned(),
+        owner,
+    }
+}
+
+#[cfg(windows)]
+fn closing_transition_failure_for_bounded_error(
+    owner: RunningActivationOwner,
+    detail: String,
+    deadline: std::time::Instant,
+    cancellation: &AtomicBool,
+) -> ClosingTransitionFailure {
+    if cancellation.load(Ordering::Acquire) {
+        return closing_transition_failure(
+            owner,
+            "Capture runtime Closing admission was cancelled during bounded revalidation.",
+        );
+    }
+    if std::time::Instant::now() >= deadline {
+        return closing_transition_failure(
+            owner,
+            "Capture runtime Closing admission expired during bounded revalidation.",
+        );
+    }
+    closing_transition_failure(owner, detail)
 }
 
 #[cfg(windows)]
@@ -2068,6 +2386,15 @@ impl SuspendedGroup {
         }
         check_listener_budget(deadline, cancellation)?;
         Ok(observation)
+    }
+
+    #[cfg(test)]
+    fn terminate_root_for_test(&mut self, ordinal: usize) -> Result<(), String> {
+        let root = self
+            .roots
+            .get_mut(ordinal)
+            .ok_or_else(|| format!("Runtime group root {ordinal} was not retained."))?;
+        terminate_child_by_exact_handle(&mut root.child, PROCESS_WAIT_TIMEOUT_MS)
     }
 
     /// Consumes the owner. On failure the returned error contains the same

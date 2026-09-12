@@ -109,6 +109,15 @@ pub(crate) enum RunningCasError {
     Storage,
 }
 
+#[cfg(windows)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ClosingCasError {
+    Cancelled,
+    Deadline,
+    Conflict,
+    Storage,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct JournalStoreConfig {
     producer_root: PathBuf,
@@ -234,7 +243,25 @@ pub(crate) struct RunningCasAdmission {
 }
 
 #[cfg(windows)]
+pub(crate) struct ClosingCasAdmission {
+    store: Arc<JournalStore>,
+    plan: JournalPlanValue,
+    expected: CasSnapshot,
+    expected_journal: RuntimeSessionJournalV1,
+    current: RuntimeSessionJournalV1,
+    deadline: Instant,
+    cancellation: Arc<AtomicBool>,
+    _lock: JournalFileLock,
+}
+
+#[cfg(windows)]
 pub(crate) enum RunningCasResult {
+    Committed(RuntimeSessionJournalV1),
+    CommittedAfterBudget(RuntimeSessionJournalV1),
+}
+
+#[cfg(windows)]
+pub(crate) enum ClosingCasResult {
     Committed(RuntimeSessionJournalV1),
     CommittedAfterBudget(RuntimeSessionJournalV1),
 }
@@ -253,6 +280,9 @@ struct TestFaults {
     forced_payload: std::sync::Mutex<Option<Vec<u8>>>,
     cancel_before_running_replace: std::sync::Mutex<Option<Arc<AtomicBool>>>,
     cancel_after_running_replace: std::sync::Mutex<Option<Arc<AtomicBool>>>,
+    cancel_before_closing_replace: std::sync::Mutex<Option<Arc<AtomicBool>>>,
+    cancel_after_closing_replace: std::sync::Mutex<Option<Arc<AtomicBool>>>,
+    cancel_after_closing_readback: std::sync::Mutex<Option<Arc<AtomicBool>>>,
 }
 
 impl JournalStore {
@@ -387,6 +417,44 @@ impl JournalStore {
             store: Arc::clone(self),
             plan: plan.clone(),
             expected: expected.clone(),
+            current,
+            deadline,
+            cancellation,
+            _lock: lock,
+        })
+    }
+
+    /// Acquire the journal lock for the private Running -> Closing admission.
+    /// The complete retained Running value is checked while the lock is held;
+    /// the close command therefore cannot turn a stale or partially changed
+    /// resource tuple into teardown intent.
+    #[cfg(windows)]
+    pub(crate) fn begin_closing_admission(
+        self: &Arc<Self>,
+        plan: &JournalPlanValue,
+        expected: &RuntimeSessionJournalV1,
+        deadline: Instant,
+        cancellation: Arc<AtomicBool>,
+    ) -> Result<ClosingCasAdmission, JournalStoreError> {
+        self.validate_plan_identity(plan)?;
+        if expected.state != JournalState::Running {
+            return Err(JournalStoreError::Conflict);
+        }
+        check_running_admission_budget(deadline, cancellation.as_ref())?;
+        validate_producer_root(&self.config.producer_root)?;
+        let lock =
+            JournalFileLock::acquire_until(&self.lock_path, deadline, cancellation.as_ref())?;
+        validate_producer_root(&self.config.producer_root)?;
+        let current = self.read_unlocked(plan)?;
+        if current != *expected || current.cas_snapshot() != expected.cas_snapshot() {
+            return Err(JournalStoreError::Conflict);
+        }
+        check_running_admission_budget(deadline, cancellation.as_ref())?;
+        Ok(ClosingCasAdmission {
+            store: Arc::clone(self),
+            plan: plan.clone(),
+            expected: expected.cas_snapshot(),
+            expected_journal: expected.clone(),
             current,
             deadline,
             cancellation,
@@ -784,6 +852,30 @@ impl JournalStore {
         *self.faults.cancel_after_running_replace.lock().unwrap() = Some(cancellation);
     }
 
+    #[cfg(all(test, windows))]
+    pub(crate) fn cancel_before_closing_replace_for_test(&self, cancellation: Arc<AtomicBool>) {
+        *self.faults.cancel_before_closing_replace.lock().unwrap() = Some(cancellation);
+    }
+
+    #[cfg(all(test, windows))]
+    pub(crate) fn cancel_after_closing_replace_for_test(&self, cancellation: Arc<AtomicBool>) {
+        *self.faults.cancel_after_closing_replace.lock().unwrap() = Some(cancellation);
+    }
+
+    #[cfg(all(test, windows))]
+    pub(crate) fn cancel_after_closing_readback_for_test(&self, cancellation: Arc<AtomicBool>) {
+        *self.faults.cancel_after_closing_readback.lock().unwrap() = Some(cancellation);
+    }
+
+    #[cfg(all(test, windows))]
+    pub(crate) fn take_cancel_after_closing_readback_for_test(&self) -> Option<Arc<AtomicBool>> {
+        self.faults
+            .cancel_after_closing_readback
+            .lock()
+            .unwrap()
+            .take()
+    }
+
     #[cfg(test)]
     pub(crate) fn fail_auxiliary_after_replace_and_durability_recheck(&self) {
         self.faults
@@ -937,6 +1029,96 @@ impl RunningCasAdmission {
             return Ok(RunningCasResult::CommittedAfterBudget(read_back));
         }
         Ok(RunningCasResult::Committed(read_back))
+    }
+}
+
+#[cfg(windows)]
+impl ClosingCasAdmission {
+    pub(crate) fn current(&self) -> &RuntimeSessionJournalV1 {
+        &self.current
+    }
+
+    /// Apply only the canonical Running -> Closing transition while the
+    /// admission lock remains held.  Closing is teardown intent: it retains
+    /// the observed readiness/resource tuple and does not query liveness,
+    /// listeners, commands, or staging.
+    pub(crate) fn commit_closing(
+        mut self,
+        observation: ResourceObservation,
+        timestamp: String,
+    ) -> Result<ClosingCasResult, JournalStoreError> {
+        check_running_admission_budget(self.deadline, self.cancellation.as_ref())?;
+        if self.current != self.expected_journal || self.current.cas_snapshot() != self.expected {
+            return Err(JournalStoreError::Conflict);
+        }
+        apply_command(
+            &mut self.current,
+            &self.plan,
+            &self.expected,
+            JournalStoreCommand::TransitionWithObservation {
+                next_state: JournalState::Closing,
+                observation,
+                timestamp,
+            },
+        )
+        .map_err(|error| match error {
+            JournalError::StaleCas => JournalStoreError::Conflict,
+            error => JournalStoreError::Journal(error),
+        })?;
+        self.current
+            .validate_against_plan(&self.plan)
+            .map_err(JournalStoreError::Journal)?;
+        let candidate = self.current.clone();
+        let bytes = candidate
+            .encode_private()
+            .map_err(JournalStoreError::Journal)?;
+        #[cfg(test)]
+        if let Some(cancellation) = self
+            .store
+            .faults
+            .cancel_before_closing_replace
+            .lock()
+            .unwrap()
+            .take()
+        {
+            cancellation.store(true, Ordering::Release);
+        }
+        check_running_admission_budget(self.deadline, self.cancellation.as_ref())?;
+        let read_back = match self.store.write_atomic_unlocked(&bytes, true) {
+            Ok(()) => self.store.read_unlocked(&self.plan)?,
+            Err(write_error) => {
+                // A replacement can have happened before a durability error.
+                // Accept Closing authority only after the same final-file,
+                // directory-barrier, and exact-candidate readback used by the
+                // Running seam.  Otherwise the caller retains the owner and
+                // must reconcile an unknown on-disk state.
+                match self
+                    .store
+                    .reestablish_candidate_durability_unlocked(&self.plan, &candidate)
+                {
+                    Ok(read_back) => read_back,
+                    Err(_) => return Err(write_error),
+                }
+            }
+        };
+        if read_back != candidate {
+            return Err(JournalStoreError::CorruptJournal);
+        }
+        #[cfg(test)]
+        if let Some(cancellation) = self
+            .store
+            .faults
+            .cancel_after_closing_replace
+            .lock()
+            .unwrap()
+            .take()
+        {
+            cancellation.store(true, Ordering::Release);
+        }
+        if cancellation_requested(self.cancellation.as_ref()) || Instant::now() >= self.deadline {
+            return Ok(ClosingCasResult::CommittedAfterBudget(read_back));
+        }
+        Ok(ClosingCasResult::Committed(read_back))
     }
 }
 
@@ -1309,7 +1491,8 @@ mod tests {
 
     use super::*;
     use crate::journal::{
-        BoundRoot, JournalBinding, JournalPlanValue, JournalState, PlannedRoot, ReconcileAttempt,
+        BoundRoot, CreationIdentity, JobBinding, JobSetupState, JournalBinding, JournalPlanValue,
+        JournalRoot, JournalState, PlannedRoot, ReconcileAttempt, ResourceObservation, RootState,
         RuntimeSessionJournalV1,
     };
 
@@ -1403,6 +1586,33 @@ mod tests {
                 },
             )
             .expect("reconcile transition")
+    }
+
+    fn running_observation(readiness: Option<&str>, state: RootState) -> ResourceObservation {
+        ResourceObservation {
+            job_binding: JobBinding {
+                setup_state: JobSetupState::Committed,
+                job_nonce: "job-1".into(),
+            },
+            staging_binding: None,
+            roots: vec![JournalRoot {
+                ordinal: 0,
+                role: "capture".into(),
+                root_ref_digest: ROOT_DIGEST.into(),
+                root_generation: 1,
+                root_nonce: "root-1".into(),
+                pid: 1234,
+                creation_identity: CreationIdentity {
+                    kind: "windows-process-creation".into(),
+                    value: "creation-1".into(),
+                },
+                state,
+                reserved_listener_identity: "listener-0".into(),
+                loopback_port: 43123,
+                live_listener_readiness: readiness.map(str::to_owned),
+                started_at: "2026-09-11T00:00:01Z".into(),
+            }],
+        }
     }
 
     #[test]
@@ -1605,6 +1815,89 @@ mod tests {
             store.read(&plan()).expect("illegal rejection is unchanged"),
             before
         );
+    }
+
+    #[test]
+    fn closing_admission_rejects_resource_drift_even_when_cas_snapshot_is_unchanged() {
+        let directory = tempdir().expect("tempdir");
+        let plan = plan();
+        let store = Arc::new(JournalStore::new(config(directory.path())).expect("store"));
+        let initial = RuntimeSessionJournalV1::planned(
+            &plan,
+            "session-1".into(),
+            "2026-09-11T00:00:00Z".into(),
+        )
+        .expect("planned journal");
+        store
+            .create_initial(&plan, &initial)
+            .expect("initial journal");
+        let prepared = store
+            .compare_and_swap(
+                &plan,
+                &initial.cas_snapshot(),
+                JournalStoreCommand::PrepareBound {
+                    binding: large_binding(&plan),
+                    timestamp: "2026-09-11T00:00:01Z".into(),
+                },
+            )
+            .expect("prepared journal");
+        let ready = store
+            .compare_and_swap(
+                &plan,
+                &prepared.cas_snapshot(),
+                JournalStoreCommand::TransitionWithObservation {
+                    next_state: JournalState::Ready,
+                    observation: running_observation(None, RootState::Suspended),
+                    timestamp: "2026-09-11T00:00:01Z".into(),
+                },
+            )
+            .expect("Ready journal");
+        let launching = store
+            .compare_and_swap(
+                &plan,
+                &ready.cas_snapshot(),
+                JournalStoreCommand::TransitionWithObservation {
+                    next_state: JournalState::Launching,
+                    observation: running_observation(None, RootState::Suspended),
+                    timestamp: "2026-09-11T00:00:01Z".into(),
+                },
+            )
+            .expect("Launching journal");
+        let running = store
+            .compare_and_swap(
+                &plan,
+                &launching.cas_snapshot(),
+                JournalStoreCommand::TransitionWithObservation {
+                    next_state: JournalState::Running,
+                    observation: running_observation(
+                        Some("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+                        RootState::Running,
+                    ),
+                    timestamp: "2026-09-11T00:00:01Z".into(),
+                },
+            )
+            .expect("Running journal");
+        let expected_snapshot = running.cas_snapshot();
+        let mut drifted = running.clone();
+        drifted.roots[0].live_listener_readiness =
+            Some("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee".into());
+        assert_eq!(drifted.cas_snapshot(), expected_snapshot);
+        fs::write(
+            &store.journal_path,
+            drifted.encode_private().expect("drifted journal encoding"),
+        )
+        .expect("inject valid resource drift");
+
+        assert!(matches!(
+            store.begin_closing_admission(
+                &plan,
+                &running,
+                Instant::now() + Duration::from_secs(5),
+                Arc::new(AtomicBool::new(false)),
+            ),
+            Err(JournalStoreError::Conflict)
+        ));
+        assert_eq!(store.read(&plan).expect("foreign drift remains"), drifted);
     }
 
     #[test]
