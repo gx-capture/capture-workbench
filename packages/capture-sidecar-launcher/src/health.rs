@@ -24,7 +24,9 @@ const R3_API_VERSION: &str = "2.0";
 const R3_RUNTIME_VERSION: &str = "0.4.2";
 const R3_DOCUMENT_SCHEMA_VERSION: &str = "2";
 const R3_CONTRACT_SET_VERSION: &str = "2";
-const R3_SCHEMA_FILE_NAME: &str = "capture-document-v2.schema.json";
+pub(crate) const R3_SCHEMA_FILE_NAME: &str = "capture-document-v2.schema.json";
+pub(crate) const CANONICAL_CAPTURE_DOCUMENT_V2_SHA256: &str =
+    "850afd212d049c25da41d3867ba5477451a6a2c6c7e41f116fe60f26b6a35335";
 
 /// A schema identity is created only from the bounded bytes of the explicit
 /// regular file named by the frozen manifest.  The path and bytes are not
@@ -33,6 +35,12 @@ const R3_SCHEMA_FILE_NAME: &str = "capture-document-v2.schema.json";
 pub(crate) struct VerifiedReadinessSchema {
     file_name: String,
     sha256: String,
+}
+
+impl VerifiedReadinessSchema {
+    pub(crate) fn sha256(&self) -> &str {
+        &self.sha256
+    }
 }
 
 /// Strict service-only readiness facts.  This value contains digests for

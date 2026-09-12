@@ -4,6 +4,7 @@ use std::{
     ffi::{OsStr, OsString},
     fmt::Write as _,
     fs,
+    io::Read,
     net::TcpListener,
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -13,13 +14,17 @@ use std::{
 };
 
 use rand::{rngs::OsRng, RngCore};
+use serde::de::{Error as DeError, IgnoredAny, MapAccess, Visitor};
 
 use crate::{
     constants::{
         LOOPBACK_HOST, MAX_LAUNCH_ATTEMPTS, READY_POLL_INTERVAL, READY_TIMEOUT, RETRY_DELAY,
         RETRY_POLL_INTERVAL, TOTAL_LAUNCH_TIMEOUT,
     },
-    health::{probe_ready_once, ProbeResult},
+    health::{
+        probe_ready_once, verify_readiness_schema, ProbeResult, VerifiedReadinessSchema,
+        CANONICAL_CAPTURE_DOCUMENT_V2_SHA256, R3_SCHEMA_FILE_NAME,
+    },
     manifest::{
         validate_manifest_contract, verify_artifact, ManifestExpectations, SidecarManifest,
         VerifiedSidecar,
@@ -138,7 +143,59 @@ struct FrozenLaunchCommand {
     token: String,
     environment: Vec<(OsString, OsString)>,
     manifest: SidecarManifest,
+    readiness_schema: Option<FrozenReadinessContext>,
     digest: String,
+}
+
+/// Producer-owned readiness evidence bound to one canonical manifest path.
+/// The schema path is derived from that manifest's parent and is never guessed
+/// from the executable location.  This type is crate-private so later service
+/// promotion can revalidate it without making a forgeable public receipt.
+pub(crate) struct FrozenReadinessContext {
+    manifest_path: PathBuf,
+    schema_path: PathBuf,
+    schema: VerifiedReadinessSchema,
+}
+
+impl FrozenReadinessContext {
+    #[allow(dead_code)]
+    pub(crate) fn schema(&self) -> &VerifiedReadinessSchema {
+        &self.schema
+    }
+
+    pub(crate) fn revalidate(&self, expected_manifest: &SidecarManifest) -> Result<(), String> {
+        let manifest_path = canonical_regular_file(
+            &self.manifest_path,
+            "Capture runtime readiness manifest was unavailable.",
+            "Capture runtime readiness manifest was not a regular file.",
+        )?;
+        if manifest_path != self.manifest_path {
+            return Err("Capture runtime readiness manifest path changed.".into());
+        }
+        let actual_manifest = load_bounded_manifest(&manifest_path)
+            .map_err(|_| "Capture runtime readiness manifest could not be reread.".to_string())?;
+        if actual_manifest != *expected_manifest {
+            return Err("Capture runtime readiness manifest changed.".into());
+        }
+        let schema_path = manifest_path
+            .parent()
+            .ok_or_else(|| "Capture runtime readiness manifest parent was invalid.".to_string())?
+            .join(R3_SCHEMA_FILE_NAME);
+        let schema_candidate = schema_path.clone();
+        let schema_path = canonical_regular_file(
+            &schema_path,
+            "Capture runtime readiness schema was unavailable.",
+            "Capture runtime readiness schema was not a regular file.",
+        )?;
+        if schema_path != schema_candidate || schema_path != self.schema_path {
+            return Err("Capture runtime readiness schema path changed.".into());
+        }
+        let schema = verify_readiness_schema(&schema_path, &actual_manifest)?;
+        if schema.sha256() != self.schema.sha256() {
+            return Err("Capture runtime readiness schema bytes changed.".into());
+        }
+        Ok(())
+    }
 }
 
 /// Producer-owned immutable inputs for the prepare/activation seam. The
@@ -159,6 +216,7 @@ struct ActivationRootInput {
     root_generation: u64,
     verified: VerifiedSidecar,
     spec: SidecarLaunchSpec,
+    readiness_manifest_path: Option<PathBuf>,
 }
 
 pub(crate) struct FrozenActivationRoot {
@@ -282,6 +340,16 @@ impl FrozenActivationDescriptor {
         self.roots.get(ordinal).map(|root| root.command.port)
     }
 
+    #[allow(dead_code)]
+    pub(crate) fn readiness_schema_context(
+        &self,
+        ordinal: usize,
+    ) -> Option<&FrozenReadinessContext> {
+        self.roots
+            .get(ordinal)
+            .and_then(|root| root.command.readiness_schema.as_ref())
+    }
+
     /// Revalidate and materialize every frozen command before a resource is
     /// acquired.  This remains crate-private so an activation caller cannot
     /// replace the producer-owned command source with arbitrary input.
@@ -373,18 +441,30 @@ fn freeze_activation_root(
     input: ActivationRootInput,
     captured_environment: &[(OsString, OsString)],
 ) -> Result<FrozenActivationRoot, String> {
+    let ActivationRootInput {
+        ordinal,
+        role,
+        root_generation,
+        verified,
+        spec,
+        readiness_manifest_path,
+    } = input;
     let planned_staging_path =
-        planned_root_staging_path(producer_root, group_staging_identity, input.ordinal)?;
+        planned_root_staging_path(producer_root, group_staging_identity, ordinal)?;
     let staging_path = planned_staging_path
         .to_str()
         .ok_or_else(|| "Capture runtime planned staging path was invalid.".to_string())?;
-    let spec = bind_planned_staging_environment(input.spec, staging_path)?;
-    let command =
-        freeze_launch_command_from_environment(&input.verified, &spec, captured_environment)?;
+    let spec = bind_planned_staging_environment(spec, staging_path)?;
+    let command = freeze_launch_command_from_environment_with_schema(
+        &verified,
+        &spec,
+        captured_environment,
+        readiness_manifest_path.as_deref(),
+    )?;
     Ok(FrozenActivationRoot {
-        ordinal: input.ordinal,
-        role: input.role,
-        root_generation: input.root_generation,
+        ordinal,
+        role,
+        root_generation,
         reserved_listener_identity: fresh_private_nonce()?,
         planned_staging_path,
         command,
@@ -492,8 +572,177 @@ impl FrozenLaunchCommand {
         verify_artifact(&canonical_path, &self.manifest).map_err(|_| {
             "Capture runtime frozen executable no longer matched its manifest.".to_string()
         })?;
+        if let Some(readiness_schema) = &self.readiness_schema {
+            readiness_schema.revalidate(&self.manifest)?;
+        }
         Ok(self.command())
     }
+}
+
+fn canonical_regular_file(
+    path: &Path,
+    unavailable: &str,
+    nonregular: &str,
+) -> Result<PathBuf, String> {
+    validate_non_reparse_chain(path).map_err(|_| unavailable.to_string())?;
+    let canonical = fs::canonicalize(path).map_err(|_| unavailable.to_string())?;
+    let metadata = fs::symlink_metadata(&canonical).map_err(|_| unavailable.to_string())?;
+    if !metadata.is_file() {
+        return Err(nonregular.to_string());
+    }
+    Ok(canonical)
+}
+
+const MAX_READINESS_MANIFEST_BYTES: u64 = 1024 * 1024;
+
+fn load_bounded_manifest(path: &Path) -> Result<SidecarManifest, String> {
+    validate_non_reparse_chain(path)
+        .map_err(|_| "Capture runtime readiness manifest path was unsafe.".to_string())?;
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|_| "Capture runtime readiness manifest was unavailable.".to_string())?;
+    if !metadata.is_file() {
+        return Err("Capture runtime readiness manifest was not a regular file.".into());
+    }
+    if metadata.len() > MAX_READINESS_MANIFEST_BYTES {
+        return Err("Capture runtime readiness manifest exceeded the safety limit.".into());
+    }
+    let capacity = usize::try_from(metadata.len())
+        .map_err(|_| "Capture runtime readiness manifest was too large.".to_string())?;
+    let file = fs::File::open(path)
+        .map_err(|_| "Capture runtime readiness manifest could not be opened.".to_string())?;
+    let mut bytes = Vec::with_capacity(capacity);
+    file.take(MAX_READINESS_MANIFEST_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "Capture runtime readiness manifest could not be read.".to_string())?;
+    if bytes.len() as u64 > MAX_READINESS_MANIFEST_BYTES {
+        return Err("Capture runtime readiness manifest exceeded the safety limit.".into());
+    }
+
+    let mut deserializer = serde_json::Deserializer::from_slice(&bytes);
+    serde::de::Deserializer::deserialize_map(&mut deserializer, StrictManifestKeys)
+        .map_err(|_| "Capture runtime readiness manifest had invalid JSON fields.".to_string())?;
+    deserializer
+        .end()
+        .map_err(|_| "Capture runtime readiness manifest had trailing JSON.".to_string())?;
+    serde_json::from_slice(&bytes)
+        .map_err(|_| "Capture runtime readiness manifest had invalid JSON.".to_string())
+}
+
+struct StrictManifestKeys;
+
+impl<'de> Visitor<'de> for StrictManifestKeys {
+    type Value = ();
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("a closed Capture Runtime manifest object")
+    }
+
+    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+    where
+        A: MapAccess<'de>,
+    {
+        let mut seen = HashSet::new();
+        while let Some(key) = map.next_key::<String>()? {
+            if !matches!(
+                key.as_str(),
+                "manifestVersion"
+                    | "runtimeVersion"
+                    | "apiVersion"
+                    | "captureDocumentSchemaVersion"
+                    | "platform"
+                    | "arch"
+                    | "fileName"
+                    | "bytes"
+                    | "sha256"
+                    | "schemaFileName"
+                    | "schemaSha256"
+            ) {
+                return Err(A::Error::custom("unknown manifest field"));
+            }
+            if !seen.insert(key) {
+                return Err(A::Error::custom("duplicate manifest field"));
+            }
+            map.next_value::<IgnoredAny>()?;
+        }
+        Ok(())
+    }
+}
+
+fn validate_non_reparse_chain(path: &Path) -> Result<(), ()> {
+    let mut current = path;
+    loop {
+        let metadata = fs::symlink_metadata(current).map_err(|_| ())?;
+        if metadata_is_reparse(&metadata) {
+            return Err(());
+        }
+        let Some(parent) = current.parent() else {
+            break;
+        };
+        if parent == current {
+            break;
+        }
+        current = parent;
+    }
+    Ok(())
+}
+
+fn metadata_is_reparse(metadata: &fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+
+        const REPARSE_POINT_ATTRIBUTE: u32 = 0x400;
+        metadata.file_attributes() & REPARSE_POINT_ATTRIBUTE != 0
+    }
+    #[cfg(not(windows))]
+    {
+        metadata.file_type().is_symlink()
+    }
+}
+
+fn freeze_readiness_context(
+    manifest_path: &Path,
+    frozen_manifest: &SidecarManifest,
+) -> Result<FrozenReadinessContext, String> {
+    let manifest_path = canonical_regular_file(
+        manifest_path,
+        "Capture runtime readiness manifest was unavailable.",
+        "Capture runtime readiness manifest was not a regular file.",
+    )?;
+    let actual_manifest = load_bounded_manifest(&manifest_path)
+        .map_err(|_| "Capture runtime readiness manifest could not be read.".to_string())?;
+    if actual_manifest != *frozen_manifest {
+        return Err("Capture runtime readiness manifest did not match the frozen asset.".into());
+    }
+    if actual_manifest.schema_sha256 != CANONICAL_CAPTURE_DOCUMENT_V2_SHA256 {
+        return Err(
+            "Capture runtime readiness schema was not the canonical release schema.".into(),
+        );
+    }
+    let schema_path = manifest_path
+        .parent()
+        .ok_or_else(|| "Capture runtime readiness manifest parent was invalid.".to_string())?
+        .join(R3_SCHEMA_FILE_NAME);
+    let schema_candidate = schema_path.clone();
+    let schema_path = canonical_regular_file(
+        &schema_path,
+        "Capture runtime readiness schema was unavailable.",
+        "Capture runtime readiness schema was not a regular file.",
+    )?;
+    if schema_path != schema_candidate
+        || schema_path.file_name().and_then(OsStr::to_str) != Some(R3_SCHEMA_FILE_NAME)
+    {
+        return Err("Capture runtime readiness schema file name was invalid.".into());
+    }
+    let schema = verify_readiness_schema(&schema_path, &actual_manifest)?;
+    if schema.sha256() != CANONICAL_CAPTURE_DOCUMENT_V2_SHA256 {
+        return Err("Capture runtime readiness schema bytes were not canonical.".into());
+    }
+    Ok(FrozenReadinessContext {
+        manifest_path,
+        schema_path,
+        schema,
+    })
 }
 
 /// Captures ambient environment values once and binds the resulting command
@@ -517,6 +766,15 @@ fn freeze_launch_command_from_environment(
     spec: &SidecarLaunchSpec,
     captured_environment: &[(OsString, OsString)],
 ) -> Result<FrozenLaunchCommand, String> {
+    freeze_launch_command_from_environment_with_schema(verified, spec, captured_environment, None)
+}
+
+fn freeze_launch_command_from_environment_with_schema(
+    verified: &VerifiedSidecar,
+    spec: &SidecarLaunchSpec,
+    captured_environment: &[(OsString, OsString)],
+    readiness_manifest_path: Option<&Path>,
+) -> Result<FrozenLaunchCommand, String> {
     let executable_path = validate_frozen_launch_inputs(verified, spec)?;
     let environment = resolve_frozen_environment(captured_environment, spec)?;
     let working_directory = executable_path
@@ -524,6 +782,9 @@ fn freeze_launch_command_from_environment(
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."))
         .to_path_buf();
+    let readiness_schema = readiness_manifest_path
+        .map(|path| freeze_readiness_context(path, &verified.manifest))
+        .transpose()?;
     let digest = frozen_command_digest(
         &executable_path,
         &working_directory,
@@ -531,6 +792,7 @@ fn freeze_launch_command_from_environment(
         &spec.token,
         &environment,
         &verified.manifest,
+        readiness_schema.as_ref(),
     );
 
     Ok(FrozenLaunchCommand {
@@ -540,6 +802,7 @@ fn freeze_launch_command_from_environment(
         token: spec.token.clone(),
         environment,
         manifest: verified.manifest.clone(),
+        readiness_schema,
         digest,
     })
 }
@@ -707,6 +970,7 @@ fn frozen_command_digest(
     token: &str,
     environment: &[(OsString, OsString)],
     manifest: &crate::SidecarManifest,
+    readiness_schema: Option<&FrozenReadinessContext>,
 ) -> String {
     let mut encoded = Vec::new();
     encoded.extend_from_slice(b"capture-sidecar/frozen-launch-command/v1\0");
@@ -751,6 +1015,7 @@ fn frozen_command_digest(
     ] {
         append_bytes(&mut encoded, name, value);
     }
+    append_readiness_context_identity(&mut encoded, readiness_schema);
     digest_bytes(&encoded)
 }
 
@@ -828,7 +1093,35 @@ fn activation_root_spec_digest(
         b"reserved-listener-identity",
         root.reserved_listener_identity.as_bytes(),
     );
+    append_readiness_context_identity(&mut encoded, root.command.readiness_schema.as_ref());
     digest_bytes(&encoded)
+}
+
+fn append_readiness_context_identity(
+    encoded: &mut Vec<u8>,
+    readiness_schema: Option<&FrozenReadinessContext>,
+) {
+    match readiness_schema {
+        None => append_bytes(encoded, b"readiness-schema-context", b"absent"),
+        Some(context) => {
+            append_bytes(encoded, b"readiness-schema-context", b"present");
+            append_bytes(
+                encoded,
+                b"readiness-manifest-path",
+                context.manifest_path.as_os_str().as_encoded_bytes(),
+            );
+            append_bytes(
+                encoded,
+                b"readiness-schema-path",
+                context.schema_path.as_os_str().as_encoded_bytes(),
+            );
+            append_bytes(
+                encoded,
+                b"readiness-schema-sha256",
+                context.schema.sha256().as_bytes(),
+            );
+        }
+    }
 }
 
 /// Bounded launch timing and retry policy.
@@ -1051,6 +1344,31 @@ mod tests {
         }
     }
 
+    fn write_canonical_readiness_manifest(
+        manifest_directory: &Path,
+        executable_path: &Path,
+    ) -> PathBuf {
+        let schema_bytes = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../capture-runtime-client-python/src/capture_runtime_client/private/schemas/capture-document.schema.json"
+        ));
+        fs::write(manifest_directory.join(R3_SCHEMA_FILE_NAME), schema_bytes)
+            .expect("canonical schema fixture");
+
+        let executable_bytes = fs::read(executable_path).expect("executable fixture");
+        let mut manifest = manifest();
+        manifest.bytes = executable_bytes.len() as u64;
+        manifest.sha256 = digest_bytes(&executable_bytes);
+        manifest.schema_sha256 = CANONICAL_CAPTURE_DOCUMENT_V2_SHA256.into();
+        let manifest_path = manifest_directory.join("capture-runtime-manifest.json");
+        fs::write(
+            &manifest_path,
+            serde_json::to_vec(&manifest).expect("manifest JSON"),
+        )
+        .expect("manifest fixture");
+        manifest_path
+    }
+
     fn token_environment(token: &str) -> Vec<(String, String)> {
         vec![("CAPTURE_API_TOKEN".into(), token.into())]
     }
@@ -1102,6 +1420,7 @@ mod tests {
                         token_environment("secret-token"),
                         Vec::new(),
                     ),
+                    readiness_manifest_path: None,
                 })
                 .collect(),
         )
@@ -1156,6 +1475,7 @@ mod tests {
                         token_environment("secret-token"),
                         Vec::new(),
                     ),
+                    readiness_manifest_path: None,
                 })
                 .collect(),
         )
@@ -1242,6 +1562,7 @@ mod tests {
                             ],
                             Vec::new(),
                         ),
+                        readiness_manifest_path: None,
                     }
                 })
                 .collect(),
@@ -1388,6 +1709,257 @@ mod tests {
 
         fs::remove_file(&executable_path).expect("delete executable");
         assert!(frozen.checked_command().is_err());
+    }
+
+    #[test]
+    fn readiness_schema_context_is_manifest_rooted_and_revalidated() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let executable_directory = directory.path().join("runtime");
+        let manifest_directory = directory.path().join("release");
+        fs::create_dir(&executable_directory).expect("runtime directory");
+        fs::create_dir(&manifest_directory).expect("release directory");
+        let executable_path = executable_directory.join("capture-runtime.exe");
+        fs::write(&executable_path, b"runtime").expect("executable");
+        let manifest_path =
+            write_canonical_readiness_manifest(&manifest_directory, &executable_path);
+        let verified_manifest = crate::manifest::load_manifest(&manifest_path).expect("manifest");
+        let verified = VerifiedSidecar {
+            manifest: verified_manifest,
+            executable_path: executable_path.clone(),
+        };
+        let spec = SidecarLaunchSpec::new(
+            executable_path.clone(),
+            42123,
+            "secret-token".into(),
+            token_environment("secret-token"),
+            Vec::new(),
+        );
+
+        let frozen = freeze_launch_command_from_environment_with_schema(
+            &verified,
+            &spec,
+            &[],
+            Some(&manifest_path),
+        )
+        .expect("schema-rooted frozen command");
+        let context = frozen.readiness_schema.as_ref().expect("readiness context");
+        assert_eq!(
+            context.manifest_path,
+            fs::canonicalize(&manifest_path).expect("manifest path")
+        );
+        assert_eq!(
+            context.schema_path,
+            fs::canonicalize(manifest_directory.join(R3_SCHEMA_FILE_NAME)).expect("schema path")
+        );
+        assert_ne!(context.schema_path.parent(), executable_path.parent());
+        assert_eq!(
+            context.schema.sha256(),
+            CANONICAL_CAPTURE_DOCUMENT_V2_SHA256
+        );
+        assert!(frozen.checked_command().is_ok());
+
+        let canonical_schema =
+            fs::read(manifest_directory.join(R3_SCHEMA_FILE_NAME)).expect("schema bytes");
+        fs::write(
+            manifest_directory.join(R3_SCHEMA_FILE_NAME),
+            b"tampered schema",
+        )
+        .expect("tamper schema");
+        assert!(frozen.checked_command().is_err());
+        fs::write(
+            manifest_directory.join(R3_SCHEMA_FILE_NAME),
+            canonical_schema,
+        )
+        .expect("restore schema");
+        assert!(frozen.checked_command().is_ok());
+
+        let canonical_manifest = fs::read(&manifest_path).expect("manifest bytes");
+        let mut oversized_manifest = canonical_manifest.clone();
+        oversized_manifest.resize(MAX_READINESS_MANIFEST_BYTES as usize + 1, b' ');
+        fs::write(&manifest_path, oversized_manifest).expect("oversized manifest");
+        assert!(frozen.checked_command().is_err());
+        fs::write(&manifest_path, &canonical_manifest).expect("restore manifest");
+        assert!(frozen.checked_command().is_ok());
+
+        for invalid_manifest in [
+            br#"{"manifestVersion":"1","unknown":true}"#.as_slice(),
+            br#"{"manifestVersion":"1","manifestVersion":"1"}"#.as_slice(),
+        ] {
+            fs::write(&manifest_path, invalid_manifest).expect("invalid manifest");
+            assert!(frozen.checked_command().is_err());
+            fs::write(&manifest_path, &canonical_manifest).expect("restore manifest");
+        }
+
+        let moved_manifest_path = manifest_directory.join("moved-manifest.json");
+        fs::rename(&manifest_path, &moved_manifest_path).expect("move manifest");
+        assert!(frozen.checked_command().is_err());
+        fs::rename(&moved_manifest_path, &manifest_path).expect("restore manifest path");
+        fs::create_dir(manifest_directory.join("invalid-manifest")).expect("manifest directory");
+        let invalid_manifest_path = manifest_directory.join("invalid-manifest");
+        assert!(freeze_launch_command_from_environment_with_schema(
+            &verified,
+            &spec,
+            &[],
+            Some(&invalid_manifest_path),
+        )
+        .is_err());
+
+        let mut changed_manifest = verified.manifest.clone();
+        changed_manifest.runtime_version = "0.4.3".into();
+        fs::write(
+            &manifest_path,
+            serde_json::to_vec(&changed_manifest).expect("changed manifest JSON"),
+        )
+        .expect("tamper manifest");
+        assert!(frozen.checked_command().is_err());
+    }
+
+    #[test]
+    fn readiness_schema_context_requires_canonical_manifest_schema_and_presence_is_bound() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let executable_path = directory.path().join("capture-runtime.exe");
+        fs::write(&executable_path, b"runtime").expect("executable");
+
+        let first_release = directory.path().join("release-one");
+        let second_release = directory.path().join("release-two");
+        fs::create_dir(&first_release).expect("first release");
+        fs::create_dir(&second_release).expect("second release");
+        let first_manifest_path =
+            write_canonical_readiness_manifest(&first_release, &executable_path);
+        let second_manifest_path =
+            write_canonical_readiness_manifest(&second_release, &executable_path);
+        let first_manifest =
+            crate::manifest::load_manifest(&first_manifest_path).expect("first manifest");
+        let verified = VerifiedSidecar {
+            manifest: first_manifest,
+            executable_path: executable_path.clone(),
+        };
+        let spec = SidecarLaunchSpec::new(
+            executable_path.clone(),
+            42123,
+            "secret-token".into(),
+            token_environment("secret-token"),
+            Vec::new(),
+        );
+        let first = freeze_launch_command_from_environment_with_schema(
+            &verified,
+            &spec,
+            &[],
+            Some(&first_manifest_path),
+        )
+        .expect("first context");
+        let second = freeze_launch_command_from_environment_with_schema(
+            &verified,
+            &spec,
+            &[],
+            Some(&second_manifest_path),
+        )
+        .expect("second context");
+        assert_ne!(first.digest, second.digest);
+        let first_root = FrozenActivationRoot {
+            ordinal: 0,
+            role: "capture".into(),
+            root_generation: 1,
+            reserved_listener_identity: "11".repeat(16),
+            planned_staging_path: PathBuf::new(),
+            command: first,
+        };
+        let second_root = FrozenActivationRoot {
+            ordinal: 0,
+            role: "capture".into(),
+            root_generation: 1,
+            reserved_listener_identity: "11".repeat(16),
+            planned_staging_path: PathBuf::new(),
+            command: second,
+        };
+        assert_ne!(
+            activation_root_spec_digest("22".repeat(16).as_str(), &first_root),
+            activation_root_spec_digest("22".repeat(16).as_str(), &second_root)
+        );
+
+        let mut foreign_manifest =
+            crate::manifest::load_manifest(&first_manifest_path).expect("manifest");
+        let foreign_schema = first_release.join(R3_SCHEMA_FILE_NAME);
+        fs::write(&foreign_schema, b"foreign schema").expect("foreign schema");
+        foreign_manifest.schema_sha256 = digest_bytes(b"foreign schema");
+        fs::write(
+            &first_manifest_path,
+            serde_json::to_vec(&foreign_manifest).expect("foreign manifest JSON"),
+        )
+        .expect("foreign manifest");
+        let foreign_verified = VerifiedSidecar {
+            manifest: foreign_manifest,
+            executable_path: executable_path.clone(),
+        };
+        assert!(freeze_launch_command_from_environment_with_schema(
+            &foreign_verified,
+            &spec,
+            &[],
+            Some(&first_manifest_path),
+        )
+        .is_err());
+        assert!(freeze_launch_command_from_environment_with_schema(
+            &verified,
+            &spec,
+            &[],
+            Some(&first_manifest_path),
+        )
+        .is_err());
+
+        let legacy = FrozenActivationDescriptor::from_activation_inputs(
+            directory.path().to_path_buf(),
+            "session-1".into(),
+            4,
+            vec![ActivationRootInput {
+                ordinal: 0,
+                role: "capture".into(),
+                root_generation: 1,
+                verified,
+                spec,
+                readiness_manifest_path: None,
+            }],
+        )
+        .expect("legacy descriptor");
+        assert!(legacy.readiness_schema_context(0).is_none());
+    }
+
+    #[test]
+    fn activation_descriptor_attaches_schema_context_before_plan_identity_is_frozen() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let executable_path = directory.path().join("capture-runtime.exe");
+        fs::write(&executable_path, b"runtime").expect("executable");
+        let release_directory = directory.path().join("release");
+        fs::create_dir(&release_directory).expect("release directory");
+        let manifest_path =
+            write_canonical_readiness_manifest(&release_directory, &executable_path);
+        let manifest = crate::manifest::load_manifest(&manifest_path).expect("manifest");
+        let descriptor = FrozenActivationDescriptor::from_activation_inputs(
+            directory.path().to_path_buf(),
+            "session-1".into(),
+            4,
+            vec![ActivationRootInput {
+                ordinal: 0,
+                role: "capture".into(),
+                root_generation: 1,
+                verified: VerifiedSidecar {
+                    manifest,
+                    executable_path: executable_path.clone(),
+                },
+                spec: SidecarLaunchSpec::new(
+                    executable_path,
+                    42123,
+                    "secret-token".into(),
+                    token_environment("secret-token"),
+                    Vec::new(),
+                ),
+                readiness_manifest_path: Some(manifest_path),
+            }],
+        )
+        .expect("schema-aware descriptor");
+
+        assert!(descriptor.readiness_schema_context(0).is_some());
+        let draft = descriptor.to_prepare_draft().expect("schema-aware draft");
+        assert!(is_lower_sha256(&draft.roots[0].spec_digest));
     }
 
     #[test]
@@ -1706,6 +2278,7 @@ mod tests {
                 token_environment("secret-token"),
                 Vec::new(),
             ),
+            readiness_manifest_path: None,
         };
         conflicting
             .spec
@@ -1737,6 +2310,7 @@ mod tests {
                 token_environment("secret-token"),
                 vec![RUN_STAGING_ENVIRONMENT_NAME.into()],
             ),
+            readiness_manifest_path: None,
         };
         assert!(FrozenActivationDescriptor::from_activation_inputs(
             directory.path().to_path_buf(),
@@ -1783,6 +2357,7 @@ mod tests {
                 token_environment("secret-token"),
                 Vec::new(),
             ),
+            readiness_manifest_path: None,
         };
 
         assert!(FrozenActivationDescriptor::from_activation_inputs(
