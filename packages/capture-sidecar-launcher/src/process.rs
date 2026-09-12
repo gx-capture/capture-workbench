@@ -7,7 +7,7 @@ use std::{
 use crate::prepare::{ImmutableGroupPlan, PrepareError, PreparedGroup, ReconcileRefSink};
 
 #[cfg(windows)]
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[cfg(windows)]
 use std::{
@@ -37,9 +37,9 @@ use windows_sys::Win32::{
     System::SystemInformation::GetSystemDirectoryW,
     System::Threading::{
         GetExitCodeProcess, GetProcessIdOfThread, GetProcessTimes, OpenProcess, OpenThread,
-        ResumeThread, TerminateProcess, WaitForSingleObject, CREATE_NO_WINDOW, CREATE_SUSPENDED,
-        PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE,
-        THREAD_QUERY_LIMITED_INFORMATION, THREAD_SUSPEND_RESUME,
+        ResumeThread, SuspendThread, TerminateProcess, WaitForSingleObject, CREATE_NO_WINDOW,
+        CREATE_SUSPENDED, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
+        PROCESS_TERMINATE, THREAD_QUERY_LIMITED_INFORMATION, THREAD_SUSPEND_RESUME,
     },
 };
 
@@ -66,6 +66,412 @@ struct OwnedProcessIdentity {
 #[cfg(any(windows, test))]
 fn same_process_identity(expected: OwnedProcessIdentity, observed: OwnedProcessIdentity) -> bool {
     expected.pid == observed.pid && expected.creation_time == observed.creation_time
+}
+
+#[cfg(windows)]
+const PROCESS_WAIT_TIMEOUT_MS: u32 = 5_000;
+
+#[cfg(windows)]
+#[allow(dead_code)]
+const GROUP_CLEANUP_BUDGET_MS: u32 = 5_000;
+
+#[cfg(windows)]
+#[allow(dead_code)]
+const DROP_CLEANUP_WAIT_MS: u32 = 250;
+
+#[cfg(windows)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+enum GroupNativeFailureKind {
+    Setup,
+    Spawn,
+    Identity,
+    Assignment,
+    Membership,
+    Resume,
+    Cleanup,
+}
+
+#[cfg(windows)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+enum SuspendedRootState {
+    Unassigned,
+    AssignedSuspended,
+    Resumed,
+}
+
+/// Private ownership for a group before the journal/activation seam is wired.
+/// The Job and every Child remain together so a partial native operation can
+/// never return a cleanup-free error.
+#[cfg(windows)]
+#[allow(dead_code)]
+struct SuspendedGroup {
+    job: Option<WindowsJob>,
+    roots: Vec<SuspendedGroupRoot>,
+    cleanup_complete: bool,
+}
+
+#[cfg(windows)]
+#[allow(dead_code)]
+struct SuspendedGroupRoot {
+    child: Child,
+    identity: Option<OwnedProcessIdentity>,
+    ordinal: u32,
+    state: SuspendedRootState,
+}
+
+#[cfg(windows)]
+#[allow(dead_code)]
+struct GroupNativeFailure {
+    kind: GroupNativeFailureKind,
+    #[allow(dead_code)]
+    detail: String,
+    owner: Option<SuspendedGroup>,
+}
+
+#[cfg(windows)]
+#[allow(dead_code)]
+struct GroupCleanupFailure {
+    kind: GroupNativeFailureKind,
+    detail: String,
+    #[allow(dead_code)]
+    owner: SuspendedGroup,
+}
+
+#[cfg(windows)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+struct GroupCleanupProof {
+    roots_reaped: bool,
+    descendants_terminated: bool,
+}
+
+#[cfg(windows)]
+impl fmt::Debug for SuspendedGroup {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SuspendedGroup")
+            .field("root_count", &self.roots.len())
+            .field("cleanup_complete", &self.cleanup_complete)
+            .finish()
+    }
+}
+
+#[cfg(windows)]
+impl fmt::Debug for GroupNativeFailure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("GroupNativeFailure")
+            .field("kind", &self.kind)
+            .field("owner_present", &self.owner.is_some())
+            .finish()
+    }
+}
+
+#[cfg(windows)]
+impl fmt::Debug for GroupCleanupFailure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("GroupCleanupFailure")
+            .field("kind", &self.kind)
+            .finish()
+    }
+}
+
+#[cfg(windows)]
+#[allow(dead_code)]
+impl GroupNativeFailure {
+    fn with_owner(
+        kind: GroupNativeFailureKind,
+        detail: impl Into<String>,
+        owner: SuspendedGroup,
+    ) -> Self {
+        Self {
+            kind,
+            detail: detail.into(),
+            owner: Some(owner),
+        }
+    }
+
+    fn without_owner(kind: GroupNativeFailureKind, detail: impl Into<String>) -> Self {
+        Self {
+            kind,
+            detail: detail.into(),
+            owner: None,
+        }
+    }
+
+    #[cfg(test)]
+    fn kind(&self) -> GroupNativeFailureKind {
+        self.kind
+    }
+}
+
+#[cfg(windows)]
+#[allow(dead_code)]
+impl GroupCleanupFailure {
+    #[cfg(test)]
+    fn retry(self) -> Result<GroupCleanupProof, Self> {
+        match self.owner.cleanup_and_prove() {
+            Ok(proof) => Ok(proof),
+            Err(next) => Err(next),
+        }
+    }
+}
+
+#[cfg(windows)]
+#[allow(dead_code)]
+impl SuspendedGroup {
+    fn spawn(commands: &mut [Command]) -> Result<Self, GroupNativeFailure> {
+        if commands.is_empty() {
+            return Err(GroupNativeFailure::without_owner(
+                GroupNativeFailureKind::Setup,
+                "A runtime group must contain at least one root.",
+            ));
+        }
+        let job = WindowsJob::new().map_err(|error| {
+            GroupNativeFailure::without_owner(GroupNativeFailureKind::Setup, error)
+        })?;
+        Self::spawn_with_job(commands, job)
+    }
+
+    #[cfg(test)]
+    fn spawn_with_faults(
+        commands: &mut [Command],
+        faults: GroupTestFaults,
+    ) -> Result<Self, GroupNativeFailure> {
+        if commands.is_empty() {
+            return Err(GroupNativeFailure::without_owner(
+                GroupNativeFailureKind::Setup,
+                "A runtime group must contain at least one root.",
+            ));
+        }
+        let job = WindowsJob::new_with_faults(faults).map_err(|error| {
+            GroupNativeFailure::without_owner(GroupNativeFailureKind::Setup, error)
+        })?;
+        Self::spawn_with_job(commands, job)
+    }
+
+    fn spawn_with_job(
+        commands: &mut [Command],
+        job: WindowsJob,
+    ) -> Result<Self, GroupNativeFailure> {
+        let mut group = Self {
+            job: Some(job),
+            roots: Vec::with_capacity(commands.len()),
+            cleanup_complete: false,
+        };
+        for (ordinal, command) in commands.iter_mut().enumerate() {
+            command.creation_flags(CREATE_NO_WINDOW | CREATE_SUSPENDED);
+            let child = match command.spawn() {
+                Ok(child) => child,
+                Err(error) => {
+                    return Err(group.failure(
+                        GroupNativeFailureKind::Spawn,
+                        format!("Capture runtime root could not be started: {error}"),
+                    ));
+                }
+            };
+            group.roots.push(SuspendedGroupRoot {
+                child,
+                identity: None,
+                ordinal: ordinal as u32,
+                state: SuspendedRootState::Unassigned,
+            });
+            let index = group.roots.len() - 1;
+            #[cfg(test)]
+            if group
+                .job
+                .as_mut()
+                .expect("group Job")
+                .take_identity_failure(ordinal)
+            {
+                return Err(group.failure(
+                    GroupNativeFailureKind::Identity,
+                    format!("Injected identity capture failure for runtime root {ordinal}."),
+                ));
+            }
+            let identity = match process_identity_from_handle(
+                group.roots[index].child.as_raw_handle() as *mut c_void,
+                group.roots[index].child.id(),
+            ) {
+                Ok(identity) => identity,
+                Err(error) => {
+                    return Err(group.failure(
+                        GroupNativeFailureKind::Identity,
+                        format!("Capture runtime root identity could not be captured: {error}"),
+                    ));
+                }
+            };
+            group.roots[index].identity = Some(identity);
+            if let Err(error) = group
+                .job
+                .as_mut()
+                .expect("group Job")
+                .assign(&group.roots[index].child)
+            {
+                return Err(group.failure(GroupNativeFailureKind::Assignment, error));
+            }
+            group.roots[index].state = SuspendedRootState::AssignedSuspended;
+            if let Err(error) = group
+                .job
+                .as_mut()
+                .expect("group Job")
+                .verify_assignment(&group.roots[index].child)
+            {
+                return Err(group.failure(GroupNativeFailureKind::Membership, error));
+            }
+        }
+        Ok(group)
+    }
+
+    fn failure(
+        self,
+        kind: GroupNativeFailureKind,
+        detail: impl Into<String>,
+    ) -> GroupNativeFailure {
+        GroupNativeFailure::with_owner(kind, detail, self)
+    }
+
+    fn verify_all_assigned_suspended(&mut self) -> Result<(), String> {
+        if self.roots.is_empty() {
+            return Err("A runtime group must contain at least one root.".into());
+        }
+        for root in &self.roots {
+            if root.state != SuspendedRootState::AssignedSuspended {
+                return Err(format!(
+                    "Runtime root {} was not retained in the assigned suspended state.",
+                    root.ordinal
+                ));
+            }
+            let expected = root.identity.ok_or_else(|| {
+                format!("Runtime root {} has no captured identity.", root.ordinal)
+            })?;
+            let observed = process_identity_from_handle(
+                root.child.as_raw_handle() as *mut c_void,
+                root.child.id(),
+            )?;
+            if !same_process_identity(expected, observed) {
+                return Err(format!(
+                    "Runtime root {} creation identity changed before resume.",
+                    root.ordinal
+                ));
+            }
+            self.job
+                .as_mut()
+                .expect("group Job")
+                .verify_assignment(&root.child)?;
+            verify_suspended_primary_thread(&root.child)?;
+        }
+        let expected = self
+            .roots
+            .iter()
+            .map(|root| root.identity.expect("validated root identity"))
+            .collect::<Vec<_>>();
+        self.job
+            .as_mut()
+            .expect("group Job")
+            .verify_membership_set(&expected)
+    }
+
+    /// Consumes the owner. On failure the returned error contains the same
+    /// owner, so the caller can reconcile without reconstructing native state.
+    fn resume_all(mut self) -> Result<Self, GroupNativeFailure> {
+        if let Err(error) = self.verify_all_assigned_suspended() {
+            return Err(self.failure(GroupNativeFailureKind::Membership, error));
+        }
+        for index in 0..self.roots.len() {
+            #[cfg(test)]
+            if self
+                .job
+                .as_mut()
+                .expect("group Job")
+                .take_resume_failure(index)
+            {
+                return Err(self.failure(
+                    GroupNativeFailureKind::Resume,
+                    format!("Injected resume failure for runtime root {index}."),
+                ));
+            }
+            if let Err(error) = resume_suspended_process(&self.roots[index].child) {
+                return Err(self.failure(GroupNativeFailureKind::Resume, error));
+            }
+            self.roots[index].state = SuspendedRootState::Resumed;
+        }
+        Ok(self)
+    }
+
+    fn cleanup_inner(&mut self) -> Result<GroupCleanupProof, String> {
+        let deadline = std::time::Instant::now()
+            + std::time::Duration::from_millis(u64::from(GROUP_CLEANUP_BUDGET_MS));
+        let job = self.job.as_mut().expect("group Job");
+        let _job_terminated = job.terminate().is_ok();
+        for root in &mut self.roots {
+            if let Some(identity) = root.identity {
+                // Keep using each retained Child handle even after a Job kill;
+                // this makes suspended roots and already-exited roots equally
+                // proveable without reopening by PID.
+                terminate_process_with_proof_with_timeout(
+                    root.child.as_raw_handle() as *mut c_void,
+                    identity,
+                    remaining_timeout_ms(deadline),
+                )?;
+                reap_child_by_exact_handle(&mut root.child, remaining_timeout_ms(deadline))?;
+            } else {
+                terminate_child_by_exact_handle(&mut root.child, remaining_timeout_ms(deadline))?;
+            }
+        }
+        if self.job.as_ref().expect("group Job").active_processes()? != 0 {
+            self.job
+                .as_mut()
+                .expect("group Job")
+                .terminate_remaining_owned_processes(deadline)?;
+        }
+        if self.job.as_ref().expect("group Job").active_processes()? != 0 {
+            return Err("Runtime group Job still reports active processes.".into());
+        }
+        Ok(GroupCleanupProof {
+            roots_reaped: true,
+            descendants_terminated: true,
+        })
+    }
+
+    fn cleanup_and_prove(mut self) -> Result<GroupCleanupProof, GroupCleanupFailure> {
+        match self.cleanup_inner() {
+            Ok(proof) => {
+                self.cleanup_complete = true;
+                Ok(proof)
+            }
+            Err(detail) => Err(GroupCleanupFailure {
+                kind: GroupNativeFailureKind::Cleanup,
+                detail,
+                owner: self,
+            }),
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Drop for SuspendedGroup {
+    fn drop(&mut self) {
+        if self.cleanup_complete {
+            return;
+        }
+        // Drop is only a last-resort native safety net. It never fabricates a
+        // cleanup proof; explicit cleanup retains this same owner on failure.
+        if let Some(job) = self.job.as_mut() {
+            let _ = job.terminate();
+        }
+        let deadline = std::time::Instant::now()
+            + std::time::Duration::from_millis(u64::from(GROUP_CLEANUP_BUDGET_MS));
+        for root in &mut self.roots {
+            let _ = terminate_child_by_exact_handle(
+                &mut root.child,
+                remaining_timeout_ms(deadline).min(DROP_CLEANUP_WAIT_MS),
+            );
+        }
+    }
 }
 
 /// A sidecar root process plus its Windows job-object ownership boundary.
@@ -728,14 +1134,32 @@ fn prove_process_terminated(
     handle: *mut c_void,
     expected: OwnedProcessIdentity,
 ) -> Result<(), String> {
+    prove_process_terminated_with_timeout(handle, expected, PROCESS_WAIT_TIMEOUT_MS)
+}
+
+#[cfg(windows)]
+fn prove_process_terminated_with_timeout(
+    handle: *mut c_void,
+    expected: OwnedProcessIdentity,
+    wait_timeout_ms: u32,
+) -> Result<(), String> {
     let observed = process_identity_from_handle(handle, expected.pid)?;
-    classify_terminated_process(handle, expected, observed)
+    classify_terminated_process_with_timeout(handle, expected, observed, wait_timeout_ms)
 }
 
 #[cfg(windows)]
 fn terminate_process_with_proof(
     handle: *mut c_void,
     expected: OwnedProcessIdentity,
+) -> Result<(), String> {
+    terminate_process_with_proof_with_timeout(handle, expected, PROCESS_WAIT_TIMEOUT_MS)
+}
+
+#[cfg(windows)]
+fn terminate_process_with_proof_with_timeout(
+    handle: *mut c_void,
+    expected: OwnedProcessIdentity,
+    wait_timeout_ms: u32,
 ) -> Result<(), String> {
     if unsafe { TerminateProcess(handle, 1) } == 0 {
         let error = unsafe { GetLastError() };
@@ -746,7 +1170,7 @@ fn terminate_process_with_proof(
             ));
         }
     }
-    prove_process_terminated(handle, expected)
+    prove_process_terminated_with_timeout(handle, expected, wait_timeout_ms)
 }
 
 /// Proves that a process handle is already terminated after a termination
@@ -756,13 +1180,23 @@ fn terminate_process_with_proof(
 /// a short-lived process exiting.  The error is recoverable only when the
 /// handle still belongs to the exact process we opened, is signaled, and has a
 /// terminal exit code.  Every other observation remains fail-closed.
-#[cfg(windows)]
+#[cfg(all(test, windows))]
 fn classify_terminated_process(
     handle: *mut c_void,
     expected: OwnedProcessIdentity,
     observed: OwnedProcessIdentity,
 ) -> Result<(), String> {
-    let wait_state = unsafe { WaitForSingleObject(handle, 5_000) };
+    classify_terminated_process_with_timeout(handle, expected, observed, PROCESS_WAIT_TIMEOUT_MS)
+}
+
+#[cfg(windows)]
+fn classify_terminated_process_with_timeout(
+    handle: *mut c_void,
+    expected: OwnedProcessIdentity,
+    observed: OwnedProcessIdentity,
+    wait_timeout_ms: u32,
+) -> Result<(), String> {
+    let wait_state = unsafe { WaitForSingleObject(handle, wait_timeout_ms) };
     let exit_code = if wait_state == WAIT_OBJECT_0 {
         let mut exit_code = 0_u32;
         if unsafe { GetExitCodeProcess(handle, &mut exit_code) } == 0 {
@@ -812,6 +1246,26 @@ fn classify_terminated_observation(
     Ok(())
 }
 
+#[cfg(any(windows, test))]
+fn next_process_list_capacity(
+    capacity: usize,
+    listed: usize,
+    assigned: usize,
+    max_capacity: usize,
+) -> Result<Option<usize>, String> {
+    if listed <= capacity && assigned <= listed {
+        return Ok(None);
+    }
+    if assigned > max_capacity || capacity >= max_capacity {
+        return Err("The owned runtime Job process list counts exceeded the safe enumeration limit or remained inconsistent at that limit.".into());
+    }
+    let next_capacity = assigned.max(capacity.saturating_mul(2)).min(max_capacity);
+    if next_capacity <= capacity {
+        return Err("The owned runtime Job process list capacity could not make progress.".into());
+    }
+    Ok(Some(next_capacity))
+}
+
 #[cfg(windows)]
 struct WindowsJob {
     handle: usize,
@@ -829,6 +1283,27 @@ struct WindowsJob {
     process_termination_attempts: usize,
     #[cfg(test)]
     stale_process_snapshot: Option<Vec<OwnedProcessIdentity>>,
+    #[cfg(test)]
+    assignment_failure_at: Option<usize>,
+    #[cfg(test)]
+    assignment_attempts: usize,
+    #[cfg(test)]
+    membership_failure_at: Option<usize>,
+    #[cfg(test)]
+    membership_attempts: usize,
+    #[cfg(test)]
+    resume_failure_at: Option<usize>,
+    #[cfg(test)]
+    identity_failure_at: Option<usize>,
+}
+
+#[cfg(all(test, windows))]
+#[derive(Default)]
+struct GroupTestFaults {
+    assignment_failure_at: Option<usize>,
+    membership_failure_at: Option<usize>,
+    resume_failure_at: Option<usize>,
+    identity_failure_at: Option<usize>,
 }
 
 #[cfg(windows)]
@@ -873,10 +1348,41 @@ impl WindowsJob {
             process_termination_attempts: 0,
             #[cfg(test)]
             stale_process_snapshot: None,
+            #[cfg(test)]
+            assignment_failure_at: None,
+            #[cfg(test)]
+            assignment_attempts: 0,
+            #[cfg(test)]
+            membership_failure_at: None,
+            #[cfg(test)]
+            membership_attempts: 0,
+            #[cfg(test)]
+            resume_failure_at: None,
+            #[cfg(test)]
+            identity_failure_at: None,
         })
     }
 
-    fn assign(&self, child: &Child) -> Result<(), String> {
+    #[cfg(test)]
+    fn new_with_faults(faults: GroupTestFaults) -> Result<Self, String> {
+        let mut job = Self::new()?;
+        job.assignment_failure_at = faults.assignment_failure_at;
+        job.membership_failure_at = faults.membership_failure_at;
+        job.resume_failure_at = faults.resume_failure_at;
+        job.identity_failure_at = faults.identity_failure_at;
+        Ok(job)
+    }
+
+    fn assign(&mut self, child: &Child) -> Result<(), String> {
+        #[cfg(test)]
+        {
+            let attempt = self.assignment_attempts;
+            self.assignment_attempts += 1;
+            if self.assignment_failure_at == Some(attempt) {
+                self.assignment_failure_at = None;
+                return Err("Injected Job assignment failure.".into());
+            }
+        }
         let assigned = unsafe {
             AssignProcessToJobObject(
                 self.handle as *mut c_void,
@@ -893,7 +1399,16 @@ impl WindowsJob {
         }
     }
 
-    fn verify_assignment(&self, child: &Child) -> Result<(), String> {
+    fn verify_assignment(&mut self, child: &Child) -> Result<(), String> {
+        #[cfg(test)]
+        {
+            let attempt = self.membership_attempts;
+            self.membership_attempts += 1;
+            if self.membership_failure_at == Some(attempt) {
+                self.membership_failure_at = None;
+                return Err("Injected Job membership verification failure.".into());
+            }
+        }
         let mut in_job = 0_i32;
         let verified = unsafe {
             IsProcessInJob(
@@ -910,6 +1425,20 @@ impl WindowsJob {
         }
         if in_job == 0 {
             return Err("Capture runtime root process was not assigned to its owned Job.".into());
+        }
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    fn verify_membership_set(&mut self, expected: &[OwnedProcessIdentity]) -> Result<(), String> {
+        let observed = self.owned_processes(None)?;
+        let expected_set: HashSet<_> = expected.iter().copied().collect();
+        let observed_set: HashSet<_> = observed.iter().copied().collect();
+        if expected.len() != expected_set.len()
+            || observed.len() != observed_set.len()
+            || expected_set != observed_set
+        {
+            return Err("The owned runtime Job membership did not match every group root.".into());
         }
         Ok(())
     }
@@ -997,14 +1526,10 @@ impl WindowsJob {
                 unsafe { &*buffer.as_ptr().cast::<JOBOBJECT_BASIC_PROCESS_ID_LIST>() };
             let assigned = information.NumberOfAssignedProcesses as usize;
             let listed = information.NumberOfProcessIdsInList as usize;
-            if listed > capacity || assigned > listed {
-                if assigned > MAX_CAPACITY {
-                    return Err(
-                        "The owned runtime Job process list exceeded the safe enumeration limit."
-                            .into(),
-                    );
-                }
-                capacity = assigned.max(capacity.saturating_mul(2)).min(MAX_CAPACITY);
+            if let Some(next_capacity) =
+                next_process_list_capacity(capacity, listed, assigned, MAX_CAPACITY)?
+            {
+                capacity = next_capacity;
                 continue;
             }
             let process_ids =
@@ -1048,7 +1573,11 @@ impl WindowsJob {
                 return Ok(());
             }
             for process in processes {
-                self.terminate_owned_process(process, exited_root)?;
+                self.terminate_owned_process_with_timeout(
+                    process,
+                    exited_root,
+                    PROCESS_WAIT_TIMEOUT_MS,
+                )?;
             }
             let mut remaining = self.owned_processes(exited_root)?;
             remaining.retain(|process| !same_process_identity(*process, root_identity));
@@ -1063,10 +1592,44 @@ impl WindowsJob {
         )
     }
 
-    fn terminate_owned_process(
+    #[allow(dead_code)]
+    fn terminate_remaining_owned_processes(
+        &mut self,
+        deadline: std::time::Instant,
+    ) -> Result<(), String> {
+        const MAX_PASSES: usize = 20;
+        for _ in 0..MAX_PASSES {
+            if remaining_timeout_ms(deadline) == 0 {
+                return Err("The owned runtime Job cleanup budget expired.".into());
+            }
+            let processes = self.owned_processes(None)?;
+            if processes.is_empty() {
+                return Ok(());
+            }
+            for process in processes {
+                self.terminate_owned_process_with_timeout(
+                    process,
+                    None,
+                    remaining_timeout_ms(deadline),
+                )?;
+            }
+            if self.owned_processes(None)?.is_empty() {
+                return Ok(());
+            }
+            let sleep_ms = remaining_timeout_ms(deadline).min(10);
+            if sleep_ms == 0 {
+                return Err("The owned runtime Job cleanup budget expired.".into());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(u64::from(sleep_ms)));
+        }
+        Err("The owned runtime Job still reports active processes after group cleanup.".into())
+    }
+
+    fn terminate_owned_process_with_timeout(
         &mut self,
         expected: OwnedProcessIdentity,
         exited_root: Option<OwnedProcessIdentity>,
+        wait_timeout_ms: u32,
     ) -> Result<(), String> {
         #[cfg(test)]
         {
@@ -1088,7 +1651,7 @@ impl WindowsJob {
                 // the next pass will handle its newly captured identity.
                 return Ok(());
             }
-            let result = self.prove_missing_process_terminated(expected);
+            let result = self.prove_missing_process_terminated(expected, wait_timeout_ms);
             return match result {
                 Ok(()) => Ok(()),
                 Err(error) => Err(format!(
@@ -1107,19 +1670,25 @@ impl WindowsJob {
         if unsafe { TerminateProcess(handle.raw(), 1) } == 0 {
             let error = unsafe { GetLastError() };
             if error == ERROR_ACCESS_DENIED {
-                return classify_terminated_process(handle.raw(), expected, observed);
+                return classify_terminated_process_with_timeout(
+                    handle.raw(),
+                    expected,
+                    observed,
+                    wait_timeout_ms,
+                );
             }
             return Err(format!(
                 "The owned runtime process {} could not be terminated: Windows error {error}.",
                 expected.pid,
             ));
         }
-        classify_terminated_process(handle.raw(), expected, observed)
+        classify_terminated_process_with_timeout(handle.raw(), expected, observed, wait_timeout_ms)
     }
 
     fn prove_missing_process_terminated(
         &self,
         expected: OwnedProcessIdentity,
+        wait_timeout_ms: u32,
     ) -> Result<(), String> {
         let handle = self
             .captured_process_handles
@@ -1130,7 +1699,7 @@ impl WindowsJob {
                     expected.pid
                 )
             })?;
-        prove_process_terminated(handle.raw(), expected)
+        prove_process_terminated_with_timeout(handle.raw(), expected, wait_timeout_ms)
     }
 
     #[cfg(test)]
@@ -1151,6 +1720,26 @@ impl WindowsJob {
     #[cfg(test)]
     fn inject_stale_process_snapshot(&mut self, snapshot: Vec<OwnedProcessIdentity>) {
         self.stale_process_snapshot = Some(snapshot);
+    }
+
+    #[cfg(test)]
+    fn take_resume_failure(&mut self, ordinal: usize) -> bool {
+        if self.resume_failure_at == Some(ordinal) {
+            self.resume_failure_at = None;
+            true
+        } else {
+            false
+        }
+    }
+
+    #[cfg(test)]
+    fn take_identity_failure(&mut self, ordinal: usize) -> bool {
+        if self.identity_failure_at == Some(ordinal) {
+            self.identity_failure_at = None;
+            true
+        } else {
+            false
+        }
     }
 
     #[cfg(all(test, windows))]
@@ -1226,7 +1815,73 @@ fn terminate_assigned_suspended_child(
 }
 
 #[cfg(windows)]
-fn resume_suspended_process(child: &Child) -> Result<(), String> {
+#[allow(dead_code)]
+fn remaining_timeout_ms(deadline: std::time::Instant) -> u32 {
+    let millis = deadline
+        .saturating_duration_since(std::time::Instant::now())
+        .as_millis();
+    u32::try_from(millis.min(u128::from(u32::MAX))).unwrap_or(u32::MAX)
+}
+
+#[cfg(windows)]
+#[allow(dead_code)]
+fn reap_child_by_exact_handle(child: &mut Child, wait_timeout_ms: u32) -> Result<(), String> {
+    let handle = child.as_raw_handle() as *mut c_void;
+    let wait_state = unsafe { WaitForSingleObject(handle, wait_timeout_ms) };
+    if wait_state != WAIT_OBJECT_0 {
+        return Err(match wait_state {
+            WAIT_TIMEOUT => "Runtime group root did not exit within the cleanup budget.",
+            WAIT_FAILED => "Runtime group root wait failed.",
+            _ => "Runtime group root returned an unknown wait state.",
+        }
+        .into());
+    }
+    let mut exit_code = 0_u32;
+    if unsafe { GetExitCodeProcess(handle, &mut exit_code) } == 0 {
+        return Err(format!(
+            "Runtime group root terminal exit code could not be queried: {}",
+            io::Error::last_os_error()
+        ));
+    }
+    if exit_code == 259 {
+        return Err("Runtime group root still reports an active exit code.".into());
+    }
+    match child.try_wait() {
+        Ok(Some(_)) => Ok(()),
+        Ok(None) => Err("Runtime group root was signaled but could not be reaped.".into()),
+        Err(error) => Err(format!("Runtime group root could not be reaped: {error}")),
+    }
+}
+
+#[cfg(windows)]
+#[allow(dead_code)]
+fn terminate_child_by_exact_handle(child: &mut Child, wait_timeout_ms: u32) -> Result<(), String> {
+    if child
+        .try_wait()
+        .map_err(|error| format!("Runtime group root liveness could not be proven: {error}"))?
+        .is_some()
+    {
+        return Ok(());
+    }
+    if let Err(error) = child.kill() {
+        if child
+            .try_wait()
+            .map_err(|wait_error| {
+                format!(
+                    "Runtime group root kill failed ({error}) and liveness could not be proven: {wait_error}"
+                )
+            })?
+            .is_some()
+        {
+            return Ok(());
+        }
+        return Err(format!("Runtime group root could not be stopped: {error}"));
+    }
+    reap_child_by_exact_handle(child, wait_timeout_ms)
+}
+
+#[cfg(windows)]
+fn open_suspended_primary_thread(child: &Child) -> Result<ScopedWindowsHandle, String> {
     let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) };
     if snapshot == INVALID_HANDLE_VALUE {
         return Err(format!(
@@ -1293,6 +1948,41 @@ fn resume_suspended_process(child: &Child) -> Result<(), String> {
                 .into(),
         );
     }
+    Ok(thread)
+}
+
+#[cfg(windows)]
+#[allow(dead_code)]
+fn verify_suspended_primary_thread(child: &Child) -> Result<(), String> {
+    // CREATE_SUSPENDED provides the initial native suspension. Re-observe the
+    // exact primary thread and temporarily move its count 1 -> 2 -> 1 so the
+    // current count is proven rather than inferred from launch history.
+    let thread = open_suspended_primary_thread(child)?;
+    let previous_suspend_count = unsafe { SuspendThread(thread.raw()) };
+    if previous_suspend_count == u32::MAX {
+        return Err(format!(
+            "The owned runtime primary thread suspend count could not be observed: {}",
+            io::Error::last_os_error()
+        ));
+    }
+    let restored_previous_count = unsafe { ResumeThread(thread.raw()) };
+    if restored_previous_count == u32::MAX {
+        return Err(format!(
+            "The owned runtime primary thread suspend count could not be restored: {}",
+            io::Error::last_os_error()
+        ));
+    }
+    if previous_suspend_count != 1 || restored_previous_count != 2 {
+        return Err(format!(
+            "The owned runtime primary thread had an unexpected suspend transition {previous_suspend_count} -> {restored_previous_count}; expected 1 -> 2 -> 1."
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn resume_suspended_process(child: &Child) -> Result<(), String> {
+    let thread = open_suspended_primary_thread(child)?;
     let previous_suspend_count = unsafe { ResumeThread(thread.raw()) };
     if previous_suspend_count == u32::MAX {
         return Err(format!(
@@ -1382,6 +2072,13 @@ fn taskkill_args(pid: u32) -> [String; 4] {
 mod tests {
     use super::*;
 
+    #[cfg(windows)]
+    use std::{
+        path::{Path, PathBuf},
+        sync::atomic::{AtomicU64, Ordering},
+        time::{Duration, SystemTime, UNIX_EPOCH},
+    };
+
     #[test]
     fn cleanup_targets_only_the_recorded_pid_tree() {
         let command = taskkill_command(4242).expect("taskkill command");
@@ -1391,6 +2088,384 @@ mod tests {
             .collect();
         assert_eq!(args, ["/PID", "4242", "/T", "/F"]);
         assert!(!args.iter().any(|arg| arg == "/IM"));
+    }
+
+    #[cfg(windows)]
+    fn group_marker_path(label: &str) -> PathBuf {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let tick = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "capture-runtime-group-{label}-{}-{}-{}.txt",
+            std::process::id(),
+            tick,
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ))
+    }
+
+    #[cfg(windows)]
+    fn marker_command(marker: &Path, keep_alive: bool) -> Command {
+        let marker = marker.to_string_lossy().replace('\'', "''");
+        let script = if keep_alive {
+            format!("Set-Content -LiteralPath '{marker}' -Value started; Start-Sleep -Seconds 30")
+        } else {
+            format!("Set-Content -LiteralPath '{marker}' -Value started")
+        };
+        let mut command = powershell_command(&script);
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        command
+    }
+
+    #[cfg(windows)]
+    fn wait_for_marker(path: &Path, expected: bool) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while path.exists() != expected && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(
+            path.exists(),
+            expected,
+            "marker state for {}",
+            path.display()
+        );
+    }
+
+    #[cfg(windows)]
+    fn cleanup_group_failure(failure: GroupNativeFailure) -> GroupCleanupProof {
+        let owner = failure
+            .owner
+            .expect("native failure must retain group owner");
+        owner
+            .cleanup_and_prove()
+            .unwrap_or_else(|failure| panic!("group cleanup proof: {}", failure.detail))
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn suspended_group_keeps_all_roots_suspended_until_one_resume_boundary() {
+        let first_marker = group_marker_path("suspended-first");
+        let second_marker = group_marker_path("suspended-second");
+        let mut commands = [
+            marker_command(&first_marker, true),
+            marker_command(&second_marker, true),
+        ];
+        let group = SuspendedGroup::spawn(&mut commands)
+            .expect("group roots should be assigned while suspended");
+        wait_for_marker(&first_marker, false);
+        wait_for_marker(&second_marker, false);
+        let group = group
+            .resume_all()
+            .expect("all roots should resume together");
+        wait_for_marker(&first_marker, true);
+        wait_for_marker(&second_marker, true);
+        let proof = group
+            .cleanup_and_prove()
+            .expect("resumed group cleanup proof");
+        assert!(proof.roots_reaped);
+        assert!(proof.descendants_terminated);
+        let _ = std::fs::remove_file(first_marker);
+        let _ = std::fs::remove_file(second_marker);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn single_root_private_group_uses_the_same_suspend_resume_boundary() {
+        let marker = group_marker_path("single-root");
+        let mut commands = [marker_command(&marker, true)];
+        let group = SuspendedGroup::spawn(&mut commands).expect("single group root should spawn");
+        wait_for_marker(&marker, false);
+        let group = group.resume_all().expect("single group root should resume");
+        wait_for_marker(&marker, true);
+        let proof = group
+            .cleanup_and_prove()
+            .expect("single group root cleanup proof");
+        assert!(proof.roots_reaped);
+        assert!(proof.descendants_terminated);
+        let _ = std::fs::remove_file(marker);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn unexpected_root_resume_is_rejected_before_any_group_root_resumes() {
+        let first_marker = group_marker_path("unexpected-resume-first");
+        let second_marker = group_marker_path("unexpected-resume-second");
+        let mut commands = [
+            marker_command(&first_marker, true),
+            marker_command(&second_marker, true),
+        ];
+        let group = SuspendedGroup::spawn(&mut commands).expect("group roots should spawn");
+        let thread = open_suspended_primary_thread(&group.roots[1].child)
+            .expect("second root primary thread");
+        assert_eq!(unsafe { SuspendThread(thread.raw()) }, 1);
+        assert_eq!(unsafe { ResumeThread(thread.raw()) }, 2);
+        assert_eq!(unsafe { ResumeThread(thread.raw()) }, 1);
+
+        let failure = group
+            .resume_all()
+            .expect_err("unexpectedly resumed root must reject the whole group");
+        assert_eq!(failure.kind(), GroupNativeFailureKind::Membership);
+        wait_for_marker(&first_marker, false);
+        wait_for_marker(&second_marker, true);
+        let proof = cleanup_group_failure(failure);
+        assert!(proof.roots_reaped);
+        assert!(proof.descendants_terminated);
+        let _ = std::fs::remove_file(first_marker);
+        let _ = std::fs::remove_file(second_marker);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn group_cleanup_preserves_an_unrelated_baseline_process() {
+        let baseline_marker = group_marker_path("baseline");
+        let group_marker = group_marker_path("baseline-group");
+        let mut baseline = marker_command(&baseline_marker, true)
+            .spawn()
+            .expect("unrelated baseline process");
+        let mut commands = [marker_command(&group_marker, true)];
+        let group = SuspendedGroup::spawn(&mut commands)
+            .expect("group root should spawn")
+            .resume_all()
+            .expect("group root should resume");
+        wait_for_marker(&group_marker, true);
+        group
+            .cleanup_and_prove()
+            .expect("group cleanup proof should succeed");
+        assert!(
+            baseline.try_wait().expect("baseline status").is_none(),
+            "group cleanup must not terminate an unrelated baseline process"
+        );
+        baseline.kill().expect("baseline cleanup");
+        baseline.wait().expect("baseline reap");
+        let _ = std::fs::remove_file(baseline_marker);
+        let _ = std::fs::remove_file(group_marker);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn group_cleanup_proves_job_descendants_are_reaped() {
+        let marker = group_marker_path("descendant");
+        let marker_text = marker.to_string_lossy().replace('\'', "''");
+        let script = format!(
+            "$p = Start-Process ping.exe -ArgumentList '-n','30','127.0.0.1' -WindowStyle Hidden; Set-Content -LiteralPath '{marker_text}' -Value started; Start-Sleep -Seconds 30"
+        );
+        let mut commands = [powershell_command(&script)];
+        for command in &mut commands {
+            command
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+        }
+        let group = SuspendedGroup::spawn(&mut commands)
+            .expect("group root should spawn")
+            .resume_all()
+            .expect("group root should resume");
+        wait_for_marker(&marker, true);
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while group
+            .job
+            .as_ref()
+            .expect("group Job")
+            .active_processes()
+            .expect("group process query")
+            < 2
+            && std::time::Instant::now() < deadline
+        {
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        assert!(
+            group
+                .job
+                .as_ref()
+                .expect("group Job")
+                .active_processes()
+                .expect("group process query")
+                >= 2,
+            "the group should observe its descendant before cleanup"
+        );
+        let proof = group
+            .cleanup_and_prove()
+            .expect("group descendant cleanup proof");
+        assert!(proof.descendants_terminated);
+        let _ = std::fs::remove_file(marker);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn partial_group_assignment_returns_the_complete_owner_without_resuming() {
+        let first_marker = group_marker_path("assignment-first");
+        let second_marker = group_marker_path("assignment-second");
+        let mut commands = [
+            marker_command(&first_marker, true),
+            marker_command(&second_marker, true),
+        ];
+        let failure = SuspendedGroup::spawn_with_faults(
+            &mut commands,
+            GroupTestFaults {
+                assignment_failure_at: Some(1),
+                ..Default::default()
+            },
+        )
+        .expect_err("second assignment failure");
+        assert_eq!(failure.kind(), GroupNativeFailureKind::Assignment);
+        let owner = failure.owner.as_ref().expect("complete group owner");
+        assert_eq!(owner.roots.len(), 2);
+        wait_for_marker(&first_marker, false);
+        wait_for_marker(&second_marker, false);
+        let proof = cleanup_group_failure(failure);
+        assert!(proof.roots_reaped);
+        assert!(proof.descendants_terminated);
+        let _ = std::fs::remove_file(first_marker);
+        let _ = std::fs::remove_file(second_marker);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn membership_failure_after_assignment_retains_the_complete_owner() {
+        let first_marker = group_marker_path("membership-first");
+        let second_marker = group_marker_path("membership-second");
+        let mut commands = [
+            marker_command(&first_marker, true),
+            marker_command(&second_marker, true),
+        ];
+        let failure = SuspendedGroup::spawn_with_faults(
+            &mut commands,
+            GroupTestFaults {
+                membership_failure_at: Some(1),
+                ..Default::default()
+            },
+        )
+        .expect_err("second membership verification failure");
+        assert_eq!(failure.kind(), GroupNativeFailureKind::Membership);
+        let owner = failure.owner.as_ref().expect("complete group owner");
+        assert_eq!(owner.roots.len(), 2);
+        assert_eq!(owner.roots[1].state, SuspendedRootState::AssignedSuspended);
+        wait_for_marker(&first_marker, false);
+        wait_for_marker(&second_marker, false);
+        let proof = cleanup_group_failure(failure);
+        assert!(proof.roots_reaped);
+        assert!(proof.descendants_terminated);
+        let _ = std::fs::remove_file(first_marker);
+        let _ = std::fs::remove_file(second_marker);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn root_spawn_failure_retains_prior_job_and_roots_for_cleanup() {
+        let first_marker = group_marker_path("spawn-first");
+        let mut commands = [marker_command(&first_marker, true), {
+            let mut command = Command::new("capture-runtime-command-that-does-not-exist.exe");
+            command
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            command
+        }];
+        let failure = SuspendedGroup::spawn(&mut commands).expect_err("second spawn failure");
+        assert_eq!(failure.kind(), GroupNativeFailureKind::Spawn);
+        assert_eq!(failure.owner.as_ref().expect("prior owner").roots.len(), 1);
+        wait_for_marker(&first_marker, false);
+        let proof = cleanup_group_failure(failure);
+        assert!(proof.roots_reaped);
+        assert!(proof.descendants_terminated);
+        let _ = std::fs::remove_file(first_marker);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn identity_capture_failure_retains_the_exact_child_handle() {
+        let marker = group_marker_path("identity");
+        let mut commands = [marker_command(&marker, true)];
+        let failure = SuspendedGroup::spawn_with_faults(
+            &mut commands,
+            GroupTestFaults {
+                identity_failure_at: Some(0),
+                ..Default::default()
+            },
+        )
+        .expect_err("identity capture failure");
+        assert_eq!(failure.kind(), GroupNativeFailureKind::Identity);
+        let owner = failure.owner.as_ref().expect("owner with child handle");
+        assert_eq!(owner.roots.len(), 1);
+        assert!(owner.roots[0].identity.is_none());
+        wait_for_marker(&marker, false);
+        let proof = cleanup_group_failure(failure);
+        assert!(proof.roots_reaped);
+        assert!(proof.descendants_terminated);
+        let _ = std::fs::remove_file(marker);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn resume_failure_after_first_root_retains_owner_and_cleans_whole_group() {
+        let first_marker = group_marker_path("resume-first");
+        let second_marker = group_marker_path("resume-second");
+        let mut commands = [
+            marker_command(&first_marker, true),
+            marker_command(&second_marker, true),
+        ];
+        let failure = SuspendedGroup::spawn_with_faults(
+            &mut commands,
+            GroupTestFaults {
+                resume_failure_at: Some(1),
+                ..Default::default()
+            },
+        )
+        .expect("suspended group");
+        let failure = failure.resume_all().expect_err("second resume failure");
+        assert_eq!(failure.kind(), GroupNativeFailureKind::Resume);
+        wait_for_marker(&first_marker, true);
+        wait_for_marker(&second_marker, false);
+        let proof = cleanup_group_failure(failure);
+        assert!(proof.roots_reaped);
+        assert!(proof.descendants_terminated);
+        let _ = std::fs::remove_file(first_marker);
+        let _ = std::fs::remove_file(second_marker);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn explicit_group_cleanup_failure_retains_same_owner_for_retry() {
+        let first_marker = group_marker_path("cleanup-first");
+        let second_marker = group_marker_path("cleanup-second");
+        let mut commands = [
+            marker_command(&first_marker, true),
+            marker_command(&second_marker, true),
+        ];
+        let group = SuspendedGroup::spawn(&mut commands)
+            .expect("suspended group")
+            .resume_all()
+            .expect("resumed group");
+        group
+            .job
+            .as_ref()
+            .expect("group Job")
+            .active_processes()
+            .expect("active roots");
+        let mut group = group;
+        group
+            .job
+            .as_mut()
+            .expect("group Job")
+            .inject_termination_failure();
+        group
+            .job
+            .as_mut()
+            .expect("group Job")
+            .inject_process_query_failure();
+        let cleanup_failure = group
+            .cleanup_and_prove()
+            .expect_err("injected cleanup failure");
+        assert_eq!(cleanup_failure.kind, GroupNativeFailureKind::Cleanup);
+        let proof = cleanup_failure.retry().expect("cleanup retry proof");
+        assert!(proof.roots_reaped);
+        assert!(proof.descendants_terminated);
+        let _ = std::fs::remove_file(first_marker);
+        let _ = std::fs::remove_file(second_marker);
     }
 
     #[cfg(windows)]
@@ -1749,6 +2824,24 @@ mod tests {
         };
         assert!(!same_process_identity(original, reused));
         assert!(same_process_identity(original, original));
+    }
+
+    #[test]
+    fn process_list_count_inconsistency_at_capacity_fails_closed() {
+        const MAX_CAPACITY: usize = 16_384;
+        assert_eq!(
+            next_process_list_capacity(16, 17, 17, MAX_CAPACITY).expect("capacity grows"),
+            Some(32)
+        );
+        assert!(
+            next_process_list_capacity(MAX_CAPACITY, MAX_CAPACITY + 1, 1, MAX_CAPACITY).is_err(),
+            "a successful inconsistent count at the maximum must terminate enumeration"
+        );
+        assert!(
+            next_process_list_capacity(MAX_CAPACITY, MAX_CAPACITY, MAX_CAPACITY + 1, MAX_CAPACITY)
+                .is_err(),
+            "an assigned count beyond the maximum must fail closed"
+        );
     }
 
     #[test]
