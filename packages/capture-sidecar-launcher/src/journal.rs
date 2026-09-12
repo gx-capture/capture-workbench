@@ -451,7 +451,7 @@ impl RecoveryAuthorization {
 }
 
 impl ImmutableGroupPlan {
-    fn validate(&self) -> Result<(), JournalError> {
+    pub(crate) fn validate(&self) -> Result<(), JournalError> {
         digest(&self.plan_digest, "planDigest")?;
         digest(&self.group_ref_digest, "groupRefDigest")?;
         if self.group_generation == 0 {

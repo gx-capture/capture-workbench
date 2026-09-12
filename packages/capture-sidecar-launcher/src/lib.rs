@@ -1,6 +1,7 @@
 mod constants;
 mod health;
 mod journal;
+mod journal_store;
 mod launcher;
 mod manifest;
 mod process;
