@@ -49,6 +49,7 @@ pub(crate) struct PreparePlanContext {
     // journal remains the lifecycle authority.
     ref_addresses: HashMap<ReconcileRef, ReconcileRefAddress>,
     clock: Arc<dyn PrepareClock + Send + Sync>,
+    pub(crate) activation_descriptor: Option<Arc<crate::launcher::FrozenActivationDescriptor>>,
 }
 
 /// The producer supplies semantic plan inputs; opaque references and all
@@ -152,11 +153,44 @@ pub(crate) fn build_immutable_group_plan(
     )
 }
 
+pub(crate) fn build_immutable_group_plan_from_activation(
+    descriptor: Arc<crate::launcher::FrozenActivationDescriptor>,
+    producer_root: PathBuf,
+    session_nonce: String,
+) -> Result<ImmutableGroupPlan, PrepareError> {
+    let draft = descriptor
+        .to_prepare_draft()
+        .map_err(|_| PrepareError::InvalidPlan)?;
+    build_immutable_group_plan_with_clock_and_activation(
+        draft,
+        producer_root,
+        session_nonce,
+        Arc::new(SystemPrepareClock),
+        Some(descriptor),
+    )
+}
+
 fn build_immutable_group_plan_with_clock(
     draft: PreparePlanDraft,
     producer_root: PathBuf,
     session_nonce: String,
     clock: Arc<dyn PrepareClock + Send + Sync>,
+) -> Result<ImmutableGroupPlan, PrepareError> {
+    build_immutable_group_plan_with_clock_and_activation(
+        draft,
+        producer_root,
+        session_nonce,
+        clock,
+        None,
+    )
+}
+
+fn build_immutable_group_plan_with_clock_and_activation(
+    draft: PreparePlanDraft,
+    producer_root: PathBuf,
+    session_nonce: String,
+    clock: Arc<dyn PrepareClock + Send + Sync>,
+    activation_descriptor: Option<Arc<crate::launcher::FrozenActivationDescriptor>>,
 ) -> Result<ImmutableGroupPlan, PrepareError> {
     validate_draft(&draft)?;
     let address_key = fresh_address_key().map_err(|_| PrepareError::ReferenceGeneration)?;
@@ -219,6 +253,7 @@ fn build_immutable_group_plan_with_clock(
             root_refs,
             ref_addresses,
             clock,
+            activation_descriptor,
         }),
     })
 }

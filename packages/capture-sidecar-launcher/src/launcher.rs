@@ -139,6 +139,119 @@ struct FrozenLaunchCommand {
     digest: String,
 }
 
+/// Producer-owned immutable inputs for the prepare/activation seam. The
+/// nonce values identify planned bindings; they do not claim that a listener
+/// or staging resource has already been acquired.
+pub(crate) struct FrozenActivationDescriptor {
+    group_generation: u64,
+    group_staging_identity: String,
+    roots: Vec<FrozenActivationRoot>,
+}
+
+pub(crate) struct FrozenActivationRoot {
+    ordinal: u32,
+    role: String,
+    root_generation: u64,
+    reserved_listener_identity: String,
+    command: FrozenLaunchCommand,
+}
+
+impl FrozenActivationDescriptor {
+    #[allow(dead_code)]
+    fn from_frozen_commands(
+        group_generation: u64,
+        roots: Vec<(u32, String, u64, FrozenLaunchCommand)>,
+    ) -> Result<Self, String> {
+        let group_staging_identity = fresh_private_nonce()?;
+        let roots = roots
+            .into_iter()
+            .map(|(ordinal, role, root_generation, command)| {
+                Ok(FrozenActivationRoot {
+                    ordinal,
+                    role,
+                    root_generation,
+                    reserved_listener_identity: fresh_private_nonce()?,
+                    command,
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        let descriptor = Self {
+            group_generation,
+            group_staging_identity,
+            roots,
+        };
+        descriptor.validate()?;
+        Ok(descriptor)
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        if self.group_generation == 0 {
+            return Err("Capture runtime activation generation was invalid.".into());
+        }
+        validate_private_nonce(&self.group_staging_identity)?;
+        if self.roots.is_empty() {
+            return Err("Capture runtime activation roots were incomplete.".into());
+        }
+        let mut ports = HashSet::with_capacity(self.roots.len());
+        let mut listener_identities = HashSet::with_capacity(self.roots.len());
+        for (index, root) in self.roots.iter().enumerate() {
+            if root.ordinal != index as u32
+                || root.root_generation == 0
+                || root.role.is_empty()
+                || root.role.len() > 256
+                || root.command.port == 0
+            {
+                return Err("Capture runtime activation roots were invalid.".into());
+            }
+            if !ports.insert(root.command.port) {
+                return Err("Capture runtime activation ports were not distinct.".into());
+            }
+            validate_private_nonce(&root.reserved_listener_identity)?;
+            if !listener_identities.insert(&root.reserved_listener_identity) {
+                return Err("Capture runtime listener identities were not distinct.".into());
+            }
+            if !is_lower_sha256(&root.command.digest) {
+                return Err("Capture runtime frozen command identity was invalid.".into());
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn to_prepare_draft(&self) -> Result<crate::prepare::PreparePlanDraft, String> {
+        self.validate()?;
+        Ok(crate::prepare::PreparePlanDraft {
+            group_generation: self.group_generation,
+            roots: self
+                .roots
+                .iter()
+                .map(|root| crate::prepare::PrepareRootDraft {
+                    ordinal: root.ordinal,
+                    role: root.role.clone(),
+                    root_generation: root.root_generation,
+                    spec_digest: activation_root_spec_digest(&self.group_staging_identity, root),
+                    reserved_listener_identity: root.reserved_listener_identity.clone(),
+                })
+                .collect(),
+        })
+    }
+}
+
+/// Builds the prepare plan through the typed activation descriptor. The
+/// value-only draft builder remains available for its existing foundation
+/// fixtures and is not an activation input path.
+#[allow(dead_code)]
+fn build_activation_plan(
+    descriptor: FrozenActivationDescriptor,
+    producer_root: PathBuf,
+    session_nonce: String,
+) -> Result<crate::prepare::ImmutableGroupPlan, crate::prepare::PrepareError> {
+    crate::prepare::build_immutable_group_plan_from_activation(
+        std::sync::Arc::new(descriptor),
+        producer_root,
+        session_nonce,
+    )
+}
+
 #[allow(dead_code)]
 impl FrozenLaunchCommand {
     fn command(&self) -> Command {
@@ -435,6 +548,66 @@ fn digest_bytes(bytes: &[u8]) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+#[allow(dead_code)]
+fn fresh_private_nonce() -> Result<String, String> {
+    let mut bytes = [0_u8; 16];
+    OsRng
+        .try_fill_bytes(&mut bytes)
+        .map_err(|_| "Capture runtime activation identity could not be generated.".to_string())?;
+    let mut nonce = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        write!(&mut nonce, "{byte:02x}")
+            .map_err(|_| "Capture runtime activation identity could not be encoded.".to_string())?;
+    }
+    Ok(nonce)
+}
+
+fn validate_private_nonce(value: &str) -> Result<(), String> {
+    if value.len() == 32 && value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        Ok(())
+    } else {
+        Err("Capture runtime activation identity was invalid.".into())
+    }
+}
+
+fn is_lower_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+}
+
+fn activation_root_spec_digest(
+    group_staging_identity: &str,
+    root: &FrozenActivationRoot,
+) -> String {
+    let mut encoded = Vec::new();
+    encoded.extend_from_slice(b"capture-sidecar/activation-root-spec/v1\0");
+    append_bytes(
+        &mut encoded,
+        b"command-digest",
+        root.command.digest.as_bytes(),
+    );
+    append_bytes(
+        &mut encoded,
+        b"group-staging-identity",
+        group_staging_identity.as_bytes(),
+    );
+    append_bytes(&mut encoded, b"ordinal", &root.ordinal.to_be_bytes());
+    append_bytes(&mut encoded, b"role", root.role.as_bytes());
+    append_bytes(
+        &mut encoded,
+        b"root-generation",
+        &root.root_generation.to_be_bytes(),
+    );
+    append_bytes(
+        &mut encoded,
+        b"reserved-listener-identity",
+        root.reserved_listener_identity.as_bytes(),
+    );
+    digest_bytes(&encoded)
+}
+
 /// Bounded launch timing and retry policy.
 #[derive(Debug, Clone, Copy)]
 pub struct LaunchOptions {
@@ -620,7 +793,13 @@ mod tests {
         collections::{BTreeMap, HashSet},
         ffi::OsString,
         fs,
-        path::PathBuf,
+        path::{Path, PathBuf},
+        sync::{atomic::AtomicUsize, Mutex},
+    };
+
+    use crate::prepare::{
+        CompleteGroupBinding, CompleteGroupBindingReceiptV1, PersistError, ReconcileRefSink,
+        VerifiedGroupBinding,
     };
 
     fn manifest() -> crate::SidecarManifest {
@@ -648,6 +827,47 @@ mod tests {
 
     fn token_environment(token: &str) -> Vec<(String, String)> {
         vec![("CAPTURE_API_TOKEN".into(), token.into())]
+    }
+
+    fn frozen_test_command(executable_path: &Path, port: u16) -> FrozenLaunchCommand {
+        freeze_launch_command_from_environment(
+            &verified(executable_path.to_path_buf()),
+            &SidecarLaunchSpec::new(
+                executable_path.to_path_buf(),
+                port,
+                "secret-token".into(),
+                token_environment("secret-token"),
+                Vec::new(),
+            ),
+            &[],
+        )
+        .expect("frozen command")
+    }
+
+    fn activation_test_descriptor(
+        executable_path: &Path,
+        ports: &[u16],
+    ) -> FrozenActivationDescriptor {
+        FrozenActivationDescriptor::from_frozen_commands(
+            4,
+            ports
+                .iter()
+                .enumerate()
+                .map(|(index, port)| {
+                    (
+                        index as u32,
+                        if index == 0 {
+                            "capture".into()
+                        } else {
+                            format!("worker-{index}")
+                        },
+                        index as u64 + 1,
+                        frozen_test_command(executable_path, *port),
+                    )
+                })
+                .collect(),
+        )
+        .expect("activation descriptor")
     }
 
     fn command_environment(command: &Command) -> BTreeMap<String, String> {
@@ -959,6 +1179,204 @@ mod tests {
         );
         assert!(
             freeze_launch_command_from_environment(&verified, &selected_pseudo, &captured).is_err()
+        );
+    }
+
+    #[test]
+    fn activation_descriptor_derives_root_identity_from_owned_commands_and_nonces() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let executable_path = directory.path().join("capture-runtime.exe");
+        fs::write(&executable_path, b"runtime").expect("executable");
+        let descriptor = activation_test_descriptor(&executable_path, &[42123, 42124]);
+        let draft = descriptor.to_prepare_draft().expect("activation draft");
+
+        assert_eq!(draft.group_generation, 4);
+        assert_eq!(draft.roots.len(), 2);
+        assert_ne!(draft.roots[0].spec_digest, draft.roots[1].spec_digest);
+        assert_ne!(
+            draft.roots[0].spec_digest,
+            descriptor.roots[0].command.digest
+        );
+        assert_ne!(
+            draft.roots[1].reserved_listener_identity,
+            draft.roots[0].reserved_listener_identity
+        );
+        assert_eq!(
+            fs::read_dir(directory.path())
+                .expect("read directory")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn activation_descriptor_rejects_incomplete_duplicate_or_colliding_roots() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let executable_path = directory.path().join("capture-runtime.exe");
+        fs::write(&executable_path, b"runtime").expect("executable");
+        let first = frozen_test_command(&executable_path, 42123);
+        let second = frozen_test_command(&executable_path, 42124);
+        assert!(FrozenActivationDescriptor::from_frozen_commands(
+            4,
+            vec![
+                (0, "capture".into(), 1, first),
+                (2, "worker".into(), 2, second)
+            ]
+        )
+        .is_err());
+
+        let first = frozen_test_command(&executable_path, 42123);
+        let second = frozen_test_command(&executable_path, 42123);
+        assert!(FrozenActivationDescriptor::from_frozen_commands(
+            4,
+            vec![
+                (0, "capture".into(), 1, first),
+                (1, "worker".into(), 2, second)
+            ]
+        )
+        .is_err());
+
+        assert!(FrozenActivationDescriptor::from_frozen_commands(4, Vec::new()).is_err());
+    }
+
+    #[test]
+    fn activation_descriptor_binds_command_staging_and_listener_identity() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let executable_path = directory.path().join("capture-runtime.exe");
+        fs::write(&executable_path, b"runtime").expect("executable");
+        let mut descriptor = activation_test_descriptor(&executable_path, &[42123, 42124]);
+        let baseline = descriptor.to_prepare_draft().expect("baseline draft");
+        let original_group_identity = descriptor.group_staging_identity.clone();
+        let original_listener_identity = descriptor.roots[0].reserved_listener_identity.clone();
+
+        descriptor.group_staging_identity = "11".repeat(16);
+        let changed_staging = descriptor.to_prepare_draft().expect("staging draft");
+        assert_ne!(
+            baseline.roots[0].spec_digest,
+            changed_staging.roots[0].spec_digest
+        );
+
+        descriptor.group_staging_identity = original_group_identity.clone();
+        descriptor.roots[0].reserved_listener_identity = "22".repeat(16);
+        let changed_listener = descriptor.to_prepare_draft().expect("listener draft");
+        assert_ne!(
+            baseline.roots[0].spec_digest,
+            changed_listener.roots[0].spec_digest
+        );
+
+        let mut changed_command = activation_test_descriptor(&executable_path, &[42125, 42124]);
+        changed_command.group_staging_identity = original_group_identity;
+        changed_command.roots[0].reserved_listener_identity = original_listener_identity;
+        changed_command.roots[1].reserved_listener_identity =
+            descriptor.roots[1].reserved_listener_identity.clone();
+        let changed_command_draft = changed_command
+            .to_prepare_draft()
+            .expect("changed command draft");
+        assert_ne!(
+            baseline.roots[0].spec_digest,
+            changed_command_draft.roots[0].spec_digest
+        );
+    }
+
+    #[cfg(windows)]
+    struct DescriptorSink {
+        binding: Mutex<Option<CompleteGroupBinding>>,
+        fail_persist: bool,
+        persist_calls: AtomicUsize,
+    }
+
+    #[cfg(windows)]
+    impl ReconcileRefSink for DescriptorSink {
+        fn persist(
+            &self,
+            _binding_attempt_id: &crate::prepare::BindingAttemptId,
+            binding: &CompleteGroupBinding,
+        ) -> Result<(), PersistError> {
+            self.persist_calls
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if self.fail_persist {
+                return Err(PersistError::Storage);
+            }
+            *self.binding.lock().unwrap() = Some(binding.clone());
+            Ok(())
+        }
+
+        fn read_back(
+            &self,
+            _binding_attempt_id: &crate::prepare::BindingAttemptId,
+        ) -> Result<CompleteGroupBindingReceiptV1, PersistError> {
+            CompleteGroupBindingReceiptV1::from_binding(
+                self.binding
+                    .lock()
+                    .unwrap()
+                    .clone()
+                    .ok_or(PersistError::Storage)?,
+            )
+        }
+
+        fn verify(
+            &self,
+            _binding_attempt_id: &crate::prepare::BindingAttemptId,
+            _expected: &CompleteGroupBinding,
+            read_back: &CompleteGroupBindingReceiptV1,
+        ) -> Result<VerifiedGroupBinding, PersistError> {
+            VerifiedGroupBinding::from_receipt(read_back.clone())
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn activation_descriptor_reaches_prepared_result_only_after_durable_binding() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let executable_path = directory.path().join("capture-runtime.exe");
+        fs::write(&executable_path, b"runtime").expect("executable");
+        let descriptor = activation_test_descriptor(&executable_path, &[42123, 42124]);
+        let plan = build_activation_plan(
+            descriptor,
+            directory.path().to_path_buf(),
+            "session-1".into(),
+        )
+        .expect("activation plan");
+        let sink = DescriptorSink {
+            binding: Mutex::new(None),
+            fail_persist: false,
+            persist_calls: AtomicUsize::new(0),
+        };
+        let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
+        assert!(prepared.context.activation_descriptor.is_some());
+        assert_eq!(
+            sink.persist_calls
+                .load(std::sync::atomic::Ordering::Relaxed),
+            1
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn activation_descriptor_sink_failure_acquires_no_runtime_resource() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let executable_path = directory.path().join("capture-runtime.exe");
+        fs::write(&executable_path, b"runtime").expect("executable");
+        let descriptor = activation_test_descriptor(&executable_path, &[42123]);
+        let plan = build_activation_plan(
+            descriptor,
+            directory.path().to_path_buf(),
+            "session-1".into(),
+        )
+        .expect("activation plan");
+        let sink = DescriptorSink {
+            binding: Mutex::new(None),
+            fail_persist: true,
+            persist_calls: AtomicUsize::new(0),
+        };
+        assert!(matches!(
+            crate::prepare::prepare_group(&plan, &sink),
+            Err(crate::prepare::PrepareError::Binding(_))
+        ));
+        assert_eq!(
+            sink.persist_calls
+                .load(std::sync::atomic::Ordering::Relaxed),
+            1
         );
     }
 }
