@@ -48,6 +48,10 @@ use windows_sys::Win32::{
         ERROR_INVALID_PARAMETER, ERROR_NO_MORE_FILES, FILETIME, INVALID_HANDLE_VALUE, WAIT_FAILED,
         WAIT_OBJECT_0, WAIT_TIMEOUT,
     },
+    NetworkManagement::IpHelper::{
+        GetExtendedTcpTable, MIB_TCPROW_OWNER_PID, MIB_TCP_STATE_LISTEN,
+        TCP_TABLE_OWNER_PID_LISTENER,
+    },
     System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
     },
@@ -148,6 +152,8 @@ struct SuspendedGroup {
     cleanup_complete: bool,
     #[cfg(test)]
     cleanup_failure_at: Option<usize>,
+    #[cfg(test)]
+    listener_query_failure: bool,
 }
 
 #[cfg(windows)]
@@ -185,6 +191,45 @@ struct NativeRootObservation {
     root_nonce: NativeNonce,
     identity: OwnedProcessIdentity,
 }
+
+/// A private observation of the exact loopback listener owned by each root.
+/// The process identity is captured from the retained root handle and the
+/// table contributes only the listener port; neither a PID supplied by a
+/// caller nor Job membership alone can create this value.
+#[cfg(windows)]
+#[allow(dead_code)]
+struct NativeListenerObservation {
+    roots: Vec<NativeListenerRootObservation>,
+}
+
+#[cfg(windows)]
+#[allow(dead_code)]
+struct NativeListenerRootObservation {
+    ordinal: u32,
+    identity: OwnedProcessIdentity,
+    port: u16,
+}
+
+#[cfg(windows)]
+#[allow(dead_code)]
+impl NativeListenerObservation {
+    fn root_count(&self) -> usize {
+        self.roots.len()
+    }
+
+    fn root(&self, ordinal: usize) -> Option<&NativeListenerRootObservation> {
+        self.roots.get(ordinal)
+    }
+}
+
+#[cfg(windows)]
+const TCP_TABLE_QUERY_ATTEMPTS: usize = 5;
+
+#[cfg(windows)]
+const MAX_TCP_TABLE_BYTES: usize = 4 * 1024 * 1024;
+
+#[cfg(windows)]
+const AF_INET: u32 = 2;
 
 #[cfg(windows)]
 fn generate_group_nonces(root_count: usize) -> Result<PreallocatedNativeNonces, String> {
@@ -988,6 +1033,8 @@ impl SuspendedGroup {
             cleanup_complete: false,
             #[cfg(test)]
             cleanup_failure_at: None,
+            #[cfg(test)]
+            listener_query_failure: false,
         };
         for (ordinal, command) in commands.iter_mut().enumerate() {
             let root_nonce = *group
@@ -1158,6 +1205,101 @@ impl SuspendedGroup {
         })
     }
 
+    fn verify_listener_roots(
+        &mut self,
+        deadline: std::time::Instant,
+        cancellation: Option<&AtomicBool>,
+    ) -> Result<Vec<OwnedProcessIdentity>, String> {
+        check_listener_budget(deadline, cancellation)?;
+        if self.roots.is_empty() || !self.unacquired_root_nonces.is_empty() {
+            return Err("The runtime group does not have a complete native root set.".into());
+        }
+        let mut identities = Vec::with_capacity(self.roots.len());
+        let mut seen = HashSet::with_capacity(self.roots.len());
+        for index in 0..self.roots.len() {
+            check_listener_budget(deadline, cancellation)?;
+            let root = &mut self.roots[index];
+            if root.state != SuspendedRootState::Resumed {
+                return Err(format!(
+                    "Runtime root {} was not retained in the resumed state for listener observation.",
+                    root.ordinal
+                ));
+            }
+            let expected = root.identity.ok_or_else(|| {
+                format!("Runtime root {} has no captured identity.", root.ordinal)
+            })?;
+            if !seen.insert(expected) {
+                return Err("The runtime group contained duplicate root identities.".into());
+            }
+            let observed = process_identity_from_handle(
+                root.child.as_raw_handle() as *mut c_void,
+                root.child.id(),
+            )?;
+            validate_listener_process_identity(expected, observed)?;
+            if root
+                .child
+                .try_wait()
+                .map_err(|error| format!("The runtime root liveness check failed: {error}"))?
+                .is_some()
+            {
+                return Err(format!(
+                    "Runtime root {} was no longer live during listener observation.",
+                    root.ordinal
+                ));
+            }
+            self.job
+                .as_mut()
+                .expect("group Job")
+                .verify_assignment(&root.child)?;
+            identities.push(expected);
+        }
+        Ok(identities)
+    }
+
+    /// Observe one exact loopback listener for every already-resumed root.
+    /// The table is evidence only: each PID is matched to the creation
+    /// identity read from the retained root process handle before and after
+    /// the table query, and Job membership is checked at both boundaries.
+    ///
+    /// This is intentionally private until the activation journal has a
+    /// canonical place for the resulting observation.  In particular, this
+    /// method never opens or terminates a process by a PID from the table.
+    #[allow(dead_code)]
+    fn observe_root_listeners(
+        &mut self,
+        ports: &[u16],
+        deadline: std::time::Instant,
+        cancellation: Option<&AtomicBool>,
+    ) -> Result<NativeListenerObservation, String> {
+        check_listener_budget(deadline, cancellation)?;
+        validate_listener_inputs(self, ports)?;
+        let before = self.verify_listener_roots(deadline, cancellation)?;
+        check_listener_budget(deadline, cancellation)?;
+        #[cfg(test)]
+        if self.listener_query_failure {
+            self.listener_query_failure = false;
+            return Err("Injected listener table query failure.".into());
+        }
+        let table = query_listener_table(deadline, cancellation)?;
+        let observation = parse_listener_table(&table, &before, ports)?;
+        let after = self.verify_listener_roots(deadline, cancellation)?;
+        if before != after {
+            return Err(
+                "A runtime root identity or Job membership changed during listener observation."
+                    .into(),
+            );
+        }
+        for (index, observed) in observation.roots.iter().enumerate() {
+            if observed.identity != before[index] {
+                return Err(
+                    "A listener row did not retain the exact root creation identity.".into(),
+                );
+            }
+        }
+        check_listener_budget(deadline, cancellation)?;
+        Ok(observation)
+    }
+
     /// Consumes the owner. On failure the returned error contains the same
     /// owner, so the caller can reconcile without reconstructing native state.
     fn resume_all(self) -> Result<Self, GroupNativeFailure> {
@@ -1276,6 +1418,209 @@ impl SuspendedGroup {
         let job = self.job.as_mut().expect("group Job");
         job.membership_failure_at = Some(job.membership_attempts);
     }
+
+    #[cfg(test)]
+    fn inject_listener_query_failure_for_test(&mut self) {
+        self.listener_query_failure = true;
+    }
+}
+
+#[cfg(windows)]
+fn check_listener_budget(
+    deadline: std::time::Instant,
+    cancellation: Option<&AtomicBool>,
+) -> Result<(), String> {
+    if cancellation.is_some_and(|flag| flag.load(Ordering::Acquire)) {
+        return Err("Runtime listener observation was cancelled.".into());
+    }
+    if std::time::Instant::now() >= deadline {
+        return Err("Runtime listener observation exceeded its group deadline.".into());
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn validate_listener_process_identity(
+    expected: OwnedProcessIdentity,
+    observed: OwnedProcessIdentity,
+) -> Result<(), String> {
+    if same_process_identity(expected, observed) {
+        Ok(())
+    } else {
+        Err("The listener owner did not retain the expected process creation identity.".into())
+    }
+}
+
+#[cfg(windows)]
+fn validate_listener_inputs(group: &SuspendedGroup, ports: &[u16]) -> Result<(), String> {
+    if ports.len() != group.roots.len()
+        || group.roots.is_empty()
+        || !group.unacquired_root_nonces.is_empty()
+    {
+        return Err("The runtime listener observation did not receive a complete root set.".into());
+    }
+    let mut seen_ports = HashSet::with_capacity(ports.len());
+    let mut seen_pids = HashSet::with_capacity(ports.len());
+    for (index, (&port, root)) in ports.iter().zip(&group.roots).enumerate() {
+        let expected_ordinal = u32::try_from(index)
+            .map_err(|_| "The runtime listener root ordinal exceeded its native range.")?;
+        if root.ordinal != expected_ordinal {
+            return Err(
+                "The runtime listener root ordinals were not contiguous and ordered.".into(),
+            );
+        }
+        if port == 0 || !seen_ports.insert(port) {
+            return Err("Runtime listener ports must be distinct nonzero values.".into());
+        }
+        let identity = root.identity.ok_or_else(|| {
+            format!("Runtime root {expected_ordinal} has no captured process identity.")
+        })?;
+        if !seen_pids.insert(identity.pid) {
+            return Err("Runtime listener roots had ambiguous process ownership.".into());
+        }
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn query_listener_table(
+    deadline: std::time::Instant,
+    cancellation: Option<&AtomicBool>,
+) -> Result<Vec<u8>, String> {
+    check_listener_budget(deadline, cancellation)?;
+    let mut required_bytes = 0_u32;
+    let first_status = unsafe {
+        GetExtendedTcpTable(
+            ptr::null_mut(),
+            &mut required_bytes,
+            1,
+            AF_INET,
+            TCP_TABLE_OWNER_PID_LISTENER,
+            0,
+        )
+    };
+    if first_status != ERROR_INSUFFICIENT_BUFFER || required_bytes == 0 {
+        return Err("The Windows listener table size query failed closed.".into());
+    }
+    let mut capacity = usize::try_from(required_bytes)
+        .map_err(|_| "The Windows listener table size exceeded the platform range.")?;
+    if capacity > MAX_TCP_TABLE_BYTES {
+        return Err("The Windows listener table exceeded its bounded size.".into());
+    }
+    for attempt in 0..TCP_TABLE_QUERY_ATTEMPTS {
+        check_listener_budget(deadline, cancellation)?;
+        let mut table = vec![0_u8; capacity];
+        let mut returned_bytes = u32::try_from(capacity)
+            .map_err(|_| "The Windows listener table size exceeded the API range.")?;
+        let status = unsafe {
+            GetExtendedTcpTable(
+                table.as_mut_ptr().cast(),
+                &mut returned_bytes,
+                1,
+                AF_INET,
+                TCP_TABLE_OWNER_PID_LISTENER,
+                0,
+            )
+        };
+        check_listener_budget(deadline, cancellation)?;
+        if status == 0 {
+            let returned = usize::try_from(returned_bytes)
+                .map_err(|_| "The Windows listener table result size was invalid.")?;
+            if returned < size_of::<u32>() || returned > table.len() {
+                return Err("The Windows listener table result was malformed.".into());
+            }
+            table.truncate(returned);
+            return Ok(table);
+        }
+        if status != ERROR_INSUFFICIENT_BUFFER {
+            return Err("The Windows listener table query failed closed.".into());
+        }
+        let next_capacity = usize::try_from(returned_bytes)
+            .map_err(|_| "The Windows listener table retry size was invalid.")?;
+        if next_capacity <= capacity
+            || next_capacity > MAX_TCP_TABLE_BYTES
+            || attempt + 1 == TCP_TABLE_QUERY_ATTEMPTS
+        {
+            return Err(
+                "The Windows listener table retries exceeded their bounded size budget.".into(),
+            );
+        }
+        capacity = next_capacity;
+    }
+    Err("The Windows listener table retries exceeded their bounded attempt budget.".into())
+}
+
+#[cfg(windows)]
+fn parse_listener_table(
+    table: &[u8],
+    expected_identities: &[OwnedProcessIdentity],
+    ports: &[u16],
+) -> Result<NativeListenerObservation, String> {
+    if table.len() < size_of::<u32>() || expected_identities.len() != ports.len() {
+        return Err("The Windows listener table result was too short or incomplete.".into());
+    }
+    let count = u32::from_ne_bytes(
+        table[..size_of::<u32>()]
+            .try_into()
+            .map_err(|_| "The Windows listener table row count was malformed.")?,
+    );
+    let count = usize::try_from(count)
+        .map_err(|_| "The Windows listener table row count exceeded the platform range.")?;
+    let row_size = size_of::<MIB_TCPROW_OWNER_PID>();
+    let rows_bytes = count
+        .checked_mul(row_size)
+        .ok_or_else(|| "The Windows listener table row count overflowed.".to_string())?;
+    let required = size_of::<u32>()
+        .checked_add(rows_bytes)
+        .ok_or_else(|| "The Windows listener table size overflowed.".to_string())?;
+    if required > table.len() || required > MAX_TCP_TABLE_BYTES {
+        return Err("The Windows listener table row count exceeded its buffer.".into());
+    }
+
+    let mut observed = (0..ports.len()).map(|_| None).collect::<Vec<_>>();
+    for row_index in 0..count {
+        let offset = size_of::<u32>() + row_index * row_size;
+        let row = unsafe {
+            ptr::read_unaligned(table.as_ptr().add(offset).cast::<MIB_TCPROW_OWNER_PID>())
+        };
+        let port = u16::from_be(row.dwLocalPort as u16);
+        let target = ports.iter().position(|expected| *expected == port);
+        let Some(target) = target else {
+            continue;
+        };
+        if row.dwState != MIB_TCP_STATE_LISTEN as u32 {
+            return Err("The Windows listener table contained a non-listening target row.".into());
+        }
+        if u32::from_be(row.dwLocalAddr) != 0x7f00_0001 {
+            return Err("The target listener was wildcard or otherwise not loopback-only.".into());
+        }
+        let identity_matches = expected_identities
+            .iter()
+            .enumerate()
+            .filter(|(_, identity)| identity.pid == row.dwOwningPid)
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        if identity_matches.len() != 1 || identity_matches[0] != target {
+            return Err("The target listener belonged to a foreign or ambiguous process.".into());
+        }
+        if observed[target].is_some() {
+            return Err("The target listener table contained duplicate rows.".into());
+        }
+        observed[target] = Some(NativeListenerRootObservation {
+            ordinal: u32::try_from(target)
+                .map_err(|_| "The listener root ordinal exceeded its native range.")?,
+            identity: expected_identities[target],
+            port,
+        });
+    }
+    let roots = observed
+        .into_iter()
+        .enumerate()
+        .map(|(index, root)| {
+            root.ok_or_else(|| format!("No exact loopback listener was observed for root {index}."))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(NativeListenerObservation { roots })
 }
 
 #[cfg(windows)]
@@ -3063,6 +3408,7 @@ mod tests {
 
     #[cfg(windows)]
     use std::{
+        net::{TcpListener, TcpStream},
         path::{Path, PathBuf},
         sync::atomic::{AtomicU64, Ordering},
         time::{Duration, SystemTime, UNIX_EPOCH},
@@ -3111,6 +3457,70 @@ mod tests {
     }
 
     #[cfg(windows)]
+    fn listener_command(port: u16, address: &str) -> Command {
+        let script = format!(
+            "$listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Parse('{address}'), {port}); $listener.Start(); Start-Sleep -Seconds 30"
+        );
+        let mut command = powershell_command(&script);
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        command
+    }
+
+    #[cfg(windows)]
+    fn free_loopback_port() -> u16 {
+        TcpListener::bind(("127.0.0.1", 0))
+            .expect("free loopback port")
+            .local_addr()
+            .expect("loopback address")
+            .port()
+    }
+
+    #[cfg(windows)]
+    fn wait_for_listener_observation(
+        group: &mut SuspendedGroup,
+        ports: &[u16],
+    ) -> NativeListenerObservation {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            match group.observe_root_listeners(ports, deadline, None) {
+                Ok(observation) => return observation,
+                Err(error) if std::time::Instant::now() < deadline => {
+                    assert!(
+                        !error.contains("foreign") && !error.contains("wildcard"),
+                        "listener table reported a permanent ownership error: {error}"
+                    );
+                    std::thread::sleep(Duration::from_millis(25));
+                }
+                Err(error) => panic!("listener observation did not complete: {error}"),
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    fn wait_for_listener_error(
+        group: &mut SuspendedGroup,
+        ports: &[u16],
+        expected_fragment: &str,
+    ) -> String {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            match group.observe_root_listeners(ports, deadline, None) {
+                Ok(_) => panic!("unexpected listener observation success"),
+                Err(error) if error.contains(expected_fragment) => return error,
+                Err(_error) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(25));
+                }
+                Err(error) => {
+                    panic!("listener observation did not report {expected_fragment:?}: {error}")
+                }
+            }
+        }
+    }
+
+    #[cfg(windows)]
     fn wait_for_marker(path: &Path, expected: bool) {
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         while path.exists() != expected && std::time::Instant::now() < deadline {
@@ -3132,6 +3542,292 @@ mod tests {
         owner
             .cleanup_and_prove()
             .unwrap_or_else(|failure| panic!("group cleanup proof: {}", failure.detail))
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn listener_creation_identity_mismatch_fails_closed() {
+        let expected = OwnedProcessIdentity {
+            pid: 42,
+            creation_time: 100,
+        };
+        let observed = OwnedProcessIdentity {
+            pid: expected.pid,
+            creation_time: expected.creation_time + 1,
+        };
+        let error = validate_listener_process_identity(expected, observed)
+            .expect_err("PID reuse with a different creation identity");
+        assert!(error.contains("creation identity"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn malformed_listener_tables_are_bounded_and_fail_closed() {
+        let expected = [OwnedProcessIdentity {
+            pid: 42,
+            creation_time: 100,
+        }];
+        let ports = [45_001_u16];
+        assert!(parse_listener_table(&[0_u8; 3], &expected, &ports).is_err());
+        assert!(parse_listener_table(&u32::MAX.to_ne_bytes(), &expected, &ports).is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn listener_observation_requires_cancellation_before_native_query() {
+        let marker = group_marker_path("listener-cancelled");
+        let mut commands = [marker_command(&marker, true)];
+        let mut group = SuspendedGroup::spawn(&mut commands)
+            .expect("suspended group")
+            .resume_all()
+            .expect("resumed group");
+        let cancelled = std::sync::atomic::AtomicBool::new(true);
+        let error = group
+            .observe_root_listeners(
+                &[free_loopback_port()],
+                std::time::Instant::now() + Duration::from_secs(5),
+                Some(&cancelled),
+            )
+            .err()
+            .expect("cancelled observation");
+        assert!(error.contains("cancelled"));
+        let proof = group
+            .cleanup_and_prove()
+            .expect("cleanup after cancelled observation");
+        assert!(proof.roots_reaped);
+        let _ = std::fs::remove_file(marker);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn direct_root_loopback_listener_is_observed_by_retained_identity() {
+        let port = free_loopback_port();
+        let mut commands = [listener_command(port, "127.0.0.1")];
+        let mut group = SuspendedGroup::spawn(&mut commands)
+            .expect("suspended listener root")
+            .resume_all()
+            .expect("resumed listener root");
+        let expected_identity = group.roots[0].identity.expect("root identity");
+        let observation = wait_for_listener_observation(&mut group, &[port]);
+        assert_eq!(observation.root_count(), 1);
+        let root = observation.root(0).expect("listener root");
+        assert_eq!(root.ordinal, 0);
+        assert_eq!(root.port, port);
+        assert_eq!(root.identity, expected_identity);
+        let proof = group.cleanup_and_prove().expect("listener group cleanup");
+        assert!(proof.roots_reaped);
+        assert!(proof.descendants_terminated);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn ordered_multi_root_loopback_listeners_are_observed_without_pid_substitution() {
+        let first_port = free_loopback_port();
+        let second_port = free_loopback_port();
+        assert_ne!(first_port, second_port);
+        let mut commands = [
+            listener_command(first_port, "127.0.0.1"),
+            listener_command(second_port, "127.0.0.1"),
+        ];
+        let mut group = SuspendedGroup::spawn(&mut commands)
+            .expect("suspended listener roots")
+            .resume_all()
+            .expect("resumed listener roots");
+        let expected = group
+            .roots
+            .iter()
+            .map(|root| root.identity.expect("root identity"))
+            .collect::<Vec<_>>();
+        let observation = wait_for_listener_observation(&mut group, &[first_port, second_port]);
+        assert_eq!(observation.root_count(), 2);
+        for (ordinal, (port, identity)) in [first_port, second_port]
+            .into_iter()
+            .zip(expected)
+            .enumerate()
+        {
+            let root = observation.root(ordinal).expect("ordered listener root");
+            assert_eq!(root.ordinal, ordinal as u32);
+            assert_eq!(root.port, port);
+            assert_eq!(root.identity, identity);
+        }
+        let proof = group
+            .cleanup_and_prove()
+            .expect("multi-root listener cleanup");
+        assert!(proof.roots_reaped);
+        assert!(proof.descendants_terminated);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn foreign_loopback_listener_on_target_port_is_rejected_without_touching_it() {
+        let foreign = TcpListener::bind(("127.0.0.1", 0)).expect("foreign listener");
+        let port = foreign.local_addr().expect("foreign address").port();
+        let marker = group_marker_path("listener-foreign");
+        let mut commands = [marker_command(&marker, true)];
+        let mut group = SuspendedGroup::spawn(&mut commands)
+            .expect("suspended group")
+            .resume_all()
+            .expect("resumed group");
+        let error = wait_for_listener_error(&mut group, &[port], "foreign");
+        assert!(error.contains("foreign"));
+        assert!(TcpStream::connect(("127.0.0.1", port)).is_ok());
+        let proof = group
+            .cleanup_and_prove()
+            .expect("foreign listener group cleanup");
+        assert!(proof.roots_reaped);
+        drop(foreign);
+        let _ = std::fs::remove_file(marker);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn wildcard_listener_on_target_port_is_rejected() {
+        let wildcard = TcpListener::bind(("0.0.0.0", 0)).expect("wildcard listener");
+        let port = wildcard.local_addr().expect("wildcard address").port();
+        let marker = group_marker_path("listener-wildcard");
+        let mut commands = [marker_command(&marker, true)];
+        let mut group = SuspendedGroup::spawn(&mut commands)
+            .expect("suspended group")
+            .resume_all()
+            .expect("resumed group");
+        let error = wait_for_listener_error(&mut group, &[port], "wildcard");
+        assert!(error.contains("wildcard"));
+        let proof = group
+            .cleanup_and_prove()
+            .expect("wildcard listener group cleanup");
+        assert!(proof.roots_reaped);
+        drop(wildcard);
+        let _ = std::fs::remove_file(marker);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn dead_root_cannot_supply_a_listener_observation() {
+        let marker = group_marker_path("listener-dead");
+        let mut commands = [marker_command(&marker, false)];
+        let mut group = SuspendedGroup::spawn(&mut commands)
+            .expect("suspended short-lived root")
+            .resume_all()
+            .expect("resumed short-lived root");
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while group.roots[0]
+            .child
+            .try_wait()
+            .expect("root status")
+            .is_none()
+            && std::time::Instant::now() < deadline
+        {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(group.roots[0]
+            .child
+            .try_wait()
+            .expect("root status")
+            .is_some());
+        let error = group
+            .observe_root_listeners(
+                &[free_loopback_port()],
+                std::time::Instant::now() + Duration::from_secs(5),
+                None,
+            )
+            .err()
+            .expect("dead root listener observation");
+        assert!(error.contains("no longer live"));
+        let proof = group.cleanup_and_prove().expect("dead root cleanup");
+        assert!(proof.roots_reaped);
+        let _ = std::fs::remove_file(marker);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn duplicate_group_listener_ports_are_rejected_before_table_query() {
+        let first_marker = group_marker_path("listener-duplicate-first");
+        let second_marker = group_marker_path("listener-duplicate-second");
+        let port = free_loopback_port();
+        let mut commands = [
+            marker_command(&first_marker, true),
+            marker_command(&second_marker, true),
+        ];
+        let mut group = SuspendedGroup::spawn(&mut commands)
+            .expect("suspended group")
+            .resume_all()
+            .expect("resumed group");
+        let error = group
+            .observe_root_listeners(
+                &[port, port],
+                std::time::Instant::now() + Duration::from_secs(5),
+                None,
+            )
+            .err()
+            .expect("duplicate listener ports");
+        assert!(error.contains("distinct nonzero"));
+        let proof = group
+            .cleanup_and_prove()
+            .expect("duplicate listener cleanup");
+        assert!(proof.roots_reaped);
+        let _ = std::fs::remove_file(first_marker);
+        let _ = std::fs::remove_file(second_marker);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn noncontiguous_group_listener_ordinals_are_rejected_before_table_query() {
+        let first_marker = group_marker_path("listener-ordinal-first");
+        let second_marker = group_marker_path("listener-ordinal-second");
+        let mut commands = [
+            marker_command(&first_marker, true),
+            marker_command(&second_marker, true),
+        ];
+        let mut group = SuspendedGroup::spawn(&mut commands)
+            .expect("suspended group")
+            .resume_all()
+            .expect("resumed group");
+        group.roots[1].ordinal = 2;
+        let first_port = free_loopback_port();
+        let second_port = free_loopback_port();
+        let error = group
+            .observe_root_listeners(
+                &[first_port, second_port],
+                std::time::Instant::now() + Duration::from_secs(5),
+                None,
+            )
+            .err()
+            .expect("noncontiguous listener ordinals");
+        assert!(error.contains("contiguous and ordered"));
+        let proof = group
+            .cleanup_and_prove()
+            .expect("ordinal validation cleanup");
+        assert!(proof.roots_reaped);
+        let _ = std::fs::remove_file(first_marker);
+        let _ = std::fs::remove_file(second_marker);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn listener_table_query_failure_retains_native_owner() {
+        let marker = group_marker_path("listener-query-failure");
+        let port = free_loopback_port();
+        let mut commands = [marker_command(&marker, true)];
+        let mut group = SuspendedGroup::spawn(&mut commands)
+            .expect("suspended group")
+            .resume_all()
+            .expect("resumed group");
+        group.inject_listener_query_failure_for_test();
+        let error = group
+            .observe_root_listeners(
+                &[port],
+                std::time::Instant::now() + Duration::from_secs(5),
+                None,
+            )
+            .err()
+            .expect("injected listener query failure");
+        assert!(error.contains("Injected listener table query failure"));
+        assert_eq!(group.roots.len(), 1);
+        let proof = group
+            .cleanup_and_prove()
+            .expect("listener query failure cleanup");
+        assert!(proof.roots_reaped);
+        let _ = std::fs::remove_file(marker);
     }
 
     #[cfg(windows)]
