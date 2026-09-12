@@ -260,6 +260,22 @@ impl FrozenActivationDescriptor {
         &self.session_nonce
     }
 
+    pub(crate) fn group_staging_identity(&self) -> &str {
+        &self.group_staging_identity
+    }
+
+    pub(crate) fn planned_group_staging_path(&self) -> PathBuf {
+        self.producer_root
+            .join(PRIVATE_RUN_STAGING_DIRECTORY)
+            .join(&self.group_staging_identity)
+    }
+
+    pub(crate) fn planned_root_staging_paths(&self) -> impl Iterator<Item = &Path> {
+        self.roots
+            .iter()
+            .map(|root| root.planned_staging_path.as_path())
+    }
+
     pub(crate) fn to_prepare_draft(&self) -> Result<crate::prepare::PreparePlanDraft, String> {
         self.validate()?;
         Ok(crate::prepare::PreparePlanDraft {
@@ -1827,5 +1843,284 @@ mod tests {
                 .load(std::sync::atomic::Ordering::Relaxed),
             1
         );
+    }
+
+    #[cfg(windows)]
+    fn prepared_activation_for_staging(
+        producer_root: &Path,
+        executable_path: &Path,
+        ports: &[u16],
+    ) -> (
+        crate::prepare::ValidatedActivationContext,
+        PathBuf,
+        Vec<PathBuf>,
+    ) {
+        let descriptor = activation_test_descriptor(producer_root, executable_path, ports);
+        let group_path = descriptor.planned_group_staging_path();
+        let root_paths = descriptor
+            .planned_root_staging_paths()
+            .map(Path::to_path_buf)
+            .collect::<Vec<_>>();
+        let plan = build_activation_plan(descriptor).expect("activation plan");
+        let sink = DescriptorSink {
+            binding: Mutex::new(None),
+            fail_persist: false,
+            persist_calls: AtomicUsize::new(0),
+        };
+        let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
+        (
+            prepared
+                .consume_for_activation()
+                .expect("validated activation context"),
+            group_path,
+            root_paths,
+        )
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn staging_materialization_owns_marker_and_ordered_empty_roots() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let executable_path = directory.path().join("capture-runtime.exe");
+        fs::write(&executable_path, b"runtime").expect("executable");
+        let (activation, group_path, root_paths) =
+            prepared_activation_for_staging(directory.path(), &executable_path, &[42123, 42124]);
+
+        let mut owner = crate::staging::materialize(activation).expect("staging owner");
+        assert!(group_path.is_dir());
+        for (ordinal, path) in root_paths.iter().enumerate() {
+            assert_eq!(
+                path.file_name().and_then(|name| name.to_str()),
+                Some(format!("root-{ordinal:08}").as_str())
+            );
+            assert!(path.is_dir());
+        }
+        let marker_path = group_path.join(".capture-run-staging-v1");
+        let marker = fs::read(&marker_path).expect("marker");
+        assert!(marker.starts_with(b"{\"schemaVersion\":\"RunStagingMarkerV1\""));
+        assert!(!marker
+            .windows(b"secret-token".len())
+            .any(|window| window == b"secret-token"));
+        owner.cleanup_pre_native().expect("empty scope cleanup");
+        assert!(!group_path.exists());
+        assert!(!root_paths[0].exists());
+        assert!(executable_path.exists());
+        assert!(group_path.parent().expect("shared parent").exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn staging_group_collision_is_rejected_before_owned_mutation() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let executable_path = directory.path().join("capture-runtime.exe");
+        fs::write(&executable_path, b"runtime").expect("executable");
+        let (activation, group_path, _) =
+            prepared_activation_for_staging(directory.path(), &executable_path, &[42125]);
+        fs::create_dir_all(&group_path).expect("foreign group");
+        fs::write(group_path.join("foreign.txt"), b"keep").expect("foreign entry");
+
+        assert!(matches!(
+            crate::staging::materialize(activation),
+            Err(crate::staging::StagingFailure::BeforeOwnership(_))
+        ));
+        assert_eq!(fs::read(group_path.join("foreign.txt")).unwrap(), b"keep");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn staging_cleanup_preflights_foreign_entries_and_allows_retry() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let executable_path = directory.path().join("capture-runtime.exe");
+        fs::write(&executable_path, b"runtime").expect("executable");
+        let (activation, group_path, _) =
+            prepared_activation_for_staging(directory.path(), &executable_path, &[42126]);
+        let mut owner = crate::staging::materialize(activation).expect("staging owner");
+        let foreign = group_path.join("runtime.crash");
+        fs::write(&foreign, b"preserve").expect("foreign entry");
+
+        assert!(matches!(
+            owner.cleanup_pre_native(),
+            Err(crate::staging::StagingCleanupError::ForeignEntry)
+        ));
+        assert_eq!(fs::read(&foreign).unwrap(), b"preserve");
+        fs::remove_file(&foreign).expect("remove test entry");
+        owner.cleanup_pre_native().expect("retry cleanup");
+        assert!(!group_path.exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn staging_cleanup_rejects_replaced_shared_ancestor_without_deleting() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let executable_path = directory.path().join("capture-runtime.exe");
+        fs::write(&executable_path, b"runtime").expect("executable");
+        let (activation, group_path, _) =
+            prepared_activation_for_staging(directory.path(), &executable_path, &[42126]);
+        let mut owner = crate::staging::materialize(activation).expect("staging owner");
+        let shared_parent = group_path.parent().expect("shared parent").to_path_buf();
+        let moved_parent = shared_parent.with_extension("moved");
+        fs::rename(&shared_parent, &moved_parent).expect("move owned parent");
+        fs::create_dir(&shared_parent).expect("foreign replacement");
+
+        assert!(matches!(
+            owner.cleanup_pre_native(),
+            Err(crate::staging::StagingCleanupError::Reparse)
+        ));
+        assert!(moved_parent.join(group_path.file_name().unwrap()).exists());
+        assert!(shared_parent.exists());
+        fs::remove_dir(&shared_parent).expect("remove replacement");
+        fs::rename(&moved_parent, &shared_parent).expect("restore owned parent");
+        owner.cleanup_pre_native().expect("retry cleanup");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn staging_cleanup_rejects_directory_identity_replacement() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let executable_path = directory.path().join("capture-runtime.exe");
+        fs::write(&executable_path, b"runtime").expect("executable");
+        let (activation, group_path, root_paths) =
+            prepared_activation_for_staging(directory.path(), &executable_path, &[42127]);
+        let mut owner = crate::staging::materialize(activation).expect("staging owner");
+        let original = root_paths[0].with_extension("original");
+        fs::rename(&root_paths[0], &original).expect("move owned root");
+        fs::create_dir(&root_paths[0]).expect("foreign replacement");
+
+        assert!(matches!(
+            owner.cleanup_pre_native(),
+            Err(crate::staging::StagingCleanupError::IdentityChanged)
+        ));
+        assert!(root_paths[0].exists());
+        fs::remove_dir(&root_paths[0]).expect("remove replacement");
+        fs::rename(&original, &root_paths[0]).expect("restore owned root");
+        owner.cleanup_pre_native().expect("retry cleanup");
+        assert!(!group_path.exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn staging_marker_flush_failure_returns_an_owner_that_can_retry_cleanup() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let executable_path = directory.path().join("capture-runtime.exe");
+        fs::write(&executable_path, b"runtime").expect("executable");
+        let (activation, group_path, _) =
+            prepared_activation_for_staging(directory.path(), &executable_path, &[42128]);
+        crate::staging::fail_next_marker_flush_for_test();
+
+        let mut owner = match crate::staging::materialize(activation) {
+            Err(crate::staging::StagingFailure::Owned { owner, .. }) => owner,
+            Err(crate::staging::StagingFailure::BeforeOwnership(kind)) => {
+                panic!("expected owned failure, got before ownership: {kind:?}")
+            }
+            Ok(_) => panic!("expected owned failure, got success"),
+        };
+        let marker_path = group_path.join(".capture-run-staging-v1");
+        let marker = fs::read(&marker_path).expect("partial marker");
+        fs::write(&marker_path, b"foreign-marker-bytes").expect("mutate marker");
+        assert!(matches!(
+            owner.cleanup_pre_native(),
+            Err(crate::staging::StagingCleanupError::ForeignEntry)
+        ));
+        assert!(group_path.exists());
+        fs::write(&marker_path, marker).expect("restore marker");
+        owner
+            .cleanup_pre_native()
+            .expect("cleanup after marker failure");
+        assert!(!group_path.exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn staging_marker_readback_failure_does_not_adopt_foreign_bytes() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let executable_path = directory.path().join("capture-runtime.exe");
+        fs::write(&executable_path, b"runtime").expect("executable");
+        let (activation, group_path, _) =
+            prepared_activation_for_staging(directory.path(), &executable_path, &[42129]);
+        crate::staging::fail_next_marker_readback_for_test();
+
+        let mut owner = match crate::staging::materialize(activation) {
+            Err(crate::staging::StagingFailure::Owned { owner, kind }) => {
+                assert_eq!(kind, crate::staging::StagingFailureKind::MarkerReadBack);
+                owner
+            }
+            Err(crate::staging::StagingFailure::BeforeOwnership(kind)) => {
+                panic!("expected owned failure, got before ownership: {kind:?}")
+            }
+            Ok(_) => panic!("expected failed marker read-back"),
+        };
+        let marker_path = group_path.join(".capture-run-staging-v1");
+        assert_eq!(
+            fs::read(&marker_path).expect("foreign marker"),
+            b"foreign-marker-bytes"
+        );
+        assert!(matches!(
+            owner.cleanup_pre_native(),
+            Err(crate::staging::StagingCleanupError::ForeignEntry)
+        ));
+        assert!(group_path.exists());
+        assert_eq!(
+            fs::read(&marker_path).expect("foreign marker retained"),
+            b"foreign-marker-bytes"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn staging_partial_marker_write_retains_only_confirmed_bytes() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let executable_path = directory.path().join("capture-runtime.exe");
+        fs::write(&executable_path, b"runtime").expect("executable");
+        let (activation, group_path, _) =
+            prepared_activation_for_staging(directory.path(), &executable_path, &[42131]);
+        crate::staging::fail_next_marker_partial_write_for_test();
+
+        let mut owner = match crate::staging::materialize(activation) {
+            Err(crate::staging::StagingFailure::Owned { owner, kind }) => {
+                assert_eq!(kind, crate::staging::StagingFailureKind::Durability);
+                owner
+            }
+            Err(crate::staging::StagingFailure::BeforeOwnership(kind)) => {
+                panic!("expected owned failure, got before ownership: {kind:?}")
+            }
+            Ok(_) => panic!("expected partial marker write failure"),
+        };
+        let marker_path = group_path.join(".capture-run-staging-v1");
+        let confirmed_prefix = fs::read(&marker_path).expect("partial marker");
+        assert!(!confirmed_prefix.is_empty());
+        assert!(!confirmed_prefix
+            .windows(b"foreign-marker-bytes".len())
+            .any(|window| window == b"foreign-marker-bytes"));
+        let mut foreign_marker = confirmed_prefix.clone();
+        foreign_marker.extend_from_slice(b"foreign-marker-bytes");
+        fs::write(&marker_path, foreign_marker).expect("mutate partial marker");
+        assert!(matches!(
+            owner.cleanup_pre_native(),
+            Err(crate::staging::StagingCleanupError::ForeignEntry)
+        ));
+        assert!(group_path.exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn staging_partial_root_failure_returns_an_owner_with_prior_roots() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let executable_path = directory.path().join("capture-runtime.exe");
+        fs::write(&executable_path, b"runtime").expect("executable");
+        let (activation, group_path, root_paths) =
+            prepared_activation_for_staging(directory.path(), &executable_path, &[42129, 42130]);
+        crate::staging::fail_next_root_mkdir_for_test(1);
+
+        let mut owner = match crate::staging::materialize(activation) {
+            Err(crate::staging::StagingFailure::Owned { owner, .. }) => owner,
+            Err(crate::staging::StagingFailure::BeforeOwnership(kind)) => {
+                panic!("expected owned failure, got before ownership: {kind:?}")
+            }
+            Ok(_) => panic!("expected owned failure, got success"),
+        };
+        assert!(root_paths[0].is_dir());
+        assert!(!root_paths[1].exists());
+        owner.cleanup_pre_native().expect("cleanup partial scope");
+        assert!(!group_path.exists());
     }
 }
