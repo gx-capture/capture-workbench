@@ -29,7 +29,17 @@ use std::{
     os::windows::{ffi::OsStringExt, io::AsRawHandle, process::CommandExt},
     path::PathBuf,
     ptr,
+    sync::atomic::{AtomicBool, Ordering},
 };
+
+#[cfg(all(test, windows))]
+use std::cell::Cell;
+
+#[cfg(all(test, windows))]
+thread_local! {
+    static CANCEL_AFTER_LAUNCHING_CAS: Cell<bool> = const { Cell::new(false) };
+    static CANCEL_BEFORE_RESUME_ROOT: Cell<Option<usize>> = const { Cell::new(None) };
+}
 
 #[cfg(windows)]
 use windows_sys::Win32::{
@@ -303,6 +313,49 @@ pub(crate) struct ReadySuspendedActivationOwner {
     ready_journal: RuntimeSessionJournalV1,
 }
 
+/// The private owner after the durable Launching CAS and native resume loop.
+/// The journal is intentionally still Launching: the live listener/readiness
+/// observation and Running transition belong to the next lifecycle slice.
+#[cfg(windows)]
+#[allow(dead_code)]
+pub(crate) struct LaunchingActivationOwner {
+    owner: SuspendedActivationOwner,
+    launching_journal: RuntimeSessionJournalV1,
+}
+
+#[cfg(windows)]
+#[allow(dead_code)]
+pub(crate) enum ActivationLaunchOwner {
+    Ready(ReadySuspendedActivationOwner),
+    Launching(LaunchingActivationOwner),
+}
+
+#[cfg(windows)]
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ActivationLaunchFailureKind {
+    Cancellation,
+    Staging,
+    Journal,
+    Native(GroupNativeFailureKind),
+}
+
+#[cfg(windows)]
+#[allow(dead_code)]
+pub(crate) struct ActivationLaunchFailure {
+    kind: ActivationLaunchFailureKind,
+    detail: String,
+    owner: Option<ActivationLaunchOwner>,
+}
+
+#[cfg(windows)]
+#[allow(dead_code)]
+impl ActivationLaunchFailure {
+    pub(crate) fn into_owner(self) -> Option<ActivationLaunchOwner> {
+        self.owner
+    }
+}
+
 #[cfg(windows)]
 impl SuspendedActivationFailure {
     #[allow(dead_code)]
@@ -384,6 +437,35 @@ impl SuspendedActivationOwner {
                 "Capture runtime prepared binding changed before Ready observation.".into(),
             );
         }
+        self.resource_observation_with_started_at(None)
+    }
+
+    #[allow(dead_code)]
+    fn resource_observation_for_journal(
+        &mut self,
+        expected: &RuntimeSessionJournalV1,
+    ) -> Result<ResourceObservation, String> {
+        let observation = self.resource_observation_with_started_at(Some(&expected.roots))?;
+        let expected_observation = ResourceObservation {
+            job_binding: expected
+                .job_binding
+                .clone()
+                .ok_or_else(|| "Capture runtime Ready Job binding was missing.".to_string())?,
+            staging_binding: expected.staging_binding.clone(),
+            roots: expected.roots.clone(),
+        };
+        if observation != expected_observation {
+            return Err(
+                "Capture runtime native or staging identity changed after durable Ready.".into(),
+            );
+        }
+        Ok(observation)
+    }
+
+    fn resource_observation_with_started_at(
+        &mut self,
+        started_at_by_root: Option<&[JournalRoot]>,
+    ) -> Result<ResourceObservation, String> {
         self.staging.revalidate_address_index()?;
         let _checked_commands = self.staging.checked_commands()?;
         let snapshot = self
@@ -396,7 +478,15 @@ impl SuspendedActivationOwner {
         if planned_roots.len() != snapshot.roots.len() {
             return Err("Capture runtime native root observation was incomplete.".into());
         }
-        let started_at = self.staging.next_timestamp()?;
+        if let Some(expected_roots) = started_at_by_root {
+            if expected_roots.len() != planned_roots.len() {
+                return Err("Capture runtime Ready root observation was incomplete.".into());
+            }
+        }
+        let shared_started_at = match started_at_by_root {
+            Some(_) => None,
+            None => Some(self.staging.next_timestamp()?),
+        };
         let mut roots = Vec::with_capacity(planned_roots.len());
         for (planned, actual) in planned_roots.iter().zip(snapshot.roots) {
             let ordinal = usize::try_from(planned.ordinal)
@@ -404,6 +494,17 @@ impl SuspendedActivationOwner {
             if actual.ordinal != planned.ordinal {
                 return Err("Capture runtime native root order changed before Ready.".into());
             }
+            let started_at = match started_at_by_root {
+                Some(expected_roots) => expected_roots
+                    .get(ordinal)
+                    .ok_or_else(|| "Capture runtime Ready root timestamp was missing.".to_string())?
+                    .started_at
+                    .clone(),
+                None => shared_started_at
+                    .as_ref()
+                    .expect("shared Ready timestamp")
+                    .clone(),
+            };
             let loopback_port = self
                 .staging
                 .planned_root_port(ordinal)
@@ -423,7 +524,7 @@ impl SuspendedActivationOwner {
                 reserved_listener_identity: planned.reserved_listener_identity.clone(),
                 loopback_port,
                 live_listener_readiness: None,
-                started_at: started_at.clone(),
+                started_at,
             });
         }
         Ok(ResourceObservation {
@@ -437,11 +538,13 @@ impl SuspendedActivationOwner {
     }
 
     #[cfg(test)]
+    #[allow(dead_code)]
     pub(crate) fn native_root_count_for_test(&self) -> Option<usize> {
         self.native.as_ref().map(|native| native.roots.len())
     }
 
     #[cfg(test)]
+    #[allow(dead_code)]
     pub(crate) fn native_is_suspended_for_test(&mut self) -> bool {
         self.native
             .as_mut()
@@ -460,6 +563,18 @@ impl SuspendedActivationOwner {
     }
 
     #[cfg(test)]
+    pub(crate) fn inject_resume_failure_at_for_test(&mut self, ordinal: usize) {
+        let native = self.native.as_mut().expect("native owner");
+        native.inject_resume_failure_at_for_test(ordinal);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn inject_native_membership_failure_for_test(&mut self) {
+        let native = self.native.as_mut().expect("native owner");
+        native.inject_membership_failure_for_test();
+    }
+
+    #[cfg(test)]
     pub(crate) fn inject_journal_drift_before_ready_for_test(&self) {
         self.staging.inject_journal_drift_before_ready_for_test();
     }
@@ -467,6 +582,171 @@ impl SuspendedActivationOwner {
 
 #[cfg(windows)]
 impl ReadySuspendedActivationOwner {
+    /// Consume the Ready owner, durably record Launching, then resume each
+    /// already-assigned root through the existing native loop.  Cancellation
+    /// is accepted only through this private crate seam; no caller can supply
+    /// replacement commands or native identity.
+    #[allow(dead_code)]
+    pub(crate) fn launch_with_cancellation(
+        self,
+        cancellation: Option<&AtomicBool>,
+    ) -> Result<LaunchingActivationOwner, ActivationLaunchFailure> {
+        let mut ready = self;
+        if cancellation_requested(cancellation) {
+            return Err(ActivationLaunchFailure {
+                kind: ActivationLaunchFailureKind::Cancellation,
+                detail: "Capture runtime Launching was cancelled before CAS.".into(),
+                owner: Some(ActivationLaunchOwner::Ready(ready)),
+            });
+        }
+
+        if ready.ready_journal.state != crate::journal::JournalState::Ready {
+            return Err(ActivationLaunchFailure {
+                kind: ActivationLaunchFailureKind::Journal,
+                detail: "Capture runtime retained journal was not Ready.".into(),
+                owner: Some(ActivationLaunchOwner::Ready(ready)),
+            });
+        }
+        if let Err(detail) = ready
+            .owner
+            .staging
+            .validate_ready_journal(&ready.ready_journal)
+        {
+            return Err(ActivationLaunchFailure {
+                kind: ActivationLaunchFailureKind::Journal,
+                detail: format!("Capture runtime Ready journal validation failed: {detail:?}."),
+                owner: Some(ActivationLaunchOwner::Ready(ready)),
+            });
+        }
+        if let Err(detail) = ready
+            .owner
+            .staging
+            .revalidate_ready_snapshot(&ready.ready_journal)
+        {
+            return Err(ActivationLaunchFailure {
+                kind: ActivationLaunchFailureKind::Journal,
+                detail,
+                owner: Some(ActivationLaunchOwner::Ready(ready)),
+            });
+        }
+        if let Err(detail) = ready.owner.staging.revalidate_address_index() {
+            return Err(ActivationLaunchFailure {
+                kind: ActivationLaunchFailureKind::Journal,
+                detail,
+                owner: Some(ActivationLaunchOwner::Ready(ready)),
+            });
+        }
+        if let Err(detail) = ready.owner.staging.checked_commands() {
+            return Err(ActivationLaunchFailure {
+                kind: ActivationLaunchFailureKind::Staging,
+                detail,
+                owner: Some(ActivationLaunchOwner::Ready(ready)),
+            });
+        }
+
+        let observation = match ready
+            .owner
+            .resource_observation_for_journal(&ready.ready_journal)
+        {
+            Ok(observation) => observation,
+            Err(detail) => {
+                return Err(ActivationLaunchFailure {
+                    kind: ActivationLaunchFailureKind::Native(GroupNativeFailureKind::Membership),
+                    detail,
+                    owner: Some(ActivationLaunchOwner::Ready(ready)),
+                });
+            }
+        };
+        if cancellation_requested(cancellation) {
+            return Err(ActivationLaunchFailure {
+                kind: ActivationLaunchFailureKind::Cancellation,
+                detail: "Capture runtime Launching was cancelled before CAS.".into(),
+                owner: Some(ActivationLaunchOwner::Ready(ready)),
+            });
+        }
+        let timestamp = match ready.owner.staging.next_timestamp() {
+            Ok(timestamp) => timestamp,
+            Err(detail) => {
+                return Err(ActivationLaunchFailure {
+                    kind: ActivationLaunchFailureKind::Journal,
+                    detail,
+                    owner: Some(ActivationLaunchOwner::Ready(ready)),
+                });
+            }
+        };
+        if timestamp < ready.ready_journal.updated_at {
+            return Err(ActivationLaunchFailure {
+                kind: ActivationLaunchFailureKind::Journal,
+                detail: "Capture runtime producer clock moved backwards before Launching CAS."
+                    .into(),
+                owner: Some(ActivationLaunchOwner::Ready(ready)),
+            });
+        }
+        let launching_journal = match ready.owner.staging.persist_launching(
+            &ready.ready_journal,
+            observation,
+            timestamp,
+        ) {
+            Ok(journal) => journal,
+            Err(detail) => {
+                return Err(ActivationLaunchFailure {
+                    kind: ActivationLaunchFailureKind::Journal,
+                    detail,
+                    owner: Some(ActivationLaunchOwner::Ready(ready)),
+                });
+            }
+        };
+
+        #[cfg(all(test, windows))]
+        if CANCEL_AFTER_LAUNCHING_CAS.with(|cancel| cancel.replace(false)) {
+            if let Some(cancellation) = cancellation {
+                cancellation.store(true, Ordering::Release);
+            }
+        }
+
+        let mut launching = LaunchingActivationOwner {
+            owner: ready.owner,
+            launching_journal,
+        };
+        if cancellation_requested(cancellation) {
+            return Err(ActivationLaunchFailure {
+                kind: ActivationLaunchFailureKind::Cancellation,
+                detail: "Capture runtime Launching was cancelled after durable CAS.".into(),
+                owner: Some(ActivationLaunchOwner::Launching(launching)),
+            });
+        }
+        let Some(native) = launching.owner.native.take() else {
+            return Err(ActivationLaunchFailure {
+                kind: ActivationLaunchFailureKind::Native(GroupNativeFailureKind::Membership),
+                detail: "Capture runtime native owner was missing before resume.".into(),
+                owner: Some(ActivationLaunchOwner::Launching(launching)),
+            });
+        };
+        match native.resume_all_with_cancellation(cancellation) {
+            Ok(native) => {
+                launching.owner.native = Some(native);
+                Ok(launching)
+            }
+            Err(failure) => {
+                let native = failure.owner.expect(
+                    "native resume failure after an owned group must retain the native owner",
+                );
+                launching.owner.native = Some(native);
+                Err(ActivationLaunchFailure {
+                    kind: if failure.kind == GroupNativeFailureKind::Resume
+                        && cancellation_requested(cancellation)
+                    {
+                        ActivationLaunchFailureKind::Cancellation
+                    } else {
+                        ActivationLaunchFailureKind::Native(failure.kind)
+                    },
+                    detail: failure.detail,
+                    owner: Some(ActivationLaunchOwner::Launching(launching)),
+                })
+            }
+        }
+    }
+
     /// Failure cleanup is native-first and never claims terminal proof. The
     /// Ready journal remains for the later reconciliation transition when the
     /// pre-native staging cleanup rejects its PreparedBound-only boundary.
@@ -491,6 +771,62 @@ impl ReadySuspendedActivationOwner {
     pub(crate) fn native_is_suspended_for_test(&mut self) -> bool {
         self.owner.native_is_suspended_for_test()
     }
+
+    #[cfg(test)]
+    pub(crate) fn inject_resume_failure_at_for_test(&mut self, ordinal: usize) {
+        self.owner.inject_resume_failure_at_for_test(ordinal);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn inject_native_membership_failure_for_test(&mut self) {
+        self.owner.inject_native_membership_failure_for_test();
+    }
+}
+
+#[cfg(windows)]
+impl LaunchingActivationOwner {
+    /// Cleanup remains native-first.  Staging is deliberately retained for
+    /// reconciliation because the current journal is Launching, not
+    /// PreparedBound, and this slice has no terminal proof.
+    #[allow(dead_code)]
+    pub(crate) fn cleanup_without_terminal_proof(
+        self,
+    ) -> Result<(), SuspendedActivationCleanupFailure> {
+        self.owner.cleanup()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn launching_journal_for_test(&self) -> &RuntimeSessionJournalV1 {
+        &self.launching_journal
+    }
+
+    #[cfg(test)]
+    #[allow(dead_code)]
+    pub(crate) fn native_root_count_for_test(&self) -> Option<usize> {
+        self.owner.native_root_count_for_test()
+    }
+
+    #[cfg(test)]
+    #[allow(dead_code)]
+    pub(crate) fn native_is_suspended_for_test(&mut self) -> bool {
+        self.owner.native_is_suspended_for_test()
+    }
+}
+
+#[cfg(windows)]
+fn cancellation_requested(cancellation: Option<&AtomicBool>) -> bool {
+    cancellation.is_some_and(|flag| flag.load(Ordering::Acquire))
+}
+
+#[cfg(all(test, windows))]
+pub(crate) fn inject_cancellation_after_launching_cas_for_test() {
+    CANCEL_AFTER_LAUNCHING_CAS.with(|cancel| cancel.set(true));
+}
+
+#[cfg(all(test, windows))]
+#[allow(dead_code)]
+pub(crate) fn inject_cancellation_before_resume_root_for_test(index: usize) {
+    CANCEL_BEFORE_RESUME_ROOT.with(|cancel_at| cancel_at.set(Some(index)));
 }
 
 #[cfg(windows)]
@@ -824,11 +1160,31 @@ impl SuspendedGroup {
 
     /// Consumes the owner. On failure the returned error contains the same
     /// owner, so the caller can reconcile without reconstructing native state.
-    fn resume_all(mut self) -> Result<Self, GroupNativeFailure> {
+    fn resume_all(self) -> Result<Self, GroupNativeFailure> {
+        self.resume_all_with_cancellation(None)
+    }
+
+    fn resume_all_with_cancellation(
+        mut self,
+        cancellation: Option<&AtomicBool>,
+    ) -> Result<Self, GroupNativeFailure> {
         if let Err(error) = self.verify_all_assigned_suspended() {
             return Err(self.failure(GroupNativeFailureKind::Membership, error));
         }
         for index in 0..self.roots.len() {
+            #[cfg(all(test, windows))]
+            if CANCEL_BEFORE_RESUME_ROOT.with(|cancel_at| cancel_at.get() == Some(index)) {
+                CANCEL_BEFORE_RESUME_ROOT.with(|cancel_at| cancel_at.set(None));
+                if let Some(cancellation) = cancellation {
+                    cancellation.store(true, Ordering::Release);
+                }
+            }
+            if cancellation_requested(cancellation) {
+                return Err(self.failure(
+                    GroupNativeFailureKind::Resume,
+                    format!("Capture runtime resume was cancelled before root {index}."),
+                ));
+            }
             #[cfg(test)]
             if self
                 .job
@@ -908,6 +1264,17 @@ impl SuspendedGroup {
     #[cfg(test)]
     fn inject_cleanup_failure_after_first_for_test(&mut self) {
         self.cleanup_failure_at = Some(1);
+    }
+
+    #[cfg(test)]
+    fn inject_resume_failure_at_for_test(&mut self, ordinal: usize) {
+        self.job.as_mut().expect("group Job").resume_failure_at = Some(ordinal);
+    }
+
+    #[cfg(test)]
+    fn inject_membership_failure_for_test(&mut self) {
+        let job = self.job.as_mut().expect("group Job");
+        job.membership_failure_at = Some(job.membership_attempts);
     }
 }
 

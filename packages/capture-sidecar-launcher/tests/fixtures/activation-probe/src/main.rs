@@ -3,7 +3,7 @@ use std::{
     env,
     ffi::OsString,
     fmt,
-    fs::{File, OpenOptions},
+    fs::{self, File, OpenOptions},
     io::{self, Read, Write},
     path::{Component, Path, PathBuf},
     thread,
@@ -11,10 +11,7 @@ use std::{
 };
 
 #[cfg(test)]
-use std::{
-    fs,
-    sync::atomic::{AtomicU64, Ordering},
-};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde_json::{Map, Value};
 
@@ -55,6 +52,7 @@ impl fmt::Display for ProbeError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ProbeConfig {
     journal_path: PathBuf,
+    journal_path_is_directory: bool,
     marker_path: PathBuf,
     session_nonce: String,
     root_ordinal: u32,
@@ -118,6 +116,7 @@ where
         return Err(ProbeError::Environment);
     }
     Ok(ProbeConfig {
+        journal_path_is_directory: journal_path.is_dir(),
         journal_path,
         marker_path,
         session_nonce,
@@ -152,9 +151,36 @@ fn read_launching_record(
     config: &ProbeConfig,
     process_id: u32,
 ) -> Result<LaunchingRecord, ProbeError> {
-    let bytes = read_bounded(&config.journal_path)?;
+    let journal_path = if config.journal_path_is_directory {
+        discover_journal_path(&config.journal_path)?
+    } else {
+        config.journal_path.clone()
+    };
+    let bytes = read_bounded(&journal_path)?;
     let journal: Value = serde_json::from_slice(&bytes).map_err(|_| ProbeError::JournalRejected)?;
     validate_journal(&journal, config, process_id)
+}
+
+/// The launcher freezes command environment before the final plan digest is
+/// available, while the store derives the journal filename from that digest.
+/// The test-only probe therefore accepts the producer root as its frozen
+/// journal path and resolves exactly one runtime-session JSON record after
+/// Launching CAS. It remains an acceptance fixture, not a lifecycle authority.
+fn discover_journal_path(directory: &Path) -> Result<PathBuf, ProbeError> {
+    let mut candidates = fs::read_dir(directory)
+        .map_err(|_| ProbeError::JournalRead)?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("runtime-session-") && name.ends_with(".json"))
+        });
+    let first = candidates.next().ok_or(ProbeError::JournalRead)?;
+    if candidates.next().is_some() {
+        return Err(ProbeError::JournalRejected);
+    }
+    Ok(first)
 }
 
 fn read_bounded(path: &Path) -> Result<Vec<u8>, ProbeError> {
@@ -444,6 +470,7 @@ mod tests {
     fn config(directory: &Path, session: &str, ordinal: u32) -> ProbeConfig {
         ProbeConfig {
             journal_path: directory.join("runtime-session.json"),
+            journal_path_is_directory: false,
             marker_path: directory.join(format!("marker-{ordinal}.txt")),
             session_nonce: session.into(),
             root_ordinal: ordinal,
@@ -558,6 +585,24 @@ mod tests {
                 std::process::id()
             )
         );
+    }
+
+    #[test]
+    fn producer_root_journal_path_resolves_one_runtime_record() {
+        let directory = tempdir();
+        let mut config = config(&directory.path, "session-1", 0);
+        let journal_path = directory.path.join("runtime-session-one.json");
+        config.journal_path = directory.path.clone();
+        config.journal_path_is_directory = true;
+        write_configured_journal(
+            &ProbeConfig {
+                journal_path: journal_path,
+                ..config.clone()
+            },
+            &valid_journal(&config.session_nonce, std::process::id(), 1),
+        );
+        run_with(&config, std::process::id()).expect("valid Launching record");
+        assert!(config.marker_path.exists());
     }
 
     #[test]

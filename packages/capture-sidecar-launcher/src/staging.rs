@@ -31,7 +31,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::{
-    journal::{JournalState, ResourceObservation, StagingBinding},
+    journal::{JournalState, ResourceObservation, RuntimeSessionJournalV1, StagingBinding},
     journal_store::JournalStoreCommand,
     prepare::ValidatedActivationContext,
 };
@@ -406,6 +406,41 @@ impl RunStagingOwner {
         journal_is_exactly_prepared(&self.activation)
     }
 
+    pub(crate) fn validate_ready_journal(
+        &self,
+        journal: &RuntimeSessionJournalV1,
+    ) -> Result<(), String> {
+        journal
+            .validate_against_plan(&self.activation.journal_plan)
+            .map_err(|_| {
+                "Capture runtime Ready journal did not match its immutable plan.".to_string()
+            })?;
+        if journal.state != JournalState::Ready
+            || journal.session_nonce != self.activation.descriptor.session_nonce()
+            || journal.plan_digest != self.activation.journal_plan.plan_digest
+        {
+            return Err("Capture runtime retained journal was not the exact Ready binding.".into());
+        }
+        Ok(())
+    }
+
+    pub(crate) fn revalidate_ready_snapshot(
+        &self,
+        expected: &RuntimeSessionJournalV1,
+    ) -> Result<(), String> {
+        self.validate_ready_journal(expected)?;
+        let current = self
+            .activation
+            .context
+            .store
+            .read(&self.activation.journal_plan)
+            .map_err(|_| "Capture runtime Ready journal could not be re-read.".to_string())?;
+        if current != *expected {
+            return Err("Capture runtime Ready journal changed before Launching.".into());
+        }
+        Ok(())
+    }
+
     pub(crate) fn planned_roots(&self) -> &[crate::journal::PlannedRoot] {
         &self.activation.journal_plan.roots
     }
@@ -492,6 +527,76 @@ impl RunStagingOwner {
             return Err("Capture runtime Ready journal read-back was not exact.".into());
         }
         Ok(ready)
+    }
+
+    /// Persist the exact Ready-to-Launching transition for this owner.  The
+    /// retained Ready value is checked both before and inside the store CAS;
+    /// an error never gets upgraded by reading whichever record happens to be
+    /// on disk after an atomic replacement.
+    pub(crate) fn persist_launching(
+        &self,
+        expected_ready: &RuntimeSessionJournalV1,
+        observation: ResourceObservation,
+        timestamp: String,
+    ) -> Result<RuntimeSessionJournalV1, String> {
+        expected_ready
+            .validate_against_plan(&self.activation.journal_plan)
+            .map_err(|_| "Capture runtime Ready journal was invalid.".to_string())?;
+        if expected_ready.state != JournalState::Ready
+            || expected_ready.session_nonce != self.activation.descriptor.session_nonce()
+            || expected_ready.plan_digest != self.activation.journal_plan.plan_digest
+        {
+            return Err(
+                "Capture runtime Ready journal identity was invalid before Launching CAS.".into(),
+            );
+        }
+        let current = self
+            .activation
+            .context
+            .store
+            .read(&self.activation.journal_plan)
+            .map_err(|_| "Capture runtime Ready journal could not be revalidated.".to_string())?;
+        if current != *expected_ready {
+            return Err("Capture runtime Ready journal changed before Launching CAS.".into());
+        }
+        let expected_revision = expected_ready
+            .journal_revision
+            .checked_add(1)
+            .ok_or_else(|| "Capture runtime journal revision overflowed.".to_string())?;
+        let expected_updated_at = timestamp.clone();
+        let launching = self
+            .activation
+            .context
+            .store
+            .compare_and_swap(
+                &self.activation.journal_plan,
+                &expected_ready.cas_snapshot(),
+                JournalStoreCommand::TransitionWithObservation {
+                    next_state: JournalState::Launching,
+                    observation: observation.clone(),
+                    timestamp,
+                },
+            )
+            .map_err(|_| "Capture runtime Launching journal CAS failed.".to_string())?;
+        if launching.state != JournalState::Launching
+            || launching.journal_revision != expected_revision
+            || launching.schema_version != expected_ready.schema_version
+            || launching.producer != expected_ready.producer
+            || launching.session_nonce != expected_ready.session_nonce
+            || launching.plan_digest != expected_ready.plan_digest
+            || launching.created_at != expected_ready.created_at
+            || launching.updated_at != expected_updated_at
+            || launching.attempt != expected_ready.attempt
+            || launching.recovery_epoch != expected_ready.recovery_epoch
+            || launching.binding != expected_ready.binding
+            || launching.job_binding.as_ref() != Some(&observation.job_binding)
+            || launching.staging_binding.as_ref() != observation.staging_binding.as_ref()
+            || launching.roots != observation.roots
+            || launching.proof.is_some()
+        {
+            return Err("Capture runtime Launching journal read-back was not exact.".into());
+        }
+        Ok(launching)
     }
 
     /// Revalidate the journal and replace the command with a freshly checked

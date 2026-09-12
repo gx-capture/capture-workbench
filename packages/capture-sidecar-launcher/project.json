@@ -22,6 +22,7 @@
     "cargo-test": {
       "cache": true,
       "executor": "nx:run-commands",
+      "dependsOn": ["cargo-fixture-build"],
       "options": {
         "command": "cargo test --manifest-path packages/capture-sidecar-launcher/Cargo.toml"
       }
