@@ -41,6 +41,7 @@ pub struct ImmutableGroupPlan {
 
 pub(crate) struct PreparePlanContext {
     pub(crate) store: Arc<JournalStore>,
+    producer_root: PathBuf,
     pub(crate) session_nonce: String,
     group_ref: ReconcileRef,
     root_refs: Vec<ReconcileRef>,
@@ -211,6 +212,7 @@ fn build_immutable_group_plan_with_clock_and_activation(
             .map_err(|_| PrepareError::ReferenceGeneration)?;
     }
     let value = finalized_plan_value(&draft, &group_ref, &root_refs)?;
+    let context_producer_root = producer_root.clone();
     let config = JournalStoreConfig::new(
         producer_root,
         session_nonce.clone(),
@@ -246,6 +248,7 @@ fn build_immutable_group_plan_with_clock_and_activation(
         value,
         context: Arc::new(PreparePlanContext {
             store,
+            producer_root: context_producer_root,
             session_nonce,
             group_ref,
             root_refs,
@@ -794,6 +797,161 @@ pub struct PreparedGroup {
     pub(crate) expected: CasSnapshot,
     pub(crate) verified: VerifiedGroupBinding,
     permit: ActivationPermitV1,
+}
+
+/// The private, move-only handoff between durable preparation and activation.
+///
+/// Construction consumes the preparation permit and revalidates every
+/// immutable identity against the descriptor, address index, and current
+/// journal snapshot.  It intentionally contains no native or filesystem
+/// resource handles; those belong to the later activation owner.
+pub(crate) struct ValidatedActivationContext {
+    pub(crate) journal_plan: JournalPlanValue,
+    pub(crate) context: Arc<PreparePlanContext>,
+    pub(crate) binding: JournalBinding,
+    pub(crate) expected: CasSnapshot,
+    pub(crate) verified: VerifiedGroupBinding,
+    pub(crate) descriptor: Arc<crate::launcher::FrozenActivationDescriptor>,
+    permit: ActivationPermitV1,
+}
+
+impl ActivationPermitV1 {
+    fn validate_against(
+        &self,
+        plan: &JournalPlanValue,
+        binding: &JournalBinding,
+        receipt: &CompleteGroupBindingReceiptV1,
+    ) -> Result<(), PrepareError> {
+        let JournalBinding::Bound {
+            binding_attempt_id,
+            group_ref_digest,
+            group_generation,
+            root_bindings,
+            activation_receipt_digest,
+        } = binding
+        else {
+            return Err(PrepareError::InvalidBinding);
+        };
+
+        let root_binding_digests = root_bindings
+            .iter()
+            .map(|root| root.root_ref_digest.clone())
+            .collect::<Vec<_>>();
+
+        if self.permit_version != 1
+            || self.plan_digest != plan.plan_digest
+            || self.binding_attempt_id.as_str() != binding_attempt_id
+            || self.group_ref_digest != *group_ref_digest
+            || self.group_generation != *group_generation
+            || self.root_binding_digests != root_binding_digests
+            || self.receipt_digest != *activation_receipt_digest
+            || self.receipt_digest != receipt.receipt_digest()
+            || receipt.binding_attempt_id() != &self.binding_attempt_id
+        {
+            return Err(PrepareError::InvalidBinding);
+        }
+
+        Ok(())
+    }
+}
+
+impl PreparedGroup {
+    /// Consume a prepared group only after revalidating its immutable
+    /// activation identity and the exact durable prepared-bound snapshot.
+    pub(crate) fn consume_for_activation(self) -> Result<ValidatedActivationContext, PrepareError> {
+        let PreparedGroup {
+            journal_plan,
+            context,
+            binding,
+            expected,
+            verified,
+            permit,
+        } = self;
+
+        let descriptor = context
+            .activation_descriptor
+            .clone()
+            .ok_or(PrepareError::InvalidPlan)?;
+
+        if context.session_nonce != descriptor.session_nonce() {
+            return Err(PrepareError::InvalidBinding);
+        }
+        if descriptor.producer_root() != context.producer_root.as_path() {
+            return Err(PrepareError::InvalidBinding);
+        }
+        if !context.addresses_are_complete() {
+            return Err(PrepareError::InvalidPlan);
+        }
+
+        let descriptor_draft = descriptor
+            .to_prepare_draft()
+            .map_err(|_| PrepareError::InvalidPlan)?;
+        let descriptor_plan =
+            finalized_plan_value(&descriptor_draft, &context.group_ref, &context.root_refs)?;
+        if descriptor_plan != journal_plan {
+            return Err(PrepareError::InvalidPlan);
+        }
+
+        verified
+            .receipt()
+            .validate()
+            .map_err(|_| PrepareError::InvalidBinding)?;
+        let plan_for_binding = ImmutableGroupPlan {
+            value: journal_plan.clone(),
+            context: Arc::clone(&context),
+        };
+        let expected_binding =
+            CompleteGroupBinding::from_plan(&plan_for_binding, permit.binding_attempt_id.clone())?;
+        if verified.receipt().binding() != &expected_binding {
+            return Err(PrepareError::InvalidBinding);
+        }
+        if expected_binding.to_journal_binding(verified.receipt().receipt_digest()) != binding {
+            return Err(PrepareError::InvalidBinding);
+        }
+        permit.validate_against(&journal_plan, &binding, verified.receipt())?;
+
+        let reopened = crate::index::reopen_from_ref(
+            descriptor.producer_root().to_path_buf(),
+            context.group_ref.as_str(),
+        )
+        .map_err(map_address_index_error)?;
+
+        if reopened.index.group_ref != context.group_ref.as_str()
+            || reopened.index.session_nonce != descriptor.session_nonce()
+            || reopened.plan != journal_plan
+            || reopened.index.roots.len() != context.root_refs.len()
+            || reopened
+                .index
+                .roots
+                .iter()
+                .zip(context.root_refs.iter())
+                .any(|(indexed, expected)| indexed.root_ref != expected.as_str())
+        {
+            return Err(PrepareError::InvalidBinding);
+        }
+
+        if reopened.journal.state != JournalState::PreparedBound
+            || reopened.journal.cas_snapshot() != expected
+        {
+            return Err(PrepareError::JournalConflict);
+        }
+        if reopened.journal.binding != binding
+            || reopened.journal.session_nonce != descriptor.session_nonce()
+            || reopened.journal.plan_digest != journal_plan.plan_digest
+        {
+            return Err(PrepareError::InvalidBinding);
+        }
+
+        Ok(ValidatedActivationContext {
+            journal_plan,
+            context,
+            binding,
+            expected,
+            verified,
+            descriptor,
+            permit,
+        })
+    }
 }
 
 struct ActivationPermitV1 {
@@ -1516,6 +1674,27 @@ mod tests {
         .expect("restartable root reference");
         assert_eq!(reopened.plan, plan.value);
         assert_eq!(reopened.journal.state, JournalState::PreparedBound);
+    }
+
+    #[test]
+    fn value_only_plan_is_rejected_before_activation_validation() {
+        let directory = tempdir().expect("tempdir");
+        let plan = plan(directory.path());
+        let sink = Sink::new(&plan, None);
+        let prepared = OwnedRuntimeSession::prepare_group(&plan, &sink).expect("prepare");
+
+        assert!(matches!(
+            prepared.consume_for_activation(),
+            Err(PrepareError::InvalidPlan)
+        ));
+        assert_eq!(
+            plan.context
+                .store
+                .read(&plan.value)
+                .expect("prepared journal")
+                .state,
+            JournalState::PreparedBound
+        );
     }
 
     #[test]

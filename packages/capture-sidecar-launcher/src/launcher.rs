@@ -950,7 +950,7 @@ mod tests {
         ffi::OsString,
         fs,
         path::{Path, PathBuf},
-        sync::{atomic::AtomicUsize, Mutex},
+        sync::{atomic::AtomicUsize, Arc, Mutex},
     };
 
     use crate::prepare::{
@@ -1667,6 +1667,142 @@ mod tests {
                 .load(std::sync::atomic::Ordering::Relaxed),
             1
         );
+        let validated = prepared
+            .consume_for_activation()
+            .expect("validated activation context");
+        assert_eq!(validated.journal_plan, plan.value);
+        assert_eq!(validated.expected.journal_revision, 1);
+        assert_eq!(validated.descriptor.session_nonce(), "session-1");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn activation_validation_rejects_stale_prepared_bound_snapshot() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let executable_path = directory.path().join("capture-runtime.exe");
+        fs::write(&executable_path, b"runtime").expect("executable");
+        let descriptor = activation_test_descriptor(directory.path(), &executable_path, &[42123]);
+        let plan = build_activation_plan(descriptor).expect("activation plan");
+        let sink = DescriptorSink {
+            binding: Mutex::new(None),
+            fail_persist: false,
+            persist_calls: AtomicUsize::new(0),
+        };
+        let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
+        let current = plan
+            .context
+            .store
+            .read(&plan.value)
+            .expect("prepared journal");
+        plan.context
+            .store
+            .compare_and_swap(
+                &plan.value,
+                &current.cas_snapshot(),
+                crate::journal_store::JournalStoreCommand::Transition {
+                    next_state: crate::journal::JournalState::ReconcileRequired,
+                    timestamp: current.updated_at.clone(),
+                },
+            )
+            .expect("state transition");
+
+        assert!(matches!(
+            prepared.consume_for_activation(),
+            Err(crate::prepare::PrepareError::JournalConflict)
+        ));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn activation_validation_rejects_descriptor_and_index_identity_tampering() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let executable_path = directory.path().join("capture-runtime.exe");
+        fs::write(&executable_path, b"runtime").expect("executable");
+
+        let descriptor = activation_test_descriptor(directory.path(), &executable_path, &[42123]);
+        let mut plan = build_activation_plan(descriptor).expect("activation plan");
+        let context = Arc::get_mut(&mut plan.context).expect("unique plan context");
+        let descriptor = Arc::get_mut(
+            context
+                .activation_descriptor
+                .as_mut()
+                .expect("activation descriptor"),
+        )
+        .expect("unique activation descriptor");
+        descriptor.roots[0].role = "changed-role".into();
+        let sink = DescriptorSink {
+            binding: Mutex::new(None),
+            fail_persist: false,
+            persist_calls: AtomicUsize::new(0),
+        };
+        let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
+        assert!(matches!(
+            prepared.consume_for_activation(),
+            Err(crate::prepare::PrepareError::InvalidPlan)
+        ));
+
+        let directory = tempfile::tempdir().expect("index directory");
+        let executable_path = directory.path().join("capture-runtime.exe");
+        fs::write(&executable_path, b"runtime").expect("executable");
+        let descriptor = activation_test_descriptor(directory.path(), &executable_path, &[42124]);
+        let plan = build_activation_plan(descriptor).expect("activation plan");
+        let sink = DescriptorSink {
+            binding: Mutex::new(None),
+            fail_persist: false,
+            persist_calls: AtomicUsize::new(0),
+        };
+        let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
+        let index_path = fs::read_dir(directory.path())
+            .expect("producer root")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .find(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with("runtime-ref-index-v1-"))
+            })
+            .expect("address index");
+        let index_bytes = fs::read(&index_path).expect("index bytes");
+        let mut index: serde_json::Value = serde_json::from_slice(&index_bytes).unwrap();
+        index["groupRef"] = serde_json::json!("tampered");
+        fs::write(&index_path, serde_json::to_vec(&index).unwrap()).expect("tampered index");
+
+        assert!(matches!(
+            prepared.consume_for_activation(),
+            Err(crate::prepare::PrepareError::InvalidPlan)
+        ));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn activation_validation_rejects_missing_address_index() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let executable_path = directory.path().join("capture-runtime.exe");
+        fs::write(&executable_path, b"runtime").expect("executable");
+        let descriptor = activation_test_descriptor(directory.path(), &executable_path, &[42125]);
+        let plan = build_activation_plan(descriptor).expect("activation plan");
+        let sink = DescriptorSink {
+            binding: Mutex::new(None),
+            fail_persist: false,
+            persist_calls: AtomicUsize::new(0),
+        };
+        let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
+        let index_path = fs::read_dir(directory.path())
+            .expect("producer root")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .find(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with("runtime-ref-index-v1-"))
+            })
+            .expect("address index");
+        fs::remove_file(index_path).expect("remove index");
+
+        assert!(matches!(
+            prepared.consume_for_activation(),
+            Err(crate::prepare::PrepareError::JournalUnavailable)
+        ));
     }
 
     #[cfg(windows)]
