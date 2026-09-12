@@ -3566,16 +3566,7 @@ mod tests {
         let job_nonce = group.job_nonce;
         let root_nonce = group.roots[0].root_nonce;
         let root_identity = group.roots[0].identity.expect("root identity");
-        group
-            .job
-            .as_mut()
-            .expect("group Job")
-            .inject_termination_failure();
-        group
-            .job
-            .as_mut()
-            .expect("group Job")
-            .inject_process_query_failure();
+        group.inject_cleanup_failure_after_first_for_test();
         let cleanup_failure = group
             .cleanup_and_prove()
             .expect_err("injected cleanup failure");
