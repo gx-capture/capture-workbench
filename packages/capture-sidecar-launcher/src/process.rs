@@ -15,7 +15,7 @@ use crate::{
     },
     journal_store::{ClosingCasError, ClosingCasResult, RunningCasError, RunningCasResult},
     prepare::ValidatedActivationContext,
-    staging::{RunStagingOwner, StagingFailure},
+    staging::{RunStagingOwner, StagingCleanupError, StagingFailure, StagingReleasedObservation},
 };
 
 #[cfg(windows)]
@@ -425,6 +425,11 @@ pub(crate) struct ClosingActivationOwner {
     closing_journal: RuntimeSessionJournalV1,
     native_cleanup_proof: Option<NativeCleanupProof>,
     listener_release_proof: Option<NativeListenerReleaseProof>,
+    staging_release_proof: Option<StagingReleasedObservation>,
+    #[cfg(all(test, windows))]
+    listener_query_failure_after_staging: bool,
+    #[cfg(all(test, windows))]
+    staging_release_cancel_before_authority: bool,
 }
 
 /// Private proof retained after the exact Job and root handles have proved
@@ -488,6 +493,40 @@ pub(crate) struct ClosingCleanupFailure {
     kind: ClosingCleanupFailureKind,
     detail: String,
     owner: ClosingActivationOwner,
+}
+
+#[cfg(windows)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ClosingStagingReleaseFailureKind {
+    Cancelled,
+    Deadline,
+    Listener,
+    Validation,
+    Storage,
+}
+
+#[cfg(windows)]
+pub(crate) struct ClosingStagingReleaseFailure {
+    kind: ClosingStagingReleaseFailureKind,
+    detail: String,
+    owner: ClosingActivationOwner,
+}
+
+#[cfg(windows)]
+impl ClosingStagingReleaseFailure {
+    pub(crate) fn into_owner(self) -> ClosingActivationOwner {
+        self.owner
+    }
+
+    #[cfg(test)]
+    pub(crate) fn kind_for_test(&self) -> ClosingStagingReleaseFailureKind {
+        self.kind
+    }
+
+    #[cfg(test)]
+    pub(crate) fn detail_for_test(&self) -> &str {
+        &self.detail
+    }
 }
 
 #[cfg(windows)]
@@ -1749,6 +1788,11 @@ impl RunningActivationOwner {
             closing_journal,
             native_cleanup_proof: None,
             listener_release_proof: None,
+            staging_release_proof: None,
+            #[cfg(all(test, windows))]
+            listener_query_failure_after_staging: false,
+            #[cfg(all(test, windows))]
+            staging_release_cancel_before_authority: false,
         })
     }
 
@@ -1991,6 +2035,194 @@ impl ClosingActivationOwner {
         Ok(self)
     }
 
+    /// Consume the native/listener-proven Closing owner through the staging
+    /// release boundary.  The journal admission remains held for the first
+    /// listener absence observation, every staging mutation, and the final
+    /// listener absence observation.  A failure retains this exact owner,
+    /// including any native proof and partial staging-release progress.
+    #[allow(dead_code)]
+    pub(crate) fn release_staging_after_native_cleanup(
+        mut self,
+        deadline: std::time::Instant,
+        cancellation: Option<Arc<AtomicBool>>,
+    ) -> Result<(Self, StagingReleasedObservation), ClosingStagingReleaseFailure> {
+        self.listener_release_proof = None;
+        let local_cancellation = Arc::new(AtomicBool::new(false));
+        let cancellation = cancellation.unwrap_or_else(|| Arc::clone(&local_cancellation));
+        let native_proof = match self.native_cleanup_proof.clone() {
+            Some(proof) => proof,
+            None => {
+                return Err(closing_staging_release_failure(
+                    self,
+                    ClosingStagingReleaseFailureKind::Validation,
+                    "Capture runtime staging release lacked the exact native cleanup proof.",
+                ));
+            }
+        };
+        if let Err(detail) = check_native_cleanup_budget(deadline, Some(cancellation.as_ref())) {
+            return Err(closing_staging_release_failure(
+                self,
+                staging_release_kind_from_detail(
+                    &detail,
+                    ClosingStagingReleaseFailureKind::Validation,
+                ),
+                detail,
+            ));
+        }
+        if let Err(detail) = self.owner.staging.revalidate_closing_index_for_cleanup(
+            &self.closing_journal,
+            deadline,
+            Arc::clone(&cancellation),
+        ) {
+            return Err(closing_staging_release_failure(
+                self,
+                ClosingStagingReleaseFailureKind::Validation,
+                detail,
+            ));
+        }
+        let cleanup_admission = match self.owner.staging.begin_closing_cleanup_admission(
+            &self.closing_journal,
+            deadline,
+            Arc::clone(&cancellation),
+        ) {
+            Ok(admission) => admission,
+            Err(cause) => {
+                return Err(closing_staging_release_failure_for_admission(self, cause));
+            }
+        };
+        if cleanup_admission.current() != &self.closing_journal {
+            return Err(closing_staging_release_failure(
+                self,
+                ClosingStagingReleaseFailureKind::Validation,
+                "Capture runtime Closing cleanup admission did not retain the exact journal.",
+            ));
+        }
+        if let Err(cause) = cleanup_admission.check_budget() {
+            return Err(closing_staging_release_failure_for_store_error(self, cause));
+        }
+
+        {
+            let native = match self.owner.native.as_mut() {
+                Some(native) => native,
+                None => {
+                    return Err(closing_staging_release_failure(
+                        self,
+                        ClosingStagingReleaseFailureKind::Validation,
+                        "Capture runtime native owner was missing before staging release.",
+                    ));
+                }
+            };
+            let retained = match native.validate_closing_binding(&self.closing_journal) {
+                Ok(proof) => proof,
+                Err(detail) => {
+                    return Err(closing_staging_release_failure(
+                        self,
+                        ClosingStagingReleaseFailureKind::Validation,
+                        detail,
+                    ));
+                }
+            };
+            if retained != native_proof {
+                return Err(closing_staging_release_failure(
+                    self,
+                    ClosingStagingReleaseFailureKind::Validation,
+                    "Capture runtime retained native cleanup proof no longer matched Closing.",
+                ));
+            }
+            if let Err(detail) = native.observe_listener_release_for_closing(
+                &self.closing_journal,
+                &native_proof,
+                deadline,
+                Some(cancellation.as_ref()),
+            ) {
+                return Err(closing_staging_release_failure(
+                    self,
+                    staging_release_kind_from_detail(
+                        &detail,
+                        ClosingStagingReleaseFailureKind::Listener,
+                    ),
+                    detail,
+                ));
+            }
+        }
+        if let Err(cause) = cleanup_admission.check_budget() {
+            return Err(closing_staging_release_failure_for_store_error(self, cause));
+        }
+
+        let observation = match self.owner.staging.cleanup_after_closing(
+            &self.closing_journal,
+            deadline,
+            cancellation.as_ref(),
+        ) {
+            Ok(observation) => observation,
+            Err(error) => {
+                return Err(closing_staging_release_failure_for_staging(self, error));
+            }
+        };
+        self.staging_release_proof = Some(observation.clone());
+        if let Err(cause) = cleanup_admission.check_budget() {
+            return Err(closing_staging_release_failure_for_store_error(self, cause));
+        }
+
+        {
+            let native = match self.owner.native.as_mut() {
+                Some(native) => native,
+                None => {
+                    return Err(closing_staging_release_failure(
+                        self,
+                        ClosingStagingReleaseFailureKind::Validation,
+                        "Capture runtime native owner was missing after staging release.",
+                    ));
+                }
+            };
+            #[cfg(all(test, windows))]
+            if self.listener_query_failure_after_staging {
+                self.listener_query_failure_after_staging = false;
+                native.inject_listener_query_failure_for_test();
+            }
+            if let Err(detail) = native.observe_listener_release_for_closing(
+                &self.closing_journal,
+                &native_proof,
+                deadline,
+                Some(cancellation.as_ref()),
+            ) {
+                return Err(closing_staging_release_failure(
+                    self,
+                    staging_release_kind_from_detail(
+                        &detail,
+                        ClosingStagingReleaseFailureKind::Listener,
+                    ),
+                    detail,
+                ));
+            }
+        }
+        let listener_release_proof =
+            match listener_release_proof_for_closing(&self.closing_journal, native_proof) {
+                Ok(proof) => proof,
+                Err(detail) => {
+                    return Err(closing_staging_release_failure(
+                        self,
+                        ClosingStagingReleaseFailureKind::Validation,
+                        detail,
+                    ));
+                }
+            };
+        #[cfg(all(test, windows))]
+        if self.staging_release_cancel_before_authority {
+            self.staging_release_cancel_before_authority = false;
+            cancellation.store(true, std::sync::atomic::Ordering::Release);
+        }
+        // The proof builder walks the complete retained root tuple.  Check
+        // the shared budget after that bounded observation and immediately
+        // before issuing the returned proof.
+        if let Err(cause) = cleanup_admission.check_budget() {
+            return Err(closing_staging_release_failure_for_store_error(self, cause));
+        }
+        self.listener_release_proof = Some(listener_release_proof);
+        drop(cleanup_admission);
+        Ok((self, observation))
+    }
+
     #[cfg(test)]
     pub(crate) fn native_cleanup_proven_for_test(&self) -> bool {
         self.native_cleanup_proof.is_some()
@@ -2007,6 +2239,63 @@ impl ClosingActivationOwner {
             .native
             .as_ref()
             .map_or(0, |native| native.cleanup_attempts)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn staging_release_proven_for_test(&self) -> bool {
+        self.staging_release_proof.is_some()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn staging_release_binding_matches_for_test(&self) -> bool {
+        self.staging_release_proof.as_ref().is_some_and(|proof| {
+            proof.matches_identity(
+                &self.closing_journal.session_nonce,
+                &self.closing_journal.plan_digest,
+                self.owner
+                    .staging
+                    .activation_descriptor()
+                    .group_staging_identity(),
+            )
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn inject_listener_query_failure_after_staging_for_test(&mut self) {
+        self.listener_query_failure_after_staging = true;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn inject_staging_release_cancel_before_authority_for_test(&mut self) {
+        self.staging_release_cancel_before_authority = true;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn inject_staging_release_delete_failure_at_for_test(&self, mutation: usize) {
+        self.owner
+            .staging
+            .inject_release_delete_failure_at_for_test(mutation);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn inject_staging_release_cancel_after_delete_at_for_test(&self, mutation: usize) {
+        self.owner
+            .staging
+            .inject_release_cancel_after_delete_at_for_test(mutation);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn inject_staging_release_entry_limit_for_test(&self, limit: usize) {
+        self.owner
+            .staging
+            .inject_release_entry_limit_for_test(limit);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn inject_staging_release_depth_limit_for_test(&self, limit: usize) {
+        self.owner
+            .staging
+            .inject_release_depth_limit_for_test(limit);
     }
 
     #[cfg(test)]
@@ -2103,6 +2392,145 @@ fn closing_cleanup_failure_for_admission(
         detail: detail.into(),
         owner,
     }
+}
+
+#[cfg(windows)]
+fn closing_staging_release_failure(
+    owner: ClosingActivationOwner,
+    kind: ClosingStagingReleaseFailureKind,
+    detail: impl Into<String>,
+) -> ClosingStagingReleaseFailure {
+    ClosingStagingReleaseFailure {
+        kind,
+        detail: detail.into(),
+        owner,
+    }
+}
+
+#[cfg(windows)]
+fn closing_staging_release_failure_for_staging(
+    owner: ClosingActivationOwner,
+    error: StagingCleanupError,
+) -> ClosingStagingReleaseFailure {
+    let kind = match error {
+        StagingCleanupError::Cancelled => ClosingStagingReleaseFailureKind::Cancelled,
+        StagingCleanupError::Deadline => ClosingStagingReleaseFailureKind::Deadline,
+        StagingCleanupError::DeleteFailed => ClosingStagingReleaseFailureKind::Storage,
+        StagingCleanupError::JournalChanged
+        | StagingCleanupError::TraversalBound
+        | StagingCleanupError::OwnershipUnknown
+        | StagingCleanupError::Reparse
+        | StagingCleanupError::IdentityChanged
+        | StagingCleanupError::ForeignEntry
+        | StagingCleanupError::HardLink
+        | StagingCleanupError::NonEmpty => ClosingStagingReleaseFailureKind::Validation,
+    };
+    closing_staging_release_failure(
+        owner,
+        kind,
+        format!("Capture runtime staging release stopped: {error:?}."),
+    )
+}
+
+#[cfg(windows)]
+fn closing_staging_release_failure_for_store_error(
+    owner: ClosingActivationOwner,
+    error: crate::journal_store::JournalStoreError,
+) -> ClosingStagingReleaseFailure {
+    let kind = match error {
+        crate::journal_store::JournalStoreError::AdmissionCancelled => {
+            ClosingStagingReleaseFailureKind::Cancelled
+        }
+        crate::journal_store::JournalStoreError::AdmissionDeadline => {
+            ClosingStagingReleaseFailureKind::Deadline
+        }
+        crate::journal_store::JournalStoreError::Conflict
+        | crate::journal_store::JournalStoreError::Journal(_) => {
+            ClosingStagingReleaseFailureKind::Validation
+        }
+        _ => ClosingStagingReleaseFailureKind::Storage,
+    };
+    closing_staging_release_failure(
+        owner,
+        kind,
+        format!("Capture runtime Closing staging-release admission stopped: {error:?}."),
+    )
+}
+
+#[cfg(windows)]
+fn closing_staging_release_failure_for_admission(
+    owner: ClosingActivationOwner,
+    cause: ClosingCasError,
+) -> ClosingStagingReleaseFailure {
+    let kind = match cause {
+        ClosingCasError::Cancelled => ClosingStagingReleaseFailureKind::Cancelled,
+        ClosingCasError::Deadline => ClosingStagingReleaseFailureKind::Deadline,
+        ClosingCasError::Conflict => ClosingStagingReleaseFailureKind::Validation,
+        ClosingCasError::Storage => ClosingStagingReleaseFailureKind::Storage,
+    };
+    closing_staging_release_failure(
+        owner,
+        kind,
+        format!("Capture runtime Closing staging-release admission stopped: {cause:?}."),
+    )
+}
+
+#[cfg(windows)]
+fn staging_release_kind_from_detail(
+    detail: &str,
+    fallback: ClosingStagingReleaseFailureKind,
+) -> ClosingStagingReleaseFailureKind {
+    let lower = detail.to_ascii_lowercase();
+    if lower.contains("cancel") {
+        ClosingStagingReleaseFailureKind::Cancelled
+    } else if lower.contains("deadline") || lower.contains("expired") {
+        ClosingStagingReleaseFailureKind::Deadline
+    } else {
+        fallback
+    }
+}
+
+#[cfg(windows)]
+fn listener_release_proof_for_closing(
+    closing: &RuntimeSessionJournalV1,
+    native: NativeCleanupProof,
+) -> Result<NativeListenerReleaseProof, String> {
+    let roots = closing
+        .roots
+        .iter()
+        .zip(&native.roots)
+        .map(|(journal_root, native_root)| {
+            if journal_root.ordinal != native_root.ordinal
+                || journal_root.root_nonce != native_nonce_text(&native_root.root_nonce)
+                || journal_root.loopback_port == 0
+                || journal_root.reserved_listener_identity.is_empty()
+                || journal_root.live_listener_readiness.is_none()
+            {
+                return None;
+            }
+            Some(NativeListenerReleaseRootProof {
+                ordinal: journal_root.ordinal,
+                root_nonce: journal_root.root_nonce.clone(),
+                creation_identity: journal_root.creation_identity.clone(),
+                reserved_listener_identity: journal_root.reserved_listener_identity.clone(),
+                readiness: journal_root.live_listener_readiness.clone()?,
+                port: journal_root.loopback_port,
+            })
+        })
+        .collect::<Option<Vec<_>>>()
+        .ok_or_else(|| {
+            "Capture runtime listener release tuple was incomplete or reordered.".to_string()
+        })?;
+    if roots.len() != closing.roots.len() || roots.is_empty() {
+        return Err("Capture runtime listener release tuple was incomplete or reordered.".into());
+    }
+    Ok(NativeListenerReleaseProof {
+        session_nonce: closing.session_nonce.clone(),
+        plan_digest: closing.plan_digest.clone(),
+        closing_revision: closing.journal_revision,
+        native,
+        roots,
+    })
 }
 
 #[cfg(windows)]

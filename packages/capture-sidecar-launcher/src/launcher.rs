@@ -1873,6 +1873,41 @@ mod tests {
     }
 
     #[cfg(windows)]
+    fn closing_owner_with_staging_for_test(
+        producer_root: &Path,
+        root_count: usize,
+    ) -> (
+        crate::prepare::ImmutableGroupPlan,
+        crate::process::ClosingActivationOwner,
+        PathBuf,
+        Vec<PathBuf>,
+    ) {
+        let (plan, _marker_paths, running, _running_journal) =
+            running_http_owner_for_test(producer_root, root_count);
+        let descriptor = plan
+            .context
+            .activation_descriptor
+            .as_ref()
+            .expect("activation descriptor")
+            .clone();
+        let group_path = descriptor.planned_group_staging_path();
+        let root_paths = descriptor
+            .planned_root_staging_paths()
+            .map(PathBuf::from)
+            .collect::<Vec<_>>();
+        let closing = running
+            .begin_closing_with_cancellation(Instant::now() + Duration::from_secs(10), None)
+            .unwrap_or_else(|_| panic!("Running owner should enter Closing"));
+        let cleaned = closing
+            .cleanup_native_and_observe_listener_release(
+                Instant::now() + Duration::from_secs(10),
+                None,
+            )
+            .unwrap_or_else(|_| panic!("native cleanup and listener absence proof"));
+        (plan, cleaned, group_path, root_paths)
+    }
+
+    #[cfg(windows)]
     fn wait_for_activation_probe_marker(
         marker_path: &Path,
         ordinal: usize,
@@ -3868,6 +3903,530 @@ mod tests {
             assert_eq!(disk.state, crate::journal::JournalState::Closing);
             assert_eq!(disk.journal_revision, running_journal.journal_revision + 1);
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn closing_staging_release_removes_owned_runtime_subtree_for_one_and_many_roots() {
+        for root_count in [1_usize, 2] {
+            let directory = tempfile::tempdir().expect("tempdir");
+            let (_plan, cleaned, group_path, root_paths) =
+                closing_owner_with_staging_for_test(directory.path(), root_count);
+            for (ordinal, root_path) in root_paths.iter().enumerate() {
+                let nested = root_path.join("nested");
+                fs::create_dir(&nested).expect("runtime nested directory");
+                fs::write(
+                    root_path.join(format!("runtime-{ordinal}.spool")),
+                    b"runtime spool",
+                )
+                .expect("runtime spool");
+                fs::write(nested.join("runtime-child.bin"), b"runtime child")
+                    .expect("runtime nested file");
+            }
+
+            let (released, observation) = cleaned
+                .release_staging_after_native_cleanup(
+                    Instant::now() + Duration::from_secs(10),
+                    None,
+                )
+                .unwrap_or_else(|failure| {
+                    panic!(
+                        "owned staging subtree should release: {}",
+                        failure.detail_for_test()
+                    )
+                });
+            assert!(!group_path.exists());
+            assert!(root_paths.iter().all(|path| !path.exists()));
+            assert!(released.staging_release_proven_for_test());
+            assert!(released.staging_release_binding_matches_for_test());
+            assert!(released.listener_release_proven_for_test());
+            assert_eq!(released.native_cleanup_attempts_for_test(), 1);
+
+            // A retry uses the retained release observation to verify absence
+            // and ancestor identity; it does not recreate or delete again.
+            let (replayed, replayed_observation) = released
+                .release_staging_after_native_cleanup(
+                    Instant::now() + Duration::from_secs(10),
+                    None,
+                )
+                .unwrap_or_else(|failure| {
+                    panic!(
+                        "released staging replay should verify absence: {}",
+                        failure.detail_for_test()
+                    )
+                });
+            assert!(observation == replayed_observation);
+            assert!(replayed.staging_release_proven_for_test());
+            assert_eq!(replayed.native_cleanup_attempts_for_test(), 1);
+            assert!(!group_path.exists());
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn closing_staging_release_rejects_foreign_top_entry_and_marker_replacement() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (_plan, cleaned, group_path, _root_paths) =
+            closing_owner_with_staging_for_test(directory.path(), 1);
+        let marker_path = group_path.join(".capture-run-staging-v1");
+        let marker_bytes = fs::read(&marker_path).expect("marker");
+        let foreign = group_path.join("foreign-runtime-state");
+        fs::write(&foreign, b"preserve").expect("foreign top entry");
+
+        let failure = match cleaned
+            .release_staging_after_native_cleanup(Instant::now() + Duration::from_secs(10), None)
+        {
+            Ok(_) => panic!("foreign top entry must block every deletion"),
+            Err(failure) => failure,
+        };
+        assert_eq!(
+            failure.kind_for_test(),
+            crate::process::ClosingStagingReleaseFailureKind::Validation
+        );
+        assert!(group_path.exists());
+        assert_eq!(fs::read(&foreign).expect("foreign retained"), b"preserve");
+        let retained = failure.into_owner();
+        fs::remove_file(&foreign).expect("remove foreign test entry");
+        fs::write(&marker_path, b"foreign-marker").expect("replace marker");
+        let marker_failure = match retained
+            .release_staging_after_native_cleanup(Instant::now() + Duration::from_secs(10), None)
+        {
+            Ok(_) => panic!("marker replacement must block every deletion"),
+            Err(failure) => failure,
+        };
+        assert_eq!(
+            marker_failure.kind_for_test(),
+            crate::process::ClosingStagingReleaseFailureKind::Validation
+        );
+        assert!(marker_failure
+            .detail_for_test()
+            .contains("OwnershipUnknown"));
+        assert!(group_path.exists());
+        let retained = marker_failure.into_owner();
+        fs::write(&marker_path, marker_bytes).expect("restore marker");
+        let outside_marker = directory.path().join("outside-marker-hardlink");
+        fs::hard_link(&marker_path, &outside_marker).expect("marker hardlink");
+        let hardlink_failure = match retained
+            .release_staging_after_native_cleanup(Instant::now() + Duration::from_secs(10), None)
+        {
+            Ok(_) => panic!("hardlinked marker must block every deletion"),
+            Err(failure) => failure,
+        };
+        assert_eq!(
+            hardlink_failure.kind_for_test(),
+            crate::process::ClosingStagingReleaseFailureKind::Validation
+        );
+        assert!(group_path.exists());
+        assert!(outside_marker.exists());
+        let retained = hardlink_failure.into_owner();
+        fs::remove_file(&outside_marker).expect("remove marker hardlink");
+        let (released, _) = retained
+            .release_staging_after_native_cleanup(Instant::now() + Duration::from_secs(10), None)
+            .unwrap_or_else(|failure| {
+                panic!(
+                    "release after restoring owned marker: {}",
+                    failure.detail_for_test()
+                )
+            });
+        assert!(released.staging_release_proven_for_test());
+        assert!(!group_path.exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn closing_staging_release_keeps_released_scope_for_post_delete_listener_retry() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (_plan, mut cleaned, group_path, root_paths) =
+            closing_owner_with_staging_for_test(directory.path(), 1);
+        fs::write(root_paths[0].join("runtime.spool"), b"runtime").expect("runtime staging file");
+        cleaned.inject_listener_query_failure_after_staging_for_test();
+
+        let failure = match cleaned
+            .release_staging_after_native_cleanup(Instant::now() + Duration::from_secs(10), None)
+        {
+            Ok(_) => panic!("post-delete listener failure must retain the owner"),
+            Err(failure) => failure,
+        };
+        assert_eq!(
+            failure.kind_for_test(),
+            crate::process::ClosingStagingReleaseFailureKind::Listener
+        );
+        assert!(!failure.detail_for_test().is_empty());
+        let retained = failure.into_owner();
+        assert!(retained.staging_release_proven_for_test());
+        assert!(!retained.listener_release_proven_for_test());
+        assert!(!group_path.exists());
+        assert_eq!(retained.native_cleanup_attempts_for_test(), 1);
+
+        let (released, _) = retained
+            .release_staging_after_native_cleanup(Instant::now() + Duration::from_secs(10), None)
+            .unwrap_or_else(|failure| {
+                panic!(
+                    "released scope should permit listener retry: {}",
+                    failure.detail_for_test()
+                )
+            });
+        assert!(released.staging_release_binding_matches_for_test());
+        assert!(released.listener_release_proven_for_test());
+        assert_eq!(released.native_cleanup_attempts_for_test(), 1);
+        assert!(!group_path.exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn closing_staging_release_checks_budget_after_final_listener_proof() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (_plan, mut cleaned, group_path, _root_paths) =
+            closing_owner_with_staging_for_test(directory.path(), 1);
+        cleaned.inject_staging_release_cancel_before_authority_for_test();
+        let failure = match cleaned
+            .release_staging_after_native_cleanup(Instant::now() + Duration::from_secs(10), None)
+        {
+            Ok(_) => panic!("late cancellation must retain the Closing owner"),
+            Err(failure) => failure,
+        };
+        assert_eq!(
+            failure.kind_for_test(),
+            crate::process::ClosingStagingReleaseFailureKind::Cancelled
+        );
+        let retained = failure.into_owner();
+        assert!(retained.staging_release_proven_for_test());
+        assert!(!retained.listener_release_proven_for_test());
+        assert!(!group_path.exists());
+        let (released, _) = retained
+            .release_staging_after_native_cleanup(Instant::now() + Duration::from_secs(10), None)
+            .unwrap_or_else(|failure| {
+                panic!(
+                    "late-cancel retry should issue the retained release proof: {}",
+                    failure.detail_for_test()
+                )
+            });
+        assert!(released.listener_release_proven_for_test());
+        assert_eq!(released.native_cleanup_attempts_for_test(), 1);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn closing_staging_release_rejects_nested_hardlink_and_preserves_outside_file() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (_plan, cleaned, group_path, root_paths) =
+            closing_owner_with_staging_for_test(directory.path(), 1);
+        let outside = directory.path().join("outside-runtime-state");
+        fs::write(&outside, b"outside").expect("outside file");
+        let inside = root_paths[0].join("runtime-hardlink.spool");
+        fs::hard_link(&outside, &inside).expect("hardlink inside run scope");
+
+        let failure = match cleaned
+            .release_staging_after_native_cleanup(Instant::now() + Duration::from_secs(10), None)
+        {
+            Ok(_) => panic!("hardlinked runtime file must block deletion"),
+            Err(failure) => failure,
+        };
+        assert_eq!(
+            failure.kind_for_test(),
+            crate::process::ClosingStagingReleaseFailureKind::Validation
+        );
+        assert!(group_path.exists());
+        assert!(inside.exists());
+        assert_eq!(fs::read(&outside).expect("outside preserved"), b"outside");
+        let retained = failure.into_owner();
+        fs::remove_file(&inside).expect("remove hardlink test entry");
+        let (released, _) = retained
+            .release_staging_after_native_cleanup(Instant::now() + Duration::from_secs(10), None)
+            .unwrap_or_else(|failure| {
+                panic!(
+                    "release after hardlink removed: {}",
+                    failure.detail_for_test()
+                )
+            });
+        assert!(!group_path.exists());
+        assert_eq!(fs::read(&outside).expect("outside preserved"), b"outside");
+        drop(released);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn closing_staging_release_rejects_nested_junction_before_any_delete() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (_plan, cleaned, group_path, root_paths) =
+            closing_owner_with_staging_for_test(directory.path(), 1);
+        let outside = directory.path().join("outside-junction");
+        fs::create_dir(&outside).expect("outside junction target");
+        fs::write(outside.join("preserve.bin"), b"outside").expect("outside payload");
+        let junction = root_paths[0].join("foreign-junction");
+        let status = std::process::Command::new("cmd.exe")
+            .args([
+                "/C",
+                "mklink",
+                "/J",
+                junction.to_str().expect("junction path"),
+                outside.to_str().expect("outside path"),
+            ])
+            .status()
+            .expect("mklink junction command");
+        assert!(status.success(), "junction creation must be available");
+
+        let failure = match cleaned
+            .release_staging_after_native_cleanup(Instant::now() + Duration::from_secs(10), None)
+        {
+            Ok(_) => panic!("nested junction must block every deletion"),
+            Err(failure) => failure,
+        };
+        assert_eq!(
+            failure.kind_for_test(),
+            crate::process::ClosingStagingReleaseFailureKind::Validation
+        );
+        assert!(group_path.exists());
+        assert!(junction.exists());
+        assert_eq!(
+            fs::read(outside.join("preserve.bin")).expect("outside preserved"),
+            b"outside"
+        );
+
+        let retained = failure.into_owner();
+        fs::remove_dir(&junction).expect("remove junction");
+        let (released, _) = retained
+            .release_staging_after_native_cleanup(Instant::now() + Duration::from_secs(10), None)
+            .unwrap_or_else(|failure| {
+                panic!(
+                    "release after junction removal: {}",
+                    failure.detail_for_test()
+                )
+            });
+        assert!(!group_path.exists());
+        assert_eq!(
+            fs::read(outside.join("preserve.bin")).expect("outside preserved"),
+            b"outside"
+        );
+        drop(released);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn closing_staging_release_rejects_missing_or_replaced_root_before_deletion() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (_plan, cleaned, group_path, root_paths) =
+            closing_owner_with_staging_for_test(directory.path(), 1);
+        let root_path = &root_paths[0];
+        let moved = directory.path().join("moved-owned-root");
+        fs::rename(root_path, &moved).expect("move owned root away");
+
+        let failure = match cleaned
+            .release_staging_after_native_cleanup(Instant::now() + Duration::from_secs(10), None)
+        {
+            Ok(_) => panic!("missing root must block staging deletion"),
+            Err(failure) => failure,
+        };
+        assert_eq!(
+            failure.kind_for_test(),
+            crate::process::ClosingStagingReleaseFailureKind::Validation
+        );
+        assert!(
+            failure.detail_for_test().contains("OwnershipUnknown"),
+            "unexpected missing-root failure: {}",
+            failure.detail_for_test()
+        );
+        assert!(group_path.exists());
+        assert!(moved.exists());
+        let retained = failure.into_owner();
+        fs::rename(&moved, root_path).expect("restore owned root");
+
+        let moved = directory.path().join("replaced-owned-root");
+        fs::rename(root_path, &moved).expect("move owned root away again");
+        fs::create_dir(root_path).expect("foreign replacement root");
+        let failure = match retained
+            .release_staging_after_native_cleanup(Instant::now() + Duration::from_secs(10), None)
+        {
+            Ok(_) => panic!("replaced root must block staging deletion"),
+            Err(failure) => failure,
+        };
+        assert_eq!(
+            failure.kind_for_test(),
+            crate::process::ClosingStagingReleaseFailureKind::Validation
+        );
+        assert!(group_path.exists());
+        assert!(moved.exists());
+        let retained = failure.into_owner();
+        fs::remove_dir(root_path).expect("remove foreign root");
+        fs::rename(&moved, root_path).expect("restore original root");
+        let (released, _) = retained
+            .release_staging_after_native_cleanup(Instant::now() + Duration::from_secs(10), None)
+            .unwrap_or_else(|failure| {
+                panic!(
+                    "release after restoring root: {}",
+                    failure.detail_for_test()
+                )
+            });
+        assert!(released.staging_release_proven_for_test());
+        assert!(!group_path.exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn closing_staging_release_retains_partial_delete_progress_for_fault_and_cancel_retry() {
+        for cancel in [false, true] {
+            let directory = tempfile::tempdir().expect("tempdir");
+            let (_plan, cleaned, group_path, root_paths) =
+                closing_owner_with_staging_for_test(directory.path(), 1);
+            let first = root_paths[0].join("a-runtime.spool");
+            let second = root_paths[0].join("b-runtime.spool");
+            fs::write(&first, b"first").expect("first runtime file");
+            fs::write(&second, b"second").expect("second runtime file");
+            if cancel {
+                cleaned.inject_staging_release_cancel_after_delete_at_for_test(0);
+            } else {
+                cleaned.inject_staging_release_delete_failure_at_for_test(1);
+            }
+            let cancellation = Arc::new(AtomicBool::new(false));
+            let failure = match cleaned.release_staging_after_native_cleanup(
+                Instant::now() + Duration::from_secs(10),
+                Some(Arc::clone(&cancellation)),
+            ) {
+                Ok(_) => panic!("partial release must retain owner"),
+                Err(failure) => failure,
+            };
+            assert_eq!(
+                failure.kind_for_test(),
+                if cancel {
+                    crate::process::ClosingStagingReleaseFailureKind::Cancelled
+                } else {
+                    crate::process::ClosingStagingReleaseFailureKind::Storage
+                }
+            );
+            assert!(group_path.exists());
+            assert!(!first.exists());
+            assert!(second.exists());
+            let retained = failure.into_owner();
+            let (released, _) = retained
+                .release_staging_after_native_cleanup(
+                    Instant::now() + Duration::from_secs(10),
+                    None,
+                )
+                .unwrap_or_else(|failure| {
+                    panic!("partial release retry: {}", failure.detail_for_test())
+                });
+            assert!(!group_path.exists());
+            assert!(released.staging_release_proven_for_test());
+            assert_eq!(released.native_cleanup_attempts_for_test(), 1);
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn closing_staging_release_rejects_unconfirmed_move_and_preflight_bounds() {
+        for target in ["root", "marker", "group"] {
+            let directory = tempfile::tempdir().expect("tempdir");
+            let (_plan, cleaned, group_path, root_paths) =
+                closing_owner_with_staging_for_test(directory.path(), 1);
+            let marker_path = group_path.join(".capture-run-staging-v1");
+            let move_target = directory.path().join(format!("moved-{target}"));
+            let mutation = match target {
+                "root" => 0,
+                "marker" => 1,
+                "group" => 2,
+                _ => unreachable!(),
+            };
+            cleaned.inject_staging_release_delete_failure_at_for_test(mutation);
+            let failure = match cleaned.release_staging_after_native_cleanup(
+                Instant::now() + Duration::from_secs(10),
+                None,
+            ) {
+                Ok(_) => panic!("injected pre-delete failure must retain the owner"),
+                Err(failure) => failure,
+            };
+            assert_eq!(
+                failure.kind_for_test(),
+                crate::process::ClosingStagingReleaseFailureKind::Storage
+            );
+            let retained = failure.into_owner();
+            let moved_path = match target {
+                "root" => &root_paths[0],
+                "marker" => &marker_path,
+                "group" => &group_path,
+                _ => unreachable!(),
+            };
+            fs::rename(moved_path, &move_target).expect("move unconfirmed target away");
+            let failure = match retained.release_staging_after_native_cleanup(
+                Instant::now() + Duration::from_secs(10),
+                None,
+            ) {
+                Ok(_) => panic!("missing unconfirmed target must remain unknown"),
+                Err(failure) => failure,
+            };
+            assert_eq!(
+                failure.kind_for_test(),
+                crate::process::ClosingStagingReleaseFailureKind::Validation
+            );
+            assert!(
+                move_target.exists(),
+                "moved owned data must remain outside scope"
+            );
+            let retained = failure.into_owner();
+            fs::rename(&move_target, moved_path).expect("restore owned target");
+            let (released, _) = retained
+                .release_staging_after_native_cleanup(
+                    Instant::now() + Duration::from_secs(10),
+                    None,
+                )
+                .unwrap_or_else(|failure| {
+                    panic!(
+                        "release after restoring target: {}",
+                        failure.detail_for_test()
+                    )
+                });
+            assert!(!group_path.exists());
+            drop(released);
+        }
+
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (_plan, cleaned, group_path, root_paths) =
+            closing_owner_with_staging_for_test(directory.path(), 1);
+        fs::create_dir(root_paths[0].join("bounded-depth")).expect("nested directory");
+        cleaned.inject_staging_release_depth_limit_for_test(0);
+        let failure = match cleaned
+            .release_staging_after_native_cleanup(Instant::now() + Duration::from_secs(10), None)
+        {
+            Ok(_) => panic!("depth bound must fail before deletion"),
+            Err(failure) => failure,
+        };
+        assert_eq!(
+            failure.kind_for_test(),
+            crate::process::ClosingStagingReleaseFailureKind::Validation
+        );
+        assert!(group_path.exists());
+        let mut retained = failure.into_owner();
+        let cancellation = Arc::new(AtomicBool::new(true));
+        let failure = match retained.release_staging_after_native_cleanup(
+            Instant::now() + Duration::from_secs(10),
+            Some(Arc::clone(&cancellation)),
+        ) {
+            Ok(_) => panic!("preflight cancellation must fail before deletion"),
+            Err(failure) => failure,
+        };
+        assert_eq!(
+            failure.kind_for_test(),
+            crate::process::ClosingStagingReleaseFailureKind::Cancelled
+        );
+        assert!(group_path.exists());
+        retained = failure.into_owner();
+        drop(retained);
+
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (_plan, cleaned, group_path, _root_paths) =
+            closing_owner_with_staging_for_test(directory.path(), 1);
+        cleaned.inject_staging_release_entry_limit_for_test(1);
+        let failure = match cleaned
+            .release_staging_after_native_cleanup(Instant::now() + Duration::from_secs(10), None)
+        {
+            Ok(_) => panic!("entry bound must fail before deletion"),
+            Err(failure) => failure,
+        };
+        assert_eq!(
+            failure.kind_for_test(),
+            crate::process::ClosingStagingReleaseFailureKind::Validation
+        );
+        assert!(group_path.exists());
+        drop(failure.into_owner());
     }
 
     #[cfg(windows)]
