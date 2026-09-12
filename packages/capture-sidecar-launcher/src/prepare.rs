@@ -19,6 +19,10 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::{
+    index::{
+        canonical_plan_digest, digest_opaque_ref, fresh_address_key, group_ref_for,
+        persist_address_index, root_ref_for, AddressIndexError, ReconcileAddressIndexV1,
+    },
     journal::{
         BoundRoot, CasSnapshot, JournalBinding, JournalError, JournalPlanValue, JournalState,
         RuntimeSessionJournalV1,
@@ -40,9 +44,9 @@ pub(crate) struct PreparePlanContext {
     pub(crate) session_nonce: String,
     group_ref: ReconcileRef,
     root_refs: Vec<ReconcileRef>,
-    // This private index is intentionally ephemeral with the opaque plan.
-    // The durable journal address remains the store's session/plan-derived
-    // identity; restart/recovery indexing is a later lifecycle slice.
+    // This map is only an in-process convenience for the current opaque plan.
+    // Durable restart addressing is supplied by the immutable ref index; the
+    // journal remains the lifecycle authority.
     ref_addresses: HashMap<ReconcileRef, ReconcileRefAddress>,
     clock: Arc<dyn PrepareClock + Send + Sync>,
 }
@@ -155,12 +159,19 @@ fn build_immutable_group_plan_with_clock(
     clock: Arc<dyn PrepareClock + Send + Sync>,
 ) -> Result<ImmutableGroupPlan, PrepareError> {
     validate_draft(&draft)?;
-    let group_ref = ReconcileRef::fresh().map_err(|_| PrepareError::ReferenceGeneration)?;
+    let address_key = fresh_address_key().map_err(|_| PrepareError::ReferenceGeneration)?;
+    let group_ref =
+        ReconcileRef(group_ref_for(&address_key).map_err(|_| PrepareError::ReferenceGeneration)?);
     group_ref
         .validate()
         .map_err(|_| PrepareError::ReferenceGeneration)?;
     let root_refs = (0..draft.roots.len())
-        .map(|_| ReconcileRef::fresh().map_err(|_| PrepareError::ReferenceGeneration))
+        .map(|ordinal| {
+            Ok(ReconcileRef(
+                root_ref_for(&address_key, ordinal as u32)
+                    .map_err(|_| PrepareError::ReferenceGeneration)?,
+            ))
+        })
         .collect::<Result<Vec<_>, _>>()?;
     for root_ref in &root_refs {
         root_ref
@@ -524,6 +535,7 @@ impl CompleteGroupBinding {
             return Err(PersistError::InvalidRecord);
         }
         let mut root_refs = HashSet::with_capacity(self.root_bindings.len());
+        let mut planned_roots = Vec::with_capacity(self.root_bindings.len());
         for (index, root) in self.root_bindings.iter().enumerate() {
             if root.ordinal != index as u32
                 || root.root_generation == 0
@@ -542,6 +554,23 @@ impl CompleteGroupBinding {
             }
             validate_digest(&root.spec_digest)?;
             validate_opaque_value(&root.reserved_listener_identity)?;
+            planned_roots.push(crate::journal::PlannedRoot {
+                ordinal: root.ordinal,
+                role: root.role.clone(),
+                root_ref_digest: root.root_ref_digest.clone(),
+                root_generation: root.root_generation,
+                spec_digest: root.spec_digest.clone(),
+                reserved_listener_identity: root.reserved_listener_identity.clone(),
+            });
+        }
+        let expected_plan_digest = canonical_plan_digest(
+            &self.group_ref_digest,
+            self.group_generation,
+            &planned_roots,
+        )
+        .map_err(|_| PersistError::InvalidRecord)?;
+        if expected_plan_digest != self.plan_digest {
+            return Err(PersistError::InvalidRecord);
         }
         Ok(())
     }
@@ -771,6 +800,21 @@ pub(crate) fn prepare_group(
         .create_initial(&plan.value, &initial)
         .map_err(map_store_error)?;
 
+    let root_ref_values = plan
+        .context
+        .root_refs
+        .iter()
+        .map(|root_ref| root_ref.as_str().to_owned())
+        .collect::<Vec<_>>();
+    let address_index = ReconcileAddressIndexV1::from_plan(
+        &plan.value,
+        plan.context.session_nonce.clone(),
+        plan.context.group_ref.as_str().to_owned(),
+        &root_ref_values,
+    )
+    .map_err(map_address_index_error)?;
+    persist_address_index(&plan.context.store, &address_index).map_err(map_address_index_error)?;
+
     let binding_attempt_id = BindingAttemptId::fresh()?;
     let expected_binding = CompleteGroupBinding::from_plan(plan, binding_attempt_id)?;
     sink.persist(expected_binding.binding_attempt_id(), &expected_binding)
@@ -868,6 +912,16 @@ fn map_store_error(error: JournalStoreError) -> PrepareError {
     }
 }
 
+fn map_address_index_error(error: AddressIndexError) -> PrepareError {
+    match error {
+        AddressIndexError::Storage(error) => map_store_error(error),
+        AddressIndexError::InvalidReference
+        | AddressIndexError::InvalidRecord
+        | AddressIndexError::ReferenceMismatch
+        | AddressIndexError::PlanMismatch => PrepareError::InvalidPlan,
+    }
+}
+
 fn map_plan_error(error: JournalError) -> PrepareError {
     match error {
         JournalError::InvalidField("timestamp") => PrepareError::InvalidTimestamp,
@@ -896,9 +950,7 @@ fn digest_ref(reference: &ReconcileRef) -> Result<String, PrepareError> {
 }
 
 fn digest_utf8(value: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(value.as_bytes());
-    hex_lower(&hasher.finalize())
+    digest_opaque_ref(value)
 }
 
 fn digest_plan(
@@ -906,19 +958,8 @@ fn digest_plan(
     group_generation: u64,
     roots: &[crate::journal::PlannedRoot],
 ) -> Result<String, PrepareError> {
-    let bytes = serde_json::to_vec(&PlanDigestWire {
-        group_ref_digest,
-        group_generation,
-        roots,
-    })
-    .map_err(|_| PrepareError::InvalidPlan)?;
-    Ok(digest_bytes_raw(&bytes))
-}
-
-fn digest_bytes_raw(bytes: &[u8]) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(bytes);
-    hex_lower(&hasher.finalize())
+    canonical_plan_digest(group_ref_digest, group_generation, roots)
+        .map_err(|_| PrepareError::InvalidPlan)
 }
 
 fn validate_digest_value(value: &str) -> Result<(), PrepareError> {
@@ -1019,14 +1060,6 @@ struct RootRefBindingWire {
     root_generation: u64,
     spec_digest: String,
     reserved_listener_identity: String,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct PlanDigestWire<'a> {
-    group_ref_digest: &'a str,
-    group_generation: u64,
-    roots: &'a [crate::journal::PlannedRoot],
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1242,6 +1275,10 @@ mod tests {
             "group_ref_digest" => binding.group_ref_digest = ALT_DIGEST.into(),
             "group_generation" => binding.group_generation += 1,
             "root_role" => binding.root_bindings[0].role = "other".into(),
+            "self_consistent_role" => {
+                binding.root_bindings[0].role = "other".into();
+                binding.plan_digest = rebased_binding_plan_digest(binding)?;
+            }
             "root_ref" => {
                 binding.root_bindings[0].root_ref =
                     ReconcileRef::fresh().map_err(|_| PersistError::InvalidRecord)?;
@@ -1249,6 +1286,10 @@ mod tests {
             "root_ref_digest" => binding.root_bindings[0].root_ref_digest = ALT_DIGEST.into(),
             "root_generation" => binding.root_bindings[0].root_generation += 1,
             "spec_digest" => binding.root_bindings[0].spec_digest = ALT_DIGEST.into(),
+            "self_consistent_spec_digest" => {
+                binding.root_bindings[0].spec_digest = ALT_DIGEST.into();
+                binding.plan_digest = rebased_binding_plan_digest(binding)?;
+            }
             "listener" => {
                 binding.root_bindings[0].reserved_listener_identity = "listener-other".into()
             }
@@ -1275,6 +1316,23 @@ mod tests {
             _ => return Err(PersistError::InvalidRecord),
         }
         Ok(())
+    }
+
+    fn rebased_binding_plan_digest(binding: &CompleteGroupBinding) -> Result<String, PersistError> {
+        let roots = binding
+            .root_bindings
+            .iter()
+            .map(|root| crate::journal::PlannedRoot {
+                ordinal: root.ordinal,
+                role: root.role.clone(),
+                root_ref_digest: root.root_ref_digest.clone(),
+                root_generation: root.root_generation,
+                spec_digest: root.spec_digest.clone(),
+                reserved_listener_identity: root.reserved_listener_identity.clone(),
+            })
+            .collect::<Vec<_>>();
+        canonical_plan_digest(&binding.group_ref_digest, binding.group_generation, &roots)
+            .map_err(|_| PersistError::InvalidRecord)
     }
 
     #[test]
@@ -1307,6 +1365,25 @@ mod tests {
             CompleteGroupBinding::decode(&encoded).expect("binding decode"),
             binding
         );
+        for mutation in ["role", "spec_digest"] {
+            let mut self_consistent = binding.clone();
+            if mutation == "role" {
+                self_consistent.root_bindings[0].role = "worker".into();
+            } else {
+                self_consistent.root_bindings[0].spec_digest = ALT_DIGEST.into();
+            }
+            self_consistent.plan_digest =
+                rebased_binding_plan_digest(&self_consistent).expect("rebased digest");
+            let self_consistent_bytes = self_consistent.encode().expect("codec self consistency");
+            let decoded = CompleteGroupBinding::decode(&self_consistent_bytes)
+                .expect("self-consistent binding decode");
+            let receipt = CompleteGroupBindingReceiptV1::from_binding(decoded).unwrap();
+            assert_eq!(
+                CompleteGroupBindingReceiptV1::decode(&receipt.encode().unwrap()).unwrap(),
+                receipt
+            );
+            assert_ne!(receipt.binding().plan_digest, plan.value.plan_digest);
+        }
         let receipt = CompleteGroupBindingReceiptV1::from_binding(binding).expect("receipt");
         let encoded = receipt.encode().expect("receipt encoding");
         assert_eq!(
@@ -1392,6 +1469,108 @@ mod tests {
         assert!(files
             .iter()
             .all(|name| !name.to_string_lossy().contains("tmp-")));
+        let address_key = crate::index::parse_address_ref(plan.context.group_ref.as_str())
+            .expect("group address")
+            .address_key;
+        let index_path = directory
+            .path()
+            .join(format!("runtime-ref-index-v1-{address_key}.json"));
+        assert!(index_path.is_file(), "prepare persisted the address index");
+        let reopened = crate::index::reopen_from_ref(
+            directory.path().to_path_buf(),
+            plan.context.root_refs[0].as_str(),
+        )
+        .expect("restartable root reference");
+        assert_eq!(reopened.plan, plan.value);
+        assert_eq!(reopened.journal.state, JournalState::PreparedBound);
+    }
+
+    #[test]
+    fn foreign_index_collision_is_preserved_and_blocks_sink() {
+        let directory = tempdir().expect("tempdir");
+        let plan = plan(directory.path());
+        let sink = Sink::new(&plan, None);
+        let address_key = crate::index::parse_address_ref(plan.context.group_ref.as_str())
+            .expect("group address")
+            .address_key;
+        let index_path = directory
+            .path()
+            .join(format!("runtime-ref-index-v1-{address_key}.json"));
+        let foreign = b"foreign-index-bytes";
+        fs::write(&index_path, foreign).expect("foreign collision");
+
+        assert!(matches!(
+            OwnedRuntimeSession::prepare_group(&plan, &sink),
+            Err(PrepareError::InvalidPlan)
+        ));
+        assert_eq!(sink.persist_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(fs::read(&index_path).expect("collision remains"), foreign);
+        assert_eq!(
+            plan.context
+                .store
+                .read(&plan.value)
+                .expect("planned journal")
+                .state,
+            JournalState::PlannedUnbound
+        );
+    }
+
+    #[test]
+    fn auxiliary_post_replace_failure_is_reestablished_or_fails_closed() {
+        let preflush_directory = tempdir().expect("preflush directory");
+        let preflush_plan = plan(preflush_directory.path());
+        let preflush_sink = Sink::new(&preflush_plan, None);
+        preflush_plan
+            .context
+            .store
+            .fail_next_auxiliary_before_flush();
+        assert!(matches!(
+            OwnedRuntimeSession::prepare_group(&preflush_plan, &preflush_sink),
+            Err(PrepareError::JournalUnavailable)
+        ));
+        assert_eq!(preflush_sink.persist_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(
+            preflush_plan
+                .context
+                .store
+                .read(&preflush_plan.value)
+                .expect("planned journal")
+                .state,
+            JournalState::PlannedUnbound
+        );
+
+        let success_directory = tempdir().expect("success directory");
+        let success_plan = plan(success_directory.path());
+        let success_sink = Sink::new(&success_plan, None);
+        success_plan
+            .context
+            .store
+            .fail_next_auxiliary_after_replace_before_flush();
+        OwnedRuntimeSession::prepare_group(&success_plan, &success_sink)
+            .expect("exact index readback after post-replace failure");
+        assert_eq!(success_sink.persist_calls.load(Ordering::Relaxed), 1);
+
+        let failure_directory = tempdir().expect("failure directory");
+        let failure_plan = plan(failure_directory.path());
+        let failure_sink = Sink::new(&failure_plan, None);
+        failure_plan
+            .context
+            .store
+            .fail_auxiliary_after_replace_and_durability_recheck();
+        assert!(matches!(
+            OwnedRuntimeSession::prepare_group(&failure_plan, &failure_sink),
+            Err(PrepareError::JournalUnavailable)
+        ));
+        assert_eq!(failure_sink.persist_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(
+            failure_plan
+                .context
+                .store
+                .read(&failure_plan.value)
+                .expect("planned journal")
+                .state,
+            JournalState::PlannedUnbound
+        );
     }
 
     #[test]
@@ -1548,10 +1727,12 @@ mod tests {
             "group_ref_digest",
             "group_generation",
             "root_role",
+            "self_consistent_role",
             "root_ref",
             "root_ref_digest",
             "root_generation",
             "spec_digest",
+            "self_consistent_spec_digest",
             "listener",
             "receipt_digest",
         ];
@@ -1559,13 +1740,18 @@ mod tests {
             let directory = tempdir().expect("tempdir");
             let plan = plan(directory.path());
             let sink = Sink::mutating(&plan, mutation);
-            assert!(
-                matches!(
-                    OwnedRuntimeSession::prepare_group(&plan, &sink),
-                    Err(PrepareError::InvalidBinding) | Err(PrepareError::Binding(_))
-                ),
-                "mutation {mutation} unexpectedly accepted"
-            );
+            let result = OwnedRuntimeSession::prepare_group(&plan, &sink);
+            if mutation.starts_with("self_consistent_") {
+                assert!(matches!(result, Err(PrepareError::InvalidBinding)));
+            } else {
+                assert!(
+                    matches!(
+                        result,
+                        Err(PrepareError::InvalidBinding) | Err(PrepareError::Binding(_))
+                    ),
+                    "mutation {mutation} unexpectedly accepted"
+                );
+            }
             assert_eq!(sink.persist_calls.load(Ordering::Relaxed), 1);
             assert_eq!(
                 plan.context

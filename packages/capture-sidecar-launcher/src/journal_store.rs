@@ -47,6 +47,8 @@ use windows_sys::Win32::{
 const JOURNAL_PREFIX: &str = "runtime-session-";
 const JOURNAL_SUFFIX: &str = ".json";
 const LOCK_SUFFIX: &str = ".lock";
+const AUXILIARY_INDEX_PREFIX: &str = "runtime-ref-index-v1-";
+const AUXILIARY_INDEX_SUFFIX: &str = ".json";
 const TEMP_MARKER: &str = ".tmp-";
 const REPARSE_POINT_ATTRIBUTE: u32 = 0x0000_0400;
 const MAX_JOURNAL_BYTES: usize = 1024 * 1024;
@@ -147,9 +149,12 @@ pub(crate) struct JournalStore {
 #[derive(Default)]
 struct TestFaults {
     fail_before_flush: AtomicBool,
+    fail_auxiliary_before_flush: AtomicBool,
     fail_before_replace: AtomicBool,
     fail_after_replace_before_flush: AtomicBool,
+    fail_after_auxiliary_replace_before_flush: AtomicBool,
     fail_durability_recheck: AtomicBool,
+    fail_auxiliary_durability_recheck: AtomicBool,
     forced_temp_path: std::sync::Mutex<Option<PathBuf>>,
     forced_payload: std::sync::Mutex<Option<Vec<u8>>>,
 }
@@ -215,6 +220,47 @@ impl JournalStore {
     ) -> Result<RuntimeSessionJournalV1, JournalStoreError> {
         self.validate_plan_identity(plan)?;
         self.with_lock(|store| store.read_unlocked(plan))
+    }
+
+    pub(crate) fn create_or_read_immutable_auxiliary(
+        &self,
+        address_key: &str,
+        encoded: &[u8],
+    ) -> Result<Vec<u8>, JournalStoreError> {
+        let index_path = auxiliary_index_path(&self.config.producer_root, address_key)?;
+        let index_lock_path = auxiliary_lock_path(&self.config.producer_root, address_key)?;
+        self.with_lock(|store| {
+            let _index_lock = JournalFileLock::acquire(&index_lock_path)?;
+            if path_exists(&index_path)? {
+                // An existing index is immutable.  Re-apply the final-file and
+                // directory barriers before handing its bytes to the codec so
+                // an exact replay also re-establishes durability.
+                return store.reestablish_existing_record_durability_unlocked(&index_path);
+            }
+            match store.write_atomic_at_unlocked(&index_path, encoded, false) {
+                Ok(()) => store.read_bounded_record_unlocked(&index_path),
+                Err(write_error) => {
+                    if let Ok(read_back) =
+                        store.reestablish_record_durability_unlocked(&index_path, encoded)
+                    {
+                        return Ok(read_back);
+                    }
+                    Err(write_error)
+                }
+            }
+        })
+    }
+
+    pub(crate) fn read_immutable_auxiliary(
+        producer_root: &Path,
+        address_key: &str,
+    ) -> Result<Vec<u8>, JournalStoreError> {
+        validate_producer_root(producer_root)?;
+        let index_path = auxiliary_index_path(producer_root, address_key)?;
+        let index_lock_path = auxiliary_lock_path(producer_root, address_key)?;
+        let _index_lock = JournalFileLock::acquire(&index_lock_path)?;
+        validate_producer_root(producer_root)?;
+        read_bounded_record_path(&index_path)
     }
 
     pub(crate) fn compare_and_swap(
@@ -284,28 +330,7 @@ impl JournalStore {
         &self,
         plan: &JournalPlanValue,
     ) -> Result<RuntimeSessionJournalV1, JournalStoreError> {
-        ensure_regular_file(&self.journal_path)?;
-        let file = File::open(&self.journal_path).map_err(|error| {
-            if error.kind() == std::io::ErrorKind::NotFound {
-                JournalStoreError::NotFound
-            } else {
-                JournalStoreError::Io("openJournal")
-            }
-        })?;
-        let file_length = file
-            .metadata()
-            .map_err(|_| JournalStoreError::Io("statJournal"))?
-            .len();
-        if file_length > MAX_JOURNAL_BYTES as u64 {
-            return Err(JournalStoreError::TooLarge);
-        }
-        let mut bytes = Vec::with_capacity(file_length as usize);
-        file.take((MAX_JOURNAL_BYTES + 1) as u64)
-            .read_to_end(&mut bytes)
-            .map_err(|_| JournalStoreError::Io("read"))?;
-        if bytes.len() > MAX_JOURNAL_BYTES {
-            return Err(JournalStoreError::TooLarge);
-        }
+        let bytes = self.read_bounded_record_unlocked(&self.journal_path)?;
         let journal = RuntimeSessionJournalV1::decode_private(&bytes)
             .map_err(|_| JournalStoreError::CorruptJournal)?;
         if journal.session_nonce != self.config.session_nonce
@@ -317,6 +342,10 @@ impl JournalStore {
             .validate_against_plan(plan)
             .map_err(JournalStoreError::Journal)?;
         Ok(journal)
+    }
+
+    fn read_bounded_record_unlocked(&self, path: &Path) -> Result<Vec<u8>, JournalStoreError> {
+        read_bounded_record_path(path)
     }
 
     fn reestablish_candidate_durability_unlocked(
@@ -348,8 +377,62 @@ impl JournalStore {
         Ok(read_back)
     }
 
+    fn reestablish_record_durability_unlocked(
+        &self,
+        path: &Path,
+        expected: &[u8],
+    ) -> Result<Vec<u8>, JournalStoreError> {
+        let final_file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path)
+            .map_err(|_| JournalStoreError::AtomicReplace)?;
+        #[cfg(test)]
+        if self
+            .faults
+            .fail_auxiliary_durability_recheck
+            .swap(false, Ordering::AcqRel)
+        {
+            return Err(JournalStoreError::Injected("auxiliaryDurabilityRecheck"));
+        }
+        final_file
+            .sync_all()
+            .map_err(|_| JournalStoreError::Durability("recoveryFinalFlush"))?;
+        sync_directory(&self.config.producer_root)?;
+        let read_back = self.read_bounded_record_unlocked(path)?;
+        if read_back != expected {
+            return Err(JournalStoreError::CorruptJournal);
+        }
+        Ok(read_back)
+    }
+
+    fn reestablish_existing_record_durability_unlocked(
+        &self,
+        path: &Path,
+    ) -> Result<Vec<u8>, JournalStoreError> {
+        let final_file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path)
+            .map_err(|_| JournalStoreError::AtomicReplace)?;
+        final_file
+            .sync_all()
+            .map_err(|_| JournalStoreError::Durability("recoveryFinalFlush"))?;
+        sync_directory(&self.config.producer_root)?;
+        self.read_bounded_record_unlocked(path)
+    }
+
     fn write_atomic_unlocked(
         &self,
+        encoded: &[u8],
+        replace_existing: bool,
+    ) -> Result<(), JournalStoreError> {
+        self.write_atomic_at_unlocked(&self.journal_path, encoded, replace_existing)
+    }
+
+    fn write_atomic_at_unlocked(
+        &self,
+        target_path: &Path,
         encoded: &[u8],
         replace_existing: bool,
     ) -> Result<(), JournalStoreError> {
@@ -362,7 +445,7 @@ impl JournalStore {
         if bytes.len() > MAX_JOURNAL_BYTES {
             return Err(JournalStoreError::TooLarge);
         }
-        let temp_path = self.temp_path();
+        let temp_path = self.temp_path_for_target(target_path);
         let mut created_temp = false;
         let result = (|| {
             let mut file = match OpenOptions::new()
@@ -380,7 +463,14 @@ impl JournalStore {
             file.write_all(bytes)
                 .map_err(|_| JournalStoreError::Io("writeTemp"))?;
             #[cfg(test)]
-            if self.faults.fail_before_flush.swap(false, Ordering::AcqRel) {
+            if (target_path == self.journal_path.as_path()
+                && self.faults.fail_before_flush.swap(false, Ordering::AcqRel))
+                || (target_path != self.journal_path.as_path()
+                    && self
+                        .faults
+                        .fail_auxiliary_before_flush
+                        .swap(false, Ordering::AcqRel))
+            {
                 return Err(JournalStoreError::Injected("beforeFlush"));
             }
             file.flush()
@@ -396,11 +486,11 @@ impl JournalStore {
             {
                 return Err(JournalStoreError::Injected("beforeReplace"));
             }
-            atomic_move(&temp_path, &self.journal_path, replace_existing)?;
+            atomic_move(&temp_path, target_path, replace_existing)?;
             let final_file = OpenOptions::new()
                 .read(true)
                 .write(true)
-                .open(&self.journal_path)
+                .open(target_path)
                 .map_err(|_| JournalStoreError::AtomicReplace)?;
             #[cfg(test)]
             if replace_existing
@@ -410,6 +500,17 @@ impl JournalStore {
                     .swap(false, Ordering::AcqRel)
             {
                 return Err(JournalStoreError::Injected("afterReplaceBeforeFlush"));
+            }
+            #[cfg(test)]
+            if target_path != self.journal_path.as_path()
+                && self
+                    .faults
+                    .fail_after_auxiliary_replace_before_flush
+                    .swap(false, Ordering::AcqRel)
+            {
+                return Err(JournalStoreError::Injected(
+                    "auxiliaryAfterReplaceBeforeFlush",
+                ));
             }
             final_file
                 .sync_all()
@@ -424,24 +525,30 @@ impl JournalStore {
     }
 
     fn temp_path(&self) -> PathBuf {
+        self.temp_path_for_target(&self.journal_path)
+    }
+
+    fn temp_path_for_target(&self, target_path: &Path) -> PathBuf {
         #[cfg(test)]
         if let Some(path) = self.faults.forced_temp_path.lock().unwrap().take() {
             return path;
         }
         let counter = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
-        self.temp_path_for(counter)
+        self.temp_path_for(target_path, counter)
     }
 
-    fn temp_path_for(&self, counter: u64) -> PathBuf {
-        let file_name = self
-            .journal_path
+    fn temp_path_for(&self, target_path: &Path, counter: u64) -> PathBuf {
+        let file_name = target_path
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("runtime-session");
-        self.config.producer_root.join(format!(
-            "{file_name}{TEMP_MARKER}{}-{counter}",
-            std::process::id()
-        ))
+        target_path
+            .parent()
+            .unwrap_or(&self.config.producer_root)
+            .join(format!(
+                "{file_name}{TEMP_MARKER}{}-{counter}",
+                std::process::id()
+            ))
     }
 
     #[cfg(test)]
@@ -470,6 +577,30 @@ impl JournalStore {
             .store(true, Ordering::Release);
         self.faults
             .fail_durability_recheck
+            .store(true, Ordering::Release);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fail_auxiliary_after_replace_and_durability_recheck(&self) {
+        self.faults
+            .fail_after_auxiliary_replace_before_flush
+            .store(true, Ordering::Release);
+        self.faults
+            .fail_auxiliary_durability_recheck
+            .store(true, Ordering::Release);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fail_next_auxiliary_after_replace_before_flush(&self) {
+        self.faults
+            .fail_after_auxiliary_replace_before_flush
+            .store(true, Ordering::Release);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fail_next_auxiliary_before_flush(&self) {
+        self.faults
+            .fail_auxiliary_before_flush
             .store(true, Ordering::Release);
     }
 
@@ -595,6 +726,54 @@ fn ensure_regular_file(path: &Path) -> Result<(), JournalStoreError> {
         return Err(JournalStoreError::PathSecurity);
     }
     Ok(())
+}
+
+fn read_bounded_record_path(path: &Path) -> Result<Vec<u8>, JournalStoreError> {
+    ensure_regular_file(path)?;
+    let file = File::open(path).map_err(|_| JournalStoreError::Io("openRecord"))?;
+    let length = file
+        .metadata()
+        .map_err(|_| JournalStoreError::Io("statRecord"))?
+        .len();
+    if length > MAX_JOURNAL_BYTES as u64 {
+        return Err(JournalStoreError::TooLarge);
+    }
+    let mut bytes = Vec::with_capacity(length as usize);
+    file.take(MAX_JOURNAL_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| JournalStoreError::Io("readRecord"))?;
+    if bytes.len() > MAX_JOURNAL_BYTES {
+        return Err(JournalStoreError::TooLarge);
+    }
+    Ok(bytes)
+}
+
+fn validate_address_key(value: &str) -> Result<(), JournalStoreError> {
+    if value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        Ok(())
+    } else {
+        Err(JournalStoreError::InvalidConfig)
+    }
+}
+
+fn auxiliary_index_path(root: &Path, address_key: &str) -> Result<PathBuf, JournalStoreError> {
+    validate_producer_root(root)?;
+    validate_address_key(address_key)?;
+    Ok(root.join(format!(
+        "{AUXILIARY_INDEX_PREFIX}{address_key}{AUXILIARY_INDEX_SUFFIX}"
+    )))
+}
+
+fn auxiliary_lock_path(root: &Path, address_key: &str) -> Result<PathBuf, JournalStoreError> {
+    validate_producer_root(root)?;
+    validate_address_key(address_key)?;
+    Ok(root.join(format!(
+        "{AUXILIARY_INDEX_PREFIX}{address_key}{LOCK_SUFFIX}"
+    )))
 }
 
 fn path_exists(path: &Path) -> Result<bool, JournalStoreError> {
