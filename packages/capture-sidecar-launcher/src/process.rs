@@ -7,6 +7,12 @@ use std::{
 use crate::prepare::{ImmutableGroupPlan, PrepareError, PreparedGroup, ReconcileRefSink};
 
 #[cfg(windows)]
+use crate::{
+    prepare::ValidatedActivationContext,
+    staging::{RunStagingOwner, StagingFailure},
+};
+
+#[cfg(windows)]
 use std::collections::{HashMap, HashSet, VecDeque};
 
 #[cfg(windows)]
@@ -126,6 +132,8 @@ struct SuspendedGroup {
     // Once a root exists, its nonce moves into that root's owner record.
     unacquired_root_nonces: VecDeque<NativeNonce>,
     cleanup_complete: bool,
+    #[cfg(test)]
+    cleanup_failure_at: Option<usize>,
 }
 
 #[cfg(windows)]
@@ -236,6 +244,83 @@ struct GroupCleanupFailure {
     owner: SuspendedGroup,
 }
 
+/// The private owner returned by the connected activation seam.  Native
+/// acquisition and staging stay together so a partial group can never lose
+/// either cleanup authority.  `native_cleanup_proven` means that no native
+/// owner remains because its proof already succeeded; a later staging retry
+/// must not reconstruct or re-run that proof.
+#[cfg(windows)]
+pub(crate) struct SuspendedActivationOwner {
+    staging: RunStagingOwner,
+    native: Option<SuspendedGroup>,
+    native_cleanup_proven: bool,
+}
+
+#[cfg(windows)]
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SuspendedActivationFailureKind {
+    Staging,
+    Native(GroupNativeFailureKind),
+}
+
+#[cfg(windows)]
+#[allow(dead_code)]
+pub(crate) struct SuspendedActivationFailure {
+    kind: SuspendedActivationFailureKind,
+    detail: String,
+    owner: Option<SuspendedActivationOwner>,
+}
+
+#[cfg(windows)]
+#[allow(dead_code)]
+pub(crate) struct SuspendedActivationCleanupFailure {
+    detail: String,
+    owner: SuspendedActivationOwner,
+}
+
+#[cfg(windows)]
+impl SuspendedActivationFailure {
+    #[allow(dead_code)]
+    pub(crate) fn into_owner(self) -> Option<SuspendedActivationOwner> {
+        self.owner
+    }
+}
+
+#[cfg(windows)]
+impl SuspendedActivationCleanupFailure {
+    #[allow(dead_code)]
+    pub(crate) fn into_owner(self) -> SuspendedActivationOwner {
+        self.owner
+    }
+}
+
+#[cfg(windows)]
+impl SuspendedActivationOwner {
+    #[cfg(test)]
+    pub(crate) fn native_root_count_for_test(&self) -> Option<usize> {
+        self.native.as_ref().map(|native| native.roots.len())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn native_is_suspended_for_test(&mut self) -> bool {
+        self.native
+            .as_mut()
+            .is_some_and(|native| native.binding_snapshot().is_ok())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn native_cleanup_proven_for_test(&self) -> bool {
+        self.native_cleanup_proven
+    }
+
+    #[cfg(test)]
+    pub(crate) fn inject_native_cleanup_failure_for_test(&mut self) {
+        let native = self.native.as_mut().expect("native owner");
+        native.inject_cleanup_failure_after_first_for_test();
+    }
+}
+
 #[cfg(windows)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
@@ -321,6 +406,20 @@ impl GroupCleanupFailure {
 #[allow(dead_code)]
 impl SuspendedGroup {
     fn spawn(commands: &mut [Command]) -> Result<Self, GroupNativeFailure> {
+        Self::spawn_with_prespawn_check(commands, |_, _| Ok(()))
+    }
+
+    /// Shared native acquisition loop with a private last-moment check.  The
+    /// connected activation path uses this hook to replace each command from
+    /// the frozen descriptor immediately before CreateProcess; legacy tests
+    /// and callers use the no-op adapter above.
+    fn spawn_with_prespawn_check<F>(
+        commands: &mut [Command],
+        before_spawn: F,
+    ) -> Result<Self, GroupNativeFailure>
+    where
+        F: FnMut(usize, &mut Command) -> Result<(), String>,
+    {
         if commands.is_empty() {
             return Err(GroupNativeFailure::without_owner(
                 GroupNativeFailureKind::Setup,
@@ -333,7 +432,7 @@ impl SuspendedGroup {
         let job = WindowsJob::new().map_err(|error| {
             GroupNativeFailure::without_owner(GroupNativeFailureKind::Setup, error)
         })?;
-        Self::spawn_with_job(commands, job, nonces)
+        Self::spawn_with_job(commands, job, nonces, before_spawn)
     }
 
     #[cfg(test)]
@@ -360,14 +459,18 @@ impl SuspendedGroup {
         let job = WindowsJob::new_with_faults(faults).map_err(|error| {
             GroupNativeFailure::without_owner(GroupNativeFailureKind::Setup, error)
         })?;
-        Self::spawn_with_job(commands, job, nonces)
+        Self::spawn_with_job(commands, job, nonces, |_, _| Ok(()))
     }
 
-    fn spawn_with_job(
+    fn spawn_with_job<F>(
         commands: &mut [Command],
         job: WindowsJob,
         nonces: PreallocatedNativeNonces,
-    ) -> Result<Self, GroupNativeFailure> {
+        mut before_spawn: F,
+    ) -> Result<Self, GroupNativeFailure>
+    where
+        F: FnMut(usize, &mut Command) -> Result<(), String>,
+    {
         debug_assert_eq!(commands.len(), nonces.root_nonces.len());
         let mut group = Self {
             job: Some(job),
@@ -375,12 +478,20 @@ impl SuspendedGroup {
             roots: Vec::with_capacity(commands.len()),
             unacquired_root_nonces: VecDeque::from(nonces.root_nonces),
             cleanup_complete: false,
+            #[cfg(test)]
+            cleanup_failure_at: None,
         };
         for (ordinal, command) in commands.iter_mut().enumerate() {
             let root_nonce = *group
                 .unacquired_root_nonces
                 .front()
                 .expect("pre-generated root nonce");
+            if let Err(error) = before_spawn(ordinal, command) {
+                return Err(group.failure(
+                    GroupNativeFailureKind::Spawn,
+                    format!("Capture runtime root failed its frozen pre-spawn check: {error}"),
+                ));
+            }
             command.creation_flags(CREATE_NO_WINDOW | CREATE_SUSPENDED);
             let child = match command.spawn() {
                 Ok(child) => child,
@@ -571,7 +682,14 @@ impl SuspendedGroup {
             + std::time::Duration::from_millis(u64::from(GROUP_CLEANUP_BUDGET_MS));
         let job = self.job.as_mut().expect("group Job");
         let _job_terminated = job.terminate().is_ok();
-        for root in &mut self.roots {
+        for (index, root) in self.roots.iter_mut().enumerate() {
+            #[cfg(not(test))]
+            let _ = index;
+            #[cfg(test)]
+            if self.cleanup_failure_at == Some(index) {
+                self.cleanup_failure_at = None;
+                return Err("Injected suspended group cleanup failure.".into());
+            }
             if let Some(identity) = root.identity {
                 // Keep using each retained Child handle even after a Job kill;
                 // this makes suspended roots and already-exited roots equally
@@ -610,6 +728,173 @@ impl SuspendedGroup {
             Err(detail) => Err(GroupCleanupFailure {
                 kind: GroupNativeFailureKind::Cleanup,
                 detail,
+                owner: self,
+            }),
+        }
+    }
+
+    #[cfg(test)]
+    fn inject_cleanup_failure_after_first_for_test(&mut self) {
+        self.cleanup_failure_at = Some(1);
+    }
+}
+
+#[cfg(windows)]
+impl fmt::Debug for SuspendedActivationFailure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SuspendedActivationFailure")
+            .field("kind", &self.kind)
+            .field("owner_present", &self.owner.is_some())
+            .finish()
+    }
+}
+
+#[cfg(windows)]
+impl fmt::Debug for SuspendedActivationCleanupFailure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SuspendedActivationCleanupFailure")
+            .finish()
+    }
+}
+
+#[cfg(windows)]
+/// Connects the already-consumed prepared context to the existing native
+/// suspended-group owner.  The returned value is intentionally private and
+/// contains no readiness or lease claim.
+#[allow(dead_code)]
+pub(crate) fn acquire_suspended_for_activation(
+    activation: ValidatedActivationContext,
+) -> Result<SuspendedActivationOwner, SuspendedActivationFailure> {
+    let staging = match crate::staging::materialize(activation) {
+        Ok(owner) => owner,
+        Err(StagingFailure::BeforeOwnership(kind)) => {
+            return Err(SuspendedActivationFailure {
+                kind: SuspendedActivationFailureKind::Staging,
+                detail: format!("Capture runtime staging acquisition stopped: {kind:?}."),
+                owner: None,
+            });
+        }
+        Err(StagingFailure::Owned { owner, kind }) => {
+            return Err(SuspendedActivationFailure {
+                kind: SuspendedActivationFailureKind::Staging,
+                detail: format!("Capture runtime staging acquisition stopped: {kind:?}."),
+                owner: Some(SuspendedActivationOwner {
+                    staging: owner,
+                    native: None,
+                    native_cleanup_proven: true,
+                }),
+            });
+        }
+    };
+
+    acquire_suspended_from_staging(staging)
+}
+
+#[cfg(windows)]
+/// Continues only from a staging owner returned by `materialize`; callers
+/// cannot construct that owner or substitute an activation path themselves.
+#[allow(dead_code)]
+pub(crate) fn acquire_suspended_from_staging(
+    staging: RunStagingOwner,
+) -> Result<SuspendedActivationOwner, SuspendedActivationFailure> {
+    // Recheck the interval between staging materialization and Job creation.
+    let mut commands = match staging.checked_commands() {
+        Ok(commands) => commands,
+        Err(_detail) => {
+            return Err(SuspendedActivationFailure {
+                kind: SuspendedActivationFailureKind::Staging,
+                detail: "Capture runtime frozen command revalidation failed before Job setup."
+                    .into(),
+                owner: Some(SuspendedActivationOwner {
+                    staging,
+                    native: None,
+                    native_cleanup_proven: true,
+                }),
+            });
+        }
+    };
+
+    let native =
+        match SuspendedGroup::spawn_with_prespawn_check(&mut commands, |ordinal, command| {
+            staging.check_before_root_spawn(ordinal, command)
+        }) {
+            Ok(native) => native,
+            Err(failure) => {
+                let native = failure.owner;
+                return Err(SuspendedActivationFailure {
+                    kind: SuspendedActivationFailureKind::Native(failure.kind),
+                    detail: failure.detail,
+                    owner: Some(SuspendedActivationOwner {
+                        staging,
+                        native_cleanup_proven: native.is_none(),
+                        native,
+                    }),
+                });
+            }
+        };
+
+    let mut native = native;
+    if let Err(detail) = native.binding_snapshot() {
+        return Err(SuspendedActivationFailure {
+            kind: SuspendedActivationFailureKind::Native(GroupNativeFailureKind::Membership),
+            detail,
+            owner: Some(SuspendedActivationOwner {
+                staging,
+                native: Some(native),
+                native_cleanup_proven: false,
+            }),
+        });
+    }
+    if !staging.journal_is_still_prepared() {
+        return Err(SuspendedActivationFailure {
+            kind: SuspendedActivationFailureKind::Native(GroupNativeFailureKind::Membership),
+            detail: "Capture runtime prepared binding changed after suspended acquisition.".into(),
+            owner: Some(SuspendedActivationOwner {
+                staging,
+                native: Some(native),
+                native_cleanup_proven: false,
+            }),
+        });
+    }
+
+    Ok(SuspendedActivationOwner {
+        staging,
+        native: Some(native),
+        native_cleanup_proven: false,
+    })
+}
+
+#[cfg(windows)]
+impl SuspendedActivationOwner {
+    /// Cleanup is native-first.  A staging retry after successful native
+    /// proof retains only the staging owner and never recreates the group.
+    #[allow(dead_code)]
+    pub(crate) fn cleanup(mut self) -> Result<(), SuspendedActivationCleanupFailure> {
+        if !self.native_cleanup_proven {
+            if let Some(native) = self.native.take() {
+                match native.cleanup_and_prove() {
+                    Ok(_proof) => self.native_cleanup_proven = true,
+                    Err(failure) => {
+                        self.native = Some(failure.owner);
+                        return Err(SuspendedActivationCleanupFailure {
+                            detail: failure.detail,
+                            owner: self,
+                        });
+                    }
+                }
+            } else {
+                // No Job was ever acquired.  This is a valid staging-only
+                // owner, so native cleanup is already vacuously complete.
+                self.native_cleanup_proven = true;
+            }
+        }
+
+        match self.staging.cleanup_pre_native() {
+            Ok(_observation) => Ok(()),
+            Err(error) => Err(SuspendedActivationCleanupFailure {
+                detail: format!("Capture runtime staging cleanup stopped: {error:?}."),
                 owner: self,
             }),
         }
@@ -2351,6 +2636,36 @@ mod tests {
         let proof = group
             .cleanup_and_prove()
             .expect("resumed group cleanup proof");
+        assert!(proof.roots_reaped);
+        assert!(proof.descendants_terminated);
+        let _ = std::fs::remove_file(first_marker);
+        let _ = std::fs::remove_file(second_marker);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn prespawn_check_failure_at_root_n_retains_prior_suspended_owner() {
+        let first_marker = group_marker_path("prespawn-check-first");
+        let second_marker = group_marker_path("prespawn-check-second");
+        let mut commands = [
+            marker_command(&first_marker, true),
+            marker_command(&second_marker, true),
+        ];
+        let failure = SuspendedGroup::spawn_with_prespawn_check(&mut commands, |ordinal, _| {
+            if ordinal == 1 {
+                Err("injected frozen pre-spawn recheck failure".into())
+            } else {
+                Ok(())
+            }
+        })
+        .expect_err("root N pre-spawn failure");
+        assert_eq!(failure.kind(), GroupNativeFailureKind::Spawn);
+        let owner = failure.owner.as_ref().expect("native owner");
+        assert_eq!(owner.roots.len(), 1);
+        assert_eq!(owner.unacquired_root_nonces.len(), 1);
+        wait_for_marker(&first_marker, false);
+        wait_for_marker(&second_marker, false);
+        let proof = cleanup_group_failure(failure);
         assert!(proof.roots_reaped);
         assert!(proof.descendants_terminated);
         let _ = std::fs::remove_file(first_marker);

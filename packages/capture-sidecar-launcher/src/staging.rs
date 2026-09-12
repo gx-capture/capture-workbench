@@ -21,6 +21,7 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{Read, Write},
     path::{Path, PathBuf},
+    process::Command,
 };
 
 #[cfg(test)]
@@ -138,6 +139,13 @@ struct OwnedMarker {
     bytes: Vec<u8>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum StagingScopeState {
+    Partial,
+    Complete,
+    Released,
+}
+
 /// Move-only pre-native owner.  The activation context is consumed here and
 /// is never supplied by a cleanup caller.
 pub(crate) struct RunStagingOwner {
@@ -148,6 +156,9 @@ pub(crate) struct RunStagingOwner {
     marker: Option<OwnedMarker>,
     roots: Vec<OwnedDirectory>,
     expected_root_paths: Vec<PathBuf>,
+    scope_state: StagingScopeState,
+    #[cfg(test)]
+    journal_drift_before_root: Cell<Option<usize>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -201,6 +212,14 @@ pub(crate) fn materialize(
     if !journal_is_exactly_prepared(&activation) {
         return Err(StagingFailure::BeforeOwnership(
             StagingFailureKind::JournalChanged,
+        ));
+    }
+    // Verify every executable before creating even the shared staging
+    // directory.  A later per-root check rechecks the artifact before each
+    // spawn; this does not eliminate path/content TOCTOU.
+    if activation.descriptor.checked_commands().is_err() {
+        return Err(StagingFailure::BeforeOwnership(
+            StagingFailureKind::InvalidActivation,
         ));
     }
     if validate_safe_chain(&producer_root_path).is_err() {
@@ -264,6 +283,9 @@ pub(crate) fn materialize(
         marker: None,
         roots: Vec::new(),
         expected_root_paths,
+        scope_state: StagingScopeState::Partial,
+        #[cfg(test)]
+        journal_drift_before_root: Cell::new(None),
     };
     if owner.group.identity.is_none() {
         return Err(StagingFailure::Owned {
@@ -359,15 +381,49 @@ pub(crate) fn materialize(
             });
         }
     }
+    owner.scope_state = StagingScopeState::Complete;
     Ok(owner)
 }
 
 impl RunStagingOwner {
+    /// Revalidate all frozen commands after staging ownership exists and
+    /// before the native Job is created.
+    pub(crate) fn checked_commands(&self) -> Result<Vec<Command>, String> {
+        self.validate_complete_materialized_scope()
+            .map_err(|error| format!("Capture runtime staging admission failed: {error:?}."))?;
+        self.activation.descriptor.checked_commands()
+    }
+
+    pub(crate) fn journal_is_still_prepared(&self) -> bool {
+        journal_is_exactly_prepared(&self.activation)
+    }
+
+    /// Revalidate the journal and replace the command with a freshly checked
+    /// frozen command immediately before the native spawn call.
+    pub(crate) fn check_before_root_spawn(
+        &self,
+        ordinal: usize,
+        command: &mut Command,
+    ) -> Result<(), String> {
+        #[cfg(test)]
+        self.maybe_inject_journal_drift_before_root(ordinal);
+        self.validate_complete_materialized_scope()
+            .map_err(|error| format!("Capture runtime staging admission failed: {error:?}."))?;
+        if !journal_is_exactly_prepared(&self.activation) {
+            return Err("Capture runtime prepared binding changed before root spawn.".into());
+        }
+        *command = self.activation.descriptor.checked_command(ordinal)?;
+        Ok(())
+    }
+
     /// Validate and remove only the complete owned empty scope.  No deletion
     /// occurs until every entry, identity, and reparse check has succeeded.
     pub(crate) fn cleanup_pre_native(
         &mut self,
     ) -> Result<StagingReleasedObservation, StagingCleanupError> {
+        if self.scope_state == StagingScopeState::Released {
+            return Err(StagingCleanupError::OwnershipUnknown);
+        }
         if !journal_is_exactly_prepared(&self.activation) {
             return Err(StagingCleanupError::JournalChanged);
         }
@@ -394,6 +450,7 @@ impl RunStagingOwner {
             return Err(StagingCleanupError::IdentityChanged);
         }
         fs::remove_dir(&self.group.path).map_err(|_| StagingCleanupError::DeleteFailed)?;
+        self.scope_state = StagingScopeState::Released;
         Ok(StagingReleasedObservation {
             session_nonce: self.activation.descriptor.session_nonce().to_owned(),
             plan_digest: self.activation.journal_plan.plan_digest.clone(),
@@ -403,6 +460,26 @@ impl RunStagingOwner {
                 .group_staging_identity()
                 .to_owned(),
         })
+    }
+
+    fn validate_complete_materialized_scope(&self) -> Result<(), StagingCleanupError> {
+        if self.scope_state != StagingScopeState::Complete {
+            return Err(StagingCleanupError::OwnershipUnknown);
+        }
+        if self.marker.is_none() || self.roots.len() != self.expected_root_paths.len() {
+            return Err(StagingCleanupError::OwnershipUnknown);
+        }
+        for (root, expected_path) in self.roots.iter().zip(&self.expected_root_paths) {
+            if root.path != *expected_path
+                || root.identity.is_none()
+                || !path_exists(expected_path)
+                || !same_identity(expected_path, root.identity)
+                || path_is_reparse(expected_path).unwrap_or(true)
+            {
+                return Err(StagingCleanupError::IdentityChanged);
+            }
+        }
+        self.validate_empty_scope()
     }
 
     fn validate_empty_scope(&self) -> Result<(), StagingCleanupError> {
@@ -484,6 +561,39 @@ impl RunStagingOwner {
     #[cfg(test)]
     fn expected_root_paths(&self) -> &[PathBuf] {
         &self.expected_root_paths
+    }
+
+    #[cfg(test)]
+    pub(crate) fn inject_journal_drift_before_root_for_test(
+        &self,
+        ordinal: usize,
+    ) -> Result<(), String> {
+        self.journal_drift_before_root.set(Some(ordinal));
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn maybe_inject_journal_drift_before_root(&self, ordinal: usize) {
+        if self.journal_drift_before_root.get() != Some(ordinal) {
+            return;
+        }
+        self.journal_drift_before_root.set(None);
+        let Ok(current) = self
+            .activation
+            .context
+            .store
+            .read(&self.activation.journal_plan)
+        else {
+            return;
+        };
+        let _ = self.activation.context.store.compare_and_swap(
+            &self.activation.journal_plan,
+            &current.cas_snapshot(),
+            crate::journal_store::JournalStoreCommand::Transition {
+                next_state: JournalState::ReconcileRequired,
+                timestamp: current.updated_at,
+            },
+        );
     }
 }
 

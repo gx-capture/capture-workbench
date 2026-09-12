@@ -278,6 +278,27 @@ impl FrozenActivationDescriptor {
             .map(|root| root.planned_staging_path.as_path())
     }
 
+    /// Revalidate and materialize every frozen command before a resource is
+    /// acquired.  This remains crate-private so an activation caller cannot
+    /// replace the producer-owned command source with arbitrary input.
+    pub(crate) fn checked_commands(&self) -> Result<Vec<Command>, String> {
+        self.validate()?;
+        self.roots
+            .iter()
+            .map(|root| root.command.checked_command())
+            .collect()
+    }
+
+    /// Revalidate one frozen command at the last pre-spawn boundary.
+    pub(crate) fn checked_command(&self, ordinal: usize) -> Result<Command, String> {
+        self.validate()?;
+        self.roots
+            .get(ordinal)
+            .ok_or_else(|| "Capture runtime activation root was missing.".to_string())?
+            .command
+            .checked_command()
+    }
+
     pub(crate) fn to_prepare_draft(&self) -> Result<crate::prepare::PreparePlanDraft, String> {
         self.validate()?;
         Ok(crate::prepare::PreparePlanDraft {
@@ -1000,6 +1021,9 @@ mod tests {
         VerifiedGroupBinding,
     };
 
+    #[cfg(windows)]
+    use sha2::{Digest, Sha256};
+
     fn manifest() -> crate::SidecarManifest {
         crate::SidecarManifest {
             manifest_version: "1".into(),
@@ -1078,6 +1102,61 @@ mod tests {
                 .collect(),
         )
         .expect("activation descriptor")
+    }
+
+    #[cfg(windows)]
+    fn real_activation_test_descriptor(
+        producer_root: &Path,
+        ports: &[u16],
+    ) -> (FrozenActivationDescriptor, PathBuf) {
+        let source = std::env::current_exe().expect("test executable");
+        let executable_path = producer_root.join("capture-runtime.exe");
+        fs::copy(&source, &executable_path).expect("copy executable fixture");
+        let bytes = fs::read(&executable_path).expect("fixture bytes");
+        let manifest = crate::SidecarManifest {
+            manifest_version: "1".into(),
+            runtime_version: "0.4.2".into(),
+            api_version: "2.0".into(),
+            capture_document_schema_version: "2".into(),
+            platform: "windows".into(),
+            arch: "x86_64".into(),
+            file_name: "capture-runtime.exe".into(),
+            bytes: bytes.len() as u64,
+            sha256: format!("{:x}", Sha256::digest(&bytes)),
+            schema_file_name: "capture-document-v2.schema.json".into(),
+            schema_sha256: "0".repeat(64),
+        };
+        let descriptor = FrozenActivationDescriptor::from_activation_inputs(
+            producer_root.to_path_buf(),
+            "session-1".into(),
+            4,
+            ports
+                .iter()
+                .enumerate()
+                .map(|(index, port)| ActivationRootInput {
+                    ordinal: index as u32,
+                    role: if index == 0 {
+                        "capture".into()
+                    } else {
+                        format!("worker-{index}")
+                    },
+                    root_generation: index as u64 + 1,
+                    verified: VerifiedSidecar {
+                        manifest: manifest.clone(),
+                        executable_path: executable_path.clone(),
+                    },
+                    spec: SidecarLaunchSpec::new(
+                        executable_path.clone(),
+                        *port,
+                        "secret-token".into(),
+                        token_environment("secret-token"),
+                        Vec::new(),
+                    ),
+                })
+                .collect(),
+        )
+        .expect("real activation descriptor");
+        (descriptor, executable_path)
     }
 
     fn command_environment(command: &Command) -> BTreeMap<String, String> {
@@ -1903,6 +1982,267 @@ mod tests {
                 .load(std::sync::atomic::Ordering::Relaxed),
             1
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn activation_descriptor_acquires_real_windows_roots_suspended_before_cleanup() {
+        for ports in [&[42130_u16][..], &[42131_u16, 42132_u16][..]] {
+            let directory = tempfile::tempdir().expect("tempdir");
+            let (descriptor, _) = real_activation_test_descriptor(directory.path(), ports);
+            let group_path = descriptor.planned_group_staging_path();
+            let plan = build_activation_plan(descriptor).expect("activation plan");
+            let sink = DescriptorSink {
+                binding: Mutex::new(None),
+                fail_persist: false,
+                persist_calls: AtomicUsize::new(0),
+            };
+            let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
+            let activation = prepared
+                .consume_for_activation()
+                .expect("validated activation context");
+            let mut owner = crate::process::acquire_suspended_for_activation(activation)
+                .expect("real executable roots should be acquired suspended");
+            assert_eq!(owner.native_root_count_for_test(), Some(ports.len()));
+            assert!(owner.native_is_suspended_for_test());
+
+            owner.cleanup().expect("native then empty staging cleanup");
+            assert!(!group_path.exists());
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn native_cleanup_failure_keeps_staging_until_native_retry_succeeds() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (descriptor, _) = real_activation_test_descriptor(directory.path(), &[42138, 42139]);
+        let group_path = descriptor.planned_group_staging_path();
+        let plan = build_activation_plan(descriptor).expect("activation plan");
+        let sink = DescriptorSink {
+            binding: Mutex::new(None),
+            fail_persist: false,
+            persist_calls: AtomicUsize::new(0),
+        };
+        let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
+        let activation = prepared
+            .consume_for_activation()
+            .expect("validated activation context");
+        let mut owner =
+            crate::process::acquire_suspended_for_activation(activation).expect("suspended owner");
+        owner.inject_native_cleanup_failure_for_test();
+
+        let cleanup_failure = owner
+            .cleanup()
+            .expect_err("native cleanup failure must retain both owners");
+        let owner = cleanup_failure.into_owner();
+        assert_eq!(owner.native_root_count_for_test(), Some(2));
+        assert!(!owner.native_cleanup_proven_for_test());
+        assert!(group_path.exists());
+
+        owner.cleanup().expect("native retry then staging cleanup");
+        assert!(!group_path.exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn all_root_artifact_preflight_fails_before_staging_ownership() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (descriptor, executable_path) =
+            real_activation_test_descriptor(directory.path(), &[42133, 42134]);
+        let group_path = descriptor.planned_group_staging_path();
+        let shared_path = group_path
+            .parent()
+            .expect("shared staging parent")
+            .to_path_buf();
+        let plan = build_activation_plan(descriptor).expect("activation plan");
+        let sink = DescriptorSink {
+            binding: Mutex::new(None),
+            fail_persist: false,
+            persist_calls: AtomicUsize::new(0),
+        };
+        let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
+        let mut bytes = fs::read(&executable_path).expect("fixture bytes");
+        bytes[0] ^= 0xff;
+        fs::write(&executable_path, bytes).expect("tamper fixture");
+        let activation = prepared
+            .consume_for_activation()
+            .expect("journal binding remains valid");
+
+        let failure = crate::staging::materialize(activation);
+        assert!(matches!(
+            failure,
+            Err(crate::staging::StagingFailure::BeforeOwnership(
+                crate::staging::StagingFailureKind::InvalidActivation
+            ))
+        ));
+        assert!(!group_path.exists());
+        assert!(!shared_path.exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn post_staging_artifact_drift_keeps_staging_owner_without_a_job() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (descriptor, executable_path) =
+            real_activation_test_descriptor(directory.path(), &[42135, 42136]);
+        let plan = build_activation_plan(descriptor).expect("activation plan");
+        let sink = DescriptorSink {
+            binding: Mutex::new(None),
+            fail_persist: false,
+            persist_calls: AtomicUsize::new(0),
+        };
+        let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
+        let activation = prepared
+            .consume_for_activation()
+            .expect("validated activation context");
+        let staging = crate::staging::materialize(activation).expect("staging owner");
+        let mut bytes = fs::read(&executable_path).expect("fixture bytes");
+        bytes[0] ^= 0xff;
+        fs::write(&executable_path, bytes).expect("tamper fixture");
+
+        let owner = match crate::process::acquire_suspended_from_staging(staging) {
+            Ok(_) => panic!("artifact drift must stop before Job setup"),
+            Err(failure) => failure
+                .into_owner()
+                .expect("staging owner after materialization"),
+        };
+        assert_eq!(owner.native_root_count_for_test(), None);
+        owner
+            .cleanup()
+            .expect("unchanged prepared journal permits staging cleanup");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn partial_marker_owner_is_rejected_before_native_job_setup() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let executable_path = directory.path().join("capture-runtime.exe");
+        fs::write(&executable_path, b"runtime").expect("executable");
+        let (activation, group_path, _) =
+            prepared_activation_for_staging(directory.path(), &executable_path, &[42141]);
+        crate::staging::fail_next_marker_flush_for_test();
+
+        let staging = match crate::staging::materialize(activation) {
+            Err(crate::staging::StagingFailure::Owned { owner, .. }) => owner,
+            _ => panic!("expected partial marker owner"),
+        };
+        let owner = match crate::process::acquire_suspended_from_staging(staging) {
+            Ok(_) => panic!("partial marker scope must stop before Job setup"),
+            Err(failure) => failure
+                .into_owner()
+                .expect("partial staging owner retained"),
+        };
+        assert_eq!(owner.native_root_count_for_test(), None);
+        owner.cleanup().expect("partial marker owner cleanup");
+        assert!(!group_path.exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn partial_root_owner_is_rejected_before_native_job_setup() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let executable_path = directory.path().join("capture-runtime.exe");
+        fs::write(&executable_path, b"runtime").expect("executable");
+        let (activation, group_path, _) =
+            prepared_activation_for_staging(directory.path(), &executable_path, &[42142, 42143]);
+        crate::staging::fail_next_root_mkdir_for_test(1);
+
+        let staging = match crate::staging::materialize(activation) {
+            Err(crate::staging::StagingFailure::Owned { owner, .. }) => owner,
+            _ => panic!("expected partial root owner"),
+        };
+        let owner = match crate::process::acquire_suspended_from_staging(staging) {
+            Ok(_) => panic!("partial root scope must stop before Job setup"),
+            Err(failure) => failure
+                .into_owner()
+                .expect("partial staging owner retained"),
+        };
+        assert_eq!(owner.native_root_count_for_test(), None);
+        owner.cleanup().expect("partial root owner cleanup");
+        assert!(!group_path.exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn released_staging_owner_is_rejected_before_native_job_setup() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let executable_path = directory.path().join("capture-runtime.exe");
+        fs::write(&executable_path, b"runtime").expect("executable");
+        let (activation, group_path, _) =
+            prepared_activation_for_staging(directory.path(), &executable_path, &[42144]);
+        let mut staging = crate::staging::materialize(activation).expect("staging owner");
+        staging
+            .cleanup_pre_native()
+            .expect("first cleanup releases staging owner");
+        assert!(!group_path.exists());
+
+        let owner = match crate::process::acquire_suspended_from_staging(staging) {
+            Ok(_) => panic!("released scope must stop before Job setup"),
+            Err(failure) => failure
+                .into_owner()
+                .expect("released staging owner retained"),
+        };
+        assert_eq!(owner.native_root_count_for_test(), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn foreign_staging_scope_is_rejected_before_native_job_setup() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let executable_path = directory.path().join("capture-runtime.exe");
+        fs::write(&executable_path, b"runtime").expect("executable");
+        let (activation, group_path, _) =
+            prepared_activation_for_staging(directory.path(), &executable_path, &[42145]);
+        let staging = crate::staging::materialize(activation).expect("staging owner");
+        let foreign = group_path.join("foreign.txt");
+        fs::write(&foreign, b"preserve").expect("foreign entry");
+
+        let owner = match crate::process::acquire_suspended_from_staging(staging) {
+            Ok(_) => panic!("foreign scope must stop before Job setup"),
+            Err(failure) => failure
+                .into_owner()
+                .expect("foreign staging owner retained"),
+        };
+        assert_eq!(owner.native_root_count_for_test(), None);
+        assert_eq!(
+            fs::read(&foreign).expect("foreign entry retained"),
+            b"preserve"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn journal_drift_at_root_n_keeps_native_owner_and_runs_native_cleanup_first() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (descriptor, _) = real_activation_test_descriptor(directory.path(), &[42137, 42140]);
+        let group_path = descriptor.planned_group_staging_path();
+        let plan = build_activation_plan(descriptor).expect("activation plan");
+        let sink = DescriptorSink {
+            binding: Mutex::new(None),
+            fail_persist: false,
+            persist_calls: AtomicUsize::new(0),
+        };
+        let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
+        let activation = prepared
+            .consume_for_activation()
+            .expect("validated activation context");
+        let staging = crate::staging::materialize(activation).expect("staging owner");
+        staging
+            .inject_journal_drift_before_root_for_test(1)
+            .expect("journal drift injection");
+
+        let owner = match crate::process::acquire_suspended_from_staging(staging) {
+            Ok(_) => panic!("changed journal must stop before root spawn"),
+            Err(failure) => failure.into_owner().expect("owner after Job setup"),
+        };
+        assert_eq!(owner.native_root_count_for_test(), Some(1));
+        let cleanup_failure = owner
+            .cleanup()
+            .expect_err("changed journal must retain staging after native cleanup");
+        let owner = cleanup_failure.into_owner();
+        assert_eq!(owner.native_root_count_for_test(), None);
+        assert!(owner.native_cleanup_proven_for_test());
+        assert!(group_path.exists());
     }
 
     #[cfg(windows)]
