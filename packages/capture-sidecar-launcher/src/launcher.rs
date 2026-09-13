@@ -1653,6 +1653,16 @@ mod tests {
         ports: &[u16],
         http_modes: &[&str],
     ) -> (FrozenActivationDescriptor, Vec<PathBuf>) {
+        activation_http_test_descriptor_with_modes_and_delay(producer_root, ports, http_modes, None)
+    }
+
+    #[cfg(windows)]
+    fn activation_http_test_descriptor_with_modes_and_delay(
+        producer_root: &Path,
+        ports: &[u16],
+        http_modes: &[&str],
+        startup_delay_ms: Option<u64>,
+    ) -> (FrozenActivationDescriptor, Vec<PathBuf>) {
         assert_eq!(ports.len(), http_modes.len());
         let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests")
@@ -1694,6 +1704,36 @@ mod tests {
                         .to_str()
                         .expect("marker path is UTF-8")
                         .to_owned();
+                    let mut test_environment = vec![
+                        ("CAPTURE_API_TOKEN".into(), ACTIVATION_HTTP_TOKEN.into()),
+                        ("CAPTURE_TEST_JOURNAL_PATH".into(), journal_path.clone()),
+                        ("CAPTURE_TEST_MARKER_PATH".into(), marker_path),
+                        (
+                            "CAPTURE_TEST_HTTP_CHECKPOINT_PATH".into(),
+                            producer_root
+                                .join(format!("activation-http-{ordinal}.checkpoint"))
+                                .to_str()
+                                .expect("HTTP checkpoint path is UTF-8")
+                                .to_owned(),
+                        ),
+                        (
+                            "CAPTURE_TEST_HTTP_LISTENER_CHECKPOINT_PATH".into(),
+                            producer_root
+                                .join(format!("activation-http-{ordinal}.listener-checkpoint"))
+                                .to_str()
+                                .expect("HTTP listener checkpoint path is UTF-8")
+                                .to_owned(),
+                        ),
+                        ("CAPTURE_TEST_SESSION_NONCE".into(), "session-1".into()),
+                        ("CAPTURE_TEST_ROOT_ORDINAL".into(), ordinal.to_string()),
+                        ("CAPTURE_TEST_HTTP_MODE".into(), http_modes[ordinal].into()),
+                    ];
+                    if let Some(startup_delay_ms) = startup_delay_ms {
+                        test_environment.push((
+                            "CAPTURE_TEST_HTTP_START_DELAY_MS".into(),
+                            startup_delay_ms.to_string(),
+                        ));
+                    }
                     ActivationRootInput {
                         ordinal: ordinal as u32,
                         role: if ordinal == 0 {
@@ -1710,22 +1750,7 @@ mod tests {
                             executable_path.clone(),
                             *port,
                             ACTIVATION_HTTP_TOKEN.into(),
-                            vec![
-                                ("CAPTURE_API_TOKEN".into(), ACTIVATION_HTTP_TOKEN.into()),
-                                ("CAPTURE_TEST_JOURNAL_PATH".into(), journal_path.clone()),
-                                ("CAPTURE_TEST_MARKER_PATH".into(), marker_path),
-                                (
-                                    "CAPTURE_TEST_HTTP_CHECKPOINT_PATH".into(),
-                                    producer_root
-                                        .join(format!("activation-http-{ordinal}.checkpoint"))
-                                        .to_str()
-                                        .expect("HTTP checkpoint path is UTF-8")
-                                        .to_owned(),
-                                ),
-                                ("CAPTURE_TEST_SESSION_NONCE".into(), "session-1".into()),
-                                ("CAPTURE_TEST_ROOT_ORDINAL".into(), ordinal.to_string()),
-                                ("CAPTURE_TEST_HTTP_MODE".into(), http_modes[ordinal].into()),
-                            ],
+                            test_environment,
                             vec!["SystemRoot".into()],
                         ),
                         readiness_manifest_path: Some(manifest_path.clone()),
@@ -1760,6 +1785,20 @@ mod tests {
         Vec<PathBuf>,
         crate::process::LaunchingActivationOwner,
     ) {
+        launch_http_owner_with_modes_and_delay_for_test(producer_root, ports, http_modes, None)
+    }
+
+    #[cfg(windows)]
+    fn launch_http_owner_with_modes_and_delay_for_test(
+        producer_root: &Path,
+        ports: &[u16],
+        http_modes: &[&str],
+        startup_delay_ms: Option<u64>,
+    ) -> (
+        crate::prepare::ImmutableGroupPlan,
+        Vec<PathBuf>,
+        crate::process::LaunchingActivationOwner,
+    ) {
         let (reservations, ports) = {
             let mut reservations = Vec::new();
             let mut distinct = HashSet::new();
@@ -1772,8 +1811,12 @@ mod tests {
             assert_eq!(distinct.len(), ports.len());
             (reservations, ports.to_vec())
         };
-        let (descriptor, marker_paths) =
-            activation_http_test_descriptor_with_modes(producer_root, &ports, http_modes);
+        let (descriptor, marker_paths) = activation_http_test_descriptor_with_modes_and_delay(
+            producer_root,
+            &ports,
+            http_modes,
+            startup_delay_ms,
+        );
         let plan = build_activation_plan(descriptor).expect("HTTP activation plan");
         let sink = DescriptorSink {
             binding: Mutex::new(None),
@@ -2000,34 +2043,155 @@ mod tests {
 
     #[cfg(windows)]
     fn wait_for_activation_probe_http_checkpoint(port: u16, marker_path: &Path) {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        enum CheckpointState {
+            Missing,
+            Complete,
+            Partial,
+            Unreadable,
+        }
+
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        enum TransportState {
+            NotAttempted,
+            ConnectFailed,
+            WriteFailed,
+            ReadTimedOutOrFailed,
+            ResponseTooLarge,
+            Complete,
+        }
+
+        fn checkpoint_state(path: &Path, expected: &[u8]) -> CheckpointState {
+            match fs::read(path) {
+                Ok(bytes) if bytes == expected => CheckpointState::Complete,
+                Ok(_) => CheckpointState::Partial,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    CheckpointState::Missing
+                }
+                Err(_) => CheckpointState::Unreadable,
+            }
+        }
+
+        fn response_status(response: &[u8]) -> Option<u16> {
+            response
+                .split(|byte| *byte == b'\n')
+                .next()
+                .and_then(|line| std::str::from_utf8(line).ok())
+                .and_then(|line| line.trim_end_matches('\r').split_whitespace().nth(1))
+                .and_then(|value| value.parse().ok())
+        }
+
         let checkpoint_path = marker_path.with_extension("checkpoint");
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let listener_checkpoint_path = marker_path.with_extension("listener-checkpoint");
+        const MAX_RESPONSE_BYTES: usize = 4096;
+        let started = Instant::now();
+        let deadline = Instant::now() + Duration::from_secs(12);
         let request = format!(
             "GET /v2/health/ready HTTP/1.1\r\nHost: {LOOPBACK_HOST}:{port}\r\nAuthorization: Bearer {ACTIVATION_HTTP_TOKEN}\r\nConnection: close\r\n\r\n"
         );
+        let mut listener_state;
+        let mut authorization_state;
+        let mut transport_state = TransportState::NotAttempted;
+        let mut last_status = None;
+        let mut response_bytes = 0usize;
+        let mut attempts = 0usize;
         while Instant::now() < deadline {
-            if !checkpoint_path.exists() {
-                if let Ok(mut stream) = TcpStream::connect_timeout(
-                    &format!("{LOOPBACK_HOST}:{port}")
-                        .parse()
-                        .expect("loopback address"),
-                    Duration::from_millis(250),
-                ) {
-                    if stream.write_all(request.as_bytes()).is_ok() {
-                        let _ = stream.set_read_timeout(Some(Duration::from_millis(100)));
-                        let mut response = Vec::new();
-                        let _ = stream.read_to_end(&mut response);
+            listener_state = checkpoint_state(&listener_checkpoint_path, b"listener-bound\n");
+            authorization_state = checkpoint_state(&checkpoint_path, b"authorized\n");
+            if authorization_state == CheckpointState::Complete {
+                return;
+            }
+            if listener_state != CheckpointState::Complete {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                thread::sleep(Duration::from_millis(10).min(remaining));
+                continue;
+            }
+
+            attempts += 1;
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            let address = format!("{LOOPBACK_HOST}:{port}")
+                .parse()
+                .expect("loopback address");
+            let connect_timeout = remaining.min(Duration::from_millis(250));
+            let Ok(mut stream) = TcpStream::connect_timeout(&address, connect_timeout) else {
+                transport_state = TransportState::ConnectFailed;
+                continue;
+            };
+            let write_timeout = deadline
+                .saturating_duration_since(Instant::now())
+                .min(Duration::from_millis(250));
+            if write_timeout.is_zero() || stream.set_write_timeout(Some(write_timeout)).is_err() {
+                transport_state = TransportState::WriteFailed;
+                continue;
+            }
+            if stream.write_all(request.as_bytes()).is_err() {
+                transport_state = TransportState::WriteFailed;
+                continue;
+            }
+            let read_timeout = deadline
+                .saturating_duration_since(Instant::now())
+                .min(Duration::from_millis(100));
+            if read_timeout.is_zero() || stream.set_read_timeout(Some(read_timeout)).is_err() {
+                transport_state = TransportState::ReadTimedOutOrFailed;
+                continue;
+            }
+            let mut response = Vec::new();
+            let mut chunk = [0_u8; 512];
+            let mut response_failed = false;
+            loop {
+                if response.windows(4).any(|window| window == b"\r\n\r\n") {
+                    break;
+                }
+                if response.len() >= MAX_RESPONSE_BYTES {
+                    transport_state = TransportState::ResponseTooLarge;
+                    response_failed = true;
+                    break;
+                }
+                if Instant::now() >= deadline {
+                    transport_state = TransportState::ReadTimedOutOrFailed;
+                    response_failed = true;
+                    break;
+                }
+                match stream.read(&mut chunk) {
+                    Ok(0) => break,
+                    Ok(count) => {
+                        let remaining = MAX_RESPONSE_BYTES - response.len();
+                        response.extend_from_slice(&chunk[..count.min(remaining)]);
+                        if count > remaining {
+                            transport_state = TransportState::ResponseTooLarge;
+                            response_failed = true;
+                            break;
+                        }
+                    }
+                    Err(_) => {
+                        transport_state = TransportState::ReadTimedOutOrFailed;
+                        response_failed = true;
+                        break;
                     }
                 }
             }
-            if fs::read(&checkpoint_path).ok().as_deref() == Some(b"authorized\n") {
+            response_bytes = response.len();
+            last_status = response_status(&response);
+            if !response_failed {
+                transport_state = TransportState::Complete;
+            }
+            authorization_state = checkpoint_state(&checkpoint_path, b"authorized\n");
+            if authorization_state == CheckpointState::Complete {
                 return;
             }
-            thread::sleep(Duration::from_millis(10));
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if !remaining.is_zero() {
+                thread::sleep(Duration::from_millis(10).min(remaining));
+            }
         }
+        listener_state = checkpoint_state(&listener_checkpoint_path, b"listener-bound\n");
+        authorization_state = checkpoint_state(&checkpoint_path, b"authorized\n");
         panic!(
-            "activation probe HTTP server did not confirm an authorized request checkpoint: {}",
-            checkpoint_path.display()
+            "activation probe HTTP checkpoint not observed (listener={listener_state:?}, authorization={authorization_state:?}, transport={transport_state:?}, status={last_status:?}, response_bytes={response_bytes}, attempts={attempts}, elapsed_ms={})",
+            started.elapsed().as_millis()
         );
     }
 
@@ -5637,6 +5801,30 @@ mod tests {
         assert!(retained.native_cleanup_proven_for_test());
         assert!(group_staging_path.is_dir());
         assert!(marker_paths.iter().all(|path| path.is_file()));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn activation_probe_listener_checkpoint_allows_bounded_delayed_startup() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (reservations, ports) = held_distinct_loopback_ports(1);
+        drop(reservations);
+        let started = Instant::now();
+        let (plan, _marker_paths, launching) = launch_http_owner_with_modes_and_delay_for_test(
+            directory.path(),
+            &ports,
+            &["ready"],
+            Some(5_100),
+        );
+        assert!(
+            started.elapsed() >= Duration::from_secs(5),
+            "delayed fixture did not exercise the former five-second startup boundary"
+        );
+        let cleanup = launching
+            .cleanup_without_terminal_proof()
+            .expect_err("Launching cleanup retains staging for reconciliation");
+        assert!(cleanup.into_owner().native_cleanup_proven_for_test());
+        drop(plan);
     }
 
     #[cfg(windows)]

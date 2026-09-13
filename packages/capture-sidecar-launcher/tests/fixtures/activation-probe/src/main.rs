@@ -26,6 +26,8 @@ const ORDINAL_ENV: &str = "CAPTURE_TEST_ROOT_ORDINAL";
 const TOKEN_ENV: &str = "CAPTURE_API_TOKEN";
 const HTTP_MODE_ENV: &str = "CAPTURE_TEST_HTTP_MODE";
 const HTTP_CHECKPOINT_ENV: &str = "CAPTURE_TEST_HTTP_CHECKPOINT_PATH";
+const HTTP_LISTENER_CHECKPOINT_ENV: &str = "CAPTURE_TEST_HTTP_LISTENER_CHECKPOINT_PATH";
+const HTTP_START_DELAY_ENV: &str = "CAPTURE_TEST_HTTP_START_DELAY_MS";
 const MAX_JOURNAL_BYTES: u64 = 1024 * 1024;
 const MARKER_RETRY: Duration = Duration::from_millis(10);
 const MARKER_TIMEOUT: Duration = Duration::from_secs(2);
@@ -34,6 +36,7 @@ const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
 const HTTP_SUCCESS_HOLD: Duration = Duration::from_secs(2);
 const HTTP_IO_TIMEOUT: Duration = Duration::from_millis(250);
 const HTTP_RETRY: Duration = Duration::from_millis(5);
+const MAX_HTTP_START_DELAY_MS: u64 = 9_000;
 const MAX_HTTP_REQUEST_BYTES: usize = 16 * 1024;
 const MIN_HTTP_TOKEN_BYTES: usize = 32;
 #[cfg_attr(not(test), allow(dead_code))]
@@ -74,6 +77,8 @@ struct ProbeConfig {
     journal_path_is_directory: bool,
     marker_path: PathBuf,
     http_checkpoint_path: Option<PathBuf>,
+    http_listener_checkpoint_path: Option<PathBuf>,
+    http_start_delay: Duration,
     session_nonce: String,
     root_ordinal: u32,
     port: u16,
@@ -139,6 +144,9 @@ where
     let http_checkpoint_path = env::var_os(HTTP_CHECKPOINT_ENV)
         .map(|_| required_path(HTTP_CHECKPOINT_ENV))
         .transpose()?;
+    let http_listener_checkpoint_path = env::var_os(HTTP_LISTENER_CHECKPOINT_ENV)
+        .map(|_| required_path(HTTP_LISTENER_CHECKPOINT_ENV))
+        .transpose()?;
     if journal_path == marker_path || !journal_path.is_absolute() || !marker_path.is_absolute() {
         return Err(ProbeError::Environment);
     }
@@ -148,6 +156,25 @@ where
     {
         return Err(ProbeError::Environment);
     }
+    if http_listener_checkpoint_path.as_ref().is_some_and(|path| {
+        path == &journal_path
+            || path == &marker_path
+            || http_checkpoint_path.as_ref() == Some(path)
+            || !path.is_absolute()
+    }) {
+        return Err(ProbeError::Environment);
+    }
+    let http_start_delay = match env::var(HTTP_START_DELAY_ENV) {
+        Ok(value) => {
+            let milliseconds = value.parse::<u64>().map_err(|_| ProbeError::Environment)?;
+            if milliseconds > MAX_HTTP_START_DELAY_MS {
+                return Err(ProbeError::Environment);
+            }
+            Duration::from_millis(milliseconds)
+        }
+        Err(env::VarError::NotPresent) => Duration::ZERO,
+        Err(env::VarError::NotUnicode(_)) => return Err(ProbeError::Environment),
+    };
     let session_nonce = required_text(SESSION_ENV)?;
     if !valid_opaque(&session_nonce) {
         return Err(ProbeError::Environment);
@@ -178,6 +205,8 @@ where
         journal_path,
         marker_path,
         http_checkpoint_path,
+        http_listener_checkpoint_path,
+        http_start_delay,
         session_nonce,
         root_ordinal,
         port,
@@ -519,6 +548,14 @@ fn serve_http(config: &ProbeConfig) -> Result<(), ProbeError> {
 }
 
 fn serve_http_until(config: &ProbeConfig, overall_deadline: Instant) -> Result<(), ProbeError> {
+    if config.http_start_delay > Duration::ZERO {
+        let remaining = remaining_http_budget(overall_deadline).ok_or(ProbeError::HttpServer)?;
+        if config.http_start_delay >= remaining {
+            thread::sleep(remaining);
+            return Err(ProbeError::HttpServer);
+        }
+        thread::sleep(config.http_start_delay);
+    }
     let listener = loop {
         match TcpListener::bind((Ipv4Addr::LOCALHOST, config.port)) {
             Ok(listener) => break listener,
@@ -534,6 +571,7 @@ fn serve_http_until(config: &ProbeConfig, overall_deadline: Instant) -> Result<(
     listener
         .set_nonblocking(true)
         .map_err(|_| ProbeError::HttpNonblocking)?;
+    write_http_listener_checkpoint(config)?;
     let mut idle_deadline = overall_deadline;
     let mut served_authorized_request = false;
     loop {
@@ -628,6 +666,35 @@ fn write_http_checkpoint(config: &ProbeConfig) -> Result<(), ProbeError> {
         return Ok(());
     };
     const CHECKPOINT: &[u8] = b"authorized\n";
+    if path.exists() {
+        return if fs::read(path).ok().as_deref() == Some(CHECKPOINT) {
+            Ok(())
+        } else {
+            Err(ProbeError::MarkerWrite)
+        };
+    }
+    let mut file = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(path)
+        .map_err(|_| ProbeError::MarkerWrite)?;
+    file.write_all(CHECKPOINT)
+        .map_err(|_| ProbeError::MarkerWrite)?;
+    file.flush().map_err(|_| ProbeError::MarkerWrite)?;
+    file.sync_all().map_err(|_| ProbeError::MarkerWrite)?;
+    drop(file);
+    if fs::read(path).ok().as_deref() == Some(CHECKPOINT) {
+        Ok(())
+    } else {
+        Err(ProbeError::MarkerWrite)
+    }
+}
+
+fn write_http_listener_checkpoint(config: &ProbeConfig) -> Result<(), ProbeError> {
+    let Some(path) = config.http_listener_checkpoint_path.as_ref() else {
+        return Ok(());
+    };
+    const CHECKPOINT: &[u8] = b"listener-bound\n";
     if path.exists() {
         return if fs::read(path).ok().as_deref() == Some(CHECKPOINT) {
             Ok(())
@@ -870,6 +937,8 @@ mod tests {
             journal_path_is_directory: false,
             marker_path: directory.join(format!("marker-{ordinal}.txt")),
             http_checkpoint_path: None,
+            http_listener_checkpoint_path: None,
+            http_start_delay: Duration::ZERO,
             session_nonce: session.into(),
             root_ordinal: ordinal,
             port: 49152 + ordinal as u16,
@@ -1047,6 +1116,7 @@ mod tests {
         let mut config = config(&directory.path, "session-1", 0);
         config.http_mode = Some(HttpMode::Ready);
         config.token = Some("fixture-bearer-token-0123456789abcdef".into());
+        config.http_listener_checkpoint_path = Some(directory.path.join("listener-bound.txt"));
         config.port = 49153;
         write_configured_journal(
             &config,
@@ -1265,11 +1335,26 @@ mod tests {
         config.port = port;
         config.http_mode = Some(HttpMode::Ready);
         config.token = Some("fixture-bearer-token-0123456789abcdef".into());
+        config.http_listener_checkpoint_path = Some(directory.path.join("listener-bound.txt"));
         let mut journal = valid_journal(&config.session_nonce, std::process::id(), 1);
         journal["roots"][0]["loopbackPort"] = json!(port);
         write_configured_journal(&config, &journal);
         let server_config = config.clone();
         let server = thread::spawn(move || run_with(&server_config, std::process::id()));
+        let listener_checkpoint_deadline = Instant::now() + Duration::from_secs(2);
+        let listener_checkpoint_path = config
+            .http_listener_checkpoint_path
+            .as_ref()
+            .expect("listener checkpoint path");
+        while Instant::now() < listener_checkpoint_deadline
+            && fs::read(listener_checkpoint_path).ok().as_deref() != Some(b"listener-bound\n")
+        {
+            thread::sleep(HTTP_RETRY);
+        }
+        assert_eq!(
+            fs::read(listener_checkpoint_path).expect("listener checkpoint"),
+            b"listener-bound\n"
+        );
         let wrong = exchange_http(
             port,
             &format!(
@@ -1348,5 +1433,31 @@ mod tests {
         );
         assert_eq!(server.join().expect("HTTP fixture thread"), Ok(()));
         assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn delayed_http_startup_fails_closed_at_the_shared_deadline() {
+        let directory = tempdir();
+        let reservation = TcpListener::bind((HOST, 0)).expect("HTTP test port");
+        let port = reservation.local_addr().expect("HTTP test address").port();
+        drop(reservation);
+        let mut config = config(&directory.path, "session-1", 0);
+        config.port = port;
+        config.http_mode = Some(HttpMode::Ready);
+        config.token = Some("fixture-bearer-token-0123456789abcdef".into());
+        config.http_start_delay = Duration::from_millis(500);
+        config.http_listener_checkpoint_path = Some(directory.path.join("listener-bound.txt"));
+        let deadline = Instant::now() + Duration::from_millis(100);
+        let started = Instant::now();
+        assert_eq!(
+            serve_http_until(&config, deadline),
+            Err(ProbeError::HttpServer)
+        );
+        assert!(started.elapsed() < Duration::from_secs(1));
+        assert!(!config
+            .http_listener_checkpoint_path
+            .as_ref()
+            .expect("listener checkpoint path")
+            .exists());
     }
 }
