@@ -136,6 +136,114 @@ impl SidecarLaunchSpec {
     }
 }
 
+/// The producer-owned inputs for one ordered root in an immutable group plan.
+///
+/// This value is consumed by [`build_immutable_group_plan`]. It deliberately
+/// has no public accessors: executable, manifest, environment, and bearer
+/// token inputs are frozen into the opaque plan and never returned as a public
+/// lifecycle receipt.
+pub struct GroupRootPlanInput {
+    role: String,
+    root_generation: u64,
+    launch: SidecarLaunchSpec,
+    manifest_path: PathBuf,
+}
+
+impl GroupRootPlanInput {
+    /// Creates one producer input. Vector order supplied to
+    /// [`build_immutable_group_plan`] is the canonical root order.
+    pub fn new(
+        role: String,
+        root_generation: u64,
+        launch: SidecarLaunchSpec,
+        manifest_path: PathBuf,
+    ) -> Self {
+        Self {
+            role,
+            root_generation,
+            launch,
+            manifest_path,
+        }
+    }
+}
+
+/// Builds a real producer-owned immutable plan for the canonical prepare
+/// seam. Every root's manifest, executable bytes, and readiness schema are
+/// verified from the supplied paths before private nonces, references, and
+/// plan identities are finalized.
+///
+/// The function performs preflight reads and creates no staging directory,
+/// listener, process, or model resource. Those resources remain forbidden
+/// until [`OwnedRuntimeSession::prepare_group`](crate::OwnedRuntimeSession::prepare_group)
+/// has completed the external sink binding transaction.
+pub fn build_immutable_group_plan(
+    producer_root: PathBuf,
+    group_generation: u64,
+    roots: Vec<GroupRootPlanInput>,
+) -> Result<crate::prepare::ImmutableGroupPlan, crate::prepare::PrepareError> {
+    if roots.is_empty() || group_generation == 0 {
+        return Err(crate::prepare::PrepareError::InvalidPlan);
+    }
+
+    let session_nonce =
+        fresh_private_nonce().map_err(|_| crate::prepare::PrepareError::ReferenceGeneration)?;
+    let activation_roots = roots
+        .into_iter()
+        .enumerate()
+        .map(|(ordinal, input)| public_activation_root(ordinal as u32, input))
+        .collect::<Result<Vec<_>, _>>()?;
+    let descriptor = FrozenActivationDescriptor::from_activation_inputs(
+        producer_root,
+        session_nonce,
+        group_generation,
+        activation_roots,
+    )
+    .map_err(|_| crate::prepare::PrepareError::InvalidPlan)?;
+    build_activation_plan(descriptor)
+}
+
+fn public_activation_root(
+    ordinal: u32,
+    input: GroupRootPlanInput,
+) -> Result<ActivationRootInput, crate::prepare::PrepareError> {
+    let GroupRootPlanInput {
+        role,
+        root_generation,
+        launch,
+        manifest_path,
+    } = input;
+    let manifest = load_bounded_manifest(&manifest_path)
+        .map_err(|_| crate::prepare::PrepareError::InvalidPlan)?;
+    let file_name = launch
+        .executable_path
+        .file_name()
+        .and_then(OsStr::to_str)
+        .ok_or(crate::prepare::PrepareError::InvalidPlan)?;
+    let expected = ManifestExpectations {
+        runtime_version: "0.4.2".into(),
+        api_version: "2.0".into(),
+        capture_document_schema_version: "2".into(),
+        file_name: file_name.to_owned(),
+        schema_file_name: R3_SCHEMA_FILE_NAME.into(),
+    };
+    validate_manifest_contract(&manifest, &expected)
+        .map_err(|_| crate::prepare::PrepareError::InvalidPlan)?;
+    let verified = VerifiedSidecar {
+        manifest,
+        executable_path: launch.executable_path.clone(),
+    };
+    validate_frozen_launch_inputs(&verified, &launch)
+        .map_err(|_| crate::prepare::PrepareError::InvalidPlan)?;
+    Ok(ActivationRootInput {
+        ordinal,
+        role,
+        root_generation,
+        verified,
+        spec: launch,
+        readiness_manifest_path: Some(manifest_path),
+    })
+}
+
 /// Frozen producer-owned command inputs. This foundation is intentionally not
 /// wired into the legacy launch path until the activation owner can consume it.
 #[allow(dead_code)]
@@ -3158,6 +3266,65 @@ mod tests {
         assert_eq!(validated.journal_plan, plan.value);
         assert_eq!(validated.expected.journal_revision, 1);
         assert_eq!(validated.descriptor.session_nonce(), "session-1");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn public_builder_freezes_environment_before_ambient_mutation() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let producer_root = directory.path().join("producer");
+        fs::create_dir(&producer_root).expect("producer root");
+        let release_directory = directory.path().join("release");
+        fs::create_dir(&release_directory).expect("release directory");
+        let source_executable = std::env::current_exe().expect("current executable");
+        let executable_path = release_directory.join("capture-runtime.exe");
+        fs::copy(&source_executable, &executable_path).expect("executable fixture");
+        let manifest_path =
+            write_canonical_readiness_manifest(&release_directory, &executable_path);
+
+        let mut marker_digest = Sha256::new();
+        marker_digest.update(directory.path().as_os_str().as_encoded_bytes());
+        let marker_name = format!(
+            "CAPTURE_PUBLIC_FROZEN_{}",
+            &format!("{:x}", marker_digest.finalize())[..16]
+        );
+        std::env::set_var(&marker_name, "before");
+        let token = "public-builder-token-0123456789abcdef".to_owned();
+        let plan = build_immutable_group_plan(
+            producer_root,
+            7,
+            vec![GroupRootPlanInput::new(
+                "capture".into(),
+                1,
+                SidecarLaunchSpec::new(
+                    executable_path,
+                    43_127,
+                    token.clone(),
+                    vec![("CAPTURE_API_TOKEN".into(), token)],
+                    vec![marker_name.clone()],
+                ),
+                manifest_path,
+            )],
+        )
+        .expect("public producer plan");
+
+        std::env::set_var(&marker_name, "after");
+        let descriptor = plan
+            .context
+            .activation_descriptor
+            .as_ref()
+            .expect("public plan activation descriptor");
+        let command = descriptor.checked_command(0).expect("frozen command");
+        let environment = command_environment(&command);
+        assert_eq!(
+            environment.get(&marker_name.to_ascii_lowercase()),
+            Some(&"before".to_owned())
+        );
+        assert_eq!(
+            environment.get("capture_api_token"),
+            Some(&"public-builder-token-0123456789abcdef".to_owned())
+        );
+        std::env::remove_var(marker_name);
     }
 
     #[cfg(windows)]

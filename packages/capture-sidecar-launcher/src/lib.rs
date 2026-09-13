@@ -14,9 +14,9 @@ use std::fmt;
 
 pub use health::{probe_ready_once, ProbeResult, ReadyHandshake};
 pub use launcher::{
-    generate_bearer_token, launch_sidecar, launch_sidecar_with_observer,
-    reserve_distinct_loopback_port, reserve_loopback_port, LaunchOptions, LaunchedSidecar,
-    SidecarLaunchSpec,
+    build_immutable_group_plan, generate_bearer_token, launch_sidecar,
+    launch_sidecar_with_observer, reserve_distinct_loopback_port, reserve_loopback_port,
+    GroupRootPlanInput, LaunchOptions, LaunchedSidecar, SidecarLaunchSpec,
 };
 pub use manifest::{
     load_manifest, validate_manifest_contract, verify_sidecar, ManifestExpectations,
