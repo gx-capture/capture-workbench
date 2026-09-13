@@ -260,6 +260,9 @@ pub(crate) struct ClosingCasAdmission {
 /// after preflight and leave an older owner acting on it.
 #[cfg(windows)]
 pub(crate) struct ClosingCleanupAdmission {
+    store: Arc<JournalStore>,
+    plan: JournalPlanValue,
+    expected: CasSnapshot,
     current: RuntimeSessionJournalV1,
     deadline: Instant,
     cancellation: Arc<AtomicBool>,
@@ -274,6 +277,12 @@ pub(crate) enum RunningCasResult {
 
 #[cfg(windows)]
 pub(crate) enum ClosingCasResult {
+    Committed(RuntimeSessionJournalV1),
+    CommittedAfterBudget(RuntimeSessionJournalV1),
+}
+
+#[cfg(windows)]
+pub(crate) enum TerminalCasResult {
     Committed(RuntimeSessionJournalV1),
     CommittedAfterBudget(RuntimeSessionJournalV1),
 }
@@ -295,6 +304,8 @@ struct TestFaults {
     cancel_before_closing_replace: std::sync::Mutex<Option<Arc<AtomicBool>>>,
     cancel_after_closing_replace: std::sync::Mutex<Option<Arc<AtomicBool>>>,
     cancel_after_closing_readback: std::sync::Mutex<Option<Arc<AtomicBool>>>,
+    cancel_before_terminal_replace: std::sync::Mutex<Option<Arc<AtomicBool>>>,
+    cancel_after_terminal_replace: std::sync::Mutex<Option<Arc<AtomicBool>>>,
 }
 
 impl JournalStore {
@@ -507,6 +518,9 @@ impl JournalStore {
         }
         check_running_admission_budget(deadline, cancellation.as_ref())?;
         Ok(ClosingCleanupAdmission {
+            store: Arc::clone(self),
+            plan: plan.clone(),
+            expected: current.cas_snapshot(),
             current,
             deadline,
             cancellation,
@@ -871,10 +885,16 @@ impl JournalStore {
     }
 
     #[cfg(test)]
-    fn fail_next_before_replace(&self) {
+    pub(crate) fn fail_next_before_replace_for_test(&self) {
         self.faults
             .fail_before_replace
             .store(true, Ordering::Release);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn replace_journal_for_test(&self, journal: &RuntimeSessionJournalV1) {
+        let bytes = journal.encode_private().expect("valid test journal");
+        fs::write(&self.journal_path, bytes).expect("replace test journal");
     }
 
     #[cfg(test)]
@@ -917,6 +937,16 @@ impl JournalStore {
     #[cfg(all(test, windows))]
     pub(crate) fn cancel_after_closing_readback_for_test(&self, cancellation: Arc<AtomicBool>) {
         *self.faults.cancel_after_closing_readback.lock().unwrap() = Some(cancellation);
+    }
+
+    #[cfg(all(test, windows))]
+    pub(crate) fn cancel_before_terminal_replace_for_test(&self, cancellation: Arc<AtomicBool>) {
+        *self.faults.cancel_before_terminal_replace.lock().unwrap() = Some(cancellation);
+    }
+
+    #[cfg(all(test, windows))]
+    pub(crate) fn cancel_after_terminal_replace_for_test(&self, cancellation: Arc<AtomicBool>) {
+        *self.faults.cancel_after_terminal_replace.lock().unwrap() = Some(cancellation);
     }
 
     #[cfg(all(test, windows))]
@@ -1182,6 +1212,83 @@ impl ClosingCleanupAdmission {
 
     pub(crate) fn check_budget(&self) -> Result<(), JournalStoreError> {
         check_running_admission_budget(self.deadline, self.cancellation.as_ref())
+    }
+
+    /// Apply only the canonical Closing -> Terminal transition while this
+    /// exact Closing snapshot remains under the journal lock.  The caller has
+    /// already completed native and staging cleanup; this method performs no
+    /// resource operation and accepts only the typed terminal observation.
+    pub(crate) fn commit_terminal(
+        mut self,
+        observation: TerminalObservation,
+        timestamp: String,
+    ) -> Result<TerminalCasResult, JournalStoreError> {
+        check_running_admission_budget(self.deadline, self.cancellation.as_ref())?;
+        if self.current.state != JournalState::Closing
+            || self.current.cas_snapshot() != self.expected
+        {
+            return Err(JournalStoreError::Conflict);
+        }
+        apply_command(
+            &mut self.current,
+            &self.plan,
+            &self.expected,
+            JournalStoreCommand::TerminalizeWithObservation {
+                observation,
+                timestamp,
+            },
+        )
+        .map_err(|error| match error {
+            JournalError::StaleCas => JournalStoreError::Conflict,
+            error => JournalStoreError::Journal(error),
+        })?;
+        self.current
+            .validate_against_plan(&self.plan)
+            .map_err(JournalStoreError::Journal)?;
+        let candidate = self.current.clone();
+        let bytes = candidate
+            .encode_private()
+            .map_err(JournalStoreError::Journal)?;
+        #[cfg(test)]
+        if let Some(cancellation) = self
+            .store
+            .faults
+            .cancel_before_terminal_replace
+            .lock()
+            .unwrap()
+            .take()
+        {
+            cancellation.store(true, Ordering::Release);
+        }
+        check_running_admission_budget(self.deadline, self.cancellation.as_ref())?;
+        let read_back = match self.store.write_atomic_unlocked(&bytes, true) {
+            Ok(()) => self.store.read_unlocked(&self.plan)?,
+            Err(write_error) => match self
+                .store
+                .reestablish_candidate_durability_unlocked(&self.plan, &candidate)
+            {
+                Ok(read_back) => read_back,
+                Err(_) => return Err(write_error),
+            },
+        };
+        if read_back != candidate {
+            return Err(JournalStoreError::CorruptJournal);
+        }
+        #[cfg(test)]
+        if let Some(cancellation) = self
+            .store
+            .faults
+            .cancel_after_terminal_replace
+            .lock()
+            .unwrap()
+            .take()
+        {
+            cancellation.store(true, Ordering::Release);
+        }
+        if cancellation_requested(self.cancellation.as_ref()) || Instant::now() >= self.deadline {
+            return Ok(TerminalCasResult::CommittedAfterBudget(read_back));
+        }
+        Ok(TerminalCasResult::Committed(read_back))
     }
 }
 
@@ -1812,7 +1919,7 @@ mod tests {
         assert_eq!(store.read(&plan()).expect("old record"), before_flush);
 
         let before_replace = store.read(&plan()).expect("read before replace");
-        store.fail_next_before_replace();
+        store.fail_next_before_replace_for_test();
         assert_eq!(
             store.compare_and_swap(
                 &plan(),

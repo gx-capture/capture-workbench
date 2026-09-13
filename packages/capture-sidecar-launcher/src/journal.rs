@@ -281,7 +281,11 @@ impl ResourceObservation {
 }
 
 impl TerminalObservation {
-    fn from_resources(
+    /// Construct a terminal observation only after the private lifecycle owner
+    /// has validated native/listener/staging evidence.  This remains
+    /// crate-private; callers cannot construct terminal authority through the
+    /// public API.
+    pub(crate) fn from_resources(
         journal: &RuntimeSessionJournalV1,
         resources: ResourceObservation,
         proof: TerminalProof,

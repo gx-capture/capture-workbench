@@ -3964,6 +3964,462 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    fn terminal_join_persists_exact_cleanup_proof_for_one_and_many_roots() {
+        for root_count in [1_usize, 2] {
+            let directory = tempfile::tempdir().expect("tempdir");
+            let (plan, cleaned, group_path, root_paths) =
+                closing_owner_with_staging_for_test(directory.path(), root_count);
+            let (released, _staging_observation) = cleaned
+                .release_staging_after_native_cleanup(
+                    Instant::now() + Duration::from_secs(10),
+                    None,
+                )
+                .unwrap_or_else(|failure| {
+                    panic!(
+                        "staging release should precede terminal join: {}",
+                        failure.detail_for_test()
+                    )
+                });
+            let closing = released.closing_journal_for_test().clone();
+            let terminal = released
+                .terminalize_after_release(Instant::now() + Duration::from_secs(10), None)
+                .unwrap_or_else(|failure| {
+                    panic!(
+                        "terminal join should persist exact proof: {}",
+                        failure.detail_for_test()
+                    )
+                });
+            let terminal_journal = terminal.journal_for_test();
+            assert_eq!(
+                terminal_journal.state,
+                crate::journal::JournalState::Terminal
+            );
+            assert_eq!(
+                terminal_journal.journal_revision,
+                closing.journal_revision + 1
+            );
+            assert_eq!(terminal_journal.attempt, closing.attempt);
+            assert_eq!(terminal_journal.recovery_epoch, closing.recovery_epoch);
+            assert_eq!(terminal_journal.schema_version, closing.schema_version);
+            assert_eq!(terminal_journal.producer, closing.producer);
+            assert_eq!(terminal_journal.session_nonce, closing.session_nonce);
+            assert_eq!(terminal_journal.plan_digest, closing.plan_digest);
+            assert_eq!(terminal_journal.binding, closing.binding);
+            assert_eq!(terminal_journal.job_binding, closing.job_binding);
+            assert_eq!(terminal_journal.staging_binding, closing.staging_binding);
+            let mut expected_roots = closing.roots.clone();
+            for root in &mut expected_roots {
+                root.state = crate::journal::RootState::Terminal;
+                root.live_listener_readiness = None;
+            }
+            assert_eq!(terminal_journal.roots, expected_roots);
+            let proof = terminal_journal.proof.as_ref().expect("terminal proof");
+            assert!(proof.root_reaped);
+            assert!(proof.descendants_terminated);
+            assert!(proof.listeners_released);
+            assert!(proof.staging_released);
+            assert_eq!(proof.proof_generation, terminal_journal.journal_revision);
+            assert!(proof.unacquired_root_bindings.is_empty());
+
+            let disk = plan
+                .context
+                .store
+                .read(&plan.value)
+                .expect("terminal journal");
+            assert_eq!(&disk, terminal_journal);
+            assert!(!group_path.exists());
+            assert!(root_paths.iter().all(|path| !path.exists()));
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn terminal_join_rechecks_released_scope_and_foreign_listener() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (plan, cleaned, group_path, _root_paths) =
+            closing_owner_with_staging_for_test(directory.path(), 1);
+        let (released, _) = cleaned
+            .release_staging_after_native_cleanup(Instant::now() + Duration::from_secs(10), None)
+            .unwrap_or_else(|failure| panic!("release staging: {}", failure.detail_for_test()));
+        fs::create_dir(&group_path).expect("foreign recreated group");
+        let failure = match released
+            .terminalize_after_release(Instant::now() + Duration::from_secs(10), None)
+        {
+            Ok(_) => panic!("recreated staging scope must block terminal proof"),
+            Err(failure) => failure,
+        };
+        assert_eq!(
+            failure.kind_for_test(),
+            crate::process::TerminalJoinFailureKind::Validation
+        );
+        assert!(group_path.exists());
+        let _owner = failure.into_owner();
+        let disk = plan
+            .context
+            .store
+            .read(&plan.value)
+            .expect("Closing journal");
+        assert_eq!(disk.state, crate::journal::JournalState::Closing);
+        fs::remove_dir(&group_path).expect("remove foreign group");
+
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (plan, cleaned, _group_path, _root_paths) =
+            closing_owner_with_staging_for_test(directory.path(), 1);
+        let port = plan
+            .context
+            .activation_descriptor
+            .as_ref()
+            .expect("activation descriptor")
+            .planned_root_port(0)
+            .expect("planned port");
+        let (released, _) = cleaned
+            .release_staging_after_native_cleanup(Instant::now() + Duration::from_secs(10), None)
+            .unwrap_or_else(|failure| panic!("release staging: {}", failure.detail_for_test()));
+        let foreign_listener = TcpListener::bind((LOOPBACK_HOST, port)).expect("foreign listener");
+        let failure = match released
+            .terminalize_after_release(Instant::now() + Duration::from_secs(10), None)
+        {
+            Ok(_) => panic!("foreign listener must block terminal proof"),
+            Err(failure) => failure,
+        };
+        assert_eq!(
+            failure.kind_for_test(),
+            crate::process::TerminalJoinFailureKind::Listener
+        );
+        assert!(TcpStream::connect((LOOPBACK_HOST, port)).is_ok());
+        let owner = failure.into_owner();
+        let disk = plan
+            .context
+            .store
+            .read(&plan.value)
+            .expect("Closing journal");
+        assert_eq!(disk.state, crate::journal::JournalState::Closing);
+        drop(foreign_listener);
+        let terminal = owner
+            .terminalize_after_release(Instant::now() + Duration::from_secs(10), None)
+            .unwrap_or_else(|failure| {
+                panic!(
+                    "terminal join after foreign listener release: {}",
+                    failure.detail_for_test()
+                )
+            });
+        assert_eq!(
+            terminal.journal_for_test().state,
+            crate::journal::JournalState::Terminal
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn terminal_join_cancellation_before_write_retries_same_owner() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (plan, cleaned, _group_path, _root_paths) =
+            closing_owner_with_staging_for_test(directory.path(), 1);
+        let (released, _) = cleaned
+            .release_staging_after_native_cleanup(Instant::now() + Duration::from_secs(10), None)
+            .unwrap_or_else(|failure| panic!("release staging: {}", failure.detail_for_test()));
+        let cancellation = Arc::new(AtomicBool::new(false));
+        plan.context
+            .store
+            .cancel_before_terminal_replace_for_test(Arc::clone(&cancellation));
+        let failure = match released.terminalize_after_release(
+            Instant::now() + Duration::from_secs(10),
+            Some(Arc::clone(&cancellation)),
+        ) {
+            Ok(_) => panic!("pre-write cancellation must retain Closing owner"),
+            Err(failure) => failure,
+        };
+        assert_eq!(
+            failure.kind_for_test(),
+            crate::process::TerminalJoinFailureKind::Cancelled
+        );
+        assert_eq!(
+            plan.context
+                .store
+                .read(&plan.value)
+                .expect("Closing journal")
+                .state,
+            crate::journal::JournalState::Closing
+        );
+        cancellation.store(false, Ordering::Release);
+        let terminal = failure
+            .into_owner()
+            .terminalize_after_release(Instant::now() + Duration::from_secs(10), None)
+            .unwrap_or_else(|failure| {
+                panic!("same owner terminal retry: {}", failure.detail_for_test())
+            });
+        assert_eq!(
+            terminal.journal_for_test().state,
+            crate::journal::JournalState::Terminal
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn terminal_join_post_write_cancellation_withholds_authority() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (plan, cleaned, _group_path, _root_paths) =
+            closing_owner_with_staging_for_test(directory.path(), 1);
+        let (released, _) = cleaned
+            .release_staging_after_native_cleanup(Instant::now() + Duration::from_secs(10), None)
+            .unwrap_or_else(|failure| panic!("release staging: {}", failure.detail_for_test()));
+        let cancellation = Arc::new(AtomicBool::new(false));
+        plan.context
+            .store
+            .cancel_after_terminal_replace_for_test(Arc::clone(&cancellation));
+        let failure = match released.terminalize_after_release(
+            Instant::now() + Duration::from_secs(10),
+            Some(Arc::clone(&cancellation)),
+        ) {
+            Ok(_) => panic!("post-write cancellation must withhold terminal authority"),
+            Err(failure) => failure,
+        };
+        assert_eq!(
+            failure.kind_for_test(),
+            crate::process::TerminalJoinFailureKind::CommittedAfterBudget
+        );
+        let disk = plan
+            .context
+            .store
+            .read(&plan.value)
+            .expect("terminal disk record");
+        assert_eq!(disk.state, crate::journal::JournalState::Terminal);
+        assert_eq!(
+            disk.proof
+                .as_ref()
+                .expect("terminal disk proof")
+                .proof_generation,
+            disk.journal_revision
+        );
+        let _owner = failure.into_owner();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn terminal_join_before_replace_failure_retains_owner_and_retries_without_cleanup() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (plan, cleaned, group_path, root_paths) =
+            closing_owner_with_staging_for_test(directory.path(), 1);
+        let (released, _) = cleaned
+            .release_staging_after_native_cleanup(Instant::now() + Duration::from_secs(10), None)
+            .unwrap_or_else(|failure| panic!("release staging: {}", failure.detail_for_test()));
+        let native_attempts = released.native_cleanup_attempts_for_test();
+        plan.context.store.fail_next_before_replace_for_test();
+        let failure = match released
+            .terminalize_after_release(Instant::now() + Duration::from_secs(10), None)
+        {
+            Ok(_) => panic!("pre-replace failure must retain Closing owner"),
+            Err(failure) => failure,
+        };
+        assert_eq!(
+            failure.kind_for_test(),
+            crate::process::TerminalJoinFailureKind::Storage
+        );
+        assert_eq!(
+            plan.context
+                .store
+                .read(&plan.value)
+                .expect("Closing journal")
+                .state,
+            crate::journal::JournalState::Closing
+        );
+        let retained = failure.into_owner();
+        assert_eq!(retained.native_cleanup_attempts_for_test(), native_attempts);
+        assert!(retained.native_cleanup_proven_for_test());
+        assert!(retained.staging_release_proven_for_test());
+        assert!(!group_path.exists());
+        assert!(root_paths.iter().all(|path| !path.exists()));
+        let terminal = retained
+            .terminalize_after_release(Instant::now() + Duration::from_secs(10), None)
+            .unwrap_or_else(|failure| {
+                panic!(
+                    "retry after pre-replace failure: {}",
+                    failure.detail_for_test()
+                )
+            });
+        assert_eq!(
+            terminal.journal_for_test().state,
+            crate::journal::JournalState::Terminal
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn terminal_join_post_replace_recheck_failure_retains_owner_and_rejects_replay() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (plan, cleaned, _group_path, _root_paths) =
+            closing_owner_with_staging_for_test(directory.path(), 1);
+        let (released, _) = cleaned
+            .release_staging_after_native_cleanup(Instant::now() + Duration::from_secs(10), None)
+            .unwrap_or_else(|failure| panic!("release staging: {}", failure.detail_for_test()));
+        plan.context
+            .store
+            .fail_after_replace_and_durability_recheck();
+        let failure = match released
+            .terminalize_after_release(Instant::now() + Duration::from_secs(10), None)
+        {
+            Ok(_) => panic!("failed durability recheck must retain owner"),
+            Err(failure) => failure,
+        };
+        assert_eq!(
+            failure.kind_for_test(),
+            crate::process::TerminalJoinFailureKind::Storage
+        );
+        let disk = plan
+            .context
+            .store
+            .read(&plan.value)
+            .expect("terminal candidate");
+        assert_eq!(disk.state, crate::journal::JournalState::Terminal);
+        assert_eq!(
+            disk.proof
+                .as_ref()
+                .expect("terminal proof")
+                .proof_generation,
+            disk.journal_revision
+        );
+        let replay = match failure
+            .into_owner()
+            .terminalize_after_release(Instant::now() + Duration::from_secs(10), None)
+        {
+            Ok(_) => panic!("old Closing owner cannot replay a durable Terminal record"),
+            Err(failure) => failure,
+        };
+        assert_eq!(
+            replay.kind_for_test(),
+            crate::process::TerminalJoinFailureKind::Conflict
+        );
+        assert_eq!(
+            plan.context
+                .store
+                .read(&plan.value)
+                .expect("Terminal journal")
+                .state,
+            crate::journal::JournalState::Terminal
+        );
+        let _owner = replay.into_owner();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn terminal_join_reestablish_success_returns_one_exact_terminal_candidate() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (plan, cleaned, _group_path, _root_paths) =
+            closing_owner_with_staging_for_test(directory.path(), 1);
+        let (released, _) = cleaned
+            .release_staging_after_native_cleanup(Instant::now() + Duration::from_secs(10), None)
+            .unwrap_or_else(|failure| panic!("release staging: {}", failure.detail_for_test()));
+        plan.context.store.fail_next_after_replace_before_flush();
+        let terminal = released
+            .terminalize_after_release(Instant::now() + Duration::from_secs(10), None)
+            .unwrap_or_else(|failure| {
+                panic!(
+                    "reestablished terminal candidate: {}",
+                    failure.detail_for_test()
+                )
+            });
+        let disk = plan
+            .context
+            .store
+            .read(&plan.value)
+            .expect("Terminal journal");
+        assert_eq!(&disk, terminal.journal_for_test());
+        assert_eq!(disk.state, crate::journal::JournalState::Terminal);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn terminal_join_rejects_same_snapshot_resource_drift_without_native_action() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (plan, cleaned, _group_path, _root_paths) =
+            closing_owner_with_staging_for_test(directory.path(), 1);
+        let (released, _) = cleaned
+            .release_staging_after_native_cleanup(Instant::now() + Duration::from_secs(10), None)
+            .unwrap_or_else(|failure| panic!("release staging: {}", failure.detail_for_test()));
+        let expected = released.closing_journal_for_test().clone();
+        let native_attempts = released.native_cleanup_attempts_for_test();
+        let mut foreign = expected.clone();
+        foreign.roots[0].live_listener_readiness =
+            Some("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee".into());
+        assert_eq!(foreign.cas_snapshot(), expected.cas_snapshot());
+        plan.context.store.replace_journal_for_test(&foreign);
+        let failure = match released
+            .terminalize_after_release(Instant::now() + Duration::from_secs(10), None)
+        {
+            Ok(_) => panic!("same-snapshot resource drift must block terminal join"),
+            Err(failure) => failure,
+        };
+        assert_eq!(
+            failure.kind_for_test(),
+            crate::process::TerminalJoinFailureKind::Conflict
+        );
+        let retained = failure.into_owner();
+        assert_eq!(retained.native_cleanup_attempts_for_test(), native_attempts);
+        assert!(retained.native_cleanup_proven_for_test());
+        assert!(retained.staging_release_proven_for_test());
+        assert_eq!(
+            plan.context
+                .store
+                .read(&plan.value)
+                .expect("foreign journal"),
+            foreign
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn terminal_join_rechecks_listener_after_clock_before_terminal_write() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (plan, cleaned, _group_path, _root_paths) =
+            closing_owner_with_staging_for_test(directory.path(), 1);
+        let port = plan
+            .context
+            .activation_descriptor
+            .as_ref()
+            .expect("activation descriptor")
+            .planned_root_port(0)
+            .expect("planned root port");
+        let (mut released, _) = cleaned
+            .release_staging_after_native_cleanup(Instant::now() + Duration::from_secs(10), None)
+            .unwrap_or_else(|failure| panic!("release staging: {}", failure.detail_for_test()));
+        released.inject_terminal_listener_rebind_after_clock_for_test(port);
+        let failure = match released
+            .terminalize_after_release(Instant::now() + Duration::from_secs(10), None)
+        {
+            Ok(_) => panic!("late listener rebound must block terminal write"),
+            Err(failure) => failure,
+        };
+        assert_eq!(
+            failure.kind_for_test(),
+            crate::process::TerminalJoinFailureKind::Listener
+        );
+        assert_eq!(
+            plan.context
+                .store
+                .read(&plan.value)
+                .expect("Closing journal")
+                .state,
+            crate::journal::JournalState::Closing
+        );
+        let mut retained = failure.into_owner();
+        assert!(TcpStream::connect((LOOPBACK_HOST, port)).is_ok());
+        retained.release_terminal_foreign_listener_for_test();
+        let terminal = retained
+            .terminalize_after_release(Instant::now() + Duration::from_secs(10), None)
+            .unwrap_or_else(|failure| {
+                panic!(
+                    "terminal retry after listener release: {}",
+                    failure.detail_for_test()
+                )
+            });
+        assert_eq!(
+            terminal.journal_for_test().state,
+            crate::journal::JournalState::Terminal
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
     fn closing_staging_release_rejects_foreign_top_entry_and_marker_replacement() {
         let directory = tempfile::tempdir().expect("tempdir");
         let (_plan, cleaned, group_path, _root_paths) =

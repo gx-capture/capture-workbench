@@ -1376,6 +1376,35 @@ impl RunStagingOwner {
         Ok(())
     }
 
+    /// Recheck the already released scope before the terminal CAS.  This is
+    /// observation only: terminalization never recreates or deletes staging.
+    #[cfg(windows)]
+    pub(crate) fn revalidate_released_scope_for_terminal(
+        &self,
+        expected: &StagingReleasedObservation,
+        deadline: Instant,
+        cancellation: &AtomicBool,
+    ) -> Result<(), String> {
+        check_staging_release_budget(deadline, cancellation).map_err(|error| {
+            format!("Capture runtime released staging budget ended: {error:?}.")
+        })?;
+        if self.scope_state != StagingScopeState::Released
+            || self.released_observation.as_ref() != Some(expected)
+            || !expected.matches_activation(&self.activation)
+        {
+            return Err(
+                "Capture runtime released staging observation was not the exact owner.".into(),
+            );
+        }
+        self.validate_released_scope().map_err(|error| {
+            format!("Capture runtime released staging scope changed: {error:?}.")
+        })?;
+        check_staging_release_budget(deadline, cancellation).map_err(|error| {
+            format!("Capture runtime released staging budget ended: {error:?}.")
+        })?;
+        Ok(())
+    }
+
     #[cfg(windows)]
     fn released_observation_for_activation(&self) -> StagingReleasedObservation {
         StagingReleasedObservation {

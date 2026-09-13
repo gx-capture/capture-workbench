@@ -11,9 +11,12 @@ use crate::{
     health::{probe_service_ready, StrictProbeResult},
     journal::{
         CreationIdentity, JobBinding, JobSetupState, JournalRoot, JournalState,
-        ResourceObservation, RootState, RuntimeSessionJournalV1,
+        ResourceObservation, RootState, RuntimeSessionJournalV1, TerminalObservation,
+        TerminalProof,
     },
-    journal_store::{ClosingCasError, ClosingCasResult, RunningCasError, RunningCasResult},
+    journal_store::{
+        ClosingCasError, ClosingCasResult, RunningCasError, RunningCasResult, TerminalCasResult,
+    },
     prepare::ValidatedActivationContext,
     staging::{RunStagingOwner, StagingCleanupError, StagingFailure, StagingReleasedObservation},
 };
@@ -40,13 +43,105 @@ use std::{
 #[cfg(all(test, windows))]
 use std::{
     cell::Cell,
-    sync::mpsc::{Receiver, SyncSender},
+    sync::{
+        mpsc::{Receiver, SyncSender},
+        Condvar, OnceLock,
+    },
 };
 
 #[cfg(all(test, windows))]
 thread_local! {
     static CANCEL_AFTER_LAUNCHING_CAS: Cell<bool> = const { Cell::new(false) };
     static CANCEL_BEFORE_RESUME_ROOT: Cell<Option<usize>> = const { Cell::new(None) };
+}
+
+/// The Windows activation-probe tests start real Job/child/listener groups.
+/// Keep at most two HTTP fixture groups for the whole live native-fixture
+/// lifetime; a permit is released only after native cleanup is proven.  This
+/// keeps the full default-parallel suite from exhausting the host's
+/// short-lived process and loopback resources while non-fixture tests remain
+/// parallel.
+#[cfg(all(test, windows))]
+const HTTP_FIXTURE_CONCURRENCY_LIMIT: usize = 2;
+
+#[cfg(all(test, windows))]
+const HTTP_FIXTURE_PERMIT_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
+
+#[cfg(all(test, windows))]
+struct HttpFixtureLimiter {
+    capacity: usize,
+    available: Mutex<usize>,
+    wake: Condvar,
+}
+
+#[cfg(all(test, windows))]
+struct HttpFixturePermit {
+    limiter: Arc<HttpFixtureLimiter>,
+}
+
+#[cfg(all(test, windows))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HttpFixturePermitError {
+    Timeout,
+    Poisoned,
+}
+
+#[cfg(all(test, windows))]
+impl HttpFixtureLimiter {
+    fn new(capacity: usize) -> Arc<Self> {
+        assert!(capacity > 0, "fixture limiter capacity must be positive");
+        Arc::new(Self {
+            capacity,
+            available: Mutex::new(capacity),
+            wake: Condvar::new(),
+        })
+    }
+
+    fn acquire(
+        self: &Arc<Self>,
+        timeout: std::time::Duration,
+    ) -> Result<HttpFixturePermit, HttpFixturePermitError> {
+        let deadline = std::time::Instant::now() + timeout;
+        let mut available = self
+            .available
+            .lock()
+            .map_err(|_| HttpFixturePermitError::Poisoned)?;
+        while *available == 0 {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() {
+                return Err(HttpFixturePermitError::Timeout);
+            }
+            let (next_available, wait_result) = self
+                .wake
+                .wait_timeout(available, remaining)
+                .map_err(|_| HttpFixturePermitError::Poisoned)?;
+            available = next_available;
+            if wait_result.timed_out() && *available == 0 {
+                return Err(HttpFixturePermitError::Timeout);
+            }
+        }
+        *available -= 1;
+        drop(available);
+        Ok(HttpFixturePermit {
+            limiter: Arc::clone(self),
+        })
+    }
+}
+
+#[cfg(all(test, windows))]
+impl Drop for HttpFixturePermit {
+    fn drop(&mut self) {
+        let mut available = self.limiter.available.lock().unwrap();
+        *available = available.saturating_add(1).min(self.limiter.capacity);
+        self.limiter.wake.notify_one();
+    }
+}
+
+#[cfg(all(test, windows))]
+fn acquire_http_fixture_permit() -> Result<HttpFixturePermit, HttpFixturePermitError> {
+    static LIMITER: OnceLock<Arc<HttpFixtureLimiter>> = OnceLock::new();
+    let limiter = LIMITER.get_or_init(|| HttpFixtureLimiter::new(HTTP_FIXTURE_CONCURRENCY_LIMIT));
+    limiter.acquire(HTTP_FIXTURE_PERMIT_WAIT)
 }
 
 #[cfg(windows)]
@@ -347,6 +442,8 @@ pub(crate) struct SuspendedActivationOwner {
     staging: RunStagingOwner,
     native: Option<SuspendedGroup>,
     native_cleanup_proven: bool,
+    #[cfg(all(test, windows))]
+    _http_fixture_permit: Option<HttpFixturePermit>,
 }
 
 #[cfg(windows)]
@@ -430,6 +527,10 @@ pub(crate) struct ClosingActivationOwner {
     listener_query_failure_after_staging: bool,
     #[cfg(all(test, windows))]
     staging_release_cancel_before_authority: bool,
+    #[cfg(all(test, windows))]
+    terminal_listener_rebind_after_clock_port: Option<u16>,
+    #[cfg(all(test, windows))]
+    terminal_foreign_listener: Option<std::net::TcpListener>,
 }
 
 /// Private proof retained after the exact Job and root handles have proved
@@ -510,6 +611,55 @@ pub(crate) struct ClosingStagingReleaseFailure {
     kind: ClosingStagingReleaseFailureKind,
     detail: String,
     owner: ClosingActivationOwner,
+}
+
+#[cfg(windows)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TerminalJoinFailureKind {
+    Cancelled,
+    Deadline,
+    Listener,
+    Conflict,
+    Storage,
+    Validation,
+    CommittedAfterBudget,
+}
+
+#[cfg(windows)]
+pub(crate) struct TerminalJoinFailure {
+    kind: TerminalJoinFailureKind,
+    detail: String,
+    owner: ClosingActivationOwner,
+}
+
+#[cfg(windows)]
+pub(crate) struct TerminalizedActivationOwner {
+    terminal_journal: RuntimeSessionJournalV1,
+}
+
+#[cfg(windows)]
+impl TerminalJoinFailure {
+    pub(crate) fn into_owner(self) -> ClosingActivationOwner {
+        self.owner
+    }
+
+    #[cfg(test)]
+    pub(crate) fn kind_for_test(&self) -> TerminalJoinFailureKind {
+        self.kind
+    }
+
+    #[cfg(test)]
+    pub(crate) fn detail_for_test(&self) -> &str {
+        &self.detail
+    }
+}
+
+#[cfg(windows)]
+impl TerminalizedActivationOwner {
+    #[cfg(test)]
+    pub(crate) fn journal_for_test(&self) -> &RuntimeSessionJournalV1 {
+        &self.terminal_journal
+    }
 }
 
 #[cfg(windows)]
@@ -1793,6 +1943,10 @@ impl RunningActivationOwner {
             listener_query_failure_after_staging: false,
             #[cfg(all(test, windows))]
             staging_release_cancel_before_authority: false,
+            #[cfg(all(test, windows))]
+            terminal_listener_rebind_after_clock_port: None,
+            #[cfg(all(test, windows))]
+            terminal_foreign_listener: None,
         })
     }
 
@@ -2223,6 +2377,342 @@ impl ClosingActivationOwner {
         Ok((self, observation))
     }
 
+    /// Consume the fully cleaned Closing owner through the final typed
+    /// Closing -> Terminal CAS.  Native cleanup and staging release have
+    /// already happened; this seam only re-observes their exact identities,
+    /// confirms absence, and persists the canonical terminal proof.
+    #[allow(dead_code)]
+    pub(crate) fn terminalize_after_release(
+        mut self,
+        deadline: std::time::Instant,
+        cancellation: Option<Arc<AtomicBool>>,
+    ) -> Result<TerminalizedActivationOwner, TerminalJoinFailure> {
+        self.listener_release_proof = None;
+        let local_cancellation = Arc::new(AtomicBool::new(false));
+        let cancellation = cancellation.unwrap_or_else(|| Arc::clone(&local_cancellation));
+        let native_proof = match self.native_cleanup_proof.clone() {
+            Some(proof) => proof,
+            None => {
+                return Err(terminal_join_failure(
+                    self,
+                    TerminalJoinFailureKind::Validation,
+                    "Capture runtime terminalization lacked the exact native cleanup proof.",
+                ));
+            }
+        };
+        let staging_proof = match self.staging_release_proof.clone() {
+            Some(proof) => proof,
+            None => {
+                return Err(terminal_join_failure(
+                    self,
+                    TerminalJoinFailureKind::Validation,
+                    "Capture runtime terminalization lacked the exact staging release proof.",
+                ));
+            }
+        };
+        if let Err(detail) = check_native_cleanup_budget(deadline, Some(cancellation.as_ref())) {
+            return Err(terminal_join_failure(
+                self,
+                terminal_join_kind_from_detail(&detail, TerminalJoinFailureKind::Validation),
+                detail,
+            ));
+        }
+
+        // The immutable address index is checked before locking.  The exact
+        // full Closing value is then re-read under the same store lock used by
+        // the typed terminal CAS; no nested journal read occurs under guard.
+        if let Err(detail) = self.owner.staging.revalidate_closing_index_for_cleanup(
+            &self.closing_journal,
+            deadline,
+            Arc::clone(&cancellation),
+        ) {
+            return Err(terminal_join_failure(
+                self,
+                TerminalJoinFailureKind::Validation,
+                detail,
+            ));
+        }
+        let admission = match self.owner.staging.begin_closing_cleanup_admission(
+            &self.closing_journal,
+            deadline,
+            Arc::clone(&cancellation),
+        ) {
+            Ok(admission) => admission,
+            Err(cause) => {
+                return Err(terminal_join_failure_for_admission(self, cause));
+            }
+        };
+        if admission.current() != &self.closing_journal {
+            return Err(terminal_join_failure(
+                self,
+                TerminalJoinFailureKind::Conflict,
+                "Capture runtime Closing journal changed before terminal admission.",
+            ));
+        }
+        if let Err(cause) = admission.check_budget() {
+            return Err(terminal_join_failure_for_store(self, cause));
+        }
+        let current = admission.current().clone();
+
+        // Revalidate the retained native identity without terminating again,
+        // then take a fresh listener-absence observation for this exact
+        // Closing revision.  A foreign rebound remains ambiguous and clears
+        // the historical proof for this attempt.
+        let fresh_listener_proof = {
+            let native = match self.owner.native.as_mut() {
+                Some(native) => native,
+                None => {
+                    return Err(terminal_join_failure(
+                        self,
+                        TerminalJoinFailureKind::Validation,
+                        "Capture runtime native owner was missing during terminalization.",
+                    ));
+                }
+            };
+            let retained = match native.validate_closing_binding(&current) {
+                Ok(proof) => proof,
+                Err(detail) => {
+                    return Err(terminal_join_failure(
+                        self,
+                        TerminalJoinFailureKind::Validation,
+                        detail,
+                    ));
+                }
+            };
+            if retained != native_proof {
+                return Err(terminal_join_failure(
+                    self,
+                    TerminalJoinFailureKind::Validation,
+                    "Capture runtime retained native cleanup proof changed before terminalization.",
+                ));
+            }
+            if let Err(detail) = native.observe_listener_release_for_closing(
+                &current,
+                &native_proof,
+                deadline,
+                Some(cancellation.as_ref()),
+            ) {
+                return Err(terminal_join_failure(
+                    self,
+                    TerminalJoinFailureKind::Listener,
+                    detail,
+                ));
+            }
+            listener_release_proof_for_closing(&current, native_proof.clone())
+        };
+        if let Err(detail) = fresh_listener_proof {
+            return Err(terminal_join_failure(
+                self,
+                terminal_join_kind_from_detail(&detail, TerminalJoinFailureKind::Listener),
+                detail,
+            ));
+        }
+        if let Err(cause) = admission.check_budget() {
+            return Err(terminal_join_failure_for_store(self, cause));
+        }
+
+        if let Err(detail) = self.owner.staging.revalidate_released_scope_for_terminal(
+            &staging_proof,
+            deadline,
+            cancellation.as_ref(),
+        ) {
+            return Err(terminal_join_failure(
+                self,
+                TerminalJoinFailureKind::Validation,
+                detail,
+            ));
+        }
+        if let Err(cause) = admission.check_budget() {
+            return Err(terminal_join_failure_for_store(self, cause));
+        }
+
+        let job_binding = match current.job_binding.clone() {
+            Some(binding) => binding,
+            None => {
+                return Err(terminal_join_failure(
+                    self,
+                    TerminalJoinFailureKind::Validation,
+                    "Capture runtime Closing Job binding was missing during terminalization.",
+                ));
+            }
+        };
+        if current.staging_binding.is_none() {
+            return Err(terminal_join_failure(
+                self,
+                TerminalJoinFailureKind::Validation,
+                "Capture runtime Closing staging binding was missing during terminalization.",
+            ));
+        }
+        let mut terminal_roots = current.roots.clone();
+        for root in &mut terminal_roots {
+            root.state = RootState::Terminal;
+            root.live_listener_readiness = None;
+        }
+        let resources = ResourceObservation {
+            job_binding,
+            staging_binding: current.staging_binding.clone(),
+            roots: terminal_roots,
+        };
+        let proof_generation = match current.journal_revision.checked_add(1) {
+            Some(generation) => generation,
+            None => {
+                return Err(terminal_join_failure(
+                    self,
+                    TerminalJoinFailureKind::Validation,
+                    "Capture runtime terminal proof generation overflowed.",
+                ));
+            }
+        };
+        let proof = TerminalProof {
+            root_reaped: true,
+            descendants_terminated: true,
+            listeners_released: true,
+            staging_released: true,
+            proof_generation,
+            unacquired_root_bindings: Vec::new(),
+        };
+        let observation = match TerminalObservation::from_resources(&current, resources, proof) {
+            Ok(observation) => observation,
+            Err(error) => {
+                return Err(terminal_join_failure(
+                    self,
+                    TerminalJoinFailureKind::Validation,
+                    format!("Capture runtime terminal observation was invalid: {error:?}."),
+                ));
+            }
+        };
+        let timestamp = match self.owner.staging.next_timestamp() {
+            Ok(timestamp) => timestamp,
+            Err(detail) => {
+                return Err(terminal_join_failure(
+                    self,
+                    TerminalJoinFailureKind::Validation,
+                    detail,
+                ));
+            }
+        };
+        #[cfg(all(test, windows))]
+        if let Some(port) = self.terminal_listener_rebind_after_clock_port.take() {
+            match std::net::TcpListener::bind(("127.0.0.1", port)) {
+                Ok(listener) => self.terminal_foreign_listener = Some(listener),
+                Err(error) => {
+                    return Err(terminal_join_failure(
+                        self,
+                        TerminalJoinFailureKind::Listener,
+                        format!(
+                            "Capture runtime test foreign listener could not rebind port: {error}."
+                        ),
+                    ));
+                }
+            }
+        }
+        if let Err(cause) = admission.check_budget() {
+            return Err(terminal_join_failure_for_store(self, cause));
+        }
+
+        // The first listener and released-scope observations protect the
+        // expensive proof construction above.  Re-observe both after the
+        // producer timestamp/candidate has been prepared and immediately
+        // before the typed write, while the same journal lock remains held.
+        // This closes the final cooperative observation window without
+        // claiming an impossible atomic snapshot across Windows and FS I/O.
+        let final_listener_proof = {
+            let native = match self.owner.native.as_mut() {
+                Some(native) => native,
+                None => {
+                    return Err(terminal_join_failure(
+                        self,
+                        TerminalJoinFailureKind::Validation,
+                        "Capture runtime native owner was missing at the terminal write boundary.",
+                    ));
+                }
+            };
+            let retained = match native.validate_closing_binding(&current) {
+                Ok(proof) => proof,
+                Err(detail) => {
+                    return Err(terminal_join_failure(
+                        self,
+                        TerminalJoinFailureKind::Validation,
+                        detail,
+                    ));
+                }
+            };
+            if retained != native_proof {
+                return Err(terminal_join_failure(
+                    self,
+                    TerminalJoinFailureKind::Validation,
+                    "Capture runtime retained native cleanup proof changed at the terminal write boundary.",
+                ));
+            }
+            if let Err(detail) = native.observe_listener_release_for_closing(
+                &current,
+                &native_proof,
+                deadline,
+                Some(cancellation.as_ref()),
+            ) {
+                return Err(terminal_join_failure(
+                    self,
+                    TerminalJoinFailureKind::Listener,
+                    detail,
+                ));
+            }
+            listener_release_proof_for_closing(&current, native_proof)
+        };
+        if let Err(detail) = final_listener_proof {
+            return Err(terminal_join_failure(
+                self,
+                terminal_join_kind_from_detail(&detail, TerminalJoinFailureKind::Listener),
+                detail,
+            ));
+        }
+        if let Err(detail) = self.owner.staging.revalidate_released_scope_for_terminal(
+            &staging_proof,
+            deadline,
+            cancellation.as_ref(),
+        ) {
+            return Err(terminal_join_failure(
+                self,
+                TerminalJoinFailureKind::Validation,
+                detail,
+            ));
+        }
+        if let Err(cause) = admission.check_budget() {
+            return Err(terminal_join_failure_for_store(self, cause));
+        }
+        let result = match admission.commit_terminal(observation, timestamp) {
+            Ok(result) => result,
+            Err(cause) => return Err(terminal_join_failure_for_store(self, cause)),
+        };
+        match result {
+            TerminalCasResult::Committed(terminal_journal) => {
+                if let Err(detail) = check_native_cleanup_budget(
+                    deadline,
+                    Some(cancellation.as_ref()),
+                ) {
+                    return Err(terminal_join_failure(
+                        self,
+                        TerminalJoinFailureKind::CommittedAfterBudget,
+                        format!(
+                            "Capture runtime terminal journal committed at revision {} after the authority budget ended ({detail}); terminal authority was withheld for reconciliation.",
+                            terminal_journal.journal_revision
+                        ),
+                    ));
+                }
+                Ok(TerminalizedActivationOwner { terminal_journal })
+            }
+            TerminalCasResult::CommittedAfterBudget(terminal_journal) => {
+                Err(terminal_join_failure(
+                    self,
+                    TerminalJoinFailureKind::CommittedAfterBudget,
+                    format!(
+                        "Capture runtime terminal journal committed at revision {} after the authority budget ended; terminal authority was withheld for reconciliation.",
+                        terminal_journal.journal_revision
+                    ),
+                ))
+            }
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn native_cleanup_proven_for_test(&self) -> bool {
         self.native_cleanup_proof.is_some()
@@ -2268,6 +2758,16 @@ impl ClosingActivationOwner {
     #[cfg(test)]
     pub(crate) fn inject_staging_release_cancel_before_authority_for_test(&mut self) {
         self.staging_release_cancel_before_authority = true;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn inject_terminal_listener_rebind_after_clock_for_test(&mut self, port: u16) {
+        self.terminal_listener_rebind_after_clock_port = Some(port);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn release_terminal_foreign_listener_for_test(&mut self) {
+        self.terminal_foreign_listener = None;
     }
 
     #[cfg(test)]
@@ -2622,6 +3122,90 @@ fn running_promotion_failure(
         detail,
         owner,
     }
+}
+
+#[cfg(windows)]
+fn terminal_join_failure(
+    owner: ClosingActivationOwner,
+    kind: TerminalJoinFailureKind,
+    detail: impl Into<String>,
+) -> TerminalJoinFailure {
+    TerminalJoinFailure {
+        kind,
+        detail: detail.into(),
+        owner,
+    }
+}
+
+#[cfg(windows)]
+fn terminal_join_kind_from_detail(
+    detail: &str,
+    fallback: TerminalJoinFailureKind,
+) -> TerminalJoinFailureKind {
+    let lower = detail.to_ascii_lowercase();
+    if lower.contains("cancel") {
+        TerminalJoinFailureKind::Cancelled
+    } else if lower.contains("deadline") || lower.contains("expired") {
+        TerminalJoinFailureKind::Deadline
+    } else {
+        fallback
+    }
+}
+
+#[cfg(windows)]
+fn terminal_join_failure_for_admission(
+    owner: ClosingActivationOwner,
+    cause: ClosingCasError,
+) -> TerminalJoinFailure {
+    let (kind, detail) = match cause {
+        ClosingCasError::Cancelled => (
+            TerminalJoinFailureKind::Cancelled,
+            "Capture runtime terminal journal admission was cancelled.",
+        ),
+        ClosingCasError::Deadline => (
+            TerminalJoinFailureKind::Deadline,
+            "Capture runtime terminal journal admission exceeded its budget.",
+        ),
+        ClosingCasError::Conflict => (
+            TerminalJoinFailureKind::Conflict,
+            "Capture runtime terminal journal admission found a stale Closing snapshot.",
+        ),
+        ClosingCasError::Storage => (
+            TerminalJoinFailureKind::Storage,
+            "Capture runtime terminal journal admission could not read its exact snapshot.",
+        ),
+    };
+    terminal_join_failure(owner, kind, detail)
+}
+
+#[cfg(windows)]
+fn terminal_join_failure_for_store(
+    owner: ClosingActivationOwner,
+    error: crate::journal_store::JournalStoreError,
+) -> TerminalJoinFailure {
+    let (kind, detail): (TerminalJoinFailureKind, String) = match error {
+        crate::journal_store::JournalStoreError::AdmissionCancelled => (
+            TerminalJoinFailureKind::Cancelled,
+            "Capture runtime terminal journal admission was cancelled.".into(),
+        ),
+        crate::journal_store::JournalStoreError::AdmissionDeadline => (
+            TerminalJoinFailureKind::Deadline,
+            "Capture runtime terminal journal admission exceeded its budget.".into(),
+        ),
+        crate::journal_store::JournalStoreError::Conflict => (
+            TerminalJoinFailureKind::Conflict,
+            "Capture runtime terminal journal admission found a stale Closing snapshot.".into(),
+        ),
+        crate::journal_store::JournalStoreError::Journal(_) => (
+            TerminalJoinFailureKind::Validation,
+            "Capture runtime terminal journal observation was rejected.".into(),
+        ),
+        error => (
+            TerminalJoinFailureKind::Storage,
+            format!("Capture runtime terminal journal write failed: {error:?}."),
+        ),
+    };
+    terminal_join_failure(owner, kind, detail)
 }
 
 #[cfg(windows)]
@@ -3857,6 +4441,23 @@ impl fmt::Debug for SuspendedActivationCleanupFailure {
 pub(crate) fn acquire_suspended_for_activation(
     activation: ValidatedActivationContext,
 ) -> Result<SuspendedActivationOwner, SuspendedActivationFailure> {
+    #[cfg(all(test, windows))]
+    let http_fixture_permit = if activation.descriptor.readiness_schema_context(0).is_some() {
+        match acquire_http_fixture_permit() {
+            Ok(permit) => Some(permit),
+            Err(error) => {
+                return Err(SuspendedActivationFailure {
+                    kind: SuspendedActivationFailureKind::Staging,
+                    detail: format!(
+                        "Capture runtime HTTP fixture concurrency permit was unavailable: {error:?}."
+                    ),
+                    owner: None,
+                });
+            }
+        }
+    } else {
+        None
+    };
     let staging = match crate::staging::materialize(activation) {
         Ok(owner) => owner,
         Err(StagingFailure::BeforeOwnership(kind)) => {
@@ -3867,18 +4468,27 @@ pub(crate) fn acquire_suspended_for_activation(
             });
         }
         Err(StagingFailure::Owned { owner, kind }) => {
+            #[allow(unused_mut)]
+            let mut owner = SuspendedActivationOwner {
+                staging: owner,
+                native: None,
+                native_cleanup_proven: true,
+                #[cfg(all(test, windows))]
+                _http_fixture_permit: http_fixture_permit,
+            };
+            #[cfg(all(test, windows))]
+            owner.release_http_fixture_permit_after_native_cleanup();
             return Err(SuspendedActivationFailure {
                 kind: SuspendedActivationFailureKind::Staging,
                 detail: format!("Capture runtime staging acquisition stopped: {kind:?}."),
-                owner: Some(SuspendedActivationOwner {
-                    staging: owner,
-                    native: None,
-                    native_cleanup_proven: true,
-                }),
+                owner: Some(owner),
             });
         }
     };
 
+    #[cfg(all(test, windows))]
+    return acquire_suspended_from_staging_with_permit(staging, http_fixture_permit);
+    #[cfg(not(all(test, windows)))]
     acquire_suspended_from_staging(staging)
 }
 
@@ -3889,19 +4499,40 @@ pub(crate) fn acquire_suspended_for_activation(
 pub(crate) fn acquire_suspended_from_staging(
     staging: RunStagingOwner,
 ) -> Result<SuspendedActivationOwner, SuspendedActivationFailure> {
+    #[cfg(all(test, windows))]
+    {
+        acquire_suspended_from_staging_with_permit(staging, None)
+    }
+    #[cfg(not(all(test, windows)))]
+    {
+        acquire_suspended_from_staging_with_permit(staging)
+    }
+}
+
+#[cfg(windows)]
+fn acquire_suspended_from_staging_with_permit(
+    staging: RunStagingOwner,
+    #[cfg(all(test, windows))] http_fixture_permit: Option<HttpFixturePermit>,
+) -> Result<SuspendedActivationOwner, SuspendedActivationFailure> {
     // Recheck the interval between staging materialization and Job creation.
     let mut commands = match staging.checked_commands() {
         Ok(commands) => commands,
         Err(_detail) => {
+            #[allow(unused_mut)]
+            let mut owner = SuspendedActivationOwner {
+                staging,
+                native: None,
+                native_cleanup_proven: true,
+                #[cfg(all(test, windows))]
+                _http_fixture_permit: http_fixture_permit,
+            };
+            #[cfg(all(test, windows))]
+            owner.release_http_fixture_permit_after_native_cleanup();
             return Err(SuspendedActivationFailure {
                 kind: SuspendedActivationFailureKind::Staging,
                 detail: "Capture runtime frozen command revalidation failed before Job setup."
                     .into(),
-                owner: Some(SuspendedActivationOwner {
-                    staging,
-                    native: None,
-                    native_cleanup_proven: true,
-                }),
+                owner: Some(owner),
             });
         }
     };
@@ -3913,14 +4544,20 @@ pub(crate) fn acquire_suspended_from_staging(
             Ok(native) => native,
             Err(failure) => {
                 let native = failure.owner;
+                #[allow(unused_mut)]
+                let mut owner = SuspendedActivationOwner {
+                    staging,
+                    native_cleanup_proven: native.is_none(),
+                    native,
+                    #[cfg(all(test, windows))]
+                    _http_fixture_permit: http_fixture_permit,
+                };
+                #[cfg(all(test, windows))]
+                owner.release_http_fixture_permit_after_native_cleanup();
                 return Err(SuspendedActivationFailure {
                     kind: SuspendedActivationFailureKind::Native(failure.kind),
                     detail: failure.detail,
-                    owner: Some(SuspendedActivationOwner {
-                        staging,
-                        native_cleanup_proven: native.is_none(),
-                        native,
-                    }),
+                    owner: Some(owner),
                 });
             }
         };
@@ -3934,6 +4571,8 @@ pub(crate) fn acquire_suspended_from_staging(
                 staging,
                 native: Some(native),
                 native_cleanup_proven: false,
+                #[cfg(all(test, windows))]
+                _http_fixture_permit: http_fixture_permit,
             }),
         });
     }
@@ -3945,6 +4584,8 @@ pub(crate) fn acquire_suspended_from_staging(
                 staging,
                 native: Some(native),
                 native_cleanup_proven: false,
+                #[cfg(all(test, windows))]
+                _http_fixture_permit: http_fixture_permit,
             }),
         });
     }
@@ -3953,28 +4594,44 @@ pub(crate) fn acquire_suspended_from_staging(
         staging,
         native: Some(native),
         native_cleanup_proven: false,
+        #[cfg(all(test, windows))]
+        _http_fixture_permit: http_fixture_permit,
     })
 }
 
 #[cfg(windows)]
 impl SuspendedActivationOwner {
+    #[cfg(all(test, windows))]
+    fn release_http_fixture_permit_after_native_cleanup(&mut self) {
+        if self.native_cleanup_proven {
+            self._http_fixture_permit.take();
+        }
+    }
+
     fn cleanup_native_for_closing(
         &mut self,
         deadline: std::time::Instant,
         cancellation: Option<&AtomicBool>,
     ) -> Result<NativeCleanupProof, String> {
         if self.native_cleanup_proven {
-            return self
+            let proof = self
                 .native
                 .as_ref()
                 .and_then(SuspendedGroup::retained_cleanup_proof)
-                .ok_or_else(|| "Capture runtime native cleanup proof was incomplete.".into());
+                .ok_or_else(|| {
+                    "Capture runtime native cleanup proof was incomplete.".to_string()
+                })?;
+            #[cfg(all(test, windows))]
+            self.release_http_fixture_permit_after_native_cleanup();
+            return Ok(proof);
         }
         let native = self.native.as_mut().ok_or_else(|| {
             "Capture runtime native owner was missing before Closing cleanup.".to_string()
         })?;
         let proof = native.cleanup_and_retain_proof(deadline, cancellation)?;
         self.native_cleanup_proven = true;
+        #[cfg(all(test, windows))]
+        self.release_http_fixture_permit_after_native_cleanup();
         Ok(proof)
     }
 
@@ -4000,6 +4657,9 @@ impl SuspendedActivationOwner {
                 self.native_cleanup_proven = true;
             }
         }
+
+        #[cfg(all(test, windows))]
+        self.release_http_fixture_permit_after_native_cleanup();
 
         match self.staging.cleanup_pre_native() {
             Ok(_observation) => Ok(()),
@@ -5649,6 +6309,30 @@ mod tests {
             .collect();
         assert_eq!(args, ["/PID", "4242", "/T", "/F"]);
         assert!(!args.iter().any(|arg| arg == "/IM"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn http_fixture_limiter_bounds_wait_and_releases_for_reacquisition() {
+        let limiter = HttpFixtureLimiter::new(1);
+        let first = limiter
+            .acquire(Duration::from_millis(40))
+            .expect("local limiter first permit");
+        let started = std::time::Instant::now();
+        match limiter.acquire(Duration::from_millis(25)) {
+            Err(HttpFixturePermitError::Timeout) => {}
+            Err(HttpFixturePermitError::Poisoned) => panic!("local limiter was poisoned"),
+            Ok(_) => panic!("local limiter exceeded its capacity"),
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "bounded limiter wait took too long"
+        );
+        drop(first);
+        let second = limiter
+            .acquire(Duration::from_millis(40))
+            .expect("permit should be reacquirable after Drop");
+        drop(second);
     }
 
     #[cfg(windows)]
