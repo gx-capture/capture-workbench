@@ -26,6 +26,7 @@ use crate::{
     journal::{CasSnapshot, JournalPlanValue, RuntimeSessionJournalV1},
     journal_store::{install_running_read_budget, JournalStoreError},
     process::{observe_restart_native, RestartNativeObservationError},
+    staging::{RestartStagingObservation, RestartStagingObservationReason},
 };
 
 /// A sanitized reason for why a restarted record cannot yet be reported as a
@@ -77,14 +78,15 @@ pub(crate) enum RestartNativeObservationReason {
 /// constructing a terminal or cleanup proof by hand; later lifecycle code
 /// must still revalidate this snapshot before any CAS or resource action.
 #[cfg(windows)]
-pub(crate) struct RestartNativeAbsenceObservation {
+pub(crate) struct RestartNativeObservationEvidence {
+    producer_root: PathBuf,
     plan: JournalPlanValue,
     journal: RuntimeSessionJournalV1,
     snapshot: CasSnapshot,
 }
 
 #[cfg(windows)]
-impl RestartNativeAbsenceObservation {
+impl RestartNativeObservationEvidence {
     pub(crate) fn plan(&self) -> &JournalPlanValue {
         &self.plan
     }
@@ -98,14 +100,48 @@ impl RestartNativeAbsenceObservation {
     }
 }
 
-/// Read-only native/listener restart observation.  `CompleteAbsence` is only
-/// an observation of the exact recorded roots and ports; it is not a terminal
-/// proof and never deletes, adopts, or mutates a resource.
+/// Read-only native/listener restart observation. `CompleteObservation` is
+/// only an observation that the exact recorded roots and ports were absent at
+/// one point in time; it is not a terminal proof and never deletes, adopts,
+/// or mutates a resource.
 #[cfg(windows)]
 pub(crate) enum RestartNativeObservationStatus {
-    CompleteAbsence(RestartNativeAbsenceObservation),
+    CompleteObservation(RestartNativeObservationEvidence),
     Unknown {
         reason: RestartNativeObservationReason,
+    },
+}
+
+/// A read-only restart result that joins the exact native-absence snapshot to
+/// an independently revalidated V2 staging scope.  This remains evidence for
+/// a later lifecycle owner; it is not a cleanup permit and cannot claim a
+/// Terminal or reconcile-complete transition.
+#[cfg(windows)]
+pub(crate) struct RestartResourceObservation {
+    native: RestartNativeObservationEvidence,
+    staging: RestartStagingObservation,
+}
+
+#[cfg(windows)]
+impl RestartResourceObservation {
+    pub(crate) fn native(&self) -> &RestartNativeObservationEvidence {
+        &self.native
+    }
+
+    pub(crate) fn staging(&self) -> &RestartStagingObservation {
+        &self.staging
+    }
+}
+
+/// Read-only restart result after both native absence and producer-owned
+/// staging binding have been checked against the same reopened journal/plan.
+/// The complete variant is intentionally scoped to point-in-time evidence and
+/// does not establish the later native cleanup, CAS, or terminal proof.
+#[cfg(windows)]
+pub(crate) enum RestartStagingObservationStatus {
+    CompleteObservation(RestartResourceObservation),
+    Unknown {
+        reason: RestartStagingObservationReason,
     },
 }
 
@@ -225,10 +261,71 @@ impl RestartJournalLookup {
             };
         }
         let snapshot = journal.cas_snapshot();
-        RestartNativeObservationStatus::CompleteAbsence(RestartNativeAbsenceObservation {
+        RestartNativeObservationStatus::CompleteObservation(RestartNativeObservationEvidence {
+            producer_root: self.context.producer_root.clone(),
             plan,
             journal,
             snapshot,
+        })
+    }
+
+    /// Join staging evidence to the exact native observation returned by
+    /// `observe_native`.  The input is consumed so callers cannot retain and
+    /// reuse a half-validated observation as later cleanup authority.
+    #[cfg(windows)]
+    pub(crate) fn observe_staging(
+        &self,
+        absence: RestartNativeObservationEvidence,
+        deadline: Instant,
+        cancellation: Arc<AtomicBool>,
+    ) -> RestartStagingObservationStatus {
+        if cancellation.load(Ordering::Acquire) {
+            return RestartStagingObservationStatus::Unknown {
+                reason: RestartStagingObservationReason::Cancelled,
+            };
+        }
+        if Instant::now() >= deadline {
+            return RestartStagingObservationStatus::Unknown {
+                reason: RestartStagingObservationReason::Deadline,
+            };
+        }
+        if absence.producer_root != self.context.producer_root
+            || absence.snapshot != absence.journal.cas_snapshot()
+            || absence
+                .journal
+                .validate_against_plan(&absence.plan)
+                .is_err()
+        {
+            return RestartStagingObservationStatus::Unknown {
+                reason: RestartStagingObservationReason::InvalidRecord,
+            };
+        }
+        let _budget = install_running_read_budget(deadline, Arc::clone(&cancellation));
+        let staging = match crate::staging::observe_restart_staging(
+            &absence.producer_root,
+            &absence.plan,
+            &absence.journal,
+            deadline,
+            &cancellation,
+        ) {
+            Ok(staging) => staging,
+            Err(reason) => {
+                return RestartStagingObservationStatus::Unknown { reason };
+            }
+        };
+        if cancellation.load(Ordering::Acquire) {
+            return RestartStagingObservationStatus::Unknown {
+                reason: RestartStagingObservationReason::Cancelled,
+            };
+        }
+        if Instant::now() >= deadline {
+            return RestartStagingObservationStatus::Unknown {
+                reason: RestartStagingObservationReason::Deadline,
+            };
+        }
+        RestartStagingObservationStatus::CompleteObservation(RestartResourceObservation {
+            native: absence,
+            staging,
         })
     }
 
@@ -936,7 +1033,7 @@ mod tests {
             Instant::now() + Duration::from_secs(5),
             Arc::new(AtomicBool::new(false)),
         );
-        let RestartNativeObservationStatus::CompleteAbsence(observation) = status else {
+        let RestartNativeObservationStatus::CompleteObservation(observation) = status else {
             panic!("complete absence observation");
         };
         assert_eq!(observation.plan(), &fixture.plan);
@@ -953,5 +1050,30 @@ mod tests {
                 .encode_private()
                 .expect("journal encoding")
         );
+    }
+
+    #[test]
+    fn staging_join_rejects_cross_context_or_tampered_native_absence() {
+        let fixture = fixture(1);
+        let journal = fixture.store.read(&fixture.plan).expect("journal");
+        let mut snapshot = journal.cas_snapshot();
+        snapshot.journal_revision += 1;
+        let absence = RestartNativeObservationEvidence {
+            producer_root: fixture.directory.path().to_path_buf(),
+            plan: fixture.plan.clone(),
+            journal,
+            snapshot,
+        };
+        let status = lookup(fixture.directory.path()).observe_staging(
+            absence,
+            Instant::now() + Duration::from_secs(5),
+            Arc::new(AtomicBool::new(false)),
+        );
+        assert!(matches!(
+            status,
+            RestartStagingObservationStatus::Unknown {
+                reason: RestartStagingObservationReason::InvalidRecord
+            }
+        ));
     }
 }
