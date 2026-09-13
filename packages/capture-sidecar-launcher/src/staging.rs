@@ -22,7 +22,8 @@ use std::{
     io::{Read, Write},
     path::{Path, PathBuf},
     process::Command,
-    sync::Arc,
+    sync::{atomic::AtomicBool, Arc},
+    time::Instant,
 };
 
 #[cfg(test)]
@@ -46,9 +47,6 @@ use crate::journal_store::{
     ClosingCleanupAdmission, RunningCasAdmission, RunningCasError, RunningCasResult,
 };
 
-#[cfg(windows)]
-use std::{sync::atomic::AtomicBool, time::Instant};
-
 const MARKER_FILE_NAME: &str = ".capture-run-staging-v1";
 const MARKER_SCHEMA_VERSION: &str = "RunStagingMarkerV1";
 const MARKER_PRODUCER: &str = "capture-runtime";
@@ -69,6 +67,10 @@ thread_local! {
     static FAIL_NEXT_MARKER_READBACK: Cell<u8> = const { Cell::new(0) };
     static FAIL_NEXT_ROOT_MKDIR: Cell<u32> = const { Cell::new(u32::MAX) };
     static CANCEL_RESTART_AFTER_MARKER: Cell<bool> = const { Cell::new(false) };
+    static CANCEL_MATERIALIZE_AFTER_GROUP_MKDIR: Cell<bool> = const { Cell::new(false) };
+    static CANCEL_MATERIALIZE_AFTER_MARKER: Cell<bool> = const { Cell::new(false) };
+    static CANCEL_AFTER_READY_CAS: Cell<bool> = const { Cell::new(false) };
+    static CANCEL_AFTER_LAUNCHING_CAS: Cell<bool> = const { Cell::new(false) };
 }
 
 /// The private result used by the later terminal CAS.  It does not claim
@@ -118,6 +120,8 @@ pub(crate) enum StagingFailureKind {
     Reparse,
     Durability,
     CleanupRequired,
+    Cancelled,
+    Deadline,
 }
 
 /// A failure before group ownership exists is safe to return as a normal
@@ -132,6 +136,49 @@ pub(crate) enum StagingFailure {
         owner: RunStagingOwner,
         kind: StagingFailureKind,
     },
+}
+
+/// A private budgeted journal failure.  `committed_candidate` is populated
+/// only when the exact CAS returned a durable candidate and a later budget
+/// check failed.  An ambiguous write never supplies a journal value for a
+/// caller to bless from a subsequent read.
+#[derive(Debug)]
+pub(crate) struct StagingBudgetFailure {
+    kind: StagingFailureKind,
+    detail: String,
+    committed_candidate: Option<RuntimeSessionJournalV1>,
+}
+
+impl StagingBudgetFailure {
+    fn new(kind: StagingFailureKind, detail: String) -> Self {
+        Self {
+            kind,
+            detail,
+            committed_candidate: None,
+        }
+    }
+
+    fn with_committed_candidate(
+        kind: StagingFailureKind,
+        detail: String,
+        committed_candidate: RuntimeSessionJournalV1,
+    ) -> Self {
+        Self {
+            kind,
+            detail,
+            committed_candidate: Some(committed_candidate),
+        }
+    }
+
+    pub(crate) fn kind(&self) -> StagingFailureKind {
+        self.kind
+    }
+
+    pub(crate) fn into_parts(
+        self,
+    ) -> (StagingFailureKind, String, Option<RuntimeSessionJournalV1>) {
+        (self.kind, self.detail, self.committed_candidate)
+    }
 }
 
 impl fmt::Debug for StagingFailure {
@@ -292,12 +339,149 @@ struct RunStagingMarkerRoot {
     root_identity_digest: String,
 }
 
+/// The legacy staging entrypoints use an unbounded budget, while activation
+/// passes one absolute deadline and cancellation flag through this private
+/// seam.  Keeping the gate here prevents a budgeted caller from accidentally
+/// restarting a per-operation timeout.
+struct StagingBudget {
+    deadline: Option<Instant>,
+    cancellation: Option<Arc<AtomicBool>>,
+}
+
+impl StagingBudget {
+    fn unbounded() -> Self {
+        Self {
+            deadline: None,
+            cancellation: None,
+        }
+    }
+
+    fn bounded(deadline: Instant, cancellation: Arc<AtomicBool>) -> Self {
+        Self {
+            deadline: Some(deadline),
+            cancellation: Some(cancellation),
+        }
+    }
+
+    fn check(&self) -> Result<(), StagingFailureKind> {
+        if self
+            .cancellation
+            .as_ref()
+            .is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Acquire))
+        {
+            return Err(StagingFailureKind::Cancelled);
+        }
+        if self
+            .deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            return Err(StagingFailureKind::Deadline);
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn cancel_after_group_mkdir_if_requested(&self) {
+        if self.deadline.is_none() {
+            return;
+        }
+        if CANCEL_MATERIALIZE_AFTER_GROUP_MKDIR.with(|fault| fault.replace(false)) {
+            if let Some(cancellation) = &self.cancellation {
+                cancellation.store(true, std::sync::atomic::Ordering::Release);
+            }
+        }
+    }
+
+    #[cfg(not(test))]
+    fn cancel_after_group_mkdir_if_requested(&self) {}
+
+    #[cfg(test)]
+    fn cancel_after_marker_if_requested(&self) {
+        if self.deadline.is_none() {
+            return;
+        }
+        if CANCEL_MATERIALIZE_AFTER_MARKER.with(|fault| fault.replace(false)) {
+            if let Some(cancellation) = &self.cancellation {
+                cancellation.store(true, std::sync::atomic::Ordering::Release);
+            }
+        }
+    }
+
+    #[cfg(not(test))]
+    fn cancel_after_marker_if_requested(&self) {}
+
+    #[cfg(test)]
+    fn cancel_after_ready_cas_if_requested(&self) {
+        if self.deadline.is_none() {
+            return;
+        }
+        if CANCEL_AFTER_READY_CAS.with(|fault| fault.replace(false)) {
+            if let Some(cancellation) = &self.cancellation {
+                cancellation.store(true, std::sync::atomic::Ordering::Release);
+            }
+        }
+    }
+
+    #[cfg(not(test))]
+    fn cancel_after_ready_cas_if_requested(&self) {}
+
+    #[cfg(test)]
+    fn cancel_after_launching_cas_if_requested(&self) {
+        if self.deadline.is_none() {
+            return;
+        }
+        if CANCEL_AFTER_LAUNCHING_CAS.with(|fault| fault.replace(false)) {
+            if let Some(cancellation) = &self.cancellation {
+                cancellation.store(true, std::sync::atomic::Ordering::Release);
+            }
+        }
+    }
+
+    #[cfg(not(test))]
+    fn cancel_after_launching_cas_if_requested(&self) {}
+}
+
+fn staging_budget_error(kind: StagingFailureKind) -> String {
+    match kind {
+        StagingFailureKind::Cancelled => "Capture runtime staging operation was cancelled.".into(),
+        StagingFailureKind::Deadline => {
+            "Capture runtime staging operation exceeded its deadline.".into()
+        }
+        _ => "Capture runtime staging budget was invalid.".into(),
+    }
+}
+
 /// Consume the validated activation handoff and materialize its producer-
 /// planned, empty directory scope.  The journal snapshot is read while the
 /// tree is still untouched, immediately before the first mkdir.
 pub(crate) fn materialize(
     activation: ValidatedActivationContext,
 ) -> Result<RunStagingOwner, StagingFailure> {
+    materialize_impl(activation, &StagingBudget::unbounded())
+}
+
+/// Budgeted pre-native materialization for the activation coordinator.  The
+/// journal/index reads use the same scoped budget as the filesystem checks;
+/// this function never acquires native resources or returns a success after
+/// the deadline/cancellation boundary.
+#[cfg(windows)]
+pub(crate) fn materialize_with_budget(
+    activation: ValidatedActivationContext,
+    deadline: Instant,
+    cancellation: Arc<AtomicBool>,
+) -> Result<RunStagingOwner, StagingFailure> {
+    let _read_budget = install_running_read_budget(deadline, Arc::clone(&cancellation));
+    let budget = StagingBudget::bounded(deadline, cancellation);
+    materialize_impl(activation, &budget)
+}
+
+fn materialize_impl(
+    activation: ValidatedActivationContext,
+    budget: &StagingBudget,
+) -> Result<RunStagingOwner, StagingFailure> {
+    if let Err(kind) = budget.check() {
+        return Err(StagingFailure::BeforeOwnership(kind));
+    }
     let producer_root_path = activation.descriptor.producer_root().to_path_buf();
     let expected_root_paths = activation
         .descriptor
@@ -322,10 +506,17 @@ pub(crate) fn materialize(
             StagingFailureKind::InvalidActivation,
         ));
     }
-    if !journal_is_exactly_prepared(&activation) {
-        return Err(StagingFailure::BeforeOwnership(
-            StagingFailureKind::JournalChanged,
-        ));
+    match journal_is_exactly_prepared_with_budget(&activation, budget) {
+        Ok(true) => {}
+        Ok(false) => {
+            return Err(StagingFailure::BeforeOwnership(
+                StagingFailureKind::JournalChanged,
+            ));
+        }
+        Err(kind) => return Err(StagingFailure::BeforeOwnership(kind)),
+    }
+    if let Err(kind) = budget.check() {
+        return Err(StagingFailure::BeforeOwnership(kind));
     }
     // Verify every executable before creating even the shared staging
     // directory.  A later per-root check rechecks the artifact before each
@@ -335,6 +526,9 @@ pub(crate) fn materialize(
             StagingFailureKind::InvalidActivation,
         ));
     }
+    if let Err(kind) = budget.check() {
+        return Err(StagingFailure::BeforeOwnership(kind));
+    }
     if validate_safe_chain(&producer_root_path).is_err() {
         return Err(StagingFailure::BeforeOwnership(StagingFailureKind::Reparse));
     }
@@ -342,8 +536,17 @@ pub(crate) fn materialize(
     let shared_parent = group_path.parent().ok_or(StagingFailure::BeforeOwnership(
         StagingFailureKind::InvalidActivation,
     ))?;
+    if let Err(kind) = budget.check() {
+        return Err(StagingFailure::BeforeOwnership(kind));
+    }
     if ensure_existing_directory(shared_parent).is_err() {
+        if let Err(kind) = budget.check() {
+            return Err(StagingFailure::BeforeOwnership(kind));
+        }
         if let Err(error) = fs::create_dir(shared_parent) {
+            if let Err(kind) = budget.check() {
+                return Err(StagingFailure::BeforeOwnership(kind));
+            }
             if error.kind() != std::io::ErrorKind::AlreadyExists
                 || ensure_existing_directory(shared_parent).is_err()
             {
@@ -353,11 +556,17 @@ pub(crate) fn materialize(
             }
         }
     }
+    if let Err(kind) = budget.check() {
+        return Err(StagingFailure::BeforeOwnership(kind));
+    }
     if path_is_reparse(shared_parent).unwrap_or(true) {
         return Err(StagingFailure::BeforeOwnership(StagingFailureKind::Reparse));
     }
     let producer_root_identity = capture_directory_identity(&producer_root_path).ok();
     let shared_parent_identity = capture_directory_identity(shared_parent).ok();
+    if let Err(kind) = budget.check() {
+        return Err(StagingFailure::BeforeOwnership(kind));
+    }
     if producer_root_identity.is_none() || shared_parent_identity.is_none() {
         return Err(StagingFailure::BeforeOwnership(
             StagingFailureKind::RootIdentity,
@@ -369,7 +578,13 @@ pub(crate) fn materialize(
             StagingFailureKind::GroupCollision,
         ));
     }
+    if let Err(kind) = budget.check() {
+        return Err(StagingFailure::BeforeOwnership(kind));
+    }
     if let Err(error) = fs::create_dir(&group_path) {
+        if let Err(kind) = budget.check() {
+            return Err(StagingFailure::BeforeOwnership(kind));
+        }
         return Err(StagingFailure::BeforeOwnership(
             if error.kind() == std::io::ErrorKind::AlreadyExists {
                 StagingFailureKind::GroupCollision
@@ -413,6 +628,7 @@ pub(crate) fn materialize(
         #[cfg(test)]
         release_depth_limit: Cell::new(None),
     };
+    budget.cancel_after_group_mkdir_if_requested();
     if owner.group.identity.is_none() {
         return Err(StagingFailure::Owned {
             owner,
@@ -425,6 +641,9 @@ pub(crate) fn materialize(
             kind: StagingFailureKind::Reparse,
         });
     }
+    if let Err(kind) = budget.check() {
+        return Err(StagingFailure::Owned { owner, kind });
+    }
 
     let marker_path = group_path.join(MARKER_FILE_NAME);
     if ensure_path_absent_and_safe(&marker_path).is_err() {
@@ -433,13 +652,16 @@ pub(crate) fn materialize(
             kind: StagingFailureKind::MarkerCollision,
         });
     }
+    if let Err(kind) = budget.check() {
+        return Err(StagingFailure::Owned { owner, kind });
+    }
     let marker_bytes = match marker_bytes(&owner) {
         Ok(bytes) => bytes,
         Err(kind) => {
             return Err(StagingFailure::Owned { owner, kind });
         }
     };
-    let marker = match create_marker(&marker_path, &marker_bytes) {
+    let marker = match create_marker(&marker_path, &marker_bytes, budget) {
         Ok(marker) => marker,
         Err((kind, identity, bytes)) => {
             if identity.is_some() {
@@ -453,8 +675,15 @@ pub(crate) fn materialize(
         }
     };
     owner.marker = Some(marker);
+    budget.cancel_after_marker_if_requested();
+    if let Err(kind) = budget.check() {
+        return Err(StagingFailure::Owned { owner, kind });
+    }
 
     for (_ordinal, root_path) in owner.expected_root_paths.clone().into_iter().enumerate() {
+        if let Err(kind) = budget.check() {
+            return Err(StagingFailure::Owned { owner, kind });
+        }
         if validate_safe_chain(&group_path).is_err()
             || ensure_existing_directory(&group_path).is_err()
             || path_is_reparse(&group_path).unwrap_or(true)
@@ -466,10 +695,16 @@ pub(crate) fn materialize(
             });
         }
         if ensure_path_absent_and_safe(&root_path).is_err() {
+            if let Err(kind) = budget.check() {
+                return Err(StagingFailure::Owned { owner, kind });
+            }
             return Err(StagingFailure::Owned {
                 owner,
                 kind: StagingFailureKind::RootCollision,
             });
+        }
+        if let Err(kind) = budget.check() {
+            return Err(StagingFailure::Owned { owner, kind });
         }
         #[cfg(test)]
         if FAIL_NEXT_ROOT_MKDIR.with(|fault| {
@@ -486,6 +721,9 @@ pub(crate) fn materialize(
             });
         }
         if let Err(error) = fs::create_dir(&root_path) {
+            if let Err(kind) = budget.check() {
+                return Err(StagingFailure::Owned { owner, kind });
+            }
             return Err(StagingFailure::Owned {
                 owner,
                 kind: if error.kind() == std::io::ErrorKind::AlreadyExists {
@@ -507,8 +745,14 @@ pub(crate) fn materialize(
                 kind: StagingFailureKind::RootIdentity,
             });
         }
+        if let Err(kind) = budget.check() {
+            return Err(StagingFailure::Owned { owner, kind });
+        }
     }
     owner.scope_state = StagingScopeState::Complete;
+    if let Err(kind) = budget.check() {
+        return Err(StagingFailure::Owned { owner, kind });
+    }
     Ok(owner)
 }
 
@@ -768,17 +1012,67 @@ impl RunStagingOwner {
         observation: ResourceObservation,
         timestamp: String,
     ) -> Result<crate::journal::RuntimeSessionJournalV1, String> {
-        if !journal_is_exactly_prepared(&self.activation) {
-            return Err("Capture runtime prepared binding changed before Ready CAS.".into());
+        self.persist_ready_impl(observation, timestamp, &StagingBudget::unbounded())
+            .map_err(|error| error.detail)
+    }
+
+    /// Persist Ready under one absolute activation budget.  The old string
+    /// error seam is retained for legacy callers; cancellation and deadline
+    /// remain distinguishable by their stable error text.
+    #[cfg(windows)]
+    pub(crate) fn persist_ready_with_budget(
+        &self,
+        observation: ResourceObservation,
+        timestamp: String,
+        deadline: Instant,
+        cancellation: Arc<AtomicBool>,
+    ) -> Result<crate::journal::RuntimeSessionJournalV1, StagingBudgetFailure> {
+        let _read_budget = install_running_read_budget(deadline, Arc::clone(&cancellation));
+        let budget = StagingBudget::bounded(deadline, cancellation);
+        self.persist_ready_impl(observation, timestamp, &budget)
+    }
+
+    fn persist_ready_impl(
+        &self,
+        observation: ResourceObservation,
+        timestamp: String,
+        budget: &StagingBudget,
+    ) -> Result<crate::journal::RuntimeSessionJournalV1, StagingBudgetFailure> {
+        if let Err(kind) = budget.check() {
+            return Err(StagingBudgetFailure::new(kind, staging_budget_error(kind)));
+        }
+        match journal_is_exactly_prepared_with_budget(&self.activation, budget) {
+            Ok(true) => {}
+            Ok(false) => {
+                return Err(StagingBudgetFailure::new(
+                    StagingFailureKind::JournalChanged,
+                    "Capture runtime prepared binding changed before Ready CAS.".into(),
+                ))
+            }
+            Err(kind) => return Err(StagingBudgetFailure::new(kind, staging_budget_error(kind))),
+        }
+        if let Err(kind) = budget.check() {
+            return Err(StagingBudgetFailure::new(kind, staging_budget_error(kind)));
         }
         let expected_revision = self
             .activation
             .expected
             .journal_revision
             .checked_add(1)
-            .ok_or_else(|| "Capture runtime journal revision overflowed.".to_string())?;
+            .ok_or_else(|| {
+                StagingBudgetFailure::new(
+                    StagingFailureKind::Durability,
+                    "Capture runtime journal revision overflowed.".into(),
+                )
+            })?;
+        if let Err(kind) = budget.check() {
+            return Err(StagingBudgetFailure::new(kind, staging_budget_error(kind)));
+        }
         #[cfg(test)]
         self.maybe_inject_journal_drift_before_ready();
+        if let Err(kind) = budget.check() {
+            return Err(StagingBudgetFailure::new(kind, staging_budget_error(kind)));
+        }
         let ready = self
             .activation
             .context
@@ -792,7 +1086,17 @@ impl RunStagingOwner {
                     timestamp,
                 },
             )
-            .map_err(|_| "Capture runtime Ready journal CAS failed.".to_string())?;
+            .map_err(|error| {
+                map_staging_budget_failure(error, "Capture runtime Ready journal CAS failed.")
+            })?;
+        budget.cancel_after_ready_cas_if_requested();
+        if let Err(kind) = budget.check() {
+            return Err(StagingBudgetFailure::with_committed_candidate(
+                kind,
+                staging_budget_error(kind),
+                ready.clone(),
+            ));
+        }
         if ready.state != JournalState::Ready
             || ready.journal_revision != expected_revision
             || ready.binding != self.activation.binding
@@ -800,7 +1104,17 @@ impl RunStagingOwner {
             || ready.staging_binding.as_ref() != observation.staging_binding.as_ref()
             || ready.roots != observation.roots
         {
-            return Err("Capture runtime Ready journal read-back was not exact.".into());
+            return Err(StagingBudgetFailure::new(
+                StagingFailureKind::JournalChanged,
+                "Capture runtime Ready journal read-back was not exact.".into(),
+            ));
+        }
+        if let Err(kind) = budget.check() {
+            return Err(StagingBudgetFailure::with_committed_candidate(
+                kind,
+                staging_budget_error(kind),
+                ready.clone(),
+            ));
         }
         Ok(ready)
     }
@@ -815,31 +1129,97 @@ impl RunStagingOwner {
         observation: ResourceObservation,
         timestamp: String,
     ) -> Result<RuntimeSessionJournalV1, String> {
+        self.persist_launching_impl(
+            expected_ready,
+            observation,
+            timestamp,
+            &StagingBudget::unbounded(),
+        )
+        .map_err(|error| error.detail)
+    }
+
+    /// Persist Launching under one absolute activation budget.  If the
+    /// atomic CAS completed just before the budget expired, this returns a
+    /// budget error so the caller retains its owner and reopens the journal;
+    /// it never reports a late success as if the transition were rolled back.
+    #[cfg(windows)]
+    pub(crate) fn persist_launching_with_budget(
+        &self,
+        expected_ready: &RuntimeSessionJournalV1,
+        observation: ResourceObservation,
+        timestamp: String,
+        deadline: Instant,
+        cancellation: Arc<AtomicBool>,
+    ) -> Result<RuntimeSessionJournalV1, StagingBudgetFailure> {
+        let _read_budget = install_running_read_budget(deadline, Arc::clone(&cancellation));
+        let budget = StagingBudget::bounded(deadline, cancellation);
+        self.persist_launching_impl(expected_ready, observation, timestamp, &budget)
+    }
+
+    fn persist_launching_impl(
+        &self,
+        expected_ready: &RuntimeSessionJournalV1,
+        observation: ResourceObservation,
+        timestamp: String,
+        budget: &StagingBudget,
+    ) -> Result<RuntimeSessionJournalV1, StagingBudgetFailure> {
+        if let Err(kind) = budget.check() {
+            return Err(StagingBudgetFailure::new(kind, staging_budget_error(kind)));
+        }
         expected_ready
             .validate_against_plan(&self.activation.journal_plan)
-            .map_err(|_| "Capture runtime Ready journal was invalid.".to_string())?;
+            .map_err(|_| {
+                StagingBudgetFailure::new(
+                    StagingFailureKind::JournalChanged,
+                    "Capture runtime Ready journal was invalid.".into(),
+                )
+            })?;
         if expected_ready.state != JournalState::Ready
             || expected_ready.session_nonce != self.activation.descriptor.session_nonce()
             || expected_ready.plan_digest != self.activation.journal_plan.plan_digest
         {
-            return Err(
+            return Err(StagingBudgetFailure::new(
+                StagingFailureKind::JournalChanged,
                 "Capture runtime Ready journal identity was invalid before Launching CAS.".into(),
-            );
+            ));
+        }
+        if let Err(kind) = budget.check() {
+            return Err(StagingBudgetFailure::new(kind, staging_budget_error(kind)));
         }
         let current = self
             .activation
             .context
             .store
             .read(&self.activation.journal_plan)
-            .map_err(|_| "Capture runtime Ready journal could not be revalidated.".to_string())?;
+            .map_err(|error| {
+                map_staging_budget_failure(
+                    error,
+                    "Capture runtime Ready journal could not be revalidated.",
+                )
+            })?;
         if current != *expected_ready {
-            return Err("Capture runtime Ready journal changed before Launching CAS.".into());
+            return Err(StagingBudgetFailure::new(
+                StagingFailureKind::JournalChanged,
+                "Capture runtime Ready journal changed before Launching CAS.".into(),
+            ));
         }
-        let expected_revision = expected_ready
-            .journal_revision
-            .checked_add(1)
-            .ok_or_else(|| "Capture runtime journal revision overflowed.".to_string())?;
+        if let Err(kind) = budget.check() {
+            return Err(StagingBudgetFailure::new(kind, staging_budget_error(kind)));
+        }
+        let expected_revision =
+            expected_ready
+                .journal_revision
+                .checked_add(1)
+                .ok_or_else(|| {
+                    StagingBudgetFailure::new(
+                        StagingFailureKind::Durability,
+                        "Capture runtime journal revision overflowed.".into(),
+                    )
+                })?;
         let expected_updated_at = timestamp.clone();
+        if let Err(kind) = budget.check() {
+            return Err(StagingBudgetFailure::new(kind, staging_budget_error(kind)));
+        }
         let launching = self
             .activation
             .context
@@ -853,7 +1233,17 @@ impl RunStagingOwner {
                     timestamp,
                 },
             )
-            .map_err(|_| "Capture runtime Launching journal CAS failed.".to_string())?;
+            .map_err(|error| {
+                map_staging_budget_failure(error, "Capture runtime Launching journal CAS failed.")
+            })?;
+        budget.cancel_after_launching_cas_if_requested();
+        if let Err(kind) = budget.check() {
+            return Err(StagingBudgetFailure::with_committed_candidate(
+                kind,
+                staging_budget_error(kind),
+                launching.clone(),
+            ));
+        }
         if launching.state != JournalState::Launching
             || launching.journal_revision != expected_revision
             || launching.schema_version != expected_ready.schema_version
@@ -870,7 +1260,17 @@ impl RunStagingOwner {
             || launching.roots != observation.roots
             || launching.proof.is_some()
         {
-            return Err("Capture runtime Launching journal read-back was not exact.".into());
+            return Err(StagingBudgetFailure::new(
+                StagingFailureKind::JournalChanged,
+                "Capture runtime Launching journal read-back was not exact.".into(),
+            ));
+        }
+        if let Err(kind) = budget.check() {
+            return Err(StagingBudgetFailure::with_committed_candidate(
+                kind,
+                staging_budget_error(kind),
+                launching.clone(),
+            ));
         }
         Ok(launching)
     }
@@ -1707,6 +2107,48 @@ fn journal_is_exactly_prepared(activation: &ValidatedActivationContext) -> bool 
         && journal.plan_digest == activation.journal_plan.plan_digest
 }
 
+fn journal_is_exactly_prepared_with_budget(
+    activation: &ValidatedActivationContext,
+    budget: &StagingBudget,
+) -> Result<bool, StagingFailureKind> {
+    budget.check()?;
+    let journal = activation
+        .context
+        .store
+        .read(&activation.journal_plan)
+        .map_err(|error| match error {
+            crate::journal_store::JournalStoreError::AdmissionCancelled => {
+                StagingFailureKind::Cancelled
+            }
+            crate::journal_store::JournalStoreError::AdmissionDeadline => {
+                StagingFailureKind::Deadline
+            }
+            _ => StagingFailureKind::JournalChanged,
+        })?;
+    budget.check()?;
+    Ok(journal.state == JournalState::PreparedBound
+        && journal.cas_snapshot() == activation.expected
+        && journal.session_nonce == activation.descriptor.session_nonce()
+        && journal.plan_digest == activation.journal_plan.plan_digest)
+}
+
+fn map_staging_budget_failure(
+    error: crate::journal_store::JournalStoreError,
+    fallback: &str,
+) -> StagingBudgetFailure {
+    match error {
+        crate::journal_store::JournalStoreError::AdmissionCancelled => StagingBudgetFailure::new(
+            StagingFailureKind::Cancelled,
+            staging_budget_error(StagingFailureKind::Cancelled),
+        ),
+        crate::journal_store::JournalStoreError::AdmissionDeadline => StagingBudgetFailure::new(
+            StagingFailureKind::Deadline,
+            staging_budget_error(StagingFailureKind::Deadline),
+        ),
+        _ => StagingBudgetFailure::new(StagingFailureKind::Durability, fallback.to_string()),
+    }
+}
+
 #[cfg(windows)]
 fn map_closing_cas_error(error: crate::journal_store::JournalStoreError) -> ClosingCasError {
     match error {
@@ -2294,7 +2736,11 @@ fn put_string(hasher: &mut Sha256, value: &str) {
 fn create_marker(
     path: &Path,
     bytes: &[u8],
+    budget: &StagingBudget,
 ) -> Result<OwnedMarker, (StagingFailureKind, Option<FileIdentity>, Vec<u8>)> {
+    if let Err(kind) = budget.check() {
+        return Err((kind, None, Vec::new()));
+    }
     let mut file = match OpenOptions::new()
         .create_new(true)
         .write(true)
@@ -2302,11 +2748,22 @@ fn create_marker(
         .open(path)
     {
         Ok(file) => file,
-        Err(_) => return Err((StagingFailureKind::MarkerCollision, None, Vec::new())),
+        Err(_) => {
+            if let Err(kind) = budget.check() {
+                return Err((kind, None, Vec::new()));
+            }
+            return Err((StagingFailureKind::MarkerCollision, None, Vec::new()));
+        }
     };
     let identity = capture_file_identity(path).ok();
     if identity.is_none() {
+        if let Err(kind) = budget.check() {
+            return Err((kind, None, Vec::new()));
+        }
         return Err((StagingFailureKind::MarkerWrite, identity, Vec::new()));
+    }
+    if let Err(kind) = budget.check() {
+        return Err((kind, identity, Vec::new()));
     }
     #[cfg(test)]
     let write_result = if FAIL_NEXT_MARKER_PARTIAL_WRITE.with(|fault| fault.replace(0)) != 0 {
@@ -2314,25 +2771,49 @@ fn create_marker(
             file: &mut file,
             remaining: 4,
         };
-        write_confirmed_prefix(&mut writer, bytes)
+        write_confirmed_prefix_with_budget(&mut writer, bytes, budget)
     } else {
-        write_confirmed_prefix(&mut file, bytes)
+        write_confirmed_prefix_with_budget(&mut file, bytes, budget)
     };
     #[cfg(not(test))]
-    let write_result = write_confirmed_prefix(&mut file, bytes);
-    let (confirmed, write_complete) = write_result;
+    let write_result = write_confirmed_prefix_with_budget(&mut file, bytes, budget);
+    let (confirmed, write_complete) = match write_result {
+        Ok(result) => result,
+        Err((kind, confirmed)) => return Err((kind, identity, confirmed)),
+    };
     if !write_complete {
+        if let Err(kind) = budget.check() {
+            return Err((kind, identity, confirmed));
+        }
         return Err((StagingFailureKind::Durability, identity, confirmed));
     }
+    if let Err(kind) = budget.check() {
+        return Err((kind, identity, confirmed));
+    }
     if file.flush().is_err() {
+        if let Err(kind) = budget.check() {
+            return Err((kind, identity, confirmed));
+        }
         return Err((StagingFailureKind::Durability, identity, confirmed));
+    }
+    if let Err(kind) = budget.check() {
+        return Err((kind, identity, confirmed));
     }
     #[cfg(test)]
     if FAIL_NEXT_MARKER_FLUSH.with(|fault| fault.replace(0)) != 0 {
         return Err((StagingFailureKind::Durability, identity, confirmed.clone()));
     }
+    if let Err(kind) = budget.check() {
+        return Err((kind, identity, confirmed));
+    }
     if file.sync_all().is_err() {
+        if let Err(kind) = budget.check() {
+            return Err((kind, identity, confirmed));
+        }
         return Err((StagingFailureKind::Durability, identity, confirmed));
+    }
+    if let Err(kind) = budget.check() {
+        return Err((kind, identity, confirmed));
     }
     drop(file);
     #[cfg(test)]
@@ -2343,14 +2824,31 @@ fn create_marker(
         let _ = fs::write(path, b"foreign-marker-bytes");
     }
     if capture_file_identity(path).ok() != identity {
+        if let Err(kind) = budget.check() {
+            return Err((kind, identity, confirmed));
+        }
         return Err((StagingFailureKind::MarkerReadBack, identity, confirmed));
+    }
+    if let Err(kind) = budget.check() {
+        return Err((kind, identity, confirmed));
     }
     let read_back = match read_bounded(path) {
         Ok(read_back) => read_back,
-        Err(()) => return Err((StagingFailureKind::MarkerReadBack, identity, confirmed)),
+        Err(()) => {
+            if let Err(kind) = budget.check() {
+                return Err((kind, identity, confirmed));
+            }
+            return Err((StagingFailureKind::MarkerReadBack, identity, confirmed));
+        }
     };
     if read_back != bytes || serde_json::from_slice::<RunStagingMarkerV1>(&read_back).is_err() {
+        if let Err(kind) = budget.check() {
+            return Err((kind, identity, confirmed));
+        }
         return Err((StagingFailureKind::MarkerReadBack, identity, confirmed));
+    }
+    if let Err(kind) = budget.check() {
+        return Err((kind, identity, confirmed));
     }
     Ok(OwnedMarker {
         path: path.to_path_buf(),
@@ -2371,6 +2869,27 @@ fn write_confirmed_prefix<W: Write>(writer: &mut W, bytes: &[u8]) -> (Vec<u8>, b
         }
     }
     (bytes.to_vec(), true)
+}
+
+fn write_confirmed_prefix_with_budget<W: Write>(
+    writer: &mut W,
+    bytes: &[u8],
+    budget: &StagingBudget,
+) -> Result<(Vec<u8>, bool), (StagingFailureKind, Vec<u8>)> {
+    let mut offset = 0;
+    while offset < bytes.len() {
+        if let Err(kind) = budget.check() {
+            return Err((kind, bytes[..offset].to_vec()));
+        }
+        match writer.write(&bytes[offset..]) {
+            Ok(0) => return Ok((bytes[..offset].to_vec(), false)),
+            Ok(count) if count <= bytes.len() - offset => offset += count,
+            Ok(_) => return Ok((bytes[..offset].to_vec(), false)),
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => return Ok((bytes[..offset].to_vec(), false)),
+        }
+    }
+    Ok((bytes.to_vec(), true))
 }
 
 #[cfg(test)]
@@ -2793,11 +3312,32 @@ pub(crate) fn cancel_restart_after_marker_for_test() {
 }
 
 #[cfg(test)]
+pub(crate) fn cancel_materialize_after_group_mkdir_for_test() {
+    CANCEL_MATERIALIZE_AFTER_GROUP_MKDIR.with(|fault| fault.set(true));
+}
+
+#[cfg(test)]
+pub(crate) fn cancel_materialize_after_marker_for_test() {
+    CANCEL_MATERIALIZE_AFTER_MARKER.with(|fault| fault.set(true));
+}
+
+#[cfg(test)]
+pub(crate) fn cancel_after_ready_cas_for_test() {
+    CANCEL_AFTER_READY_CAS.with(|fault| fault.set(true));
+}
+
+#[cfg(test)]
+pub(crate) fn cancel_after_launching_cas_for_test() {
+    CANCEL_AFTER_LAUNCHING_CAS.with(|fault| fault.set(true));
+}
+
+#[cfg(test)]
 mod tests {
     #[cfg(windows)]
     use std::{
         process::Command,
         sync::atomic::AtomicBool,
+        sync::{Arc, Mutex},
         time::{Duration, Instant},
     };
 
@@ -2807,10 +3347,394 @@ mod tests {
     use crate::{
         journal::{
             BoundRoot, CreationIdentity, JobBinding, JobSetupState, JournalBinding, JournalRoot,
-            JournalState, RootState, RuntimeSessionJournalV1, StagingBinding,
+            JournalState, ResourceObservation, RootState, RuntimeSessionJournalV1, StagingBinding,
         },
-        prepare::{build_immutable_group_plan, PreparePlanDraft, PrepareRootDraft},
+        prepare::{
+            build_immutable_group_plan, BindingAttemptId, CompleteGroupBinding,
+            CompleteGroupBindingReceiptV1, PersistError, PreparePlanDraft, PrepareRootDraft,
+            ReconcileRefSink, ValidatedActivationContext, VerifiedGroupBinding,
+        },
+        GroupRootPlanInput, OwnedRuntimeSession, SidecarLaunchSpec,
     };
+
+    #[cfg(windows)]
+    use sha2::{Digest, Sha256};
+
+    #[cfg(windows)]
+    struct BudgetSink {
+        binding: Mutex<Option<CompleteGroupBinding>>,
+    }
+
+    #[cfg(windows)]
+    impl BudgetSink {
+        fn new() -> Self {
+            Self {
+                binding: Mutex::new(None),
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    impl ReconcileRefSink for BudgetSink {
+        fn persist(
+            &self,
+            _binding_attempt_id: &BindingAttemptId,
+            binding: &CompleteGroupBinding,
+        ) -> Result<(), PersistError> {
+            *self.binding.lock().unwrap() = Some(binding.clone());
+            Ok(())
+        }
+
+        fn read_back(
+            &self,
+            _binding_attempt_id: &BindingAttemptId,
+        ) -> Result<CompleteGroupBindingReceiptV1, PersistError> {
+            CompleteGroupBindingReceiptV1::from_binding(
+                self.binding
+                    .lock()
+                    .unwrap()
+                    .clone()
+                    .ok_or(PersistError::Storage)?,
+            )
+        }
+
+        fn verify(
+            &self,
+            _binding_attempt_id: &BindingAttemptId,
+            _expected: &CompleteGroupBinding,
+            read_back: &CompleteGroupBindingReceiptV1,
+        ) -> Result<VerifiedGroupBinding, PersistError> {
+            VerifiedGroupBinding::from_receipt(read_back.clone())
+        }
+    }
+
+    #[cfg(windows)]
+    struct BudgetActivationFixture {
+        _directory: tempfile::TempDir,
+        activation: ValidatedActivationContext,
+    }
+
+    #[cfg(windows)]
+    impl BudgetActivationFixture {
+        fn new() -> Self {
+            let directory = tempfile::tempdir().expect("budget fixture directory");
+            let producer_root = directory.path().join("producer-root");
+            fs::create_dir(&producer_root).expect("producer root");
+
+            let executable_path = producer_root.join("capture-runtime.exe");
+            fs::copy(
+                std::env::current_exe().expect("test executable"),
+                &executable_path,
+            )
+            .expect("executable fixture");
+            let executable_bytes = fs::read(&executable_path).expect("executable bytes");
+
+            let schema_bytes = include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../capture-runtime-client-python/src/capture_runtime_client/private/schemas/capture-document.schema.json"
+            ));
+            fs::write(
+                producer_root.join(crate::health::R3_SCHEMA_FILE_NAME),
+                schema_bytes,
+            )
+            .expect("canonical schema fixture");
+
+            let manifest = crate::SidecarManifest {
+                manifest_version: "1".into(),
+                runtime_version: "0.4.2".into(),
+                api_version: "2.0".into(),
+                capture_document_schema_version: "2".into(),
+                platform: "windows".into(),
+                arch: "x86_64".into(),
+                file_name: "capture-runtime.exe".into(),
+                bytes: executable_bytes.len() as u64,
+                sha256: format!("{:x}", Sha256::digest(&executable_bytes)),
+                schema_file_name: crate::health::R3_SCHEMA_FILE_NAME.into(),
+                schema_sha256: crate::health::CANONICAL_CAPTURE_DOCUMENT_V2_SHA256.into(),
+            };
+            let manifest_path = producer_root.join("capture-runtime-manifest.json");
+            fs::write(
+                &manifest_path,
+                serde_json::to_vec(&manifest).expect("manifest JSON"),
+            )
+            .expect("manifest fixture");
+
+            let plan = crate::build_immutable_group_plan(
+                producer_root.clone(),
+                1,
+                vec![GroupRootPlanInput::new(
+                    "capture".into(),
+                    1,
+                    SidecarLaunchSpec::new(
+                        executable_path,
+                        42127,
+                        "budget-test-token".into(),
+                        vec![("CAPTURE_API_TOKEN".into(), "budget-test-token".into())],
+                        Vec::new(),
+                    ),
+                    manifest_path,
+                )],
+            )
+            .expect("immutable activation plan");
+            let sink = BudgetSink::new();
+            let prepared = OwnedRuntimeSession::prepare_group(&plan, &sink)
+                .expect("prepared activation group");
+            let activation = prepared
+                .consume_for_activation()
+                .expect("validated activation context");
+            Self {
+                _directory: directory,
+                activation,
+            }
+        }
+
+        fn group_path(&self) -> PathBuf {
+            self.activation.descriptor.planned_group_staging_path()
+        }
+    }
+
+    #[cfg(windows)]
+    fn suspended_observation(owner: &RunStagingOwner) -> ResourceObservation {
+        ResourceObservation {
+            job_binding: JobBinding {
+                setup_state: JobSetupState::Committed,
+                job_nonce: "job-budget".into(),
+            },
+            staging_binding: Some(
+                owner
+                    .staging_binding_for_ready()
+                    .expect("complete staging binding"),
+            ),
+            roots: owner
+                .activation
+                .journal_plan
+                .roots
+                .iter()
+                .map(|root| JournalRoot {
+                    ordinal: root.ordinal,
+                    role: root.role.clone(),
+                    root_ref_digest: root.root_ref_digest.clone(),
+                    root_generation: root.root_generation,
+                    root_nonce: format!("root-budget-{}", root.ordinal),
+                    pid: std::process::id(),
+                    creation_identity: CreationIdentity {
+                        kind: "windows-process-creation".into(),
+                        value: format!("creation-budget-{}", root.ordinal),
+                    },
+                    state: RootState::Suspended,
+                    reserved_listener_identity: root.reserved_listener_identity.clone(),
+                    loopback_port: owner
+                        .activation
+                        .descriptor
+                        .planned_root_port(root.ordinal as usize)
+                        .expect("planned root port"),
+                    live_listener_readiness: None,
+                    started_at: "2026-09-12T00:00:00Z".into(),
+                })
+                .collect(),
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn budget_expiry_before_ownership_has_zero_private_group_effect() {
+        let fixture = BudgetActivationFixture::new();
+        let group = fixture.group_path();
+        let result = materialize_with_budget(
+            fixture.activation,
+            Instant::now() - Duration::from_millis(1),
+            Arc::new(AtomicBool::new(false)),
+        );
+
+        assert!(matches!(
+            result,
+            Err(StagingFailure::BeforeOwnership(
+                StagingFailureKind::Deadline
+            ))
+        ));
+        assert!(!group.exists(), "expired admission created a private group");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn budget_cancellation_before_ownership_has_zero_private_group_effect() {
+        let fixture = BudgetActivationFixture::new();
+        let group = fixture.group_path();
+        let result = materialize_with_budget(
+            fixture.activation,
+            Instant::now() + Duration::from_secs(5),
+            Arc::new(AtomicBool::new(true)),
+        );
+
+        assert!(matches!(
+            result,
+            Err(StagingFailure::BeforeOwnership(
+                StagingFailureKind::Cancelled
+            ))
+        ));
+        assert!(
+            !group.exists(),
+            "cancelled admission created a private group"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn budget_cancellation_after_group_mkdir_returns_the_owned_owner() {
+        let fixture = BudgetActivationFixture::new();
+        let group = fixture.group_path();
+        cancel_materialize_after_group_mkdir_for_test();
+        let result = materialize_with_budget(
+            fixture.activation,
+            Instant::now() + Duration::from_secs(5),
+            Arc::new(AtomicBool::new(false)),
+        );
+
+        match result {
+            Err(StagingFailure::Owned { owner, kind }) => {
+                assert_eq!(kind, StagingFailureKind::Cancelled);
+                assert_eq!(owner.group.path, group);
+                assert!(owner.group.path.is_dir());
+                assert!(owner.marker.is_none());
+                assert!(owner.roots.is_empty());
+            }
+            Err(StagingFailure::BeforeOwnership(kind)) => {
+                panic!("cancellation happened before ownership: {kind:?}")
+            }
+            Ok(_) => panic!("cancellation was reported as success"),
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn budget_cancellation_after_marker_readback_returns_marker_owner() {
+        let fixture = BudgetActivationFixture::new();
+        let group = fixture.group_path();
+        cancel_materialize_after_marker_for_test();
+        let result = materialize_with_budget(
+            fixture.activation,
+            Instant::now() + Duration::from_secs(5),
+            Arc::new(AtomicBool::new(false)),
+        );
+
+        match result {
+            Err(StagingFailure::Owned { owner, kind }) => {
+                assert_eq!(kind, StagingFailureKind::Cancelled);
+                let marker = owner.marker.as_ref().expect("retained marker owner");
+                assert_eq!(owner.group.path, group);
+                assert!(marker.path.is_file());
+                assert!(owner.roots.is_empty());
+            }
+            Err(StagingFailure::BeforeOwnership(kind)) => {
+                panic!("marker cancellation happened before ownership: {kind:?}")
+            }
+            Ok(_) => panic!("marker cancellation was reported as success"),
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn budgeted_materialization_reports_journal_lock_deadline_before_group_creation() {
+        let fixture = BudgetActivationFixture::new();
+        let group = fixture.group_path();
+        let holder = fixture
+            .activation
+            .context
+            .store
+            .lock_for_test()
+            .expect("journal lock holder");
+        let started = Instant::now();
+        let result = materialize_with_budget(
+            fixture.activation,
+            Instant::now() + Duration::from_millis(100),
+            Arc::new(AtomicBool::new(false)),
+        );
+        let elapsed = started.elapsed();
+        drop(holder);
+
+        assert!(matches!(
+            result,
+            Err(StagingFailure::BeforeOwnership(
+                StagingFailureKind::Deadline
+            ))
+        ));
+        assert!(!group.exists(), "lock timeout created a private group");
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "budgeted lock read exceeded its bounded wait: {elapsed:?}"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn budgeted_ready_cas_reports_late_cancellation_with_ready_disk_state() {
+        let fixture = BudgetActivationFixture::new();
+        let owner = materialize(fixture.activation).expect("materialized owner");
+        let observation = suspended_observation(&owner);
+        let timestamp = owner.next_timestamp().expect("Ready timestamp");
+        let cancellation = Arc::new(AtomicBool::new(false));
+        cancel_after_ready_cas_for_test();
+        let result = owner.persist_ready_with_budget(
+            observation,
+            timestamp,
+            Instant::now() + Duration::from_secs(5),
+            Arc::clone(&cancellation),
+        );
+
+        assert!(
+            result
+                .as_ref()
+                .err()
+                .is_some_and(|error| error.detail.contains("cancelled")),
+            "late Ready cancellation was reported as success: {result:?}"
+        );
+        let journal = owner
+            .activation
+            .context
+            .store
+            .read(&owner.activation.journal_plan)
+            .expect("Ready disk state");
+        assert_eq!(journal.state, JournalState::Ready);
+        assert!(cancellation.load(std::sync::atomic::Ordering::Acquire));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn budgeted_launching_cas_reports_late_cancellation_with_launching_disk_state() {
+        let fixture = BudgetActivationFixture::new();
+        let owner = materialize(fixture.activation).expect("materialized owner");
+        let observation = suspended_observation(&owner);
+        let ready_timestamp = owner.next_timestamp().expect("Ready timestamp");
+        let ready = owner
+            .persist_ready(observation.clone(), ready_timestamp)
+            .expect("Ready transition");
+        let launching_timestamp = owner.next_timestamp().expect("Launching timestamp");
+        let cancellation = Arc::new(AtomicBool::new(false));
+        cancel_after_launching_cas_for_test();
+        let result = owner.persist_launching_with_budget(
+            &ready,
+            observation,
+            launching_timestamp,
+            Instant::now() + Duration::from_secs(5),
+            Arc::clone(&cancellation),
+        );
+
+        assert!(
+            result
+                .as_ref()
+                .err()
+                .is_some_and(|error| error.detail.contains("cancelled")),
+            "late Launching cancellation was reported as success: {result:?}"
+        );
+        let journal = owner
+            .activation
+            .context
+            .store
+            .read(&owner.activation.journal_plan)
+            .expect("Launching disk state");
+        assert_eq!(journal.state, JournalState::Launching);
+        assert!(cancellation.load(std::sync::atomic::Ordering::Acquire));
+    }
 
     #[cfg(windows)]
     fn real_scope_digest_fixture(

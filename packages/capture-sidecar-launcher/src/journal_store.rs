@@ -227,6 +227,59 @@ impl Drop for RunningReadBudgetScope {
     }
 }
 
+/// The one absolute activation budget shared by journal/index reads and the
+/// native owner.  The cancellation flag is consulted while acquiring or
+/// validating resources; cleanup and its follow-up reconcile CAS use the same
+/// deadline but deliberately do not turn cancellation into a second abort
+/// while the owned Job is being closed.
+#[cfg(windows)]
+#[derive(Clone)]
+pub(crate) struct ActivationBudget {
+    deadline: Instant,
+    cancellation: Arc<AtomicBool>,
+}
+
+#[cfg(windows)]
+impl ActivationBudget {
+    pub(crate) fn new(deadline: Instant, cancellation: Arc<AtomicBool>) -> Self {
+        Self {
+            deadline,
+            cancellation,
+        }
+    }
+
+    pub(crate) fn deadline(&self) -> Instant {
+        self.deadline
+    }
+
+    pub(crate) fn cancellation(&self) -> &AtomicBool {
+        self.cancellation.as_ref()
+    }
+
+    /// Clone the one cancellation source owned by the activation coordinator.
+    /// Private phase adapters use this accessor so they cannot accidentally
+    /// create an independent cancellation flag for a later phase.
+    pub(crate) fn cancellation_arc(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.cancellation)
+    }
+
+    pub(crate) fn check(&self) -> Result<(), JournalStoreError> {
+        check_running_admission_budget(self.deadline, self.cancellation.as_ref())
+    }
+
+    pub(crate) fn check_deadline(&self) -> Result<(), JournalStoreError> {
+        if Instant::now() >= self.deadline {
+            Err(JournalStoreError::AdmissionDeadline)
+        } else {
+            Ok(())
+        }
+    }
+
+    pub(crate) fn install_read_scope(&self) -> RunningReadBudgetScope {
+        install_running_read_budget(self.deadline, Arc::clone(&self.cancellation))
+    }
+}
+
 /// The only journal mutation seam for the Running promotion.  The lock and
 /// the expected Launching value stay together while the native owner performs
 /// its final observations; callers cannot replace the journal command or
@@ -269,6 +322,21 @@ pub(crate) struct ClosingCleanupAdmission {
     _lock: JournalFileLock,
 }
 
+/// A typed, exact-candidate admission for recording that an activation
+/// failure needs reconciliation.  It is intentionally narrower than the
+/// general command enum: callers cannot supply a replacement journal or
+/// bypass the full candidate comparison under the OS lock.
+#[cfg(windows)]
+pub(crate) struct ActivationReconcileAdmission {
+    store: Arc<JournalStore>,
+    plan: JournalPlanValue,
+    expected: CasSnapshot,
+    expected_journal: RuntimeSessionJournalV1,
+    current: RuntimeSessionJournalV1,
+    deadline: Instant,
+    _lock: JournalFileLock,
+}
+
 #[cfg(windows)]
 pub(crate) enum RunningCasResult {
     Committed(RuntimeSessionJournalV1),
@@ -283,6 +351,12 @@ pub(crate) enum ClosingCasResult {
 
 #[cfg(windows)]
 pub(crate) enum TerminalCasResult {
+    Committed(RuntimeSessionJournalV1),
+    CommittedAfterBudget(RuntimeSessionJournalV1),
+}
+
+#[cfg(windows)]
+pub(crate) enum ActivationReconcileCasResult {
     Committed(RuntimeSessionJournalV1),
     CommittedAfterBudget(RuntimeSessionJournalV1),
 }
@@ -306,6 +380,8 @@ struct TestFaults {
     cancel_after_closing_readback: std::sync::Mutex<Option<Arc<AtomicBool>>>,
     cancel_before_terminal_replace: std::sync::Mutex<Option<Arc<AtomicBool>>>,
     cancel_after_terminal_replace: std::sync::Mutex<Option<Arc<AtomicBool>>>,
+    #[cfg(all(test, windows))]
+    expire_after_activation_reconcile_readback: AtomicBool,
 }
 
 impl JournalStore {
@@ -410,6 +486,64 @@ impl JournalStore {
         let _index_lock = acquire_scoped_lock(&index_lock_path)?;
         validate_producer_root(producer_root)?;
         read_bounded_record_path(&index_path)
+    }
+
+    /// Lock and retain the exact phase value that cleanup observed.  The
+    /// cancellation flag is intentionally not an input: once the native
+    /// owner has been closed, this bounded bookkeeping step should still make
+    /// the durable reconcile intent when time remains.  A later journal value
+    /// is never accepted as a substitute for the retained candidate.
+    #[cfg(windows)]
+    pub(crate) fn begin_activation_reconcile(
+        self: &Arc<Self>,
+        plan: &JournalPlanValue,
+        expected: &RuntimeSessionJournalV1,
+        deadline: Instant,
+    ) -> Result<ActivationReconcileAdmission, JournalStoreError> {
+        self.validate_plan_identity(plan)?;
+        expected
+            .validate_against_plan(plan)
+            .map_err(JournalStoreError::Journal)?;
+        if !matches!(
+            expected.state,
+            JournalState::PreparedBound
+                | JournalState::Ready
+                | JournalState::Launching
+                | JournalState::Running
+        ) {
+            return Err(JournalStoreError::Conflict);
+        }
+        if expected.session_nonce != self.config.session_nonce
+            || expected.plan_digest != self.config.plan_digest
+        {
+            return Err(JournalStoreError::Conflict);
+        }
+        if Instant::now() >= deadline {
+            return Err(JournalStoreError::AdmissionDeadline);
+        }
+        validate_producer_root(&self.config.producer_root)?;
+        // Cleanup has already honoured cancellation.  Use a local false flag
+        // here so a requested cancellation cannot strand a valid reconcile
+        // transition, while the absolute deadline still bounds lock wait.
+        let no_cancellation = AtomicBool::new(false);
+        let lock = JournalFileLock::acquire_until(&self.lock_path, deadline, &no_cancellation)?;
+        validate_producer_root(&self.config.producer_root)?;
+        let current = self.read_unlocked(plan)?;
+        if current != *expected || current.cas_snapshot() != expected.cas_snapshot() {
+            return Err(JournalStoreError::Conflict);
+        }
+        if Instant::now() >= deadline {
+            return Err(JournalStoreError::AdmissionDeadline);
+        }
+        Ok(ActivationReconcileAdmission {
+            store: Arc::clone(self),
+            plan: plan.clone(),
+            expected: expected.cas_snapshot(),
+            expected_journal: expected.clone(),
+            current,
+            deadline,
+            _lock: lock,
+        })
     }
 
     /// Acquire the journal lock for the private Running admission.  The
@@ -950,6 +1084,13 @@ impl JournalStore {
     }
 
     #[cfg(all(test, windows))]
+    pub(crate) fn expire_after_activation_reconcile_readback_for_test(&self) {
+        self.faults
+            .expire_after_activation_reconcile_readback
+            .store(true, Ordering::Release);
+    }
+
+    #[cfg(all(test, windows))]
     pub(crate) fn take_cancel_after_closing_readback_for_test(&self) -> Option<Arc<AtomicBool>> {
         self.faults
             .cancel_after_closing_readback
@@ -1111,6 +1252,82 @@ impl RunningCasAdmission {
             return Ok(RunningCasResult::CommittedAfterBudget(read_back));
         }
         Ok(RunningCasResult::Committed(read_back))
+    }
+}
+
+#[cfg(windows)]
+impl ActivationReconcileAdmission {
+    pub(crate) fn current(&self) -> &RuntimeSessionJournalV1 {
+        &self.current
+    }
+
+    /// Convert the retained exact phase to ReconcileRequired while the same
+    /// journal lock remains held.  This keeps the resource tuple, binding,
+    /// attempt and recovery epoch unchanged; a stale or ambiguous candidate
+    /// returns an error and never issues a reconcile authority.
+    pub(crate) fn commit_reconcile_required(
+        mut self,
+        timestamp: String,
+    ) -> Result<ActivationReconcileCasResult, JournalStoreError> {
+        if Instant::now() >= self.deadline {
+            return Err(JournalStoreError::AdmissionDeadline);
+        }
+        if self.current != self.expected_journal || self.current.cas_snapshot() != self.expected {
+            return Err(JournalStoreError::Conflict);
+        }
+        apply_command(
+            &mut self.current,
+            &self.plan,
+            &self.expected,
+            JournalStoreCommand::Transition {
+                next_state: JournalState::ReconcileRequired,
+                timestamp,
+            },
+        )
+        .map_err(|error| match error {
+            JournalError::StaleCas => JournalStoreError::Conflict,
+            error => JournalStoreError::Journal(error),
+        })?;
+        self.current
+            .validate_against_plan(&self.plan)
+            .map_err(JournalStoreError::Journal)?;
+        let candidate = self.current.clone();
+        let bytes = candidate
+            .encode_private()
+            .map_err(JournalStoreError::Journal)?;
+        if Instant::now() >= self.deadline {
+            return Err(JournalStoreError::AdmissionDeadline);
+        }
+        let read_back = match self.store.write_atomic_unlocked(&bytes, true) {
+            Ok(()) => self.store.read_unlocked(&self.plan)?,
+            Err(write_error) => match self
+                .store
+                .reestablish_candidate_durability_unlocked(&self.plan, &candidate)
+            {
+                Ok(read_back) => read_back,
+                Err(_) => return Err(write_error),
+            },
+        };
+        if read_back != candidate {
+            return Err(JournalStoreError::CorruptJournal);
+        }
+        #[cfg(all(test, windows))]
+        let test_expired = self
+            .store
+            .faults
+            .expire_after_activation_reconcile_readback
+            .swap(false, Ordering::AcqRel);
+        #[cfg(not(all(test, windows)))]
+        let test_expired = false;
+        // The test hook represents the clock crossing the absolute deadline
+        // in the post-readback gap without making the coordinator wait for a
+        // wall-clock interval while fixture permits are contended.
+        if test_expired || Instant::now() >= self.deadline {
+            return Ok(ActivationReconcileCasResult::CommittedAfterBudget(
+                read_back,
+            ));
+        }
+        Ok(ActivationReconcileCasResult::Committed(read_back))
     }
 }
 
@@ -1989,6 +2206,112 @@ mod tests {
             store.read(&plan()).expect("illegal rejection is unchanged"),
             before
         );
+    }
+
+    #[test]
+    fn activation_reconcile_commits_only_the_retained_full_candidate() {
+        let directory = tempdir().expect("tempdir");
+        let plan = plan();
+        let store = Arc::new(JournalStore::new(config(directory.path())).expect("store"));
+        let initial = RuntimeSessionJournalV1::planned(
+            &plan,
+            "session-1".into(),
+            "2026-09-11T00:00:00Z".into(),
+        )
+        .expect("planned journal");
+        store
+            .create_initial(&plan, &initial)
+            .expect("initial journal");
+        let prepared = store
+            .compare_and_swap(
+                &plan,
+                &initial.cas_snapshot(),
+                JournalStoreCommand::PrepareBound {
+                    binding: large_binding(&plan),
+                    timestamp: "2026-09-11T00:00:01Z".into(),
+                },
+            )
+            .expect("prepared journal");
+
+        let reconciled = store
+            .begin_activation_reconcile(&plan, &prepared, Instant::now() + Duration::from_secs(5))
+            .expect("exact prepared candidate admission")
+            .commit_reconcile_required("2026-09-11T00:00:02Z".into())
+            .expect("reconcile transition");
+        let reconciled = match reconciled {
+            ActivationReconcileCasResult::Committed(journal) => journal,
+            ActivationReconcileCasResult::CommittedAfterBudget(_) => {
+                panic!("reconcile transition exceeded its test budget")
+            }
+        };
+        assert_eq!(reconciled.state, JournalState::ReconcileRequired);
+        assert_eq!(reconciled.journal_revision, prepared.journal_revision + 1);
+        assert_eq!(reconciled.binding, prepared.binding);
+        assert_eq!(reconciled.attempt, prepared.attempt);
+        assert_eq!(reconciled.recovery_epoch, prepared.recovery_epoch);
+        assert_eq!(store.read(&plan).expect("reconciled journal"), reconciled);
+    }
+
+    #[test]
+    fn activation_reconcile_rejects_stale_or_full_candidate_drift_without_mutation() {
+        let directory = tempdir().expect("tempdir");
+        let plan = plan();
+        let store = Arc::new(JournalStore::new(config(directory.path())).expect("store"));
+        let initial = RuntimeSessionJournalV1::planned(
+            &plan,
+            "session-1".into(),
+            "2026-09-11T00:00:00Z".into(),
+        )
+        .expect("planned journal");
+        store
+            .create_initial(&plan, &initial)
+            .expect("initial journal");
+        let prepared = store
+            .compare_and_swap(
+                &plan,
+                &initial.cas_snapshot(),
+                JournalStoreCommand::PrepareBound {
+                    binding: large_binding(&plan),
+                    timestamp: "2026-09-11T00:00:01Z".into(),
+                },
+            )
+            .expect("prepared journal");
+        let ready = store
+            .compare_and_swap(
+                &plan,
+                &prepared.cas_snapshot(),
+                JournalStoreCommand::TransitionWithObservation {
+                    next_state: JournalState::Ready,
+                    observation: running_observation(None, RootState::Suspended),
+                    timestamp: "2026-09-11T00:00:02Z".into(),
+                },
+            )
+            .expect("ready journal");
+        let mut drifted = ready.clone();
+        drifted.updated_at = "2026-09-11T00:00:03Z".into();
+        assert_eq!(drifted.cas_snapshot(), ready.cas_snapshot());
+        assert!(matches!(
+            store.begin_activation_reconcile(
+                &plan,
+                &drifted,
+                Instant::now() + Duration::from_secs(5),
+            ),
+            Err(JournalStoreError::Conflict)
+        ));
+        assert_eq!(
+            store.read(&plan).expect("full drift remains foreign"),
+            ready
+        );
+
+        assert!(matches!(
+            store.begin_activation_reconcile(
+                &plan,
+                &prepared,
+                Instant::now() + Duration::from_secs(5),
+            ),
+            Err(JournalStoreError::Conflict)
+        ));
+        assert_eq!(store.read(&plan).expect("stale record remains"), ready);
     }
 
     #[test]

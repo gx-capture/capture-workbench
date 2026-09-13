@@ -30,6 +30,9 @@ use crate::{
     journal_store::{JournalStore, JournalStoreCommand, JournalStoreConfig, JournalStoreError},
 };
 
+#[cfg(windows)]
+use crate::journal_store::ActivationBudget;
+
 const RECEIPT_DOMAIN: &[u8] = b"capture-runtime/group-binding-receipt/v1\0";
 
 /// The producer-created plan is opaque until the later external construction
@@ -832,6 +835,7 @@ pub(crate) struct ValidatedActivationContext {
     pub(crate) context: Arc<PreparePlanContext>,
     pub(crate) binding: JournalBinding,
     pub(crate) expected: CasSnapshot,
+    pub(crate) expected_journal: RuntimeSessionJournalV1,
     pub(crate) verified: VerifiedGroupBinding,
     pub(crate) descriptor: Arc<crate::launcher::FrozenActivationDescriptor>,
     permit: ActivationPermitV1,
@@ -896,6 +900,31 @@ impl PreparedGroup {
     /// Consume a prepared group only after revalidating its immutable
     /// activation identity and the exact durable prepared-bound snapshot.
     pub(crate) fn consume_for_activation(self) -> Result<ValidatedActivationContext, PrepareError> {
+        self.consume_for_activation_inner()
+    }
+
+    /// Budget-aware private handoff used by the activation owner.  The scope
+    /// covers both the immutable reference-index reopen and its journal read,
+    /// so lock contention cannot silently start a new per-step timeout.
+    #[cfg(windows)]
+    pub(crate) fn consume_for_activation_with_budget(
+        self,
+        budget: &ActivationBudget,
+    ) -> Result<ValidatedActivationContext, PrepareError> {
+        budget
+            .check()
+            .map_err(|_| PrepareError::JournalUnavailable)?;
+        let _read_budget = budget.install_read_scope();
+        let result = self.consume_for_activation_inner();
+        if result.is_ok() {
+            budget
+                .check()
+                .map_err(|_| PrepareError::JournalUnavailable)?;
+        }
+        result
+    }
+
+    fn consume_for_activation_inner(self) -> Result<ValidatedActivationContext, PrepareError> {
         let PreparedGroup {
             journal_plan,
             context,
@@ -966,6 +995,7 @@ impl PreparedGroup {
             context,
             binding,
             expected,
+            expected_journal: reopened.journal,
             verified,
             descriptor,
             permit,
