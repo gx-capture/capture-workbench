@@ -7,6 +7,7 @@ mod launcher;
 mod manifest;
 mod prepare;
 mod process;
+mod reconcile;
 mod staging;
 
 use std::fmt;

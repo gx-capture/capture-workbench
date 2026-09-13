@@ -81,6 +81,16 @@ struct ReconcileRefAddress {
 }
 
 impl PreparePlanContext {
+    #[cfg(test)]
+    pub(crate) fn group_ref_for_test(&self) -> ReconcileRef {
+        self.group_ref.clone()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn root_refs_for_test(&self) -> Vec<ReconcileRef> {
+        self.root_refs.clone()
+    }
+
     fn address_of(&self, reference: &ReconcileRef) -> Option<&ReconcileRefAddress> {
         self.ref_addresses.get(reference)
     }
@@ -384,6 +394,11 @@ impl std::error::Error for PrepareError {}
 pub struct ReconcileRef(String);
 
 impl ReconcileRef {
+    #[cfg(test)]
+    pub(crate) fn from_test(value: String) -> Self {
+        Self(value)
+    }
+
     fn fresh() -> Result<Self, ()> {
         Ok(Self(random_hex(16)?))
     }
