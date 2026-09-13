@@ -10,7 +10,10 @@
 use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -813,6 +816,23 @@ pub trait ReconcileRefSink {
     ) -> Result<VerifiedGroupBinding, PersistError>;
 }
 
+/// A producer-owned cancellation request for one prepared activation.
+///
+/// The handle carries only the cancellation signal.  Native resources,
+/// staging identities, journal values, and activation permits remain private
+/// to the producer and are never reachable through this seam.
+#[derive(Clone)]
+pub struct ActivationCancelHandle {
+    cancellation: Arc<AtomicBool>,
+}
+
+impl ActivationCancelHandle {
+    /// Request cancellation at the next producer-owned activation boundary.
+    pub fn cancel(&self) {
+        self.cancellation.store(true, Ordering::Release);
+    }
+}
+
 /// Opaque, move-only result of prepare. Its full journal value is retained so
 /// activation can revalidate the exact immutable plan later.
 pub struct PreparedGroup {
@@ -821,6 +841,7 @@ pub struct PreparedGroup {
     pub(crate) binding: JournalBinding,
     pub(crate) expected: CasSnapshot,
     pub(crate) verified: VerifiedGroupBinding,
+    cancellation: Arc<AtomicBool>,
     permit: ActivationPermitV1,
 }
 
@@ -897,6 +918,18 @@ impl ActivationPermitV1 {
 }
 
 impl PreparedGroup {
+    /// Obtain the only public control seam for this prepared activation.
+    pub fn cancel_handle(&self) -> ActivationCancelHandle {
+        ActivationCancelHandle {
+            cancellation: Arc::clone(&self.cancellation),
+        }
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn cancellation_arc(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.cancellation)
+    }
+
     /// Consume a prepared group only after revalidating its immutable
     /// activation identity and the exact durable prepared-bound snapshot.
     pub(crate) fn consume_for_activation(self) -> Result<ValidatedActivationContext, PrepareError> {
@@ -931,6 +964,7 @@ impl PreparedGroup {
             binding,
             expected,
             verified,
+            cancellation: _,
             permit,
         } = self;
 
@@ -1043,6 +1077,7 @@ pub(crate) fn prepare_group(
     plan: &ImmutableGroupPlan,
     sink: &dyn ReconcileRefSink,
 ) -> Result<PreparedGroup, PrepareError> {
+    let cancellation = Arc::new(AtomicBool::new(false));
     plan.value
         .validate()
         .map_err(|_| PrepareError::InvalidPlan)?;
@@ -1129,6 +1164,7 @@ pub(crate) fn prepare_group(
         binding: journal_binding,
         expected: bound.cas_snapshot(),
         verified,
+        cancellation,
         permit,
     })
 }
@@ -1914,6 +1950,39 @@ mod tests {
                 .state,
             JournalState::PreparedBound
         );
+    }
+
+    #[test]
+    fn cancel_handle_stops_private_coordinator_before_resource_acquisition() {
+        let directory = tempdir().expect("tempdir");
+        let plan = plan(directory.path());
+        let sink = Sink::new(&plan, None);
+        let prepared = OwnedRuntimeSession::prepare_group(&plan, &sink).expect("prepare");
+        let cancellation = prepared.cancellation_arc();
+        prepared.cancel_handle().cancel();
+        let budget = ActivationBudget::new(
+            std::time::Instant::now() + std::time::Duration::from_secs(5),
+            cancellation,
+        );
+
+        let failure = match crate::process::activate_prepared_group_with_budget(prepared, &budget) {
+            Ok(_) => panic!("cancelled preparation must not activate"),
+            Err(failure) => failure,
+        };
+        assert_eq!(
+            failure.kind_for_test(),
+            crate::process::PrivateActivationFailureKind::Cancellation
+        );
+        assert!(failure.into_owner().is_none());
+        assert_eq!(
+            plan.context
+                .store
+                .read(&plan.value)
+                .expect("prepared journal")
+                .state,
+            JournalState::PreparedBound
+        );
+        assert!(!directory.path().join("private-run-staging").exists());
     }
 
     #[test]

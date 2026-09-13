@@ -382,6 +382,8 @@ struct TestFaults {
     cancel_after_terminal_replace: std::sync::Mutex<Option<Arc<AtomicBool>>>,
     #[cfg(all(test, windows))]
     expire_after_activation_reconcile_readback: AtomicBool,
+    #[cfg(all(test, windows))]
+    expire_after_running_readback: AtomicBool,
 }
 
 impl JournalStore {
@@ -1091,6 +1093,13 @@ impl JournalStore {
     }
 
     #[cfg(all(test, windows))]
+    pub(crate) fn expire_after_running_readback_for_test(&self) {
+        self.faults
+            .expire_after_running_readback
+            .store(true, Ordering::Release);
+    }
+
+    #[cfg(all(test, windows))]
     pub(crate) fn take_cancel_after_closing_readback_for_test(&self) -> Option<Arc<AtomicBool>> {
         self.faults
             .cancel_after_closing_readback
@@ -1236,6 +1245,18 @@ impl RunningCasAdmission {
         };
         if read_back != candidate {
             return Err(JournalStoreError::CorruptJournal);
+        }
+        #[cfg(all(test, windows))]
+        if self
+            .store
+            .faults
+            .expire_after_running_readback
+            .swap(false, Ordering::AcqRel)
+        {
+            let remaining = self.deadline.saturating_duration_since(Instant::now());
+            if !remaining.is_zero() {
+                std::thread::sleep(remaining);
+            }
         }
         #[cfg(test)]
         if let Some(cancellation) = self

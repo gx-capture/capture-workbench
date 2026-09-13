@@ -23,9 +23,9 @@ pub use manifest::{
     SidecarManifest, VerifiedSidecar,
 };
 pub use prepare::{
-    BindingAttemptId, CompleteGroupBinding, CompleteGroupBindingReceiptV1, ImmutableGroupPlan,
-    PersistError, PrepareError, PreparedGroup, ReconcileRef, ReconcileRefSink, RootRefBinding,
-    VerifiedGroupBinding,
+    ActivationCancelHandle, BindingAttemptId, CompleteGroupBinding, CompleteGroupBindingReceiptV1,
+    ImmutableGroupPlan, PersistError, PrepareError, PreparedGroup, ReconcileRef, ReconcileRefSink,
+    RootRefBinding, VerifiedGroupBinding,
 };
 pub use process::{
     OwnedRuntimeSession, OwnedSidecarProcess, RuntimeCleanupError, RuntimeCleanupErrorKind,
