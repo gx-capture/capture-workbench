@@ -10,7 +10,7 @@ use crate::prepare::{ImmutableGroupPlan, PrepareError, PreparedGroup, ReconcileR
 use crate::{
     health::{probe_service_ready, StrictProbeResult},
     journal::{
-        CreationIdentity, JobBinding, JobSetupState, JournalRoot, JournalState,
+        CreationIdentity, JobBinding, JobSetupState, JournalPlanValue, JournalRoot, JournalState,
         ResourceObservation, RootState, RuntimeSessionJournalV1, TerminalObservation,
         TerminalProof,
     },
@@ -229,6 +229,26 @@ enum GroupNativeFailureKind {
     Membership,
     Resume,
     Cleanup,
+}
+
+/// Read-only restart observations.  These values deliberately contain no
+/// native handles or identifiers; the producer-owned journal remains the
+/// authority for the identities being checked.
+#[cfg(windows)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RestartNativeObservationError {
+    MissingNativeIdentity,
+    InvalidState,
+    InvalidRecord,
+    RootPresent,
+    RootReused,
+    RootAccessDenied,
+    RootUnqueryable,
+    ListenerPresent,
+    ListenerAmbiguous,
+    ListenerQuery,
+    Cancelled,
+    Deadline,
 }
 
 #[cfg(windows)]
@@ -4382,6 +4402,212 @@ fn parse_listener_table(
 }
 
 #[cfg(windows)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RestartRootProcessState {
+    Absent,
+    Present,
+}
+
+/// Observe the exact recorded root processes and listener ports after a
+/// producer restart.  This function is deliberately read-only: it never
+/// opens a Job, adopts a handle for later action, terminates a process, or
+/// mutates the journal.  A successful result means only that the point-in-time
+/// absence observation completed and must still be revalidated before a later
+/// journal transition.
+#[cfg(windows)]
+pub(crate) fn observe_restart_native(
+    journal: &RuntimeSessionJournalV1,
+    plan: &JournalPlanValue,
+    deadline: std::time::Instant,
+    cancellation: &AtomicBool,
+) -> Result<(), RestartNativeObservationError> {
+    journal
+        .validate_against_plan(plan)
+        .map_err(|_| RestartNativeObservationError::InvalidRecord)?;
+    match journal.state {
+        JournalState::PlannedUnbound | JournalState::PreparedBound => {
+            // These records have no durable, complete native identity.  Do
+            // not turn their missing fields into a PID query or an absence
+            // claim.
+            return Err(RestartNativeObservationError::MissingNativeIdentity);
+        }
+        JournalState::Ready
+        | JournalState::Launching
+        | JournalState::Running
+        | JournalState::Closing
+        | JournalState::ReconcileRequired => {}
+        JournalState::Terminal | JournalState::ManualReview => {
+            return Err(RestartNativeObservationError::InvalidState);
+        }
+    }
+
+    let job = journal
+        .job_binding
+        .as_ref()
+        .ok_or(RestartNativeObservationError::MissingNativeIdentity)?;
+    if job.setup_state != JobSetupState::Committed {
+        return Err(RestartNativeObservationError::MissingNativeIdentity);
+    }
+    let crate::journal::JournalBinding::Bound { root_bindings, .. } = &journal.binding else {
+        return Err(RestartNativeObservationError::MissingNativeIdentity);
+    };
+    if root_bindings.len() != plan.roots.len()
+        || journal.roots.len() != plan.roots.len()
+        || journal.roots.is_empty()
+    {
+        return Err(RestartNativeObservationError::MissingNativeIdentity);
+    }
+
+    let mut expected_pids = HashSet::with_capacity(journal.roots.len());
+    let mut expected_ports = HashSet::with_capacity(journal.roots.len());
+    for (index, root) in journal.roots.iter().enumerate() {
+        let ordinal =
+            u32::try_from(index).map_err(|_| RestartNativeObservationError::InvalidRecord)?;
+        if root.ordinal != ordinal
+            || root.pid == 0
+            || root.root_nonce.is_empty()
+            || root.reserved_listener_identity.is_empty()
+            || root.loopback_port == 0
+            || !expected_pids.insert(root.pid)
+            || !expected_ports.insert(root.loopback_port)
+        {
+            return Err(RestartNativeObservationError::MissingNativeIdentity);
+        }
+        let creation_time = parse_creation_identity(root)
+            .map_err(|_| RestartNativeObservationError::InvalidRecord)?;
+        if creation_time == 0 {
+            return Err(RestartNativeObservationError::InvalidRecord);
+        }
+    }
+
+    for root in &journal.roots {
+        match observe_restart_root_process(root, deadline, cancellation)? {
+            RestartRootProcessState::Absent => {}
+            RestartRootProcessState::Present => {
+                return Err(RestartNativeObservationError::RootPresent);
+            }
+        }
+    }
+
+    check_restart_observation_budget(deadline, cancellation)?;
+    let table = query_listener_table(deadline, Some(cancellation))
+        .map_err(|_| RestartNativeObservationError::ListenerQuery)?;
+    check_restart_observation_budget(deadline, cancellation)?;
+    parse_restart_listener_absence(&table, &journal.roots)
+}
+
+#[cfg(windows)]
+fn observe_restart_root_process(
+    root: &JournalRoot,
+    deadline: std::time::Instant,
+    cancellation: &AtomicBool,
+) -> Result<RestartRootProcessState, RestartNativeObservationError> {
+    check_restart_observation_budget(deadline, cancellation)?;
+    let expected_creation =
+        parse_creation_identity(root).map_err(|_| RestartNativeObservationError::InvalidRecord)?;
+    if expected_creation == 0 {
+        return Err(RestartNativeObservationError::InvalidRecord);
+    }
+    let handle = unsafe {
+        OpenProcess(
+            PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE,
+            0,
+            root.pid,
+        )
+    };
+    if handle.is_null() {
+        let error = unsafe { GetLastError() };
+        return if error == ERROR_INVALID_PARAMETER {
+            Ok(RestartRootProcessState::Absent)
+        } else if error == ERROR_ACCESS_DENIED {
+            Err(RestartNativeObservationError::RootAccessDenied)
+        } else {
+            Err(RestartNativeObservationError::RootUnqueryable)
+        };
+    }
+    let handle = ScopedWindowsHandle(handle as usize);
+    let observed = process_identity_from_handle(handle.raw(), root.pid)
+        .map_err(|_| restart_native_query_error())?;
+    if observed.creation_time != expected_creation {
+        return Err(RestartNativeObservationError::RootReused);
+    }
+    check_restart_observation_budget(deadline, cancellation)?;
+    let wait_state = unsafe { WaitForSingleObject(handle.raw(), 0) };
+    match wait_state {
+        WAIT_OBJECT_0 => {
+            let mut _exit_code = 0_u32;
+            if unsafe { GetExitCodeProcess(handle.raw(), &mut _exit_code) } == 0 {
+                return Err(restart_native_query_error());
+            }
+            // A signaled process handle is authoritative.  259 is the
+            // conventional STILL_ACTIVE value, but it is also a legal
+            // application exit code after the wait has reported termination.
+            Ok(RestartRootProcessState::Absent)
+        }
+        WAIT_TIMEOUT => Ok(RestartRootProcessState::Present),
+        WAIT_FAILED => Err(restart_native_query_error()),
+        _ => Err(RestartNativeObservationError::RootUnqueryable),
+    }
+}
+
+#[cfg(windows)]
+fn restart_native_query_error() -> RestartNativeObservationError {
+    restart_native_query_error_for_code(unsafe { GetLastError() })
+}
+
+#[cfg(windows)]
+fn restart_native_query_error_for_code(error: u32) -> RestartNativeObservationError {
+    if error == ERROR_ACCESS_DENIED {
+        RestartNativeObservationError::RootAccessDenied
+    } else {
+        RestartNativeObservationError::RootUnqueryable
+    }
+}
+
+#[cfg(windows)]
+fn parse_restart_listener_absence(
+    table: &[u8],
+    roots: &[JournalRoot],
+) -> Result<(), RestartNativeObservationError> {
+    let rows =
+        listener_table_rows(table).map_err(|_| RestartNativeObservationError::ListenerQuery)?;
+    let mut seen_ports = HashSet::with_capacity(roots.len());
+    for row in rows {
+        let port = u16::from_be(row.dwLocalPort as u16);
+        let Some(root) = roots.iter().find(|root| root.loopback_port == port) else {
+            continue;
+        };
+        if !seen_ports.insert(port) {
+            return Err(RestartNativeObservationError::ListenerAmbiguous);
+        }
+        if row.dwState != MIB_TCP_STATE_LISTEN as u32
+            || u32::from_be(row.dwLocalAddr) != 0x7f00_0001
+        {
+            return Err(RestartNativeObservationError::ListenerAmbiguous);
+        }
+        if row.dwOwningPid == root.pid {
+            return Err(RestartNativeObservationError::ListenerPresent);
+        }
+        return Err(RestartNativeObservationError::ListenerAmbiguous);
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn check_restart_observation_budget(
+    deadline: std::time::Instant,
+    cancellation: &AtomicBool,
+) -> Result<(), RestartNativeObservationError> {
+    if cancellation.load(Ordering::Acquire) {
+        return Err(RestartNativeObservationError::Cancelled);
+    }
+    if std::time::Instant::now() >= deadline {
+        return Err(RestartNativeObservationError::Deadline);
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
 fn listener_table_rows(table: &[u8]) -> Result<Vec<MIB_TCPROW_OWNER_PID>, String> {
     if table.len() < size_of::<u32>() || table.len() > MAX_TCP_TABLE_BYTES {
         return Err("The Windows listener table result was too short or too large.".into());
@@ -7571,6 +7797,324 @@ mod tests {
         };
         assert!(!same_process_identity(original, reused));
         assert!(same_process_identity(original, original));
+    }
+
+    #[cfg(windows)]
+    fn restart_root_for_identity(identity: OwnedProcessIdentity) -> JournalRoot {
+        JournalRoot {
+            ordinal: 0,
+            role: "root".into(),
+            root_ref_digest: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                .into(),
+            root_generation: 1,
+            root_nonce: "root-nonce".into(),
+            pid: identity.pid,
+            creation_identity: CreationIdentity {
+                kind: "windows-process-creation".into(),
+                value: format!("{:016x}", identity.creation_time),
+            },
+            state: RootState::Running,
+            reserved_listener_identity: "listener-nonce".into(),
+            loopback_port: 45_001,
+            live_listener_readiness: Some("readiness".into()),
+            started_at: "2026-01-01T00:00:00Z".into(),
+        }
+    }
+
+    #[cfg(windows)]
+    struct RestartObservationChild {
+        child: Option<Child>,
+        identity: OwnedProcessIdentity,
+        reaped: bool,
+    }
+
+    impl RestartObservationChild {
+        fn spawn(mut command: Command) -> Self {
+            command.creation_flags(CREATE_NO_WINDOW);
+            let child = command.spawn().expect("restart observation child");
+            let mut owned = Self::from_spawned(child);
+            let pid = owned.identity.pid;
+            let handle = unsafe {
+                OpenProcess(
+                    PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE,
+                    0,
+                    pid,
+                )
+            };
+            assert!(!handle.is_null(), "child process handle");
+            let handle = ScopedWindowsHandle(handle as usize);
+            let identity = process_identity_from_handle(handle.raw(), pid).expect("child identity");
+            owned.identity = identity;
+            owned
+        }
+
+        fn from_spawned(child: Child) -> Self {
+            Self {
+                identity: OwnedProcessIdentity {
+                    pid: child.id(),
+                    creation_time: 0,
+                },
+                child: Some(child),
+                reaped: false,
+            }
+        }
+
+        fn spawn_then_inject_identity_panic(mut command: Command) -> u32 {
+            command.creation_flags(CREATE_NO_WINDOW);
+            let child = command.spawn().expect("restart identity fault child");
+            let pid = child.id();
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _owned = Self::from_spawned(child);
+                panic!("injected restart identity capture failure");
+            }));
+            assert!(result.is_err(), "identity fault must unwind the owner");
+            pid
+        }
+
+        fn exited(exit_code: u32) -> Self {
+            let mut command = Command::new("cmd.exe");
+            command
+                .args(["/D", "/S", "/C", &format!("exit /B {exit_code}")])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            Self::spawn(command)
+        }
+
+        fn is_alive(&mut self) -> bool {
+            self.child
+                .as_mut()
+                .expect("restart observation child")
+                .try_wait()
+                .expect("child status")
+                .is_none()
+        }
+
+        fn wait(&mut self) {
+            if self.reaped {
+                return;
+            }
+            self.child
+                .as_mut()
+                .expect("restart observation child")
+                .wait()
+                .expect("child reap");
+            self.reaped = true;
+        }
+    }
+
+    impl Drop for RestartObservationChild {
+        fn drop(&mut self) {
+            let Some(child) = self.child.as_mut() else {
+                return;
+            };
+            if !self.reaped {
+                let running = child.try_wait().ok().flatten().is_none();
+                if running {
+                    let _ = child.kill();
+                }
+                let _ = child.wait();
+                self.reaped = true;
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn restart_observer_rejects_zero_creation_before_native_query() {
+        let root = restart_root_for_identity(OwnedProcessIdentity {
+            pid: 4,
+            creation_time: 0,
+        });
+        assert_eq!(
+            observe_restart_root_process(
+                &root,
+                std::time::Instant::now() + Duration::from_secs(5),
+                &AtomicBool::new(false),
+            ),
+            Err(RestartNativeObservationError::InvalidRecord)
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn restart_observer_identity_failure_reaps_the_exact_spawned_child() {
+        let mut command = powershell_command("Start-Sleep -Seconds 30");
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let pid = RestartObservationChild::spawn_then_inject_identity_panic(command);
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let handle = unsafe {
+                OpenProcess(
+                    PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE,
+                    0,
+                    pid,
+                )
+            };
+            if handle.is_null() {
+                assert_eq!(unsafe { GetLastError() }, ERROR_INVALID_PARAMETER);
+                break;
+            }
+            let handle = ScopedWindowsHandle(handle as usize);
+            assert_eq!(
+                unsafe { WaitForSingleObject(handle.raw(), 0) },
+                WAIT_OBJECT_0,
+                "the injected identity-failure child must be terminated before its owner drops"
+            );
+            if std::time::Instant::now() >= deadline {
+                panic!("the exact injected identity-failure child was not reaped");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn restart_observer_keeps_access_denied_distinct_from_other_query_errors() {
+        assert_eq!(
+            restart_native_query_error_for_code(ERROR_ACCESS_DENIED),
+            RestartNativeObservationError::RootAccessDenied
+        );
+        assert_eq!(
+            restart_native_query_error_for_code(ERROR_INVALID_PARAMETER),
+            RestartNativeObservationError::RootUnqueryable
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn restart_observer_treats_signaled_exit_code_259_as_absent() {
+        let mut child = RestartObservationChild::exited(259);
+        child.wait();
+        assert_eq!(
+            observe_restart_root_process(
+                &restart_root_for_identity(child.identity),
+                std::time::Instant::now() + Duration::from_secs(5),
+                &AtomicBool::new(false),
+            )
+            .expect("exact exited root observation"),
+            RestartRootProcessState::Absent
+        );
+    }
+
+    #[cfg(windows)]
+    fn spawn_restart_observation_child() -> RestartObservationChild {
+        let mut command = powershell_command("Start-Sleep -Seconds 30");
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        RestartObservationChild::spawn(command)
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn restart_observer_reports_exact_exited_root_as_absent() {
+        let mut child = RestartObservationChild::exited(17);
+        child.wait();
+
+        assert_eq!(
+            observe_restart_root_process(
+                &restart_root_for_identity(child.identity),
+                std::time::Instant::now() + Duration::from_secs(5),
+                &AtomicBool::new(false),
+            )
+            .expect("exact exited root observation"),
+            RestartRootProcessState::Absent
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn restart_observer_reports_live_root_without_touching_it() {
+        let mut child = spawn_restart_observation_child();
+        let state = observe_restart_root_process(
+            &restart_root_for_identity(child.identity),
+            std::time::Instant::now() + Duration::from_secs(5),
+            &AtomicBool::new(false),
+        )
+        .expect("live root observation");
+        assert_eq!(state, RestartRootProcessState::Present);
+        assert!(child.is_alive());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn restart_observer_classifies_creation_mismatch_as_reused_pid() {
+        let mut child = spawn_restart_observation_child();
+        let mut mismatched = restart_root_for_identity(child.identity);
+        mismatched.creation_identity.value = format!("{:016x}", child.identity.creation_time + 1);
+        assert_eq!(
+            observe_restart_root_process(
+                &mismatched,
+                std::time::Instant::now() + Duration::from_secs(5),
+                &AtomicBool::new(false),
+            ),
+            Err(RestartNativeObservationError::RootReused)
+        );
+        assert!(child.is_alive());
+    }
+
+    #[cfg(windows)]
+    fn encoded_listener_table(rows: &[MIB_TCPROW_OWNER_PID]) -> Vec<u8> {
+        let row_size = size_of::<MIB_TCPROW_OWNER_PID>();
+        let mut table = vec![0_u8; size_of::<u32>() + rows.len() * row_size];
+        table[..size_of::<u32>()].copy_from_slice(&(rows.len() as u32).to_ne_bytes());
+        for (index, row) in rows.iter().enumerate() {
+            unsafe {
+                ptr::write_unaligned(
+                    table
+                        .as_mut_ptr()
+                        .add(size_of::<u32>() + index * row_size)
+                        .cast::<MIB_TCPROW_OWNER_PID>(),
+                    *row,
+                );
+            }
+        }
+        table
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn restart_listener_absence_rejects_target_foreign_and_wildcard_rows() {
+        let identity = OwnedProcessIdentity {
+            pid: 42,
+            creation_time: 100,
+        };
+        let root = restart_root_for_identity(identity);
+        let empty = encoded_listener_table(&[]);
+        assert!(parse_restart_listener_absence(&empty, std::slice::from_ref(&root)).is_ok());
+
+        let mut row = MIB_TCPROW_OWNER_PID {
+            dwState: MIB_TCP_STATE_LISTEN as u32,
+            dwLocalAddr: 0x0100_007f,
+            dwLocalPort: u32::from(root.loopback_port.to_be()),
+            dwRemoteAddr: 0,
+            dwRemotePort: 0,
+            dwOwningPid: root.pid,
+        };
+        let target = encoded_listener_table(&[row]);
+        assert_eq!(
+            parse_restart_listener_absence(&target, std::slice::from_ref(&root)),
+            Err(RestartNativeObservationError::ListenerPresent)
+        );
+
+        row.dwOwningPid = root.pid + 1;
+        let foreign = encoded_listener_table(&[row]);
+        assert_eq!(
+            parse_restart_listener_absence(&foreign, std::slice::from_ref(&root)),
+            Err(RestartNativeObservationError::ListenerAmbiguous)
+        );
+
+        row.dwOwningPid = root.pid;
+        row.dwLocalAddr = 0;
+        let wildcard = encoded_listener_table(&[row]);
+        assert_eq!(
+            parse_restart_listener_absence(&wildcard, std::slice::from_ref(&root)),
+            Err(RestartNativeObservationError::ListenerAmbiguous)
+        );
     }
 
     #[test]
