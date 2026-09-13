@@ -79,7 +79,7 @@ struct ProbeConfig {
     http_checkpoint_path: Option<PathBuf>,
     http_listener_checkpoint_path: Option<PathBuf>,
     http_start_delay: Duration,
-    session_nonce: String,
+    session_nonce: Option<String>,
     root_ordinal: u32,
     port: u16,
     http_mode: Option<HttpMode>,
@@ -175,10 +175,16 @@ where
         Err(env::VarError::NotPresent) => Duration::ZERO,
         Err(env::VarError::NotUnicode(_)) => return Err(ProbeError::Environment),
     };
-    let session_nonce = required_text(SESSION_ENV)?;
-    if !valid_opaque(&session_nonce) {
-        return Err(ProbeError::Environment);
-    }
+    let session_nonce = match env::var_os(SESSION_ENV) {
+        Some(value) => {
+            let value = value.to_str().ok_or(ProbeError::Environment)?.to_owned();
+            if value.is_empty() || !valid_opaque(&value) {
+                return Err(ProbeError::Environment);
+            }
+            Some(value)
+        }
+        None => None,
+    };
     let ordinal_text = required_text(ORDINAL_ENV)?;
     let root_ordinal = ordinal_text
         .parse::<u32>()
@@ -267,7 +273,25 @@ fn read_launching_record(
     };
     let bytes = read_bounded(&journal_path)?;
     let journal: Value = serde_json::from_slice(&bytes).map_err(|_| ProbeError::JournalRejected)?;
-    validate_journal(&journal, config, process_id)
+    let durable_session_nonce = durable_session_nonce(&journal, config.session_nonce.as_deref())?;
+    validate_journal(&journal, config, process_id, &durable_session_nonce)
+}
+
+fn durable_session_nonce(
+    journal: &Value,
+    configured_session_nonce: Option<&str>,
+) -> Result<String, ProbeError> {
+    let durable_session_nonce = journal
+        .as_object()
+        .and_then(|object| object.get("sessionNonce"))
+        .and_then(Value::as_str)
+        .ok_or(ProbeError::JournalRejected)?;
+    if !valid_opaque(durable_session_nonce)
+        || configured_session_nonce.is_some_and(|configured| configured != durable_session_nonce)
+    {
+        return Err(ProbeError::JournalRejected);
+    }
+    Ok(durable_session_nonce.to_owned())
 }
 
 /// The launcher freezes command environment before the final plan digest is
@@ -312,6 +336,7 @@ fn validate_journal(
     journal: &Value,
     config: &ProbeConfig,
     process_id: u32,
+    session_nonce: &str,
 ) -> Result<LaunchingRecord, ProbeError> {
     let root = exact_object(
         journal,
@@ -335,7 +360,7 @@ fn validate_journal(
     )?;
     if string_field(root, "schemaVersion")? != JOURNAL_SCHEMA
         || string_field(root, "producer")? != JOURNAL_PRODUCER
-        || string_field(root, "sessionNonce")? != config.session_nonce
+        || string_field(root, "sessionNonce")? != session_nonce
         || string_field(root, "state")? != "launching"
         || !valid_opaque(string_field(root, "sessionNonce")?)
         || !valid_digest(string_field(root, "planDigest")?)
@@ -350,7 +375,7 @@ fn validate_journal(
     let journal_revision = number_field(root, "journalRevision")?;
     validate_job_binding(root.get("jobBinding"))?;
     validate_binding(root.get("binding"), root.get("roots"))?;
-    validate_staging_binding(root.get("stagingBinding"), &config.session_nonce)?;
+    validate_staging_binding(root.get("stagingBinding"), session_nonce)?;
     let roots = root
         .get("roots")
         .and_then(Value::as_array)
@@ -939,7 +964,7 @@ mod tests {
             http_checkpoint_path: None,
             http_listener_checkpoint_path: None,
             http_start_delay: Duration::ZERO,
-            session_nonce: session.into(),
+            session_nonce: Some(session.into()),
             root_ordinal: ordinal,
             port: 49152 + ordinal as u16,
             http_mode: None,
@@ -1065,7 +1090,11 @@ mod tests {
         let config = config(&directory.path, "session-1", 0);
         write_configured_journal(
             &config,
-            &valid_journal(&config.session_nonce, std::process::id(), 1),
+            &valid_journal(
+                config.session_nonce.as_deref().expect("session nonce"),
+                std::process::id(),
+                1,
+            ),
         );
         run_with(&config, std::process::id()).expect("valid Launching record");
         let marker = fs::read_to_string(&config.marker_path).expect("marker");
@@ -1090,17 +1119,113 @@ mod tests {
                 journal_path: journal_path,
                 ..config.clone()
             },
-            &valid_journal(&config.session_nonce, std::process::id(), 1),
+            &valid_journal(
+                config.session_nonce.as_deref().expect("session nonce"),
+                std::process::id(),
+                1,
+            ),
         );
         run_with(&config, std::process::id()).expect("valid Launching record");
         assert!(config.marker_path.exists());
     }
 
     #[test]
+    fn optional_environment_nonce_derives_durable_journal_nonce() {
+        let directory = tempdir();
+        let mut config = config(&directory.path, "legacy-session", 0);
+        config.session_nonce = None;
+        config.journal_path = directory.path.clone();
+        config.journal_path_is_directory = true;
+        let journal_path = directory.path.join("runtime-session-derived.json");
+        write_configured_journal(
+            &ProbeConfig {
+                journal_path: journal_path,
+                ..config.clone()
+            },
+            &valid_journal("durable-session", std::process::id(), 1),
+        );
+
+        run_with(&config, std::process::id()).expect("durable nonce should authorize fixture");
+        assert!(config.marker_path.exists());
+    }
+
+    #[test]
+    fn legacy_environment_nonce_crosscheck_accepts_exact_match() {
+        let journal = valid_journal("session-1", std::process::id(), 1);
+
+        assert_eq!(
+            durable_session_nonce(&journal, Some("session-1")),
+            Ok("session-1".into())
+        );
+    }
+
+    #[test]
+    fn legacy_environment_nonce_crosscheck_rejects_mismatch() {
+        let journal = valid_journal("durable-session", std::process::id(), 1);
+
+        assert_eq!(
+            durable_session_nonce(&journal, Some("session-1")),
+            Err(ProbeError::JournalRejected)
+        );
+    }
+
+    #[test]
+    fn missing_or_malformed_durable_nonce_fails_closed_before_marker() {
+        let directory = tempdir();
+        let config = config(&directory.path, "session-1", 0);
+        let mut journal = valid_journal("session-1", std::process::id(), 1);
+        journal
+            .as_object_mut()
+            .expect("journal object")
+            .remove("sessionNonce");
+        write_configured_journal(&config, &journal);
+        assert_eq!(
+            run_with(&config, std::process::id()),
+            Err(ProbeError::JournalRejected)
+        );
+
+        journal = valid_journal("session-1", std::process::id(), 1);
+        journal["sessionNonce"] = json!("durable nonce with spaces");
+        write_configured_journal(&config, &journal);
+        assert_eq!(
+            run_with(&config, std::process::id()),
+            Err(ProbeError::JournalRejected)
+        );
+        assert!(!config.marker_path.exists());
+    }
+
+    #[test]
+    fn multiple_runtime_journals_are_ambiguous_and_fail_closed() {
+        let directory = tempdir();
+        let mut config = config(&directory.path, "session-1", 0);
+        config.journal_path = directory.path.clone();
+        config.journal_path_is_directory = true;
+        for name in ["runtime-session-one.json", "runtime-session-two.json"] {
+            write_configured_journal(
+                &ProbeConfig {
+                    journal_path: directory.path.join(name),
+                    ..config.clone()
+                },
+                &valid_journal("session-1", std::process::id(), 1),
+            );
+        }
+
+        assert_eq!(
+            run_with(&config, std::process::id()),
+            Err(ProbeError::JournalRejected)
+        );
+        assert!(!config.marker_path.exists());
+    }
+
+    #[test]
     fn ready_state_is_rejected_without_marker() {
         let directory = tempdir();
         let config = config(&directory.path, "session-1", 0);
-        let mut journal = valid_journal(&config.session_nonce, std::process::id(), 1);
+        let mut journal = valid_journal(
+            config.session_nonce.as_deref().expect("session nonce"),
+            std::process::id(),
+            1,
+        );
         journal["state"] = json!("ready");
         write_configured_journal(&config, &journal);
         assert_eq!(
@@ -1120,7 +1245,11 @@ mod tests {
         config.port = 49153;
         write_configured_journal(
             &config,
-            &valid_journal(&config.session_nonce, std::process::id(), 1),
+            &valid_journal(
+                config.session_nonce.as_deref().expect("session nonce"),
+                std::process::id(),
+                1,
+            ),
         );
         assert_eq!(
             run_with(&config, std::process::id()),
@@ -1138,7 +1267,11 @@ mod tests {
             run_with(&config, std::process::id()),
             Err(ProbeError::JournalRejected)
         );
-        let mut journal = valid_journal(&config.session_nonce, std::process::id(), 1);
+        let mut journal = valid_journal(
+            config.session_nonce.as_deref().expect("session nonce"),
+            std::process::id(),
+            1,
+        );
         journal["unexpected"] = json!(true);
         write_configured_journal(&config, &journal);
         assert_eq!(
@@ -1158,7 +1291,11 @@ mod tests {
             run_with(&config, std::process::id()),
             Err(ProbeError::JournalRejected)
         );
-        journal = valid_journal(&config.session_nonce, std::process::id(), 1);
+        journal = valid_journal(
+            config.session_nonce.as_deref().expect("session nonce"),
+            std::process::id(),
+            1,
+        );
         write_configured_journal(&config, &journal);
         assert_eq!(
             run_with(
@@ -1185,7 +1322,11 @@ mod tests {
         let config = config(&directory.path, "session-1", 0);
         write_configured_journal(
             &config,
-            &valid_journal(&config.session_nonce, std::process::id(), 1),
+            &valid_journal(
+                config.session_nonce.as_deref().expect("session nonce"),
+                std::process::id(),
+                1,
+            ),
         );
         fs::write(&config.marker_path, b"foreign").expect("foreign marker");
         assert_eq!(
@@ -1336,7 +1477,11 @@ mod tests {
         config.http_mode = Some(HttpMode::Ready);
         config.token = Some("fixture-bearer-token-0123456789abcdef".into());
         config.http_listener_checkpoint_path = Some(directory.path.join("listener-bound.txt"));
-        let mut journal = valid_journal(&config.session_nonce, std::process::id(), 1);
+        let mut journal = valid_journal(
+            config.session_nonce.as_deref().expect("session nonce"),
+            std::process::id(),
+            1,
+        );
         journal["roots"][0]["loopbackPort"] = json!(port);
         write_configured_journal(&config, &journal);
         let server_config = config.clone();
