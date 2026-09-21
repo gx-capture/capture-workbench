@@ -8,10 +8,14 @@ See [SPEC](../SPECS/capture-runtime-042-publication-preflight.md) and
 - [x] Fresh producer/Cert/LAW analyses: 31m05s, 30m09s and 31m04s.
 - [x] Root resolves Nx targets and verifies remaining registry occupancy.
 - [x] Record user-selected JPEG and usability floor without claiming CER.
-- [ ] Obtain fresh standards/specification review of this bounded repair plan.
+- [x] Obtain first fresh standards/specification reviews (30m20s/30m30s), both
+  BLOCKED; preserve reports and incorporate their narrow amendments.
+- [ ] Obtain fresh review of the amended plan before implementation.
 - [ ] Fix PyPI pre-publication manifest/identity validation and ledger reuse.
 - [ ] Reuse exact package-candidate Python bytes in runtime candidates.
 - [ ] Repair LAW OCR failure privacy with sentinel regression coverage.
+- [ ] Repair production version inventory and preserve PyPI destination checks.
+- [ ] Correct the independently verified stale LAW fixed contract expectation.
 - [ ] Run producer promotion-registry/release-version tests and LAW Java tests
   through resolved uncached Nx targets; retain RED/GREEN evidence.
 - [ ] Fresh post-repair review; address blockers and commit each owned slice.

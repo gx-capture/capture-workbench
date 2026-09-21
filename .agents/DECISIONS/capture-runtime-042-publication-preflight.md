@@ -34,3 +34,15 @@
 
 This is a proposed bounded repair plan, not a completed release gate or a
 substitute for fresh review. Test/source evidence will be recorded in the TODO.
+
+## Amendments after independent review
+
+Both 30-minute reviews of `8b66098` reported BLOCKED. Root adopts their four
+concrete corrections: include inline full-release PyPI and affected caller
+inputs, reconcile remote bytes before upload, explicitly own production version
+inventory repair, and correct the independently verified stale LAW expectation.
+Keep Node 24 explicit and preserve existing Trusted Publishing action locations.
+The SPEC now states identity rows, preflight/record modes, substitution checks,
+remote retry/error cases and exact ownership. These are plan amendments only;
+fresh workers must review them before implementation. Previous BLOCKED reports
+are not converted into approvals.
