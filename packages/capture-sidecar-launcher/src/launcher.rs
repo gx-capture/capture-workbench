@@ -6651,11 +6651,7 @@ mod tests {
             failure.kind_for_test(),
             crate::process::RunningPromotionFailureKind::Cancelled
         );
-        assert!(
-            failure.detail_for_test().contains("AdmissionCancelled"),
-            "{}",
-            failure.detail_for_test()
-        );
+        assert!(failure.committed_candidate_for_test().is_none());
         let launching = failure.into_owner();
         assert_eq!(
             plan.context.store.read(&plan.value).expect("journal").state,

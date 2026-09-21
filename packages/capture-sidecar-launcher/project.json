@@ -24,7 +24,8 @@
       "executor": "nx:run-commands",
       "dependsOn": ["cargo-fixture-build"],
       "options": {
-        "command": "cargo test --manifest-path packages/capture-sidecar-launcher/Cargo.toml"
+        "command": "cargo test --manifest-path packages/capture-sidecar-launcher/Cargo.toml",
+        "env": { "RUST_TEST_THREADS": "4" }
       }
     },
     "cargo-fixture-build": {

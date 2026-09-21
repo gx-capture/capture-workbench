@@ -15,8 +15,8 @@ use crate::{
         TerminalProof,
     },
     journal_store::{
-        ActivationBudget, ActivationReconcileCasResult, ClosingCasError, ClosingCasResult,
-        JournalStore, JournalStoreError, RunningCasError, RunningCasResult, TerminalCasResult,
+        ActivationBudget, CasDisposition, ClosingCasError, JournalStore, JournalStoreError,
+        OwnedCasResult, RunningCasError,
     },
     prepare::ValidatedActivationContext,
     staging::{
@@ -24,6 +24,9 @@ use crate::{
         StagingReleasedObservation,
     },
 };
+
+#[cfg(windows)]
+use crate::journal_store::install_running_read_budget;
 
 #[cfg(windows)]
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -74,9 +77,6 @@ thread_local! {
 /// parallel.
 #[cfg(all(test, windows))]
 const HTTP_FIXTURE_CONCURRENCY_LIMIT: usize = 2;
-
-#[cfg(all(test, windows))]
-const HTTP_FIXTURE_PERMIT_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
 
 #[cfg(all(test, windows))]
 struct HttpFixtureLimiter {
@@ -137,6 +137,24 @@ impl HttpFixtureLimiter {
             limiter: Arc::clone(self),
         })
     }
+
+    fn acquire_available(self: &Arc<Self>) -> Result<HttpFixturePermit, HttpFixturePermitError> {
+        let mut available = self
+            .available
+            .lock()
+            .map_err(|_| HttpFixturePermitError::Poisoned)?;
+        while *available == 0 {
+            available = self
+                .wake
+                .wait(available)
+                .map_err(|_| HttpFixturePermitError::Poisoned)?;
+        }
+        *available -= 1;
+        drop(available);
+        Ok(HttpFixturePermit {
+            limiter: Arc::clone(self),
+        })
+    }
 }
 
 #[cfg(all(test, windows))]
@@ -148,9 +166,44 @@ impl Drop for HttpFixturePermit {
     }
 }
 
+// Admission belongs outside the scenario clock. The guard retains an unused
+// permit on early validation failure; native acquisition takes it exactly once.
+#[cfg(all(test, windows))]
+thread_local! {
+    static SCHEDULED_FIXTURES: std::cell::RefCell<std::collections::HashMap<usize, HttpFixturePermit>> = std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+#[cfg(all(test, windows))]
+struct ScheduledFixtureAdmission(usize);
+
+#[cfg(all(test, windows))]
+impl ScheduledFixtureAdmission {
+    fn new(store: &Arc<JournalStore>, permit: HttpFixturePermit) -> Self {
+        let key = Arc::as_ptr(store) as usize;
+        SCHEDULED_FIXTURES.with(|pending| {
+            assert!(
+                pending.borrow_mut().insert(key, permit).is_none(),
+                "duplicate fixture admission"
+            );
+        });
+        Self(key)
+    }
+
+    fn take(&self) -> Option<HttpFixturePermit> {
+        SCHEDULED_FIXTURES.with(|pending| pending.borrow_mut().remove(&self.0))
+    }
+}
+
+#[cfg(all(test, windows))]
+impl Drop for ScheduledFixtureAdmission {
+    fn drop(&mut self) {
+        self.take();
+    }
+}
+
 #[cfg(all(test, windows))]
 fn acquire_http_fixture_permit() -> Result<HttpFixturePermit, HttpFixturePermitError> {
-    http_fixture_limiter().acquire(HTTP_FIXTURE_PERMIT_WAIT)
+    http_fixture_limiter().acquire_available()
 }
 
 #[cfg(all(test, windows))]
@@ -497,15 +550,65 @@ struct GroupCleanupFailure {
 }
 
 /// The immutable journal context retained alongside a native owner.  Staging
-/// owns the activation context itself; keeping this exact candidate here lets
-/// a private failure path perform a full-candidate reconcile CAS without
-/// reopening a later record or reconstructing a permit.
+/// owns the activation context itself; keeping the exact predecessor and
+/// attempted candidate here lets a private failure path perform a full
+/// candidate reconcile decision without reopening a later record or
+/// reconstructing a permit.
 #[cfg(windows)]
 #[derive(Clone)]
 struct ActivationFailureJournalContext {
     store: Arc<JournalStore>,
     plan: JournalPlanValue,
+    predecessor: RuntimeSessionJournalV1,
     candidate: RuntimeSessionJournalV1,
+    disposition: CasDisposition,
+}
+
+#[cfg(windows)]
+fn record_owned_cas_context(
+    context: &mut ActivationFailureJournalContext,
+    outcome: &OwnedCasResult,
+) {
+    if outcome.disposition() == CasDisposition::Prewrite {
+        return;
+    }
+    context.predecessor = outcome.predecessor().clone();
+    context.candidate = outcome
+        .attempt()
+        .cloned()
+        .unwrap_or_else(|| outcome.predecessor().clone());
+    context.disposition = outcome.disposition();
+}
+
+// Durable evidence survives later authority/admission failure. Only the exact
+// retained attempt can retire ambiguity; a disk snapshot cannot invent one.
+#[cfg(windows)]
+fn confirm_retained_candidate(
+    context: &mut Option<ActivationFailureJournalContext>,
+    current: &RuntimeSessionJournalV1,
+) {
+    if let Some(context) = context.as_mut() {
+        if context.candidate == *current && context.disposition == CasDisposition::AmbiguousWrite {
+            context.disposition = CasDisposition::ConfirmedLate;
+        }
+    }
+}
+
+#[cfg(windows)]
+fn pending_successor(
+    context: &Option<ActivationFailureJournalContext>,
+    baseline: &RuntimeSessionJournalV1,
+    state: JournalState,
+) -> (Option<RuntimeSessionJournalV1>, Option<CasDisposition>) {
+    context
+        .as_ref()
+        .filter(|context| {
+            context.predecessor == *baseline
+                && context.candidate != *baseline
+                && context.candidate.state == state
+        })
+        .map(|context| (Some(context.candidate.clone()), Some(context.disposition)))
+        .unwrap_or((None, None))
 }
 
 #[cfg(windows)]
@@ -524,6 +627,7 @@ pub(crate) struct ActivationReconcileFailure {
     detail: String,
     owner: SuspendedActivationOwner,
     committed_candidate: Option<RuntimeSessionJournalV1>,
+    candidate_disposition: Option<CasDisposition>,
 }
 
 #[cfg(windows)]
@@ -697,6 +801,11 @@ pub(crate) struct ClosingActivationOwner {
 struct NativeCleanupProof {
     job_nonce: NativeNonce,
     roots: Vec<NativeCleanupRootProof>,
+    /// Activation-failure cleanup may complete with no root identity (for
+    /// example when CreateProcess succeeded but identity capture failed).
+    /// Such evidence is usable only to retain the activation owner for
+    /// reconciliation; normal Closing/Terminal proof must remain complete.
+    activation_failure_only: bool,
 }
 
 #[cfg(windows)]
@@ -785,6 +894,11 @@ pub(crate) struct TerminalJoinFailure {
     kind: TerminalJoinFailureKind,
     detail: String,
     owner: ClosingActivationOwner,
+    /// The exact Terminal value when the final CAS committed after the
+    /// authority budget. Retry validates this value by full read-back and
+    /// never issues another Terminal CAS.
+    committed_candidate: Option<RuntimeSessionJournalV1>,
+    candidate_disposition: Option<CasDisposition>,
 }
 
 #[cfg(windows)]
@@ -866,6 +980,11 @@ pub(crate) struct ClosingTransitionFailure {
     kind: ClosingTransitionFailureKind,
     detail: String,
     owner: RunningActivationOwner,
+    /// The exact Closing value when the CAS committed before authority was
+    /// withheld. Retry adopts it only after full read-back, without a second
+    /// CAS.
+    committed_candidate: Option<RuntimeSessionJournalV1>,
+    candidate_disposition: Option<CasDisposition>,
 }
 
 #[cfg(windows)]
@@ -909,6 +1028,7 @@ pub(crate) struct RunningPromotionFailure {
     /// check failed.  This is retained privately so reconciliation can use the
     /// known candidate without reopening arbitrary disk state.
     committed_candidate: Option<RuntimeSessionJournalV1>,
+    candidate_disposition: Option<CasDisposition>,
 }
 
 #[cfg(windows)]
@@ -1142,6 +1262,7 @@ fn private_failure_from_running_promotion_failure(
         detail,
         mut owner,
         committed_candidate,
+        candidate_disposition,
     } = failure;
     // A late Running CAS can leave the durable state one phase ahead of the
     // retained Launching owner.  Install that exact candidate before forced
@@ -1150,6 +1271,7 @@ fn private_failure_from_running_promotion_failure(
     if let Some(candidate) = committed_candidate {
         if let Some(context) = owner.owner.failure_context.as_mut() {
             context.candidate = candidate;
+            context.disposition = candidate_disposition.unwrap_or(CasDisposition::ConfirmedLate);
         }
     }
     let kind = match kind {
@@ -1225,11 +1347,6 @@ fn private_failure_after_cleanup(
     owner: SuspendedActivationOwner,
     budget: &ActivationBudget,
 ) -> PrivateActivationFailure {
-    let known_running_candidate = owner
-        .failure_context
-        .as_ref()
-        .filter(|context| context.candidate.state == JournalState::Running)
-        .map(|context| context.candidate.clone());
     match owner.cleanup_and_reconcile(budget) {
         Ok(reconciled) => PrivateActivationFailure {
             kind: original_kind,
@@ -1244,7 +1361,7 @@ fn private_failure_after_cleanup(
                 failure.detail
             ),
             owner: Some(PrivateActivationFailureOwner::Suspended(failure.owner)),
-            committed_candidate: failure.committed_candidate.or(known_running_candidate),
+            committed_candidate: failure.committed_candidate,
         },
     }
 }
@@ -1394,10 +1511,10 @@ impl SuspendedActivationOwner {
         ) {
             Ok(ready) => ready,
             Err(error) => {
-                let (staging_kind, detail, committed_candidate) = error.into_parts();
-                if let Some(candidate) = committed_candidate {
+                let (staging_kind, detail, cas_outcome) = error.into_cas_parts();
+                if let Some(outcome) = cas_outcome {
                     if let Some(context) = self.failure_context.as_mut() {
-                        context.candidate = candidate;
+                        record_owned_cas_context(context, &outcome);
                     }
                 }
                 return Err(SuspendedActivationFailure {
@@ -1413,6 +1530,7 @@ impl SuspendedActivationOwner {
         // snapshot.
         if let Some(context) = self.failure_context.as_mut() {
             context.candidate = ready_journal.clone();
+            context.disposition = CasDisposition::Committed;
         }
         #[cfg(all(test, windows))]
         if CANCEL_AFTER_READY_HELPER.with(|cancel| cancel.replace(false)) {
@@ -1560,6 +1678,14 @@ impl SuspendedActivationOwner {
     pub(crate) fn inject_native_cleanup_failure_for_test(&mut self) {
         let native = self.native.as_mut().expect("native owner");
         native.inject_cleanup_failure_after_first_for_test();
+    }
+
+    #[cfg(all(test, windows))]
+    pub(crate) fn inject_job_termination_failure_for_test(&mut self) {
+        self.native
+            .as_mut()
+            .expect("native owner")
+            .inject_job_termination_failure_for_test();
     }
 
     #[cfg(test)]
@@ -1755,10 +1881,10 @@ impl ReadySuspendedActivationOwner {
             ) {
                 Ok(journal) => journal,
                 Err(error) => {
-                    let (staging_kind, detail, committed_candidate) = error.into_parts();
-                    if let Some(candidate) = committed_candidate {
+                    let (staging_kind, detail, cas_outcome) = error.into_cas_parts();
+                    if let Some(outcome) = cas_outcome {
                         if let Some(context) = ready.owner.failure_context.as_mut() {
-                            context.candidate = candidate;
+                            record_owned_cas_context(context, &outcome);
                         }
                     }
                     return Err(ActivationLaunchFailure {
@@ -1788,6 +1914,7 @@ impl ReadySuspendedActivationOwner {
             let mut owner = ready.owner;
             if let Some(context) = owner.failure_context.as_mut() {
                 context.candidate = launching_journal.clone();
+                context.disposition = CasDisposition::Committed;
             }
             return Err(ActivationLaunchFailure {
                 kind,
@@ -1806,6 +1933,7 @@ impl ReadySuspendedActivationOwner {
         }
         if let Some(context) = ready.owner.failure_context.as_mut() {
             context.candidate = launching_journal.clone();
+            context.disposition = CasDisposition::Committed;
         }
 
         #[cfg(all(test, windows))]
@@ -2318,31 +2446,25 @@ impl LaunchingActivationOwner {
             staging_binding: Some(final_staging),
             roots,
         };
-        let result = match self.owner.staging.persist_running_admission(
+        let result = self.owner.staging.persist_running_admission_owned(
             admission,
             &self.launching_journal,
             observation,
             timestamp,
-        ) {
-            Ok(result) => result,
-            Err(cause) => {
-                return Err(running_promotion_failure_for_cas(
-                    self,
-                    cause,
-                    "Capture runtime Running journal CAS failed.",
-                ));
-            }
-        };
-        let running_journal = match result {
-            RunningCasResult::Committed(journal) => {
+        );
+        if let Some(context) = self.owner.failure_context.as_mut() {
+            record_owned_cas_context(context, &result);
+        }
+        let running_journal = match result.disposition() {
+            CasDisposition::Committed => {
                 #[cfg(all(test, windows))]
                 if let Some(hook) = self.running_commit_hook.take() {
                     hook.reached.store(true, Ordering::Release);
                     hook.cancel.cancel();
                 }
-                journal
+                result.attempt().cloned().expect("running candidate")
             }
-            RunningCasResult::CommittedAfterBudget(candidate) => {
+            CasDisposition::ConfirmedLate => {
                 // The exact Running record is durable, but cancellation or
                 // deadline was observed before authority issuance.  Keep the
                 // Launching owner and leave the disk record for reconciliation;
@@ -2355,7 +2477,14 @@ impl LaunchingActivationOwner {
                 return Err(running_promotion_failure_with_candidate(
                     self,
                     detail,
-                    Some(candidate),
+                    result.attempt().cloned(),
+                ));
+            }
+            CasDisposition::Prewrite | CasDisposition::AmbiguousWrite => {
+                return Err(running_promotion_failure_for_owned(
+                    self,
+                    result,
+                    "Capture runtime Running journal CAS failed.",
                 ));
             }
         };
@@ -2579,6 +2708,11 @@ impl LaunchingActivationOwner {
     pub(crate) fn inject_native_cleanup_failure_for_test(&mut self) {
         self.owner.inject_native_cleanup_failure_for_test();
     }
+
+    #[cfg(all(test, windows))]
+    pub(crate) fn inject_job_termination_failure_for_test(&mut self) {
+        self.owner.inject_job_termination_failure_for_test();
+    }
 }
 
 #[cfg(windows)]
@@ -2700,30 +2834,41 @@ impl RunningActivationOwner {
             ));
         }
 
-        let result = match self.owner.staging.persist_closing_admission(
+        let result = self.owner.staging.persist_closing_admission_owned(
             admission,
             &self.running_journal,
             observation,
             timestamp,
-        ) {
-            Ok(result) => result,
-            Err(cause) => {
-                return Err(closing_transition_failure_for_cas(
-                    self,
-                    cause,
-                    "Capture runtime Closing journal CAS was ambiguous; no Closing authority was issued and the disk state (possibly Closing) requires reconciliation.",
-                ));
-            }
-        };
-        let closing_journal = match result {
-            ClosingCasResult::Committed(journal) => journal,
-            ClosingCasResult::CommittedAfterBudget(_) => {
+        );
+        if let Some(context) = self.owner.failure_context.as_mut() {
+            record_owned_cas_context(context, &result);
+        }
+        let closing_journal = match result.disposition() {
+            CasDisposition::Committed => result.attempt().cloned().expect("closing candidate"),
+            CasDisposition::ConfirmedLate => {
                 let detail = if cancellation.load(Ordering::Acquire) {
                     "Capture runtime Closing CAS completed after cancellation; the durable Closing record remains for reconciliation."
                 } else {
                     "Capture runtime Closing CAS completed after its deadline; the durable Closing record remains for reconciliation."
                 };
-                return Err(closing_transition_failure(self, detail));
+                return Err(ClosingTransitionFailure {
+                    kind: if cancellation.load(Ordering::Acquire) {
+                        ClosingTransitionFailureKind::Cancelled
+                    } else {
+                        ClosingTransitionFailureKind::Deadline
+                    },
+                    detail: detail.into(),
+                    owner: self,
+                    committed_candidate: result.attempt().cloned(),
+                    candidate_disposition: Some(CasDisposition::ConfirmedLate),
+                });
+            }
+            CasDisposition::Prewrite | CasDisposition::AmbiguousWrite => {
+                return Err(closing_transition_failure_for_owned(
+                    self,
+                    result,
+                    "Capture runtime Closing journal CAS was ambiguous; no Closing authority was issued and the disk state (possibly Closing) requires reconciliation.",
+                ));
             }
         };
         if let Err(detail) = check_running_promotion_budget(deadline, cancellation.as_ref()) {
@@ -2731,7 +2876,17 @@ impl RunningActivationOwner {
             // owner boundary has not been issued.  Keep the original Running
             // owner so reconciliation can account for the disk Closing
             // intent without fabricating a typed Closing authority.
-            return Err(closing_transition_failure(self, detail));
+            return Err(ClosingTransitionFailure {
+                kind: if cancellation.load(Ordering::Acquire) {
+                    ClosingTransitionFailureKind::Cancelled
+                } else {
+                    ClosingTransitionFailureKind::Deadline
+                },
+                detail,
+                owner: self,
+                committed_candidate: Some(closing_journal),
+                candidate_disposition: Some(CasDisposition::ConfirmedLate),
+            });
         }
 
         Ok(ClosingActivationOwner {
@@ -3211,6 +3366,13 @@ impl ClosingActivationOwner {
                 ));
             }
         };
+        if native_proof.activation_failure_only || native_proof.roots.is_empty() {
+            return Err(terminal_join_failure(
+                self,
+                TerminalJoinFailureKind::Validation,
+                "Capture runtime terminalization lacked complete native identity proof.",
+            ));
+        }
         if let Err(detail) = check_native_cleanup_budget(deadline, Some(cancellation.as_ref())) {
             return Err(terminal_join_failure(
                 self,
@@ -3480,37 +3642,45 @@ impl ClosingActivationOwner {
         if let Err(cause) = admission.check_budget() {
             return Err(terminal_join_failure_for_store(self, cause));
         }
-        let result = match admission.commit_terminal(observation, timestamp) {
-            Ok(result) => result,
-            Err(cause) => return Err(terminal_join_failure_for_store(self, cause)),
-        };
-        match result {
-            TerminalCasResult::Committed(terminal_journal) => {
+        let result = admission.commit_terminal_owned(observation, timestamp);
+        match result.disposition() {
+            CasDisposition::Committed => {
+                let terminal_journal = result.attempt().cloned().expect("terminal candidate");
                 if let Err(detail) = check_native_cleanup_budget(
                     deadline,
                     Some(cancellation.as_ref()),
                 ) {
-                    return Err(terminal_join_failure(
+                    return Err(terminal_join_failure_with_candidate(
                         self,
                         TerminalJoinFailureKind::CommittedAfterBudget,
                         format!(
                             "Capture runtime terminal journal committed at revision {} after the authority budget ended ({detail}); terminal authority was withheld for reconciliation.",
                             terminal_journal.journal_revision
                         ),
+                        terminal_journal,
                     ));
                 }
                 Ok(TerminalizedActivationOwner { terminal_journal })
             }
-            TerminalCasResult::CommittedAfterBudget(terminal_journal) => {
-                Err(terminal_join_failure(
+            CasDisposition::ConfirmedLate => {
+                let terminal_journal = result.attempt().cloned().expect("late terminal candidate");
+                Err(terminal_join_failure_with_candidate(
                     self,
                     TerminalJoinFailureKind::CommittedAfterBudget,
                     format!(
                         "Capture runtime terminal journal committed at revision {} after the authority budget ended; terminal authority was withheld for reconciliation.",
                         terminal_journal.journal_revision
                     ),
+                    terminal_journal,
                 ))
             }
+            CasDisposition::Prewrite | CasDisposition::AmbiguousWrite => Err(
+                terminal_join_failure_for_owned(
+                    self,
+                    result,
+                    "Capture runtime terminal journal write remained unconfirmed; terminal authority was withheld for reconciliation.",
+                ),
+            ),
         }
     }
 
@@ -3609,6 +3779,11 @@ impl ClosingActivationOwner {
     pub(crate) fn inject_native_cleanup_failure_for_test(&mut self) {
         let native = self.owner.native.as_mut().expect("native owner");
         native.inject_cleanup_failure_after_first_for_test();
+    }
+
+    #[cfg(all(test, windows))]
+    pub(crate) fn inject_job_termination_failure_for_test(&mut self) {
+        self.owner.inject_job_termination_failure_for_test();
     }
 
     #[cfg(test)]
@@ -3852,10 +4027,17 @@ fn closing_transition_failure(
     } else {
         ClosingTransitionFailureKind::Validation
     };
+    let (committed_candidate, candidate_disposition) = pending_successor(
+        &owner.owner.failure_context,
+        &owner.running_journal,
+        JournalState::Closing,
+    );
     ClosingTransitionFailure {
         kind,
         detail,
         owner,
+        committed_candidate,
+        candidate_disposition,
     }
 }
 
@@ -3871,10 +4053,46 @@ fn closing_transition_failure_for_cas(
         ClosingCasError::Conflict => ClosingTransitionFailureKind::Conflict,
         ClosingCasError::Storage => ClosingTransitionFailureKind::Storage,
     };
+    let (committed_candidate, candidate_disposition) = pending_successor(
+        &owner.owner.failure_context,
+        &owner.running_journal,
+        JournalState::Closing,
+    );
     ClosingTransitionFailure {
         kind,
         detail: detail.to_owned(),
         owner,
+        committed_candidate,
+        candidate_disposition,
+    }
+}
+
+#[cfg(windows)]
+fn closing_transition_failure_for_owned(
+    mut owner: RunningActivationOwner,
+    outcome: OwnedCasResult,
+    detail: &str,
+) -> ClosingTransitionFailure {
+    if let Some(context) = owner.owner.failure_context.as_mut() {
+        record_owned_cas_context(context, &outcome);
+    }
+    let kind = match outcome.error() {
+        Some(JournalStoreError::AdmissionCancelled) => ClosingTransitionFailureKind::Cancelled,
+        Some(JournalStoreError::AdmissionDeadline) => ClosingTransitionFailureKind::Deadline,
+        Some(JournalStoreError::Conflict) => ClosingTransitionFailureKind::Conflict,
+        _ => ClosingTransitionFailureKind::Storage,
+    };
+    let (committed_candidate, candidate_disposition) = pending_successor(
+        &owner.owner.failure_context,
+        &owner.running_journal,
+        JournalState::Closing,
+    );
+    ClosingTransitionFailure {
+        kind,
+        detail: detail.to_owned(),
+        owner,
+        committed_candidate,
+        candidate_disposition,
     }
 }
 
@@ -3915,6 +4133,9 @@ fn running_promotion_failure_with_candidate(
     committed_candidate: Option<RuntimeSessionJournalV1>,
 ) -> RunningPromotionFailure {
     let detail = detail.into();
+    let candidate_disposition = committed_candidate
+        .as_ref()
+        .map(|_| CasDisposition::ConfirmedLate);
     let lower = detail.to_ascii_lowercase();
     let kind = if lower.contains("cancel") {
         RunningPromotionFailureKind::Cancelled
@@ -3932,6 +4153,31 @@ fn running_promotion_failure_with_candidate(
         detail,
         owner,
         committed_candidate,
+        candidate_disposition,
+    }
+}
+
+#[cfg(windows)]
+fn running_promotion_failure_for_owned(
+    mut owner: LaunchingActivationOwner,
+    outcome: OwnedCasResult,
+    detail: &str,
+) -> RunningPromotionFailure {
+    if let Some(context) = owner.owner.failure_context.as_mut() {
+        record_owned_cas_context(context, &outcome);
+    }
+    let kind = match outcome.error() {
+        Some(JournalStoreError::AdmissionCancelled) => RunningPromotionFailureKind::Cancelled,
+        Some(JournalStoreError::AdmissionDeadline) => RunningPromotionFailureKind::Deadline,
+        Some(JournalStoreError::Conflict) => RunningPromotionFailureKind::Storage,
+        _ => RunningPromotionFailureKind::Storage,
+    };
+    RunningPromotionFailure {
+        kind,
+        detail: detail.to_owned(),
+        owner,
+        committed_candidate: outcome.attempt().cloned(),
+        candidate_disposition: Some(outcome.disposition()),
     }
 }
 
@@ -3941,11 +4187,56 @@ fn terminal_join_failure(
     kind: TerminalJoinFailureKind,
     detail: impl Into<String>,
 ) -> TerminalJoinFailure {
+    let (committed_candidate, candidate_disposition) = pending_successor(
+        &owner.owner.failure_context,
+        &owner.closing_journal,
+        JournalState::Terminal,
+    );
     TerminalJoinFailure {
         kind,
         detail: detail.into(),
         owner,
+        committed_candidate,
+        candidate_disposition,
     }
+}
+
+#[cfg(windows)]
+fn terminal_join_failure_with_candidate(
+    mut owner: ClosingActivationOwner,
+    kind: TerminalJoinFailureKind,
+    detail: impl Into<String>,
+    committed_candidate: RuntimeSessionJournalV1,
+) -> TerminalJoinFailure {
+    if let Some(context) = owner.owner.failure_context.as_mut() {
+        context.predecessor = owner.closing_journal.clone();
+        context.candidate = committed_candidate.clone();
+        context.disposition = CasDisposition::ConfirmedLate;
+    }
+    TerminalJoinFailure {
+        kind,
+        detail: detail.into(),
+        owner,
+        committed_candidate: Some(committed_candidate),
+        candidate_disposition: Some(CasDisposition::ConfirmedLate),
+    }
+}
+
+#[cfg(windows)]
+fn terminal_join_failure_for_owned(
+    mut owner: ClosingActivationOwner,
+    outcome: OwnedCasResult,
+    detail: &str,
+) -> TerminalJoinFailure {
+    if let Some(context) = owner.owner.failure_context.as_mut() {
+        record_owned_cas_context(context, &outcome);
+    }
+    let mut failure = match outcome.error().cloned() {
+        Some(error) => terminal_join_failure_for_store(owner, error),
+        None => terminal_join_failure(owner, TerminalJoinFailureKind::Storage, detail),
+    };
+    failure.detail = detail.to_owned();
+    failure
 }
 
 #[cfg(windows)]
@@ -4042,6 +4333,7 @@ fn running_promotion_failure_for_cas(
         detail,
         owner,
         committed_candidate: None,
+        candidate_disposition: None,
     }
 }
 
@@ -4729,6 +5021,7 @@ impl SuspendedGroup {
         Ok(NativeCleanupProof {
             job_nonce: self.job_nonce,
             roots,
+            activation_failure_only: false,
         })
     }
 
@@ -4757,13 +5050,51 @@ impl SuspendedGroup {
     ) -> Result<NativeCleanupProof, String> {
         if self.cleanup_complete {
             return self
-                .retained_cleanup_proof()
+                .retained_activation_cleanup_proof()
                 .ok_or_else(|| "Capture runtime native cleanup proof was incomplete.".into());
         }
         let _proof = self.cleanup_inner_for_activation_failure(deadline)?;
         self.cleanup_complete = true;
-        self.retained_cleanup_proof()
+        self.retained_activation_cleanup_proof()
             .ok_or_else(|| "Capture runtime native cleanup proof was incomplete.".into())
+    }
+
+    /// Project only the evidence needed to retain an activation-failure owner.
+    /// Every retained Child has already been terminated and waited by
+    /// `cleanup_inner_for_activation_failure`, and the Job has reported zero
+    /// active processes. Unknown identities are intentionally omitted: this
+    /// method never invents a creation identity or reacquires a PID.
+    fn retained_activation_cleanup_proof(&mut self) -> Option<NativeCleanupProof> {
+        if !self.cleanup_complete
+            || self
+                .job
+                .as_ref()
+                .and_then(|job| job.active_processes().ok())
+                != Some(0)
+            || self
+                .roots
+                .iter_mut()
+                .any(|root| root.child.try_wait().ok().flatten().is_none())
+        {
+            return None;
+        }
+        let roots = self
+            .roots
+            .iter()
+            .enumerate()
+            .filter_map(|(index, root)| {
+                Some(NativeCleanupRootProof {
+                    ordinal: u32::try_from(index).ok()?,
+                    root_nonce: root.root_nonce,
+                    identity: root.identity?,
+                })
+            })
+            .collect();
+        Some(NativeCleanupProof {
+            job_nonce: self.job_nonce,
+            roots,
+            activation_failure_only: true,
+        })
     }
 
     fn retained_cleanup_proof(&self) -> Option<NativeCleanupProof> {
@@ -4788,6 +5119,7 @@ impl SuspendedGroup {
         Some(NativeCleanupProof {
             job_nonce: self.job_nonce,
             roots,
+            activation_failure_only: false,
         })
     }
 
@@ -5154,9 +5486,17 @@ impl SuspendedGroup {
         cancellation: Option<&AtomicBool>,
         force_job_termination: bool,
     ) -> Result<GroupCleanupProof, String> {
-        if force_job_termination {
-            let _ = self.job.as_mut().expect("group Job").terminate();
+        let force_termination_error = if force_job_termination {
+            // Keep the Job result separate from per-root cleanup. Exact Child
+            // handles still have to be waited even when the native Job call
+            // fails, but a zero active-process count alone must never be
+            // treated as proof that the Job termination itself succeeded.
+            self.job.as_mut().expect("group Job").terminate().err()
+        } else {
+            None
+        };
 
+        if force_job_termination {
             // A root created immediately before the budget check may still be
             // outside the Job and have no captured identity.  Start a kill
             // through every retained exact Child handle before consulting the
@@ -5192,6 +5532,9 @@ impl SuspendedGroup {
             if let Some(error) = first_error {
                 return Err(error);
             }
+            if let Some(error) = force_termination_error {
+                return Err(error);
+            }
         }
         check_native_cleanup_budget(deadline, cancellation)?;
         #[cfg(test)]
@@ -5199,7 +5542,14 @@ impl SuspendedGroup {
             self.cleanup_attempts = self.cleanup_attempts.saturating_add(1);
         }
         let job = self.job.as_mut().expect("group Job");
-        let _job_terminated = force_job_termination || job.terminate().is_ok();
+        // A zero active-process count proves only that no members remain in
+        // the Job. It cannot prove that the required Job termination call
+        // succeeded. Keep the owner and withhold all normal cleanup proof
+        // when that native call fails; a fresh retry may then repeat the exact
+        // Job and Child handle sequence.
+        if !force_job_termination {
+            job.terminate()?;
+        }
         if !force_job_termination {
             for (index, root) in self.roots.iter_mut().enumerate() {
                 check_native_cleanup_budget(deadline, cancellation)?;
@@ -5268,6 +5618,14 @@ impl SuspendedGroup {
     #[cfg(test)]
     fn inject_cleanup_failure_after_first_for_test(&mut self) {
         self.cleanup_failure_at = Some(1);
+    }
+
+    #[cfg(all(test, windows))]
+    fn inject_job_termination_failure_for_test(&mut self) {
+        self.job
+            .as_mut()
+            .expect("group Job")
+            .inject_termination_failure();
     }
 
     #[cfg(test)]
@@ -5883,13 +6241,21 @@ fn acquire_suspended_for_activation_inner(
     let failure_context = Some(ActivationFailureJournalContext {
         store: Arc::clone(&activation.context.store),
         plan: activation.journal_plan.clone(),
+        predecessor: activation.expected_journal.clone(),
         candidate: activation.expected_journal.clone(),
+        disposition: CasDisposition::Prewrite,
     });
     #[cfg(all(test, windows))]
     let http_fixture_permit = if activation.descriptor.readiness_schema_context(0).is_some() {
-        let permit = match budget {
-            Some(budget) => acquire_http_fixture_permit_with_budget(budget),
-            None => acquire_http_fixture_permit(),
+        let scheduled = SCHEDULED_FIXTURES.with(|pending| {
+            pending
+                .borrow_mut()
+                .remove(&(Arc::as_ptr(&activation.context.store) as usize))
+        });
+        let permit = match (scheduled, budget) {
+            (Some(permit), _) => Ok(permit),
+            (None, Some(budget)) => acquire_http_fixture_permit_with_budget(budget),
+            (None, None) => acquire_http_fixture_permit(),
         };
         match permit {
             Ok(permit) => Some(permit),
@@ -6173,8 +6539,12 @@ impl SuspendedActivationOwner {
                     return Err(ActivationReconcileFailure {
                         kind: ActivationReconcileFailureKind::Cleanup,
                         detail,
+                        committed_candidate: self
+                            .failure_context
+                            .as_ref()
+                            .map(|c| c.candidate.clone()),
+                        candidate_disposition: self.failure_context.as_ref().map(|c| c.disposition),
                         owner: self,
-                        committed_candidate: None,
                     });
                 }
                 self.native_cleanup_proven = true;
@@ -6187,12 +6557,27 @@ impl SuspendedActivationOwner {
         #[cfg(all(test, windows))]
         self.release_http_fixture_permit_after_native_cleanup();
 
+        let no_cancellation = AtomicBool::new(false);
+        if let Err(detail) = self
+            .staging
+            .validate_reconcile_retained_scope(budget.deadline(), &no_cancellation)
+        {
+            return Err(ActivationReconcileFailure {
+                kind: ActivationReconcileFailureKind::Cleanup,
+                detail,
+                committed_candidate: self.failure_context.as_ref().map(|c| c.candidate.clone()),
+                candidate_disposition: self.failure_context.as_ref().map(|c| c.disposition),
+                owner: self,
+            });
+        }
+
         if let Err(error) = budget.check_deadline() {
             return Err(ActivationReconcileFailure {
                 kind: ActivationReconcileFailureKind::Deadline,
                 detail: activation_budget_error_detail(error),
+                committed_candidate: self.failure_context.as_ref().map(|c| c.candidate.clone()),
+                candidate_disposition: self.failure_context.as_ref().map(|c| c.disposition),
                 owner: self,
-                committed_candidate: None,
             });
         }
         let timestamp = match self.staging.next_timestamp() {
@@ -6201,8 +6586,9 @@ impl SuspendedActivationOwner {
                 return Err(ActivationReconcileFailure {
                     kind: ActivationReconcileFailureKind::Validation,
                     detail,
+                    committed_candidate: self.failure_context.as_ref().map(|c| c.candidate.clone()),
+                    candidate_disposition: self.failure_context.as_ref().map(|c| c.disposition),
                     owner: self,
-                    committed_candidate: None,
                 });
             }
         };
@@ -6210,21 +6596,76 @@ impl SuspendedActivationOwner {
             return Err(ActivationReconcileFailure {
                 kind: ActivationReconcileFailureKind::Deadline,
                 detail: activation_budget_error_detail(error),
+                committed_candidate: self.failure_context.as_ref().map(|c| c.candidate.clone()),
+                candidate_disposition: self.failure_context.as_ref().map(|c| c.disposition),
                 owner: self,
-                committed_candidate: None,
             });
         }
         let Some(context) = self.failure_context.clone() else {
             return Err(ActivationReconcileFailure {
                 kind: ActivationReconcileFailureKind::Validation,
                 detail: "Capture runtime activation reconcile context was unavailable.".into(),
+                committed_candidate: self.failure_context.as_ref().map(|c| c.candidate.clone()),
+                candidate_disposition: self.failure_context.as_ref().map(|c| c.disposition),
                 owner: self,
-                committed_candidate: None,
             });
         };
+        let reconcile_read_cancellation = Arc::new(AtomicBool::new(false));
+        let _read_budget = install_running_read_budget(
+            budget.deadline(),
+            Arc::clone(&reconcile_read_cancellation),
+        );
+        let current = match context.store.read_durable(&context.plan) {
+            Ok(current) => current,
+            Err(error) => {
+                return Err(ActivationReconcileFailure {
+                    kind: activation_reconcile_failure_kind(&error),
+                    detail: "Capture runtime activation reconcile could not validate its durable predecessor or candidate.".into(),
+                    committed_candidate: self.failure_context.as_ref().map(|c| c.candidate.clone()),
+                    candidate_disposition: self.failure_context.as_ref().map(|c| c.disposition),
+                    owner: self,
+                });
+            }
+        };
+        let expected = if current == context.candidate {
+            confirm_retained_candidate(&mut self.failure_context, &current);
+            context.candidate.clone()
+        } else if current == context.predecessor
+            && context.disposition == CasDisposition::AmbiguousWrite
+        {
+            context.predecessor.clone()
+        } else {
+            return Err(ActivationReconcileFailure {
+                kind: ActivationReconcileFailureKind::Conflict,
+                detail: "Capture runtime activation reconcile found an unknown or conflicting durable journal state.".into(),
+                committed_candidate: self.failure_context.as_ref().map(|c| c.candidate.clone()),
+                candidate_disposition: self.failure_context.as_ref().map(|c| c.disposition),
+                owner: self,
+            });
+        };
+        // A durable ReconcileRequired candidate is already the requested
+        // state. Native cleanup plus retained staging proves semantic
+        // adoption; repeating Reconcile -> Reconcile CAS would create a
+        // second authority edge.
+        if expected.state == JournalState::ReconcileRequired {
+            if let Err(error) = budget.check_deadline() {
+                return Err(ActivationReconcileFailure {
+                    kind: ActivationReconcileFailureKind::Deadline,
+                    detail: activation_budget_error_detail(error),
+                    committed_candidate: Some(expected),
+                    candidate_disposition: self.failure_context.as_ref().map(|c| c.disposition),
+                    owner: self,
+                });
+            }
+            drop(_read_budget);
+            return Ok(ReconciledActivationOwner {
+                journal: expected,
+                owner: self,
+            });
+        }
         let admission = match context.store.begin_activation_reconcile(
             &context.plan,
-            &context.candidate,
+            &expected,
             budget.deadline(),
         ) {
             Ok(admission) => admission,
@@ -6234,32 +6675,43 @@ impl SuspendedActivationOwner {
                     detail: format!(
                         "Capture runtime activation reconcile admission failed: {error:?}."
                     ),
+                    committed_candidate: self.failure_context.as_ref().map(|c| c.candidate.clone()),
+                    candidate_disposition: self.failure_context.as_ref().map(|c| c.disposition),
                     owner: self,
-                    committed_candidate: None,
                 });
             }
         };
-        match admission.commit_reconcile_required(timestamp) {
-            Ok(ActivationReconcileCasResult::Committed(journal)) => {
-                Ok(ReconciledActivationOwner {
-                    journal,
-                    owner: self,
-                })
-            }
-            Ok(ActivationReconcileCasResult::CommittedAfterBudget(journal)) => {
-                Err(ActivationReconcileFailure {
-                    kind: ActivationReconcileFailureKind::Deadline,
-                    detail: "Capture runtime activation reconcile committed after its absolute deadline; durable state is retained without reconcile authority.".into(),
-                    owner: self,
-                    committed_candidate: Some(journal),
-                })
-            }
-            Err(error) => Err(ActivationReconcileFailure {
-                kind: activation_reconcile_failure_kind(&error),
-                detail: format!("Capture runtime activation reconcile CAS failed: {error:?}."),
+        drop(_read_budget);
+        let outcome = admission.commit_reconcile_required_owned(timestamp);
+        if let Some(context) = self.failure_context.as_mut() {
+            record_owned_cas_context(context, &outcome);
+        }
+        match outcome.disposition() {
+            CasDisposition::Committed => Ok(ReconciledActivationOwner {
+                journal: outcome.attempt().cloned().expect("reconcile candidate"),
                 owner: self,
-                committed_candidate: None,
             }),
+            CasDisposition::ConfirmedLate
+            | CasDisposition::AmbiguousWrite
+            | CasDisposition::Prewrite => {
+                let kind = match outcome.error() {
+                    Some(error) => activation_reconcile_failure_kind(error),
+                    None => ActivationReconcileFailureKind::Deadline,
+                };
+                let detail = match outcome.disposition() {
+                    CasDisposition::ConfirmedLate => "Capture runtime activation reconcile committed after its absolute deadline; durable state is retained without reconcile authority.".into(),
+                    CasDisposition::AmbiguousWrite => "Capture runtime activation reconcile write remained unconfirmed; durable state is retained without reconcile authority.".into(),
+                    CasDisposition::Prewrite => format!("Capture runtime activation reconcile CAS failed: {:?}.", outcome.error()),
+                    CasDisposition::Committed => unreachable!(),
+                };
+                Err(ActivationReconcileFailure {
+                    kind,
+                    detail,
+                    committed_candidate: self.failure_context.as_ref().map(|c| c.candidate.clone()),
+                    candidate_disposition: self.failure_context.as_ref().map(|c| c.disposition),
+                    owner: self,
+                })
+            }
         }
     }
 
@@ -6600,7 +7052,1536 @@ impl fmt::Display for RuntimeCleanupError {
 
 impl std::error::Error for RuntimeCleanupError {}
 
-/// Fail-closed evidence returned after one launch attempt has been stopped.
+/// Semantic lifecycle state exposed by the public group lease.
+///
+/// The native process, listener, journal, and staging identities remain
+/// producer-private.  This state is deliberately small so a host can decide
+/// whether to continue a normal lifecycle operation without acquiring any
+/// cleanup authority of its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GroupLifecycleState {
+    Running,
+    Closing,
+    Terminal,
+}
+
+/// Read-only semantic observation of a live group.  It contains no native
+/// identifiers, paths, tokens, journal values, or proof objects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GroupObservation {
+    state: GroupLifecycleState,
+    root_count: usize,
+    roots_ready: bool,
+    listeners_bound: bool,
+}
+
+impl GroupObservation {
+    pub fn state(&self) -> GroupLifecycleState {
+        self.state
+    }
+
+    pub fn root_count(&self) -> usize {
+        self.root_count
+    }
+
+    pub fn roots_ready(&self) -> bool {
+        self.roots_ready
+    }
+
+    pub fn all_roots_ready(&self) -> bool {
+        self.roots_ready
+    }
+
+    pub fn listeners_bound(&self) -> bool {
+        self.listeners_bound
+    }
+
+    pub fn all_listeners_bound(&self) -> bool {
+        self.listeners_bound
+    }
+}
+
+/// Semantic terminal proof projected from the canonical producer journal.
+/// All four booleans are meaningful only when `state()` is `Terminal`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GroupProof {
+    state: GroupLifecycleState,
+    root_count: usize,
+    root_reaped: bool,
+    descendants_terminated: bool,
+    listeners_released: bool,
+    staging_released: bool,
+}
+
+impl GroupProof {
+    pub fn state(&self) -> GroupLifecycleState {
+        self.state
+    }
+
+    pub fn root_count(&self) -> usize {
+        self.root_count
+    }
+
+    pub fn root_reaped(&self) -> bool {
+        self.root_reaped
+    }
+
+    pub fn descendants_terminated(&self) -> bool {
+        self.descendants_terminated
+    }
+
+    pub fn listeners_released(&self) -> bool {
+        self.listeners_released
+    }
+
+    pub fn staging_released(&self) -> bool {
+        self.staging_released
+    }
+
+    pub fn is_terminal(&self) -> bool {
+        self.state == GroupLifecycleState::Terminal
+    }
+}
+
+/// The semantic reason supplied when a live group is closed.  The producer
+/// owns the durable lifecycle transition; this value never crosses into the
+/// journal or native process APIs as an unconstrained string.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CloseReason {
+    Shutdown,
+    Cancelled,
+}
+
+/// Stable phase names for sanitized public activation errors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LaunchPhase {
+    Preparation,
+    NativeAcquisition,
+    Readiness,
+    Reconcile,
+}
+
+/// Stable public activation failure categories.  Details remain private to
+/// the producer so formatting this value cannot disclose paths, PIDs, tokens,
+/// or native diagnostics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LaunchErrorKind {
+    Unsupported,
+    Preparation,
+    Staging,
+    Native,
+    Storage,
+    Conflict,
+    Cancellation,
+    Deadline,
+    Reconcile,
+    Validation,
+}
+
+#[cfg(windows)]
+enum LaunchFailureOwner {
+    Suspended(SuspendedActivationOwner),
+    Reconciled(ReconciledActivationOwner),
+}
+
+/// Sanitized activation failure retaining the producer's exact cleanup owner.
+pub struct LaunchError {
+    kind: LaunchErrorKind,
+    phase: LaunchPhase,
+    no_resources: bool,
+    #[cfg(windows)]
+    owner: Option<LaunchFailureOwner>,
+    #[cfg(windows)]
+    committed_candidate: Option<RuntimeSessionJournalV1>,
+}
+
+impl LaunchError {
+    pub fn kind(&self) -> LaunchErrorKind {
+        self.kind
+    }
+
+    pub fn phase(&self) -> LaunchPhase {
+        self.phase
+    }
+
+    /// Retry only the exact retained activation cleanup/reconciliation owner.
+    /// This starts a fresh bounded cleanup attempt and never reruns group
+    /// activation or resets the journal's recovery counters.
+    pub fn retry_cleanup(self) -> Result<ActivationCleanupObservation, Self> {
+        #[cfg(not(windows))]
+        {
+            Err(self)
+        }
+        #[cfg(windows)]
+        {
+            let LaunchError {
+                kind,
+                phase,
+                no_resources,
+                owner,
+                committed_candidate,
+            } = self;
+            if no_resources {
+                return Ok(ActivationCleanupObservation {
+                    state: SemanticActivationCleanupState::NoResourcesAcquired,
+                    native_closed: true,
+                    staging_retained: false,
+                });
+            }
+            let Some(owner) = owner else {
+                return Err(Self {
+                    kind,
+                    phase,
+                    no_resources: false,
+                    owner: None,
+                    committed_candidate,
+                });
+            };
+            let cancellation = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let budget = ActivationBudget::new(
+                std::time::Instant::now() + std::time::Duration::from_secs(60),
+                Arc::clone(&cancellation),
+            );
+            match owner {
+                LaunchFailureOwner::Reconciled(owner) => {
+                    match read_back_reconciled_activation(owner, &budget) {
+                        Ok(()) => Ok(ActivationCleanupObservation {
+                            state: SemanticActivationCleanupState::ReconcileRequired,
+                            native_closed: true,
+                            staging_retained: true,
+                        }),
+                        Err(owner) => Err(Self {
+                            kind: LaunchErrorKind::Reconcile,
+                            phase: LaunchPhase::Reconcile,
+                            no_resources: false,
+                            owner: Some(LaunchFailureOwner::Reconciled(owner)),
+                            committed_candidate: None,
+                        }),
+                    }
+                }
+                LaunchFailureOwner::Suspended(owner) => {
+                    match owner.cleanup_and_reconcile(&budget) {
+                        Ok(reconciled) => {
+                            match read_back_reconciled_activation(reconciled, &budget) {
+                                Ok(()) => Ok(ActivationCleanupObservation {
+                                    state: SemanticActivationCleanupState::ReconcileRequired,
+                                    native_closed: true,
+                                    staging_retained: true,
+                                }),
+                                Err(owner) => Err(Self {
+                                    kind: LaunchErrorKind::Reconcile,
+                                    phase: LaunchPhase::Reconcile,
+                                    no_resources: false,
+                                    owner: Some(LaunchFailureOwner::Reconciled(owner)),
+                                    committed_candidate: None,
+                                }),
+                            }
+                        }
+                        Err(failure) => {
+                            let kind = map_activation_reconcile_error_kind(failure.kind);
+                            let owner = failure.owner;
+                            let committed_candidate = failure.committed_candidate;
+                            Err(Self {
+                                kind,
+                                phase: LaunchPhase::Reconcile,
+                                no_resources: false,
+                                owner: Some(LaunchFailureOwner::Suspended(owner)),
+                                committed_candidate,
+                            })
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl fmt::Debug for LaunchError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("LaunchError")
+            .field("kind", &self.kind)
+            .field("phase", &self.phase)
+            .finish()
+    }
+}
+
+impl fmt::Display for LaunchError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "runtime activation failed during {:?} ({:?})",
+            self.phase, self.kind
+        )
+    }
+}
+
+impl std::error::Error for LaunchError {}
+
+/// Whether a failed activation acquired no resource in this invocation or
+/// retained a durable record for producer reconciliation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SemanticActivationCleanupState {
+    NoResourcesAcquired,
+    ReconcileRequired,
+}
+
+/// Semantic result of explicit activation cleanup retry.  `staging_retained`
+/// intentionally means this invocation left the producer staging scope for
+/// later reconciliation; it does not claim that staging was globally absent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ActivationCleanupObservation {
+    state: SemanticActivationCleanupState,
+    native_closed: bool,
+    staging_retained: bool,
+}
+
+impl ActivationCleanupObservation {
+    pub fn state(&self) -> SemanticActivationCleanupState {
+        self.state
+    }
+
+    pub fn native_closed(&self) -> bool {
+        self.native_closed
+    }
+
+    pub fn staging_retained(&self) -> bool {
+        self.staging_retained
+    }
+}
+
+/// Stable phase names for public cleanup errors.  The phase represents the
+/// exact producer owner retained for retry, including late CAS candidates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CleanupPhase {
+    Running,
+    Closing,
+    NativeCleaned,
+    StagingReleased,
+    TerminalCommittedAfterBudget,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CleanupErrorKind {
+    Unsupported,
+    Cancelled,
+    Deadline,
+    Conflict,
+    Storage,
+    Native,
+    Listener,
+    Staging,
+    Validation,
+    InvalidState,
+    TerminalCommittedAfterBudget,
+}
+
+#[cfg(windows)]
+enum CleanupFailureOwner {
+    Running {
+        owner: RunningActivationOwner,
+        committed_candidate: Option<RuntimeSessionJournalV1>,
+    },
+    Closing {
+        owner: ClosingActivationOwner,
+        phase: CleanupPhase,
+        committed_candidate: Option<RuntimeSessionJournalV1>,
+    },
+}
+
+/// Sanitized public cleanup failure.  The exact private owner is retained so
+/// `retry` can resume at the first unproven phase without reconstructing or
+/// reacquiring native state.
+pub struct CleanupError {
+    kind: CleanupErrorKind,
+    phase: CleanupPhase,
+    #[cfg(windows)]
+    owner: Option<CleanupFailureOwner>,
+}
+
+impl CleanupError {
+    pub fn kind(&self) -> CleanupErrorKind {
+        self.kind
+    }
+
+    pub fn phase(&self) -> CleanupPhase {
+        self.phase
+    }
+
+    /// Retry the exact retained cleanup owner with one fresh 60 second
+    /// absolute budget. No journal attempt counter is reset and no phase CAS
+    /// is repeated after an exact committed candidate is known.
+    pub fn retry(self) -> Result<GroupProof, Self> {
+        #[cfg(not(windows))]
+        {
+            Err(self)
+        }
+        #[cfg(windows)]
+        {
+            retry_cleanup_error(self)
+        }
+    }
+}
+
+impl fmt::Debug for CleanupError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CleanupError")
+            .field("kind", &self.kind)
+            .field("phase", &self.phase)
+            .finish()
+    }
+}
+
+impl fmt::Display for CleanupError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "runtime cleanup failed during {:?} ({:?})",
+            self.phase, self.kind
+        )
+    }
+}
+
+impl std::error::Error for CleanupError {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LifecyclePhase {
+    Observe,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LifecycleErrorKind {
+    Unsupported,
+    Busy,
+    Cancellation,
+    Deadline,
+    Conflict,
+    Storage,
+    Native,
+    Listener,
+    Validation,
+    InvalidState,
+}
+
+/// Sanitized read-only observation failure.  A failed observation never
+/// consumes or closes its lease, so the caller retains close authority.
+pub struct LifecycleError {
+    kind: LifecycleErrorKind,
+    phase: LifecyclePhase,
+}
+
+impl LifecycleError {
+    pub fn kind(&self) -> LifecycleErrorKind {
+        self.kind
+    }
+
+    pub fn phase(&self) -> LifecyclePhase {
+        self.phase
+    }
+}
+
+impl fmt::Debug for LifecycleError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("LifecycleError")
+            .field("kind", &self.kind)
+            .field("phase", &self.phase)
+            .finish()
+    }
+}
+
+impl fmt::Display for LifecycleError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "runtime lifecycle observation failed during {:?} ({:?})",
+            self.phase, self.kind
+        )
+    }
+}
+
+impl std::error::Error for LifecycleError {}
+
+/// A move-only, one-use live group lease.  Its token is invalidated before
+/// close or drop starts, and the private native owner is then dropped through
+/// the existing bounded Job/child fallback only.
+pub struct GroupLease {
+    token: std::sync::atomic::AtomicBool,
+    #[cfg(windows)]
+    owner: Mutex<Option<RunningActivationOwner>>,
+}
+
+impl GroupLease {
+    #[cfg(windows)]
+    fn new(owner: RunningActivationOwner) -> Self {
+        Self {
+            token: std::sync::atomic::AtomicBool::new(true),
+            owner: Mutex::new(Some(owner)),
+        }
+    }
+
+    fn invalidate(&self) {
+        self.token
+            .store(false, std::sync::atomic::Ordering::Release);
+    }
+}
+
+impl Drop for GroupLease {
+    fn drop(&mut self) {
+        // This is intentionally the first operation. Dropping the owner below
+        // may invoke the native bounded fallback, but can never leave a valid
+        // in-memory lease token during that work.
+        self.invalidate();
+    }
+}
+
+/// A public whole-group lifecycle owner. Legacy one-process methods remain
+/// available on this type for migration; the R3 methods below are a separate
+/// opaque group seam.
+impl OwnedRuntimeSession {
+    pub fn activate_group(prepared: PreparedGroup) -> Result<GroupLease, LaunchError> {
+        #[cfg(not(windows))]
+        {
+            let _ = prepared;
+            return Err(LaunchError {
+                kind: LaunchErrorKind::Unsupported,
+                phase: LaunchPhase::Preparation,
+                no_resources: false,
+            });
+        }
+        #[cfg(windows)]
+        {
+            match activate_prepared_group(prepared) {
+                Ok(owner) => Ok(GroupLease::new(owner)),
+                Err(failure) => Err(launch_error_from_private_failure(failure)),
+            }
+        }
+    }
+
+    pub fn observe(lease: &GroupLease) -> Result<GroupObservation, LifecycleError> {
+        #[cfg(not(windows))]
+        {
+            let _ = lease;
+            return Err(LifecycleError {
+                kind: LifecycleErrorKind::Unsupported,
+                phase: LifecyclePhase::Observe,
+            });
+        }
+        #[cfg(windows)]
+        {
+            let cancellation = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+            observe_group_with_budget(lease, deadline, cancellation)
+        }
+    }
+
+    pub fn close(lease: GroupLease, reason: CloseReason) -> Result<GroupProof, CleanupError> {
+        #[cfg(not(windows))]
+        {
+            let _ = (lease, reason);
+            return Err(CleanupError {
+                kind: CleanupErrorKind::Unsupported,
+                phase: CleanupPhase::Running,
+            });
+        }
+        #[cfg(windows)]
+        {
+            let mut lease = lease;
+            // Invalidate before extracting the owner so a concurrent observer
+            // cannot begin after close has acquired its one-use authority.
+            lease.invalidate();
+            let owner = match lease.owner.get_mut() {
+                Ok(slot) => slot.take(),
+                Err(poisoned) => poisoned.into_inner().take(),
+            };
+            let Some(owner) = owner else {
+                return Err(CleanupError {
+                    kind: CleanupErrorKind::InvalidState,
+                    phase: CleanupPhase::Running,
+                    owner: None,
+                });
+            };
+            let cancellation = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+            let _ = reason;
+            close_running_owner(owner, deadline, cancellation)
+        }
+    }
+}
+
+#[cfg(windows)]
+/// Observe through one caller-owned absolute budget.  Keeping the budget
+/// outside the mutex acquisition makes contention itself bounded and ensures
+/// a lock released before the deadline does not grant a fresh timeout after
+/// admission.
+fn observe_group_with_budget(
+    lease: &GroupLease,
+    deadline: std::time::Instant,
+    cancellation: Arc<AtomicBool>,
+) -> Result<GroupObservation, LifecycleError> {
+    if std::time::Instant::now() >= deadline {
+        return Err(lifecycle_error(LifecycleErrorKind::Deadline));
+    }
+    if !lease.token.load(std::sync::atomic::Ordering::Acquire) {
+        return Err(LifecycleError {
+            kind: LifecycleErrorKind::InvalidState,
+            phase: LifecyclePhase::Observe,
+        });
+    }
+    let mut owner = loop {
+        match lease.owner.try_lock() {
+            Ok(owner) => break owner,
+            Err(std::sync::TryLockError::Poisoned(_)) => {
+                // Poisoned admission retains the owner in the lease; fail
+                // closed without taking or dropping that owner.
+                return Err(lifecycle_error(LifecycleErrorKind::InvalidState));
+            }
+            Err(std::sync::TryLockError::WouldBlock) => {
+                let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+                if remaining.is_zero() {
+                    return Err(lifecycle_error(LifecycleErrorKind::Busy));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10).min(remaining));
+            }
+        }
+    };
+    let owner = owner.as_mut().ok_or(LifecycleError {
+        kind: LifecycleErrorKind::InvalidState,
+        phase: LifecyclePhase::Observe,
+    })?;
+    // Recheck after admission: another observer may have invalidated authority.
+    if !lease.token.load(Ordering::Acquire) {
+        return Err(lifecycle_error(LifecycleErrorKind::InvalidState));
+    }
+    let result = owner.observe_public(deadline, cancellation);
+    if let Err(error) = &result {
+        // A failed readiness/listener check revokes observation authority.
+        // Budget, cancellation, lock, journal and staging observation errors
+        // alone do not establish failed readiness; they withhold this result
+        // but preserve retry and the exact close owner.
+        if error.kind == LifecycleErrorKind::Listener {
+            lease.invalidate();
+        }
+    }
+    result
+}
+
+#[cfg(windows)]
+fn launch_error_from_private_failure(failure: PrivateActivationFailure) -> LaunchError {
+    let PrivateActivationFailure {
+        kind,
+        owner,
+        committed_candidate,
+        ..
+    } = failure;
+    let (public_kind, phase) = match kind {
+        PrivateActivationFailureKind::Preparation => {
+            (LaunchErrorKind::Preparation, LaunchPhase::Preparation)
+        }
+        PrivateActivationFailureKind::Staging => {
+            (LaunchErrorKind::Staging, LaunchPhase::NativeAcquisition)
+        }
+        PrivateActivationFailureKind::Native => {
+            (LaunchErrorKind::Native, LaunchPhase::NativeAcquisition)
+        }
+        PrivateActivationFailureKind::Journal => (LaunchErrorKind::Storage, LaunchPhase::Readiness),
+        PrivateActivationFailureKind::Cancellation => {
+            (LaunchErrorKind::Cancellation, LaunchPhase::Readiness)
+        }
+        PrivateActivationFailureKind::Deadline => {
+            (LaunchErrorKind::Deadline, LaunchPhase::Readiness)
+        }
+        PrivateActivationFailureKind::Reconcile => {
+            (LaunchErrorKind::Reconcile, LaunchPhase::Reconcile)
+        }
+    };
+    let owner = owner.map(|owner| match owner {
+        PrivateActivationFailureOwner::Reconciled(owner) => LaunchFailureOwner::Reconciled(owner),
+        PrivateActivationFailureOwner::Suspended(owner) => LaunchFailureOwner::Suspended(owner),
+    });
+    LaunchError {
+        kind: public_kind,
+        phase,
+        no_resources: owner.is_none(),
+        owner,
+        committed_candidate,
+    }
+}
+
+#[cfg(windows)]
+fn map_activation_reconcile_error_kind(kind: ActivationReconcileFailureKind) -> LaunchErrorKind {
+    match kind {
+        ActivationReconcileFailureKind::Cleanup => LaunchErrorKind::Native,
+        ActivationReconcileFailureKind::Deadline => LaunchErrorKind::Deadline,
+        ActivationReconcileFailureKind::Conflict => LaunchErrorKind::Conflict,
+        ActivationReconcileFailureKind::Storage => LaunchErrorKind::Storage,
+        ActivationReconcileFailureKind::Validation => LaunchErrorKind::Validation,
+    }
+}
+
+#[cfg(windows)]
+fn read_back_reconciled_activation(
+    owner: ReconciledActivationOwner,
+    budget: &ActivationBudget,
+) -> Result<(), ReconciledActivationOwner> {
+    if budget.check().is_err() {
+        return Err(owner);
+    }
+    let Some(context) = owner.owner.failure_context.as_ref() else {
+        return Err(owner);
+    };
+    if owner
+        .owner
+        .staging
+        .validate_reconcile_retained_scope(budget.deadline(), budget.cancellation())
+        .is_err()
+    {
+        return Err(owner);
+    }
+    let _read_budget = budget.install_read_scope();
+    let current = match context
+        .store
+        .read_exact_durable(&context.plan, &owner.journal)
+    {
+        Ok(current) => current,
+        Err(_) => return Err(owner),
+    };
+    if current != owner.journal
+        || current.state != JournalState::ReconcileRequired
+        || current.validate_against_plan(&context.plan).is_err()
+        || budget.check().is_err()
+    {
+        return Err(owner);
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+impl RunningActivationOwner {
+    fn observe_public(
+        &mut self,
+        deadline: std::time::Instant,
+        cancellation: Arc<AtomicBool>,
+    ) -> Result<GroupObservation, LifecycleError> {
+        let budget = ActivationBudget::new(deadline, Arc::clone(&cancellation));
+        if let Err(error) = budget.check() {
+            return Err(lifecycle_error_for_store(error));
+        }
+
+        let expected = self.running_journal.clone();
+        let Some(context) = self.owner.failure_context.as_ref() else {
+            return Err(lifecycle_error(LifecycleErrorKind::InvalidState));
+        };
+        let store = Arc::clone(&context.store);
+        let plan = context.plan.clone();
+        {
+            let _read_budget = budget.install_read_scope();
+            let current = store.read(&plan).map_err(lifecycle_error_for_store)?;
+            if current != expected
+                || current.state != JournalState::Running
+                || current.validate_against_plan(&plan).is_err()
+            {
+                return Err(lifecycle_error(LifecycleErrorKind::Conflict));
+            }
+        }
+
+        self.owner
+            .staging
+            .revalidate_address_index_for_running(deadline, Arc::clone(&cancellation))
+            .map_err(|_| lifecycle_error(LifecycleErrorKind::Validation))?;
+        self.owner
+            .staging
+            .checked_commands_for_running()
+            .map_err(|_| lifecycle_error(LifecycleErrorKind::Validation))?;
+        let descriptor = self.owner.staging.activation_descriptor();
+        let expected_staging = self
+            .owner
+            .staging
+            .staging_binding_for_running()
+            .map_err(|_| lifecycle_error(LifecycleErrorKind::Validation))?;
+        if expected.staging_binding.as_ref() != Some(&expected_staging) {
+            return Err(lifecycle_error(LifecycleErrorKind::Conflict));
+        }
+
+        let mut readiness_facts = Vec::with_capacity(expected.roots.len());
+        for ordinal in 0..expected.roots.len() {
+            let (_, manifest, schema_context, _) = descriptor
+                .strict_readiness_inputs(ordinal)
+                .map_err(|_| lifecycle_error(LifecycleErrorKind::Validation))?;
+            schema_context
+                .revalidate(manifest)
+                .map_err(|_| lifecycle_error(LifecycleErrorKind::Validation))?;
+        }
+
+        let ports = expected
+            .roots
+            .iter()
+            .map(|root| root.loopback_port)
+            .collect::<Vec<_>>();
+        let first_listener_observation = {
+            let native = self
+                .owner
+                .native
+                .as_mut()
+                .ok_or(lifecycle_error(LifecycleErrorKind::Native))?;
+            native
+                .observe_root_listeners(&ports, deadline, Some(cancellation.as_ref()))
+                .map_err(|detail| lifecycle_error_for_native_detail(&detail))?
+        };
+
+        for ordinal in 0..expected.roots.len() {
+            if let Err(error) = budget.check() {
+                return Err(lifecycle_error_for_store(error));
+            }
+            let (token, manifest, schema_context, port) = descriptor
+                .strict_readiness_inputs(ordinal)
+                .map_err(|_| lifecycle_error(LifecycleErrorKind::Validation))?;
+            schema_context
+                .revalidate(manifest)
+                .map_err(|_| lifecycle_error(LifecycleErrorKind::Validation))?;
+            match probe_service_ready(
+                port,
+                token,
+                manifest,
+                schema_context.schema(),
+                deadline,
+                cancellation.as_ref(),
+            ) {
+                Ok(StrictProbeResult::Ready(facts)) => readiness_facts.push(facts),
+                Ok(StrictProbeResult::NotReady) => {
+                    return Err(lifecycle_error(LifecycleErrorKind::Listener))
+                }
+                Ok(StrictProbeResult::Cancelled) => {
+                    return Err(lifecycle_error(LifecycleErrorKind::Cancellation))
+                }
+                Err(detail) => {
+                    let error = lifecycle_error_for_native_detail(&detail);
+                    return Err(
+                        if matches!(
+                            error.kind,
+                            LifecycleErrorKind::Cancellation | LifecycleErrorKind::Deadline
+                        ) {
+                            error
+                        } else {
+                            lifecycle_error(LifecycleErrorKind::Listener)
+                        },
+                    );
+                }
+            }
+        }
+
+        let final_listener_observation = {
+            let native = self
+                .owner
+                .native
+                .as_mut()
+                .ok_or(lifecycle_error(LifecycleErrorKind::Native))?;
+            native
+                .observe_root_listeners(&ports, deadline, Some(cancellation.as_ref()))
+                .map_err(|detail| lifecycle_error_for_native_detail(&detail))?
+        };
+        if first_listener_observation != final_listener_observation {
+            return Err(lifecycle_error(LifecycleErrorKind::Listener));
+        }
+        if readiness_facts.len() != expected.roots.len()
+            || final_listener_observation.roots.len() != expected.roots.len()
+        {
+            return Err(lifecycle_error(LifecycleErrorKind::Validation));
+        }
+        for ((root, facts), listener) in expected
+            .roots
+            .iter()
+            .zip(&readiness_facts)
+            .zip(&final_listener_observation.roots)
+        {
+            if listener.ordinal != root.ordinal
+                || root.live_listener_readiness.as_deref()
+                    != Some(running_readiness_digest(&expected, root, listener, facts).as_str())
+            {
+                return Err(lifecycle_error(LifecycleErrorKind::Conflict));
+            }
+        }
+        self.owner
+            .staging
+            .checked_commands_for_running()
+            .map_err(|_| lifecycle_error(LifecycleErrorKind::Validation))?;
+        let final_staging = self
+            .owner
+            .staging
+            .staging_binding_for_running()
+            .map_err(|_| lifecycle_error(LifecycleErrorKind::Validation))?;
+        if expected.staging_binding.as_ref() != Some(&final_staging) {
+            return Err(lifecycle_error(LifecycleErrorKind::Conflict));
+        }
+        {
+            let _read_budget = budget.install_read_scope();
+            let current = store.read(&plan).map_err(lifecycle_error_for_store)?;
+            if current != expected {
+                return Err(lifecycle_error(LifecycleErrorKind::Conflict));
+            }
+        }
+        if let Err(error) = budget.check() {
+            return Err(lifecycle_error_for_store(error));
+        }
+        Ok(GroupObservation {
+            state: GroupLifecycleState::Running,
+            root_count: expected.roots.len(),
+            roots_ready: true,
+            listeners_bound: true,
+        })
+    }
+}
+
+#[cfg(windows)]
+fn lifecycle_error(kind: LifecycleErrorKind) -> LifecycleError {
+    LifecycleError {
+        kind,
+        phase: LifecyclePhase::Observe,
+    }
+}
+
+#[cfg(windows)]
+fn lifecycle_error_for_store(error: JournalStoreError) -> LifecycleError {
+    let kind = match error {
+        JournalStoreError::AdmissionCancelled => LifecycleErrorKind::Cancellation,
+        JournalStoreError::AdmissionDeadline => LifecycleErrorKind::Deadline,
+        JournalStoreError::Conflict => LifecycleErrorKind::Conflict,
+        JournalStoreError::UnsupportedPlatform => LifecycleErrorKind::Unsupported,
+        JournalStoreError::Journal(_) | JournalStoreError::CorruptJournal => {
+            LifecycleErrorKind::Validation
+        }
+        _ => LifecycleErrorKind::Storage,
+    };
+    lifecycle_error(kind)
+}
+
+#[cfg(windows)]
+fn lifecycle_error_for_native_detail(detail: &str) -> LifecycleError {
+    let lower = detail.to_ascii_lowercase();
+    let kind = if lower.contains("cancel") {
+        LifecycleErrorKind::Cancellation
+    } else if lower.contains("deadline") || lower.contains("expired") {
+        LifecycleErrorKind::Deadline
+    } else if lower.contains("listener") || lower.contains("readiness") {
+        LifecycleErrorKind::Listener
+    } else if lower.contains("identity") || lower.contains("binding") {
+        LifecycleErrorKind::Validation
+    } else {
+        LifecycleErrorKind::Native
+    };
+    lifecycle_error(kind)
+}
+
+#[cfg(windows)]
+fn map_cleanup_transition_kind(kind: ClosingTransitionFailureKind) -> CleanupErrorKind {
+    match kind {
+        ClosingTransitionFailureKind::Cancelled => CleanupErrorKind::Cancelled,
+        ClosingTransitionFailureKind::Conflict => CleanupErrorKind::Conflict,
+        ClosingTransitionFailureKind::Storage => CleanupErrorKind::Storage,
+        ClosingTransitionFailureKind::Validation => CleanupErrorKind::Validation,
+        ClosingTransitionFailureKind::Deadline => CleanupErrorKind::Deadline,
+    }
+}
+
+#[cfg(windows)]
+fn map_cleanup_native_kind(kind: ClosingCleanupFailureKind) -> CleanupErrorKind {
+    match kind {
+        ClosingCleanupFailureKind::Cancelled => CleanupErrorKind::Cancelled,
+        ClosingCleanupFailureKind::Deadline => CleanupErrorKind::Deadline,
+        ClosingCleanupFailureKind::Native => CleanupErrorKind::Native,
+        ClosingCleanupFailureKind::Listener => CleanupErrorKind::Listener,
+        ClosingCleanupFailureKind::Validation => CleanupErrorKind::Validation,
+    }
+}
+
+#[cfg(windows)]
+fn map_cleanup_staging_kind(kind: ClosingStagingReleaseFailureKind) -> CleanupErrorKind {
+    match kind {
+        ClosingStagingReleaseFailureKind::Cancelled => CleanupErrorKind::Cancelled,
+        ClosingStagingReleaseFailureKind::Deadline => CleanupErrorKind::Deadline,
+        ClosingStagingReleaseFailureKind::Listener => CleanupErrorKind::Listener,
+        ClosingStagingReleaseFailureKind::Validation => CleanupErrorKind::Validation,
+        ClosingStagingReleaseFailureKind::Storage => CleanupErrorKind::Staging,
+    }
+}
+
+#[cfg(windows)]
+fn map_cleanup_terminal_kind(kind: TerminalJoinFailureKind) -> CleanupErrorKind {
+    match kind {
+        TerminalJoinFailureKind::Cancelled => CleanupErrorKind::Cancelled,
+        TerminalJoinFailureKind::Deadline => CleanupErrorKind::Deadline,
+        TerminalJoinFailureKind::Listener => CleanupErrorKind::Listener,
+        TerminalJoinFailureKind::Conflict => CleanupErrorKind::Conflict,
+        TerminalJoinFailureKind::Storage => CleanupErrorKind::Storage,
+        TerminalJoinFailureKind::Validation => CleanupErrorKind::Validation,
+        TerminalJoinFailureKind::CommittedAfterBudget => {
+            CleanupErrorKind::TerminalCommittedAfterBudget
+        }
+    }
+}
+
+#[cfg(windows)]
+fn cleanup_error_from_transition(failure: ClosingTransitionFailure) -> CleanupError {
+    let kind = map_cleanup_transition_kind(failure.kind);
+    CleanupError {
+        kind,
+        phase: CleanupPhase::Running,
+        owner: Some(CleanupFailureOwner::Running {
+            owner: failure.owner,
+            committed_candidate: failure.committed_candidate,
+        }),
+    }
+}
+
+#[cfg(windows)]
+fn cleanup_error_from_native(failure: ClosingCleanupFailure) -> CleanupError {
+    let phase = if failure.owner.native_cleanup_proof.is_some() {
+        CleanupPhase::NativeCleaned
+    } else {
+        CleanupPhase::Closing
+    };
+    CleanupError {
+        kind: map_cleanup_native_kind(failure.kind),
+        phase,
+        owner: Some(CleanupFailureOwner::Closing {
+            owner: failure.owner,
+            phase,
+            committed_candidate: None,
+        }),
+    }
+}
+
+#[cfg(windows)]
+fn cleanup_error_from_staging(failure: ClosingStagingReleaseFailure) -> CleanupError {
+    let phase = if failure.owner.staging_release_proof.is_some() {
+        CleanupPhase::StagingReleased
+    } else {
+        CleanupPhase::NativeCleaned
+    };
+    CleanupError {
+        kind: map_cleanup_staging_kind(failure.kind),
+        phase,
+        owner: Some(CleanupFailureOwner::Closing {
+            owner: failure.owner,
+            phase,
+            committed_candidate: None,
+        }),
+    }
+}
+
+#[cfg(windows)]
+fn cleanup_error_from_terminal(failure: TerminalJoinFailure) -> CleanupError {
+    let phase = match failure.candidate_disposition {
+        Some(CasDisposition::ConfirmedLate) => CleanupPhase::TerminalCommittedAfterBudget,
+        Some(CasDisposition::AmbiguousWrite) | Some(CasDisposition::Prewrite) | None => {
+            CleanupPhase::StagingReleased
+        }
+        Some(CasDisposition::Committed) => CleanupPhase::StagingReleased,
+    };
+    let kind = map_cleanup_terminal_kind(failure.kind);
+    CleanupError {
+        kind,
+        phase,
+        owner: Some(CleanupFailureOwner::Closing {
+            owner: failure.owner,
+            phase,
+            committed_candidate: failure.committed_candidate,
+        }),
+    }
+}
+
+#[cfg(windows)]
+fn close_running_owner(
+    owner: RunningActivationOwner,
+    deadline: std::time::Instant,
+    cancellation: Arc<AtomicBool>,
+) -> Result<GroupProof, CleanupError> {
+    let closing =
+        match owner.begin_closing_with_cancellation(deadline, Some(Arc::clone(&cancellation))) {
+            Ok(owner) => owner,
+            Err(failure) => return Err(cleanup_error_from_transition(failure)),
+        };
+    close_closing_owner(closing, CleanupPhase::Closing, None, deadline, cancellation)
+}
+
+#[cfg(windows)]
+fn close_closing_owner(
+    mut owner: ClosingActivationOwner,
+    phase: CleanupPhase,
+    committed_candidate: Option<RuntimeSessionJournalV1>,
+    deadline: std::time::Instant,
+    cancellation: Arc<AtomicBool>,
+) -> Result<GroupProof, CleanupError> {
+    if let Some(candidate) = committed_candidate {
+        let retained_candidate = candidate.clone();
+        return project_known_terminal_candidate(&mut owner, candidate, deadline, &cancellation)
+            .map_err(|kind| CleanupError {
+                kind,
+                phase: CleanupPhase::TerminalCommittedAfterBudget,
+                owner: Some(CleanupFailureOwner::Closing {
+                    owner,
+                    phase: CleanupPhase::TerminalCommittedAfterBudget,
+                    committed_candidate: Some(retained_candidate),
+                }),
+            });
+    }
+
+    let owner = if phase == CleanupPhase::Closing {
+        match owner
+            .cleanup_native_and_observe_listener_release(deadline, Some(Arc::clone(&cancellation)))
+        {
+            Ok(owner) => owner,
+            Err(failure) => return Err(cleanup_error_from_native(failure)),
+        }
+    } else {
+        owner
+    };
+    let (owner, _) = if owner.staging_release_proof.is_none()
+        && (phase == CleanupPhase::Closing || phase == CleanupPhase::NativeCleaned)
+    {
+        match owner.release_staging_after_native_cleanup(deadline, Some(Arc::clone(&cancellation)))
+        {
+            Ok(result) => result,
+            Err(failure) => return Err(cleanup_error_from_staging(failure)),
+        }
+    } else {
+        let proof = owner.staging_release_proof.clone().expect("staging proof");
+        (owner, proof)
+    };
+    match owner.terminalize_after_release(deadline, Some(cancellation)) {
+        Ok(terminal) => Ok(project_terminal_owner(terminal)),
+        Err(failure) => Err(cleanup_error_from_terminal(failure)),
+    }
+}
+
+#[cfg(windows)]
+fn project_terminal_owner(owner: TerminalizedActivationOwner) -> GroupProof {
+    let journal = owner.terminal_journal;
+    let proof = journal.proof.expect("validated terminal proof");
+    GroupProof {
+        state: GroupLifecycleState::Terminal,
+        root_count: journal.roots.len() + proof.unacquired_root_bindings.len(),
+        root_reaped: proof.root_reaped,
+        descendants_terminated: proof.descendants_terminated,
+        listeners_released: proof.listeners_released,
+        staging_released: proof.staging_released,
+    }
+}
+
+#[cfg(windows)]
+fn map_cleanup_store_kind(error: &JournalStoreError) -> CleanupErrorKind {
+    match error {
+        JournalStoreError::AdmissionCancelled => CleanupErrorKind::Cancelled,
+        JournalStoreError::AdmissionDeadline => CleanupErrorKind::Deadline,
+        JournalStoreError::Conflict => CleanupErrorKind::Conflict,
+        JournalStoreError::Journal(_) | JournalStoreError::CorruptJournal => {
+            CleanupErrorKind::Validation
+        }
+        JournalStoreError::UnsupportedPlatform => CleanupErrorKind::Unsupported,
+        _ => CleanupErrorKind::Storage,
+    }
+}
+
+#[cfg(windows)]
+fn adopt_known_closing_candidate(
+    mut owner: RunningActivationOwner,
+    candidate: RuntimeSessionJournalV1,
+    budget: &ActivationBudget,
+) -> Result<ClosingActivationOwner, CleanupError> {
+    if budget.check().is_err() {
+        return Err(cleanup_error_for_known_closing_candidate(
+            owner,
+            candidate,
+            CleanupErrorKind::Deadline,
+        ));
+    }
+    let Some(context) = owner.owner.failure_context.as_ref() else {
+        return Err(cleanup_error_for_known_closing_candidate(
+            owner,
+            candidate,
+            CleanupErrorKind::InvalidState,
+        ));
+    };
+    let expected = &owner.running_journal;
+    let valid_shape = candidate.state == JournalState::Closing
+        && candidate.schema_version == expected.schema_version
+        && candidate.producer == expected.producer
+        && candidate.session_nonce == expected.session_nonce
+        && candidate.plan_digest == expected.plan_digest
+        && candidate.created_at == expected.created_at
+        && candidate.binding == expected.binding
+        && candidate.job_binding == expected.job_binding
+        && candidate.staging_binding == expected.staging_binding
+        && candidate.recovery_epoch == expected.recovery_epoch
+        && candidate.attempt == expected.attempt
+        && expected
+            .journal_revision
+            .checked_add(1)
+            .is_some_and(|revision| candidate.journal_revision == revision)
+        && candidate.roots.len() == expected.roots.len()
+        && candidate
+            .roots
+            .iter()
+            .zip(&expected.roots)
+            .all(|(root, prior)| {
+                same_root_identity(root, prior)
+                    && root.state == RootState::Closing
+                    && root.live_listener_readiness == prior.live_listener_readiness
+            })
+        && candidate.proof.is_none()
+        && candidate.validate_against_plan(&context.plan).is_ok();
+    if !valid_shape {
+        return Err(cleanup_error_for_known_closing_candidate(
+            owner,
+            candidate,
+            CleanupErrorKind::Conflict,
+        ));
+    }
+    let store = Arc::clone(&context.store);
+    let plan = context.plan.clone();
+    let _read_budget = budget.install_read_scope();
+    let current = match store.read_durable(&plan) {
+        Ok(current) => current,
+        Err(error) => {
+            return Err(cleanup_error_for_known_closing_candidate(
+                owner,
+                candidate,
+                map_cleanup_store_kind(&error),
+            ))
+        }
+    };
+    if current == candidate {
+        confirm_retained_candidate(&mut owner.owner.failure_context, &current);
+        if budget.check().is_err() {
+            return Err(cleanup_error_for_known_closing_candidate(
+                owner,
+                candidate,
+                CleanupErrorKind::Deadline,
+            ));
+        }
+        if let Some(context) = owner.owner.failure_context.as_mut() {
+            context.candidate = candidate.clone();
+        }
+        return Ok(ClosingActivationOwner {
+            owner: owner.owner,
+            closing_journal: candidate,
+            native_cleanup_proof: None,
+            listener_release_proof: None,
+            staging_release_proof: None,
+            #[cfg(all(test, windows))]
+            listener_query_failure_after_staging: false,
+            #[cfg(all(test, windows))]
+            staging_release_cancel_before_authority: false,
+            #[cfg(all(test, windows))]
+            terminal_listener_rebind_after_clock_port: None,
+            #[cfg(all(test, windows))]
+            terminal_foreign_listener: None,
+        });
+    }
+    if context.disposition != CasDisposition::AmbiguousWrite
+        || context.candidate != candidate
+        || current != *expected
+        || current.validate_against_plan(&plan).is_err()
+    {
+        return Err(cleanup_error_for_known_closing_candidate(
+            owner,
+            candidate,
+            CleanupErrorKind::Conflict,
+        ));
+    }
+    drop(_read_budget);
+
+    // The durable record is still the exact predecessor. Permit one fresh
+    // Running -> Closing CAS using the same absolute retry budget. A CAS that
+    // reports an ambiguous replacement contributes its newer exact candidate
+    // through the normal transition failure path.
+    let cancellation = budget.cancellation_arc();
+    match owner.begin_closing_with_cancellation(budget.deadline(), Some(cancellation)) {
+        Ok(closing) => Ok(closing),
+        Err(failure) => Err(cleanup_error_from_transition(failure)),
+    }
+}
+
+#[cfg(windows)]
+fn cleanup_error_for_known_closing_candidate(
+    owner: RunningActivationOwner,
+    candidate: RuntimeSessionJournalV1,
+    kind: CleanupErrorKind,
+) -> CleanupError {
+    CleanupError {
+        kind,
+        phase: CleanupPhase::Running,
+        owner: Some(CleanupFailureOwner::Running {
+            owner,
+            committed_candidate: Some(candidate),
+        }),
+    }
+}
+
+#[cfg(windows)]
+fn project_known_terminal_candidate(
+    owner: &mut ClosingActivationOwner,
+    candidate: RuntimeSessionJournalV1,
+    deadline: std::time::Instant,
+    cancellation: &Arc<AtomicBool>,
+) -> Result<GroupProof, CleanupErrorKind> {
+    if cancellation.load(Ordering::Acquire) || std::time::Instant::now() >= deadline {
+        return Err(CleanupErrorKind::Deadline);
+    }
+    let Some(context) = owner.owner.failure_context.as_ref() else {
+        return Err(CleanupErrorKind::InvalidState);
+    };
+    if !terminal_candidate_shape_is_valid(owner, &candidate) {
+        return Err(CleanupErrorKind::Conflict);
+    }
+    let _read_budget = install_running_read_budget(deadline, Arc::clone(cancellation));
+    let current = context
+        .store
+        .read_exact_durable(&context.plan, &candidate)
+        .map_err(|error| map_cleanup_store_kind(&error))?;
+    // read_exact_durable already validated the complete record under the lock.
+    confirm_retained_candidate(&mut owner.owner.failure_context, &current);
+    // Reading and validating the complete candidate can consume the remaining
+    // authority budget. Recheck immediately before projecting GroupProof so a
+    // late readback never grants terminal authority; the caller retains this
+    // exact candidate for a fresh retry and issues no second Terminal CAS.
+    if cancellation.load(Ordering::Acquire) || std::time::Instant::now() >= deadline {
+        return Err(CleanupErrorKind::Deadline);
+    }
+    let proof = candidate.proof.as_ref().expect("validated proof");
+    Ok(GroupProof {
+        state: GroupLifecycleState::Terminal,
+        root_count: candidate.roots.len() + proof.unacquired_root_bindings.len(),
+        root_reaped: proof.root_reaped,
+        descendants_terminated: proof.descendants_terminated,
+        listeners_released: proof.listeners_released,
+        staging_released: proof.staging_released,
+    })
+}
+
+#[cfg(windows)]
+fn terminal_candidate_shape_is_valid(
+    owner: &ClosingActivationOwner,
+    candidate: &RuntimeSessionJournalV1,
+) -> bool {
+    candidate.state == JournalState::Terminal
+        && candidate.schema_version == owner.closing_journal.schema_version
+        && candidate.producer == owner.closing_journal.producer
+        && candidate.session_nonce == owner.closing_journal.session_nonce
+        && candidate.plan_digest == owner.closing_journal.plan_digest
+        && candidate.created_at == owner.closing_journal.created_at
+        && candidate.binding == owner.closing_journal.binding
+        && candidate.job_binding == owner.closing_journal.job_binding
+        && candidate.staging_binding == owner.closing_journal.staging_binding
+        && candidate.recovery_epoch == owner.closing_journal.recovery_epoch
+        && candidate.attempt == owner.closing_journal.attempt
+        && owner
+            .closing_journal
+            .journal_revision
+            .checked_add(1)
+            .is_some_and(|revision| candidate.journal_revision == revision)
+        && candidate.roots.len() == owner.closing_journal.roots.len()
+        && candidate
+            .roots
+            .iter()
+            .zip(&owner.closing_journal.roots)
+            .all(|(root, prior)| {
+                same_root_identity(root, prior)
+                    && root.state == RootState::Terminal
+                    && root.live_listener_readiness.is_none()
+            })
+        && candidate.proof.as_ref().is_some_and(|proof| {
+            proof.root_reaped
+                && proof.descendants_terminated
+                && proof.listeners_released
+                && proof.staging_released
+        })
+}
+
+#[cfg(windows)]
+fn same_root_identity(left: &JournalRoot, right: &JournalRoot) -> bool {
+    left.ordinal == right.ordinal
+        && left.role == right.role
+        && left.root_ref_digest == right.root_ref_digest
+        && left.root_generation == right.root_generation
+        && left.root_nonce == right.root_nonce
+        && left.pid == right.pid
+        && left.creation_identity == right.creation_identity
+        && left.reserved_listener_identity == right.reserved_listener_identity
+        && left.loopback_port == right.loopback_port
+        && left.started_at == right.started_at
+}
+
+#[cfg(windows)]
+fn retry_known_terminal_candidate(
+    mut owner: ClosingActivationOwner,
+    candidate: RuntimeSessionJournalV1,
+    budget: &ActivationBudget,
+) -> Result<GroupProof, CleanupError> {
+    if budget.check().is_err() {
+        return Err(cleanup_error_for_known_terminal_candidate(
+            owner,
+            candidate,
+            CleanupErrorKind::Deadline,
+        ));
+    }
+    if !terminal_candidate_shape_is_valid(&owner, &candidate) {
+        return Err(cleanup_error_for_known_terminal_candidate(
+            owner,
+            candidate,
+            CleanupErrorKind::Conflict,
+        ));
+    }
+    let Some(context) = owner.owner.failure_context.as_ref() else {
+        return Err(cleanup_error_for_known_terminal_candidate(
+            owner,
+            candidate,
+            CleanupErrorKind::InvalidState,
+        ));
+    };
+    let store = Arc::clone(&context.store);
+    let plan = context.plan.clone();
+    let _read_budget = budget.install_read_scope();
+    let current = match store.read_durable(&plan) {
+        Ok(current) => current,
+        Err(error) => {
+            return Err(cleanup_error_for_known_terminal_candidate(
+                owner,
+                candidate,
+                map_cleanup_store_kind(&error),
+            ))
+        }
+    };
+    if current == candidate {
+        confirm_retained_candidate(&mut owner.owner.failure_context, &current);
+        drop(_read_budget);
+        return project_known_terminal_candidate(
+            &mut owner,
+            candidate.clone(),
+            budget.deadline(),
+            &budget.cancellation_arc(),
+        )
+        .map_err(|kind| cleanup_error_for_known_terminal_candidate(owner, candidate, kind));
+    }
+    if context.disposition != CasDisposition::AmbiguousWrite
+        || context.candidate != candidate
+        || current != owner.closing_journal
+        || current.validate_against_plan(&plan).is_err()
+    {
+        return Err(cleanup_error_for_known_terminal_candidate(
+            owner,
+            candidate,
+            CleanupErrorKind::Conflict,
+        ));
+    }
+    drop(_read_budget);
+
+    // The predecessor is still exactly Closing. Permit one fresh Closing ->
+    // Terminal CAS, which rechecks native/listener/staging proof through the
+    // normal private seam. A Terminal record is never written from a
+    // Terminal predecessor and a known Terminal candidate is only projected
+    // after its complete read-back and final budget check above.
+    let cancellation = budget.cancellation_arc();
+    match owner.terminalize_after_release(budget.deadline(), Some(cancellation)) {
+        Ok(terminal) => Ok(project_terminal_owner(terminal)),
+        Err(failure) => Err(cleanup_error_from_terminal(failure)),
+    }
+}
+
+#[cfg(windows)]
+fn cleanup_error_for_known_terminal_candidate(
+    owner: ClosingActivationOwner,
+    candidate: RuntimeSessionJournalV1,
+    kind: CleanupErrorKind,
+) -> CleanupError {
+    let phase = owner
+        .owner
+        .failure_context
+        .as_ref()
+        .filter(|context| context.candidate == candidate)
+        .map(|context| match context.disposition {
+            CasDisposition::AmbiguousWrite => CleanupPhase::StagingReleased,
+            CasDisposition::ConfirmedLate => CleanupPhase::TerminalCommittedAfterBudget,
+            CasDisposition::Prewrite | CasDisposition::Committed => CleanupPhase::StagingReleased,
+        })
+        .unwrap_or(CleanupPhase::TerminalCommittedAfterBudget);
+    CleanupError {
+        kind,
+        phase,
+        owner: Some(CleanupFailureOwner::Closing {
+            owner,
+            phase,
+            committed_candidate: Some(candidate),
+        }),
+    }
+}
+
+#[cfg(windows)]
+fn retry_cleanup_error(error: CleanupError) -> Result<GroupProof, CleanupError> {
+    let CleanupError { kind, phase, owner } = error;
+    let Some(owner) = owner else {
+        return Err(CleanupError {
+            kind,
+            phase,
+            owner: None,
+        });
+    };
+    let cancellation = Arc::new(AtomicBool::new(false));
+    let budget = ActivationBudget::new(
+        std::time::Instant::now() + std::time::Duration::from_secs(60),
+        Arc::clone(&cancellation),
+    );
+    match owner {
+        CleanupFailureOwner::Running {
+            owner,
+            committed_candidate,
+        } => {
+            if let Some(candidate) = committed_candidate {
+                match adopt_known_closing_candidate(owner, candidate.clone(), &budget) {
+                    Ok(closing) => close_closing_owner(
+                        closing,
+                        CleanupPhase::Closing,
+                        None,
+                        budget.deadline(),
+                        cancellation,
+                    ),
+                    Err(error) => Err(error),
+                }
+            } else {
+                close_running_owner(owner, budget.deadline(), cancellation)
+            }
+        }
+        CleanupFailureOwner::Closing {
+            owner,
+            phase,
+            committed_candidate,
+        } => {
+            if phase == CleanupPhase::TerminalCommittedAfterBudget
+                || (phase == CleanupPhase::StagingReleased
+                    && committed_candidate
+                        .as_ref()
+                        .is_some_and(|candidate| candidate.state == JournalState::Terminal))
+            {
+                let Some(candidate) = committed_candidate else {
+                    return Err(CleanupError {
+                        kind: CleanupErrorKind::InvalidState,
+                        phase,
+                        owner: Some(CleanupFailureOwner::Closing {
+                            owner,
+                            phase,
+                            committed_candidate: None,
+                        }),
+                    });
+                };
+                return retry_known_terminal_candidate(owner, candidate, &budget);
+            }
+            close_closing_owner(owner, phase, None, budget.deadline(), cancellation)
+        }
+    }
+}
+
+// Fail-closed evidence returned after one legacy launch attempt has been stopped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RuntimeTerminationProof {
     pub root_pid: u32,
@@ -7979,6 +9960,7 @@ mod tests {
 
     #[cfg(windows)]
     struct CoordinatorActivationFixture {
+        admission: ScheduledFixtureAdmission,
         _directory: tempfile::TempDir,
         plan: ImmutableGroupPlan,
     }
@@ -7986,6 +9968,9 @@ mod tests {
     #[cfg(windows)]
     impl CoordinatorActivationFixture {
         fn new() -> Self {
+            let permit = http_fixture_limiter()
+                .acquire(Duration::from_secs(120))
+                .expect("bounded fixture scheduling admission");
             let directory = tempfile::tempdir().expect("coordinator fixture directory");
             let producer_root = directory.path().join("producer-root");
             fs::create_dir(&producer_root).expect("producer root");
@@ -8041,7 +10026,9 @@ mod tests {
                 )],
             )
             .expect("immutable activation plan");
+            let admission = ScheduledFixtureAdmission::new(&plan.context.store, permit);
             Self {
+                admission,
                 _directory: directory,
                 plan,
             }
@@ -8059,7 +10046,9 @@ mod tests {
 
     #[cfg(windows)]
     struct CoordinatorHttpFixture {
+        _admission: ScheduledFixtureAdmission,
         _directory: tempfile::TempDir,
+        producer_root: PathBuf,
         plan: ImmutableGroupPlan,
         marker_paths: Vec<PathBuf>,
         checkpoint_paths: Vec<PathBuf>,
@@ -8071,6 +10060,9 @@ mod tests {
         fn new(ports: &[u16], modes: &[&str]) -> Self {
             assert_eq!(ports.len(), modes.len());
             assert!(!ports.is_empty());
+            let permit = http_fixture_limiter()
+                .acquire(Duration::from_secs(120))
+                .expect("bounded fixture scheduling admission");
             let directory = tempfile::tempdir().expect("coordinator HTTP fixture directory");
             let producer_root = directory.path().join("producer-root");
             fs::create_dir(&producer_root).expect("producer root");
@@ -8177,7 +10169,15 @@ mod tests {
                                     listener_checkpoint_path,
                                 ),
                                 ("CAPTURE_TEST_ROOT_ORDINAL".into(), ordinal.to_string()),
-                                ("CAPTURE_TEST_HTTP_MODE".into(), modes[ordinal].into()),
+                                (
+                                    "CAPTURE_TEST_HTTP_MODE".into(),
+                                    if modes[ordinal] == "ready" {
+                                        "ready-hold"
+                                    } else {
+                                        modes[ordinal]
+                                    }
+                                    .into(),
+                                ),
                             ],
                             vec!["SystemRoot".into()],
                         ),
@@ -8185,10 +10185,13 @@ mod tests {
                     )
                 })
                 .collect();
-            let plan = crate::build_immutable_group_plan(producer_root, 1, roots)
+            let plan = crate::build_immutable_group_plan(producer_root.clone(), 1, roots)
                 .expect("immutable HTTP activation plan");
+            let admission = ScheduledFixtureAdmission::new(&plan.context.store, permit);
             Self {
+                _admission: admission,
                 _directory: directory,
+                producer_root,
                 plan,
                 marker_paths,
                 checkpoint_paths,
@@ -8235,6 +10238,82 @@ mod tests {
             "activation HTTP checkpoint bytes for {}",
             path.display()
         );
+    }
+
+    #[cfg(windows)]
+    fn promoted_running_fixture() -> (
+        CoordinatorHttpFixture,
+        Arc<JournalStore>,
+        RunningActivationOwner,
+    ) {
+        let (reservations, ports) = reserve_coordinator_ports(1);
+        let fixture = CoordinatorHttpFixture::new(&ports, &["ready"]);
+        let store = Arc::clone(&fixture.plan.context.store);
+        let (fixture, prepared) = fixture.prepare();
+        drop(reservations);
+        let running = match activate_prepared_group(prepared) {
+            Ok(running) => running,
+            Err(failure) => panic!(
+                "strict Running promotion: kind={:?}, detail={}, authorized={:?}, listeners={:?}",
+                failure.kind_for_test(),
+                failure.detail_for_test(),
+                fixture
+                    .checkpoint_paths
+                    .iter()
+                    .map(|p| fs::read(p).ok().as_deref() == Some(b"authorized\n"))
+                    .collect::<Vec<_>>(),
+                fixture
+                    .listener_checkpoint_paths
+                    .iter()
+                    .map(|p| fs::read(p).ok().as_deref() == Some(b"listener-bound\n"))
+                    .collect::<Vec<_>>()
+            ),
+        };
+        (fixture, store, running)
+    }
+
+    #[cfg(windows)]
+    fn late_closing_commit_fixture() -> (
+        CoordinatorHttpFixture,
+        Arc<JournalStore>,
+        CleanupError,
+        RuntimeSessionJournalV1,
+    ) {
+        let (fixture, store, running) = promoted_running_fixture();
+        let cancellation = Arc::new(AtomicBool::new(false));
+        store.cancel_after_closing_replace_for_test(Arc::clone(&cancellation));
+        let error = match close_running_owner(
+            running,
+            std::time::Instant::now() + Duration::from_secs(30),
+            cancellation,
+        ) {
+            Ok(_) => panic!("late Closing CAS unexpectedly granted authority"),
+            Err(error) => error,
+        };
+        let candidate = store.read(&fixture.plan.value).expect("Closing candidate");
+        (fixture, store, error, candidate)
+    }
+
+    #[cfg(windows)]
+    fn late_terminal_commit_fixture() -> (
+        CoordinatorHttpFixture,
+        Arc<JournalStore>,
+        CleanupError,
+        RuntimeSessionJournalV1,
+    ) {
+        let (fixture, store, running) = promoted_running_fixture();
+        let cancellation = Arc::new(AtomicBool::new(false));
+        store.cancel_after_terminal_replace_for_test(Arc::clone(&cancellation));
+        let error = match close_running_owner(
+            running,
+            std::time::Instant::now() + Duration::from_secs(30),
+            cancellation,
+        ) {
+            Ok(_) => panic!("late Terminal CAS unexpectedly granted authority"),
+            Err(error) => error,
+        };
+        let candidate = store.read(&fixture.plan.value).expect("Terminal candidate");
+        (fixture, store, error, candidate)
     }
 
     #[cfg(windows)]
@@ -8423,6 +10502,515 @@ mod tests {
                 .state,
             crate::journal::JournalState::ReconcileRequired
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn late_closing_candidate_retries_by_full_readback_without_second_cas() {
+        let (fixture, store, error, candidate) = late_closing_commit_fixture();
+        assert_eq!(candidate.state, crate::journal::JournalState::Closing);
+        let revision = candidate.journal_revision;
+        let proof = retry_cleanup_error(error).expect("known Closing candidate retry");
+        assert_eq!(proof.state, GroupLifecycleState::Terminal);
+        let terminal = store.read(&fixture.plan.value).expect("Terminal journal");
+        assert_eq!(terminal.state, crate::journal::JournalState::Terminal);
+        assert_eq!(terminal.journal_revision, revision + 1);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn ambiguous_closing_replace_retains_exact_candidate_for_fresh_predecessor_retry() {
+        let (fixture, store, running) = promoted_running_fixture();
+        store.fail_after_replace_and_durability_recheck();
+        let error = close_running_owner(
+            running,
+            std::time::Instant::now() + Duration::from_secs(30),
+            Arc::new(AtomicBool::new(false)),
+        )
+        .expect_err("ambiguous Closing replacement must retain the owner");
+        let candidate = match error.owner.as_ref() {
+            Some(CleanupFailureOwner::Running {
+                committed_candidate: Some(candidate),
+                ..
+            }) => candidate.clone(),
+            _ => panic!("ambiguous Closing candidate was lost"),
+        };
+        assert_eq!(candidate.state, crate::journal::JournalState::Closing);
+        assert_eq!(
+            store
+                .read(&fixture.plan.value)
+                .expect("durable Closing candidate"),
+            candidate,
+            "replacement fault must retain the exact candidate on disk"
+        );
+        let proof = retry_cleanup_error(error).expect("fresh exact Closing retry");
+        assert_eq!(proof.state, GroupLifecycleState::Terminal);
+        assert_eq!(
+            store
+                .read(&fixture.plan.value)
+                .expect("Terminal journal")
+                .state,
+            crate::journal::JournalState::Terminal
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn nonambiguous_closing_prewrite_failure_does_not_claim_candidate_authority() {
+        let (fixture, store, running) = promoted_running_fixture();
+        store.fail_next_before_replace_for_test();
+        let error = close_running_owner(
+            running,
+            std::time::Instant::now() + Duration::from_secs(30),
+            Arc::new(AtomicBool::new(false)),
+        )
+        .expect_err("pre-replacement failure must retain Running owner");
+        match error.owner.as_ref() {
+            Some(CleanupFailureOwner::Running {
+                committed_candidate: None,
+                ..
+            }) => {}
+            _ => panic!("pre-replacement failure claimed Closing authority"),
+        }
+        assert_eq!(
+            store
+                .read(&fixture.plan.value)
+                .expect("unchanged Running journal")
+                .state,
+            crate::journal::JournalState::Running
+        );
+        assert_eq!(
+            retry_cleanup_error(error)
+                .expect("fresh Running -> Closing retry")
+                .state,
+            GroupLifecycleState::Terminal
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn late_closing_candidate_conflicts_retain_owner_for_missing_corrupt_or_changed_readback() {
+        for mode in ["missing", "corrupt", "changed"] {
+            let (fixture, store, error, candidate) = late_closing_commit_fixture();
+            if mode == "missing" {
+                store.remove_journal_for_test();
+            } else if mode == "corrupt" {
+                store.corrupt_journal_for_test();
+            } else {
+                let mut changed = candidate.clone();
+                changed.recovery_epoch = changed.recovery_epoch.saturating_add(1);
+                store.replace_journal_for_test(&changed);
+            }
+            let retained = match retry_cleanup_error(error) {
+                Ok(_) => panic!("{mode} Closing readback unexpectedly granted authority"),
+                Err(error) => error,
+            };
+            store.replace_journal_for_test(&candidate);
+            let proof = retry_cleanup_error(retained)
+                .unwrap_or_else(|_| panic!("restored Closing candidate retry for {mode}"));
+            assert_eq!(proof.state, GroupLifecycleState::Terminal);
+            let terminal = store.read(&fixture.plan.value).expect("Terminal journal");
+            assert_eq!(terminal.state, crate::journal::JournalState::Terminal);
+            assert_eq!(terminal.journal_revision, candidate.journal_revision + 1);
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn late_terminal_candidate_retries_by_full_readback_without_second_cas() {
+        let (fixture, store, error, candidate) = late_terminal_commit_fixture();
+        assert_eq!(candidate.state, crate::journal::JournalState::Terminal);
+        let attempt = candidate.attempt;
+        let recovery_epoch = candidate.recovery_epoch;
+        let revision = candidate.journal_revision;
+        let proof = retry_cleanup_error(error).expect("known Terminal candidate retry");
+        assert_eq!(proof.state, GroupLifecycleState::Terminal);
+        let terminal = store.read(&fixture.plan.value).expect("Terminal journal");
+        assert_eq!(terminal, candidate);
+        assert_eq!(terminal.journal_revision, revision);
+        assert_eq!(terminal.attempt, attempt);
+        assert_eq!(terminal.recovery_epoch, recovery_epoch);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn ambiguous_terminal_replace_retains_exact_candidate_for_fresh_projection() {
+        let (fixture, store, running) = promoted_running_fixture();
+        let cancellation = Arc::new(AtomicBool::new(false));
+        let closing = running
+            .begin_closing_with_cancellation(
+                std::time::Instant::now() + Duration::from_secs(30),
+                Some(Arc::clone(&cancellation)),
+            )
+            .unwrap_or_else(|failure| panic!("Running -> Closing: {}", failure.detail_for_test()));
+        let closing = closing
+            .cleanup_native_and_observe_listener_release(
+                std::time::Instant::now() + Duration::from_secs(30),
+                Some(Arc::clone(&cancellation)),
+            )
+            .unwrap_or_else(|failure| panic!("native cleanup: {}", failure.detail_for_test()));
+        let (closing, _) = closing
+            .release_staging_after_native_cleanup(
+                std::time::Instant::now() + Duration::from_secs(30),
+                Some(Arc::clone(&cancellation)),
+            )
+            .unwrap_or_else(|failure| panic!("staging cleanup: {}", failure.detail_for_test()));
+        store.fail_after_replace_and_durability_recheck();
+        let failure = match closing.terminalize_after_release(
+            std::time::Instant::now() + Duration::from_secs(30),
+            Some(cancellation),
+        ) {
+            Ok(_) => panic!("ambiguous Terminal replacement unexpectedly succeeded"),
+            Err(failure) => failure,
+        };
+        let error = cleanup_error_from_terminal(failure);
+        assert_eq!(error.phase(), CleanupPhase::StagingReleased);
+        let candidate = match error.owner.as_ref() {
+            Some(CleanupFailureOwner::Closing {
+                committed_candidate: Some(candidate),
+                ..
+            }) => candidate.clone(),
+            _ => panic!("ambiguous Terminal candidate was lost"),
+        };
+        assert_eq!(candidate.state, crate::journal::JournalState::Terminal);
+        assert_eq!(
+            store
+                .read(&fixture.plan.value)
+                .expect("durable Terminal candidate"),
+            candidate,
+            "replacement fault must retain the exact Terminal candidate on disk"
+        );
+        let proof = retry_cleanup_error(error).expect("fresh exact Terminal projection");
+        assert_eq!(proof.state, GroupLifecycleState::Terminal);
+        assert_eq!(
+            store.read(&fixture.plan.value).expect("Terminal journal"),
+            candidate
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn normal_cleanup_with_failed_job_termination_retains_owner_for_fresh_retry() {
+        let (fixture, store, running) = promoted_running_fixture();
+        let closing = running
+            .begin_closing_with_cancellation(
+                std::time::Instant::now() + Duration::from_secs(30),
+                Some(Arc::new(AtomicBool::new(false))),
+            )
+            .unwrap_or_else(|failure| panic!("Running -> Closing: {}", failure.detail_for_test()));
+        let mut closing = closing;
+        closing.inject_job_termination_failure_for_test();
+        let error = close_closing_owner(
+            closing,
+            CleanupPhase::Closing,
+            None,
+            std::time::Instant::now() + Duration::from_secs(30),
+            Arc::new(AtomicBool::new(false)),
+        )
+        .expect_err("failed TerminateJobObject must retain native owner");
+        assert_eq!(error.phase, CleanupPhase::Closing);
+        match error.owner.as_ref() {
+            Some(CleanupFailureOwner::Closing { owner, .. }) => {
+                assert!(!owner.native_cleanup_proven_for_test());
+            }
+            _ => panic!("normal native failure lost Closing owner"),
+        }
+        assert_eq!(
+            store
+                .read(&fixture.plan.value)
+                .expect("Closing journal")
+                .state,
+            crate::journal::JournalState::Closing
+        );
+        let proof = retry_cleanup_error(error).expect("fresh native cleanup retry");
+        assert_eq!(proof.state, GroupLifecycleState::Terminal);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn staging_release_proof_survives_post_delete_listener_failure_and_retries_join() {
+        let (fixture, store, running) = promoted_running_fixture();
+        let closing = running
+            .begin_closing_with_cancellation(
+                std::time::Instant::now() + Duration::from_secs(30),
+                Some(Arc::new(AtomicBool::new(false))),
+            )
+            .unwrap_or_else(|failure| panic!("Running -> Closing: {}", failure.detail_for_test()));
+        let mut closing = closing;
+        closing.inject_listener_query_failure_after_staging_for_test();
+        let error = close_closing_owner(
+            closing,
+            CleanupPhase::Closing,
+            None,
+            std::time::Instant::now() + Duration::from_secs(30),
+            Arc::new(AtomicBool::new(false)),
+        )
+        .expect_err("post-delete listener failure must retain staging proof");
+        assert_eq!(error.phase, CleanupPhase::StagingReleased);
+        match error.owner.as_ref() {
+            Some(CleanupFailureOwner::Closing { owner, .. }) => {
+                assert!(owner.staging_release_proven_for_test());
+            }
+            _ => panic!("staging proof owner was lost"),
+        }
+        let proof = retry_cleanup_error(error).expect("fresh terminal join retry");
+        assert_eq!(proof.state, GroupLifecycleState::Terminal);
+        assert_eq!(
+            store
+                .read(&fixture.plan.value)
+                .expect("Terminal journal")
+                .state,
+            crate::journal::JournalState::Terminal
+        );
+        let staging_parent = fixture.producer_root.join("private-run-staging");
+        assert_eq!(
+            fs::read_dir(staging_parent)
+                .expect("staging parent")
+                .filter_map(Result::ok)
+                .count(),
+            0,
+            "staging deletion must not be repeated during terminal join retry"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn terminal_listener_rebind_after_staging_release_keeps_foreign_owner_and_skips_delete_retry() {
+        let (fixture, store, running) = promoted_running_fixture();
+        let closing = running
+            .begin_closing_with_cancellation(
+                std::time::Instant::now() + Duration::from_secs(30),
+                Some(Arc::new(AtomicBool::new(false))),
+            )
+            .unwrap_or_else(|failure| panic!("Running -> Closing: {}", failure.detail_for_test()));
+        let closing_revision = closing.closing_journal_for_test().journal_revision;
+        let port = closing.closing_journal_for_test().roots[0].loopback_port;
+        let mut closing = closing;
+        closing.inject_terminal_listener_rebind_after_clock_for_test(port);
+        let mut error = close_closing_owner(
+            closing,
+            CleanupPhase::Closing,
+            None,
+            std::time::Instant::now() + Duration::from_secs(30),
+            Arc::new(AtomicBool::new(false)),
+        )
+        .expect_err("foreign listener rebound after staging release");
+        assert_eq!(error.kind, CleanupErrorKind::Listener);
+        assert_eq!(error.phase, CleanupPhase::StagingReleased);
+        assert_eq!(
+            store
+                .read(&fixture.plan.value)
+                .expect("Closing journal")
+                .journal_revision,
+            closing_revision
+        );
+        let staging_parent = fixture.producer_root.join("private-run-staging");
+        assert_eq!(
+            fs::read_dir(&staging_parent)
+                .expect("staging parent")
+                .filter_map(Result::ok)
+                .count(),
+            0,
+            "staging was released before the foreign listener was observed"
+        );
+        let (mut owner, phase, candidate) = match error.owner.take() {
+            Some(CleanupFailureOwner::Closing {
+                owner,
+                phase,
+                committed_candidate,
+            }) => {
+                assert_eq!(phase, CleanupPhase::StagingReleased);
+                assert!(owner.staging_release_proven_for_test());
+                (owner, phase, committed_candidate)
+            }
+            _ => panic!("foreign listener failure lost the Closing owner"),
+        };
+        owner.release_terminal_foreign_listener_for_test();
+        let proof = close_closing_owner(
+            owner,
+            phase,
+            candidate,
+            std::time::Instant::now() + Duration::from_secs(30),
+            Arc::new(AtomicBool::new(false)),
+        )
+        .expect("terminal join after foreign listener release");
+        assert_eq!(proof.state, GroupLifecycleState::Terminal);
+        assert_eq!(
+            store
+                .read(&fixture.plan.value)
+                .expect("Terminal journal")
+                .journal_revision,
+            closing_revision + 1
+        );
+        assert_eq!(
+            fs::read_dir(staging_parent)
+                .expect("staging parent after retry")
+                .filter_map(Result::ok)
+                .count(),
+            0,
+            "terminal retry must not repeat staging deletion"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn public_observe_contention_expires_without_journal_mutation() {
+        let (fixture, store, running) = promoted_running_fixture();
+        let before = store.read(&fixture.plan.value).expect("Running journal");
+        let lease = Arc::new(GroupLease::new(running));
+        let guard = lease.owner.lock().expect("observe contention owner lock");
+        let observer_lease = Arc::clone(&lease);
+        let deadline = std::time::Instant::now() + Duration::from_millis(100);
+        let observer = std::thread::spawn(move || {
+            observe_group_with_budget(&observer_lease, deadline, Arc::new(AtomicBool::new(false)))
+        });
+        std::thread::sleep(Duration::from_millis(200));
+        let error = observer
+            .join()
+            .expect("bounded observe thread")
+            .expect_err("contention held through deadline must not enter journal observation");
+        assert!(matches!(
+            error.kind(),
+            LifecycleErrorKind::Busy | LifecycleErrorKind::Deadline
+        ));
+        drop(guard);
+        assert_eq!(
+            store.read(&fixture.plan.value).expect("unchanged journal"),
+            before
+        );
+        let lease = Arc::try_unwrap(lease)
+            .ok()
+            .expect("observe contention released its shared lease");
+        OwnedRuntimeSession::close(lease, CloseReason::Shutdown).expect("close after contention");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn public_observe_uses_remaining_budget_after_lock_release() {
+        let (fixture, _store, running) = promoted_running_fixture();
+        let lease = Arc::new(GroupLease::new(running));
+        let guard = lease.owner.lock().expect("observe release owner lock");
+        let observer_lease = Arc::clone(&lease);
+        let deadline = std::time::Instant::now() + Duration::from_millis(500);
+        let observer = std::thread::spawn(move || {
+            observe_group_with_budget(&observer_lease, deadline, Arc::new(AtomicBool::new(false)))
+        });
+        std::thread::sleep(Duration::from_millis(50));
+        drop(guard);
+        observer
+            .join()
+            .expect("observe release thread")
+            .expect("observation after timely lock release");
+        let lease = Arc::try_unwrap(lease)
+            .ok()
+            .expect("observe release consumed its shared lease");
+        OwnedRuntimeSession::close(lease, CloseReason::Shutdown).expect("close after observation");
+        assert_eq!(
+            fixture
+                .plan
+                .context
+                .store
+                .read(&fixture.plan.value)
+                .expect("Terminal journal")
+                .state,
+            crate::journal::JournalState::Terminal
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn public_observe_poison_fails_closed_and_lease_remains_closable() {
+        let (fixture, store, running) = promoted_running_fixture();
+        let lease = Arc::new(GroupLease::new(running));
+        let poison_lease = Arc::clone(&lease);
+        let _ = std::thread::spawn(move || {
+            let _guard = poison_lease.owner.lock().expect("poison owner lock");
+            panic!("poison observe owner lock");
+        })
+        .join();
+        let error = observe_group_with_budget(
+            &lease,
+            std::time::Instant::now() + Duration::from_secs(1),
+            Arc::new(AtomicBool::new(false)),
+        )
+        .expect_err("poisoned observe owner must fail closed");
+        assert_eq!(error.kind(), LifecycleErrorKind::InvalidState);
+        assert_eq!(
+            store
+                .read(&fixture.plan.value)
+                .expect("unchanged journal")
+                .state,
+            crate::journal::JournalState::Running
+        );
+        let lease = Arc::try_unwrap(lease)
+            .ok()
+            .expect("poisoned observe shared lease");
+        OwnedRuntimeSession::close(lease, CloseReason::Shutdown)
+            .expect("poisoned lease remains closable");
+        assert_eq!(
+            store
+                .read(&fixture.plan.value)
+                .expect("Terminal journal")
+                .state,
+            crate::journal::JournalState::Terminal
+        );
+        let _ = fixture;
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn late_terminal_candidate_post_readback_deadline_retains_exact_candidate_for_retry() {
+        let (fixture, store, error, candidate) = late_terminal_commit_fixture();
+        store.expire_after_terminal_candidate_readback_for_test();
+        let retained = match retry_cleanup_error(error) {
+            Ok(_) => panic!("late Terminal readback unexpectedly granted authority"),
+            Err(error) => error,
+        };
+        assert_eq!(retained.kind, CleanupErrorKind::Deadline);
+        assert_eq!(
+            store
+                .read(&fixture.plan.value)
+                .expect("unchanged Terminal candidate"),
+            candidate,
+            "late readback must not issue a second Terminal CAS"
+        );
+        let proof = retry_cleanup_error(retained).expect("fresh exact Terminal retry");
+        assert_eq!(proof.state, GroupLifecycleState::Terminal);
+        assert_eq!(
+            store.read(&fixture.plan.value).expect("Terminal journal"),
+            candidate
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn late_terminal_candidate_conflicts_retain_owner_for_missing_corrupt_or_changed_readback() {
+        for mode in ["missing", "corrupt", "changed"] {
+            let (fixture, store, error, candidate) = late_terminal_commit_fixture();
+            let revision = candidate.journal_revision;
+            if mode == "missing" {
+                store.remove_journal_for_test();
+            } else if mode == "corrupt" {
+                store.corrupt_journal_for_test();
+            } else {
+                let mut changed = candidate.clone();
+                changed.recovery_epoch = changed.recovery_epoch.saturating_add(1);
+                store.replace_journal_for_test(&changed);
+            }
+            let retained = match retry_cleanup_error(error) {
+                Ok(_) => panic!("{mode} Terminal readback unexpectedly granted authority"),
+                Err(error) => error,
+            };
+            store.replace_journal_for_test(&candidate);
+            let proof = retry_cleanup_error(retained)
+                .unwrap_or_else(|_| panic!("restored Terminal candidate retry for {mode}"));
+            assert_eq!(proof.state, GroupLifecycleState::Terminal);
+            let terminal = store
+                .read(&fixture.plan.value)
+                .expect("restored Terminal journal");
+            assert_eq!(terminal, candidate);
+            assert_eq!(terminal.journal_revision, revision);
+        }
     }
 
     #[cfg(windows)]
@@ -8730,9 +11318,11 @@ mod tests {
                 .expect("candidate remains accessible after incomplete cleanup"),
             &candidate
         );
-        let mut owner = match private_failure.into_owner().expect("retained owner") {
-            PrivateActivationFailureOwner::Suspended(owner) => owner,
-            PrivateActivationFailureOwner::Reconciled(_) => {
+        let mut public_error = launch_error_from_private_failure(private_failure);
+        assert_eq!(public_error.committed_candidate.as_ref(), Some(&candidate));
+        let owner = match public_error.owner.as_mut().expect("retained public owner") {
+            LaunchFailureOwner::Suspended(owner) => owner,
+            LaunchFailureOwner::Reconciled(_) => {
                 panic!("incomplete cleanup must not issue a reconcile authority")
             }
         };
@@ -8780,20 +11370,16 @@ mod tests {
                 "post-deadline reap must be proved through the exact retained handle"
             );
         }
-        let teardown_budget =
-            ActivationBudget::new(teardown_deadline, Arc::new(AtomicBool::new(false)));
-        let reconciled = match owner.cleanup_and_reconcile(&teardown_budget) {
-            Ok(owner) => owner,
-            Err(failure) => panic!(
-                "explicit post-test retained-owner teardown: {}",
-                failure.detail
-            ),
-        };
+        let cleanup = public_error
+            .retry_cleanup()
+            .expect("fresh public cleanup budget");
+        assert!(cleanup.native_closed && cleanup.staging_retained);
+        let reconciled = store.read(&fixture.plan.value).expect("reconciled journal");
         let mut expected = candidate;
         expected.state = crate::journal::JournalState::ReconcileRequired;
         expected.journal_revision += 1;
-        expected.updated_at = reconciled.journal_for_test().updated_at.clone();
-        assert_eq!(reconciled.journal_for_test(), &expected);
+        expected.updated_at = reconciled.updated_at.clone();
+        assert_eq!(reconciled, expected);
     }
 
     #[cfg(windows)]
@@ -8925,6 +11511,10 @@ mod tests {
             Ok(_) => panic!("handoff cancellation after Ready helper must fail activation"),
             Err(failure) => failure,
         };
+        assert!(
+            !CANCEL_AFTER_READY_HELPER.with(|flag| flag.get()),
+            "Ready handoff injection was reached"
+        );
         assert_eq!(
             failure.kind_for_test(),
             PrivateActivationFailureKind::Cancellation,
@@ -9063,10 +11653,15 @@ mod tests {
         let failure_context = Some(ActivationFailureJournalContext {
             store: Arc::clone(&activation.context.store),
             plan: activation.journal_plan.clone(),
+            predecessor: activation.expected_journal.clone(),
             candidate: activation.expected_journal.clone(),
+            disposition: CasDisposition::Prewrite,
         });
         let staging = crate::staging::materialize(activation).expect("materialized scope");
-        let permit = acquire_http_fixture_permit().expect("fixture permit");
+        let permit = fixture
+            .admission
+            .take()
+            .expect("pre-admitted fixture permit");
         let cancellation = Arc::new(AtomicBool::new(false));
         let budget = ActivationBudget::new(
             std::time::Instant::now() - Duration::from_millis(1),
@@ -9150,6 +11745,536 @@ mod tests {
         );
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn public_retry_reads_back_late_reconcile_candidate_without_replaying_cas() {
+        let fixture = CoordinatorActivationFixture::new();
+        let store = Arc::clone(&fixture.plan.context.store);
+        let (fixture, prepared) = fixture.prepare();
+        crate::staging::cancel_after_ready_cas_for_test();
+        store.expire_after_activation_reconcile_readback_for_test();
+
+        let error = match OwnedRuntimeSession::activate_group(prepared) {
+            Ok(_) => panic!("late reconcile commit must withhold public lease"),
+            Err(error) => error,
+        };
+        assert_eq!(error.kind(), LaunchErrorKind::Reconcile);
+        assert_eq!(error.phase(), LaunchPhase::Reconcile);
+        let before_retry = store.read(&fixture.plan.value).expect("late candidate");
+        assert_eq!(
+            before_retry.state,
+            crate::journal::JournalState::ReconcileRequired
+        );
+        let cleanup = error
+            .retry_cleanup()
+            .expect("exact late reconcile candidate readback");
+        assert_eq!(
+            cleanup.state,
+            SemanticActivationCleanupState::ReconcileRequired
+        );
+        assert!(cleanup.native_closed);
+        assert!(cleanup.staging_retained);
+        assert_eq!(
+            store.read(&fixture.plan.value).expect("same candidate"),
+            before_retry
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn public_retry_reconcile_preserves_disposition_across_conflict_and_predecessor() {
+        for ambiguous in [false, true] {
+            let fixture = CoordinatorActivationFixture::new();
+            let store = Arc::clone(&fixture.plan.context.store);
+            let (fixture, prepared) = fixture.prepare();
+            let error = if ambiguous {
+                let budget = ActivationBudget::new(
+                    std::time::Instant::now() + Duration::from_secs(30),
+                    prepared.cancellation_arc(),
+                );
+                let activation = prepared
+                    .consume_for_activation_with_budget(&budget)
+                    .expect("activation");
+                let suspended = acquire_suspended_for_activation_with_budget(activation, &budget)
+                    .unwrap_or_else(|failure| panic!("native acquisition: {}", failure.detail));
+                let ready = suspended
+                    .persist_ready_with_budget(&budget)
+                    .unwrap_or_else(|failure| panic!("Ready: {}", failure.detail));
+                store.fail_after_replace_and_durability_recheck();
+                launch_error_from_private_failure(private_failure_after_cleanup(
+                    PrivateActivationFailureKind::Cancellation,
+                    "test cancellation".into(),
+                    ready.owner,
+                    &budget,
+                ))
+            } else {
+                crate::staging::cancel_after_ready_cas_for_test();
+                store.expire_after_activation_reconcile_readback_for_test();
+                match OwnedRuntimeSession::activate_group(prepared) {
+                    Ok(_) => panic!("late reconcile"),
+                    Err(error) => error,
+                }
+            };
+            let (candidate, predecessor) = match error.owner.as_ref().expect("cleanup owner") {
+                LaunchFailureOwner::Suspended(owner) => {
+                    let context = owner.failure_context.as_ref().expect("retained context");
+                    assert_eq!(
+                        context.disposition,
+                        if ambiguous {
+                            CasDisposition::AmbiguousWrite
+                        } else {
+                            CasDisposition::ConfirmedLate
+                        }
+                    );
+                    (context.candidate.clone(), context.predecessor.clone())
+                }
+                _ => panic!("late reconcile must retain suspended owner"),
+            };
+            let mut conflict = predecessor.clone();
+            conflict.recovery_epoch += 1;
+            store.replace_journal_for_test(&conflict);
+            let error = error.retry_cleanup().expect_err("conflicting record");
+            assert_eq!(store.read(&fixture.plan.value).unwrap(), conflict);
+            assert_eq!(error.committed_candidate.as_ref(), Some(&candidate));
+            store.replace_journal_for_test(&predecessor);
+            if ambiguous {
+                let cleanup = error
+                    .retry_cleanup()
+                    .expect("exact ambiguous predecessor retry");
+                assert!(cleanup.native_closed && cleanup.staging_retained);
+                let journal = store.read(&fixture.plan.value).unwrap();
+                assert_eq!(journal.state, JournalState::ReconcileRequired);
+                assert_eq!(journal.journal_revision, candidate.journal_revision);
+            } else {
+                let error = error
+                    .retry_cleanup()
+                    .expect_err("confirmed predecessor replay");
+                assert_eq!(store.read(&fixture.plan.value).unwrap(), predecessor);
+                assert_eq!(error.committed_candidate.as_ref(), Some(&candidate));
+                store.replace_journal_for_test(&candidate);
+                error
+                    .retry_cleanup()
+                    .expect("restored exact confirmed candidate");
+                assert_eq!(store.read(&fixture.plan.value).unwrap(), candidate);
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn confirmed_closing_and_terminal_reject_predecessor_restoration_without_cas() {
+        for terminal in [false, true] {
+            let (fixture, store, error, candidate) = if terminal {
+                late_terminal_commit_fixture()
+            } else {
+                late_closing_commit_fixture()
+            };
+            let context = match error.owner.as_ref().unwrap() {
+                CleanupFailureOwner::Running { owner, .. } => {
+                    owner.owner.failure_context.as_ref().unwrap()
+                }
+                CleanupFailureOwner::Closing { owner, .. } => {
+                    owner.owner.failure_context.as_ref().unwrap()
+                }
+            };
+            assert_eq!(context.candidate, candidate);
+            assert_eq!(context.disposition, CasDisposition::ConfirmedLate);
+            let predecessor = context.predecessor.clone();
+            store.replace_journal_for_test(&predecessor);
+            let before = store.owned_cas_calls_for_test();
+            let error =
+                retry_cleanup_error(error).expect_err("confirmed predecessor replay must conflict");
+            assert_eq!(error.kind(), CleanupErrorKind::Conflict);
+            assert_eq!(store.owned_cas_calls_for_test(), before, "no repeated CAS");
+            assert_eq!(store.read(&fixture.plan.value).unwrap(), predecessor);
+            store.replace_journal_for_test(&candidate);
+            retry_cleanup_error(error).expect("exact candidate restores cleanup");
+        }
+    }
+
+    #[cfg(windows)]
+    fn ambiguous_cleanup_fixture(
+        terminal: bool,
+    ) -> (
+        CoordinatorHttpFixture,
+        Arc<JournalStore>,
+        CleanupError,
+        RuntimeSessionJournalV1,
+    ) {
+        let (fixture, store, running) = promoted_running_fixture();
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        let cancel = Arc::new(AtomicBool::new(false));
+        let error = if terminal {
+            let closing = running
+                .begin_closing_with_cancellation(deadline, Some(cancel.clone()))
+                .unwrap_or_else(|e| panic!("Closing: {}", e.detail));
+            let closing = closing
+                .cleanup_native_and_observe_listener_release(deadline, Some(cancel.clone()))
+                .unwrap_or_else(|e| panic!("native: {}", e.detail));
+            let (closing, _) = closing
+                .release_staging_after_native_cleanup(deadline, Some(cancel.clone()))
+                .unwrap_or_else(|e| panic!("staging: {}", e.detail));
+            store.fail_after_replace_and_durability_recheck();
+            let failure = match closing.terminalize_after_release(deadline, Some(cancel)) {
+                Err(e) => e,
+                Ok(_) => panic!("expected ambiguous Terminal"),
+            };
+            cleanup_error_from_terminal(failure)
+        } else {
+            store.fail_after_replace_and_durability_recheck();
+            close_running_owner(running, deadline, cancel).expect_err("ambiguous Closing")
+        };
+        let candidate = store.read(&fixture.plan.value).unwrap();
+        (fixture, store, error, candidate)
+    }
+
+    #[cfg(windows)]
+    fn cleanup_context(error: &CleanupError) -> &ActivationFailureJournalContext {
+        match error.owner.as_ref().unwrap() {
+            CleanupFailureOwner::Running { owner, .. } => {
+                owner.owner.failure_context.as_ref().unwrap()
+            }
+            CleanupFailureOwner::Closing { owner, .. } => {
+                owner.owner.failure_context.as_ref().unwrap()
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    fn retry_cleanup_with_budget(
+        error: CleanupError,
+        candidate: RuntimeSessionJournalV1,
+        budget: &ActivationBudget,
+    ) -> CleanupError {
+        match error.owner.unwrap() {
+            CleanupFailureOwner::Running { owner, .. } => {
+                match adopt_known_closing_candidate(owner, candidate, budget) {
+                    Err(e) => e,
+                    Ok(_) => panic!("expected failed Closing adoption"),
+                }
+            }
+            CleanupFailureOwner::Closing { owner, .. } => {
+                retry_known_terminal_candidate(owner, candidate, budget)
+                    .expect_err("failed Terminal adoption")
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn durable_adoption_confirms_before_later_cancellation_and_rejects_replay() {
+        for (terminal, expire) in [(false, false), (true, false), (false, true), (true, true)] {
+            let (fixture, store, error, candidate) = ambiguous_cleanup_fixture(terminal);
+            let predecessor = cleanup_context(&error).predecessor.clone();
+            let cancel = Arc::new(AtomicBool::new(false));
+            let signal = cancel.clone();
+            let deadline = std::time::Instant::now()
+                + if expire {
+                    Duration::from_millis(250)
+                } else {
+                    Duration::from_secs(30)
+                };
+            store.after_durable_read_for_test(move || {
+                if expire {
+                    std::thread::sleep(
+                        deadline.saturating_duration_since(std::time::Instant::now()),
+                    );
+                } else {
+                    signal.store(true, Ordering::Release);
+                }
+            });
+            let budget = ActivationBudget::new(deadline, cancel);
+            let error = retry_cleanup_with_budget(error, candidate.clone(), &budget);
+            assert_eq!(cleanup_context(&error).candidate, candidate);
+            assert_eq!(
+                cleanup_context(&error).disposition,
+                CasDisposition::ConfirmedLate
+            );
+            store.replace_journal_for_test(&predecessor);
+            let before = store.owned_cas_calls_for_test();
+            let error = retry_cleanup_error(error).expect_err("confirmed predecessor conflicts");
+            assert_eq!(error.kind(), CleanupErrorKind::Conflict);
+            assert_eq!(store.owned_cas_calls_for_test(), before);
+            assert_eq!(store.read(&fixture.plan.value).unwrap(), predecessor);
+            store.replace_journal_for_test(&candidate);
+            retry_cleanup_error(error).expect("restored candidate recovers");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn durable_adoption_prewrite_retry_preserves_pending_candidate() {
+        for (terminal, prewrite) in [(false, false), (true, false), (false, true), (true, true)] {
+            let (_fixture, store, error, candidate) = ambiguous_cleanup_fixture(terminal);
+            store.replace_journal_for_test(&cleanup_context(&error).predecessor);
+            let cancel = Arc::new(AtomicBool::new(false));
+            let signal = cancel.clone();
+            if prewrite {
+                store.fail_next_before_replace_for_test();
+            } else {
+                store.after_durable_read_for_test(move || signal.store(true, Ordering::Release));
+            }
+            let budget =
+                ActivationBudget::new(std::time::Instant::now() + Duration::from_secs(30), cancel);
+            let error = retry_cleanup_with_budget(error, candidate.clone(), &budget);
+            assert_eq!(cleanup_context(&error).candidate, candidate);
+            assert_eq!(
+                cleanup_context(&error).disposition,
+                CasDisposition::AmbiguousWrite
+            );
+            match error.owner.as_ref().unwrap() {
+                CleanupFailureOwner::Running {
+                    committed_candidate,
+                    ..
+                }
+                | CleanupFailureOwner::Closing {
+                    committed_candidate,
+                    ..
+                } => assert_eq!(committed_candidate.as_ref(), Some(&candidate)),
+            }
+            store.replace_journal_for_test(&candidate);
+            retry_cleanup_error(error).expect("public retry discovers pending candidate");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn durable_adoption_reconcile_confirms_all_activation_phases_before_later_failure() {
+        for state in [
+            JournalState::Ready,
+            JournalState::Launching,
+            JournalState::Running,
+            JournalState::ReconcileRequired,
+        ] {
+            let (reservations, ports) = reserve_coordinator_ports(1);
+            let fixture = CoordinatorHttpFixture::new(&ports, &["ready"]);
+            let store = fixture.plan.context.store.clone();
+            let (fixture, prepared) = fixture.prepare();
+            let budget = ActivationBudget::new(
+                std::time::Instant::now() + Duration::from_secs(30),
+                prepared.cancellation_arc(),
+            );
+            let activation = prepared
+                .consume_for_activation_with_budget(&budget)
+                .unwrap();
+            let suspended = acquire_suspended_for_activation_with_budget(activation, &budget)
+                .unwrap_or_else(|e| panic!("{}", e.detail));
+            let owner = if state == JournalState::Ready {
+                store.fail_after_replace_and_durability_recheck();
+                match suspended.persist_ready_with_budget(&budget) {
+                    Err(e) => e.owner.unwrap(),
+                    Ok(_) => panic!("ambiguous Ready"),
+                }
+            } else {
+                let ready = suspended
+                    .persist_ready_with_budget(&budget)
+                    .unwrap_or_else(|e| panic!("{}", e.detail));
+                drop(reservations);
+                if state == JournalState::Launching {
+                    store.fail_after_replace_and_durability_recheck();
+                    match ready.launch_with_budget(&budget) {
+                        Err(e) => match e.owner.unwrap() {
+                            ActivationLaunchOwner::Ready(o) => o.owner,
+                            ActivationLaunchOwner::Launching(o) => o.owner,
+                        },
+                        Ok(_) => panic!("ambiguous Launching"),
+                    }
+                } else if state == JournalState::Running {
+                    let launching = ready
+                        .launch_with_budget(&budget)
+                        .unwrap_or_else(|e| panic!("{}", e.detail));
+                    store.fail_after_replace_and_durability_recheck();
+                    match launching.promote_running_with_cancellation(
+                        budget.deadline(),
+                        Some(budget.cancellation_arc()),
+                    ) {
+                        Err(e) => e.owner.owner,
+                        Ok(_) => panic!("ambiguous Running"),
+                    }
+                } else {
+                    store.fail_after_replace_and_durability_recheck();
+                    match ready.owner.cleanup_and_reconcile(&budget) {
+                        Err(e) => e.owner,
+                        Ok(_) => panic!("ambiguous Reconcile"),
+                    }
+                }
+            };
+            let context = owner.failure_context.as_ref().unwrap();
+            assert_eq!(context.disposition, CasDisposition::AmbiguousWrite);
+            assert_eq!(context.candidate.state, state);
+            let candidate = context.candidate.clone();
+            let predecessor = context.predecessor.clone();
+            // Complete native cleanup first without adopting the candidate, so
+            // the controlled deadline measures only the durable adoption seam.
+            store.fail_durable_read_for_test();
+            let owner = match owner.cleanup_and_reconcile(&budget) {
+                Err(e) => e.owner,
+                Ok(_) => panic!("injected read failure"),
+            };
+            assert!(owner.native_cleanup_proven);
+            let deadline = std::time::Instant::now() + Duration::from_millis(100);
+            store.after_durable_read_for_test(move || {
+                std::thread::sleep(deadline.saturating_duration_since(std::time::Instant::now()))
+            });
+            let short = ActivationBudget::new(deadline, Arc::new(AtomicBool::new(false)));
+            let failure = match owner.cleanup_and_reconcile(&short) {
+                Err(e) => e,
+                Ok(_) => panic!("late adoption"),
+            };
+            assert_eq!(failure.committed_candidate.as_ref(), Some(&candidate));
+            assert_eq!(
+                failure.candidate_disposition,
+                Some(CasDisposition::ConfirmedLate)
+            );
+            let context = failure.owner.failure_context.as_ref().unwrap();
+            assert_eq!(context.candidate, candidate);
+            assert_eq!(context.disposition, CasDisposition::ConfirmedLate);
+            store.replace_journal_for_test(&predecessor);
+            let before = store.owned_cas_calls_for_test();
+            let failure = match failure.owner.cleanup_and_reconcile(&budget) {
+                Err(e) => e,
+                Ok(_) => panic!("confirmed predecessor"),
+            };
+            assert_eq!(failure.kind, ActivationReconcileFailureKind::Conflict);
+            assert_eq!(store.owned_cas_calls_for_test(), before);
+            assert_eq!(store.read(&fixture.plan.value).unwrap(), predecessor);
+            assert!(failure.owner.native_cleanup_proven);
+            store.replace_journal_for_test(&candidate);
+            let recovered = failure
+                .owner
+                .cleanup_and_reconcile(&budget)
+                .unwrap_or_else(|e| panic!("{}", e.detail));
+            assert_eq!(recovered.journal.state, JournalState::ReconcileRequired);
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn durable_adoption_terminal_later_read_failure_keeps_confirmation_and_proofs() {
+        let (_fixture, store, error, candidate) = ambiguous_cleanup_fixture(true);
+        let predecessor = cleanup_context(&error).predecessor.clone();
+        let fault_store = store.clone();
+        store.after_durable_read_for_test(move || fault_store.fail_exact_durability_for_test());
+        let error = retry_cleanup_error(error).expect_err("second read fails");
+        assert_eq!(
+            cleanup_context(&error).disposition,
+            CasDisposition::ConfirmedLate
+        );
+        match error.owner.as_ref().unwrap() {
+            CleanupFailureOwner::Closing { owner, .. } => {
+                assert!(owner.native_cleanup_proof.is_some());
+                // Terminalization invalidates the earlier live listener snapshot;
+                // the exact candidate carries the fresh complete release proof.
+                assert!(owner.listener_release_proof.is_none());
+                assert!(candidate.proof.as_ref().unwrap().listeners_released);
+                assert!(owner.staging_release_proof.is_some());
+            }
+            _ => panic!("lost Closing owner"),
+        }
+        store.replace_journal_for_test(&predecessor);
+        let before = store.owned_cas_calls_for_test();
+        let error = retry_cleanup_error(error).expect_err("confirmed predecessor");
+        assert_eq!(error.kind(), CleanupErrorKind::Conflict);
+        assert_eq!(store.owned_cas_calls_for_test(), before);
+        store.replace_journal_for_test(&candidate);
+        retry_cleanup_error(error).expect("restore exact Terminal");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn durable_adoption_new_reconcile_attempt_supersedes_confirmed_ready() {
+        let fixture = CoordinatorActivationFixture::new();
+        let store = fixture.plan.context.store.clone();
+        let (_fixture, prepared) = fixture.prepare();
+        let budget = ActivationBudget::new(
+            std::time::Instant::now() + Duration::from_secs(30),
+            prepared.cancellation_arc(),
+        );
+        let activation = prepared
+            .consume_for_activation_with_budget(&budget)
+            .unwrap();
+        let suspended = acquire_suspended_for_activation_with_budget(activation, &budget)
+            .unwrap_or_else(|e| panic!("{}", e.detail));
+        store.fail_after_replace_and_durability_recheck();
+        let owner = match suspended.persist_ready_with_budget(&budget) {
+            Err(e) => e.owner.unwrap(),
+            Ok(_) => panic!("ambiguous Ready"),
+        };
+        let ready = owner.failure_context.as_ref().unwrap().candidate.clone();
+        store.fail_after_replace_and_durability_recheck();
+        let failure = match owner.cleanup_and_reconcile(&budget) {
+            Err(e) => e,
+            Ok(_) => panic!("ambiguous Reconcile"),
+        };
+        let context = failure.owner.failure_context.as_ref().unwrap();
+        assert_eq!(context.predecessor, ready);
+        assert_eq!(context.candidate.state, JournalState::ReconcileRequired);
+        assert_eq!(context.disposition, CasDisposition::AmbiguousWrite);
+        assert_eq!(
+            failure.committed_candidate.as_ref(),
+            Some(&context.candidate)
+        );
+        assert_eq!(
+            failure.candidate_disposition,
+            Some(CasDisposition::AmbiguousWrite)
+        );
+        failure
+            .owner
+            .cleanup_and_reconcile(&budget)
+            .unwrap_or_else(|e| panic!("{}", e.detail));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn scheduled_fixture_permit_is_transferred_once_before_scenario_budget() {
+        let fixture = CoordinatorActivationFixture::new();
+        let (_fixture, prepared) = fixture.prepare();
+        let budget = ActivationBudget::new(
+            std::time::Instant::now() + Duration::from_secs(30),
+            prepared.cancellation_arc(),
+        );
+        let activation = prepared
+            .consume_for_activation_with_budget(&budget)
+            .unwrap();
+        let owner = acquire_suspended_for_activation_with_budget(activation, &budget)
+            .unwrap_or_else(|e| panic!("{}", e.detail));
+        assert!(owner._http_fixture_permit.is_some());
+        assert!(
+            _fixture.admission.take().is_none(),
+            "native owner took the single scheduled permit"
+        );
+        let mut owner = owner;
+        owner
+            .cleanup_native_for_closing(budget.deadline(), None)
+            .expect("native cleanup");
+        assert!(owner.native_cleanup_proven);
+        assert!(owner._http_fixture_permit.is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn durable_adoption_failed_flush_does_not_confirm_matching_bytes() {
+        for terminal in [false, true] {
+            let (_fixture, store, error, candidate) = ambiguous_cleanup_fixture(terminal);
+            store.fail_durable_read_for_test();
+            let error = retry_cleanup_error(error).expect_err("failed durability");
+            assert_eq!(
+                cleanup_context(&error).disposition,
+                CasDisposition::AmbiguousWrite
+            );
+            store.replace_journal_for_test(&cleanup_context(&error).predecessor);
+            retry_cleanup_error(error).expect("unconfirmed predecessor remains retryable");
+            assert_eq!(
+                candidate.state,
+                if terminal {
+                    JournalState::Terminal
+                } else {
+                    JournalState::Closing
+                }
+            );
+        }
+    }
+
     #[test]
     fn cleanup_targets_only_the_recorded_pid_tree() {
         let command = taskkill_command(4242).expect("taskkill command");
@@ -9183,6 +12308,30 @@ mod tests {
             .acquire(Duration::from_millis(40))
             .expect("permit should be reacquirable after Drop");
         drop(second);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn unbudgeted_fixture_admission_waits_for_available_permit() {
+        let limiter = HttpFixtureLimiter::new(1);
+        let first = limiter
+            .acquire_available()
+            .expect("local limiter first permit");
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let waiter = {
+            let limiter = Arc::clone(&limiter);
+            std::thread::spawn(move || {
+                let permit = limiter.acquire_available().expect("queued permit");
+                sender.send(()).expect("queued admission signal");
+                permit
+            })
+        };
+        assert!(receiver.recv_timeout(Duration::from_millis(100)).is_err());
+        drop(first);
+        receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("queued admission should proceed after release");
+        drop(waiter.join().expect("queued admission thread"));
     }
 
     #[cfg(windows)]
@@ -10242,6 +13391,42 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    fn activation_spawn_failure_with_zero_roots_proves_job_cleanup_without_identity() {
+        let mut command = Command::new("capture-runtime-command-that-does-not-exist.exe");
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let failure = SuspendedGroup::spawn(std::slice::from_mut(&mut command))
+            .expect_err("first CreateProcess failure");
+        assert_eq!(failure.kind(), GroupNativeFailureKind::Spawn);
+        let mut owner = failure
+            .owner
+            .expect("Job owner survives zero-root spawn failure");
+        assert!(owner.roots.is_empty());
+        assert_eq!(owner.unacquired_root_nonces.len(), 1);
+
+        let proof = owner
+            .cleanup_and_retain_proof_after_activation_failure(
+                std::time::Instant::now() + Duration::from_secs(5),
+            )
+            .expect("activation cleanup proof for empty root set");
+        assert!(proof.activation_failure_only);
+        assert!(proof.roots.is_empty());
+        assert!(owner.cleanup_complete);
+        assert_eq!(
+            owner
+                .job
+                .as_ref()
+                .expect("retained Job")
+                .active_processes()
+                .expect("Job process query"),
+            0
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
     fn identity_capture_failure_retains_the_exact_child_handle() {
         let marker = group_marker_path("identity");
         let mut commands = [marker_command(&marker, true)];
@@ -10259,10 +13444,59 @@ mod tests {
         assert!(owner.roots[0].identity.is_none());
         assert!(owner.unacquired_root_nonces.is_empty());
         wait_for_marker(&marker, false);
-        let proof = cleanup_group_failure(failure);
-        assert!(proof.roots_reaped);
-        assert!(proof.descendants_terminated);
+        let mut owner = failure.owner.expect("identity failure owner");
+        let proof = owner
+            .cleanup_and_retain_proof_after_activation_failure(
+                std::time::Instant::now() + Duration::from_secs(5),
+            )
+            .expect("activation cleanup proof with unknown child identity");
+        assert!(proof.activation_failure_only);
+        assert!(
+            proof.roots.is_empty(),
+            "unknown identity is never fabricated"
+        );
+        assert!(owner.cleanup_complete);
+        assert!(owner.roots[0]
+            .child
+            .try_wait()
+            .expect("exact child wait")
+            .is_some());
         let _ = std::fs::remove_file(marker);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn activation_spawn_failure_keeps_unacquired_suffix_outside_cleanup_proof() {
+        let first_marker = group_marker_path("activation-spawn-first");
+        let mut commands = [marker_command(&first_marker, true), {
+            let mut command = Command::new("capture-runtime-command-that-does-not-exist.exe");
+            command
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            command
+        }];
+        let failure = SuspendedGroup::spawn(&mut commands).expect_err("second spawn failure");
+        let mut owner = failure.owner.expect("partial group owner");
+        assert_eq!(owner.roots.len(), 1);
+        assert_eq!(owner.unacquired_root_nonces.len(), 1);
+        wait_for_marker(&first_marker, false);
+
+        let proof = owner
+            .cleanup_and_retain_proof_after_activation_failure(
+                std::time::Instant::now() + Duration::from_secs(5),
+            )
+            .expect("activation cleanup proof with unacquired suffix");
+        assert!(proof.activation_failure_only);
+        assert_eq!(proof.roots.len(), 1);
+        assert_eq!(owner.unacquired_root_nonces.len(), 1);
+        assert!(owner.cleanup_complete);
+        assert!(owner.roots[0]
+            .child
+            .try_wait()
+            .expect("exact child wait")
+            .is_some());
+        let _ = std::fs::remove_file(first_marker);
     }
 
     #[cfg(windows)]
@@ -10329,6 +13563,47 @@ mod tests {
         assert!(proof.descendants_terminated);
         let _ = std::fs::remove_file(first_marker);
         let _ = std::fs::remove_file(second_marker);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn activation_cleanup_job_failure_retains_owner_for_a_fresh_retry() {
+        let marker = group_marker_path("activation-job-failure");
+        let mut commands = [marker_command(&marker, true)];
+        let mut group = SuspendedGroup::spawn(&mut commands)
+            .expect("suspended group")
+            .resume_all()
+            .expect("resumed group");
+        wait_for_marker(&marker, true);
+        group
+            .job
+            .as_mut()
+            .expect("group Job")
+            .inject_termination_failure();
+
+        let first = match group.cleanup_and_retain_proof_after_activation_failure(
+            std::time::Instant::now() + Duration::from_secs(5),
+        ) {
+            Ok(_) => panic!("injected Job failure unexpectedly proved cleanup"),
+            Err(error) => error,
+        };
+        assert!(first.contains("Injected Job termination failure"));
+        assert!(!group.cleanup_complete);
+        assert!(group.roots[0]
+            .child
+            .try_wait()
+            .expect("exact child wait")
+            .is_some());
+
+        let proof = group
+            .cleanup_and_retain_proof_after_activation_failure(
+                std::time::Instant::now() + Duration::from_secs(5),
+            )
+            .expect("fresh activation cleanup retry");
+        assert!(proof.activation_failure_only);
+        assert_eq!(proof.roots.len(), 1);
+        assert!(group.cleanup_complete);
+        let _ = std::fs::remove_file(marker);
     }
 
     #[cfg(windows)]

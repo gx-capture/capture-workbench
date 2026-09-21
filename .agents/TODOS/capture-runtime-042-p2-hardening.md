@@ -5,6 +5,21 @@ and the [DECISION](../DECISIONS/capture-runtime-042-p2-hardening.md) owns
 rationale. The [GUIDE](../GUIDES/staged-ocr-delivery-workflow.md) owns fresh
 worker procedure. This file is the only executable Phase 2 checklist.
 
+## Continuation checkpoint (2026-09-21)
+
+The historical documentation gate records below retain their original HEAD
+and evidence scope. They do not describe the current implementation baseline
+`12fe94c60970876413628d619b732c59fae67585` or its pre-existing dirty public R3
+work. The [bounded R3 repair checklist](capture-runtime-042-r3-closeout.md)
+records fresh analysis, review, repairs and local checks within D2.4; it does
+not replace this release checklist or mark a D0-D8 gate complete.
+
+The producer has a private RequestRef metadata codec, not the public
+`start_or_get` lifecycle/SDK. Cert and LAW retain their migration prerequisites:
+verified public producer interfaces and, where required, an immutable D3
+candidate/ledger. Private source/fixture checks are not installed OCR or
+published acceptance evidence.
+
 ## Gate status and non-negotiable rules
 
 The state machine is strictly linear:

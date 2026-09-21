@@ -37,7 +37,7 @@ use crate::{
         JournalPlanValue, JournalState, ResourceObservation, RuntimeSessionJournalV1,
         StagingBinding,
     },
-    journal_store::JournalStoreCommand,
+    journal_store::{CasDisposition, JournalStoreCommand, OwnedCasResult},
     prepare::ValidatedActivationContext,
 };
 
@@ -138,15 +138,14 @@ pub(crate) enum StagingFailure {
     },
 }
 
-/// A private budgeted journal failure.  `committed_candidate` is populated
-/// only when the exact CAS returned a durable candidate and a later budget
-/// check failed.  An ambiguous write never supplies a journal value for a
-/// caller to bless from a subsequent read.
+/// A private budgeted journal failure. The owned CAS result remains attached
+/// so callers can distinguish a prewrite failure, ambiguous replacement, and
+/// confirmed-late durable candidate without blessing a bare journal value.
 #[derive(Debug)]
 pub(crate) struct StagingBudgetFailure {
     kind: StagingFailureKind,
     detail: String,
-    committed_candidate: Option<RuntimeSessionJournalV1>,
+    cas_outcome: Option<OwnedCasResult>,
 }
 
 impl StagingBudgetFailure {
@@ -154,19 +153,19 @@ impl StagingBudgetFailure {
         Self {
             kind,
             detail,
-            committed_candidate: None,
+            cas_outcome: None,
         }
     }
 
-    fn with_committed_candidate(
+    fn with_cas_outcome(
         kind: StagingFailureKind,
         detail: String,
-        committed_candidate: RuntimeSessionJournalV1,
+        cas_outcome: OwnedCasResult,
     ) -> Self {
         Self {
             kind,
             detail,
-            committed_candidate: Some(committed_candidate),
+            cas_outcome: Some(cas_outcome),
         }
     }
 
@@ -174,10 +173,8 @@ impl StagingBudgetFailure {
         self.kind
     }
 
-    pub(crate) fn into_parts(
-        self,
-    ) -> (StagingFailureKind, String, Option<RuntimeSessionJournalV1>) {
-        (self.kind, self.detail, self.committed_candidate)
+    pub(crate) fn into_cas_parts(self) -> (StagingFailureKind, String, Option<OwnedCasResult>) {
+        (self.kind, self.detail, self.cas_outcome)
     }
 }
 
@@ -1073,28 +1070,43 @@ impl RunStagingOwner {
         if let Err(kind) = budget.check() {
             return Err(StagingBudgetFailure::new(kind, staging_budget_error(kind)));
         }
-        let ready = self
-            .activation
-            .context
-            .store
-            .compare_and_swap(
-                &self.activation.journal_plan,
-                &self.activation.expected,
-                JournalStoreCommand::TransitionWithObservation {
-                    next_state: JournalState::Ready,
-                    observation: observation.clone(),
-                    timestamp,
-                },
-            )
-            .map_err(|error| {
-                map_staging_budget_failure(error, "Capture runtime Ready journal CAS failed.")
-            })?;
+        let cas_outcome = self.activation.context.store.compare_and_swap_owned(
+            &self.activation.journal_plan,
+            &self.activation.expected_journal,
+            JournalStoreCommand::TransitionWithObservation {
+                next_state: JournalState::Ready,
+                observation: observation.clone(),
+                timestamp,
+            },
+        );
+        let ready = match cas_outcome.disposition() {
+            CasDisposition::Committed | CasDisposition::ConfirmedLate => {
+                cas_outcome.attempt().cloned().ok_or_else(|| {
+                    StagingBudgetFailure::with_cas_outcome(
+                        StagingFailureKind::Durability,
+                        "Capture runtime Ready journal CAS returned no candidate.".into(),
+                        cas_outcome.clone(),
+                    )
+                })?
+            }
+            CasDisposition::Prewrite | CasDisposition::AmbiguousWrite => {
+                let kind = cas_outcome
+                    .error()
+                    .map(map_journal_store_error_kind)
+                    .unwrap_or(StagingFailureKind::Durability);
+                return Err(StagingBudgetFailure::with_cas_outcome(
+                    kind,
+                    "Capture runtime Ready journal CAS failed.".into(),
+                    cas_outcome,
+                ));
+            }
+        };
         budget.cancel_after_ready_cas_if_requested();
         if let Err(kind) = budget.check() {
-            return Err(StagingBudgetFailure::with_committed_candidate(
+            return Err(StagingBudgetFailure::with_cas_outcome(
                 kind,
                 staging_budget_error(kind),
-                ready.clone(),
+                cas_outcome,
             ));
         }
         if ready.state != JournalState::Ready
@@ -1104,16 +1116,17 @@ impl RunStagingOwner {
             || ready.staging_binding.as_ref() != observation.staging_binding.as_ref()
             || ready.roots != observation.roots
         {
-            return Err(StagingBudgetFailure::new(
+            return Err(StagingBudgetFailure::with_cas_outcome(
                 StagingFailureKind::JournalChanged,
                 "Capture runtime Ready journal read-back was not exact.".into(),
+                cas_outcome,
             ));
         }
         if let Err(kind) = budget.check() {
-            return Err(StagingBudgetFailure::with_committed_candidate(
+            return Err(StagingBudgetFailure::with_cas_outcome(
                 kind,
                 staging_budget_error(kind),
-                ready.clone(),
+                cas_outcome,
             ));
         }
         Ok(ready)
@@ -1220,28 +1233,43 @@ impl RunStagingOwner {
         if let Err(kind) = budget.check() {
             return Err(StagingBudgetFailure::new(kind, staging_budget_error(kind)));
         }
-        let launching = self
-            .activation
-            .context
-            .store
-            .compare_and_swap(
-                &self.activation.journal_plan,
-                &expected_ready.cas_snapshot(),
-                JournalStoreCommand::TransitionWithObservation {
-                    next_state: JournalState::Launching,
-                    observation: observation.clone(),
-                    timestamp,
-                },
-            )
-            .map_err(|error| {
-                map_staging_budget_failure(error, "Capture runtime Launching journal CAS failed.")
-            })?;
+        let cas_outcome = self.activation.context.store.compare_and_swap_owned(
+            &self.activation.journal_plan,
+            expected_ready,
+            JournalStoreCommand::TransitionWithObservation {
+                next_state: JournalState::Launching,
+                observation: observation.clone(),
+                timestamp,
+            },
+        );
+        let launching = match cas_outcome.disposition() {
+            CasDisposition::Committed | CasDisposition::ConfirmedLate => {
+                cas_outcome.attempt().cloned().ok_or_else(|| {
+                    StagingBudgetFailure::with_cas_outcome(
+                        StagingFailureKind::Durability,
+                        "Capture runtime Launching journal CAS returned no candidate.".into(),
+                        cas_outcome.clone(),
+                    )
+                })?
+            }
+            CasDisposition::Prewrite | CasDisposition::AmbiguousWrite => {
+                let kind = cas_outcome
+                    .error()
+                    .map(map_journal_store_error_kind)
+                    .unwrap_or(StagingFailureKind::Durability);
+                return Err(StagingBudgetFailure::with_cas_outcome(
+                    kind,
+                    "Capture runtime Launching journal CAS failed.".into(),
+                    cas_outcome,
+                ));
+            }
+        };
         budget.cancel_after_launching_cas_if_requested();
         if let Err(kind) = budget.check() {
-            return Err(StagingBudgetFailure::with_committed_candidate(
+            return Err(StagingBudgetFailure::with_cas_outcome(
                 kind,
                 staging_budget_error(kind),
-                launching.clone(),
+                cas_outcome,
             ));
         }
         if launching.state != JournalState::Launching
@@ -1260,16 +1288,17 @@ impl RunStagingOwner {
             || launching.roots != observation.roots
             || launching.proof.is_some()
         {
-            return Err(StagingBudgetFailure::new(
+            return Err(StagingBudgetFailure::with_cas_outcome(
                 StagingFailureKind::JournalChanged,
                 "Capture runtime Launching journal read-back was not exact.".into(),
+                cas_outcome,
             ));
         }
         if let Err(kind) = budget.check() {
-            return Err(StagingBudgetFailure::with_committed_candidate(
+            return Err(StagingBudgetFailure::with_cas_outcome(
                 kind,
                 staging_budget_error(kind),
-                launching.clone(),
+                cas_outcome,
             ));
         }
         Ok(launching)
@@ -1287,7 +1316,7 @@ impl RunStagingOwner {
             .store
             .begin_running_admission(
                 &self.activation.journal_plan,
-                &expected_launching.cas_snapshot(),
+                expected_launching,
                 deadline,
                 cancellation,
             )
@@ -1373,6 +1402,46 @@ impl RunStagingOwner {
     }
 
     #[cfg(windows)]
+    pub(crate) fn persist_running_admission_owned(
+        &self,
+        admission: RunningCasAdmission,
+        expected_launching: &RuntimeSessionJournalV1,
+        observation: ResourceObservation,
+        timestamp: String,
+    ) -> OwnedCasResult {
+        let mut result = admission.commit_running_owned(observation.clone(), timestamp.clone());
+        let Some(running) = result.attempt().cloned() else {
+            return result;
+        };
+        let expected_revision = match expected_launching.journal_revision.checked_add(1) {
+            Some(revision) => revision,
+            None => {
+                return result
+                    .mark_ambiguous(crate::journal_store::JournalStoreError::CorruptJournal)
+            }
+        };
+        if running.state != JournalState::Running
+            || running.journal_revision != expected_revision
+            || running.schema_version != expected_launching.schema_version
+            || running.producer != expected_launching.producer
+            || running.session_nonce != expected_launching.session_nonce
+            || running.plan_digest != expected_launching.plan_digest
+            || running.created_at != expected_launching.created_at
+            || running.updated_at != timestamp
+            || running.attempt != expected_launching.attempt
+            || running.recovery_epoch != expected_launching.recovery_epoch
+            || running.binding != expected_launching.binding
+            || running.job_binding.as_ref() != Some(&observation.job_binding)
+            || running.staging_binding.as_ref() != observation.staging_binding.as_ref()
+            || running.roots != observation.roots
+            || running.proof.is_some()
+        {
+            result = result.mark_ambiguous(crate::journal_store::JournalStoreError::CorruptJournal);
+        }
+        result
+    }
+
+    #[cfg(windows)]
     pub(crate) fn persist_closing_admission(
         &self,
         admission: ClosingCasAdmission,
@@ -1423,6 +1492,55 @@ impl RunStagingOwner {
             cancellation.store(true, std::sync::atomic::Ordering::Release);
         }
         Ok(result)
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn persist_closing_admission_owned(
+        &self,
+        admission: ClosingCasAdmission,
+        expected_running: &RuntimeSessionJournalV1,
+        observation: ResourceObservation,
+        timestamp: String,
+    ) -> OwnedCasResult {
+        let mut result = admission.commit_closing_owned(observation.clone(), timestamp.clone());
+        let Some(closing) = result.attempt().cloned() else {
+            return result;
+        };
+        let expected_revision = match expected_running.journal_revision.checked_add(1) {
+            Some(revision) => revision,
+            None => {
+                return result
+                    .mark_ambiguous(crate::journal_store::JournalStoreError::CorruptJournal)
+            }
+        };
+        if closing.state != JournalState::Closing
+            || closing.journal_revision != expected_revision
+            || closing.schema_version != expected_running.schema_version
+            || closing.producer != expected_running.producer
+            || closing.session_nonce != expected_running.session_nonce
+            || closing.plan_digest != expected_running.plan_digest
+            || closing.created_at != expected_running.created_at
+            || closing.updated_at != timestamp
+            || closing.attempt != expected_running.attempt
+            || closing.recovery_epoch != expected_running.recovery_epoch
+            || closing.binding != expected_running.binding
+            || closing.job_binding.as_ref() != Some(&observation.job_binding)
+            || closing.staging_binding.as_ref() != observation.staging_binding.as_ref()
+            || closing.roots != observation.roots
+            || closing.proof.is_some()
+        {
+            result = result.mark_ambiguous(crate::journal_store::JournalStoreError::CorruptJournal);
+        }
+        #[cfg(test)]
+        if let Some(cancellation) = self
+            .activation
+            .context
+            .store
+            .take_cancel_after_closing_readback_for_test()
+        {
+            cancellation.store(true, std::sync::atomic::Ordering::Release);
+        }
+        result
     }
 
     /// Revalidate the journal and replace the command with a freshly checked
@@ -1839,6 +1957,72 @@ impl RunStagingOwner {
         Ok(())
     }
 
+    /// Validate the exact owner predicate needed by activation-failure
+    /// reconcile. This accepts complete and partial materialization, but it
+    /// never treats a missing, changed, or foreign path as retained staging.
+    #[cfg(windows)]
+    pub(crate) fn validate_reconcile_retained_scope(
+        &self,
+        deadline: Instant,
+        cancellation: &AtomicBool,
+    ) -> Result<(), String> {
+        check_staging_release_budget(deadline, cancellation).map_err(|error| {
+            format!("Capture runtime retained staging budget ended: {error:?}.")
+        })?;
+        if self.scope_state == StagingScopeState::Released {
+            return Err("Capture runtime retained staging had already been released.".into());
+        }
+        self.validate_scope_chain()
+            .map_err(|error| format!("Capture runtime retained staging changed: {error:?}."))?;
+        if !path_exists(&self.group.path) {
+            return Err("Capture runtime retained staging group was missing.".into());
+        }
+        if let Some(marker) = self.marker.as_ref() {
+            self.validate_release_marker(marker, deadline, cancellation)
+                .map_err(|error| {
+                    format!("Capture runtime retained staging marker changed: {error:?}.")
+                })?;
+        } else if path_exists(&self.group.path.join(MARKER_FILE_NAME)) {
+            return Err("Capture runtime retained staging marker ownership was unknown.".into());
+        }
+        for (index, root) in self.roots.iter().enumerate() {
+            check_staging_release_budget(deadline, cancellation).map_err(|error| {
+                format!("Capture runtime retained staging budget ended: {error:?}.")
+            })?;
+            let Some(expected_path) = self.expected_root_paths.get(index) else {
+                return Err("Capture runtime retained staging root ordering was invalid.".into());
+            };
+            if self.released_roots.get(index).copied().unwrap_or(false) {
+                if path_exists(expected_path) {
+                    return Err("Capture runtime released staging root reappeared.".into());
+                }
+                continue;
+            }
+            if root.path != *expected_path
+                || root.identity.is_none()
+                || !path_exists(expected_path)
+                || !same_identity(expected_path, root.identity)
+                || path_is_reparse(expected_path).unwrap_or(true)
+                || !ensure_existing_directory(expected_path).is_ok()
+            {
+                return Err("Capture runtime retained staging root identity changed.".into());
+            }
+        }
+        let entries = fs::read_dir(&self.group.path)
+            .map_err(|_| "Capture runtime retained staging group could not be read.")?;
+        for entry in entries {
+            let path = entry
+                .map_err(|_| "Capture runtime retained staging group entry was unreadable.")?
+                .path();
+            let is_marker = path == self.group.path.join(MARKER_FILE_NAME);
+            let known_root = self.expected_root_paths.iter().any(|root| root == &path);
+            if !is_marker && !known_root {
+                return Err("Capture runtime retained staging contained a foreign entry.".into());
+            }
+        }
+        Ok(())
+    }
+
     /// Recheck the already released scope before the terminal CAS.  This is
     /// observation only: terminalization never recreates or deletes staging.
     #[cfg(windows)]
@@ -2146,6 +2330,19 @@ fn map_staging_budget_failure(
             staging_budget_error(StagingFailureKind::Deadline),
         ),
         _ => StagingBudgetFailure::new(StagingFailureKind::Durability, fallback.to_string()),
+    }
+}
+
+fn map_journal_store_error_kind(
+    error: &crate::journal_store::JournalStoreError,
+) -> StagingFailureKind {
+    match error {
+        crate::journal_store::JournalStoreError::AdmissionCancelled => {
+            StagingFailureKind::Cancelled
+        }
+        crate::journal_store::JournalStoreError::AdmissionDeadline => StagingFailureKind::Deadline,
+        crate::journal_store::JournalStoreError::Conflict => StagingFailureKind::JournalChanged,
+        _ => StagingFailureKind::Durability,
     }
 }
 

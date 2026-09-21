@@ -11,6 +11,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(windows)]
+use std::os::windows::{fs::MetadataExt, io::AsRawHandle};
+
 #[cfg(test)]
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -27,6 +30,7 @@ const TOKEN_ENV: &str = "CAPTURE_API_TOKEN";
 const HTTP_MODE_ENV: &str = "CAPTURE_TEST_HTTP_MODE";
 const HTTP_CHECKPOINT_ENV: &str = "CAPTURE_TEST_HTTP_CHECKPOINT_PATH";
 const HTTP_LISTENER_CHECKPOINT_ENV: &str = "CAPTURE_TEST_HTTP_LISTENER_CHECKPOINT_PATH";
+const HTTP_RESPONSE_GATE_ENV: &str = "CAPTURE_TEST_HTTP_RESPONSE_GATE_PATH";
 const HTTP_START_DELAY_ENV: &str = "CAPTURE_TEST_HTTP_START_DELAY_MS";
 const MAX_JOURNAL_BYTES: u64 = 1024 * 1024;
 const MARKER_RETRY: Duration = Duration::from_millis(10);
@@ -39,6 +43,39 @@ const HTTP_RETRY: Duration = Duration::from_millis(5);
 const MAX_HTTP_START_DELAY_MS: u64 = 9_000;
 const MAX_HTTP_REQUEST_BYTES: usize = 16 * 1024;
 const MIN_HTTP_TOKEN_BYTES: usize = 32;
+#[cfg(windows)]
+const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+const MAX_RESPONSE_GATE_BYTES: u64 = 32;
+
+#[cfg(windows)]
+#[repr(C)]
+struct Win32FileTime {
+    low_date_time: u32,
+    high_date_time: u32,
+}
+
+#[cfg(windows)]
+#[repr(C)]
+struct Win32ByHandleFileInformation {
+    file_attributes: u32,
+    creation_time: Win32FileTime,
+    last_access_time: Win32FileTime,
+    last_write_time: Win32FileTime,
+    volume_serial_number: u32,
+    file_size_high: u32,
+    file_size_low: u32,
+    number_of_links: u32,
+    file_index_high: u32,
+    file_index_low: u32,
+}
+
+#[cfg(windows)]
+extern "system" {
+    fn GetFileInformationByHandle(
+        file: *mut std::ffi::c_void,
+        information: *mut Win32ByHandleFileInformation,
+    ) -> i32;
+}
 #[cfg_attr(not(test), allow(dead_code))]
 const RUNTIME_READY_SCHEMA_SHA256: &str =
     "850afd212d049c25da41d3867ba5477451a6a2c6c7e41f116fe60f26b6a35335";
@@ -78,6 +115,7 @@ struct ProbeConfig {
     marker_path: PathBuf,
     http_checkpoint_path: Option<PathBuf>,
     http_listener_checkpoint_path: Option<PathBuf>,
+    http_response_gate_path: Option<PathBuf>,
     http_start_delay: Duration,
     session_nonce: Option<String>,
     root_ordinal: u32,
@@ -89,6 +127,7 @@ struct ProbeConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum HttpMode {
     Ready,
+    ReadyHold,
     Status503,
     Partial,
     Silent,
@@ -147,6 +186,9 @@ where
     let http_listener_checkpoint_path = env::var_os(HTTP_LISTENER_CHECKPOINT_ENV)
         .map(|_| required_path(HTTP_LISTENER_CHECKPOINT_ENV))
         .transpose()?;
+    let http_response_gate_path = env::var_os(HTTP_RESPONSE_GATE_ENV)
+        .map(|_| required_path(HTTP_RESPONSE_GATE_ENV))
+        .transpose()?;
     if journal_path == marker_path || !journal_path.is_absolute() || !marker_path.is_absolute() {
         return Err(ProbeError::Environment);
     }
@@ -164,6 +206,22 @@ where
     }) {
         return Err(ProbeError::Environment);
     }
+    if http_response_gate_path.as_ref().is_some_and(|path| {
+        path == &journal_path
+            || path == &marker_path
+            || http_checkpoint_path.as_ref() == Some(path)
+            || http_listener_checkpoint_path.as_ref() == Some(path)
+            || !path.is_absolute()
+    }) {
+        return Err(ProbeError::Environment);
+    }
+    validate_config_paths(
+        &journal_path,
+        &marker_path,
+        http_checkpoint_path.as_deref(),
+        http_listener_checkpoint_path.as_deref(),
+        http_response_gate_path.as_deref(),
+    )?;
     let http_start_delay = match env::var(HTTP_START_DELAY_ENV) {
         Ok(value) => {
             let milliseconds = value.parse::<u64>().map_err(|_| ProbeError::Environment)?;
@@ -212,6 +270,7 @@ where
         marker_path,
         http_checkpoint_path,
         http_listener_checkpoint_path,
+        http_response_gate_path,
         http_start_delay,
         session_nonce,
         root_ordinal,
@@ -224,6 +283,7 @@ where
 fn parse_http_mode(value: &str) -> Result<HttpMode, ProbeError> {
     match value {
         "ready" => Ok(HttpMode::Ready),
+        "ready-hold" => Ok(HttpMode::ReadyHold),
         "status503" => Ok(HttpMode::Status503),
         "partial" => Ok(HttpMode::Partial),
         "silent" => Ok(HttpMode::Silent),
@@ -251,6 +311,129 @@ fn required_path(name: &str) -> Result<PathBuf, ProbeError> {
         return Err(ProbeError::Environment);
     }
     Ok(path)
+}
+
+fn validate_config_paths(
+    journal_path: &Path,
+    marker_path: &Path,
+    http_checkpoint_path: Option<&Path>,
+    http_listener_checkpoint_path: Option<&Path>,
+    http_response_gate_path: Option<&Path>,
+) -> Result<(), ProbeError> {
+    let journal_root = if journal_path.is_dir() {
+        journal_path
+    } else {
+        journal_path.parent().ok_or(ProbeError::Environment)?
+    };
+    validate_existing_directory(journal_root, ProbeError::Environment)?;
+    for path in [
+        Some(journal_path),
+        Some(marker_path),
+        http_checkpoint_path,
+        http_listener_checkpoint_path,
+        http_response_gate_path,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if !path.starts_with(journal_root) {
+            return Err(ProbeError::Environment);
+        }
+        validate_path_ancestors(path, ProbeError::Environment)?;
+        if let Ok(metadata) = fs::symlink_metadata(path) {
+            if path == journal_path && metadata.is_dir() {
+                continue;
+            }
+            if !metadata.is_file() || metadata_is_alias(&metadata) {
+                return Err(ProbeError::Environment);
+            }
+            let file = File::open(path).map_err(|_| ProbeError::Environment)?;
+            let opened = file.metadata().map_err(|_| ProbeError::Environment)?;
+            if !opened_file_is_safe(&file, &opened) {
+                return Err(ProbeError::Environment);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_path_ancestors(path: &Path, error: ProbeError) -> Result<(), ProbeError> {
+    if !path.is_absolute() {
+        return Err(error);
+    }
+    for ancestor in path.ancestors() {
+        match fs::symlink_metadata(ancestor) {
+            Ok(metadata) if metadata_is_alias(&metadata) => return Err(error),
+            Ok(metadata) if ancestor != path && !metadata.is_dir() => return Err(error),
+            Ok(_) => {}
+            Err(io_error) if io_error.kind() == io::ErrorKind::NotFound => {}
+            Err(_) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
+fn metadata_is_alias(metadata: &fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        metadata.file_type().is_symlink()
+            || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+    }
+    #[cfg(not(windows))]
+    {
+        metadata.file_type().is_symlink()
+    }
+}
+
+fn opened_file_is_safe(file: &File, metadata: &fs::Metadata) -> bool {
+    if !metadata.is_file() || metadata_is_alias(metadata) {
+        return false;
+    }
+    #[cfg(windows)]
+    {
+        let mut information = std::mem::MaybeUninit::<Win32ByHandleFileInformation>::uninit();
+        if unsafe { GetFileInformationByHandle(file.as_raw_handle(), information.as_mut_ptr()) }
+            == 0
+        {
+            return false;
+        }
+        let information = unsafe { information.assume_init() };
+        return information.file_attributes & FILE_ATTRIBUTE_REPARSE_POINT == 0
+            && information.file_attributes & 0x10 == 0
+            && information.number_of_links == 1;
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = file;
+        true
+    }
+}
+
+fn validate_existing_directory(path: &Path, error: ProbeError) -> Result<(), ProbeError> {
+    validate_path_ancestors(path, error.clone())?;
+    let metadata = fs::symlink_metadata(path).map_err(|_| error.clone())?;
+    if !metadata.is_dir() || metadata_is_alias(&metadata) {
+        return Err(error);
+    }
+    Ok(())
+}
+
+fn open_strict_regular_file(
+    path: &Path,
+    read_error: ProbeError,
+    reject_error: ProbeError,
+) -> Result<File, ProbeError> {
+    validate_path_ancestors(path, reject_error.clone())?;
+    let metadata = fs::symlink_metadata(path).map_err(|_| read_error.clone())?;
+    if !metadata.is_file() || metadata_is_alias(&metadata) {
+        return Err(reject_error.clone());
+    }
+    let file = File::open(path).map_err(|_| read_error)?;
+    let opened = file.metadata().map_err(|_| reject_error.clone())?;
+    if !opened_file_is_safe(&file, &opened) {
+        return Err(reject_error);
+    }
+    Ok(file)
 }
 
 fn required_text(name: &str) -> Result<String, ProbeError> {
@@ -300,6 +483,7 @@ fn durable_session_nonce(
 /// journal path and resolves exactly one runtime-session JSON record after
 /// Launching CAS. It remains an acceptance fixture, not a lifecycle authority.
 fn discover_journal_path(directory: &Path) -> Result<PathBuf, ProbeError> {
+    validate_existing_directory(directory, ProbeError::JournalRead)?;
     let mut candidates = fs::read_dir(directory)
         .map_err(|_| ProbeError::JournalRead)?
         .filter_map(Result::ok)
@@ -317,7 +501,8 @@ fn discover_journal_path(directory: &Path) -> Result<PathBuf, ProbeError> {
 }
 
 fn read_bounded(path: &Path) -> Result<Vec<u8>, ProbeError> {
-    let file = File::open(path).map_err(|_| ProbeError::JournalRead)?;
+    let file =
+        open_strict_regular_file(path, ProbeError::JournalRead, ProbeError::JournalRejected)?;
     let size = file.metadata().map_err(|_| ProbeError::JournalRead)?.len();
     if size > MAX_JOURNAL_BYTES {
         return Err(ProbeError::JournalRejected);
@@ -569,7 +754,15 @@ fn valid_digest(value: &str) -> bool {
 }
 
 fn serve_http(config: &ProbeConfig) -> Result<(), ProbeError> {
-    serve_http_until(config, Instant::now() + HTTP_TIMEOUT)
+    serve_http_until(
+        config,
+        Instant::now()
+            + if config.http_mode == Some(HttpMode::ReadyHold) {
+                HOLD_TIMEOUT
+            } else {
+                HTTP_TIMEOUT
+            },
+    )
 }
 
 fn serve_http_until(config: &ProbeConfig, overall_deadline: Instant) -> Result<(), ProbeError> {
@@ -612,7 +805,9 @@ fn serve_http_until(config: &ProbeConfig, overall_deadline: Instant) -> Result<(
             Ok((mut stream, _)) => {
                 if handle_http_connection(&mut stream, config, deadline)? {
                     served_authorized_request = true;
-                    idle_deadline = Instant::now() + HTTP_SUCCESS_HOLD;
+                    if config.http_mode != Some(HttpMode::ReadyHold) {
+                        idle_deadline = Instant::now() + HTTP_SUCCESS_HOLD;
+                    }
                 }
             }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
@@ -628,6 +823,12 @@ fn handle_http_connection(
     config: &ProbeConfig,
     deadline: Instant,
 ) -> Result<bool, ProbeError> {
+    // Windows accepted sockets inherit the listener's nonblocking mode.
+    // Request reads and response writes use bounded socket timeouts below;
+    // a scheduling gap before the client's first bytes is not a bad request.
+    stream
+        .set_nonblocking(false)
+        .map_err(|_| ProbeError::HttpNonblocking)?;
     let request = read_http_request(stream, deadline)?;
     let expected_host = format!("{HOST}:{}", config.port);
     match parse_http_request(
@@ -636,14 +837,30 @@ fn handle_http_connection(
         &expected_host,
     ) {
         HttpRequestKind::Authorized => match config.http_mode {
-            Some(HttpMode::Ready) => {
+            Some(HttpMode::Ready | HttpMode::ReadyHold) => {
                 write_http_checkpoint(config)?;
-                let body = ready_body();
-                write_http_response(stream, 200, "OK", &body, deadline)?;
+                wait_for_http_response_gate(config, deadline)?;
+                // Explicit lifecycle mode: a sibling marker controls readiness
+                // without surrendering the listener or extending its hard deadline.
+                if config.http_mode == Some(HttpMode::ReadyHold)
+                    && config.marker_path.with_extension("not-ready").exists()
+                {
+                    write_http_response(
+                        stream,
+                        503,
+                        "Service Unavailable",
+                        br#"{"ready":false}"#,
+                        deadline,
+                    )?;
+                } else {
+                    let body = ready_body();
+                    write_http_response(stream, 200, "OK", &body, deadline)?;
+                }
                 Ok(true)
             }
             Some(HttpMode::Status503) => {
                 write_http_checkpoint(config)?;
+                wait_for_http_response_gate(config, deadline)?;
                 write_http_response(
                     stream,
                     503,
@@ -655,12 +872,14 @@ fn handle_http_connection(
             }
             Some(HttpMode::Partial) => {
                 write_http_checkpoint(config)?;
+                wait_for_http_response_gate(config, deadline)?;
                 let body = ready_body();
                 write_http_partial_response(stream, &body, deadline)?;
                 Ok(true)
             }
             Some(HttpMode::Silent) => {
                 write_http_checkpoint(config)?;
+                wait_for_http_response_gate(config, deadline)?;
                 if let Some(remaining) = remaining_http_budget(deadline) {
                     thread::sleep(remaining);
                 }
@@ -684,6 +903,55 @@ fn handle_http_connection(
             Ok(false)
         }
     }
+}
+
+fn wait_for_http_response_gate(config: &ProbeConfig, deadline: Instant) -> Result<(), ProbeError> {
+    const RELEASE: &[u8] = b"release\n";
+    let Some(path) = config.http_response_gate_path.as_ref() else {
+        return Ok(());
+    };
+    if Instant::now() >= deadline {
+        return Err(ProbeError::HttpServer);
+    }
+    loop {
+        if Instant::now() >= deadline {
+            return Err(ProbeError::HttpServer);
+        }
+        match read_bounded_response_gate(path)? {
+            Some(bytes) if bytes == RELEASE => {
+                if Instant::now() >= deadline {
+                    return Err(ProbeError::HttpServer);
+                }
+                return Ok(());
+            }
+            Some(_) => return Err(ProbeError::HttpServer),
+            None => {}
+        }
+        let remaining = remaining_http_budget(deadline).ok_or(ProbeError::HttpServer)?;
+        thread::sleep(HTTP_RETRY.min(remaining));
+    }
+}
+
+fn read_bounded_response_gate(path: &Path) -> Result<Option<Vec<u8>>, ProbeError> {
+    validate_path_ancestors(path, ProbeError::HttpServer)?;
+    match fs::symlink_metadata(path) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err(ProbeError::HttpServer),
+        Ok(_) => {}
+    }
+    let file = open_strict_regular_file(path, ProbeError::HttpServer, ProbeError::HttpServer)?;
+    let size = file.metadata().map_err(|_| ProbeError::HttpServer)?.len();
+    if size > MAX_RESPONSE_GATE_BYTES {
+        return Err(ProbeError::HttpServer);
+    }
+    let mut bytes = Vec::with_capacity(size as usize);
+    file.take(MAX_RESPONSE_GATE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| ProbeError::HttpServer)?;
+    if bytes.len() as u64 > MAX_RESPONSE_GATE_BYTES {
+        return Err(ProbeError::HttpServer);
+    }
+    Ok(Some(bytes))
 }
 
 fn write_http_checkpoint(config: &ProbeConfig) -> Result<(), ProbeError> {
@@ -955,6 +1223,15 @@ fn write_marker(
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::sync::{Arc, Barrier, Mutex as TestMutex};
+
+    #[cfg(windows)]
+    use std::{os::windows::fs::symlink_file, process::Command};
+
+    const TEST_HTTP_TOKEN: &str = "fixture-bearer-token-0123456789abcdef";
+    const TEST_RELEASE: &[u8] = b"release\n";
+
+    static ENVIRONMENT_LOCK: TestMutex<()> = TestMutex::new(());
 
     fn config(directory: &Path, session: &str, ordinal: u32) -> ProbeConfig {
         ProbeConfig {
@@ -963,6 +1240,7 @@ mod tests {
             marker_path: directory.join(format!("marker-{ordinal}.txt")),
             http_checkpoint_path: None,
             http_listener_checkpoint_path: None,
+            http_response_gate_path: None,
             http_start_delay: Duration::ZERO,
             session_nonce: Some(session.into()),
             root_ordinal: ordinal,
@@ -991,6 +1269,31 @@ mod tests {
         ));
         fs::create_dir(&path).expect("temporary fixture directory");
         TestDirectory { path }
+    }
+
+    #[cfg(windows)]
+    fn symlink_file_or_skip(target: &Path, link: &Path) -> bool {
+        match symlink_file(target, link) {
+            Ok(()) => true,
+            Err(error) if matches!(error.raw_os_error(), Some(5 | 1314)) => false,
+            Err(error) => panic!("symlink creation failed: {error}"),
+        }
+    }
+
+    #[cfg(windows)]
+    fn create_directory_junction(target: &Path, link: &Path) {
+        let link = link.to_str().expect("junction link path");
+        let target = target.to_str().expect("junction target path");
+        let output = Command::new("cmd")
+            .args(["/C", "mklink", "/J", link, target])
+            .output()
+            .expect("mklink command");
+        assert!(
+            output.status.success(),
+            "directory junction creation failed (stdout: {}, stderr: {}): mklink /J {link} {target}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     fn valid_journal(session: &str, pid: u32, root_count: usize) -> Value {
@@ -1078,6 +1381,127 @@ mod tests {
                 Err(_) => thread::sleep(HTTP_RETRY),
             }
         }
+    }
+
+    fn http_config(
+        directory: &Path,
+        port: u16,
+        gate_path: PathBuf,
+        checkpoint_path: PathBuf,
+        listener_checkpoint_path: PathBuf,
+    ) -> ProbeConfig {
+        ProbeConfig {
+            port,
+            http_mode: Some(HttpMode::Ready),
+            token: Some(TEST_HTTP_TOKEN.into()),
+            http_response_gate_path: Some(gate_path),
+            http_checkpoint_path: Some(checkpoint_path),
+            http_listener_checkpoint_path: Some(listener_checkpoint_path),
+            ..config(directory, "session-1", 0)
+        }
+    }
+
+    fn spawn_atomic_gate_writer(
+        gate_path: PathBuf,
+        prepared: Arc<Barrier>,
+        publish: Arc<Barrier>,
+    ) -> thread::JoinHandle<()> {
+        let temporary = gate_path.with_file_name(".response-gate.tmp");
+        thread::spawn(move || {
+            publish_atomic_gate(&gate_path, &temporary);
+            prepared.wait();
+            publish.wait();
+            fs::rename(&temporary, &gate_path).expect("atomic response gate publication");
+        })
+    }
+
+    fn publish_atomic_gate(gate_path: &Path, temporary: &Path) {
+        let mut file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(temporary)
+            .expect("temporary response gate");
+        file.write_all(TEST_RELEASE)
+            .and_then(|_| file.flush())
+            .and_then(|_| file.sync_all())
+            .expect("durable temporary response gate");
+        drop(file);
+        assert!(!gate_path.exists(), "final gate appeared before rename");
+    }
+
+    fn connect_http(port: u16, request: &str) -> TcpStream {
+        let address = format!("{HOST}:{port}").parse().expect("loopback address");
+        let deadline = Instant::now() + Duration::from_millis(400);
+        loop {
+            if Instant::now() >= deadline {
+                panic!("HTTP fixture did not become reachable");
+            }
+            match TcpStream::connect_timeout(&address, Duration::from_millis(25)) {
+                Ok(mut stream) => {
+                    stream.write_all(request.as_bytes()).expect("HTTP request");
+                    return stream;
+                }
+                Err(_) => thread::sleep(HTTP_RETRY),
+            }
+        }
+    }
+
+    fn wait_for_checkpoint(path: &Path, expected: &[u8], timeout: Duration) {
+        let deadline = Instant::now() + timeout;
+        while fs::read(path).ok().as_deref() != Some(expected) && Instant::now() < deadline {
+            thread::sleep(HTTP_RETRY);
+        }
+        assert_eq!(fs::read(path).expect("HTTP checkpoint"), expected);
+    }
+
+    fn parse_config_with_gate_path(kind: &str) -> Result<ProbeConfig, ProbeError> {
+        let _lock = ENVIRONMENT_LOCK.lock().expect("environment lock");
+        let directory = tempdir();
+        let journal_path = directory.path.join("runtime-session.json");
+        let marker_path = directory.path.join("marker.txt");
+        let checkpoint_path = directory.path.join("checkpoint.txt");
+        let listener_checkpoint_path = directory.path.join("listener-checkpoint.txt");
+        let gate_path = match kind {
+            "journal" => journal_path.clone(),
+            "marker" => marker_path.clone(),
+            "checkpoint" => checkpoint_path.clone(),
+            "listener-checkpoint" => listener_checkpoint_path.clone(),
+            "relative" => PathBuf::from("relative-response-gate"),
+            _ => panic!("unknown gate path case: {kind}"),
+        };
+        let values = [
+            (JOURNAL_ENV, Some(journal_path.as_os_str())),
+            (MARKER_ENV, Some(marker_path.as_os_str())),
+            (HTTP_CHECKPOINT_ENV, Some(checkpoint_path.as_os_str())),
+            (
+                HTTP_LISTENER_CHECKPOINT_ENV,
+                Some(listener_checkpoint_path.as_os_str()),
+            ),
+            (HTTP_RESPONSE_GATE_ENV, Some(gate_path.as_os_str())),
+            (TOKEN_ENV, Some(std::ffi::OsStr::new(TEST_HTTP_TOKEN))),
+            (ORDINAL_ENV, Some(std::ffi::OsStr::new("0"))),
+            (HTTP_MODE_ENV, Some(std::ffi::OsStr::new("ready"))),
+        ];
+        let previous = values
+            .iter()
+            .map(|(name, _)| (*name, env::var_os(name)))
+            .collect::<Vec<_>>();
+        for (name, value) in values {
+            env::set_var(name, value.expect("configured environment value"));
+        }
+        let result = parse_config(
+            ["serve", "--host", HOST, "--port", "49152"]
+                .into_iter()
+                .map(OsString::from),
+        );
+        for (name, value) in previous {
+            if let Some(value) = value {
+                env::set_var(name, value);
+            } else {
+                env::remove_var(name);
+            }
+        }
+        result
     }
 
     fn run_with(config: &ProbeConfig, process_id: u32) -> Result<(), ProbeError> {
@@ -1215,6 +1639,104 @@ mod tests {
             Err(ProbeError::JournalRejected)
         );
         assert!(!config.marker_path.exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn discovered_journal_hardlink_to_foreign_file_fails_closed_without_touching_target() {
+        let directory = tempdir();
+        let config = ProbeConfig {
+            journal_path: directory.path.clone(),
+            journal_path_is_directory: true,
+            ..config(&directory.path, "session-1", 0)
+        };
+        let foreign = directory.path.join("foreign-journal.json");
+        let candidate = directory.path.join("runtime-session-alias.json");
+        fs::write(&foreign, b"foreign journal bytes").expect("foreign journal");
+        fs::hard_link(&foreign, &candidate).expect("journal hardlink");
+        let before = fs::read(&foreign).expect("foreign journal bytes");
+
+        assert_eq!(
+            run_with(&config, std::process::id()),
+            Err(ProbeError::JournalRejected)
+        );
+        assert_eq!(
+            fs::read(&foreign).expect("foreign journal after probe"),
+            before
+        );
+        assert!(!config.marker_path.exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn journal_directory_junction_fails_closed_before_discovery() {
+        let directory = tempdir();
+        let foreign_directory = directory.path.join("foreign-directory");
+        let junction = directory.path.join("journal-junction");
+        fs::create_dir(&foreign_directory).expect("foreign directory");
+        create_directory_junction(&foreign_directory, &junction);
+        let config = ProbeConfig {
+            journal_path: junction,
+            journal_path_is_directory: true,
+            ..config(&directory.path, "session-1", 0)
+        };
+
+        assert_eq!(
+            run_with(&config, std::process::id()),
+            Err(ProbeError::JournalRead)
+        );
+        assert!(!config.marker_path.exists());
+        fs::remove_dir(&config.journal_path).expect("remove test directory junction");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn response_gate_symlink_fails_closed_without_touching_target() {
+        let directory = tempdir();
+        let foreign = directory.path.join("foreign-gate");
+        let gate = directory.path.join("response-gate");
+        fs::write(&foreign, TEST_RELEASE).expect("foreign gate");
+        if !symlink_file_or_skip(&foreign, &gate) {
+            return;
+        }
+        let before = fs::read(&foreign).expect("foreign gate bytes");
+        let config = ProbeConfig {
+            http_response_gate_path: Some(gate),
+            ..config(&directory.path, "session-1", 0)
+        };
+
+        assert_eq!(
+            wait_for_http_response_gate(&config, Instant::now() + Duration::from_millis(100)),
+            Err(ProbeError::HttpServer)
+        );
+        assert_eq!(
+            fs::read(&foreign).expect("foreign gate after probe"),
+            before
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn response_gate_hardlink_to_foreign_file_fails_closed_without_touching_target() {
+        let directory = tempdir();
+        let foreign = directory.path.join("foreign-gate");
+        let gate = directory.path.join("response-gate");
+        fs::write(&foreign, TEST_RELEASE).expect("foreign gate");
+        fs::hard_link(&foreign, &gate).expect("gate hardlink");
+        let before = fs::read(&foreign).expect("foreign gate bytes");
+        let config = ProbeConfig {
+            http_response_gate_path: Some(gate),
+            ..config(&directory.path, "session-1", 0)
+        };
+
+        assert_eq!(
+            wait_for_http_response_gate(&config, Instant::now() + Duration::from_millis(100)),
+            Err(ProbeError::HttpServer)
+        );
+        assert_eq!(
+            fs::read(&foreign).expect("foreign gate after probe"),
+            before
+        );
     }
 
     #[test]
@@ -1534,6 +2056,233 @@ mod tests {
     }
 
     #[test]
+    fn response_gate_absent_then_atomic_release_allows_authorized_response() {
+        let directory = tempdir();
+        let reservation = TcpListener::bind((HOST, 0)).expect("HTTP test port");
+        let port = reservation.local_addr().expect("HTTP test address").port();
+        drop(reservation);
+        let gate_path = directory.path.join("response-gate");
+        let checkpoint_path = directory.path.join("authorized.txt");
+        let listener_checkpoint_path = directory.path.join("listener-bound.txt");
+        let config = http_config(
+            &directory.path,
+            port,
+            gate_path.clone(),
+            checkpoint_path.clone(),
+            listener_checkpoint_path.clone(),
+        );
+        let server_config = config.clone();
+        let server_deadline = Instant::now() + Duration::from_millis(800);
+        let server = thread::spawn(move || serve_http_until(&server_config, server_deadline));
+        wait_for_checkpoint(
+            &listener_checkpoint_path,
+            b"listener-bound\n",
+            Duration::from_millis(300),
+        );
+        let request = format!(
+            "GET /v2/health/ready HTTP/1.1\r\nHost: {HOST}:{port}\r\nAuthorization: Bearer {TEST_HTTP_TOKEN}\r\n\r\n"
+        );
+        let mut stream = connect_http(port, &request);
+        wait_for_checkpoint(
+            &checkpoint_path,
+            b"authorized\n",
+            Duration::from_millis(300),
+        );
+        assert!(
+            !gate_path.exists(),
+            "final gate appeared before publication"
+        );
+
+        let prepared = Arc::new(Barrier::new(2));
+        let publish = Arc::new(Barrier::new(2));
+        let writer = spawn_atomic_gate_writer(gate_path.clone(), prepared.clone(), publish.clone());
+        prepared.wait();
+        assert!(
+            !gate_path.exists(),
+            "partial gate was visible before rename"
+        );
+        assert_eq!(
+            fs::read(gate_path.with_file_name(".response-gate.tmp"))
+                .expect("complete temporary gate"),
+            TEST_RELEASE
+        );
+        publish.wait();
+        writer.join().expect("atomic gate writer");
+        assert_eq!(fs::read(&gate_path).expect("published gate"), TEST_RELEASE);
+
+        stream
+            .set_read_timeout(Some(Duration::from_millis(300)))
+            .expect("HTTP response read timeout");
+        let mut response = Vec::new();
+        stream.read_to_end(&mut response).expect("HTTP response");
+        assert!(response.starts_with(b"HTTP/1.1 200 OK\r\n"));
+        assert!(response.ends_with(&ready_body()));
+        assert_eq!(server.join().expect("HTTP fixture thread"), Ok(()));
+    }
+
+    #[test]
+    fn response_gate_empty_partial_and_wrong_bytes_fail_closed() {
+        for (name, bytes) in [
+            ("empty", b"".as_slice()),
+            ("partial", b"releas".as_slice()),
+            ("wrong", b"continue\n".as_slice()),
+        ] {
+            let directory = tempdir();
+            let gate_path = directory.path.join(format!("response-gate-{name}"));
+            fs::write(&gate_path, bytes).expect("malformed response gate");
+            let config = ProbeConfig {
+                http_response_gate_path: Some(gate_path),
+                ..config(&directory.path, "session-1", 0)
+            };
+            assert_eq!(
+                wait_for_http_response_gate(&config, Instant::now() + Duration::from_millis(100)),
+                Err(ProbeError::HttpServer),
+                "{name} response gate must fail closed"
+            );
+        }
+    }
+
+    #[test]
+    fn response_gate_without_release_cannot_extend_existing_deadline() {
+        let directory = tempdir();
+        let gate_path = directory.path.join("response-gate");
+        let config = ProbeConfig {
+            http_response_gate_path: Some(gate_path.clone()),
+            ..config(&directory.path, "session-1", 0)
+        };
+        let started = Instant::now();
+        assert_eq!(
+            wait_for_http_response_gate(&config, started + Duration::from_millis(100)),
+            Err(ProbeError::HttpServer)
+        );
+        let deadline = started + Duration::from_millis(100);
+        fs::write(&gate_path, TEST_RELEASE).expect("late response gate");
+        assert_eq!(
+            wait_for_http_response_gate(&config, deadline),
+            Err(ProbeError::HttpServer)
+        );
+    }
+
+    #[test]
+    fn existing_response_gate_is_rejected_when_deadline_is_already_expired() {
+        let directory = tempdir();
+        let gate_path = directory.path.join("response-gate");
+        fs::write(&gate_path, TEST_RELEASE).expect("response gate");
+        let config = ProbeConfig {
+            http_response_gate_path: Some(gate_path),
+            ..config(&directory.path, "session-1", 0)
+        };
+        assert_eq!(
+            wait_for_http_response_gate(&config, Instant::now() - Duration::from_millis(1)),
+            Err(ProbeError::HttpServer)
+        );
+    }
+
+    #[test]
+    fn response_gate_published_after_deadline_cannot_release_waiter() {
+        let directory = tempdir();
+        let gate_path = directory.path.join("response-gate");
+        let config = ProbeConfig {
+            http_response_gate_path: Some(gate_path.clone()),
+            ..config(&directory.path, "session-1", 0)
+        };
+        let deadline = Instant::now() + Duration::from_millis(100);
+        let writer_path = gate_path.clone();
+        let writer = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(150));
+            let temporary = writer_path.with_file_name(".response-gate.tmp-late");
+            publish_atomic_gate(&writer_path, &temporary);
+            fs::rename(&temporary, &writer_path).expect("late response gate publication");
+        });
+        assert_eq!(
+            wait_for_http_response_gate(&config, deadline),
+            Err(ProbeError::HttpServer)
+        );
+        writer.join().expect("late response gate writer");
+        assert_eq!(fs::read(gate_path).expect("late gate bytes"), TEST_RELEASE);
+    }
+
+    #[test]
+    fn unrelated_or_malformed_authorization_does_not_bypass_response_gate() {
+        let directory = tempdir();
+        let reservation = TcpListener::bind((HOST, 0)).expect("HTTP test port");
+        let port = reservation.local_addr().expect("HTTP test address").port();
+        drop(reservation);
+        let gate_path = directory.path.join("response-gate");
+        let checkpoint_path = directory.path.join("authorized.txt");
+        let listener_checkpoint_path = directory.path.join("listener-bound.txt");
+        let config = http_config(
+            &directory.path,
+            port,
+            gate_path.clone(),
+            checkpoint_path.clone(),
+            listener_checkpoint_path.clone(),
+        );
+        let server_config = config.clone();
+        let server_deadline = Instant::now() + Duration::from_millis(800);
+        let server = thread::spawn(move || serve_http_until(&server_config, server_deadline));
+        wait_for_checkpoint(
+            &listener_checkpoint_path,
+            b"listener-bound\n",
+            Duration::from_millis(300),
+        );
+        let unauthorized = exchange_http(
+            port,
+            &format!(
+                "GET /v2/health/ready HTTP/1.1\r\nHost: {HOST}:{port}\r\nAuthorization: Bearer wrong-token\r\n\r\n"
+            ),
+        );
+        assert!(unauthorized.starts_with(b"HTTP/1.1 401 Unauthorized\r\n"));
+        assert!(!gate_path.exists());
+        let malformed = exchange_http(
+            port,
+            &format!(
+                "GET /v2/health/ready HTTP/1.1\r\nHost: {HOST}:{port}\r\nAuthorization: Bearer {TEST_HTTP_TOKEN}\r\nAuthorization: Bearer {TEST_HTTP_TOKEN}\r\n\r\n"
+            ),
+        );
+        assert!(malformed.starts_with(b"HTTP/1.1 400 Bad Request\r\n"));
+        assert!(!gate_path.exists());
+
+        let request = format!(
+            "GET /v2/health/ready HTTP/1.1\r\nHost: {HOST}:{port}\r\nAuthorization: Bearer {TEST_HTTP_TOKEN}\r\n\r\n"
+        );
+        let mut stream = connect_http(port, &request);
+        wait_for_checkpoint(
+            &checkpoint_path,
+            b"authorized\n",
+            Duration::from_millis(300),
+        );
+        fs::write(&gate_path, TEST_RELEASE).expect("authorized response gate");
+        stream
+            .set_read_timeout(Some(Duration::from_millis(300)))
+            .expect("HTTP response read timeout");
+        let mut response = Vec::new();
+        stream.read_to_end(&mut response).expect("HTTP response");
+        assert!(response.starts_with(b"HTTP/1.1 200 OK\r\n"));
+        assert_eq!(server.join().expect("HTTP fixture thread"), Ok(()));
+    }
+
+    #[test]
+    fn configured_response_gate_aliases_and_relative_paths_fail_validation() {
+        for kind in [
+            "journal",
+            "marker",
+            "checkpoint",
+            "listener-checkpoint",
+            "relative",
+        ] {
+            assert!(
+                matches!(
+                    parse_config_with_gate_path(kind),
+                    Err(ProbeError::Environment)
+                ),
+                "configured gate path must be rejected: {}",
+                kind
+            );
+        }
+    }
+
+    #[test]
     fn http_server_authorized_requests_cannot_extend_the_overall_deadline() {
         let directory = tempdir();
         let reservation = TcpListener::bind((HOST, 0)).expect("HTTP test port");
@@ -1578,6 +2327,92 @@ mod tests {
         );
         assert_eq!(server.join().expect("HTTP fixture thread"), Ok(()));
         assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn accepted_nonblocking_socket_waits_for_delayed_request_bytes() {
+        use std::sync::mpsc;
+        let directory = tempdir();
+        let listener = TcpListener::bind((HOST, 0)).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let mut config = config(&directory.path, "session-1", 0);
+        config.port = port;
+        config.http_mode = Some(HttpMode::ReadyHold);
+        config.token = Some(TEST_HTTP_TOKEN.into());
+        let (accepted, acceptance) = mpsc::channel();
+        let (finished, completion) = mpsc::channel();
+        let mut client = TcpStream::connect((HOST, port)).unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let server = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            let mut stream = loop {
+                match listener.accept() {
+                    Ok((stream, _)) => break stream,
+                    Err(error)
+                        if error.kind() == io::ErrorKind::WouldBlock
+                            && Instant::now() < deadline =>
+                    {
+                        thread::sleep(HTTP_RETRY)
+                    }
+                    Err(error) => panic!("bounded accept failed: {error}"),
+                }
+            };
+            accepted.send(()).unwrap();
+            let result = handle_http_connection(&mut stream, &config, deadline);
+            finished.send(result).unwrap();
+        });
+        let accepted = acceptance.recv_timeout(Duration::from_secs(1));
+        // Once accept is complete, the client deliberately withholds bytes.
+        // An inherited nonblocking socket used to kill the fixture immediately.
+        let premature = completion.recv_timeout(Duration::from_millis(25));
+        let request = format!("GET /v2/health/ready HTTP/1.1\r\nHost: {HOST}:{port}\r\nAuthorization: Bearer {TEST_HTTP_TOKEN}\r\n\r\n");
+        let sent = client.write_all(request.as_bytes());
+        let mut response = Vec::new();
+        let read = client.read_to_end(&mut response);
+        let joined = server.join();
+        assert!(accepted.is_ok());
+        assert!(
+            matches!(premature, Err(mpsc::RecvTimeoutError::Timeout)),
+            "fixture completed before request bytes: {premature:?}"
+        );
+        assert!(sent.is_ok() && read.is_ok());
+        assert!(joined.is_ok());
+        assert_eq!(
+            completion.recv_timeout(Duration::from_secs(1)).unwrap(),
+            Ok(true)
+        );
+        assert!(response.starts_with(b"HTTP/1.1 200 OK"));
+    }
+
+    #[test]
+    fn lifecycle_hold_preserves_listener_and_switches_readiness_with_a_hard_bound() {
+        let directory = tempdir();
+        let reservation = TcpListener::bind((HOST, 0)).expect("HTTP test port");
+        let port = reservation.local_addr().unwrap().port();
+        drop(reservation);
+        let mut config = config(&directory.path, "session-1", 0);
+        config.port = port;
+        config.http_mode = Some(HttpMode::ReadyHold);
+        config.token = Some("fixture-bearer-token-0123456789abcdef".into());
+        let server_config = config.clone();
+        let started = Instant::now();
+        let deadline = started + Duration::from_secs(4);
+        let server = thread::spawn(move || serve_http_until(&server_config, deadline));
+        let request = format!("GET /v2/health/ready HTTP/1.1\r\nHost: {HOST}:{port}\r\nAuthorization: Bearer fixture-bearer-token-0123456789abcdef\r\n\r\n");
+        assert!(exchange_http(port, &request).starts_with(b"HTTP/1.1 200 OK"));
+        thread::sleep(HTTP_SUCCESS_HOLD + Duration::from_millis(100));
+        assert!(exchange_http(port, &request).starts_with(b"HTTP/1.1 200 OK"));
+        let marker = config.marker_path.with_extension("not-ready");
+        fs::write(&marker, b"not-ready").unwrap();
+        assert!(exchange_http(port, &request).starts_with(b"HTTP/1.1 503"));
+        fs::remove_file(marker).unwrap();
+        assert!(exchange_http(port, &request).starts_with(b"HTTP/1.1 200 OK"));
+        assert_eq!(server.join().expect("bounded server"), Ok(()));
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(TcpStream::connect((HOST, port)).is_err());
     }
 
     #[test]

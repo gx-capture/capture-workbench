@@ -28,8 +28,11 @@ pub use prepare::{
     RootRefBinding, VerifiedGroupBinding,
 };
 pub use process::{
-    OwnedRuntimeSession, OwnedSidecarProcess, RuntimeCleanupError, RuntimeCleanupErrorKind,
-    RuntimeTerminationProof,
+    ActivationCleanupObservation, CleanupError, CleanupErrorKind, CleanupPhase, CloseReason,
+    GroupLease, GroupLifecycleState, GroupObservation, GroupProof, LaunchError, LaunchErrorKind,
+    LaunchPhase, LifecycleError, LifecycleErrorKind, LifecyclePhase, OwnedRuntimeSession,
+    OwnedSidecarProcess, RuntimeCleanupError, RuntimeCleanupErrorKind, RuntimeTerminationProof,
+    SemanticActivationCleanupState,
 };
 
 /// A connection to a ready authenticated sidecar.

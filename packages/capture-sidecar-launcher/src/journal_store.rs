@@ -109,6 +109,112 @@ pub(crate) enum RunningCasError {
     Storage,
 }
 
+/// The result of one producer-owned journal admission.  The predecessor is
+/// retained even when the operation fails before replacement; an attempted
+/// candidate is retained only as an attempt and is never authority by itself.
+/// This is the one value passed across the store/staging/process boundaries so
+/// an ambiguous write cannot lose the owner or be mistaken for a later disk
+/// snapshot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct OwnedCasResult {
+    predecessor: RuntimeSessionJournalV1,
+    attempt: Option<RuntimeSessionJournalV1>,
+    disposition: CasDisposition,
+    error: Option<JournalStoreError>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CasDisposition {
+    /// No replacement was attempted; `attempt` is always `None`.
+    Prewrite,
+    /// The replacement and complete durable readback were confirmed.
+    Committed,
+    /// Replacement may have happened, but durable full readback is unknown.
+    AmbiguousWrite,
+    /// The replacement and durability barriers were confirmed, but the
+    /// caller's authority budget ended before authority could be issued.
+    ConfirmedLate,
+}
+
+impl OwnedCasResult {
+    pub(crate) fn predecessor(&self) -> &RuntimeSessionJournalV1 {
+        &self.predecessor
+    }
+
+    pub(crate) fn attempt(&self) -> Option<&RuntimeSessionJournalV1> {
+        self.attempt.as_ref()
+    }
+
+    pub(crate) fn disposition(&self) -> CasDisposition {
+        self.disposition
+    }
+
+    pub(crate) fn error(&self) -> Option<&JournalStoreError> {
+        self.error.as_ref()
+    }
+
+    fn prewrite(predecessor: RuntimeSessionJournalV1, error: JournalStoreError) -> Self {
+        Self {
+            predecessor,
+            attempt: None,
+            disposition: CasDisposition::Prewrite,
+            error: Some(error),
+        }
+    }
+
+    fn ambiguous(
+        predecessor: RuntimeSessionJournalV1,
+        attempt: RuntimeSessionJournalV1,
+        error: JournalStoreError,
+    ) -> Self {
+        Self {
+            predecessor,
+            attempt: Some(attempt),
+            disposition: CasDisposition::AmbiguousWrite,
+            error: Some(error),
+        }
+    }
+
+    fn committed(predecessor: RuntimeSessionJournalV1, candidate: RuntimeSessionJournalV1) -> Self {
+        Self {
+            predecessor,
+            attempt: Some(candidate),
+            disposition: CasDisposition::Committed,
+            error: None,
+        }
+    }
+
+    fn confirmed_late(
+        predecessor: RuntimeSessionJournalV1,
+        candidate: RuntimeSessionJournalV1,
+    ) -> Self {
+        Self {
+            predecessor,
+            attempt: Some(candidate),
+            disposition: CasDisposition::ConfirmedLate,
+            error: None,
+        }
+    }
+
+    pub(crate) fn with_error(mut self, error: JournalStoreError) -> Self {
+        self.error = Some(error);
+        self
+    }
+
+    pub(crate) fn mark_ambiguous(mut self, error: JournalStoreError) -> Self {
+        self.disposition = CasDisposition::AmbiguousWrite;
+        self.error = Some(error);
+        self
+    }
+
+    fn into_legacy_result(self) -> Result<RuntimeSessionJournalV1, JournalStoreError> {
+        if let Some(error) = self.error {
+            return Err(error);
+        }
+        self.attempt.ok_or(JournalStoreError::CorruptJournal)
+    }
+}
+
 #[cfg(windows)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ClosingCasError {
@@ -200,6 +306,13 @@ thread_local! {
     static RUNNING_READ_BUDGET: RefCell<Option<RunningReadBudget>> = const { RefCell::new(None) };
 }
 
+#[derive(Debug)]
+enum AtomicWriteOutcome {
+    Written,
+    FailedBeforeReplace(JournalStoreError),
+    FailedAfterReplace(JournalStoreError),
+}
+
 #[cfg(windows)]
 pub(crate) struct RunningReadBudgetScope {
     previous: Option<RunningReadBudget>,
@@ -288,7 +401,7 @@ impl ActivationBudget {
 pub(crate) struct RunningCasAdmission {
     store: Arc<JournalStore>,
     plan: JournalPlanValue,
-    expected: CasSnapshot,
+    expected: RuntimeSessionJournalV1,
     current: RuntimeSessionJournalV1,
     deadline: Instant,
     cancellation: Arc<AtomicBool>,
@@ -316,6 +429,7 @@ pub(crate) struct ClosingCleanupAdmission {
     store: Arc<JournalStore>,
     plan: JournalPlanValue,
     expected: CasSnapshot,
+    expected_journal: RuntimeSessionJournalV1,
     current: RuntimeSessionJournalV1,
     deadline: Instant,
     cancellation: Arc<AtomicBool>,
@@ -364,6 +478,9 @@ pub(crate) enum ActivationReconcileCasResult {
 #[cfg(test)]
 #[derive(Default)]
 struct TestFaults {
+    after_durable_read: std::sync::Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    fail_durable_read: AtomicBool,
+    owned_cas_calls: std::sync::atomic::AtomicUsize,
     fail_before_flush: AtomicBool,
     fail_auxiliary_before_flush: AtomicBool,
     fail_before_replace: AtomicBool,
@@ -384,6 +501,8 @@ struct TestFaults {
     expire_after_activation_reconcile_readback: AtomicBool,
     #[cfg(all(test, windows))]
     expire_after_running_readback: AtomicBool,
+    #[cfg(all(test, windows))]
+    expire_after_terminal_candidate_readback: AtomicBool,
 }
 
 impl JournalStore {
@@ -447,6 +566,75 @@ impl JournalStore {
     ) -> Result<RuntimeSessionJournalV1, JournalStoreError> {
         self.validate_plan_identity(plan)?;
         self.with_lock(|store| store.read_unlocked(plan))
+    }
+
+    /// Re-establish both final-file and directory durability before parsing
+    /// an exact retry value. A plain read is insufficient after a flush or
+    /// replace error because it cannot prove the record survived the same
+    /// durability barriers as the original admission.
+    #[cfg(windows)]
+    pub(crate) fn read_exact_durable(
+        &self,
+        plan: &JournalPlanValue,
+        expected: &RuntimeSessionJournalV1,
+    ) -> Result<RuntimeSessionJournalV1, JournalStoreError> {
+        self.validate_plan_identity(plan)?;
+        expected
+            .validate_against_plan(plan)
+            .map_err(JournalStoreError::Journal)?;
+        self.with_lock(|store| {
+            let read_back = store.reestablish_candidate_durability_unlocked(plan, expected)?;
+            if read_back != *expected {
+                return Err(JournalStoreError::Conflict);
+            }
+            Ok(read_back)
+        })
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn read_durable(
+        &self,
+        plan: &JournalPlanValue,
+    ) -> Result<RuntimeSessionJournalV1, JournalStoreError> {
+        self.validate_plan_identity(plan)?;
+        let current = self.with_lock(|store| {
+            #[cfg(test)]
+            if store.faults.fail_durable_read.swap(false, Ordering::AcqRel) {
+                return Err(JournalStoreError::Durability("retryFinalFlush"));
+            }
+            let final_file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&store.journal_path)
+                .map_err(|_| JournalStoreError::AtomicReplace)?;
+            final_file
+                .sync_all()
+                .map_err(|_| JournalStoreError::Durability("retryFinalFlush"))?;
+            sync_directory(&store.config.producer_root)?;
+            store.read_unlocked(plan)
+        })?;
+        #[cfg(test)]
+        if let Some(action) = self.faults.after_durable_read.lock().unwrap().take() {
+            action();
+        }
+        Ok(current)
+    }
+
+    #[cfg(all(test, windows))]
+    pub(crate) fn after_durable_read_for_test(&self, action: impl FnOnce() + Send + 'static) {
+        *self.faults.after_durable_read.lock().unwrap() = Some(Box::new(action));
+    }
+
+    #[cfg(all(test, windows))]
+    pub(crate) fn fail_exact_durability_for_test(&self) {
+        self.faults
+            .fail_durability_recheck
+            .store(true, Ordering::Release);
+    }
+
+    #[cfg(all(test, windows))]
+    pub(crate) fn fail_durable_read_for_test(&self) {
+        self.faults.fail_durable_read.store(true, Ordering::Release);
     }
 
     pub(crate) fn create_or_read_immutable_auxiliary(
@@ -557,7 +745,7 @@ impl JournalStore {
     pub(crate) fn begin_running_admission(
         self: &Arc<Self>,
         plan: &JournalPlanValue,
-        expected: &CasSnapshot,
+        expected: &RuntimeSessionJournalV1,
         deadline: Instant,
         cancellation: Arc<AtomicBool>,
     ) -> Result<RunningCasAdmission, JournalStoreError> {
@@ -568,7 +756,7 @@ impl JournalStore {
             JournalFileLock::acquire_until(&self.lock_path, deadline, cancellation.as_ref())?;
         validate_producer_root(&self.config.producer_root)?;
         let current = self.read_unlocked(plan)?;
-        if current.cas_snapshot() != *expected {
+        if current != *expected {
             return Err(JournalStoreError::Conflict);
         }
         check_running_admission_budget(deadline, cancellation.as_ref())?;
@@ -657,6 +845,7 @@ impl JournalStore {
             store: Arc::clone(self),
             plan: plan.clone(),
             expected: current.cas_snapshot(),
+            expected_journal: current.clone(),
             current,
             deadline,
             cancellation,
@@ -735,39 +924,64 @@ impl JournalStore {
     ) -> Result<RuntimeSessionJournalV1, JournalStoreError> {
         self.validate_plan_identity(plan)?;
         self.with_lock(|store| {
-            let mut current = store.read_unlocked(plan)?;
-            if current.cas_snapshot() != *expected {
+            let predecessor = store.read_unlocked(plan)?;
+            if predecessor.cas_snapshot() != *expected {
                 return Err(JournalStoreError::Conflict);
             }
-            apply_command(&mut current, plan, expected, command).map_err(|error| match error {
+            store
+                .compare_and_swap_owned_locked(plan, &predecessor, command)
+                .into_legacy_result()
+        })
+    }
+
+    /// The production CAS seam.  The complete predecessor and attempted
+    /// candidate travel together through every post-readback branch, so a
+    /// caller can retain its owner without inferring a phase from a later
+    /// journal read.  Validation/lock failures are represented as a Prewrite
+    /// result with the caller's exact predecessor.
+    pub(crate) fn compare_and_swap_owned(
+        &self,
+        plan: &JournalPlanValue,
+        expected: &RuntimeSessionJournalV1,
+        command: JournalStoreCommand,
+    ) -> OwnedCasResult {
+        if let Err(error) = self.validate_plan_identity(plan) {
+            return OwnedCasResult::prewrite(expected.clone(), error);
+        }
+        match self
+            .with_lock(|store| Ok(store.compare_and_swap_owned_locked(plan, expected, command)))
+        {
+            Ok(result) => result,
+            Err(error) => OwnedCasResult::prewrite(expected.clone(), error),
+        }
+    }
+
+    fn compare_and_swap_owned_locked(
+        &self,
+        plan: &JournalPlanValue,
+        expected: &RuntimeSessionJournalV1,
+        command: JournalStoreCommand,
+    ) -> OwnedCasResult {
+        let predecessor = match self.read_unlocked(plan) {
+            Ok(current) => current,
+            Err(error) => return OwnedCasResult::prewrite(expected.clone(), error),
+        };
+        if predecessor != *expected || predecessor.cas_snapshot() != expected.cas_snapshot() {
+            return OwnedCasResult::prewrite(predecessor, JournalStoreError::Conflict);
+        }
+        let mut candidate = predecessor.clone();
+        if let Err(error) = apply_command(&mut candidate, plan, &expected.cas_snapshot(), command)
+            .map_err(|error| match error {
                 JournalError::StaleCas => JournalStoreError::Conflict,
                 error => JournalStoreError::Journal(error),
-            })?;
-            current
-                .validate_against_plan(plan)
-                .map_err(JournalStoreError::Journal)?;
-            let bytes = current
-                .encode_private()
-                .map_err(JournalStoreError::Journal)?;
-            if let Err(write_error) = store.write_atomic_unlocked(&bytes, true) {
-                // The replacement may have happened before a durability error
-                // was reported. Re-establish the final-file and directory
-                // barriers while this same lock is held, then accept only an
-                // exact complete candidate read-back. A stale/old record, a
-                // corrupt record, or another candidate never becomes success.
-                if let Ok(read_back) =
-                    store.reestablish_candidate_durability_unlocked(plan, &current)
-                {
-                    return Ok(read_back);
-                }
-                return Err(write_error);
-            }
-            let read_back = store.read_unlocked(plan)?;
-            if read_back != current {
-                return Err(JournalStoreError::CorruptJournal);
-            }
-            Ok(current)
-        })
+            })
+        {
+            return OwnedCasResult::prewrite(predecessor, error);
+        }
+        if let Err(error) = candidate.validate_against_plan(plan) {
+            return OwnedCasResult::prewrite(predecessor, JournalStoreError::Journal(error));
+        }
+        self.write_candidate_with_readback_unlocked(plan, predecessor, candidate, None, None)
     }
 
     fn validate_plan_identity(&self, plan: &JournalPlanValue) -> Result<(), JournalStoreError> {
@@ -805,6 +1019,21 @@ impl JournalStore {
         journal
             .validate_against_plan(plan)
             .map_err(JournalStoreError::Journal)?;
+        #[cfg(all(test, windows))]
+        if self
+            .faults
+            .expire_after_terminal_candidate_readback
+            .swap(false, Ordering::AcqRel)
+        {
+            RUNNING_READ_BUDGET.with(|slot| {
+                if let Some(budget) = slot.borrow().clone() {
+                    let remaining = budget.deadline.saturating_duration_since(Instant::now());
+                    if !remaining.is_zero() {
+                        thread::sleep(remaining);
+                    }
+                }
+            });
+        }
         Ok(journal)
     }
 
@@ -839,6 +1068,63 @@ impl JournalStore {
             return Err(JournalStoreError::CorruptJournal);
         }
         Ok(read_back)
+    }
+
+    /// Write one fully validated candidate and perform the complete
+    /// final-file, directory, and journal readback sequence.  `None` budget
+    /// is used by the legacy/generic seam; typed lifecycle admissions pass
+    /// their caller-owned deadline and cancellation source.
+    fn write_candidate_with_readback_unlocked(
+        &self,
+        plan: &JournalPlanValue,
+        predecessor: RuntimeSessionJournalV1,
+        candidate: RuntimeSessionJournalV1,
+        deadline: Option<Instant>,
+        cancellation: Option<&AtomicBool>,
+    ) -> OwnedCasResult {
+        let bytes = match candidate.encode_private() {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                return OwnedCasResult::prewrite(predecessor, JournalStoreError::Journal(error))
+            }
+        };
+        let outcome = self.write_atomic_at_outcome_unlocked(&self.journal_path, &bytes, true);
+        let read_back = match outcome {
+            AtomicWriteOutcome::Written => match self.read_unlocked(plan) {
+                Ok(read_back) => read_back,
+                Err(error) => {
+                    return OwnedCasResult::ambiguous(predecessor, candidate, error);
+                }
+            },
+            AtomicWriteOutcome::FailedBeforeReplace(error) => {
+                return OwnedCasResult::prewrite(predecessor, error);
+            }
+            AtomicWriteOutcome::FailedAfterReplace(_write_error) => {
+                // The write path reports the actual replacement stage.  Only
+                // this branch may attempt the durability recovery; a failed
+                // pre-replacement write must retain the predecessor with no
+                // candidate authority.
+                match self.reestablish_candidate_durability_unlocked(plan, &candidate) {
+                    Ok(read_back) => read_back,
+                    Err(error) => {
+                        return OwnedCasResult::ambiguous(predecessor, candidate, error);
+                    }
+                }
+            }
+        };
+        if read_back != candidate {
+            return OwnedCasResult::ambiguous(
+                predecessor,
+                candidate,
+                JournalStoreError::CorruptJournal,
+            );
+        }
+        if let (Some(deadline), Some(cancellation)) = (deadline, cancellation) {
+            if cancellation_requested(cancellation) || Instant::now() >= deadline {
+                return OwnedCasResult::confirmed_late(predecessor, read_back);
+            }
+        }
+        OwnedCasResult::committed(predecessor, read_back)
     }
 
     fn reestablish_record_durability_unlocked(
@@ -900,6 +1186,19 @@ impl JournalStore {
         encoded: &[u8],
         replace_existing: bool,
     ) -> Result<(), JournalStoreError> {
+        match self.write_atomic_at_outcome_unlocked(target_path, encoded, replace_existing) {
+            AtomicWriteOutcome::Written => Ok(()),
+            AtomicWriteOutcome::FailedBeforeReplace(error)
+            | AtomicWriteOutcome::FailedAfterReplace(error) => Err(error),
+        }
+    }
+
+    fn write_atomic_at_outcome_unlocked(
+        &self,
+        target_path: &Path,
+        encoded: &[u8],
+        replace_existing: bool,
+    ) -> AtomicWriteOutcome {
         #[cfg(test)]
         let forced_payload = self.faults.forced_payload.lock().unwrap().take();
         #[cfg(test)]
@@ -907,10 +1206,11 @@ impl JournalStore {
         #[cfg(not(test))]
         let bytes = encoded;
         if bytes.len() > MAX_JOURNAL_BYTES {
-            return Err(JournalStoreError::TooLarge);
+            return AtomicWriteOutcome::FailedBeforeReplace(JournalStoreError::TooLarge);
         }
         let temp_path = self.temp_path_for_target(target_path);
         let mut created_temp = false;
+        let mut replace_attempted = false;
         let result = (|| {
             let mut file = match OpenOptions::new()
                 .create_new(true)
@@ -950,6 +1250,7 @@ impl JournalStore {
             {
                 return Err(JournalStoreError::Injected("beforeReplace"));
             }
+            replace_attempted = true;
             atomic_move(&temp_path, target_path, replace_existing)?;
             let final_file = OpenOptions::new()
                 .read(true)
@@ -985,7 +1286,11 @@ impl JournalStore {
         if result.is_err() && created_temp {
             let _ = fs::remove_file(&temp_path);
         }
-        result
+        match result {
+            Ok(()) => AtomicWriteOutcome::Written,
+            Err(error) if replace_attempted => AtomicWriteOutcome::FailedAfterReplace(error),
+            Err(error) => AtomicWriteOutcome::FailedBeforeReplace(error),
+        }
     }
 
     fn temp_path(&self) -> PathBuf {
@@ -1020,6 +1325,11 @@ impl JournalStore {
         self.faults.fail_before_flush.store(true, Ordering::Release);
     }
 
+    #[cfg(all(test, windows))]
+    pub(crate) fn owned_cas_calls_for_test(&self) -> usize {
+        self.faults.owned_cas_calls.load(Ordering::Acquire)
+    }
+
     #[cfg(test)]
     pub(crate) fn fail_next_before_replace_for_test(&self) {
         self.faults
@@ -1031,6 +1341,16 @@ impl JournalStore {
     pub(crate) fn replace_journal_for_test(&self, journal: &RuntimeSessionJournalV1) {
         let bytes = journal.encode_private().expect("valid test journal");
         fs::write(&self.journal_path, bytes).expect("replace test journal");
+    }
+
+    #[cfg(all(test, windows))]
+    pub(crate) fn remove_journal_for_test(&self) {
+        fs::remove_file(&self.journal_path).expect("remove test journal");
+    }
+
+    #[cfg(all(test, windows))]
+    pub(crate) fn corrupt_journal_for_test(&self) {
+        fs::write(&self.journal_path, b"corrupt-test-journal").expect("corrupt test journal");
     }
 
     #[cfg(test)]
@@ -1096,6 +1416,13 @@ impl JournalStore {
     pub(crate) fn expire_after_running_readback_for_test(&self) {
         self.faults
             .expire_after_running_readback
+            .store(true, Ordering::Release);
+    }
+
+    #[cfg(all(test, windows))]
+    pub(crate) fn expire_after_terminal_candidate_readback_for_test(&self) {
+        self.faults
+            .expire_after_terminal_candidate_readback
             .store(true, Ordering::Release);
     }
 
@@ -1187,18 +1514,43 @@ impl RunningCasAdmission {
     /// before the replacement is intentionally duplicated after encoding: it
     /// closes the last pre-write window without changing other journal APIs.
     pub(crate) fn commit_running(
-        mut self,
+        self,
         observation: ResourceObservation,
         timestamp: String,
     ) -> Result<RunningCasResult, JournalStoreError> {
-        check_running_admission_budget(self.deadline, self.cancellation.as_ref())?;
-        if self.current.cas_snapshot() != self.expected {
-            return Err(JournalStoreError::Conflict);
+        let result = self.commit_running_owned(observation, timestamp);
+        match result.disposition() {
+            CasDisposition::Committed => Ok(RunningCasResult::Committed(
+                result.attempt().cloned().expect("committed candidate"),
+            )),
+            CasDisposition::ConfirmedLate => Ok(RunningCasResult::CommittedAfterBudget(
+                result.attempt().cloned().expect("late candidate"),
+            )),
+            CasDisposition::Prewrite | CasDisposition::AmbiguousWrite => Err(result
+                .error()
+                .cloned()
+                .unwrap_or(JournalStoreError::CorruptJournal)),
         }
-        apply_command(
+    }
+
+    pub(crate) fn commit_running_owned(
+        mut self,
+        observation: ResourceObservation,
+        timestamp: String,
+    ) -> OwnedCasResult {
+        let predecessor = self.current.clone();
+        if let Err(error) =
+            check_running_admission_budget(self.deadline, self.cancellation.as_ref())
+        {
+            return OwnedCasResult::prewrite(predecessor, error);
+        }
+        if self.current != self.expected {
+            return OwnedCasResult::prewrite(predecessor, JournalStoreError::Conflict);
+        }
+        if let Err(error) = apply_command(
             &mut self.current,
             &self.plan,
-            &self.expected,
+            &self.expected.cas_snapshot(),
             JournalStoreCommand::TransitionWithObservation {
                 next_state: JournalState::Running,
                 observation,
@@ -1208,14 +1560,13 @@ impl RunningCasAdmission {
         .map_err(|error| match error {
             JournalError::StaleCas => JournalStoreError::Conflict,
             error => JournalStoreError::Journal(error),
-        })?;
-        self.current
-            .validate_against_plan(&self.plan)
-            .map_err(JournalStoreError::Journal)?;
+        }) {
+            return OwnedCasResult::prewrite(predecessor, error);
+        }
         let candidate = self.current.clone();
-        let bytes = candidate
-            .encode_private()
-            .map_err(JournalStoreError::Journal)?;
+        if let Err(error) = candidate.validate_against_plan(&self.plan) {
+            return OwnedCasResult::prewrite(predecessor, JournalStoreError::Journal(error));
+        }
         #[cfg(test)]
         if let Some(cancellation) = self
             .store
@@ -1227,31 +1578,25 @@ impl RunningCasAdmission {
         {
             cancellation.store(true, Ordering::Release);
         }
-        check_running_admission_budget(self.deadline, self.cancellation.as_ref())?;
-        let read_back = match self.store.write_atomic_unlocked(&bytes, true) {
-            Ok(()) => self.store.read_unlocked(&self.plan)?,
-            Err(write_error) => {
-                // A replacement can have happened before a durability error.
-                // Re-establish and accept only the complete exact candidate;
-                // an apparently Running disk record alone grants no authority.
-                match self
-                    .store
-                    .reestablish_candidate_durability_unlocked(&self.plan, &candidate)
-                {
-                    Ok(read_back) => read_back,
-                    Err(_) => return Err(write_error),
-                }
-            }
-        };
-        if read_back != candidate {
-            return Err(JournalStoreError::CorruptJournal);
+        if let Err(error) =
+            check_running_admission_budget(self.deadline, self.cancellation.as_ref())
+        {
+            return OwnedCasResult::prewrite(predecessor, error);
         }
+        let mut result = self.store.write_candidate_with_readback_unlocked(
+            &self.plan,
+            predecessor,
+            candidate,
+            Some(self.deadline),
+            Some(self.cancellation.as_ref()),
+        );
         #[cfg(all(test, windows))]
-        if self
-            .store
-            .faults
-            .expire_after_running_readback
-            .swap(false, Ordering::AcqRel)
+        if matches!(result.disposition(), CasDisposition::Committed)
+            && self
+                .store
+                .faults
+                .expire_after_running_readback
+                .swap(false, Ordering::AcqRel)
         {
             let remaining = self.deadline.saturating_duration_since(Instant::now());
             if !remaining.is_zero() {
@@ -1269,10 +1614,15 @@ impl RunningCasAdmission {
         {
             cancellation.store(true, Ordering::Release);
         }
-        if cancellation_requested(self.cancellation.as_ref()) || Instant::now() >= self.deadline {
-            return Ok(RunningCasResult::CommittedAfterBudget(read_back));
+        if matches!(result.disposition(), CasDisposition::Committed)
+            && (cancellation_requested(self.cancellation.as_ref())
+                || Instant::now() >= self.deadline)
+        {
+            let predecessor = result.predecessor().clone();
+            let candidate = result.attempt().cloned().expect("committed candidate");
+            result = OwnedCasResult::confirmed_late(predecessor, candidate);
         }
-        Ok(RunningCasResult::Committed(read_back))
+        result
     }
 }
 
@@ -1287,16 +1637,40 @@ impl ActivationReconcileAdmission {
     /// attempt and recovery epoch unchanged; a stale or ambiguous candidate
     /// returns an error and never issues a reconcile authority.
     pub(crate) fn commit_reconcile_required(
-        mut self,
+        self,
         timestamp: String,
     ) -> Result<ActivationReconcileCasResult, JournalStoreError> {
-        if Instant::now() >= self.deadline {
-            return Err(JournalStoreError::AdmissionDeadline);
+        let result = self.commit_reconcile_required_owned(timestamp);
+        match result.disposition() {
+            CasDisposition::Committed => Ok(ActivationReconcileCasResult::Committed(
+                result.attempt().cloned().expect("reconcile candidate"),
+            )),
+            CasDisposition::ConfirmedLate => {
+                Ok(ActivationReconcileCasResult::CommittedAfterBudget(
+                    result.attempt().cloned().expect("late reconcile candidate"),
+                ))
+            }
+            CasDisposition::Prewrite | CasDisposition::AmbiguousWrite => Err(result
+                .error()
+                .cloned()
+                .unwrap_or(JournalStoreError::CorruptJournal)),
+        }
+    }
+
+    pub(crate) fn commit_reconcile_required_owned(mut self, timestamp: String) -> OwnedCasResult {
+        #[cfg(test)]
+        self.store
+            .faults
+            .owned_cas_calls
+            .fetch_add(1, Ordering::AcqRel);
+        let predecessor = self.current.clone();
+        if let Err(error) = check_running_admission_budget(self.deadline, &AtomicBool::new(false)) {
+            return OwnedCasResult::prewrite(predecessor, error);
         }
         if self.current != self.expected_journal || self.current.cas_snapshot() != self.expected {
-            return Err(JournalStoreError::Conflict);
+            return OwnedCasResult::prewrite(predecessor, JournalStoreError::Conflict);
         }
-        apply_command(
+        if let Err(error) = apply_command(
             &mut self.current,
             &self.plan,
             &self.expected,
@@ -1308,30 +1682,23 @@ impl ActivationReconcileAdmission {
         .map_err(|error| match error {
             JournalError::StaleCas => JournalStoreError::Conflict,
             error => JournalStoreError::Journal(error),
-        })?;
-        self.current
-            .validate_against_plan(&self.plan)
-            .map_err(JournalStoreError::Journal)?;
+        }) {
+            return OwnedCasResult::prewrite(predecessor, error);
+        }
         let candidate = self.current.clone();
-        let bytes = candidate
-            .encode_private()
-            .map_err(JournalStoreError::Journal)?;
-        if Instant::now() >= self.deadline {
-            return Err(JournalStoreError::AdmissionDeadline);
+        if let Err(error) = candidate.validate_against_plan(&self.plan) {
+            return OwnedCasResult::prewrite(predecessor, JournalStoreError::Journal(error));
         }
-        let read_back = match self.store.write_atomic_unlocked(&bytes, true) {
-            Ok(()) => self.store.read_unlocked(&self.plan)?,
-            Err(write_error) => match self
-                .store
-                .reestablish_candidate_durability_unlocked(&self.plan, &candidate)
-            {
-                Ok(read_back) => read_back,
-                Err(_) => return Err(write_error),
-            },
-        };
-        if read_back != candidate {
-            return Err(JournalStoreError::CorruptJournal);
+        if let Err(error) = check_running_admission_budget(self.deadline, &AtomicBool::new(false)) {
+            return OwnedCasResult::prewrite(predecessor, error);
         }
+        let mut result = self.store.write_candidate_with_readback_unlocked(
+            &self.plan,
+            predecessor,
+            candidate,
+            Some(self.deadline),
+            None,
+        );
         #[cfg(all(test, windows))]
         let test_expired = self
             .store
@@ -1340,15 +1707,14 @@ impl ActivationReconcileAdmission {
             .swap(false, Ordering::AcqRel);
         #[cfg(not(all(test, windows)))]
         let test_expired = false;
-        // The test hook represents the clock crossing the absolute deadline
-        // in the post-readback gap without making the coordinator wait for a
-        // wall-clock interval while fixture permits are contended.
-        if test_expired || Instant::now() >= self.deadline {
-            return Ok(ActivationReconcileCasResult::CommittedAfterBudget(
-                read_back,
-            ));
+        if matches!(result.disposition(), CasDisposition::Committed)
+            && (test_expired || Instant::now() >= self.deadline)
+        {
+            let predecessor = result.predecessor().clone();
+            let candidate = result.attempt().cloned().expect("reconcile candidate");
+            result = OwnedCasResult::confirmed_late(predecessor, candidate);
         }
-        Ok(ActivationReconcileCasResult::Committed(read_back))
+        result
     }
 }
 
@@ -1363,15 +1729,45 @@ impl ClosingCasAdmission {
     /// the observed readiness/resource tuple and does not query liveness,
     /// listeners, commands, or staging.
     pub(crate) fn commit_closing(
-        mut self,
+        self,
         observation: ResourceObservation,
         timestamp: String,
     ) -> Result<ClosingCasResult, JournalStoreError> {
-        check_running_admission_budget(self.deadline, self.cancellation.as_ref())?;
-        if self.current != self.expected_journal || self.current.cas_snapshot() != self.expected {
-            return Err(JournalStoreError::Conflict);
+        let result = self.commit_closing_owned(observation, timestamp);
+        match result.disposition() {
+            CasDisposition::Committed => Ok(ClosingCasResult::Committed(
+                result.attempt().cloned().expect("closing candidate"),
+            )),
+            CasDisposition::ConfirmedLate => Ok(ClosingCasResult::CommittedAfterBudget(
+                result.attempt().cloned().expect("late closing candidate"),
+            )),
+            CasDisposition::Prewrite | CasDisposition::AmbiguousWrite => Err(result
+                .error()
+                .cloned()
+                .unwrap_or(JournalStoreError::CorruptJournal)),
         }
-        apply_command(
+    }
+
+    pub(crate) fn commit_closing_owned(
+        mut self,
+        observation: ResourceObservation,
+        timestamp: String,
+    ) -> OwnedCasResult {
+        #[cfg(test)]
+        self.store
+            .faults
+            .owned_cas_calls
+            .fetch_add(1, Ordering::AcqRel);
+        let predecessor = self.current.clone();
+        if let Err(error) =
+            check_running_admission_budget(self.deadline, self.cancellation.as_ref())
+        {
+            return OwnedCasResult::prewrite(predecessor, error);
+        }
+        if self.current != self.expected_journal || self.current.cas_snapshot() != self.expected {
+            return OwnedCasResult::prewrite(predecessor, JournalStoreError::Conflict);
+        }
+        if let Err(error) = apply_command(
             &mut self.current,
             &self.plan,
             &self.expected,
@@ -1384,14 +1780,13 @@ impl ClosingCasAdmission {
         .map_err(|error| match error {
             JournalError::StaleCas => JournalStoreError::Conflict,
             error => JournalStoreError::Journal(error),
-        })?;
-        self.current
-            .validate_against_plan(&self.plan)
-            .map_err(JournalStoreError::Journal)?;
+        }) {
+            return OwnedCasResult::prewrite(predecessor, error);
+        }
         let candidate = self.current.clone();
-        let bytes = candidate
-            .encode_private()
-            .map_err(JournalStoreError::Journal)?;
+        if let Err(error) = candidate.validate_against_plan(&self.plan) {
+            return OwnedCasResult::prewrite(predecessor, JournalStoreError::Journal(error));
+        }
         #[cfg(test)]
         if let Some(cancellation) = self
             .store
@@ -1403,27 +1798,18 @@ impl ClosingCasAdmission {
         {
             cancellation.store(true, Ordering::Release);
         }
-        check_running_admission_budget(self.deadline, self.cancellation.as_ref())?;
-        let read_back = match self.store.write_atomic_unlocked(&bytes, true) {
-            Ok(()) => self.store.read_unlocked(&self.plan)?,
-            Err(write_error) => {
-                // A replacement can have happened before a durability error.
-                // Accept Closing authority only after the same final-file,
-                // directory-barrier, and exact-candidate readback used by the
-                // Running seam.  Otherwise the caller retains the owner and
-                // must reconcile an unknown on-disk state.
-                match self
-                    .store
-                    .reestablish_candidate_durability_unlocked(&self.plan, &candidate)
-                {
-                    Ok(read_back) => read_back,
-                    Err(_) => return Err(write_error),
-                }
-            }
-        };
-        if read_back != candidate {
-            return Err(JournalStoreError::CorruptJournal);
+        if let Err(error) =
+            check_running_admission_budget(self.deadline, self.cancellation.as_ref())
+        {
+            return OwnedCasResult::prewrite(predecessor, error);
         }
+        let mut result = self.store.write_candidate_with_readback_unlocked(
+            &self.plan,
+            predecessor,
+            candidate,
+            Some(self.deadline),
+            Some(self.cancellation.as_ref()),
+        );
         #[cfg(test)]
         if let Some(cancellation) = self
             .store
@@ -1435,10 +1821,15 @@ impl ClosingCasAdmission {
         {
             cancellation.store(true, Ordering::Release);
         }
-        if cancellation_requested(self.cancellation.as_ref()) || Instant::now() >= self.deadline {
-            return Ok(ClosingCasResult::CommittedAfterBudget(read_back));
+        if matches!(result.disposition(), CasDisposition::Committed)
+            && (cancellation_requested(self.cancellation.as_ref())
+                || Instant::now() >= self.deadline)
+        {
+            let predecessor = result.predecessor().clone();
+            let candidate = result.attempt().cloned().expect("closing candidate");
+            result = OwnedCasResult::confirmed_late(predecessor, candidate);
         }
-        Ok(ClosingCasResult::Committed(read_back))
+        result
     }
 }
 
@@ -1457,17 +1848,48 @@ impl ClosingCleanupAdmission {
     /// already completed native and staging cleanup; this method performs no
     /// resource operation and accepts only the typed terminal observation.
     pub(crate) fn commit_terminal(
-        mut self,
+        self,
         observation: TerminalObservation,
         timestamp: String,
     ) -> Result<TerminalCasResult, JournalStoreError> {
-        check_running_admission_budget(self.deadline, self.cancellation.as_ref())?;
-        if self.current.state != JournalState::Closing
+        let result = self.commit_terminal_owned(observation, timestamp);
+        match result.disposition() {
+            CasDisposition::Committed => Ok(TerminalCasResult::Committed(
+                result.attempt().cloned().expect("terminal candidate"),
+            )),
+            CasDisposition::ConfirmedLate => Ok(TerminalCasResult::CommittedAfterBudget(
+                result.attempt().cloned().expect("late terminal candidate"),
+            )),
+            CasDisposition::Prewrite | CasDisposition::AmbiguousWrite => Err(result
+                .error()
+                .cloned()
+                .unwrap_or(JournalStoreError::CorruptJournal)),
+        }
+    }
+
+    pub(crate) fn commit_terminal_owned(
+        mut self,
+        observation: TerminalObservation,
+        timestamp: String,
+    ) -> OwnedCasResult {
+        #[cfg(test)]
+        self.store
+            .faults
+            .owned_cas_calls
+            .fetch_add(1, Ordering::AcqRel);
+        let predecessor = self.current.clone();
+        if let Err(error) =
+            check_running_admission_budget(self.deadline, self.cancellation.as_ref())
+        {
+            return OwnedCasResult::prewrite(predecessor, error);
+        }
+        if self.current != self.expected_journal
+            || self.current.state != JournalState::Closing
             || self.current.cas_snapshot() != self.expected
         {
-            return Err(JournalStoreError::Conflict);
+            return OwnedCasResult::prewrite(predecessor, JournalStoreError::Conflict);
         }
-        apply_command(
+        if let Err(error) = apply_command(
             &mut self.current,
             &self.plan,
             &self.expected,
@@ -1479,14 +1901,13 @@ impl ClosingCleanupAdmission {
         .map_err(|error| match error {
             JournalError::StaleCas => JournalStoreError::Conflict,
             error => JournalStoreError::Journal(error),
-        })?;
-        self.current
-            .validate_against_plan(&self.plan)
-            .map_err(JournalStoreError::Journal)?;
+        }) {
+            return OwnedCasResult::prewrite(predecessor, error);
+        }
         let candidate = self.current.clone();
-        let bytes = candidate
-            .encode_private()
-            .map_err(JournalStoreError::Journal)?;
+        if let Err(error) = candidate.validate_against_plan(&self.plan) {
+            return OwnedCasResult::prewrite(predecessor, JournalStoreError::Journal(error));
+        }
         #[cfg(test)]
         if let Some(cancellation) = self
             .store
@@ -1498,20 +1919,18 @@ impl ClosingCleanupAdmission {
         {
             cancellation.store(true, Ordering::Release);
         }
-        check_running_admission_budget(self.deadline, self.cancellation.as_ref())?;
-        let read_back = match self.store.write_atomic_unlocked(&bytes, true) {
-            Ok(()) => self.store.read_unlocked(&self.plan)?,
-            Err(write_error) => match self
-                .store
-                .reestablish_candidate_durability_unlocked(&self.plan, &candidate)
-            {
-                Ok(read_back) => read_back,
-                Err(_) => return Err(write_error),
-            },
-        };
-        if read_back != candidate {
-            return Err(JournalStoreError::CorruptJournal);
+        if let Err(error) =
+            check_running_admission_budget(self.deadline, self.cancellation.as_ref())
+        {
+            return OwnedCasResult::prewrite(predecessor, error);
         }
+        let mut result = self.store.write_candidate_with_readback_unlocked(
+            &self.plan,
+            predecessor,
+            candidate,
+            Some(self.deadline),
+            Some(self.cancellation.as_ref()),
+        );
         #[cfg(test)]
         if let Some(cancellation) = self
             .store
@@ -1523,10 +1942,15 @@ impl ClosingCleanupAdmission {
         {
             cancellation.store(true, Ordering::Release);
         }
-        if cancellation_requested(self.cancellation.as_ref()) || Instant::now() >= self.deadline {
-            return Ok(TerminalCasResult::CommittedAfterBudget(read_back));
+        if matches!(result.disposition(), CasDisposition::Committed)
+            && (cancellation_requested(self.cancellation.as_ref())
+                || Instant::now() >= self.deadline)
+        {
+            let predecessor = result.predecessor().clone();
+            let candidate = result.attempt().cloned().expect("terminal candidate");
+            result = OwnedCasResult::confirmed_late(predecessor, candidate);
         }
-        Ok(TerminalCasResult::Committed(read_back))
+        result
     }
 }
 

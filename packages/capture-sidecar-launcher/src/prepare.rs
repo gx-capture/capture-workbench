@@ -1133,15 +1133,29 @@ pub(crate) fn prepare_group(
     verify_binding_independently(&expected_binding, &read_back, &verified)?;
     let receipt_digest = verified.receipt().receipt_digest().to_owned();
     let journal_binding = expected_binding.to_journal_binding(&receipt_digest);
-    let cas = plan.context.store.compare_and_swap(
+    let cas = plan.context.store.compare_and_swap_owned(
         &plan.value,
-        &initial.cas_snapshot(),
+        &initial,
         JournalStoreCommand::PrepareBound {
             binding: journal_binding.clone(),
             timestamp: plan.context.clock.now()?,
         },
     );
-    let bound = cas.map_err(map_store_error)?;
+    let bound = match cas.disposition() {
+        crate::journal_store::CasDisposition::Committed
+        | crate::journal_store::CasDisposition::ConfirmedLate => cas
+            .attempt()
+            .cloned()
+            .ok_or(PrepareError::JournalAmbiguous)?,
+        crate::journal_store::CasDisposition::Prewrite
+        | crate::journal_store::CasDisposition::AmbiguousWrite => {
+            return Err(cas
+                .error()
+                .cloned()
+                .map(map_store_error)
+                .unwrap_or(PrepareError::JournalAmbiguous));
+        }
+    };
     if bound.state != JournalState::PreparedBound || bound.binding != journal_binding {
         return Err(PrepareError::JournalAmbiguous);
     }
