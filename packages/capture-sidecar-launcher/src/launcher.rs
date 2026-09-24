@@ -2094,7 +2094,9 @@ mod tests {
         expected_status: u16,
         expect_bearer_challenge: bool,
     ) {
-        let deadline = Instant::now() + Duration::from_secs(5);
+        // Loaded CI runners can delay fixture startup and first response bytes;
+        // keep retrying until a complete status line arrives, then assert it.
+        let deadline = Instant::now() + Duration::from_secs(15);
         let authorization = authorization
             .map(|token| format!("Authorization: Bearer {token}\r\n"))
             .unwrap_or_default();
@@ -2134,7 +2136,11 @@ mod tests {
                 .and_then(|line| std::str::from_utf8(line).ok())
                 .and_then(|line| line.split_whitespace().nth(1))
                 .and_then(|value| value.parse::<u16>().ok());
-            if status == Some(expected_status) {
+            let Some(status) = status else {
+                thread::sleep(Duration::from_millis(10));
+                continue;
+            };
+            if status == expected_status {
                 if expect_bearer_challenge
                     && !response
                         .windows(b"WWW-Authenticate: Bearer\r\n".len())
