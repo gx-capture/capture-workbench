@@ -36,7 +36,10 @@ const MAX_JOURNAL_BYTES: u64 = 1024 * 1024;
 const MARKER_RETRY: Duration = Duration::from_millis(10);
 const MARKER_TIMEOUT: Duration = Duration::from_secs(2);
 const HOLD_TIMEOUT: Duration = Duration::from_secs(30);
-const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
+// Keep the HTTP root alive for the whole test step that probes it. The
+// launcher terminates owned roots on close; this only bounds leaked fixtures,
+// and must exceed the tests' 60 s eventual waits on starved CI runners.
+const HTTP_TIMEOUT: Duration = Duration::from_secs(90);
 const HTTP_SUCCESS_HOLD: Duration = Duration::from_secs(2);
 const HTTP_IO_TIMEOUT: Duration = Duration::from_millis(250);
 const HTTP_RETRY: Duration = Duration::from_millis(5);

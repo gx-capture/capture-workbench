@@ -2102,13 +2102,16 @@ mod tests {
     ) {
         // Loaded CI runners can delay fixture startup and first response bytes;
         // keep retrying until a complete status line arrives, then assert it.
-        let deadline = Instant::now() + FIXTURE_EVENTUAL_WAIT;
+        let started = Instant::now();
+        let deadline = started + FIXTURE_EVENTUAL_WAIT;
         let authorization = authorization
             .map(|token| format!("Authorization: Bearer {token}\r\n"))
             .unwrap_or_default();
         let request = format!(
             "GET /v2/health/ready HTTP/1.1\r\nHost: {host}\r\n{authorization}Connection: close\r\n\r\n"
         );
+        let mut connect_failures = 0usize;
+        let mut incomplete_responses = 0usize;
         while Instant::now() < deadline {
             let Ok(mut stream) = TcpStream::connect_timeout(
                 &format!("{LOOPBACK_HOST}:{port}")
@@ -2116,6 +2119,7 @@ mod tests {
                     .expect("loopback address"),
                 Duration::from_millis(250),
             ) else {
+                connect_failures += 1;
                 thread::sleep(Duration::from_millis(10));
                 continue;
             };
@@ -2143,6 +2147,7 @@ mod tests {
                 .and_then(|line| line.split_whitespace().nth(1))
                 .and_then(|value| value.parse::<u16>().ok());
             let Some(status) = status else {
+                incomplete_responses += 1;
                 thread::sleep(Duration::from_millis(10));
                 continue;
             };
@@ -2158,7 +2163,12 @@ mod tests {
             }
             panic!("activation probe returned an unexpected HTTP status");
         }
-        panic!("activation probe HTTP server did not become reachable");
+        panic!(
+            "activation probe HTTP server did not become reachable \
+             (connect_failures={connect_failures}, incomplete_responses={incomplete_responses}, \
+             elapsed_ms={})",
+            started.elapsed().as_millis()
+        );
     }
 
     #[cfg(windows)]
