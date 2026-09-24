@@ -123,7 +123,11 @@ class OwnedProcessSampler {
   private timer: NodeJS.Timeout | undefined;
   private sampling: Promise<void> = Promise.resolve();
 
-  constructor(private readonly roots: readonly string[]) {}
+  private readonly roots: readonly string[];
+
+  constructor(roots: readonly string[]) {
+    this.roots = roots;
+  }
 
   async sample(): Promise<ProcessImageRecord[]> {
     const owned = ownedProcessImages(await processImages(), this.roots);

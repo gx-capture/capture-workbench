@@ -35,6 +35,25 @@
 This is a proposed bounded repair plan, not a completed release gate or a
 substitute for fresh review. Test/source evidence will be recorded in the TODO.
 
+## Release scope decision (2026-09-24)
+
+The user selected: publish 0.4.2 with printed-document OCR usability as the
+floor and state handwritten recognition as a known limitation. Local
+diagnostics found the canonical handwritten JPEG not practically usable with
+the pinned PP-OCRv6 medium recognizer, with no integration defect proven.
+Handwriting improvement is a separately scoped successor evaluation (likely a
+dedicated recognizer and therefore a new immutable model identity), not a
+0.4.2 blocker. Release notes must disclose the limitation; do not claim CER.
+
+The user also approved committing the reviewed preflight repairs as two
+slices and prioritising a Capture-first installed acceptance path. Capture's
+production app data follows the Tauri identifier through Windows known
+folders, so `APPDATA`/`LOCALAPPDATA` overrides do not isolate it. The
+practical path therefore builds a side-by-side production installer whose
+only configuration change is the identifier/productName/mainBinaryName
+triple, proves the generated NSIS script cannot touch the ordinary
+installation, and removes only run-owned state afterwards.
+
 ## Amendments after independent review
 
 Both 30-minute reviews of `8b66098` reported BLOCKED. Root adopts their four

@@ -333,3 +333,9 @@ test('build and run CLIs require explicit complete inputs', () => {
   assert.throws(() => parseRunArguments(['--provenance', 'p.json', '--input', 'a.jpg']), /Missing required --input-sha256/u);
   assert.throws(() => parseRunArguments(['--provenance', 'p.json', '--input', 'a.jpg', '--input-sha256', 'ABC']), /SHA-256/u);
 });
+
+test('practical CLI modules load under Node type stripping', async () => {
+  await import('./build-practical-installer.ts');
+  const run = await import('./practical-installed-ocr.ts');
+  assert.equal(typeof run.runPracticalInstalledOcr, 'function');
+});
