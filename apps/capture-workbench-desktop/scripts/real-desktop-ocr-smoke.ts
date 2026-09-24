@@ -344,7 +344,7 @@ interface RealDesktopSmokeEvidence {
   readonly ocrExecutionProof?: AcceptanceOcrExecutionProofSummary;
 }
 
-interface AuthenticatedOcrPreflightObservation {
+export interface AuthenticatedOcrPreflightObservation {
   readonly contractSha256: string;
   readonly workerSha256: string;
   readonly mode: 'gpu-dml' | 'cpu-fallback';
@@ -2150,11 +2150,11 @@ async function readStructuredProvenance(
   };
 }
 
-interface DurableLibraryDetailRecord {
+export interface DurableLibraryDetailRecord {
   readonly [key: string]: unknown;
 }
 
-async function readDurableLibraryDetail(
+export async function readDurableLibraryDetail(
   page: Page,
   documentId: string,
 ): Promise<DurableLibraryDetailRecord> {
@@ -2227,7 +2227,7 @@ function readPdfPageScope(detail: DurableLibraryDetailRecord): PdfPageScopeEvide
   };
 }
 
-function readImportedSourceSha256(detail: DurableLibraryDetailRecord): string {
+export function readImportedSourceSha256(detail: DurableLibraryDetailRecord): string {
   const raw = (detail as { readonly raw?: unknown }).raw;
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
     throw new Error('Packaged library detail omitted raw OCR data while verifying source identity.');
@@ -2244,7 +2244,7 @@ function readImportedSourceSha256(detail: DurableLibraryDetailRecord): string {
   return sha256;
 }
 
-function readDurableOcrProvenance(detail: DurableLibraryDetailRecord): {
+export function readDurableOcrProvenance(detail: DurableLibraryDetailRecord): {
   readonly engine: 'windowsml-ocr';
   readonly model: string;
   readonly device: OcrDevice;
@@ -2277,7 +2277,7 @@ function readDurableOcrProvenance(detail: DurableLibraryDetailRecord): {
   };
 }
 
-function assertDurableOcrCheckpoint(
+export function assertDurableOcrCheckpoint(
   detail: DurableLibraryDetailRecord,
   expected: {
     readonly sourceKind: 'image' | 'pdf';
@@ -2435,7 +2435,7 @@ export function assertOcrExecutionProofMatchesInstalledJourney(
   }
 }
 
-function parseAuthenticatedOcrPreflight(value: unknown): AuthenticatedOcrPreflightObservation {
+export function parseAuthenticatedOcrPreflight(value: unknown): AuthenticatedOcrPreflightObservation {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('Authenticated Capture Runtime readiness payload was invalid.');
   }
@@ -2509,7 +2509,7 @@ async function deleteCompletedOwnedSmokeDocuments(page: Page): Promise<void> {
   }
 }
 
-function exactDocumentCard(page: Page, fileName: string) {
+export function exactDocumentCard(page: Page, fileName: string) {
   const exactName = page.getByText(fileName, { exact: true });
   return page.locator('button.document-card').filter({ has: exactName });
 }
@@ -2709,7 +2709,7 @@ async function requireDirectory(path: string, name: string): Promise<void> {
   }
 }
 
-function reservePort(): Promise<number> {
+export function reservePort(): Promise<number> {
   return new Promise((resolvePort, reject) => {
     const server = net.createServer();
     server.once('error', reject);
@@ -2721,7 +2721,7 @@ function reservePort(): Promise<number> {
   });
 }
 
-async function waitUntil<T>(check: () => Promise<T | undefined>, timeoutMs: number, message: string): Promise<T> {
+export async function waitUntil<T>(check: () => Promise<T | undefined>, timeoutMs: number, message: string): Promise<T> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const probeBudget = Math.min(5_000, Math.max(1, deadline - Date.now()));
@@ -2748,14 +2748,14 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: s
   }
 }
 
-interface PackagedUiState {
+export interface PackagedUiState {
   readonly runtimeState: string | null;
   readonly sourceImportEnabled: boolean;
   readonly ocrComputeMode: 'gpu-dml' | 'cpu-fallback' | null;
   readonly ocrComputeVisible: boolean;
 }
 
-async function invokeTauriCommand(
+export async function invokeTauriCommand(
   page: Page,
   command: string,
   args: Readonly<Record<string, unknown>>,
@@ -2778,7 +2778,7 @@ function isTauriBridgeClosedError(error: unknown): boolean {
   return /(?:target page|page|browser|websocket|connection|execution context).*(?:closed|destroyed|disconnected)|(?:closed|destroyed|disconnected).*(?:target page|page|browser|websocket|connection|execution context)/iu.test(message);
 }
 
-async function queryPackagedUiState(cdpPort: number): Promise<PackagedUiState | undefined> {
+export async function queryPackagedUiState(cdpPort: number): Promise<PackagedUiState | undefined> {
   const response = await withTimeout(
     fetch(`http://127.0.0.1:${cdpPort}/json/list`),
     3_000,
@@ -2863,7 +2863,7 @@ async function queryPackagedUiState(cdpPort: number): Promise<PackagedUiState | 
   }
 }
 
-async function waitForPackagedRuntimeReadySignal(cdpPort: number): Promise<boolean> {
+export async function waitForPackagedRuntimeReadySignal(cdpPort: number): Promise<boolean> {
   try {
     const state = await queryPackagedUiState(cdpPort);
     return state?.runtimeState === 'ready'
@@ -2920,7 +2920,7 @@ function findPackagedPage(browser: CdpBrowser): Page | undefined {
     .find((candidate) => candidate.url() === 'http://tauri.localhost/');
 }
 
-async function closePackagedBrowser(browser: CdpBrowser): Promise<void> {
+export async function closePackagedBrowser(browser: CdpBrowser): Promise<void> {
   await withTimeout(
     browser.close(),
     2_000,
@@ -2928,7 +2928,7 @@ async function closePackagedBrowser(browser: CdpBrowser): Promise<void> {
   ).catch(() => undefined);
 }
 
-async function reattachToPackagedPage(cdpPort: number): Promise<{ browser: CdpBrowser; page: Page }> {
+export async function reattachToPackagedPage(cdpPort: number): Promise<{ browser: CdpBrowser; page: Page }> {
   return connectToPackagedPage(cdpPort, {
     timeoutMs: 10_000,
   });
@@ -2955,7 +2955,7 @@ async function waitForOwnedTreeGone(
   }
 }
 
-async function collectVisibleOcrSegments(page: Page): Promise<readonly RealOcrUiSegment[]> {
+export async function collectVisibleOcrSegments(page: Page): Promise<readonly RealOcrUiSegment[]> {
   return page.getByTestId('document-raw-segment').evaluateAll((elements) => elements.map((element) => {
     const locatorKind = element.getAttribute('data-locator-kind');
     if (locatorKind !== 'page' && locatorKind !== 'time') {
@@ -3001,14 +3001,14 @@ async function collectVisibleStructuredBlocks(page: Page): Promise<readonly Real
   }));
 }
 
-async function visibleRuntimeError(page: Page): Promise<string | undefined> {
+export async function visibleRuntimeError(page: Page): Promise<string | undefined> {
   const error = page.getByTestId('runtime-error');
   if (!await error.isVisible().catch(() => false)) return undefined;
   const message = await error.getByTestId('runtime-error-message').textContent().catch(() => undefined);
   return `Capture Workbench runtime entered an error state: ${message?.trim() || 'no detail was rendered.'}`;
 }
 
-async function runtimeSetupDiagnostics(page: Page): Promise<string> {
+export async function runtimeSetupDiagnostics(page: Page): Promise<string> {
   const setup = page.getByTestId('runtime-setup');
   if (!await setup.isVisible().catch(() => false)) return 'setup-visible=false';
   const message = await setup.locator('.setup-status').textContent().catch(() => undefined);
@@ -3040,7 +3040,7 @@ function resolveSourceKind(sourcePath: string): SourceKind {
   return 'unknown';
 }
 
-function isProcessAlive(pid: number): boolean {
+export function isProcessAlive(pid: number): boolean {
   const result = spawnSync('tasklist.exe', ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], {
     encoding: 'utf8',
     windowsHide: true,
@@ -3051,13 +3051,13 @@ function isProcessAlive(pid: number): boolean {
   return result.status === 0 && new RegExp(`^"[^"]+","${pid}",`, 'mu').test(String(result.stdout || ''));
 }
 
-interface OwnedChildProcess {
+export interface OwnedChildProcess {
   readonly pid: number;
   readonly name: string;
   readonly commandLine: string;
 }
 
-function descendantProcessRecords(rootPid: number | undefined): OwnedChildProcess[] | undefined {
+export function descendantProcessRecords(rootPid: number | undefined): OwnedChildProcess[] | undefined {
   if (!rootPid || process.platform !== 'win32') return rootPid ? [] : undefined;
   const script = [
     `$root = ${rootPid}`,
@@ -3122,7 +3122,7 @@ async function waitForPortClosed(port: number): Promise<boolean> {
   return false;
 }
 
-async function isLoopbackPortOpen(port: number): Promise<boolean> {
+export async function isLoopbackPortOpen(port: number): Promise<boolean> {
   if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) return false;
   return await new Promise<boolean>((resolveOpen) => {
     const socket = net.createConnection({ host: '127.0.0.1', port });

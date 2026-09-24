@@ -357,6 +357,28 @@
         "parallel": false
       }
     },
+    "build-practical-installer": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "metadata": {
+        "description": "Builds a side-by-side production NSIS installer (distinct identifier, product name and binary name only) from a verified runtime release directory. Pass --mode, --runtime-release, --runtime-sha256 and --run-id."
+      },
+      "outputs": ["{workspaceRoot}/tmp/capture-workbench-desktop/practical-installed"],
+      "options": {
+        "command": "node apps/capture-workbench-desktop/scripts/build-practical-installer.ts"
+      }
+    },
+    "acceptance-practical-installed": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "metadata": {
+        "description": "No-build practical OCR on an installed side-by-side production build: first-run setup, native import, durable OCR checkpoint, normal close, uninstall and cleanup proof. Pass --provenance, --input and --input-sha256 (plus --runtime-release for rehearsal)."
+      },
+      "outputs": ["{workspaceRoot}/tmp/capture-workbench-desktop/practical-installed"],
+      "options": {
+        "command": "node apps/capture-workbench-desktop/scripts/practical-installed-ocr.ts"
+      }
+    },
     "acceptance-three-projects": {
       "cache": false,
       "executor": "nx:run-commands",

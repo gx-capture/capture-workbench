@@ -8,6 +8,7 @@ import {
   from,
   forkJoin,
   map,
+  type Observable,
   of,
   switchMap,
   throwError,
@@ -28,8 +29,25 @@ export function createInstalledRegistry({
   uninstallRegistryKey,
   baseChildEnvironment,
   pathExists,
+}: {
+  smokeRoot: string;
+  workspaceRoot: string;
+  registryViews: readonly string[];
+  productRegistryKey: string;
+  uninstallRegistryKey: string;
+  baseChildEnvironment: (
+    source: NodeJS.ProcessEnv,
+    isolatedTemp: string,
+    ownedRoot?: string,
+  ) => Record<string, string>;
+  pathExists: (path: string) => Observable<boolean>;
 }) {
-  function waitUntil(check, timeout, message, deadline = Date.now() + timeout) {
+  function waitUntil(
+    check: () => Observable<boolean>,
+    timeout: number,
+    message: string,
+    deadline = Date.now() + timeout,
+  ): Observable<undefined> {
     return defer(() => check()).pipe(
       switchMap((done) => {
         if (done) return of(undefined);
