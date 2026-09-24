@@ -76,6 +76,7 @@ jobs:
       contents: read
       id-token: write
     with:
+      package_candidate_id: ${{ inputs.candidate_id }}
       candidate_kind: package
       candidate_id: ${{ inputs.candidate_id }}
       candidate_run_id: ${{ inputs.candidate_run_id }}

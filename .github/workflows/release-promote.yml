@@ -234,6 +234,15 @@ jobs:
     needs: prepare-candidate
     runs-on: ubuntu-latest
     environment: capture-registry-pypi
+    env:
+      PYPI_KIND: full-release
+      PYPI_CANDIDATE_ID: ${{ inputs.runtime_candidate_id }}
+      PYPI_RELEASE_ID: ${{ inputs.candidate_id }}
+      PYPI_PACKAGE_ID: ${{ inputs.package_candidate_id }}
+      PYPI_SOURCE: ${{ needs.prepare-candidate.outputs.source_commit }}
+      PYPI_VERSION: ${{ needs.prepare-candidate.outputs.release_version }}
+      PYPI_CONTRACT: ${{ inputs.contract_set_sha256 }}
+      PYPI_SOURCE_MANIFEST_SHA256: ${{ inputs.runtime_candidate_manifest_sha256 }}
     permissions:
       actions: read
       contents: read
@@ -244,6 +253,11 @@ jobs:
         with:
           fetch-depth: 1
           persist-credentials: false
+
+      - name: Install Node.js 24 for publication tooling
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
 
       - name: Install uv and Python 3.12
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
@@ -280,38 +294,55 @@ jobs:
           test "${#artifacts[@]}" -eq "$expected_count"
           cp -- "${artifacts[@]}" "$target_dir/"
 
+      - name: Preflight exact PyPI identity, staged bytes and remote retries
+        id: pypi-preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest_sha256="$(node --input-type=module -e "const fs=await import('node:fs/promises'); const evidence=JSON.parse(await fs.readFile('promotion-input/promotion-evidence.json','utf8')); if(!/^[0-9a-f]{64}$/.test(evidence.candidateManifestSha256)) throw new Error('Promotion evidence manifest digest is missing.'); process.stdout.write(evidence.candidateManifestSha256);")"
+          node tools/record-pypi-candidate.ts \
+            --mode preflight \
+            --candidate promotion-input/candidate \
+            --python-directory "$RUNNER_TEMP/pypi-python" \
+            --candidate-kind "$PYPI_KIND" \
+            --candidate-id "$PYPI_CANDIDATE_ID" \
+            --release-candidate-id "$PYPI_RELEASE_ID" \
+            --package-candidate-id "$PYPI_PACKAGE_ID" \
+            --source-commit "$PYPI_SOURCE" \
+            --version "$PYPI_VERSION" \
+            --contract-set-sha256 "$PYPI_CONTRACT" \
+            --candidate-manifest-sha256 "$manifest_sha256" \
+            --source-candidate-manifest-sha256 "$PYPI_SOURCE_MANIFEST_SHA256" \
+            --binding "$RUNNER_TEMP/pypi-preflight.json"
+          echo "candidate_manifest_sha256=$manifest_sha256" >> "$GITHUB_OUTPUT"
+
       - name: Publish exact Python distributions with Trusted Publishing
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
         with:
           packages-dir: ${{ runner.temp }}/pypi-python
           skip-existing: true
 
-      - name: Record the exact PyPI publication ledger
+      - name: Record the exact PyPI publication ledger after mandatory readback
         shell: bash
         env:
-          PYTHON_PROJECT: ${{ inputs.pypi_project }}
+          PYPI_MANIFEST_SHA256: ${{ steps.pypi-preflight.outputs.candidate_manifest_sha256 }}
         run: |
           set -euo pipefail
-          case "$PYTHON_PROJECT" in
-            client) projects='capture-runtime-client' ;;
-            *) echo "Unsupported Python project lane: $PYTHON_PROJECT" >&2; exit 1 ;;
-          esac
           node tools/record-pypi-candidate.ts \
+            --mode record \
             --candidate promotion-input/candidate \
             --python-directory "$RUNNER_TEMP/pypi-python" \
-            --projects "$projects" \
-            --candidate-id '${{ inputs.runtime_candidate_id }}' \
-            --version '${{ needs.prepare-candidate.outputs.release_version }}' \
+            --candidate-kind "$PYPI_KIND" \
+            --candidate-id "$PYPI_CANDIDATE_ID" \
+            --release-candidate-id "$PYPI_RELEASE_ID" \
+            --package-candidate-id "$PYPI_PACKAGE_ID" \
+            --source-commit "$PYPI_SOURCE" \
+            --version "$PYPI_VERSION" \
+            --contract-set-sha256 "$PYPI_CONTRACT" \
+            --candidate-manifest-sha256 "$PYPI_MANIFEST_SHA256" \
+            --source-candidate-manifest-sha256 "$PYPI_SOURCE_MANIFEST_SHA256" \
+            --binding "$RUNNER_TEMP/pypi-preflight.json" \
             --output registry-ledger-pypi.json
-
-      - name: Bind PyPI ledger to the release and runtime candidate
-        shell: bash
-        env:
-          RELEASE_CANDIDATE_ID: ${{ inputs.candidate_id }}
-          CONTRACT_SET_SHA256: ${{ inputs.contract_set_sha256 }}
-        run: |
-          set -euo pipefail
-          node --input-type=module -e "const fs=await import('node:fs/promises'); const crypto=await import('node:crypto'); const ledger=JSON.parse(await fs.readFile('registry-ledger-pypi.json','utf8')); if(!/^[0-9a-f]{64}$/.test(process.env.RELEASE_CANDIDATE_ID)||!/^[0-9a-f]{64}$/.test(process.env.CONTRACT_SET_SHA256)) throw new Error('Release candidate ledger binding is incomplete.'); const source=await fs.readFile('promotion-input/candidate/runtime-candidate-manifest.json'); ledger.releaseCandidateId=process.env.RELEASE_CANDIDATE_ID; ledger.contractSetSha256=process.env.CONTRACT_SET_SHA256; ledger.sourceCandidateManifestSha256=crypto.createHash('sha256').update(source).digest('hex'); await fs.writeFile('registry-ledger-pypi.json',JSON.stringify(ledger,null,2)+'\\n');"
 
       - name: Verify clean Python installation from PyPI
         shell: bash

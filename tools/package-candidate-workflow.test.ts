@@ -183,6 +183,23 @@ test('runtime candidate workflow excludes the desktop product lane', async () =>
     /capture-workbench-desktop|tauri|nsis|windows-install/iu,
   );
   assert.match(runtimeWorkflow, /capture-runtime:build-release-artifacts/u);
+  assert.doesNotMatch(runtimeWorkflow, /capture-runtime-client-python:build/u);
+  const assemblyCommands = toolCommands(
+    runtimeWorkflow,
+    'assemble-runtime-candidate.ts',
+  );
+  assert.equal(assemblyCommands.length, 1);
+  for (const flag of [
+    '--package-candidate ',
+    '--package-producer-run-id ',
+    '--package-candidate-manifest-sha256 ',
+    '--contract-set-sha256 ',
+  ]) {
+    assert(
+      assemblyCommands[0].includes(flag),
+      `Runtime assembly must pass ${flag}`,
+    );
+  }
   assert.match(
     runtimeWorkflow,
     /capture-sidecar-launcher:cargo-package-dry-run/u,
@@ -198,6 +215,81 @@ test('runtime candidate workflow excludes the desktop product lane', async () =>
     verificationCommands[0] ?? '',
     /--contract-set-sha256 '\$\{\{ inputs\.contract_set_sha256 \}\}'/u,
   );
+});
+
+test('all PyPI callers preflight before Trusted Publishing and consume the binding after upload on Node24', async () => {
+  for (const filename of ['_publish-pypi.yml', 'release-promote.yml']) {
+    const workflow = await readFile(
+      join(root, '.github/workflows', filename),
+      'utf8',
+    );
+    const job =
+      filename === 'release-promote.yml'
+        ? workflow.split('  publish-pypi:')[1].split('  publish-crates:')[0]
+        : workflow;
+    const commands = toolCommands(job, 'record-pypi-candidate.ts');
+    assert.equal(commands.length, 2);
+    assert.match(commands[0], /--mode preflight/u);
+    assert.match(commands[1], /--mode record/u);
+    for (const command of commands) {
+      for (const flag of [
+        'candidate-kind',
+        'candidate-id',
+        'release-candidate-id',
+        'package-candidate-id',
+        'source-commit',
+        'version',
+        'contract-set-sha256',
+        'candidate-manifest-sha256',
+        'source-candidate-manifest-sha256',
+        'python-directory',
+        'binding',
+      ])
+        assert(command.includes(`--${flag} `), `${filename} missing ${flag}`);
+    }
+    const setup = job.indexOf('node-version: 24');
+    const preflight = job.indexOf('--mode preflight');
+    const upload = job.indexOf('uses: pypa/gh-action-pypi-publish@');
+    const record = job.indexOf('--mode record');
+    assert(
+      setup >= 0 && setup < preflight && preflight < upload && upload < record,
+    );
+    assert.equal(
+      (job.match(/uses: pypa\/gh-action-pypi-publish@/gu) ?? []).length,
+      1,
+    );
+    assert.doesNotMatch(
+      job,
+      /ledger\.releaseCandidateId\s*=|ledger\.sourceCandidateManifestSha256\s*=/u,
+    );
+    assert.match(job, /environment: capture-registry-pypi/u);
+    if (filename === 'release-promote.yml') {
+      assert.match(job, /PYPI_KIND: full-release/u);
+      assert.match(job, /promotion-input\/promotion-evidence\.json/u);
+      assert.match(
+        job,
+        /steps\.pypi-preflight\.outputs\.candidate_manifest_sha256/u,
+      );
+    }
+  }
+  for (const [filename, kind, digest] of [
+    ['package-promote.yml', 'package', 'candidate_manifest_sha256'],
+    ['runtime-promote.yml', 'runtime', 'runtime_candidate_manifest_sha256'],
+  ]) {
+    const workflow = await readFile(
+      join(root, '.github/workflows', filename),
+      'utf8',
+    );
+    const job = workflow
+      .split('  publish-pypi:')[1]
+      .split(/\n {2}[a-z][a-z-]+:/u)[0];
+    assert(job.includes(`candidate_kind: ${kind}`));
+    assert(
+      job.includes(`candidate_manifest_sha256: \u0024{{ inputs.${digest} }}`),
+    );
+    assert.match(job, /package_candidate_id: /u);
+    assert.match(job, /release_candidate_id: /u);
+  }
 });
 
 test('runtime promotion requires npm evidence before publishing runtime registries', async () => {
