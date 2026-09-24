@@ -47,7 +47,7 @@ def test_commit_a_generator_reproduces_exact_tracked_bytes() -> None:
 def test_commit_a_provenance_binds_bytes_and_fixed_revisions() -> None:
     provenance = json.loads((FIXTURE_ROOT / "provenance/commit-a.json").read_text("utf-8"))
     assert provenance == json.loads((FIXTURE_ROOT / "provenance/commit-a.json").read_text("utf-8"))
-    assert provenance["releaseVersion"] == "0.4.1"
+    assert provenance["releaseVersion"] == "0.4.2"
     assert provenance["stage"] == "commit-a"
     assert provenance["licensePath"] == "licenses/LICENSE.txt"
     assert provenance["noticePath"] == "licenses/NOTICE.txt"
@@ -72,14 +72,26 @@ def test_commit_a_provenance_binds_bytes_and_fixed_revisions() -> None:
     assert pipeline["device"] == "windowsml-dml"
     assert pipeline["cpuFallback"] == "provider-missing-only"
     assert pipeline["failClosedOnDmlError"] is True
+    assert pipeline["algorithm"] == "capture-workbench-ocr-profile-v2"
     assert pipeline["models"]["det"] == {
+        "modelDir": "det",
+        "modelName": "PP-OCRv6_medium_det",
         "revision": "61323801669c338b7891481ec7bac61ce31b576a",
         "source": "PaddlePaddle/PP-OCRv6_medium_det_onnx",
     }
     assert pipeline["models"]["rec"] == {
+        "modelDir": "rec",
+        "modelName": "PP-OCRv6_medium_rec",
         "revision": "50c7eacafc52fa7bcf4194e8cd08e46f8558504b",
         "source": "PaddlePaddle/PP-OCRv6_medium_rec_onnx",
     }
+    assert [item["path"] for item in pipeline["artifacts"]] == [
+        "det/inference.onnx",
+        "det/inference.yml",
+        "rec/inference.onnx",
+        "rec/inference.yml",
+        "rec/ppocrv6_dict.txt",
+    ]
 
     ocr = next(item for item in provenance["files"] if item["kind"] == "ocr-fixture")
     assert ocr["expectedText"] == "CAPTURE OCR FIXTURE"
@@ -145,6 +157,8 @@ def test_commit_a_contains_only_project_owned_non_model_media() -> None:
             continue
         payload = path.read_bytes().lower()
         assert b"model.bin" not in payload
+        if path.name == "pipeline.json":
+            continue
         assert b".onnx" not in payload
         assert b".wav" not in payload
         assert b".mp3" not in payload

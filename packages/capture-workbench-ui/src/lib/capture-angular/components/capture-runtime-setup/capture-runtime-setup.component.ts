@@ -1,8 +1,10 @@
 import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
 import { CaptureWorkbenchStore } from '../../services/capture-workbench-store/capture-workbench-store';
+import { CaptureRuntimeComputeStatusComponent } from '../capture-runtime-compute-status/capture-runtime-compute-status.component';
 
 @Component({
   selector: 'gx-capture-runtime-setup',
+  imports: [CaptureRuntimeComputeStatusComponent],
   template: `
     <section class="runtime-card" aria-labelledby="capture-runtime-title" data-testid="capture-runtime-setup">
       <div class="runtime-heading">
@@ -20,12 +22,13 @@ import { CaptureWorkbenchStore } from '../../services/capture-workbench-store/ca
       @if (store.runtime().status === 'checking') {
         <p class="muted" aria-live="polite">Checking runtime capabilities</p>
       } @else if (store.runtime().status === 'ready') {
-        <p class="runtime-ready" aria-live="polite">
-          {{ store.config().labels?.runtimeReady ?? 'Runtime is ready' }}
-          @if (store.runtime().ready; as ready) {
+        @if (store.runtime().ready; as ready) {
+          <p class="runtime-ready" aria-live="polite">
+            {{ store.config().labels?.runtimeReady ?? 'Runtime is ready' }}
             <span>v{{ ready.runtimeVersion }}</span>
-          }
-        </p>
+          </p>
+          <gx-capture-runtime-compute-status [preflight]="ready.ocrCompute" />
+        }
       } @else if (store.runtime().status === 'incompatible' || store.runtime().status === 'error') {
         <p class="error" role="alert">{{ store.runtime().error }}</p>
         <button type="button" class="secondary" (click)="store.refreshRuntime()">

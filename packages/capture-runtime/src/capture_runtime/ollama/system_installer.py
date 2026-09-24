@@ -74,9 +74,7 @@ class SystemRuntimeInstaller:
             raise ValueError("model_readiness_poll_interval_seconds must be non-negative")
         self._lifecycle = lifecycle
         self._engine_manager = engine_manager
-        self._windowsml_device_id = (
-            extraction_config.windowsml_device_id if extraction_config is not None else 0
-        )
+        del extraction_config
         del ocr_adapter, whisper_adapter, http_client_factory
         self._runner = command_runner or AsyncSubprocessCommandRunner()
         self._resolve_winget = winget_resolver or (lambda: shutil.which("winget"))
@@ -226,11 +224,6 @@ class SystemRuntimeInstaller:
                 requirement_id,
                 cancel_event=cancel_event,
                 report_progress=report_progress,
-                probe_options=(
-                    {"deviceId": self._windowsml_device_id}
-                    if requirement_id == WINDOWSML_REQUIREMENT_ID
-                    else None
-                ),
             )
             return
         if requirement_id == OLLAMA_RUNTIME_REQUIREMENT_ID:

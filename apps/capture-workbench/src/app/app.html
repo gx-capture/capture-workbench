@@ -146,6 +146,10 @@
       </mat-card>
     }
 
+    @if (store.ocrCompute(); as compute) {
+      <gx-capture-runtime-compute-status [preflight]="compute" />
+    }
+
     <mat-card class="intake" appearance="outlined" [class.is-disabled]="!store.canCapture()">
       <p class="eyebrow">匯入文件</p>
       <h2>拖放檔案，或從電腦選擇來源。</h2>

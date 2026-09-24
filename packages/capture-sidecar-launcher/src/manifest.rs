@@ -145,7 +145,7 @@ fn validate_sha256(name: &str, value: &str) -> Result<(), String> {
     }
 }
 
-fn verify_artifact(path: &Path, manifest: &SidecarManifest) -> Result<(), String> {
+pub(crate) fn verify_artifact(path: &Path, manifest: &SidecarManifest) -> Result<(), String> {
     let metadata = fs::metadata(path).map_err(|error| {
         format!(
             "Capture runtime executable is unavailable at {}: {error}",
@@ -193,7 +193,7 @@ mod tests {
 
     fn expected() -> ManifestExpectations {
         ManifestExpectations {
-            runtime_version: "0.4.1".into(),
+            runtime_version: "0.4.2".into(),
             api_version: "2.0".into(),
             capture_document_schema_version: "2".into(),
             file_name: "capture-runtime.exe".into(),
@@ -204,7 +204,7 @@ mod tests {
     fn manifest(bytes: u64, sha256: &str) -> SidecarManifest {
         SidecarManifest {
             manifest_version: "1".into(),
-            runtime_version: "0.4.1".into(),
+            runtime_version: "0.4.2".into(),
             api_version: "2.0".into(),
             capture_document_schema_version: "2".into(),
             platform: "windows".into(),

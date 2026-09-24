@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
 
 from capture_runtime.clock import Clock
 from capture_runtime.contract_set import SCHEMA_DIALECT, canonical_json_bytes
 from capture_runtime.contracts import (
     CaptureDocument,
+    CaptureOperationV2,
     OpenStructuringSessionV2,
     RawCapture,
     StructuringBatchV2,
@@ -50,12 +52,16 @@ class StructuringSessionService:
         coordinator: StructuringCoordinator,
         clock: Clock,
         contract_set_sha256: str,
+        host_result_committer: Callable[..., CaptureOperationV2] | None = None,
+        host_result_discarder: Callable[[str], None] | None = None,
     ) -> None:
         self.repository = repository
         self.streaming_repository = streaming_repository
         self._coordinator = coordinator
         self._clock = clock
         self._contract_set_sha256 = contract_set_sha256
+        self._host_result_committer = host_result_committer
+        self._host_result_discarder = host_result_discarder
 
     def initialize(self) -> None:
         self.repository.initialize()
@@ -100,6 +106,26 @@ class StructuringSessionService:
         idempotency_key: str,
     ) -> StructuringSessionV2:
         session = self.repository.get(session_id)
+        try:
+            return self._submit_session(
+                session,
+                batch_index,
+                payload,
+                idempotency_key=idempotency_key,
+            )
+        except Exception:
+            self._discard_host_result(session.capture_id)
+            raise
+
+    def _submit_session(
+        self,
+        session: StructuringSessionV2,
+        batch_index: int,
+        payload: SubmitStructuringBatchV2,
+        *,
+        idempotency_key: str,
+    ) -> StructuringSessionV2:
+        session_id = session.session_id
         batch = self.repository.batch(session_id, batch_index)
         submission_fingerprint = hashlib.sha256(
             canonical_json_bytes(payload.model_dump(mode="json", by_alias=True))
@@ -156,9 +182,31 @@ class StructuringSessionService:
             completed_document=completed_document,
         )
         if completed_document is not None:
-            self.streaming_repository.write_result(session.capture_id, completed_document)
-            self.streaming_repository.complete_capture(session.capture_id)
+            self._commit_completed_capture(
+                session.capture_id, session.session_id, completed_document
+            )
         return updated_session
+
+    def _discard_host_result(self, capture_id: str) -> None:
+        if self._host_result_discarder is not None:
+            self._host_result_discarder(capture_id)
+
+    def _commit_completed_capture(
+        self,
+        capture_id: str,
+        session_id: str,
+        document: CaptureDocument,
+    ) -> None:
+        committer = self._host_result_committer
+        if committer is None:
+            self.streaming_repository.write_result(capture_id, document)
+            self.streaming_repository.complete_capture(capture_id)
+            return
+        committer(
+            capture_id,
+            document,
+            idempotency_key=f"pull-structuring-{session_id}",
+        )
 
     def _planned_batches(
         self,
@@ -251,8 +299,7 @@ class StructuringSessionService:
                 continue
             if operation.status.value == "completed":
                 continue
-            self.streaming_repository.write_result(session.capture_id, document)
-            self.streaming_repository.complete_capture(session.capture_id)
+            self._commit_completed_capture(session.capture_id, session.session_id, document)
 
 
 __all__ = ["StructuringSessionService"]

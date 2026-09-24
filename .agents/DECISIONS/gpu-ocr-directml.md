@@ -1,5 +1,11 @@
 # Decision: DirectML-first OCR on the cert-prep iGPU route
 
+> Historical/superseded decision: preserve this body for provenance only. Its
+> default adapter `0`, `CAPTURE_WINDOWSML_DEVICE_ID`, and host override policy
+> are obsolete and must not guide current implementation or release decisions.
+> Use the [canonical Phase 2 compute truth](../SPECS/capture-runtime-042-p2-hardening.md)
+> instead.
+
 ## Decision
 
 Use `onnxruntime-directml==1.24.4` for Windows OCR and Whisper's Windows extra. Remove the

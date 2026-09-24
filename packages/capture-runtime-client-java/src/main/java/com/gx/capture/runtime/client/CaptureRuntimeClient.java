@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.gx.capture.runtime.client.CaptureRuntimeTypes.CaptureDocument;
 import com.gx.capture.runtime.client.CaptureRuntimeTypes.CaptureEvent;
 import com.gx.capture.runtime.client.CaptureRuntimeTypes.CaptureOperation;
+import com.gx.capture.runtime.client.CaptureRuntimeTypes.CaptureOcrProjection;
 import com.gx.capture.runtime.client.CaptureRuntimeTypes.CaptureStatus;
 import com.gx.capture.runtime.client.CaptureRuntimeTypes.CaptureStreamingResult;
 import com.gx.capture.runtime.client.CaptureRuntimeTypes.CaptureStructuringProvider;
@@ -94,6 +95,12 @@ public final class CaptureRuntimeClient {
     return WireCodecs.decode(responseBody.getBytes(StandardCharsets.UTF_8), RawCapture.class, mapper);
   }
 
+  public CaptureOcrProjection decodeOcr(String responseBody) {
+    Objects.requireNonNull(responseBody, "responseBody");
+    discover();
+    return WireCodecs.decode(responseBody.getBytes(StandardCharsets.UTF_8), CaptureOcrProjection.class, mapper);
+  }
+
   /** Strictly decode a host connector payload without making a network call. */
   public static CaptureDocument decodeDocumentPayload(Object payload) {
     var mapper = WireCodecs.mapper();
@@ -178,7 +185,7 @@ public final class CaptureRuntimeClient {
         ingestion = json("PUT", "/v2/ingestions/" + pathPart(ingestion.ingestionId()) + "/chunks/" + ingestion.nextChunkIndex(), chunk, Ingestion.class, chunkHeaders);
       }
       ingestion = json("POST", "/v2/ingestions/" + pathPart(ingestion.ingestionId()) + "/finalize", object(new FinalizeIngestion("2", upload.body().length, digest)), Ingestion.class, Map.of());
-      return json("POST", "/v2/captures", object(new StartCapture("2", upload.clientRequestId(), ingestion.ingestionId(), upload.structuringMode(), upload.targetLanguage(), "eager")), CaptureOperation.class, headers("X-Idempotency-Key", requiredKey(upload.clientRequestId())));
+      return json("POST", "/v2/captures", object(new StartCapture("2", upload.clientRequestId(), ingestion.ingestionId(), upload.structuringMode(), upload.targetLanguage(), "eager", upload.pdfPageNumbers())), CaptureOperation.class, headers("X-Idempotency-Key", requiredKey(upload.clientRequestId())));
     } catch (RuntimeException error) {
       try { json("DELETE", "/v2/ingestions/" + pathPart(ingestion.ingestionId()), null, Void.class, Map.of()); } catch (RuntimeException ignored) { }
       throw error;
@@ -191,6 +198,10 @@ public final class CaptureRuntimeClient {
 
   public PartialCapture getStreamingPartial(String id) {
     return json("GET", "/v2/captures/" + pathPart(id) + "/partial", null, PartialCapture.class, Map.of());
+  }
+
+  public CaptureOcrProjection getOcr(String id) {
+    return json("GET", "/v2/captures/" + pathPart(id) + "/ocr", null, CaptureOcrProjection.class, Map.of());
   }
 
   public CaptureStreamingResult getStreamingResult(String id) {
@@ -352,6 +363,7 @@ public final class CaptureRuntimeClient {
         "/v2/captures",
         "/v2/captures/{capture_id}/events",
         "/v2/captures/{capture_id}/raw",
+        "/v2/captures/{capture_id}/ocr",
         "/v2/captures/{capture_id}/result",
         "/v2/captures/{capture_id}/structure/session",
         "/v2/captures/{capture_id}/structure/session/batches/{batch_index}"))) {
@@ -437,7 +449,7 @@ public final class CaptureRuntimeClient {
     public static ClientOptions defaults() { return new ClientOptions("2", Set.of(CaptureRuntimeTypes.CONTRACT_SET_SHA256), 1); }
   }
 
-  public record CaptureUpload(String fileName, byte[] body, String mediaType, SourceKind sourceKind, String targetLanguage, StructuringMode structuringMode, String clientRequestId) {
+  public record CaptureUpload(String fileName, byte[] body, String mediaType, SourceKind sourceKind, String targetLanguage, StructuringMode structuringMode, String clientRequestId, List<Integer> pdfPageNumbers) {
     public CaptureUpload {
       fileName = requireHeader(fileName, "fileName");
       body = Objects.requireNonNull(body, "body").clone();
@@ -447,8 +459,10 @@ public final class CaptureRuntimeClient {
       targetLanguage = targetLanguage == null ? null : requireHeader(targetLanguage, "targetLanguage");
       structuringMode = structuringMode == null ? StructuringMode.RUNTIME : structuringMode;
       clientRequestId = requiredKey(clientRequestId);
+      pdfPageNumbers = CaptureRuntimeTypes.pdfPageNumbers(pdfPageNumbers);
     }
-    public CaptureUpload(String fileName, byte[] body, SourceKind sourceKind, String clientRequestId) { this(fileName, body, "application/octet-stream", sourceKind, null, StructuringMode.RUNTIME, clientRequestId); }
+    public CaptureUpload(String fileName, byte[] body, String mediaType, SourceKind sourceKind, String targetLanguage, StructuringMode structuringMode, String clientRequestId) { this(fileName, body, mediaType, sourceKind, targetLanguage, structuringMode, clientRequestId, null); }
+    public CaptureUpload(String fileName, byte[] body, SourceKind sourceKind, String clientRequestId) { this(fileName, body, "application/octet-stream", sourceKind, null, StructuringMode.RUNTIME, clientRequestId, null); }
     private static String requireHeader(String value, String field) { return requiredKey(value).strip(); }
   }
 }

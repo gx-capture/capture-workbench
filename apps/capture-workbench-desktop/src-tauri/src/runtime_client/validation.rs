@@ -46,3 +46,16 @@ pub(super) fn validate_structuring_mode(value: &str) -> Result<(), String> {
         Err("Capture structuring mode is invalid.".into())
     }
 }
+
+pub(super) fn validate_pdf_page_numbers(value: &[u32]) -> Result<(), String> {
+    if value.is_empty()
+        || value.len() > 500
+        || !value
+            .iter()
+            .enumerate()
+            .all(|(index, page)| *page == (index + 1) as u32)
+    {
+        return Err("Capture PDF page selection is invalid.".into());
+    }
+    Ok(())
+}

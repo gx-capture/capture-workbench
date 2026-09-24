@@ -7,7 +7,17 @@ import zlib
 from pathlib import Path
 from typing import Final
 
-RELEASE_VERSION: Final = "0.4.1"
+RELEASE_VERSION: Final = "0.4.2"
+DET_ONNX_BYTES: Final = 62032837
+DET_ONNX_SHA256: Final = "eb13b44b25bb36f89528b68720af8a61d9cf381176107f465db1757b65d086e1"
+DET_YAML_BYTES: Final = 886
+DET_YAML_SHA256: Final = "7298d5ead546584af2504d03355f881ac7a7bc0eb1e282d3e159277c1d0af871"
+REC_ONNX_BYTES: Final = 76554979
+REC_ONNX_SHA256: Final = "9c09abf0957f7968c7586464b7397b84ad2387a0497a351af40e9acc71b673ba"
+REC_YAML_BYTES: Final = 150580
+REC_YAML_SHA256: Final = "991b700facf5b50a7de193468207d5f4255b538dde0d312ae3b7c7a9b6873129"
+PADDLEOCR_DICT_BYTES: Final = 74947
+PADDLEOCR_DICT_SHA256: Final = "b5f2bfe2bdd9448429e3e82b51c789775d9b42f2403d082b00662eb77e401c5d"
 DET_REVISION: Final = "61323801669c338b7891481ec7bac61ce31b576a"
 REC_REVISION: Final = "50c7eacafc52fa7bcf4194e8cd08e46f8558504b"
 PADDLEOCR_DICT_REVISION: Final = "b03f46425e8ff4442b268ce449e3eef758146cd4"
@@ -175,7 +185,7 @@ def _license_text() -> bytes:
 
 def _notice_text() -> bytes:
     return (
-        b"Capture Workbench v0.4.1 Commit A notice\n\n"
+        b"Capture Workbench v0.4.2 Commit A notice\n\n"
         b"These files contain no model weights. The fixed OCR\n"
         b"phrase is intentionally limited to `CAPTURE OCR FIXTURE`. PaddleOCR\n"
         b"and model-revision metadata identify user-directed upstream inputs; their\n"
@@ -267,24 +277,92 @@ def build_files() -> dict[str, bytes]:
     pdf = render_image_only_pdf(rgb)
     pipeline = _canonical_json(
         {
-            "algorithm": "capture-workbench-ocr-pipeline-v1",
+            "algorithm": "capture-workbench-ocr-profile-v2",
+            "artifacts": [
+                {
+                    "bytes": DET_ONNX_BYTES,
+                    "path": "det/inference.onnx",
+                    "sha256": DET_ONNX_SHA256,
+                },
+                {
+                    "bytes": DET_YAML_BYTES,
+                    "path": "det/inference.yml",
+                    "sha256": DET_YAML_SHA256,
+                },
+                {
+                    "bytes": REC_ONNX_BYTES,
+                    "path": "rec/inference.onnx",
+                    "sha256": REC_ONNX_SHA256,
+                },
+                {
+                    "bytes": REC_YAML_BYTES,
+                    "path": "rec/inference.yml",
+                    "sha256": REC_YAML_SHA256,
+                },
+                {
+                    "bytes": PADDLEOCR_DICT_BYTES,
+                    "path": "rec/ppocrv6_dict.txt",
+                    "sha256": PADDLEOCR_DICT_SHA256,
+                },
+            ],
             "cpuFallback": "provider-missing-only",
             "device": "windowsml-dml",
-            "dictionaryRevision": PADDLEOCR_DICT_REVISION,
+            "dictionary": {
+                "languageCoverage": "traditional-chinese-multilingual",
+                "path": "rec/ppocrv6_dict.txt",
+                "revision": PADDLEOCR_DICT_REVISION,
+                "sha256": PADDLEOCR_DICT_SHA256,
+            },
+            "directml": {
+                "enableMemPattern": False,
+                "executionMode": "sequential",
+                "fallbackProvider": "CPUExecutionProvider",
+                "preferredProvider": "DmlExecutionProvider",
+                "providerOrder": ["DmlExecutionProvider", "CPUExecutionProvider"],
+                "requireExecutionEvidence": True,
+            },
             "failClosedOnDmlError": True,
             "model": "pp-ocrv6-medium-windowsml",
             "models": {
                 "det": {
+                    "modelDir": "det",
+                    "modelName": "PP-OCRv6_medium_det",
                     "revision": DET_REVISION,
                     "source": DET_REPOSITORY,
                 },
                 "rec": {
+                    "modelDir": "rec",
+                    "modelName": "PP-OCRv6_medium_rec",
                     "revision": REC_REVISION,
                     "source": REC_REPOSITORY,
                 },
             },
+            "orientation": {
+                "useDocOrientationClassify": False,
+                "useDocUnwarping": False,
+                "useTextlineOrientation": False,
+            },
+            "paddle": {
+                "acceptedOrientationKwargs": [
+                    "use_doc_orientation_classify",
+                    "use_doc_unwarping",
+                    "use_textline_orientation",
+                ],
+                "engine": "onnxruntime",
+            },
+            "preprocessing": {
+                "contrast": {"enabled": False, "owner": "none"},
+                "deskew": {"enabled": False, "owner": "none"},
+                "owner": "capture-runtime",
+                "render": {"colorMode": "RGB", "image": "pillow", "pdf": "pdfium"},
+                "normalization": {
+                    "alphaComposite": "white",
+                    "exifTranspose": True,
+                    "resize": "bounded-lanczos",
+                },
+            },
             "releaseVersion": RELEASE_VERSION,
-            "schemaVersion": "1",
+            "schemaVersion": "2",
         }
     )
     license_bytes = _license_text()

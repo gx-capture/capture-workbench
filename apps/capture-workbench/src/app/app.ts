@@ -10,6 +10,7 @@ import { MatFormField, MatLabel } from '@angular/material/form-field';
 import { MatInput } from '@angular/material/input';
 import { MatOption, MatSelect } from '@angular/material/select';
 import { MatSpinner } from '@angular/material/progress-spinner';
+import { CaptureRuntimeComputeStatusComponent } from '@gx-capture/capture-workbench-ui';
 import { DesktopWorkspaceStore } from './services/desktop-workspace.store';
 
 @Component({
@@ -26,6 +27,7 @@ import { DesktopWorkspaceStore } from './services/desktop-workspace.store';
     MatOption,
     MatSelect,
     MatSpinner,
+    CaptureRuntimeComputeStatusComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
 })

@@ -258,6 +258,7 @@ function validateContractBundle(bundle: ContractBundle): string {
     '/v2/captures',
     '/v2/captures/{capture_id}/events',
     '/v2/captures/{capture_id}/raw',
+    '/v2/captures/{capture_id}/ocr',
     '/v2/captures/{capture_id}/result',
     '/v2/captures/{capture_id}/structure/session',
     '/v2/captures/{capture_id}/structure/session/batches/{batch_index}',
@@ -280,6 +281,8 @@ function validateContractBundle(bundle: ContractBundle): string {
           idempotency?: { mode?: unknown; header?: unknown };
           mediaType?: unknown;
           streaming?: { kind?: unknown; lastEventIdHeader?: unknown };
+          responseSchema?: unknown;
+          responseStatusCodes?: unknown[];
         }
       | undefined;
   const upload = requireOperation('/v2/captures');
@@ -287,6 +290,7 @@ function validateContractBundle(bundle: ContractBundle): string {
     '/v2/ingestions/{ingestion_id}/chunks/{chunk_index}',
   );
   const events = requireOperation('/v2/captures/{capture_id}/events');
+  const ocr = requireOperation('/v2/captures/{capture_id}/ocr', 'GET');
   const sessionOpen = requireOperation(
     '/v2/captures/{capture_id}/structure/session',
     'POST',
@@ -324,6 +328,15 @@ function validateContractBundle(bundle: ContractBundle): string {
   ) {
     throw new CaptureRuntimeCompatibilityError(
       'Capture Runtime SSE metadata is incompatible.',
+    );
+  }
+  if (
+    ocr?.body?.kind !== 'none' ||
+    ocr?.responseSchema !== 'CaptureOcrProjectionV3' ||
+    !ocr.responseStatusCodes?.includes(200)
+  ) {
+    throw new CaptureRuntimeCompatibilityError(
+      'Capture Runtime OCR metadata is incompatible.',
     );
   }
   if (

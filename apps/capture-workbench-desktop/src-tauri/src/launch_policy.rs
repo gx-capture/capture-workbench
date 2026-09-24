@@ -97,8 +97,42 @@ impl LaunchPolicy {
             environment.push(("CAPTURE_SMOKE_WORKER_MIRROR_OPT_IN", "1".into()));
             environment.push(("CAPTURE_SMOKE_WORKER_MIRROR_URL", mirror_url));
         }
+        if let Some(model_root) = local_ocr_model_override(
+            std::env::var("CAPTURE_PDF_OCR_E2E_LOCAL_MODEL_OPT_IN").ok(),
+            std::env::var("CAPTURE_PDF_OCR_E2E_LOCAL_MODEL_ROOT").ok(),
+        ) {
+            environment.push(("CAPTURE_PDF_OCR_E2E_LOCAL_MODEL_OPT_IN", "1".into()));
+            environment.push(("CAPTURE_PDF_OCR_E2E_LOCAL_MODEL_ROOT", model_root));
+        }
+        #[cfg(feature = "acceptance-app-data")]
+        if std::env::var("CAPTURE_OCR_EXECUTION_EVIDENCE_OPT_IN")
+            .ok()
+            .as_deref()
+            .map(str::trim)
+            == Some("1")
+        {
+            environment.push(("CAPTURE_OCR_EXECUTION_EVIDENCE_OPT_IN", "1".into()));
+            if let Some(root) =
+                acceptance_ocr_execution_evidence_value("CAPTURE_OCR_EXECUTION_EVIDENCE_ROOT")
+            {
+                environment.push(("CAPTURE_OCR_EXECUTION_EVIDENCE_ROOT", root));
+            }
+            if let Some(runtime_sha256) =
+                acceptance_ocr_execution_evidence_value("CAPTURE_OCR_EXECUTION_RUNTIME_SHA256")
+            {
+                environment.push(("CAPTURE_OCR_EXECUTION_RUNTIME_SHA256", runtime_sha256));
+            }
+        }
         environment
     }
+}
+
+#[cfg(feature = "acceptance-app-data")]
+fn acceptance_ocr_execution_evidence_value(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
 }
 
 fn configured_cuda_path(value: Option<String>) -> Option<String> {
@@ -127,6 +161,14 @@ fn smoke_worker_mirror_url(opt_in: Option<String>, raw_url: Option<String>) -> O
         .and_then(|value| value.parse::<u16>().ok())
         .filter(|port| *port != 0)?;
     Some(format!("http://127.0.0.1:{port}"))
+}
+
+fn local_ocr_model_override(opt_in: Option<String>, root: Option<String>) -> Option<String> {
+    if opt_in.as_deref().map(str::trim) != Some("1") {
+        return None;
+    }
+    root.map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
 }
 
 pub(crate) struct LaunchPolicyFactory {
@@ -178,7 +220,8 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{
-        configured_cuda_path, smoke_worker_mirror_url, whisper_cpu_fallback_enabled, LaunchPolicy,
+        configured_cuda_path, local_ocr_model_override, smoke_worker_mirror_url,
+        whisper_cpu_fallback_enabled, LaunchPolicy,
     };
 
     #[test]
@@ -242,5 +285,22 @@ mod tests {
             smoke_worker_mirror_url(Some("0".into()), Some("http://127.0.0.1:43123".into())),
             None
         );
+    }
+
+    #[test]
+    fn local_ocr_model_override_requires_explicit_opt_in_and_root() {
+        assert_eq!(
+            local_ocr_model_override(Some("1".into()), Some("C:\\probe-model".into())),
+            Some("C:\\probe-model".into())
+        );
+        assert_eq!(
+            local_ocr_model_override(Some("0".into()), Some("C:\\probe-model".into())),
+            None
+        );
+        assert_eq!(
+            local_ocr_model_override(Some("1".into()), Some("   ".into())),
+            None
+        );
+        assert_eq!(local_ocr_model_override(Some("1".into()), None), None);
     }
 }

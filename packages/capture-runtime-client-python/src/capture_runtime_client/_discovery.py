@@ -221,6 +221,7 @@ def validate_contract_bundle(bundle: Any, digest: str) -> str:
         "/v2/captures",
         "/v2/captures/{capture_id}/events",
         "/v2/captures/{capture_id}/raw",
+        "/v2/captures/{capture_id}/ocr",
         "/v2/captures/{capture_id}/result",
         "/v2/captures/{capture_id}/structure/session",
         "/v2/captures/{capture_id}/structure/session/batches/{batch_index}",
@@ -245,6 +246,7 @@ def validate_contract_bundle(bundle: Any, digest: str) -> str:
     upload = find_operation("/v2/captures")
     chunk = find_operation("/v2/ingestions/{ingestion_id}/chunks/{chunk_index}")
     events = find_operation("/v2/captures/{capture_id}/events")
+    ocr = find_operation("/v2/captures/{capture_id}/ocr", "GET")
     session_open = find_operation("/v2/captures/{capture_id}/structure/session", "POST")
     batch_get = find_operation(
         "/v2/captures/{capture_id}/structure/session/batches/{batch_index}", "GET"
@@ -280,6 +282,14 @@ def validate_contract_bundle(bundle: Any, digest: str) -> str:
         or streaming.get("lastEventIdHeader") != "Last-Event-ID"
     ):
         raise CaptureRuntimeCompatibilityError("Capture Runtime SSE metadata is incompatible.")
+    if (
+        ocr is None
+        or not isinstance(ocr.get("body"), Mapping)
+        or ocr["body"].get("kind") != "none"
+        or ocr.get("responseSchema") != "CaptureOcrProjectionV3"
+        or 200 not in ocr.get("responseStatusCodes", [])
+    ):
+        raise CaptureRuntimeCompatibilityError("Capture Runtime OCR metadata is incompatible.")
     if (
         session_open is None
         or not isinstance(session_open.get("body"), Mapping)

@@ -22,6 +22,7 @@ from capture_runtime.extractors import (
     DeterministicCaptureExtractor,
     StandaloneRuntimeCaptureExtractor,
 )
+from capture_runtime.ocr_preflight import OcrComputePreflight
 from capture_runtime.ollama import (
     ExternalOllamaCaptureStructuringProvider,
     IsolatedOllamaLifecycle,
@@ -75,6 +76,7 @@ class RuntimeDependencies:
     supported_structuring_modes: list[StructuringMode]
     disabled_requirement_ids: set[str]
     enabled_requirement_ids: set[str] | None
+    ocr_preflight: OcrComputePreflight
 
 
 def build_runtime_dependencies(
@@ -88,10 +90,12 @@ def build_runtime_dependencies(
     installation_repository: InstallationRepository | None = None,
     model_installation_repository: ModelInstallationRepository | None = None,
     contract_set: ContractSet | None = None,
+    ocr_preflight: OcrComputePreflight | None = None,
 ) -> RuntimeDependencies:
     """Build one isolated dependency graph for a runtime application."""
 
     runtime_clock = clock or SystemClock()
+    runtime_contract_set = contract_set or load_contract_set()
     lifecycle = IsolatedOllamaLifecycle(
         settings.ollama,
         process_controller=process_controller,
@@ -107,10 +111,17 @@ def build_runtime_dependencies(
             settings.extraction.engine_resolution_timeout_seconds
         ),
     )
+    active_ocr_preflight = ocr_preflight or OcrComputePreflight(
+        contract_sha256=runtime_contract_set.sha256,
+        worker_probe=lambda: engine_manager.ocr_compute_preflight(
+            contract_sha256=runtime_contract_set.sha256,
+        ),
+    )
     standalone_extractor = StandaloneRuntimeCaptureExtractor(
         runtime_clock,
         settings.extraction,
         engine_manager=engine_manager,
+        contract_sha256=runtime_contract_set.sha256,
     )
     active_extractor = extractor
     if active_extractor is None:
@@ -177,7 +188,7 @@ def build_runtime_dependencies(
         clock=runtime_clock,
         retention_hours=settings.retention_hours,
     )
-    staging_root = settings.app_data_dir / "jobs" / "staging"
+    staging_root = settings.staging_root
     progressive_processor = (
         None
         if settings.extraction_provider == "fake"
@@ -195,7 +206,6 @@ def build_runtime_dependencies(
         extractor=active_extractor,
         structurer=active_structurer,
     )
-    runtime_contract_set = contract_set or load_contract_set()
     structuring_session_repository = StructuringSessionRepository(
         settings.app_data_dir / "jobs" / "structuring-sessions",
         clock=runtime_clock,
@@ -207,6 +217,8 @@ def build_runtime_dependencies(
         coordinator=StructuringCoordinator(),
         clock=runtime_clock,
         contract_set_sha256=runtime_contract_set.sha256,
+        host_result_committer=streaming_capture_service.commit_host_result,
+        host_result_discarder=streaming_capture_service._clear_pending_execution_proof,
     )
     installation_service = InstallationService(
         active_installation_repository,
@@ -237,6 +249,7 @@ def build_runtime_dependencies(
         supported_structuring_modes=supported_structuring_modes,
         disabled_requirement_ids=disabled_requirement_ids,
         enabled_requirement_ids=enabled_requirement_ids,
+        ocr_preflight=active_ocr_preflight,
     )
 
 

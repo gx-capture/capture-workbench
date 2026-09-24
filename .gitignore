@@ -2,7 +2,8 @@
 
 # compiled output
 dist
-output/playwright/
+output/
+proofshot-artifacts/
 tmp
 out-tsc
 

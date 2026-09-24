@@ -47,6 +47,29 @@ def test_approved_production_lock_is_canonical_model_enabled() -> None:
     assert model_source_lock.release_mode(lock) == model_source_lock.MODEL_ENABLED_RELEASE_MODE
 
 
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda payload: next(
+            item
+            for item in payload["requirements"][0]["files"]
+            if item["path"] == "provenance/commit-a.json"
+        ).update({"sha256": "0" * 64}),
+        lambda payload: payload["fixtures"][0].update({"noticeSha256": "0" * 64}),
+    ],
+    ids=["provenance-sha", "fixture-notice"],
+)
+def test_source_lock_rejects_first_party_git_blob_drift(mutate) -> None:
+    payload, _content = approved_source_lock()
+    mutate(payload)
+
+    with pytest.raises(
+        model_source_lock.ModelSourceLockError,
+        match="first-party Git blob",
+    ):
+        model_source_lock.validate_source_lock(payload)
+
+
 def test_windows_autocrlf_checkout_preserves_canonical_source_lock(
     tmp_path: Path,
 ) -> None:

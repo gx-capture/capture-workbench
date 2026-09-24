@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Callable, Collection, Iterator, Mapping
+from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -38,6 +38,7 @@ from .contracts import (
     CAPTURE_CONTRACT_SET_SHA256,
     CaptureDocument,
     CaptureEvent,
+    CaptureOcrProjection,
     CaptureOperation,
     CaptureSourceKind,
     Ingestion,
@@ -67,6 +68,14 @@ class CaptureUpload:
     media_type: str = "application/octet-stream"
     structuring_mode: StructuringMode | str = StructuringMode.RUNTIME
     target_language: str | None = None
+    pdf_page_numbers: Sequence[int] | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "pdf_page_numbers",
+            _normalize_pdf_page_numbers(self.pdf_page_numbers),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -205,6 +214,7 @@ class CaptureRuntimeClient:
         client_request_id: str,
         media_type: str = "application/octet-stream",
         target_language: str | None = None,
+        pdf_page_numbers: Sequence[int] | None = None,
     ) -> CaptureOperation:
         return self.start_capture(
             CaptureUpload(
@@ -213,6 +223,7 @@ class CaptureRuntimeClient:
                 source_kind,
                 media_type,
                 target_language=target_language,
+                pdf_page_numbers=pdf_page_numbers,
             ),
             client_request_id=client_request_id,
         )
@@ -226,6 +237,12 @@ class CaptureRuntimeClient:
     def get_raw(self, capture_id: str) -> RawCapture:
         return decode_model(
             self._request("GET", f"/v2/captures/{_safe_id(capture_id)}/raw"), RawCapture
+        )
+
+    def get_ocr(self, capture_id: str) -> CaptureOcrProjection:
+        return decode_model(
+            self._request("GET", f"/v2/captures/{_safe_id(capture_id)}/ocr"),
+            CaptureOcrProjection,
         )
 
     def get_result(self, capture_id: str) -> CaptureStreamingResult:
@@ -415,19 +432,22 @@ class CaptureRuntimeClient:
                 ),
                 Ingestion,
             )
+            start_payload: dict[str, object] = {
+                "protocolVersion": "2",
+                "clientRequestId": client_request_id,
+                "ingestionId": ingestion.ingestion_id,
+                "structuringMode": StructuringMode(upload.structuring_mode).value,
+                "targetLanguage": upload.target_language,
+                "startPolicy": "eager",
+            }
+            if upload.pdf_page_numbers is not None:
+                start_payload["pdfPageNumbers"] = list(upload.pdf_page_numbers)
             return decode_model(
                 self._request(
                     "POST",
                     "/v2/captures",
                     headers={"X-Idempotency-Key": client_request_id},
-                    json={
-                        "protocolVersion": "2",
-                        "clientRequestId": client_request_id,
-                        "ingestionId": ingestion.ingestion_id,
-                        "structuringMode": StructuringMode(upload.structuring_mode).value,
-                        "targetLanguage": upload.target_language,
-                        "startPolicy": "eager",
-                    },
+                    json=start_payload,
                 ),
                 CaptureOperation,
             )
@@ -629,6 +649,26 @@ def _safe_id(value: str) -> str:
     ):
         raise ValueError("Capture Runtime identifier is invalid")
     return value
+
+
+def _normalize_pdf_page_numbers(
+    value: Sequence[int] | None,
+) -> tuple[int, ...] | None:
+    if value is None:
+        return None
+    if isinstance(value, (str, bytes, bytearray)):
+        raise ValueError("pdf_page_numbers must be an ordered prefix from page one")
+    try:
+        normalized = tuple(value)
+    except TypeError as error:
+        raise ValueError("pdf_page_numbers must be an ordered prefix from page one") from error
+    if not 1 <= len(normalized) <= 500:
+        raise ValueError("pdf_page_numbers must contain 1 to 500 pages")
+    if any(type(page_number) is not int or page_number < 1 for page_number in normalized):
+        raise ValueError("pdf_page_numbers must be an ordered prefix from page one")
+    if normalized != tuple(range(1, len(normalized) + 1)):
+        raise ValueError("pdf_page_numbers must be an ordered prefix from page one")
+    return normalized
 
 
 def _safe_batch_index(value: int) -> int:

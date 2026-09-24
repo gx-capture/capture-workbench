@@ -1,17 +1,22 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { cp, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
 
 import { verifyPackageCandidate } from './verify-package-candidate.ts';
 import { verifyPackageCandidateBinding } from './verify-package-candidate-binding.ts';
 
-const version = '0.4.1';
+const version = '0.4.2';
 const sourceCommit = 'a'.repeat(40);
 const producerRunId = 12345;
 const contractSetBytes = Buffer.from('{"catalogVersion":"2"}\n', 'utf8');
+const CANONICAL_CONTRACT_SET_SHA256 =
+  'd293a3de26114f1b4fd65ea6d6d3f157fa2f93109b31e1e30d5d15ef0dfdeb40';
+const STALE_CONTRACT_SET_SHA256 =
+  '858e258be437465821d92ec4aa33e494aca5600b672af06856a26e883af827a0';
 const packages = [
   ['@gx-capture/capture-workbench-ui', 'gx-capture-capture-workbench-ui'],
   ['@gx-capture/capture-runtime-client', 'gx-capture-capture-runtime-client'],
@@ -25,7 +30,12 @@ function integrity(value: Buffer): string {
   return `sha512-${createHash('sha512').update(value).digest('base64')}`;
 }
 
-async function makeCandidate(): Promise<{
+async function makeCandidate(
+  options: {
+    readonly contractSetBytes?: Buffer;
+    readonly runtimePackageContractSetSha256?: string;
+  } = {},
+): Promise<{
   root: string;
   candidateId: string;
   manifestSha256: string;
@@ -37,11 +47,37 @@ async function makeCandidate(): Promise<{
   await mkdir(join(root, 'contracts'));
   await mkdir(join(root, 'maven'));
   await mkdir(join(root, 'checksums'));
+  const candidateContractSetBytes =
+    options.contractSetBytes ?? contractSetBytes;
+  const contractSetSha256 = digest(candidateContractSetBytes);
+  const runtimePackageContractSetSha256 =
+    options.runtimePackageContractSetSha256 ?? contractSetSha256;
   const artifactValues = new Map<string, Buffer>();
   const packageEntries = [];
   for (const [name, archiveBase] of packages) {
     const archive = `package/${archiveBase}-${version}.tgz`;
-    const value = Buffer.from(`${name}\n`, 'utf8');
+    const archiveInput = join(root, 'archive-input', archiveBase);
+    await mkdir(join(archiveInput, 'package'), { recursive: true });
+    const packageManifest = {
+      name,
+      version,
+      ...(name === '@gx-capture/capture-runtime-client'
+        ? { contractSetSha256: runtimePackageContractSetSha256 }
+        : {}),
+    };
+    await writeFile(
+      join(archiveInput, 'package/package.json'),
+      `${JSON.stringify(packageManifest)}\n`,
+    );
+    const archivePath = join(root, archive);
+    const packed = spawnSync(
+      'tar',
+      ['-czf', archivePath, '-C', archiveInput, 'package'],
+      { encoding: 'utf8' },
+    );
+    if (packed.status !== 0)
+      throw new Error(`Unable to create package fixture: ${packed.stderr}`);
+    const value = await readFile(archivePath);
     artifactValues.set(archive, value);
     packageEntries.push({
       archive,
@@ -53,8 +89,8 @@ async function makeCandidate(): Promise<{
     await writeFile(join(root, archive), value);
   }
   for (const name of [
-    'capture_runtime_client-0.4.1-py3-none-any.whl',
-    'capture_runtime_client-0.4.1.tar.gz',
+    'capture_runtime_client-0.4.2-py3-none-any.whl',
+    'capture_runtime_client-0.4.2.tar.gz',
   ]) {
     const path = `python/${name}`;
     const value = Buffer.from(`${name}\n`, 'utf8');
@@ -80,15 +116,14 @@ async function makeCandidate(): Promise<{
   artifactValues.set('contracts/contract-snapshot.json', contractBytes);
   await writeFile(
     join(root, 'contracts', 'contract-set.json'),
-    contractSetBytes,
+    candidateContractSetBytes,
   );
-  const contractSetSha256 = digest(contractSetBytes);
   const contractSetShaBytes = Buffer.from(`${contractSetSha256}\n`, 'utf8');
   await writeFile(
     join(root, 'contracts', 'contract-set.sha256'),
     contractSetShaBytes,
   );
-  artifactValues.set('contracts/contract-set.json', contractSetBytes);
+  artifactValues.set('contracts/contract-set.json', candidateContractSetBytes);
   artifactValues.set('contracts/contract-set.sha256', contractSetShaBytes);
 
   const javaArtifacts = [
@@ -195,6 +230,37 @@ test('package candidate verification binds the complete npm package set', async 
   }
 });
 
+test('package candidate verification rejects a packed runtime client with stale contract metadata', async () => {
+  const canonicalContractSetBytes = await readFile(
+    resolve(
+      process.cwd(),
+      'packages/capture-runtime/src/capture_runtime/assets/contract-set.json',
+    ),
+  );
+  const candidate = await makeCandidate({
+    contractSetBytes: canonicalContractSetBytes,
+    runtimePackageContractSetSha256: STALE_CONTRACT_SET_SHA256,
+  });
+  try {
+    assert.equal(candidate.contractSetSha256, CANONICAL_CONTRACT_SET_SHA256);
+    await assert.rejects(
+      () =>
+        verifyPackageCandidate({
+          candidate: candidate.root,
+          version,
+          sourceCommit,
+          producerRunId,
+          candidateId: candidate.candidateId,
+          candidateManifestSha256: candidate.manifestSha256,
+          contractSetSha256: CANONICAL_CONTRACT_SET_SHA256,
+        }),
+      /Packed package.*contract-set SHA-256 differs/u,
+    );
+  } finally {
+    await rm(candidate.root, { recursive: true, force: true });
+  }
+});
+
 test('package candidate verification rejects changed archive bytes', async () => {
   const candidate = await makeCandidate();
   try {
@@ -202,7 +268,7 @@ test('package candidate verification rejects changed archive bytes', async () =>
       join(
         candidate.root,
         'package',
-        'gx-capture-capture-workbench-ui-0.4.1.tgz',
+        'gx-capture-capture-workbench-ui-0.4.2.tgz',
       ),
       'tampered',
     );
@@ -228,7 +294,7 @@ test('package candidate verification rejects changed Maven artifact bytes', asyn
   const candidate = await makeCandidate();
   try {
     await writeFile(
-      join(candidate.root, 'maven', 'capture-runtime-client-0.4.1.jar'),
+      join(candidate.root, 'maven', 'capture-runtime-client-0.4.2.jar'),
       'tampered',
     );
     await assert.rejects(

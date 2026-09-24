@@ -1,5 +1,11 @@
 # DirectML-first OCR without a CPU-only retry
 
+> Historical/superseded record: preserve this body for provenance only. Its
+> default adapter `0`, `CAPTURE_WINDOWSML_DEVICE_ID`, and host override policy
+> are obsolete and must not guide current implementation or release decisions.
+> Use the [canonical Phase 2 compute truth](capture-runtime-042-p2-hardening.md)
+> instead.
+
 ## Scope
 
 PDF and image OCR in `capture-runtime` use ONNX Runtime DirectML first on Windows. Audio

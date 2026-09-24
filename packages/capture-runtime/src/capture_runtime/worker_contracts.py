@@ -15,11 +15,44 @@ MAX_WORKER_OUTPUT_BYTES = 8 * 1024 * 1024
 MAX_WORKER_ERROR_MESSAGE = 500
 REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 
-type WorkerOperation = Literal["probe", "run", "cancel"]
+type WorkerOperation = Literal["probe", "preflight", "run", "cancel"]
 
 
 class WorkerProtocolError(ValueError):
     """Raised when an untrusted worker frame violates the protocol."""
+
+
+@dataclass(frozen=True, slots=True)
+class WorkerProgress:
+    """Validated intermediate frame emitted before a terminal response."""
+
+    request_id: str
+    payload: dict[str, Any]
+    protocol_version: str = WORKER_PROTOCOL_VERSION
+
+    @classmethod
+    def from_dict(cls, value: object) -> WorkerProgress:
+        payload = _object(value, "worker progress")
+        _exact_keys(payload, {"protocolVersion", "requestId", "kind", "payload"}, "worker progress")
+        if payload["protocolVersion"] != WORKER_PROTOCOL_VERSION:
+            raise WorkerProtocolError(
+                f"worker protocol mismatch: expected {WORKER_PROTOCOL_VERSION!r}"
+            )
+        if payload["kind"] != "progress":
+            raise WorkerProtocolError("worker progress kind is invalid")
+        return cls(
+            request_id=_request_id(payload["requestId"]),
+            payload=_object(payload["payload"], "worker progress payload"),
+            protocol_version=payload["protocolVersion"],
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "protocolVersion": self.protocol_version,
+            "requestId": self.request_id,
+            "kind": "progress",
+            "payload": self.payload,
+        }
 
 
 def _object(value: object, label: str) -> dict[str, Any]:
@@ -71,7 +104,7 @@ class WorkerRequest:
                 f"worker protocol mismatch: expected {WORKER_PROTOCOL_VERSION!r}"
             )
         operation = payload["operation"]
-        if operation not in {"probe", "run", "cancel"}:
+        if operation not in {"probe", "preflight", "run", "cancel"}:
             raise WorkerProtocolError("worker operation is unsupported")
         return cls(
             request_id=_request_id(payload["requestId"]),
@@ -164,6 +197,7 @@ __all__ = [
     "MAX_WORKER_OUTPUT_BYTES",
     "WORKER_PROTOCOL_VERSION",
     "WorkerError",
+    "WorkerProgress",
     "WorkerProtocolError",
     "WorkerRequest",
     "WorkerResponse",

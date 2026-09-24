@@ -77,6 +77,20 @@ p {
   font-weight: 650;
 }
 
+.runtime-compute-status,
+.runtime-compute-notice {
+  margin-top: 0.45rem;
+  font-size: 0.82rem;
+}
+
+.runtime-compute-status {
+  color: #087443;
+}
+
+.runtime-compute-notice {
+  color: #8a5a00;
+}
+
 .status-badge,
 .requirement-status {
   display: inline-flex;

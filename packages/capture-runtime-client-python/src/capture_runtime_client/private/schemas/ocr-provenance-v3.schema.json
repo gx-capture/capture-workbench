@@ -1,0 +1,118 @@
+{
+  "$defs": {
+    "OcrProvenanceResolvedV3": {
+      "additionalProperties": false,
+      "description": "Concrete OCR identity available after model/provider resolution.",
+      "properties": {
+        "status": {
+          "const": "resolved",
+          "title": "Status",
+          "type": "string"
+        },
+        "engine": {
+          "const": "windowsml-ocr",
+          "title": "Engine",
+          "type": "string"
+        },
+        "model": {
+          "minLength": 1,
+          "title": "Model",
+          "type": "string"
+        },
+        "modelDigest": {
+          "not": {
+            "const": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Modeldigest",
+          "type": "string"
+        },
+        "device": {
+          "minLength": 1,
+          "title": "Device",
+          "type": "string"
+        },
+        "profileId": {
+          "minLength": 1,
+          "title": "Profileid",
+          "type": "string"
+        },
+        "profileSpecSha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Profilespecsha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "engine",
+        "model",
+        "modelDigest",
+        "device",
+        "profileId",
+        "profileSpecSha256"
+      ],
+      "title": "OcrProvenanceResolvedV3",
+      "type": "object"
+    },
+    "OcrProvenanceUnavailableReason": {
+      "enum": [
+        "model_unavailable",
+        "worker_crashed",
+        "worker_timeout",
+        "protocol_failure"
+      ],
+      "title": "OcrProvenanceUnavailableReason",
+      "type": "string"
+    },
+    "OcrProvenanceUnavailableV3": {
+      "additionalProperties": false,
+      "description": "Profile identity retained when model identity is not yet available.",
+      "properties": {
+        "status": {
+          "const": "unavailable",
+          "title": "Status",
+          "type": "string"
+        },
+        "profileId": {
+          "minLength": 1,
+          "title": "Profileid",
+          "type": "string"
+        },
+        "profileSpecSha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Profilespecsha256",
+          "type": "string"
+        },
+        "reason": {
+          "$ref": "#/$defs/OcrProvenanceUnavailableReason"
+        }
+      },
+      "required": [
+        "status",
+        "profileId",
+        "profileSpecSha256",
+        "reason"
+      ],
+      "title": "OcrProvenanceUnavailableV3",
+      "type": "object"
+    }
+  },
+  "description": "Discriminated OCR provenance without fake model/device placeholders.",
+  "discriminator": {
+    "mapping": {
+      "resolved": "#/$defs/OcrProvenanceResolvedV3",
+      "unavailable": "#/$defs/OcrProvenanceUnavailableV3"
+    },
+    "propertyName": "status"
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/OcrProvenanceResolvedV3"
+    },
+    {
+      "$ref": "#/$defs/OcrProvenanceUnavailableV3"
+    }
+  ],
+  "title": "OcrProvenanceV3"
+}

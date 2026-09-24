@@ -35,6 +35,7 @@ def register_runtime_routes(
 
     @router.get("/health/ready", response_model=RuntimeReady)
     async def ready() -> RuntimeReady:
+        ocr_compute = await dependencies.ocr_preflight.decide_async()
         return RuntimeReady(
             ready=True,
             capture_document_schema_sha256=CAPTURE_DOCUMENT_SCHEMA_RELEASE_SHA256,
@@ -47,6 +48,7 @@ def register_runtime_routes(
                 "supportsRawDiagnostics": True,
                 "maxUploadBytes": dependencies.settings.max_upload_bytes,
             },
+            ocr_compute=ocr_compute,
         )
 
     @router.get("/runtime/requirements", response_model=RuntimeRequirementsV2)

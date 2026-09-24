@@ -31,7 +31,6 @@ a repository that does not exist. The same distinction applies to copyright.
 
 Node 24 provides native type stripping for the converted root tool scripts, so
 no runtime transpiler or new tool dependency is introduced. `packageManager`
-pins the lowest supported pnpm 11 release, while `engines.pnpm` rejects older
-clients. pnpm 11's explicit `allowBuilds` map keeps the reviewed Angular/Nx
-native helpers enabled while denying the unused `less` lifecycle script; it is
-not a blanket approval for future dependencies.
+and `engines.pnpm` pin pnpm 12.0.0. pnpm 12's explicit `allowBuilds` map keeps
+the reviewed Angular/Nx native helpers enabled while denying the unused `less`
+lifecycle script; it is not a blanket approval for future dependencies.

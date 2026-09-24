@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "capture-runtime"
-version = "0.4.1"
+version = "0.4.2"
 description = "Independent local capture sidecar for Capture Workbench."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
@@ -54,6 +54,7 @@ packages = ["src/capture_runtime"]
 "src/capture_runtime/assets/engine-catalog.json" = "capture_runtime/assets/engine-catalog.json"
 "src/capture_runtime/assets/contract-set.json" = "capture_runtime/assets/contract-set.json"
 "src/capture_runtime/assets/contract-set.sha256" = "capture_runtime/assets/contract-set.sha256"
+"src/capture_runtime/assets/ocr-profile.json" = "capture_runtime/assets/ocr-profile.json"
 
 [tool.uv]
 exclude-dependencies = [

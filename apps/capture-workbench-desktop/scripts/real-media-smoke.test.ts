@@ -24,7 +24,7 @@ const unavailableCatalog = {
   })),
 };
 
-function modelEnabledCatalog(runtimeVersion = '0.4.1') {
+function modelEnabledCatalog(runtimeVersion = '0.4.2') {
   return {
     catalogVersion: '2',
     runtimeVersion,
@@ -75,7 +75,7 @@ test('approved model-enabled lock preserves the generated-catalog path', () => {
     assertRealMediaRequirementsAvailable(
       {
         approval: { blockers: [], status: 'approved' },
-        releaseVersion: '0.4.1',
+        releaseVersion: '0.4.2',
         requirements: dependencyOrder.map((requirementId) => ({
           requirementId,
         })),

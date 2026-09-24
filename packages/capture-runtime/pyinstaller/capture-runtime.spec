@@ -2,6 +2,7 @@
 
 import os
 from pathlib import Path
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
 
 root = Path(SPEC).resolve().parents[1]
 layout = os.environ.get("CAPTURE_PYINSTALLER_LAYOUT", "onefile")
@@ -13,11 +14,12 @@ contract_assets = root / "src" / "capture_runtime" / "assets"
 a = Analysis(
     [str(root / "src" / "capture_runtime" / "__main__.py")],
     pathex=[str(root / "src")],
-    binaries=[],
-    datas=[
+    binaries=collect_dynamic_libs("pypdfium2"),
+    datas=collect_data_files("pypdfium2") + [
         (str(catalog), "."),
         (str(contract_assets / "contract-set.json"), "capture_runtime/assets"),
         (str(contract_assets / "contract-set.sha256"), "capture_runtime/assets"),
+        (str(contract_assets / "ocr-profile.json"), "capture_runtime/assets"),
     ],
     hiddenimports=[
         "uvicorn.logging",
@@ -27,10 +29,14 @@ a = Analysis(
         "uvicorn.protocols.http.h11_impl",
         "uvicorn.protocols.websockets.auto",
         "uvicorn.lifespan.on",
+        "PIL.Image",
+        "PIL.BmpImagePlugin",
+        "PIL.JpegImagePlugin",
+        "PIL.PngImagePlugin",
+        "PIL.WebPImagePlugin",
     ],
     hookspath=[str(root / "pyinstaller" / "hooks")],
     excludes=[
-        "PIL",
         "ctranslate2",
         "cv2",
         "faster_whisper",
@@ -40,7 +46,6 @@ a = Analysis(
         "paddle",
         "paddleocr",
         "paddlex",
-        "pypdfium2",
         "pytest",
         "tkinter",
         "uvloop",

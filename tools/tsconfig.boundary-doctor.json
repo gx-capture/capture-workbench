@@ -5,6 +5,11 @@
   },
   "include": [
     "./capture-boundary-doctor.ts",
-    "./capture-boundary-doctor.test.ts"
+    "./capture-boundary-doctor.test.ts",
+    "./three-project-acceptance.ts",
+    "./three-project-acceptance.test.ts",
+    "./three-project-cleanup-verifier.test.ts",
+    "./windows-built-in-process-resolver.ts",
+    "./windows-built-in-process-resolver.test.ts"
   ]
 }

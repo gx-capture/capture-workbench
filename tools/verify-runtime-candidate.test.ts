@@ -7,7 +7,7 @@ import { test } from 'node:test';
 
 import { verifyRuntimeCandidate } from './verify-runtime-candidate.ts';
 
-const VERSION = '0.4.1';
+const VERSION = '0.4.2';
 const SOURCE_COMMIT = 'a'.repeat(40);
 const PACKAGE_CANDIDATE_ID = 'b'.repeat(64);
 
@@ -44,13 +44,13 @@ async function createCandidate() {
   );
   await writeFile(join(root, 'runtime/capture-runtime-x64.exe'), 'runtime');
   const packageFiles = [
-    'capture_runtime_client-0.4.1-py3-none-any.whl',
-    'capture_runtime_client-0.4.1.tar.gz',
+    'capture_runtime_client-0.4.2-py3-none-any.whl',
+    'capture_runtime_client-0.4.2.tar.gz',
   ];
   for (const name of packageFiles)
     await writeFile(join(root, 'python', name), name);
   await writeFile(
-    join(root, 'crate/capture-sidecar-launcher-0.4.1.crate'),
+    join(root, 'crate/capture-sidecar-launcher-0.4.2.crate'),
     'crate',
   );
   await writeFile(

@@ -11,7 +11,6 @@ test('shows one explicit Traditional Chinese setup wizard for missing core requi
   await expect(page.getByRole('heading', { name: '啟用本機文件處理' })).toBeVisible();
   await expect(page.getByRole('button', { name: '同意並安裝核心需求' })).toBeVisible();
   await expect(page.getByText('WindowsML OCR')).toBeVisible();
-  await expect(page.getByText('隔離 Ollama', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: '選擇檔案' })).toBeDisabled();
 });
 
@@ -61,16 +60,58 @@ async function openDesktop(page: Page, requirements: readonly Record<string, unk
     interface TauriTestGlobal {
       isTauri: boolean;
       __captureInvokedCommands: string[];
-      __TAURI_INTERNALS__: { invoke: (command: string, args?: unknown) => Promise<unknown> };
+      __TAURI_INTERNALS__: {
+        invoke: (command: string, args?: unknown) => Promise<unknown>;
+        metadata: {
+          currentWindow: { label: string };
+          currentWebview: { label: string };
+        };
+        transformCallback: (...args: unknown[]) => number;
+      };
+      __TAURI_EVENT_PLUGIN_INTERNALS__: {
+        unregisterListener: (event: string, eventId: number) => void;
+      };
     }
     const target = globalThis as unknown as TauriTestGlobal;
+    let nextCallbackId = 1;
+    let nextEventId = 1;
     target.isTauri = true;
     target.__captureInvokedCommands = [];
     target.__TAURI_INTERNALS__ = {
+      metadata: {
+        currentWindow: { label: 'main' },
+        currentWebview: { label: 'main' },
+      },
+      transformCallback: () => nextCallbackId++,
       invoke: (command: string): Promise<unknown> => {
         target.__captureInvokedCommands.push(command);
         if (command === 'desktop_runtime_status') {
           return Promise.resolve({ status: 'ready', detail: 'Capture Runtime 已準備完成。' });
+        }
+        if (command === 'runtime_ready') {
+          return Promise.resolve({
+            ready: true,
+            service: 'capture-runtime',
+            apiVersion: '2.0',
+            runtimeVersion: '0.4.2',
+            captureDocumentSchemaVersion: '2',
+            contractSetVersion: '2',
+            capabilities: {},
+            ocrCompute: {
+              apiVersion: '2.0',
+              schemaVersion: '1',
+              service: 'capture-runtime',
+              runtimeVersion: '0.4.2',
+              contractSetVersion: '2',
+              contractSha256: 'a'.repeat(64),
+              workerSha256: 'b'.repeat(64),
+              mode: 'gpu-dml',
+              adapterClass: 'dedicated',
+              reasonCode: null,
+              userNoticeRequired: false,
+              noticeCode: null,
+            },
+          });
         }
         if (command === 'runtime_requirements') {
           return Promise.resolve({ items: runtimeRequirements });
@@ -96,8 +137,17 @@ async function openDesktop(page: Page, requirements: readonly Record<string, unk
             byteLength: 2048, createdAtMs: 1, updatedAtMs: 1, status: 'completed', stage: 'completed',
           }]);
         }
+        if (command === 'plugin:event|listen') {
+          return Promise.resolve(nextEventId++);
+        }
+        if (command === 'plugin:event|unlisten') {
+          return Promise.resolve(null);
+        }
         return Promise.reject(new Error(`Unexpected command: ${command}`));
       },
+    };
+    target.__TAURI_EVENT_PLUGIN_INTERNALS__ = {
+      unregisterListener: () => undefined,
     };
   }, requirements);
   await page.goto('/');

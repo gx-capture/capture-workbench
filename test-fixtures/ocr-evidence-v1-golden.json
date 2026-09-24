@@ -1,0 +1,105 @@
+{
+  "schemaVersion": 1,
+  "captureId": "capture-中文-😀",
+  "sourceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "status": "completed",
+  "pageCount": 4,
+  "pages": [
+    {
+      "page": 1,
+      "status": "recognized",
+      "raster": {
+        "width": 1200,
+        "height": 800
+      },
+      "normalizedCharCount": 1,
+      "boxCount": 0,
+      "confidence": 0,
+      "confidenceSummary": {
+        "scoreState": "none",
+        "numericCount": 0,
+        "min": null,
+        "max": null,
+        "mean": null
+      }
+    },
+    {
+      "page": 2,
+      "status": "recognized",
+      "raster": {
+        "width": 1200,
+        "height": 800
+      },
+      "normalizedCharCount": 1,
+      "boxCount": 1,
+      "confidence": 1,
+      "confidenceSummary": {
+        "scoreState": "numeric",
+        "numericCount": 1,
+        "min": 1,
+        "max": 1,
+        "mean": 1
+      }
+    },
+    {
+      "page": 3,
+      "status": "recognized",
+      "raster": {
+        "width": 1200,
+        "height": 800
+      },
+      "normalizedCharCount": 1,
+      "boxCount": 1,
+      "confidence": 0.9,
+      "confidenceSummary": {
+        "scoreState": "numeric",
+        "numericCount": 1,
+        "min": 0.9,
+        "max": 0.9,
+        "mean": 0.9
+      }
+    },
+    {
+      "page": 4,
+      "status": "recognized",
+      "raster": {
+        "width": 1200,
+        "height": 800
+      },
+      "normalizedCharCount": 1,
+      "boxCount": 1,
+      "confidence": 0.0001,
+      "confidenceSummary": {
+        "scoreState": "numeric",
+        "numericCount": 1,
+        "min": 0.0001,
+        "max": 0.0001,
+        "mean": 0.0001
+      }
+    }
+  ],
+  "summary": {
+    "normalizedCharCount": 4,
+    "boxCount": 3,
+    "confidenceSummary": {
+      "scoreState": "numeric",
+      "numericCount": 3,
+      "min": 0.0001,
+      "max": 1,
+      "mean": 0.6334
+    }
+  },
+  "provenance": {
+    "status": "resolved",
+    "runtimeVersion": "0.4.2",
+    "contractSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "engine": "windowsml-ocr",
+    "model": "模型-ppocrv6",
+    "modelDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "device": "GPU-😀",
+    "profileId": "配置-1",
+    "profileSpecSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "workerSha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+  },
+  "digest": "4abc160a72ae94d6899a0e34f6533dcaf4ad2ccb5e3ed369e3b6f1af590b6226"
+}

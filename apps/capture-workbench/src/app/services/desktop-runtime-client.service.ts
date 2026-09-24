@@ -1,16 +1,22 @@
 import { computed, Injectable, inject } from '@angular/core';
 import { rxResource } from '@angular/core/rxjs-interop';
 import {
+  parseCaptureOcrProjection,
+  type CaptureOcrProjection,
+} from '@gx-capture/capture-runtime-client';
+import {
   type CaptureDocument,
   type CaptureEvent,
   type CaptureOperation,
   type PartialCapture,
   type CaptureRequirementId,
+  type OcrComputePreflight,
   type RawCapture,
   type RuntimeInstallation,
   type RuntimeModelInstallation,
   type RuntimeModelOption,
   type RuntimeRequirement,
+  type RuntimeReady,
 } from '@gx-capture/capture-workbench-ui';
 import {
   EMPTY,
@@ -57,8 +63,33 @@ export class DesktopRuntimeClientService {
   readonly status = this.readiness.value;
   readonly resourceStatus = this.readiness.status;
   readonly error = this.readiness.error;
-  readonly ready = computed(
+  readonly ocrCompute = computed<OcrComputePreflight | null>(() => {
+    const status = this.readiness.hasValue() ? this.readiness.value() : undefined;
+    const compute = status?.ocrCompute;
+    return isOcrComputePreflight(compute) ? compute : null;
+  });
+  /**
+   * A page scope is opt-in and must be an ordered prefix. Missing or malformed
+   * status data fails safe to the runtime's canonical all-page behavior.
+   */
+  readonly pdfPageNumbers = computed<readonly number[] | undefined>(() => {
+    const status = this.readiness.hasValue() ? this.readiness.value() : undefined;
+    const pageNumbers = status?.pdfPageNumbers;
+    return isPdfPageNumbers(pageNumbers) ? [...pageNumbers] : undefined;
+  });
+  /** True once the native sidecar is authenticated and setup APIs are usable.
+   *
+   * A clean app-data directory has no installed OCR worker yet, so the
+   * worker-owned compute preflight is intentionally unavailable during setup.
+   * Capture actions continue to require `ready`, which additionally requires
+   * the typed compute decision.
+   */
+  readonly started = computed(
     () => this.resourceStatus() === 'resolved' && this.status().status === 'ready',
+  );
+  readonly ready = computed(
+    () => this.started()
+      && this.ocrCompute() !== null,
   );
 
   getRequirements(signal?: AbortSignal): Observable<readonly RuntimeRequirement[]> {
@@ -104,9 +135,18 @@ export class DesktopRuntimeClientService {
     return this.commands.invoke('runtime_get_model_installation', { input: { id: installationId } }, signal);
   }
 
-  createCapture(documentId: string, clientRequestId: string, signal?: AbortSignal): Observable<DesktopCaptureOperation> {
+  createCapture(
+    documentId: string,
+    clientRequestId: string,
+    pdfPageNumbers?: readonly number[],
+    signal?: AbortSignal,
+  ): Observable<DesktopCaptureOperation> {
     return this.commands.invoke('runtime_create_capture', {
-      input: { documentId, clientRequestId },
+      input: {
+        documentId,
+        clientRequestId,
+        ...(pdfPageNumbers === undefined ? {} : { pdfPageNumbers }),
+      },
     }, signal);
   }
 
@@ -172,6 +212,12 @@ export class DesktopRuntimeClientService {
     return this.commands.invoke('runtime_get_raw', { input: { id: captureId } }, signal);
   }
 
+  getOcr(captureId: string, signal?: AbortSignal): Observable<CaptureOcrProjection> {
+    return this.commands
+      .invoke<unknown>('runtime_get_ocr', { input: { id: captureId } }, signal)
+      .pipe(map(parseCaptureOcrProjection));
+  }
+
   getResult(captureId: string, signal?: AbortSignal): Observable<CaptureDocument> {
     return this.commands
       .invoke<StreamingTerminalResultV2>('runtime_get_result', { input: { id: captureId } }, signal)
@@ -197,7 +243,9 @@ export class DesktopRuntimeClientService {
     return defer(() => this.status$(signal)).pipe(
       tap((status) => lastDetail = status.detail),
       expand((status) => {
-        if (status.status === 'ready') return EMPTY;
+        if (status.status === 'ready') {
+          return EMPTY;
+        }
         if (status.status === 'failed' || status.status === 'stopped') {
           return throwError(() => new Error(status.detail));
         }
@@ -205,10 +253,46 @@ export class DesktopRuntimeClientService {
       }),
       filter((status) => status.status === 'ready'),
       take(1),
+      switchMap((status) => this.loadCanonicalReady$(status, signal)),
       timeout({
         first: DESKTOP_RUNTIME_READY_TIMEOUT_MS,
         with: () => throwError(() => new Error(`Capture Runtime 準備逾時：${lastDetail}`)),
       }),
     );
   }
+
+  private loadCanonicalReady$(
+    status: DesktopRuntimeStatus,
+    signal: AbortSignal,
+  ): Observable<DesktopRuntimeStatus> {
+    return this.commands.invoke<RuntimeReady>('runtime_ready', {}, signal).pipe(
+      map((ready) => {
+        const compute = (ready as RuntimeReady | null | undefined)?.ocrCompute;
+        return {
+          ...status,
+          runtimeVersion: ready.runtimeVersion,
+          apiVersion: ready.apiVersion,
+          captureDocumentSchemaVersion: ready.captureDocumentSchemaVersion,
+          ocrCompute: isOcrComputePreflight(compute) ? compute : null,
+        };
+      }),
+    );
+  }
+}
+
+function isOcrComputePreflight(
+  value: unknown,
+): value is OcrComputePreflight {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const mode = (value as { mode?: unknown }).mode;
+  return mode === 'gpu-dml' || mode === 'cpu-fallback';
+}
+
+function isPdfPageNumbers(value: unknown): value is readonly number[] {
+  return Array.isArray(value)
+    && value.length >= 1
+    && value.every((page) => Number.isSafeInteger(page) && page >= 1)
+    && value.every((page, index) => page === index + 1);
 }

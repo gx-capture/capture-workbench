@@ -348,6 +348,26 @@ def test_streaming_runtime_fails_when_audio_processor_is_unavailable(
     asyncio.run(scenario())
 
 
+def test_deterministic_audio_extractor_does_not_leak_pdf_page_scope() -> None:
+    async def scenario() -> None:
+        clock = FixedClock()
+        content = b"ID3CAPTURE_TEXT:deterministic audio"
+        source = CaptureSource(
+            sha256=hashlib.sha256(content).hexdigest(),
+            file_name="sample.mp3",
+            media_type="audio/mpeg",
+            bytes=len(content),
+        )
+        extraction = await DeterministicCaptureExtractor(clock).extract(
+            content,
+            source,
+            asyncio.Event(),
+        )
+        assert extraction.raw.ocr_page_scope is None
+
+    asyncio.run(scenario())
+
+
 def test_session_worker_sinks_worker_heartbeat_before_input_ack() -> None:
     async def scenario() -> None:
         process_stdout = asyncio.StreamReader()

@@ -18,6 +18,7 @@ from capture_runtime.contracts import (
     CaptureDocument,
     CaptureEventV2,
     CaptureFailureV2,
+    CaptureOcrProjectionV3,
     CaptureOperationV2,
     CaptureSource,
     IngestionV2,
@@ -389,6 +390,24 @@ class StreamingRepository:
             try:
                 return RawCapture.model_validate_json(
                     (self._capture_directory(capture_id) / "raw.json").read_text(encoding="utf-8")
+                )
+            except (OSError, ValidationError) as error:
+                raise StreamingPartialNotFoundError(capture_id) from error
+
+    def write_ocr_projection(self, capture_id: str, projection: CaptureOcrProjectionV3) -> None:
+        with self._lock:
+            self._get_capture(capture_id)
+            _atomic_json(
+                self._capture_directory(capture_id) / "ocr.json",
+                projection.model_dump(mode="json", by_alias=True),
+            )
+
+    def read_ocr_projection(self, capture_id: str) -> CaptureOcrProjectionV3:
+        with self._lock:
+            self._get_capture(capture_id)
+            try:
+                return CaptureOcrProjectionV3.model_validate_json(
+                    (self._capture_directory(capture_id) / "ocr.json").read_text(encoding="utf-8")
                 )
             except (OSError, ValidationError) as error:
                 raise StreamingPartialNotFoundError(capture_id) from error

@@ -27,6 +27,7 @@ from capture_runtime.contract_set import (
 )
 from capture_runtime.dependencies import RuntimeDependencies, build_runtime_dependencies
 from capture_runtime.extractors import CaptureExtractor
+from capture_runtime.ocr_preflight import OcrComputePreflight
 from capture_runtime.ollama import ProcessController, RuntimeInstaller
 from capture_runtime.routes.common import ApiProblem, error_response
 from capture_runtime.routes.meta import register_contract_routes
@@ -117,6 +118,7 @@ def create_app(
     installation_repository: InstallationRepository | None = None,
     model_installation_repository: ModelInstallationRepository | None = None,
     contract_set: ContractSet | None = None,
+    ocr_preflight: OcrComputePreflight | None = None,
 ) -> FastAPI:
     """Create one isolated runtime app and its dependency graph.
 
@@ -137,6 +139,7 @@ def create_app(
         installation_repository=installation_repository,
         model_installation_repository=model_installation_repository,
         contract_set=runtime_contract_set,
+        ocr_preflight=ocr_preflight,
     )
     runtime_settings = runtime_dependencies.settings
 

@@ -45,12 +45,12 @@ def test_direct_source_lock_generates_catalog_without_model_release_assets(
     engine_dir.mkdir()
     ocr_worker, ocr_worker_manifest = archive_pair(
         engine_dir,
-        "capture-engine-ocr-0.4.1-windows-x64.zip",
+        "capture-engine-ocr-0.4.2-windows-x64.zip",
         "capture-engine-ocr.exe",
     )
     whisper_worker, whisper_worker_manifest = archive_pair(
         engine_dir,
-        "capture-engine-whisper-0.4.1-windows-x64.zip",
+        "capture-engine-whisper-0.4.2-windows-x64.zip",
         "capture-engine-whisper.exe",
     )
     source_lock, _content = approved_source_lock()
@@ -114,6 +114,60 @@ def test_direct_source_lock_generates_catalog_without_model_release_assets(
     assert not list(release.glob("capture-model-*"))
 
 
+def test_catalog_generation_rejects_first_party_git_blob_drift(
+    tmp_path: Path,
+) -> None:
+    engine_dir = tmp_path / "engines"
+    engine_dir.mkdir()
+    ocr_worker, ocr_worker_manifest = archive_pair(
+        engine_dir,
+        "capture-engine-ocr-0.4.2-windows-x64.zip",
+        "capture-engine-ocr.exe",
+    )
+    whisper_worker, whisper_worker_manifest = archive_pair(
+        engine_dir,
+        "capture-engine-whisper-0.4.2-windows-x64.zip",
+        "capture-engine-whisper.exe",
+    )
+    source_lock, _content = approved_source_lock()
+    provenance = next(
+        item
+        for item in source_lock["requirements"][0]["files"]
+        if item["path"] == "provenance/commit-a.json"
+    )
+    provenance["sha256"] = "0" * 64
+    source_lock_path = tmp_path / "model-source-lock.json"
+    source_lock_path.write_bytes(canonical_json_bytes(source_lock))
+    catalog_path = tmp_path / "catalog" / "capture-engine-catalog.json"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT_PATH),
+            "--model-source-lock",
+            str(source_lock_path),
+            "--output",
+            str(catalog_path),
+            "--ocr-worker-archive",
+            str(ocr_worker),
+            "--ocr-worker-manifest",
+            str(ocr_worker_manifest),
+            "--whisper-worker-archive",
+            str(whisper_worker),
+            "--whisper-worker-manifest",
+            str(whisper_worker_manifest),
+        ],
+        env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[2] / "src")},
+        stdin=subprocess.DEVNULL,
+        shell=False,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert "first-party Git blob" in result.stderr
+    assert not catalog_path.exists()
+
+
 def test_pending_source_lock_release_generation_fails_closed(
     tmp_path: Path,
 ) -> None:
@@ -121,12 +175,12 @@ def test_pending_source_lock_release_generation_fails_closed(
     engine_dir.mkdir()
     ocr_worker, ocr_worker_manifest = archive_pair(
         engine_dir,
-        "capture-engine-ocr-0.4.1-windows-x64.zip",
+        "capture-engine-ocr-0.4.2-windows-x64.zip",
         "capture-engine-ocr.exe",
     )
     whisper_worker, whisper_worker_manifest = archive_pair(
         engine_dir,
-        "capture-engine-whisper-0.4.1-windows-x64.zip",
+        "capture-engine-whisper-0.4.2-windows-x64.zip",
         "capture-engine-whisper.exe",
     )
     source_lock_path = tmp_path / "pending-model-source-lock.json"
@@ -165,12 +219,12 @@ def test_pending_source_lock_generates_only_preflight_catalog_with_explicit_flag
     engine_dir.mkdir()
     ocr_worker, ocr_worker_manifest = archive_pair(
         engine_dir,
-        "capture-engine-ocr-0.4.1-windows-x64.zip",
+        "capture-engine-ocr-0.4.2-windows-x64.zip",
         "capture-engine-ocr.exe",
     )
     whisper_worker, whisper_worker_manifest = archive_pair(
         engine_dir,
-        "capture-engine-whisper-0.4.1-windows-x64.zip",
+        "capture-engine-whisper-0.4.2-windows-x64.zip",
         "capture-engine-whisper.exe",
     )
     source_lock_path = tmp_path / "pending-model-source-lock.json"
@@ -217,12 +271,12 @@ def test_pending_preflight_rejects_unrelated_blockers_and_approved_lock(
     engine_dir.mkdir()
     ocr_worker, ocr_worker_manifest = archive_pair(
         engine_dir,
-        "capture-engine-ocr-0.4.1-windows-x64.zip",
+        "capture-engine-ocr-0.4.2-windows-x64.zip",
         "capture-engine-ocr.exe",
     )
     whisper_worker, whisper_worker_manifest = archive_pair(
         engine_dir,
-        "capture-engine-whisper-0.4.1-windows-x64.zip",
+        "capture-engine-whisper-0.4.2-windows-x64.zip",
         "capture-engine-whisper.exe",
     )
     pending_payload = pending_source_lock()

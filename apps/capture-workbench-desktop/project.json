@@ -173,11 +173,24 @@
         "parallel": false
       }
     },
+    "build-nsis-acceptance": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "metadata": {
+        "description": "Builds a separately named acceptance-only NSIS bundle with the compile-time acceptance-app-data feature; never use as the release NSIS artifact."
+      },
+      "outputs": [
+        "{workspaceRoot}/output/acceptance-nsis"
+      ],
+      "options": {
+        "command": "node apps/capture-workbench-desktop/scripts/build-acceptance-nsis.ts"
+      }
+    },
     "package-qa-test": {
       "cache": true,
       "executor": "nx:run-commands",
       "options": {
-        "command": "node --test apps/capture-workbench-desktop/scripts/*.test.ts tools/acceptance-contract.test.ts tools/three-project-acceptance.test.ts tools/check-async-boundary.test.ts tools/finalize-packed-package.test.ts tools/local-release-consumer-smoke.test.ts tools/node24-corepack.test.ts tools/record-candidate-verification.test.ts"
+        "command": "node --test apps/capture-workbench-desktop/scripts/*.test.ts tools/acceptance-contract.test.ts tools/worker-stage-policy.test.ts tools/three-project-acceptance.test.ts tools/three-project-cleanup-verifier.test.ts tools/check-async-boundary.test.ts tools/finalize-packed-package.test.ts tools/local-release-consumer-smoke.test.ts tools/node24-corepack.test.ts tools/record-candidate-verification.test.ts tools/acceptance-checkpoint-journal.test.ts"
       }
     },
     "package-qa": {
@@ -342,6 +355,28 @@
           "node apps/capture-workbench-desktop/scripts/acceptance-real.ts --recorded"
         ],
         "parallel": false
+      }
+    },
+    "build-practical-installer": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "metadata": {
+        "description": "Builds a side-by-side production NSIS installer (distinct identifier, product name and binary name only) from a verified runtime release directory. Pass --mode, --runtime-release, --runtime-sha256 and --run-id."
+      },
+      "outputs": ["{workspaceRoot}/tmp/capture-workbench-desktop/practical-installed"],
+      "options": {
+        "command": "node apps/capture-workbench-desktop/scripts/build-practical-installer.ts"
+      }
+    },
+    "acceptance-practical-installed": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "metadata": {
+        "description": "No-build practical OCR on an installed side-by-side production build: first-run setup, native import, durable OCR checkpoint, normal close, uninstall and cleanup proof. Pass --provenance, --input and --input-sha256 (plus --runtime-release for rehearsal)."
+      },
+      "outputs": ["{workspaceRoot}/tmp/capture-workbench-desktop/practical-installed"],
+      "options": {
+        "command": "node apps/capture-workbench-desktop/scripts/practical-installed-ocr.ts"
       }
     },
     "acceptance-three-projects": {

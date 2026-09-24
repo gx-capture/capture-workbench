@@ -12,6 +12,14 @@ Use PDFium rendering plus PaddleOCR for every PDF page. Remove the embedded-text
 fast path and the production `pypdf` dependency. Require `windowsml-ocr` before
 Cert Prep dispatches PDF capture.
 
+The v2 capture request may additionally carry an ordered `pdfPageNumbers`
+prefix. Omission preserves all-page OCR for existing callers and the normal
+desktop app. Only the feature-gated packaged Phase 1 acceptance harness
+advertises `[1]` through the private native status seam, which the app passes
+through for PDF capture. Runtime raw output records the parsed source page
+count and the requested/processed page numbers so an app-level acceptance run
+can prove that later pages never entered OCR.
+
 ## Rejected alternatives
 
 - Character-quality heuristics: valid Unicode can still be semantically wrong,

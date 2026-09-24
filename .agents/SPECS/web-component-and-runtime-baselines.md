@@ -32,7 +32,7 @@ lifecycle and input synchronization; the package remains an NPM ESM library.
   executes these type-strippable TypeScript files directly. ESLint's flat
   configuration files remain `.mjs`, because they are tool configuration rather
   than application or verification scripts.
-- The workspace requires Node `>=24.0.0` and pnpm `>=11.0.0`.
+- The workspace requires Node `>=24.0.0` and pnpm `12.0.0`.
 
 ## Non-goals
 
@@ -61,7 +61,7 @@ lifecycle and input synchronization; the package remains an NPM ESM library.
 - All root `tools/*.mjs` and desktop harness `scripts/*.mjs` files and their
   references are replaced by `.ts`.
 - Every published package/import reference uses `@gx-capture/capture-workbench-ui`.
-- Local and CI configuration enforce Node 24 and pnpm 11 or newer.
+- Local and CI configuration enforce Node 24 and pnpm 12.0.0.
 
 ## Verification
 

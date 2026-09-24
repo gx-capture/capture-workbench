@@ -18,9 +18,22 @@ import { of } from 'rxjs';
 export const READY: RuntimeReady = {
   ready: true,
   service: 'capture-runtime',
-  runtimeVersion: '0.4.1',
+  runtimeVersion: '0.4.2',
   apiVersion: '2.0',
   captureDocumentSchemaVersion: '2',
+  ocrCompute: {
+    apiVersion: '2.0',
+    schemaVersion: '1',
+    service: 'capture-runtime',
+    runtimeVersion: '0.4.2',
+    contractSetVersion: '2',
+    contractSha256: 'a'.repeat(64),
+    mode: 'gpu-dml',
+    adapterClass: 'dedicated',
+    reasonCode: null,
+    userNoticeRequired: false,
+    noticeCode: null,
+  },
   capabilities: {
     captureKinds: ['pdf', 'image', 'audio'],
     structuringModes: ['runtime', 'host'],

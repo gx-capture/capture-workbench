@@ -2,6 +2,11 @@ import { createHash } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import {
+  parseRuntimeIdentityMode,
+  type RuntimeIdentityMode,
+} from './runtime-identity.ts';
+
 export type RuntimeReleaseManifest = {
   readonly manifestVersion: string;
   readonly runtimeVersion: string;
@@ -15,6 +20,8 @@ export type RuntimeReleaseManifest = {
   readonly schemaFileName: string;
   readonly schemaSha256: string;
 };
+
+export type RuntimeReleaseVerificationMode = RuntimeIdentityMode;
 
 function sha256(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex');
@@ -33,7 +40,9 @@ function assertSafeName(value: unknown, expected: string): asserts value is stri
 export async function verifyRuntimeRelease(
   releaseRoot: string,
   expectedVersion: string,
+  mode: unknown,
 ): Promise<RuntimeReleaseManifest> {
+  const verificationMode = parseRuntimeIdentityMode(mode);
   const raw = JSON.parse(
     await readFile(join(releaseRoot, 'capture-runtime-manifest.json'), 'utf8'),
   ) as unknown;
@@ -43,7 +52,7 @@ export async function verifyRuntimeRelease(
   const manifest = raw as Partial<RuntimeReleaseManifest>;
   if (
     manifest.manifestVersion !== '1' ||
-    manifest.runtimeVersion !== expectedVersion ||
+    (verificationMode === 'release' && manifest.runtimeVersion !== expectedVersion) ||
     manifest.apiVersion !== '2.0' ||
     manifest.captureDocumentSchemaVersion !== '2' ||
     manifest.platform !== 'windows' ||

@@ -24,6 +24,8 @@ for _generated_name in (
     "CaptureOperationV2",
     "PartialCaptureV2",
     "CaptureEventV2",
+    "OcrPageProjectionV3",
+    "CaptureOcrProjectionV3",
     "StructuringProviderCapabilityV2",
     "OpenStructuringSessionV2",
     "StructuringSessionV2",
@@ -38,18 +40,19 @@ for _generated_name in (
 
 CAPTURE_API_VERSION = "2.0"
 CAPTURE_DOCUMENT_SCHEMA_VERSION = _generated.CAPTURE_DOCUMENT_SCHEMA_VERSION
-CAPTURE_RUNTIME_VERSION = "0.4.1"
+CAPTURE_RUNTIME_VERSION = "0.4.2"
 CAPTURE_DOCUMENT_SCHEMA_ID = (
     "https://github.com/gx-capture/capture-workbench/schema/capture-document-v2.schema.json"
 )
 CAPTURE_DOCUMENT_SCHEMA_SHA256 = "850afd212d049c25da41d3867ba5477451a6a2c6c7e41f116fe60f26b6a35335"
 _CONTRACT_SET_ASSETS = files("capture_runtime_client.private.assets")
-CAPTURE_CONTRACT_SET_SHA256 = _CONTRACT_SET_ASSETS.joinpath(
-    "contract-set.sha256"
-).read_text(encoding="ascii").strip()
-if hashlib.sha256(
-    _CONTRACT_SET_ASSETS.joinpath("contract-set.json").read_bytes()
-).hexdigest() != CAPTURE_CONTRACT_SET_SHA256:
+CAPTURE_CONTRACT_SET_SHA256 = (
+    _CONTRACT_SET_ASSETS.joinpath("contract-set.sha256").read_text(encoding="ascii").strip()
+)
+if (
+    hashlib.sha256(_CONTRACT_SET_ASSETS.joinpath("contract-set.json").read_bytes()).hexdigest()
+    != CAPTURE_CONTRACT_SET_SHA256
+):
     raise RuntimeError("Packaged contract-set asset does not match its SHA-256 allowlist.")
 
 
@@ -74,6 +77,38 @@ class CaptureBlock(_generated.CaptureBlock):
 
 
 class CaptureFailure(_generated.CaptureFailureV2):
+    pass
+
+
+class OcrRaster(_generated.OcrRasterV3):
+    pass
+
+
+class OcrPoint(_generated.OcrPointV3):
+    pass
+
+
+class OcrBox(_generated.OcrBoxV3):
+    pass
+
+
+class OcrProvenance(_generated.OcrProvenanceV3):
+    pass
+
+
+class OcrProvenanceResolved(_generated.OcrProvenanceResolvedV3):
+    pass
+
+
+class OcrProvenanceUnavailable(_generated.OcrProvenanceUnavailableV3):
+    pass
+
+
+class OcrPageProjection(_generated.OcrPageProjectionV3):
+    pass
+
+
+class CaptureOcrProjection(_generated.CaptureOcrProjectionV3):
     pass
 
 
@@ -189,6 +224,7 @@ class RuntimeReady(_generated.StrictModel):
     schema_sha256: str | None = None
     contract_set_version: str = "2"
     capabilities: dict[str, Any] = Field(default_factory=dict)
+    ocr_compute: dict[str, Any] | None = None
     message: str | None = None
 
 
@@ -219,6 +255,10 @@ StreamingIngestionMode = _generated.StreamingIngestionMode
 StreamingIngestionStatus = _generated.StreamingIngestionStatus
 StreamingCaptureStatus = _generated.StreamingCaptureStatus
 StreamingEventType = _generated.StreamingEventType
+OcrProjectionStatus = _generated.OcrProjectionStatus
+OcrPageStatus = _generated.OcrPageStatus
+OcrProvenanceStatus = _generated.OcrProvenanceStatus
+OcrProvenanceUnavailableReason = _generated.OcrProvenanceUnavailableReason
 CaptureRequirementId = _generated.CaptureRequirementId
 project_source_text = _generated.project_source_text
 
@@ -227,6 +267,7 @@ def _load_contract_schema(name: str) -> dict[str, Any]:
     filename = {
         "RawCapture": "raw-capture.schema.json",
         "CaptureDocument": "capture-document.schema.json",
+        "CaptureOcrProjection": "capture-ocr-projection-v3.schema.json",
     }.get(name)
     if filename is None:
         raise ValueError(f"Unknown generated contract schema: {name}")
@@ -267,6 +308,14 @@ __all__ = [
     "RawCaptureSegment",
     "CaptureBlock",
     "CaptureFailure",
+    "OcrRaster",
+    "OcrPoint",
+    "OcrBox",
+    "OcrProvenance",
+    "OcrProvenanceResolved",
+    "OcrProvenanceUnavailable",
+    "OcrPageProjection",
+    "CaptureOcrProjection",
     "CaptureDocument",
     "RawCapture",
     "RuntimeArtifactDescriptor",
@@ -307,6 +356,10 @@ __all__ = [
     "StreamingIngestionStatus",
     "StreamingCaptureStatus",
     "StreamingEventType",
+    "OcrProjectionStatus",
+    "OcrPageStatus",
+    "OcrProvenanceStatus",
+    "OcrProvenanceUnavailableReason",
     "CaptureRequirementId",
     "project_source_text",
 ]

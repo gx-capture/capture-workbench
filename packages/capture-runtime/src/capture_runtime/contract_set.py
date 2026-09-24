@@ -486,6 +486,14 @@ def _operation_definitions() -> list[dict[str, Any]]:
             problems=_COMMON_PROBLEMS + ("capture_not_found", "raw_unavailable"),
         ),
         _operation(
+            "v2.captures.ocr",
+            "v2",
+            "GET",
+            f"{v2}/captures/{{capture_id}}/ocr",
+            response_schema="CaptureOcrProjectionV3",
+            problems=_COMMON_PROBLEMS + ("capture_not_found", "ocr_unavailable"),
+        ),
+        _operation(
             "v2.captures.cancel",
             "v2",
             "POST",

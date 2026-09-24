@@ -4,8 +4,9 @@ packages:
 
 autoInstallPeers: true
 engineStrict: true
+pmOnFail: ignore
 
-# pnpm 11 requires an explicit decision for dependency lifecycle scripts.
+# pnpm 12 requires an explicit decision for dependency lifecycle scripts.
 # These are the reviewed packages needed for Angular/Nx builds and file watching;
 # less is unused by this workspace and remains denied.
 allowBuilds:

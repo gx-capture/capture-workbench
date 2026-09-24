@@ -6,6 +6,12 @@
 - [x] Make the OCR worker enumerate, bound, render, and recognize every PDF page.
   Verify: `pnpm nx run capture-runtime:test-unit --skip-nx-cache`
 
+- [x] Add an explicit bounded PDF page-prefix seam for Phase 1 while retaining
+  all-page behavior for callers that omit it; expose source/requested/processed
+  page evidence through raw capture output.
+  Verify: `pnpm nx run capture-runtime:test-unit --skip-nx-cache` and the
+  packaged desktop OCR acceptance manifest.
+
 - [x] Remove production `pypdf` code/dependency and refresh the lockfile.
   Verify: `pnpm nx run capture-runtime:lint --skip-nx-cache` and
   `pnpm nx run capture-runtime:typecheck --skip-nx-cache`

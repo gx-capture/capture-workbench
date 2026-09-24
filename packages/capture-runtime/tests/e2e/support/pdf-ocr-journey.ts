@@ -14,18 +14,29 @@ import {
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { request, reservePort, terminateOwnedTree } from './runtime-process.ts';
 import { verifyRuntimeRelease } from './runtime-release.ts';
+import {
+  verifyRuntimePackageIdentity,
+  type RuntimePackageIdentityReport,
+  type RuntimeProbeIdentity,
+} from './runtime-identity.ts';
 
 const installationTimeoutMs = 30 * 60_000;
 const captureTimeoutMs = 30 * 60_000;
 const captureStallTimeoutMs = 5 * 60_000;
+const workspaceRoot = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  '../../../../..',
+);
 
 export type PdfOcrPackageKind = 'local-package' | 'online-package';
 
 export type RunPdfOcrE2eOptions = {
   readonly packageKind: PdfOcrPackageKind;
+  readonly identityMode: 'local-probe' | 'release';
   readonly releaseRoot: string;
   readonly runtimeVersion: string;
   readonly evidencePath: string;
@@ -64,6 +75,22 @@ type StreamingCapabilities = {
   readonly maxChunkBytes: number;
 };
 
+type RuntimeReady = {
+  readonly ready: boolean;
+  readonly apiVersion?: unknown;
+  readonly runtimeVersion?: unknown;
+};
+
+type OcrProjectionIdentity = {
+  readonly apiVersion?: unknown;
+  readonly schemaVersion?: unknown;
+  readonly contractSha256?: unknown;
+};
+
+type ContractIndexIdentity = {
+  readonly sha256?: unknown;
+};
+
 export type PdfOcrRawCapture = {
   readonly sourceText: string;
   readonly segments: readonly {
@@ -86,6 +113,8 @@ export type PdfOcrExpectedAnchor = {
 export type PdfOcrE2eEvidence = {
   readonly evidenceKind: 'real-runtime-pdf-ocr-e2e';
   readonly packageKind: PdfOcrPackageKind;
+  readonly identityMode: 'local-probe' | 'release';
+  readonly identity?: RuntimePackageIdentityReport;
   readonly workerTransport: 'test-local-exact-url' | 'catalog-https';
   readonly workerTransportE2eVerified: true;
   readonly runtimeVersion: string;
@@ -177,6 +206,8 @@ export function assertPdfOcrRawCapture(
 ): Omit<
   PdfOcrE2eEvidence,
   | 'packageKind'
+  | 'identityMode'
+  | 'identity'
   | 'workerTransport'
   | 'workerTransportE2eVerified'
   | 'runtimeVersion'
@@ -274,6 +305,7 @@ export function isolatedEnvironment(
   token: string,
   localWorkerUrl: string | undefined,
   sourceEnvironment: NodeJS.ProcessEnv = process.env,
+  localModelRoot: string | undefined = undefined,
 ): NodeJS.ProcessEnv {
   const inherited = Object.fromEntries(
     Object.entries(sourceEnvironment).filter(([name]) => {
@@ -287,6 +319,12 @@ export function isolatedEnvironment(
         CAPTURE_PDF_OCR_E2E_LOCAL_WORKER_URL: localWorkerUrl,
       }
     : {};
+  const localModelEnvironment = localModelRoot
+    ? {
+        CAPTURE_PDF_OCR_E2E_LOCAL_MODEL_OPT_IN: '1',
+        CAPTURE_PDF_OCR_E2E_LOCAL_MODEL_ROOT: localModelRoot,
+      }
+    : {};
   return {
     ...inherited,
     CAPTURE_HOST: '127.0.0.1',
@@ -298,8 +336,8 @@ export function isolatedEnvironment(
     CAPTURE_APP_DATA_DIR: appDataDirectory,
     CAPTURE_STRUCTURING_PROVIDER: 'host',
     CAPTURE_EXTRACTION_PROVIDER: 'runtime',
-    CAPTURE_WINDOWSML_DEVICE_ID: '0',
     ...workerEnvironment,
+    ...localModelEnvironment,
   };
 }
 
@@ -379,19 +417,19 @@ async function waitForReady(
   port: number,
   token: string,
   child: ReturnType<typeof spawn>,
-): Promise<void> {
+): Promise<RuntimeReady> {
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
     if (child.exitCode !== null || child.signalCode !== null) {
       throw new Error('Local-package Capture Runtime exited before readiness.');
     }
     try {
-      const ready = await request<{ readonly ready: boolean }>(
+      const ready = await request<RuntimeReady>(
         port,
         token,
         '/v2/health/ready',
       );
-      if (ready.ready) return;
+      if (ready.ready) return ready;
     } catch {
       // The packaged runtime is still starting.
     }
@@ -644,6 +682,16 @@ function assertTemporaryRoot(root: string): void {
 export async function runPdfOcrE2e(
   options: RunPdfOcrE2eOptions,
 ): Promise<void> {
+  if (
+    (options.packageKind === 'local-package' &&
+      options.identityMode !== 'local-probe') ||
+    (options.packageKind === 'online-package' &&
+      options.identityMode !== 'release')
+  ) {
+    throw new Error(
+      'PDF OCR E2E package kind and runtime identity mode must agree.',
+    );
+  }
   if (process.platform !== 'win32' || process.arch !== 'x64') {
     throw new Error('Real runtime PDF OCR E2E requires Windows x64.');
   }
@@ -665,6 +713,7 @@ export async function runPdfOcrE2e(
   const manifest = await verifyRuntimeRelease(
     releaseRoot,
     options.runtimeVersion,
+    options.identityMode,
   );
   const ocrWorkerArchives = (await readdir(releaseRoot)).filter(
     (name) =>
@@ -691,6 +740,13 @@ export async function runPdfOcrE2e(
     options.packageKind === 'local-package'
       ? join(releaseRoot, ocrWorkerArchives[0])
       : undefined;
+  const localModelRoot =
+    options.packageKind === 'local-package'
+      ? resolve(
+          process.env.CAPTURE_PDF_OCR_E2E_LOCAL_MODEL_ROOT?.trim() ||
+            join(releaseRoot, '..', '..', 'model-sources', 'commit-a'),
+        )
+      : undefined;
   const token = randomBytes(32).toString('hex');
   let workerMirror: WorkerMirror | undefined;
   let workerArchiveBytes: Uint8Array | undefined;
@@ -698,15 +754,32 @@ export async function runPdfOcrE2e(
   let child: ReturnType<typeof spawn> | undefined;
   let captureId: string | undefined;
   let cleanupVerified = false;
+  let identity: RuntimePackageIdentityReport | undefined;
   try {
-    workerMirror = workerArchivePath
-      ? await startWorkerMirror(workerArchivePath)
-      : undefined;
     workerArchiveBytes = workerArchivePath
       ? await readFile(workerArchivePath)
       : undefined;
+    workerMirror = workerArchivePath
+      ? await startWorkerMirror(workerArchivePath)
+      : undefined;
     port = await reservePort();
     const executable = join(releaseRoot, manifest.fileName);
+    const executableBytes = await readFile(executable);
+    const probe: RuntimeProbeIdentity = {
+      runtimeExecutableSha256: sha256(executableBytes),
+      ...(workerArchiveBytes
+        ? { ocrWorkerSha256: sha256(workerArchiveBytes) }
+        : {}),
+    };
+    const expectedContractSha256 = (
+      await readFile(
+        join(
+          workspaceRoot,
+          'packages/capture-runtime/src/capture_runtime/assets/contract-set.sha256',
+        ),
+        'utf8',
+      )
+    ).trim();
     child = spawn(
       executable,
       ['serve', '--host', '127.0.0.1', '--port', String(port)],
@@ -719,10 +792,12 @@ export async function runPdfOcrE2e(
           port,
           token,
           workerMirror?.workerUrl,
+          process.env,
+          localModelRoot,
         ),
       },
     );
-    await waitForReady(port, token, child);
+    const readiness = await waitForReady(port, token, child);
     await installOcr(port, token);
     if (options.packageKind === 'local-package') {
       assert.ok(workerMirror);
@@ -748,6 +823,45 @@ export async function runPdfOcrE2e(
       token,
       `/v2/captures/${captureId}/raw`,
     );
+    const ocrProjection = await request<OcrProjectionIdentity>(
+      port,
+      token,
+      `/v2/captures/${captureId}/ocr`,
+    );
+    const contractIndex = await request<ContractIndexIdentity>(
+      port,
+      token,
+      '/meta/v2/contracts',
+    );
+    if (contractIndex.sha256 !== ocrProjection.contractSha256) {
+      throw new Error('Runtime contract index and OCR projection hashes differ.');
+    }
+    if (options.identityMode === 'local-probe') {
+      identity = await verifyRuntimePackageIdentity({
+        mode: options.identityMode,
+        packageRoot: releaseRoot,
+        runtimeExecutablePath: executable,
+        ocrWorkerArchivePath: workerArchivePath,
+        expectedContractSha256,
+        probe,
+        observed: {
+          apiVersion: ocrProjection.apiVersion ?? readiness.apiVersion,
+          ocrSchemaVersion: ocrProjection.schemaVersion,
+          contractSha256: ocrProjection.contractSha256,
+          loadedRuntimeSha256: sha256(executableBytes),
+          loadedOcrWorkerSha256:
+            workerMirror?.observations.successfulDownloads === 1 &&
+            workerArchiveBytes
+              ? sha256(workerArchiveBytes)
+              : undefined,
+          runtimeVersion: readiness.runtimeVersion ?? manifest.runtimeVersion,
+        },
+        expectedRuntimeVersion: options.runtimeVersion,
+        sourceTreeRoots: [
+          join(workspaceRoot, 'packages/capture-runtime/src'),
+        ],
+      });
+    }
     const semanticEvidence = assertPdfOcrRawCapture(
       raw,
       expectedPages,
@@ -772,6 +886,8 @@ export async function runPdfOcrE2e(
     const evidence: PdfOcrE2eEvidence = {
       ...semanticEvidence,
       packageKind: options.packageKind,
+      identityMode: options.identityMode,
+      ...(identity ? { identity } : {}),
       workerTransport:
         options.packageKind === 'local-package'
           ? 'test-local-exact-url'

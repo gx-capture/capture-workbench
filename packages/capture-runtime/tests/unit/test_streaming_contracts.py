@@ -10,11 +10,14 @@ from capture_runtime.contracts import (
     CaptureEngine,
     CaptureEventV2,
     CaptureSource,
+    OcrPageScopeV2,
     OpenIngestionV2,
     PartialCaptureV2,
     RawCaptureSegment,
     ReportStructuringFailureV2,
+    StartCaptureV2,
     StreamingEventType,
+    StructuringMode,
 )
 from capture_runtime.streaming import (
     InMemoryStreamingIngestionAdapter,
@@ -77,6 +80,49 @@ def test_v2_contracts_use_camel_case_and_preserve_sealed_segment_projection() ->
     assert partial.model_dump(by_alias=True)["coveredUntilMs"] == 600_000
     assert event.model_dump(by_alias=True)["eventType"] == "segment"
     assert event.model_dump(by_alias=True)["segments"][0]["locator"]["startMs"] == 0
+
+
+def test_pdf_page_scope_is_an_ordered_prefix_and_survives_wire_aliases() -> None:
+    request = StartCaptureV2(
+        client_request_id="capture-request-1",
+        ingestion_id="ingestion-1",
+        structuring_mode=StructuringMode.RUNTIME,
+        pdf_page_numbers=[1],
+    )
+    scope = OcrPageScopeV2(
+        source_page_count=46,
+        requested_page_numbers=[1],
+        processed_page_numbers=[1],
+    )
+
+    assert request.model_dump(by_alias=True)["pdfPageNumbers"] == [1]
+    assert scope.model_dump(by_alias=True) == {
+        "sourcePageCount": 46,
+        "requestedPageNumbers": [1],
+        "processedPageNumbers": [1],
+    }
+
+    legacy_request = StartCaptureV2(
+        client_request_id="legacy-capture-request-1",
+        ingestion_id="ingestion-1",
+        structuring_mode=StructuringMode.RUNTIME,
+    )
+    assert legacy_request.pdf_page_numbers is None
+    assert "pdfPageNumbers" not in legacy_request.model_dump(by_alias=True, exclude_none=True)
+
+    with pytest.raises(ValueError, match="ordered prefix"):
+        StartCaptureV2(
+            client_request_id="capture-request-1",
+            ingestion_id="ingestion-1",
+            structuring_mode=StructuringMode.RUNTIME,
+            pdf_page_numbers=[2],
+        )
+    with pytest.raises(ValueError, match="processed PDF pages"):
+        OcrPageScopeV2(
+            source_page_count=46,
+            requested_page_numbers=[1],
+            processed_page_numbers=[1, 2],
+        )
 
 
 def test_partial_capture_rejects_non_projection_text() -> None:

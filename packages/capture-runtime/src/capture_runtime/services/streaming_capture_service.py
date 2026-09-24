@@ -15,12 +15,14 @@ from capture_runtime.contracts import (
     CaptureDocument,
     CaptureEventV2,
     CaptureFailureV2,
+    CaptureOcrProjectionV3,
     CaptureOperationV2,
     CaptureSource,
     CaptureSourceKind,
     CaptureStreamingResult,
     FinalizeIngestionV2,
     IngestionV2,
+    OcrProjectionStatus,
     OpenIngestionV2,
     PartialCaptureV2,
     RawCapture,
@@ -30,10 +32,19 @@ from capture_runtime.contracts import (
     StructuringMode,
 )
 from capture_runtime.extractors import (
+    CaptureExtractionOutcome,
     CaptureExtractor,
     ExtractionRuntimeUnavailableError,
+    OcrExtractionFailure,
+    OcrSourcePreflightError,
     UnsupportedMediaError,
 )
+from capture_runtime.ocr_execution_proof import (
+    OcrExecutionDeviceProofV1,
+    OcrExecutionEvidenceSink,
+    acceptance_ocr_execution_evidence_sink_from_environment,
+)
+from capture_runtime.ocr_projection import OcrPipeline
 from capture_runtime.ollama.lifecycle_impl import RuntimeUnavailableError
 from capture_runtime.progressive_audio import ProgressiveAudioError, ProgressiveSessionEvent
 from capture_runtime.progressive_capture import (
@@ -50,6 +61,7 @@ from capture_runtime.storage import (
 from capture_runtime.streaming import MAX_STREAM_CHUNK_BYTES
 from capture_runtime.structuring import StructuringValidationError, validate_structuring_candidate
 from capture_runtime.structuring_provider import CaptureStructuringProvider
+from capture_runtime.worker_client import OcrWorkerFailure
 
 
 class StreamingCaptureService:
@@ -61,6 +73,7 @@ class StreamingCaptureService:
         processor: ProgressiveCaptureProcessor | None = None,
         extractor: CaptureExtractor | None = None,
         structurer: CaptureStructuringProvider | None = None,
+        execution_evidence_sink: OcrExecutionEvidenceSink | None = None,
         max_chunk_bytes: int = MAX_STREAM_CHUNK_BYTES,
     ) -> None:
         self.repository = repository
@@ -69,8 +82,18 @@ class StreamingCaptureService:
         self._processor = processor
         self._extractor = extractor
         self._structurer = structurer
+        self._execution_evidence_sink = (
+            execution_evidence_sink
+            if execution_evidence_sink is not None
+            else acceptance_ocr_execution_evidence_sink_from_environment()
+        )
+        self._ocr_pipeline = OcrPipeline()
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._cancellations: dict[str, asyncio.Event] = {}
+        # Keep the discard hook used by structuring sessions. Host OCR proofs
+        # are published at the awaiting_structuring checkpoint and are never
+        # retained here while waiting for a host-owned commit.
+        self._pending_execution_proofs: dict[str, OcrExecutionDeviceProofV1] = {}
         self._shutting_down = False
 
     def open_ingestion(self, request: OpenIngestionV2) -> IngestionV2:
@@ -161,6 +184,22 @@ class StreamingCaptureService:
     def raw(self, capture_id: str) -> RawCapture:
         return self.repository.read_raw(capture_id)
 
+    def ocr(self, capture_id: str) -> CaptureOcrProjectionV3:
+        try:
+            return self.repository.read_ocr_projection(capture_id)
+        except StreamingPartialNotFoundError:
+            operation = self.repository.get_capture(capture_id)
+            if operation.status is not StreamingCaptureStatus.FAILED or operation.error is None:
+                raise
+            projection = self._ocr_pipeline.failed(
+                capture_id=capture_id,
+                source=operation.source,
+                failure=operation.error,
+                created_at=operation.updated_at,
+            )
+            self.repository.write_ocr_projection(capture_id, projection)
+            return projection
+
     def terminal_result(self, capture_id: str) -> CaptureStreamingResult:
         operation = self.repository.get_capture(capture_id)
         if operation.status is not StreamingCaptureStatus.COMPLETED:
@@ -210,35 +249,41 @@ class StreamingCaptureService:
         *,
         idempotency_key: str,
     ) -> CaptureOperationV2:
-        operation = self.repository.get_capture(capture_id)
-        fingerprint = _candidate_fingerprint(candidate)
-        if operation.status is StreamingCaptureStatus.COMPLETED:
-            return self.repository.commit_host_result(
-                capture_id,
-                idempotency_key=idempotency_key,
-                fingerprint=fingerprint,
-                result=candidate,
-            )
-        request = self.repository.capture_request(capture_id)
-        if (
-            request.structuring_mode is not StructuringMode.HOST
-            or operation.status is not StreamingCaptureStatus.AWAITING_STRUCTURING
-        ):
-            raise StreamingTransitionError("capture is not awaiting host structuring")
-        raw = self.repository.read_raw(capture_id)
-        validated = _validate_runtime_document(candidate, raw)
-        completed = CaptureDocument.model_validate(
-            {
-                **validated.model_dump(mode="json", by_alias=True),
-                "completedAt": self._clock.now().isoformat(),
-            }
-        )
-        return self.repository.commit_host_result(
-            capture_id,
-            idempotency_key=idempotency_key,
-            fingerprint=fingerprint,
-            result=completed,
-        )
+        try:
+            operation = self.repository.get_capture(capture_id)
+            fingerprint = _candidate_fingerprint(candidate)
+            if operation.status is StreamingCaptureStatus.COMPLETED:
+                committed = self.repository.commit_host_result(
+                    capture_id,
+                    idempotency_key=idempotency_key,
+                    fingerprint=fingerprint,
+                    result=candidate,
+                )
+            else:
+                request = self.repository.capture_request(capture_id)
+                if (
+                    request.structuring_mode is not StructuringMode.HOST
+                    or operation.status is not StreamingCaptureStatus.AWAITING_STRUCTURING
+                ):
+                    raise StreamingTransitionError("capture is not awaiting host structuring")
+                raw = self.repository.read_raw(capture_id)
+                validated = _validate_runtime_document(candidate, raw)
+                completed = CaptureDocument.model_validate(
+                    {
+                        **validated.model_dump(mode="json", by_alias=True),
+                        "completedAt": self._clock.now().isoformat(),
+                    }
+                )
+                committed = self.repository.commit_host_result(
+                    capture_id,
+                    idempotency_key=idempotency_key,
+                    fingerprint=fingerprint,
+                    result=completed,
+                )
+            return committed
+        except Exception:
+            self._clear_pending_execution_proof(capture_id)
+            raise
 
     def report_host_failure(
         self,
@@ -248,24 +293,27 @@ class StreamingCaptureService:
         message: str,
         idempotency_key: str,
     ) -> CaptureOperationV2:
-        operation = self.repository.get_capture(capture_id)
-        request = self.repository.capture_request(capture_id)
-        if (
-            request.structuring_mode is not StructuringMode.HOST
-            or operation.status is not StreamingCaptureStatus.AWAITING_STRUCTURING
-        ):
-            raise StreamingTransitionError("capture is not awaiting host structuring")
-        return self.repository.fail_host_structure(
-            capture_id,
-            idempotency_key=idempotency_key,
-            fingerprint=_failure_fingerprint(code, message),
-            failure=CaptureFailureV2(
-                code=code,
-                message=message,
-                stage="structuring",
-                retryable=False,
-            ),
-        )
+        try:
+            operation = self.repository.get_capture(capture_id)
+            request = self.repository.capture_request(capture_id)
+            if (
+                request.structuring_mode is not StructuringMode.HOST
+                or operation.status is not StreamingCaptureStatus.AWAITING_STRUCTURING
+            ):
+                raise StreamingTransitionError("capture is not awaiting host structuring")
+            return self.repository.fail_host_structure(
+                capture_id,
+                idempotency_key=idempotency_key,
+                fingerprint=_failure_fingerprint(code, message),
+                failure=CaptureFailureV2(
+                    code=code,
+                    message=message,
+                    stage="structuring",
+                    retryable=False,
+                ),
+            )
+        finally:
+            self._clear_pending_execution_proof(capture_id)
 
     def fail_invalid_host_structure(
         self, capture_id: str, *, idempotency_key: str
@@ -278,11 +326,13 @@ class StreamingCaptureService:
         )
 
     def cancel_capture(self, capture_id: str) -> CaptureOperationV2:
+        self._clear_pending_execution_proof(capture_id)
         cancellation = self._cancellations.setdefault(capture_id, asyncio.Event())
         cancellation.set()
         return self.repository.cancel_capture(capture_id)
 
     def delete_capture(self, capture_id: str) -> None:
+        self._clear_pending_execution_proof(capture_id)
         task = self._tasks.pop(capture_id, None)
         if task is not None and not task.done():
             task.cancel()
@@ -291,6 +341,7 @@ class StreamingCaptureService:
 
     async def shutdown(self) -> None:
         self._shutting_down = True
+        self._pending_execution_proofs.clear()
         tasks = list(self._tasks.values())
         for task in tasks:
             task.cancel()
@@ -299,6 +350,7 @@ class StreamingCaptureService:
                 await task
         self._tasks.clear()
         self._cancellations.clear()
+        self._pending_execution_proofs.clear()
 
     def _schedule(self, capture_id: str) -> None:
         if (
@@ -326,15 +378,19 @@ class StreamingCaptureService:
             source_path = self.repository.source_path(operation.ingestion_id)
             processor = self._processor
             if operation.kind is CaptureSourceKind.AUDIO and processor is not None:
-                raw = await processor.process(
-                    capture_id=capture_id,
-                    source=operation.source,
-                    source_path=source_path,
-                    cancellation=cancellation,
-                    sink=lambda events, session: self._persist_events(capture_id, events, session),
+                extraction = CaptureExtractionOutcome(
+                    raw=await processor.process(
+                        capture_id=capture_id,
+                        source=operation.source,
+                        source_path=source_path,
+                        cancellation=cancellation,
+                        sink=lambda events, session: self._persist_events(
+                            capture_id, events, session
+                        ),
+                    )
                 )
             elif operation.kind is not CaptureSourceKind.AUDIO and self._extractor is not None:
-                raw = await self._extract_buffered_source(
+                extraction = await self._extract_buffered_source(
                     capture_id,
                     operation.source,
                     operation.kind,
@@ -347,7 +403,13 @@ class StreamingCaptureService:
                     code="requirement_unavailable",
                     retryable=True,
                 )
+            raw = extraction.raw
             self.repository.write_raw(capture_id, raw)
+            if extraction.ocr_projection is not None:
+                self.repository.write_ocr_projection(
+                    capture_id,
+                    extraction.ocr_projection.model_copy(update={"capture_id": capture_id}),
+                )
             raw_written = True
             if cancellation.is_set():
                 return
@@ -355,9 +417,18 @@ class StreamingCaptureService:
             if request.structuring_mode is StructuringMode.RUNTIME:
                 self.repository.mark_awaiting_structuring(capture_id)
                 await self.structure(capture_id)
+                self._publish_execution_proof(capture_id, operation.kind.value, extraction)
             else:
                 self.repository.mark_awaiting_structuring(capture_id)
+                if cancellation.is_set():
+                    return
+                if (
+                    extraction.ocr_projection is not None
+                    and extraction.ocr_projection.status is OcrProjectionStatus.COMPLETED
+                ):
+                    self._publish_execution_proof(capture_id, operation.kind.value, extraction)
         except asyncio.CancelledError:
+            self._clear_pending_execution_proof(capture_id)
             if not cancellation.is_set() and not self._shutting_down:
                 self._fail(
                     capture_id,
@@ -371,6 +442,24 @@ class StreamingCaptureService:
                 _safe_failure_message(error),
                 stage=error.stage,
                 retryable=error.retryable,
+            )
+        except OcrExtractionFailure as error:
+            self._publish_ocr_failure_evidence(operation, error)
+            self._fail(
+                capture_id,
+                error.failure.code,
+                error.failure.message,
+                stage=error.failure.stage or "extraction",
+                retryable=error.failure.retryable,
+                ocr_projection=error.projection,
+            )
+        except OcrSourcePreflightError:
+            self._fail(
+                capture_id,
+                "ocr_source_preflight_failed",
+                "OCR source preflight failed.",
+                stage="extraction",
+                retryable=False,
             )
         except StructuringValidationError:
             self._fail(
@@ -441,7 +530,7 @@ class StreamingCaptureService:
         declared_kind: CaptureSourceKind,
         source_path: Path,
         cancellation: asyncio.Event,
-    ) -> RawCapture:
+    ) -> CaptureExtractionOutcome:
         extractor = self._extractor
         if extractor is None:
             raise ProgressiveCaptureError(
@@ -471,7 +560,23 @@ class StreamingCaptureService:
                 code="source_kind_mismatch",
                 retryable=False,
             )
-        raw = await extractor.extract(content, source, cancellation)
+        request = self.repository.capture_request(capture_id)
+        if request.pdf_page_numbers is not None and declared_kind is not CaptureSourceKind.PDF:
+            raise ProgressiveCaptureError(
+                "PDF page selection is only valid for PDF sources.",
+                code="invalid_pdf_page_selection",
+                retryable=False,
+            )
+        if request.pdf_page_numbers is None:
+            extraction = await extractor.extract(content, source, cancellation)
+        else:
+            extraction = await extractor.extract(
+                content,
+                source,
+                cancellation,
+                pdf_page_numbers=tuple(request.pdf_page_numbers),
+            )
+        raw = extraction.raw
         if not raw.segments:
             raise ProgressiveCaptureError(
                 "Extraction produced no non-empty content.",
@@ -496,7 +601,49 @@ class StreamingCaptureService:
             partial_revision=partial.revision,
             segments=list(raw.segments),
         )
-        return raw
+        return extraction
+
+    def _publish_execution_proof(
+        self,
+        capture_id: str,
+        source_role: str,
+        extraction: CaptureExtractionOutcome,
+    ) -> None:
+        proof = extraction._execution_proof
+        if proof is None:
+            return
+        self._execution_evidence_sink.record(capture_id, source_role, proof)
+
+    def _publish_ocr_failure_evidence(
+        self,
+        operation: CaptureOperationV2,
+        error: OcrExtractionFailure,
+    ) -> None:
+        """Best-effort private evidence; never changes the public failure path."""
+
+        source = operation.source
+        diagnostics_error = _find_ocr_worker_failure(error)
+        if source is None or diagnostics_error is None:
+            return
+        diagnostics = getattr(diagnostics_error, "_diagnostics", None)
+        record_failure = getattr(self._execution_evidence_sink, "record_failure", None)
+        if diagnostics is None or not callable(record_failure):
+            return
+        try:
+            record_failure(
+                source_sha256=source.sha256,
+                source_role=operation.kind.value,
+                diagnostics=diagnostics,
+                worker_sha256=getattr(diagnostics_error, "_worker_sha256", None),
+                provenance=diagnostics_error.provenance,
+            )
+        except Exception:
+            # The artifact sink is an acceptance-only diagnostic adapter.  A
+            # failed diagnostic write must not replace or expose the OCR error.
+            return
+
+    def _clear_pending_execution_proof(self, capture_id: str) -> None:
+        self._pending_execution_proofs.pop(capture_id, None)
 
     async def _persist_events(
         self,
@@ -525,17 +672,32 @@ class StreamingCaptureService:
         *,
         stage: str = "extraction",
         retryable: bool = True,
+        ocr_projection: CaptureOcrProjectionV3 | None = None,
     ) -> None:
+        self._clear_pending_execution_proof(capture_id)
         with suppress(StreamingRecordNotFoundError):
-            self.repository.fail_capture(
-                capture_id,
-                CaptureFailureV2(
-                    code=code,
-                    message=message,
-                    stage=stage,
-                    retryable=retryable,
-                ),
+            failure = CaptureFailureV2(
+                code=code,
+                message=message,
+                stage=stage,
+                retryable=retryable,
             )
+            operation = self.repository.get_capture(capture_id)
+            try:
+                self.repository.read_ocr_projection(capture_id)
+            except StreamingPartialNotFoundError:
+                projection = ocr_projection
+                if projection is None:
+                    projection = self._ocr_pipeline.failed(
+                        capture_id=capture_id,
+                        source=operation.source,
+                        failure=failure,
+                        created_at=operation.updated_at,
+                    )
+                else:
+                    projection = projection.model_copy(update={"capture_id": capture_id})
+                self.repository.write_ocr_projection(capture_id, projection)
+            self.repository.fail_capture(capture_id, failure)
 
     def _captures_for(self, ingestion_id: str) -> list[CaptureOperationV2]:
         return [
@@ -559,6 +721,19 @@ def _validate_runtime_document(candidate: object, raw: RawCapture) -> CaptureDoc
                 for issue in error.errors()
             ],
         ) from error
+
+
+def _find_ocr_worker_failure(error: BaseException) -> OcrWorkerFailure | None:
+    current: BaseException | None = error
+    visited: set[int] = set()
+    for _ in range(8):
+        if current is None or id(current) in visited:
+            return None
+        visited.add(id(current))
+        if isinstance(current, OcrWorkerFailure):
+            return current
+        current = current.__cause__ or current.__context__
+    return None
 
 
 def _safe_failure_message(error: BaseException) -> str:

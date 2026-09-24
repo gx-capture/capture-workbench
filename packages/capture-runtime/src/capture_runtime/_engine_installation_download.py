@@ -6,7 +6,7 @@ import asyncio
 import hashlib
 import os
 from collections.abc import Callable
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Protocol
 from urllib.parse import urlsplit
 
@@ -20,6 +20,8 @@ _SMOKE_WORKER_MIRROR_OPT_IN = "CAPTURE_SMOKE_WORKER_MIRROR_OPT_IN"
 _SMOKE_WORKER_MIRROR_URL = "CAPTURE_SMOKE_WORKER_MIRROR_URL"
 _PDF_OCR_E2E_LOCAL_WORKER_OPT_IN = "CAPTURE_PDF_OCR_E2E_LOCAL_WORKER_OPT_IN"
 _PDF_OCR_E2E_LOCAL_WORKER_URL = "CAPTURE_PDF_OCR_E2E_LOCAL_WORKER_URL"
+_PDF_OCR_E2E_LOCAL_MODEL_OPT_IN = "CAPTURE_PDF_OCR_E2E_LOCAL_MODEL_OPT_IN"
+_PDF_OCR_E2E_LOCAL_MODEL_ROOT = "CAPTURE_PDF_OCR_E2E_LOCAL_MODEL_ROOT"
 
 
 def _facade_download_chunk_bytes() -> int:
@@ -112,6 +114,30 @@ def pdf_ocr_e2e_local_worker_url(environ: dict[str, str] | None = None) -> str |
     return f"http://127.0.0.1:{port}/{file_name}"
 
 
+def pdf_ocr_e2e_local_model_root(environ: dict[str, str] | None = None) -> Path | None:
+    """Resolve the locked model root used only by the local-package OCR probe.
+
+    The normal installer always uses catalog HTTPS URLs.  This explicit test
+    opt-in lets a commit-bound local candidate exercise the freshly built app
+    before its derived profile bytes exist at the immutable release source URL.
+    The downloader still verifies every copied file against the catalog.
+    """
+
+    source = os.environ if environ is None else environ
+    if source.get(_PDF_OCR_E2E_LOCAL_MODEL_OPT_IN, "").strip() != "1":
+        return None
+    raw = source.get(_PDF_OCR_E2E_LOCAL_MODEL_ROOT, "").strip()
+    if not raw:
+        raise EngineInstallationError("PDF OCR E2E local model root is missing")
+    try:
+        root = Path(raw).resolve(strict=True)
+    except OSError as error:
+        raise EngineInstallationError("PDF OCR E2E local model root is unavailable") from error
+    if not root.is_dir() or root.is_symlink():
+        raise EngineInstallationError("PDF OCR E2E local model root is not a directory")
+    return root
+
+
 class ArtifactDownloader(Protocol):
     async def download(
         self,
@@ -187,6 +213,71 @@ class HttpArtifactDownloader:
                 raise EngineInstallationError("engine artifact byte count does not match catalog")
             if digest.hexdigest() != descriptor.sha256:
                 raise EngineInstallationError("engine artifact checksum does not match catalog")
+        except BaseException:
+            destination.unlink(missing_ok=True)
+            raise
+
+
+class LocalModelFileDownloader:
+    """Copy exact locked model files from a test-only local source root."""
+
+    def __init__(self, root: Path) -> None:
+        try:
+            resolved = root.resolve(strict=True)
+        except OSError as error:
+            raise EngineInstallationError("local OCR model root is unavailable") from error
+        if not resolved.is_dir() or resolved.is_symlink():
+            raise EngineInstallationError("local OCR model root is not a directory")
+        self._root = resolved
+
+    def _source(self, descriptor: EngineModelFileDescriptor) -> Path:
+        relative = PurePosixPath(descriptor.path)
+        if relative.is_absolute() or any(part in {"", ".", ".."} for part in relative.parts):
+            raise EngineInstallationError("local OCR model path is unsafe")
+        source = self._root.joinpath(*relative.parts)
+        try:
+            resolved = source.resolve(strict=True)
+        except OSError as error:
+            raise EngineInstallationError("local OCR model file is unavailable") from error
+        if source.is_symlink() or resolved != source or not resolved.is_file():
+            raise EngineInstallationError("local OCR model file is unsafe")
+        return resolved
+
+    async def download(
+        self,
+        descriptor: EngineModelFileDescriptor,
+        destination: Path,
+        *,
+        cancel_event: asyncio.Event,
+        progress: Callable[[int], None],
+    ) -> None:
+        source = self._source(descriptor)
+        copied = 0
+        digest = hashlib.sha256()
+        try:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            with source.open("rb") as reader, destination.open("xb") as writer:
+                while chunk := reader.read(_facade_download_chunk_bytes()):
+                    if cancel_event.is_set():
+                        raise asyncio.CancelledError
+                    copied += len(chunk)
+                    if copied > descriptor.bytes:
+                        raise EngineInstallationError(
+                            "local OCR model file exceeded catalog byte count"
+                        )
+                    writer.write(chunk)
+                    digest.update(chunk)
+                    progress(copied)
+                writer.flush()
+                os.fsync(writer.fileno())
+            if copied != descriptor.bytes:
+                raise EngineInstallationError(
+                    "local OCR model file byte count does not match catalog"
+                )
+            if digest.hexdigest() != descriptor.sha256:
+                raise EngineInstallationError(
+                    "local OCR model file checksum does not match catalog"
+                )
         except BaseException:
             destination.unlink(missing_ok=True)
             raise
@@ -393,7 +484,9 @@ __all__ = [
     "ArtifactDownloader",
     "HttpArtifactDownloader",
     "HttpModelFileDownloader",
+    "LocalModelFileDownloader",
     "ModelFileDownloader",
+    "pdf_ocr_e2e_local_model_root",
     "pdf_ocr_e2e_local_worker_url",
     "smoke_worker_mirror_url",
 ]

@@ -9,14 +9,14 @@
       "cache": true,
       "executor": "nx:run-commands",
       "options": {
-        "command": "pnpm exec eslint tools/capture-boundary-doctor.ts tools/capture-boundary-doctor.test.ts"
+        "command": "pnpm exec eslint tools/capture-boundary-doctor.ts tools/capture-boundary-doctor.test.ts tools/three-project-acceptance.ts tools/three-project-acceptance.test.ts tools/three-project-cleanup-verifier.test.ts tools/windows-built-in-process-resolver.ts tools/windows-built-in-process-resolver.test.ts tools/package-manager-version.test.ts"
       }
     },
     "test": {
       "cache": true,
       "executor": "nx:run-commands",
       "options": {
-        "command": "node --test tools/capture-boundary-doctor.test.ts"
+        "command": "node --test tools/capture-boundary-doctor.test.ts tools/three-project-acceptance.test.ts tools/three-project-cleanup-verifier.test.ts tools/windows-built-in-process-resolver.test.ts tools/package-manager-version.test.ts"
       }
     },
     "typecheck": {
@@ -103,7 +103,7 @@
       "cache": true,
       "executor": "nx:run-commands",
       "options": {
-        "command": "node --test tools/package-candidate-workflow.test.ts tools/publish-npm-candidate.test.ts tools/publish-crate-candidate.test.ts tools/verify-package-candidate.test.ts tools/verify-java-sdk-candidate.test.ts tools/verify-runtime-candidate.test.ts tools/verify-runtime-candidate-binding.test.ts tools/verify-registry-ledgers.test.ts tools/record-pypi-candidate.test.ts"
+        "command": "node --test tools/package-candidate-workflow.test.ts tools/publish-npm-candidate.test.ts tools/publish-crate-candidate.test.ts tools/verify-package-candidate.test.ts tools/verify-java-sdk-candidate.test.ts tools/verify-runtime-candidate.test.ts tools/verify-runtime-candidate-binding.test.ts tools/verify-registry-ledgers.test.ts tools/record-pypi-candidate.test.ts tools/assemble-runtime-candidate.test.ts"
       }
     },
     "release-manifest-test": {
@@ -111,6 +111,58 @@
       "executor": "nx:run-commands",
       "options": {
         "command": "node --test tools/create-release-manifest.test.ts"
+      }
+    },
+    "python-candidate-index-test": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "dependsOn": ["python-candidate-index-http-integration"],
+      "options": {
+        "env": {
+          "PYTHON_INDEX_UNIT_ONLY": "1"
+        },
+        "command": "node --test --test-name-pattern \"^(?!runs pip and Poetry HTTP installation smoke in isolated temporary environments$)\" tools/python-candidate-index.test.ts"
+      }
+    },
+    "python-candidate-index-typecheck": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "corepack pnpm exec tsc -p tools/tsconfig.python-candidate-index.json --noEmit --pretty false"
+      }
+    },
+    "python-candidate-index-lint": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "corepack pnpm exec eslint tools/python-candidate-index.ts tools/python-candidate-index.test.ts"
+      }
+    },
+    "python-candidate-index-assemble": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "metadata": {
+        "description": "Assembles a separately stored immutable Python PEP 503 candidate index from exact package/runtime candidates; requires PYTHON_INDEX_* environment inputs."
+      },
+      "options": {
+        "command": "node tools/python-candidate-index.ts --mode assemble"
+      }
+    },
+    "python-candidate-index-http-integration": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "node --test --test-name-pattern \"runs pip and Poetry HTTP installation smoke in isolated temporary environments\" tools/python-candidate-index.test.ts"
+      }
+    },
+    "python-candidate-index-real-integration": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "metadata": {
+        "description": "Runs the real j16 package/runtime candidate through pip and Poetry HTTP installation smoke using PYTHON_INDEX_* environment inputs."
+      },
+      "options": {
+        "command": "node tools/python-candidate-index.ts --mode verify --http-smoke"
       }
     },
     "release-index-test": {

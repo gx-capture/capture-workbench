@@ -3,11 +3,13 @@ import {
   EMPTY,
   catchError,
   concatMap,
+  concatWith,
   defer,
   expand,
   filter,
   finalize,
   from,
+  ignoreElements,
   map,
   type Observable,
   of,
@@ -23,14 +25,19 @@ import type {
   CaptureEvent,
   CaptureOperation,
   CaptureRequirementId,
+  OcrComputePreflight,
   PartialCapture,
   RuntimeRequirement,
 } from '@gx-capture/capture-workbench-ui';
+import type { CaptureOcrProjection } from '@gx-capture/capture-runtime-client';
 import type {
   DesktopLibraryDetail,
   DesktopLibraryStatus,
   DesktopLibrarySummary,
+  OcrEvidenceExpectedIdentity,
+  OcrEvidenceV1,
 } from '../contracts';
+import { buildOcrEvidence } from '../contracts';
 import { DesktopLibraryService } from './desktop-library.service';
 import {
   DesktopRuntimeClientService,
@@ -45,6 +52,8 @@ import {
   isActiveJob,
   isActiveStreaming,
   isAudioMediaType,
+  isOcrCheckpoint,
+  isPdfMediaType,
   terminalLibraryStatus,
   terminalStage,
 } from './desktop-workspace.selectors';
@@ -61,6 +70,10 @@ interface ActiveCapture {
   terminalStatus?: DesktopLibraryStatus;
   terminalErrorCode?: string;
   terminalErrorMessage?: string;
+  /** Readiness identity captured by the host before the runtime operation starts. */
+  ocrCompute?: OcrComputePreflight | null;
+  /** Source identity received from the runtime operation, never from OCR output. */
+  sourceSha256?: string;
   readonly cancelWake: Subject<void>;
 }
 
@@ -130,6 +143,17 @@ export class DesktopWorkspaceCaptureService {
     return isAudioMediaType(document?.mediaType ?? '');
   }
 
+  private isPdfDocument(
+    documentId: string,
+    host: DesktopWorkspaceCaptureHost,
+    mediaType?: string,
+  ): boolean {
+    if (mediaType !== undefined) return isPdfMediaType(mediaType);
+    const document = host.documents().find((item) => item.documentId === documentId)
+      ?? (host.selected()?.documentId === documentId ? host.selected() : undefined);
+    return isPdfMediaType(document?.mediaType ?? '');
+  }
+
   private applyStreamingEvent(active: ActiveCapture, event: CaptureEvent): void {
     active.lastEventSequence = Math.max(active.lastEventSequence, event.sequence);
     active.lastStage = event.stage;
@@ -152,7 +176,7 @@ export class DesktopWorkspaceCaptureService {
           host.setMessage('選取的音訊需要額外安裝 Whisper。');
           return EMPTY;
         }
-        return this.captureExisting$(document.documentId, host);
+        return this.captureExisting$(document.documentId, host, document.mediaType);
       }),
       catchError((error) => {
         host.setMessage(errorMessage(error));
@@ -164,6 +188,7 @@ export class DesktopWorkspaceCaptureService {
   private captureExisting$(
     documentId: string,
     host: DesktopWorkspaceCaptureHost,
+    mediaType?: string,
   ): Observable<void> {
     return defer(() => {
       if (!this.runtime.ready() || this.activeCaptures.has(documentId)) return EMPTY;
@@ -174,9 +199,13 @@ export class DesktopWorkspaceCaptureService {
         cancelRequested: false,
         cancelSent: false,
         cancelWake: new Subject<void>(),
+        ocrCompute: this.runtime.ocrCompute(),
       };
       this.activeCaptures.set(documentId, active);
       this.markBusy(documentId, true);
+      const pdfPageNumbers = this.isPdfDocument(documentId, host, mediaType)
+        ? this.runtime.pdfPageNumbers()
+        : undefined;
 
       const work$ = this.library.updateCapture({
         documentId,
@@ -187,7 +216,7 @@ export class DesktopWorkspaceCaptureService {
         tap(() => host.reloadDocumentState(documentId)),
         switchMap(() => active.streaming
           ? this.captureStreaming$(documentId, active, host)
-          : this.captureOneShot$(documentId, active, host)),
+          : this.captureOneShot$(documentId, active, host, pdfPageNumbers)),
       );
 
       return this.trackCaptureLifecycle$(documentId, active, work$, host);
@@ -198,10 +227,12 @@ export class DesktopWorkspaceCaptureService {
     documentId: string,
     active: ActiveCapture,
     host: DesktopWorkspaceCaptureHost,
+    pdfPageNumbers?: readonly number[],
   ): Observable<void> {
-    return this.runtime.createCapture(documentId, crypto.randomUUID()).pipe(
+    return this.runtime.createCapture(documentId, crypto.randomUUID(), pdfPageNumbers).pipe(
       switchMap((job) => {
         active.captureId = job.captureId;
+        this.rememberSourceIdentity(active, job);
         active.lastStage = captureJobStage(job);
         return this.library.updateCapture({
           documentId,
@@ -214,7 +245,7 @@ export class DesktopWorkspaceCaptureService {
         );
       }),
       switchMap((job) => this.waitForTerminal$(documentId, job, active, host)),
-      switchMap((job) => this.persistTerminal$(documentId, job, active)),
+      switchMap((job) => this.persistOneShot$(documentId, job, active, host)),
       map(() => undefined),
     );
   }
@@ -362,6 +393,7 @@ export class DesktopWorkspaceCaptureService {
         terminalErrorCode: terminalCommitted ? document.errorCode : undefined,
         terminalErrorMessage: terminalCommitted ? document.errorMessage : undefined,
         cancelWake: new Subject<void>(),
+        ocrCompute: this.runtime.ocrCompute(),
       };
       this.activeCaptures.set(document.documentId, active);
       this.markBusy(document.documentId, true);
@@ -384,9 +416,12 @@ export class DesktopWorkspaceCaptureService {
             )),
           )
           : this.runtime.getCapture(document.captureId).pipe(
-            tap((job) => active.lastStage = captureJobStage(job)),
+            tap((job) => {
+              this.rememberSourceIdentity(active, job);
+              active.lastStage = captureJobStage(job);
+            }),
             switchMap((job) => this.waitForTerminal$(document.documentId, job, active, host)),
-            switchMap((job) => this.persistTerminal$(document.documentId, job, active)),
+            switchMap((job) => this.persistOneShot$(document.documentId, job, active, host)),
           );
       return this.trackCaptureLifecycle$(document.documentId, active, work$, host);
     });
@@ -426,10 +461,10 @@ export class DesktopWorkspaceCaptureService {
       switchMap((job) => this.persistRawDuringExtraction$(documentId, job, active, host)),
       tap((job) => active.lastStage = captureJobStage(job)),
       expand((job) => {
-        if (!isActiveJob(job)) return EMPTY;
+        if (!isActiveJob(job) || isOcrCheckpoint(job)) return EMPTY;
         return this.advanceCapture$(documentId, job, active, host);
       }),
-      filter((job) => !isActiveJob(job)),
+      filter((job) => !isActiveJob(job) || isOcrCheckpoint(job)),
       take(1),
     );
   }
@@ -473,7 +508,7 @@ export class DesktopWorkspaceCaptureService {
   ): Observable<DesktopCaptureOperation> {
     if (
       active.rawPersisted
-      || (captureJobStage(job) !== 'structuring' && captureJobStage(job) !== 'awaiting_structuring')
+      || captureJobStage(job) !== 'structuring'
     ) {
       return of(job);
     }
@@ -527,11 +562,92 @@ export class DesktopWorkspaceCaptureService {
     );
   }
 
+  private persistOneShot$(
+    documentId: string,
+    job: DesktopCaptureOperation,
+    active: ActiveCapture,
+    host: DesktopWorkspaceCaptureHost,
+  ): Observable<DesktopLibrarySummary> {
+    return isOcrCheckpoint(job)
+      ? this.persistOcrCheckpoint$(documentId, job, active, host)
+      : this.persistTerminal$(documentId, job, active);
+  }
+
+  private persistOcrCheckpoint$(
+    documentId: string,
+    job: DesktopCaptureOperation,
+    active: ActiveCapture,
+    host: DesktopWorkspaceCaptureHost,
+  ): Observable<DesktopLibrarySummary> {
+    const stage = captureJobStage(job);
+    return this.settleOne$(this.runtime.getRaw(job.captureId)).pipe(
+      switchMap((raw) => {
+        if (!raw) {
+          return throwError(() => new Error('Capture Runtime OCR checkpoint raw projection is unavailable.'));
+        }
+        return this.settleOne$(this.runtime.getOcr(job.captureId)).pipe(
+          switchMap((projection) => {
+            if (
+              projection.status !== 'completed'
+              || projection.pages.some((page) => page.status === 'failed')
+            ) {
+              return throwError(() => new Error('Capture Runtime OCR checkpoint is not complete.'));
+            }
+            return buildOcrEvidence({
+              projection,
+              expected: this.expectedOcrIdentity(job, active, projection.status),
+            }).pipe(map((ocrEvidence) => ({ raw, ocrEvidence })));
+          }),
+        );
+      }),
+      switchMap(({ raw, ocrEvidence }) => this.settleOne$(this.library.updateCapture({
+        documentId,
+        captureId: job.captureId,
+        status: ocrEvidence.status,
+        stage,
+        raw,
+        ocrEvidence,
+      }))),
+      tap(() => {
+        active.terminalCommitted = true;
+        active.terminalStatus = 'awaiting_confirmation';
+        active.lastStage = stage;
+        host.reloadDocumentState(documentId);
+      }),
+      switchMap(() => this.settleOne$(this.runtime.deleteCapture(job.captureId))),
+      switchMap(() => this.settleOne$(this.library.updateCapture({
+        documentId,
+        status: 'awaiting_confirmation',
+        stage,
+        clearCaptureId: true,
+      }))),
+    );
+  }
+
   private persistTerminalData$(
     documentId: string,
     job: DesktopCaptureOperation,
     active: ActiveCapture,
+    ocrEvidence?: OcrEvidenceV1,
   ): Observable<DesktopLibrarySummary> {
+    if (
+      ocrEvidence === undefined
+      && (job.status === 'completed' || job.status === 'failed')
+    ) {
+      this.rememberSourceIdentity(active, job);
+      return this.settleOne$(this.runtime.getOcr(job.captureId)).pipe(
+        switchMap((projection) => buildOcrEvidence({
+          projection,
+          expected: this.expectedOcrIdentity(job, active),
+        })),
+        switchMap((evidence) => this.persistTerminalData$(
+          documentId,
+          job,
+          active,
+          evidence,
+        )),
+      );
+    }
     if (job.status === 'completed') {
       if (active.rawPersisted) {
         return this.runtime.getResult(job.captureId).pipe(
@@ -541,6 +657,7 @@ export class DesktopWorkspaceCaptureService {
             status: 'completed' as const,
             stage: captureJobStage(job),
             result,
+            ...(ocrEvidence === undefined ? {} : { ocrEvidence }),
           })),
         );
       }
@@ -557,6 +674,7 @@ export class DesktopWorkspaceCaptureService {
                 status: 'completed' as const,
                 stage: captureJobStage(job),
                 result,
+                ...(ocrEvidence === undefined ? {} : { ocrEvidence }),
                 ...(active.rawPersisted ? {} : { raw }),
               };
               return this.library.updateCapture(update).pipe(
@@ -576,6 +694,7 @@ export class DesktopWorkspaceCaptureService {
           captureId: job.captureId,
           status: terminalLibraryStatus(job),
           stage: captureJobStage(job),
+          ...(ocrEvidence === undefined ? {} : { ocrEvidence }),
           errorCode: job.error?.code,
           errorMessage: job.error?.message,
         });
@@ -587,6 +706,7 @@ export class DesktopWorkspaceCaptureService {
             captureId: job.captureId,
             status: terminalLibraryStatus(job),
             stage: captureJobStage(job),
+            ...(ocrEvidence === undefined ? {} : { ocrEvidence }),
             errorCode: job.error?.code,
             errorMessage: job.error?.message,
             ...(active.rawPersisted || !raw ? {} : { raw }),
@@ -600,6 +720,66 @@ export class DesktopWorkspaceCaptureService {
       );
     }
     return throwError(() => new Error(`Capture Runtime returned unsupported terminal status: ${job.status}`));
+  }
+
+  private expectedOcrIdentity(
+    job: DesktopCaptureOperation,
+    active: ActiveCapture,
+    terminalStatus: CaptureOcrProjection['status'] = job.status === 'failed' ? 'failed' : 'completed',
+  ): OcrEvidenceExpectedIdentity {
+    const compute = active.ocrCompute;
+    if (!compute) {
+      throw new Error('OCR evidence identity unavailable: runtime OCR readiness is missing.');
+    }
+    const sourceSha256 = active.sourceSha256 ?? job.source?.sha256;
+    if (!sourceSha256) {
+      throw new Error('OCR evidence identity unavailable: capture source identity is missing.');
+    }
+    if (!compute.workerSha256) {
+      throw new Error('OCR evidence identity unavailable: OCR worker identity is missing.');
+    }
+    if (terminalStatus !== 'completed' && terminalStatus !== 'failed') {
+      throw new Error(`OCR evidence is unsupported for terminal status: ${terminalStatus}`);
+    }
+    return {
+      captureId: job.captureId,
+      sourceSha256,
+      runtimeVersion: compute.runtimeVersion,
+      contractSha256: compute.contractSha256,
+      terminalStatus,
+      workerSha256: compute.workerSha256,
+    };
+  }
+
+  private rememberSourceIdentity(
+    active: ActiveCapture,
+    job: DesktopCaptureOperation,
+  ): void {
+    const sourceSha256 = job.source?.sha256;
+    if (sourceSha256 === undefined) return;
+    if (active.sourceSha256 !== undefined && active.sourceSha256 !== sourceSha256) {
+      throw new Error('OCR evidence identity mismatch: capture source changed.');
+    }
+    active.sourceSha256 = sourceSha256;
+  }
+
+  /** Settle one-shot streams before handing values to the next lifecycle stage. */
+  private settleOne$<T>(source$: Observable<T>): Observable<T> {
+    return defer(() => {
+      let value!: T;
+      let emitted = false;
+      return source$.pipe(
+        take(1),
+        tap((next) => {
+          value = next;
+          emitted = true;
+        }),
+        ignoreElements(),
+        concatWith(defer(() => emitted
+          ? of(value)
+          : throwError(() => new Error('Capture lifecycle source completed without a value.')))),
+      );
+    });
   }
 
   private cleanupAfterCommit$(

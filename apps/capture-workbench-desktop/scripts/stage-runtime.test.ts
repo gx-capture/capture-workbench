@@ -12,7 +12,7 @@ import {
 function manifestFor(bytes, sha256, schemaSha256) {
   return {
     manifestVersion: '1',
-    runtimeVersion: '0.4.1',
+    runtimeVersion: '0.4.2',
     apiVersion: '2.0',
     captureDocumentSchemaVersion: '2',
     platform: 'windows',

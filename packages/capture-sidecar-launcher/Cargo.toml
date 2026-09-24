@@ -1,6 +1,6 @@
 [package]
 name = "capture-sidecar-launcher"
-version = "0.4.1"
+version = "0.4.2"
 description = "Shared authenticated Capture Runtime sidecar launcher for Windows desktop hosts."
 edition = "2021"
 rust-version = "1.77.2"
@@ -10,6 +10,7 @@ homepage = "https://github.com/gx-capture/capture-workbench"
 readme = "README.md"
 keywords = ["capture", "sidecar", "launcher", "windows"]
 categories = ["os"]
+exclude = ["tests/fixtures/activation-probe/**"]
 
 [dependencies]
 rand = "0.8"
@@ -20,11 +21,14 @@ sha2 = "0.10"
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
   "Win32_Foundation",
+  "Win32_NetworkManagement_IpHelper",
   "Win32_Security",
   "Win32_System_Diagnostics_ToolHelp",
+  "Win32_System_IO",
   "Win32_System_JobObjects",
   "Win32_System_SystemInformation",
   "Win32_System_Threading",
+  "Win32_Storage_FileSystem",
 ] }
 
 [dev-dependencies]

@@ -11,13 +11,15 @@ from typing import Any
 
 from capture_runtime.worker_contracts import (
     MAX_WORKER_INPUT_BYTES,
+    WORKER_PROTOCOL_VERSION,
     WorkerError,
     WorkerProtocolError,
     WorkerRequest,
     WorkerResponse,
 )
 
-WorkerHandler = Callable[[WorkerRequest, threading.Event], dict[str, Any]]
+WorkerProgressReporter = Callable[[dict[str, Any]], None]
+WorkerHandler = Callable[[WorkerRequest, threading.Event, WorkerProgressReporter], dict[str, Any]]
 WorkerPreparer = Callable[[WorkerRequest], None]
 
 
@@ -25,6 +27,21 @@ def _write(response: WorkerResponse) -> None:
     encoded = json.dumps(response.to_dict(), ensure_ascii=False, separators=(",", ":")).encode(
         "utf-8"
     )
+    sys.stdout.buffer.write(encoded + b"\n")
+    sys.stdout.buffer.flush()
+
+
+def _progress(request_id: str, payload: dict[str, Any]) -> None:
+    encoded = json.dumps(
+        {
+            "protocolVersion": WORKER_PROTOCOL_VERSION,
+            "requestId": request_id,
+            "kind": "progress",
+            "payload": payload,
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
     sys.stdout.buffer.write(encoded + b"\n")
     sys.stdout.buffer.flush()
 
@@ -64,9 +81,16 @@ def serve(handler: WorkerHandler, *, prepare: WorkerPreparer | None = None) -> N
             retryable=False,
         )
         return
-    if request.operation == "probe":
+    if request.operation in {"probe", "preflight"}:
         try:
-            _write(WorkerResponse(request.request_id, True, handler(request, cancellation), None))
+            _write(
+                WorkerResponse(
+                    request.request_id,
+                    True,
+                    handler(request, cancellation, lambda _payload: None),
+                    None,
+                )
+            )
         except Exception:
             _failure(
                 request.request_id,
@@ -110,7 +134,11 @@ def serve(handler: WorkerHandler, *, prepare: WorkerPreparer | None = None) -> N
         daemon=True,
     ).start()
     try:
-        result = handler(request, cancellation)
+        result = handler(
+            request,
+            cancellation,
+            lambda payload: _progress(request.request_id, payload),
+        )
         _write(WorkerResponse(request.request_id, True, result, None))
         code = 0
     except InterruptedError:

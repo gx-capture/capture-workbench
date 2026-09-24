@@ -11,6 +11,7 @@ from pathlib import Path
 from threading import Lock
 from uuid import uuid4
 
+from capture_runtime.contracts import OcrComputePreflightV2
 from capture_runtime.engine_catalog import (
     ActivatedArtifact,
     ActiveEngineState,
@@ -20,6 +21,7 @@ from capture_runtime.engine_catalog import (
     EngineModelDeliveryDescriptor,
     EngineRequirementDescriptor,
 )
+from capture_runtime.ocr_preflight import OcrComputeSelection
 from capture_runtime.worker_client import InstalledEngine, WorkerClient, WorkerProbeResult
 from capture_runtime.worker_process import WorkerExecutionError
 
@@ -58,7 +60,11 @@ from ._engine_installation_download import (
     ArtifactDownloader,
     HttpArtifactDownloader,
     HttpModelFileDownloader,
+    LocalModelFileDownloader,
     ModelFileDownloader,
+)
+from ._engine_installation_download import (
+    pdf_ocr_e2e_local_model_root as _pdf_ocr_e2e_local_model_root_impl,
 )
 from ._engine_installation_download import (
     pdf_ocr_e2e_local_worker_url as _pdf_ocr_e2e_local_worker_url_impl,
@@ -123,6 +129,10 @@ def _smoke_worker_mirror_url(environ: dict[str, str] | None = None) -> str | Non
 
 def _pdf_ocr_e2e_local_worker_url(environ: dict[str, str] | None = None) -> str | None:
     return _pdf_ocr_e2e_local_worker_url_impl(environ)
+
+
+def _pdf_ocr_e2e_local_model_root(environ: dict[str, str] | None = None) -> Path | None:
+    return _pdf_ocr_e2e_local_model_root_impl(environ)
 
 
 def _artifact_validation_limits() -> ArtifactValidationLimits:
@@ -244,12 +254,24 @@ class EngineInstallationManager:
         self.catalog = catalog
         self.worker_client = worker_client
         self.downloader = downloader or HttpArtifactDownloader()
-        self.model_downloader = model_downloader or HttpModelFileDownloader()
+        local_model_root = _pdf_ocr_e2e_local_model_root()
+        self.model_downloader = model_downloader or (
+            LocalModelFileDownloader(local_model_root)
+            if local_model_root is not None
+            else HttpModelFileDownloader()
+        )
         self._smoke_worker_mirror_url = _smoke_worker_mirror_url()
         self._pdf_ocr_e2e_local_worker_url = _pdf_ocr_e2e_local_worker_url()
         self._locks: dict[str, asyncio.Lock] = {}
         self._verified_active_engines: dict[str, _VerifiedActiveEngine] = {}
         self._verified_active_engines_lock = Lock()
+        self._ocr_compute_preflight_cache: dict[
+            tuple[InstalledEngine, str], OcrComputePreflightV2
+        ] = {}
+        self._ocr_compute_selection_cache: dict[
+            tuple[InstalledEngine, str], OcrComputeSelection
+        ] = {}
+        self._ocr_compute_preflight_lock = asyncio.Lock()
         self._active_engine_resolution_timeout_seconds = active_engine_resolution_timeout_seconds
 
     def requirement(self, requirement_id: str) -> EngineRequirementDescriptor:
@@ -311,6 +333,10 @@ class EngineInstallationManager:
             artifact_version=state.artifact_version,
             executable=executable,
             model_dir=model_dir,
+            # The catalog digest identifies the downloaded archive.  The
+            # worker-owned preflight binds to the executable that was
+            # extracted and verified against that archive's inner manifest.
+            worker_sha256=sha256_file(executable),
         )
         with self._verified_active_engines_lock:
             self._verified_active_engines[requirement_id] = _VerifiedActiveEngine(
@@ -348,6 +374,102 @@ class EngineInstallationManager:
             )
         except Exception:
             return None
+
+    async def ocr_compute_selection(
+        self,
+        *,
+        contract_sha256: str,
+    ) -> OcrComputeSelection | None:
+        """Resolve and retain the worker-owned immutable OCR compute plan."""
+
+        async with self._ocr_compute_preflight_lock:
+            try:
+                engine = await self.resolve_active_engine("windowsml-ocr")
+            except Exception:
+                return None
+            if engine is None:
+                return None
+            cache_key = (engine, contract_sha256)
+            cached = self._ocr_compute_selection_cache.get(cache_key)
+            if cached is not None:
+                return cached
+            worker_probe = getattr(self.worker_client, "ocr_compute_selection", None)
+            if not callable(worker_probe):
+                return None
+            try:
+                value = await worker_probe(
+                    engine,
+                    contract_sha256=contract_sha256,
+                )
+                selection = (
+                    value
+                    if isinstance(value, OcrComputeSelection)
+                    else OcrComputeSelection.from_dict(value)
+                )
+            except Exception:
+                return None
+            if selection.readiness.contract_sha256 != contract_sha256:
+                return None
+            if engine.worker_sha256 is not None and (
+                selection.execution_plan.worker_sha256 != engine.worker_sha256
+            ):
+                return None
+            self._ocr_compute_selection_cache[cache_key] = selection
+            return selection
+
+    async def ocr_compute_preflight(
+        self,
+        *,
+        contract_sha256: str,
+    ) -> OcrComputePreflightV2 | None:
+        """Probe OCR compute in the installed worker and cache valid evidence.
+
+        The core runtime intentionally does not carry ONNX Runtime.  The
+        installed OCR worker owns provider discovery and native adapter
+        enumeration; an absent, failed, or malformed worker response is
+        therefore unavailable rather than a CPU decision invented by core.
+        """
+
+        if callable(getattr(self.worker_client, "ocr_compute_selection", None)):
+            selection = await self.ocr_compute_selection(
+                contract_sha256=contract_sha256,
+            )
+            return None if selection is None else selection.readiness
+
+        async with self._ocr_compute_preflight_lock:
+            try:
+                engine = await self.resolve_active_engine("windowsml-ocr")
+            except Exception:
+                return None
+            if engine is None:
+                return None
+            cache_key = (engine, contract_sha256)
+            cached = self._ocr_compute_preflight_cache.get(cache_key)
+            if cached is not None:
+                return cached
+            worker_probe = getattr(self.worker_client, "ocr_compute_preflight", None)
+            if not callable(worker_probe):
+                return None
+            try:
+                value = await worker_probe(
+                    engine,
+                    contract_sha256=contract_sha256,
+                )
+                if isinstance(value, OcrComputePreflightV2):
+                    payload = value.model_dump(mode="json", by_alias=True)
+                elif isinstance(value, dict):
+                    payload = value
+                else:
+                    return None
+                decision = OcrComputePreflightV2.model_validate(payload)
+            except Exception:
+                return None
+            if decision.contract_sha256 != contract_sha256:
+                return None
+            if engine.worker_sha256 is not None and decision.worker_sha256 != engine.worker_sha256:
+                return None
+            self._ocr_compute_preflight_cache[cache_key] = decision
+            return decision
 
     async def install(
         self,
@@ -447,13 +569,15 @@ class EngineInstallationManager:
                 worker_descriptor,
                 cancel_event=cancel_event,
             )
+            probe_executable = self._resolved_child(
+                new_version / "worker", worker_descriptor.entry_point
+            )
             probe_engine = InstalledEngine(
                 requirement_id=requirement.requirement_id,
                 artifact_version=requirement.artifact_version,
-                executable=self._resolved_child(
-                    new_version / "worker", worker_descriptor.entry_point
-                ),
+                executable=probe_executable,
                 model_dir=new_version / "model" / model_descriptor.entry_point,
+                worker_sha256=sha256_file(probe_executable),
             )
             try:
                 code_probe = await self.worker_client.probe(
@@ -506,13 +630,15 @@ class EngineInstallationManager:
                 completed_model_bytes += file_descriptor.bytes
             verify_direct_model_files(model_root, model_descriptor)
             report_progress(0.85)
+            engine_executable = self._resolved_child(
+                new_version / "worker", worker_descriptor.entry_point
+            )
             engine = InstalledEngine(
                 requirement_id=requirement.requirement_id,
                 artifact_version=requirement.artifact_version,
-                executable=self._resolved_child(
-                    new_version / "worker", worker_descriptor.entry_point
-                ),
+                executable=engine_executable,
                 model_dir=self._resolved_child(model_root, model_descriptor.entry_point),
+                worker_sha256=sha256_file(engine_executable),
             )
             probe = await self.worker_client.probe(
                 engine,
@@ -565,11 +691,15 @@ class EngineInstallationManager:
             if activation_error is not None:
                 raise activation_error
             activated = True
+            active_executable = self._resolved_child(
+                version / "worker", worker_descriptor.entry_point
+            )
             active_engine = InstalledEngine(
                 requirement_id=requirement.requirement_id,
                 artifact_version=requirement.artifact_version,
-                executable=self._resolved_child(version / "worker", worker_descriptor.entry_point),
+                executable=active_executable,
                 model_dir=self._resolved_child(version / "model", model_descriptor.entry_point),
+                worker_sha256=sha256_file(active_executable),
             )
             installed_files = _installed_engine_snapshot(version / "worker", version / "model")
             if installed_files is not None:
@@ -633,6 +763,7 @@ __all__ = [
     "EngineInstallationManager",
     "EngineResolutionTimeoutError",
     "HttpArtifactDownloader",
+    "LocalModelFileDownloader",
     "safe_extract_artifact",
     "sha256_file",
     "verify_extracted_artifact",

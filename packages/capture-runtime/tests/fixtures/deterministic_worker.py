@@ -26,7 +26,7 @@ mode = request["payload"].get("mode", "normal")
 if mode == "timeout":
     time.sleep(60)
 elif mode == "staged-timeout":
-    sys.stderr.write("capture-worker-stage:model-load-cuda-start\n")
+    sys.stderr.write("capture-worker-stage:whisper-model-load-cuda-start\n")
     sys.stderr.flush()
     time.sleep(60)
 elif mode == "cancel":

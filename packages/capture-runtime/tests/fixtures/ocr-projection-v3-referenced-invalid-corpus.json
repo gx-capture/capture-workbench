@@ -1,0 +1,86 @@
+{
+  "cases": [
+    {
+      "name": "uppercase-source-sha256",
+      "base": "completed",
+      "path": ["source", "sha256"],
+      "operation": "replace",
+      "value": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    },
+    {
+      "name": "source-sha256-with-internal-whitespace",
+      "base": "completed",
+      "path": ["source", "sha256"],
+      "operation": "replace",
+      "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "name": "source-sha256-with-invalid-length",
+      "base": "completed",
+      "path": ["source", "sha256"],
+      "operation": "replace",
+      "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "name": "source-sha256-with-invalid-hex",
+      "base": "completed",
+      "path": ["source", "sha256"],
+      "operation": "replace",
+      "value": "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg"
+    },
+    {
+      "name": "uppercase-failure-code",
+      "base": "failed",
+      "path": ["failure", "code"],
+      "operation": "replace",
+      "value": "OCR_UNAVAILABLE"
+    },
+    {
+      "name": "invalid-failure-code",
+      "base": "failed",
+      "path": ["failure", "code"],
+      "operation": "replace",
+      "value": "ocr-unavailable"
+    },
+    {
+      "name": "whitespace-only-failure-code",
+      "base": "failed",
+      "path": ["failure", "code"],
+      "operation": "replace",
+      "value": " "
+    },
+    {
+      "name": "missing-source-sha256",
+      "base": "completed",
+      "path": ["source", "sha256"],
+      "operation": "remove"
+    },
+    {
+      "name": "extra-source-field",
+      "base": "completed",
+      "path": ["source", "unexpected"],
+      "operation": "add",
+      "value": true
+    },
+    {
+      "name": "missing-failure-code",
+      "base": "failed",
+      "path": ["failure", "code"],
+      "operation": "remove"
+    },
+    {
+      "name": "extra-failure-field",
+      "base": "failed",
+      "path": ["failure", "unexpected"],
+      "operation": "add",
+      "value": true
+    },
+    {
+      "name": "unknown-provenance-discriminator",
+      "base": "completed",
+      "path": ["provenance", "status"],
+      "operation": "replace",
+      "value": "future"
+    }
+  ]
+}

@@ -1,0 +1,65 @@
+{
+  "$defs": {
+    "OcrPointV3": {
+      "additionalProperties": false,
+      "description": "One predictor-input pixel coordinate in polygon order.",
+      "properties": {
+        "x": {
+          "minimum": 0,
+          "title": "X",
+          "type": "number"
+        },
+        "y": {
+          "minimum": 0,
+          "title": "Y",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ],
+      "title": "OcrPointV3",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "A text region retaining the predictor polygon without rectangle loss.",
+  "properties": {
+    "polygon": {
+      "items": {
+        "$ref": "#/$defs/OcrPointV3"
+      },
+      "maxItems": 256,
+      "minItems": 4,
+      "title": "Polygon",
+      "type": "array"
+    },
+    "text": {
+      "maxLength": 8000000,
+      "minLength": 1,
+      "title": "Text",
+      "type": "string"
+    },
+    "confidence": {
+      "anyOf": [
+        {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Confidence"
+    }
+  },
+  "required": [
+    "polygon",
+    "text",
+    "confidence"
+  ],
+  "title": "OcrBoxV3",
+  "type": "object"
+}

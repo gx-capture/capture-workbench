@@ -17,6 +17,7 @@ import pytest
 import capture_runtime.engine_installation as engine_installation_module
 from capture_runtime.clock import SystemClock
 from capture_runtime.config import ExtractionRuntimeConfig
+from capture_runtime.contracts import OcrAdapterClass, OcrComputeMode, OcrComputePreflightV2
 from capture_runtime.engine_catalog import EngineCatalog, EngineCatalogError
 from capture_runtime.engine_installation import (
     ArtifactDownloader,
@@ -27,7 +28,7 @@ from capture_runtime.engine_installation import (
 )
 from capture_runtime.ollama import SystemRuntimeInstaller
 from capture_runtime.worker_client import InstalledEngine, WorkerProbeResult
-from capture_runtime.worker_process import WorkerExecutionError
+from capture_runtime.worker_process import WorkerExecutionError, WorkerTimeoutError
 
 
 def _manifest(files: dict[str, bytes]) -> bytes:
@@ -165,7 +166,7 @@ def _catalog(root: Path, *, version: str = "engine-1") -> tuple[EngineCatalog, d
         EngineCatalog.from_dict(
             {
                 "catalogVersion": "2",
-                "runtimeVersion": "0.4.1",
+                "runtimeVersion": "0.4.2",
                 "requirements": [
                     {
                         "requirementId": "windowsml-ocr",
@@ -275,6 +276,36 @@ class FakeWorkerClient:
         self.shutdown_called = True
 
 
+class ComputePreflightWorkerClient(FakeWorkerClient):
+    def __init__(self, decision: object) -> None:
+        super().__init__()
+        self.decision = decision
+        self.compute_preflight_calls: list[tuple[InstalledEngine, str]] = []
+
+    async def ocr_compute_preflight(
+        self,
+        engine: InstalledEngine,
+        *,
+        contract_sha256: str,
+        timeout_seconds: float = 30,
+    ) -> object:
+        del timeout_seconds
+        self.compute_preflight_calls.append((engine, contract_sha256))
+        return self.decision
+
+
+class TimeoutComputePreflightWorkerClient(ComputePreflightWorkerClient):
+    async def ocr_compute_preflight(
+        self,
+        engine: InstalledEngine,
+        *,
+        contract_sha256: str,
+        timeout_seconds: float = 30,
+    ) -> object:
+        del engine, contract_sha256, timeout_seconds
+        raise WorkerTimeoutError("worker request timed out at stage worker-process-timeout")
+
+
 class CodeProbeFailureWorkerClient(FakeWorkerClient):
     async def probe(
         self,
@@ -304,7 +335,7 @@ class StageCodeProbeFailureWorkerClient(FakeWorkerClient):
         timeout_seconds: float = 30,
     ) -> WorkerProbeResult:
         if not include_model:
-            raise WorkerExecutionError("worker exited with code 1 at stage load-model")
+            raise WorkerExecutionError("worker exited with code 1 at stage worker-entry-start")
         return await super().probe(
             engine,
             include_model=include_model,
@@ -325,7 +356,10 @@ def test_code_probe_worker_stage_is_projected(tmp_path: Path) -> None:
 
     with pytest.raises(
         EngineInstallationError,
-        match="^engine worker code probe failed: worker exited with code 1 at stage load-model$",
+        match=(
+            "^engine worker code probe failed: "
+            "worker exited with code 1 at stage worker-entry-start$"
+        ),
     ):
         asyncio.run(
             manager.install(
@@ -407,6 +441,139 @@ def test_engine_installation_is_atomic_offline_ready_and_idempotent(
     )
     assert downloader.calls == first_calls
     assert asyncio.run(manager.probe("windowsml-ocr")).ready is True  # type: ignore[union-attr]
+
+
+def test_ocr_compute_preflight_uses_one_cached_worker_probe_after_install(
+    tmp_path: Path,
+) -> None:
+    catalog, sources = _catalog(tmp_path)
+    contract_sha256 = "a" * 64
+    # The archive digest in the catalog is not the executable digest reported
+    # by the worker.  The manager binds worker-owned preflight to the
+    # extracted executable after archive verification.
+    worker_executable_sha256 = hashlib.sha256(b"worker-engine-1").hexdigest()
+    decision = OcrComputePreflightV2(
+        contract_sha256=contract_sha256,
+        worker_sha256=worker_executable_sha256,
+        mode=OcrComputeMode.GPU_DML,
+        adapter_class=OcrAdapterClass.DEDICATED,
+        user_notice_required=False,
+    )
+    worker = ComputePreflightWorkerClient(decision)
+    manager = EngineInstallationManager(
+        tmp_path / "engines",
+        catalog,
+        worker_client=worker,  # type: ignore[arg-type]
+        downloader=CopyDownloader(sources),
+        model_downloader=CopyModelDownloader(sources),
+    )
+    asyncio.run(
+        manager.install(
+            "windowsml-ocr",
+            cancel_event=asyncio.Event(),
+            report_progress=lambda _value: None,
+        )
+    )
+
+    first = asyncio.run(manager.ocr_compute_preflight(contract_sha256=contract_sha256))
+    second = asyncio.run(manager.ocr_compute_preflight(contract_sha256=contract_sha256))
+
+    assert first == decision
+    assert second == decision
+    assert first.worker_sha256 == worker_executable_sha256
+    assert len(worker.compute_preflight_calls) == 1
+
+
+def test_ocr_compute_preflight_is_unavailable_when_worker_identity_mismatches_catalog(
+    tmp_path: Path,
+) -> None:
+    catalog, sources = _catalog(tmp_path)
+    contract_sha256 = "a" * 64
+    decision = OcrComputePreflightV2(
+        contract_sha256=contract_sha256,
+        worker_sha256="b" * 64,
+        mode=OcrComputeMode.GPU_DML,
+        adapter_class=OcrAdapterClass.DEDICATED,
+        user_notice_required=False,
+    )
+    worker = ComputePreflightWorkerClient(decision)
+    manager = EngineInstallationManager(
+        tmp_path / "engines",
+        catalog,
+        worker_client=worker,  # type: ignore[arg-type]
+        downloader=CopyDownloader(sources),
+        model_downloader=CopyModelDownloader(sources),
+    )
+    asyncio.run(
+        manager.install(
+            "windowsml-ocr",
+            cancel_event=asyncio.Event(),
+            report_progress=lambda _value: None,
+        )
+    )
+
+    assert asyncio.run(manager.ocr_compute_preflight(contract_sha256=contract_sha256)) is None
+
+
+def test_ocr_compute_preflight_is_unavailable_when_worker_is_missing(
+    tmp_path: Path,
+) -> None:
+    catalog, _sources = _catalog(tmp_path)
+    worker = ComputePreflightWorkerClient(object())
+    manager = EngineInstallationManager(
+        tmp_path / "engines",
+        catalog,
+        worker_client=worker,  # type: ignore[arg-type]
+    )
+
+    assert asyncio.run(manager.ocr_compute_preflight(contract_sha256="a" * 64)) is None
+    assert worker.compute_preflight_calls == []
+
+
+def test_ocr_compute_preflight_is_unavailable_when_worker_protocol_is_malformed(
+    tmp_path: Path,
+) -> None:
+    catalog, sources = _catalog(tmp_path)
+    worker = ComputePreflightWorkerClient({"mode": "cpu-fallback"})
+    manager = EngineInstallationManager(
+        tmp_path / "engines",
+        catalog,
+        worker_client=worker,  # type: ignore[arg-type]
+        downloader=CopyDownloader(sources),
+        model_downloader=CopyModelDownloader(sources),
+    )
+    asyncio.run(
+        manager.install(
+            "windowsml-ocr",
+            cancel_event=asyncio.Event(),
+            report_progress=lambda _value: None,
+        )
+    )
+
+    assert asyncio.run(manager.ocr_compute_preflight(contract_sha256="a" * 64)) is None
+
+
+def test_ocr_compute_preflight_is_unavailable_when_worker_times_out(
+    tmp_path: Path,
+) -> None:
+    catalog, sources = _catalog(tmp_path)
+    worker = TimeoutComputePreflightWorkerClient(object())
+    manager = EngineInstallationManager(
+        tmp_path / "engines",
+        catalog,
+        worker_client=worker,  # type: ignore[arg-type]
+        downloader=CopyDownloader(sources),
+        model_downloader=CopyModelDownloader(sources),
+    )
+    asyncio.run(
+        manager.install(
+            "windowsml-ocr",
+            cancel_event=asyncio.Event(),
+            report_progress=lambda _value: None,
+        )
+    )
+
+    assert asyncio.run(manager.ocr_compute_preflight(contract_sha256="a" * 64)) is None
 
 
 def test_successful_activation_does_not_rehash_the_model_before_worker_launch(
@@ -754,7 +921,7 @@ def test_next_install_removes_only_validated_crash_residue(tmp_path: Path) -> No
     )
     requirement_root = root / "windowsml-ocr"
     staging_residue = requirement_root / ".staging" / ("a" * 32)
-    version_residue = requirement_root / "versions" / f".crashed-0.4.1.{'b' * 32}"
+    version_residue = requirement_root / "versions" / f".crashed-0.4.2.{'b' * 32}"
     invalid_staging = requirement_root / ".staging" / "not-owned"
     invalid_version = requirement_root / "versions" / ".not-owned"
     for path in (
@@ -863,7 +1030,7 @@ def test_core_only_catalog_reports_models_unavailable_without_downloading(
     catalog = EngineCatalog.from_dict(
         {
             "catalogVersion": "2",
-            "runtimeVersion": "0.4.1",
+            "runtimeVersion": "0.4.2",
             "requirements": [],
         }
     )
@@ -916,7 +1083,6 @@ def test_system_installer_passes_nonzero_directml_device_to_model_probe(tmp_path
         windowsml_model_dir=tmp_path / "windowsml",
         whisper_models_dir=tmp_path / "whisper",
         temp_dir=tmp_path / "temp",
-        windowsml_device_id=7,
         max_pdf_pages=10,
         max_image_pixels=100_000,
         ocr_render_scale=2,
@@ -941,8 +1107,8 @@ def test_system_installer_passes_nonzero_directml_device_to_model_probe(tmp_path
     )
 
     assert [(include_model, options) for _engine, include_model, options in worker.probes] == [
-        (False, {"deviceId": 7}),
-        (True, {"deviceId": 7}),
+        (False, None),
+        (True, None),
     ]
 
 

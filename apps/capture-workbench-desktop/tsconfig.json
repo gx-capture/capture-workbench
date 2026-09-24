@@ -16,11 +16,17 @@
   "include": [
     "playwright.acceptance.config.ts",
     "scripts/acceptance-real.ts",
+    "scripts/acceptance-orchestration.test.ts",
+    "scripts/build-practical-installer.ts",
+    "scripts/practical-installed.ts",
+    "scripts/practical-installed.test.ts",
+    "scripts/practical-installed-ocr.ts",
     "scripts/real-desktop-ocr-acceptance.spec.ts",
     "scripts/real-desktop-ocr-smoke.ts",
     "scripts/real-ocr-result-assertions.ts",
     "scripts/real-ocr-result-assertions.test.ts",
     "../../tools/acceptance-contract.ts",
+    "../../tools/acceptance-checkpoint-journal.test.ts",
     "../../tools/three-project-acceptance.ts",
     "../../tools/three-project-acceptance.test.ts"
   ],

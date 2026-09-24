@@ -21,6 +21,12 @@ datas = (
     + collect_data_files("paddlex")
     + collect_data_files("pypdfium2")
 )
+datas += [
+    (
+        str(root / "src" / "capture_runtime" / "assets" / "ocr-profile.json"),
+        "capture_runtime/assets",
+    )
+]
 for distribution in (
     "imagesize",
     "opencv-contrib-python",

@@ -19,6 +19,11 @@ there is no public schema loader or generated-model package. Runtime version and
 contract hash identity are negotiated from discovery, never copied from a local
 schema or manifest file.
 
+`CaptureRuntimeClient.CaptureUpload` accepts an optional ordered
+`pdfPageNumbers` prefix; omitting it preserves all-page capture. PDF raw
+responses expose the runtime's additive `ocrPageScope` evidence, while
+`CaptureOcrProjection` provides the strict page-level OCR projection.
+
 Law Prep's AI connector and structuring provider use the narrow typed
 `RawCapture`/`CaptureDocument` boundary for provenance and validation. Product
 mapping, persistence, review, and coordination remain local to Law Prep.

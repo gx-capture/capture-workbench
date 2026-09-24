@@ -49,6 +49,8 @@ pub(crate) struct StoredDocument {
     pub(super) recovery_code: Option<String>,
     #[serde(default)]
     pub(super) recovery_message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) ocr_evidence: Option<crate::contracts::OcrEvidenceV1>,
 }
 
 impl StoredDocument {
@@ -110,6 +112,13 @@ impl LibraryStore {
         if index.version != INDEX_VERSION {
             return Err("Capture library version is unsupported.".into());
         }
+        for evidence in index
+            .documents
+            .iter()
+            .filter_map(|document| document.ocr_evidence.as_ref())
+        {
+            evidence.validate()?;
+        }
         Ok(Self {
             root,
             index: Mutex::new(index),
@@ -142,6 +151,7 @@ impl LibraryStore {
             error_message: None,
             recovery_code: None,
             recovery_message: None,
+            ocr_evidence: None,
         };
         let summary = document.summary();
         let mut index = self.lock_index()?;
@@ -220,6 +230,21 @@ impl LibraryStore {
         let mut next_index = index.clone();
         let document = &mut next_index.documents[position];
         let directory = self.document_directory(&document.document_id)?;
+        if let Some(evidence) = &update.ocr_evidence {
+            evidence.validate()?;
+            if evidence.status != update.status {
+                return Err("OCR evidence status must match the terminal library update.".into());
+            }
+            if let Some(existing) = &document.ocr_evidence {
+                if existing != evidence {
+                    return Err(
+                        "OCR evidence is write-once and conflicts with existing evidence.".into(),
+                    );
+                }
+            } else {
+                document.ocr_evidence = Some(evidence.clone());
+            }
+        }
         if update.clear_capture_id {
             document.capture_id = None;
         } else if update.capture_id.is_some() {
@@ -312,6 +337,7 @@ impl LibraryStore {
             summary: document.summary(),
             raw: read_json_optional(&directory.join(RAW_FILE_NAME))?,
             result: read_json_optional(&directory.join(RESULT_FILE_NAME))?,
+            ocr_evidence: document.ocr_evidence,
         })
     }
 

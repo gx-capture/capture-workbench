@@ -1,0 +1,22 @@
+{
+  "additionalProperties": false,
+  "description": "One predictor-input pixel coordinate in polygon order.",
+  "properties": {
+    "x": {
+      "minimum": 0,
+      "title": "X",
+      "type": "number"
+    },
+    "y": {
+      "minimum": 0,
+      "title": "Y",
+      "type": "number"
+    }
+  },
+  "required": [
+    "x",
+    "y"
+  ],
+  "title": "OcrPointV3",
+  "type": "object"
+}

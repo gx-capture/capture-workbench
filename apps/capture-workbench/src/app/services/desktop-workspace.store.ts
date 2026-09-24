@@ -60,6 +60,8 @@ export class DesktopWorkspaceStore {
     modelInstallationPhase(this.activeModelInstallation()));
   readonly selectedModelOptionId = this.installation.selectedModelOptionId;
   readonly busyIds = this.captureLifecycle.busyIds;
+  readonly ocrCompute = this.runtime.ocrCompute;
+  readonly runtimeStarted = this.runtime.started;
   readonly requestedRequirements = signal<ReadonlySet<CaptureRequirementId>>(new Set());
   readonly streamingPartials = this.captureLifecycle.streamingPartials;
 
@@ -84,21 +86,21 @@ export class DesktopWorkspaceStore {
     if (
       this.runtime.error()
       || this.requirementsResource.error()
-      || this.modelOptionsResource.error()
       || this.documentsResource.error()
     ) {
       return 'error';
     }
-    if (!this.runtime.ready()) return 'starting';
+    if (!this.runtimeStarted()) return 'starting';
     const requirementsStatus = this.requirementsResource.status();
-    const modelStatus = this.modelOptionsResource.status();
+    // Model discovery is optional: OCR remains usable when Ollama/Qwen is absent.
     if (
       requirementsStatus === 'idle' || requirementsStatus === 'loading' || requirementsStatus === 'reloading'
-      || modelStatus === 'idle' || modelStatus === 'loading' || modelStatus === 'reloading'
     ) {
       return 'starting';
     }
-    return this.coreMissing().length === 0 && !this.modelSelectionRequired() ? 'ready' : 'needs-setup';
+    return this.runtime.ready() && this.coreMissing().length === 0
+      ? 'ready'
+      : 'needs-setup';
   });
 
   readonly canCapture = computed(() => this.state() === 'ready' && !this.installing());
@@ -120,7 +122,7 @@ export class DesktopWorkspaceStore {
     { readonly ready: true } | undefined
   >({
     defaultValue: [],
-    params: () => this.runtime.ready() ? { ready: true } : undefined,
+    params: () => this.runtimeStarted() ? { ready: true } : undefined,
     stream: ({ abortSignal }) => this.runtime.getRequirements(abortSignal),
   });
 
@@ -129,7 +131,7 @@ export class DesktopWorkspaceStore {
     { readonly ready: true } | undefined
   >({
     defaultValue: [],
-    params: () => this.runtime.ready() ? { ready: true } : undefined,
+    params: () => this.runtimeStarted() ? { ready: true } : undefined,
     stream: ({ abortSignal }) => this.runtime.getModelOptions(abortSignal),
   });
 
@@ -138,7 +140,7 @@ export class DesktopWorkspaceStore {
     { readonly query: string; readonly status: string } | undefined
   >({
     defaultValue: [],
-    params: () => this.runtime.ready()
+    params: () => this.runtimeStarted()
       ? { query: this.query(), status: this.statusFilter() }
       : undefined,
     stream: ({ params, abortSignal }) => this.library.list(params.query, params.status, abortSignal),
@@ -151,7 +153,7 @@ export class DesktopWorkspaceStore {
     defaultValue: null,
     params: () => {
       const documentId = this.selectedId();
-      return this.runtime.ready() && documentId ? { documentId } : undefined;
+      return this.runtimeStarted() && documentId ? { documentId } : undefined;
     },
     stream: ({ params, abortSignal }) => this.library.get(params.documentId, abortSignal),
   });
@@ -170,7 +172,6 @@ export class DesktopWorkspaceStore {
   private readonly resourceErrorEffect = effect(() => {
     const error = this.runtime.error()
       ?? this.requirementsResource.error()
-      ?? this.modelOptionsResource.error()
       ?? this.documentsResource.error()
       ?? this.selectedResource.error();
     if (error) this.message.set(errorMessage(error));
@@ -226,11 +227,12 @@ export class DesktopWorkspaceStore {
 
   /** Installs all currently available core requirements in deterministic order. */
   installCoreRequirements(): void {
-    if (!this.runtime.ready() || this.installing()) return;
+    if (!this.runtimeStarted() || this.installing()) return;
     const installable = this.installableCoreRequirements();
     if (installable.length === 0) return;
     this.installation.installCoreRequirements$(installable).subscribe({
       complete: () => {
+        this.runtime.reload();
         this.requirementsResource.reload();
         this.message.set('安裝流程已完成，正在重新檢查 Runtime 需求。');
       },
@@ -252,7 +254,7 @@ export class DesktopWorkspaceStore {
   /** Starts the selected model installation and refreshes dependent resources. */
   installSelectedModel(): void {
     const optionId = this.selectedModelOptionId();
-    if (!this.runtime.ready() || this.installing() || !optionId) return;
+    if (!this.runtimeStarted() || this.installing() || !optionId) return;
     this.installation.installSelectedModel$(optionId).pipe(
       finalize(() => {
         this.modelOptionsResource.reload();

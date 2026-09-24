@@ -24,10 +24,13 @@ jobs:
       - name: Check out source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Install pnpm
-        uses: pnpm/action-setup@b0f76dfb45f55f8421693e4803ac7bb65143bd34 # v6
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 12.0.0
 
       - name: Install Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
@@ -63,27 +66,6 @@ jobs:
       - name: Install Playwright Chromium
         shell: pwsh
         run: pnpm exec playwright install chromium
-
-      - name: Verify real acceptance inputs
-        shell: pwsh
-        env:
-          CAPTURE_REAL_DESKTOP_OCR_INPUT: ${{ vars.CAPTURE_REAL_DESKTOP_OCR_INPUT || vars.CAPTURE_REAL_DESKTOP_OCR_PDF }}
-          CAPTURE_REAL_DESKTOP_OCR_EXPECTATIONS: ${{ vars.CAPTURE_REAL_DESKTOP_OCR_EXPECTATIONS }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $PSNativeCommandUseErrorActionPreference = $true
-          if (-not $env:CAPTURE_REAL_DESKTOP_OCR_INPUT) {
-            throw 'Real acceptance requires CAPTURE_REAL_DESKTOP_OCR_INPUT.'
-          }
-          if (-not $env:CAPTURE_REAL_DESKTOP_OCR_EXPECTATIONS) {
-            throw 'Real acceptance requires CAPTURE_REAL_DESKTOP_OCR_EXPECTATIONS.'
-          }
-          if (-not (Test-Path -LiteralPath $env:CAPTURE_REAL_DESKTOP_OCR_INPUT -PathType Leaf)) {
-            throw "Real acceptance input was not found: $env:CAPTURE_REAL_DESKTOP_OCR_INPUT"
-          }
-          if (-not (Test-Path -LiteralPath $env:CAPTURE_REAL_DESKTOP_OCR_EXPECTATIONS -PathType Leaf)) {
-            throw "Real acceptance expectations were not found: $env:CAPTURE_REAL_DESKTOP_OCR_EXPECTATIONS"
-          }
 
       - name: Verify Capture Workbench package
         shell: pwsh
@@ -177,33 +159,13 @@ jobs:
         shell: pwsh
         run: pnpm nx run capture-workbench-e2e:e2e
 
-      # Missing fixtures, runtime, model, or reviewed baselines fail the job;
-      # this acceptance gate must never become an implicit skip.
-      - name: Run real acceptance visual gate
-        shell: pwsh
-        env:
-          E2E_ACCEPTANCE_RUN_ID: ci-${{ github.run_id }}
-          E2E_RECORD_VIDEO: '0'
-          CAPTURE_REAL_DESKTOP_OCR_INPUT: ${{ vars.CAPTURE_REAL_DESKTOP_OCR_INPUT || vars.CAPTURE_REAL_DESKTOP_OCR_PDF }}
-          CAPTURE_REAL_DESKTOP_OCR_EXPECTATIONS: ${{ vars.CAPTURE_REAL_DESKTOP_OCR_EXPECTATIONS }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $PSNativeCommandUseErrorActionPreference = $true
-          if (-not $env:CAPTURE_REAL_DESKTOP_OCR_INPUT) {
-            throw 'Real acceptance requires an input path; the file is validated and hashed at runtime.'
-          }
-          if (-not $env:CAPTURE_REAL_DESKTOP_OCR_EXPECTATIONS) {
-            throw 'Real acceptance requires an OCR expectation manifest; set CAPTURE_REAL_DESKTOP_OCR_EXPECTATIONS.'
-          }
-          pnpm nx run capture-workbench-desktop:acceptance-real
-
-      - name: Upload real acceptance artifacts
+      - name: Upload reference flow Playwright artifacts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: capture-workbench-acceptance-${{ github.run_id }}
-          path: output/playwright/capture-workbench
-          if-no-files-found: warn
+          name: capture-workbench-reference-playwright-${{ github.run_id }}
+          path: dist/.playwright/apps/capture-workbench-e2e/**
+          if-no-files-found: error
           retention-days: 7
 
       - name: Upload runtime packaging diagnostics

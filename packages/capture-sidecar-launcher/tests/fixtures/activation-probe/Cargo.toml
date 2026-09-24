@@ -1,0 +1,13 @@
+[package]
+name = "capture-activation-probe"
+version = "0.4.2"
+description = "Private Windows activation ordering probe used by capture-sidecar-launcher tests."
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "capture-activation-probe"
+path = "src/main.rs"
+
+[dependencies]
+serde_json = "=1.0.151"

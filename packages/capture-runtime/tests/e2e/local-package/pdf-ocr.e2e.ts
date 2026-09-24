@@ -7,7 +7,7 @@ const workspaceRoot = resolve(
   dirname(fileURLToPath(import.meta.url)),
   '../../../../..',
 );
-const runtimeVersion = '0.4.1';
+const runtimeVersion = '0.4.2';
 
 async function main(): Promise<void> {
   const releaseRoot = process.env.CAPTURE_PDF_OCR_E2E_RELEASE_DIR?.trim()
@@ -15,6 +15,7 @@ async function main(): Promise<void> {
     : join(workspaceRoot, 'packages/capture-runtime/dist/release');
   await runPdfOcrE2e({
     packageKind: 'local-package',
+    identityMode: 'local-probe',
     releaseRoot,
     runtimeVersion,
     evidencePath: join(

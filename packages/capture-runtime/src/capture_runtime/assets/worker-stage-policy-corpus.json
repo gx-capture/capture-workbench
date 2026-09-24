@@ -1,0 +1,17 @@
+[
+  {"input": "worker-entry-start", "expected": "worker-entry-start"},
+  {"input": "ocr-probe-providers-12-cpu-yes-dml-no", "expected": "ocr-probe-providers-12-cpu-yes-dml-no"},
+  {"input": "ocr-pipeline-create-failed-runtimeerror", "expected": "ocr-pipeline-create-failed-runtimeerror"},
+  {"input": "python-import-paddleocr-failed-importerror", "expected": "python-import-paddleocr-failed-importerror"},
+  {"input": "python-import-paddleocr-failed-importerror-native-load-paddlex", "expected": "python-import-paddleocr-failed-importerror-native-load-paddlex"},
+  {"input": "python-import-paddleocr-failed-importerror-native-load-paddleocr-dependency-missing-opencv", "expected": "python-import-paddleocr-failed-importerror-native-load-paddleocr-dependency-missing-opencv"},
+  {"input": "python-import-paddleocr-failed-importerror-native-load-secret-token", "expected": "python-import-paddleocr-failed-unknown"},
+  {"input": "ocr-pipeline-create-failed-secret-token-abc123", "expected": "ocr-pipeline-create-failed-unknown"},
+  {"input": "whisper-model-load-cpu-failed-runtimeerror", "expected": "whisper-model-load-cpu-failed-runtimeerror"},
+  {"input": "whisper-model-load-cpu-failed-secret-token-abc123", "expected": "whisper-model-load-cpu-failed-unknown"},
+  {"input": "ocr-provider-evidence-dml-123456-cpu-654321", "expected": "ocr-provider-evidence-dml-123456-cpu-654321"},
+  {"input": "ocr-probe-providers-1234567-cpu-yes-dml-no", "expected": "ocr-probe-providers-unknown"},
+  {"input": "secret-token-abc123", "expected": null},
+  {"input": "capture-worker-stage:secret-token-abc123", "expected": null},
+  {"input": "ocr-probe-assets-start", "expected": null}
+]

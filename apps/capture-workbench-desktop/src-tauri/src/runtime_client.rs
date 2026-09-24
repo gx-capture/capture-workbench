@@ -23,8 +23,12 @@ mod validation;
 use transport::{is_http_rejection, request, request_sse, request_with_headers, RequestBody};
 use validation::{
     validate_client_request_id, validate_document_id, validate_model_option_id, validate_opaque_id,
-    validate_requirement_id, validate_structuring_mode,
+    validate_pdf_page_numbers, validate_requirement_id, validate_structuring_mode,
 };
+
+pub(crate) fn ready(state: &DesktopState) -> Result<Value, String> {
+    request_json(state, "GET", "/v2/health/ready", None, None)
+}
 
 pub(crate) fn requirements(state: &DesktopState) -> Result<Value, String> {
     request_json(state, "GET", "/v2/runtime/requirements", None, None)
@@ -119,8 +123,15 @@ pub(crate) fn create_capture(
         "audio/wav" | "audio/mpeg" | "audio/mp4" => "audio",
         _ => return Err("Capture source media type is unsupported.".into()),
     };
+    if let Some(page_numbers) = input.pdf_page_numbers.as_deref() {
+        validate_pdf_page_numbers(page_numbers)?;
+        if source_kind != "pdf" {
+            return Err("Capture PDF page selection is only valid for PDF sources.".into());
+        }
+    }
     let config = state.backend_config()?;
     let ingestion_request_id = format!("{}-ingestion", input.client_request_id);
+    let pdf_page_numbers = input.pdf_page_numbers.clone();
     let ingestion = request(
         &config,
         "POST",
@@ -155,17 +166,13 @@ pub(crate) fn create_capture(
             }))?),
             None,
         )?;
+        let capture_body =
+            capture_start_body(&input.client_request_id, ingestion_id, pdf_page_numbers);
         request(
             &config,
             "POST",
             "/v2/captures",
-            Some(json_body(json!({
-                "protocolVersion": "2",
-                "clientRequestId": input.client_request_id,
-                "ingestionId": ingestion_id,
-                "structuringMode": "runtime",
-                "startPolicy": "eager",
-            }))?),
+            Some(json_body(capture_body)?),
             Some(&input.client_request_id),
         )
     })();
@@ -377,6 +384,24 @@ fn json_body(value: Value) -> Result<RequestBody, String> {
         .map_err(|_| "Capture Runtime JSON request cannot be encoded.".to_string())
 }
 
+fn capture_start_body(
+    client_request_id: &str,
+    ingestion_id: &str,
+    pdf_page_numbers: Option<Vec<u32>>,
+) -> Value {
+    let mut body = json!({
+        "protocolVersion": "2",
+        "clientRequestId": client_request_id,
+        "ingestionId": ingestion_id,
+        "structuringMode": "host",
+        "startPolicy": "eager",
+    });
+    if let Some(page_numbers) = pdf_page_numbers {
+        body["pdfPageNumbers"] = json!(page_numbers);
+    }
+    body
+}
+
 fn source_sha256(source: &RuntimeSourceFile) -> Result<String, String> {
     let mut file = std::fs::File::open(&source.path)
         .map_err(|_| "Capture library source cannot be opened for finalization.".to_string())?;
@@ -417,6 +442,10 @@ pub(crate) fn raw_capture(state: &DesktopState, input: RuntimeIdInput) -> Result
     null_for_http_rejection(capture_value(state, "GET", &input.id, "/raw", None), 409)
 }
 
+pub(crate) fn capture_ocr(state: &DesktopState, input: RuntimeIdInput) -> Result<Value, String> {
+    capture_value(state, "GET", &input.id, "/ocr", None)
+}
+
 pub(crate) fn capture_result(state: &DesktopState, input: RuntimeIdInput) -> Result<Value, String> {
     capture_value(state, "GET", &input.id, "/result", None)
 }
@@ -443,13 +472,11 @@ fn capture_value(
     body: Option<RequestBody>,
 ) -> Result<Value, String> {
     validate_opaque_id(capture_id)?;
-    request_json(
-        state,
-        method,
-        &format!("/v2/captures/{capture_id}{suffix}"),
-        body,
-        None,
-    )
+    request_json(state, method, &capture_path(capture_id, suffix), body, None)
+}
+
+fn capture_path(capture_id: &str, suffix: &str) -> String {
+    format!("/v2/captures/{capture_id}{suffix}")
 }
 
 fn streaming_value(
@@ -515,7 +542,7 @@ mod tests {
             &BackendConfig {
                 base_url: format!("http://127.0.0.1:{port}"),
                 token: "secret-token".into(),
-                runtime_version: "0.4.1".into(),
+                runtime_version: "0.4.2".into(),
                 api_version: "2.0".into(),
                 capture_document_schema_version: "2".into(),
             },
@@ -536,6 +563,125 @@ mod tests {
     fn runtime_identifiers_reject_path_traversal() {
         assert!(validate_opaque_id("../capture").is_err());
         assert!(validate_document_id("../document").is_err());
+    }
+
+    #[test]
+    fn ocr_path_is_fixed_and_keeps_the_capture_id_as_one_url_segment() {
+        assert_eq!(
+            capture_path("capture-1", "/ocr"),
+            "/v2/captures/capture-1/ocr"
+        );
+        assert_eq!(
+            capture_path("capture_1", "/ocr"),
+            "/v2/captures/capture_1/ocr"
+        );
+        assert!(!capture_path("capture-1", "/ocr").contains("/v2/captures/capture-1/raw"));
+    }
+
+    #[test]
+    fn ocr_projection_round_trip_is_authenticated_and_409_is_not_mapped_to_null() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("listener");
+        let port = listener.local_addr().expect("address").port();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut request = [0_u8; 4096];
+            let count = stream.read(&mut request).expect("request");
+            let request = String::from_utf8_lossy(&request[..count]);
+            assert!(request.starts_with("GET /v2/captures/capture-1/ocr HTTP/1.1"));
+            assert!(request.contains("Authorization: Bearer secret-token"));
+            let body = r#"{
+                "apiVersion":"2.0",
+                "schemaVersion":"3",
+                "captureId":"capture-1",
+                "status":"completed",
+                "source":{"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","fileName":"scan.pdf","mediaType":"application/pdf","bytes":1024},
+                "pages":[{"page":1,"status":"recognized","raster":{"width":120,"height":80,"scale":1,"coordinateSystem":"pixel"},"text":"OCR","boxes":[{"polygon":[{"x":1,"y":1},{"x":20,"y":1},{"x":20,"y":20},{"x":1,"y":20}],"text":"OCR","confidence":0.9}],"confidence":0.9,"provenance":{"status":"resolved","engine":"windowsml-ocr","model":"pp-ocrv6-medium-windowsml","modelDigest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","device":"windowsml-dml","profileId":"capture-workbench-ocr-pipeline-v1","profileSpecSha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}}],
+                "pageCount":1,
+                "runtimeVersion":"0.4.2",
+                "contractSha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "provenance":{"status":"resolved","engine":"windowsml-ocr","model":"pp-ocrv6-medium-windowsml","modelDigest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","device":"windowsml-dml","profileId":"capture-workbench-ocr-pipeline-v1","profileSpecSha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},
+                "createdAt":"2026-08-14T00:00:00Z"
+            }"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .expect("response");
+        });
+        let value = request(
+            &BackendConfig {
+                base_url: format!("http://127.0.0.1:{port}"),
+                token: "secret-token".into(),
+                runtime_version: "0.4.2".into(),
+                api_version: "2.0".into(),
+                capture_document_schema_version: "2".into(),
+            },
+            "GET",
+            &capture_path("capture-1", "/ocr"),
+            None,
+            None,
+        )
+        .expect("projection");
+        assert_eq!(value["captureId"], "capture-1");
+        server.join().expect("server");
+
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("listener");
+        let port = listener.local_addr().expect("address").port();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut request = [0_u8; 4096];
+            let _ = stream.read(&mut request).expect("request");
+            let body = r#"{"code":"ocr_unavailable","message":"OCR is still processing."}"#;
+            write!(
+                stream,
+                "HTTP/1.1 409 Conflict\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .expect("response");
+        });
+        let error = request(
+            &BackendConfig {
+                base_url: format!("http://127.0.0.1:{port}"),
+                token: "secret-token".into(),
+                runtime_version: "0.4.2".into(),
+                api_version: "2.0".into(),
+                capture_document_schema_version: "2".into(),
+            },
+            "GET",
+            &capture_path("capture-1", "/ocr"),
+            None,
+            None,
+        )
+        .expect_err("OCR unavailable must remain an error");
+        assert!(error.contains("HTTP 409"));
+        assert!(!error.contains("secret-token"));
+        assert_ne!(error, "null");
+        server.join().expect("server");
+    }
+
+    #[test]
+    fn legacy_capture_start_omits_the_optional_pdf_page_scope() {
+        let body = capture_start_body("request-1", "ingestion-1", None);
+        assert!(!body
+            .as_object()
+            .expect("capture request object")
+            .contains_key("pdfPageNumbers"));
+
+        let scoped = capture_start_body("request-1", "ingestion-1", Some(vec![1]));
+        assert_eq!(scoped["pdfPageNumbers"], json!([1]));
+    }
+
+    #[test]
+    fn phase1_one_shot_image_and_pdf_requests_use_host_structuring() {
+        let image = capture_start_body("image-request", "image-ingestion", None);
+        assert_eq!(image["structuringMode"], "host");
+
+        let pdf = capture_start_body("pdf-request", "pdf-ingestion", Some(vec![1]));
+        assert_eq!(pdf["structuringMode"], "host");
+        assert_eq!(pdf["pdfPageNumbers"], json!([1]));
     }
 
     #[test]
@@ -585,7 +731,7 @@ mod tests {
             &BackendConfig {
                 base_url: format!("http://127.0.0.1:{port}"),
                 token: "secret-token".into(),
-                runtime_version: "0.4.1".into(),
+                runtime_version: "0.4.2".into(),
                 api_version: "2.0".into(),
                 capture_document_schema_version: "2".into(),
             },
@@ -651,7 +797,7 @@ mod tests {
             &BackendConfig {
                 base_url: format!("http://127.0.0.1:{port}"),
                 token: "token".into(),
-                runtime_version: "0.4.1".into(),
+                runtime_version: "0.4.2".into(),
                 api_version: "2.0".into(),
                 capture_document_schema_version: "2".into(),
             },

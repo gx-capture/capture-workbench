@@ -56,7 +56,7 @@ const ocrWorkerArchive = join(
   'capture-runtime',
   'dist',
   'release',
-  'capture-engine-ocr-0.4.1-windows-x64.zip',
+  'capture-engine-ocr-0.4.2-windows-x64.zip',
 );
 const defaultPdfPath = join(
   repoRoot,
@@ -654,8 +654,8 @@ async function main(): Promise<void> {
           name: 'capture-workbench-phase-1-5-consumer',
           version: '0.0.0',
           private: true,
-          packageManager: 'pnpm@11.15.1',
-          engines: { node: '>=24.0.0', pnpm: '>=11.0.0' },
+          packageManager: 'pnpm@12.0.0',
+          engines: { node: '>=24.0.0', pnpm: '12.0.0' },
           dependencies: {
             '@angular/compiler': '22.0.7',
             '@angular/core': '22.0.7',

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from typing import Any
 
 import httpx
@@ -17,6 +17,11 @@ from .errors import (
 
 def decode_model[ModelT: BaseModel](response: httpx.Response, model: type[ModelT]) -> ModelT:
     payload = decode_json(response)
+    if model.__name__ in {"CaptureOcrProjection", "CaptureOcrProjectionV3"}:
+        if not isinstance(payload, Mapping) or "pages" not in payload:
+            raise CaptureRuntimeProtocolError(
+                "Capture Runtime returned an OCR projection without required pages."
+            )
     try:
         return model.model_validate(payload)
     except ValidationError as error:

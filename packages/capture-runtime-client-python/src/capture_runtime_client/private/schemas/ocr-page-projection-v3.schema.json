@@ -1,0 +1,330 @@
+{
+  "$defs": {
+    "CaptureFailureV2": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "pattern": "^[a-z][a-z0-9_]{1,63}$",
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Message",
+          "type": "string"
+        },
+        "stage": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Stage"
+        },
+        "retryable": {
+          "default": false,
+          "title": "Retryable",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "CaptureFailureV2",
+      "type": "object"
+    },
+    "OcrBoxV3": {
+      "additionalProperties": false,
+      "description": "A text region retaining the predictor polygon without rectangle loss.",
+      "properties": {
+        "polygon": {
+          "items": {
+            "$ref": "#/$defs/OcrPointV3"
+          },
+          "maxItems": 256,
+          "minItems": 4,
+          "title": "Polygon",
+          "type": "array"
+        },
+        "text": {
+          "maxLength": 8000000,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        },
+        "confidence": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Confidence"
+        }
+      },
+      "required": [
+        "polygon",
+        "text",
+        "confidence"
+      ],
+      "title": "OcrBoxV3",
+      "type": "object"
+    },
+    "OcrPageStatus": {
+      "enum": [
+        "recognized",
+        "empty",
+        "failed"
+      ],
+      "title": "OcrPageStatus",
+      "type": "string"
+    },
+    "OcrPointV3": {
+      "additionalProperties": false,
+      "description": "One predictor-input pixel coordinate in polygon order.",
+      "properties": {
+        "x": {
+          "minimum": 0,
+          "title": "X",
+          "type": "number"
+        },
+        "y": {
+          "minimum": 0,
+          "title": "Y",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ],
+      "title": "OcrPointV3",
+      "type": "object"
+    },
+    "OcrProvenanceResolvedV3": {
+      "additionalProperties": false,
+      "description": "Concrete OCR identity available after model/provider resolution.",
+      "properties": {
+        "status": {
+          "const": "resolved",
+          "title": "Status",
+          "type": "string"
+        },
+        "engine": {
+          "const": "windowsml-ocr",
+          "title": "Engine",
+          "type": "string"
+        },
+        "model": {
+          "minLength": 1,
+          "title": "Model",
+          "type": "string"
+        },
+        "modelDigest": {
+          "not": {
+            "const": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Modeldigest",
+          "type": "string"
+        },
+        "device": {
+          "minLength": 1,
+          "title": "Device",
+          "type": "string"
+        },
+        "profileId": {
+          "minLength": 1,
+          "title": "Profileid",
+          "type": "string"
+        },
+        "profileSpecSha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Profilespecsha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "engine",
+        "model",
+        "modelDigest",
+        "device",
+        "profileId",
+        "profileSpecSha256"
+      ],
+      "title": "OcrProvenanceResolvedV3",
+      "type": "object"
+    },
+    "OcrProvenanceUnavailableReason": {
+      "enum": [
+        "model_unavailable",
+        "worker_crashed",
+        "worker_timeout",
+        "protocol_failure"
+      ],
+      "title": "OcrProvenanceUnavailableReason",
+      "type": "string"
+    },
+    "OcrProvenanceUnavailableV3": {
+      "additionalProperties": false,
+      "description": "Profile identity retained when model identity is not yet available.",
+      "properties": {
+        "status": {
+          "const": "unavailable",
+          "title": "Status",
+          "type": "string"
+        },
+        "profileId": {
+          "minLength": 1,
+          "title": "Profileid",
+          "type": "string"
+        },
+        "profileSpecSha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Profilespecsha256",
+          "type": "string"
+        },
+        "reason": {
+          "$ref": "#/$defs/OcrProvenanceUnavailableReason"
+        }
+      },
+      "required": [
+        "status",
+        "profileId",
+        "profileSpecSha256",
+        "reason"
+      ],
+      "title": "OcrProvenanceUnavailableV3",
+      "type": "object"
+    },
+    "OcrProvenanceV3": {
+      "description": "Discriminated OCR provenance without fake model/device placeholders.",
+      "discriminator": {
+        "mapping": {
+          "resolved": "#/$defs/OcrProvenanceResolvedV3",
+          "unavailable": "#/$defs/OcrProvenanceUnavailableV3"
+        },
+        "propertyName": "status"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/OcrProvenanceResolvedV3"
+        },
+        {
+          "$ref": "#/$defs/OcrProvenanceUnavailableV3"
+        }
+      ],
+      "title": "OcrProvenanceV3"
+    },
+    "OcrRasterV3": {
+      "additionalProperties": false,
+      "properties": {
+        "width": {
+          "exclusiveMinimum": 0,
+          "title": "Width",
+          "type": "integer"
+        },
+        "height": {
+          "exclusiveMinimum": 0,
+          "title": "Height",
+          "type": "integer"
+        },
+        "scale": {
+          "exclusiveMinimum": 0,
+          "maximum": 8,
+          "title": "Scale",
+          "type": "number"
+        },
+        "coordinateSystem": {
+          "const": "pixel",
+          "title": "Coordinatesystem",
+          "type": "string"
+        }
+      },
+      "required": [
+        "width",
+        "height",
+        "scale",
+        "coordinateSystem"
+      ],
+      "title": "OcrRasterV3",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "page": {
+      "minimum": 1,
+      "title": "Page",
+      "type": "integer"
+    },
+    "status": {
+      "$ref": "#/$defs/OcrPageStatus"
+    },
+    "raster": {
+      "$ref": "#/$defs/OcrRasterV3"
+    },
+    "text": {
+      "default": "",
+      "maxLength": 8000000,
+      "title": "Text",
+      "type": "string"
+    },
+    "boxes": {
+      "items": {
+        "$ref": "#/$defs/OcrBoxV3"
+      },
+      "maxItems": 100000,
+      "title": "Boxes",
+      "type": "array"
+    },
+    "confidence": {
+      "anyOf": [
+        {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Confidence"
+    },
+    "provenance": {
+      "$ref": "#/$defs/OcrProvenanceV3"
+    },
+    "failure": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CaptureFailureV2"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "required": [
+    "page",
+    "status",
+    "raster",
+    "provenance"
+  ],
+  "title": "OcrPageProjectionV3",
+  "type": "object"
+}

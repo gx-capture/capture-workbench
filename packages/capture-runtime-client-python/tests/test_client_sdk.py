@@ -2,27 +2,75 @@ from __future__ import annotations
 
 import hashlib
 import json
+import tomllib
 from collections.abc import Callable
 from contextlib import contextmanager
+from copy import deepcopy
 from importlib.resources import files
 from pathlib import Path
 
 import httpx
 import pytest
+from pydantic import ValidationError
 
 from capture_runtime_client import (
     CAPTURE_CONTRACT_SET_SHA256,
     CAPTURE_DOCUMENT_SCHEMA_SHA256,
     CaptureAuthenticationError,
+    CaptureOcrProjection,
     CaptureProtocolError,
     CaptureRemoteError,
     CaptureRuntimeClient,
     CaptureRuntimeCompatibilityError,
     CaptureRuntimeError,
+    CaptureUpload,
     InMemoryRuntimeTransport,
     RuntimeReady,
     validate_loopback_base_url,
 )
+
+SHARED_PERSPECTIVE_FIXTURE = (
+    Path(__file__).resolve().parents[3]
+    / "packages/capture-runtime/tests/fixtures/ocr-projection-v3-perspective.json"
+)
+SHARED_REFERENCED_INVALID_CORPUS_FIXTURE = (
+    Path(__file__).resolve().parents[3]
+    / "packages/capture-runtime/tests/fixtures/ocr-projection-v3-referenced-invalid-corpus.json"
+)
+
+
+def _shared_perspective_payload() -> dict[str, object]:
+    payload = json.loads(SHARED_PERSPECTIVE_FIXTURE.read_text(encoding="utf-8"))
+    assert isinstance(payload, dict)
+    payload["contractSha256"] = CAPTURE_CONTRACT_SET_SHA256
+    return payload
+
+
+def _shared_referenced_invalid_corpus() -> list[dict[str, object]]:
+    corpus = json.loads(SHARED_REFERENCED_INVALID_CORPUS_FIXTURE.read_text(encoding="utf-8"))
+    assert isinstance(corpus, dict)
+    cases = corpus.get("cases")
+    assert isinstance(cases, list)
+    assert all(isinstance(case, dict) for case in cases)
+    return cases
+
+
+def _apply_referenced_invalid_mutation(
+    payload: dict[str, object], invalid: dict[str, object]
+) -> None:
+    path = invalid["path"]
+    assert isinstance(path, list) and all(isinstance(part, str) for part in path)
+    parent = payload
+    for part in path[:-1]:
+        value = parent[part]
+        assert isinstance(value, dict)
+        parent = value
+    field = path[-1]
+    assert isinstance(field, str)
+    if invalid["operation"] == "remove":
+        parent.pop(field)
+    else:
+        parent[field] = invalid["value"]
 
 
 def test_packaged_contract_set_hash_matches_runtime_asset() -> None:
@@ -43,12 +91,23 @@ def test_packaged_contract_set_hash_matches_runtime_asset() -> None:
     assert packaged_digest == runtime_digest == CAPTURE_CONTRACT_SET_SHA256
 
 
+def test_python_project_declares_the_packaged_contract_set_hash() -> None:
+    project = tomllib.loads(
+        (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(encoding="utf-8")
+    )
+
+    assert (
+        project["tool"]["capture_runtime_client"]["contract_set_sha256"]
+        == CAPTURE_CONTRACT_SET_SHA256
+    )
+
+
 def _ready(**overrides: object) -> dict[str, object]:
     payload: dict[str, object] = {
         "ready": True,
         "service": "capture-runtime",
         "apiVersion": "2.0",
-        "runtimeVersion": "0.4.1",
+        "runtimeVersion": "0.4.2",
         "captureDocumentSchemaVersion": "2",
         "capabilities": {
             "captureKinds": ["pdf"],
@@ -69,7 +128,7 @@ def _discovery_routes() -> dict[tuple[str, str], Callable[[httpx.Request], httpx
     href = f"/meta/v2/contracts/sha256/{digest}"
     index = {
         "catalogVersion": "2",
-        "runtimeVersion": "0.4.1",
+        "runtimeVersion": "0.4.2",
         "contractSetVersion": "2",
         "surfaces": [{"id": "v2"}],
         "sha256": digest,
@@ -108,6 +167,203 @@ def _transport(
     routes: dict[tuple[str, str], Callable[[httpx.Request], httpx.Response]],
 ) -> InMemoryRuntimeTransport:
     return InMemoryRuntimeTransport({**_discovery_routes(), **routes})
+
+
+def test_capture_upload_accepts_and_freezes_an_ordered_pdf_page_prefix() -> None:
+    upload = CaptureUpload(
+        "scan.pdf",
+        b"pdf-bytes",
+        "pdf",
+        media_type="application/pdf",
+        pdf_page_numbers=[1, 2],
+    )
+
+    assert upload.pdf_page_numbers == (1, 2)
+
+
+@pytest.mark.parametrize("page_numbers", [(), (2,), (1, 3)])
+def test_capture_upload_rejects_non_prefix_pdf_page_numbers(
+    page_numbers: tuple[int, ...],
+) -> None:
+    with pytest.raises(ValueError, match="ordered prefix|1 to 500"):
+        CaptureUpload(
+            "scan.pdf",
+            b"pdf-bytes",
+            "pdf",
+            media_type="application/pdf",
+            pdf_page_numbers=page_numbers,
+        )
+
+
+def test_start_capture_sends_ordered_pdf_page_prefix() -> None:
+    content = b"pdf-bytes"
+    digest = hashlib.sha256(content).hexdigest()
+
+    def ingestion(
+        request: httpx.Request,
+        *,
+        received: int,
+        next_chunk: int,
+        status: str = "open",
+        finalized: str | None = None,
+    ) -> httpx.Response:
+        return httpx.Response(
+            201 if next_chunk == 0 else 200,
+            json={
+                "protocolVersion": "2",
+                "kind": "pdf",
+                "ingestionId": "ingestion-1",
+                "status": status,
+                "fileName": "scan.pdf",
+                "mediaType": "application/pdf",
+                "totalBytes": len(content),
+                "receivedBytes": received,
+                "contiguousBytes": received,
+                "nextChunkIndex": next_chunk,
+                "nextOffset": received,
+                "sourceSha256": digest,
+                "finalizedSha256": finalized,
+                "expiresAt": "2026-01-01T00:00:00+00:00",
+            },
+            request=request,
+        )
+
+    def start(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        assert payload["pdfPageNumbers"] == [1]
+        assert payload["structuringMode"] == "runtime"
+        return httpx.Response(
+            202,
+            json={
+                "protocolVersion": "2",
+                "captureId": "capture-1",
+                "ingestionId": "ingestion-1",
+                "kind": "pdf",
+                "status": "extracting",
+                "progress": 0.0,
+                "partialRevision": 0,
+                "lastEventSequence": 0,
+                "source": None,
+                "error": None,
+                "createdAt": "2026-01-01T00:00:00+00:00",
+                "updatedAt": "2026-01-01T00:00:00+00:00",
+                "completedAt": None,
+            },
+            request=request,
+        )
+
+    transport = _transport(
+        {
+            ("POST", "/v2/ingestions"): lambda request: ingestion(
+                request, received=0, next_chunk=0
+            ),
+            ("PUT", "/v2/ingestions/ingestion-1/chunks/0"): lambda request: ingestion(
+                request, received=len(content), next_chunk=1
+            ),
+            ("POST", "/v2/ingestions/ingestion-1/finalize"): lambda request: ingestion(
+                request,
+                received=len(content),
+                next_chunk=1,
+                status="ready",
+                finalized=digest,
+            ),
+            ("POST", "/v2/captures"): start,
+        }
+    )
+
+    operation = CaptureRuntimeClient(transport=transport).start_capture(
+        CaptureUpload(
+            "scan.pdf",
+            content,
+            "pdf",
+            media_type="application/pdf",
+            pdf_page_numbers=(1,),
+        ),
+        client_request_id="request-page-1",
+    )
+
+    assert operation.capture_id == "capture-1"
+
+
+def _ocr_projection(*, status: str = "completed") -> dict[str, object]:
+    engine = {
+        "status": "resolved",
+        "engine": "windowsml-ocr",
+        "model": "pp-ocrv6-medium-windowsml",
+        "modelDigest": f"sha256:{'a' * 64}",
+        "device": "windowsml-dml",
+        "profileId": "capture-workbench-ocr-pipeline-v1",
+        "profileSpecSha256": "b" * 64,
+    }
+    source = {
+        "sha256": "b" * 64,
+        "fileName": "scan.pdf",
+        "mediaType": "application/pdf",
+        "bytes": 1024,
+    }
+    if status == "failed":
+        return {
+            "apiVersion": "2.0",
+            "schemaVersion": "3",
+            "captureId": "cap",
+            "status": "failed",
+            "pages": [],
+            "pageCount": 0,
+            "runtimeVersion": "0.4.2",
+            "contractSha256": CAPTURE_CONTRACT_SET_SHA256,
+            "source": None,
+            "provenance": engine,
+            "warnings": [],
+            "failure": {
+                "code": "ocr_unavailable",
+                "message": "PaddleOCR is not available.",
+                "stage": "ocr",
+                "retryable": True,
+            },
+            "createdAt": "2026-01-01T00:00:00+00:00",
+        }
+    return {
+        "apiVersion": "2.0",
+        "schemaVersion": "3",
+        "captureId": "cap",
+        "status": "completed",
+        "source": source,
+        "pageCount": 1,
+        "runtimeVersion": "0.4.2",
+        "contractSha256": CAPTURE_CONTRACT_SET_SHA256,
+        "pages": [
+            {
+                "page": 1,
+                "status": "recognized",
+                "raster": {
+                    "width": 1200,
+                    "height": 1600,
+                    "scale": 2,
+                    "coordinateSystem": "pixel",
+                },
+                "text": "第一頁 法律文件",
+                "boxes": [
+                    {
+                        "polygon": [
+                            {"x": 10.5, "y": 20.25},
+                            {"x": 310.75, "y": 12.5},
+                            {"x": 320, "y": 80.5},
+                            {"x": 5, "y": 90},
+                        ],
+                        "text": "蝚砌???瘜??辣",
+                        "confidence": 0.98,
+                    }
+                ],
+                "confidence": 0.98,
+                "provenance": engine,
+                "failure": None,
+            }
+        ],
+        "provenance": engine,
+        "warnings": [],
+        "failure": None,
+        "createdAt": "2026-01-01T00:00:00+00:00",
+    }
 
 
 def test_loopback_transport_and_handshake() -> None:
@@ -167,6 +423,10 @@ def test_loopback_transport_and_handshake() -> None:
                 streaming={"kind": "sse", "lastEventIdHeader": "Last-Event-ID"},
             ),
             operation("/v2/captures/{capture_id}/raw"),
+            operation(
+                "/v2/captures/{capture_id}/ocr",
+                responseSchema="CaptureOcrProjectionV3",
+            ),
             operation("/v2/captures/{capture_id}/result"),
             operation(
                 "/v2/captures/{capture_id}/structure/session",
@@ -194,7 +454,7 @@ def test_loopback_transport_and_handshake() -> None:
     digest = hashlib.sha256(bundle_bytes).hexdigest()
     index = {
         "catalogVersion": "2",
-        "runtimeVersion": "0.4.1",
+        "runtimeVersion": "0.4.2",
         "contractSetVersion": "2",
         "surfaces": [{"id": "v2"}],
         "sha256": digest,
@@ -245,6 +505,311 @@ def test_compatibility_failure_is_machine_readable() -> None:
         CaptureRuntimeClient(transport=transport).handshake()
 
 
+def test_get_ocr_maps_completed_and_failed_page_projections() -> None:
+    completed = _ocr_projection()
+    failed = _ocr_projection(status="failed")
+    transport = _transport(
+        {
+            ("GET", "/v2/captures/cap/ocr"): lambda request: httpx.Response(
+                200, json=completed, request=request
+            )
+        }
+    )
+    result = CaptureRuntimeClient(transport=transport).get_ocr("cap")
+    assert isinstance(result, CaptureOcrProjection)
+    assert result.pages[0].provenance is not None
+    assert result.pages[0].provenance.engine == "windowsml-ocr"
+    assert [(point.x, point.y) for point in result.pages[0].boxes[0].polygon] == [
+        (10.5, 20.25),
+        (310.75, 12.5),
+        (320, 80.5),
+        (5, 90),
+    ]
+
+    failed_transport = _transport(
+        {
+            ("GET", "/v2/captures/cap/ocr"): lambda request: httpx.Response(
+                200, json=failed, request=request
+            )
+        }
+    )
+    failed_result = CaptureRuntimeClient(transport=failed_transport).get_ocr("cap")
+    assert failed_result.status.value == "failed"
+    assert failed_result.failure is not None
+    assert failed_result.failure.code == "ocr_unavailable"
+
+
+@pytest.mark.parametrize(
+    ("status_code", "code", "error_type"),
+    [
+        (401, "unauthorized", CaptureAuthenticationError),
+        (404, "capture_not_found", CaptureRemoteError),
+        (409, "ocr_unavailable", CaptureRemoteError),
+    ],
+)
+def test_get_ocr_maps_auth_not_found_and_pending_errors(
+    status_code: int, code: str, error_type: type[CaptureRuntimeError]
+) -> None:
+    transport = _transport(
+        {
+            ("GET", "/v2/captures/cap/ocr"): lambda request: httpx.Response(
+                status_code,
+                json={
+                    "error": {
+                        "code": code,
+                        "message": "OCR is pending." if status_code == 409 else "OCR failed.",
+                        "details": {"retryable": status_code == 409},
+                    }
+                },
+                request=request,
+            )
+        }
+    )
+    with pytest.raises(error_type) as caught:
+        CaptureRuntimeClient(transport=transport).get_ocr("cap")
+    assert caught.value.status_code == status_code
+    assert caught.value.code == code
+
+
+def test_generated_ocr_model_rejects_invalid_box_and_projection_state() -> None:
+    assert CaptureOcrProjection.model_fields["pages"].is_required()
+    unavailable = {
+        "status": "unavailable",
+        "profileId": "capture-workbench-ocr-pipeline-v1",
+        "profileSpecSha256": "b" * 64,
+        "reason": "model_unavailable",
+    }
+    failed_with_unavailable = _ocr_projection(status="failed")
+    failed_with_unavailable["provenance"] = unavailable
+    failed_result = CaptureRuntimeClient(
+        transport=_transport(
+            {
+                ("GET", "/v2/captures/cap/ocr"): lambda request: httpx.Response(
+                    200, json=failed_with_unavailable, request=request
+                )
+            }
+        )
+    ).get_ocr("cap")
+    assert failed_result.provenance.status == "unavailable"
+
+    unresolved_model_digest = _ocr_projection()
+    unresolved_provenance = unresolved_model_digest["provenance"]
+    unresolved_pages = unresolved_model_digest["pages"]
+    assert isinstance(unresolved_provenance, dict)
+    assert isinstance(unresolved_pages, list) and isinstance(unresolved_pages[0], dict)
+    unresolved_provenance["modelDigest"] = "sha256:" + "0" * 64
+    unresolved_page_provenance = unresolved_pages[0]["provenance"]
+    assert isinstance(unresolved_page_provenance, dict)
+    unresolved_page_provenance["modelDigest"] = unresolved_provenance["modelDigest"]
+    with pytest.raises(CaptureProtocolError):
+        CaptureRuntimeClient(
+            transport=_transport(
+                {
+                    ("GET", "/v2/captures/cap/ocr"): lambda request: httpx.Response(
+                        200, json=unresolved_model_digest, request=request
+                    )
+                }
+            )
+        ).get_ocr("cap")
+
+    completed_with_unavailable = _ocr_projection()
+    completed_with_unavailable["provenance"] = unavailable
+    completed_page = completed_with_unavailable["pages"][0]
+    assert isinstance(completed_page, dict)
+    completed_page["provenance"] = unavailable
+    with pytest.raises(CaptureProtocolError):
+        CaptureRuntimeClient(
+            transport=_transport(
+                {
+                    ("GET", "/v2/captures/cap/ocr"): lambda request: httpx.Response(
+                        200, json=completed_with_unavailable, request=request
+                    )
+                }
+            )
+        ).get_ocr("cap")
+
+    invalid_box = _ocr_projection()
+    page = invalid_box["pages"][0]
+    assert isinstance(page, dict)
+    boxes = page["boxes"]
+    assert isinstance(boxes, list)
+    boxes[0]["polygon"][0]["x"] = 1201
+    with pytest.raises(CaptureProtocolError):
+        CaptureRuntimeClient(
+            transport=_transport(
+                {
+                    ("GET", "/v2/captures/cap/ocr"): lambda request: httpx.Response(
+                        200, json=invalid_box, request=request
+                    )
+                }
+            )
+        ).get_ocr("cap")
+
+    rectangle_only = _ocr_projection()
+    rectangle_page = rectangle_only["pages"][0]
+    assert isinstance(rectangle_page, dict)
+    rectangle_page["boxes"] = [{"x": 10, "y": 20, "width": 300, "height": 60}]
+    with pytest.raises(CaptureProtocolError):
+        CaptureRuntimeClient(
+            transport=_transport(
+                {
+                    ("GET", "/v2/captures/cap/ocr"): lambda request: httpx.Response(
+                        200, json=rectangle_only, request=request
+                    )
+                }
+            )
+        ).get_ocr("cap")
+
+    too_few_points = _ocr_projection()
+    too_few_page = too_few_points["pages"][0]
+    assert isinstance(too_few_page, dict)
+    too_few_boxes = too_few_page["boxes"]
+    assert isinstance(too_few_boxes, list) and isinstance(too_few_boxes[0], dict)
+    too_few_boxes[0]["polygon"] = too_few_boxes[0]["polygon"][:3]
+    with pytest.raises(CaptureProtocolError):
+        CaptureRuntimeClient(
+            transport=_transport(
+                {
+                    ("GET", "/v2/captures/cap/ocr"): lambda request: httpx.Response(
+                        200, json=too_few_points, request=request
+                    )
+                }
+            )
+        ).get_ocr("cap")
+
+    non_finite_point = _ocr_projection()
+    non_finite_page = non_finite_point["pages"][0]
+    assert isinstance(non_finite_page, dict)
+    non_finite_boxes = non_finite_page["boxes"]
+    assert isinstance(non_finite_boxes, list) and isinstance(non_finite_boxes[0], dict)
+    non_finite_boxes[0]["polygon"][0]["x"] = float("nan")
+    with pytest.raises(CaptureProtocolError):
+        CaptureRuntimeClient(
+            transport=_transport(
+                {
+                    ("GET", "/v2/captures/cap/ocr"): lambda request: httpx.Response(
+                        200,
+                        content=json.dumps(non_finite_point, allow_nan=True).encode("utf-8"),
+                        request=request,
+                    )
+                }
+            )
+        ).get_ocr("cap")
+
+    completed_without_page_provenance = _ocr_projection()
+    page = completed_without_page_provenance["pages"][0]
+    assert isinstance(page, dict)
+    del page["provenance"]
+    with pytest.raises(CaptureProtocolError):
+        CaptureRuntimeClient(
+            transport=_transport(
+                {
+                    ("GET", "/v2/captures/cap/ocr"): lambda request: httpx.Response(
+                        200,
+                        json=completed_without_page_provenance,
+                        request=request,
+                    )
+                }
+            )
+        ).get_ocr("cap")
+
+    completed_without_recognized_text = _ocr_projection()
+    page = completed_without_recognized_text["pages"][0]
+    assert isinstance(page, dict)
+    page.update(
+        {
+            "status": "empty",
+            "text": "",
+            "boxes": [],
+            "confidence": None,
+            "provenance": None,
+        }
+    )
+    with pytest.raises(CaptureProtocolError):
+        CaptureRuntimeClient(
+            transport=_transport(
+                {
+                    ("GET", "/v2/captures/cap/ocr"): lambda request: httpx.Response(
+                        200,
+                        json=completed_without_recognized_text,
+                        request=request,
+                    )
+                }
+            )
+        ).get_ocr("cap")
+
+    missing_pages = _ocr_projection()
+    del missing_pages["pages"]
+    with pytest.raises(CaptureProtocolError):
+        CaptureRuntimeClient(
+            transport=_transport(
+                {
+                    ("GET", "/v2/captures/cap/ocr"): lambda request: httpx.Response(
+                        200, json=missing_pages, request=request
+                    )
+                }
+            )
+        ).get_ocr("cap")
+
+    completed_with_failure = _ocr_projection()
+    completed_with_failure["failure"] = {
+        "code": "ocr_unavailable",
+        "message": "OCR failed.",
+    }
+    with pytest.raises(CaptureProtocolError):
+        CaptureRuntimeClient(
+            transport=_transport(
+                {
+                    ("GET", "/v2/captures/cap/ocr"): lambda request: httpx.Response(
+                        200, json=completed_with_failure, request=request
+                    )
+                }
+            )
+        ).get_ocr("cap")
+
+
+def test_shared_perspective_corpus_has_python_parity_with_rectangle_nan_and_bounds_rejections() -> (
+    None
+):
+    payload = _shared_perspective_payload()
+    parsed = CaptureOcrProjection.model_validate(payload)
+    assert [(point.x, point.y) for point in parsed.pages[0].boxes[0].polygon] == [
+        (11.25, 20.5),
+        (91.75, 18.0),
+        (104.0, 61.25),
+        (4.5, 64.0),
+    ]
+
+    rectangle = deepcopy(payload)
+    rectangle["pages"][0]["boxes"] = [{"x": 4, "y": 18, "width": 100, "height": 46}]
+    with pytest.raises(ValidationError):
+        CaptureOcrProjection.model_validate(rectangle)
+
+    non_finite = deepcopy(payload)
+    non_finite["pages"][0]["boxes"][0]["polygon"][0]["x"] = float("nan")
+    with pytest.raises(ValidationError):
+        CaptureOcrProjection.model_validate(non_finite)
+
+    out_of_bounds = deepcopy(payload)
+    out_of_bounds["pages"][0]["boxes"][0]["polygon"][0]["x"] = 121
+    with pytest.raises(ValidationError):
+        CaptureOcrProjection.model_validate(out_of_bounds)
+
+
+def test_shared_referenced_invalid_corpus_has_python_parity_with_typescript_and_java() -> None:
+    corpus = _shared_referenced_invalid_corpus()
+    assert len(corpus) == 12
+    for invalid in corpus:
+        base = (
+            _shared_perspective_payload()
+            if invalid["base"] == "completed"
+            else _ocr_projection(status="failed")
+        )
+        _apply_referenced_invalid_mutation(base, invalid)
+        with pytest.raises(ValidationError):
+            CaptureOcrProjection.model_validate(base)
+
+
 def test_loopback_validation_rejects_remote_or_credentials() -> None:
     assert validate_loopback_base_url(43123) == "http://127.0.0.1:43123"
     with pytest.raises(CaptureRuntimeError):
@@ -258,7 +823,7 @@ def test_discovery_rejects_unknown_contract_set_hash() -> None:
     digest = hashlib.sha256(bundle).hexdigest()
     index = {
         "catalogVersion": "2",
-        "runtimeVersion": "0.4.1",
+        "runtimeVersion": "0.4.2",
         "contractSetVersion": "2",
         "surfaces": [{"id": "v2"}],
         "sha256": digest,
@@ -285,7 +850,7 @@ def test_discovery_rejects_wrong_content_addressed_href() -> None:
     digest = "a" * 64
     index = {
         "catalogVersion": "2",
-        "runtimeVersion": "0.4.1",
+        "runtimeVersion": "0.4.2",
         "contractSetVersion": "2",
         "surfaces": [{"id": "v2"}],
         "sha256": digest,
@@ -487,17 +1052,21 @@ def test_retry_policy_retries_idempotent_requests_only() -> None:
                 json={"error": {"code": "busy", "message": "retry"}},
                 request=request,
             )
-        return httpx.Response(200, json={
-            "protocolVersion": "2",
-            "captureId": "cap",
-            "ingestionId": "ingestion",
-            "status": "failed",
-            "partialRevision": 0,
-            "lastEventSequence": 0,
-            "createdAt": "2026-01-01T00:00:00+00:00",
-            "updatedAt": "2026-01-01T00:00:00+00:00",
-            "completedAt": "2026-01-01T00:00:00+00:00",
-        }, request=request)
+        return httpx.Response(
+            200,
+            json={
+                "protocolVersion": "2",
+                "captureId": "cap",
+                "ingestionId": "ingestion",
+                "status": "failed",
+                "partialRevision": 0,
+                "lastEventSequence": 0,
+                "createdAt": "2026-01-01T00:00:00+00:00",
+                "updatedAt": "2026-01-01T00:00:00+00:00",
+                "completedAt": "2026-01-01T00:00:00+00:00",
+            },
+            request=request,
+        )
 
     transport = _transport({("POST", "/v2/captures/cap/structure/failure"): keyed})
     CaptureRuntimeClient(transport=transport, max_retries=1).report_structuring_failure(
@@ -539,8 +1108,7 @@ def test_sse_reconnects_with_last_event_id_cursor() -> None:
 
         def stream(self, method: str, path: str, **kwargs: object) -> object:
             headers = {
-                str(key): str(value)
-                for key, value in dict(kwargs.get("headers", {})).items()
+                str(key): str(value) for key, value in dict(kwargs.get("headers", {})).items()
             }
             calls.append(headers)
             index = len(calls) - 1
@@ -673,9 +1241,8 @@ def test_pull_session_rejects_extra_semantic_fields_and_maps_conflict() -> None:
             json={"error": {"code": "idempotency_conflict", "message": "same key"}},
             request=request,
         )
-    transport = _transport(
-        {("PUT", "/v2/captures/cap/structure/session/batches/0"): conflict}
-    )
+
+    transport = _transport({("PUT", "/v2/captures/cap/structure/session/batches/0"): conflict})
     client = CaptureRuntimeClient(transport=transport)
     with pytest.raises(CaptureProtocolError):
         client.submit_structuring_batch(

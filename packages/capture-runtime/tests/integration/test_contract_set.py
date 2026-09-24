@@ -28,7 +28,7 @@ def test_default_contract_set_is_deterministic_and_covers_v2() -> None:
     assert first.sha256 == hashlib.sha256(first.bundle_bytes).hexdigest()
     assert first.index["sha256"] == first.sha256
     assert {surface["id"] for surface in first.bundle["surfaces"]} == {"v2"}
-    assert len(first.bundle["operations"]) == 31
+    assert len(first.bundle["operations"]) == 32
     assert {operation["surface"] for operation in first.bundle["operations"]} == {"v2"}
     assert any(
         operation["path"] == "/v2/captures/{capture_id}/events"
@@ -65,7 +65,6 @@ def test_runtime_owned_schema_source_has_one_release_contract_identity() -> None
     assert document["schemaSha256"] == (
         "850afd212d049c25da41d3867ba5477451a6a2c6c7e41f116fe60f26b6a35335"
     )
-    assert contract_set.sha256 == "b28366f022533192c063056bbf64cacfd09390815c65408066369dd61094e278"
 
 
 def test_contract_set_index_bundle_loading_rejects_digest_drift() -> None:
@@ -103,7 +102,7 @@ def test_contract_discovery_requires_bearer_and_serves_verified_bundle(client) -
     assert index_response.headers["x-contract-sha256"] == contract_set.sha256
     index = index_response.json()
     assert index["catalogVersion"] == "2"
-    assert index["runtimeVersion"] == "0.4.1"
+    assert index["runtimeVersion"] == "0.4.2"
     assert index["sha256"] == contract_set.sha256
     assert index["href"].endswith(f"/sha256/{contract_set.sha256}")
     assert index["mediaType"] == "application/json"

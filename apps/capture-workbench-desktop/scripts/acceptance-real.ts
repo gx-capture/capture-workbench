@@ -1,68 +1,21 @@
-import { existsSync } from 'node:fs';
-import { mkdir, readFile } from 'node:fs/promises';
-import { spawnSync } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
+import { mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-
-// eslint-disable-next-line @nx/enforce-module-boundaries -- acceptance runner is a workspace-level test contract.
-import {
-  createAcceptanceRun,
-  collectAcceptanceArtifactInputs,
-  writeAcceptanceManifest,
-} from '../../../tools/acceptance-contract.ts';
-
+import { fileURLToPath } from 'node:url';
+// eslint-disable-next-line @nx/enforce-module-boundaries -- acceptance is a workspace-level contract.
+import { createAcceptanceRun } from '../../../tools/acceptance-contract.ts';
+// eslint-disable-next-line @nx/enforce-module-boundaries -- cleanup policy remains the existing owner.
+import type { AcceptanceProjectPlan } from '../../../tools/three-project-acceptance.ts';
+import { runCaptureWorkbenchAcceptanceOrchestration } from './acceptance-orchestration.ts';
 const workspaceRoot = resolve(import.meta.dirname, '../../..');
-const recorded = process.argv.includes('--recorded');
-const timestamp = new Date().toISOString().replace(/[:.]/gu, '-');
-process.env.E2E_ACCEPTANCE_RUN_ID ||= `local-${timestamp}-${process.pid}`;
-process.env.E2E_RECORD_VIDEO = recorded ? '1' : process.env.E2E_RECORD_VIDEO || '0';
-process.env.E2E_ARTIFACT_ROOT ||= join(
-  workspaceRoot,
-  'output',
-  'playwright',
-  'capture-workbench',
-  process.env.E2E_ACCEPTANCE_RUN_ID,
-);
 
-const run = createAcceptanceRun(process.env, 'capture-workbench', workspaceRoot);
-await mkdir(run.artifactRoot, { recursive: true });
+export function waitForChildClose(child: ChildProcess): Promise<{ status: number; error: boolean }> { return new Promise((done) => { let error = false; child.once('error', () => { error = true; }); child.once('close', (status) => done({ status: status ?? 1, error })); }); }
 
-const result = spawnSync(
-  'corepack',
-  ['pnpm', 'exec', 'playwright', 'test', '--config', 'apps/capture-workbench-desktop/playwright.acceptance.config.ts', 'apps/capture-workbench-desktop/scripts/real-desktop-ocr-acceptance.spec.ts', '--project=chromium'],
-  { cwd: workspaceRoot, env: process.env, stdio: 'inherit', shell: true, windowsHide: false },
-);
-if (result.error) throw result.error;
-const manifestPath = join(run.artifactRoot, 'acceptance-manifest.json');
-await mkdir(run.artifactRoot, { recursive: true });
-const existing = existsSync(manifestPath)
-  ? JSON.parse(await readFile(manifestPath, 'utf8')) as {
-      status?: 'completed' | 'failed';
-      errors?: string[];
-      consoleErrors?: string[];
-      pageErrors?: string[];
-      cleanup?: { app: boolean; sidecar: boolean; cdpPort: boolean; temporaryAppData: boolean };
-      fixture?: { name: string; sha256: string };
-    }
-  : undefined;
-const exitCode = result.status ?? 1;
-const cleanupComplete = existing?.cleanup
-  ? Object.values(existing.cleanup).every(Boolean)
-  : false;
-const acceptancePassed = exitCode === 0 && existing?.status === 'completed' && cleanupComplete &&
-  (existing?.errors?.length ?? 0) === 0 && (existing?.consoleErrors?.length ?? 0) === 0 &&
-  (existing?.pageErrors?.length ?? 0) === 0;
-await writeAcceptanceManifest(run.artifactRoot, {
-  project: run.project,
-  runId: run.runId,
-  status: acceptancePassed ? 'completed' : 'failed',
-  recordVideo: run.recordVideo,
-  artifacts: await collectAcceptanceArtifactInputs(run.artifactRoot),
-  errors: existing?.errors ?? [`Capture Workbench acceptance Playwright exited with ${exitCode}.`],
-  consoleErrors: existing?.consoleErrors ?? [],
-  pageErrors: existing?.pageErrors ?? [],
-  cleanup: existing?.cleanup ?? { app: false, sidecar: false, cdpPort: false, temporaryAppData: false },
-  fixture: existing?.fixture,
-});
-if (!acceptancePassed) {
-  throw new Error(`Capture Workbench acceptance did not complete truthfully (Playwright=${exitCode}, manifest=${existing?.status ?? 'missing'}).`);
+async function runPlaywrightChild(cwd: string, environment: NodeJS.ProcessEnv): Promise<{ status: number; error: boolean }> { const child = spawn('corepack', ['pnpm', 'exec', 'playwright', 'test', '--config', 'apps/capture-workbench-desktop/playwright.acceptance.config.ts', 'apps/capture-workbench-desktop/scripts/real-desktop-ocr-acceptance.spec.ts', '--project=chromium'], { cwd, env: environment, stdio: 'ignore', shell: true, windowsHide: false }); return waitForChildClose(child); }
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const recorded = process.argv.includes('--recorded'); process.env.E2E_ACCEPTANCE_RUN_ID ||= `local-${new Date().toISOString().replace(/[:.]/gu, '-')}-${process.pid}`; process.env.E2E_RECORD_VIDEO = recorded ? '1' : process.env.E2E_RECORD_VIDEO || '0'; process.env.E2E_ARTIFACT_ROOT ||= join(workspaceRoot, 'output', 'playwright', 'capture-workbench', process.env.E2E_ACCEPTANCE_RUN_ID);
+  const run = createAcceptanceRun(process.env, 'capture-workbench', workspaceRoot); await mkdir(run.artifactRoot, { recursive: true }); const eventRoot = resolve(process.env.E2E_ACCEPTANCE_EVENT_ROOT?.trim() || join(run.artifactRoot, 'acceptance-events')); const scopePath = process.env.E2E_ACCEPTANCE_SCOPE_PATH?.trim();
+  const childEnvironment = { ...process.env, E2E_ACCEPTANCE_EVENT_ROOT: eventRoot }; const plan: AcceptanceProjectPlan = { project: 'capture-workbench', cwd: workspaceRoot, target: 'capture-workbench-desktop:acceptance-real', artifactRoot: run.artifactRoot, scopePath: scopePath ?? eventRoot, environment: childEnvironment };
+  const result = await runCaptureWorkbenchAcceptanceOrchestration({ run, acceptanceEventRoot: eventRoot, manifestValidationPlan: plan, child: () => runPlaywrightChild(workspaceRoot, childEnvironment), ...(scopePath ? { scope: { context: { item: plan, scopePath } } } : {}) }); if (result.terminal.phase1Verdict !== 'pass') throw new Error('Capture Workbench acceptance did not complete truthfully.');
 }

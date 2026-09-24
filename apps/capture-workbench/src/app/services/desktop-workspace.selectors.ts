@@ -13,9 +13,9 @@ import type { DesktopCaptureOperation } from './desktop-runtime-client.service';
 
 /** Pure workspace selectors and terminal mappings shared by the facade services. */
 
+// OCR is the capture gate; Ollama and its model catalog are optional host structuring.
 export const CORE_REQUIREMENTS = new Set<CaptureRequirementId>([
   'windowsml-ocr',
-  'ollama-runtime',
 ]);
 
 export const INSTALLATION_ORDER = new Map<CaptureRequirementId, number>([
@@ -93,6 +93,11 @@ export function isAudioMediaType(mediaType: string): boolean {
   return mediaType.startsWith('audio/');
 }
 
+/** Identifies PDF media that uses the one-shot capture path. */
+export function isPdfMediaType(mediaType: string): boolean {
+  return mediaType === 'application/pdf';
+}
+
 /** Identifies non-terminal one-shot capture jobs. */
 export function isActiveJob(job: DesktopCaptureOperation): boolean {
   return job.status === 'queued'
@@ -102,6 +107,11 @@ export function isActiveJob(job: DesktopCaptureOperation): boolean {
     || job.status === 'extracting'
     || job.status === 'awaiting_structuring'
     || job.status === 'structuring';
+}
+
+/** A one-shot OCR result is ready for host persistence before optional structuring. */
+export function isOcrCheckpoint(job: DesktopCaptureOperation): boolean {
+  return job.status === 'awaiting_structuring';
 }
 
 /** Returns the v2 stage while preserving the legacy desktop bridge field. */
@@ -129,6 +139,7 @@ export function terminalLibraryStatus(job: DesktopCaptureOperation): DesktopLibr
 export function terminalStatusFromStage(stage?: string): DesktopLibraryStatus {
   if (stage === 'cancelled') return 'canceled';
   if (stage === 'failed') return 'failed';
+  if (stage === 'awaiting_structuring') return 'awaiting_confirmation';
   return 'completed';
 }
 
@@ -153,6 +164,7 @@ export function committedTerminalStatus(document: DesktopLibrarySummary): Deskto
 export function terminalStage(status?: DesktopLibraryStatus): string {
   if (status === 'canceled') return 'cancelled';
   if (status === 'failed') return 'failed';
+  if (status === 'awaiting_confirmation') return 'awaiting_structuring';
   return 'completed';
 }
 

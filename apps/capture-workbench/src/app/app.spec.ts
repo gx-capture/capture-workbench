@@ -2,6 +2,7 @@ import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { provideNoopAnimations } from '@angular/platform-browser/animations';
 import type {
+  OcrComputePreflight,
   RuntimeModelInstallation,
   RuntimeModelOption,
 } from '@gx-capture/capture-workbench-ui';
@@ -164,11 +165,100 @@ describe('App', () => {
     expect(store.selectModelOption).toHaveBeenCalledWith('qwen3.5-0.8b-v1');
     expect(store.installSelectedModel).toHaveBeenCalledOnce();
   });
+
+  it('renders the GPU compute status before the source import control', async () => {
+    await TestBed.configureTestingModule({
+      imports: [App],
+      providers: [
+        provideNoopAnimations(),
+        {
+          provide: DesktopWorkspaceStore,
+          useValue: workspaceStub(),
+        },
+      ],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(App);
+    fixture.detectChanges();
+
+    const status = fixture.nativeElement.querySelector(
+      '[data-testid="ocr-compute-status"]',
+    ) as HTMLElement | null;
+    const sourceImport = fixture.nativeElement.querySelector(
+      '[data-testid="source-import"]',
+    ) as HTMLElement | null;
+    expect(status?.textContent).toContain('OCR acceleration enabled (DirectML).');
+    expect(status?.getAttribute('data-mode')).toBe('gpu-dml');
+    expect(status).not.toBeNull();
+    expect(sourceImport).not.toBeNull();
+    if (!status || !sourceImport) throw new Error('Expected compute status and source import controls.');
+    expect(status.compareDocumentPosition(sourceImport)
+      & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('renders the CPU fallback notice before import when the runtime reports no usable GPU', async () => {
+    const store = workspaceStub();
+    store.ocrCompute.set(cpuFallback());
+    await TestBed.configureTestingModule({
+      imports: [App],
+      providers: [
+        provideNoopAnimations(),
+        {
+          provide: DesktopWorkspaceStore,
+          useValue: store,
+        },
+      ],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(App);
+    fixture.detectChanges();
+
+    const notice = fixture.nativeElement.querySelector(
+      '[data-testid="ocr-compute-notice"]',
+    ) as HTMLElement | null;
+    const sourceImport = fixture.nativeElement.querySelector(
+      '[data-testid="source-import"]',
+    ) as HTMLElement | null;
+    expect(notice?.textContent).toContain(
+      'No usable GPU acceleration is available. CPU OCR may be slower.',
+    );
+    expect(notice?.getAttribute('data-mode')).toBe('cpu-fallback');
+    expect(notice).not.toBeNull();
+    expect(sourceImport).not.toBeNull();
+    if (!notice || !sourceImport) throw new Error('Expected CPU notice and source import controls.');
+    expect(notice.compareDocumentPosition(sourceImport)
+      & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('keeps import disabled and shows the typed preflight error', async () => {
+    const store = workspaceStub();
+    store.state.set('error');
+    store.ocrCompute.set(null);
+    store.canCapture.set(false);
+    store.message.set(
+      'Capture Runtime OCR compute preflight is unavailable; import is disabled.',
+    );
+    await TestBed.configureTestingModule({
+      imports: [App],
+      providers: [
+        provideNoopAnimations(),
+        {
+          provide: DesktopWorkspaceStore,
+          useValue: store,
+        },
+      ],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(App);
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('[data-testid="runtime-error-message"]')?.textContent)
+      .toContain('OCR compute preflight is unavailable');
+    expect((fixture.nativeElement.querySelector('[data-testid="source-import"]') as HTMLButtonElement).disabled)
+      .toBe(true);
+  });
 });
 
 function workspaceStub(selected: unknown = null, modelInstallation: RuntimeModelInstallation | null = null) {
   return {
-    state: signal<'ready' | 'needs-setup'>('ready'),
+    state: signal<'ready' | 'needs-setup' | 'error'>('ready'),
     message: signal('Capture Runtime 已準備完成，可以開始處理文件。'),
     requirements: signal([]),
     documents: signal([]),
@@ -182,6 +272,7 @@ function workspaceStub(selected: unknown = null, modelInstallation: RuntimeModel
     modelInstallationPhase: signal(''),
     modelInstallationPercent: signal(0),
     activeModelOption: signal(null),
+    ocrCompute: signal<OcrComputePreflight | null>(gpuCompute()),
     modelSelectionRequired: signal(false),
     modelOptions: signal<readonly RuntimeModelOption[]>([]),
     selectedModelOptionId: signal<string | null>(null),
@@ -205,5 +296,32 @@ function workspaceStub(selected: unknown = null, modelInstallation: RuntimeModel
     formatDate: () => '2026 年 7 月 28 日 11:18',
     stageLabel: () => '已完成',
     statusLabel: () => '已完成',
+  };
+}
+
+function gpuCompute(): OcrComputePreflight {
+  return {
+    apiVersion: '2.0',
+    schemaVersion: '1',
+    service: 'capture-runtime',
+    runtimeVersion: '0.4.2',
+    contractSetVersion: '2',
+    contractSha256: 'a'.repeat(64),
+    mode: 'gpu-dml',
+    adapterClass: 'dedicated',
+    reasonCode: null,
+    userNoticeRequired: false,
+    noticeCode: null,
+  };
+}
+
+function cpuFallback(): OcrComputePreflight {
+  return {
+    ...gpuCompute(),
+    mode: 'cpu-fallback',
+    adapterClass: 'unknown',
+    reasonCode: 'no_compatible_gpu',
+    userNoticeRequired: true,
+    noticeCode: 'ocr_cpu_fallback',
   };
 }

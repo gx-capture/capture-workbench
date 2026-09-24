@@ -1,4 +1,132 @@
 {
+  "$defs": {
+    "OcrAdapterClass": {
+      "enum": [
+        "dedicated",
+        "integrated",
+        "unknown"
+      ],
+      "title": "OcrAdapterClass",
+      "type": "string"
+    },
+    "OcrComputeMode": {
+      "enum": [
+        "gpu-dml",
+        "cpu-fallback"
+      ],
+      "title": "OcrComputeMode",
+      "type": "string"
+    },
+    "OcrComputeNoticeCode": {
+      "enum": [
+        "ocr_cpu_fallback"
+      ],
+      "title": "OcrComputeNoticeCode",
+      "type": "string"
+    },
+    "OcrComputePreflightV2": {
+      "additionalProperties": false,
+      "description": "Runtime-owned pre-OCR compute selection and user-notice contract.",
+      "properties": {
+        "apiVersion": {
+          "const": "2.0",
+          "default": "2.0",
+          "title": "Apiversion",
+          "type": "string"
+        },
+        "schemaVersion": {
+          "const": "1",
+          "default": "1",
+          "title": "Schemaversion",
+          "type": "string"
+        },
+        "service": {
+          "const": "capture-runtime",
+          "default": "capture-runtime",
+          "title": "Service",
+          "type": "string"
+        },
+        "runtimeVersion": {
+          "const": "0.4.2",
+          "default": "0.4.2",
+          "title": "Runtimeversion",
+          "type": "string"
+        },
+        "contractSetVersion": {
+          "const": "2",
+          "default": "2",
+          "title": "Contractsetversion",
+          "type": "string"
+        },
+        "contractSha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Contractsha256",
+          "type": "string"
+        },
+        "workerSha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Workersha256"
+        },
+        "mode": {
+          "$ref": "#/$defs/OcrComputeMode"
+        },
+        "adapterClass": {
+          "$ref": "#/$defs/OcrAdapterClass"
+        },
+        "reasonCode": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OcrComputeReasonCode"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "userNoticeRequired": {
+          "title": "Usernoticerequired",
+          "type": "boolean"
+        },
+        "noticeCode": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OcrComputeNoticeCode"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "contractSha256",
+        "mode",
+        "adapterClass",
+        "userNoticeRequired"
+      ],
+      "title": "OcrComputePreflightV2",
+      "type": "object"
+    },
+    "OcrComputeReasonCode": {
+      "enum": [
+        "no_compatible_gpu",
+        "dml_provider_unavailable"
+      ],
+      "title": "OcrComputeReasonCode",
+      "type": "string"
+    }
+  },
   "additionalProperties": false,
   "description": "General v2 readiness payload shared by runtime clients.",
   "properties": {
@@ -19,8 +147,8 @@
       "type": "string"
     },
     "runtimeVersion": {
-      "const": "0.4.1",
-      "default": "0.4.1",
+      "const": "0.4.2",
+      "default": "0.4.2",
       "title": "Runtimeversion",
       "type": "string"
     },
@@ -66,6 +194,17 @@
       "additionalProperties": true,
       "title": "Capabilities",
       "type": "object"
+    },
+    "ocrCompute": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/OcrComputePreflightV2"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "message": {
       "anyOf": [

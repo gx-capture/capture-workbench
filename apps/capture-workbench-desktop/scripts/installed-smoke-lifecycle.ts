@@ -187,7 +187,12 @@ export function createInstalledSmokeLifecycle({
   }
 
   function childOutcome(child) {
-    return new Observable((subscriber) => {
+    return new Observable<{
+      kind: 'error' | 'exit';
+      error?: Error;
+      code?: number | null;
+      signal?: NodeJS.Signals | null;
+    }>((subscriber) => {
       const onError = (error) => subscriber.next({ kind: 'error', error });
       const onExit = (code, signal) =>
         subscriber.next({ kind: 'exit', code, signal });
@@ -209,7 +214,7 @@ export function createInstalledSmokeLifecycle({
       });
       return race(
         childOutcome(child),
-        timer(timeout).pipe(map(() => ({ kind: 'timeout' }))),
+        timer(timeout).pipe(map(() => ({ kind: 'timeout' as const }))),
       ).pipe(
         concatMap((outcome) => {
           if (outcome.kind === 'timeout') {

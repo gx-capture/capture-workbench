@@ -1,5 +1,9 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { provideCaptureWorkbenchInputs } from '../../../contracts';
+import { CaptureRuntimeProtocolError } from '@gx-capture/capture-runtime-client';
+import {
+  provideCaptureWorkbenchInputs,
+  type RuntimeReady,
+} from '../../../contracts';
 import { of, throwError } from 'rxjs';
 import { CaptureWorkbenchComponent } from './capture-angular';
 import {
@@ -94,6 +98,85 @@ describe('CaptureWorkbenchComponent', () => {
       status: 'error',
       error: 'runtime probe failed',
     });
+  });
+
+  it('shows the CPU fallback notice before a file is selected', async () => {
+    const cpuReady: RuntimeReady = {
+      ...READY,
+      ocrCompute: {
+        apiVersion: '2.0',
+        schemaVersion: '1',
+        service: 'capture-runtime',
+        runtimeVersion: '0.4.2',
+        contractSetVersion: '2',
+        contractSha256: 'a'.repeat(64),
+        mode: 'cpu-fallback',
+        adapterClass: 'unknown',
+        reasonCode: 'no_compatible_gpu',
+        userNoticeRequired: true,
+        noticeCode: 'ocr_cpu_fallback',
+      },
+    };
+    const client = fakeClient({
+      getReady: vi.fn(() => of(cpuReady)),
+    });
+    inputSource.client.set(client);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(
+      captureWorkbenchRoot(fixture).querySelector(
+        '[data-testid="ocr-compute-notice"]',
+      )?.textContent,
+    ).toContain('No usable GPU acceleration is available. CPU OCR may be slower.');
+    expect(
+      captureWorkbenchRoot(fixture).querySelector(
+        '[data-testid="ocr-compute-status"]',
+      ),
+    ).toBeNull();
+  });
+
+  it('shows GPU status without a CPU fallback notice', async () => {
+    inputSource.client.set(fakeClient());
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(
+      captureWorkbenchRoot(fixture).querySelector(
+        '[data-testid="ocr-compute-status"]',
+      )?.textContent,
+    ).toContain('OCR acceleration enabled (DirectML).');
+    expect(
+      captureWorkbenchRoot(fixture).querySelector(
+        '[data-testid="ocr-compute-notice"]',
+      ),
+    ).toBeNull();
+  });
+
+  it('blocks file selection and preserves typed preflight errors', async () => {
+    const preflightError = new CaptureRuntimeProtocolError(
+      'Capture Runtime returned an invalid OCR compute preflight.',
+    );
+    inputSource.client.set(
+      fakeClient({
+        getReady: vi.fn(() => throwError(() => preflightError)),
+      }),
+    );
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.runtime()).toMatchObject({
+      status: 'error',
+      error: preflightError.message,
+    });
+    expect(
+      (captureWorkbenchRoot(fixture).querySelector(
+        'input[type=file]',
+      ) as HTMLInputElement).disabled,
+    ).toBe(true);
   });
 
   it('still performs a handshake when runtime setup UI is hidden', async () => {

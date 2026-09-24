@@ -4,23 +4,26 @@
 
 from __future__ import annotations
 
+import math
 from datetime import datetime
 from enum import StrEnum
-from typing import Annotated, Any, Literal, Self
+from typing import Annotated, Any, Final, Literal, Self
 
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    RootModel,
     StringConstraints,
+    TypeAdapter,
     field_validator,
     model_validator,
 )
 from pydantic.alias_generators import to_camel
 
-API_VERSION: Literal['2.0'] = '2.0'
-CAPTURE_DOCUMENT_SCHEMA_VERSION: Literal['2'] = '2'
-RUNTIME_VERSION: Literal['0.4.1'] = '0.4.1'
+API_VERSION: Final = '2.0'
+CAPTURE_DOCUMENT_SCHEMA_VERSION: Final = '2'
+RUNTIME_VERSION: Final = '0.4.2'
 
 
 NonEmptyString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
@@ -84,6 +87,26 @@ class RuntimeRequirementStatus(StrEnum):
     INSTALLABLE = "installable"
     MANUAL_ACTION_REQUIRED = "manual_action_required"
     UNAVAILABLE = "unavailable"
+
+
+class OcrComputeMode(StrEnum):
+    GPU_DML = "gpu-dml"
+    CPU_FALLBACK = "cpu-fallback"
+
+
+class OcrAdapterClass(StrEnum):
+    DEDICATED = "dedicated"
+    INTEGRATED = "integrated"
+    UNKNOWN = "unknown"
+
+
+class OcrComputeReasonCode(StrEnum):
+    NO_COMPATIBLE_GPU = "no_compatible_gpu"
+    DML_PROVIDER_UNAVAILABLE = "dml_provider_unavailable"
+
+
+class OcrComputeNoticeCode(StrEnum):
+    CPU_FALLBACK = "ocr_cpu_fallback"
 
 
 CaptureRequirementId = Literal[
@@ -269,6 +292,25 @@ class RawCaptureSegment(StrictModel):
     text: CaptureText
 
 
+class OcrPageScopeV2(StrictModel):
+    """Public evidence describing which PDF pages entered OCR."""
+
+    source_page_count: int = Field(ge=1, le=500)
+    requested_page_numbers: list[int] = Field(min_length=1, max_length=500)
+    processed_page_numbers: list[int] = Field(min_length=1, max_length=500)
+
+    @model_validator(mode="after")
+    def validate_page_scope(self) -> Self:
+        expected = list(range(1, len(self.requested_page_numbers) + 1))
+        if self.requested_page_numbers != expected:
+            raise ValueError("requested PDF pages must be an ordered prefix from page one")
+        if self.requested_page_numbers[-1] > self.source_page_count:
+            raise ValueError("requested PDF pages must exist in the source")
+        if self.processed_page_numbers != self.requested_page_numbers:
+            raise ValueError("processed PDF pages must equal requested PDF pages")
+        return self
+
+
 def project_source_text(segments: list[RawCaptureSegment]) -> str:
     return "\n".join(segment.text for segment in segments)
 
@@ -281,6 +323,7 @@ class RawCapture(StrictModel):
     source_text: ProjectedText
     extraction_engine: CaptureEngine
     warnings: list[WarningText] = Field(default_factory=list, max_length=1_000)
+    ocr_page_scope: OcrPageScopeV2 | None = None
     created_at: datetime
 
     _aware_created_at = field_validator("created_at")(_require_aware)
@@ -536,12 +579,22 @@ class StartCaptureV2(StrictModel):
     structuring_mode: StructuringMode
     target_language: str | None = None
     start_policy: Literal["eager"] = "eager"
+    pdf_page_numbers: list[int] | None = Field(default=None, min_length=1, max_length=500)
 
     @field_validator("target_language")
     @classmethod
     def validate_target_language(cls, value: str | None) -> str | None:
         if value is not None and not 1 <= len(value) <= 64:
             raise ValueError("targetLanguage must be 1 to 64 characters")
+        return value
+
+    @field_validator("pdf_page_numbers")
+    @classmethod
+    def validate_pdf_page_numbers(cls, value: list[int] | None) -> list[int] | None:
+        if value is None:
+            return None
+        if value != list(range(1, len(value) + 1)):
+            raise ValueError("pdfPageNumbers must be an ordered prefix from page one")
         return value
 
 
@@ -556,6 +609,275 @@ class CaptureFailureV2(StrictModel):
     message: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
     stage: NonEmptyString | None = None
     retryable: bool = False
+
+
+class OcrProjectionStatus(StrEnum):
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class OcrPageStatus(StrEnum):
+    RECOGNIZED = "recognized"
+    EMPTY = "empty"
+    FAILED = "failed"
+
+
+class OcrProvenanceStatus(StrEnum):
+    RESOLVED = "resolved"
+    UNAVAILABLE = "unavailable"
+
+
+class OcrProvenanceUnavailableReason(StrEnum):
+    MODEL_UNAVAILABLE = "model_unavailable"
+    WORKER_CRASHED = "worker_crashed"
+    WORKER_TIMEOUT = "worker_timeout"
+    PROTOCOL_FAILURE = "protocol_failure"
+
+
+class OcrProvenanceResolvedV3(StrictModel):
+    """Concrete OCR identity available after model/provider resolution."""
+
+    status: Literal["resolved"]
+    engine: Literal["windowsml-ocr"]
+    model: NonEmptyString
+    model_digest: EngineDigest = Field(json_schema_extra={"not": {"const": "sha256:" + "0" * 64}})
+    device: NonEmptyString
+    profile_id: NonEmptyString
+    profile_spec_sha256: Sha256Hex
+
+    @field_validator("model_digest")
+    @classmethod
+    def reject_unknown_model_digest(cls, value: str) -> str:
+        if value == "sha256:" + "0" * 64:
+            raise ValueError("modelDigest must identify a resolved model")
+        return value
+
+
+class OcrProvenanceUnavailableV3(StrictModel):
+    """Profile identity retained when model identity is not yet available."""
+
+    status: Literal["unavailable"]
+    profile_id: NonEmptyString
+    profile_spec_sha256: Sha256Hex
+    reason: OcrProvenanceUnavailableReason
+
+
+OcrProvenancePayloadV3 = Annotated[
+    OcrProvenanceResolvedV3 | OcrProvenanceUnavailableV3,
+    Field(discriminator="status"),
+]
+
+
+class OcrProvenanceV3(RootModel[OcrProvenancePayloadV3]):
+    """Discriminated OCR provenance without fake model/device placeholders."""
+
+    root: OcrProvenancePayloadV3
+
+    def __init__(self, root: OcrProvenancePayloadV3 | None = None, **data: Any) -> None:
+        if root is None:
+            root = TypeAdapter(OcrProvenancePayloadV3).validate_python(data)
+        elif data:
+            raise TypeError("OcrProvenanceV3 accepts either root or wire fields, not both")
+        elif isinstance(root, OcrProvenanceV3):
+            root = root.root
+        super().__init__(root=root)
+
+    @property
+    def status(self) -> Literal["resolved", "unavailable"]:
+        return self.root.status
+
+    @property
+    def is_resolved(self) -> bool:
+        return isinstance(self.root, OcrProvenanceResolvedV3)
+
+    @property
+    def profile_id(self) -> str:
+        return self.root.profile_id
+
+    @property
+    def profile_spec_sha256(self) -> str:
+        return self.root.profile_spec_sha256
+
+    @property
+    def reason(self) -> OcrProvenanceUnavailableReason:
+        if not isinstance(self.root, OcrProvenanceUnavailableV3):
+            raise AttributeError("resolved OCR provenance has no unavailable reason")
+        return self.root.reason
+
+    @property
+    def engine(self) -> str:
+        if not isinstance(self.root, OcrProvenanceResolvedV3):
+            raise AttributeError("unavailable OCR provenance has no engine")
+        return self.root.engine
+
+    @property
+    def model(self) -> str:
+        if not isinstance(self.root, OcrProvenanceResolvedV3):
+            raise AttributeError("unavailable OCR provenance has no model")
+        return self.root.model
+
+    @property
+    def model_digest(self) -> str:
+        if not isinstance(self.root, OcrProvenanceResolvedV3):
+            raise AttributeError("unavailable OCR provenance has no model digest")
+        return self.root.model_digest
+
+    @property
+    def device(self) -> str:
+        if not isinstance(self.root, OcrProvenanceResolvedV3):
+            raise AttributeError("unavailable OCR provenance has no device")
+        return self.root.device
+
+
+class OcrRasterV3(StrictModel):
+    width: int = Field(gt=0)
+    height: int = Field(gt=0)
+    scale: float = Field(gt=0, le=8)
+    coordinate_system: Literal["pixel"]
+
+
+class OcrPointV3(StrictModel):
+    """One predictor-input pixel coordinate in polygon order."""
+
+    x: float = Field(ge=0)
+    y: float = Field(ge=0)
+
+    @field_validator("x", "y")
+    @classmethod
+    def validate_coordinate(cls, value: float) -> float:
+        if not math.isfinite(value) or value < 0:
+            raise ValueError("OCR polygon coordinates must be finite and non-negative")
+        return value
+
+
+class OcrBoxV3(StrictModel):
+    """A text region retaining the predictor polygon without rectangle loss."""
+
+    polygon: list[OcrPointV3] = Field(min_length=4, max_length=256)
+    text: ProjectedText
+    confidence: float | None = Field(..., ge=0, le=1)
+
+    @field_validator("confidence")
+    @classmethod
+    def validate_confidence(cls, value: float | None) -> float | None:
+        if value is not None and not math.isfinite(value):
+            raise ValueError("OCR box confidence must be finite")
+        return value
+
+    @property
+    def x(self) -> int:
+        return math.floor(min(point.x for point in self.polygon))
+
+    @property
+    def y(self) -> int:
+        return math.floor(min(point.y for point in self.polygon))
+
+    @property
+    def width(self) -> int:
+        return max(1, math.ceil(max(point.x for point in self.polygon)) - self.x)
+
+    @property
+    def height(self) -> int:
+        return max(1, math.ceil(max(point.y for point in self.polygon)) - self.y)
+
+
+class OcrPageProjectionV3(StrictModel):
+    # Recognized pages carry the pipeline's arithmetic-mean score rounded to
+    # four decimal places, or 0.0 when text is legal without numeric region
+    # scores. None is reserved for empty and failed pages on the wire.
+    page: int = Field(ge=1)
+    status: OcrPageStatus
+    raster: OcrRasterV3
+    text: Annotated[str, StringConstraints(max_length=8_000_000)] = ""
+    boxes: list[OcrBoxV3] = Field(default_factory=list, max_length=100_000)
+    # ``null`` is a terminal empty/failed-page value; recognized pages are
+    # validated below and receive either the rounded mean or the no-score 0.0.
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    provenance: OcrProvenanceV3
+    failure: CaptureFailureV2 | None = None
+
+    @model_validator(mode="after")
+    def validate_page_payload(self) -> Self:
+        if self.status is not OcrPageStatus.FAILED and not self.provenance.is_resolved:
+            raise ValueError("recognized and empty OCR pages require resolved provenance")
+        raster = self.raster
+        for box in self.boxes:
+            if any(point.x > raster.width or point.y > raster.height for point in box.polygon):
+                raise ValueError("OCR polygon must stay inside the raw raster bounds")
+        if self.status is OcrPageStatus.RECOGNIZED:
+            if not self.text.strip() or self.failure is not None or self.confidence is None:
+                raise ValueError("recognized OCR pages require text, confidence, and no failure")
+        elif self.status is OcrPageStatus.EMPTY:
+            if (
+                self.text.strip()
+                or self.boxes
+                or self.confidence is not None
+                or self.failure is not None
+            ):
+                raise ValueError(
+                    "empty OCR pages must not contain text, boxes, confidence, or failure"
+                )
+        else:
+            if (
+                self.text.strip()
+                or self.boxes
+                or self.confidence is not None
+                or self.failure is None
+            ):
+                raise ValueError("failed OCR pages require only a typed failure")
+        return self
+
+
+class CaptureOcrProjectionV3(StrictModel):
+    api_version: Literal["2.0"]
+    schema_version: Literal["3"]
+    capture_id: NonEmptyString
+    status: OcrProjectionStatus
+    source: CaptureSource | None = None
+    # The wire projection always carries a page collection, including the
+    # empty collection used by a failed run before a safe page count exists.
+    # Requiring the member here keeps JSON Schema and runtime construction
+    # semantics aligned while still allowing ``pages=[]``.
+    pages: list[OcrPageProjectionV3] = Field(..., max_length=500)
+    page_count: int = Field(ge=0, le=500)
+    runtime_version: Literal['0.4.2']
+    contract_sha256: Sha256Hex
+    provenance: OcrProvenanceV3
+    warnings: list[WarningText] = Field(default_factory=list, max_length=1_000)
+    failure: CaptureFailureV2 | None = None
+    created_at: datetime
+
+    _aware_created_at = field_validator("created_at")(_require_aware)
+
+    @model_validator(mode="after")
+    def validate_projection(self) -> Self:
+        if self.page_count != len(self.pages):
+            raise ValueError("pageCount must equal the number of OCR pages")
+        if [page.page for page in self.pages] != list(range(1, len(self.pages) + 1)):
+            raise ValueError("OCR pages must be complete and ordered from page one")
+        if self.status is OcrProjectionStatus.COMPLETED:
+            if not self.pages or self.failure is not None or self.source is None:
+                raise ValueError(
+                    "completed OCR projections require pages, source, provenance, and no failure"
+                )
+            if not self.provenance.is_resolved:
+                raise ValueError("completed OCR projections require resolved provenance")
+            if any(page.status is OcrPageStatus.FAILED for page in self.pages):
+                raise ValueError("completed OCR projections must not contain failed pages")
+            if not any(page.status is OcrPageStatus.RECOGNIZED for page in self.pages):
+                raise ValueError("completed OCR projections require recognized text")
+            if any(
+                page.provenance is None or page.provenance != self.provenance for page in self.pages
+            ):
+                raise ValueError(
+                    "completed OCR pages require provenance matching the document provenance"
+                )
+        elif self.failure is None:
+            raise ValueError("failed OCR projections require a typed failure")
+        for page in self.pages:
+            if page.provenance != self.provenance:
+                raise ValueError("page OCR provenance must match document provenance")
+        return self
 
 
 class ReportStructuringFailureV2(StrictModel):
@@ -677,18 +999,56 @@ class RuntimeStreamingCapabilitiesV2(StrictModel):
     stall_timeout_ms: int = Field(gt=0)
 
 
+class OcrComputePreflightV2(StrictModel):
+    """Runtime-owned pre-OCR compute selection and user-notice contract."""
+
+    api_version: Literal["2.0"] = API_VERSION
+    schema_version: Literal["1"] = "1"
+    service: Literal["capture-runtime"] = "capture-runtime"
+    runtime_version: Literal["0.4.2"] = RUNTIME_VERSION
+    contract_set_version: Literal["2"] = "2"
+    contract_sha256: Sha256Hex
+    # The worker computes this digest from its own executable. It is absent
+    # for the setup-time decision seam before a worker is installed, while
+    # production engine-manager probes require it to match the catalog.
+    worker_sha256: Sha256Hex | None = None
+    mode: OcrComputeMode
+    adapter_class: OcrAdapterClass
+    reason_code: OcrComputeReasonCode | None = None
+    user_notice_required: bool
+    notice_code: OcrComputeNoticeCode | None = None
+
+    @model_validator(mode="after")
+    def validate_decision(self) -> Self:
+        if self.mode is OcrComputeMode.GPU_DML:
+            if (
+                self.reason_code is not None
+                or self.user_notice_required
+                or self.notice_code is not None
+            ):
+                raise ValueError("gpu-dml cannot carry a fallback reason or notice")
+        elif (
+            self.reason_code is None
+            or not self.user_notice_required
+            or self.notice_code is not OcrComputeNoticeCode.CPU_FALLBACK
+        ):
+            raise ValueError("cpu-fallback requires a reason and user notice")
+        return self
+
+
 class RuntimeReady(StrictModel):
     """General v2 readiness payload shared by runtime clients."""
 
     ready: bool
     service: Literal["capture-runtime"] = "capture-runtime"
     api_version: Literal["2.0"] = API_VERSION
-    runtime_version: Literal["0.4.1"] = RUNTIME_VERSION
+    runtime_version: Literal["0.4.2"] = RUNTIME_VERSION
     capture_document_schema_version: Literal["2"] = CAPTURE_DOCUMENT_SCHEMA_VERSION
     capture_document_schema_sha256: Sha256Hex | None = None
     schema_sha256: Sha256Hex | None = None
     contract_set_version: Literal["2"] = "2"
     capabilities: dict[str, Any] = Field(default_factory=dict)
+    ocr_compute: OcrComputePreflightV2 | None = None
     message: str | None = None
 
 
@@ -725,6 +1085,7 @@ __all__ = [
     'StructuringSemanticBlockV2',
     'SubmitStructuringBatchV2',
     'RawCaptureSegment',
+    'OcrPageScopeV2',
     'RawCapture',
     'CaptureBlock',
     'CaptureDocument',
@@ -744,12 +1105,21 @@ __all__ = [
     'StartCaptureV2',
     'FinalizeIngestionV2',
     'CaptureFailureV2',
+    'OcrProvenanceResolvedV3',
+    'OcrProvenanceUnavailableV3',
+    'OcrProvenanceV3',
+    'OcrRasterV3',
+    'OcrPointV3',
+    'OcrBoxV3',
+    'OcrPageProjectionV3',
+    'CaptureOcrProjectionV3',
     'ReportStructuringFailureV2',
     'CaptureOperationV2',
     'CaptureStreamingResult',
     'PartialCaptureV2',
     'CaptureEventV2',
     'RuntimeStreamingCapabilitiesV2',
+    'OcrComputePreflightV2',
     'RuntimeReady',
     'ErrorBodyV2',
     'ErrorEnvelopeV2',
@@ -758,10 +1128,18 @@ __all__ = [
     'RuntimeInstallationStatus',
     'RuntimeModelOptionStatus',
     'RuntimeRequirementStatus',
+    'OcrComputeMode',
+    'OcrAdapterClass',
+    'OcrComputeReasonCode',
+    'OcrComputeNoticeCode',
     'StructuringSessionStatus',
     'StructuringBatchStatus',
     'StreamingIngestionMode',
     'StreamingIngestionStatus',
     'StreamingCaptureStatus',
     'StreamingEventType',
+    'OcrProjectionStatus',
+    'OcrPageStatus',
+    'OcrProvenanceStatus',
+    'OcrProvenanceUnavailableReason',
 ]

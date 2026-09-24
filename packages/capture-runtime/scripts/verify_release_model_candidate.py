@@ -15,6 +15,7 @@ from model_source_lock import (
     source_lock_sha256,
 )
 
+from capture_runtime.contract_set import load_contract_set
 from capture_runtime.engine_catalog import (
     EngineArtifactDescriptor,
     canonical_json_bytes,
@@ -322,6 +323,7 @@ async def verify_candidate(
         root = Path(temporary)
         fixture_root = root / "fixtures"
         fixture_root.mkdir()
+        contract_sha256 = load_contract_set().sha256
         ocr_fixture = fixtures["ocr"]
         await _download_exact_url(
             url=ocr_fixture["licenseUrl"],
@@ -367,23 +369,29 @@ async def verify_candidate(
                     requirement_id,
                     cancel_event=asyncio.Event(),
                     report_progress=lambda _value: None,
-                    probe_options=(
-                        {"deviceId": 0} if fixture_kind == "ocr" else {"preferGpu": True}
-                    ),
+                    probe_options=None if fixture_kind == "ocr" else {"preferGpu": True},
                 )
                 engine = manager.active_engine(requirement_id)
                 if engine is None:
                     raise EngineInstallationError("candidate requirement did not activate")
                 fixture = fixtures[fixture_kind]
+                if fixture_kind == "ocr":
+                    selection = await manager.ocr_compute_selection(
+                        contract_sha256=contract_sha256,
+                    )
+                    if selection is None:
+                        raise EngineInstallationError("candidate OCR compute plan was unavailable")
+                    run_options: dict[str, object] = {
+                        "computePlan": selection.execution_plan.to_dict(),
+                        "maxImagePixels": 100_000_000,
+                    }
+                else:
+                    run_options = _whisper_run_options(fixture)
                 run = await worker_client.run(
                     engine,
                     source_path=(fixture_root / fixture_kind).resolve(),
                     media_type=fixture["mediaType"],
-                    options=(
-                        {"deviceId": 0, "maxImagePixels": 100_000_000}
-                        if fixture_kind == "ocr"
-                        else _whisper_run_options(fixture)
-                    ),
+                    options=run_options,
                     cancel_event=asyncio.Event(),
                     timeout_seconds=(
                         600 if fixture_kind == "ocr" else WHISPER_CANDIDATE_TIMEOUT_SECONDS

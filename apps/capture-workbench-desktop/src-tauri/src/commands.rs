@@ -26,6 +26,17 @@ pub fn desktop_runtime_status(state: tauri::State<'_, DesktopState>) -> DesktopR
     state.status()
 }
 
+/// Returns the canonical runtime readiness payload after the native launcher
+/// has authenticated the sidecar. The renderer receives the redacted payload
+/// through this command; the sidecar URL and bearer token stay native-owned.
+#[tauri::command]
+pub async fn runtime_ready(
+    state: tauri::State<'_, DesktopState>,
+) -> Result<serde_json::Value, String> {
+    let state = state.inner().clone();
+    run_blocking(move || runtime_client::ready(&state)).await
+}
+
 #[cfg(feature = "acceptance-app-data")]
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -40,6 +51,41 @@ pub fn desktop_runtime_process_probe(
 ) -> DesktopRuntimeProcessProbe {
     DesktopRuntimeProcessProbe {
         process_id: state.runtime_process_id(),
+    }
+}
+
+/// Requests the normal Tauri close lifecycle. The window event handler owns
+/// the native runtime shutdown, including the OwnedRuntimeSession Job.
+#[tauri::command]
+pub fn desktop_acceptance_close_window(window: tauri::Window) -> Result<(), String> {
+    window
+        .close()
+        .map_err(|error| format!("Capture Workbench window close failed: {error}"))
+}
+
+/// Injects an app-root hard termination through the current process handle.
+/// This command intentionally accepts no PID: the native handle is resolved
+/// by the host itself, so the acceptance harness cannot race a reused PID.
+#[cfg(feature = "acceptance-app-data")]
+#[tauri::command]
+pub fn desktop_acceptance_terminate_root() -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Foundation::GetLastError;
+        use windows_sys::Win32::System::Threading::{GetCurrentProcess, TerminateProcess};
+
+        let process = unsafe { GetCurrentProcess() };
+        if unsafe { TerminateProcess(process, 0xE2) } == 0 {
+            return Err(format!(
+                "Capture Workbench root termination failed with native code {}.",
+                unsafe { GetLastError() },
+            ));
+        }
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        Err("Capture Workbench root termination injection requires Windows.".into())
     }
 }
 
@@ -279,6 +325,15 @@ pub async fn runtime_get_raw(
 ) -> Result<serde_json::Value, String> {
     let state = state.inner().clone();
     run_blocking(move || runtime_client::raw_capture(&state, input)).await
+}
+
+#[tauri::command]
+pub async fn runtime_get_ocr(
+    state: tauri::State<'_, DesktopState>,
+    input: RuntimeIdInput,
+) -> Result<serde_json::Value, String> {
+    let state = state.inner().clone();
+    run_blocking(move || runtime_client::capture_ocr(&state, input)).await
 }
 
 #[tauri::command]

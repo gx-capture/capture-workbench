@@ -4,9 +4,9 @@ Publishable Capture Workbench UI and transport contracts for Capture Runtime. Th
 owns runtime setup, file preprocessing, queued capture jobs, progress,
 cancellation, raw diagnostics, and JSON/text export.
 
-Install the pinned GitHub Packages version with a token that has only
-`read:packages` access. Consumer Actions jobs should declare `contents: read`
-and `packages: read`; they do not need write permissions.
+When release policy permits consumer verification, use a GitHub Packages token
+that has only `read:packages` access. Consumer Actions jobs should declare
+`contents: read` and `packages: read`; they do not need write permissions.
 
 Configure the scope without committing the token (the repository root includes
 the same `.npmrc.example`):
@@ -16,17 +16,74 @@ the same `.npmrc.example`):
 //npm.pkg.github.com/:_authToken=${GITHUB_PACKAGES_TOKEN}
 ```
 
-The published `0.4.1` registry bytes are the synchronized v2 package
-candidate and have been verified against the package candidate artifact. The
-published version is immutable; any future package metadata or API change
-must use the next coordinated version (for example, `0.4.1`).
+> Phase 2 checkpoint (2026-09-10): this checkout is documentation/design-only.
+> It does not assert that any release is published or that registry bytes exist.
+> D4/D7 acceptance records use the exact bytes/hash of the producer's
+> `@capture-runtime/acceptance-contract` package (proposed at
+> `packages/capture-acceptance-contract`), version `"1"`. Its semantic manifest
+> excludes itself, any hash file, archive, and delivery metadata;
+> `contractSha256` hashes that canonical manifest, while the external archive
+> has a separate `acceptanceContractArchiveSha256`. Both are distinct from the
+> runtime contract-set hash; no generated embedded self-hash is accepted. D2
+> owns only schemas/codecs and synthetic RED/GREEN cases; D3 creates the
+> immutable package/bundle and ledger; D4 consumes real D3 bytes; D6 rehashes
+> fresh public bytes for D7. A consumer writes only its
+> `ConsumerSemanticResultV1`; the producer owns mutable scope and the final
+> `AcceptanceChildWireV1`.
+> D6 immutable public downloads are permitted and required for D7 verification:
+> D7 installs/uses only the exact bytes bound by the D6 ledger, before D8.
+> Ordinary stable or mutable-pointer consumer installation waits until D8
+> stable-pointer promotion in the canonical Phase 2 delivery state machine.
+> Until D6, do not install from a mutable pointer or infer release identity
+> from this source tree.
 
-Install the exact published version for consumer verification:
+## Phase 2 acceptance handoff
 
-```powershell
-$env:GITHUB_PACKAGES_TOKEN = '<read:packages token>'
-corepack pnpm add @gx-capture/capture-workbench-ui@0.4.1 --save-exact
-```
+When this package participates as a consumer, it consumes the exact generated
+`@capture-runtime/acceptance-contract` package bytes, `ProducerAcceptanceContractV1`
+version `"1"`, and literal `contractSha256` bound by D3/D6. The package is the
+canonical schema/codec/generator/manifest/hash authority;
+`tools/acceptance-contract.ts` is only a consumer adapter. This UI package does
+not copy or redefine producer record names, fields, fixture rules, or cleanup
+policy. The consumer receives only a frozen,
+read-only `ProducerChildInvocationV1` and writes exactly one
+`ConsumerSemanticResultV1` to the separate semantic-result output. It never
+receives or mutates `ProducerChildScopeV1` and never writes the final
+`AcceptanceChildWireV1`; the producer validates the ordered fixture results,
+proves cleanup, and adds cleanup fields only to that final wire. A semantic
+result has no journal, reconcile-ref, generation, attempt, process/listener/
+staging, capture-delete, model-memory, or wire fields. The producer scope is
+state-discriminated: `planned` is unbound, `prepared` carries the complete
+ordered group/root `rootBindings`, and `ready` adds only the verified frozen
+invocation digest; ready scope is not nested in the invocation. Its
+`ProducerChildInvocationV1` is immutable, read-only, and carries the complete
+ordered `rootBindings` itself. Its
+`fixtureResults[]` must preserve the producer's ordered
+`fixtureAssignments[]` cardinality, keys, and per-fixture media/oracle/artifact
+digests; the consumer cannot add, remove, reorder, or substitute a fixture.
+Assignments carry opaque media/oracle capability handles plus handle digests;
+the consumer's private read-only resolver/store binds those handles to real
+media and full oracle truth using `mediaSha256`/`oracleSha256`. Raw paths/text
+never enter the invocation or semantic result. Each capability is issued for
+one named child/leg, gate, and invocation, atomically consumed on first open,
+revoked on cancel/mismatch/freeze/activation/cleanup/close, and unusable after
+expiry or reconcile; raw handles, media, truth, paths, tokens, PIDs, and native
+diagnostics are never logged or persisted outside the private resolver/store.
+
+The proposed package delivery owners are `schemas/*.schema.json`,
+`src/codecs.ts`, `src/export.ts`, `src/index.ts`, `src/canonical-json.ts`,
+`src/manifest.ts`, `src/hash.ts`, `tools/generate.ts`, and
+`tools/create-bundle.ts`; package/Nx metadata owns the delivery target.
+
+The producer's native R3 boundary is whole-group: public
+`prepare_group(plan, sink) -> PreparedGroup` returns an opaque, move-only,
+nonserializable value containing a producer-private activation permit, and
+`activate_group(PreparedGroup) -> GroupLease` consumes it once. Sink
+`persist`/`read_back`/`verify` uses `bindingAttemptId` for the complete ordered
+root binding; activation CASes `ready -> launching` before resume. A partial
+resume or listener-readiness failure closes the whole Job, returns no lease,
+and reconciles the group. This UI package exposes no permit, native identity,
+or per-root activation API.
 
 ## Angular integration contract
 
@@ -229,8 +286,12 @@ later registration attempt may retry after the underlying error is corrected.
 
 The framework-neutral fixture is
 [`fixtures/web-component/index.html`](./fixtures/web-component/index.html).
-Install `@gx-capture/capture-workbench-ui` from the configured NPM-compatible registry and
-import it from your bundler. The package does not publish a standalone browser
+For D7 published acceptance, install the exact immutable package version and
+runtime bytes identified by the D6 download-back ledger; this exact install is
+required before D8 and must not resolve through `stable`, `latest`, or another
+mutable pointer. After D8 stable-pointer promotion, ordinary consumers may
+follow the stable channel and install from the configured NPM-compatible
+registry. The package does not publish a standalone browser
 bundle or CDN entry.
 
 React and Vue consumers can assign the object properties through a DOM ref and

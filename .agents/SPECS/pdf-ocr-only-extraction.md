@@ -2,22 +2,31 @@
 
 ## Purpose
 
-Make the rendered PDF page the only source of truth for PDF capture. Every PDF
-page is rendered by PDFium and recognized by the existing PaddleOCR 3.7
-WindowsML worker. Embedded PDF text is never read or returned.
+Make the rendered PDF page the only source of truth for PDF capture. Every
+selected PDF page is rendered by PDFium and recognized by the existing
+PaddleOCR 3.7 WindowsML worker. Embedded PDF text is never read or returned.
 
 ## Non-goals
 
 - Do not add another OCR engine or a second PDF parsing service.
 - Do not preserve `pdf-embedded-text` or mixed embedded/OCR extraction modes.
-- Do not change the public Capture Runtime v2 HTTP or document schema.
+- Keep existing Capture Runtime v2 fields compatible; the additive capture
+  request page scope and raw page-scope evidence are explicit v2 fields.
 - Do not claim a local candidate is published or installed-package evidence.
 
 ## Interfaces
 
-- The public PDF upload and result contracts remain unchanged.
-- The internal OCR worker PDF request receives `maxPages` and `renderScale` and
-  processes every page in source order.
+- `StartCaptureV2` accepts an optional `pdfPageNumbers` ordered prefix. When it
+  is omitted, the existing all-page behavior remains unchanged. The normal
+  desktop app omits this field; only the feature-gated packaged Phase 1
+  acceptance harness advertises `[1]` through the private native status seam.
+  A missing or malformed status value is treated as omitted, so an ordinary
+  PDF always remains an all-page `1..N` capture.
+- `RawCapture` carries additive `ocrPageScope` evidence with the source page
+  count and the requested/processed page numbers.
+- The internal OCR worker PDF request receives `maxPages`, `renderScale`, and
+  an optional `pageNumbers` prefix; it renders only selected pages in source
+  order.
 - PDF capture requires the `windowsml-ocr` runtime requirement to be ready.
 - Successful PDF extraction reports the existing `windowsml-ocr` engine and
   PaddleOCR model/device provenance.
@@ -44,7 +53,11 @@ WindowsML worker. Embedded PDF text is never read or returned.
 
 - No production source or dependency imports `pypdf`.
 - A PDF with a non-empty but incorrect text layer still invokes PaddleOCR for
-  every page and returns only OCR worker text.
+  every selected page and returns only OCR worker text.
+- The packaged Phase 1 desktop journey for the canonical 46-page PDF proves
+  `sourcePageCount: 46`, `requestedPageNumbers: [1]`, and
+  `processedPageNumbers: [1]`; its visible raw and structured page locators
+  contain no page 2 through 46.
 - The OCR worker enforces the configured PDF page limit and preserves page
   order while holding at most one rendered page image at a time.
 - Cert Prep blocks PDF and image capture when `windowsml-ocr` is not ready.

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { cp, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 function args(values: readonly string[]) {
@@ -74,7 +74,10 @@ async function main(): Promise<void> {
     coordinates: { groupId: 'com.gx.capture', artifactId: 'capture-runtime-client', packaging: 'jar' },
     contractSetSha256,
     artifacts,
-    toolchains: { java: process.env.JAVA_HOME ?? 'unknown', maven: 'maven' },
+    toolchains: {
+      java: process.env.JAVA_HOME ? basename(process.env.JAVA_HOME) : 'unknown',
+      maven: 'maven',
+    },
   } as const;
   const candidateId = createHash('sha256').update(JSON.stringify(baseManifest)).digest('hex');
   const manifest = { ...baseManifest, candidateId };

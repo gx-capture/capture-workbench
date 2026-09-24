@@ -1,0 +1,34 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "width": {
+      "exclusiveMinimum": 0,
+      "title": "Width",
+      "type": "integer"
+    },
+    "height": {
+      "exclusiveMinimum": 0,
+      "title": "Height",
+      "type": "integer"
+    },
+    "scale": {
+      "exclusiveMinimum": 0,
+      "maximum": 8,
+      "title": "Scale",
+      "type": "number"
+    },
+    "coordinateSystem": {
+      "const": "pixel",
+      "title": "Coordinatesystem",
+      "type": "string"
+    }
+  },
+  "required": [
+    "width",
+    "height",
+    "scale",
+    "coordinateSystem"
+  ],
+  "title": "OcrRasterV3",
+  "type": "object"
+}

@@ -691,7 +691,6 @@ export function runtimeEnvironment(
     CAPTURE_EXTRACTION_PROVIDER: 'runtime',
     CAPTURE_RETENTION_HOURS: '24',
     CAPTURE_MAX_UPLOAD_BYTES: String(50 * 1024 * 1024),
-    CAPTURE_WINDOWSML_DEVICE_ID: '0',
     CAPTURE_WHISPER_PRIMARY_MODEL: 'large-v3-turbo',
     CAPTURE_WHISPER_FALLBACK_MODEL: 'small',
     CAPTURE_WHISPER_PREFER_GPU: String(expectedProvenance.whisperPreferGpu),

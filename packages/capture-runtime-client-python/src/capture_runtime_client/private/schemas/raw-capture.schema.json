@@ -74,6 +74,43 @@
       "title": "CaptureSource",
       "type": "object"
     },
+    "OcrPageScopeV2": {
+      "additionalProperties": false,
+      "description": "Public evidence describing which PDF pages entered OCR.",
+      "properties": {
+        "sourcePageCount": {
+          "maximum": 500,
+          "minimum": 1,
+          "title": "Sourcepagecount",
+          "type": "integer"
+        },
+        "requestedPageNumbers": {
+          "items": {
+            "type": "integer"
+          },
+          "maxItems": 500,
+          "minItems": 1,
+          "title": "Requestedpagenumbers",
+          "type": "array"
+        },
+        "processedPageNumbers": {
+          "items": {
+            "type": "integer"
+          },
+          "maxItems": 500,
+          "minItems": 1,
+          "title": "Processedpagenumbers",
+          "type": "array"
+        }
+      },
+      "required": [
+        "sourcePageCount",
+        "requestedPageNumbers",
+        "processedPageNumbers"
+      ],
+      "title": "OcrPageScopeV2",
+      "type": "object"
+    },
     "PageLocator": {
       "additionalProperties": false,
       "properties": {
@@ -241,6 +278,17 @@
       "maxItems": 1000,
       "title": "Warnings",
       "type": "array"
+    },
+    "ocrPageScope": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/OcrPageScopeV2"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "createdAt": {
       "format": "date-time",

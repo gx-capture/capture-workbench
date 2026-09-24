@@ -20,6 +20,11 @@ const forbiddenMarkers = [
   'unknown fake installation',
   'capture fakes',
 ];
+const requiredDesktopUiMarkers = [
+  'ocr-compute-status',
+  'OCR acceleration enabled (DirectML).',
+  'No usable GPU acceleration is available. CPU OCR may be slower.',
+];
 const indexPath = join(bundleRoot, 'index.html');
 
 function collectJavascriptFiles(directory) {
@@ -83,7 +88,24 @@ function verifyProductionBundle() {
                 ),
             );
           }
-          return of(javascriptFiles.length);
+          return from(javascriptFiles).pipe(
+            concatMap((file) => defer(() => from(readFile(file, 'utf8')))),
+            toArray(),
+            concatMap((contents) => {
+              const bundle = contents.join('\n');
+              const missingMarkers = requiredDesktopUiMarkers.filter(
+                (marker) => !bundle.includes(marker),
+              );
+              if (missingMarkers.length > 0) {
+                return throwError(
+                  () => new Error(
+                    `Production Capture Workbench is missing required OCR compute UI markers: ${missingMarkers.join(', ')}`,
+                  ),
+                );
+              }
+              return of(javascriptFiles.length);
+            }),
+          );
         }),
       );
     }),

@@ -27,7 +27,7 @@ public final class CaptureRuntimeTypes {
   public static final String CONTRACT_SET_VERSION = "2";
   /** Updated only as part of a coordinated runtime/client release. */
   public static final String CONTRACT_SET_SHA256 =
-      "b28366f022533192c063056bbf64cacfd09390815c65408066369dd61094e278";
+      "d293a3de26114f1b4fd65ea6d6d3f157fa2f93109b31e1e30d5d15ef0dfdeb40";
 
   private static final Pattern SHA256 = Pattern.compile("^[0-9a-f]{64}$");
   private static final Pattern FAILURE_CODE = Pattern.compile("^[a-z][a-z0-9_]{1,63}$");
@@ -57,6 +57,21 @@ public final class CaptureRuntimeTypes {
     return value;
   }
 
+  /** Validate canonical OCR wire values without changing malformed input into valid input. */
+  private static String wireOcrSha256(String value, String field) {
+    if (value == null || !OCR_SOURCE_SHA256_PATTERN.matcher(value).matches()) {
+      throw new IllegalArgumentException(field + " must be a lowercase SHA-256 digest on the wire");
+    }
+    return value;
+  }
+
+  private static String wireOcrFailureCode(String value) {
+    if (value == null || !OCR_FAILURE_CODE_PATTERN.matcher(value).matches()) {
+      throw new IllegalArgumentException("failure code must use the canonical lowercase form on the wire");
+    }
+    return value;
+  }
+
   private static String timestamp(String value, String field) {
     value = text(value, field);
     try {
@@ -80,6 +95,25 @@ public final class CaptureRuntimeTypes {
   private static List<String> warnings(List<String> values) {
     if (values == null) return List.of();
     return List.copyOf(values.stream().map(value -> bounded(value, 500, "warning")).toList());
+  }
+
+  /** Normalize a bounded ordered page prefix at the public Java boundary. */
+  static List<Integer> pageNumbers(List<Integer> values, String field) {
+    if (values == null) return null;
+    if (values.isEmpty() || values.size() > 500) {
+      throw new IllegalArgumentException(field + " must contain 1 to 500 pages");
+    }
+    for (var index = 0; index < values.size(); index++) {
+      if (values.get(index) == null || values.get(index) != index + 1) {
+        throw new IllegalArgumentException(field + " must be an ordered prefix from page one");
+      }
+    }
+    return List.copyOf(values);
+  }
+
+  /** Normalize the optional PDF page prefix at the public Java boundary. */
+  static List<Integer> pdfPageNumbers(List<Integer> values) {
+    return pageNumbers(values, "pdfPageNumbers");
   }
 
   private static String project(List<RawCaptureSegment> segments) {
@@ -333,6 +367,16 @@ public final class CaptureRuntimeTypes {
   }
 
   public record Source(String sha256, String fileName, String mediaType, long bytes) {
+    @JsonCreator(mode = JsonCreator.Mode.PROPERTIES)
+    static Source fromWire(
+        @JsonProperty(value = "sha256", required = true) String sha256,
+        @JsonProperty(value = "fileName", required = true) String fileName,
+        @JsonProperty(value = "mediaType", required = true) String mediaType,
+        @JsonProperty(value = "bytes", required = true) long bytes) {
+      wireOcrSha256(sha256, "sha256");
+      return new Source(sha256, fileName, mediaType, bytes);
+    }
+
     public Source {
       sha256 = CaptureRuntimeTypes.sha256(sha256, "sha256");
       fileName = bounded(fileName, 255, "fileName");
@@ -362,6 +406,31 @@ public final class CaptureRuntimeTypes {
     }
   }
 
+  public record OcrPageScope(
+      @JsonProperty(required = true) int sourcePageCount,
+      @JsonProperty(required = true) List<Integer> requestedPageNumbers,
+      @JsonProperty(required = true) List<Integer> processedPageNumbers) {
+    public OcrPageScope {
+      if (sourcePageCount < 1 || sourcePageCount > 500) {
+        throw new IllegalArgumentException("sourcePageCount must be between 1 and 500");
+      }
+      requestedPageNumbers =
+          Objects.requireNonNull(
+              pageNumbers(requestedPageNumbers, "requestedPageNumbers"),
+              "requestedPageNumbers");
+      processedPageNumbers =
+          Objects.requireNonNull(
+              pageNumbers(processedPageNumbers, "processedPageNumbers"),
+              "processedPageNumbers");
+      if (requestedPageNumbers.size() > sourcePageCount) {
+        throw new IllegalArgumentException("requested PDF pages must exist in the source");
+      }
+      if (!processedPageNumbers.equals(requestedPageNumbers)) {
+        throw new IllegalArgumentException("processed PDF pages must equal requested PDF pages");
+      }
+    }
+  }
+
   public record RawCapture(
       String schemaVersion,
       boolean diagnosticOnly,
@@ -370,7 +439,8 @@ public final class CaptureRuntimeTypes {
       @JsonProperty(required = true) String sourceText,
       @JsonProperty(required = true) Engine extractionEngine,
       @JsonSetter(nulls = Nulls.FAIL) List<String> warnings,
-      @JsonProperty(required = true) String createdAt) {
+      @JsonProperty(required = true) String createdAt,
+      OcrPageScope ocrPageScope) {
     public RawCapture {
       schemaVersion = text(schemaVersion, "schemaVersion");
       if (!"2".equals(schemaVersion)) throw new IllegalArgumentException("schemaVersion must equal 2");
@@ -389,6 +459,19 @@ public final class CaptureRuntimeTypes {
       extractionEngine = Objects.requireNonNull(extractionEngine, "extractionEngine");
       warnings = CaptureRuntimeTypes.warnings(warnings);
       createdAt = timestamp(createdAt, "createdAt");
+      ocrPageScope = ocrPageScope == null ? null : Objects.requireNonNull(ocrPageScope, "ocrPageScope");
+    }
+
+    public RawCapture(
+        String schemaVersion,
+        boolean diagnosticOnly,
+        Source source,
+        List<RawCaptureSegment> segments,
+        String sourceText,
+        Engine extractionEngine,
+        List<String> warnings,
+        String createdAt) {
+      this(schemaVersion, diagnosticOnly, source, segments, sourceText, extractionEngine, warnings, createdAt, null);
     }
   }
 
@@ -465,6 +548,16 @@ public final class CaptureRuntimeTypes {
   }
 
   public record Failure(String code, String message, String stage, boolean retryable) {
+    @JsonCreator(mode = JsonCreator.Mode.PROPERTIES)
+    static Failure fromWire(
+        @JsonProperty(value = "code", required = true) String code,
+        @JsonProperty(value = "message", required = true) String message,
+        @JsonProperty(value = "stage") String stage,
+        @JsonProperty(value = "retryable") boolean retryable) {
+      wireOcrFailureCode(code);
+      return new Failure(code, message, stage, retryable);
+    }
+
     public Failure {
       code = text(code, "code").toLowerCase();
       if (!FAILURE_CODE.matcher(code).matches()) throw new IllegalArgumentException("invalid failure code");
@@ -539,7 +632,14 @@ public final class CaptureRuntimeTypes {
     }
   }
 
-  public record StartCapture(String protocolVersion, String clientRequestId, String ingestionId, StructuringMode structuringMode, String targetLanguage, String startPolicy) {
+  public record StartCapture(
+      String protocolVersion,
+      String clientRequestId,
+      String ingestionId,
+      StructuringMode structuringMode,
+      String targetLanguage,
+      String startPolicy,
+      List<Integer> pdfPageNumbers) {
     public StartCapture {
       protocolVersion = protocolVersion == null ? PROTOCOL_VERSION : text(protocolVersion, "protocolVersion");
       if (!PROTOCOL_VERSION.equals(protocolVersion)) throw new IllegalArgumentException("protocolVersion must equal 2");
@@ -549,8 +649,289 @@ public final class CaptureRuntimeTypes {
       targetLanguage = targetLanguage == null ? null : bounded(targetLanguage, 64, "targetLanguage");
       startPolicy = startPolicy == null ? "eager" : text(startPolicy, "startPolicy");
       if (!"eager".equals(startPolicy)) throw new IllegalArgumentException("startPolicy must equal eager");
+      pdfPageNumbers = CaptureRuntimeTypes.pdfPageNumbers(pdfPageNumbers);
+    }
+
+    public StartCapture(
+        String protocolVersion,
+        String clientRequestId,
+        String ingestionId,
+        StructuringMode structuringMode,
+        String targetLanguage,
+        String startPolicy) {
+      this(protocolVersion, clientRequestId, ingestionId, structuringMode, targetLanguage, startPolicy, null);
     }
   }
+
+  // BEGIN GENERATED OCR PROJECTION
+  // Generated from capture-ocr-projection-v3.schema.json in contract-set.json. Do not edit.
+  private static final String OCR_RUNTIME_VERSION = "0.4.2";
+  private static final Pattern OCR_SOURCE_SHA256_PATTERN = Pattern.compile("^[0-9a-f]{64}$");
+  private static final Pattern OCR_FAILURE_CODE_PATTERN = Pattern.compile("^[a-z][a-z0-9_]{1,63}$");
+
+  public enum OcrProjectionStatus {
+    COMPLETED("completed"),
+    FAILED("failed");
+
+    private final String wireValue;
+
+    OcrProjectionStatus(String wireValue) {
+      this.wireValue = wireValue;
+    }
+
+    @JsonValue
+    public String wireValue() {
+      return wireValue;
+    }
+
+    @JsonCreator(mode = JsonCreator.Mode.DELEGATING)
+    public static OcrProjectionStatus fromWireValue(String value) {
+      for (var item : values()) {
+        if (item.wireValue.equals(value)) return item;
+      }
+      throw new IllegalArgumentException("unknown OCR OcrProjectionStatus: " + value);
+    }
+  }
+
+  public enum OcrPageStatus {
+    RECOGNIZED("recognized"),
+    EMPTY("empty"),
+    FAILED("failed");
+
+    private final String wireValue;
+
+    OcrPageStatus(String wireValue) {
+      this.wireValue = wireValue;
+    }
+
+    @JsonValue
+    public String wireValue() {
+      return wireValue;
+    }
+
+    @JsonCreator(mode = JsonCreator.Mode.DELEGATING)
+    public static OcrPageStatus fromWireValue(String value) {
+      for (var item : values()) {
+        if (item.wireValue.equals(value)) return item;
+      }
+      throw new IllegalArgumentException("unknown OCR OcrPageStatus: " + value);
+    }
+  }
+
+  public record OcrRaster(
+      @JsonProperty(required = true) long width,
+      @JsonProperty(required = true) long height,
+      @JsonProperty(required = true) double scale,
+      @JsonProperty(required = true) String coordinateSystem) {
+    public OcrRaster {
+      if (width <= 0 || height <= 0 || !Double.isFinite(scale) || scale <= 0 || scale > 8) {
+        throw new IllegalArgumentException("OCR raster metadata is invalid");
+      }
+      coordinateSystem = ocrText(coordinateSystem, 1, 5, "coordinateSystem");
+      if (!"pixel".equals(coordinateSystem)) {
+        throw new IllegalArgumentException("coordinateSystem must equal pixel");
+      }
+    }
+  }
+
+  public record OcrPoint(
+      @JsonProperty(required = true) double x,
+      @JsonProperty(required = true) double y) {
+    public OcrPoint {
+      if (!Double.isFinite(x) || x < 0 || !Double.isFinite(y) || y < 0) {
+        throw new IllegalArgumentException("OCR polygon coordinates must be finite and non-negative");
+      }
+    }
+  }
+
+  public record OcrBox(
+      @JsonProperty(required = true) List<OcrPoint> polygon,
+      @JsonProperty(required = true) String text,
+      @JsonProperty(required = true) Double confidence) {
+    public OcrBox {
+      polygon = List.copyOf(Objects.requireNonNull(polygon, "polygon"));
+      if (polygon.size() < 4 || polygon.size() > 256) {
+        throw new IllegalArgumentException("OCR polygon point count must be between 4 and 256");
+      }
+      text = ocrText(text, 1, 8000000, "text");
+      if (confidence != null && (!Double.isFinite(confidence) || confidence < 0 || confidence > 1)) {
+        throw new IllegalArgumentException("OCR box confidence is outside the canonical range");
+      }
+    }
+  }
+
+  private static String ocrText(String value, long minimum, long maximum, String field) {
+    if (value == null) throw new IllegalArgumentException(field + " must not be null");
+    value = value.strip();
+    var length = value.codePointCount(0, value.length());
+    if (length < minimum || length > maximum) {
+      throw new IllegalArgumentException(field + " length is outside the canonical range");
+    }
+    return value;
+  }
+
+  private static String ocrSha256(String value, String field) {
+    value = ocrText(value, 64, 64, field);
+    if (!value.matches("^[0-9a-f]{64}$")) {
+      throw new IllegalArgumentException(field + " must be a lowercase SHA-256 digest");
+    }
+    return value;
+  }
+
+  public enum OcrProvenanceUnavailableReason {
+    MODEL_UNAVAILABLE("model_unavailable"),
+    WORKER_CRASHED("worker_crashed"),
+    WORKER_TIMEOUT("worker_timeout"),
+    PROTOCOL_FAILURE("protocol_failure");
+
+    private final String wireValue;
+
+    OcrProvenanceUnavailableReason(String wireValue) {
+      this.wireValue = wireValue;
+    }
+
+    @JsonValue
+    public String wireValue() {
+      return wireValue;
+    }
+
+    @JsonCreator(mode = JsonCreator.Mode.DELEGATING)
+    public static OcrProvenanceUnavailableReason fromWireValue(String value) {
+      for (var item : values()) {
+        if (item.wireValue.equals(value)) return item;
+      }
+      throw new IllegalArgumentException("unknown OCR OcrProvenanceUnavailableReason: " + value);
+    }
+  }
+
+  @JsonTypeInfo(
+      use = JsonTypeInfo.Id.NAME,
+      include = JsonTypeInfo.As.EXISTING_PROPERTY,
+      property = "status",
+      visible = true)
+  @JsonSubTypes({
+    @JsonSubTypes.Type(value = OcrProvenanceResolved.class, name = "resolved"),
+    @JsonSubTypes.Type(value = OcrProvenanceUnavailable.class, name = "unavailable")
+  })
+  public sealed interface OcrProvenance
+      permits OcrProvenanceResolved, OcrProvenanceUnavailable {
+    String status();
+
+    String profileId();
+
+    String profileSpecSha256();
+  }
+
+  @JsonTypeName("resolved")
+  public record OcrProvenanceResolved(
+      @JsonProperty(required = true) String status,
+      @JsonProperty(required = true) String engine,
+      @JsonProperty(required = true) String model,
+      @JsonProperty(required = true) String modelDigest,
+      @JsonProperty(required = true) String device,
+      @JsonProperty(required = true) String profileId,
+      @JsonProperty(required = true) String profileSpecSha256) implements OcrProvenance {
+    public OcrProvenanceResolved {
+      if (!"resolved".equals(status)) throw new IllegalArgumentException("OCR resolved provenance status must equal resolved");
+      engine = ocrText(engine, 1, Long.MAX_VALUE, "engine");
+      if (!"windowsml-ocr".equals(engine)) throw new IllegalArgumentException("OCR engine must equal windowsml-ocr");
+      model = ocrText(model, 1, Long.MAX_VALUE, "model");
+      modelDigest = ocrText(modelDigest, 1, Long.MAX_VALUE, "modelDigest");
+      if (!modelDigest.matches("^sha256:[0-9a-f]{64}$") || "sha256:0000000000000000000000000000000000000000000000000000000000000000".equals(modelDigest)) {
+        throw new IllegalArgumentException("modelDigest is not a resolved model digest");
+      }
+      device = ocrText(device, 1, Long.MAX_VALUE, "device");
+      profileId = ocrText(profileId, 1, Long.MAX_VALUE, "profileId");
+      profileSpecSha256 = ocrSha256(profileSpecSha256, "profileSpecSha256");
+    }
+  }
+
+  @JsonTypeName("unavailable")
+  public record OcrProvenanceUnavailable(
+      @JsonProperty(required = true) String status,
+      @JsonProperty(required = true) String profileId,
+      @JsonProperty(required = true) String profileSpecSha256,
+      @JsonProperty(required = true) OcrProvenanceUnavailableReason reason) implements OcrProvenance {
+    public OcrProvenanceUnavailable {
+      if (!"unavailable".equals(status)) throw new IllegalArgumentException("OCR unavailable provenance status must equal unavailable");
+      profileId = ocrText(profileId, 1, Long.MAX_VALUE, "profileId");
+      profileSpecSha256 = ocrSha256(profileSpecSha256, "profileSpecSha256");
+      reason = Objects.requireNonNull(reason, "reason");
+    }
+  }
+
+  private static List<String> ocrWarnings(List<String> values) {
+    if (values == null) return List.of();
+    if (values.size() > 1000) throw new IllegalArgumentException("OCR warnings exceed the canonical limit");
+    return List.copyOf(values.stream().map(value -> ocrText(value, 0, 500, "warning")).toList());
+  }
+
+  public record OcrPageProjection(
+      @JsonProperty(required = true) long page,
+      @JsonProperty(required = true) OcrPageStatus status,
+      @JsonProperty(required = true) OcrRaster raster,
+      String text,
+      List<OcrBox> boxes,
+      Double confidence,
+      @JsonProperty(required = true) OcrProvenance provenance,
+      Failure failure) {
+    public OcrPageProjection {
+      if (page < 1) throw new IllegalArgumentException("OCR page must be positive");
+      status = Objects.requireNonNull(status, "status");
+      raster = Objects.requireNonNull(raster, "raster");
+      text = text == null ? "" : ocrText(text, 0, 8000000, "text");
+      boxes = boxes == null ? List.of() : List.copyOf(boxes);
+      if (boxes.size() > 100000) throw new IllegalArgumentException("OCR boxes exceed the canonical limit");
+      if (confidence != null && (!Double.isFinite(confidence) || confidence < 0 || confidence > 1)) throw new IllegalArgumentException("OCR confidence is outside the canonical range");
+      provenance = Objects.requireNonNull(provenance, "provenance");
+      if ((status == OcrPageStatus.RECOGNIZED || status == OcrPageStatus.EMPTY) && !(provenance instanceof OcrProvenanceResolved)) throw new IllegalArgumentException("recognized and empty OCR pages require resolved provenance");
+      if (status == OcrPageStatus.RECOGNIZED && (text.isBlank() || confidence == null || failure != null)) throw new IllegalArgumentException("recognized OCR page is invalid");
+      if (status == OcrPageStatus.EMPTY && (!text.isBlank() || !boxes.isEmpty() || confidence != null || failure != null)) throw new IllegalArgumentException("empty OCR page is invalid");
+      if (status == OcrPageStatus.FAILED && (!text.isBlank() || !boxes.isEmpty() || confidence != null || failure == null)) throw new IllegalArgumentException("failed OCR page is invalid");
+      for (var box : boxes) for (var point : box.polygon()) if (point.x() > raster.width() || point.y() > raster.height()) throw new IllegalArgumentException("OCR polygon must stay inside the raw raster bounds");
+    }
+  }
+
+  public record CaptureOcrProjection(
+      @JsonProperty(required = true) String apiVersion,
+      @JsonProperty(required = true) String schemaVersion,
+      @JsonProperty(required = true) String captureId,
+      @JsonProperty(required = true) OcrProjectionStatus status,
+      Source source,
+      @JsonProperty(required = true) List<OcrPageProjection> pages,
+      @JsonProperty(required = true) long pageCount,
+      @JsonProperty(required = true) String runtimeVersion,
+      @JsonProperty(required = true) String contractSha256,
+      @JsonProperty(required = true) OcrProvenance provenance,
+      List<String> warnings,
+      Failure failure,
+      @JsonProperty(required = true) String createdAt) {
+    public CaptureOcrProjection {
+      apiVersion = ocrText(apiVersion, 1, 3, "apiVersion"); if (!"2.0".equals(apiVersion)) throw new IllegalArgumentException("apiVersion is incompatible");
+      schemaVersion = ocrText(schemaVersion, 1, 1, "schemaVersion"); if (!"3".equals(schemaVersion)) throw new IllegalArgumentException("schemaVersion is incompatible");
+      captureId = ocrText(captureId, 1, Long.MAX_VALUE, "captureId");
+      status = Objects.requireNonNull(status, "status");
+      pages = List.copyOf(Objects.requireNonNull(pages, "pages"));
+      if (pageCount < 0 || pageCount > 500 || pageCount != pages.size()) throw new IllegalArgumentException("pageCount must equal pages.size() and stay in the canonical range");
+      if (pages.size() > 500) throw new IllegalArgumentException("OCR pages exceed the canonical limit");
+      runtimeVersion = ocrText(runtimeVersion, 1, 5, "runtimeVersion"); if (!OCR_RUNTIME_VERSION.equals(runtimeVersion)) throw new IllegalArgumentException("runtimeVersion is incompatible");
+      contractSha256 = ocrSha256(contractSha256, "contractSha256");
+      provenance = Objects.requireNonNull(provenance, "provenance");
+      for (var index = 0; index < pages.size(); index++) {
+        var page = pages.get(index);
+        if (page.page() != index + 1) throw new IllegalArgumentException("OCR pages must be complete and ordered from page one");
+        if (!provenance.equals(page.provenance())) throw new IllegalArgumentException("page OCR provenance must match document provenance");
+      }
+      warnings = ocrWarnings(warnings);
+      createdAt = timestamp(createdAt, "createdAt");
+      if (status == OcrProjectionStatus.COMPLETED && (pages.isEmpty() || source == null || failure != null)) throw new IllegalArgumentException("completed OCR projections require pages, source, provenance, and no failure");
+      if (status == OcrProjectionStatus.COMPLETED && !(provenance instanceof OcrProvenanceResolved)) throw new IllegalArgumentException("completed OCR projections require resolved provenance");
+      if (status == OcrProjectionStatus.COMPLETED && pages.stream().anyMatch(page -> page.status() == OcrPageStatus.FAILED)) throw new IllegalArgumentException("completed OCR projections must not contain failed pages");
+      if (status == OcrProjectionStatus.COMPLETED && pages.stream().noneMatch(page -> page.status() == OcrPageStatus.RECOGNIZED)) throw new IllegalArgumentException("completed OCR projections require recognized text");
+      if (status == OcrProjectionStatus.FAILED && failure == null) throw new IllegalArgumentException("failed OCR projection requires failure");
+    }
+  }
+  // END GENERATED OCR PROJECTION
 
   public record StructuringProviderCapability(
       Engine provider, String capability, String schemaDialect) {

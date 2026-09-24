@@ -181,9 +181,8 @@ host adapter, not runtime credentials.
 
 ## Develop from source
 
-The workspace uses Nx and requires Node.js 24 or newer, pnpm 11 or newer via
-Corepack, Python 3.12 with `uv` for the runtime, and Rust for Tauri/native
-targets.
+The workspace uses Nx and requires Node.js 24 and pnpm 12.0.0 via Corepack,
+Python 3.12 with `uv` for the runtime, and Rust for Tauri/native targets.
 
 ```powershell
 corepack install

@@ -1,18 +1,21 @@
-"""Fail-closed validation for the v0.4.1 direct-model source lock."""
+"""Fail-closed validation for the v0.4.2 direct-model source lock."""
 
 from __future__ import annotations
 
 import argparse
 import hashlib
 import json
+import subprocess
 import unicodedata
 from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import urlsplit
 
 LOCK_VERSION = "2"
-RELEASE_VERSION = "0.4.1"
-COMMIT_A_SHA = "31821b241846878d917a60e638a4fce39aba418a"
+RELEASE_VERSION = "0.4.2"
+COMMIT_A_SHA = "c219cf9d887056b782c2a9f1d3a9d1b79467f0e7"
+REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
+FIRST_PARTY_REPOSITORY_ROOT = "packages/capture-runtime/model-sources/commit-a"
 FIRST_PARTY_ROOT = (
     "https://raw.githubusercontent.com/gx-capture/capture-workbench/"
     f"{COMMIT_A_SHA}/packages/capture-runtime/model-sources/commit-a"
@@ -122,6 +125,45 @@ def _first_party_url(value: object, relative: str, label: str) -> str:
     if host != "raw.githubusercontent.com" or url != expected:
         raise ModelSourceLockError(f"{label} must bind the exact Commit A raw URL")
     return url
+
+
+def _is_first_party_repository_url(value: str) -> bool:
+    parsed = urlsplit(value)
+    return (
+        parsed.hostname is not None
+        and parsed.hostname.lower() == "raw.githubusercontent.com"
+        and parsed.path.startswith("/gx-capture/capture-workbench/")
+    )
+
+
+def _first_party_git_blob(
+    *,
+    revision: str,
+    relative: str,
+    expected_bytes: int,
+    expected_sha256: str,
+    label: str,
+    repository_root: Path = REPOSITORY_ROOT,
+) -> None:
+    """Check lock metadata against the immutable first-party Git blob."""
+
+    blob_path = f"{FIRST_PARTY_REPOSITORY_ROOT}/{relative}"
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repository_root), "cat-file", "blob", f"{revision}:{blob_path}"],
+            check=True,
+            capture_output=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise ModelSourceLockError(
+            f"{label} first-party Git blob is unavailable for {revision}:{relative}"
+        ) from error
+    actual = result.stdout
+    actual_sha256 = hashlib.sha256(actual).hexdigest()
+    if len(actual) != expected_bytes or actual_sha256 != expected_sha256:
+        raise ModelSourceLockError(
+            f"{label} first-party Git blob does not match lock bytes/SHA for {revision}:{relative}"
+        )
 
 
 def _redirect_hosts(value: object, initial_host: str, label: str) -> list[str]:
@@ -290,10 +332,17 @@ def _validate_requirement(raw_requirement: object, index: int) -> dict[str, Any]
         pipeline = next((item for item in validated if item["path"] == "model/pipeline.json"), None)
         if pipeline is None or pipeline["kind"] != "derived":
             raise ModelSourceLockError("OCR requirement needs derived model/pipeline.json")
-        for item in validated:
-            path = item["path"]
-            if path in {"model/pipeline.json", "provenance/commit-a.json"}:
-                _first_party_url(item["url"], path, f"windowsml-ocr.{path}.url")
+    for item in validated:
+        path = item["path"]
+        if _is_first_party_repository_url(item["url"]):
+            _first_party_url(item["url"], path, f"{requirement_id}.{path}.url")
+            _first_party_git_blob(
+                revision=item["revision"],
+                relative=path,
+                expected_bytes=item["bytes"],
+                expected_sha256=item["sha256"],
+                label=f"{requirement_id}.{path}",
+            )
     return requirement
 
 
@@ -352,9 +401,37 @@ def _validate_ocr_fixture(value: object) -> dict[str, Any]:
     if fixture["licenseBytes"] != 1087 or fixture["noticeBytes"] != 303:
         raise ModelSourceLockError("OCR fixture license/NOTICE bytes drifted")
     _first_party_url(fixture["url"], "fixtures/ocr-reference.png", "OCR fixture url")
+    _first_party_git_blob(
+        revision=revision,
+        relative="fixtures/ocr-reference.png",
+        expected_bytes=fixture["bytes"],
+        expected_sha256=fixture["sha256"],
+        label="OCR fixture",
+    )
     _first_party_url(fixture["pdfUrl"], "fixtures/ocr-scanned.pdf", "OCR fixture pdfUrl")
+    _first_party_git_blob(
+        revision=revision,
+        relative="fixtures/ocr-scanned.pdf",
+        expected_bytes=fixture["pdfBytes"],
+        expected_sha256=fixture["pdfSha256"],
+        label="OCR fixture PDF",
+    )
     _first_party_url(fixture["licenseUrl"], "licenses/LICENSE.txt", "OCR fixture licenseUrl")
+    _first_party_git_blob(
+        revision=revision,
+        relative="licenses/LICENSE.txt",
+        expected_bytes=fixture["licenseBytes"],
+        expected_sha256=fixture["licenseSha256"],
+        label="OCR fixture license",
+    )
     _first_party_url(fixture["noticeUrl"], "licenses/NOTICE.txt", "OCR fixture noticeUrl")
+    _first_party_git_blob(
+        revision=revision,
+        relative="licenses/NOTICE.txt",
+        expected_bytes=fixture["noticeBytes"],
+        expected_sha256=fixture["noticeSha256"],
+        label="OCR fixture NOTICE",
+    )
     if (
         fixture["licensePath"] != "licenses/LICENSE.txt"
         or fixture["noticePath"] != "licenses/NOTICE.txt"

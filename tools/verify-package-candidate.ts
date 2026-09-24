@@ -4,6 +4,11 @@ import { readFile, readdir, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+import {
+  assertPackedPackageIdentity,
+  inspectPackedPackageManifest,
+} from './verify-packed-package.ts';
+
 const PACKAGE_NAMES = new Map([
   ['gx-capture-capture-workbench-ui', '@gx-capture/capture-workbench-ui'],
   ['gx-capture-capture-runtime-client', '@gx-capture/capture-runtime-client'],
@@ -297,13 +302,19 @@ export async function verifyPackageCandidate(input: {
       'Package manifest entry',
     );
     assert(typeof item.archive === 'string' && artifactPaths.has(item.archive));
+    const archiveBase = item.archive
+      .slice('package/'.length)
+      .split(`-${input.version}.tgz`)
+      .at(0);
+    assert(typeof archiveBase === 'string');
+    const expectedPackageName = PACKAGE_NAMES.get(archiveBase);
+    assert(
+      expectedPackageName !== undefined && item.name === expectedPackageName,
+      `Package manifest identity differs for ${item.archive}.`,
+    );
     assert(
       typeof item.name === 'string' &&
-        PACKAGE_NAMES.has(
-          item.archive
-            .slice('package/'.length)
-            .split(`-${input.version}.tgz`)[0]!,
-        ),
+        PACKAGE_NAMES.has(archiveBase),
     );
     assert(
       !packageNames.has(item.name),
@@ -314,6 +325,14 @@ export async function verifyPackageCandidate(input: {
     assert.equal(await sha256(archivePath), item.sha256);
     assert.equal(await sha512Integrity(archivePath), item.integrity);
     assert.equal((await stat(archivePath)).size, item.bytes);
+    const packedManifest = inspectPackedPackageManifest(archivePath);
+    assertPackedPackageIdentity(packedManifest, {
+      name: item.name,
+      version: input.version,
+      contractSetSha256: input.contractSetSha256,
+      requireContractSetSha256:
+        item.name === '@gx-capture/capture-runtime-client',
+    });
   }
   assert.deepEqual(
     packageNames,

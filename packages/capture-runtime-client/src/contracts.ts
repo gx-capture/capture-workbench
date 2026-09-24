@@ -7,6 +7,15 @@ export interface CaptureDocument extends Generated.CaptureDocument {}
 export interface CaptureEngine extends Generated.CaptureEngine {}
 export interface CaptureEvent extends Generated.CaptureEventV2 {}
 export interface CaptureFailure extends Generated.CaptureFailureV2 {}
+export interface OcrRaster extends Generated.OcrRasterV3 {}
+export interface OcrPoint extends Generated.OcrPointV3 {}
+export interface OcrBox extends Generated.OcrBoxV3 {}
+export type OcrProvenance = Generated.OcrProvenanceV3;
+export type OcrProvenanceResolved = Generated.OcrProvenanceResolvedV3;
+export type OcrProvenanceUnavailable = Generated.OcrProvenanceUnavailableV3;
+export interface OcrPageProjection extends Generated.OcrPageProjectionV3 {}
+export interface CaptureOcrProjection extends Generated.CaptureOcrProjectionV3 {}
+export interface OcrComputePreflight extends Generated.OcrComputePreflightV2 {}
 export interface CaptureOperation extends Generated.CaptureOperationV2 {}
 export interface CaptureReviewEdit {
   readonly segmentId: string;
@@ -54,6 +63,7 @@ export interface RuntimeReady {
   readonly schemaSha256?: string;
   readonly contractSetVersion?: string;
   readonly capabilities: Readonly<Record<string, unknown>>;
+  readonly ocrCompute?: OcrComputePreflight | null;
   readonly message?: string | null;
 }
 export interface RuntimeStreamingCapabilities extends Generated.RuntimeStreamingCapabilitiesV2 {}
@@ -67,6 +77,12 @@ export type StructuringSessionStatus = Generated.StructuringSessionStatus;
 export type StructuringBatchStatus = Generated.StructuringBatchStatus;
 export type StreamingCaptureStatus = Generated.StreamingCaptureStatus;
 export type StreamingEventType = Generated.StreamingEventType;
+export type OcrProjectionStatus = Generated.OcrProjectionStatus;
+export type OcrPageStatus = Generated.OcrPageStatus;
+export type OcrAdapterClass = Generated.OcrAdapterClass;
+export type OcrComputeMode = Generated.OcrComputeMode;
+export type OcrComputeNoticeCode = Generated.OcrComputeNoticeCode;
+export type OcrComputeReasonCode = Generated.OcrComputeReasonCode;
 export type StreamingIngestionStatus = Generated.StreamingIngestionStatus;
 export type RuntimeInstallationStatus = Generated.RuntimeInstallationStatus;
 export type RuntimeModelOptionStatus = Generated.RuntimeModelOptionStatus;
@@ -89,7 +105,7 @@ export {
 
 /** Approved current runtime contract-set identity; update only with a release. */
 export const CAPTURE_CONTRACT_SET_SHA256 =
-  'b28366f022533192c063056bbf64cacfd09390815c65408066369dd61094e278';
+  'd293a3de26114f1b4fd65ea6d6d3f157fa2f93109b31e1e30d5d15ef0dfdeb40';
 
 export interface RuntimeDiscovery {
   readonly ready: RuntimeReady;

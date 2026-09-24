@@ -19,6 +19,8 @@ pub struct RuntimeModelInstallationStartInput {
 pub struct RuntimeCreateCaptureInput {
     pub document_id: String,
     pub client_request_id: String,
+    #[serde(default)]
+    pub pdf_page_numbers: Option<Vec<u32>>,
 }
 
 #[derive(Clone, Debug, Deserialize)]

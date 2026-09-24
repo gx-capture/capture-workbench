@@ -11,6 +11,7 @@ import type {
   DesktopLibraryExport,
   DesktopLibraryStatus,
   DesktopLibrarySummary,
+  OcrEvidenceV1,
 } from '../contracts';
 import { DesktopTauriCommandService } from './desktop-tauri-command.service';
 
@@ -113,6 +114,7 @@ export class DesktopLibraryService {
     readonly errorMessage?: string;
     readonly recoveryCode?: string;
     readonly recoveryMessage?: string;
+    readonly ocrEvidence?: OcrEvidenceV1;
   }): Observable<DesktopLibrarySummary> {
     return this.commands
       .invoke<DesktopLibrarySummary>('library_update_capture', {

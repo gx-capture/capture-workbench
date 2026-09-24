@@ -9,11 +9,16 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import os
-import re
 import sys
 from pathlib import Path
 from threading import Event
 from typing import TYPE_CHECKING, Any
+
+from capture_runtime.worker_stage_policy import (
+    sanitize_worker_stage,
+    whisper_import_os_failure_stage,
+    whisper_import_stage,
+)
 
 if TYPE_CHECKING:
     from capture_runtime.worker_contracts import WorkerRequest as WorkerRequestModel
@@ -23,12 +28,12 @@ _WORKER_STAGES: list[str] = []
 
 
 def _report_stage(stage: str) -> None:
-    normalized = re.sub(r"[^a-z0-9]+", "-", stage.casefold()).strip("-")[:120]
-    if not normalized:
-        normalized = "worker-stage-invalid"
-    _WORKER_STAGES.append(normalized)
+    safe_stage = sanitize_worker_stage(stage)
+    if safe_stage is None:
+        return
+    _WORKER_STAGES.append(safe_stage)
     del _WORKER_STAGES[:-16]
-    sys.stderr.write(f"{STAGE_PREFIX}{normalized}\n")
+    sys.stderr.write(f"{STAGE_PREFIX}{safe_stage}\n")
     sys.stderr.flush()
 
 
@@ -36,12 +41,8 @@ def _last_worker_stage() -> str:
     return _WORKER_STAGES[-1] if _WORKER_STAGES else ""
 
 
-def _report_import_os_failure(stage: str, error: OSError) -> None:
-    winerror = getattr(error, "winerror", None)
-    if isinstance(winerror, int) and 0 <= winerror <= 65_535:
-        _report_stage(f"{stage}-winerror-{winerror}")
-    else:
-        _report_stage(stage)
+def _report_import_os_failure(module: str, error: OSError) -> None:
+    _report_stage(whisper_import_os_failure_stage(module, error))
 
 
 _report_stage("worker-entry-start")
@@ -58,7 +59,7 @@ def _import_capture_runtime() -> tuple[Any, Any, Any]:
         _report_stage("python-import-engine-adapters-dependency-failed")
         raise
     except OSError as error:
-        _report_import_os_failure("python-import-engine-adapters-os-failed", error)
+        _report_import_os_failure("engine-adapters", error)
         raise
     except BaseException:
         _report_stage("python-import-engine-adapters-failed")
@@ -75,7 +76,7 @@ def _import_capture_runtime() -> tuple[Any, Any, Any]:
         _report_stage("python-import-worker-contracts-dependency-failed")
         raise
     except OSError as error:
-        _report_import_os_failure("python-import-worker-contracts-os-failed", error)
+        _report_import_os_failure("worker-contracts", error)
         raise
     except BaseException:
         _report_stage("python-import-worker-contracts-failed")
@@ -92,7 +93,7 @@ def _import_capture_runtime() -> tuple[Any, Any, Any]:
         _report_stage("python-import-worker-server-dependency-failed")
         raise
     except OSError as error:
-        _report_import_os_failure("python-import-worker-server-os-failed", error)
+        _report_import_os_failure("worker-server", error)
         raise
     except BaseException:
         _report_stage("python-import-worker-server-failed")
@@ -108,14 +109,10 @@ MAX_SOURCE_BYTES = 50 * 1024 * 1024
 
 
 def _import_whisper_runtime() -> None:
-    for module, stage in (
-        ("ctranslate2", "python-import-ctranslate"),
-        ("av", "python-import-av"),
-        ("faster_whisper", "python-import-faster-whisper"),
-    ):
-        _report_stage(f"{stage}-start")
+    for module in ("ctranslate2", "av", "faster_whisper"):
+        _report_stage(whisper_import_stage(module, "start"))
         importlib.import_module(module)
-        _report_stage(f"{stage}-complete")
+        _report_stage(whisper_import_stage(module, "complete"))
 
 
 def _payload(request: WorkerRequestModel, expected: set[str]) -> dict[str, Any]:
@@ -259,7 +256,11 @@ def _run(request: WorkerRequestModel, cancellation: Event) -> dict[str, Any]:
     }
 
 
-def handle(request: WorkerRequestModel, cancellation: Event) -> dict[str, Any]:
+def handle(
+    request: WorkerRequestModel,
+    cancellation: Event,
+    _progress: object,
+) -> dict[str, Any]:
     if request.operation == "probe":
         return _probe(request)
     if request.operation == "run":

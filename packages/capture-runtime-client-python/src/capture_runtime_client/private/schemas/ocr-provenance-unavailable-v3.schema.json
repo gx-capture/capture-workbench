@@ -1,0 +1,44 @@
+{
+  "$defs": {
+    "OcrProvenanceUnavailableReason": {
+      "enum": [
+        "model_unavailable",
+        "worker_crashed",
+        "worker_timeout",
+        "protocol_failure"
+      ],
+      "title": "OcrProvenanceUnavailableReason",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Profile identity retained when model identity is not yet available.",
+  "properties": {
+    "status": {
+      "const": "unavailable",
+      "title": "Status",
+      "type": "string"
+    },
+    "profileId": {
+      "minLength": 1,
+      "title": "Profileid",
+      "type": "string"
+    },
+    "profileSpecSha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Profilespecsha256",
+      "type": "string"
+    },
+    "reason": {
+      "$ref": "#/$defs/OcrProvenanceUnavailableReason"
+    }
+  },
+  "required": [
+    "status",
+    "profileId",
+    "profileSpecSha256",
+    "reason"
+  ],
+  "title": "OcrProvenanceUnavailableV3",
+  "type": "object"
+}

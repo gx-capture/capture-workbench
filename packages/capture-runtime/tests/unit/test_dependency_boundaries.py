@@ -77,6 +77,30 @@ def test_ocr_bundle_collects_pypdfium2_runtime_metadata() -> None:
         assert f'"{distribution}"' in spec
 
 
+def test_core_runtime_packages_pdfium_for_ocr_source_preflight() -> None:
+    spec = RUNTIME_SPEC.read_text(encoding="utf-8")
+
+    assert 'collect_data_files("pypdfium2")' in spec
+    assert 'collect_dynamic_libs("pypdfium2")' in spec
+    assert '"pypdfium2"' not in spec.split("excludes=[", 1)[1].split("]", 1)[0]
+
+
+def test_core_runtime_packages_pillow_for_raster_conversion() -> None:
+    spec = RUNTIME_SPEC.read_text(encoding="utf-8")
+
+    excludes = spec.split("excludes=[", 1)[1].split("]", 1)[0]
+    assert '"PIL"' not in excludes
+    assert '"PIL.Image"' in spec
+
+
+def test_core_runtime_excludes_onnxruntime_for_worker_owned_compute_preflight() -> None:
+    spec = RUNTIME_SPEC.read_text(encoding="utf-8")
+
+    excludes = spec.split("excludes=[", 1)[1].split("]", 1)[0]
+    assert '"onnxruntime"' in excludes
+    assert 'collect_submodules("onnxruntime")' not in spec
+
+
 def test_core_runtime_does_not_collect_public_capture_contract_package_data() -> None:
     spec = RUNTIME_SPEC.read_text(encoding="utf-8")
 

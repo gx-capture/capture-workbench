@@ -153,6 +153,7 @@ async function main(): Promise<void> {
     }
     await runPdfOcrE2e({
       packageKind: 'online-package',
+      identityMode: 'release',
       releaseRoot,
       runtimeVersion: options.runtimeVersion,
       evidencePath: join(

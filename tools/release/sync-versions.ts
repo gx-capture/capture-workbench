@@ -12,6 +12,7 @@ import {
 
 const TEXT_EXTENSIONS = new Set([
   '.json',
+  '.java',
   '.md',
   '.mjs',
   '.py',
@@ -19,6 +20,7 @@ const TEXT_EXTENSIONS = new Set([
   '.toml',
   '.ts',
   '.tsx',
+  '.xml',
   '.yml',
   '.yaml',
 ]);

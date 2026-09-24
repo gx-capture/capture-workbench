@@ -2,6 +2,7 @@ import {
   type CaptureDocument,
   type CaptureEvent,
   type CaptureOperation,
+  type CaptureOcrProjection,
   type CaptureStreamingResult,
   type PartialCapture,
   type RawCapture,
@@ -261,6 +262,13 @@ export class CaptureRuntimeClient {
     return this.json(
       { path: `/v2/captures/${encodeURIComponent(id)}/raw`, signal },
       'RawCapture',
+    );
+  }
+
+  getOcr(id: string, signal?: AbortSignal): Promise<CaptureOcrProjection> {
+    return this.json(
+      { path: `/v2/captures/${encodeURIComponent(id)}/ocr`, signal },
+      'CaptureOcrProjection',
     );
   }
 

@@ -14,6 +14,7 @@ from fastapi.responses import StreamingResponse
 
 from capture_runtime.contracts import (
     CaptureDocument,
+    CaptureOcrProjectionV3,
     CaptureOperationV2,
     CaptureStreamingResult,
     FinalizeIngestionV2,
@@ -299,6 +300,19 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
         except StructuringSessionRecordCorruptError as error:
             raise ApiProblem(
                 500, "structuring_session_corrupt", "Structuring session state is corrupt."
+            ) from error
+        except StreamingRecordNotFoundError as error:
+            raise ApiProblem(
+                404, "capture_not_found", "Streaming capture was not found."
+            ) from error
+
+    @router.get("/captures/{capture_id}/ocr", response_model=CaptureOcrProjectionV3)
+    async def capture_ocr(capture_id: str) -> CaptureOcrProjectionV3:
+        try:
+            return service.ocr(capture_id)
+        except StreamingPartialNotFoundError as error:
+            raise ApiProblem(
+                409, "ocr_unavailable", "Canonical OCR projection is not available yet."
             ) from error
         except StreamingRecordNotFoundError as error:
             raise ApiProblem(

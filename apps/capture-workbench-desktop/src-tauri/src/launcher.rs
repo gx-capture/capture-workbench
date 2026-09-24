@@ -1,8 +1,8 @@
 use std::{fs, path::PathBuf, sync::atomic::AtomicBool};
 
 use capture_sidecar_launcher::{
-    launch_sidecar, verify_sidecar, LaunchOptions, ManifestExpectations, OwnedSidecarProcess,
-    SidecarLaunchSpec,
+    launch_sidecar_with_observer, verify_sidecar, LaunchOptions, ManifestExpectations,
+    OwnedRuntimeSession, SidecarLaunchSpec,
 };
 
 use crate::{
@@ -17,7 +17,7 @@ use crate::{
 };
 
 pub(crate) struct LaunchedRuntime {
-    pub child: OwnedSidecarProcess,
+    pub child: OwnedRuntimeSession,
     pub config: BackendConfig,
 }
 
@@ -25,6 +25,7 @@ pub(crate) fn launch_runtime(
     assets: &RuntimeAssets,
     data_dir: PathBuf,
     stopping: &AtomicBool,
+    observe_spawn: impl FnMut(OwnedRuntimeSession) -> Result<(), String>,
 ) -> Result<LaunchedRuntime, String> {
     let verified = verify_sidecar(
         &assets.manifest_path,
@@ -38,24 +39,30 @@ pub(crate) fn launch_runtime(
         },
     )?;
     let mut policy_factory = LaunchPolicyFactory::new(data_dir);
-    let launched = launch_sidecar(&verified, stopping, LaunchOptions::default(), |_, _| {
-        let policy = policy_factory.next()?;
-        prepare_isolated_directories(&policy)?;
-        Ok(SidecarLaunchSpec::new(
-            verified.executable_path.clone(),
-            policy.runtime_port,
-            policy.token.clone(),
-            policy
-                .environment()
-                .into_iter()
-                .map(|(name, value)| (name.to_owned(), value))
-                .collect(),
-            CHILD_ENVIRONMENT_ALLOWLIST
-                .iter()
-                .map(|name| (*name).to_owned())
-                .collect(),
-        ))
-    })?;
+    let launched = launch_sidecar_with_observer(
+        &verified,
+        stopping,
+        LaunchOptions::default(),
+        |_, _| {
+            let policy = policy_factory.next()?;
+            prepare_isolated_directories(&policy)?;
+            Ok(SidecarLaunchSpec::new(
+                verified.executable_path.clone(),
+                policy.runtime_port,
+                policy.token.clone(),
+                policy
+                    .environment()
+                    .into_iter()
+                    .map(|(name, value)| (name.to_owned(), value))
+                    .collect(),
+                CHILD_ENVIRONMENT_ALLOWLIST
+                    .iter()
+                    .map(|name| (*name).to_owned())
+                    .collect(),
+            ))
+        },
+        observe_spawn,
+    )?;
 
     Ok(LaunchedRuntime {
         child: launched.process,

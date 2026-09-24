@@ -23,6 +23,7 @@ from capture_runtime.engine_installation import (
     EngineInstallationError,
     HttpArtifactDownloader,
     HttpModelFileDownloader,
+    LocalModelFileDownloader,
     safe_extract_artifact,
 )
 
@@ -97,7 +98,7 @@ def _archive(
         {
             "role": "worker",
             "requirementId": "windowsml-ocr",
-            "artifactVersion": "0.4.1",
+            "artifactVersion": "0.4.2",
             "workerProtocolVersion": "1",
             "platform": "windows",
             "arch": "x86_64",
@@ -369,7 +370,7 @@ def test_direct_model_catalog_rejects_case_colliding_paths() -> None:
     with pytest.raises(EngineCatalogError, match="sorted and unique"):
         EngineModelDeliveryDescriptor.from_dict(
             {
-                "artifactVersion": "0.4.1",
+                "artifactVersion": "0.4.2",
                 "entryCount": len(files),
                 "entryPoint": "model",
                 "extractedBytes": sum(item["bytes"] for item in files),
@@ -590,3 +591,26 @@ def test_direct_model_cancellation_removes_partial_file(tmp_path: Path) -> None:
             )
         )
     assert not destination.exists()
+
+
+def test_local_model_downloader_copies_only_locked_root_file(
+    tmp_path: Path,
+) -> None:
+    content = b"local locked model"
+    source_root = tmp_path / "model-source"
+    source = source_root / "model" / "model.bin"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(content)
+    descriptor = _direct_model_file(content)
+    destination = tmp_path / "destination" / "model.bin"
+
+    asyncio.run(
+        LocalModelFileDownloader(source_root).download(
+            descriptor,
+            destination,
+            cancel_event=asyncio.Event(),
+            progress=lambda _copied: None,
+        )
+    )
+
+    assert destination.read_bytes() == content

@@ -126,7 +126,6 @@ def _installer(
         windowsml_model_dir=tmp_path / "windowsml",
         whisper_models_dir=tmp_path / "whisper",
         temp_dir=tmp_path / "temp",
-        windowsml_device_id=0,
         max_pdf_pages=10,
         max_image_pixels=100_000,
         ocr_render_scale=2,

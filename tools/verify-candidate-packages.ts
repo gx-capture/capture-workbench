@@ -1,6 +1,11 @@
-import { spawnSync } from 'node:child_process';
-import { readdirSync, statSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+
+import {
+  assertPackedPackageIdentity,
+  inspectPackedPackageManifest,
+} from './verify-packed-package.ts';
 
 function parseArguments(args: readonly string[]) {
   if (
@@ -22,6 +27,29 @@ const expected = new Set([
   '@gx-capture/capture-workbench-ui',
   '@gx-capture/capture-runtime-client',
 ]);
+const packageContractMetadataRequired = '@gx-capture/capture-runtime-client';
+const candidateManifest = JSON.parse(
+  readFileSync(join(candidate, 'candidate-manifest.json'), 'utf8'),
+) as { contractSetSha256?: unknown };
+if (
+  typeof candidateManifest.contractSetSha256 !== 'string' ||
+  !/^[0-9a-f]{64}$/u.test(candidateManifest.contractSetSha256)
+) {
+  throw new Error('Candidate contract-set digest is invalid.');
+}
+const contractSetSha256 = candidateManifest.contractSetSha256;
+const contractSetShaPath = join(candidate, 'contracts', 'contract-set.sha256');
+if (readFileSync(contractSetShaPath, 'utf8').trim() !== contractSetSha256) {
+  throw new Error('Candidate contract-set digest differs from its manifest.');
+}
+const contractSetJsonPath = join(candidate, 'contracts', 'contract-set.json');
+if (
+  createHash('sha256')
+    .update(readFileSync(contractSetJsonPath))
+    .digest('hex') !== contractSetSha256
+) {
+  throw new Error('Candidate contract-set bundle digest differs.');
+}
 const archives = readdirSync(packageDirectory).filter((name) =>
   name.endsWith('.tgz'),
 );
@@ -31,21 +59,9 @@ const found = new Set<string>();
 for (const archive of archives) {
   if (!statSync(join(packageDirectory, archive)).isFile())
     throw new Error('Candidate package is not a regular file.');
-  const result = spawnSync(
-    'tar',
-    ['-xOf', join(packageDirectory, archive), 'package/package.json'],
-    {
-      encoding: 'utf8',
-    },
+  const manifest = inspectPackedPackageManifest(
+    join(packageDirectory, archive),
   );
-  if (result.status !== 0)
-    throw new Error(`Unable to inspect candidate package ${archive}.`);
-  const manifest = JSON.parse(result.stdout) as {
-    name?: unknown;
-    version?: unknown;
-    dependencies?: Record<string, unknown>;
-    peerDependencies?: Record<string, unknown>;
-  };
   if (
     typeof manifest.name !== 'string' ||
     !expected.has(manifest.name) ||
@@ -53,10 +69,12 @@ for (const archive of archives) {
   ) {
     throw new Error(`Candidate package identity is invalid: ${archive}.`);
   }
-  if (manifest.version !== version)
-    throw new Error(
-      `Candidate package ${manifest.name} has the wrong version.`,
-    );
+  assertPackedPackageIdentity(manifest, {
+    name: manifest.name,
+    version,
+    contractSetSha256,
+    requireContractSetSha256: manifest.name === packageContractMetadataRequired,
+  });
   found.add(manifest.name);
   for (const dependency of [
     ...Object.values(manifest.dependencies ?? {}),

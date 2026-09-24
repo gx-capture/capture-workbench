@@ -1,6 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 import { firstValueFrom, of } from 'rxjs';
-import type { DesktopLibrarySummary } from '../contracts';
+import type { DesktopLibrarySummary, OcrEvidenceV1 } from '../contracts';
 import { DesktopLibraryService } from './desktop-library.service';
 import { DesktopTauriCommandService } from './desktop-tauri-command.service';
 
@@ -52,6 +52,22 @@ describe('DesktopLibraryService native source import', () => {
     expect(imported.errorMessage).toBe('Bearer [redacted]');
     expect(imported.recoveryMessage).toBe('token= [redacted]');
     expect(JSON.stringify(imported)).not.toContain('secret-token');
+  });
+
+  it('passes privacy-safe OCR evidence through the existing capture update command', async () => {
+    const { commands, service } = configure();
+    const ocrEvidence = { schemaVersion: 1 } as OcrEvidenceV1;
+    const update = {
+      documentId: summary.documentId,
+      status: 'completed' as const,
+      ocrEvidence,
+    };
+
+    await firstValueFrom(service.updateCapture(update));
+
+    expect(commands.invoke).toHaveBeenCalledWith('library_update_capture', {
+      update,
+    });
   });
 });
 

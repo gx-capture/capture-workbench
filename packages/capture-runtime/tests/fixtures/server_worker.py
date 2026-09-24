@@ -13,7 +13,21 @@ def prepare(_request: WorkerRequest) -> None:
     prepared_on_main_thread = threading.current_thread() is threading.main_thread()
 
 
-def handle(request: WorkerRequest, _cancellation: threading.Event) -> dict[str, object]:
+def handle(
+    request: WorkerRequest,
+    _cancellation: threading.Event,
+    progress: object,
+) -> dict[str, object]:
+    if request.operation == "preflight":
+        return {
+            "contractSha256": request.payload["contractSha256"],
+            "mode": "gpu-dml",
+            "adapterClass": "dedicated",
+            "userNoticeRequired": False,
+        }
+    if request.operation == "run" and request.payload.get("mode") == "progress":
+        assert callable(progress)
+        progress({"type": "progress-fixture", "completed": 1})
     return {
         "mainThread": threading.current_thread() is threading.main_thread(),
         "operation": request.operation,

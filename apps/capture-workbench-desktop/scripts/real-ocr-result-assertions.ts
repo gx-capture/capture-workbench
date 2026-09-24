@@ -102,6 +102,40 @@ export function normalizeOcrText(value: string): string {
     .replace(/\s+/gu, ' ');
 }
 
+export function assertDurableOcrSegmentsEqual(
+  durableSegments: unknown,
+  visibleSegments: readonly RealOcrUiSegment[],
+  message = 'durable raw OCR segments must equal the public UI projection.',
+): void {
+  assert.deepEqual(
+    normalizeDurableOcrSegments(durableSegments),
+    visibleSegments,
+    message,
+  );
+}
+
+function normalizeDurableOcrSegments(value: unknown): unknown {
+  if (!Array.isArray(value)) return value;
+  return value.map((segment) => {
+    if (segment === null || typeof segment !== 'object' || Array.isArray(segment)) return segment;
+    const record = segment as Record<string, unknown>;
+    const locator = record.locator;
+    if (
+      locator !== null
+      && typeof locator === 'object'
+      && !Array.isArray(locator)
+      && (locator as Record<string, unknown>).kind === 'page'
+      && Object.prototype.hasOwnProperty.call(locator, 'boundingBox')
+      && (locator as Record<string, unknown>).boundingBox === null
+    ) {
+      const normalizedLocator = { ...(locator as Record<string, unknown>) };
+      delete normalizedLocator.boundingBox;
+      return { ...record, locator: normalizedLocator };
+    }
+    return segment;
+  });
+}
+
 export function assertRealOcrResult(
   view: RealOcrUiResult,
   expectation: RealOcrExpectation,

@@ -245,6 +245,160 @@ test('desktop CI binds its staged contract resources to generated contracts', as
   assert.match(ci, /capture-workbench-desktop:contract-consistency/u);
 });
 
+test('ordinary CI keeps real OCR local while release promotion stays deterministic', async () => {
+  const workspaceRoot = join(appRoot, '..', '..');
+  const [
+    ci,
+    projectSource,
+    candidateWorkflow,
+    promotionWorkflow,
+    stableWorkflow,
+    promotionVerifier,
+    todo,
+  ] = await Promise.all([
+    readFile(join(workspaceRoot, '.github', 'workflows', 'ci.yml'), 'utf8'),
+    readFile(join(appRoot, 'project.json'), 'utf8'),
+    readFile(
+      join(workspaceRoot, '.github', 'workflows', 'release-candidate.yml'),
+      'utf8',
+    ),
+    readFile(
+      join(workspaceRoot, '.github', 'workflows', 'release-promote.yml'),
+      'utf8',
+    ),
+    readFile(
+      join(
+        workspaceRoot,
+        '.github',
+        'workflows',
+        '_publish-stable-pointer.yml',
+      ),
+      'utf8',
+    ),
+    readFile(
+      join(workspaceRoot, 'tools', 'verify-promotion-evidence.ts'),
+      'utf8',
+    ),
+    readFile(
+      join(
+        workspaceRoot,
+        '.agents',
+        'TODOS',
+        'capture-runtime-042-p2-hardening.md',
+      ),
+      'utf8',
+    ),
+  ]);
+
+  const ciSteps = workflowNamedSteps(ci);
+  for (const name of [
+    'Verify real acceptance inputs',
+    'Run real acceptance visual gate',
+    'Upload real acceptance artifacts',
+  ]) {
+    assert.equal(
+      ciSteps.some((step) => step.name === name),
+      false,
+      `Ordinary CI must not run ${name}.`,
+    );
+  }
+  assert.doesNotMatch(
+    ci,
+    /capture-workbench-desktop:acceptance-real|E2E_ACCEPTANCE_RUN_ID|CAPTURE_REAL_DESKTOP_OCR_(?:INPUT|EXPECTATIONS)|output\/playwright\/capture-workbench/u,
+  );
+  const referenceFlow = requiredWorkflowStep(ciSteps, 'Verify reference flow');
+  assert.match(referenceFlow.script ?? '', /capture-workbench-e2e:e2e/u);
+  const referenceArtifacts = requiredWorkflowStep(
+    ciSteps,
+    'Upload reference flow Playwright artifacts',
+  );
+  assert.equal(referenceArtifacts.condition, 'always()');
+  assert.match(
+    referenceArtifacts.source,
+    /path:\s*dist\/\.playwright\/apps\/capture-workbench-e2e\/\*\*/u,
+  );
+  assert.match(referenceArtifacts.source, /if-no-files-found:\s*error/u);
+
+  const project = JSON.parse(projectSource) as {
+    readonly targets: Record<
+      string,
+      {
+        readonly cache?: boolean;
+        readonly dependsOn?: readonly string[];
+        readonly options?: {
+          readonly command?: string;
+          readonly commands?: readonly string[];
+        };
+      }
+    >;
+  };
+  const acceptance = project.targets['acceptance-real'];
+  assert.ok(acceptance);
+  assert.equal(acceptance.cache, false);
+  assert.deepEqual(acceptance.dependsOn, ['typecheck-scripts']);
+  assert.ok(
+    acceptance.options?.commands?.some((command) =>
+      /acceptance-real\.ts$/u.test(command),
+    ),
+  );
+  const packageQaCommand = project.targets['package-qa-test']?.options?.command;
+  assert.equal(typeof packageQaCommand, 'string');
+  assert.match(
+    packageQaCommand ?? '',
+    /tools\/three-project-acceptance\.test\.ts/u,
+  );
+  assert.match(
+    packageQaCommand ?? '',
+    /apps\/capture-workbench-desktop\/scripts\/\*\.test\.ts/u,
+  );
+  await readFile(
+    join(appRoot, 'scripts', 'real-desktop-ocr-smoke.test.ts'),
+    'utf8',
+  );
+
+  for (const source of [
+    candidateWorkflow,
+    promotionWorkflow,
+    stableWorkflow,
+    promotionVerifier,
+  ]) {
+    assert.doesNotMatch(
+      source,
+      /acceptance-real|smoke-real-desktop-ocr-directml/u,
+    );
+  }
+  assert.match(candidateWorkflow, /verify-main-ci\.ts/u);
+  const requiredVerifications = promotionVerifier.match(
+    /const REQUIRED_VERIFICATIONS = \[(?<body>[\s\S]*?)\] as const/u,
+  )?.groups?.['body'];
+  assert.ok(requiredVerifications);
+  assert.deepEqual(
+    [...requiredVerifications.matchAll(/'([^']+)'/gu)].map((match) => match[1]),
+    ['windows-install', 'runtime-product', 'cross-framework-consumers'],
+  );
+  const requiredProducerJobs = promotionVerifier.match(
+    /const REQUIRED_PRODUCER_JOBS = \[(?<body>[\s\S]*?)\] as const/u,
+  )?.groups?.['body'];
+  assert.ok(requiredProducerJobs);
+  assert.deepEqual(
+    [...requiredProducerJobs.matchAll(/'([^']+)'/gu)].map((match) => match[1]),
+    [
+      'verify-windows-install',
+      'verify-runtime-product',
+      'verify-cross-framework-consumers',
+    ],
+  );
+  assert.doesNotMatch(requiredProducerJobs, /verify-windows-x64/u);
+
+  assert.match(
+    todo,
+    /`capture-workbench-desktop:acceptance-real-ocr-gpu-selection`/u,
+  );
+  assert.match(todo, /--skip-nx-cache/u);
+  assert.match(todo, /canonical JPEG then (?:the )?original PDF page 1/u);
+  assert.match(todo, /- \[ \] \*\*Compute real-proof slice:/u);
+});
+
 test('production CSP is strict while allowing only dynamic loopback API ports', async () => {
   const config = JSON.parse(
     await readFile(join(appRoot, 'src-tauri', 'tauri.conf.json'), 'utf8'),
@@ -321,6 +475,7 @@ test('blocking native I/O is isolated behind async Tauri commands', async () => 
     'runtime_model_options',
     'runtime_start_model_installation',
     'runtime_get_model_installation',
+    'runtime_ready',
     'runtime_create_capture',
     'runtime_get_capture',
     'runtime_cancel_capture',

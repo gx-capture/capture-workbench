@@ -6,7 +6,7 @@ pub use desktop::{BackendConfig, DesktopRuntimeStatus};
 pub use library::{
     LibraryCaptureUpdate, LibraryDocumentDetail, LibraryDocumentRequest, LibraryDocumentSummary,
     LibraryExportFormat, LibraryExportPayload, LibraryExportRequest, LibraryImportSourceRequest,
-    LibraryListRequest, LibrarySourceInput, LibrarySourcePayload,
+    LibraryListRequest, LibrarySourceInput, LibrarySourcePayload, OcrEvidenceV1,
 };
 pub use runtime::{
     RuntimeCreateCaptureInput, RuntimeIdInput, RuntimeInstallationStartInput,

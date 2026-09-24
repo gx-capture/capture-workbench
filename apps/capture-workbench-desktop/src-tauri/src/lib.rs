@@ -25,6 +25,7 @@ macro_rules! desktop_invoke_handler {
     ($($extra:path),* $(,)?) => {
         tauri::generate_handler![
             commands::desktop_runtime_status,
+            commands::runtime_ready,
             commands::library_import_source,
             commands::library_update_capture,
             commands::library_list,
@@ -48,9 +49,11 @@ macro_rules! desktop_invoke_handler {
             commands::runtime_cancel_capture,
             commands::runtime_cancel_streaming_capture,
             commands::runtime_get_raw,
+            commands::runtime_get_ocr,
             commands::runtime_get_result,
             commands::runtime_delete_capture,
-            commands::runtime_delete_streaming_capture
+            commands::runtime_delete_streaming_capture,
+            commands::desktop_acceptance_close_window
             $(, $extra)*
         ]
     };
@@ -125,7 +128,8 @@ pub fn run() {
 
     #[cfg(feature = "acceptance-app-data")]
     let builder = builder.invoke_handler(desktop_invoke_handler!(
-        commands::desktop_runtime_process_probe
+        commands::desktop_runtime_process_probe,
+        commands::desktop_acceptance_terminate_root
     ));
     #[cfg(all(not(feature = "acceptance-app-data"), feature = "model-smoke-app-data"))]
     let builder = builder.invoke_handler(desktop_invoke_handler!(
@@ -261,7 +265,7 @@ mod shared_sidecar_contract_tests {
     fn manifest() -> SidecarManifest {
         SidecarManifest {
             manifest_version: "1".into(),
-            runtime_version: "0.4.1".into(),
+            runtime_version: "0.4.2".into(),
             api_version: "2.0".into(),
             capture_document_schema_version: "2".into(),
             platform: "windows".into(),
@@ -286,7 +290,7 @@ mod shared_sidecar_contract_tests {
             sender
                 .send(request[..count].to_vec())
                 .expect("request bytes");
-            let body = r#"{"ready":true,"runtimeVersion":"0.4.1","apiVersion":"2.0","captureDocumentSchemaVersion":"2","capabilities":{}}"#;
+            let body = r#"{"ready":true,"runtimeVersion":"0.4.2","apiVersion":"2.0","captureDocumentSchemaVersion":"2","capabilities":{}}"#;
             write!(
                 stream,
                 "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",

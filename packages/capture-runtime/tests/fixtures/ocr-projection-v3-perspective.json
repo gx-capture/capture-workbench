@@ -1,0 +1,63 @@
+{
+  "apiVersion": "2.0",
+  "schemaVersion": "3",
+  "captureId": "parity-capture",
+  "status": "completed",
+  "source": {
+    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "fileName": "perspective-scan.pdf",
+    "mediaType": "application/pdf",
+    "bytes": 1024
+  },
+  "pages": [
+    {
+      "page": 1,
+      "status": "recognized",
+      "raster": {
+        "width": 120,
+        "height": 80,
+        "scale": 1,
+        "coordinateSystem": "pixel"
+      },
+      "text": "Perspective OCR",
+      "boxes": [
+        {
+          "polygon": [
+            {"x": 11.25, "y": 20.5},
+            {"x": 91.75, "y": 18},
+            {"x": 104, "y": 61.25},
+            {"x": 4.5, "y": 64}
+          ],
+          "text": "Perspective OCR",
+          "confidence": 0.93
+        }
+      ],
+      "confidence": 0.93,
+      "provenance": {
+        "status": "resolved",
+        "engine": "windowsml-ocr",
+        "model": "pp-ocrv6-medium-windowsml",
+        "modelDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "device": "windowsml-dml",
+        "profileId": "capture-workbench-ocr-pipeline-v1",
+        "profileSpecSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      "failure": null
+    }
+  ],
+  "pageCount": 1,
+  "runtimeVersion": "0.4.2",
+  "contractSha256": "__CONTRACT_SET_SHA256__",
+  "provenance": {
+    "status": "resolved",
+    "engine": "windowsml-ocr",
+    "model": "pp-ocrv6-medium-windowsml",
+    "modelDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "device": "windowsml-dml",
+    "profileId": "capture-workbench-ocr-pipeline-v1",
+    "profileSpecSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  },
+  "warnings": [],
+  "failure": null,
+  "createdAt": "2026-08-14T00:00:00Z"
+}

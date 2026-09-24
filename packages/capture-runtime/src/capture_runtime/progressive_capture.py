@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import re
 import struct
 import subprocess
 import sys
@@ -49,10 +48,13 @@ from capture_runtime.whisper_session import (
 )
 from capture_runtime.worker_client import InstalledEngine
 from capture_runtime.worker_process import _subprocess_path
+from capture_runtime.worker_stage_policy import (
+    MAX_WORKER_DIAGNOSTIC_STAGES,
+    WORKER_STAGE_PATTERN,
+    sanitize_worker_stage_sequence,
+)
 
 STREAM_READ_BYTES = 1024 * 1024
-_WORKER_STAGE_PATTERN = re.compile(r"(?m)^capture-worker-stage:([a-z0-9]+(?:-[a-z0-9]+)*)\r?$")
-_MAX_WORKER_DIAGNOSTIC_STAGES = 16
 
 
 class ProgressiveCaptureError(RuntimeError):
@@ -629,8 +631,11 @@ async def _drain_stderr(stream: asyncio.StreamReader) -> str:
         captured.extend(chunk)
         if len(captured) > 64 * 1024:
             del captured[: -64 * 1024]
-    stages = _WORKER_STAGE_PATTERN.findall(captured.decode("utf-8", errors="replace"))
-    return ">".join(stages[-_MAX_WORKER_DIAGNOSTIC_STAGES:])
+    stages = sanitize_worker_stage_sequence(
+        WORKER_STAGE_PATTERN.findall(captured.decode("utf-8", errors="replace")),
+        reject_unknown=False,
+    )
+    return ">".join(stages[-MAX_WORKER_DIAGNOSTIC_STAGES:])
 
 
 def _segment_event(payload: bytes) -> ProgressiveSessionEvent:

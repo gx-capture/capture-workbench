@@ -6,7 +6,7 @@ use std::fs;
 #[cfg(test)]
 use crate::contracts::{
     LibraryCaptureUpdate, LibraryDocumentRequest, LibraryImportSourceRequest, LibraryListRequest,
-    LibrarySourceInput,
+    LibrarySourceInput, OcrEvidenceV1,
 };
 
 const INDEX_FILE_NAME: &str = "library-index-v1.json";
@@ -107,7 +107,129 @@ mod tests {
             error_message: None,
             recovery_code: None,
             recovery_message: None,
+            ocr_evidence: None,
         }
+    }
+
+    fn completed_evidence() -> OcrEvidenceV1 {
+        serde_json::from_value(serde_json::json!({
+            "schemaVersion": 1,
+            "captureId": "capture-1",
+            "sourceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "status": "completed",
+            "pageCount": 1,
+            "pages": [{
+                "page": 1,
+                "status": "recognized",
+                "raster": { "width": 1200, "height": 800 },
+                "normalizedCharCount": 5,
+                "boxCount": 0,
+                "confidence": 0.0,
+                "confidenceSummary": {
+                    "scoreState": "none",
+                    "numericCount": 0,
+                    "min": null,
+                    "max": null,
+                    "mean": null
+                }
+            }],
+            "summary": {
+                "normalizedCharCount": 5,
+                "boxCount": 0,
+                "confidenceSummary": {
+                    "scoreState": "none",
+                    "numericCount": 0,
+                    "min": null,
+                    "max": null,
+                    "mean": null
+                }
+            },
+            "provenance": {
+                "status": "resolved",
+                "runtimeVersion": "0.4.2",
+                "contractSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                "engine": "windowsml-ocr",
+                "model": "ppocrv6-traditional-multilingual",
+                "modelDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                "device": "GPU",
+                "profileId": "profile-1",
+                "profileSpecSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "workerSha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+            },
+            "digest": "55f71236198d8c2534bf75d17da1f5107777f3b2f5a66c23a3b66b6b4b7e0788"
+        }))
+        .expect("valid completed evidence")
+    }
+
+    fn failed_zero_page_evidence() -> OcrEvidenceV1 {
+        serde_json::from_value(serde_json::json!({
+            "schemaVersion": 1,
+            "captureId": "capture-failed",
+            "sourceSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "status": "failed",
+            "pageCount": 0,
+            "pages": [],
+            "summary": {
+                "normalizedCharCount": 0,
+                "boxCount": 0,
+                "confidenceSummary": {
+                    "scoreState": "none",
+                    "numericCount": 0,
+                    "min": null,
+                    "max": null,
+                    "mean": null
+                }
+            },
+            "provenance": {
+                "status": "unavailable",
+                "runtimeVersion": "0.4.2",
+                "contractSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                "profileId": "profile-1",
+                "profileSpecSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "workerSha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+            },
+            "failure": { "code": "ocr_worker_failed", "message": "OCR failure: ocr_worker_failed." },
+            "digest": "5443b6d42b54d46fc546f68e9ed7c6d43f5c67a7f58b19a80f971fbd0ca04c4c"
+        }))
+        .expect("valid failed evidence")
+    }
+
+    fn evidence_update(
+        document_id: &str,
+        status: &str,
+        evidence: Option<OcrEvidenceV1>,
+    ) -> LibraryCaptureUpdate {
+        LibraryCaptureUpdate {
+            document_id: document_id.into(),
+            capture_id: None,
+            clear_capture_id: false,
+            status: status.into(),
+            stage: Some(status.into()),
+            raw: None,
+            result: None,
+            error_code: None,
+            error_message: None,
+            recovery_code: None,
+            recovery_message: None,
+            ocr_evidence: evidence,
+        }
+    }
+
+    fn update_value(evidence: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({
+            "documentId": "document-1",
+            "captureId": null,
+            "clearCaptureId": false,
+            "status": "completed",
+            "stage": "completed",
+            "raw": null,
+            "result": null,
+            "errorCode": null,
+            "errorMessage": null,
+            "recoveryCode": null,
+            "recoveryMessage": null,
+            "ocrEvidence": evidence
+        })
     }
 
     fn leave_replacing_transaction(
@@ -209,6 +331,7 @@ mod tests {
                 error_message: None,
                 recovery_code: None,
                 recovery_message: None,
+                ocr_evidence: None,
             })
             .expect("update");
         let detail = library
@@ -242,6 +365,317 @@ mod tests {
             .list(LibraryListRequest::default())
             .expect("list")
             .is_empty());
+    }
+
+    #[test]
+    fn legacy_index_without_ocr_evidence_reopens_with_none() {
+        let directory = tempfile::tempdir().expect("temporary app data");
+        let library = LibraryStore::open(directory.path()).expect("library");
+        let created = library
+            .create_source(LibrarySourceInput {
+                file_name: "legacy.pdf".into(),
+                media_type: "application/pdf".into(),
+                bytes: b"pdf bytes".to_vec(),
+            })
+            .expect("source");
+        let index_path = directory.path().join("library").join(INDEX_FILE_NAME);
+        let mut index: serde_json::Value =
+            serde_json::from_slice(&fs::read(&index_path).expect("index")).expect("json");
+        index["documents"][0]
+            .as_object_mut()
+            .expect("document object")
+            .remove("ocrEvidence");
+        fs::write(
+            &index_path,
+            serde_json::to_vec_pretty(&index).expect("legacy index"),
+        )
+        .expect("legacy index write");
+        drop(library);
+
+        let reopened = LibraryStore::open(directory.path()).expect("reopened library");
+        let detail = reopened
+            .get(LibraryDocumentRequest {
+                document_id: created.document_id,
+            })
+            .expect("detail");
+        assert_eq!(detail.ocr_evidence, None);
+    }
+
+    #[test]
+    fn completed_and_failed_ocr_evidence_roundtrip_across_restart() {
+        let directory = tempfile::tempdir().expect("temporary app data");
+        let library = LibraryStore::open(directory.path()).expect("library");
+        let completed = library
+            .create_source(LibrarySourceInput {
+                file_name: "completed.pdf".into(),
+                media_type: "application/pdf".into(),
+                bytes: b"pdf bytes".to_vec(),
+            })
+            .expect("completed source");
+        let completed_evidence = completed_evidence();
+        library
+            .update_capture(evidence_update(
+                &completed.document_id,
+                "completed",
+                Some(completed_evidence.clone()),
+            ))
+            .expect("completed evidence update");
+
+        let failed = library
+            .create_source(LibrarySourceInput {
+                file_name: "failed.pdf".into(),
+                media_type: "application/pdf".into(),
+                bytes: b"pdf bytes".to_vec(),
+            })
+            .expect("failed source");
+        let failed_evidence = failed_zero_page_evidence();
+        library
+            .update_capture(evidence_update(
+                &failed.document_id,
+                "failed",
+                Some(failed_evidence.clone()),
+            ))
+            .expect("failed evidence update");
+        drop(library);
+
+        let reopened = LibraryStore::open(directory.path()).expect("reopened library");
+        assert_eq!(
+            reopened
+                .get(LibraryDocumentRequest {
+                    document_id: completed.document_id,
+                })
+                .expect("completed detail")
+                .ocr_evidence,
+            Some(completed_evidence)
+        );
+        assert_eq!(
+            reopened
+                .get(LibraryDocumentRequest {
+                    document_id: failed.document_id,
+                })
+                .expect("failed detail")
+                .ocr_evidence,
+            Some(failed_evidence)
+        );
+    }
+
+    #[test]
+    fn omitted_follow_up_update_retains_ocr_evidence() {
+        let directory = tempfile::tempdir().expect("temporary app data");
+        let library = LibraryStore::open(directory.path()).expect("library");
+        let created = library
+            .create_source(LibrarySourceInput {
+                file_name: "retained.pdf".into(),
+                media_type: "application/pdf".into(),
+                bytes: b"pdf bytes".to_vec(),
+            })
+            .expect("source");
+        let evidence = completed_evidence();
+        library
+            .update_capture(evidence_update(
+                &created.document_id,
+                "completed",
+                Some(evidence.clone()),
+            ))
+            .expect("evidence update");
+        library
+            .update_capture(evidence_update(&created.document_id, "processing", None))
+            .expect("omitted evidence update");
+
+        assert_eq!(
+            library
+                .get(LibraryDocumentRequest {
+                    document_id: created.document_id,
+                })
+                .expect("detail")
+                .ocr_evidence,
+            Some(evidence)
+        );
+    }
+
+    #[test]
+    fn different_second_ocr_evidence_fails_closed() {
+        let directory = tempfile::tempdir().expect("temporary app data");
+        let library = LibraryStore::open(directory.path()).expect("library");
+        let created = library
+            .create_source(LibrarySourceInput {
+                file_name: "conflict.pdf".into(),
+                media_type: "application/pdf".into(),
+                bytes: b"pdf bytes".to_vec(),
+            })
+            .expect("source");
+        library
+            .update_capture(evidence_update(
+                &created.document_id,
+                "completed",
+                Some(completed_evidence()),
+            ))
+            .expect("first evidence update");
+        let mut second: serde_json::Value =
+            serde_json::to_value(completed_evidence()).expect("evidence json");
+        second["captureId"] = serde_json::json!("capture-2");
+        second["digest"] =
+            serde_json::json!("80a8f793a98add8b12b3cbcd3e2779f93713deb1a450cb2be2650520ec6c4f73");
+        let second: OcrEvidenceV1 = serde_json::from_value(second).expect("second evidence");
+        let error = library
+            .update_capture(evidence_update(
+                &created.document_id,
+                "completed",
+                Some(second),
+            ))
+            .expect_err("evidence conflict");
+        assert!(error.contains("OCR evidence"));
+        assert_eq!(
+            library
+                .get(LibraryDocumentRequest {
+                    document_id: created.document_id,
+                })
+                .expect("detail")
+                .ocr_evidence
+                .expect("evidence")
+                .capture_id,
+            "capture-1"
+        );
+    }
+
+    #[test]
+    fn numeric_confidence_summary_is_accepted() {
+        let mut value = serde_json::to_value(completed_evidence()).expect("evidence json");
+        value["captureId"] = serde_json::json!("capture-numeric");
+        value["pages"][0]["boxCount"] = serde_json::json!(1);
+        value["pages"][0]["confidence"] = serde_json::json!(0.9);
+        value["pages"][0]["confidenceSummary"] = serde_json::json!({
+            "scoreState": "numeric",
+            "numericCount": 1,
+            "min": 0.9,
+            "max": 0.9,
+            "mean": 0.9
+        });
+        value["summary"]["boxCount"] = serde_json::json!(1);
+        value["summary"]["confidenceSummary"] = value["pages"][0]["confidenceSummary"].clone();
+        value["digest"] =
+            serde_json::json!("4c476296785088a64fd2086bf6045b7018f33b5cabb456b77b8ac3989310dea9");
+        let evidence: OcrEvidenceV1 = serde_json::from_value(value).expect("numeric evidence");
+        evidence.validate().expect("numeric evidence is valid");
+    }
+
+    #[test]
+    fn ts_builder_golden_evidence_is_native_validated() {
+        let evidence: OcrEvidenceV1 = serde_json::from_str(include_str!(
+            "../../../../test-fixtures/ocr-evidence-v1-golden.json"
+        ))
+        .expect("TS builder golden evidence");
+        evidence
+            .validate()
+            .expect("TS builder golden evidence is valid");
+        assert_eq!(evidence.capture_id, "capture-中文-😀");
+        assert_eq!(evidence.page_count, 4);
+        assert_eq!(evidence.pages[0].confidence, Some(0.0));
+        assert_eq!(evidence.pages[1].confidence, Some(1.0));
+        assert_eq!(evidence.pages[2].confidence, Some(0.9));
+        assert_eq!(evidence.pages[3].confidence, Some(0.0001));
+    }
+
+    #[test]
+    fn non_canonical_confidence_values_are_rejected_by_native_mirror() {
+        for value in [
+            serde_json::json!(-0.0),
+            serde_json::json!(0.00001),
+            serde_json::json!(1e-7),
+        ] {
+            let mut evidence = serde_json::to_value(completed_evidence()).expect("evidence json");
+            evidence["pages"][0]["confidence"] = value;
+            let evidence: OcrEvidenceV1 = serde_json::from_value(evidence).expect("typed evidence");
+            assert!(
+                evidence.validate().is_err(),
+                "non-canonical value was accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn non_canonical_confidence_summary_values_are_rejected_by_native_mirror() {
+        for value in [
+            serde_json::json!(-0.0),
+            serde_json::json!(0.00001),
+            serde_json::json!(1e-7),
+        ] {
+            let mut evidence = serde_json::to_value(completed_evidence()).expect("evidence json");
+            let summary = serde_json::json!({
+                "scoreState": "numeric",
+                "numericCount": 1,
+                "min": value,
+                "max": value,
+                "mean": value
+            });
+            evidence["pages"][0]["boxCount"] = serde_json::json!(1);
+            evidence["pages"][0]["confidenceSummary"] = summary.clone();
+            evidence["pages"][0]["confidence"] = serde_json::json!(0.9);
+            evidence["summary"]["boxCount"] = serde_json::json!(1);
+            evidence["summary"]["confidenceSummary"] = summary;
+            let evidence: OcrEvidenceV1 = serde_json::from_value(evidence).expect("typed evidence");
+            assert!(
+                evidence.validate().is_err(),
+                "non-canonical summary value was accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_ocr_evidence_is_rejected_at_library_update_seam() {
+        let cases = [
+            ("schemaVersion", serde_json::json!(2)),
+            ("digest", serde_json::json!("not-a-sha")),
+            ("pageCount", serde_json::json!(2)),
+        ];
+        for (field, value) in cases {
+            let mut evidence = serde_json::to_value(completed_evidence()).expect("evidence json");
+            evidence[field] = value;
+            let update: LibraryCaptureUpdate =
+                serde_json::from_value(update_value(evidence)).expect("typed update");
+            let directory = tempfile::tempdir().expect("temporary app data");
+            let library = LibraryStore::open(directory.path()).expect("library");
+            let created = library
+                .create_source(LibrarySourceInput {
+                    file_name: "malformed.pdf".into(),
+                    media_type: "application/pdf".into(),
+                    bytes: b"pdf bytes".to_vec(),
+                })
+                .expect("source");
+            let update = LibraryCaptureUpdate {
+                document_id: created.document_id,
+                ..update
+            };
+            let error = library
+                .update_capture(update)
+                .expect_err("malformed evidence rejected");
+            assert!(error.contains("OCR evidence"), "{field}: {error}");
+        }
+
+        let mut evidence = serde_json::to_value(completed_evidence()).expect("evidence json");
+        evidence["pages"][0]["text"] = serde_json::json!("raw secret");
+        assert!(serde_json::from_value::<LibraryCaptureUpdate>(update_value(evidence)).is_err());
+
+        let mut evidence = serde_json::to_value(completed_evidence()).expect("evidence json");
+        evidence["pages"][0]["page"] = serde_json::json!(2);
+        let update: LibraryCaptureUpdate =
+            serde_json::from_value(update_value(evidence)).expect("typed update");
+        let directory = tempfile::tempdir().expect("temporary app data");
+        let library = LibraryStore::open(directory.path()).expect("library");
+        let created = library
+            .create_source(LibrarySourceInput {
+                file_name: "unordered.pdf".into(),
+                media_type: "application/pdf".into(),
+                bytes: b"pdf bytes".to_vec(),
+            })
+            .expect("source");
+        let error = library
+            .update_capture(LibraryCaptureUpdate {
+                document_id: created.document_id,
+                ..update
+            })
+            .expect_err("unordered pages rejected");
+        assert!(error.contains("OCR evidence"));
     }
 
     #[test]
@@ -510,6 +944,7 @@ mod tests {
                 error_message: Some("test".into()),
                 recovery_code: None,
                 recovery_message: None,
+                ocr_evidence: None,
             })
             .expect("write backup");
         fs::write(
@@ -551,6 +986,7 @@ mod tests {
                 error_message: None,
                 recovery_code: None,
                 recovery_message: None,
+                ocr_evidence: None,
             })
             .expect("link capture");
         assert_eq!(linked.capture_id.as_deref(), Some("capture-1"));
@@ -568,6 +1004,7 @@ mod tests {
                 error_message: Some("terminal evidence".into()),
                 recovery_code: Some("runtime_cleanup_failed".into()),
                 recovery_message: Some("retry cleanup".into()),
+                ocr_evidence: None,
             })
             .expect("preserve capture");
         assert_eq!(preserved.capture_id.as_deref(), Some("capture-1"));
@@ -593,6 +1030,7 @@ mod tests {
                 error_message: Some("terminal evidence".into()),
                 recovery_code: None,
                 recovery_message: None,
+                ocr_evidence: None,
             })
             .expect("clear capture");
         assert_eq!(cleared.capture_id, None);
@@ -615,6 +1053,7 @@ mod tests {
                 error_message: None,
                 recovery_code: None,
                 recovery_message: None,
+                ocr_evidence: None,
             })
             .is_err());
     }

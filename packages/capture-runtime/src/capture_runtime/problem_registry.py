@@ -132,6 +132,9 @@ DEFAULT_PROBLEM_REGISTRY = ProblemRegistry(
         ),
         _definition("capture_not_found", 404, "Capture operation was not found.", "not_found"),
         _definition("raw_unavailable", 409, "Raw extraction is not available.", "conflict"),
+        _definition(
+            "ocr_unavailable", 409, "Canonical OCR projection is not available.", "conflict"
+        ),
         _definition("result_unavailable", 409, "Structured result is not available.", "conflict"),
         _definition(
             "invalid_structure",

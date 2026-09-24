@@ -43,6 +43,7 @@ test('local-package PDF OCR E2E uses a dedicated complete worker URL contract', 
       CAPTURE_SMOKE_WORKER_MIRROR_OPT_IN: '1',
       CAPTURE_SMOKE_WORKER_MIRROR_URL: 'http://127.0.0.1:9999',
     },
+    'C:\\temp\\ocr-model-source',
   );
 
   assert.equal(environment.PATH, 'test-path');
@@ -50,6 +51,11 @@ test('local-package PDF OCR E2E uses a dedicated complete worker URL contract', 
   assert.equal(
     environment.CAPTURE_PDF_OCR_E2E_LOCAL_WORKER_URL,
     'http://127.0.0.1:43125/capture-engine-ocr-test.zip',
+  );
+  assert.equal(environment.CAPTURE_PDF_OCR_E2E_LOCAL_MODEL_OPT_IN, '1');
+  assert.equal(
+    environment.CAPTURE_PDF_OCR_E2E_LOCAL_MODEL_ROOT,
+    'C:\\temp\\ocr-model-source',
   );
   assert.equal(environment.CAPTURE_SMOKE_WORKER_MIRROR_OPT_IN, undefined);
   assert.equal(environment.CAPTURE_SMOKE_WORKER_MIRROR_URL, undefined);
@@ -77,6 +83,8 @@ test('online-package PDF OCR E2E removes every local worker URL override', () =>
   assert.equal(environment.CAPTURE_PDF_OCR_E2E_LOCAL_WORKER_URL, undefined);
   assert.equal(environment.CAPTURE_SMOKE_WORKER_MIRROR_OPT_IN, undefined);
   assert.equal(environment.CAPTURE_SMOKE_WORKER_MIRROR_URL, undefined);
+  assert.equal(environment.CAPTURE_PDF_OCR_E2E_LOCAL_MODEL_OPT_IN, undefined);
+  assert.equal(environment.CAPTURE_PDF_OCR_E2E_LOCAL_MODEL_ROOT, undefined);
 });
 
 test('online-package PDF OCR E2E pins one official immutable runtime package', () => {

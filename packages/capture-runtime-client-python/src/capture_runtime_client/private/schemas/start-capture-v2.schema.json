@@ -47,6 +47,23 @@
       "default": "eager",
       "title": "Startpolicy",
       "type": "string"
+    },
+    "pdfPageNumbers": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "integer"
+          },
+          "maxItems": 500,
+          "minItems": 1,
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Pdfpagenumbers"
     }
   },
   "required": [

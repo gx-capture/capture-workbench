@@ -21,9 +21,22 @@ const ready = {
   ready: true,
   service: 'capture-runtime',
   apiVersion: '2.0',
-  runtimeVersion: '0.4.1',
+  runtimeVersion: '0.4.2',
   captureDocumentSchemaVersion: '2',
   captureDocumentSchemaSha256: CAPTURE_DOCUMENT_SCHEMA_SHA256,
+  ocrCompute: {
+    apiVersion: '2.0',
+    schemaVersion: '1',
+    service: 'capture-runtime',
+    runtimeVersion: '0.4.2',
+    contractSetVersion: '2',
+    contractSha256: CAPTURE_CONTRACT_SET_SHA256,
+    mode: 'gpu-dml',
+    adapterClass: 'dedicated',
+    reasonCode: null,
+    userNoticeRequired: false,
+    noticeCode: null,
+  },
   capabilities: {
     captureKinds: ['pdf'],
     structuringModes: ['host'],
@@ -43,12 +56,141 @@ const canonicalBundleBytes = Uint8Array.from(
 );
 const canonicalContractIndex = {
   catalogVersion: '2',
-  runtimeVersion: '0.4.1',
+  runtimeVersion: '0.4.2',
   contractSetVersion: '2',
   surfaces: [{ id: 'v2' }],
   sha256: CAPTURE_CONTRACT_SET_SHA256,
   href: `/meta/v2/contracts/sha256/${CAPTURE_CONTRACT_SET_SHA256}`,
 };
+
+const ocrEngine = {
+  status: 'resolved',
+  engine: 'windowsml-ocr',
+  model: 'pp-ocrv6-medium-windowsml',
+  modelDigest: `sha256:${'a'.repeat(64)}`,
+  device: 'windowsml-dml',
+  profileId: 'capture-workbench-ocr-pipeline-v1',
+  profileSpecSha256: 'b'.repeat(64),
+};
+
+const ocrSource = {
+  sha256: 'b'.repeat(64),
+  fileName: 'scan.pdf',
+  mediaType: 'application/pdf',
+  bytes: 1024,
+};
+
+const completedOcr = {
+  apiVersion: '2.0',
+  schemaVersion: '3',
+  captureId: 'cap',
+  status: 'completed',
+  source: ocrSource,
+  pageCount: 1,
+  runtimeVersion: '0.4.2',
+  contractSha256: CAPTURE_CONTRACT_SET_SHA256,
+  pages: [
+    {
+      page: 1,
+      status: 'recognized',
+      raster: { width: 1200, height: 1600, scale: 2, coordinateSystem: 'pixel' },
+      text: '第一頁 法律文件',
+      boxes: [
+        {
+          polygon: [
+            { x: 10.5, y: 20.25 },
+            { x: 310.75, y: 12.5 },
+            { x: 320, y: 80.5 },
+            { x: 5, y: 90 },
+          ],
+          text: '蝚砌???瘜??辣',
+          confidence: 0.98,
+        },
+      ],
+      confidence: 0.98,
+      provenance: ocrEngine,
+      failure: null,
+    },
+  ],
+  provenance: ocrEngine,
+  warnings: [],
+  failure: null,
+  createdAt: '2026-01-01T00:00:00Z',
+};
+
+const failedOcr = {
+  apiVersion: '2.0',
+  schemaVersion: '3',
+  captureId: 'cap',
+  status: 'failed',
+  pages: [],
+  pageCount: 0,
+  runtimeVersion: '0.4.2',
+  contractSha256: CAPTURE_CONTRACT_SET_SHA256,
+  source: null,
+  provenance: ocrEngine,
+  warnings: [],
+  failure: {
+    code: 'ocr_unavailable',
+    message: 'PaddleOCR is not available.',
+    stage: 'ocr',
+    retryable: true,
+  },
+  createdAt: '2026-01-01T00:00:00Z',
+};
+
+function sharedPerspectiveOcrFixture(): Record<string, unknown> {
+  const fixture = JSON.parse(
+    readFileSync(
+      resolve(
+        process.cwd(),
+        'packages/capture-runtime/tests/fixtures/ocr-projection-v3-perspective.json',
+      ),
+      'utf8',
+    ),
+  ) as Record<string, unknown>;
+  fixture['contractSha256'] = CAPTURE_CONTRACT_SET_SHA256;
+  return fixture;
+}
+
+type ReferencedInvalidCorpusCase = {
+  readonly name: string;
+  readonly base: 'completed' | 'failed';
+  readonly path: readonly string[];
+  readonly operation: 'replace' | 'remove' | 'add';
+  readonly value?: unknown;
+};
+
+function sharedReferencedInvalidCorpus(): readonly ReferencedInvalidCorpusCase[] {
+  const fixture = JSON.parse(
+    readFileSync(
+      resolve(
+        process.cwd(),
+        'packages/capture-runtime/tests/fixtures/ocr-projection-v3-referenced-invalid-corpus.json',
+      ),
+      'utf8',
+    ),
+  ) as { readonly cases: readonly ReferencedInvalidCorpusCase[] };
+  return fixture.cases;
+}
+
+function applyReferencedInvalidMutation(
+  payload: Record<string, unknown>,
+  invalid: ReferencedInvalidCorpusCase,
+): void {
+  let parent = payload;
+  for (const segment of invalid.path.slice(0, -1)) {
+    const value = parent[segment];
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error(`Invalid corpus path is not an object: ${invalid.name}`);
+    }
+    parent = value as Record<string, unknown>;
+  }
+  const field = invalid.path.at(-1);
+  if (!field) throw new Error(`Invalid corpus path is empty: ${invalid.name}`);
+  if (invalid.operation === 'remove') delete parent[field];
+  else parent[field] = invalid.value;
+}
 
 function withDiscovery(
   routes: ConstructorParameters<typeof InMemoryRuntimeTransport>[0],
@@ -132,6 +274,14 @@ describe('CaptureRuntimeClient', () => {
     expect(Object.keys(publicSdk)).not.toContain('decodeJson');
   });
 
+  it('publishes the canonical value-level OCR projection parser', () => {
+    expect(publicSdk.parseCaptureOcrProjection(completedOcr)).toBe(completedOcr);
+    expect(() => publicSdk.parseCaptureOcrProjection({
+      captureId: 'cap',
+      status: 'completed',
+    })).toThrow(CaptureRuntimeProtocolError);
+  });
+
   it('discovers and negotiates versions plus schema hash', async () => {
     const operation = (
       path: string,
@@ -189,6 +339,9 @@ describe('CaptureRuntimeClient', () => {
           streaming: { kind: 'sse', lastEventIdHeader: 'Last-Event-ID' },
         }),
         operation('/v2/captures/{capture_id}/raw'),
+        operation('/v2/captures/{capture_id}/ocr', {
+          responseSchema: 'CaptureOcrProjectionV3',
+        }),
         operation('/v2/captures/{capture_id}/result'),
         operation('/v2/captures/{capture_id}/structure/session', {
           method: 'POST',
@@ -216,7 +369,7 @@ describe('CaptureRuntimeClient', () => {
     ).join('');
     const index = {
       catalogVersion: '2',
-      runtimeVersion: '0.4.1',
+      runtimeVersion: '0.4.2',
       contractSetVersion: '2',
       surfaces: [{ id: 'v2' }],
       sha256: digest,
@@ -302,6 +455,322 @@ describe('CaptureRuntimeClient', () => {
       '/v2/runtime/requirements',
       '/v2/runtime/requirements',
     ]);
+  });
+
+  it('gets completed and failed OCR projections through the discovered operation', async () => {
+    const visited: string[] = [];
+    const transport = new InMemoryRuntimeTransport(
+      withDiscovery([
+        {
+          path: '/v2/captures/cap/ocr',
+          handle: () => {
+            visited.push('/v2/captures/cap/ocr');
+            return Response.json(completedOcr);
+          },
+        },
+      ], visited),
+    );
+    const client = new CaptureRuntimeClient({ baseUrl: 43123, transport });
+
+    const completed = await client.getOcr('cap');
+    expect(completed.pages).toHaveLength(1);
+    expect(completed.pages[0]?.provenance?.engine).toBe('windowsml-ocr');
+    expect(completed.pages[0]?.boxes?.[0]?.polygon).toEqual([
+      { x: 10.5, y: 20.25 },
+      { x: 310.75, y: 12.5 },
+      { x: 320, y: 80.5 },
+      { x: 5, y: 90 },
+    ]);
+    expect(visited.at(-1)).toBe('/v2/captures/cap/ocr');
+
+    const failedTransport = new InMemoryRuntimeTransport(
+      withDiscovery([
+        {
+          path: '/v2/captures/cap/ocr',
+          handle: () => Response.json(failedOcr),
+        },
+      ]),
+    );
+    const failed = await new CaptureRuntimeClient({
+      baseUrl: 43123,
+      transport: failedTransport,
+    }).getOcr('cap');
+    expect(failed.status).toBe('failed');
+    expect(failed.failure?.code).toBe('ocr_unavailable');
+  });
+
+  it.each([
+    [401, 'unauthorized', CaptureAuthenticationError],
+    [404, 'capture_not_found', CaptureRuntimeError],
+    [409, 'ocr_unavailable', CaptureRuntimeError],
+  ] as const)('maps OCR HTTP %s to the stable error taxonomy', async (status, code, errorType) => {
+    const transport = new InMemoryRuntimeTransport(
+      withDiscovery([
+        {
+          path: '/v2/captures/cap/ocr',
+          handle: () =>
+            new Response(
+              JSON.stringify({
+                error: {
+                  code,
+                  message: code === 'ocr_unavailable' ? 'OCR is pending.' : 'OCR request failed.',
+                  details: { retryable: status === 409 },
+                },
+              }),
+              { status, headers: { 'Content-Type': 'application/json' } },
+            ),
+        },
+      ]),
+    );
+    await expect(
+      new CaptureRuntimeClient({ baseUrl: 43123, transport }).getOcr('cap'),
+    ).rejects.toMatchObject({ status, code });
+    await expect(
+      new CaptureRuntimeClient({ baseUrl: 43123, transport }).getOcr('cap'),
+    ).rejects.toBeInstanceOf(errorType);
+  });
+
+  it('rejects OCR projections with invalid page, box, provenance, and terminal invariants', async () => {
+    const invalid = structuredClone(completedOcr);
+    invalid.pages[0].boxes[0].polygon[0].x = invalid.pages[0].raster.width + 1;
+    await expect(
+      decodeJson(
+        new Response(JSON.stringify(invalid)),
+        undefined,
+        'CaptureOcrProjection',
+      ),
+    ).rejects.toBeInstanceOf(CaptureRuntimeProtocolError);
+
+    const rectangleOnly = structuredClone(completedOcr) as Record<string, unknown>;
+    const rectanglePage = (rectangleOnly['pages'] as Record<string, unknown>[])[0];
+    rectanglePage['boxes'] = [{ x: 10, y: 20, width: 300, height: 60 }];
+    await expect(
+      decodeJson(
+        new Response(JSON.stringify(rectangleOnly)),
+        undefined,
+        'CaptureOcrProjection',
+      ),
+    ).rejects.toBeInstanceOf(CaptureRuntimeProtocolError);
+
+    const tooFewPoints = structuredClone(completedOcr);
+    tooFewPoints.pages[0].boxes[0].polygon = tooFewPoints.pages[0].boxes[0].polygon.slice(0, 3);
+    await expect(
+      decodeJson(
+        new Response(JSON.stringify(tooFewPoints)),
+        undefined,
+        'CaptureOcrProjection',
+      ),
+    ).rejects.toBeInstanceOf(CaptureRuntimeProtocolError);
+
+    const negativePoint = structuredClone(completedOcr);
+    negativePoint.pages[0].boxes[0].polygon[0].y = -0.01;
+    await expect(
+      decodeJson(
+        new Response(JSON.stringify(negativePoint)),
+        undefined,
+        'CaptureOcrProjection',
+      ),
+    ).rejects.toBeInstanceOf(CaptureRuntimeProtocolError);
+
+    const nonFinitePoint = structuredClone(completedOcr);
+    nonFinitePoint.pages[0].boxes[0].polygon[0].x = Number.POSITIVE_INFINITY;
+    await expect(
+      decodeJson(
+        new Response(JSON.stringify(nonFinitePoint)),
+        undefined,
+        'CaptureOcrProjection',
+      ),
+    ).rejects.toBeInstanceOf(CaptureRuntimeProtocolError);
+
+    const unresolvedModelDigest = structuredClone(completedOcr);
+    unresolvedModelDigest.provenance.modelDigest = `sha256:${'0'.repeat(64)}`;
+    unresolvedModelDigest.pages[0].provenance.modelDigest =
+      unresolvedModelDigest.provenance.modelDigest;
+    await expect(
+      decodeJson(
+        new Response(JSON.stringify(unresolvedModelDigest)),
+        undefined,
+        'CaptureOcrProjection',
+      ),
+    ).rejects.toBeInstanceOf(CaptureRuntimeProtocolError);
+
+    const missingPages = { ...completedOcr } as Record<string, unknown>;
+    delete missingPages.pages;
+    await expect(
+      decodeJson(
+        new Response(JSON.stringify(missingPages)),
+        undefined,
+        'CaptureOcrProjection',
+      ),
+    ).rejects.toBeInstanceOf(CaptureRuntimeProtocolError);
+
+    const completedWithFailure = {
+      ...completedOcr,
+      failure: failedOcr.failure,
+    };
+    await expect(
+      decodeJson(
+        new Response(JSON.stringify(completedWithFailure)),
+        undefined,
+        'CaptureOcrProjection',
+      ),
+    ).rejects.toBeInstanceOf(CaptureRuntimeProtocolError);
+
+    const unavailableProvenance = {
+      status: 'unavailable',
+      profileId: 'capture-workbench-ocr-pipeline-v1',
+      profileSpecSha256: 'b'.repeat(64),
+      reason: 'model_unavailable',
+    };
+    const failedWithUnavailableProvenance = {
+      ...failedOcr,
+      pageCount: 1,
+      pages: [
+        {
+          page: 1,
+          status: 'failed',
+          raster: { width: 1200, height: 1600, scale: 2, coordinateSystem: 'pixel' },
+          text: '',
+          boxes: [],
+          confidence: null,
+          provenance: unavailableProvenance,
+          failure: failedOcr.failure,
+        },
+      ],
+      provenance: unavailableProvenance,
+    };
+    await expect(
+      decodeJson(
+        new Response(JSON.stringify(failedWithUnavailableProvenance)),
+        undefined,
+        'CaptureOcrProjection',
+      ),
+    ).resolves.toMatchObject({ status: 'failed' });
+
+    const recognizedWithUnavailableProvenance = {
+      ...failedWithUnavailableProvenance,
+      pages: [
+        {
+          ...failedWithUnavailableProvenance.pages[0],
+          status: 'recognized',
+          text: 'recognized',
+          boxes: [
+            {
+              polygon: [
+                { x: 1, y: 1 },
+                { x: 11, y: 1 },
+                { x: 11, y: 11 },
+                { x: 1, y: 11 },
+              ],
+              text: 'recognized',
+              confidence: 0.9,
+            },
+          ],
+          confidence: 0.9,
+          failure: null,
+        },
+      ],
+    };
+    await expect(
+      decodeJson(
+        new Response(JSON.stringify(recognizedWithUnavailableProvenance)),
+        undefined,
+        'CaptureOcrProjection',
+      ),
+    ).rejects.toBeInstanceOf(CaptureRuntimeProtocolError);
+
+    const completedWithUnavailableProvenance = {
+      ...completedOcr,
+      provenance: unavailableProvenance,
+      pages: [{ ...completedOcr.pages[0], provenance: unavailableProvenance }],
+    };
+    await expect(
+      decodeJson(
+        new Response(JSON.stringify(completedWithUnavailableProvenance)),
+        undefined,
+        'CaptureOcrProjection',
+      ),
+    ).rejects.toBeInstanceOf(CaptureRuntimeProtocolError);
+
+    const completedWithoutPageProvenance = structuredClone(completedOcr);
+    delete completedWithoutPageProvenance.pages[0].provenance;
+    await expect(
+      decodeJson(
+        new Response(JSON.stringify(completedWithoutPageProvenance)),
+        undefined,
+        'CaptureOcrProjection',
+      ),
+    ).rejects.toBeInstanceOf(CaptureRuntimeProtocolError);
+
+    const completedWithoutRecognizedText = structuredClone(completedOcr);
+    completedWithoutRecognizedText.pages[0].status = 'empty';
+    completedWithoutRecognizedText.pages[0].text = '';
+    completedWithoutRecognizedText.pages[0].boxes = [];
+    completedWithoutRecognizedText.pages[0].confidence = null;
+    completedWithoutRecognizedText.pages[0].provenance = null;
+    await expect(
+      decodeJson(
+        new Response(JSON.stringify(completedWithoutRecognizedText)),
+        undefined,
+        'CaptureOcrProjection',
+      ),
+    ).rejects.toBeInstanceOf(CaptureRuntimeProtocolError);
+  });
+
+  it('shares the canonical perspective corpus with Python and Java validators', async () => {
+    const perspective = sharedPerspectiveOcrFixture();
+    const decoded = await decodeJson<Record<string, unknown>>(
+      new Response(JSON.stringify(perspective)),
+      undefined,
+      'CaptureOcrProjection',
+    );
+    const pages = decoded['pages'] as Record<string, unknown>[];
+    const boxes = pages[0]?.['boxes'] as Record<string, unknown>[];
+    expect((boxes[0]?.['polygon'] as Record<string, unknown>[])[2]).toEqual({
+      x: 104,
+      y: 61.25,
+    });
+
+    const rectangle = structuredClone(perspective);
+    const rectanglePage = (rectangle['pages'] as Record<string, unknown>[])[0]!;
+    rectanglePage['boxes'] = [{ x: 4, y: 18, width: 100, height: 46 }];
+    await expect(
+      decodeJson(new Response(JSON.stringify(rectangle)), undefined, 'CaptureOcrProjection'),
+    ).rejects.toBeInstanceOf(CaptureRuntimeProtocolError);
+
+    const nonFinite = structuredClone(perspective);
+    const nonFinitePage = (nonFinite['pages'] as Record<string, unknown>[])[0]!;
+    const nonFiniteBox = (nonFinitePage['boxes'] as Record<string, unknown>[])[0]!;
+    ((nonFiniteBox['polygon'] as Record<string, unknown>[])[0]!)['x'] = Number.NaN;
+    await expect(
+      decodeJson(new Response(JSON.stringify(nonFinite)), undefined, 'CaptureOcrProjection'),
+    ).rejects.toBeInstanceOf(CaptureRuntimeProtocolError);
+
+    const outOfBounds = structuredClone(perspective);
+    const outOfBoundsPage = (outOfBounds['pages'] as Record<string, unknown>[])[0]!;
+    const outOfBoundsBox = (outOfBoundsPage['boxes'] as Record<string, unknown>[])[0]!;
+    ((outOfBoundsBox['polygon'] as Record<string, unknown>[])[0]!)['x'] = 121;
+    await expect(
+      decodeJson(new Response(JSON.stringify(outOfBounds)), undefined, 'CaptureOcrProjection'),
+    ).rejects.toBeInstanceOf(CaptureRuntimeProtocolError);
+  });
+
+  it('shares referenced DTO invalid corpus rejections with Python and Java validators', async () => {
+    const corpus = sharedReferencedInvalidCorpus();
+    expect(corpus).toHaveLength(12);
+    for (const invalid of corpus) {
+      const payload = structuredClone(
+        invalid.base === 'completed' ? completedOcr : failedOcr,
+      ) as Record<string, unknown>;
+      applyReferencedInvalidMutation(payload, invalid);
+      await expect(
+        decodeJson(
+          new Response(JSON.stringify(payload)),
+          undefined,
+          'CaptureOcrProjection',
+        ),
+      ).rejects.toBeInstanceOf(CaptureRuntimeProtocolError);
+    }
   });
 
   it('redacts credentials from common errors', () => {
@@ -444,7 +913,7 @@ describe('CaptureRuntimeClient', () => {
     ).join('');
     const index = {
       catalogVersion: '2',
-      runtimeVersion: '0.4.1',
+      runtimeVersion: '0.4.2',
       contractSetVersion: '2',
       surfaces: [{ id: 'v2' }],
       sha256: digest,
@@ -472,7 +941,7 @@ describe('CaptureRuntimeClient', () => {
     const digest = 'a'.repeat(64);
     const index = {
       catalogVersion: '2',
-      runtimeVersion: '0.4.1',
+      runtimeVersion: '0.4.2',
       contractSetVersion: '2',
       surfaces: [{ id: 'v2' }],
       sha256: digest,
@@ -505,6 +974,27 @@ describe('CaptureRuntimeClient', () => {
         ),
         undefined,
         'RuntimeModelInstallation',
+      ),
+    ).rejects.toBeInstanceOf(CaptureRuntimeProtocolError);
+  });
+
+  it('rejects an inconsistent OCR compute preflight instead of allowing unsafe mode', async () => {
+    await expect(
+      decodeJson(
+        new Response(
+          JSON.stringify({
+            ...ready,
+            ocrCompute: {
+              ...ready.ocrCompute,
+              mode: 'gpu-dml',
+              reasonCode: 'dml_provider_unavailable',
+              userNoticeRequired: true,
+              noticeCode: 'ocr_cpu_fallback',
+            },
+          }),
+        ),
+        undefined,
+        'RuntimeReady',
       ),
     ).rejects.toBeInstanceOf(CaptureRuntimeProtocolError);
   });
