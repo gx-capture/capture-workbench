@@ -443,9 +443,10 @@ test('inventory rejects duplicate nested JSON owners before mutation', async () 
   await withFixture(async (root) => {
     const path = join(root, 'packages/capture-runtime-client/package.json');
     const before = await readFile(path, 'utf8');
+    // Windows CI checkouts may use CRLF; keep the fixture's own line ending.
     const duplicate = before.replace(
-      '"registry": "https://npm.pkg.github.com",\n    "access": "public"',
-      '"registry": "https://npm.pkg.github.com",\n    "registry": "https://example.invalid",\n    "access": "public"',
+      /("registry": "https:\/\/npm\.pkg\.github\.com",)(\r?\n)(\s*"access": "public")/u,
+      '$1$2    "registry": "https://example.invalid",$2$3',
     );
     assert.notEqual(duplicate, before);
     await writeFile(path, duplicate, 'utf8');
