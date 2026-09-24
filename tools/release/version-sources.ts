@@ -1261,11 +1261,9 @@ function addReleaseSourceEntries(
   const contractSetPath = 'packages/capture-runtime/src/capture_runtime/assets/contract-set.json';
   addExpectedJson(entries, 'contract-set.version', 'tooling', root, contractSetPath, 'contractSetVersion', EXPECTED_CONTRACT_SET_VERSION);
 
-  addExpectedJson(entries, 'release.desktop-manifest', 'release', root, 'apps/capture-workbench-desktop/src-tauri/resources/capture-runtime-manifest.json', 'runtimeVersion', EXPECTED_RELEASE_VERSION);
-  addExpectedJson(entries, 'release.desktop-manifest-api', 'api', root, 'apps/capture-workbench-desktop/src-tauri/resources/capture-runtime-manifest.json', 'apiVersion', EXPECTED_RUNTIME_API_VERSION);
-  addExpectedJson(entries, 'release.desktop-manifest-schema', 'document-schema', root, 'apps/capture-workbench-desktop/src-tauri/resources/capture-runtime-manifest.json', 'captureDocumentSchemaVersion', EXPECTED_DOCUMENT_SCHEMA_VERSION);
+  // The staged desktop manifest and .runtime-stage.json are git-ignored build
+  // outputs validated by stage-runtime; only the tracked example is a source.
   addExpectedJson(entries, 'release.desktop-example-manifest', 'release', root, 'apps/capture-workbench-desktop/src-tauri/resources/capture-runtime-manifest.example.json', 'runtimeVersion', EXPECTED_RELEASE_VERSION);
-  addExpectedJson(entries, 'release.desktop-stage', 'release', root, 'apps/capture-workbench-desktop/src-tauri/resources/.runtime-stage.json', 'runtimeVersion', EXPECTED_RELEASE_VERSION);
   addExpectedMatch(entries, 'release.deterministic-stage', 'release', root, 'apps/capture-workbench-desktop/scripts/stage-deterministic-runtime.ts', /runtimeVersion:\s*'([^']+)'/mu, EXPECTED_RELEASE_VERSION);
   addExpectedMatch(entries, 'release.runtime-stage', 'release', root, 'apps/capture-workbench-desktop/scripts/stage-runtime.ts', /runtimeVersion:\s*'([^']+)'/mu, EXPECTED_RELEASE_VERSION);
   addExpectedMatch(entries, 'release.real-model-smoke', 'release', root, 'apps/capture-workbench-desktop/scripts/real-media-model-smoke.ts', /^export const REAL_MODEL_RELEASE_VERSION\s*=\s*'([^']+)'/mu, EXPECTED_RELEASE_VERSION);
