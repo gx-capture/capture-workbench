@@ -53,8 +53,10 @@ use windows_sys::Win32::{
     System::IO::OVERLAPPED,
 };
 
-#[cfg(all(test, windows))]
-use windows_sys::Win32::Foundation::{GetLastError, ERROR_LOCK_VIOLATION};
+#[cfg(windows)]
+use windows_sys::Win32::Foundation::{
+    GetLastError, ERROR_ACCESS_DENIED, ERROR_LOCK_VIOLATION, ERROR_SHARING_VIOLATION,
+};
 
 const JOURNAL_PREFIX: &str = "runtime-session-";
 const JOURNAL_SUFFIX: &str = ".json";
@@ -66,6 +68,13 @@ const REPARSE_POINT_ATTRIBUTE: u32 = 0x0000_0400;
 const MAX_JOURNAL_BYTES: usize = 1024 * 1024;
 const LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(10);
 const LOCK_TIMEOUT: Duration = Duration::from_secs(5);
+// A replace fails while any other handle (antivirus, indexer, backup or an
+// observer) has the destination open, even with FILE_SHARE_DELETE. Retry
+// only those transient conflicts, within a bounded budget of about 0.75 s.
+#[cfg(windows)]
+const REPLACE_RETRY_ATTEMPTS: u32 = 12;
+#[cfg(windows)]
+const REPLACE_RETRY_MAX_INTERVAL: Duration = Duration::from_millis(100);
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[cfg(all(test, windows))]
@@ -2186,12 +2195,23 @@ fn atomic_move(from: &Path, to: &Path, replace_existing: bool) -> Result<(), Jou
     if replace_existing {
         flags |= MOVEFILE_REPLACE_EXISTING;
     }
-    let moved = unsafe { MoveFileExW(from.as_ptr(), to.as_ptr(), flags) } != 0;
-    if moved {
-        Ok(())
-    } else {
-        Err(JournalStoreError::AtomicReplace)
+    let mut interval = Duration::from_millis(5);
+    for attempt in 1..=REPLACE_RETRY_ATTEMPTS {
+        if unsafe { MoveFileExW(from.as_ptr(), to.as_ptr(), flags) } != 0 {
+            return Ok(());
+        }
+        let error = unsafe { GetLastError() };
+        let transient = matches!(
+            error,
+            ERROR_ACCESS_DENIED | ERROR_SHARING_VIOLATION | ERROR_LOCK_VIOLATION
+        );
+        if !transient || attempt == REPLACE_RETRY_ATTEMPTS {
+            break;
+        }
+        thread::sleep(interval);
+        interval = (interval * 2).min(REPLACE_RETRY_MAX_INTERVAL);
     }
+    Err(JournalStoreError::AtomicReplace)
 }
 
 #[cfg(not(windows))]
@@ -3348,5 +3368,57 @@ mod tests {
             JournalStoreConfig::new(traversal, "session-1".into(), DIGEST_A.into()),
             Err(JournalStoreError::PathSecurity)
         );
+    }
+
+    #[test]
+    fn atomic_replace_waits_for_a_transient_reader_to_close() {
+        let root = tempdir().expect("temporary root");
+        let target = root.path().join("runtime-session-a.json");
+        let source = root.path().join("runtime-session-a.json.tmp-1");
+        fs::write(&target, b"old").expect("target");
+        fs::write(&source, b"new").expect("source");
+        // Rust opens with FILE_SHARE_READ | WRITE | DELETE; a replace still
+        // fails with ERROR_ACCESS_DENIED while this handle is open.
+        let reader = fs::File::open(&target).expect("transient reader");
+        let release = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(40));
+            drop(reader);
+        });
+        atomic_move(&source, &target, true).expect("replace after the reader closes");
+        release.join().expect("reader thread");
+        assert_eq!(fs::read(&target).expect("replaced target"), b"new");
+        assert!(!source.exists());
+    }
+
+    #[test]
+    fn atomic_replace_fails_closed_when_a_reader_outlasts_the_retry_budget() {
+        let root = tempdir().expect("temporary root");
+        let target = root.path().join("runtime-session-b.json");
+        let source = root.path().join("runtime-session-b.json.tmp-1");
+        fs::write(&target, b"old").expect("target");
+        fs::write(&source, b"new").expect("source");
+        let reader = fs::File::open(&target).expect("persistent reader");
+        let started = Instant::now();
+        assert_eq!(
+            atomic_move(&source, &target, true),
+            Err(JournalStoreError::AtomicReplace)
+        );
+        assert!(started.elapsed() < Duration::from_secs(3));
+        drop(reader);
+        assert_eq!(fs::read(&target).expect("preserved target"), b"old");
+        assert_eq!(fs::read(&source).expect("preserved source"), b"new");
+    }
+
+    #[test]
+    fn atomic_create_does_not_retry_an_existing_destination() {
+        let root = tempdir().expect("temporary root");
+        let target = root.path().join("runtime-session-c.json");
+        let source = root.path().join("runtime-session-c.json.tmp-1");
+        fs::write(&target, b"old").expect("target");
+        fs::write(&source, b"new").expect("source");
+        let started = Instant::now();
+        assert!(atomic_move(&source, &target, false).is_err());
+        assert!(started.elapsed() < Duration::from_millis(50));
+        assert_eq!(fs::read(&target).expect("preserved target"), b"old");
     }
 }

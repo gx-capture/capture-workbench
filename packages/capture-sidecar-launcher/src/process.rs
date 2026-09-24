@@ -9901,6 +9901,12 @@ fn taskkill_args(pid: u32) -> [String; 4] {
 mod tests {
     use super::*;
 
+    /// Upper bound for waiting on fixture processes, markers and listeners to
+    /// reach a state. Waits return as soon as the condition holds; the bound
+    /// only matters on failure and leaves Windows CI room for first-launch
+    /// antivirus scans. Budgets under test keep their own exact values.
+    const FIXTURE_EVENTUAL_WAIT: Duration = Duration::from_secs(60);
+
     #[cfg(windows)]
     use std::{
         fs,
@@ -10226,7 +10232,7 @@ mod tests {
 
     #[cfg(windows)]
     fn wait_for_exact_checkpoint(path: &Path, expected: &[u8]) {
-        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let deadline = std::time::Instant::now() + FIXTURE_EVENTUAL_WAIT;
         while std::fs::read(path).ok().as_deref() != Some(expected)
             && std::time::Instant::now() < deadline
         {
@@ -12392,7 +12398,7 @@ mod tests {
         group: &mut SuspendedGroup,
         ports: &[u16],
     ) -> NativeListenerObservation {
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let deadline = std::time::Instant::now() + FIXTURE_EVENTUAL_WAIT;
         loop {
             match group.observe_root_listeners(ports, deadline, None) {
                 Ok(observation) => return observation,
@@ -12414,7 +12420,7 @@ mod tests {
         ports: &[u16],
         expected_fragment: &str,
     ) -> String {
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let deadline = std::time::Instant::now() + FIXTURE_EVENTUAL_WAIT;
         loop {
             match group.observe_root_listeners(ports, deadline, None) {
                 Ok(_) => panic!("unexpected listener observation success"),
@@ -12431,7 +12437,7 @@ mod tests {
 
     #[cfg(windows)]
     fn wait_for_marker(path: &Path, expected: bool) {
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let deadline = std::time::Instant::now() + FIXTURE_EVENTUAL_WAIT;
         while path.exists() != expected && std::time::Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(10));
         }
@@ -12646,7 +12652,7 @@ mod tests {
             .expect("suspended short-lived root")
             .resume_all()
             .expect("resumed short-lived root");
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let deadline = std::time::Instant::now() + FIXTURE_EVENTUAL_WAIT;
         while group.roots[0]
             .child
             .try_wait()

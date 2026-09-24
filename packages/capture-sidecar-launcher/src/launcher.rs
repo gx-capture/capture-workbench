@@ -1459,6 +1459,12 @@ mod tests {
     #[cfg(windows)]
     use sha2::{Digest, Sha256};
 
+    /// Upper bound for waiting on fixture processes, markers and listeners to
+    /// reach a state. Waits return as soon as the condition holds; the bound
+    /// only matters on failure and leaves Windows CI room for first-launch
+    /// antivirus scans. Budgets under test keep their own exact values.
+    const FIXTURE_EVENTUAL_WAIT: Duration = Duration::from_secs(60);
+
     #[cfg(windows)]
     const ACTIVATION_HTTP_TOKEN: &str = "fixture-bearer-token-0123456789abcdef";
 
@@ -2068,7 +2074,7 @@ mod tests {
         let expected = format!(
             "state=launching\nordinal={ordinal}\npid={expected_pid}\njournalRevision={expected_revision}\n"
         );
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let deadline = std::time::Instant::now() + FIXTURE_EVENTUAL_WAIT;
         let mut last_observation = None;
         while std::time::Instant::now() < deadline {
             match fs::read_to_string(marker_path) {
@@ -2096,13 +2102,16 @@ mod tests {
     ) {
         // Loaded CI runners can delay fixture startup and first response bytes;
         // keep retrying until a complete status line arrives, then assert it.
-        let deadline = Instant::now() + Duration::from_secs(15);
+        let started = Instant::now();
+        let deadline = started + FIXTURE_EVENTUAL_WAIT;
         let authorization = authorization
             .map(|token| format!("Authorization: Bearer {token}\r\n"))
             .unwrap_or_default();
         let request = format!(
             "GET /v2/health/ready HTTP/1.1\r\nHost: {host}\r\n{authorization}Connection: close\r\n\r\n"
         );
+        let mut connect_failures = 0usize;
+        let mut incomplete_responses = 0usize;
         while Instant::now() < deadline {
             let Ok(mut stream) = TcpStream::connect_timeout(
                 &format!("{LOOPBACK_HOST}:{port}")
@@ -2110,6 +2119,7 @@ mod tests {
                     .expect("loopback address"),
                 Duration::from_millis(250),
             ) else {
+                connect_failures += 1;
                 thread::sleep(Duration::from_millis(10));
                 continue;
             };
@@ -2137,6 +2147,7 @@ mod tests {
                 .and_then(|line| line.split_whitespace().nth(1))
                 .and_then(|value| value.parse::<u16>().ok());
             let Some(status) = status else {
+                incomplete_responses += 1;
                 thread::sleep(Duration::from_millis(10));
                 continue;
             };
@@ -2152,7 +2163,12 @@ mod tests {
             }
             panic!("activation probe returned an unexpected HTTP status");
         }
-        panic!("activation probe HTTP server did not become reachable");
+        panic!(
+            "activation probe HTTP server did not become reachable \
+             (connect_failures={connect_failures}, incomplete_responses={incomplete_responses}, \
+             elapsed_ms={})",
+            started.elapsed().as_millis()
+        );
     }
 
     #[cfg(windows)]
@@ -2199,7 +2215,7 @@ mod tests {
         let listener_checkpoint_path = marker_path.with_extension("listener-checkpoint");
         const MAX_RESPONSE_BYTES: usize = 4096;
         let started = Instant::now();
-        let deadline = Instant::now() + Duration::from_secs(12);
+        let deadline = Instant::now() + FIXTURE_EVENTUAL_WAIT;
         let request = format!(
             "GET /v2/health/ready HTTP/1.1\r\nHost: {LOOPBACK_HOST}:{port}\r\nAuthorization: Bearer {ACTIVATION_HTTP_TOKEN}\r\nConnection: close\r\n\r\n"
         );
