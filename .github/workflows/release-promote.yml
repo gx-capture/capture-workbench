@@ -316,10 +316,19 @@ jobs:
             --binding "$RUNNER_TEMP/pypi-preflight.json"
           echo "candidate_manifest_sha256=$manifest_sha256" >> "$GITHUB_OUTPUT"
 
+      - name: Stage an upload-only copy of the validated distributions
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The publish action writes *.publish.attestation files next to the
+          # uploads; keep the validated directory exact for mandatory readback.
+          rm -rf "$RUNNER_TEMP/pypi-upload"
+          cp -R "$RUNNER_TEMP/pypi-python" "$RUNNER_TEMP/pypi-upload"
+
       - name: Publish exact Python distributions with Trusted Publishing
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
         with:
-          packages-dir: ${{ runner.temp }}/pypi-python
+          packages-dir: ${{ runner.temp }}/pypi-upload
           skip-existing: true
 
       - name: Record the exact PyPI publication ledger after mandatory readback
