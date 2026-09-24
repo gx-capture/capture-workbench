@@ -80,6 +80,7 @@ const INVENTORY_FILES = [
   '.github/workflows/_publish-promotion-ledger.yml',
   '.github/workflows/_publish-stable-pointer.yml',
   'tools/publish-crate-candidate.ts',
+  'tools/record-pypi-candidate.ts',
   'tools/create-github-release.ts',
 ];
 
@@ -164,6 +165,57 @@ test('typed release inventory reports every D2.1 identity without mutation', () 
   }
   assert.equal(inventory.channelOwners.length, 9);
 });
+
+const R3_HEALTH_PATH = 'packages/capture-sidecar-launcher/src/health.rs';
+const R3_IDENTITIES = [
+  ['R3_SERVICE', 'runtime.service.sidecar-health', 'capture-runtime', 'other-runtime'],
+  ['R3_RUNTIME_VERSION', 'runtime.version.sidecar-health', '0.4.2', '0.4.3'],
+  ['R3_API_VERSION', 'runtime.api.sidecar-health', '2.0', '2.1'],
+  ['R3_DOCUMENT_SCHEMA_VERSION', 'document.schema.sidecar-health', '2', '3'],
+  ['R3_CONTRACT_SET_VERSION', 'contract-set.version.sidecar-health', '2', '3'],
+] as const;
+
+test('R3 inventory uses production identities and preserves negative test fixtures', async () => {
+  await withFixture(async (root) => {
+    const path = join(root, R3_HEALTH_PATH);
+    const before = await readFile(path, 'utf8');
+    assert.match(before, /foreign_manifest\.runtime_version = "0\.4\.3"/u);
+    assert.match(before, /\("runtimeVersion", serde_json::json!\("0\.4\.1"\)\)/u);
+    const inventory = collectReleaseInventory(root);
+    for (const [, id, value] of R3_IDENTITIES) requiredEntry(inventory, id, value);
+    const versions = collectReleaseVersionEntries(root);
+    assert.ok(versions.every((entry) => entry.value === '0.4.2'));
+    assert.equal(verifyGeneratedVersions(root).releaseVersion, '0.4.2');
+    assert.equal(await readFile(path, 'utf8'), before);
+  });
+});
+
+for (const [name, id, value, wrong] of R3_IDENTITIES) {
+  for (const mutation of ['drift', 'missing', 'duplicate'] as const) {
+    test(`R3 inventory rejects ${mutation} of production ${name}`, async () => {
+      await withFixture(async (root) => {
+        const path = join(root, R3_HEALTH_PATH);
+        const before = await readFile(path, 'utf8');
+        const declaration = `const ${name}: &str = "${value}";`;
+        const replacement = mutation === 'drift'
+          ? `const ${name}: &str = "${wrong}";`
+          : mutation === 'missing' ? '' : `${declaration}\n  ${declaration}`;
+        const changed = before.replace(declaration, replacement);
+        assert.notEqual(changed, before);
+        await writeFile(path, changed, 'utf8');
+        assert.throws(() => collectReleaseInventory(root), (error: unknown) => {
+          assert.ok(error instanceof Error);
+          assert.ok(error.message.includes(id), error.message);
+          return true;
+        });
+        if (name === 'R3_RUNTIME_VERSION') {
+          assert.throws(() => verifyGeneratedVersions(root), /sidecar|R3|release/iu);
+        }
+        assert.equal(await readFile(path, 'utf8'), changed);
+      });
+    });
+  }
+}
 
 test('inventory rejects stale Nx identity before changing fixture bytes', async () => {
   await withFixture(async (root) => {
@@ -437,16 +489,16 @@ test('inventory rejects every channel destination and package identity mutation'
     },
     {
       name: 'PyPI destination suffix',
-      sourcePath: '.github/workflows/_publish-pypi.yml',
+      sourcePath: 'tools/record-pypi-candidate.ts',
       find: 'https://pypi.org/pypi/${project}/${version}/json',
       replace: 'https://pypi.org/pypi/${project}/${version}/json/other',
       expected: /channel\.pypi|PyPI/u,
     },
     {
       name: 'PyPI project name',
-      sourcePath: '.github/workflows/_publish-pypi.yml',
-      find: "const project = 'capture-runtime-client'",
-      replace: "const project = 'capture-runtime-client-wrong'",
+      sourcePath: 'tools/record-pypi-candidate.ts',
+      find: "const PROJECTS = ['capture-runtime-client'] as const",
+      replace: "const PROJECTS = ['capture-runtime-client-wrong'] as const",
       expected: /channel\.pypi|project/u,
     },
     {

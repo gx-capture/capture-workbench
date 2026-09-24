@@ -20,7 +20,7 @@ const EXPECTED_GIT_REPOSITORY =
   'git+https://github.com/gx-capture/capture-workbench.git';
 const EXPECTED_NPM_REGISTRY = 'https://npm.pkg.github.com';
 const EXPECTED_PYPI_PROJECT = 'capture-runtime-client';
-const EXPECTED_PYPI_WORKFLOW_URL =
+const EXPECTED_PYPI_METADATA_URL =
   'https://pypi.org/pypi/${project}/${version}/json';
 const EXPECTED_MAVEN_REPOSITORY =
   'https://maven.pkg.github.com/gx-capture/capture-workbench';
@@ -786,8 +786,20 @@ export function collectReleaseVersionEntries(
     /runtime_version:\s*Literal\["([^"]+)"\]/u,
   );
 
+  // Health rejection tests deliberately contain incompatible versions. Only
+  // the production R3 constant is a release authority in this source file.
+  const healthPath = 'packages/capture-sidecar-launcher/src/health.rs';
+  add(
+    entries,
+    'Sidecar R3 runtime version',
+    matchExactlyOne(
+      text(root, healthPath),
+      /^[ \t]*const R3_RUNTIME_VERSION:\s*&str\s*=\s*"([^"]+)";/mu,
+      'Sidecar R3 runtime version',
+      healthPath,
+    ),
+  );
   for (const path of [
-    'packages/capture-sidecar-launcher/src/health.rs',
     'packages/capture-sidecar-launcher/src/manifest.rs',
     'packages/capture-sidecar-launcher/src/lib.rs',
     'apps/capture-workbench-desktop/src-tauri/src/config.rs',
@@ -1051,35 +1063,50 @@ function addReleaseSourceEntries(
     EXPECTED_RELEASE_VERSION,
     7,
   );
-  addExpectedOccurrences(
+  addExpectedMatch(
     entries,
     'runtime.version.sidecar-health',
     'release',
     root,
     'packages/capture-sidecar-launcher/src/health.rs',
-    /runtime_version:\s*"([^"]+)"/gu,
+    /^[ \t]*const R3_RUNTIME_VERSION:\s*&str\s*=\s*"([^"]+)";/mu,
     EXPECTED_RELEASE_VERSION,
-    1,
   );
-  addExpectedOccurrences(
+  addExpectedMatch(
     entries,
     'runtime.api.sidecar-health',
     'api',
     root,
     'packages/capture-sidecar-launcher/src/health.rs',
-    /api_version:\s*"([^"]+)"/gu,
+    /^[ \t]*const R3_API_VERSION:\s*&str\s*=\s*"([^"]+)";/mu,
     EXPECTED_RUNTIME_API_VERSION,
-    1,
   );
-  addExpectedOccurrences(
+  addExpectedMatch(
     entries,
     'document.schema.sidecar-health',
     'document-schema',
     root,
     'packages/capture-sidecar-launcher/src/health.rs',
-    /capture_document_schema_version:\s*"([^"]+)"/gu,
+    /^[ \t]*const R3_DOCUMENT_SCHEMA_VERSION:\s*&str\s*=\s*"([^"]+)";/mu,
     EXPECTED_DOCUMENT_SCHEMA_VERSION,
-    1,
+  );
+  addExpectedMatch(
+    entries,
+    'contract-set.version.sidecar-health',
+    'tooling',
+    root,
+    'packages/capture-sidecar-launcher/src/health.rs',
+    /^[ \t]*const R3_CONTRACT_SET_VERSION:\s*&str\s*=\s*"([^"]+)";/mu,
+    EXPECTED_CONTRACT_SET_VERSION,
+  );
+  addExpectedMatch(
+    entries,
+    'runtime.service.sidecar-health',
+    'tooling',
+    root,
+    'packages/capture-sidecar-launcher/src/health.rs',
+    /^[ \t]*const R3_SERVICE:\s*&str\s*=\s*"([^"]+)";/mu,
+    'capture-runtime',
   );
   addExpectedOccurrences(
     entries,
@@ -1416,21 +1443,21 @@ function addChannelIdentityEntries(
   );
   addExpectedMatch(
     entries,
-    'channel.pypi.workflow.project',
+    'channel.pypi.helper.project',
     'channel',
     root,
-    '.github/workflows/_publish-pypi.yml',
-    /const project\s*=\s*'([^']+)'/u,
+    'tools/record-pypi-candidate.ts',
+    /^const PROJECTS\s*=\s*\['([^']+)'\]\s+as const;/mu,
     EXPECTED_PYPI_PROJECT,
   );
   addExpectedMatch(
     entries,
-    'channel.pypi.workflow.destination',
+    'channel.pypi.helper.destination',
     'channel',
     root,
-    '.github/workflows/_publish-pypi.yml',
-    /fetch\(`([^`]+)`/u,
-    EXPECTED_PYPI_WORKFLOW_URL,
+    'tools/record-pypi-candidate.ts',
+    /fetch\(\s*`([^`]+)`/u,
+    EXPECTED_PYPI_METADATA_URL,
   );
 
   addExpectedMatch(
