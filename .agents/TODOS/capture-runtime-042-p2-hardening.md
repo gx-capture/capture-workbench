@@ -743,7 +743,9 @@ diagnostic and is not D4.
   Model a dGPU with the positive `unavailable` assessment and a usable,
   fully mapped iGPU. The plan must select DirectML on the iGPU with its exact
   LUID/ORT mapping, never CPU; retain the separate indeterminate-dGPU
-  fail-closed regression.
+  fail-closed regression. The later installed proof on the Capture Workbench
+  app runs the canonical JPEG then the original PDF page 1, with cleanup
+  between them, before any Cert or LAW model process starts.
 
   Prerequisite: D1/D2 design approval, current owner discovery, and the
   existing `capture-runtime:test-unit` target. RED proof: the focused test is
