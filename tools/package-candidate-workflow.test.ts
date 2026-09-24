@@ -99,7 +99,7 @@ test('package candidate workflow is independent from the desktop product lane', 
   assert.match(promoteWorkflow, /verify-package-candidate\.ts/u);
   assert.match(
     promoteWorkflow,
-    /packages-dir: \$\{\{ runner\.temp \}\}\/pypi-python/u,
+    /packages-dir: \$\{\{ runner\.temp \}\}\/pypi-upload/u,
   );
   assert.match(pypiWorkflow, /inputs\.candidate_kind == 'package'/u);
   assert.match(pypiWorkflow, /python_project/u);
@@ -293,11 +293,23 @@ test('all PyPI uploaders preflight before Trusted Publishing and consume the bin
     }
     const setup = job.indexOf('node-version: 24');
     const preflight = job.indexOf('--mode preflight');
+    const stageCopy = job.indexOf(
+      'cp -R "$RUNNER_TEMP/pypi-python" "$RUNNER_TEMP/pypi-upload"',
+    );
     const upload = job.indexOf('uses: pypa/gh-action-pypi-publish@');
     const record = job.indexOf('--mode record');
     assert(
-      setup >= 0 && setup < preflight && preflight < upload && upload < record,
+      setup >= 0 &&
+        setup < preflight &&
+        preflight < stageCopy &&
+        stageCopy < upload &&
+        upload < record,
     );
+    // The publish action writes *.publish.attestation files into its upload
+    // directory; readback must keep validating the untouched staging copy.
+    assert.match(job, /packages-dir: \$\{\{ runner\.temp \}\}\/pypi-upload/u);
+    for (const command of commands)
+      assert.match(command, /--python-directory "\$RUNNER_TEMP\/pypi-python"/u);
     assert.equal(
       (job.match(/uses: pypa\/gh-action-pypi-publish@/gu) ?? []).length,
       1,
