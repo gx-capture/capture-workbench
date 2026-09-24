@@ -829,7 +829,8 @@ test('promotion is candidate-only and creates the tag after registry verificatio
       'utf8',
     ),
     readFile(
-      join(workspaceRoot, '.github', 'workflows', '_publish-pypi.yml'),
+      // PyPI uploads run inline here; _publish-pypi.yml only verifies.
+      join(workspaceRoot, '.github', 'workflows', 'package-promote.yml'),
       'utf8',
     ),
     readFile(

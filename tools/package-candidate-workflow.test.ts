@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import test from 'node:test';
 
@@ -95,13 +95,13 @@ test('package candidate workflow is independent from the desktop product lane', 
     promoteWorkflow,
     /tag-release|publish-github-release|stable-pointer/u,
   );
-  assert.match(pypiWorkflow, /inputs\.candidate_kind == 'package'/u);
-  assert.match(pypiWorkflow, /capture-package-candidate-/u);
-  assert.match(pypiWorkflow, /verify-package-candidate\.ts/u);
+  assert.match(promoteWorkflow, /capture-package-candidate-/u);
+  assert.match(promoteWorkflow, /verify-package-candidate\.ts/u);
   assert.match(
-    pypiWorkflow,
+    promoteWorkflow,
     /packages-dir: \$\{\{ runner\.temp \}\}\/pypi-python/u,
   );
+  assert.match(pypiWorkflow, /inputs\.candidate_kind == 'package'/u);
   assert.match(pypiWorkflow, /python_project/u);
   assert.match(pypiWorkflow, /capture_runtime_client/u);
   assert.match(pypiWorkflow, /ledger_candidate_id/u);
@@ -217,8 +217,52 @@ test('runtime candidate workflow excludes the desktop product lane', async () =>
   );
 });
 
-test('all PyPI callers preflight before Trusted Publishing and consume the binding after upload on Node24', async () => {
-  for (const filename of ['_publish-pypi.yml', 'release-promote.yml']) {
+test('PyPI uploads run only inline in the top-level workflows registered as Trusted Publishers', async () => {
+  // PyPI binds the upload token to the job's workflow and the attestation to
+  // the calling workflow; a reusable workflow can never satisfy both.
+  const registeredPublishers = new Set([
+    'package-promote.yml',
+    'release-promote.yml',
+  ]);
+  const workflows = (await readdir(join(root, '.github/workflows'))).filter(
+    (name) => name.endsWith('.yml'),
+  );
+  const uploaders: string[] = [];
+  for (const filename of workflows) {
+    const workflow = await readFile(
+      join(root, '.github/workflows', filename),
+      'utf8',
+    );
+    if (/uses: pypa\/gh-action-pypi-publish@/u.test(workflow))
+      uploaders.push(filename);
+  }
+  assert.deepEqual(uploaders.sort(), [...registeredPublishers].sort());
+  assert(uploaders.every((filename) => !filename.startsWith('_')));
+
+  const verification = await readFile(
+    join(root, '.github/workflows/_publish-pypi.yml'),
+    'utf8',
+  );
+  assert.doesNotMatch(verification, /id-token: write/u);
+  const verificationCommands = toolCommands(
+    verification,
+    'record-pypi-candidate.ts',
+  );
+  assert.equal(verificationCommands.length, 2);
+  assert.match(verificationCommands[0], /--mode preflight/u);
+  assert.match(verificationCommands[1], /--mode record/u);
+  const runtimePromote = await readFile(
+    join(root, '.github/workflows/runtime-promote.yml'),
+    'utf8',
+  );
+  const runtimePypi = runtimePromote
+    .split('  publish-pypi:')[1]
+    .split(/\n {2}[a-z][a-z-]+:/u)[0];
+  assert.doesNotMatch(runtimePypi, /id-token: write/u);
+});
+
+test('all PyPI uploaders preflight before Trusted Publishing and consume the binding after upload on Node24', async () => {
+  for (const filename of ['package-promote.yml', 'release-promote.yml']) {
     const workflow = await readFile(
       join(root, '.github/workflows', filename),
       'utf8',
@@ -226,7 +270,7 @@ test('all PyPI callers preflight before Trusted Publishing and consume the bindi
     const job =
       filename === 'release-promote.yml'
         ? workflow.split('  publish-pypi:')[1].split('  publish-crates:')[0]
-        : workflow;
+        : workflow.split('  publish-pypi:')[1];
     const commands = toolCommands(job, 'record-pypi-candidate.ts');
     assert.equal(commands.length, 2);
     assert.match(commands[0], /--mode preflight/u);
@@ -270,10 +314,17 @@ test('all PyPI callers preflight before Trusted Publishing and consume the bindi
         job,
         /steps\.pypi-preflight\.outputs\.candidate_manifest_sha256/u,
       );
+    } else {
+      assert.match(job, /PYPI_KIND: package/u);
+      assert.match(
+        job,
+        /PYPI_MANIFEST_SHA256: \$\{\{ inputs\.candidate_manifest_sha256 \}\}/u,
+      );
+      assert.match(job, /PYPI_PACKAGE_ID: \$\{\{ inputs\.candidate_id \}\}/u);
+      assert.match(job, /id-token: write/u);
     }
   }
   for (const [filename, kind, digest] of [
-    ['package-promote.yml', 'package', 'candidate_manifest_sha256'],
     ['runtime-promote.yml', 'runtime', 'runtime_candidate_manifest_sha256'],
   ]) {
     const workflow = await readFile(

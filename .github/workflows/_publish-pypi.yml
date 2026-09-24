@@ -1,4 +1,9 @@
-name: Reusable Capture PyPI Publication
+name: Reusable Capture PyPI Verification
+
+# PyPI Trusted Publishing does not support reusable workflows: the upload token
+# and attestation would name different workflows. Uploads therefore run inline
+# in package-promote.yml and release-promote.yml; this workflow only proves that
+# PyPI already serves the exact candidate wheel/sdist pair and records a ledger.
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -53,7 +58,6 @@ on:
 permissions:
   actions: read
   contents: read
-  id-token: write
 
 jobs:
   publish:
@@ -148,7 +152,7 @@ jobs:
           test "${#artifacts[@]}" -eq "$expected_count"
           cp -- "${artifacts[@]}" "$target_dir/"
 
-      - name: Preflight exact PyPI identity, staged bytes and remote retries
+      - name: Preflight exact PyPI identity and staged bytes
         shell: bash
         run: |
           set -euo pipefail
@@ -166,12 +170,6 @@ jobs:
             --candidate-manifest-sha256 "$PYPI_MANIFEST_SHA256" \
             --source-candidate-manifest-sha256 "$PYPI_MANIFEST_SHA256" \
             --binding "$RUNNER_TEMP/pypi-preflight.json"
-
-      - name: Publish exact Python distributions with Trusted Publishing
-        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
-        with:
-          packages-dir: ${{ runner.temp }}/pypi-python
-          skip-existing: true
 
       - name: Record the exact PyPI client bootstrap ledger after mandatory readback
         shell: bash

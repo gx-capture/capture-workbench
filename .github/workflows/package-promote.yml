@@ -69,20 +69,142 @@ jobs:
       contract_set_sha256: ${{ inputs.contract_set_sha256 }}
     secrets: inherit
 
+  # PyPI Trusted Publishing binds both the upload token and the upload
+  # attestation to the workflow that runs the publish action, and does not
+  # support reusable workflows. Keep this job inline so both identities are
+  # package-promote.yml; _publish-pypi.yml only verifies existing uploads.
   publish-pypi:
-    uses: ./.github/workflows/_publish-pypi.yml
+    runs-on: ubuntu-latest
+    environment: capture-registry-pypi
     permissions:
       actions: read
       contents: read
       id-token: write
-    with:
-      package_candidate_id: ${{ inputs.candidate_id }}
-      candidate_kind: package
-      candidate_id: ${{ inputs.candidate_id }}
-      candidate_run_id: ${{ inputs.candidate_run_id }}
-      candidate_manifest_sha256: ${{ inputs.candidate_manifest_sha256 }}
-      source_commit: ${{ inputs.source_commit }}
-      release_version: ${{ inputs.release_version }}
-      release_candidate_id: ${{ inputs.candidate_id }}
-      contract_set_sha256: ${{ inputs.contract_set_sha256 }}
-    secrets: inherit
+    env:
+      PYPI_KIND: package
+      PYPI_CANDIDATE_ID: ${{ inputs.candidate_id }}
+      PYPI_RELEASE_ID: ${{ inputs.candidate_id }}
+      PYPI_PACKAGE_ID: ${{ inputs.candidate_id }}
+      PYPI_SOURCE: ${{ inputs.source_commit }}
+      PYPI_VERSION: ${{ inputs.release_version }}
+      PYPI_CONTRACT: ${{ inputs.contract_set_sha256 }}
+      PYPI_MANIFEST_SHA256: ${{ inputs.candidate_manifest_sha256 }}
+    steps:
+      - name: Check out publication tooling at the candidate source commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.source_commit }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install Node.js 24 for publication tooling
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+
+      - name: Install uv and Python 3.12
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: '3.12'
+
+      - name: Download the exact immutable Package Candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: capture-package-candidate-${{ inputs.release_version }}-${{ inputs.candidate_run_id }}
+          run-id: ${{ inputs.candidate_run_id }}
+          github-token: ${{ github.token }}
+          path: promotion-input/candidate
+
+      - name: Verify the exact package producer run and Python candidate
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          run_json="$(gh run view '${{ inputs.candidate_run_id }}' --repo '${{ github.repository }}' --json status,conclusion,workflowName,headSha)"
+          node --input-type=module -e "const r=JSON.parse(process.argv[1]); if(r.status!=='completed'||r.conclusion!=='success'||r.workflowName!=='Release Package Candidate'||r.headSha!=='${{ inputs.source_commit }}') throw new Error('Package producer run is not a successful exact-source package candidate.');" "$run_json"
+          node tools/verify-package-candidate.ts \
+            --candidate promotion-input/candidate \
+            --version '${{ inputs.release_version }}' \
+            --source-commit '${{ inputs.source_commit }}' \
+            --producer-run-id '${{ inputs.candidate_run_id }}' \
+            --candidate-id '${{ inputs.candidate_id }}' \
+            --candidate-manifest-sha256 '${{ inputs.candidate_manifest_sha256 }}' \
+            --contract-set-sha256 '${{ inputs.contract_set_sha256 }}' \
+            --require-evidence
+
+      - name: Select exact Python client artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_dir="$GITHUB_WORKSPACE/promotion-input/candidate/python"
+          target_dir="$RUNNER_TEMP/pypi-python"
+          rm -rf "$target_dir"
+          mkdir -p "$target_dir"
+          shopt -s nullglob
+          artifacts=("$source_dir"/capture_runtime_client-*)
+          test "${#artifacts[@]}" -eq 2
+          cp -- "${artifacts[@]}" "$target_dir/"
+
+      - name: Preflight exact PyPI identity, staged bytes and remote retries
+        shell: bash
+        run: |
+          set -euo pipefail
+          node tools/record-pypi-candidate.ts \
+            --mode preflight \
+            --candidate promotion-input/candidate \
+            --python-directory "$RUNNER_TEMP/pypi-python" \
+            --candidate-kind "$PYPI_KIND" \
+            --candidate-id "$PYPI_CANDIDATE_ID" \
+            --release-candidate-id "$PYPI_RELEASE_ID" \
+            --package-candidate-id "$PYPI_PACKAGE_ID" \
+            --source-commit "$PYPI_SOURCE" \
+            --version "$PYPI_VERSION" \
+            --contract-set-sha256 "$PYPI_CONTRACT" \
+            --candidate-manifest-sha256 "$PYPI_MANIFEST_SHA256" \
+            --source-candidate-manifest-sha256 "$PYPI_MANIFEST_SHA256" \
+            --binding "$RUNNER_TEMP/pypi-preflight.json"
+
+      - name: Publish exact Python distributions with Trusted Publishing
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: ${{ runner.temp }}/pypi-python
+          skip-existing: true
+
+      - name: Record the exact PyPI client ledger after mandatory readback
+        shell: bash
+        run: |
+          set -euo pipefail
+          node tools/record-pypi-candidate.ts \
+            --mode record \
+            --candidate promotion-input/candidate \
+            --python-directory "$RUNNER_TEMP/pypi-python" \
+            --candidate-kind "$PYPI_KIND" \
+            --candidate-id "$PYPI_CANDIDATE_ID" \
+            --release-candidate-id "$PYPI_RELEASE_ID" \
+            --package-candidate-id "$PYPI_PACKAGE_ID" \
+            --source-commit "$PYPI_SOURCE" \
+            --version "$PYPI_VERSION" \
+            --contract-set-sha256 "$PYPI_CONTRACT" \
+            --candidate-manifest-sha256 "$PYPI_MANIFEST_SHA256" \
+            --source-candidate-manifest-sha256 "$PYPI_MANIFEST_SHA256" \
+            --binding "$RUNNER_TEMP/pypi-preflight.json" \
+            --output registry-ledger-pypi.json
+
+      - name: Verify clean Python installation from PyPI
+        shell: bash
+        run: |
+          set -euo pipefail
+          probe="$RUNNER_TEMP/capture-pypi-probe"
+          uv venv "$probe"
+          uv pip install --python "$probe/bin/python" --index-url https://pypi.org/simple \
+            "capture-runtime-client==${{ inputs.release_version }}"
+          "$probe/bin/python" -c 'import capture_runtime_client; assert capture_runtime_client.__package__ == "capture_runtime_client"'
+
+      - name: Upload PyPI publication ledger
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: registry-ledger-pypi-${{ inputs.candidate_id }}
+          path: registry-ledger-pypi.json
+          if-no-files-found: error
+          retention-days: 14
