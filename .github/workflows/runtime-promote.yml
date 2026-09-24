@@ -139,7 +139,6 @@ jobs:
     permissions:
       actions: read
       contents: read
-      id-token: write
     with:
       candidate_kind: runtime
       candidate_manifest_sha256: ${{ inputs.runtime_candidate_manifest_sha256 }}
