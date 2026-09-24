@@ -1459,6 +1459,12 @@ mod tests {
     #[cfg(windows)]
     use sha2::{Digest, Sha256};
 
+    /// Upper bound for waiting on fixture processes, markers and listeners to
+    /// reach a state. Waits return as soon as the condition holds; the bound
+    /// only matters on failure and leaves Windows CI room for first-launch
+    /// antivirus scans. Budgets under test keep their own exact values.
+    const FIXTURE_EVENTUAL_WAIT: Duration = Duration::from_secs(60);
+
     #[cfg(windows)]
     const ACTIVATION_HTTP_TOKEN: &str = "fixture-bearer-token-0123456789abcdef";
 
@@ -2068,7 +2074,7 @@ mod tests {
         let expected = format!(
             "state=launching\nordinal={ordinal}\npid={expected_pid}\njournalRevision={expected_revision}\n"
         );
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let deadline = std::time::Instant::now() + FIXTURE_EVENTUAL_WAIT;
         let mut last_observation = None;
         while std::time::Instant::now() < deadline {
             match fs::read_to_string(marker_path) {
@@ -2096,7 +2102,7 @@ mod tests {
     ) {
         // Loaded CI runners can delay fixture startup and first response bytes;
         // keep retrying until a complete status line arrives, then assert it.
-        let deadline = Instant::now() + Duration::from_secs(15);
+        let deadline = Instant::now() + FIXTURE_EVENTUAL_WAIT;
         let authorization = authorization
             .map(|token| format!("Authorization: Bearer {token}\r\n"))
             .unwrap_or_default();
@@ -2199,7 +2205,7 @@ mod tests {
         let listener_checkpoint_path = marker_path.with_extension("listener-checkpoint");
         const MAX_RESPONSE_BYTES: usize = 4096;
         let started = Instant::now();
-        let deadline = Instant::now() + Duration::from_secs(12);
+        let deadline = Instant::now() + FIXTURE_EVENTUAL_WAIT;
         let request = format!(
             "GET /v2/health/ready HTTP/1.1\r\nHost: {LOOPBACK_HOST}:{port}\r\nAuthorization: Bearer {ACTIVATION_HTTP_TOKEN}\r\nConnection: close\r\n\r\n"
         );
