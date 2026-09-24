@@ -116,8 +116,8 @@ export async function buildPracticalInstaller(
   }
 
   const runRoot = join(practicalRoot, input.runId);
-  await assertAbsent([runRoot], 'Practical run directory');
-  const release = await verifyRuntimeReleaseDirectory(input.runtimeRelease, input.runtimeSha256, releaseVersion);
+  assertAbsent([runRoot], 'Practical run directory');
+  const release = verifyRuntimeReleaseDirectory(input.runtimeRelease, input.runtimeSha256, releaseVersion);
   await mkdir(runRoot, { recursive: true });
 
   // Staging copies and validates the exact release bytes; nothing is rebuilt.

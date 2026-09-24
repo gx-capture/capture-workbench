@@ -236,7 +236,7 @@ export async function runPracticalInstalledOcr(args: PracticalRunArguments): Pro
   const ocrWorker = installerProvenance.runtime.workers.find((worker) => worker.requirementId === 'windowsml-ocr');
   if (!ocrWorker) throw new Error('Installer provenance omits the OCR worker identity.');
   if (args.runtimeRelease) {
-    const release = await verifyRuntimeReleaseDirectory(
+    const release = verifyRuntimeReleaseDirectory(
       args.runtimeRelease,
       installerProvenance.runtime.executable.sha256,
       installerProvenance.releaseVersion,
@@ -248,17 +248,17 @@ export async function runPracticalInstalledOcr(args: PracticalRunArguments): Pro
     if (!releaseWorker || releaseWorker.sha256 !== ocrWorker.sha256) {
       throw new Error('Runtime release OCR worker differs from the installer provenance.');
     }
-    workerMirror = await startWorkerMirror(ocrWorker.fileName, await readVerifiedWorker(release, releaseWorker));
+    workerMirror = await startWorkerMirror(ocrWorker.fileName, readVerifiedWorker(release, releaseWorker));
   }
 
   const folders = await knownFolders();
   const variantRoots = practicalKnownFolderRoots(folders, variant);
-  await assertAbsent(variantRoots, 'Practical variant application data');
+  assertAbsent(variantRoots, 'Practical variant application data');
   const ordinaryBefore = await ordinaryInstallationSnapshot(folders.roaming);
 
   const runRoot = join(evidenceRoot, 'run');
   const privateRoot = join(evidenceRoot, 'private');
-  await assertAbsent([runRoot, privateRoot, join(evidenceRoot, 'practical-ocr-evidence.json')], 'Practical run output');
+  assertAbsent([runRoot, privateRoot, join(evidenceRoot, 'practical-ocr-evidence.json')], 'Practical run output');
   const installDirectory = join(runRoot, 'install');
   const webViewData = join(runRoot, 'webview2');
   const temporary = join(runRoot, 'temp');

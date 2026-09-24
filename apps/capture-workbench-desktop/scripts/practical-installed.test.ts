@@ -140,10 +140,10 @@ async function releaseFixture(mutate: (files: Map<string, Buffer>) => void = () 
 test('runtime release directory is verified against an independent digest, sidecars, manifest and catalog', async (t) => {
   const good = await releaseFixture();
   t.after(() => rm(good.directory, { recursive: true, force: true }));
-  const release = await verifyRuntimeReleaseDirectory(good.directory, good.runtimeSha256, '0.4.2');
+  const release = verifyRuntimeReleaseDirectory(good.directory, good.runtimeSha256, '0.4.2');
   assert.equal(release.workers[0].requirementId, 'windowsml-ocr');
-  await assert.rejects(verifyRuntimeReleaseDirectory(good.directory, sha('other'), '0.4.2'), /expected release digest/u);
-  await assert.rejects(verifyRuntimeReleaseDirectory(good.directory, good.runtimeSha256, '0.4.3'), /manifest/u);
+  assert.throws(() => verifyRuntimeReleaseDirectory(good.directory, sha('other'), '0.4.2'), /expected release digest/u);
+  assert.throws(() => verifyRuntimeReleaseDirectory(good.directory, good.runtimeSha256, '0.4.3'), /manifest/u);
 
   const cases: Array<[string, (files: Map<string, Buffer>) => void, RegExp]> = [
     [
@@ -161,7 +161,7 @@ test('runtime release directory is verified against an independent digest, sidec
   for (const [label, mutate, expected] of cases) {
     const fixture = await releaseFixture(mutate);
     t.after(() => rm(fixture.directory, { recursive: true, force: true }));
-    await assert.rejects(verifyRuntimeReleaseDirectory(fixture.directory, good.runtimeSha256, '0.4.2'), expected, label);
+    assert.throws(() => verifyRuntimeReleaseDirectory(fixture.directory, good.runtimeSha256, '0.4.2'), expected, label);
   }
 
   const wrongUrl = await releaseFixture((files) => {
@@ -171,7 +171,7 @@ test('runtime release directory is verified against an independent digest, sidec
     files.set(`${RUNTIME_CATALOG_NAME}.sha256`, Buffer.from(`${sha256Hex(files.get(RUNTIME_CATALOG_NAME) ?? Buffer.alloc(0))}  ${RUNTIME_CATALOG_NAME}\n`));
   });
   t.after(() => rm(wrongUrl.directory, { recursive: true, force: true }));
-  await assert.rejects(verifyRuntimeReleaseDirectory(wrongUrl.directory, good.runtimeSha256, '0.4.2'), /worker artifact/u);
+  assert.throws(() => verifyRuntimeReleaseDirectory(wrongUrl.directory, good.runtimeSha256, '0.4.2'), /worker artifact/u);
 });
 
 test('application environment is allowlisted and only rehearsal adds the loopback worker mirror', () => {

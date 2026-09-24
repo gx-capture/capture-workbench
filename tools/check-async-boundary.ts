@@ -155,6 +155,12 @@ function exceptionReason(relativePath) {
   if (relativePath === 'apps/capture-workbench-desktop/scripts/build-acceptance-nsis.ts') {
     return 'NSIS acceptance installer build process boundary';
   }
+  if (relativePath === 'apps/capture-workbench-desktop/scripts/build-practical-installer.ts') {
+    return 'practical side-by-side NSIS installer build process boundary';
+  }
+  if (relativePath === 'apps/capture-workbench-desktop/scripts/practical-installed-ocr.ts') {
+    return 'opt-in practical installed OCR process boundary';
+  }
   if (relativePath === 'apps/capture-workbench-desktop/scripts/local-candidate-model.ts') {
     return 'local candidate model asset process boundary';
   }

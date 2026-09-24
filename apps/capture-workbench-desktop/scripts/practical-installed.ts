@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { lstat, readFile } from 'node:fs/promises';
+import { lstatSync, readFileSync } from 'node:fs';
 import { basename, isAbsolute, join, relative, resolve, win32 } from 'node:path';
 
 // Practical installed OCR verifies a normal production build of Capture
@@ -122,10 +122,14 @@ export function installedExecutableName(variant: PracticalVariant): string {
   return `${variant.mainBinaryName}.exe`;
 }
 
-async function regularFile(path: string, label: string): Promise<Buffer> {
-  const metadata = await lstat(path).catch(() => undefined);
+function lstatOrUndefined(path: string) {
+  return lstatSync(path, { throwIfNoEntry: false });
+}
+
+function regularFile(path: string, label: string): Buffer {
+  const metadata = lstatOrUndefined(path);
   if (!metadata?.isFile()) throw new Error(`${label} must be a regular file.`);
-  return readFile(path);
+  return readFileSync(path);
 }
 
 function parseSidecar(text: string, fileName: string): string {
@@ -136,9 +140,9 @@ function parseSidecar(text: string, fileName: string): string {
   return match[1];
 }
 
-async function verifiedWithSidecar(directory: string, fileName: string): Promise<VerifiedFile> {
-  const bytes = await regularFile(join(directory, fileName), fileName);
-  const sidecar = await regularFile(join(directory, `${fileName}.sha256`), `${fileName}.sha256`);
+function verifiedWithSidecar(directory: string, fileName: string): VerifiedFile {
+  const bytes = regularFile(join(directory, fileName), fileName);
+  const sidecar = regularFile(join(directory, `${fileName}.sha256`), `${fileName}.sha256`);
   const sha256 = sha256Hex(bytes);
   if (parseSidecar(sidecar.toString('utf8'), fileName) !== sha256) {
     throw new Error(`${fileName} differs from its release checksum.`);
@@ -157,23 +161,23 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * (candidate manifest or release notes) so the directory cannot vouch for
  * itself.
  */
-export async function verifyRuntimeReleaseDirectory(
+export function verifyRuntimeReleaseDirectory(
   directory: string,
   expectedRuntimeSha256: string,
   expectedVersion: string,
-): Promise<VerifiedRuntimeRelease> {
+): VerifiedRuntimeRelease {
   assertSha256(expectedRuntimeSha256, 'Expected runtime SHA-256');
   const root = resolve(directory);
-  if (!(await lstat(root).catch(() => undefined))?.isDirectory()) {
+  if (!lstatOrUndefined(root)?.isDirectory()) {
     throw new Error('Runtime release directory must be a regular directory.');
   }
-  const executable = await verifiedWithSidecar(root, RUNTIME_EXECUTABLE_NAME);
+  const executable = verifiedWithSidecar(root, RUNTIME_EXECUTABLE_NAME);
   if (executable.sha256 !== expectedRuntimeSha256) {
     throw new Error('Runtime executable differs from the expected release digest.');
   }
-  const catalog = await verifiedWithSidecar(root, RUNTIME_CATALOG_NAME);
-  const manifestBytes = await regularFile(join(root, RUNTIME_MANIFEST_NAME), RUNTIME_MANIFEST_NAME);
-  const schemaBytes = await regularFile(join(root, RUNTIME_SCHEMA_NAME), RUNTIME_SCHEMA_NAME);
+  const catalog = verifiedWithSidecar(root, RUNTIME_CATALOG_NAME);
+  const manifestBytes = regularFile(join(root, RUNTIME_MANIFEST_NAME), RUNTIME_MANIFEST_NAME);
+  const schemaBytes = regularFile(join(root, RUNTIME_SCHEMA_NAME), RUNTIME_SCHEMA_NAME);
   const manifest: unknown = JSON.parse(manifestBytes.toString('utf8'));
   if (
     !isRecord(manifest) ||
@@ -187,7 +191,7 @@ export async function verifyRuntimeReleaseDirectory(
     throw new Error('Runtime manifest does not bind the release executable, schema and version.');
   }
   const catalogValue: unknown = JSON.parse(
-    (await readFile(join(root, RUNTIME_CATALOG_NAME))).toString('utf8'),
+    readFileSync(join(root, RUNTIME_CATALOG_NAME)).toString('utf8'),
   );
   if (!isRecord(catalogValue) || catalogValue.runtimeVersion !== expectedVersion || !Array.isArray(catalogValue.requirements)) {
     throw new Error('Runtime engine catalog is malformed or has another version.');
@@ -236,8 +240,8 @@ export async function verifyRuntimeReleaseDirectory(
 }
 
 /** Reads a worker from the verified directory and checks it against the catalog. */
-export async function readVerifiedWorker(release: VerifiedRuntimeRelease, worker: WorkerArtifact): Promise<Buffer> {
-  const bytes = await regularFile(join(release.directory, worker.fileName), worker.fileName);
+export function readVerifiedWorker(release: VerifiedRuntimeRelease, worker: WorkerArtifact): Buffer {
+  const bytes = regularFile(join(release.directory, worker.fileName), worker.fileName);
   if (bytes.length !== worker.bytes || sha256Hex(bytes) !== worker.sha256) {
     throw new Error(`${worker.fileName} differs from the release engine catalog.`);
   }
@@ -316,9 +320,9 @@ export function practicalKnownFolderRoots(
   });
 }
 
-export async function assertAbsent(paths: readonly string[], label: string): Promise<void> {
+export function assertAbsent(paths: readonly string[], label: string): void {
   for (const path of paths) {
-    if (await lstat(path).catch(() => undefined)) {
+    if (lstatOrUndefined(path)) {
       throw new Error(`${label} already exists; refusing to reuse state that this run does not own.`);
     }
   }
