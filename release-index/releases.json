@@ -5,6 +5,11 @@
       "status": "released",
       "manifestSha256": "2f7f0294bc700883b92d37f167772f5a06772b005ce7c425fb3bf0583032d7ae",
       "candidateId": "7aa902e347b69e1e1774f053e873ea27db12c4daa7c7c4d3aa56634e417d89f0"
+    },
+    "v0.4.2": {
+      "status": "released",
+      "manifestSha256": "f0db39baca644a3f1aa7892926c8c28215dc1cef4dca917404b71b54a65af627",
+      "candidateId": "a1b8234f9a593d2d4b4ba5686a53c8c711f9019bd2c042c3ad4ab449a0eb02e2"
     }
   }
 }
