@@ -201,6 +201,10 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
+          # Budgets are release policy owned by the tooling ref, so a runtime
+          # candidate built earlier can be re-measured against current limits.
+          git fetch --no-tags origin '${{ github.sha }}'
+          git checkout '${{ github.sha }}' -- packages/capture-runtime/size-budgets
           New-Item -ItemType Directory -Force -Path packages/capture-runtime/dist/release | Out-Null
           Copy-Item -Path "$env:RUNTIME_CANDIDATE_PATH/runtime/*" -Destination packages/capture-runtime/dist/release -Recurse -Force
           $sizeTarget = if ($env:RELEASE_MODE -eq 'model-enabled') { 'capture-runtime:size-regression-check-model-enabled' } else { 'capture-runtime:size-regression-check' }
