@@ -14,11 +14,11 @@ See [SPEC](../SPECS/capture-runtime-042-publication-preflight.md) and
   (spec 30m19s and standards 30m44s, both PASS at `439c2f0`).
 - [x] Fix PyPI pre-publication manifest/identity validation and ledger reuse.
 - [x] Reuse exact package-candidate Python bytes in runtime candidates.
-- [ ] Repair LAW OCR failure privacy with sentinel regression coverage
-  (implemented in the LAW worktree, 369 tests/0 failures; not yet committed).
+- [x] Repair LAW OCR failure privacy with sentinel regression coverage
+  (LAW `2a860ae`, merged to LAW main via PR #79).
 - [x] Repair production version inventory and preserve PyPI destination checks.
-- [ ] Correct the independently verified stale LAW fixed contract expectation
-  (implemented with the LAW privacy slice; not yet committed).
+- [x] Correct the independently verified stale LAW fixed contract expectation
+  (LAW `5dd18cd`, merged via PR #79).
 - [x] Run producer promotion-registry/release-version tests through uncached
   Nx: 46/46 and 33/33, plus capture-tools lint/typecheck (2026-09-24).
 - [x] Post-repair review of the producer slices. The external post-repair
@@ -34,9 +34,28 @@ See [SPEC](../SPECS/capture-runtime-042-publication-preflight.md) and
   and variant cleanup with the ordinary installation preserved. Private
   review: all lines in order, gist readable, many handwriting word errors
   (the disclosed limitation). Rehearsal evidence is not release evidence.
-- [ ] Schedule candidate build, pre-publication checks, immutable
+- [x] Schedule candidate build, pre-publication checks, immutable
   publication, fresh download and published-mode practical OCR in Capture,
-  then Cert and LAW.
+  then Cert and LAW. Route A (2026-09-24..27): package candidate
+  `35964636948` and runtime candidate `35964853750` at `6726b6a`; package
+  promotion `36288205702` (npm, Maven, PyPI inline, crates.io) and runtime
+  promotion `36289842249` (GitHub release `v0.4.2`, runtime exe
+  `d42b343d…`). Published-mode practical OCR passed in Capture, Cert
+  (merged to Cert main, PR #21) and LAW (engine → AI service → runtime,
+  `ocr_paddle`, anchors matched; merged to LAW main, PR #79).
+- [x] LAW first-run install: the AI service no longer cancels a
+  `windowsml-ocr` installation on its 240 s setup timeout and resumes an
+  active one (LAW `2394cf7`). The runtime reports `installable` throughout
+  a download, and the first GitHub download took ~9 min locally.
+- [ ] Full route for the desktop installer and stable pointer: release
+  candidate at `6726b6a` reusing the Route A candidates, consumer gates,
+  then release-promote (registries re-verify as already published; the
+  GitHub release keeps its runtime seed assets and gains desktop assets).
+
+Known limitations carried by 0.4.2: handwriting OCR quality (disclosed);
+slow first-run engine download from GitHub releases; the installed OCR
+worker crashes when `CAPTURE_APP_DATA_DIR` makes worker paths exceed
+Windows MAX_PATH (default `%LOCALAPPDATA%` roots are fine).
 
 Analysis/commit/registry evidence is in
 `%TEMP%/capture-042-release-20260921`. Read `root-user-steering.md` alongside
