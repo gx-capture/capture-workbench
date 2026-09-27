@@ -47,10 +47,15 @@ See [SPEC](../SPECS/capture-runtime-042-publication-preflight.md) and
   `windowsml-ocr` installation on its 240 s setup timeout and resumes an
   active one (LAW `2394cf7`). The runtime reports `installable` throughout
   a download, and the first GitHub download took ~9 min locally.
-- [ ] Full route for the desktop installer and stable pointer: release
-  candidate at `6726b6a` reusing the Route A candidates, consumer gates,
-  then release-promote (registries re-verify as already published; the
-  GitHub release keeps its runtime seed assets and gains desktop assets).
+- [x] Full route for the desktop installer and stable pointer
+  (2026-09-27): release candidate `36324039007` (`a1b8234f…`) at `6726b6a`
+  reusing the Route A candidates, consumer gates `36329045296` (Cert Prep
+  and LAW), release promotion `36329671186`. Registries re-verified as
+  already published, the GitHub release gained the desktop installer and
+  release manifest, and `release-index/stable.json` points at `v0.4.2`.
+  Unblocking it needed: size budgets read from the tooling ref (the 0.4.2
+  runtime grew to 69.9 MB), and consumer-gate fixes for pnpm 12 in Cert
+  Prep (#22–#24) and LAW (#80, #81).
 
 Known limitations carried by 0.4.2: handwriting OCR quality (disclosed);
 slow first-run engine download from GitHub releases; the installed OCR
