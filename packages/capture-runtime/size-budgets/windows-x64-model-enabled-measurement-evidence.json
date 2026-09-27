@@ -1,10 +1,10 @@
 {
   "evidenceVersion": "1",
   "releaseMode": "model-enabled",
-  "sourceCommit": "f55140b",
-  "releaseCandidateRunId": 31693056293,
-  "runtimeCandidateId": "b6344be18a9012af0c238ff806512d3a4d628fbf2814cd24e1feb4ce8f67e860",
-  "runtimeArtifactId": 9177740708,
-  "runtimeExecutableMeasuredBytes": 60552680,
-  "nsisInstallerMeasuredBytes": 62634838
+  "sourceCommit": "6726b6a",
+  "releaseCandidateRunId": 36321456868,
+  "runtimeCandidateId": "c9c20dfa65a120a23737bd752abde7631ccb62e18e5082b363ab502b30f9be10",
+  "runtimeArtifactId": 10794051894,
+  "runtimeExecutableMeasuredBytes": 69887996,
+  "nsisInstallerMeasuredBytes": 72137811
 }

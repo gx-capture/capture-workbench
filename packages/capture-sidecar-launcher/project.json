@@ -24,7 +24,7 @@
       "executor": "nx:run-commands",
       "dependsOn": ["cargo-fixture-build"],
       "options": {
-        "command": "cargo test --manifest-path packages/capture-sidecar-launcher/Cargo.toml",
+        "command": "node tools/cargo-test-retry-failed.ts --manifest-path packages/capture-sidecar-launcher/Cargo.toml",
         "env": { "RUST_TEST_THREADS": "4" }
       }
     },

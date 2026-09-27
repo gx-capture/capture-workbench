@@ -312,7 +312,10 @@ test('ordinary CI keeps real OCR local while release promotion stays determinist
     ciSteps,
     'Upload reference flow Playwright artifacts',
   );
-  assert.equal(referenceArtifacts.condition, 'always()');
+  assert.equal(
+    referenceArtifacts.condition,
+    "${{ always() && steps.scope.outputs.full == 'true' }}",
+  );
   assert.match(
     referenceArtifacts.source,
     /path:\s*dist\/\.playwright\/apps\/capture-workbench-e2e\/\*\*/u,

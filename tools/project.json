@@ -9,14 +9,14 @@
       "cache": true,
       "executor": "nx:run-commands",
       "options": {
-        "command": "pnpm exec eslint tools/capture-boundary-doctor.ts tools/capture-boundary-doctor.test.ts tools/three-project-acceptance.ts tools/three-project-acceptance.test.ts tools/three-project-cleanup-verifier.test.ts tools/windows-built-in-process-resolver.ts tools/windows-built-in-process-resolver.test.ts tools/package-manager-version.test.ts"
+        "command": "pnpm exec eslint tools/capture-boundary-doctor.ts tools/capture-boundary-doctor.test.ts tools/three-project-acceptance.ts tools/three-project-acceptance.test.ts tools/three-project-cleanup-verifier.test.ts tools/windows-built-in-process-resolver.ts tools/windows-built-in-process-resolver.test.ts tools/package-manager-version.test.ts tools/cargo-test-retry-failed.ts tools/cargo-test-retry-failed.test.ts"
       }
     },
     "test": {
       "cache": true,
       "executor": "nx:run-commands",
       "options": {
-        "command": "node --test tools/capture-boundary-doctor.test.ts tools/three-project-acceptance.test.ts tools/three-project-cleanup-verifier.test.ts tools/windows-built-in-process-resolver.test.ts tools/package-manager-version.test.ts"
+        "command": "node --test tools/capture-boundary-doctor.test.ts tools/three-project-acceptance.test.ts tools/three-project-cleanup-verifier.test.ts tools/windows-built-in-process-resolver.test.ts tools/package-manager-version.test.ts tools/cargo-test-retry-failed.test.ts"
       }
     },
     "typecheck": {

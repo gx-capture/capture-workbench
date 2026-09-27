@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -46,8 +46,17 @@ function runChild(root: string, mode = 'ok'): Promise<{ status: number; error: b
     let error = false;
     child.once('error', () => { error = true; });
     child.once('close', (status) => resolveChild({ status: status ?? 1, error }));
-    if (mode === 'cleanup-live') setTimeout(() => void finalizeDesktopTeardown(undefined, child, 'window-close', () => undefined), 500);
+    // Tear down only after the child has written its manifest; a fixed delay races slow runners.
+    if (mode === 'cleanup-live') void waitForFile(join(root, 'acceptance-manifest.json')).then(() => finalizeDesktopTeardown(undefined, child, 'window-close', () => undefined));
   });
+}
+
+async function waitForFile(path: string, timeoutMs = 60_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await access(path).then(() => true, () => false)) return;
+    await new Promise<void>((resolveWait) => setTimeout(resolveWait, 50));
+  }
 }
 
 async function withRoot<T>(run: (root: string) => Promise<T>): Promise<T> {

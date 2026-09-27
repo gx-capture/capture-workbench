@@ -65,3 +65,19 @@ The SPEC now states identity rows, preflight/record modes, substitution checks,
 remote retry/error cases and exact ownership. These are plan amendments only;
 fresh workers must review them before implementation. Previous BLOCKED reports
 are not converted into approvals.
+
+## Publication outcome (2026-09-27)
+
+0.4.2 shipped through Route A: standalone package promotion, then runtime
+promotion, both from the `6726b6a` candidates. PyPI Trusted Publishing
+matches the token's `job_workflow_ref` while the attestation names the
+caller, so uploads run inline in the registered top-level workflows
+(`package-promote.yml`, `release-promote.yml`); `_publish-pypi.yml` only
+verifies. Runtime promotion accepts a package promotion run whose commit is
+on main and contains the candidate source.
+
+Consumer migration order was Cert Prep, then LAW, each merged to main only
+after its PR CI and a published-mode practical OCR run passed. The user
+relaxed test scope in favour of publishing: keep checks that guard
+published bytes, identity and privacy; drop duplicate or fake-host smoke
+paths.
