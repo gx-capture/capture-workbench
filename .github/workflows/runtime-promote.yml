@@ -82,8 +82,19 @@ jobs:
           set -euo pipefail
           runtime_run="$(gh run view '${{ inputs.runtime_candidate_run_id }}' --repo '${{ github.repository }}' --json status,conclusion,workflowName,headSha)"
           node --input-type=module -e "const r=JSON.parse(process.argv[1]); if(r.status!=='completed'||r.conclusion!=='success'||r.workflowName!=='Release Runtime Candidate'||r.headSha!=='${{ inputs.source_commit }}') throw new Error('Runtime producer run is not a successful exact-source Runtime Candidate.');" "$runtime_run"
-          package_run="$(gh run view '${{ inputs.package_promote_run_id }}' --repo '${{ github.repository }}' --json status,conclusion,workflowName,headSha)"
-          node --input-type=module -e "const r=JSON.parse(process.argv[1]); if(r.status!=='completed'||r.conclusion!=='success'||r.workflowName!=='Package Promotion'||r.headSha!=='${{ inputs.source_commit }}') throw new Error('Package promotion run is not a successful exact-source package promotion.');" "$package_run"
+          # Package promotion is dispatched from main, whose head may carry
+          # workflow repairs made after the candidate was sealed. Its tooling
+          # still runs at the candidate source; require that its dispatch commit
+          # is on main and descends from that source instead of equality.
+          package_run="$(gh run view '${{ inputs.package_promote_run_id }}' --repo '${{ github.repository }}' --json status,conclusion,workflowName,headSha,headBranch,event)"
+          node --input-type=module -e "const r=JSON.parse(process.argv[1]); if(r.status!=='completed'||r.conclusion!=='success'||r.workflowName!=='Package Promotion'||r.event!=='workflow_dispatch'||r.headBranch!=='main'||!/^[0-9a-f]{40}$/.test(r.headSha)) throw new Error('Package promotion run is not a successful main-branch package promotion.');" "$package_run"
+          package_sha="$(node --input-type=module -e "process.stdout.write(JSON.parse(process.argv[1]).headSha)" "$package_run")"
+          includes_source="$(gh api 'repos/${{ github.repository }}/compare/${{ inputs.source_commit }}...'"$package_sha" --jq .status)"
+          on_main="$(gh api 'repos/${{ github.repository }}/compare/'"$package_sha"'...main' --jq .status)"
+          case "$includes_source:$on_main" in
+            identical:identical|identical:ahead|ahead:identical|ahead:ahead) ;;
+            *) echo "Package promotion commit must be on main and include the candidate source ($includes_source/$on_main)." >&2; exit 1 ;;
+          esac
 
       - name: Download and verify the exact Runtime Candidate
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4

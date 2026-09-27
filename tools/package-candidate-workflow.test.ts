@@ -372,6 +372,25 @@ test('runtime promotion requires npm evidence before publishing runtime registri
     assert.match(content, /FORCE_JAVASCRIPT_ACTIONS_TO_NODE24/u);
   }
   assert.match(promoteWorkflow, /package_promote_run_id/u);
+  // The runtime candidate must come from the exact source commit, while the
+  // package promotion may run from a later main commit that includes it.
+  assert.match(
+    promoteWorkflow,
+    /workflowName!=='Release Runtime Candidate'\|\|r\.headSha!=='\$\{\{ inputs\.source_commit \}\}'/u,
+  );
+  assert.match(
+    promoteWorkflow,
+    /workflowName!=='Package Promotion'\|\|r\.event!=='workflow_dispatch'\|\|r\.headBranch!=='main'/u,
+  );
+  assert.match(
+    promoteWorkflow,
+    /compare\/\$\{\{ inputs\.source_commit \}\}\.\.\.'"\$package_sha"/u,
+  );
+  assert.match(promoteWorkflow, /compare\/'"\$package_sha"'\.\.\.main'/u);
+  assert.match(
+    promoteWorkflow,
+    /identical:identical\|identical:ahead\|ahead:identical\|ahead:ahead\) ;;/u,
+  );
   assert.match(promoteWorkflow, /registry-ledger-npm-/u);
   assert.match(
     promoteWorkflow,
