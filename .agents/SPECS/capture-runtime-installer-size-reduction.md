@@ -16,7 +16,7 @@ isolation, and DirectML-first fail-closed OCR policy are unchanged.
 
 - This spec extends `standalone-desktop-product.md`: the Tauri host remains the
   public Windows 11 x64 product and the runtime remains a native sidecar.
-- It preserves `gpu-ocr-directml.md`: if `DmlExecutionProvider` is registered,
+- It preserves the DirectML OCR policy: if `DmlExecutionProvider` is registered,
   the OCR worker creates one DML-first session and fails closed on
   initialization/inference failure. CPU-only OCR is allowed only when DML is
   unavailable. Provenance remains `windowsml-dml` or `cpu`.

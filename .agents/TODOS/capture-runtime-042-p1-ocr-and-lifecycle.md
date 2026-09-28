@@ -29,6 +29,7 @@
   explicit noticed CPU fallback, provenance, and cleanup without raw text.
   Full-document OCR is reserved for a risk-specific page-order or memory test.
   Release manifest promotion and publish actions remain separate later gates.
+  The canonical JPEG passed published-mode practical OCR in Capture Workbench, Cert Prep, and LAW on 2026-09-27; the PDF page-1 leg remains. CER is not gated for the handwritten JPEG (disclosed 0.4.2 limitation).
 - Phase 2 defer: production ambient-environment hardening and persisted
   runtime catalog identity remain outside this Phase 1 wiring slice.
 - [x] Update the three-project real-OCR orchestrator to run deterministic

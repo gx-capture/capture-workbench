@@ -48,13 +48,6 @@ their contracts are part of the release owner, not CI repair.
 | Create | A new module, schema, fixture, or command requires discovery proving that no existing owner fits and a separate authorized slice. |
 | Delete | Delete only after residual scans, replacement tests, an additive commit, and exact-owner review prove that the old policy is unused. |
 
-Historical GPU/P1 documents already carry their superseded banners at this
-checkpoint. Their bodies remain historical evidence and are not rewritten here:
-
-- [GPU OCR decision](gpu-ocr-directml.md)
-- [GPU OCR decision record](../DECISIONS/gpu-ocr-directml.md)
-- [P1 compute preflight TODO](../TODOS/capture-runtime-042-p1-ocr-compute-preflight.md)
-
 ## Responsibility map
 
 The producer owns runtime policy and execution truth. A host receives semantic
@@ -906,9 +899,8 @@ indeterminate-dGPU test remains a separate fail-closed case.
 | No usable GPU and policy permits CPU notice | CPU with an explicit noticed readiness result | CPU is not a recovery path after a selected GPU failure |
 | Probe timeout, exception, unknown adapter, incomplete mapping, or indeterminate state | Indeterminate/unavailable | Do not guess, rank, or persist an ordinal |
 
-The historical adapter-`0` and `CAPTURE_WINDOWSML_DEVICE_ID` notes are
-superseded by this table. See the [historical GPU decision](gpu-ocr-directml.md)
-for provenance only.
+This table replaces the earlier adapter-`0` default and the
+`CAPTURE_WINDOWSML_DEVICE_ID` host override.
 
 ## Acceptance and evidence contract
 
