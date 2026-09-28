@@ -297,6 +297,107 @@ def test_http_downloader_rejects_size_drift(
     assert not (tmp_path / "download.zip").exists()
 
 
+def _ranged_transport(
+    payload: bytes,
+    *,
+    supports_ranges: bool = True,
+    corrupt_segments: bool = False,
+    requested: list[str] | None = None,
+) -> httpx.MockTransport:
+    def handler(request: httpx.Request) -> httpx.Response:
+        byte_range = request.headers.get("range")
+        if requested is not None and byte_range:
+            requested.append(byte_range)
+        if not byte_range or not supports_ranges:
+            return httpx.Response(
+                200,
+                headers={"content-length": str(len(payload))},
+                content=payload,
+                request=request,
+            )
+        start, end = (int(value) for value in byte_range.removeprefix("bytes=").split("-"))
+        reported = f"bytes {start}-{end}/{len(payload)}"
+        if corrupt_segments and byte_range != "bytes=0-0":
+            reported = f"bytes 0-{end - start}/{len(payload)}"
+        return httpx.Response(
+            206,
+            headers={"content-range": reported},
+            content=payload[start : end + 1],
+            request=request,
+        )
+
+    return httpx.MockTransport(handler)
+
+
+def test_http_downloader_fetches_large_artifacts_as_byte_ranges(tmp_path: Path) -> None:
+    archive = tmp_path / "expected.zip"
+    descriptor, _ = _archive(archive, {"capture-engine-ocr.exe": b"x" * 4096})
+    payload = archive.read_bytes()
+    requested: list[str] = []
+    reported: list[int] = []
+    downloader = HttpArtifactDownloader(
+        lambda: httpx.AsyncClient(transport=_ranged_transport(payload, requested=requested)),
+        parallel_min_bytes=1,
+        parallel_segments=4,
+    )
+
+    asyncio.run(
+        downloader.download(
+            descriptor,
+            tmp_path / "download.zip",
+            cancel_event=asyncio.Event(),
+            progress=reported.append,
+        )
+    )
+
+    assert (tmp_path / "download.zip").read_bytes() == payload
+    assert requested[0] == "bytes=0-0"
+    assert len(requested) == 5
+    assert reported[-1] == len(payload)
+
+
+def test_http_downloader_streams_when_ranges_are_unsupported(tmp_path: Path) -> None:
+    archive = tmp_path / "expected.zip"
+    descriptor, _ = _archive(archive, {"capture-engine-ocr.exe": b"x" * 4096})
+    payload = archive.read_bytes()
+    downloader = HttpArtifactDownloader(
+        lambda: httpx.AsyncClient(transport=_ranged_transport(payload, supports_ranges=False)),
+        parallel_min_bytes=1,
+    )
+
+    asyncio.run(
+        downloader.download(
+            descriptor,
+            tmp_path / "download.zip",
+            cancel_event=asyncio.Event(),
+            progress=lambda _copied: None,
+        )
+    )
+
+    assert (tmp_path / "download.zip").read_bytes() == payload
+
+
+def test_http_downloader_rejects_mismatched_range_responses(tmp_path: Path) -> None:
+    archive = tmp_path / "expected.zip"
+    descriptor, _ = _archive(archive, {"capture-engine-ocr.exe": b"x" * 4096})
+    payload = archive.read_bytes()
+    downloader = HttpArtifactDownloader(
+        lambda: httpx.AsyncClient(transport=_ranged_transport(payload, corrupt_segments=True)),
+        parallel_min_bytes=1,
+    )
+
+    with pytest.raises(EngineInstallationError, match="range response"):
+        asyncio.run(
+            downloader.download(
+                descriptor,
+                tmp_path / "download.zip",
+                cancel_event=asyncio.Event(),
+                progress=lambda _copied: None,
+            )
+        )
+    assert not (tmp_path / "download.zip").exists()
+
+
 def _direct_model_file(
     content: bytes,
     *,
