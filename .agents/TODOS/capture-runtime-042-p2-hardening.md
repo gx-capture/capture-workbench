@@ -2,8 +2,8 @@
 
 The [canonical SPEC](../SPECS/capture-runtime-042-p2-hardening.md) owns policy
 and the [DECISION](../DECISIONS/capture-runtime-042-p2-hardening.md) owns
-rationale. The [GUIDE](../GUIDES/staged-ocr-delivery-workflow.md) owns fresh
-worker procedure. This file is the only executable Phase 2 checklist.
+rationale. The [release runbook](../GUIDES/release-runbook.md) owns the
+release procedure. This file is the only executable Phase 2 checklist.
 
 ## Continuation checkpoint (2026-09-21)
 
@@ -1118,7 +1118,6 @@ untracked instruction files:
 .agents/SPECS/capture-runtime-042-p2-hardening.md
 .agents/DECISIONS/capture-runtime-042-p2-hardening.md
 .agents/TODOS/capture-runtime-042-p2-hardening.md
-.agents/GUIDES/staged-ocr-delivery-workflow.md
 packages/capture-workbench-ui/README.md
 apps/capture-workbench-desktop/README.md
 ~~~
@@ -1126,7 +1125,7 @@ apps/capture-workbench-desktop/README.md
 Before commit, verify:
 
 ~~~powershell
-git diff --check -- .agents/SPECS/capture-runtime-042-p2-hardening.md .agents/DECISIONS/capture-runtime-042-p2-hardening.md .agents/TODOS/capture-runtime-042-p2-hardening.md .agents/GUIDES/staged-ocr-delivery-workflow.md packages/capture-workbench-ui/README.md apps/capture-workbench-desktop/README.md
+git diff --check -- .agents/SPECS/capture-runtime-042-p2-hardening.md .agents/DECISIONS/capture-runtime-042-p2-hardening.md .agents/TODOS/capture-runtime-042-p2-hardening.md packages/capture-workbench-ui/README.md apps/capture-workbench-desktop/README.md
 corepack pnpm nx show project capture-runtime --json
 corepack pnpm nx show project capture-sidecar-launcher --json
 corepack pnpm nx show project capture-tools --json

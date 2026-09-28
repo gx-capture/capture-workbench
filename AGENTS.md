@@ -12,6 +12,7 @@
 
 # Release and CI guidance
 
+- Follow `.agents/GUIDES/release-runbook.md` for the current release state, the publish procedure, and known pitfalls.
 - Push CI on `main` is release evidence: release candidates verify it for their source commit, so never skip or weaken it. Only pull requests that touch nothing but `.agents/**` or Markdown skip verification.
 - Route A (`package-promote`, then `runtime-promote`) publishes the registries and the runtime seed release. The full route (`release-candidate`, `consumer-gates`, `release-promote`) reuses those candidate runs at the same source commit, re-verifies registries idempotently, adds the desktop assets and moves the stable pointer.
 - Size budgets are release policy read from the tooling ref. When the runtime outgrows the headroom, re-baseline `packages/capture-runtime/size-budgets/*` with new measurement evidence; never alter a candidate.
