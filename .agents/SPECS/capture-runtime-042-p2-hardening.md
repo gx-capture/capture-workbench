@@ -900,7 +900,9 @@ indeterminate-dGPU test remains a separate fail-closed case.
 | Probe timeout, exception, unknown adapter, incomplete mapping, or indeterminate state | Indeterminate/unavailable | Do not guess, rank, or persist an ordinal |
 
 This table replaces the earlier adapter-`0` default and the
-`CAPTURE_WINDOWSML_DEVICE_ID` host override.
+`CAPTURE_WINDOWSML_DEVICE_ID` host override. The DirectML provider policy,
+provenance meaning, and production environment gate are in
+[gpu-ocr-directml.md](gpu-ocr-directml.md).
 
 ## Acceptance and evidence contract
 
