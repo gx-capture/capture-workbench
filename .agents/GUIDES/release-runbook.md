@@ -94,7 +94,7 @@ candidate with `node tools/install-capture-workbench-dependencies.mts
   (budget = measured bytes plus `headroomBasisPoints`) when the runtime grows.
 - PyPI Trusted Publishing binds the top-level workflow: uploads stay inline in
   `package-promote.yml` and `release-promote.yml`. `_publish-pypi.yml` only
-  verifies; its PyPI publisher entry can be removed on pypi.org.
+  verifies and has no Trusted Publisher entry on pypi.org; do not re-add one.
 - Consumer gate workflows pin `pnpm/action-setup@f40ffcd9…`; `b0f76dfb`
   installs a broken pnpm v11 shim. Gate check steps need GitHub Packages auth
   because pnpm 12 re-verifies `@gx-capture` lockfile entries.

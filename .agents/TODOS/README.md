@@ -24,4 +24,3 @@ evidence rules. Release state and procedure: [release-runbook.md](../GUIDES/rele
 
 - Rustdoc for the remaining public `capture-sidecar-launcher` functions —
   [capture-large-file-refactor.md](capture-large-file-refactor.md)
-- Remove the unused `_publish-pypi.yml` Trusted Publisher on pypi.org (manual).
