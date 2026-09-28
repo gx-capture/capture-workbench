@@ -1,8 +1,9 @@
 # Capture Runtime Installer Size Reduction TODO
 
-- [ ] Record reproducible pre-change runtime/NSIS/installed/startup and
+- [x] Record reproducible pre-change runtime/NSIS/installed/startup and
   PyInstaller inventory evidence without invented values.
   Verify: `corepack pnpm nx run capture-runtime:bundle-size-report --skip-nx-cache`.
+  Done: `packages/capture-runtime/size-budgets/*-measurement-evidence.json`.
 
 - [x] Replace dynamic monolithic PyInstaller collection and slim core
   dependencies (`uvicorn`, PDF core, OCR/Whisper isolation).
@@ -22,9 +23,10 @@
   Verify: focused extractor/worker integration tests plus
   `corepack pnpm nx run capture-runtime:test --skip-nx-cache`.
 
-- [ ] Generate a runtime-owned catalog and exact release assets/manifests.
+- [x] Generate a runtime-owned catalog and exact release assets/manifests.
   Verify: `corepack pnpm nx run capture-runtime:generate-engine-catalog --skip-nx-cache`
   and release consistency tests.
+  Done: `capture-runtime:generate-engine-catalog`; `capture-engine-catalog.json` ships on GitHub release `v0.4.2`.
 
 - [x] Stage and build a core-only NSIS installer and enforce core/worker/NSIS
   boundaries.

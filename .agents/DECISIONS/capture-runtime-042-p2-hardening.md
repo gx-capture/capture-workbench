@@ -5,7 +5,7 @@ Status: canonical rationale record for the documentation checkpoint dated
 owns policy, actual owner paths, interface alternatives, journal schema,
 compute truth, acceptance, identity, and D0-D8 gates. The
 [TODO](../TODOS/capture-runtime-042-p2-hardening.md) owns executable work; the
-[GUIDE](../GUIDES/staged-ocr-delivery-workflow.md) owns fresh-worker procedure.
+[release runbook](../GUIDES/release-runbook.md) owns the release procedure.
 
 ## Checkpoint and authority
 

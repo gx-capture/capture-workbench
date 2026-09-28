@@ -36,3 +36,4 @@
 - [ ] After a package containing this change is published, run the official
   online-package E2E with the same PDF semantics.
   Verify: `pnpm nx run capture-runtime:e2e-online-package-pdf-ocr --skip-nx-cache`
+  Attempted 2026-09-28 against published 0.4.2 with an image-only PDF made from the canonical JPEG: it timed out during the first-run OCR engine download from GitHub releases (the known slow download), before OCR ran.

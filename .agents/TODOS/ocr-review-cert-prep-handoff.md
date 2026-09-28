@@ -1,16 +1,23 @@
 # OCR Review and Cert Prep Handoff TODO
 
-- [ ] Add review contracts, opt-in config, and client confirmation seam.
+- [x] Add review contracts, opt-in config, and client confirmation seam.
   Verify: focused capture-angular typecheck and contract tests.
-- [ ] Pause host workflow at raw extraction and implement review UI/actions.
+  Done: review contracts and confirmation seam in `capture-angular`.
+- [x] Pause host workflow at raw extraction and implement review UI/actions.
   Verify: capture-angular workflow/host tests.
-- [ ] Add review-required/completed custom events and documentation.
+  Done: review workflow in `capture-angular.ts` with `capture-angular.workflow.spec.ts`.
+- [x] Add review-required/completed custom events and documentation.
   Verify: custom-element event tests and package lint.
-- [ ] Add Cert Prep capture-review session persistence and coordinator split.
+  Done: review events exposed by `capture-workbench-element-facade.ts`.
+- [x] Add Cert Prep capture-review session persistence and coordinator split.
   Verify: focused backend capture-workbench tests.
-- [ ] Add capture-review API routes and regenerate the Angular API client.
+  Done: Cert Prep `domains/capture_workbench/review_sessions.py` and `review_workflow.py`.
+- [x] Add capture-review API routes and regenerate the Angular API client.
   Verify: OpenAPI/client generator tests and backend contract tests.
-- [ ] Persist review overlay while preserving raw OCR provenance.
+  Done: Cert Prep review routes in `api/app.py`; regenerated `libs/cert-prep-api`.
+- [x] Persist review overlay while preserving raw OCR provenance.
   Verify: backend persistence and Markdown tests.
-- [ ] Run real PDF review/confirm smoke and all relevant Nx regressions.
+  Done: Cert Prep review sessions keep the raw OCR result alongside the review overlay.
+- [x] Run real PDF review/confirm smoke and all relevant Nx regressions.
   Verify: real-PDF smoke, lint, typecheck, test, and git diff --check.
+  Done: Cert Prep packaged flow smoke covers review; published-mode practical OCR passed 2026-09-27.

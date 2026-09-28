@@ -6,50 +6,22 @@ Capture Runtime sidecar with a memory-only bearer token.
 
 The desktop host starts one verified `capture-runtime` sidecar on a random loopback port with a memory-only 256-bit bearer token. Its product provider is an isolated Ollama lane with dedicated app data, model storage, port, profile, and PID file.
 
-## Phase 2 checkpoint
+## Acceptance targets
 
-The current Capture Runtime 0.4.2 Phase 2 material is a docs/design checkpoint
-(2026-09-10);
-it does not claim a published package, immutable candidate, installed
-acceptance result, or release. The existing
-`capture-workbench-desktop:acceptance-real` target is a local installed-runtime
-diagnostic and is explicitly not D4. The future D4 target is proposed as
-`capture-workbench-desktop:acceptance-d3-candidate`, owned by
-`apps/capture-workbench-desktop/scripts/acceptance-d3-candidate.ts:runD3CandidateAcceptance`;
-it will accept externally supplied D3 root/id/digests and must never stage or
-build, import the source tree, or follow a mutable URL. That target is not
-present until its project metadata and schema are created and reviewed. The
-desktop host is a consumer: it consumes the exact bytes/hash of the producer's
-`@capture-runtime/acceptance-contract` package (proposed at
-`packages/capture-acceptance-contract`), version `"1"`, and writes only its
-semantic result. `tools/acceptance-contract.ts` is a consumer adapter, not
-contract authority. Fixture assignments use opaque media/oracle capability
-handles and digests; consumer-private read-only resolvers bind them to real
-media/full truth, while raw paths/text never enter the invocation or result.
-The desktop never mutates producer scope or writes the final acceptance wire.
-The package semantic manifest excludes itself, hash files, archives, and
-delivery metadata; `contractSha256` hashes only that canonical manifest, while
-the external archive has separate `acceptanceContractArchiveSha256`. This
-acceptance identity is distinct from runtime `contractSetSha256`; D2 is limited
-to schemas/codecs and synthetic RED/GREEN cases, D3 creates the immutable
-package/bundle and ledger, and D4 consumes real D3 bytes. Each capability is
-single-use and audience-bound to one child/leg/gate/invocation, revoked on
-cancel, mismatch, failed freeze/activation/cleanup, or close, and never logged
-as a raw handle/path/token/PID.
-The proposed package delivery owners are `schemas/*.schema.json`,
-`src/codecs.ts`, `src/export.ts`, `src/index.ts`, `src/canonical-json.ts`,
-`src/manifest.ts`, `src/hash.ts`, `tools/generate.ts`, and
-`tools/create-bundle.ts`; package/Nx metadata owns delivery.
+- `capture-workbench-desktop:acceptance-real` runs real OCR against a locally
+  built installed runtime; it is a diagnostic, not release evidence.
+- `capture-workbench-desktop:build-practical-installer` and
+  `acceptance-practical-installed` build a side-by-side production installer
+  (only the identifier, product name, and binary name differ) and run the
+  canonical OCR journey against published or candidate bytes, then remove
+  only run-owned state.
+- `capture-workbench-desktop:acceptance-three-projects` runs Capture
+  Workbench, Cert Prep, and LAW in order with cleanup proven between them.
 
-The producer's native R3 boundary is whole-group:
-`prepare_group(plan, sink) -> PreparedGroup` returns an opaque, move-only,
-nonserializable value containing a producer-private `ActivationPermit`, and
-`activate_group(PreparedGroup) -> GroupLease` consumes it once. Complete
-ordered root bindings are persisted/read back/verified by `bindingAttemptId`;
-activation CASes `ready -> launching` before resume. Reserved listener identity
-before resume is distinct from live readiness after resume. Partial assignment,
-resume, or listener readiness closes the entire Job, returns no lease, and
-reconciles the whole group. Capture remains the size-one path.
+Acceptance records use the producer's `@capture-runtime/acceptance-contract`
+package (`packages/capture-acceptance-contract`). The desktop writes only its
+semantic result; raw paths, text, tokens, and PIDs never enter acceptance
+records. The release procedure is in `.agents/GUIDES/release-runbook.md`.
 
 Run `corepack pnpm dev` for the product lane. It generates and stages release
 runtime assets before Tauri starts. `corepack pnpm dev:deterministic` remains a

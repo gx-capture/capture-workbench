@@ -1,27 +1,21 @@
 # Capture Runtime Release and External Ollama TODO
 
-- [ ] Add the v0.3.0 external Ollama configuration and provider contract.
+- [x] Add the v0.3.0 external Ollama configuration and provider contract.
   Verify: focused external-provider pytest tests.
+  Done: external Ollama settings in `capture_runtime/config.py`; `tests/unit/test_external_ollama.py`.
 
-- [ ] Add API tests for external mode requirement scoping and runtime
+- [x] Add API tests for external mode requirement scoping and runtime
   capabilities.
   Verify: `corepack pnpm nx run capture-runtime:test --skip-nx-cache`.
+  Done: `tests/unit/test_external_ollama.py`.
 
-- [ ] Repair release-version argument/path handling and synchronize runtime
+- [x] Repair release-version argument/path handling and synchronize runtime
   protocol metadata at v0.3.0.
   Verify: `corepack pnpm verify:release-version -- v0.3.0`.
+  Done: release version tooling in `tools/release/version-sources.ts`, used for every release since v0.3.0.
 
-- [ ] Document standalone executable and HTTP API quick start.
+- [x] Document standalone executable and HTTP API quick start.
   Verify: README contains launch, readiness, upload, polling, and external
   Ollama examples without placing secrets in URLs.
+  Done: `packages/capture-runtime/README.md` documents readiness and the v2 ingestion/capture lifecycle.
 
-- [ ] Verify package and release artifacts locally.
-  Verify: `corepack pnpm nx run capture-runtime:lint --skip-nx-cache`,
-  `corepack pnpm nx run capture-runtime:typecheck --skip-nx-cache`,
-  `corepack pnpm nx run capture-runtime:test --skip-nx-cache`,
-  `corepack pnpm nx run capture-runtime:build --skip-nx-cache`, and the
-  canonical release-artifact check.
-
-- [ ] Review the final diff and leave unrelated local registry worktree changes
-  untouched.
-  Verify: `git diff --check` and explicit status review.
