@@ -36,6 +36,8 @@ dev = [
 pythonpath = ["src"]
 testpaths = ["tests"]
 addopts = "-ra"
+# Remove tmp_path directories after every session; tests must not leave temp files.
+tmp_path_retention_policy = "failed"
 
 [tool.ruff]
 line-length = 100

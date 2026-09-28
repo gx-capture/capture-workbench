@@ -7,6 +7,7 @@
 - The published Web Component is a host-framework-independent custom element. Consumer verification must use the packaged loader, public DOM/property/event API, and runtime contract; do not block a consumer solely because its host uses a different Angular major version. Treat Angular-version compatibility as a defect only when an actual build or runtime verification demonstrates a failure.
 - Never log or persist sidecar bearer tokens.
 - Runtime jobs are ephemeral; host applications own durable source and domain persistence.
+- Tests must not leave temporary files. A TypeScript test file that creates temp files imports `tools/test-temp-root.ts` first (a private temp root removed on exit); pytest uses `tmp_path_retention_policy = "failed"` (passed tests' dirs are removed; only failed ones from the last 3 sessions stay). Never use `"none"`: it disables pytest's session lock, so concurrent pytest runs delete each other's temp dirs.
 
 # Release and CI guidance
 

@@ -1,3 +1,4 @@
+import './test-temp-root.ts';
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
