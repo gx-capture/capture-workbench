@@ -1,3 +1,5 @@
+// eslint-disable-next-line @nx/enforce-module-boundaries -- shared test temp-root guard.
+import '../../../tools/test-temp-root.ts';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
