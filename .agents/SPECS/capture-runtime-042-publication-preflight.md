@@ -157,5 +157,5 @@ implementation gates; Root does not self-approve their closure.
 No registry upload, tag, candidate sealing, stable-pointer mutation or installed
 OCR claim occurs in this repair slice. A confirmed occupied immutable version
 requires exact-byte reconciliation or an explicit successor decision. The
-separate release-scope question remains pending; no silent contract relaxation
-or claim of complete Phase2 is authorized by this document.
+release-scope question was resolved on 2026-09-24: publish 0.4.2 with printed
+OCR as the floor and handwriting disclosed as a known limitation.

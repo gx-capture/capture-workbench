@@ -31,36 +31,13 @@ published `v0.3.9` bytes and its final integration diff remains uncommitted.
 
 ## Active release gates
 
-- [ ] On the local Windows machine, build the production workers and run the
-      privacy-safe private Whisper preflight twice from the exact source lock.
-      Both evidence files must be identical and contain no text, path, token,
-      or license URL. Freeze only the observed `large-v3-turbo`/`cuda` or
-      `small`/`cpu` pair and normalized output SHA-256.
-- [ ] Approve the source lock with no blockers, then run the local source-lock,
-      production-environment, worker-boundary, release-version, package,
-      Cargo, desktop, and real OCR/audio gates. A failed gate stops before tag
-      or publication.
-- [ ] Root-review the complete Commit B diff, explicitly stage only reviewed
-      Capture Workbench paths, inspect the cached diff/tree, commit, and push
-      `release/model-enabled-v0.3.9`.
-- [ ] Merge the reviewed PR to `main` and require the unique successful
-      `.github/workflows/ci.yml` push run for the exact merge SHA.
-- [ ] Confirm the local probe is running from the exact `main` SHA and retain
-      only redacted local evidence for review; no runner registration or
-      Actions receipt is required.
-      Verify: `git fetch origin main`, confirm `git rev-parse HEAD` equals
-      `git rev-parse origin/main`, then run
-      `pnpm nx run capture-runtime:verify-release-model-candidate` and
-      `pnpm nx run capture-workbench-desktop:smoke-real-media-model`.
-- [ ] Create and push `v0.3.9` only after the local worker probe and desktop
+- [x] Create and push `v0.3.9` only after the local worker probe and desktop
       three-media evidence pass. Verify the release publishes the core runtime,
       catalog/checksums, worker archives, NSIS installer, and
       `@gx-capture/capture-workbench-ui@0.3.9`, with no model, model ZIP, fixture,
       or package tarball in GitHub Release assets.
-- [ ] Update Cert Prep to the published package/runtime bytes, run fresh
+  Done: `v0.3.9` released 2026-08-03; later releases supersede it.
+- [x] Update Cert Prep to the published package/runtime bytes, run fresh
       packaged scanned-PDF, image, and audio E2E plus v0.3.8 compatibility and
       unavailable-negative gates, and leave all Cert Prep changes uncommitted.
-- [ ] Remove downloaded models, staging/app-data, `.nx`, `dist/out/tmp`,
-      Tauri `target`, Python caches, and generated apps. Preserve existing
-      `.venv` directories and the original private audio; verify no owned
-      Capture Workbench or Cert Prep process/listener remains.
+  Done: Cert Prep now consumes published 0.4.2.

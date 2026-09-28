@@ -1,36 +1,10 @@
 # Capture Runtime 0.4.2 Phase 2 hardening (canonical design)
 
-Status: canonical Phase 2 policy and acceptance source. `D0 DocsCommitted` is
-complete for the commit that contains this documentation correction. The exact
-commit id is intentionally not written here: external review binds the result
-with `git rev-parse HEAD` after the commit. `D1 DesignReviewed` is pending a
-fresh Standards and Specification review at that exact head. This document is
-design and delivery policy; it does not authorize implementation, packaging,
-publication, or stable-pointer mutation.
-
-## Current checkpoint: 2026-09-10
-
-- This closure starts from expected HEAD
-  `f4ab9518d3d23c280791b90b8590fd0f1262500e`; stop if `HEAD` drifts. The only pre-existing working
-  tree changes are untracked `.github/copilot-instructions.md` and
-  `.github/instructions/`; they are preserved and are not part of this slice.
-- PR #39 is at `c6d2140e233de70734005713427f77f92414f415`; its deterministic CI
-  is green, but the PR is not merged. Phase 1 is complete only at the
-  local-probe tier: Capture, Cert Prep, and GX Law Prep passed real
-  local-package OCR in that order. That is not published or release evidence.
-- No current-HEAD Phase 2 real JPEG, PDF page-1, GPU, cleanup, immutable
-  candidate, download-back, or publication result is claimed. Source files
-  currently contain release value `0.4.2`; that does not establish that an
-  official `0.4.2` package is published.
-- CI repair is paused and has no authority in this checkpoint. The named D5-D8
-  implementation slice below explicitly owns publication-workflow contract
-  edits; this documentation checkpoint makes no workflow changes, reruns no
-  CI, and treats no deterministic run as OCR, GPU, cleanup, install, or release
-  proof.
-- The only completed state-machine gate in this docs commit is D0. D1 remains
-  pending until a fresh external review names the post-commit `HEAD`, exact
-  paths, and external check/PR metadata. Any later content commit returns the
-  state to D1.
+Status: canonical Phase 2 design and acceptance policy. Capture Runtime 0.4.2
+was published on 2026-09-27 and promoted to stable through the
+[release runbook](../GUIDES/release-runbook.md); the
+[TODO](../TODOS/capture-runtime-042-p2-hardening.md) records the evidence for
+each completed item and the one open item (usable iGPU selection).
 
 ## Purpose and non-goals
 

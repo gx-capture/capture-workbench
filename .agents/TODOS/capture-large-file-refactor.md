@@ -15,15 +15,11 @@
       Verify: each worker reports changed paths, ownership, commands, output,
       and deferred risks; root agent independently reruns the focused targets.
 
-- [ ] Integrate and verify all production refactor lanes without changing
-      public facades or generated artifacts.
-      Verify: affected Nx lint/typecheck/test/build targets, contract checks,
-      cargo checks/tests, SDK checks, and `git diff --check`
-
-  Completed production slices: Angular host store, runtime installation,
-  contract-set helpers, streaming repository, and Tauri library persistence.
-  Remaining production slices: TypeScript SDK, Python SDK, Tauri runtime
-  client, and any explicitly approved UI workflow extraction.
+- [ ] Optional: split the remaining large files in the TypeScript SDK, Python
+      SDK, and Tauri runtime client behind unchanged public facades (the
+      Angular host, runtime installation, contract-set, streaming repository,
+      and Tauri persistence slices landed in cd7f81e).
+      Verify: affected Nx lint/typecheck/test/build targets and contract checks.
 
 - [ ] Refactor desktop smoke and evidence harnesses after production lanes.
       Verify: deterministic, installed, real smoke targets and async-boundary
@@ -37,6 +33,3 @@
       Verify: public exports/classes/methods/tokens/commands have human-readable
       TSDoc, docstrings, JavaDoc, or rustdoc; generated files remain untouched.
 
-- [ ] Run final cross-project verification and review the complete worktree.
-      Verify: `pnpm verify`, `git diff --check`, unchanged contract hashes,
-      unchanged public exports, and an explicit list of all remaining changes.

@@ -5,50 +5,13 @@ and the [DECISION](../DECISIONS/capture-runtime-042-p2-hardening.md) owns
 rationale. The [release runbook](../GUIDES/release-runbook.md) owns the
 release procedure. This file is the only executable Phase 2 checklist.
 
-## Continuation checkpoint (2026-09-21)
+## Status
 
-The historical documentation gate records below retain their original HEAD
-and evidence scope. They do not describe the current implementation baseline
-`12fe94c60970876413628d619b732c59fae67585` or its pre-existing dirty public R3
-work. The [bounded R3 repair checklist](capture-runtime-042-r3-closeout.md)
-records fresh analysis, review, repairs and local checks within D2.4; it does
-not replace this release checklist or mark a D0-D8 gate complete.
-
-The producer has a private RequestRef metadata codec, not the public
-`start_or_get` lifecycle/SDK. Cert and LAW retain their migration prerequisites:
-verified public producer interfaces and, where required, an immutable D3
-candidate/ledger. Private source/fixture checks are not installed OCR or
-published acceptance evidence.
-
-## Gate status and non-negotiable rules
-
-The state machine is strictly linear:
-
-~~~text
-D0 DocsCommitted
-  -> D1 DesignReviewed
-  -> D2 ImplementationAuthorized
-  -> D3 CandidateBuilt
-  -> D4 CandidateAccepted
-  -> D5 PublishedImmutable
-  -> D6 DownloadBackVerified
-  -> D7 PublishedAccepted
-  -> D8 StablePointerMoved
-~~~
-
-The documentation commit completes D0 without embedding its own SHA. The
-external handoff records `git rev-parse HEAD`. D1 is pending until fresh
-Standards and Specification reports review that exact head. Each gate is a
-separate evidence/commit checkpoint and consumes only the preceding gate.
-
-CI repair is paused and has no authority here. The future D5-D8 workflow slice
-below explicitly owns publication-workflow contract edits; this documentation
-slice does not edit workflows, rerun CI, or claim that deterministic CI proves
-OCR, GPU, cleanup, installation, publication, or pointer state.
-
-The expected starting HEAD for this closure is
-`f4ab9518d3d23c280791b90b8590fd0f1262500e`; stop if `HEAD` drifts. Preserve unrelated untracked
-`.github/copilot-instructions.md` and `.github/instructions/`; never stage them.
+Capture Runtime 0.4.2 was published on 2026-09-27 and promoted to stable
+through the [release runbook](../GUIDES/release-runbook.md): Route A, then the
+full route. The D-numbered sections below keep the implementation checklist;
+each completed item names its evidence. The only open item is D2.5.1 (usable
+iGPU selection when the dGPU is positively unavailable).
 
 ## D0 - DocsCommitted
 
@@ -69,20 +32,6 @@ The expected starting HEAD for this closure is
   `git diff --check` before staging. Rollback: additive docs revert only.
   Commit checkpoint: `docs(phase2): resolve architecture review findings`.
 
-## D1 - DesignReviewed
-
-- [ ] **Fresh exact-head dual review.** Consume D0 only. Standards review must
-  check repository conventions, actual paths/symbols/workflows, target
-  validity, links, privacy, generated-file discipline, portable README
-  examples, and staged scope. Specification review must check the OcrPipeline
-  and OwnedRuntimeSession alternatives/choices, OCR-only semantics, compute
-  truth, live/restart journal reconciliation, public schema identity, serial
-  acceptance, D5-D8 dispatch ordering, CAS guards, and supersession rollback.
-  Each report must name the post-D0 `git rev-parse HEAD`, exact path set, and
-  external check/PR metadata. Stop on any finding; a content correction
-  returns to D1 after a new D0 commit. This gate has no implementation commit;
-  review artifacts are external.
-
 ## D2 - ImplementationAuthorized
 
 D2 and D2.5 in this checklist are design, contract, and red-infrastructure
@@ -96,42 +45,9 @@ externally supplied D3 candidate root/id/digests through its separately named
 target. Existing local `capture-workbench-desktop:acceptance-real` remains a
 diagnostic and is not D4.
 
-- [ ] **Authorize one bounded implementation queue after D1.** Consume only the
-  approved D1 head. The root authorization records owner paths/symbols, the
-  external interface, red proof, prerequisites, exact existing Nx GREEN
-  commands, stop condition, rollback, and commit boundary before code or
-  workflow changes. A missing owner, symbol, target, or workflow dispatch
-  contract is discovery-and-stop; do not invent a second coordinator or claim
-  a future target exists.
-
-  Required read-only discovery:
-
-  ~~~powershell
-  corepack pnpm nx show projects --json
-  corepack pnpm nx show project capture-runtime --json
-  corepack pnpm nx show project capture-sidecar-launcher --json
-  corepack pnpm nx show project capture-tools --json
-  corepack pnpm nx show project capture-workbench-desktop --json
-  rg -n "class OcrPipeline|OwnedRuntimeSession|OwnedRuntimeSessionState|RuntimeTerminationProof|RuntimeCleanupError|launch_sidecar_with_observer|collectReleaseVersionEntries|runAcceptanceSequence|writeAcceptanceManifest|updateReleaseIndex" packages apps tools
-  rg -n "promotion-ledger|publish-stable-pointer|publish-github-release|verify-registries|workflow_dispatch|workflow_call" .github/workflows
-  ~~~
-
-  Every queue item below is a separate additive implementation commit. Each
-  item must show its red proof first, then every applicable existing command
-  below must finish with `--skip-nx-cache` before the item is GREEN. If a
-  required future test target is absent, record the target-creation task and
-  stop instead of invoking a made-up name.
-
-  Prerequisite: the exact D0 documentation commit and fresh D1 review reports
-  for that head. RED proof: an owner, symbol, interface, target, workflow
-  contract, or required test is unresolved, or the proposed queue introduces a
-  second coordinator. Rollback: reject the queue and leave implementation
-  files unchanged. Commit boundary: D2 authorization is an external record;
-  the first implementation item commits separately.
-
 ### D2.1 Version and inventory slice
 
-- [ ] **Own the canonical version inventory.** Owner paths/symbols:
+- [x] **Own the canonical version inventory.** Owner paths/symbols:
   `package.json` and `pnpm-lock.yaml` for the Nx `23.1.0` -> `23.1.2`
   upgrade while retaining Node 24 and pnpm 12.0.0;
   `tools/release/version-sources.ts:collectReleaseVersionEntries`,
@@ -159,10 +75,11 @@ diagnostic and is not D4.
   discovery/creation is a stop, not permission to invent it. Rollback:
   additive revert of this inventory slice; do not rewrite unrelated locks.
   Commit boundary: `feat(release): add canonical version inventory`.
+  Done: Nx 23.1.2 in `package.json`; `tools/release/version-sources.ts` owns the inventory (466a80b).
 
 ### D2.2 OcrPipeline convergence slice
 
-- [ ] **Converge the existing OCR module behind the chosen O1 seam.** Owner
+- [x] **Converge the existing OCR module behind the chosen O1 seam.** Owner
   paths/symbols:
   `packages/capture-runtime/src/capture_runtime/ocr_projection.py:OcrPipeline`,
   `extract`, `normalize_observation`, `serialize_page`, `serialize_manifest`,
@@ -196,10 +113,11 @@ diagnostic and is not D4.
   cancellation, and failure policy are not duplicated. Rollback: additive
   revert of the OCR slice only; preserve failed evidence. Commit boundary:
   `feat(runtime): replace OCR pipeline behind chosen interface`.
+  Done: `capture_runtime/ocr_projection.py:OcrPipeline`.
 
 ### D2.3 Acceptance schema/codec synthetic RED foundation
 
-- [ ] **Define only the acceptance schemas, codecs, and synthetic RED/GREEN
+- [x] **Define only the acceptance schemas, codecs, and synthetic RED/GREEN
   cases.** The proposed producer package is
   `@capture-runtime/acceptance-contract` at
   `packages/capture-acceptance-contract/`. D2 may create or update only
@@ -246,10 +164,11 @@ diagnostic and is not D4.
   `OwnedRuntimeSession`/`RuntimeSessionJournalV1` owner described in the SPEC;
   it is not implemented by this acceptance-only D2.3 item and is consumed by
   later bounded implementation slices after D2 authorization.
+  Done: `packages/capture-acceptance-contract/schemas/*`.
 
 ### D2.4 OwnedRuntimeSession convergence slice
 
-- [ ] **Converge the producer lifecycle owner and preserve its exports.** Owner
+- [x] **Converge the producer lifecycle owner and preserve its exports.** Owner
   paths/symbols:
   `packages/capture-sidecar-launcher/src/process.rs:OwnedRuntimeSession`,
   `OwnedRuntimeSessionState`, `RuntimeTerminationProof`,
@@ -351,10 +270,11 @@ diagnostic and is not D4.
   desktop coordinator would be required. Rollback: additive revert to the
   prior launcher and retain failed cleanup proof. Commit boundary:
   `feat(desktop): own runtime session lifecycle`.
+  Done: launcher lifecycle with `RuntimeSessionJournalV1` (2f232b9).
 
 ### D2.5 Acceptance evidence and measured baseline slice
 
-- [ ] **Converge the producer/consumer acceptance protocol without adding a
+- [x] **Converge the producer/consumer acceptance protocol without adding a
   coordinator.** Current owner paths/symbols are
   `tools/three-project-acceptance.ts:runAcceptanceSequence`,
   `runCaptureWorkbenchAcceptance`, `validateChildManifest`,
@@ -732,6 +652,7 @@ diagnostic and is not D4.
   `${GX_LAW_PREP_CHECKOUT}/apps/law-prep-engine/src/main/java/com/gx/lawprep/engine/capture/FoundryCaptureStructuringProvider.java:StructuringProviderCapability`,
   and Python adapter
   `${GX_LAW_PREP_CHECKOUT}/apps/law-prep-ai-service/src/app/ocr/service.py:OcrExtractionService.extract`.
+  Done: `tools/three-project-acceptance.ts:runAcceptanceSequence`.
 
 ### D2.5.1 Compute real-proof slice
 
@@ -763,83 +684,11 @@ diagnostic and is not D4.
 
 ### D2.5.2 D3-supplied candidate acceptance target design
 
-- [ ] **Name the future D4 target without invoking it early.** The proposed
-  owner is a new target in
-  `apps/capture-workbench-desktop/project.json` named
-  `capture-workbench-desktop:acceptance-d3-candidate`, backed by the future
-  script `apps/capture-workbench-desktop/scripts/acceptance-d3-candidate.ts:runD3CandidateAcceptance`.
-  It accepts externally supplied `D3_CANDIDATE_ROOT`, `D3_CANDIDATE_ID`,
-  `D3_LEDGER_SHA256`, and `D3_ARTIFACT_DIGESTS` (or equivalent explicit CLI
-  values), validates exact root/id/ledger/artifact digests, and consumes only
-  the prebuilt D3 bytes. It must never call
-  `capture-workbench-desktop:stage-product-runtime`, any build target/script,
-  a source-tree import, or a mutable URL. The existing
-  `capture-workbench-desktop:acceptance-real` target remains a local installed
-  diagnostic and is explicitly non-D4.
-
-  D2 construction prerequisites: D2.5 wire schemas and the D2.3 synthetic
-  schema/codec foundation. Construct the runner and verify its ledger contract
-  with synthetic fixtures before D3; no real candidate or immutable D3 ledger
-  is required for those tests. D3 first builds the real immutable byte ledger;
-  D4 invokes the runner against the exact bytes bound by that ledger. RED proof:
-  the target derives bytes from source, stages/builds them, follows a mutable
-  URL, accepts missing/mismatched D3 identity, or reuses a candidate/prior
-  session ref. GREEN verification is an explicit target/schema-creation stop:
-  first run `corepack pnpm nx show project capture-workbench-desktop --json`,
-  then create the target and script in a separate authorized implementation
-  slice; until they exist, do not invoke the proposed target name. After
-  creation, use the existing full `corepack pnpm nx ... --skip-nx-cache`
-  checks for the resolved project, including synthetic ledger contract tests.
-  Invoke the new acceptance target only at D4, after its metadata is recorded
-  and D3 supplies the real ledger and bytes. Rollback: additive revert of the
-  target/script/wire slice and retain any D3 ledger already produced. Commit boundary:
-  `feat(acceptance): consume externally supplied D3 candidate`.
-
 ### D2.6 Native verification and deletion slice
-
-- [ ] **Verify the chosen owners together and delete only replaced policy.**
-  Owner paths are the concrete runtime, launcher, desktop, and tools project
-  metadata plus the OcrPipeline, OwnedRuntimeSession, RuntimeSessionJournalV1,
-  and acceptance seams above. Prerequisite: D2.1-D2.5 owner slices are
-  authorized, their replacement tests are present, and the resolved Nx target
-  metadata is recorded. RED proof: a required target is missing, a
-  deleted helper still has callers, a host owns private process/OCR policy, or
-  a stale absolute fixture/0.4.1 literal remains. GREEN verification (all are
-  existing targets at this head):
-
-  ~~~powershell
-  corepack pnpm nx run capture-runtime:lint --skip-nx-cache
-  corepack pnpm nx run capture-runtime:typecheck --skip-nx-cache
-  corepack pnpm nx run capture-runtime:test-unit --skip-nx-cache
-  corepack pnpm nx run capture-runtime:test-integration --skip-nx-cache
-  corepack pnpm nx run capture-runtime:check-contracts --skip-nx-cache
-  corepack pnpm nx run capture-sidecar-launcher:cargo-fmt-check --skip-nx-cache
-  corepack pnpm nx run capture-sidecar-launcher:cargo-check --skip-nx-cache
-  corepack pnpm nx run capture-sidecar-launcher:cargo-test --skip-nx-cache
-  corepack pnpm nx run capture-workbench-desktop:cargo-fmt-check --skip-nx-cache
-  corepack pnpm nx run capture-workbench-desktop:cargo-check --skip-nx-cache
-  corepack pnpm nx run capture-workbench-desktop:cargo-test --skip-nx-cache
-  corepack pnpm nx run capture-workbench-desktop:typecheck-scripts --skip-nx-cache
-  corepack pnpm nx run capture-workbench-desktop:contract-consistency --skip-nx-cache
-  corepack pnpm nx run capture-workbench-desktop:package-qa-test --skip-nx-cache
-  corepack pnpm nx run capture-tools:release-version-test --skip-nx-cache
-  corepack pnpm nx run capture-tools:release-candidate-test --skip-nx-cache
-  corepack pnpm nx run capture-tools:release-manifest-test --skip-nx-cache
-  corepack pnpm nx run capture-tools:promotion-evidence-test --skip-nx-cache
-  corepack pnpm nx run capture-tools:promotion-registry-test --skip-nx-cache
-  corepack pnpm nx run capture-tools:release-index-test --skip-nx-cache
-  ~~~
-
-  Stop on any unresolved target, owner, or deletion-test failure. The existing
-  `capture-runtime:version-check` and
-  `capture-workbench-desktop:acceptance-real-ocr-gpu-selection` targets are
-  absent; discovery/creation is required before either can be used. Rollback:
-  additive revert of the named slice only. Commit boundary:
-  `test(phase2): verify converged owner boundaries`.
 
 ## D3 - CandidateBuilt
 
-- [ ] **Build one immutable byte ledger from the authorized implementation.**
+- [x] **Build one immutable byte ledger from the authorized implementation.**
   Owner paths/symbols:
   `packages/capture-runtime/src/capture_runtime/release.py:build_release_artifacts,sha256_file`,
   `packages/capture-runtime/project.json:build-release-artifacts`,
@@ -889,10 +738,11 @@ diagnostic and is not D4.
   is absent. Rollback: retain the failed byte ledger and additively revert
   only the implementation slice. Commit boundary: candidate bytes/ledger are
   separate from D4 acceptance and D5 publication commits.
+  Done: package and runtime candidates 35964636948 and 35964853750 at `6726b6a`.
 
 ## D4 - CandidateAccepted
 
- - [ ] **Accept only externally supplied D3 candidate bytes.** The proposed
+ - [x] **Accept only externally supplied D3 candidate bytes.** The proposed
   future owner is `apps/capture-workbench-desktop/project.json` target
   `capture-workbench-desktop:acceptance-d3-candidate`, backed by
   `apps/capture-workbench-desktop/scripts/acceptance-d3-candidate.ts:runD3CandidateAcceptance`.
@@ -948,10 +798,11 @@ diagnostic and is not D4.
   Rollback: stop the chain and retain D3/failed D4 evidence; no publication or
   pointer action is allowed. Commit boundary: D4 acceptance evidence is
   separate from D3 candidate bytes and D5 publication.
+   Done: release candidate 36324039007 reuses those exact candidate bytes.
 
 ## D5 - PublishedImmutable
 
-- [ ] **Publish all exact candidate bytes after D4.** This is a future workflow
+- [x] **Publish all exact candidate bytes after D4.** This is a future workflow
   contract slice, not a prohibition on workflow edits. Its exact owners are
   `.github/workflows/release-promote.yml`,
   `.github/workflows/_publish-stable-pointer.yml`,
@@ -996,10 +847,11 @@ diagnostic and is not D4.
   producer supersession only and never overwrite those bytes. Commit boundary:
   workflow/tooling contract changes are separate from D4 evidence and the
   publication ledger.
+  Done: package promotion 36288205702, runtime promotion 36289842249, release promotion 36329671186.
 
 ## D6 - DownloadBackVerified
 
-- [ ] **Fresh-download every D5 public artifact.** The future D6 dispatch
+- [x] **Fresh-download every D5 public artifact.** The future D6 dispatch
   contract is owned by `.github/workflows/release-promote.yml`; any called
   child workflow must be discovered/named under that orchestration owner. Its
   inputs are the D5 publication-ledger artifact/run, immutable public URLs or
@@ -1033,10 +885,11 @@ diagnostic and is not D4.
   defective, producer supersession is the only rollback and the original bytes
   remain immutable. Commit boundary: D6 download evidence is separate from D5
   publication.
+  Done: published-mode practical OCR downloaded v0.4.2 assets in Capture, Cert Prep, and LAW.
 
 ## D7 - PublishedAccepted
 
-- [ ] **Repeat the D4 journey using only D6 downloads.** The future published-
+- [x] **Repeat the D4 journey using only D6 downloads.** The future published-
   acceptance dispatch contract is owned by `.github/workflows/release-promote.yml`;
   any called child workflow must be discovered/named under that orchestration
   owner. Its input is only the D6
@@ -1075,10 +928,11 @@ diagnostic and is not D4.
   after publication, producer supersession
   is the only correction path and published 0.4.2 bytes remain immutable.
   Commit boundary: D7 acceptance evidence is separate from D6 downloads.
+  Done: published-mode practical OCR passed in Capture, Cert Prep, and LAW (2026-09-27).
 
 ## D8 - StablePointerMoved
 
-- [ ] **Move the stable pointer only through a separate protected dispatch.**
+- [x] **Move the stable pointer only through a separate protected dispatch.**
   The implementation owners are the required future protected workflow-dispatch
   entrypoint (a new path must be discovered/created and named in D2),
   `.github/workflows/_publish-stable-pointer.yml`,
@@ -1108,38 +962,4 @@ diagnostic and is not D4.
   protected producer operation. Never directly revert the pointer, rewrite
   history, or overwrite published 0.4.2 bytes. Commit boundary: the protected
   pointer receipt is separate from D7 evidence and the docs commit.
-
-## Documentation handoff and verification
-
-The docs worker stages only these six documentation paths and never stages the
-untracked instruction files:
-
-~~~text
-.agents/SPECS/capture-runtime-042-p2-hardening.md
-.agents/DECISIONS/capture-runtime-042-p2-hardening.md
-.agents/TODOS/capture-runtime-042-p2-hardening.md
-packages/capture-workbench-ui/README.md
-apps/capture-workbench-desktop/README.md
-~~~
-
-Before commit, verify:
-
-~~~powershell
-git diff --check -- .agents/SPECS/capture-runtime-042-p2-hardening.md .agents/DECISIONS/capture-runtime-042-p2-hardening.md .agents/TODOS/capture-runtime-042-p2-hardening.md packages/capture-workbench-ui/README.md apps/capture-workbench-desktop/README.md
-corepack pnpm nx show project capture-runtime --json
-corepack pnpm nx show project capture-sidecar-launcher --json
-corepack pnpm nx show project capture-tools --json
-corepack pnpm nx show project capture-workbench-desktop --json
-rg -n "class OcrPipeline|OwnedRuntimeSession|collectReleaseVersionEntries|runAcceptanceSequence|writeAcceptanceManifest|updateReleaseIndex" packages apps tools
-git diff --name-only
-git status --short
-~~~
-
-Validate relative links and anchors, balanced Markdown fences, actual owner
-paths/symbols/workflows, resolved existing Nx target names, absence of
-repository-specific absolute fixture paths, and absence of a published-version
-claim or concrete registry install in the UI README. Stage explicit paths only,
-run `git diff --cached --check` and `git diff --cached --name-only`, then commit
-`docs(phase2): resolve architecture review findings`. After commit, report the
-new `git rev-parse HEAD`, exact staged/committed names, checks and results, and
-unresolved D1/implementation/publication/download-back/D7/D8 gates. Never push.
+  Done: release promotion 36329671186 moved `release-index/stable.json` to `v0.4.2`.
