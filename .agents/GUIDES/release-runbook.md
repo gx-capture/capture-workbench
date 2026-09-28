@@ -103,5 +103,6 @@ candidate with `node tools/install-capture-workbench-dependencies.mts
 - Local practical OCR runs: keep `CAPTURE_APP_DATA_DIR` short (installed OCR
   worker paths beyond Windows MAX_PATH crash the worker) and set `CAPTURE_PORT`
   together with `--port`, or the allowed-host check rejects requests.
-- Pull requests that only touch `.agents/**` or Markdown skip CI
-  verification; push CI on `main` always runs in full.
+- Every pull request runs full CI, docs-only ones included: contract tests
+  assert content in `.agents` TODOs and READMEs, and a docs-only skip once let
+  `main` go red for three merges.
