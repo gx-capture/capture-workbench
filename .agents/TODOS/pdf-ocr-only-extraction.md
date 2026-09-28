@@ -37,3 +37,4 @@
   online-package E2E with the same PDF semantics.
   Verify: `pnpm nx run capture-runtime:e2e-online-package-pdf-ocr --skip-nx-cache`
   Attempted 2026-09-28 against published 0.4.2 with an image-only PDF made from the canonical JPEG: it timed out during the first-run OCR engine download from GitHub releases (the known slow download), before OCR ran.
+  Retried 2026-09-28 on an idle network with the download timeout raised to 30 minutes: the 0.4.2 runtime's single-stream engine download still exceeded the 30-minute install budget. Rerun after a release that includes the parallel engine download (#50).

@@ -15,21 +15,13 @@
       Verify: each worker reports changed paths, ownership, commands, output,
       and deferred risks; root agent independently reruns the focused targets.
 
-- [ ] Optional: split the remaining large files in the TypeScript SDK, Python
-      SDK, and Tauri runtime client behind unchanged public facades (the
-      Angular host, runtime installation, contract-set, streaming repository,
-      and Tauri persistence slices landed in cd7f81e).
-      Verify: affected Nx lint/typecheck/test/build targets and contract checks.
+- [x] Document the public client SDK APIs.
+      Done (2026-09-28): one-line docs on every public method of the TypeScript
+      (`capture-runtime-client`), Python (`capture-runtime-client-python`), and
+      Java (`CaptureRuntimeClient`) clients; no behaviour or contract change.
 
-- [ ] Refactor desktop smoke and evidence harnesses after production lanes.
-      Verify: deterministic, installed, real smoke targets and async-boundary
-      checker remain green; evidence remains redacted and schema-compatible.
-
-  Current decision: deferred. The existing smoke entrypoints have source-marker
-  tests that require a narrower extraction design. The completed local registry
-  research trial and its stale local-registry test have been retired separately.
-
-- [ ] Complete public API documentation and advisory coverage report.
-      Verify: public exports/classes/methods/tokens/commands have human-readable
-      TSDoc, docstrings, JavaDoc, or rustdoc; generated files remain untouched.
+- [ ] Add rustdoc to the remaining public `capture-sidecar-launcher` functions
+      (26 of 81 `pub fn` were documented on 2026-09-28).
+      Verify: `pnpm nx run capture-sidecar-launcher:cargo-check` and
+      `cargo doc --no-deps` without missing-docs regressions.
 

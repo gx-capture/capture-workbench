@@ -13,6 +13,7 @@ from .errors import CaptureTransportError
 
 
 def validate_loopback_base_url(value: str | int) -> str:
+    """Return a normalized loopback origin, rejecting non-loopback or unsafe URLs."""
     candidate = f"http://127.0.0.1:{value}" if isinstance(value, int) else value
     parsed = urlsplit(candidate)
     if (
@@ -33,12 +34,16 @@ def validate_loopback_base_url(value: str | int) -> str:
 
 
 class RuntimeTransport(Protocol):
+    """Minimal request/stream interface the client needs from a transport."""
+
     def request(self, method: str, path: str, **kwargs: Any) -> httpx.Response: ...
 
     def stream(self, method: str, path: str, **kwargs: Any) -> Any: ...
 
 
 class HttpRuntimeTransport:
+    """httpx transport that adds the bearer token and only talks to a loopback origin."""
+
     def __init__(
         self,
         *,
@@ -90,6 +95,8 @@ class HttpRuntimeTransport:
 
 @dataclass(frozen=True, slots=True)
 class InMemoryRoute:
+    """One in-memory route: an HTTP method, a path, and its handler."""
+
     method: str
     path: str
     handler: Callable[[httpx.Request], httpx.Response]

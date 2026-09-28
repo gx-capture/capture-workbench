@@ -85,6 +85,7 @@ export class CaptureRuntimeClient {
       : (options.transport ?? new HttpRuntimeTransport(options));
   }
 
+  /** Negotiate the runtime contract once; concurrent callers share the result and a failure is retried on the next call. */
   discover(signal?: AbortSignal): Promise<RuntimeDiscovery> {
     if (!this.discovery) {
       const negotiation = negotiateRuntime(
@@ -105,6 +106,7 @@ export class CaptureRuntimeClient {
     return this.discovery;
   }
 
+  /** Read `/v2/health/ready`: runtime version, API version, and contract identity. */
   getReady(signal?: AbortSignal): Promise<RuntimeReady> {
     return this.json<RuntimeReady>(
       { path: '/v2/health/ready', signal },
@@ -112,6 +114,7 @@ export class CaptureRuntimeClient {
     );
   }
 
+  /** Read streaming limits such as the maximum upload chunk size. */
   getStreamingCapabilities(
     signal?: AbortSignal,
   ): Promise<RuntimeStreamingCapabilities> {
@@ -121,6 +124,7 @@ export class CaptureRuntimeClient {
     );
   }
 
+  /** List the runtime requirements (OCR, Whisper, Ollama) and their install status. */
   async getRequirements(
     signal?: AbortSignal,
   ): Promise<readonly RuntimeRequirement[]> {
@@ -131,6 +135,7 @@ export class CaptureRuntimeClient {
     return response.items;
   }
 
+  /** Start installing a requirement with user consent; the idempotency key makes retries safe. */
   startInstallation(
     requirementId: string,
     idempotencyKey: string,
@@ -151,6 +156,7 @@ export class CaptureRuntimeClient {
     );
   }
 
+  /** List requirement installations known to the runtime, including active ones. */
   listInstallations(
     signal?: AbortSignal,
   ): Promise<readonly RuntimeInstallation[]> {
@@ -160,6 +166,7 @@ export class CaptureRuntimeClient {
     ).then((value) => value.items);
   }
 
+  /** Read one requirement installation's status and progress. */
   getInstallation(
     id: string,
     signal?: AbortSignal,
@@ -170,6 +177,7 @@ export class CaptureRuntimeClient {
     );
   }
 
+  /** Cancel a queued or running requirement installation. */
   cancelInstallation(
     id: string,
     signal?: AbortSignal,
@@ -184,6 +192,7 @@ export class CaptureRuntimeClient {
     );
   }
 
+  /** List the structuring model options the runtime allows. */
   getModelOptions(signal?: AbortSignal): Promise<RuntimeModelOptions> {
     return this.json(
       { path: '/v2/runtime/model-options', signal },
@@ -191,6 +200,7 @@ export class CaptureRuntimeClient {
     );
   }
 
+  /** Start installing the selected structuring model. */
   startModelInstallation(
     optionId: string,
     idempotencyKey: string,
@@ -211,6 +221,7 @@ export class CaptureRuntimeClient {
     );
   }
 
+  /** Read one structuring model installation's status. */
   getModelInstallation(
     id: string,
     signal?: AbortSignal,
@@ -232,6 +243,7 @@ export class CaptureRuntimeClient {
     return this.getModelInstallation(id, signal);
   }
 
+  /** Cancel a structuring model installation. */
   cancelModelInstallation(
     id: string,
     signal?: AbortSignal,
@@ -246,18 +258,22 @@ export class CaptureRuntimeClient {
     );
   }
 
+  /** Upload a file and start its capture (see `startStreamingCapture`). */
   createCapture(upload: CaptureUpload): Promise<CaptureOperation> {
     return this.startStreamingCapture(upload);
   }
 
+  /** Read a capture operation's current state. */
   getCapture(id: string, signal?: AbortSignal): Promise<CaptureOperation> {
     return this.getStreamingCapture(id, signal);
   }
 
+  /** Request cancellation of a capture operation. */
   cancelCapture(id: string, signal?: AbortSignal): Promise<CaptureOperation> {
     return this.cancelStreamingCapture(id, signal);
   }
 
+  /** Read the raw extraction of a capture. */
   getRaw(id: string, signal?: AbortSignal): Promise<RawCapture> {
     return this.json(
       { path: `/v2/captures/${encodeURIComponent(id)}/raw`, signal },
@@ -265,6 +281,7 @@ export class CaptureRuntimeClient {
     );
   }
 
+  /** Read the page-addressable OCR projection of a capture. */
   getOcr(id: string, signal?: AbortSignal): Promise<CaptureOcrProjection> {
     return this.json(
       { path: `/v2/captures/${encodeURIComponent(id)}/ocr`, signal },
@@ -272,10 +289,12 @@ export class CaptureRuntimeClient {
     );
   }
 
+  /** Read the terminal capture state, raw extraction, and structured document. */
   getResult(id: string, signal?: AbortSignal): Promise<CaptureStreamingResult> {
     return this.getStreamingResult(id, signal);
   }
 
+  /** Commit the final structured document for a capture. */
   commitStructure(
     id: string,
     candidate: CaptureDocument,
@@ -290,6 +309,7 @@ export class CaptureRuntimeClient {
     );
   }
 
+  /** Report that host-side structuring failed for a capture. */
   reportStructuringFailure(
     id: string,
     code: string,
@@ -338,6 +358,7 @@ export class CaptureRuntimeClient {
     );
   }
 
+  /** Read the structuring session of a capture. */
   getStructuringSession(
     captureId: string,
     signal?: AbortSignal,
@@ -351,6 +372,7 @@ export class CaptureRuntimeClient {
     );
   }
 
+  /** Read one batch of a structuring session. */
   getStructuringBatch(
     captureId: string,
     batchIndex: number,
@@ -379,6 +401,7 @@ export class CaptureRuntimeClient {
     return this.getStructuringBatch(captureId, batchIndex, signal);
   }
 
+  /** Submit the host's result for one structuring batch. */
   submitStructuringBatch(
     captureId: string,
     batchIndex: number,
@@ -413,6 +436,7 @@ export class CaptureRuntimeClient {
     );
   }
 
+  /** Upload a file through a chunked ingestion and start its capture. */
   async startStreamingCapture(
     upload: CaptureUpload,
   ): Promise<CaptureOperation> {
@@ -425,6 +449,7 @@ export class CaptureRuntimeClient {
     );
   }
 
+  /** Read a capture operation's current state. */
   getStreamingCapture(
     id: string,
     signal?: AbortSignal,
@@ -434,6 +459,7 @@ export class CaptureRuntimeClient {
       'CaptureOperation',
     );
   }
+  /** Read the partial result a capture has produced so far. */
   getStreamingPartial(
     id: string,
     signal?: AbortSignal,
@@ -443,6 +469,7 @@ export class CaptureRuntimeClient {
       'PartialCapture',
     );
   }
+  /** Read the terminal capture state, raw extraction, and structured document. */
   getStreamingResult(
     id: string,
     signal?: AbortSignal,
@@ -452,6 +479,7 @@ export class CaptureRuntimeClient {
       'StreamingResult',
     );
   }
+  /** Request cancellation of a capture operation. */
   cancelStreamingCapture(
     id: string,
     signal?: AbortSignal,
@@ -465,6 +493,7 @@ export class CaptureRuntimeClient {
       'CaptureOperation',
     );
   }
+  /** Commit the final structured document for a capture. */
   commitStreamingStructuredResult(
     id: string,
     candidate: CaptureDocument,
@@ -485,6 +514,7 @@ export class CaptureRuntimeClient {
       'CaptureOperation',
     );
   }
+  /** Report that host-side structuring failed for a capture. */
   reportStreamingStructuringFailure(
     id: string,
     code: string,
@@ -506,6 +536,7 @@ export class CaptureRuntimeClient {
       'CaptureOperation',
     );
   }
+  /** Delete a capture and its stored artifacts from the runtime. */
   deleteCapture(id: string, signal?: AbortSignal): Promise<void> {
     return this.json<void>({
       path: `/v2/captures/${encodeURIComponent(id)}`,
@@ -514,6 +545,7 @@ export class CaptureRuntimeClient {
     });
   }
 
+  /** Yield capture events from the SSE stream until a terminal event, resuming after the last seen event. */
   async *captureEvents(
     id: string,
     options: {
