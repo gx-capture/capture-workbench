@@ -30,6 +30,7 @@
   Full-document OCR is reserved for a risk-specific page-order or memory test.
   Release manifest promotion and publish actions remain separate later gates.
   The canonical JPEG passed published-mode practical OCR in Capture Workbench, Cert Prep, and LAW on 2026-09-27; the PDF page-1 leg remains. CER is not gated for the handwritten JPEG (disclosed 0.4.2 limitation).
+  PDF page 1 with the published runtime (2026-09-28): an image-only PDF made from the canonical JPEG passed in Cert Prep's installed app (`windowsml_ocr` on `windowsml-dml`) and through LAW's engine and AI service (`ocr_paddle`). The Capture Workbench leg and the original private PDF remain.
 - Phase 2 defer: production ambient-environment hardening and persisted
   runtime catalog identity remain outside this Phase 1 wiring slice.
 - [x] Update the three-project real-OCR orchestrator to run deterministic

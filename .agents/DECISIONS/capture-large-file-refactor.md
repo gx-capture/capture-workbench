@@ -41,3 +41,14 @@ Accepted for implementation from HEAD
 - Replacing RxJS workflow boundaries with Promise/async code.
 - Creating thin wrapper layers solely to satisfy DDD folder names.
 - Running all release/real-media smoke work in parallel with production edits.
+
+## 2026-09-28 closeout
+
+- Not splitting the remaining TypeScript SDK, Python SDK, and Tauri runtime
+  client files: the largest are 560-850 lines, stable, and without open
+  defects, so a split adds churn and regression risk for no concrete gain.
+  Revisit only when a change in one of them becomes hard to review.
+- Not refactoring the desktop smoke and evidence harnesses: their source-marker
+  tests pin the current structure, and no defect needs the change.
+- Public API documentation is prioritised by consumers: the three published
+  client SDKs are documented; launcher rustdoc remains a TODO.

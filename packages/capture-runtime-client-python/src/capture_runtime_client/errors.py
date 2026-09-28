@@ -10,10 +10,12 @@ _SECRET_FIELD = re.compile(r"(?:token|authorization|credential|secret|password)"
 
 
 def redact_text(value: str) -> str:
+    """Mask bearer tokens in ``value`` and cap it at 500 characters."""
     return _BEARER.sub("Bearer [redacted]", value)[:500]
 
 
 def redact_value(value: Any, *, depth: int = 0) -> Any:
+    """Recursively redact strings and secret-looking keys in a JSON-like value."""
     if depth > 4:
         return "[redacted]"
     if isinstance(value, str):
@@ -64,6 +66,8 @@ class CaptureRuntimeError(RuntimeError):
 
 
 class CaptureTransportError(CaptureRuntimeError):
+    """The runtime could not be reached or the connection failed; retryable."""
+
     category = "transport"
 
     def __init__(self, message: str, details: Any = None, *, code: str = "transport_error") -> None:
@@ -78,6 +82,8 @@ class CaptureTransportError(CaptureRuntimeError):
 
 
 class CaptureAuthenticationError(CaptureRuntimeError):
+    """The runtime rejected the bearer token."""
+
     category = "authentication"
 
     def __init__(
@@ -99,6 +105,8 @@ class CaptureAuthenticationError(CaptureRuntimeError):
 
 
 class CaptureCompatibilityError(CaptureRuntimeError):
+    """The runtime's API version or contract set is not supported by this client."""
+
     category = "compatibility"
 
     def __init__(self, message: str, details: Any = None) -> None:
@@ -112,6 +120,8 @@ class CaptureCompatibilityError(CaptureRuntimeError):
 
 
 class CaptureProtocolError(CaptureRuntimeError):
+    """The runtime returned a response that does not match the contract."""
+
     category = "protocol"
 
     def __init__(self, message: str, details: Any = None) -> None:
@@ -125,6 +135,8 @@ class CaptureProtocolError(CaptureRuntimeError):
 
 
 class CaptureRemoteError(CaptureRuntimeError):
+    """The runtime returned an error envelope; fields mirror that envelope."""
+
     category = "remote"
 
     def __init__(

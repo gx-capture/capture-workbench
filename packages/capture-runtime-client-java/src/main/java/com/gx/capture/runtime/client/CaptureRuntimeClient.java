@@ -60,15 +60,18 @@ public final class CaptureRuntimeClient {
   private final ClientOptions options;
   private volatile DiscoveredContractSet discovery;
 
+  /** Create a client over a transport with default options. */
   public CaptureRuntimeClient(RuntimeTransport transport) {
     this(transport, ClientOptions.defaults());
   }
 
+  /** Create a client over a transport with explicit contract and retry options. */
   public CaptureRuntimeClient(RuntimeTransport transport, ClientOptions options) {
     this.transport = Objects.requireNonNull(transport, "transport");
     this.options = Objects.requireNonNull(options, "options");
   }
 
+  /** Create a client for a loopback runtime URL and bearer token. */
   public CaptureRuntimeClient(String baseUrl, String bearerToken) {
     this(new HttpRuntimeTransport(baseUrl, bearerToken));
   }
@@ -83,18 +86,21 @@ public final class CaptureRuntimeClient {
     }
   }
 
+  /** Decode a structured document response after contract discovery. */
   public CaptureDocument decodeDocument(String responseBody) {
     Objects.requireNonNull(responseBody, "responseBody");
     discover();
     return WireCodecs.decode(responseBody.getBytes(StandardCharsets.UTF_8), CaptureDocument.class, mapper);
   }
 
+  /** Decode a raw extraction response after contract discovery. */
   public RawCapture decodeRaw(String responseBody) {
     Objects.requireNonNull(responseBody, "responseBody");
     discover();
     return WireCodecs.decode(responseBody.getBytes(StandardCharsets.UTF_8), RawCapture.class, mapper);
   }
 
+  /** Decode an OCR projection response after contract discovery. */
   public CaptureOcrProjection decodeOcr(String responseBody) {
     Objects.requireNonNull(responseBody, "responseBody");
     discover();
@@ -107,6 +113,7 @@ public final class CaptureRuntimeClient {
     return WireCodecs.decode(WireCodecs.encode(payload, mapper), CaptureDocument.class, mapper);
   }
 
+  /** Reject a structured candidate that does not preserve the raw capture's source, segments, text, engine, time, and warnings. */
   public static CaptureDocument requireValidStructuringCandidate(
       RawCapture raw, CaptureDocument candidate) {
     Objects.requireNonNull(raw, "raw");
@@ -122,46 +129,57 @@ public final class CaptureRuntimeClient {
     return candidate;
   }
 
+  /** Read streaming limits such as the maximum upload chunk size. */
   public StreamingCapabilities getStreamingCapabilities() {
     return json("GET", "/v2/streaming/health/ready", null, StreamingCapabilities.class, Map.of());
   }
 
+  /** Read {@code /v2/health/ready}: runtime version, API version, and contract identity. */
   public RuntimeReady getReady() {
     return json("GET", "/v2/health/ready", null, RuntimeReady.class, Map.of());
   }
 
+  /** List the runtime requirements (OCR, Whisper, Ollama) and their install status. */
   public List<RuntimeRequirement> getRequirements() {
     return json("GET", "/v2/runtime/requirements", null, RuntimeRequirements.class, Map.of()).items();
   }
 
+  /** Start installing a requirement with user consent; the idempotency key makes retries safe. */
   public RuntimeInstallation startInstallation(String requirementId, String idempotencyKey) {
     return json("POST", "/v2/runtime/installations", object(Map.of("requirementId", requirementId, "consent", true)), RuntimeInstallation.class, headers("X-Idempotency-Key", requiredKey(idempotencyKey)));
   }
 
+  /** List requirement installations known to the runtime, including active ones. */
   public List<RuntimeInstallation> listInstallations() {
     return json("GET", "/v2/runtime/installations", null, RuntimeInstallations.class, Map.of()).items();
   }
 
+  /** Read one requirement installation's status and progress. */
   public RuntimeInstallation getInstallation(String id) {
     return json("GET", "/v2/runtime/installations/" + pathPart(id), null, RuntimeInstallation.class, Map.of());
   }
 
+  /** Cancel a queued or running requirement installation. */
   public RuntimeInstallation cancelInstallation(String id) {
     return json("POST", "/v2/runtime/installations/" + pathPart(id) + "/cancel", null, RuntimeInstallation.class, Map.of());
   }
 
+  /** List the structuring model options the runtime allows. */
   public RuntimeModelOptions getModelOptions() {
     return json("GET", "/v2/runtime/model-options", null, RuntimeModelOptions.class, Map.of());
   }
 
+  /** Start installing the selected structuring model. */
   public RuntimeModelInstallation startModelInstallation(String optionId, String idempotencyKey) {
     return json("POST", "/v2/runtime/model-installations", object(Map.of("optionId", optionId, "consent", true)), RuntimeModelInstallation.class, headers("X-Idempotency-Key", requiredKey(idempotencyKey)));
   }
 
+  /** Read one structuring model installation's status. */
   public RuntimeModelInstallation getModelInstallation(String id) {
     return json("GET", "/v2/runtime/model-installations/" + pathPart(id), null, RuntimeModelInstallation.class, Map.of());
   }
 
+  /** Cancel a structuring model installation. */
   public RuntimeModelInstallation cancelModelInstallation(String id) {
     return json("POST", "/v2/runtime/model-installations/" + pathPart(id) + "/cancel", null, RuntimeModelInstallation.class, Map.of());
   }
@@ -192,38 +210,47 @@ public final class CaptureRuntimeClient {
     }
   }
 
+  /** Read a capture operation's current state. */
   public CaptureOperation getStreamingCapture(String id) {
     return json("GET", "/v2/captures/" + pathPart(id), null, CaptureOperation.class, Map.of());
   }
 
+  /** Read the partial result a capture has produced so far. */
   public PartialCapture getStreamingPartial(String id) {
     return json("GET", "/v2/captures/" + pathPart(id) + "/partial", null, PartialCapture.class, Map.of());
   }
 
+  /** Read the page-addressable OCR projection of a capture. */
   public CaptureOcrProjection getOcr(String id) {
     return json("GET", "/v2/captures/" + pathPart(id) + "/ocr", null, CaptureOcrProjection.class, Map.of());
   }
 
+  /** Read the terminal capture state, raw extraction, and structured document. */
   public CaptureStreamingResult getStreamingResult(String id) {
     return json("GET", "/v2/captures/" + pathPart(id) + "/result", null, CaptureStreamingResult.class, Map.of());
   }
 
+  /** Request cancellation of a capture operation. */
   public CaptureOperation cancelStreamingCapture(String id) {
     return json("POST", "/v2/captures/" + pathPart(id) + "/cancel", null, CaptureOperation.class, Map.of());
   }
 
+  /** Delete a capture and its stored artifacts from the runtime. */
   public void deleteStreamingCapture(String id) {
     json("DELETE", "/v2/captures/" + pathPart(id), null, Void.class, Map.of());
   }
 
+  /** Delete an unfinished upload ingestion. */
   public void deleteStreamingIngestion(String id) {
     json("DELETE", "/v2/ingestions/" + pathPart(id), null, Void.class, Map.of());
   }
 
+  /** Commit the final structured document for a capture. */
   public CaptureOperation commitStreamingStructuredResult(String id, CaptureDocument candidate, String idempotencyKey) {
     return json("POST", "/v2/captures/" + pathPart(id) + "/structure/commit", object(candidate), CaptureOperation.class, headers("X-Idempotency-Key", requiredKey(idempotencyKey)));
   }
 
+  /** Report that host-side structuring failed for a capture. */
   public CaptureOperation reportStreamingStructuringFailure(String id, String code, String message, String idempotencyKey) {
     return json("POST", "/v2/captures/" + pathPart(id) + "/structure/failure", object(Map.of("protocolVersion", "2", "code", code, "message", message)), CaptureOperation.class, headers("X-Idempotency-Key", requiredKey(idempotencyKey)));
   }
@@ -247,6 +274,7 @@ public final class CaptureRuntimeClient {
         headers("X-Idempotency-Key", key));
   }
 
+  /** Read the structuring session of a capture. */
   public StructuringSession getStructuringSession(String captureId) {
     return json(
         "GET",
@@ -256,6 +284,7 @@ public final class CaptureRuntimeClient {
         Map.of());
   }
 
+  /** Read one batch of a structuring session. */
   public StructuringBatch getStructuringBatch(String captureId, int batchIndex) {
     if (batchIndex < 0) throw new IllegalArgumentException("batchIndex must not be negative");
     return json(
@@ -271,6 +300,7 @@ public final class CaptureRuntimeClient {
     return getStructuringBatch(captureId, batchIndex);
   }
 
+  /** Submit the host's result for one structuring batch. */
   public StructuringSession submitStructuringBatch(
       String captureId, int batchIndex, SubmitStructuringBatch submission, String idempotencyKey) {
     if (batchIndex < 0) throw new IllegalArgumentException("batchIndex must not be negative");
@@ -283,8 +313,10 @@ public final class CaptureRuntimeClient {
         headers("X-Idempotency-Key", requiredKey(idempotencyKey)));
   }
 
+  /** Read the capture's event stream from the start until a terminal event. */
   public List<CaptureEvent> captureEvents(String id) { return captureEvents(id, null); }
 
+  /** Read the capture's event stream after {@code lastEventId} until a terminal event. */
   public List<CaptureEvent> captureEvents(String id, Long lastEventId) {
     discover();
     var requestHeaders = new HashMap<String, List<String>>();

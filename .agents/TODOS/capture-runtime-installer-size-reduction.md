@@ -38,9 +38,10 @@
   Windows x64 budgets with CI regression gates/uploads.
   Verify: `corepack pnpm nx run capture-runtime:size-regression-check --skip-nx-cache`.
 
-- [ ] Prove real DirectML OCR on a scanned PDF with non-empty OCR,
+- [x] Prove real DirectML OCR on a scanned PDF with non-empty OCR,
   `windowsml-dml` provenance, and no worker residue.
   Verify: `corepack pnpm nx run capture-workbench-desktop:smoke-real-desktop-ocr-directml`.
+  Done: Cert Prep's installed app OCR'd an image-only PDF with published 0.4.2 on 2026-09-28 (`windowsml_ocr` on `windowsml-dml`, non-empty text, clean app exit).
 
 - [ ] Prove real Whisper audio segments/time locators/provenance/offline restart
   and no worker residue.
