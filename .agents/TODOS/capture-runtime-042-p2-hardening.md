@@ -666,7 +666,9 @@ diagnostic and is not D4.
   LUID/ORT mapping, never CPU; retain the separate indeterminate-dGPU
   fail-closed regression. The later installed proof on the Capture Workbench
   app runs the canonical JPEG then the original PDF page 1, with cleanup
-  between them, before any Cert or LAW model process starts.
+  between them, before any Cert or LAW model process starts. Its target,
+  `capture-workbench-desktop:acceptance-real-ocr-gpu-selection`, does not exist
+  yet and must be created before that proof (run it with `--skip-nx-cache`).
 
   Prerequisite: D1/D2 design approval, current owner discovery, and the
   existing `capture-runtime:test-unit` target. RED proof: the focused test is
