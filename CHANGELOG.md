@@ -31,8 +31,6 @@ runtime, package lock, Python host, desktop host, and browser host versions.
 
 ### CI
 
-- Pull requests that only change `.agents/**` or Markdown skip the Windows
-  verification job; pushes to `main` always verify everything.
 - Release candidates read size budgets from the tooling ref.
 
 ## 0.4.2 (2026-09-27)

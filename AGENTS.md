@@ -11,5 +11,5 @@
 # Release and CI guidance
 
 - Follow `.agents/GUIDES/release-runbook.md` for the current release state, the publish procedure, and known pitfalls.
-- Push CI on `main` is release evidence: release candidates verify it for their source commit, so never skip or weaken it. Only pull requests that touch nothing but `.agents/**` or Markdown skip verification.
+- Push CI on `main` is release evidence: release candidates verify it for their source commit, so never skip or weaken it. Every pull request runs the full verification: contract tests read `.agents` TODOs and READMEs.
 - Launcher `cargo test` is the only place failed tests are retried; fix timing-sensitive tests at the source rather than adding retries elsewhere.

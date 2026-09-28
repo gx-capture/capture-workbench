@@ -27,38 +27,18 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Classify change scope
-        id: scope
-        shell: bash
-        run: |
-          set -euo pipefail
-          # Pushes (release CI evidence) always verify everything. Pull
-          # requests that only touch agent notes or Markdown skip the build.
-          full=true
-          if [ "${{ github.event_name }}" = pull_request ]; then
-            changed="$(git diff --name-only '${{ github.event.pull_request.base.sha }}' HEAD)"
-            if [ -n "$changed" ] && ! grep -Ev '^\.agents/|\.md$' <<<"$changed" >/dev/null; then
-              full=false
-            fi
-          fi
-          echo "full=$full" >> "$GITHUB_OUTPUT"
-          echo "Full verification: $full"
-
       - name: Install pnpm
-        if: ${{ steps.scope.outputs.full == 'true' }}
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
           version: 12.0.0
 
       - name: Install Node.js
-        if: ${{ steps.scope.outputs.full == 'true' }}
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 24
           cache: pnpm
 
       - name: Install Java 25 for the Maven SDK
-        if: ${{ steps.scope.outputs.full == 'true' }}
         uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
         with:
           distribution: temurin
@@ -66,34 +46,28 @@ jobs:
           cache: maven
 
       - name: Install uv and Python 3.12
-        if: ${{ steps.scope.outputs.full == 'true' }}
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           python-version: '3.12'
           enable-cache: true
 
       - name: Prepare Rust target
-        if: ${{ steps.scope.outputs.full == 'true' }}
         shell: pwsh
         run: rustup target add x86_64-pc-windows-msvc
 
       - name: Install workspace dependencies
-        if: ${{ steps.scope.outputs.full == 'true' }}
         shell: pwsh
         run: pnpm install --frozen-lockfile
 
       - name: Verify canonical release metadata
-        if: ${{ steps.scope.outputs.full == 'true' }}
         shell: pwsh
         run: pnpm nx run capture-runtime:classify-release-model-mode
 
       - name: Install Playwright Chromium
-        if: ${{ steps.scope.outputs.full == 'true' }}
         shell: pwsh
         run: pnpm exec playwright install chromium
 
       - name: Verify Capture Workbench package
-        if: ${{ steps.scope.outputs.full == 'true' }}
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -119,7 +93,6 @@ jobs:
           pnpm nx run capture-angular:clean-consumer-smoke
 
       - name: Verify reference app
-        if: ${{ steps.scope.outputs.full == 'true' }}
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -130,7 +103,6 @@ jobs:
           pnpm nx run capture-workbench:production-bundle-check
 
       - name: Verify release and promotion tooling
-        if: ${{ steps.scope.outputs.full == 'true' }}
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -147,7 +119,6 @@ jobs:
           pnpm nx run capture-tools:release-index-test
 
       - name: Verify capture runtime
-        if: ${{ steps.scope.outputs.full == 'true' }}
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -159,12 +130,10 @@ jobs:
           pnpm nx run capture-runtime:build
 
       - name: Build and verify optional engine workers
-        if: ${{ steps.scope.outputs.full == 'true' }}
         shell: pwsh
         run: pnpm nx run capture-runtime:verify-worker-boundaries
 
       - name: Build and verify the core-only Windows installer
-        if: ${{ steps.scope.outputs.full == 'true' }}
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -174,7 +143,6 @@ jobs:
           pnpm nx run capture-workbench-desktop:build-nsis
 
       - name: Verify Capture Workbench desktop product
-        if: ${{ steps.scope.outputs.full == 'true' }}
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -187,12 +155,11 @@ jobs:
           pnpm nx run capture-workbench-desktop:smoke-deterministic
 
       - name: Verify reference flow
-        if: ${{ steps.scope.outputs.full == 'true' }}
         shell: pwsh
         run: pnpm nx run capture-workbench-e2e:e2e
 
       - name: Upload reference flow Playwright artifacts
-        if: ${{ always() && steps.scope.outputs.full == 'true' }}
+        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: capture-workbench-reference-playwright-${{ github.run_id }}
@@ -201,7 +168,7 @@ jobs:
           retention-days: 7
 
       - name: Upload runtime packaging diagnostics
-        if: ${{ always() && steps.scope.outputs.full == 'true' }}
+        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: capture-runtime-packaging-${{ github.sha }}
