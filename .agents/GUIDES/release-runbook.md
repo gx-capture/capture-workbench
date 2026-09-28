@@ -100,5 +100,8 @@ candidate with `node tools/install-capture-workbench-dependencies.mts
 - pnpm 12 rejects `pnpm install --lockfile=false`.
 - GitHub Packages npm and Maven need a token even for public packages.
 - Launcher `cargo test` runs through `tools/cargo-test-retry-failed.ts`.
+- Local practical OCR runs: keep `CAPTURE_APP_DATA_DIR` short (installed OCR
+  worker paths beyond Windows MAX_PATH crash the worker) and set `CAPTURE_PORT`
+  together with `--port`, or the allowed-host check rejects requests.
 - Pull requests that only touch `.agents/**` or Markdown skip CI
   verification; push CI on `main` always runs in full.
