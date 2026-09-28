@@ -15,6 +15,10 @@ import httpx
 from capture_runtime.engine_catalog import EngineArtifactDescriptor, EngineModelFileDescriptor
 
 from ._engine_installation_errors import EngineInstallationError
+from ._engine_installation_limits import (
+    PARALLEL_DOWNLOAD_MIN_BYTES,
+    PARALLEL_DOWNLOAD_SEGMENTS,
+)
 
 _SMOKE_WORKER_MIRROR_OPT_IN = "CAPTURE_SMOKE_WORKER_MIRROR_OPT_IN"
 _SMOKE_WORKER_MIRROR_URL = "CAPTURE_SMOKE_WORKER_MIRROR_URL"
@@ -164,10 +168,15 @@ class HttpArtifactDownloader:
     def __init__(
         self,
         client_factory: Callable[[], httpx.AsyncClient] | None = None,
+        *,
+        parallel_min_bytes: int = PARALLEL_DOWNLOAD_MIN_BYTES,
+        parallel_segments: int = PARALLEL_DOWNLOAD_SEGMENTS,
     ) -> None:
         self._client_factory = client_factory or (
             lambda: httpx.AsyncClient(timeout=120, follow_redirects=True)
         )
+        self._parallel_min_bytes = parallel_min_bytes
+        self._parallel_segments = parallel_segments
 
     async def download(
         self,
@@ -177,45 +186,156 @@ class HttpArtifactDownloader:
         cancel_event: asyncio.Event,
         progress: Callable[[int], None],
     ) -> None:
-        copied = 0
-        digest = hashlib.sha256()
         try:
             async with self._client_factory() as client:
-                async with client.stream("GET", descriptor.url) as response:
-                    response.raise_for_status()
-                    declared = response.headers.get("content-length")
-                    if declared is not None:
-                        try:
-                            declared_bytes = int(declared)
-                        except ValueError as error:
-                            raise EngineInstallationError(
-                                "engine artifact Content-Length is invalid"
-                            ) from error
-                        if declared_bytes != descriptor.bytes:
-                            raise EngineInstallationError(
-                                "engine artifact Content-Length does not match catalog"
-                            )
-                    with destination.open("xb") as writer:
-                        async for chunk in response.aiter_bytes(_facade_download_chunk_bytes()):
-                            if cancel_event.is_set():
-                                raise asyncio.CancelledError
-                            copied += len(chunk)
-                            if copied > descriptor.bytes:
-                                raise EngineInstallationError(
-                                    "engine artifact exceeded catalog byte count"
-                                )
-                            writer.write(chunk)
-                            digest.update(chunk)
-                            progress(copied)
-                        writer.flush()
-                        os.fsync(writer.fileno())
+                # Release hosts throttle each connection, so large artifacts are
+                # fetched as concurrent byte ranges when the server supports them.
+                if (
+                    self._parallel_segments > 1
+                    and descriptor.bytes >= self._parallel_min_bytes
+                    and await _supports_byte_ranges(client, descriptor)
+                ):
+                    await self._download_ranges(
+                        client,
+                        descriptor,
+                        destination,
+                        cancel_event=cancel_event,
+                        progress=progress,
+                    )
+                    copied, digest = await asyncio.to_thread(_file_size_and_sha256, destination)
+                else:
+                    copied, digest = await self._download_stream(
+                        client,
+                        descriptor,
+                        destination,
+                        cancel_event=cancel_event,
+                        progress=progress,
+                    )
             if copied != descriptor.bytes:
                 raise EngineInstallationError("engine artifact byte count does not match catalog")
-            if digest.hexdigest() != descriptor.sha256:
+            if digest != descriptor.sha256:
                 raise EngineInstallationError("engine artifact checksum does not match catalog")
         except BaseException:
             destination.unlink(missing_ok=True)
             raise
+
+    async def _download_ranges(
+        self,
+        client: httpx.AsyncClient,
+        descriptor: EngineArtifactDescriptor,
+        destination: Path,
+        *,
+        cancel_event: asyncio.Event,
+        progress: Callable[[int], None],
+    ) -> None:
+        size = descriptor.bytes
+        step = -(-size // self._parallel_segments)
+        ranges = [(start, min(start + step, size) - 1) for start in range(0, size, step)]
+        with destination.open("xb") as writer:
+            writer.truncate(size)
+        received = [0] * len(ranges)
+
+        async def segment(index: int, start: int, end: int) -> None:
+            expected = end - start + 1
+            headers = {"Range": f"bytes={start}-{end}"}
+            async with client.stream("GET", descriptor.url, headers=headers) as response:
+                if (
+                    response.status_code != 206
+                    or response.headers.get("content-range") != f"bytes {start}-{end}/{size}"
+                ):
+                    raise EngineInstallationError("engine artifact range response is invalid")
+                with destination.open("r+b") as writer:
+                    writer.seek(start)
+                    async for chunk in response.aiter_bytes(_facade_download_chunk_bytes()):
+                        if cancel_event.is_set():
+                            raise asyncio.CancelledError
+                        received[index] += len(chunk)
+                        if received[index] > expected:
+                            raise EngineInstallationError(
+                                "engine artifact range exceeded its length"
+                            )
+                        writer.write(chunk)
+                        progress(sum(received))
+                    writer.flush()
+                    os.fsync(writer.fileno())
+            if received[index] != expected:
+                raise EngineInstallationError("engine artifact range is incomplete")
+
+        tasks = [
+            asyncio.create_task(segment(index, start, end))
+            for index, (start, end) in enumerate(ranges)
+        ]
+        try:
+            await asyncio.gather(*tasks)
+        except BaseException:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
+
+    async def _download_stream(
+        self,
+        client: httpx.AsyncClient,
+        descriptor: EngineArtifactDescriptor,
+        destination: Path,
+        *,
+        cancel_event: asyncio.Event,
+        progress: Callable[[int], None],
+    ) -> tuple[int, str]:
+        copied = 0
+        digest = hashlib.sha256()
+        async with client.stream("GET", descriptor.url) as response:
+            response.raise_for_status()
+            declared = response.headers.get("content-length")
+            if declared is not None:
+                try:
+                    declared_bytes = int(declared)
+                except ValueError as error:
+                    raise EngineInstallationError(
+                        "engine artifact Content-Length is invalid"
+                    ) from error
+                if declared_bytes != descriptor.bytes:
+                    raise EngineInstallationError(
+                        "engine artifact Content-Length does not match catalog"
+                    )
+            with destination.open("xb") as writer:
+                async for chunk in response.aiter_bytes(_facade_download_chunk_bytes()):
+                    if cancel_event.is_set():
+                        raise asyncio.CancelledError
+                    copied += len(chunk)
+                    if copied > descriptor.bytes:
+                        raise EngineInstallationError("engine artifact exceeded catalog byte count")
+                    writer.write(chunk)
+                    digest.update(chunk)
+                    progress(copied)
+                writer.flush()
+                os.fsync(writer.fileno())
+        return copied, digest.hexdigest()
+
+
+async def _supports_byte_ranges(
+    client: httpx.AsyncClient, descriptor: EngineArtifactDescriptor
+) -> bool:
+    """Probe one byte; any failure falls back to a single sequential stream."""
+
+    try:
+        async with client.stream("GET", descriptor.url, headers={"Range": "bytes=0-0"}) as response:
+            if response.status_code != 206:
+                return False
+            content_range: str | None = response.headers.get("content-range")
+            return content_range == f"bytes 0-0/{descriptor.bytes}"
+    except httpx.HTTPError:
+        return False
+
+
+def _file_size_and_sha256(path: Path) -> tuple[int, str]:
+    digest = hashlib.sha256()
+    size = 0
+    with path.open("rb") as reader:
+        while chunk := reader.read(_facade_download_chunk_bytes()):
+            size += len(chunk)
+            digest.update(chunk)
+    return size, digest.hexdigest()
 
 
 class LocalModelFileDownloader:

@@ -11,6 +11,10 @@ MAX_COMPRESSION_RATIO = 200
 FILES_MANIFEST_NAME = "files-manifest.json"
 MAX_FILES_MANIFEST_BYTES = 1024 * 1024
 DOWNLOAD_CHUNK_BYTES = 1024 * 1024
+# Artifacts at least this large download as concurrent byte ranges when the
+# host supports them; release CDNs throttle each connection.
+PARALLEL_DOWNLOAD_MIN_BYTES = 16 * 1024 * 1024
+PARALLEL_DOWNLOAD_SEGMENTS = 4
 MAX_DIRECT_MODEL_REDIRECTS = 5
 DEFAULT_ACTIVE_ENGINE_RESOLUTION_TIMEOUT_SECONDS = 60.0
 WINDOWS_FORBIDDEN_PATH_CHARACTERS = frozenset('<>:"|?*')

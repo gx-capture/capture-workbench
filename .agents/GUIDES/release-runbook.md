@@ -19,7 +19,8 @@ actually shipped; workflow files remain the source of truth for inputs.
   practical OCR: Cert Prep (`WodenWang820118/cert-prep`) and LAW
   (`WodenWang820118/gx.law-prep`: Java engine → Python AI service → runtime).
 - Known limitations: handwriting OCR quality (printed text is the floor);
-  first-run engine download from GitHub releases takes roughly 9–17 minutes;
+  first-run engine download from GitHub releases takes roughly 9–17 minutes
+  with 0.4.2 (the next release downloads byte ranges in parallel, ~5 minutes);
   installed OCR worker paths beyond Windows MAX_PATH crash the worker.
 
 ## Workflow map

@@ -84,7 +84,9 @@ async function downloadAsset(
   assertSafeAssetName(name);
   const response = await fetch(`${baseUrl}/${encodeURIComponent(name)}`, {
     redirect: 'follow',
-    signal: AbortSignal.timeout(10 * 60_000),
+    // Release assets can download at ~170 KB/s per connection; match the
+    // 30-minute engine installation budget instead of failing first.
+    signal: AbortSignal.timeout(30 * 60_000),
   });
   const finalUrl = new URL(response.url);
   if (
