@@ -408,25 +408,49 @@ export type PypiPreflightBinding = Awaited<
   ReturnType<typeof validateCandidate>
 >;
 
+// PyPI's JSON API can lag an accepted upload by minutes, so the mandatory
+// readback waits for the version to appear before it reports a 404.
+const READBACK_ATTEMPTS = 20;
+const READBACK_DELAY_MS = 15_000;
+
+export type Wait = (milliseconds: number) => Promise<void>;
+
+const sleep: Wait = (milliseconds) =>
+  new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+function fetchMetadata(
+  project: string,
+  version: string,
+  fetch: typeof globalThis.fetch,
+): Promise<Response> {
+  return fetch(`https://pypi.org/pypi/${project}/${version}/json`, {
+    headers: {
+      Accept: 'application/json',
+      'User-Agent': 'gx-capture-release-verifier',
+    },
+    redirect: 'error',
+    signal: AbortSignal.timeout(30_000),
+  });
+}
+
 async function reconcile(
   binding: PypiPreflightBinding,
   preflight: boolean,
   fetch: typeof globalThis.fetch,
+  wait: Wait,
 ): Promise<void> {
   const version = binding.releaseVersion;
   for (const project of PROJECTS) {
-    const response = await fetch(
-      `https://pypi.org/pypi/${project}/${version}/json`,
-      {
-        headers: {
-          Accept: 'application/json',
-          'User-Agent': 'gx-capture-release-verifier',
-        },
-        redirect: 'error',
-        signal: AbortSignal.timeout(30_000),
-      },
-    );
+    let response = await fetchMetadata(project, version, fetch);
     if (preflight && response.status === 404) continue;
+    for (
+      let attempt = 1;
+      response.status === 404 && attempt < READBACK_ATTEMPTS;
+      attempt++
+    ) {
+      await wait(READBACK_DELAY_MS);
+      response = await fetchMetadata(project, version, fetch);
+    }
     assert(
       response.status === 200,
       `PyPI metadata is unavailable (HTTP ${response.status}).`,
@@ -479,7 +503,7 @@ export async function preflightPypiCandidate(
   fetch: typeof globalThis.fetch = globalThis.fetch,
 ): Promise<PypiPreflightBinding> {
   const binding = await validateCandidate(input);
-  await reconcile(binding, true, fetch);
+  await reconcile(binding, true, fetch, sleep);
   assert.deepEqual(
     await validateCandidate(input),
     binding,
@@ -492,6 +516,7 @@ export async function recordPypiCandidate(
   input: PypiCandidateInput,
   savedBinding: unknown,
   fetch: typeof globalThis.fetch = globalThis.fetch,
+  wait: Wait = sleep,
 ) {
   const binding = await validateCandidate(input);
   assert.deepEqual(
@@ -499,7 +524,7 @@ export async function recordPypiCandidate(
     binding,
     'PyPI preflight binding differs from the current candidate.',
   );
-  await reconcile(binding, false, fetch);
+  await reconcile(binding, false, fetch, wait);
   assert.deepEqual(
     await validateCandidate(input),
     binding,
