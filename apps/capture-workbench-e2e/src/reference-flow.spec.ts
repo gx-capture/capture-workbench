@@ -1,3 +1,7 @@
+// Browser reference flow (CI): the reference app in a browser with a fake
+// Tauri bridge and scripted runtime responses. It checks the Traditional
+// Chinese setup wizard, install actions against the runtime catalog, and the
+// document queue, without real OCR.
 import { expect, test, type Page } from '@playwright/test';
 
 test('shows one explicit Traditional Chinese setup wizard for missing core requirements', async ({ page }) => {

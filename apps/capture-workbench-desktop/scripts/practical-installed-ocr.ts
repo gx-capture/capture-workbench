@@ -1,3 +1,11 @@
+// Practical installed OCR (`acceptance-practical-installed`): the release-grade
+// check of what a user gets from the installer. It installs the side-by-side
+// installer from build-practical-installer (verified against its provenance),
+// launches the installed app, installs the OCR engine from the published or
+// candidate worker bytes, imports a run-owned copy of the image or PDF given by
+// --input, and waits for the durable OCR result. Raw text and unmasked
+// screenshots stay private for human review; the evidence records only counts
+// and identities. Teardown always runs and removes only run-owned state.
 import { execFile, spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';

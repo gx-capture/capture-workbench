@@ -173,9 +173,6 @@ function exceptionReason(relativePath) {
   if (relativePath === 'apps/capture-workbench-desktop/scripts/ocr-semantic-evidence.ts') {
     return 'real OCR semantic evidence CLI boundary';
   }
-  if (relativePath === 'apps/capture-workbench-desktop/scripts/real-jpeg-acceptance-coordinator.ts') {
-    return 'real JPEG acceptance process boundary';
-  }
   if (relativePath === 'tools/acceptance-checkpoint-journal.ts') {
     return 'acceptance checkpoint journal filesystem boundary';
   }

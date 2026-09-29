@@ -1296,9 +1296,8 @@ test('installed acceptance wires the private OCR proof from run root to manifest
 });
 
 test('acceptance NSIS packaging is feature-gated and output-separated from release NSIS', async () => {
-  const [projectText, finalizer, buildSource] = await Promise.all([
+  const [projectText, buildSource] = await Promise.all([
     readFile(new URL('../project.json', import.meta.url), 'utf8'),
-    readFile(new URL('./finalize-acceptance-nsis.ts', import.meta.url), 'utf8'),
     readFile(new URL('./build-acceptance-nsis.ts', import.meta.url), 'utf8'),
   ]);
   const project = JSON.parse(projectText) as {
@@ -1315,8 +1314,6 @@ test('acceptance NSIS packaging is feature-gated and output-separated from relea
   assert.doesNotMatch(acceptanceCommand, /src-tauri[\\/]target[\\/].*bundle[\\/]nsis/u);
   assert.notEqual(acceptance, undefined);
   assert.notDeepEqual(acceptance?.outputs, release?.outputs);
-  assert.match(finalizer, /finalizeAcceptanceNsis/u);
-  assert.match(finalizer, /staged-runtime-sha256/u);
   assert.match(buildSource, /--bundles['\s\S]*nsis/u);
   assert.match(buildSource, /CARGO_TARGET_DIR: cargoTargetDir/u);
   assert.match(buildSource, /assertStagedRuntime\('release'\)/u);

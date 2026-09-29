@@ -1,3 +1,9 @@
+// Real PDF OCR through the Capture Runtime HTTP API, with no UI: start the
+// runtime executable from a release directory, install the OCR worker, upload
+// CAPTURE_PDF_OCR_E2E_PDF, wait for extraction, and check the page count
+// (CAPTURE_PDF_OCR_E2E_EXPECTED_PAGES) and text anchors
+// (CAPTURE_PDF_OCR_E2E_EXPECTED_ANCHORS_JSON). Used by local-package/ (a local
+// release build) and online-package/ (the published GitHub release).
 import assert from 'node:assert/strict';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';

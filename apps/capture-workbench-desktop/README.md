@@ -117,6 +117,11 @@ fixture. Only the packaged executable can be overridden for local runs with
 generated catalog and source lock are the approved 0.4.2 model-enabled
 contract.
 
+To also check progressive audio, first record a reference with
+`node apps/capture-workbench-desktop/scripts/progressive-audio-oracle.ts`
+(`CAPTURE_PROGRESSIVE_AUDIO_ORACLE_SOURCE` and `_OUTPUT`), then pass the output
+file as `CAPTURE_REAL_MEDIA_MODEL_AUDIO_ORACLE`.
+
 ## Installed deterministic smoke
 
 The installed deterministic smoke is intentionally opt-in because it performs a

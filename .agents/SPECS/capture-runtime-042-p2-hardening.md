@@ -80,7 +80,6 @@ symbols and paths, not proposed placeholders.
 | `tools/release/version-sources.ts` | `collectReleaseVersionEntries()` and its existing version-source inventory | `tools/release/version-sources.test.ts`, target `capture-tools:release-version-test`; first implementation slice owns the inventory extension and Nx upgrade |
 | `tools/three-project-acceptance.ts` | `runAcceptanceSequence`, `runCaptureWorkbenchAcceptance`, `validateChildManifest`, `validateTerminalManifest`, `validateCleanupEvidence`, and `verifyRecordedCleanupScope` | Sole producer runner for Capture private JPEG, Capture scanned PDF page 1, Cert, and LAW; it consumes the proposed `@capture-runtime/acceptance-contract` package; `tools/acceptance-contract.ts:writeAcceptanceManifest`/`readAcceptanceManifestTolerant` are consumer-adapter migration seams only |
 | `packages/capture-acceptance-contract/` (proposed) | `schemas/*.schema.json`, `src/canonical-json.ts`, `src/codecs.ts`, `src/export.ts`, `src/hash.ts`, `src/manifest.ts`, `src/index.ts`, `tools/generate.ts`, `tools/create-bundle.ts`, `package.json`, and `project.json` | Canonical generated acceptance package/bundle, semantic manifest, and hash authority; creation is D2 discovery-and-stop and its exact bytes/digests are D3/D6 artifacts |
-| `apps/capture-workbench-desktop/scripts/real-jpeg-acceptance-coordinator.ts` | `runRealJpegAcceptance` and `runRealJpegAcceptanceCli` | Standalone coordinator to migrate into `tools/three-project-acceptance.ts:runAcceptanceSequence`, then delete only after residual callers, async-boundary exceptions, and replacement tests are proven |
 
 Before an implementation slice, run these read-only discovery commands and
 record the resolved targets. A missing target is discovery-and-stop; it is not
@@ -1497,11 +1496,8 @@ unique within a run and never reused across candidate/prior sessions:
 
 Each child writes only its semantic result. The producer validates it, proves
 cleanup, then writes the immutable wire before the next `sequenceIndex`.
-The standalone
-`apps/capture-workbench-desktop/scripts/real-jpeg-acceptance-coordinator.ts:runRealJpegAcceptance`
-and `runRealJpegAcceptanceCli` are migration/deletion surfaces, not a second
-runner. Delete them only after residual-caller, async-boundary, and replacement
-tests are green.
+`runAcceptanceSequence` is the only runner; there is no standalone JPEG
+coordinator.
 
 Identity derivation is deterministic and scope-bound: `runIdDigest` is the
 lowercase SHA-256 of the private run id; `childId` is the SHA-256 of canonical
