@@ -52,7 +52,7 @@ test('projects the durable library detail into privacy-safe JPEG semantic eviden
       },
     }],
     provenance: {
-      runtimeVersion: '0.4.2',
+      runtimeVersion: '0.4.3',
       contractSha256: CONTRACT_SHA,
       engine: 'windowsml-ocr',
       model: 'ppocrv6-traditional-multilingual',
@@ -115,7 +115,7 @@ test('projects the durable awaiting OCR checkpoint without inventing a structure
       },
     }],
     provenance: {
-      runtimeVersion: '0.4.2',
+      runtimeVersion: '0.4.3',
       contractSha256: CONTRACT_SHA,
       engine: 'windowsml-ocr',
       model: 'ppocrv6-traditional-multilingual',
@@ -341,7 +341,7 @@ function expectedIdentity(includeProof = true) {
     fixtureName: 'ocr_test_image.jpeg',
     sourceKind: 'image' as const,
     sourceSha256: SOURCE_SHA,
-    runtimeVersion: '0.4.2',
+    runtimeVersion: '0.4.3',
     runtimeSha256: RUNTIME_SHA,
     contractSha256: CONTRACT_SHA,
     workerSha256: WORKER_SHA,
@@ -424,7 +424,7 @@ function completedDetail(): TestDetail {
     },
     provenance: {
       status: 'resolved',
-      runtimeVersion: '0.4.2',
+      runtimeVersion: '0.4.3',
       contractSha256: CONTRACT_SHA,
       engine: 'windowsml-ocr',
       model: 'ppocrv6-traditional-multilingual',
@@ -454,7 +454,7 @@ function failedPdfDetail(): TestDetail {
   const base = completedDetail().ocrEvidence;
   const unavailable = {
     status: 'unavailable',
-    runtimeVersion: '0.4.2',
+    runtimeVersion: '0.4.3',
     contractSha256: CONTRACT_SHA,
     engine: null,
     model: null,

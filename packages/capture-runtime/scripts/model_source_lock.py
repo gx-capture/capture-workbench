@@ -1,4 +1,4 @@
-"""Fail-closed validation for the v0.4.2 direct-model source lock."""
+"""Fail-closed validation for the v0.4.3 direct-model source lock."""
 
 from __future__ import annotations
 
@@ -12,8 +12,8 @@ from typing import Any
 from urllib.parse import urlsplit
 
 LOCK_VERSION = "2"
-RELEASE_VERSION = "0.4.2"
-COMMIT_A_SHA = "c219cf9d887056b782c2a9f1d3a9d1b79467f0e7"
+RELEASE_VERSION = "0.4.3"
+COMMIT_A_SHA = "c78c798c53bbe915f8420fb996074de20268dca3"
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 FIRST_PARTY_REPOSITORY_ROOT = "packages/capture-runtime/model-sources/commit-a"
 FIRST_PARTY_ROOT = (

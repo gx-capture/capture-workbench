@@ -1,6 +1,6 @@
 [package]
 name = "capture-activation-probe"
-version = "0.4.2"
+version = "0.4.3"
 description = "Private Windows activation ordering probe used by capture-sidecar-launcher tests."
 edition = "2021"
 publish = false

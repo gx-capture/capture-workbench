@@ -40,7 +40,7 @@ for _generated_name in (
 
 CAPTURE_API_VERSION = "2.0"
 CAPTURE_DOCUMENT_SCHEMA_VERSION = _generated.CAPTURE_DOCUMENT_SCHEMA_VERSION
-CAPTURE_RUNTIME_VERSION = "0.4.2"
+CAPTURE_RUNTIME_VERSION = "0.4.3"
 CAPTURE_DOCUMENT_SCHEMA_ID = (
     "https://github.com/gx-capture/capture-workbench/schema/capture-document-v2.schema.json"
 )

@@ -17,21 +17,21 @@
       "licenseBytes": 1087,
       "licensePath": "licenses/LICENSE.txt",
       "licenseSha256": "20d8153042f147e730a2265e35e3862f8d1ad67b5f6804d44fb81e7dfbc5818b",
-      "licenseUrl": "https://raw.githubusercontent.com/gx-capture/capture-workbench/c219cf9d887056b782c2a9f1d3a9d1b79467f0e7/packages/capture-runtime/model-sources/commit-a/licenses/LICENSE.txt",
+      "licenseUrl": "https://raw.githubusercontent.com/gx-capture/capture-workbench/c78c798c53bbe915f8420fb996074de20268dca3/packages/capture-runtime/model-sources/commit-a/licenses/LICENSE.txt",
       "mediaType": "image/png",
       "noticeBytes": 303,
       "noticePath": "licenses/NOTICE.txt",
-      "noticeSha256": "a4ea8a97835816cdab007d221d1ffe9a2bb0e61825148d73f26c886cda7dcc97",
-      "noticeUrl": "https://raw.githubusercontent.com/gx-capture/capture-workbench/c219cf9d887056b782c2a9f1d3a9d1b79467f0e7/packages/capture-runtime/model-sources/commit-a/licenses/NOTICE.txt",
+      "noticeSha256": "5289f092bce10f65a45413472c4fe2a873c9201095a2bf7f599903f7eb8590f3",
+      "noticeUrl": "https://raw.githubusercontent.com/gx-capture/capture-workbench/c78c798c53bbe915f8420fb996074de20268dca3/packages/capture-runtime/model-sources/commit-a/licenses/NOTICE.txt",
       "owner": "gx-capture/capture-workbench",
       "pdfBytes": 2421,
       "pdfSha256": "5eec85d2b2e98e06577cb5310d1b3037ca26f03d06d85a292ae78b68d4c57f30",
-      "pdfUrl": "https://raw.githubusercontent.com/gx-capture/capture-workbench/c219cf9d887056b782c2a9f1d3a9d1b79467f0e7/packages/capture-runtime/model-sources/commit-a/fixtures/ocr-scanned.pdf",
+      "pdfUrl": "https://raw.githubusercontent.com/gx-capture/capture-workbench/c78c798c53bbe915f8420fb996074de20268dca3/packages/capture-runtime/model-sources/commit-a/fixtures/ocr-scanned.pdf",
       "redistributable": true,
-      "revision": "c219cf9d887056b782c2a9f1d3a9d1b79467f0e7",
+      "revision": "c78c798c53bbe915f8420fb996074de20268dca3",
       "sha256": "7d61f4835837c4c387a0d46c4f21f7442fe22aab3f14f330b86f6857f5f3bc82",
       "spdx": "MIT",
-      "url": "https://raw.githubusercontent.com/gx-capture/capture-workbench/c219cf9d887056b782c2a9f1d3a9d1b79467f0e7/packages/capture-runtime/model-sources/commit-a/fixtures/ocr-reference.png"
+      "url": "https://raw.githubusercontent.com/gx-capture/capture-workbench/c78c798c53bbe915f8420fb996074de20268dca3/packages/capture-runtime/model-sources/commit-a/fixtures/ocr-reference.png"
     },
     {
       "bytes": 11005641,
@@ -52,10 +52,10 @@
     }
   ],
   "lockVersion": "2",
-  "releaseVersion": "0.4.2",
+  "releaseVersion": "0.4.3",
   "requirements": [
     {
-      "artifactVersion": "0.4.2",
+      "artifactVersion": "0.4.3",
       "entryPoint": "model",
       "files": [
         {
@@ -142,7 +142,7 @@
               "model/rec/inference.yml",
               "model/rec/ppocrv6_dict.txt"
             ],
-            "sourceCommit": "c219cf9d887056b782c2a9f1d3a9d1b79467f0e7",
+            "sourceCommit": "c78c798c53bbe915f8420fb996074de20268dca3",
             "toolVersions": {
               "generator": "commit-a-v2",
               "python": "3.12.12"
@@ -154,10 +154,10 @@
           "owner": "gx-capture/capture-workbench",
           "path": "model/pipeline.json",
           "redirectHosts": [],
-          "revision": "c219cf9d887056b782c2a9f1d3a9d1b79467f0e7",
-          "sha256": "729f2dc6dada651630d2409866786b1e9b361f66eb8cb9daeeb4343206e863da",
+          "revision": "c78c798c53bbe915f8420fb996074de20268dca3",
+          "sha256": "2b13583d8b5533478d72d8b61a0dc09daa48982d8aaaa42105aa1db3d32c19f8",
           "spdx": "MIT",
-          "url": "https://raw.githubusercontent.com/gx-capture/capture-workbench/c219cf9d887056b782c2a9f1d3a9d1b79467f0e7/packages/capture-runtime/model-sources/commit-a/model/pipeline.json"
+          "url": "https://raw.githubusercontent.com/gx-capture/capture-workbench/c78c798c53bbe915f8420fb996074de20268dca3/packages/capture-runtime/model-sources/commit-a/model/pipeline.json"
         },
         {
           "bytes": 76554979,
@@ -212,16 +212,16 @@
           "owner": "gx-capture/capture-workbench",
           "path": "provenance/commit-a.json",
           "redirectHosts": [],
-          "revision": "c219cf9d887056b782c2a9f1d3a9d1b79467f0e7",
-          "sha256": "9dcfcd8cb9c16f31a92622e008b49fa02e7948d16cb8516a264a168163211a96",
+          "revision": "c78c798c53bbe915f8420fb996074de20268dca3",
+          "sha256": "cd43570f78af40823179f97428aa333d3c445c795d1b06a41db838c03f1a33a0",
           "spdx": "MIT",
-          "url": "https://raw.githubusercontent.com/gx-capture/capture-workbench/c219cf9d887056b782c2a9f1d3a9d1b79467f0e7/packages/capture-runtime/model-sources/commit-a/provenance/commit-a.json"
+          "url": "https://raw.githubusercontent.com/gx-capture/capture-workbench/c78c798c53bbe915f8420fb996074de20268dca3/packages/capture-runtime/model-sources/commit-a/provenance/commit-a.json"
         }
       ],
       "requirementId": "windowsml-ocr"
     },
     {
-      "artifactVersion": "0.4.2",
+      "artifactVersion": "0.4.3",
       "entryPoint": "model",
       "files": [
         {

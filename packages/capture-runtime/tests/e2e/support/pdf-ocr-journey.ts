@@ -342,6 +342,8 @@ export function isolatedEnvironment(
     CAPTURE_APP_DATA_DIR: appDataDirectory,
     CAPTURE_STRUCTURING_PROVIDER: 'host',
     CAPTURE_EXTRACTION_PROVIDER: 'runtime',
+    // Prove the real download path: never reuse the machine engine cache.
+    CAPTURE_ENGINE_CACHE_DIR: 'off',
     ...workerEnvironment,
     ...localModelEnvironment,
   };

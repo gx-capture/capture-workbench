@@ -21,13 +21,20 @@ Capture Workbench follows an explicit 0.x compatibility policy:
 The consumer consistency check is a permanent CI gate for the declared
 runtime, package lock, Python host, desktop host, and browser host versions.
 
+## 0.4.3
+
 ### Runtime
 
 - Engine artifacts of 16 MiB or more download as four concurrent byte ranges
   when the host supports them, falling back to one stream otherwise; size and
   SHA-256 are still verified. The 152 MB OCR engine took 4.7 minutes instead of
-  roughly 15 (GitHub Releases served ~170 KB/s per connection). Ships with the
-  next release; 0.4.2 keeps the single stream.
+  roughly 15 when GitHub Releases served ~170 KB/s per connection.
+- Engine workers and model files are kept in a machine-wide cache
+  (`%LOCALAPPDATA%\gx-capture\engine-cache`), keyed by SHA-256 and re-verified
+  on every read. A second host, a fresh app-data directory, or a reinstall
+  copies the verified bytes instead of downloading them again; entries unused
+  for 60 days are evicted. Set `CAPTURE_ENGINE_CACHE_DIR` to move the cache or
+  to `off` to disable it.
 
 ### CI
 
