@@ -277,10 +277,35 @@ test('preflight permits exact wheel-only, sdist-only and complete retries but re
       else await recordPypiCandidate(fixture.input, binding, remote(urls));
     }
     const binding = await preflightPypiCandidate(fixture.input, absent);
+    const waits: number[] = [];
     await assert.rejects(
-      recordPypiCandidate(fixture.input, binding, absent),
+      recordPypiCandidate(fixture.input, binding, absent, async (ms) => {
+        waits.push(ms);
+      }),
       /HTTP 404/u,
     );
+    assert.equal(waits.length, 19, 'readback gives up after a bounded wait');
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('readback waits for a just-published version to appear on PyPI', async () => {
+  const fixture = await packageFixture();
+  try {
+    const binding = await preflightPypiCandidate(fixture.input, absent);
+    const published = remote();
+    let requests = 0;
+    const lagging: typeof fetch = async (url, init) =>
+      ++requests <= 2 ? absent(url, init) : published(url, init);
+    const ledger = await recordPypiCandidate(
+      fixture.input,
+      binding,
+      lagging,
+      async () => {},
+    );
+    assert.equal(requests, 3);
+    assert.equal(ledger.status, 'published');
   } finally {
     await rm(fixture.root, { recursive: true, force: true });
   }
