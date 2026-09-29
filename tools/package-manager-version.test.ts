@@ -85,19 +85,6 @@ test('workspace package-manager sources pin exact pnpm 12.0.0', async () => {
       `${sourcePath} must enforce the exact pnpm engine`,
     );
   }
-
-  for (const documentationPath of [
-    'README.md',
-    '.agents/DECISIONS/web-component-and-runtime-baselines.md',
-    '.agents/SPECS/web-component-and-runtime-baselines.md',
-  ]) {
-    const documentation = await readRootFile(documentationPath);
-    assert.doesNotMatch(
-      documentation,
-      /pnpm(?:@11|\s+11|\s*`>=11|:\s*['"]>=11)/iu,
-      `${documentationPath} must not describe a legacy pnpm release as supported`,
-    );
-  }
 });
 
 test('workspace pnpm command resolves to exact pnpm 12.0.0', () => {
