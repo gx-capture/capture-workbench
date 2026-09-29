@@ -103,6 +103,7 @@ enum ProbeError {
     HttpNonblocking,
     HttpServer,
     HttpRequest,
+    HttpClientDisconnected,
 }
 
 impl fmt::Display for ProbeError {
@@ -116,6 +117,7 @@ impl fmt::Display for ProbeError {
             Self::HttpNonblocking => "activation probe HTTP listener could not be configured",
             Self::HttpServer => "activation probe HTTP server failed",
             Self::HttpRequest => "activation probe HTTP request was invalid",
+            Self::HttpClientDisconnected => "activation probe HTTP client disconnected",
         };
         formatter.write_str(message)
     }
@@ -830,6 +832,7 @@ fn serve_http_until(config: &ProbeConfig, overall_deadline: Instant) -> Result<(
     let mut idle_deadline = overall_deadline;
     let mut served_authorized_request = false;
     let mut accepted_connections = 0usize;
+    let mut disconnected_connections = 0usize;
     loop {
         let deadline = overall_deadline.min(idle_deadline);
         if Instant::now() >= deadline {
@@ -837,10 +840,11 @@ fn serve_http_until(config: &ProbeConfig, overall_deadline: Instant) -> Result<(
                 return Ok(());
             }
             note_http_failure(format!(
-                "no authorized request within {} ms of listening on port {}; {} connection(s) accepted",
+                "no authorized request within {} ms of listening on port {}; {} connection(s) accepted, {} dropped by the client",
                 started.elapsed().as_millis(),
                 config.port,
-                accepted_connections
+                accepted_connections,
+                disconnected_connections
             ));
             return Err(ProbeError::HttpServer);
         }
@@ -848,6 +852,15 @@ fn serve_http_until(config: &ProbeConfig, overall_deadline: Instant) -> Result<(
             Ok((mut stream, _)) => {
                 accepted_connections += 1;
                 let handled = handle_http_connection(&mut stream, config, deadline);
+                // A client that gives up and reconnects (a loaded runner's read
+                // timeout) drops only its own connection, as with a real server.
+                if handled == Err(ProbeError::HttpClientDisconnected) {
+                    disconnected_connections += 1;
+                    if let Ok(mut slot) = HTTP_FAILURE_DETAIL.lock() {
+                        slot.take();
+                    }
+                    continue;
+                }
                 if let Err(error) = &handled {
                     let inner = HTTP_FAILURE_DETAIL
                         .lock()
@@ -1082,7 +1095,7 @@ fn read_http_request(stream: &mut TcpStream, deadline: Instant) -> Result<Vec<u8
             .set_read_timeout(Some(remaining.min(HTTP_IO_TIMEOUT)))
             .map_err(|_| ProbeError::HttpRequest)?;
         match stream.read(&mut chunk) {
-            Ok(0) => return Err(ProbeError::HttpRequest),
+            Ok(0) => return Err(ProbeError::HttpClientDisconnected),
             Ok(count) => {
                 request.extend_from_slice(&chunk[..count]);
                 if request.len() > MAX_HTTP_REQUEST_BYTES {
@@ -1093,6 +1106,9 @@ fn read_http_request(stream: &mut TcpStream, deadline: Instant) -> Result<Vec<u8
                 }
             }
             Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) if client_disconnected(&error) => {
+                return Err(ProbeError::HttpClientDisconnected);
+            }
             Err(_) => return Err(ProbeError::HttpRequest),
         }
     }
@@ -1229,6 +1245,9 @@ fn write_http_bytes(
             }
             Ok(count) => written += count,
             Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) if client_disconnected(&error) => {
+                return Err(ProbeError::HttpClientDisconnected);
+            }
             Err(error) => {
                 note_http_failure(format!("response write failed: {:?}", error.kind()));
                 return Err(ProbeError::HttpServer);
@@ -1243,9 +1262,21 @@ fn write_http_bytes(
         match stream.flush() {
             Ok(()) => return Ok(()),
             Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) if client_disconnected(&error) => {
+                return Err(ProbeError::HttpClientDisconnected);
+            }
             Err(_) => return Err(ProbeError::HttpServer),
         }
     }
+}
+
+fn client_disconnected(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::ConnectionAborted
+            | io::ErrorKind::ConnectionReset
+            | io::ErrorKind::BrokenPipe
+    )
 }
 
 fn remaining_http_budget(deadline: Instant) -> Option<Duration> {
@@ -2452,6 +2483,51 @@ mod tests {
             Ok(true)
         );
         assert!(response.starts_with(b"HTTP/1.1 200 OK"));
+    }
+
+    #[test]
+    fn a_connection_dropped_by_the_client_does_not_stop_the_server() {
+        let directory = tempdir();
+        let reservation = TcpListener::bind((HOST, 0)).expect("HTTP test port");
+        let port = reservation.local_addr().expect("HTTP test address").port();
+        drop(reservation);
+        let mut config = config(&directory.path, "session-1", 0);
+        config.port = port;
+        config.http_mode = Some(HttpMode::Ready);
+        config.token = Some(TEST_HTTP_TOKEN.into());
+        let server_config = config.clone();
+        let server = thread::spawn(move || {
+            serve_http_until(&server_config, Instant::now() + Duration::from_secs(5))
+        });
+        let address = format!("{HOST}:{port}").parse().expect("loopback address");
+        let connect = || {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            loop {
+                match TcpStream::connect_timeout(&address, Duration::from_millis(50)) {
+                    Ok(stream) => return stream,
+                    Err(_) if Instant::now() < deadline => thread::sleep(HTTP_RETRY),
+                    Err(error) => panic!("HTTP fixture was not reachable: {error}"),
+                }
+            }
+        };
+
+        // A client that times out closes its connection before the response.
+        drop(connect());
+        let mut retry = connect();
+        retry
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .expect("HTTP test read timeout");
+        let request = format!(
+            "GET /v2/health/ready HTTP/1.1\r\nHost: {HOST}:{port}\r\nAuthorization: Bearer {TEST_HTTP_TOKEN}\r\n\r\n"
+        );
+        retry
+            .write_all(request.as_bytes())
+            .expect("retried request");
+        let mut response = Vec::new();
+        retry.read_to_end(&mut response).expect("retried response");
+
+        assert!(response.starts_with(b"HTTP/1.1 200 OK\r\n"));
+        assert_eq!(server.join().expect("HTTP fixture thread"), Ok(()));
     }
 
     #[test]
