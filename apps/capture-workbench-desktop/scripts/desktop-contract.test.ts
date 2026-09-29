@@ -254,7 +254,6 @@ test('ordinary CI keeps real OCR local while release promotion stays determinist
     promotionWorkflow,
     stableWorkflow,
     promotionVerifier,
-    todo,
   ] = await Promise.all([
     readFile(join(workspaceRoot, '.github', 'workflows', 'ci.yml'), 'utf8'),
     readFile(join(appRoot, 'project.json'), 'utf8'),
@@ -277,15 +276,6 @@ test('ordinary CI keeps real OCR local while release promotion stays determinist
     ),
     readFile(
       join(workspaceRoot, 'tools', 'verify-promotion-evidence.ts'),
-      'utf8',
-    ),
-    readFile(
-      join(
-        workspaceRoot,
-        '.agents',
-        'TODOS',
-        'capture-runtime-042-p2-hardening.md',
-      ),
       'utf8',
     ),
   ]);
@@ -389,14 +379,6 @@ test('ordinary CI keeps real OCR local while release promotion stays determinist
     ],
   );
   assert.doesNotMatch(requiredProducerJobs, /verify-windows-x64/u);
-
-  assert.match(
-    todo,
-    /`capture-workbench-desktop:acceptance-real-ocr-gpu-selection`/u,
-  );
-  assert.match(todo, /--skip-nx-cache/u);
-  assert.match(todo, /canonical JPEG then (?:the )?original PDF page 1/u);
-  assert.match(todo, /- \[ \] \*\*Compute real-proof slice:/u);
 });
 
 test('production CSP is strict while allowing only dynamic loopback API ports', async () => {

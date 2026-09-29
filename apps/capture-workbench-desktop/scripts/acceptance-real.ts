@@ -1,3 +1,9 @@
+// Entry for `nx run capture-workbench-desktop:acceptance-real`: real OCR on
+// the locally built desktop app. It creates an acceptance run, runs the
+// Playwright spec real-desktop-ocr-acceptance.spec.ts (which drives
+// real-desktop-ocr-smoke.ts), and checks the run's terminal verdict and
+// cleanup evidence. `--recorded` also records video. Diagnostic only; release
+// evidence comes from acceptance-practical-installed and the release workflows.
 import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';

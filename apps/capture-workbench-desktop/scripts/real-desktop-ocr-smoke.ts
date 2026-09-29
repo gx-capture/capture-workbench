@@ -1,3 +1,20 @@
+// Real OCR journey on the packaged Capture Workbench desktop app: the path a
+// user takes with a scanned image or PDF. It launches the app with fresh app
+// data, connects over CDP, and walks the UI:
+//
+//   01 consent to the core runtime install (with a retry) -> runtime ready
+//   02 import the source file -> document processing
+//   03 OCR finishes: the text must contain the expectation's anchors
+//      (diagnostic runs also structure the result: 03-successful-result)
+//   04 review complete
+//
+// then deletes the documents it created and proves the app, the runtime
+// sidecar, the CDP port, and temporary app data are gone.
+//
+// Inputs: CAPTURE_REAL_DESKTOP_OCR_INPUT (image) or CAPTURE_REAL_DESKTOP_OCR_PDF,
+// and CAPTURE_REAL_DESKTOP_OCR_EXPECTATIONS or `<input>.expected.json` beside
+// the input. With E2E_ACCEPTANCE_RUN_ID set (acceptance) it stops at the
+// durable OCR checkpoint and writes privacy-safe evidence only.
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';

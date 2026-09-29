@@ -1,3 +1,7 @@
+// Real PDF OCR against the published GitHub release: downloads the runtime
+// pinned by CAPTURE_PDF_OCR_E2E_ONLINE_RUNTIME_VERSION and _SHA256 and lets it
+// download the OCR engine itself, as an end user's install does. See
+// ../support/pdf-ocr-journey.ts for the journey and inputs.
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';

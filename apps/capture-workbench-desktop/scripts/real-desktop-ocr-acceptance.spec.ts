@@ -1,3 +1,7 @@
+// Playwright wrapper for the real desktop OCR journey in
+// real-desktop-ocr-smoke.ts. The small tests at the top pin which screenshot
+// checkpoints have pixel baselines; the last test runs the journey itself and
+// compares each checkpoint with the approved screenshots.
 import { readFile } from 'node:fs/promises';
 import { extname } from 'node:path';
 

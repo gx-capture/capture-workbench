@@ -504,10 +504,8 @@ future dispatch contracts already exist.
   `stage-product-runtime`, a build/source path, or a mutable URL. The future
   D4 target must accept externally supplied D3 root/id/digests; the existing
   `acceptance-real` target is non-D4.
-- Keeping `apps/capture-workbench-desktop/scripts/real-jpeg-acceptance-coordinator.ts`
-  as a parallel producer; its `runRealJpegAcceptance`/CLI migrates into the
-  sole `tools/three-project-acceptance.ts:runAcceptanceSequence` runner and is
-  deleted only after residual and async-boundary checks.
+- A second producer runner beside
+  `tools/three-project-acceptance.ts:runAcceptanceSequence`.
 - Rebuilding or republishing between D3/D4/D5, accepting a local candidate in
   D7, or moving the stable pointer before D7.
 

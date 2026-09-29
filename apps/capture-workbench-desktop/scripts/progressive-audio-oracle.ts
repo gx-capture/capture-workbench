@@ -1,3 +1,8 @@
+// Manual step before `smoke-real-media-model` with audio: runs a real
+// progressive Whisper capture of CAPTURE_PROGRESSIVE_AUDIO_ORACLE_SOURCE and
+// writes the reference evidence to CAPTURE_PROGRESSIVE_AUDIO_ORACLE_OUTPUT.
+// The model smoke compares its own audio result against that file
+// (CAPTURE_REAL_MEDIA_MODEL_AUDIO_ORACLE).
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { createServer, type Server } from 'node:http';

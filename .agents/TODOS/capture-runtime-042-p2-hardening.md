@@ -438,12 +438,8 @@ diagnostic and is not D4.
   <= 1% for every real scanned PDF page 1, and critical-anchor omissions are
   zero; no averaging. Model memory and journal/process/listener/staging
   cleanup must be proven before the next child.
-  `apps/capture-workbench-desktop/scripts/real-jpeg-acceptance-coordinator.ts:runRealJpegAcceptance`
-  and `runRealJpegAcceptanceCli`, its test, and its special
-  `tools/check-async-boundary.ts` allowance are migration/deletion surfaces;
-  migrate them into `tools/three-project-acceptance.ts:runAcceptanceSequence`
-  as the sole producer runner, then delete only after residual scans and
-  replacement tests pass.
+  `tools/three-project-acceptance.ts:runAcceptanceSequence` is the sole
+  producer runner, including the Capture JPEG leg.
 
   `AcceptanceChildWireV1` is the producer's only canonical evidence envelope.
   It carries `parentGate`, `tier`, D3/D6 ledger binding, invocation digest,

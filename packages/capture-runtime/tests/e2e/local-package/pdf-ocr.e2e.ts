@@ -1,3 +1,6 @@
+// Real PDF OCR against the locally built release in
+// packages/capture-runtime/dist/release (or CAPTURE_PDF_OCR_E2E_RELEASE_DIR).
+// See ../support/pdf-ocr-journey.ts for the journey and inputs.
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
