@@ -22,7 +22,7 @@ const STRICT_IO_POLL: Duration = Duration::from_millis(25);
 const MAX_READINESS_SCHEMA_BYTES: u64 = 4 * 1024 * 1024;
 const R3_SERVICE: &str = "capture-runtime";
 const R3_API_VERSION: &str = "2.0";
-const R3_RUNTIME_VERSION: &str = "0.4.2";
+const R3_RUNTIME_VERSION: &str = "0.4.3";
 const R3_DOCUMENT_SCHEMA_VERSION: &str = "2";
 const R3_CONTRACT_SET_VERSION: &str = "2";
 pub(crate) const R3_SCHEMA_FILE_NAME: &str = "capture-document-v2.schema.json";
@@ -1113,7 +1113,7 @@ mod tests {
     fn manifest() -> SidecarManifest {
         SidecarManifest {
             manifest_version: "1".into(),
-            runtime_version: "0.4.2".into(),
+            runtime_version: "0.4.3".into(),
             api_version: "2.0".into(),
             capture_document_schema_version: "2".into(),
             platform: "windows".into(),
@@ -1219,7 +1219,7 @@ mod tests {
         let StrictProbeResult::Ready(facts) = result else {
             panic!("valid RuntimeReady response was not accepted");
         };
-        assert_eq!(facts.runtime_version, "0.4.2");
+        assert_eq!(facts.runtime_version, "0.4.3");
         assert_eq!(facts.api_version, "2.0");
         assert_eq!(facts.capture_document_schema_version, "2");
         assert_eq!(facts.capture_document_schema_sha256, schema.sha256);
@@ -1294,7 +1294,7 @@ mod tests {
     fn strict_r3_rejects_a_foreign_manifest_even_with_a_matching_schema() {
         let directory = tempfile::tempdir().expect("tempdir");
         let (mut foreign_manifest, foreign_schema) = verified_schema(directory.path());
-        foreign_manifest.runtime_version = "0.4.3".into();
+        foreign_manifest.runtime_version = "99.0.0".into();
         assert!(verify_readiness_schema(
             &directory.path().join(R3_SCHEMA_FILE_NAME),
             &foreign_manifest
@@ -1360,7 +1360,7 @@ mod tests {
         assert!(parse_strict_body(null_document_digest, &manifest, &schema).is_err());
 
         let duplicate = format!(
-            r#"{{"ready":true,"ready":false,"service":"capture-runtime","apiVersion":"2.0","runtimeVersion":"0.4.2","captureDocumentSchemaVersion":"2","contractSetVersion":"2","capabilities":{{}}}}"#
+            r#"{{"ready":true,"ready":false,"service":"capture-runtime","apiVersion":"2.0","runtimeVersion":"0.4.3","captureDocumentSchemaVersion":"2","contractSetVersion":"2","capabilities":{{}}}}"#
         );
         let body = format!(
             "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -1369,7 +1369,7 @@ mod tests {
         );
         assert!(parse_strict_health_response(body.as_bytes(), &manifest, &schema).is_err());
 
-        let duplicate_nested = r#"{"ready":true,"service":"capture-runtime","apiVersion":"2.0","runtimeVersion":"0.4.2","captureDocumentSchemaVersion":"2","contractSetVersion":"2","capabilities":{"x":1,"x":2}}"#;
+        let duplicate_nested = r#"{"ready":true,"service":"capture-runtime","apiVersion":"2.0","runtimeVersion":"0.4.3","captureDocumentSchemaVersion":"2","contractSetVersion":"2","capabilities":{"x":1,"x":2}}"#;
         let body = format!(
             "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
             duplicate_nested.len(),
@@ -1547,7 +1547,7 @@ mod tests {
             let (mut stream, _) = listener.accept().expect("accept");
             let mut request = [0_u8; 4096];
             stream.read(&mut request).expect("request");
-            let body = r#"{"ready":true,"service":"capture-runtime","apiVersion":"2.0","runtimeVersion":"0.4.2","captureDocumentSchemaVersion":"2","capabilities":{}}"#;
+            let body = r#"{"ready":true,"service":"capture-runtime","apiVersion":"2.0","runtimeVersion":"0.4.3","captureDocumentSchemaVersion":"2","capabilities":{}}"#;
             let response = format!(
                 "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
                 body.len(),
@@ -1715,7 +1715,7 @@ mod tests {
     #[test]
     fn post_parse_deadline_never_accepts_ready() {
         let ready = Ok(ProbeResult::Ready(ReadyHandshake {
-            runtime_version: "0.4.2".into(),
+            runtime_version: "0.4.3".into(),
             api_version: "2.0".into(),
             capture_document_schema_version: "2".into(),
         }));
@@ -1739,7 +1739,7 @@ mod tests {
             let mut request = [0_u8; 4096];
             let count = stream.read(&mut request).expect("request");
             sender.send(request[..count].to_vec()).expect("send");
-            let body = r#"{"ready":true,"runtimeVersion":"0.4.2","apiVersion":"2.0","captureDocumentSchemaVersion":"2","capabilities":{}}"#;
+            let body = r#"{"ready":true,"runtimeVersion":"0.4.3","apiVersion":"2.0","captureDocumentSchemaVersion":"2","capabilities":{}}"#;
             write!(
                 stream,
                 "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -1758,7 +1758,7 @@ mod tests {
 
     #[test]
     fn incompatible_handshake_does_not_echo_the_received_value() {
-        let body = br#"{"ready":true,"runtimeVersion":"0.4.2","apiVersion":"2.0","captureDocumentSchemaVersion":"99","capabilities":{}}"#;
+        let body = br#"{"ready":true,"runtimeVersion":"0.4.3","apiVersion":"2.0","captureDocumentSchemaVersion":"99","capabilities":{}}"#;
         let response = format!(
             "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{}",
             body.len(),

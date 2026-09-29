@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "capture-runtime-client"
-version = "0.4.2"
+version = "0.4.3"
 description = "Capture Runtime HTTP, in-memory, discovery, and protocol client SDK."
 readme = "README.md"
 requires-python = ">=3.12,<3.15"
@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [tool.capture_runtime_client]
-contract_set_sha256 = "d293a3de26114f1b4fd65ea6d6d3f157fa2f93109b31e1e30d5d15ef0dfdeb40"
+contract_set_sha256 = "232ef06bf547e79120df28f39303e73b0e5842beace5910a422f15dfb5e2acbc"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/capture_runtime_client"]

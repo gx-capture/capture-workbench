@@ -24,12 +24,12 @@ import {
 } from './record-pypi-candidate.ts';
 import { verifyRegistryLedger } from './verify-registry-ledgers.ts';
 
-const version = '0.4.2';
+const version = '0.4.3';
 const sourceCommit = 'a'.repeat(40);
 const contractSetSha256 = 'c'.repeat(64);
 const names = [
-  'capture_runtime_client-0.4.2-py3-none-any.whl',
-  'capture_runtime_client-0.4.2.tar.gz',
+  'capture_runtime_client-0.4.3-py3-none-any.whl',
+  'capture_runtime_client-0.4.3.tar.gz',
 ];
 const hash = (bytes: string | Uint8Array) =>
   createHash('sha256').update(bytes).digest('hex');
@@ -59,12 +59,12 @@ async function packageFixture(
     'contracts/contract-snapshot.json',
   ];
   const packageFiles = [
-    'package/gx-capture-capture-workbench-ui-0.4.2.tgz',
-    'package/gx-capture-capture-runtime-client-0.4.2.tgz',
+    'package/gx-capture-capture-workbench-ui-0.4.3.tgz',
+    'package/gx-capture-capture-runtime-client-0.4.3.tgz',
     'package-manifest.json',
     'java-candidate-manifest.json',
-    'maven/capture-runtime-client-0.4.2.jar',
-    'maven/capture-runtime-client-0.4.2-sources.jar',
+    'maven/capture-runtime-client-0.4.3.jar',
+    'maven/capture-runtime-client-0.4.3-sources.jar',
     'maven/pom.xml',
     'maven/capture-runtime-contract-set.sha256',
   ];
@@ -73,7 +73,7 @@ async function packageFixture(
     'runtime/capture-runtime-manifest.json',
     'runtime/capture-engine-catalog.json',
     'runtime/capture-document-v2.schema.json',
-    'crate/capture-sidecar-launcher-0.4.2.crate',
+    'crate/capture-sidecar-launcher-0.4.3.crate',
   ];
   for (const path of [
     ...commonFiles,
@@ -217,7 +217,7 @@ function remote(
   return async (url) => {
     assert.equal(
       String(url),
-      'https://pypi.org/pypi/capture-runtime-client/0.4.2/json',
+      'https://pypi.org/pypi/capture-runtime-client/0.4.3/json',
     );
     return Response.json({ info, urls });
   };
@@ -345,7 +345,7 @@ test('every missing or conflicting expected identity fails before any registry r
     }
     for (const [name, value] of Object.entries({
       candidateKind: 'guess',
-      version: '0.4.3',
+      version: '99.0.0',
       sourceCommit: 'f'.repeat(40),
       candidateId: 'f'.repeat(64),
       releaseCandidateId: 'f'.repeat(64),
@@ -422,7 +422,7 @@ test('resealed manifests cannot hide duplicate/aliased paths, wrong pair or full
       'package',
       (m) => {
         artifact(m, '.tar.gz').path =
-          'python/capture_runtime_client-0.4.2-cp312-none-any.whl';
+          'python/capture_runtime_client-0.4.3-cp312-none-any.whl';
       },
     ],
     [
@@ -632,7 +632,7 @@ test('full runtime aliases are independently validated even when both candidate 
       m.sourceCommit = 'f'.repeat(40);
     },
     (m) => {
-      m.releaseVersion = '0.4.3';
+      m.releaseVersion = '99.0.0';
     },
     (m) => {
       m.contractSetSha256 = 'f'.repeat(64);
@@ -727,14 +727,14 @@ test('PyPI record lane can select one project without accepting the other packag
   assert.deepEqual(
     projectArtifacts(
       [
-        'capture_runtime_client-0.4.2-py3-none-any.whl',
-        'capture_runtime_client-0.4.2.tar.gz',
+        'capture_runtime_client-0.4.3-py3-none-any.whl',
+        'capture_runtime_client-0.4.3.tar.gz',
       ],
       'capture-runtime-client',
     ),
     [
-      'capture_runtime_client-0.4.2-py3-none-any.whl',
-      'capture_runtime_client-0.4.2.tar.gz',
+      'capture_runtime_client-0.4.3-py3-none-any.whl',
+      'capture_runtime_client-0.4.3.tar.gz',
     ],
   );
   assert.throws(

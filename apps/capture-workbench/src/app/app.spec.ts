@@ -304,7 +304,7 @@ function gpuCompute(): OcrComputePreflight {
     apiVersion: '2.0',
     schemaVersion: '1',
     service: 'capture-runtime',
-    runtimeVersion: '0.4.2',
+    runtimeVersion: '0.4.3',
     contractSetVersion: '2',
     contractSha256: 'a'.repeat(64),
     mode: 'gpu-dml',

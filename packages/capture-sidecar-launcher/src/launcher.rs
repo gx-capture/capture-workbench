@@ -220,7 +220,7 @@ fn public_activation_root(
         .and_then(OsStr::to_str)
         .ok_or(crate::prepare::PrepareError::InvalidPlan)?;
     let expected = ManifestExpectations {
-        runtime_version: "0.4.2".into(),
+        runtime_version: "0.4.3".into(),
         api_version: "2.0".into(),
         capture_document_schema_version: "2".into(),
         file_name: file_name.to_owned(),
@@ -1471,7 +1471,7 @@ mod tests {
     fn manifest() -> crate::SidecarManifest {
         crate::SidecarManifest {
             manifest_version: "1".into(),
-            runtime_version: "0.4.2".into(),
+            runtime_version: "0.4.3".into(),
             api_version: "2.0".into(),
             capture_document_schema_version: "2".into(),
             platform: "windows".into(),
@@ -1585,7 +1585,7 @@ mod tests {
         let bytes = fs::read(&executable_path).expect("fixture bytes");
         let manifest = crate::SidecarManifest {
             manifest_version: "1".into(),
-            runtime_version: "0.4.2".into(),
+            runtime_version: "0.4.3".into(),
             api_version: "2.0".into(),
             capture_document_schema_version: "2".into(),
             platform: "windows".into(),
@@ -1652,7 +1652,7 @@ mod tests {
         let bytes = fs::read(&executable_path).expect("fixture bytes");
         let manifest = crate::SidecarManifest {
             manifest_version: "1".into(),
-            runtime_version: "0.4.2".into(),
+            runtime_version: "0.4.3".into(),
             api_version: "2.0".into(),
             capture_document_schema_version: "2".into(),
             platform: "windows".into(),
@@ -2555,7 +2555,7 @@ mod tests {
         .is_err());
 
         let mut changed_manifest = verified.manifest.clone();
-        changed_manifest.runtime_version = "0.4.3".into();
+        changed_manifest.runtime_version = "99.0.0".into();
         fs::write(
             &manifest_path,
             serde_json::to_vec(&changed_manifest).expect("changed manifest JSON"),

@@ -57,7 +57,7 @@ describe('buildOcrEvidence', () => {
       },
     });
     expect(evidence.provenance).toMatchObject({
-      runtimeVersion: '0.4.2',
+      runtimeVersion: '0.4.3',
       contractSha256: 'c'.repeat(64),
       engine: 'windowsml-ocr',
       model: 'ppocrv6-traditional-multilingual',
@@ -331,7 +331,7 @@ describe('buildOcrEvidence', () => {
     const resolved = await buildOcrEvidence({ projection: projection(), expected: expectedIdentity() });
     expect(resolved.provenance).toEqual({
       status: 'resolved',
-      runtimeVersion: '0.4.2',
+      runtimeVersion: '0.4.3',
       contractSha256: 'c'.repeat(64),
       engine: 'windowsml-ocr',
       model: 'ppocrv6-traditional-multilingual',
@@ -348,7 +348,7 @@ describe('buildOcrEvidence', () => {
     });
     expect(unavailable.provenance).toMatchObject({
       status: 'unavailable',
-      runtimeVersion: '0.4.2',
+      runtimeVersion: '0.4.3',
       contractSha256: 'c'.repeat(64),
       engine: null,
       model: null,
@@ -405,17 +405,22 @@ function expectedIdentity(terminalStatus: 'completed' | 'failed' = 'completed') 
   return {
     captureId: 'capture-1',
     sourceSha256: 'a'.repeat(64),
-    runtimeVersion: '0.4.2',
+    runtimeVersion: '0.4.3',
     contractSha256: 'c'.repeat(64),
     terminalStatus,
     workerSha256: 'f'.repeat(64),
   };
 }
 
+// The golden is evidence recorded by a 0.4.2 runtime. Its version stays fixed so
+// a release bump does not change the checked-in digest.
+const RECORDED_RUNTIME_VERSION = '0.4.2' as string;
+
 function goldenExpectedIdentity() {
   return {
     ...expectedIdentity(),
     captureId: 'capture-中文-😀',
+    runtimeVersion: RECORDED_RUNTIME_VERSION,
   };
 }
 
@@ -454,7 +459,7 @@ function projection(): CaptureOcrProjection {
         provenance: resolvedProvenance(),
       },
     ],
-    runtimeVersion: '0.4.2',
+    runtimeVersion: '0.4.3',
     contractSha256: 'c'.repeat(64),
     provenance: resolvedProvenance(),
     createdAt: '2026-08-29T00:00:00Z',
@@ -495,6 +500,7 @@ function goldenProjection(): CaptureOcrProjection {
   return {
     ...base,
     captureId: 'capture-中文-😀',
+    runtimeVersion: RECORDED_RUNTIME_VERSION as CaptureOcrProjection['runtimeVersion'],
     pages: [
       { ...base.pages[0], page: 1, text: '甲', boxes: [], confidence: 0, provenance },
       { ...base.pages[0], page: 2, text: '乙', boxes: [box(1)], confidence: 1, provenance },

@@ -36,7 +36,7 @@ def _descriptor(archive: Path, manifest: bytes) -> EngineArtifactDescriptor:
         {
             "role": "worker",
             "requirementId": "windowsml-ocr",
-            "artifactVersion": "0.4.2",
+            "artifactVersion": "0.4.3",
             "workerProtocolVersion": "1",
             "platform": "windows",
             "arch": "x86_64",

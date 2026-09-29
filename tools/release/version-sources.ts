@@ -7,14 +7,14 @@ export const workspaceRoot = resolve(import.meta.dirname, '../..');
 const RELEASE_VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u;
 const API_VERSION_PATTERN = /^\d+\.\d+$/u;
 const SCHEMA_VERSION_PATTERN = /^\d+$/u;
-const EXPECTED_RELEASE_VERSION = '0.4.2';
+const EXPECTED_RELEASE_VERSION = '0.4.3';
 const EXPECTED_RUNTIME_API_VERSION = '2.0';
 const EXPECTED_DOCUMENT_SCHEMA_VERSION = '2';
 const EXPECTED_CONTRACT_SET_VERSION = '2';
 const EXPECTED_NX_VERSION = '23.1.2';
 const EXPECTED_PROJECTION_SCHEMA_VERSION = '3';
 const EXPECTED_CONTRACT_SET_SHA256 =
-  'd293a3de26114f1b4fd65ea6d6d3f157fa2f93109b31e1e30d5d15ef0dfdeb40';
+  '232ef06bf547e79120df28f39303e73b0e5842beace5910a422f15dfb5e2acbc';
 const EXPECTED_REPOSITORY = 'https://github.com/gx-capture/capture-workbench';
 const EXPECTED_GIT_REPOSITORY =
   'git+https://github.com/gx-capture/capture-workbench.git';
@@ -1742,6 +1742,27 @@ export function replaceReleaseVersion(
     new RegExp(`(?<![0-9])${escaped}(?![0-9])`, 'gu'),
     next,
   );
+}
+
+// Only workspace crates (packages without a `source`) carry the release
+// version; registry dependencies that share the number must stay untouched.
+export function replaceLocalCrateVersions(
+  lock: string,
+  previous: string,
+  next: string,
+): string {
+  return lock
+    .split(/(?=^\[\[package\]\]$)/mu)
+    .map((block) =>
+      /^source = /mu.test(block)
+        ? block
+        : block.replace(
+            /^version = "([^"]+)"$/mu,
+            (line, version: string) =>
+              version === previous ? `version = "${next}"` : line,
+          ),
+    )
+    .join('');
 }
 
 export function assertRegularTextFile(path: string): void {

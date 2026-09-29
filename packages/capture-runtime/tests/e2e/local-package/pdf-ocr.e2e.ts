@@ -10,7 +10,7 @@ const workspaceRoot = resolve(
   dirname(fileURLToPath(import.meta.url)),
   '../../../../..',
 );
-const runtimeVersion = '0.4.2';
+const runtimeVersion = '0.4.3';
 
 async function main(): Promise<void> {
   const releaseRoot = process.env.CAPTURE_PDF_OCR_E2E_RELEASE_DIR?.trim()

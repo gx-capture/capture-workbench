@@ -27,7 +27,7 @@ public final class CaptureRuntimeTypes {
   public static final String CONTRACT_SET_VERSION = "2";
   /** Updated only as part of a coordinated runtime/client release. */
   public static final String CONTRACT_SET_SHA256 =
-      "d293a3de26114f1b4fd65ea6d6d3f157fa2f93109b31e1e30d5d15ef0dfdeb40";
+      "232ef06bf547e79120df28f39303e73b0e5842beace5910a422f15dfb5e2acbc";
 
   private static final Pattern SHA256 = Pattern.compile("^[0-9a-f]{64}$");
   private static final Pattern FAILURE_CODE = Pattern.compile("^[a-z][a-z0-9_]{1,63}$");
@@ -665,7 +665,7 @@ public final class CaptureRuntimeTypes {
 
   // BEGIN GENERATED OCR PROJECTION
   // Generated from capture-ocr-projection-v3.schema.json in contract-set.json. Do not edit.
-  private static final String OCR_RUNTIME_VERSION = "0.4.2";
+  private static final String OCR_RUNTIME_VERSION = "0.4.3";
   private static final Pattern OCR_SOURCE_SHA256_PATTERN = Pattern.compile("^[0-9a-f]{64}$");
   private static final Pattern OCR_FAILURE_CODE_PATTERN = Pattern.compile("^[a-z][a-z0-9_]{1,63}$");
 

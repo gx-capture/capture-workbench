@@ -16,6 +16,7 @@ import {
   collectReleaseInventory,
   collectReleaseVersionEntries,
   loadReleaseIntent,
+  replaceLocalCrateVersions,
   replaceReleaseVersion,
   verifyGeneratedVersions,
   workspaceRoot,
@@ -122,7 +123,7 @@ test('release intent is the synchronized source for all release-managed versions
   assert.ok(entries.every((entry) => entry.value === intent.releaseVersion));
   assert.ok(entries.some((entry) => entry.label === 'Java runtime client POM'));
   assert.deepEqual(loadReleaseIntent(workspaceRoot), {
-    releaseVersion: '0.4.2',
+    releaseVersion: '0.4.3',
     runtimeApiVersion: '2.0',
     documentSchemaVersion: '2',
   });
@@ -133,7 +134,7 @@ test('typed release inventory reports every D2.1 identity without mutation', () 
   const ids = inventory.entries.map((entry) => entry.id);
   assert.equal(new Set(ids).size, ids.length);
   requiredEntry(inventory, 'workspace.nx', '23.1.2');
-  requiredEntry(inventory, 'release.version', '0.4.2');
+  requiredEntry(inventory, 'release.version', '0.4.3');
   requiredEntry(inventory, 'runtime.api', '2.0');
   requiredEntry(inventory, 'document.schema', '2');
   requiredEntry(inventory, 'ocr.projection.schema', '3');
@@ -147,7 +148,7 @@ test('typed release inventory reports every D2.1 identity without mutation', () 
     requiredEntry(
       inventory,
       id,
-      'd293a3de26114f1b4fd65ea6d6d3f157fa2f93109b31e1e30d5d15ef0dfdeb40',
+      '232ef06bf547e79120df28f39303e73b0e5842beace5910a422f15dfb5e2acbc',
     );
   }
   for (const channel of [
@@ -168,7 +169,7 @@ test('typed release inventory reports every D2.1 identity without mutation', () 
 const R3_HEALTH_PATH = 'packages/capture-sidecar-launcher/src/health.rs';
 const R3_IDENTITIES = [
   ['R3_SERVICE', 'runtime.service.sidecar-health', 'capture-runtime', 'other-runtime'],
-  ['R3_RUNTIME_VERSION', 'runtime.version.sidecar-health', '0.4.2', '0.4.3'],
+  ['R3_RUNTIME_VERSION', 'runtime.version.sidecar-health', '0.4.3', '99.0.0'],
   ['R3_API_VERSION', 'runtime.api.sidecar-health', '2.0', '2.1'],
   ['R3_DOCUMENT_SCHEMA_VERSION', 'document.schema.sidecar-health', '2', '3'],
   ['R3_CONTRACT_SET_VERSION', 'contract-set.version.sidecar-health', '2', '3'],
@@ -178,13 +179,13 @@ test('R3 inventory uses production identities and preserves negative test fixtur
   await withFixture(async (root) => {
     const path = join(root, R3_HEALTH_PATH);
     const before = await readFile(path, 'utf8');
-    assert.match(before, /foreign_manifest\.runtime_version = "0\.4\.3"/u);
+    assert.match(before, /foreign_manifest\.runtime_version = "99\.0\.0"/u);
     assert.match(before, /\("runtimeVersion", serde_json::json!\("0\.4\.1"\)\)/u);
     const inventory = collectReleaseInventory(root);
     for (const [, id, value] of R3_IDENTITIES) requiredEntry(inventory, id, value);
     const versions = collectReleaseVersionEntries(root);
-    assert.ok(versions.every((entry) => entry.value === '0.4.2'));
-    assert.equal(verifyGeneratedVersions(root).releaseVersion, '0.4.2');
+    assert.ok(versions.every((entry) => entry.value === '0.4.3'));
+    assert.equal(verifyGeneratedVersions(root).releaseVersion, '0.4.3');
     assert.equal(await readFile(path, 'utf8'), before);
   });
 });
@@ -307,7 +308,7 @@ test('inventory rejects missing source and duplicate hash identities', async () 
     );
     const before = await readFile(path, 'utf8');
     const missing = before.replace(
-      /RUNTIME_VERSION: Final = "0\.4\.2"\r?\n/u,
+      /RUNTIME_VERSION: Final = "[^"]+"\r?\n/u,
       '',
     );
     assert.notEqual(missing, before);
@@ -417,13 +418,13 @@ test('inventory rejects a self-consistent release and API drift against Phase2 d
       const path = join(root, relativePath);
       const before = await readFile(path, 'utf8');
       const drifted = before
-        .replaceAll('0.4.2', '0.4.3')
+        .replaceAll('0.4.3', '99.0.0')
         .replaceAll('2.0', '2.1')
         .replace('"documentSchemaVersion": "2"', '"documentSchemaVersion": "3"');
       assert.notEqual(drifted, before, relativePath);
       await writeFile(path, drifted, 'utf8');
     }
-    assert.throws(() => collectReleaseInventory(root), /Phase2|expected 0\.4\.2|release\.intent/u);
+    assert.throws(() => collectReleaseInventory(root), /Phase2|expected \d+\.\d+\.\d+|release\.intent/u);
   });
 });
 
@@ -598,7 +599,31 @@ test('inventory rejects generated projection structural identity drift before mu
 
 test('release replacement is exact and does not alter adjacent versions', () => {
   assert.equal(
-    replaceReleaseVersion('0.4.2 0.3.100 v0.4.2', '0.4.2', '0.4.2'),
-    '0.4.2 0.3.100 v0.4.2',
+    replaceReleaseVersion('1.2.3 11.2.3 1.2.30 v1.2.3', '1.2.3', '9.9.9'),
+    '9.9.9 11.2.3 1.2.30 v9.9.9',
+  );
+});
+
+test('Cargo.lock replacement moves workspace crates and keeps registry crates', () => {
+  const lock = [
+    'version = 4',
+    '',
+    '[[package]]',
+    'name = "local-crate"',
+    'version = "1.2.3"',
+    '',
+    '[[package]]',
+    'name = "registry-crate"',
+    'version = "1.2.3"',
+    'source = "registry+https://github.com/rust-lang/crates.io-index"',
+    '',
+    '[[package]]',
+    'name = "other-local"',
+    'version = "1.2.30"',
+    '',
+  ].join('\n');
+  assert.equal(
+    replaceLocalCrateVersions(lock, '1.2.3', '9.9.9'),
+    lock.replace('"local-crate"\nversion = "1.2.3"', '"local-crate"\nversion = "9.9.9"'),
   );
 });

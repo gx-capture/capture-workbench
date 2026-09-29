@@ -9998,7 +9998,7 @@ mod tests {
             .expect("canonical schema fixture");
             let manifest = SidecarManifest {
                 manifest_version: "1".into(),
-                runtime_version: "0.4.2".into(),
+                runtime_version: "0.4.3".into(),
                 api_version: "2.0".into(),
                 capture_document_schema_version: "2".into(),
                 platform: "windows".into(),
@@ -10097,7 +10097,7 @@ mod tests {
             fs::write(&schema_path, schema_bytes).expect("canonical readiness schema");
             let manifest = SidecarManifest {
                 manifest_version: "1".into(),
-                runtime_version: "0.4.2".into(),
+                runtime_version: "0.4.3".into(),
                 api_version: "2.0".into(),
                 capture_document_schema_version: "2".into(),
                 platform: "windows".into(),

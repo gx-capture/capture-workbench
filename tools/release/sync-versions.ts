@@ -5,6 +5,7 @@ import {
   assertRegularTextFile,
   collectReleaseVersionEntries,
   loadReleaseIntent,
+  replaceLocalCrateVersions,
   replaceReleaseVersion,
   verifyGeneratedVersions,
   workspaceRoot,
@@ -39,6 +40,21 @@ const SKIPPED_SEGMENTS = new Set([
   'target',
 ]);
 const SKIPPED_NAMES = new Set(['Cargo.lock', 'pnpm-lock.yaml', 'uv.lock']);
+
+function cargoLocksUnder(root: string, relativeDirectory: string): string[] {
+  const directory = resolve(root, relativeDirectory);
+  const locks: string[] = [];
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    if (SKIPPED_SEGMENTS.has(entry.name)) continue;
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) {
+      locks.push(...cargoLocksUnder(root, relative(root, path)));
+    } else if (entry.name === 'Cargo.lock') {
+      locks.push(path);
+    }
+  }
+  return locks;
+}
 
 function filesUnder(root: string, relativeDirectory: string): string[] {
   const directory = resolve(root, relativeDirectory);
@@ -104,6 +120,21 @@ export function synchronizeReleaseVersion(
     assertRegularTextFile(path);
     const before = readFileSync(path, 'utf8');
     const after = replaceReleaseVersion(before, previous, intent.releaseVersion);
+    if (before === after) continue;
+    changed.push(relative(root, path));
+    if (!check) writeFileSync(path, after, 'utf8');
+  }
+  for (const path of [
+    ...cargoLocksUnder(root, 'packages'),
+    ...cargoLocksUnder(root, 'apps'),
+  ]) {
+    assertRegularTextFile(path);
+    const before = readFileSync(path, 'utf8');
+    const after = replaceLocalCrateVersions(
+      before,
+      previous,
+      intent.releaseVersion,
+    );
     if (before === after) continue;
     changed.push(relative(root, path));
     if (!check) writeFileSync(path, after, 'utf8');

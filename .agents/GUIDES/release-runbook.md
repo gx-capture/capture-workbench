@@ -104,6 +104,14 @@ candidate with `node tools/install-capture-workbench-dependencies.mts
 - Local practical OCR runs: keep `CAPTURE_APP_DATA_DIR` short (installed OCR
   worker paths beyond Windows MAX_PATH crash the worker) and set `CAPTURE_PORT`
   together with `--port`, or the allowed-host check rejects requests.
-- Every pull request runs full CI, docs-only ones included: contract tests
-  assert content in `.agents` TODOs and READMEs, and a docs-only skip once let
-  `main` go red for three merges.
+- `sync-versions.ts` rewrites every occurrence of the previous release
+  version (and workspace crates in `Cargo.lock`). A test's "conflicting
+  version" must therefore be a value no release will reach (`99.0.0`), and
+  recorded fixture data (OCR evidence goldens) must use a fixed version other
+  than the current one, or the bump collapses the conflict or breaks digests.
+- Every pull request runs full CI, docs-only ones included; a docs-only skip
+  once let `main` go red for three merges. Tests never assert documentation
+  prose, so docs edits alone cannot fail CI.
+- Engine downloads are served from the machine-wide cache
+  (`%LOCALAPPDATA%\gx-capture\engine-cache`) once any host has installed
+  them. Set `CAPTURE_ENGINE_CACHE_DIR=off` to time or debug a cold download.
