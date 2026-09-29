@@ -11,15 +11,15 @@ on:
 permissions:
   contents: read
 
+# PR and main run the same complete verification. The four jobs are
+# independent and run in parallel; a release candidate requires the whole
+# run to succeed on main (tools/verify-main-ci.ts).
 jobs:
-  verify-windows-x64:
+  # Published packages: TypeScript, Python, and Java clients, the sidecar
+  # launcher crate, and the Angular Web Component package.
+  packages:
     runs-on: windows-latest
-    # The product build, first-run runtime staging, engine download, and model
-    # installation all happen in this job. Keep the job bound above the
-    # Playwright journey timeout so a slow first-run does not become an opaque
-    # job timeout.
-    timeout-minutes: 180
-
+    timeout-minutes: 60
     steps:
       - name: Check out source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -92,6 +92,162 @@ jobs:
           pnpm nx run capture-angular:build
           pnpm nx run capture-angular:clean-consumer-smoke
 
+  # Capture Runtime (Python) and the optional OCR and Whisper worker builds.
+  runtime:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 12.0.0
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install uv and Python 3.12
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: '3.12'
+          enable-cache: true
+
+      - name: Install workspace dependencies
+        shell: pwsh
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify capture runtime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          pnpm nx run capture-runtime:python-version-check
+          pnpm nx run capture-runtime:lint
+          pnpm nx run capture-runtime:typecheck
+          pnpm nx run capture-runtime:test
+          pnpm nx run capture-runtime:build
+
+      - name: Build and verify optional engine workers
+        shell: pwsh
+        run: pnpm nx run capture-runtime:verify-worker-boundaries
+
+      - name: Upload workers packaging diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: capture-runtime-packaging-workers-${{ github.sha }}
+          path: |
+            packages/capture-runtime/dist/engines/*-files.json
+            packages/capture-runtime/dist/ocr-worker-inventory.txt
+            packages/capture-runtime/dist/whisper-worker-inventory.txt
+            packages/capture-runtime/.build/pyinstaller/ocr-worker/capture-engine-ocr/xref-capture-engine-ocr.html
+            packages/capture-runtime/.build/pyinstaller/ocr-worker/capture-engine-ocr/warn-capture-engine-ocr.txt
+            packages/capture-runtime/.build/pyinstaller/whisper-worker/capture-engine-whisper/xref-capture-engine-whisper.html
+            packages/capture-runtime/.build/pyinstaller/whisper-worker/capture-engine-whisper/warn-capture-engine-whisper.txt
+          if-no-files-found: warn
+          retention-days: 7
+
+  # Production core runtime and the core-only NSIS installer.
+  installer:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 12.0.0
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install uv and Python 3.12
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: '3.12'
+          enable-cache: true
+
+      - name: Prepare Rust target
+        shell: pwsh
+        run: rustup target add x86_64-pc-windows-msvc
+
+      - name: Install workspace dependencies
+        shell: pwsh
+        run: pnpm install --frozen-lockfile
+
+      - name: Build and verify the core-only Windows installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          pnpm nx run capture-workbench-desktop:stage-core-runtime
+          pnpm nx run capture-runtime:verify-core-boundary
+          pnpm nx run capture-workbench-desktop:build-nsis
+
+      - name: Upload core packaging diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: capture-runtime-packaging-core-${{ github.sha }}
+          path: |
+            packages/capture-runtime/dist/core-inventory.txt
+            packages/capture-runtime/dist/core-inventory-recursive.txt
+            packages/capture-runtime/.build/pyinstaller/core-onefile/capture-runtime/xref-capture-runtime.html
+            packages/capture-runtime/.build/pyinstaller/core-onefile/capture-runtime/warn-capture-runtime.txt
+          if-no-files-found: warn
+          retention-days: 7
+
+  # Reference app, desktop product, release tooling, and the browser
+  # reference flow.
+  desktop:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 12.0.0
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Prepare Rust target
+        shell: pwsh
+        run: rustup target add x86_64-pc-windows-msvc
+
+      - name: Install workspace dependencies
+        shell: pwsh
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright Chromium
+        shell: pwsh
+        run: pnpm exec playwright install chromium
+
       - name: Verify reference app
         shell: pwsh
         run: |
@@ -118,35 +274,15 @@ jobs:
           pnpm nx run capture-tools:release-manifest-test
           pnpm nx run capture-tools:release-index-test
 
-      - name: Verify capture runtime
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $PSNativeCommandUseErrorActionPreference = $true
-          pnpm nx run capture-runtime:python-version-check
-          pnpm nx run capture-runtime:lint
-          pnpm nx run capture-runtime:typecheck
-          pnpm nx run capture-runtime:test
-          pnpm nx run capture-runtime:build
-
-      - name: Build and verify optional engine workers
-        shell: pwsh
-        run: pnpm nx run capture-runtime:verify-worker-boundaries
-
-      - name: Build and verify the core-only Windows installer
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $PSNativeCommandUseErrorActionPreference = $true
-          pnpm nx run capture-workbench-desktop:stage-core-runtime
-          pnpm nx run capture-runtime:verify-core-boundary
-          pnpm nx run capture-workbench-desktop:build-nsis
-
+      # The Tauri build embeds the reference app built above and the staged
+      # runtime resources; the deterministic fixture runtime stages them
+      # without building the production runtime.
       - name: Verify Capture Workbench desktop product
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
+          pnpm nx run capture-workbench-desktop:stage-deterministic-runtime
           pnpm nx run capture-workbench-desktop:cargo-fmt-check
           pnpm nx run capture-workbench-desktop:contract-consistency
           pnpm nx run capture-workbench-desktop:cargo-check
@@ -165,24 +301,4 @@ jobs:
           name: capture-workbench-reference-playwright-${{ github.run_id }}
           path: dist/.playwright/apps/capture-workbench-e2e/**
           if-no-files-found: error
-          retention-days: 7
-
-      - name: Upload runtime packaging diagnostics
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: capture-runtime-packaging-${{ github.sha }}
-          path: |
-            packages/capture-runtime/dist/engines/*-files.json
-            packages/capture-runtime/dist/core-inventory.txt
-            packages/capture-runtime/dist/core-inventory-recursive.txt
-            packages/capture-runtime/dist/ocr-worker-inventory.txt
-            packages/capture-runtime/dist/whisper-worker-inventory.txt
-            packages/capture-runtime/.build/pyinstaller/core-onefile/capture-runtime/xref-capture-runtime.html
-            packages/capture-runtime/.build/pyinstaller/core-onefile/capture-runtime/warn-capture-runtime.txt
-            packages/capture-runtime/.build/pyinstaller/ocr-worker/capture-engine-ocr/xref-capture-engine-ocr.html
-            packages/capture-runtime/.build/pyinstaller/ocr-worker/capture-engine-ocr/warn-capture-engine-ocr.txt
-            packages/capture-runtime/.build/pyinstaller/whisper-worker/capture-engine-whisper/xref-capture-engine-whisper.html
-            packages/capture-runtime/.build/pyinstaller/whisper-worker/capture-engine-whisper/warn-capture-engine-whisper.txt
-          if-no-files-found: warn
           retention-days: 7
