@@ -1224,77 +1224,6 @@ test('DirectML smoke CLI requirement rejects CPU provenance', () => {
   );
 });
 
-test('real desktop cleanup selects and verifies an exact filename within the detail pane', async () => {
-  const source = await readFile(
-    new URL('./real-desktop-ocr-smoke.ts', import.meta.url),
-    'utf8',
-  );
-  assert.match(source, /getByText\(fileName, \{ exact: true \}\)/u);
-  assert.doesNotMatch(source, /filter\(\{ hasText: fileName \}\)/u);
-  assert.match(source, /locator\('\.detail-pane'\)/u);
-  assert.match(source, /selectedFileName\?\.trim\(\),\s*fileName/u);
-  assert.match(
-    source,
-    /detailPane\.getByRole\('button', \{ name: '刪除', exact: true \}\)/u,
-  );
-});
-
-test('exact-artifact acceptance opens the supplied source without creating a picker fixture', async () => {
-  const source = await readFile(
-    new URL('./real-desktop-ocr-smoke.ts', import.meta.url),
-    'utf8',
-  );
-  assert.match(source, /const pickerSourcePath = acceptance\s*\n\s*\? sourcePath\s*\n\s*:\s*join\(outputDirectory, sourceName\)/u);
-  assert.match(source, /if \(!acceptance\) await writeFile\(pickerSourcePath, sourceBytes\)/u);
-  assert.match(source, /if \(!acceptance\) \{\s*\n\s*await rm\(pickerSourcePath/u);
-});
-
-test('only the explicit packaged PDF acceptance run advertises page one', async () => {
-  const [smokeSource, captureSource, runtimeSource, workerSource] = await Promise.all([
-    readFile(new URL('./real-desktop-ocr-smoke.ts', import.meta.url), 'utf8'),
-    readFile(new URL('../../../apps/capture-workbench/src/app/services/desktop-workspace-capture.service.ts', import.meta.url), 'utf8'),
-    readFile(new URL('../../../apps/capture-workbench/src/app/services/desktop-runtime-client.service.ts', import.meta.url), 'utf8'),
-    readFile(new URL('../../../packages/capture-runtime/src/capture_runtime/workers/ocr_main.py', import.meta.url), 'utf8'),
-  ]);
-  assert.match(
-    smokeSource,
-    /acceptance && sourceKind === 'pdf'[\s\S]*CAPTURE_ACCEPTANCE_PDF_PAGE_SCOPE: 'page-1'/u,
-  );
-  assert.match(captureSource, /isPdfDocument\(documentId, host, mediaType\)[\s\S]*this\.runtime\.pdfPageNumbers\(\)/u);
-  assert.doesNotMatch(captureSource, /isPdfDocument\(documentId, host, mediaType\)\s*\?\s*\[1\]/u);
-  assert.match(runtimeSource, /value\.length >= 1[\s\S]*value\.every\(\(page, index\) => page === index \+ 1\)/u);
-  assert.match(workerSource, /tuple\(range\(1, page_count \+ 1\)\) if page_numbers is None/u);
-});
-
-test('installed acceptance wires the private OCR proof from run root to manifest', async () => {
-  const [smokeSource, launchPolicy, runtimeConfig, ocrWorker, streamingService, acceptanceContract] = await Promise.all([
-    readFile(new URL('./real-desktop-ocr-smoke.ts', import.meta.url), 'utf8'),
-    readFile(new URL('../src-tauri/src/launch_policy.rs', import.meta.url), 'utf8'),
-    readFile(new URL('../../../packages/capture-runtime/src/capture_runtime/config.py', import.meta.url), 'utf8'),
-    readFile(new URL('../../../packages/capture-runtime/src/capture_runtime/workers/ocr_main.py', import.meta.url), 'utf8'),
-    readFile(new URL('../../../packages/capture-runtime/src/capture_runtime/services/streaming_capture_service.py', import.meta.url), 'utf8'),
-    readFile(new URL('../../../tools/acceptance-contract.ts', import.meta.url), 'utf8'),
-  ]);
-  assert.match(smokeSource, /CAPTURE_OCR_EXECUTION_EVIDENCE_OPT_IN: '1'/u);
-  assert.match(smokeSource, /CAPTURE_OCR_EXECUTION_EVIDENCE_ROOT: acceptance\.artifactRoot/u);
-  assert.match(smokeSource, /CAPTURE_OCR_EXECUTION_RUNTIME_SHA256: expectedRuntimeSha256/u);
-  assert.match(smokeSource, /sourceRole: 'actual-installed-runtime'/u);
-  assert.match(smokeSource, /CAPTURE_REAL_DESKTOP_INSTALLER_PROVENANCE/u);
-  assert.match(smokeSource, /readOcrExecutionProof\(acceptance\.artifactRoot\)/u);
-  assert.match(smokeSource, /assertOcrExecutionProofMatchesInstalledJourney\(proof/u);
-  assert.match(smokeSource, /modelSha256: proof\.modelSha256/u);
-  assert.match(smokeSource, /profileSpecSha256: proof\.profileSpecSha256/u);
-  assert.match(smokeSource, /requestedPageScope: proof\.requestedPageScope/u);
-  assert.match(smokeSource, /expectedIdentity: \{[\s\S]*semanticArtifactIdentity\.bytes/u);
-  assert.match(smokeSource, /ocrExecutionProof: proof/u);
-  assert.match(smokeSource, /ocrExecutionProof\.artifactPath/u);
-  assert.match(launchPolicy, /#\[cfg\(feature = "acceptance-app-data"\)\][\s\S]*CAPTURE_OCR_EXECUTION_EVIDENCE_OPT_IN/u);
-  assert.doesNotMatch(runtimeConfig, /CAPTURE_OCR_EXECUTION_EVIDENCE_ROOT/u);
-  assert.doesNotMatch(ocrWorker, /record_execution_proof|AcceptanceOcrExecutionEvidenceSink/u);
-  assert.match(streamingService, /await self\.structure\(capture_id\)[\s\S]*_publish_execution_proof/u);
-  assert.match(acceptanceContract, /readOcrExecutionProof[\s\S]*sha256Canonical[\s\S]*Acceptance OCR execution proof evidence is not bound/u);
-});
-
 test('acceptance NSIS packaging is feature-gated and output-separated from release NSIS', async () => {
   const [projectText, buildSource] = await Promise.all([
     readFile(new URL('../project.json', import.meta.url), 'utf8'),
@@ -1317,18 +1246,6 @@ test('acceptance NSIS packaging is feature-gated and output-separated from relea
   assert.match(buildSource, /--bundles['\s\S]*nsis/u);
   assert.match(buildSource, /CARGO_TARGET_DIR: cargoTargetDir/u);
   assert.match(buildSource, /assertStagedRuntime\('release'\)/u);
-});
-
-test('installed OCR failure acceptance validates and manifests only a real worker failure', async () => {
-  const [smokeSource, acceptanceContract] = await Promise.all([
-    readFile(new URL('./real-desktop-ocr-smoke.ts', import.meta.url), 'utf8'),
-    readFile(new URL('../../../tools/acceptance-contract.ts', import.meta.url), 'utf8'),
-  ]);
-  assert.match(smokeSource, /readOcrExecutionFailure\(\s*acceptance\.artifactRoot,[\s\S]*sourceSha256/u);
-  assert.match(smokeSource, /ocrExecutionFailure/u);
-  assert.match(smokeSource, /ocrExecutionFailure\.artifactPath/u);
-  assert.doesNotMatch(smokeSource, /rm\(acceptance\.artifactRoot,\s*\{\s*recursive/u);
-  assert.match(acceptanceContract, /readOcrExecutionFailure[\s\S]*stageSequence/u);
 });
 
 test('packaged desktop entrypoint renders canonical OCR compute state before source import', async () => {
@@ -1771,29 +1688,6 @@ test('OCR screenshot evidence masks whole raw/result cards before capture', asyn
   assert.match(acceptanceSource, /getByTestId\('document-result'\)/u);
 });
 
-test('Phase 1 OCR checkpoint keeps its masked artifact but defers unapproved pixel diff', async () => {
-  const [smokeSource, acceptanceSource] = await Promise.all([
-    readFile(new URL('./real-desktop-ocr-smoke.ts', import.meta.url), 'utf8'),
-    readFile(new URL('./real-desktop-ocr-acceptance.spec.ts', import.meta.url), 'utf8'),
-  ]);
-  assert.match(
-    smokeSource,
-    /acceptanceScreenshot\(page, acceptance, acceptanceScreenshots, '03-ocr-checkpoint'/u,
-    'the OCR checkpoint must still produce a privacy-masked artifact',
-  );
-  assert.match(
-    acceptanceSource,
-    /name === '01-core-install-started'\s*\|\|\s*name === '02-document-processing'\s*\|\|\s*name === '03-ocr-checkpoint'\) return;/u,
-    'the first Phase 1 run must skip pixel diff at the unapproved OCR checkpoint',
-  );
-  assert.match(
-    acceptanceSource,
-    /semantic\/proof assertions remain the hard gate[\s\S]*first-run[\s\S]*artifact is retained for manual baseline approval/u,
-    'the callback must document why the pixel diff is deferred',
-  );
-  assert.match(acceptanceSource, /toHaveScreenshot\(/u, 'stable checkpoints must continue using approved goldens');
-});
-
 test('real desktop OCR provenance requires the PaddleOCR engine', () => {
   assert.deepEqual(
     parseOcrProvenance([
@@ -1811,16 +1705,3 @@ test('real desktop OCR provenance requires the PaddleOCR engine', () => {
   );
 });
 
-test('installed OCR acceptance binds worker archive and executable identity to the local candidate mirror', async () => {
-  const source = await readFile(
-    new URL('./real-desktop-ocr-smoke.ts', import.meta.url),
-    'utf8',
-  );
-  assert.match(source, /startLocalCandidateWorkerMirror\(/u);
-  assert.match(source, /CAPTURE_RUNTIME_CANDIDATE_ROOT/u);
-  assert.match(source, /CAPTURE_RUNTIME_CANDIDATE_ID/u);
-  assert.doesNotMatch(source, /capture-engine-ocr-0\.4\.2-windows-x64\.zip/u);
-  assert.doesNotMatch(source, /capture-engine-ocr-0\.4\.2-windows-x64-files\.json/u);
-  assert.doesNotMatch(source, /packages[\\/]capture-runtime[\\/]dist[\\/]release/u);
-  assert.doesNotMatch(source, /readWorkerExecutableSha256FromManifest/u);
-});

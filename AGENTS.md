@@ -13,6 +13,6 @@
 
 - Follow `.agents/GUIDES/release-runbook.md` for the current release state, the publish procedure, and known pitfalls.
 - Push CI on `main` is release evidence: release candidates verify it for their source commit, so never skip or weaken it. Every pull request runs the same full verification as `main`, in parallel jobs.
-- Tests check code and workflows, never documentation prose: a TODO checkbox or README wording must not fail CI.
+- Tests check behavior and workflow contracts, never documentation prose (a TODO checkbox or README wording must not fail CI) and never implementation text alone: a test that only regex-matches a script's source breaks on harmless refactors and passes when behavior breaks.
 - Real OCR journeys (desktop acceptance, practical installed OCR, runtime PDF OCR E2E) are local and manual; their file headers describe the steps and inputs.
 - Launcher `cargo test` is the only place failed tests are retried; fix timing-sensitive tests at the source rather than adding retries elsewhere.
