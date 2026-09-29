@@ -85,6 +85,7 @@ test('online-package PDF OCR E2E removes every local worker URL override', () =>
   assert.equal(environment.CAPTURE_SMOKE_WORKER_MIRROR_URL, undefined);
   assert.equal(environment.CAPTURE_PDF_OCR_E2E_LOCAL_MODEL_OPT_IN, undefined);
   assert.equal(environment.CAPTURE_PDF_OCR_E2E_LOCAL_MODEL_ROOT, undefined);
+  assert.equal(environment.CAPTURE_ENGINE_CACHE_DIR, 'off');
 });
 
 test('online-package PDF OCR E2E pins one official immutable runtime package', () => {

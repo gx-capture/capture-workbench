@@ -15,6 +15,13 @@ from capture_runtime.config import RuntimeSettings
 TOKEN = "capture-test-token-abcdefghijklmnopqrstuvwxyz-123456"
 
 
+@pytest.fixture(autouse=True)
+def _no_shared_engine_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Tests must exercise real download paths and never write to the machine
+    # cache; test_engine_download_cache covers the cache explicitly.
+    monkeypatch.setenv("CAPTURE_ENGINE_CACHE_DIR", "off")
+
+
 @pytest.fixture
 def settings_factory(tmp_path: Path) -> Callable[..., RuntimeSettings]:
     counter = 0

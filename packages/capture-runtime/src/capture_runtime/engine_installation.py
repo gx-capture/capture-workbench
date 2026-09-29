@@ -26,6 +26,7 @@ from capture_runtime.worker_client import InstalledEngine, WorkerClient, WorkerP
 from capture_runtime.worker_process import WorkerExecutionError
 
 from . import _engine_installation_limits as _installation_limits
+from ._engine_download_cache import with_shared_cache
 from ._engine_installation_activation import (
     InstalledFileSnapshot as _InstalledFileSnapshot,
 )
@@ -253,12 +254,14 @@ class EngineInstallationManager:
         self.root = root
         self.catalog = catalog
         self.worker_client = worker_client
-        self.downloader = downloader or HttpArtifactDownloader()
+        # Network downloads go through the machine-wide verified cache, so
+        # every host and every fresh app-data directory downloads once.
+        self.downloader = downloader or with_shared_cache(HttpArtifactDownloader())
         local_model_root = _pdf_ocr_e2e_local_model_root()
         self.model_downloader = model_downloader or (
             LocalModelFileDownloader(local_model_root)
             if local_model_root is not None
-            else HttpModelFileDownloader()
+            else with_shared_cache(HttpModelFileDownloader())
         )
         self._smoke_worker_mirror_url = _smoke_worker_mirror_url()
         self._pdf_ocr_e2e_local_worker_url = _pdf_ocr_e2e_local_worker_url()
