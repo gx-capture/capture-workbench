@@ -155,7 +155,8 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-  # Production core runtime and the core-only NSIS installer.
+  # Production core runtime, the desktop contract check against it, and the
+  # core-only NSIS installer.
   installer:
     runs-on: windows-latest
     timeout-minutes: 60
@@ -197,6 +198,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
           pnpm nx run capture-workbench-desktop:stage-core-runtime
+          pnpm nx run capture-workbench-desktop:contract-consistency
           pnpm nx run capture-runtime:verify-core-boundary
           pnpm nx run capture-workbench-desktop:build-nsis
 
@@ -235,13 +237,6 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
-
-      # contract-consistency depends on capture-runtime:check-contracts (Python).
-      - name: Install uv and Python 3.12
-        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
-        with:
-          python-version: '3.12'
-          enable-cache: true
 
       - name: Prepare Rust target
         shell: pwsh
@@ -291,7 +286,6 @@ jobs:
           $PSNativeCommandUseErrorActionPreference = $true
           pnpm nx run capture-workbench-desktop:stage-deterministic-runtime
           pnpm nx run capture-workbench-desktop:cargo-fmt-check
-          pnpm nx run capture-workbench-desktop:contract-consistency
           pnpm nx run capture-workbench-desktop:cargo-check
           pnpm nx run capture-workbench-desktop:cargo-test
           pnpm nx run capture-workbench-desktop:package-qa-test
