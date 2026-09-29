@@ -83,6 +83,16 @@ extern "system" {
 const RUNTIME_READY_SCHEMA_SHA256: &str =
     "850afd212d049c25da41d3867ba5477451a6a2c6c7e41f116fe60f26b6a35335";
 
+/// Why the HTTP server gave up, for the `<marker>.error` report. The error
+/// variant stays `HttpServer`; this only explains which path produced it.
+static HTTP_FAILURE_DETAIL: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+fn note_http_failure(detail: String) {
+    if let Ok(mut slot) = HTTP_FAILURE_DETAIL.lock() {
+        *slot = Some(detail);
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ProbeError {
     Invocation,
@@ -148,9 +158,15 @@ fn main() {
         // The launcher discards the probe's stderr; leave the reason beside the
         // marker so a waiting test can fail fast with it instead of timing out.
         if let Some(marker_path) = env::var_os(MARKER_ENV) {
+            let detail = HTTP_FAILURE_DETAIL
+                .lock()
+                .ok()
+                .and_then(|mut slot| slot.take())
+                .map(|detail| format!(" ({detail})"))
+                .unwrap_or_default();
             let _ = fs::write(
                 PathBuf::from(marker_path).with_extension("error"),
-                format!("{error}\n"),
+                format!("{error}{detail}\n"),
             );
         }
         std::process::exit(2);
@@ -777,10 +793,12 @@ fn serve_http(config: &ProbeConfig) -> Result<(), ProbeError> {
 }
 
 fn serve_http_until(config: &ProbeConfig, overall_deadline: Instant) -> Result<(), ProbeError> {
+    let started = Instant::now();
     if config.http_start_delay > Duration::ZERO {
         let remaining = remaining_http_budget(overall_deadline).ok_or(ProbeError::HttpServer)?;
         if config.http_start_delay >= remaining {
             thread::sleep(remaining);
+            note_http_failure("the configured start delay outlasted the HTTP budget".into());
             return Err(ProbeError::HttpServer);
         }
         thread::sleep(config.http_start_delay);
@@ -794,7 +812,15 @@ fn serve_http_until(config: &ProbeConfig, overall_deadline: Instant) -> Result<(
             {
                 thread::sleep(HTTP_RETRY);
             }
-            Err(_) => return Err(ProbeError::HttpServer),
+            Err(error) => {
+                note_http_failure(format!(
+                    "binding port {} failed after {} ms: {:?}",
+                    config.port,
+                    started.elapsed().as_millis(),
+                    error.kind()
+                ));
+                return Err(ProbeError::HttpServer);
+            }
         }
     };
     listener
@@ -803,18 +829,39 @@ fn serve_http_until(config: &ProbeConfig, overall_deadline: Instant) -> Result<(
     write_http_listener_checkpoint(config)?;
     let mut idle_deadline = overall_deadline;
     let mut served_authorized_request = false;
+    let mut accepted_connections = 0usize;
     loop {
         let deadline = overall_deadline.min(idle_deadline);
         if Instant::now() >= deadline {
-            return if served_authorized_request {
-                Ok(())
-            } else {
-                Err(ProbeError::HttpServer)
-            };
+            if served_authorized_request {
+                return Ok(());
+            }
+            note_http_failure(format!(
+                "no authorized request within {} ms of listening on port {}; {} connection(s) accepted",
+                started.elapsed().as_millis(),
+                config.port,
+                accepted_connections
+            ));
+            return Err(ProbeError::HttpServer);
         }
         match listener.accept() {
             Ok((mut stream, _)) => {
-                if handle_http_connection(&mut stream, config, deadline)? {
+                accepted_connections += 1;
+                let handled = handle_http_connection(&mut stream, config, deadline);
+                if let Err(error) = &handled {
+                    let inner = HTTP_FAILURE_DETAIL
+                        .lock()
+                        .ok()
+                        .and_then(|mut slot| slot.take())
+                        .map(|detail| format!(": {detail}"))
+                        .unwrap_or_default();
+                    note_http_failure(format!(
+                        "connection {accepted_connections} on port {} failed after {} ms with {error}{inner}",
+                        config.port,
+                        started.elapsed().as_millis()
+                    ));
+                }
+                if handled? {
                     served_authorized_request = true;
                     if config.http_mode != Some(HttpMode::ReadyHold) {
                         idle_deadline = Instant::now() + HTTP_SUCCESS_HOLD;
@@ -824,7 +871,10 @@ fn serve_http_until(config: &ProbeConfig, overall_deadline: Instant) -> Result<(
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                 thread::sleep(HTTP_RETRY);
             }
-            Err(_) => return Err(ProbeError::HttpServer),
+            Err(error) => {
+                note_http_failure(format!("accept failed: {:?}", error.kind()));
+                return Err(ProbeError::HttpServer);
+            }
         }
     }
 }
@@ -1173,10 +1223,16 @@ fn write_http_bytes(
             .set_write_timeout(Some(remaining.min(HTTP_IO_TIMEOUT)))
             .map_err(|_| ProbeError::HttpServer)?;
         match stream.write(&bytes[written..]) {
-            Ok(0) => return Err(ProbeError::HttpServer),
+            Ok(0) => {
+                note_http_failure("response write returned zero bytes".into());
+                return Err(ProbeError::HttpServer);
+            }
             Ok(count) => written += count,
             Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
-            Err(_) => return Err(ProbeError::HttpServer),
+            Err(error) => {
+                note_http_failure(format!("response write failed: {:?}", error.kind()));
+                return Err(ProbeError::HttpServer);
+            }
         }
     }
     loop {
