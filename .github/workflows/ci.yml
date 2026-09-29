@@ -236,6 +236,13 @@ jobs:
           node-version: 24
           cache: pnpm
 
+      # contract-consistency depends on capture-runtime:check-contracts (Python).
+      - name: Install uv and Python 3.12
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: '3.12'
+          enable-cache: true
+
       - name: Prepare Rust target
         shell: pwsh
         run: rustup target add x86_64-pc-windows-msvc
