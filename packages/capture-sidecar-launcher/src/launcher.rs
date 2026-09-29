@@ -2011,6 +2011,7 @@ mod tests {
         }
         for port in ports.iter().copied() {
             wait_for_activation_probe_http_status(
+                &marker_paths,
                 port,
                 Some(ACTIVATION_HTTP_TOKEN),
                 &format!("{LOOPBACK_HOST}:{port}"),
@@ -2064,6 +2065,19 @@ mod tests {
         (plan, cleaned, group_path, root_paths)
     }
 
+    /// The probe writes `<marker>.error` when it exits before listening (for
+    /// example on a rejected journal). Waiters check it every iteration so a
+    /// dead probe fails the test at once with its reason, not after a timeout.
+    #[cfg(windows)]
+    fn activation_probe_exit_reason<P: AsRef<Path>>(marker_paths: &[P]) -> Option<String> {
+        marker_paths.iter().find_map(|marker| {
+            let path = marker.as_ref().with_extension("error");
+            fs::read_to_string(&path)
+                .ok()
+                .map(|reason| format!("{}: {}", path.display(), reason.trim()))
+        })
+    }
+
     #[cfg(windows)]
     fn wait_for_activation_probe_marker(
         marker_path: &Path,
@@ -2077,6 +2091,9 @@ mod tests {
         let deadline = std::time::Instant::now() + FIXTURE_EVENTUAL_WAIT;
         let mut last_observation = None;
         while std::time::Instant::now() < deadline {
+            if let Some(reason) = activation_probe_exit_reason(&[marker_path]) {
+                panic!("activation probe exited before writing its marker: {reason}");
+            }
             match fs::read_to_string(marker_path) {
                 Ok(marker) if marker == expected => return,
                 Ok(marker) => last_observation = Some(format!("partial or mismatching {marker:?}")),
@@ -2094,6 +2111,7 @@ mod tests {
 
     #[cfg(windows)]
     fn wait_for_activation_probe_http_status(
+        marker_paths: &[PathBuf],
         port: u16,
         authorization: Option<&str>,
         host: &str,
@@ -2113,6 +2131,9 @@ mod tests {
         let mut connect_failures = 0usize;
         let mut incomplete_responses = 0usize;
         while Instant::now() < deadline {
+            if let Some(reason) = activation_probe_exit_reason(marker_paths) {
+                panic!("activation probe exited before serving HTTP: {reason}");
+            }
             let Ok(mut stream) = TcpStream::connect_timeout(
                 &format!("{LOOPBACK_HOST}:{port}")
                     .parse()
@@ -2226,6 +2247,9 @@ mod tests {
         let mut response_bytes = 0usize;
         let mut attempts = 0usize;
         while Instant::now() < deadline {
+            if let Some(reason) = activation_probe_exit_reason(&[marker_path]) {
+                panic!("activation probe exited before its HTTP checkpoint: {reason}");
+            }
             listener_state = checkpoint_state(&listener_checkpoint_path, b"listener-bound\n");
             authorization_state = checkpoint_state(&checkpoint_path, b"authorized\n");
             if authorization_state == CheckpointState::Complete {
@@ -3770,6 +3794,7 @@ mod tests {
                     "frozen readiness token binding mismatch"
                 );
                 wait_for_activation_probe_http_status(
+                    &marker_paths,
                     port,
                     Some("wrong-token"),
                     &format!("{LOOPBACK_HOST}:{port}"),
@@ -3777,6 +3802,7 @@ mod tests {
                     true,
                 );
                 wait_for_activation_probe_http_status(
+                    &marker_paths,
                     port,
                     None,
                     &format!("{LOOPBACK_HOST}:{port}"),
@@ -3784,6 +3810,7 @@ mod tests {
                     true,
                 );
                 wait_for_activation_probe_http_status(
+                    &marker_paths,
                     port,
                     Some(ACTIVATION_HTTP_TOKEN),
                     "localhost",
@@ -3791,6 +3818,7 @@ mod tests {
                     false,
                 );
                 wait_for_activation_probe_http_status(
+                    &marker_paths,
                     port,
                     Some(ACTIVATION_HTTP_TOKEN),
                     &format!("{LOOPBACK_HOST}:{port}"),
@@ -3876,6 +3904,7 @@ mod tests {
             }
             for port in ports.iter().copied() {
                 wait_for_activation_probe_http_status(
+                    &marker_paths,
                     port,
                     Some(ACTIVATION_HTTP_TOKEN),
                     &format!("{LOOPBACK_HOST}:{port}"),
@@ -3991,6 +4020,7 @@ mod tests {
             }
             for port in ports.iter().copied() {
                 wait_for_activation_probe_http_status(
+                    &marker_paths,
                     port,
                     Some(ACTIVATION_HTTP_TOKEN),
                     &format!("{LOOPBACK_HOST}:{port}"),
@@ -4111,6 +4141,7 @@ mod tests {
             );
         }
         wait_for_activation_probe_http_status(
+            &marker_paths,
             ports[0],
             Some(ACTIVATION_HTTP_TOKEN),
             &format!("{LOOPBACK_HOST}:{}", ports[0]),
@@ -5604,6 +5635,7 @@ mod tests {
             launching_journal.journal_revision,
         );
         wait_for_activation_probe_http_status(
+            &marker_paths,
             ports[0],
             Some(ACTIVATION_HTTP_TOKEN),
             &format!("{LOOPBACK_HOST}:{}", ports[0]),
@@ -5840,6 +5872,7 @@ mod tests {
                 journal.journal_revision,
             );
             wait_for_activation_probe_http_status(
+                &marker_paths,
                 ports[0],
                 Some(ACTIVATION_HTTP_TOKEN),
                 &format!("{LOOPBACK_HOST}:{}", ports[0]),
@@ -5941,6 +5974,7 @@ mod tests {
         let (plan, marker_paths, launching) =
             launch_http_owner_with_modes_for_test(directory.path(), &ports, &modes);
         wait_for_activation_probe_http_status(
+            &marker_paths,
             ports[0],
             Some(ACTIVATION_HTTP_TOKEN),
             &format!("{LOOPBACK_HOST}:{}", ports[0]),
@@ -5948,6 +5982,7 @@ mod tests {
             false,
         );
         wait_for_activation_probe_http_status(
+            &marker_paths,
             ports[1],
             Some(ACTIVATION_HTTP_TOKEN),
             &format!("{LOOPBACK_HOST}:{}", ports[1]),
@@ -6156,6 +6191,7 @@ mod tests {
             journal.journal_revision,
         );
         wait_for_activation_probe_http_status(
+            &marker_paths,
             ports[0],
             Some(ACTIVATION_HTTP_TOKEN),
             &format!("{LOOPBACK_HOST}:{}", ports[0]),
@@ -6294,6 +6330,7 @@ mod tests {
             journal.journal_revision,
         );
         wait_for_activation_probe_http_status(
+            &marker_paths,
             ports[0],
             Some(ACTIVATION_HTTP_TOKEN),
             &format!("{LOOPBACK_HOST}:{}", ports[0]),
@@ -6377,6 +6414,7 @@ mod tests {
             journal.journal_revision,
         );
         wait_for_activation_probe_http_status(
+            &marker_paths,
             ports[0],
             Some(ACTIVATION_HTTP_TOKEN),
             &format!("{LOOPBACK_HOST}:{}", ports[0]),

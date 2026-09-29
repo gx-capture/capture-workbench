@@ -145,6 +145,14 @@ fn main() {
     let result = run_probe(parse_config(env::args_os().skip(1)), std::process::id());
     if let Err(error) = result {
         eprintln!("{error}");
+        // The launcher discards the probe's stderr; leave the reason beside the
+        // marker so a waiting test can fail fast with it instead of timing out.
+        if let Some(marker_path) = env::var_os(MARKER_ENV) {
+            let _ = fs::write(
+                PathBuf::from(marker_path).with_extension("error"),
+                format!("{error}\n"),
+            );
+        }
         std::process::exit(2);
     }
     thread::sleep(HOLD_TIMEOUT);
