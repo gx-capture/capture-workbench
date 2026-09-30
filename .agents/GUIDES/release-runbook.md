@@ -1,26 +1,30 @@
 # Capture Workbench release runbook
 
-Current as of 2026-09-28. This is the operational procedure for publishing a
-Capture Workbench release and moving its consumers. It reflects how 0.4.2 was
+Current as of 2026-09-29. This is the operational procedure for publishing a
+Capture Workbench release and moving its consumers. It reflects how 0.4.3 was
 actually shipped; workflow files remain the source of truth for inputs.
 
 ## Current state
 
-- Capture Runtime and Workbench **0.4.2** are published: npm
+- Capture Runtime and Workbench **0.4.3** are published: npm
   (`@gx-capture/capture-workbench-ui`, `@gx-capture/capture-runtime-client` on
   GitHub Packages), Maven (`com.gx.capture:capture-runtime-client`, GitHub
   Packages), PyPI (`capture-runtime-client`), crates.io
-  (`capture-sidecar-launcher`), and GitHub release `v0.4.2` (runtime exe
-  `d42b343d…`, OCR/Whisper engine zips, desktop installer, release manifest).
-  `release-index/stable.json` on the `release-index` branch points at `v0.4.2`.
-- Source commit of the 0.4.2 candidates: `6726b6a`. Contract-set SHA-256:
-  `d293a3de26114f1b4fd65ea6d6d3f157fa2f93109b31e1e30d5d15ef0dfdeb40`.
-- Consumers on their `main` branches pin 0.4.2 and passed published-mode
-  practical OCR: Cert Prep (`WodenWang820118/cert-prep`) and LAW
-  (`WodenWang820118/gx.law-prep`: Java engine → Python AI service → runtime).
+  (`capture-sidecar-launcher`), and GitHub release `v0.4.3` (runtime exe
+  `538c8afe…`, OCR/Whisper engine zips, desktop installer, release manifest).
+  `release-index/stable.json` on the `release-index` branch points at `v0.4.3`.
+- Source commit of the 0.4.3 candidates: `d3c73d2`. Contract-set SHA-256:
+  `232ef06bf547e79120df28f39303e73b0e5842beace5910a422f15dfb5e2acbc`.
+  Runs: package candidate 36543979781, runtime candidate 36544271386, package
+  promote 36545669625, runtime promote 36561430902, release candidate
+  36571021075, consumer gates 36574474509, release promote 36576362697.
+- Consumers on their `main` branches pin 0.4.3 and passed published-mode
+  practical OCR: Cert Prep (`WodenWang820118/cert-prep`, PR #34) and LAW
+  (`WodenWang820118/gx.law-prep`, PR #92: Java engine → Python AI service →
+  runtime).
+- First-run OCR install on fresh app data: about 40 s with a cold download,
+  about 8 s when the machine-wide engine cache already holds the engine.
 - Known limitations: handwriting OCR quality (printed text is the floor);
-  first-run engine download from GitHub releases takes roughly 9–17 minutes
-  with 0.4.2 (the next release downloads byte ranges in parallel, ~5 minutes);
   installed OCR worker paths beyond Windows MAX_PATH crash the worker.
 
 ## Workflow map
@@ -57,7 +61,7 @@ missing ones.
    first, then LAW).
 5. Dispatch `release-candidate.yml` with the Route A inputs and the
    `release_mode` recorded in the runtime candidate manifest
-   (`model-enabled` for 0.4.2). Record the run ID, `candidateId`, and the
+   (`model-enabled` for 0.4.3). Record the run ID, `candidateId`, and the
    `candidate-manifest.json` hash from artifact
    `capture-candidate-<version>-<run>`.
 6. Pre-run both consumer gates locally against the downloaded release
@@ -104,6 +108,15 @@ candidate with `node tools/install-capture-workbench-dependencies.mts
 - Local practical OCR runs: keep `CAPTURE_APP_DATA_DIR` short (installed OCR
   worker paths beyond Windows MAX_PATH crash the worker) and set `CAPTURE_PORT`
   together with `--port`, or the allowed-host check rejects requests.
+- PyPI's JSON API can lag an upload by minutes; the post-publish readback
+  retries a 404 for about five minutes before failing.
+- Consumer migrations: bump only exact version tokens (never `10.4.2` or other
+  packages' `0.4.2` in lock files), move tests that use the new version as a
+  "wrong" value to `99.0.0` first, and let each package manager update its
+  own lock. If `pnpm install` re-resolves unrelated peers (LAW), change only the
+  `@gx-capture` lock entries and verify with `pnpm install --frozen-lockfile`.
+  Regenerate consumer contract artifacts (LAW `law-contracts-generate`) and
+  recompute pinned receipt digests from their canonical bytes.
 - `sync-versions.ts` rewrites every occurrence of the previous release
   version (and workspace crates in `Cargo.lock`). A test's "conflicting
   version" must therefore be a value no release will reach (`99.0.0`), and
