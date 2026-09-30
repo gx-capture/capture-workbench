@@ -123,7 +123,7 @@ test('release intent is the synchronized source for all release-managed versions
   assert.ok(entries.every((entry) => entry.value === intent.releaseVersion));
   assert.ok(entries.some((entry) => entry.label === 'Java runtime client POM'));
   assert.deepEqual(loadReleaseIntent(workspaceRoot), {
-    releaseVersion: '0.4.3',
+    releaseVersion: '0.4.4',
     runtimeApiVersion: '2.0',
     documentSchemaVersion: '2',
   });
@@ -134,7 +134,7 @@ test('typed release inventory reports every D2.1 identity without mutation', () 
   const ids = inventory.entries.map((entry) => entry.id);
   assert.equal(new Set(ids).size, ids.length);
   requiredEntry(inventory, 'workspace.nx', '23.1.2');
-  requiredEntry(inventory, 'release.version', '0.4.3');
+  requiredEntry(inventory, 'release.version', '0.4.4');
   requiredEntry(inventory, 'runtime.api', '2.0');
   requiredEntry(inventory, 'document.schema', '2');
   requiredEntry(inventory, 'ocr.projection.schema', '3');
@@ -148,7 +148,7 @@ test('typed release inventory reports every D2.1 identity without mutation', () 
     requiredEntry(
       inventory,
       id,
-      '232ef06bf547e79120df28f39303e73b0e5842beace5910a422f15dfb5e2acbc',
+      '03ba27e42e13292162b0f3da12bf3fe065edad12806efdf4bb19e0cc360e42d7',
     );
   }
   for (const channel of [
@@ -169,7 +169,7 @@ test('typed release inventory reports every D2.1 identity without mutation', () 
 const R3_HEALTH_PATH = 'packages/capture-sidecar-launcher/src/health.rs';
 const R3_IDENTITIES = [
   ['R3_SERVICE', 'runtime.service.sidecar-health', 'capture-runtime', 'other-runtime'],
-  ['R3_RUNTIME_VERSION', 'runtime.version.sidecar-health', '0.4.3', '99.0.0'],
+  ['R3_RUNTIME_VERSION', 'runtime.version.sidecar-health', '0.4.4', '99.0.0'],
   ['R3_API_VERSION', 'runtime.api.sidecar-health', '2.0', '2.1'],
   ['R3_DOCUMENT_SCHEMA_VERSION', 'document.schema.sidecar-health', '2', '3'],
   ['R3_CONTRACT_SET_VERSION', 'contract-set.version.sidecar-health', '2', '3'],
@@ -184,8 +184,8 @@ test('R3 inventory uses production identities and preserves negative test fixtur
     const inventory = collectReleaseInventory(root);
     for (const [, id, value] of R3_IDENTITIES) requiredEntry(inventory, id, value);
     const versions = collectReleaseVersionEntries(root);
-    assert.ok(versions.every((entry) => entry.value === '0.4.3'));
-    assert.equal(verifyGeneratedVersions(root).releaseVersion, '0.4.3');
+    assert.ok(versions.every((entry) => entry.value === '0.4.4'));
+    assert.equal(verifyGeneratedVersions(root).releaseVersion, '0.4.4');
     assert.equal(await readFile(path, 'utf8'), before);
   });
 });
@@ -418,7 +418,7 @@ test('inventory rejects a self-consistent release and API drift against Phase2 d
       const path = join(root, relativePath);
       const before = await readFile(path, 'utf8');
       const drifted = before
-        .replaceAll('0.4.3', '99.0.0')
+        .replaceAll('0.4.4', '99.0.0')
         .replaceAll('2.0', '2.1')
         .replace('"documentSchemaVersion": "2"', '"documentSchemaVersion": "3"');
       assert.notEqual(drifted, before, relativePath);

@@ -14,8 +14,8 @@ const qaDir = 'C:\\software-dev\\capture-workbench\\output\\law-prep-installed-v
 const userDataDir = join(qaDir, 'webview-user-data');
 const cdpPort = 40299;
 
-const ocrZipPath = 'C:\\software-dev\\gx.law-prep-installed-test\\resources\\capture-runtime\\capture-engine-ocr-0.4.3-windows-x64.zip';
-const modelRoot = 'C:\\software-dev\\capture-workbench-phase1-j19-model-mirror-0.4.3';
+const ocrZipPath = 'C:\\software-dev\\gx.law-prep-installed-test\\resources\\capture-runtime\\capture-engine-ocr-0.4.4-windows-x64.zip';
+const modelRoot = 'C:\\software-dev\\capture-workbench-phase1-j19-model-mirror-0.4.4';
 
 console.log('=== Step 1: Pre-cleanup check ===');
 function killSidecars() {

@@ -37,13 +37,13 @@ function descriptorForFixture(): LocalCandidateModelDescriptor {
     sha256: sha256(contents),
   }));
   const modelManifest = {
-    artifactVersion: '0.4.3',
+    artifactVersion: '0.4.4',
     entryPoint: 'model',
     files,
     manifestVersion: '1',
   };
   return {
-    artifactVersion: '0.4.3',
+    artifactVersion: '0.4.4',
     entryCount: files.length,
     entryPoint: 'model',
     extractedBytes: files.reduce((total, file) => total + file.bytes, 0),
@@ -118,7 +118,7 @@ async function createCandidateFixture(descriptor: LocalCandidateModelDescriptor)
   await mkdir(dirname(catalogPath), { recursive: true });
   const catalogBytes = Buffer.from(JSON.stringify({
     catalogVersion: '2',
-    runtimeVersion: '0.4.3',
+    runtimeVersion: '0.4.4',
     requirements: [{
       requirementId: 'windowsml-ocr',
       modelFiles: descriptor,
@@ -136,7 +136,7 @@ async function createCandidateFixture(descriptor: LocalCandidateModelDescriptor)
     packageCandidateId: 'b'.repeat(64),
     producerRunId: 1,
     releaseMode: 'core-only',
-    releaseVersion: '0.4.3',
+    releaseVersion: '0.4.4',
     schemaVersion: '1',
     sourceCommit: 'c'.repeat(40),
     toolchains: { node: '24', python: '3.12', runtime: 'capture-runtime' },
@@ -350,7 +350,7 @@ test('local candidate model binding rejects candidate manifest and catalog byte 
 
     const tamperedCatalog = Buffer.from(JSON.stringify({
       catalogVersion: '2',
-      runtimeVersion: '0.4.3',
+      runtimeVersion: '0.4.4',
       requirements: [],
     }));
     await writeFile(candidate.catalogPath, tamperedCatalog);

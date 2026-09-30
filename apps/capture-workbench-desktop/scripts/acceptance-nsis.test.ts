@@ -16,7 +16,7 @@ const HEAD = 'a'.repeat(40);
 const RUNTIME_SHA = 'b'.repeat(64);
 const RUNTIME_MANIFEST_SHA = 'c'.repeat(64);
 
-async function createBundle(targetDir: string, installerNames = ['Capture Workbench_0.4.3_x64-setup.exe']) {
+async function createBundle(targetDir: string, installerNames = ['Capture Workbench_0.4.4_x64-setup.exe']) {
   const bundle = join(targetDir, TARGET_TRIPLE, 'release', 'bundle', 'nsis');
   await mkdir(bundle, { recursive: true });
   for (const [index, installerName] of installerNames.entries()) {
@@ -117,7 +117,7 @@ test('acceptance NSIS output is isolated and provenance binds the built installe
       stagedRuntimeSha256: RUNTIME_SHA,
       runtimeManifestSha256: RUNTIME_MANIFEST_SHA,
       installer: {
-        fileName: 'Capture Workbench_0.4.3_x64-setup.exe',
+        fileName: 'Capture Workbench_0.4.4_x64-setup.exe',
         bytes: 11,
         sha256: '1926123787d3259ad378dd81bdac48e28b07f1bc88e070c0ef3a9e0a6621f459',
       },

@@ -559,8 +559,8 @@ export async function resolveLocalInstalledRuntimeIdentity(
   if (sha256Bytes(Buffer.from(JSON.stringify(candidateManifestBase))) !== options.candidateId) {
     throw new Error('Runtime candidate ID is not bound to its manifest.');
   }
-  if (candidateManifest.releaseVersion !== '0.4.3') {
-    throw new Error('Runtime candidate version is not 0.4.3.');
+  if (candidateManifest.releaseVersion !== '0.4.4') {
+    throw new Error('Runtime candidate version is not 0.4.4.');
   }
   const candidateContractSetSha256 = requireDigest(candidateManifest.contractSetSha256, 'runtime candidate contract set');
   const candidateContractBytes = await readFile(await requireCandidateFile(candidateAuthority, 'contracts/contract-set.json', 'Runtime candidate contract set'));

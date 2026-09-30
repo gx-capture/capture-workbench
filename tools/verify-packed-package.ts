@@ -95,7 +95,7 @@ export function verifyPackedPackage(): void {
     manifest.name === '@gx-capture/capture-workbench-ui',
     'Unexpected package name.',
   );
-  assert(manifest.version === '0.4.3', 'Unexpected package version.');
+  assert(manifest.version === '0.4.4', 'Unexpected package version.');
   assert(
     manifest.repository?.url ===
       'git+https://github.com/gx-capture/capture-workbench.git',
@@ -119,7 +119,7 @@ export function verifyPackedPackage(): void {
     'The packed package must own its non-Angular-host compiler fallback.',
   );
   assert(
-    manifest.dependencies?.['@gx-capture/capture-runtime-client'] === '0.4.3',
+    manifest.dependencies?.['@gx-capture/capture-runtime-client'] === '0.4.4',
     'The packed package must depend on the published capture-runtime-client version.',
   );
   assert(

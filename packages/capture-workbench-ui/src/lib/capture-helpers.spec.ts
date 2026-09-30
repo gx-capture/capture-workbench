@@ -120,7 +120,7 @@ describe('capture helpers', () => {
     const hostOnly: RuntimeReady = {
       ready: true,
       service: 'capture-runtime',
-      runtimeVersion: '0.4.3',
+      runtimeVersion: '0.4.4',
       apiVersion: '2.0',
       captureDocumentSchemaVersion: '2',
       capabilities: {

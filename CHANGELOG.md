@@ -21,6 +21,8 @@ Capture Workbench follows an explicit 0.x compatibility policy:
 The consumer consistency check is a permanent CI gate for the declared
 runtime, package lock, Python host, desktop host, and browser host versions.
 
+## 0.4.4
+
 ### Runtime
 
 - A PDF page where PaddleOCR returns a region with empty text (score zero) no

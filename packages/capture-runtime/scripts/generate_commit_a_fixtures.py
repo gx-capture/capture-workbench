@@ -7,7 +7,7 @@ import zlib
 from pathlib import Path
 from typing import Final
 
-RELEASE_VERSION: Final = "0.4.3"
+RELEASE_VERSION: Final = "0.4.4"
 DET_ONNX_BYTES: Final = 62032837
 DET_ONNX_SHA256: Final = "eb13b44b25bb36f89528b68720af8a61d9cf381176107f465db1757b65d086e1"
 DET_YAML_BYTES: Final = 886
@@ -185,7 +185,7 @@ def _license_text() -> bytes:
 
 def _notice_text() -> bytes:
     return (
-        b"Capture Workbench v0.4.3 Commit A notice\n\n"
+        b"Capture Workbench v0.4.4 Commit A notice\n\n"
         b"These files contain no model weights. The fixed OCR\n"
         b"phrase is intentionally limited to `CAPTURE OCR FIXTURE`. PaddleOCR\n"
         b"and model-revision metadata identify user-directed upstream inputs; their\n"

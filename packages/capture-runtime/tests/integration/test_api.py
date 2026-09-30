@@ -114,7 +114,7 @@ def test_v2_runtime_ready_reports_authenticated_ocr_compute_decision(settings_fa
         "apiVersion": "2.0",
         "schemaVersion": "1",
         "service": "capture-runtime",
-        "runtimeVersion": "0.4.3",
+        "runtimeVersion": "0.4.4",
         "contractSetVersion": "2",
         "contractSha256": contract_set.sha256,
         "workerSha256": None,
