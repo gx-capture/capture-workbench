@@ -609,6 +609,66 @@ def test_ocr_worker_rejects_header_final_provenance_equivocation_without_pages(
     asyncio.run(run())
 
 
+@pytest.mark.parametrize(
+    ("mutation", "expected"),
+    [
+        ("recognized", [(1, 2), (2, 2)]),
+        ("empty", [(1, 2), (2, 2)]),
+        ("failed", [(1, 2)]),
+        ("duplicate", [(1, 2)]),
+        ("out-of-order", []),
+        ("raster", [(1, 2)]),
+        ("requested-manifest", []),
+        ("cancel", [(1, 2)]),
+    ],
+)
+def test_worker_progress_reports_only_verified_page_counts(tmp_path, mutation, expected) -> None:
+    pages = [_ocr_page_payload(1, "one"), _ocr_page_payload(2, "two")]
+    manifest = [{"page": page["page"], "raster": deepcopy(page["raster"])} for page in pages]
+    if mutation in {"empty", "failed"}:
+        pages[1] = _ocr_page_payload(2, "", status=mutation)
+    elif mutation == "duplicate":
+        pages[1] = deepcopy(pages[0])
+    elif mutation == "out-of-order":
+        pages.reverse()
+    elif mutation == "raster":
+        pages[1]["raster"]["width"] = 121
+    elif mutation == "requested-manifest":
+        manifest[0]["raster"]["width"] = 121
+    client = WorkerClient(process=EquivocatingOcrProcess(pages, deepcopy(pages)))
+    source = tmp_path / "source.pdf"
+    source.write_bytes(b"pdf")
+    observed = []
+
+    async def run() -> None:
+        cancellation = asyncio.Event()
+
+        def progress(completed: int, total: int) -> None:
+            observed.append((completed, total))
+            if mutation == "cancel":
+                cancellation.set()
+
+        try:
+            await client.run(
+                InstalledEngine(
+                    requirement_id="windowsml-ocr",
+                    artifact_version="test",
+                    executable=tmp_path / "ocr.exe",
+                    model_dir=tmp_path,
+                ),
+                source_path=source,
+                media_type="application/pdf",
+                options={"pageManifest": manifest},
+                cancel_event=cancellation,
+                ocr_progress=progress,
+            )
+        except OcrWorkerFailure:
+            assert mutation in {"duplicate", "out-of-order", "raster", "failed"}
+        assert observed == expected
+
+    asyncio.run(run())
+
+
 def test_ocr_worker_accepts_signed_zero_as_the_same_numeric_content(
     tmp_path: Path,
 ) -> None:

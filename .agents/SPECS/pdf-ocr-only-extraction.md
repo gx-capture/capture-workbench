@@ -30,6 +30,12 @@ PaddleOCR 3.7 WindowsML worker. Embedded PDF text is never read or returned.
 - PDF capture requires the `windowsml-ocr` runtime requirement to be ready.
 - Successful PDF extraction reports the existing `windowsml-ocr` engine and
   PaddleOCR model/device provenance.
+- Validated, consecutive OCR worker pages update the existing V2 `progress`
+  field and `checkpoint` events while capture remains `extracting`. Progress
+  is `0.9 * completed / requested`, including successfully processed empty
+  pages; the final 10% remains reserved for structuring. These events contain
+  counts expressed as a fraction, not OCR text or a success receipt. Raw text
+  and terminal success still require complete result/provenance validation.
 
 ## Key decisions
 
@@ -46,6 +52,12 @@ PaddleOCR 3.7 WindowsML worker. Embedded PDF text is never read or returned.
 - Cancellation is checked before each page render and recognition operation.
 - A page with no recognized text does not create an empty segment; a document
   with no non-empty OCR segments fails closed.
+- Empty recognition regions are skipped only after their text type, score,
+  polygon and array cardinality pass validation. Malformed metadata still
+  rejects the result. Blank regions do not abort an otherwise readable page.
+- Cancelled, failed, deleted or completed captures receive no further OCR
+  progress. Malformed, duplicate, out-of-order or raster-mismatched worker
+  frames cannot advance the public completed-page fraction.
 - Worker/model unavailability is reported as the existing typed runtime
   requirement failure before Cert Prep dispatches the upload.
 
@@ -82,14 +94,20 @@ PaddleOCR 3.7 WindowsML worker. Embedded PDF text is never read or returned.
   validation; they do not constitute OCR acceptance.
 - Cert Prep frontend/backend tests use fake runtime clients to prove PDF
   admission is OCR-gated and no upload is dispatched when unavailable.
-- Node unit tests validate E2E option parsing, environment isolation, and
-  evidence shape only.
+- Node unit tests validate E2E option parsing, environment isolation and
+  evidence shape. Controlled-clock HTTP polling tests prove slow ongoing
+  progress survives five minutes, metadata churn cannot hide a stall, and
+  the absolute deadline and worker failures remain effective.
 
 ### Integration tests (`tests/integration`)
 
 - Installer/catalog/downloader/worker tests prove the local E2E worker URL maps
   only `windowsml-ocr`, leaves Whisper and model URLs locked, and rejects a
   mismatched catalog filename.
+- A paused OCR transport drives the real worker client, extractor, service
+  and HTTP routes: page progress is visible before terminal output, raw text
+  is unavailable until validation, and late frames after cancellation have
+  no effect. Invalid terminal output remains a failure despite prior progress.
 
 ### Real runtime E2E (`tests/e2e`)
 
@@ -102,6 +120,8 @@ PaddleOCR 3.7 WindowsML worker. Embedded PDF text is never read or returned.
   and `online-package`; they contain only hashes, page/sample/matched-character
   counts, provenance, transport, and cleanup flags, never source paths, expected
   samples, or OCR text.
-- A V2 watchdog reports only changes to capture status, progress, partial
-  revision, event sequence, and update time. Five minutes without any movement
-  fails as stalled instead of waiting only on the 30-minute terminal timeout.
+- A V2 watchdog resets its five-minute idle deadline only for a forward stage
+  transition or a new highest progress value. Partial revisions, event
+  sequences, timestamps, heartbeats and regressing values do not reset it.
+  It uses monotonic elapsed time and keeps the separate 30-minute E2E deadline;
+  the installed worker retains its existing 15-minute execution deadline.

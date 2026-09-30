@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import math
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
@@ -101,6 +102,7 @@ class CaptureExtractor(Protocol):
         cancel_event: asyncio.Event,
         *,
         pdf_page_numbers: tuple[int, ...] | None = None,
+        ocr_progress: Callable[[int, int], None] | None = None,
     ) -> CaptureExtractionOutcome: ...
 
 
@@ -339,6 +341,7 @@ class StandaloneRuntimeCaptureExtractor:
         cancel_event: asyncio.Event,
         *,
         pdf_page_numbers: tuple[int, ...] | None = None,
+        ocr_progress: Callable[[int, int], None] | None = None,
     ) -> CaptureExtractionOutcome:
         if self.engine_manager is not None:
             return await self._extract_with_workers(
@@ -346,6 +349,7 @@ class StandaloneRuntimeCaptureExtractor:
                 source,
                 cancel_event,
                 pdf_page_numbers=pdf_page_numbers,
+                ocr_progress=ocr_progress,
             )
         try:
             return await asyncio.to_thread(
@@ -365,6 +369,7 @@ class StandaloneRuntimeCaptureExtractor:
         cancel_event: asyncio.Event,
         *,
         pdf_page_numbers: tuple[int, ...] | None = None,
+        ocr_progress: Callable[[int, int], None] | None = None,
     ) -> CaptureExtractionOutcome:
         sniffed = self.sniff(content)
         self._checkpoint(cancel_event)
@@ -386,6 +391,7 @@ class StandaloneRuntimeCaptureExtractor:
                         cancel_event,
                         page_manifest=expected_ocr_pages,
                         page_numbers=pdf_page_numbers,
+                        ocr_progress=ocr_progress,
                     )
                 except (ExtractionRuntimeUnavailableError, EngineRuntimeUnavailableError) as error:
                     raise OcrWorkerFailure(kind="unavailable", progress=None) from error
@@ -436,6 +442,7 @@ class StandaloneRuntimeCaptureExtractor:
                         },
                         cancel_event,
                         page_manifest=expected_ocr_pages,
+                        ocr_progress=ocr_progress,
                     )
                 except (ExtractionRuntimeUnavailableError, EngineRuntimeUnavailableError) as error:
                     raise OcrWorkerFailure(kind="unavailable", progress=None) from error
@@ -519,6 +526,7 @@ class StandaloneRuntimeCaptureExtractor:
         *,
         page_manifest: tuple[OcrPageManifest, ...],
         page_numbers: tuple[int, ...] | None = None,
+        ocr_progress: Callable[[int, int], None] | None = None,
     ) -> WorkerRunResult:
         options: dict[str, object] = {
             "maxPages": self.config.max_pdf_pages,
@@ -533,6 +541,7 @@ class StandaloneRuntimeCaptureExtractor:
             options,
             cancel_event,
             page_manifest=page_manifest,
+            ocr_progress=ocr_progress,
         )
 
     def _worker_projection(
@@ -570,6 +579,7 @@ class StandaloneRuntimeCaptureExtractor:
         cancel_event: asyncio.Event,
         *,
         page_manifest: tuple[OcrPageManifest, ...] | None = None,
+        ocr_progress: Callable[[int, int], None] | None = None,
     ) -> WorkerRunResult:
         assert self.engine_manager is not None
         worker_options = dict(options)
@@ -651,6 +661,7 @@ class StandaloneRuntimeCaptureExtractor:
                 media_type=media_type,
                 options=worker_options,
                 cancel_event=cancel_event,
+                ocr_progress=ocr_progress,
             )
         finally:
             path.unlink(missing_ok=True)
@@ -1303,6 +1314,7 @@ class DeterministicCaptureExtractor:
         cancel_event: asyncio.Event,
         *,
         pdf_page_numbers: tuple[int, ...] | None = None,
+        ocr_progress: Callable[[int, int], None] | None = None,
     ) -> CaptureExtractionOutcome:
         sniffed = self.sniff(content)
         if self._delay_seconds:

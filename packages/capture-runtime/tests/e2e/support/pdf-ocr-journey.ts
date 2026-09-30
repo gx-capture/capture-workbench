@@ -141,7 +141,8 @@ export type PdfOcrE2eEvidence = {
   readonly watchdogContract: 'capture-operation-v2-progress';
   readonly watchdogCheckpointCount: number;
   readonly workerArtifactSha256?: string;
-  readonly workerRequestCount?: 1;
+  readonly workerRequestCount?: number;
+  readonly workerRangeProbeCount?: number;
   readonly workerBytesServed?: number;
   readonly captureDeleted: true;
   readonly ownedProcessCleanupVerified: true;
@@ -282,7 +283,8 @@ export function assertPdfOcrRawCapture(
     observedPages: pages.length,
     allPagesContainText: true,
     matchedAnchorCount: expectedAnchors.length,
-    sampledPageCount: new Set(expectedAnchors.map((anchor) => anchor.page)).size,
+    sampledPageCount: new Set(expectedAnchors.map((anchor) => anchor.page))
+      .size,
     matchedExpectedCharacterCount: expectedAnchors.reduce(
       (total, anchor) => total + normalizedText(anchor.text).length,
       0,
@@ -298,9 +300,7 @@ export function assertPdfOcrRawCapture(
 function requiredPdfPath(): string {
   const value = process.env.CAPTURE_PDF_OCR_E2E_PDF?.trim();
   if (!value) {
-    throw new Error(
-      'CAPTURE_PDF_OCR_E2E_PDF must name an existing real PDF.',
-    );
+    throw new Error('CAPTURE_PDF_OCR_E2E_PDF must name an existing real PDF.');
   }
   return resolve(value);
 }
@@ -358,19 +358,22 @@ type WorkerMirror = {
   readonly workerUrl: string;
   readonly observations: {
     readonly requestedPaths: string[];
+    readonly requestedRanges: string[];
     successfulDownloads: number;
     bytesServed: number;
   };
 };
 
-async function startWorkerMirror(
+export async function startWorkerMirror(
   archivePath: string,
 ): Promise<WorkerMirror> {
   const archiveName = archivePath.split(/[\\/]/u).at(-1);
-  if (!archiveName) throw new Error('Local OCR worker archive name is invalid.');
+  if (!archiveName)
+    throw new Error('Local OCR worker archive name is invalid.');
   const metadata = await stat(archivePath);
   const observations = {
     requestedPaths: [] as string[],
+    requestedRanges: [] as string[],
     successfulDownloads: 0,
     bytesServed: 0,
   };
@@ -383,12 +386,20 @@ async function startWorkerMirror(
       response.writeHead(404).end();
       return;
     }
+    if (requestMessage.headers.range !== undefined) {
+      // Exercise the downloader's sequential fallback without streaming the
+      // archive once for the capability probe and again for the download.
+      observations.requestedRanges.push(requestMessage.headers.range);
+      response.writeHead(416, { 'Content-Length': '0' }).end();
+      return;
+    }
     response.writeHead(200, {
       'Content-Length': String(metadata.size),
       'Content-Type': 'application/zip',
     });
     const stream = createReadStream(archivePath);
     stream.once('error', () => response.destroy());
+    response.once('close', () => stream.destroy());
     response.once('finish', () => {
       observations.successfulDownloads += 1;
       observations.bytesServed += metadata.size;
@@ -413,12 +424,10 @@ async function startWorkerMirror(
   };
 }
 
-async function closeWorkerMirror(server: Server): Promise<void> {
+export async function closeWorkerMirror(server: Server): Promise<void> {
   server.closeIdleConnections();
   server.closeAllConnections();
-  await new Promise<void>((resolveClose) =>
-    server.close(() => resolveClose()),
-  );
+  await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
 }
 
 async function waitForReady(
@@ -592,61 +601,56 @@ async function startPdfCapture(
   }
 }
 
-async function waitForExtraction(
+export async function waitForExtraction(
   port: number,
   token: string,
   captureId: string,
+  clock = { now: () => performance.now(), delay },
 ): Promise<number> {
-  const deadline = Date.now() + captureTimeoutMs;
+  const deadline = clock.now() + captureTimeoutMs;
   let checkpointCount = 0;
-  let lastSignature = '';
-  let lastMovementAt = Date.now();
-  while (Date.now() < deadline) {
+  const stages = [
+    'waiting_input',
+    'extracting',
+    'structuring',
+    'awaiting_structuring',
+  ];
+  let furthestStage = -1;
+  let highestProgress = -1;
+  let lastMovementAt = clock.now();
+  while (clock.now() < deadline) {
     const current = await request<CaptureJob>(
       port,
       token,
       `/v2/captures/${captureId}`,
     );
-    const signature = captureWatchdogSignature(current);
-    if (signature !== lastSignature) {
-      lastSignature = signature;
-      lastMovementAt = Date.now();
-      checkpointCount += 1;
-      process.stdout.write(`${formatCaptureWatchdogCheckpoint(current)}\n`);
-    }
-    if (current.status === 'awaiting_structuring') return checkpointCount;
-    if (!['waiting_input', 'extracting', 'structuring'].includes(current.status)) {
+    if (clock.now() >= deadline)
+      throw new Error('Real PDF extraction timed out.');
+    const stage = stages.indexOf(current.status);
+    if (stage === -1) {
       throw new Error(
         `Real PDF extraction ended as ${current.status}: ${current.error?.message ?? 'no detail'}.`,
       );
     }
-    if (Date.now() - lastMovementAt >= captureStallTimeoutMs) {
+    // Only forward stage/page movement resets the idle deadline. Polling,
+    // heartbeats, revision churn and regressing percentages are not progress.
+    const progress = current.progress ?? -1;
+    if (stage > furthestStage || progress > highestProgress) {
+      furthestStage = Math.max(furthestStage, stage);
+      highestProgress = Math.max(highestProgress, progress);
+      lastMovementAt = clock.now();
+      checkpointCount += 1;
+      process.stdout.write(`${formatCaptureWatchdogCheckpoint(current)}\n`);
+    }
+    if (current.status === 'awaiting_structuring') return checkpointCount;
+    if (clock.now() - lastMovementAt >= captureStallTimeoutMs) {
       throw new Error(
         `Real PDF extraction watchdog stalled after ${captureStallTimeoutMs}ms: ${formatCaptureWatchdogCheckpoint(current)}.`,
       );
     }
-    await delay(1_000);
+    await clock.delay(1_000);
   }
   throw new Error('Real PDF extraction timed out.');
-}
-
-export function captureWatchdogSignature(
-  capture: Pick<
-    CaptureJob,
-    | 'status'
-    | 'progress'
-    | 'partialRevision'
-    | 'lastEventSequence'
-    | 'updatedAt'
-  >,
-): string {
-  return JSON.stringify([
-    capture.status,
-    capture.progress,
-    capture.partialRevision,
-    capture.lastEventSequence,
-    capture.updatedAt,
-  ]);
 }
 
 export function formatCaptureWatchdogCheckpoint(
@@ -712,7 +716,9 @@ export async function runPdfOcrE2e(
   );
   const pdfMetadata = await stat(pdfPath).catch(() => undefined);
   if (!pdfMetadata?.isFile()) {
-    throw new Error('CAPTURE_PDF_OCR_E2E_PDF must be an existing regular file.');
+    throw new Error(
+      'CAPTURE_PDF_OCR_E2E_PDF must be an existing regular file.',
+    );
   }
   const pdfBytes = await readFile(pdfPath);
   if (pdfBytes.length === 0) throw new Error('Real PDF fixture is empty.');
@@ -724,14 +730,15 @@ export async function runPdfOcrE2e(
     options.identityMode,
   );
   const ocrWorkerArchives = (await readdir(releaseRoot)).filter(
-    (name) =>
-      name.startsWith('capture-engine-ocr-') && name.endsWith('.zip'),
+    (name) => name.startsWith('capture-engine-ocr-') && name.endsWith('.zip'),
   );
   if (
     options.packageKind === 'local-package' &&
     ocrWorkerArchives.length !== 1
   ) {
-    throw new Error('Local release must contain exactly one OCR worker archive.');
+    throw new Error(
+      'Local release must contain exactly one OCR worker archive.',
+    );
   }
   if (
     options.packageKind === 'online-package' &&
@@ -810,9 +817,16 @@ export async function runPdfOcrE2e(
     if (options.packageKind === 'local-package') {
       assert.ok(workerMirror);
       assert.ok(workerArchiveBytes);
-      assert.deepEqual(workerMirror.observations.requestedPaths, [
-        `/${ocrWorkerArchives[0]}`,
-      ]);
+      const rangeProbes = workerMirror.observations.requestedRanges;
+      assert.ok(rangeProbes.length <= 1);
+      assert.ok(rangeProbes.every((range) => range === 'bytes=0-0'));
+      assert.deepEqual(
+        workerMirror.observations.requestedPaths,
+        Array.from(
+          { length: rangeProbes.length + 1 },
+          () => `/${ocrWorkerArchives[0]}`,
+        ),
+      );
       assert.equal(workerMirror.observations.successfulDownloads, 1);
       assert.equal(
         workerMirror.observations.bytesServed,
@@ -842,7 +856,9 @@ export async function runPdfOcrE2e(
       '/meta/v2/contracts',
     );
     if (contractIndex.sha256 !== ocrProjection.contractSha256) {
-      throw new Error('Runtime contract index and OCR projection hashes differ.');
+      throw new Error(
+        'Runtime contract index and OCR projection hashes differ.',
+      );
     }
     if (options.identityMode === 'local-probe') {
       identity = await verifyRuntimePackageIdentity({
@@ -865,9 +881,7 @@ export async function runPdfOcrE2e(
           runtimeVersion: readiness.runtimeVersion ?? manifest.runtimeVersion,
         },
         expectedRuntimeVersion: options.runtimeVersion,
-        sourceTreeRoots: [
-          join(workspaceRoot, 'packages/capture-runtime/src'),
-        ],
+        sourceTreeRoots: [join(workspaceRoot, 'packages/capture-runtime/src')],
       });
     }
     const semanticEvidence = assertPdfOcrRawCapture(
@@ -909,7 +923,9 @@ export async function runPdfOcrE2e(
       ...(workerArchiveBytes && workerMirror
         ? {
             workerArtifactSha256: sha256(workerArchiveBytes),
-            workerRequestCount: 1 as const,
+            workerRequestCount: workerMirror.observations.requestedPaths.length,
+            workerRangeProbeCount:
+              workerMirror.observations.requestedRanges.length,
             workerBytesServed: workerMirror.observations.bytesServed,
           }
         : {}),
