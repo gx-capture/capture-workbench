@@ -25,8 +25,8 @@ import {
   type StartLocalCandidateWorkerMirrorOptions,
 } from './local-candidate-worker-mirror.ts';
 
-const ARCHIVE_NAME = 'capture-engine-ocr-0.4.3-windows-x64.zip';
-const FILES_MANIFEST_NAME = 'capture-engine-ocr-0.4.3-windows-x64-files.json';
+const ARCHIVE_NAME = 'capture-engine-ocr-0.4.4-windows-x64.zip';
+const FILES_MANIFEST_NAME = 'capture-engine-ocr-0.4.4-windows-x64-files.json';
 
 interface CandidateFixture {
   readonly root: string;
@@ -110,12 +110,12 @@ function createCatalog(
 ): Record<string, unknown> {
   return {
     catalogVersion: '2',
-    runtimeVersion: '0.4.3',
+    runtimeVersion: '0.4.4',
     requirements: [{
       requirementId: 'windowsml-ocr',
       artifacts: [{
         arch: 'x86_64',
-        artifactVersion: '0.4.3',
+        artifactVersion: '0.4.4',
         bytes: archive.length,
         entryPoint: 'capture-engine-ocr.exe',
         extractedBytes: 19,
@@ -143,7 +143,7 @@ async function rebindCandidate(
     schemaVersion: '1',
     candidateKind: 'runtime',
     sourceCommit: 'a'.repeat(40),
-    releaseVersion: '0.4.3',
+    releaseVersion: '0.4.4',
     releaseMode: 'model-enabled',
     producerRunId: 1,
     packageCandidateId: 'b'.repeat(64),

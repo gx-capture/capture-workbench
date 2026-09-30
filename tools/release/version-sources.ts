@@ -7,14 +7,14 @@ export const workspaceRoot = resolve(import.meta.dirname, '../..');
 const RELEASE_VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u;
 const API_VERSION_PATTERN = /^\d+\.\d+$/u;
 const SCHEMA_VERSION_PATTERN = /^\d+$/u;
-const EXPECTED_RELEASE_VERSION = '0.4.3';
+const EXPECTED_RELEASE_VERSION = '0.4.4';
 const EXPECTED_RUNTIME_API_VERSION = '2.0';
 const EXPECTED_DOCUMENT_SCHEMA_VERSION = '2';
 const EXPECTED_CONTRACT_SET_VERSION = '2';
 const EXPECTED_NX_VERSION = '23.1.2';
 const EXPECTED_PROJECTION_SCHEMA_VERSION = '3';
 const EXPECTED_CONTRACT_SET_SHA256 =
-  '232ef06bf547e79120df28f39303e73b0e5842beace5910a422f15dfb5e2acbc';
+  '03ba27e42e13292162b0f3da12bf3fe065edad12806efdf4bb19e0cc360e42d7';
 const EXPECTED_REPOSITORY = 'https://github.com/gx-capture/capture-workbench';
 const EXPECTED_GIT_REPOSITORY =
   'git+https://github.com/gx-capture/capture-workbench.git';

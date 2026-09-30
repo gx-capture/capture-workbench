@@ -237,7 +237,7 @@ def test_failed_worker_capture_does_not_record_a_success_proof(
         operation="run",
         payload={
             "requirementId": "windowsml-ocr",
-            "artifactVersion": "0.4.3",
+            "artifactVersion": "0.4.4",
             "modelPath": str(model_path),
             "sourcePath": str(source_path),
             "mediaType": "application/pdf",
@@ -369,7 +369,7 @@ def test_worker_proof_validation_failure_does_not_leave_acceptance_artifact(
             await client.run(
                 InstalledEngine(
                     requirement_id="windowsml-ocr",
-                    artifact_version="0.4.3",
+                    artifact_version="0.4.4",
                     executable=tmp_path / "ocr.exe",
                     model_dir=model_path,
                 ),

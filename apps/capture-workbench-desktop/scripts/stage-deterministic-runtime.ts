@@ -66,7 +66,7 @@ export function stageDeterministicRuntime(): Observable<unknown> {
             concatMap(({ digest, schemaSha256 }) => {
               const manifest = {
                 manifestVersion: '1',
-                runtimeVersion: '0.4.3',
+                runtimeVersion: '0.4.4',
                 apiVersion: '2.0',
                 captureDocumentSchemaVersion: '2',
                 platform: 'windows',

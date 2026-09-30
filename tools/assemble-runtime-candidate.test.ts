@@ -9,7 +9,7 @@ import test from 'node:test';
 
 import { verifyRuntimeCandidate } from './verify-runtime-candidate.ts';
 
-const version = '0.4.3';
+const version = '0.4.4';
 const sourceCommit = 'a'.repeat(40);
 const producerRunId = 12345;
 const contractSetBytes = Buffer.from('{"contractSetVersion":"2"}\n', 'utf8');
@@ -85,8 +85,8 @@ async function makeCandidate(
     await writeFile(join(root, archive), value);
   }
   for (const name of [
-    'capture_runtime_client-0.4.3-py3-none-any.whl',
-    'capture_runtime_client-0.4.3.tar.gz',
+    'capture_runtime_client-0.4.4-py3-none-any.whl',
+    'capture_runtime_client-0.4.4.tar.gz',
   ]) {
     const path = `python/${name}`;
     const value = Buffer.from(`${name}\n`, 'utf8');
@@ -221,7 +221,7 @@ async function assemblyFixture(localDist: boolean) {
     }),
   );
   const files = new Map<string, string | Buffer>([
-    ['packages/capture-runtime/pyproject.toml', 'version = "0.4.3"\n'],
+    ['packages/capture-runtime/pyproject.toml', 'version = "0.4.4"\n'],
     [
       'packages/capture-runtime/src/capture_runtime/assets/contract-set.json',
       contractSetBytes,
@@ -251,17 +251,17 @@ async function assemblyFixture(localDist: boolean) {
       JSON.stringify({ runtimeVersion: version }),
     ],
     [
-      'packages/capture-sidecar-launcher/target/package/capture-sidecar-launcher-0.4.3.crate',
+      'packages/capture-sidecar-launcher/target/package/capture-sidecar-launcher-0.4.4.crate',
       'crate fixture',
     ],
   ]);
   if (localDist) {
     files.set(
-      'packages/capture-runtime-client-python/dist/capture_runtime_client-0.4.3-py3-none-any.whl',
+      'packages/capture-runtime-client-python/dist/capture_runtime_client-0.4.4-py3-none-any.whl',
       'DIFFERENT LOCAL WHEEL',
     );
     files.set(
-      'packages/capture-runtime-client-python/dist/capture_runtime_client-0.4.3.tar.gz',
+      'packages/capture-runtime-client-python/dist/capture_runtime_client-0.4.4.tar.gz',
       'DIFFERENT LOCAL SDIST',
     );
   }
@@ -318,8 +318,8 @@ for (const localDist of [false, true]) {
       );
       assert.equal(result.status, 0, result.stderr);
       for (const name of [
-        'capture_runtime_client-0.4.3-py3-none-any.whl',
-        'capture_runtime_client-0.4.3.tar.gz',
+        'capture_runtime_client-0.4.4-py3-none-any.whl',
+        'capture_runtime_client-0.4.4.tar.gz',
       ]) {
         assert.deepEqual(
           await readFile(join(fixture.output, 'python', name)),
@@ -419,7 +419,7 @@ test('runtime assembly fails closed on package evidence, archive, manifest and d
         await writeFile(
           join(
             fixture.candidate.root,
-            'python/capture_runtime_client-0.4.3-py3-none-any.whl',
+            'python/capture_runtime_client-0.4.4-py3-none-any.whl',
           ),
           'substituted package bytes',
         );
@@ -439,7 +439,7 @@ test('runtime assembly fails closed on package evidence, archive, manifest and d
           );
           const oldPath = artifact.path;
           artifact.path =
-            'python/capture_runtime_client-0.4.3-cp312-none-any.whl';
+            'python/capture_runtime_client-0.4.4-cp312-none-any.whl';
           await cp(
             join(fixture.candidate.root, oldPath),
             join(fixture.candidate.root, artifact.path),

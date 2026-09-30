@@ -105,7 +105,7 @@ test('local-probe accepts semver, app hash, inventory, and local direct_url drif
       ...localInput(paths),
       soft: {
         runtimeVersion: '0.4.1',
-        expectedRuntimeVersion: '0.4.3',
+        expectedRuntimeVersion: '0.4.4',
         desktopHash: 'rebuilt-app',
         expectedDesktopHash: 'previous-app',
         allAssetInventoryMatches: false,
@@ -238,11 +238,11 @@ test('release identity keeps strict version, manifest, lock, download-back, and 
     const base = {
       ...localInput(paths),
       mode: 'release' as const,
-      expectedRuntimeVersion: '0.4.3',
+      expectedRuntimeVersion: '0.4.4',
       expectedRuntimeSha256: digest('runtime bytes'),
       observed: {
         ...localInput(paths).observed,
-        runtimeVersion: '0.4.3',
+        runtimeVersion: '0.4.4',
       },
       release: {
         allArtifactManifestMatches: true,

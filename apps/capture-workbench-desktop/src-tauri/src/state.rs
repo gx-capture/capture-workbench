@@ -564,7 +564,7 @@ mod tests {
             config: BackendConfig {
                 base_url: "http://127.0.0.1:49152".into(),
                 token: "test-token".into(),
-                runtime_version: "0.4.3".into(),
+                runtime_version: "0.4.4".into(),
                 api_version: "2.0".into(),
                 capture_document_schema_version: "2".into(),
             },

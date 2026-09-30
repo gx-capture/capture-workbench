@@ -23,7 +23,7 @@ from pydantic.alias_generators import to_camel
 
 API_VERSION: Final = '2.0'
 CAPTURE_DOCUMENT_SCHEMA_VERSION: Final = '2'
-RUNTIME_VERSION: Final = '0.4.3'
+RUNTIME_VERSION: Final = '0.4.4'
 
 
 NonEmptyString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
@@ -840,7 +840,7 @@ class CaptureOcrProjectionV3(StrictModel):
     # semantics aligned while still allowing ``pages=[]``.
     pages: list[OcrPageProjectionV3] = Field(..., max_length=500)
     page_count: int = Field(ge=0, le=500)
-    runtime_version: Literal['0.4.3']
+    runtime_version: Literal['0.4.4']
     contract_sha256: Sha256Hex
     provenance: OcrProvenanceV3
     warnings: list[WarningText] = Field(default_factory=list, max_length=1_000)
@@ -1005,7 +1005,7 @@ class OcrComputePreflightV2(StrictModel):
     api_version: Literal["2.0"] = API_VERSION
     schema_version: Literal["1"] = "1"
     service: Literal["capture-runtime"] = "capture-runtime"
-    runtime_version: Literal["0.4.3"] = RUNTIME_VERSION
+    runtime_version: Literal["0.4.4"] = RUNTIME_VERSION
     contract_set_version: Literal["2"] = "2"
     contract_sha256: Sha256Hex
     # The worker computes this digest from its own executable. It is absent
@@ -1042,7 +1042,7 @@ class RuntimeReady(StrictModel):
     ready: bool
     service: Literal["capture-runtime"] = "capture-runtime"
     api_version: Literal["2.0"] = API_VERSION
-    runtime_version: Literal["0.4.3"] = RUNTIME_VERSION
+    runtime_version: Literal["0.4.4"] = RUNTIME_VERSION
     capture_document_schema_version: Literal["2"] = CAPTURE_DOCUMENT_SCHEMA_VERSION
     capture_document_schema_sha256: Sha256Hex | None = None
     schema_sha256: Sha256Hex | None = None

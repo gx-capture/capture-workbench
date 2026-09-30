@@ -122,7 +122,7 @@ fn write_asset(directory: &Path, executable_path: &Path) -> PathBuf {
         .to_owned();
     let manifest = SidecarManifest {
         manifest_version: "1".into(),
-        runtime_version: "0.4.3".into(),
+        runtime_version: "0.4.4".into(),
         api_version: "2.0".into(),
         capture_document_schema_version: "2".into(),
         platform: "windows".into(),

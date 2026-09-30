@@ -1178,7 +1178,7 @@ fn parse_http_request(request: &[u8], token: &str, expected_host: &str) -> HttpR
 }
 
 fn ready_body() -> Vec<u8> {
-    let mut body = br#"{"ready":true,"service":"capture-runtime","apiVersion":"2.0","runtimeVersion":"0.4.3","captureDocumentSchemaVersion":"2","captureDocumentSchemaSha256":""#
+    let mut body = br#"{"ready":true,"service":"capture-runtime","apiVersion":"2.0","runtimeVersion":"0.4.4","captureDocumentSchemaVersion":"2","captureDocumentSchemaSha256":""#
         .to_vec();
     body.extend_from_slice(RUNTIME_READY_SCHEMA_SHA256.as_bytes());
     body.extend_from_slice(

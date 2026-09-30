@@ -13,7 +13,7 @@ import {
   type FilesystemAuthority,
 } from './filesystem-authority.ts';
 
-const LOCAL_CANDIDATE_RUNTIME_VERSION = '0.4.3';
+const LOCAL_CANDIDATE_RUNTIME_VERSION = '0.4.4';
 const CANDIDATE_MANIFEST_PATH = 'candidate-manifest.json';
 const CATALOG_PATH = 'runtime/capture-engine-catalog.json';
 const WORKER_ENTRY_POINT_PATTERN = /^[A-Za-z0-9._-]+$/u;

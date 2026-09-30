@@ -50,7 +50,7 @@ export const stageProvenance = join(
 
 const expected = Object.freeze({
   manifestVersion: '1',
-  runtimeVersion: '0.4.3',
+  runtimeVersion: '0.4.4',
   apiVersion: '2.0',
   captureDocumentSchemaVersion: '2',
   platform: 'windows',

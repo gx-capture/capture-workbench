@@ -18,14 +18,14 @@ import { of } from 'rxjs';
 export const READY: RuntimeReady = {
   ready: true,
   service: 'capture-runtime',
-  runtimeVersion: '0.4.3',
+  runtimeVersion: '0.4.4',
   apiVersion: '2.0',
   captureDocumentSchemaVersion: '2',
   ocrCompute: {
     apiVersion: '2.0',
     schemaVersion: '1',
     service: 'capture-runtime',
-    runtimeVersion: '0.4.3',
+    runtimeVersion: '0.4.4',
     contractSetVersion: '2',
     contractSha256: 'a'.repeat(64),
     mode: 'gpu-dml',

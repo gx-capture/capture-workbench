@@ -21,14 +21,14 @@ const ready = {
   ready: true,
   service: 'capture-runtime',
   apiVersion: '2.0',
-  runtimeVersion: '0.4.3',
+  runtimeVersion: '0.4.4',
   captureDocumentSchemaVersion: '2',
   captureDocumentSchemaSha256: CAPTURE_DOCUMENT_SCHEMA_SHA256,
   ocrCompute: {
     apiVersion: '2.0',
     schemaVersion: '1',
     service: 'capture-runtime',
-    runtimeVersion: '0.4.3',
+    runtimeVersion: '0.4.4',
     contractSetVersion: '2',
     contractSha256: CAPTURE_CONTRACT_SET_SHA256,
     mode: 'gpu-dml',
@@ -56,7 +56,7 @@ const canonicalBundleBytes = Uint8Array.from(
 );
 const canonicalContractIndex = {
   catalogVersion: '2',
-  runtimeVersion: '0.4.3',
+  runtimeVersion: '0.4.4',
   contractSetVersion: '2',
   surfaces: [{ id: 'v2' }],
   sha256: CAPTURE_CONTRACT_SET_SHA256,
@@ -87,7 +87,7 @@ const completedOcr = {
   status: 'completed',
   source: ocrSource,
   pageCount: 1,
-  runtimeVersion: '0.4.3',
+  runtimeVersion: '0.4.4',
   contractSha256: CAPTURE_CONTRACT_SET_SHA256,
   pages: [
     {
@@ -125,7 +125,7 @@ const failedOcr = {
   status: 'failed',
   pages: [],
   pageCount: 0,
-  runtimeVersion: '0.4.3',
+  runtimeVersion: '0.4.4',
   contractSha256: CAPTURE_CONTRACT_SET_SHA256,
   source: null,
   provenance: ocrEngine,
@@ -369,7 +369,7 @@ describe('CaptureRuntimeClient', () => {
     ).join('');
     const index = {
       catalogVersion: '2',
-      runtimeVersion: '0.4.3',
+      runtimeVersion: '0.4.4',
       contractSetVersion: '2',
       surfaces: [{ id: 'v2' }],
       sha256: digest,
@@ -913,7 +913,7 @@ describe('CaptureRuntimeClient', () => {
     ).join('');
     const index = {
       catalogVersion: '2',
-      runtimeVersion: '0.4.3',
+      runtimeVersion: '0.4.4',
       contractSetVersion: '2',
       surfaces: [{ id: 'v2' }],
       sha256: digest,
@@ -941,7 +941,7 @@ describe('CaptureRuntimeClient', () => {
     const digest = 'a'.repeat(64);
     const index = {
       catalogVersion: '2',
-      runtimeVersion: '0.4.3',
+      runtimeVersion: '0.4.4',
       contractSetVersion: '2',
       surfaces: [{ id: 'v2' }],
       sha256: digest,

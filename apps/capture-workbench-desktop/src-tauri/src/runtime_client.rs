@@ -542,7 +542,7 @@ mod tests {
             &BackendConfig {
                 base_url: format!("http://127.0.0.1:{port}"),
                 token: "secret-token".into(),
-                runtime_version: "0.4.3".into(),
+                runtime_version: "0.4.4".into(),
                 api_version: "2.0".into(),
                 capture_document_schema_version: "2".into(),
             },
@@ -597,7 +597,7 @@ mod tests {
                 "source":{"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","fileName":"scan.pdf","mediaType":"application/pdf","bytes":1024},
                 "pages":[{"page":1,"status":"recognized","raster":{"width":120,"height":80,"scale":1,"coordinateSystem":"pixel"},"text":"OCR","boxes":[{"polygon":[{"x":1,"y":1},{"x":20,"y":1},{"x":20,"y":20},{"x":1,"y":20}],"text":"OCR","confidence":0.9}],"confidence":0.9,"provenance":{"status":"resolved","engine":"windowsml-ocr","model":"pp-ocrv6-medium-windowsml","modelDigest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","device":"windowsml-dml","profileId":"capture-workbench-ocr-pipeline-v1","profileSpecSha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}}],
                 "pageCount":1,
-                "runtimeVersion":"0.4.3",
+                "runtimeVersion":"0.4.4",
                 "contractSha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 "provenance":{"status":"resolved","engine":"windowsml-ocr","model":"pp-ocrv6-medium-windowsml","modelDigest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","device":"windowsml-dml","profileId":"capture-workbench-ocr-pipeline-v1","profileSpecSha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},
                 "createdAt":"2026-08-14T00:00:00Z"
@@ -614,7 +614,7 @@ mod tests {
             &BackendConfig {
                 base_url: format!("http://127.0.0.1:{port}"),
                 token: "secret-token".into(),
-                runtime_version: "0.4.3".into(),
+                runtime_version: "0.4.4".into(),
                 api_version: "2.0".into(),
                 capture_document_schema_version: "2".into(),
             },
@@ -646,7 +646,7 @@ mod tests {
             &BackendConfig {
                 base_url: format!("http://127.0.0.1:{port}"),
                 token: "secret-token".into(),
-                runtime_version: "0.4.3".into(),
+                runtime_version: "0.4.4".into(),
                 api_version: "2.0".into(),
                 capture_document_schema_version: "2".into(),
             },
@@ -731,7 +731,7 @@ mod tests {
             &BackendConfig {
                 base_url: format!("http://127.0.0.1:{port}"),
                 token: "secret-token".into(),
-                runtime_version: "0.4.3".into(),
+                runtime_version: "0.4.4".into(),
                 api_version: "2.0".into(),
                 capture_document_schema_version: "2".into(),
             },
@@ -797,7 +797,7 @@ mod tests {
             &BackendConfig {
                 base_url: format!("http://127.0.0.1:{port}"),
                 token: "token".into(),
-                runtime_version: "0.4.3".into(),
+                runtime_version: "0.4.4".into(),
                 api_version: "2.0".into(),
                 capture_document_schema_version: "2".into(),
             },
