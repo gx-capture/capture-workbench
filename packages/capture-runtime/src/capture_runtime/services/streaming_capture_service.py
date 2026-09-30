@@ -567,14 +567,42 @@ class StreamingCaptureService:
                 code="invalid_pdf_page_selection",
                 retryable=False,
             )
+
+        def report_ocr_progress(completed_pages: int, total_pages: int) -> None:
+            if cancellation.is_set() or self._shutting_down:
+                return
+            operation = self.repository.get_capture(capture_id)
+            if operation.status is not StreamingCaptureStatus.EXTRACTING:
+                return
+            # Reserve the existing final 10% for structuring. A page checkpoint
+            # says nothing about the validity of the eventual terminal envelope.
+            progress = 0.9 * completed_pages / total_pages
+            if progress <= (operation.progress or 0):
+                return
+            try:
+                self.repository.append_event(
+                    capture_id,
+                    event_type=StreamingEventType.CHECKPOINT,
+                    stage="extracting",
+                    progress=progress,
+                )
+            except OSError:
+                # Page progress is an observability signal. A failed checkpoint
+                # write skips this update; the next page or terminal event
+                # still records state, and OCR itself must not fail with it.
+                return
+
         if request.pdf_page_numbers is None:
-            extraction = await extractor.extract(content, source, cancellation)
+            extraction = await extractor.extract(
+                content, source, cancellation, ocr_progress=report_ocr_progress
+            )
         else:
             extraction = await extractor.extract(
                 content,
                 source,
                 cancellation,
                 pdf_page_numbers=tuple(request.pdf_page_numbers),
+                ocr_progress=report_ocr_progress,
             )
         raw = extraction.raw
         if not raw.segments:

@@ -7,6 +7,7 @@ import threading
 import time
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -42,6 +43,8 @@ from capture_runtime.ocr_execution_proof import (
     InMemoryOcrExecutionEvidenceSink,
 )
 from capture_runtime.ocr_projection import OcrPageInput, OcrPipeline
+from capture_runtime.worker_client import InstalledEngine, WorkerClient
+from capture_runtime.worker_contracts import WorkerResponse
 from tests.conftest import TOKEN
 
 
@@ -71,6 +74,144 @@ def _stub_legacy_pdf_manifest_dimensions(monkeypatch: pytest.MonkeyPatch) -> Non
 
 def _source() -> bytes:
     return b"abcdef"
+
+
+@pytest.mark.parametrize("terminal", ["success", "cancel", "invalid"])
+def test_pdf_page_progress_reaches_http_before_worker_terminal(
+    client: TestClient, tmp_path, monkeypatch, terminal: str
+) -> None:
+    first_page = threading.Event()
+    release = threading.Event()
+    provenance = {
+        "status": "resolved",
+        "engine": "windowsml-ocr",
+        "model": "pp-ocrv6-medium-windowsml",
+        "modelDigest": "sha256:" + "a" * 64,
+        "device": "windowsml-dml",
+        "profileId": "capture-workbench-ocr-pipeline-v1",
+        "profileSpecSha256": "b" * 64,
+    }
+
+    class PausedProcess:
+        async def request(self, _executable, _operation, payload, *, progress_handler, **kwargs):
+            manifest = payload["options"]["pageManifest"]
+            progress_handler(
+                {
+                    "type": "ocr-header",
+                    "pageCount": len(manifest),
+                    "pages": manifest,
+                    "provenance": provenance,
+                }
+            )
+            pages = [
+                {
+                    **item,
+                    "status": "recognized",
+                    "text": f"private page {item['page']}",
+                    "boxes": [],
+                    "regionConfidences": [],
+                    "confidence": None,
+                    "failure": None,
+                }
+                for item in manifest
+            ]
+            progress_handler({"type": "ocr-page", "page": pages[0]})
+            first_page.set()
+            assert await asyncio.to_thread(release.wait, 10)
+            # Even a late worker frame must not publish after cancellation.
+            progress_handler({"type": "ocr-page", "page": pages[1]})
+            final_pages = pages if terminal != "invalid" else pages[:1]
+            return WorkerResponse(
+                request_id="paused-ocr",
+                ok=True,
+                error=None,
+                result={
+                    "pages": final_pages,
+                    "provenance": provenance,
+                    "warnings": [],
+                    "segments": [
+                        {
+                            "order": index,
+                            "text": page["text"],
+                            "page": page["page"],
+                            "startMs": None,
+                            "endMs": None,
+                        }
+                        for index, page in enumerate(final_pages)
+                    ],
+                },
+            )
+
+    async def resolve_engine(requirement_id):
+        return InstalledEngine(
+            requirement_id=requirement_id,
+            artifact_version="test",
+            executable=tmp_path / "worker",
+            model_dir=tmp_path,
+        )
+
+    async def compute_selection(**kwargs):
+        return SimpleNamespace(
+            execution_plan=SimpleNamespace(to_dict=lambda: {"mode": "cpu-fallback"})
+        )
+
+    extractor = StandaloneRuntimeCaptureExtractor(
+        SystemClock(),
+        client.app.state.settings.extraction,
+        engine_manager=SimpleNamespace(
+            worker_client=WorkerClient(process=PausedProcess()),
+            resolve_active_engine=resolve_engine,
+            ocr_compute_selection=compute_selection,
+        ),
+    )
+    monkeypatch.setattr(extractor, "_pdf_page_count", lambda _content: 2)
+    service = client.app.state.streaming_capture_service
+    service._extractor = extractor
+    capture_id = _start_pdf_capture(
+        client, b"%PDF-1.7 paused pages", "paused-pages", structuring_mode="host"
+    )
+    try:
+        assert first_page.wait(10)
+        current = client.get(f"/v2/captures/{capture_id}").json()
+        assert current["status"] == "extracting"
+        assert current["progress"] == pytest.approx(0.45)
+        assert current["partialRevision"] == 0
+        assert client.get(f"/v2/captures/{capture_id}/raw").status_code == 409
+        checkpoints = [
+            event
+            for event in service.events(capture_id, after_sequence=0)
+            if event.event_type.value == "checkpoint"
+        ]
+        assert [event.progress for event in checkpoints] == [0.45]
+        assert all(not event.segments for event in checkpoints)
+        assert "private page" not in checkpoints[0].model_dump_json()
+        if terminal == "cancel":
+            client.post(f"/v2/captures/{capture_id}/cancel").raise_for_status()
+            sequence = service.get_capture(capture_id).last_event_sequence
+        release.set()
+        expected = {
+            "success": StreamingCaptureStatus.AWAITING_STRUCTURING,
+            "invalid": StreamingCaptureStatus.FAILED,
+            "cancel": StreamingCaptureStatus.CANCELLED,
+        }[terminal]
+        _wait_for_capture_status(service, capture_id, expected)
+        # Wait for the service task as well as the public terminal status.
+        for _ in range(200):
+            if capture_id not in service._tasks:
+                break
+            time.sleep(0.01)
+        if terminal == "cancel":
+            assert service.get_capture(capture_id).last_event_sequence == sequence
+        elif terminal == "success":
+            raw = client.get(f"/v2/captures/{capture_id}/raw").json()
+            assert [segment["text"] for segment in raw["segments"]] == [
+                "private page 1",
+                "private page 2",
+            ]
+        else:
+            assert client.get(f"/v2/captures/{capture_id}/raw").status_code == 409
+    finally:
+        release.set()
 
 
 def _open(client: TestClient) -> tuple[str, str]:
@@ -260,7 +401,9 @@ class _HostProofExtractor:
     def sniff(self, _content: bytes) -> SniffedSource:
         return SniffedSource(CaptureSourceKind.PDF, "application/pdf")
 
-    async def extract(self, _content, source, cancel_event, *, pdf_page_numbers=None):
+    async def extract(
+        self, _content, source, cancel_event, *, pdf_page_numbers=None, ocr_progress=None
+    ):
         del cancel_event, pdf_page_numbers
         segment = RawCaptureSegment(
             segment_id="host-proof-page-1",
@@ -315,7 +458,9 @@ class _GatedHostProofExtractor(_HostProofExtractor):
         self.release = threading.Event()
         self.finished = threading.Event()
 
-    async def extract(self, content, source, cancel_event, *, pdf_page_numbers=None):
+    async def extract(
+        self, content, source, cancel_event, *, pdf_page_numbers=None, ocr_progress=None
+    ):
         self.entered.set()
         try:
             while not self.release.is_set():
@@ -409,6 +554,7 @@ def test_pdf_page_scope_crosses_start_route_and_extractor_to_raw_route(
             _cancel_event,
             *,
             pdf_page_numbers: tuple[int, ...] | None = None,
+            ocr_progress=None,
         ) -> CaptureExtractionOutcome:
             calls.append(pdf_page_numbers)
             assert pdf_page_numbers == (1,)
@@ -475,6 +621,8 @@ def test_pdf_page_scope_omission_uses_legacy_all_page_extractor_path(
             _content: bytes,
             capture_source,
             _cancel_event,
+            *,
+            ocr_progress=None,
         ) -> CaptureExtractionOutcome:
             calls.append("all-pages")
             segments = [
@@ -641,7 +789,7 @@ def test_worker_failure_persists_complete_ocr_projection_before_get_route(
             return SniffedSource(CaptureSourceKind.PDF, "application/pdf")
 
         async def extract(
-            self, _content: bytes, capture_source, _cancel_event
+            self, _content: bytes, capture_source, _cancel_event, *, ocr_progress=None
         ) -> CaptureExtractionOutcome:
             failure = CaptureFailureV2(
                 code="ocr_worker_timeout",
@@ -806,7 +954,9 @@ def test_runtime_completion_publishes_only_after_successful_completion(
         def sniff(self, _content: bytes) -> SniffedSource:
             return SniffedSource(CaptureSourceKind.PDF, "application/pdf")
 
-        async def extract(self, content, source, cancel_event, *, pdf_page_numbers=None):
+        async def extract(
+            self, content, source, cancel_event, *, pdf_page_numbers=None, ocr_progress=None
+        ):
             del content, cancel_event, pdf_page_numbers
             segment = RawCaptureSegment(
                 segment_id="page-1",
@@ -993,7 +1143,7 @@ def test_failed_host_ocr_never_publishes_success_execution_proof(client: TestCli
         def sniff(self, _content: bytes) -> SniffedSource:
             return SniffedSource(CaptureSourceKind.PDF, "application/pdf")
 
-        async def extract(self, _content, capture_source, _cancel_event):
+        async def extract(self, _content, capture_source, _cancel_event, *, ocr_progress=None):
             failure = CaptureFailureV2(
                 code="ocr_worker_failed",
                 message="OCR worker failed.",
@@ -1756,3 +1906,41 @@ def test_v2_host_commit_invalid_candidate_fails_the_capture(client: TestClient) 
     assert operation["status"] == "failed"
     assert operation["error"]["code"] == "structuring_invalid_output"
     assert client.get(f"/v2/captures/{capture_id}/partial").status_code == 409
+
+
+class _ProgressReportingExtractor(_HostProofExtractor):
+    async def extract(
+        self, content, source, cancel_event, *, pdf_page_numbers=None, ocr_progress=None
+    ):
+        assert ocr_progress is not None
+        ocr_progress(1, 2)
+        return await super().extract(
+            content, source, cancel_event, pdf_page_numbers=pdf_page_numbers
+        )
+
+
+def test_page_progress_persistence_failure_does_not_fail_ocr(
+    client: TestClient, monkeypatch
+) -> None:
+    service = client.app.state.streaming_capture_service
+    service._extractor = _ProgressReportingExtractor("progress write failure page")
+    append_event = service.repository.append_event
+    failed_writes: list[float | None] = []
+
+    def failing_checkpoint(capture_id, *, event_type, stage, **kwargs):
+        if event_type.value == "checkpoint" and stage == "extracting":
+            failed_writes.append(kwargs.get("progress"))
+            raise OSError("events.jsonl is locked")
+        return append_event(capture_id, event_type=event_type, stage=stage, **kwargs)
+
+    monkeypatch.setattr(service.repository, "append_event", failing_checkpoint)
+    capture_id = _start_pdf_capture(
+        client,
+        b"%PDF-1.7 progress write failure",
+        "progress-write-failure",
+        structuring_mode="host",
+    )
+
+    _wait_for_capture_status(service, capture_id, StreamingCaptureStatus.AWAITING_STRUCTURING)
+    assert failed_writes == [pytest.approx(0.45)]
+    assert service.repository.read_raw(capture_id).source_text == "progress write failure page"

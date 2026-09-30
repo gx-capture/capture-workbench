@@ -581,11 +581,13 @@ def normalize_paddle_results(
         for index, raw_text in enumerate(texts):
             if not isinstance(raw_text, str):
                 _paddle_fail("rec_texts values must be strings")
-            text = raw_text.strip()
-            if not text:
-                _paddle_fail("rec_texts values must be non-empty")
             polygon = _paddle_polygon(polygon_values[index])
             _validate_paddle_polygon(polygon, raster_width, raster_height)
+            text = raw_text.strip()
+            # Paddle can retain an unrecognized crop with empty text and score zero.
+            # Validate its metadata before omitting it from the recognized regions.
+            if not text:
+                continue
             regions.append(
                 OcrRegion(
                     text=text,
@@ -1975,6 +1977,7 @@ class WindowsMLOcrAdapter:
                 ),
             )
         except PaddleResultNormalizationError as error:
+            self._report_stage(ocr_stage_failure("normalize", error))
             cleanup_error = self._abort_provider_evidence(pipeline)
             if cleanup_error is not None:
                 raise OcrInferenceCleanupError(

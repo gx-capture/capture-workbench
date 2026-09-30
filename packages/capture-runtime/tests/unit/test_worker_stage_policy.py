@@ -97,6 +97,10 @@ def test_stage_builders_preserve_current_ocr_and_whisper_families() -> None:
     )
     assert ocr_provider_evidence_stage(5, 2) == "ocr-provider-evidence-dml-5-cpu-2"
     assert ocr_stage_failure("predict", RuntimeError()) == "ocr-predict-failed-runtimeerror"
+    for error in (ValueError(), LookupError()):
+        stage = ocr_stage_failure("normalize", error)
+        assert stage.startswith("ocr-normalize-failed-")
+        assert sanitize_worker_stage(stage) == stage
     assert whisper_import_stage("faster_whisper", "complete") == (
         "python-import-faster-whisper-complete"
     )
