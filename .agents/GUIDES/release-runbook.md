@@ -25,7 +25,10 @@ actually shipped; workflow files remain the source of truth for inputs.
 - First-run OCR install on fresh app data: about 40 s with a cold download,
   about 8 s when the machine-wide engine cache already holds the engine.
 - Known limitations: handwriting OCR quality (printed text is the floor);
-  installed OCR worker paths beyond Windows MAX_PATH crash the worker.
+  installed OCR worker paths beyond Windows MAX_PATH crash the worker; a PDF
+  page with a region PaddleOCR recognizes as empty text (seen on a vertical
+  Japanese page) fails the whole capture in 0.4.3, fixed on `main` for the
+  next release; vertical Japanese text is read in the wrong column order.
 
 ## Workflow map
 
