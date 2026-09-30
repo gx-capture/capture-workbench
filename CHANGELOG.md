@@ -21,7 +21,12 @@ Capture Workbench follows an explicit 0.x compatibility policy:
 The consumer consistency check is a permanent CI gate for the declared
 runtime, package lock, Python host, desktop host, and browser host versions.
 
-## 0.4.4
+## 0.4.4 (2026-09-30)
+
+- Published to npm, Maven, PyPI, and crates.io, with the runtime, engine zips,
+  and desktop installer on the GitHub release; the stable pointer moved to
+  `v0.4.4`. Cert Prep and LAW consume it. The official online-package PDF OCR
+  E2E passes on the 44-page 2024-07 N1 PDF.
 
 ### Runtime
 

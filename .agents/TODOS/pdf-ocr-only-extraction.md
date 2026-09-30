@@ -68,15 +68,15 @@
   Nx cache. A failed checkpoint write skips that progress update and never
   fails OCR.
 
-- [ ] After a package containing this change is published, run the official
+- [x] After a package containing this change is published, run the official
   online-package E2E with the same PDF semantics.
   Verify: `pnpm nx run capture-runtime:e2e-online-package-pdf-ocr --skip-nx-cache`
-  Retried 2026-09-30 against published 0.4.3 (runtime SHA-256
-  `538c8afe05b58fe8587bf8dd35d6a214e355772cbd84bb9148a6e6ff10cf690c`).
-  Installation succeeded; the 44-page N1 PDF failed during extraction with
-  `OCR worker failed before completing all pages.` The published worker still
-  rejects blank recognition regions. Publish the normalization fix and rerun
-  with the new version and executable hash before checking this item off.
+  Passed 2026-09-30 against published 0.4.4 (runtime SHA-256
+  `0227313c6ca2f6c67a1c12d8f232b5708df63cc611b036f80b5163a5630e68fd`), with the
+  OCR worker installed from the catalog HTTPS URL and the engine cache off:
+  44/44 pages contain text, all eight anchors match (72 normalized
+  characters), 45 watchdog checkpoints, capture deletion and owned-process
+  cleanup verified.
 
 - [ ] Read vertical Japanese text in the correct column order. Page 16 of the
   N1 PDF (a boxed vertical passage) now completes but returns its columns in
