@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import math
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from time import monotonic
@@ -696,6 +697,7 @@ class WorkerClient:
         options: dict[str, object],
         cancel_event: asyncio.Event,
         timeout_seconds: float = DEFAULT_RUN_TIMEOUT_SECONDS,
+        ocr_progress: Callable[[int, int], None] | None = None,
     ) -> WorkerRunResult:
         if not source_path.is_file() or not source_path.is_absolute():
             raise ValueError("worker source path must be an existing absolute file")
@@ -715,8 +717,24 @@ class WorkerClient:
             candidate = [*progress_frames, frame]
             # Validate before committing the frame so a malformed terminal
             # progress frame cannot erase already trusted completed pages.
-            parse_ocr_progress(candidate)
+            progress = parse_ocr_progress(candidate)
             progress_frames.append(frame)
+            if ocr_progress is None or progress is None or not progress.pages:
+                return
+            if cancel_event.is_set():
+                return
+            # Only consecutive, successful pages matching the requested raster
+            # manifest count as movement. Do not publish text or terminal success.
+            requested_manifest = options.get("pageManifest")
+            if requested_manifest is not None and candidate[0]["pages"] != requested_manifest:
+                return
+            if any(
+                page.status not in {"recognized", "empty"}
+                or _canonical_manifest_page(page) != _canonical_manifest_page(expected)
+                for page, expected in zip(progress.pages, progress.page_manifest, strict=False)
+            ):
+                return
+            ocr_progress(len(progress.pages), progress.page_count)
 
         progress_handler = collect_ocr_progress if is_ocr else None
         try:

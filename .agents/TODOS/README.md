@@ -5,8 +5,8 @@ evidence rules. Release state and procedure: [release-runbook.md](../GUIDES/rele
 
 ## Next release
 
-- Ship the parallel engine download (first OCR use ~5 instead of ~15 minutes),
-  then rerun the online PDF OCR e2e — [pdf-ocr-only-extraction.md](pdf-ocr-only-extraction.md)
+- Ship the blank-region OCR fix and PDF page progress, then rerun the online
+  PDF OCR e2e against the new release — [pdf-ocr-only-extraction.md](pdf-ocr-only-extraction.md)
 
 ## Runtime and OCR
 
@@ -19,6 +19,10 @@ evidence rules. Release state and procedure: [release-runbook.md](../GUIDES/rele
   E2E — [runtime-model-selection-download.md](runtime-model-selection-download.md)
 - Handwriting OCR quality (disclosed 0.4.2 limitation) needs a separate
   recognizer evaluation.
+- Vertical Japanese text: recognized in the wrong column order with more
+  errors (N1 PDF page 16). Evaluate `useTextlineOrientation` or a
+  vertical-aware recognizer; either changes the OCR profile identity, so it
+  ships as a release decision — [pdf-ocr-only-extraction.md](pdf-ocr-only-extraction.md)
 
 ## Maintenance
 

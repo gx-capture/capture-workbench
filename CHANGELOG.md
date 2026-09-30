@@ -21,6 +21,19 @@ Capture Workbench follows an explicit 0.x compatibility policy:
 The consumer consistency check is a permanent CI gate for the declared
 runtime, package lock, Python host, desktop host, and browser host versions.
 
+### Runtime
+
+- A PDF page where PaddleOCR returns a region with empty text (score zero) no
+  longer fails the whole capture; the blank region is skipped after its
+  polygon and score are validated. The 44-page 2024-07 N1 PDF, which failed on
+  its vertical-text page 16 with 0.4.2 and 0.4.3, now completes.
+- PDF captures report page progress while extracting (up to 90%, one checkpoint
+  per validated page, no OCR text); a failed checkpoint write skips that update.
+- OCR worker failure evidence names a rejected normalization step
+  (`ocr-normalize-failed-*`).
+- Known limitation: vertical Japanese text is recognized but returned in the
+  wrong column order, with more recognition errors than horizontal text.
+
 ### Release tooling
 
 - The post-publish PyPI readback waits up to about five minutes for PyPI's

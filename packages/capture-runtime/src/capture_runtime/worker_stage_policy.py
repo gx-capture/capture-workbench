@@ -282,7 +282,7 @@ def ocr_provider_evidence_stage(dml_count: int, cpu_count: int) -> str:
 
 
 def ocr_stage_failure(stage: str, error: object) -> str:
-    if stage not in {"pipeline-create", "predict", "provider-evidence"}:
+    if stage not in {"pipeline-create", "predict", "normalize", "provider-evidence"}:
         return "ocr-predict-failed-unknown"
     return f"ocr-{stage}-failed-{_exception_name(error)}"
 

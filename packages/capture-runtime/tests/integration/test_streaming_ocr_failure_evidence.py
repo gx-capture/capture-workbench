@@ -88,6 +88,7 @@ def test_streaming_ocr_failure_records_private_artifact_before_public_projection
                 _cancel_event: asyncio.Event,
                 *,
                 pdf_page_numbers: tuple[int, ...] | None = None,
+                ocr_progress=None,
             ) -> CaptureExtractionOutcome:
                 del pdf_page_numbers
                 public_failure = CaptureFailureV2(
