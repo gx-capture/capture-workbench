@@ -1,34 +1,35 @@
 # Capture Workbench release runbook
 
-Current as of 2026-09-29. This is the operational procedure for publishing a
-Capture Workbench release and moving its consumers. It reflects how 0.4.3 was
+Current as of 2026-09-30. This is the operational procedure for publishing a
+Capture Workbench release and moving its consumers. It reflects how 0.4.4 was
 actually shipped; workflow files remain the source of truth for inputs.
 
 ## Current state
 
-- Capture Runtime and Workbench **0.4.3** are published: npm
+- Capture Runtime and Workbench **0.4.4** are published: npm
   (`@gx-capture/capture-workbench-ui`, `@gx-capture/capture-runtime-client` on
   GitHub Packages), Maven (`com.gx.capture:capture-runtime-client`, GitHub
   Packages), PyPI (`capture-runtime-client`), crates.io
-  (`capture-sidecar-launcher`), and GitHub release `v0.4.3` (runtime exe
-  `538c8afe…`, OCR/Whisper engine zips, desktop installer, release manifest).
-  `release-index/stable.json` on the `release-index` branch points at `v0.4.3`.
-- Source commit of the 0.4.3 candidates: `d3c73d2`. Contract-set SHA-256:
-  `232ef06bf547e79120df28f39303e73b0e5842beace5910a422f15dfb5e2acbc`.
-  Runs: package candidate 36543979781, runtime candidate 36544271386, package
-  promote 36545669625, runtime promote 36561430902, release candidate
-  36571021075, consumer gates 36574474509, release promote 36576362697.
-- Consumers on their `main` branches pin 0.4.3 and passed published-mode
-  practical OCR: Cert Prep (`WodenWang820118/cert-prep`, PR #34) and LAW
-  (`WodenWang820118/gx.law-prep`, PR #92: Java engine → Python AI service →
+  (`capture-sidecar-launcher`), and GitHub release `v0.4.4` (runtime exe
+  `0227313c…`, OCR/Whisper engine zips, desktop installer, release manifest).
+  `release-index/stable.json` on the `release-index` branch points at `v0.4.4`.
+- Source commit of the 0.4.4 candidates: `adfb528`. Contract-set SHA-256:
+  `03ba27e42e13292162b0f3da12bf3fe065edad12806efdf4bb19e0cc360e42d7`.
+  Model-source Commit A `de87d3d` (tag `capture-runtime-model-sources-v0.4.4`).
+  Runs: package candidate 36679014775, runtime candidate 36679263490, package
+  promote 36680401772, runtime promote 36680574761, release candidate
+  36687378087, consumer gates 36690225096, release promote 36691500910.
+- Consumers on their `main` branches pin 0.4.4 and passed published-mode
+  practical OCR: Cert Prep (`WodenWang820118/cert-prep`, PR #35) and LAW
+  (`WodenWang820118/gx.law-prep`, PR #93: Java engine → Python AI service →
   runtime).
+- The online-package PDF OCR E2E passes against published 0.4.4 with the
+  44-page 2024-07 N1 PDF (all pages with text, eight anchors).
 - First-run OCR install on fresh app data: about 40 s with a cold download,
   about 8 s when the machine-wide engine cache already holds the engine.
 - Known limitations: handwriting OCR quality (printed text is the floor);
-  installed OCR worker paths beyond Windows MAX_PATH crash the worker; a PDF
-  page with a region PaddleOCR recognizes as empty text (seen on a vertical
-  Japanese page) fails the whole capture in 0.4.3, fixed on `main` for the
-  next release; vertical Japanese text is read in the wrong column order.
+  installed OCR worker paths beyond Windows MAX_PATH crash the worker;
+  vertical Japanese text is read in the wrong column order.
 
 ## Workflow map
 
@@ -64,7 +65,7 @@ missing ones.
    first, then LAW).
 5. Dispatch `release-candidate.yml` with the Route A inputs and the
    `release_mode` recorded in the runtime candidate manifest
-   (`model-enabled` for 0.4.3). Record the run ID, `candidateId`, and the
+   (`model-enabled` for 0.4.4). Record the run ID, `candidateId`, and the
    `candidate-manifest.json` hash from artifact
    `capture-candidate-<version>-<run>`.
 6. Pre-run both consumer gates locally against the downloaded release
@@ -120,6 +121,11 @@ candidate with `node tools/install-capture-workbench-dependencies.mts
   `@gx-capture` lock entries and verify with `pnpm install --frozen-lockfile`.
   Regenerate consumer contract artifacts (LAW `law-contracts-generate`) and
   recompute pinned receipt digests from their canonical bytes.
+- Cert Prep pins its `minimumReleaseAgeExclude` entries to exact
+  `@gx-capture` versions. When the previous release is less than about a day
+  old, `pnpm install` rejects the old lock entries before it can re-resolve;
+  move only the two `@gx-capture` lock entries (integrity and tarball from
+  GitHub Packages) and verify with `pnpm install --frozen-lockfile`.
 - `sync-versions.ts` rewrites every occurrence of the previous release
   version (and workspace crates in `Cargo.lock`). A test's "conflicting
   version" must therefore be a value no release will reach (`99.0.0`), and

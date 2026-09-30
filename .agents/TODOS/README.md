@@ -3,11 +3,6 @@
 Ordered by priority. Each line links to the TODO that holds the detail and
 evidence rules. Release state and procedure: [release-runbook.md](../GUIDES/release-runbook.md).
 
-## Next release
-
-- Ship the blank-region OCR fix and PDF page progress, then rerun the online
-  PDF OCR e2e against the new release — [pdf-ocr-only-extraction.md](pdf-ocr-only-extraction.md)
-
 ## Runtime and OCR
 
 - Usable iGPU selection when the dGPU is positively unavailable, plus the
@@ -25,6 +20,14 @@ evidence rules. Release state and procedure: [release-runbook.md](../GUIDES/rele
   ships as a release decision — [pdf-ocr-only-extraction.md](pdf-ocr-only-extraction.md)
 
 ## Maintenance
+
+- Release version literals: a version bump touches about 136 files, most of
+  them tests and scripts that hard-code the version. Read it from the
+  existing per-language source instead (`RUNTIME_VERSION` in Python and the
+  TypeScript client, `CARGO_PKG_VERSION` in Rust, `release/version.json` in
+  tools), keep assertions that compare against `release/version.json`, then
+  apply the same to Cert Prep and LAW. Target: only manifests, locks and
+  generated artifacts change per release.
 
 - Rustdoc for the remaining public `capture-sidecar-launcher` functions —
   [capture-large-file-refactor.md](capture-large-file-refactor.md)
