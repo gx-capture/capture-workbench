@@ -1,0 +1,101 @@
+{
+  "algorithm": "capture-workbench-ocr-profile-v2",
+  "artifacts": [
+    {
+      "bytes": 62032837,
+      "path": "det/inference.onnx",
+      "sha256": "eb13b44b25bb36f89528b68720af8a61d9cf381176107f465db1757b65d086e1"
+    },
+    {
+      "bytes": 886,
+      "path": "det/inference.yml",
+      "sha256": "7298d5ead546584af2504d03355f881ac7a7bc0eb1e282d3e159277c1d0af871"
+    },
+    {
+      "bytes": 76554979,
+      "path": "rec/inference.onnx",
+      "sha256": "9c09abf0957f7968c7586464b7397b84ad2387a0497a351af40e9acc71b673ba"
+    },
+    {
+      "bytes": 150580,
+      "path": "rec/inference.yml",
+      "sha256": "991b700facf5b50a7de193468207d5f4255b538dde0d312ae3b7c7a9b6873129"
+    },
+    {
+      "bytes": 74947,
+      "path": "rec/ppocrv6_dict.txt",
+      "sha256": "b5f2bfe2bdd9448429e3e82b51c789775d9b42f2403d082b00662eb77e401c5d"
+    }
+  ],
+  "cpuFallback": "provider-missing-only",
+  "device": "windowsml-dml",
+  "dictionary": {
+    "languageCoverage": "traditional-chinese-multilingual",
+    "path": "rec/ppocrv6_dict.txt",
+    "revision": "b03f46425e8ff4442b268ce449e3eef758146cd4",
+    "sha256": "b5f2bfe2bdd9448429e3e82b51c789775d9b42f2403d082b00662eb77e401c5d"
+  },
+  "directml": {
+    "enableMemPattern": false,
+    "executionMode": "sequential",
+    "fallbackProvider": "CPUExecutionProvider",
+    "preferredProvider": "DmlExecutionProvider",
+    "providerOrder": [
+      "DmlExecutionProvider",
+      "CPUExecutionProvider"
+    ],
+    "requireExecutionEvidence": true
+  },
+  "failClosedOnDmlError": true,
+  "model": "pp-ocrv6-medium-windowsml",
+  "models": {
+    "det": {
+      "modelDir": "det",
+      "modelName": "PP-OCRv6_medium_det",
+      "revision": "61323801669c338b7891481ec7bac61ce31b576a",
+      "source": "PaddlePaddle/PP-OCRv6_medium_det_onnx"
+    },
+    "rec": {
+      "modelDir": "rec",
+      "modelName": "PP-OCRv6_medium_rec",
+      "revision": "50c7eacafc52fa7bcf4194e8cd08e46f8558504b",
+      "source": "PaddlePaddle/PP-OCRv6_medium_rec_onnx"
+    }
+  },
+  "orientation": {
+    "useDocOrientationClassify": false,
+    "useDocUnwarping": false,
+    "useTextlineOrientation": false
+  },
+  "paddle": {
+    "acceptedOrientationKwargs": [
+      "use_doc_orientation_classify",
+      "use_doc_unwarping",
+      "use_textline_orientation"
+    ],
+    "engine": "onnxruntime"
+  },
+  "preprocessing": {
+    "contrast": {
+      "enabled": false,
+      "owner": "none"
+    },
+    "deskew": {
+      "enabled": false,
+      "owner": "none"
+    },
+    "normalization": {
+      "alphaComposite": "white",
+      "exifTranspose": true,
+      "resize": "bounded-lanczos"
+    },
+    "owner": "capture-runtime",
+    "render": {
+      "colorMode": "RGB",
+      "image": "pillow",
+      "pdf": "pdfium"
+    }
+  },
+  "releaseVersion": "0.4.4",
+  "schemaVersion": "2"
+}
