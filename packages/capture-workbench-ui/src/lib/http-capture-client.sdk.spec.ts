@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import {
+  RUNTIME_VERSION,
   CAPTURE_CONTRACT_SET_SHA256,
   type RuntimeTransport,
   type RuntimeTransportRequest,
@@ -26,7 +27,7 @@ describe('HttpCaptureClient SDK delegation', () => {
           return jsonResponse({
             ready: true,
             service: 'capture-runtime',
-            runtimeVersion: '0.4.4',
+            runtimeVersion: RUNTIME_VERSION,
             apiVersion: '2.0',
             captureDocumentSchemaVersion: '2',
             captureDocumentSchemaSha256:
@@ -44,7 +45,7 @@ describe('HttpCaptureClient SDK delegation', () => {
         if (request.path === '/meta/v2/contracts') {
           return jsonResponse({
             catalogVersion: '2',
-            runtimeVersion: '0.4.4',
+            runtimeVersion: RUNTIME_VERSION,
             contractSetVersion: '2',
             surfaces: [{ id: 'v2' }],
             sha256: CAPTURE_CONTRACT_SET_SHA256,

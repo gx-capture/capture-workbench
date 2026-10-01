@@ -1,3 +1,5 @@
+// eslint-disable-next-line @nx/enforce-module-boundaries -- repository tooling reads shared release intent.
+import { RELEASE_VERSION } from '../../../tools/release/release-intent.ts';
 // Manual step before `smoke-real-media-model` with audio: runs a real
 // progressive Whisper capture of CAPTURE_PROGRESSIVE_AUDIO_ORACLE_SOURCE and
 // writes the reference evidence to CAPTURE_PROGRESSIVE_AUDIO_ORACLE_OUTPUT.
@@ -167,9 +169,9 @@ async function startWorkerMirror(port: number): Promise<Server> {
     'capture-runtime',
     'dist',
     'release',
-    'capture-engine-whisper-0.4.4-windows-x64.zip',
+    `capture-engine-whisper-${RELEASE_VERSION}-windows-x64.zip`,
   );
-  const archiveName = 'capture-engine-whisper-0.4.4-windows-x64.zip';
+  const archiveName = `capture-engine-whisper-${RELEASE_VERSION}-windows-x64.zip`;
   const archiveMetadata = await stat(archivePath).catch(() => undefined);
   if (!archiveMetadata?.isFile()) throw new Error('Progressive audio oracle worker archive is missing.');
   const server = createServer((request, response) => {

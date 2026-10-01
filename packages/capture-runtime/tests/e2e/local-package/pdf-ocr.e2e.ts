@@ -1,3 +1,5 @@
+// eslint-disable-next-line @nx/enforce-module-boundaries -- repository tooling reads shared release intent.
+import { RELEASE_VERSION } from '../../../../../tools/release/release-intent.ts';
 // Real PDF OCR against the locally built release in
 // packages/capture-runtime/dist/release (or CAPTURE_PDF_OCR_E2E_RELEASE_DIR).
 // See ../support/pdf-ocr-journey.ts for the journey and inputs.
@@ -10,7 +12,7 @@ const workspaceRoot = resolve(
   dirname(fileURLToPath(import.meta.url)),
   '../../../../..',
 );
-const runtimeVersion = '0.4.4';
+const runtimeVersion = RELEASE_VERSION;
 
 async function main(): Promise<void> {
   const releaseRoot = process.env.CAPTURE_PDF_OCR_E2E_RELEASE_DIR?.trim()

@@ -1,7 +1,8 @@
 import { TestBed } from '@angular/core/testing';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { CAPTURE_CONTRACT_SET_SHA256 } from '@gx-capture/capture-runtime-client';
+import {
+  RUNTIME_VERSION, CAPTURE_CONTRACT_SET_SHA256 } from '@gx-capture/capture-runtime-client';
 import {
   CAPTURE_CLIENT,
   type CaptureClient,
@@ -469,7 +470,7 @@ const contractBundle = Uint8Array.from(
 );
 const contractIndex = {
   catalogVersion: '2',
-  runtimeVersion: '0.4.4',
+  runtimeVersion: RUNTIME_VERSION,
   contractSetVersion: '2',
   surfaces: [{ id: 'v2' }],
   sha256: CAPTURE_CONTRACT_SET_SHA256,
@@ -511,7 +512,7 @@ function discoveryResponse(path: string): Response | undefined {
       ready: true,
       service: 'capture-runtime',
       apiVersion: '2.0',
-      runtimeVersion: '0.4.4',
+      runtimeVersion: RUNTIME_VERSION,
       captureDocumentSchemaVersion: '2',
       captureDocumentSchemaSha256:
         '850afd212d049c25da41d3867ba5477451a6a2c6c7e41f116fe60f26b6a35335',

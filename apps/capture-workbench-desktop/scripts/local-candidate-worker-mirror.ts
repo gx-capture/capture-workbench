@@ -1,3 +1,5 @@
+// eslint-disable-next-line @nx/enforce-module-boundaries -- repository tooling reads shared release intent.
+import { RELEASE_VERSION } from '../../../tools/release/release-intent.ts';
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import {
@@ -13,7 +15,7 @@ import {
   type FilesystemAuthority,
 } from './filesystem-authority.ts';
 
-const LOCAL_CANDIDATE_RUNTIME_VERSION = '0.4.4';
+const LOCAL_CANDIDATE_RUNTIME_VERSION = RELEASE_VERSION;
 const CANDIDATE_MANIFEST_PATH = 'candidate-manifest.json';
 const CATALOG_PATH = 'runtime/capture-engine-catalog.json';
 const WORKER_ENTRY_POINT_PATTERN = /^[A-Za-z0-9._-]+$/u;

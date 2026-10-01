@@ -1,4 +1,5 @@
 import './test-temp-root.ts';
+import { RELEASE_VERSION } from './release/release-intent.ts';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createHash } from 'node:crypto';
@@ -24,12 +25,12 @@ import {
 } from './record-pypi-candidate.ts';
 import { verifyRegistryLedger } from './verify-registry-ledgers.ts';
 
-const version = '0.4.4';
+const version = RELEASE_VERSION;
 const sourceCommit = 'a'.repeat(40);
 const contractSetSha256 = 'c'.repeat(64);
 const names = [
-  'capture_runtime_client-0.4.4-py3-none-any.whl',
-  'capture_runtime_client-0.4.4.tar.gz',
+  ("capture_runtime_client-" + RELEASE_VERSION + "-py3-none-any.whl"),
+  ("capture_runtime_client-" + RELEASE_VERSION + ".tar.gz"),
 ];
 const hash = (bytes: string | Uint8Array) =>
   createHash('sha256').update(bytes).digest('hex');
@@ -59,12 +60,12 @@ async function packageFixture(
     'contracts/contract-snapshot.json',
   ];
   const packageFiles = [
-    'package/gx-capture-capture-workbench-ui-0.4.4.tgz',
-    'package/gx-capture-capture-runtime-client-0.4.4.tgz',
+    ("package/gx-capture-capture-workbench-ui-" + RELEASE_VERSION + ".tgz"),
+    ("package/gx-capture-capture-runtime-client-" + RELEASE_VERSION + ".tgz"),
     'package-manifest.json',
     'java-candidate-manifest.json',
-    'maven/capture-runtime-client-0.4.4.jar',
-    'maven/capture-runtime-client-0.4.4-sources.jar',
+    ("maven/capture-runtime-client-" + RELEASE_VERSION + ".jar"),
+    ("maven/capture-runtime-client-" + RELEASE_VERSION + "-sources.jar"),
     'maven/pom.xml',
     'maven/capture-runtime-contract-set.sha256',
   ];
@@ -73,7 +74,7 @@ async function packageFixture(
     'runtime/capture-runtime-manifest.json',
     'runtime/capture-engine-catalog.json',
     'runtime/capture-document-v2.schema.json',
-    'crate/capture-sidecar-launcher-0.4.4.crate',
+    ("crate/capture-sidecar-launcher-" + RELEASE_VERSION + ".crate"),
   ];
   for (const path of [
     ...commonFiles,
@@ -217,7 +218,7 @@ function remote(
   return async (url) => {
     assert.equal(
       String(url),
-      'https://pypi.org/pypi/capture-runtime-client/0.4.4/json',
+      ("https://pypi.org/pypi/capture-runtime-client/" + RELEASE_VERSION + "/json"),
     );
     return Response.json({ info, urls });
   };
@@ -447,7 +448,7 @@ test('resealed manifests cannot hide duplicate/aliased paths, wrong pair or full
       'package',
       (m) => {
         artifact(m, '.tar.gz').path =
-          'python/capture_runtime_client-0.4.4-cp312-none-any.whl';
+          ("python/capture_runtime_client-" + RELEASE_VERSION + "-cp312-none-any.whl");
       },
     ],
     [
@@ -752,14 +753,14 @@ test('PyPI record lane can select one project without accepting the other packag
   assert.deepEqual(
     projectArtifacts(
       [
-        'capture_runtime_client-0.4.4-py3-none-any.whl',
-        'capture_runtime_client-0.4.4.tar.gz',
+        ("capture_runtime_client-" + RELEASE_VERSION + "-py3-none-any.whl"),
+        ("capture_runtime_client-" + RELEASE_VERSION + ".tar.gz"),
       ],
       'capture-runtime-client',
     ),
     [
-      'capture_runtime_client-0.4.4-py3-none-any.whl',
-      'capture_runtime_client-0.4.4.tar.gz',
+      ("capture_runtime_client-" + RELEASE_VERSION + "-py3-none-any.whl"),
+      ("capture_runtime_client-" + RELEASE_VERSION + ".tar.gz"),
     ],
   );
   assert.throws(

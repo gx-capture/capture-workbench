@@ -542,7 +542,7 @@ mod tests {
             &BackendConfig {
                 base_url: format!("http://127.0.0.1:{port}"),
                 token: "secret-token".into(),
-                runtime_version: "0.4.4".into(),
+                runtime_version: env!("CARGO_PKG_VERSION").into(),
                 api_version: "2.0".into(),
                 capture_document_schema_version: "2".into(),
             },
@@ -589,7 +589,8 @@ mod tests {
             let request = String::from_utf8_lossy(&request[..count]);
             assert!(request.starts_with("GET /v2/captures/capture-1/ocr HTTP/1.1"));
             assert!(request.contains("Authorization: Bearer secret-token"));
-            let body = r#"{
+            let body = concat!(
+                r#"{
                 "apiVersion":"2.0",
                 "schemaVersion":"3",
                 "captureId":"capture-1",
@@ -597,11 +598,14 @@ mod tests {
                 "source":{"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","fileName":"scan.pdf","mediaType":"application/pdf","bytes":1024},
                 "pages":[{"page":1,"status":"recognized","raster":{"width":120,"height":80,"scale":1,"coordinateSystem":"pixel"},"text":"OCR","boxes":[{"polygon":[{"x":1,"y":1},{"x":20,"y":1},{"x":20,"y":20},{"x":1,"y":20}],"text":"OCR","confidence":0.9}],"confidence":0.9,"provenance":{"status":"resolved","engine":"windowsml-ocr","model":"pp-ocrv6-medium-windowsml","modelDigest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","device":"windowsml-dml","profileId":"capture-workbench-ocr-pipeline-v1","profileSpecSha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}}],
                 "pageCount":1,
-                "runtimeVersion":"0.4.4",
+                "runtimeVersion":""#,
+                env!("CARGO_PKG_VERSION"),
+                r#"",
                 "contractSha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 "provenance":{"status":"resolved","engine":"windowsml-ocr","model":"pp-ocrv6-medium-windowsml","modelDigest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","device":"windowsml-dml","profileId":"capture-workbench-ocr-pipeline-v1","profileSpecSha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},
                 "createdAt":"2026-08-14T00:00:00Z"
-            }"#;
+            }"#
+            );
             write!(
                 stream,
                 "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -614,7 +618,7 @@ mod tests {
             &BackendConfig {
                 base_url: format!("http://127.0.0.1:{port}"),
                 token: "secret-token".into(),
-                runtime_version: "0.4.4".into(),
+                runtime_version: env!("CARGO_PKG_VERSION").into(),
                 api_version: "2.0".into(),
                 capture_document_schema_version: "2".into(),
             },
@@ -646,7 +650,7 @@ mod tests {
             &BackendConfig {
                 base_url: format!("http://127.0.0.1:{port}"),
                 token: "secret-token".into(),
-                runtime_version: "0.4.4".into(),
+                runtime_version: env!("CARGO_PKG_VERSION").into(),
                 api_version: "2.0".into(),
                 capture_document_schema_version: "2".into(),
             },
@@ -731,7 +735,7 @@ mod tests {
             &BackendConfig {
                 base_url: format!("http://127.0.0.1:{port}"),
                 token: "secret-token".into(),
-                runtime_version: "0.4.4".into(),
+                runtime_version: env!("CARGO_PKG_VERSION").into(),
                 api_version: "2.0".into(),
                 capture_document_schema_version: "2".into(),
             },
@@ -797,7 +801,7 @@ mod tests {
             &BackendConfig {
                 base_url: format!("http://127.0.0.1:{port}"),
                 token: "token".into(),
-                runtime_version: "0.4.4".into(),
+                runtime_version: env!("CARGO_PKG_VERSION").into(),
                 api_version: "2.0".into(),
                 capture_document_schema_version: "2".into(),
             },

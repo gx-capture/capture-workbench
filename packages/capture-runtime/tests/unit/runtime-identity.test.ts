@@ -1,5 +1,7 @@
 // eslint-disable-next-line @nx/enforce-module-boundaries -- shared test temp-root guard.
 import '../../../../tools/test-temp-root.ts';
+// eslint-disable-next-line @nx/enforce-module-boundaries -- repository tooling reads shared release intent.
+import { RELEASE_VERSION } from '../../../../tools/release/release-intent.ts';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import {
@@ -105,7 +107,7 @@ test('local-probe accepts semver, app hash, inventory, and local direct_url drif
       ...localInput(paths),
       soft: {
         runtimeVersion: '0.4.1',
-        expectedRuntimeVersion: '0.4.4',
+        expectedRuntimeVersion: RELEASE_VERSION,
         desktopHash: 'rebuilt-app',
         expectedDesktopHash: 'previous-app',
         allAssetInventoryMatches: false,
@@ -238,11 +240,11 @@ test('release identity keeps strict version, manifest, lock, download-back, and 
     const base = {
       ...localInput(paths),
       mode: 'release' as const,
-      expectedRuntimeVersion: '0.4.4',
+      expectedRuntimeVersion: RELEASE_VERSION,
       expectedRuntimeSha256: digest('runtime bytes'),
       observed: {
         ...localInput(paths).observed,
-        runtimeVersion: '0.4.4',
+        runtimeVersion: RELEASE_VERSION,
       },
       release: {
         allArtifactManifestMatches: true,

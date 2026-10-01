@@ -1,3 +1,4 @@
+import { RELEASE_VERSION } from './release/release-intent.ts';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
@@ -7,7 +8,7 @@ test('candidate identity is deterministic and changes when an artifact digest ch
   const manifest = {
     schemaVersion: '1',
     sourceCommit: 'a'.repeat(40),
-    releaseVersion: '0.4.4',
+    releaseVersion: RELEASE_VERSION,
     releaseMode: 'core-only',
     runtimeApiVersion: '2.0',
     documentSchemaVersion: '2',

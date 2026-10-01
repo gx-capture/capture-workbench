@@ -1,4 +1,5 @@
 import './test-temp-root.ts';
+import { RELEASE_VERSION } from './release/release-intent.ts';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
@@ -8,7 +9,7 @@ import { test } from 'node:test';
 
 import { verifyRuntimeCandidate } from './verify-runtime-candidate.ts';
 
-const VERSION = '0.4.4';
+const VERSION = RELEASE_VERSION;
 const SOURCE_COMMIT = 'a'.repeat(40);
 const PACKAGE_CANDIDATE_ID = 'b'.repeat(64);
 
@@ -45,13 +46,13 @@ async function createCandidate() {
   );
   await writeFile(join(root, 'runtime/capture-runtime-x64.exe'), 'runtime');
   const packageFiles = [
-    'capture_runtime_client-0.4.4-py3-none-any.whl',
-    'capture_runtime_client-0.4.4.tar.gz',
+    ("capture_runtime_client-" + RELEASE_VERSION + "-py3-none-any.whl"),
+    ("capture_runtime_client-" + RELEASE_VERSION + ".tar.gz"),
   ];
   for (const name of packageFiles)
     await writeFile(join(root, 'python', name), name);
   await writeFile(
-    join(root, 'crate/capture-sidecar-launcher-0.4.4.crate'),
+    join(root, ("crate/capture-sidecar-launcher-" + RELEASE_VERSION + ".crate")),
     'crate',
   );
   await writeFile(

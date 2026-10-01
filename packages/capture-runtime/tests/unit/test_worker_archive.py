@@ -11,6 +11,7 @@ from types import ModuleType
 
 import pytest
 
+from capture_runtime.constants import RUNTIME_VERSION
 from capture_runtime.engine_catalog import EngineArtifactDescriptor
 from capture_runtime.engine_installation import safe_extract_artifact
 
@@ -36,7 +37,7 @@ def _descriptor(archive: Path, manifest: bytes) -> EngineArtifactDescriptor:
         {
             "role": "worker",
             "requirementId": "windowsml-ocr",
-            "artifactVersion": "0.4.4",
+            "artifactVersion": RUNTIME_VERSION,
             "workerProtocolVersion": "1",
             "platform": "windows",
             "arch": "x86_64",

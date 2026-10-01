@@ -126,11 +126,20 @@ candidate with `node tools/install-capture-workbench-dependencies.mts
   old, `pnpm install` rejects the old lock entries before it can re-resolve;
   move only the two `@gx-capture` lock entries (integrity and tarball from
   GitHub Packages) and verify with `pnpm install --frozen-lockfile`.
-- `sync-versions.ts` rewrites every occurrence of the previous release
-  version (and workspace crates in `Cargo.lock`). A test's "conflicting
-  version" must therefore be a value no release will reach (`99.0.0`), and
-  recorded fixture data (OCR evidence goldens) must use a fixed version other
-  than the current one, or the bump collapses the conflict or breaks digests.
+- Version management has two stages: ordinary source/tests reference a scoped
+  owner, then code updates the explicit owner/native metadata list. Preview with
+  `pnpm nx run capture-tools:release-version-plan --args="--version <version>"` and apply
+  with `pnpm nx run capture-tools:release-version-sync --args="--version <version>"`.
+  `release/version.json` is the release intent; package metadata and packaged
+  Python constants are explicit mirrors. The updater never scans/replaces the
+  tree, rewrites locks, or approves model provenance and contract hashes.
+  Its `followUp` lists package-manager lock refresh, model-source approval and
+  existing contract/engine/profile generators. After those steps, run
+  `pnpm nx run capture-tools:release-version-check`; this validates source,
+  generated identities, local Cargo/uv lock versions and the existing inventory.
+  Passing this check is not candidate publication or installed acceptance.
+  Keep negative versions and historical byte/digest evidence independent;
+  ordinary current-version fixtures reference the scoped shared constant.
 - Every pull request runs full CI, docs-only ones included; a docs-only skip
   once let `main` go red for three merges. Tests never assert documentation
   prose, so docs edits alone cannot fail CI.

@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from capture_runtime.constants import RUNTIME_VERSION
 from capture_runtime.contract_set import (
     CONTRACT_ASSET_PATH,
     CONTRACT_ASSET_SHA256_PATH,
@@ -102,7 +103,7 @@ def test_contract_discovery_requires_bearer_and_serves_verified_bundle(client) -
     assert index_response.headers["x-contract-sha256"] == contract_set.sha256
     index = index_response.json()
     assert index["catalogVersion"] == "2"
-    assert index["runtimeVersion"] == "0.4.4"
+    assert index["runtimeVersion"] == RUNTIME_VERSION
     assert index["sha256"] == contract_set.sha256
     assert index["href"].endswith(f"/sha256/{contract_set.sha256}")
     assert index["mediaType"] == "application/json"

@@ -4,26 +4,27 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import test from 'node:test';
 import { resolveNode24Corepack } from './node24-corepack.ts';
+import {
+  packageManagerPolicy,
+  readPackageManagerPolicy,
+} from './package-manager.ts';
 
 const root = join(import.meta.dirname, '..');
-const expectedVersion = '12.0.0';
-const expectedPackageManager = `pnpm@${expectedVersion}`;
+const expectedPolicy = readPackageManagerPolicy(root);
+const expectedVersion = expectedPolicy.engines.pnpm;
+const expectedPackageManager = expectedPolicy.packageManager;
 const bootstrapWorkflows = [
   '.github/workflows/ci.yml',
   '.github/workflows/package-candidate.yml',
   '.github/workflows/runtime-candidate.yml',
   '.github/workflows/release-candidate.yml',
 ] as const;
-const generatedConsumerSources = [
-  'tools/clean-angular-consumer-smoke.ts',
-  'tools/runtime-web-component-e2e.ts',
-] as const;
 
 async function readRootFile(relativePath: string): Promise<string> {
   return readFile(join(root, relativePath), 'utf8');
 }
 
-test('workspace package-manager sources pin exact pnpm 12.0.0', async () => {
+test('workspace and CI use the exact pnpm version owned by package.json', async () => {
   const manifest = JSON.parse(await readRootFile('package.json')) as {
     packageManager?: unknown;
     engines?: { pnpm?: unknown };
@@ -32,10 +33,6 @@ test('workspace package-manager sources pin exact pnpm 12.0.0', async () => {
   assert.equal(manifest.engines?.pnpm, expectedVersion);
 
   const workspace = await readRootFile('pnpm-workspace.yaml');
-  assert.match(
-    workspace,
-    /# pnpm 12 requires an explicit decision for dependency lifecycle scripts\./u,
-  );
   assert.match(
     workspace,
     /^pmOnFail:\s+ignore\s*$/mu,
@@ -57,37 +54,41 @@ test('workspace package-manager sources pin exact pnpm 12.0.0', async () => {
   for (const workflowPath of bootstrapWorkflows) {
     const workflow = await readRootFile(workflowPath);
     const setupCount = workflow.match(/pnpm\/action-setup@/gu)?.length ?? 0;
-    const exactVersionCount =
-      workflow.match(/^\s+version:\s+12\.0\.0\s*$/gmu)?.length ?? 0;
     assert.ok(setupCount > 0, `${workflowPath} must install pnpm`);
-    assert.equal(
-      exactVersionCount,
-      setupCount,
-      `${workflowPath} must pin every pnpm bootstrap to ${expectedVersion}`,
-    );
-    assert.doesNotMatch(
-      workflow,
-      /version:\s*(?:latest|next|(?:[<>=~^*]|\d+\.\d+\.\d*-))/iu,
-      `${workflowPath} must not use a floating or pre-12 pnpm version`,
-    );
-  }
-
-  for (const sourcePath of generatedConsumerSources) {
-    const source = await readRootFile(sourcePath);
-    assert.equal(
-      source.match(new RegExp(`pnpm@${expectedVersion}`, 'gu'))?.length,
-      1,
-      `${sourcePath} must generate an exact pnpm packageManager pin`,
-    );
-    assert.match(
-      source,
-      new RegExp(`pnpm: '${expectedVersion}'`, 'u'),
-      `${sourcePath} must enforce the exact pnpm engine`,
-    );
+    const setupSteps = workflow
+      .split(/(?=^\x20{6}- )/mu)
+      .filter((step) => /uses: pnpm\/action-setup@/u.test(step));
+    assert.equal(setupSteps.length, setupCount);
+    for (const step of setupSteps) {
+      assert.doesNotMatch(
+        step,
+        /^\s+version:/mu,
+        `${workflowPath} must read packageManager instead of duplicating its version`,
+      );
+    }
   }
 });
 
-test('workspace pnpm command resolves to exact pnpm 12.0.0', () => {
+test('isolated consumers inherit tooling fields and reject mismatched or floating pins', () => {
+  const alternative = {
+    packageManager: 'pnpm@12.99.1',
+    engines: { node: '>=24.0.0', pnpm: '12.99.1' },
+    dependencies: { unrelated: '12.8.2' },
+  };
+  assert.deepEqual(packageManagerPolicy(alternative), {
+    packageManager: alternative.packageManager,
+    engines: alternative.engines,
+  });
+  for (const broken of [
+    { ...alternative, packageManager: 'pnpm@latest' },
+    { ...alternative, packageManager: 'pnpm@12.99.01' },
+    { ...alternative, packageManager: 'pnpm@11.0.0' },
+    { ...alternative, engines: { node: '>=24.0.0', pnpm: '12.0.0' } },
+  ])
+    assert.throws(() => packageManagerPolicy(broken), /exact pnpm 12/u);
+});
+
+test('workspace pnpm command resolves to its exact declared version', () => {
   const corepackCli = resolveNode24Corepack();
   assert.ok(corepackCli, 'Node 24 Corepack must be available');
   const actualVersion = execFileSync(

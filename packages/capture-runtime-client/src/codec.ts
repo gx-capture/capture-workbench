@@ -1,3 +1,4 @@
+import { RUNTIME_VERSION } from './contracts.js';
 import {
   CaptureAuthenticationError,
   CaptureRemoteError,
@@ -115,7 +116,7 @@ function validateRuntimeReady(record: Record<string, unknown>): void {
     compute['apiVersion'] !== '2.0' ||
     compute['schemaVersion'] !== '1' ||
     compute['service'] !== 'capture-runtime' ||
-    compute['runtimeVersion'] !== '0.4.4' ||
+    compute['runtimeVersion'] !== RUNTIME_VERSION ||
     compute['contractSetVersion'] !== '2' ||
     typeof compute['contractSha256'] !== 'string' ||
     !/^[0-9a-f]{64}$/u.test(compute['contractSha256']) ||
@@ -205,7 +206,7 @@ function validateCaptureOcrProjection(record: Record<string, unknown>): void {
       'Capture Runtime returned an OCR projection with an invalid pageCount.',
     );
   }
-  if (record['runtimeVersion'] !== '0.4.4') {
+  if (record['runtimeVersion'] !== RUNTIME_VERSION) {
     throw new CaptureRuntimeProtocolError(
       'Capture Runtime returned an OCR projection with an incompatible runtimeVersion.',
     );

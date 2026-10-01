@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 from capture_runtime.app import create_app
+from capture_runtime.constants import RUNTIME_VERSION
 from capture_runtime.contract_set import load_contract_set
 from capture_runtime.contracts import OcrAdapterClass, OcrComputeMode, OcrComputePreflightV2
 from capture_runtime.dependencies import build_runtime_dependencies
@@ -114,7 +115,7 @@ def test_v2_runtime_ready_reports_authenticated_ocr_compute_decision(settings_fa
         "apiVersion": "2.0",
         "schemaVersion": "1",
         "service": "capture-runtime",
-        "runtimeVersion": "0.4.4",
+        "runtimeVersion": RUNTIME_VERSION,
         "contractSetVersion": "2",
         "contractSha256": contract_set.sha256,
         "workerSha256": None,

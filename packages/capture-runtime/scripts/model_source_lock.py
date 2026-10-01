@@ -1,4 +1,4 @@
-"""Fail-closed validation for the v0.4.4 direct-model source lock."""
+"""Fail-closed validation for the current direct-model source lock."""
 
 from __future__ import annotations
 
@@ -12,9 +12,13 @@ from typing import Any
 from urllib.parse import urlsplit
 
 LOCK_VERSION = "2"
-RELEASE_VERSION = "0.4.4"
 COMMIT_A_SHA = "de87d3ddeb28363c0d96cca79b224900de688816"
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
+# Release CI invokes this script with --no-project before installing the runtime.
+# Read the repository's declared owner without importing the runtime package.
+RELEASE_VERSION = json.loads(
+    (REPOSITORY_ROOT / "release" / "version.json").read_text(encoding="utf-8")
+)["releaseVersion"]
 FIRST_PARTY_REPOSITORY_ROOT = "packages/capture-runtime/model-sources/commit-a"
 FIRST_PARTY_ROOT = (
     "https://raw.githubusercontent.com/gx-capture/capture-workbench/"

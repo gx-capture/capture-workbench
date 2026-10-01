@@ -1,3 +1,4 @@
+import { RELEASE_VERSION } from './release/release-intent.ts';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
@@ -41,7 +42,7 @@ function evidence(overrides: Record<string, unknown> = {}) {
       schemaVersion: '1',
       candidateId,
       sourceCommit,
-      releaseVersion: '0.4.4',
+      releaseVersion: RELEASE_VERSION,
       releaseMode: 'core-only',
       artifacts: [
         {
@@ -116,7 +117,7 @@ test('promotion evidence requires passing exact candidate, producer, and consume
     candidateId,
     candidateManifestSha256: manifestSha256,
     sourceCommit,
-    releaseVersion: '0.4.4',
+    releaseVersion: RELEASE_VERSION,
     releaseMode: 'core-only',
     contractClassification: 'no-impact',
   });

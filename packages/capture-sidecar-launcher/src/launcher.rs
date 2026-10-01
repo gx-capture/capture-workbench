@@ -220,7 +220,7 @@ fn public_activation_root(
         .and_then(OsStr::to_str)
         .ok_or(crate::prepare::PrepareError::InvalidPlan)?;
     let expected = ManifestExpectations {
-        runtime_version: "0.4.4".into(),
+        runtime_version: env!("CARGO_PKG_VERSION").into(),
         api_version: "2.0".into(),
         capture_document_schema_version: "2".into(),
         file_name: file_name.to_owned(),
@@ -1471,7 +1471,7 @@ mod tests {
     fn manifest() -> crate::SidecarManifest {
         crate::SidecarManifest {
             manifest_version: "1".into(),
-            runtime_version: "0.4.4".into(),
+            runtime_version: env!("CARGO_PKG_VERSION").into(),
             api_version: "2.0".into(),
             capture_document_schema_version: "2".into(),
             platform: "windows".into(),
@@ -1585,7 +1585,7 @@ mod tests {
         let bytes = fs::read(&executable_path).expect("fixture bytes");
         let manifest = crate::SidecarManifest {
             manifest_version: "1".into(),
-            runtime_version: "0.4.4".into(),
+            runtime_version: env!("CARGO_PKG_VERSION").into(),
             api_version: "2.0".into(),
             capture_document_schema_version: "2".into(),
             platform: "windows".into(),
@@ -1652,7 +1652,7 @@ mod tests {
         let bytes = fs::read(&executable_path).expect("fixture bytes");
         let manifest = crate::SidecarManifest {
             manifest_version: "1".into(),
-            runtime_version: "0.4.4".into(),
+            runtime_version: env!("CARGO_PKG_VERSION").into(),
             api_version: "2.0".into(),
             capture_document_schema_version: "2".into(),
             platform: "windows".into(),

@@ -1,4 +1,5 @@
 import './test-temp-root.ts';
+import { RELEASE_VERSION } from './release/release-intent.ts';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -36,7 +37,7 @@ test('release manifest is immutable, candidate-bound, and records registry and g
         schemaVersion: '1',
         candidateId,
         sourceCommit,
-        releaseVersion: '0.4.4',
+        releaseVersion: RELEASE_VERSION,
         runtimeApiVersion: '2.0',
         documentSchemaVersion: '2',
         packageCandidateId,
@@ -49,7 +50,7 @@ test('release manifest is immutable, candidate-bound, and records registry and g
       candidateManifest,
     );
     const snapshot = Buffer.from(
-      `${JSON.stringify({ schemaVersion: '1', releaseVersion: '0.4.4' })}\n`,
+      `${JSON.stringify({ schemaVersion: '1', releaseVersion: RELEASE_VERSION })}\n`,
     );
     await writeFile(
       join(candidate, 'contracts', 'contract-snapshot.json'),
@@ -100,7 +101,7 @@ test('release manifest is immutable, candidate-bound, and records registry and g
         candidateId,
         candidateManifestSha256: digest(candidateManifest),
         sourceCommit,
-        releaseVersion: '0.4.4',
+        releaseVersion: RELEASE_VERSION,
         contractClassification: 'no-impact',
       }),
     );
@@ -114,7 +115,7 @@ test('release manifest is immutable, candidate-bound, and records registry and g
         sourceCandidateManifestSha256: 'f'.repeat(64),
         releaseCandidateId: candidateId,
         contractSetSha256,
-        releaseVersion: '0.4.4',
+        releaseVersion: RELEASE_VERSION,
         status: 'published',
         packages: [
           { name: '@gx-capture/capture-runtime-client', integrity: 'sha512-a' },
@@ -130,11 +131,11 @@ test('release manifest is immutable, candidate-bound, and records registry and g
         sourceCandidateManifestSha256: '1'.repeat(64),
         releaseCandidateId: candidateId,
         contractSetSha256,
-        releaseVersion: '0.4.4',
+        releaseVersion: RELEASE_VERSION,
         status: 'published',
         artifacts: [
           {
-            name: 'capture_runtime_client-0.4.4-py3-none-any.whl',
+            name: ("capture_runtime_client-" + RELEASE_VERSION + "-py3-none-any.whl"),
             sha256: 'e'.repeat(64),
           },
         ],
@@ -149,11 +150,11 @@ test('release manifest is immutable, candidate-bound, and records registry and g
         sourceCandidateManifestSha256: '2'.repeat(64),
         releaseCandidateId: candidateId,
         contractSetSha256,
-        releaseVersion: '0.4.4',
+        releaseVersion: RELEASE_VERSION,
         status: 'published',
         artifacts: [
           {
-            name: 'capture-sidecar-launcher-0.4.4.crate',
+            name: ("capture-sidecar-launcher-" + RELEASE_VERSION + ".crate"),
             candidateSha256: 'f'.repeat(64),
             registrySha256: 'f'.repeat(64),
           },
@@ -169,11 +170,11 @@ test('release manifest is immutable, candidate-bound, and records registry and g
         sourceCandidateManifestSha256: '3'.repeat(64),
         releaseCandidateId: candidateId,
         contractSetSha256,
-        releaseVersion: '0.4.4',
+        releaseVersion: RELEASE_VERSION,
         status: 'published',
         artifacts: [
           {
-            name: 'capture-runtime-client-0.4.4.jar',
+            name: ("capture-runtime-client-" + RELEASE_VERSION + ".jar"),
             sha256: 'f'.repeat(64),
           },
         ],
@@ -187,7 +188,7 @@ test('release manifest is immutable, candidate-bound, and records registry and g
         '--candidate',
         candidate,
         '--tag',
-        'v0.4.4',
+        ("v" + RELEASE_VERSION),
         '--promotion-evidence',
         evidencePath,
         '--consumer-gate-ledger',
@@ -205,7 +206,7 @@ test('release manifest is immutable, candidate-bound, and records registry and g
     const manifest = JSON.parse(await readFile(output, 'utf8'));
     assert.equal(manifest.status, 'released');
     assert.equal(manifest.candidateId, candidateId);
-    assert.equal(manifest.releaseTag, 'v0.4.4');
+    assert.equal(manifest.releaseTag, ("v" + RELEASE_VERSION));
     assert.equal(manifest.registryArtifacts.length, 4);
     assert.equal(manifest.consumerGates.gates[0].verdict, 'passed');
     assert.match(

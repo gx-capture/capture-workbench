@@ -628,7 +628,7 @@ export async function runPythonCandidateIndexHttpSmoke(input: {
     const captureMetadata = poetryVenvFiles.filter((path) => /capture_runtime_client-[^/]+\.dist-info\/METADATA$/iu.test(path));
     assert.equal(captureMetadata.length, 1, 'Poetry virtualenv contains missing or duplicate capture-runtime-client metadata.');
     assert(
-      captureMetadata[0]?.toLowerCase().replaceAll('\\', '/').includes('capture_runtime_client-0.4.4.dist-info/metadata'),
+      captureMetadata[0]?.toLowerCase().replaceAll('\\', '/').includes(`capture_runtime_client-${input.version.toLowerCase()}.dist-info/metadata`),
       'Poetry virtualenv contains stale capture-runtime-client metadata.',
     );
     const poetryCache = join(smokeRoot, 'poetry-cache');

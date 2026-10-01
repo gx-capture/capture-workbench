@@ -665,7 +665,8 @@ public final class CaptureRuntimeTypes {
 
   // BEGIN GENERATED OCR PROJECTION
   // Generated from capture-ocr-projection-v3.schema.json in contract-set.json. Do not edit.
-  private static final String OCR_RUNTIME_VERSION = "0.4.4";
+  public static final String RUNTIME_VERSION = "0.4.4";
+  private static final String OCR_RUNTIME_VERSION = RUNTIME_VERSION;
   private static final Pattern OCR_SOURCE_SHA256_PATTERN = Pattern.compile("^[0-9a-f]{64}$");
   private static final Pattern OCR_FAILURE_CODE_PATTERN = Pattern.compile("^[a-z][a-z0-9_]{1,63}$");
 

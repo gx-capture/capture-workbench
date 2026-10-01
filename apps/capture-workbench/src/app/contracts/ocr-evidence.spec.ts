@@ -1,3 +1,4 @@
+import { RUNTIME_VERSION } from '@gx-capture/capture-runtime-client';
 import type {
   CaptureOcrProjection,
   OcrBox,
@@ -57,7 +58,7 @@ describe('buildOcrEvidence', () => {
       },
     });
     expect(evidence.provenance).toMatchObject({
-      runtimeVersion: '0.4.4',
+      runtimeVersion: RUNTIME_VERSION,
       contractSha256: 'c'.repeat(64),
       engine: 'windowsml-ocr',
       model: 'ppocrv6-traditional-multilingual',
@@ -331,7 +332,7 @@ describe('buildOcrEvidence', () => {
     const resolved = await buildOcrEvidence({ projection: projection(), expected: expectedIdentity() });
     expect(resolved.provenance).toEqual({
       status: 'resolved',
-      runtimeVersion: '0.4.4',
+      runtimeVersion: RUNTIME_VERSION,
       contractSha256: 'c'.repeat(64),
       engine: 'windowsml-ocr',
       model: 'ppocrv6-traditional-multilingual',
@@ -348,7 +349,7 @@ describe('buildOcrEvidence', () => {
     });
     expect(unavailable.provenance).toMatchObject({
       status: 'unavailable',
-      runtimeVersion: '0.4.4',
+      runtimeVersion: RUNTIME_VERSION,
       contractSha256: 'c'.repeat(64),
       engine: null,
       model: null,
@@ -405,7 +406,7 @@ function expectedIdentity(terminalStatus: 'completed' | 'failed' = 'completed') 
   return {
     captureId: 'capture-1',
     sourceSha256: 'a'.repeat(64),
-    runtimeVersion: '0.4.4',
+    runtimeVersion: RUNTIME_VERSION,
     contractSha256: 'c'.repeat(64),
     terminalStatus,
     workerSha256: 'f'.repeat(64),
@@ -459,7 +460,7 @@ function projection(): CaptureOcrProjection {
         provenance: resolvedProvenance(),
       },
     ],
-    runtimeVersion: '0.4.4',
+    runtimeVersion: RUNTIME_VERSION,
     contractSha256: 'c'.repeat(64),
     provenance: resolvedProvenance(),
     createdAt: '2026-08-29T00:00:00Z',

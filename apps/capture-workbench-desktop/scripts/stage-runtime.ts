@@ -1,3 +1,5 @@
+// eslint-disable-next-line @nx/enforce-module-boundaries -- repository tooling reads shared release intent.
+import { RELEASE_VERSION } from '../../../tools/release/release-intent.ts';
 // Node 24 executes this type-strippable TypeScript script directly.
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
@@ -50,7 +52,7 @@ export const stageProvenance = join(
 
 const expected = Object.freeze({
   manifestVersion: '1',
-  runtimeVersion: '0.4.4',
+  runtimeVersion: RELEASE_VERSION,
   apiVersion: '2.0',
   captureDocumentSchemaVersion: '2',
   platform: 'windows',

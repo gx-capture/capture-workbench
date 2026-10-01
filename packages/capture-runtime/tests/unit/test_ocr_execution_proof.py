@@ -12,6 +12,7 @@ import pytest
 import capture_runtime.ocr_execution_proof as ocr_execution_proof
 import capture_runtime.workers.ocr_main as ocr_main
 from capture_runtime.config import sanitized_child_environment
+from capture_runtime.constants import RUNTIME_VERSION
 from capture_runtime.contracts import OcrProvenanceV3
 from capture_runtime.engine_adapters import (
     OcrExecutionEvidence,
@@ -237,7 +238,7 @@ def test_failed_worker_capture_does_not_record_a_success_proof(
         operation="run",
         payload={
             "requirementId": "windowsml-ocr",
-            "artifactVersion": "0.4.4",
+            "artifactVersion": RUNTIME_VERSION,
             "modelPath": str(model_path),
             "sourcePath": str(source_path),
             "mediaType": "application/pdf",
@@ -369,7 +370,7 @@ def test_worker_proof_validation_failure_does_not_leave_acceptance_artifact(
             await client.run(
                 InstalledEngine(
                     requirement_id="windowsml-ocr",
-                    artifact_version="0.4.4",
+                    artifact_version=RUNTIME_VERSION,
                     executable=tmp_path / "ocr.exe",
                     model_dir=model_path,
                 ),

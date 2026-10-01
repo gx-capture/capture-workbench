@@ -1,3 +1,4 @@
+import { RELEASE_VERSION } from './release/release-intent.ts';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
@@ -16,7 +17,7 @@ function snapshot(overrides: Record<string, unknown> = {}) {
   };
   return {
     schemaVersion: '1',
-    releaseVersion: '0.4.4',
+    releaseVersion: RELEASE_VERSION,
     runtimeApi: {
       apiVersion: '2.0',
       documentSchemaVersion: '2',
@@ -26,8 +27,8 @@ function snapshot(overrides: Record<string, unknown> = {}) {
     },
     contractManifest: {
       manifestVersion: '1',
-      packageVersion: '0.4.4',
-      runtimeVersion: '0.4.4',
+      packageVersion: RELEASE_VERSION,
+      runtimeVersion: RELEASE_VERSION,
       apiVersion: '2.0',
       captureDocumentSchemaVersion: '2',
       captureDocumentSchemaId:
@@ -51,7 +52,7 @@ function snapshot(overrides: Record<string, unknown> = {}) {
 
 test('description, ordering, digest, and release-version changes are no-impact', () => {
   const candidate = snapshot({
-    releaseVersion: '0.4.4',
+    releaseVersion: RELEASE_VERSION,
     runtimeApi: {
       apiVersion: '2.0',
       documentSchemaVersion: '2',
@@ -71,8 +72,8 @@ test('description, ordering, digest, and release-version changes are no-impact',
     },
     contractManifest: {
       ...snapshot().contractManifest,
-      packageVersion: '0.4.4',
-      runtimeVersion: '0.4.4',
+      packageVersion: RELEASE_VERSION,
+      runtimeVersion: RELEASE_VERSION,
       captureDocumentSchemaSha256: 'b'.repeat(64),
     },
   });

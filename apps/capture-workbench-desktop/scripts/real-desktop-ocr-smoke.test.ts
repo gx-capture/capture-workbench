@@ -1,5 +1,7 @@
 // eslint-disable-next-line @nx/enforce-module-boundaries -- shared test temp-root guard.
 import '../../../tools/test-temp-root.ts';
+// eslint-disable-next-line @nx/enforce-module-boundaries -- repository tooling reads shared release intent.
+import { RELEASE_VERSION } from '../../../tools/release/release-intent.ts';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
@@ -143,7 +145,7 @@ function phase1PageOnePdfSemanticFixture(): OcrSemanticEvidenceV1 {
       },
     }],
     provenance: {
-      runtimeVersion: '0.4.4',
+      runtimeVersion: RELEASE_VERSION,
       contractSha256: '5'.repeat(64),
       engine: 'windowsml-ocr',
       model: 'pp-ocrv6-medium-windowsml',
@@ -287,7 +289,7 @@ async function writeRuntimeCandidate(root: string, runtimeBytes: Buffer, newline
     fileName: 'capture-runtime-x86_64-pc-windows-msvc.exe',
     manifestVersion: '1',
     platform: 'windows',
-    runtimeVersion: '0.4.4',
+    runtimeVersion: RELEASE_VERSION,
     schemaFileName: 'capture-document-v2.schema.json',
     schemaSha256,
     sha256: runtimeSha256,
@@ -305,7 +307,7 @@ async function writeRuntimeCandidate(root: string, runtimeBytes: Buffer, newline
     schemaVersion: '1',
     candidateKind: 'runtime',
     sourceCommit: 'a'.repeat(40),
-    releaseVersion: '0.4.4',
+    releaseVersion: RELEASE_VERSION,
     releaseMode: 'model-enabled',
     producerRunId: 'run-1',
     packageCandidateId: 'b'.repeat(64),
@@ -348,7 +350,7 @@ test('local package identity uses the actual installed runtime when source-stage
       fileName: 'capture-runtime-x86_64-pc-windows-msvc.exe',
       manifestVersion: '1',
       platform: 'windows',
-      runtimeVersion: '0.4.4',
+      runtimeVersion: RELEASE_VERSION,
       schemaFileName: 'capture-document-v2.schema.json',
       schemaSha256: sha256('{"schemaVersion":"2"}\n'),
       sha256: sha256(installedBytes),
@@ -373,7 +375,7 @@ test('local package identity uses the actual installed runtime when source-stage
   assert.equal(identity.runtimeSha256, candidate.runtimeSha256);
   assert.equal(identity.runtimeSha256 !== identity.sourceStagedRuntimeSha256, true);
   assert.equal(identity.candidateId, candidate.candidateId);
-  assert.equal(identity.runtimeVersion, '0.4.4');
+  assert.equal(identity.runtimeVersion, RELEASE_VERSION);
   assert.equal(identity.contractSetSha256.length, 64);
 });
 
@@ -407,7 +409,7 @@ test('local package identity accepts an installed candidate under an ancestor ju
         fileName: 'capture-runtime-x86_64-pc-windows-msvc.exe',
         manifestVersion: '1',
         platform: 'windows',
-        runtimeVersion: '0.4.4',
+        runtimeVersion: RELEASE_VERSION,
         schemaFileName: 'capture-document-v2.schema.json',
         schemaSha256: sha256('{"schemaVersion":"2"}\n'),
         sha256: sha256(runtimeBytes),
@@ -589,7 +591,7 @@ test('local package identity fails closed for an installed runtime not allowed b
     JSON.stringify({
       apiVersion: '2.0', arch: 'x86_64', bytes: installedBytes.length,
       captureDocumentSchemaVersion: '2', fileName: 'capture-runtime-x86_64-pc-windows-msvc.exe',
-      manifestVersion: '1', platform: 'windows', runtimeVersion: '0.4.4',
+      manifestVersion: '1', platform: 'windows', runtimeVersion: RELEASE_VERSION,
       schemaFileName: 'capture-document-v2.schema.json', schemaSha256: sha256('{"schemaVersion":"2"}\n'),
       sha256: sha256(installedBytes),
     }) + '\n',
@@ -627,7 +629,7 @@ test('local package identity fails closed when installer provenance is wrong', a
     JSON.stringify({
       apiVersion: '2.0', arch: 'x86_64', bytes: runtimeBytes.length,
       captureDocumentSchemaVersion: '2', fileName: 'capture-runtime-x86_64-pc-windows-msvc.exe',
-      manifestVersion: '1', platform: 'windows', runtimeVersion: '0.4.4',
+      manifestVersion: '1', platform: 'windows', runtimeVersion: RELEASE_VERSION,
       schemaFileName: 'capture-document-v2.schema.json', schemaSha256: sha256('{"schemaVersion":"2"}\n'),
       sha256: sha256(runtimeBytes),
     }) + '\n',
@@ -662,7 +664,7 @@ test('local package identity fails closed when the installed root has split runt
   const runtimeManifest = JSON.stringify({
     apiVersion: '2.0', arch: 'x86_64', bytes: runtimeBytes.length,
     captureDocumentSchemaVersion: '2', fileName: 'capture-runtime-x86_64-pc-windows-msvc.exe',
-    manifestVersion: '1', platform: 'windows', runtimeVersion: '0.4.4',
+    manifestVersion: '1', platform: 'windows', runtimeVersion: RELEASE_VERSION,
     schemaFileName: 'capture-document-v2.schema.json', schemaSha256: sha256('{"schemaVersion":"2"}\n'),
     sha256: sha256(runtimeBytes),
   }) + '\n';
@@ -741,7 +743,7 @@ const fakeInstalledRuntimeIdentity = {
   installRoot: 'C:/owned/install',
   runtimePath: 'C:/owned/install/binaries/runtime.exe',
   runtimeSha256: '1'.repeat(64),
-  runtimeVersion: '0.4.4',
+  runtimeVersion: RELEASE_VERSION,
   runtimeManifestSha256: '2'.repeat(64),
   contractSetSha256: '3'.repeat(64),
   candidateId: '4'.repeat(64),

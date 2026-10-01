@@ -10,6 +10,7 @@ import pytest
 from PIL import Image
 
 import capture_runtime.workers.ocr_main as ocr_main
+from capture_runtime.constants import RUNTIME_VERSION
 from capture_runtime.contracts import (
     OcrAdapterClass,
     OcrComputeMode,
@@ -414,7 +415,7 @@ def test_ocr_compute_preflight_uses_worker_capability_probe_without_model_initia
             operation="preflight",
             payload={
                 "requirementId": "windowsml-ocr",
-                "artifactVersion": "0.4.4",
+                "artifactVersion": RUNTIME_VERSION,
                 "modelPath": None,
                 "contractSha256": "a" * 64,
                 "options": {},
@@ -475,7 +476,7 @@ def test_ocr_compute_preflight_worker_reports_typed_cpu_reason(
             operation="preflight",
             payload={
                 "requirementId": "windowsml-ocr",
-                "artifactVersion": "0.4.4",
+                "artifactVersion": RUNTIME_VERSION,
                 "modelPath": None,
                 "contractSha256": "a" * 64,
                 "options": {},
@@ -510,7 +511,7 @@ def test_ocr_compute_preflight_rejects_a_catalog_worker_digest_mismatch() -> Non
                 operation="preflight",
                 payload={
                     "requirementId": "windowsml-ocr",
-                    "artifactVersion": "0.4.4",
+                    "artifactVersion": RUNTIME_VERSION,
                     "modelPath": None,
                     "contractSha256": "a" * 64,
                     "options": {},
@@ -529,7 +530,7 @@ def test_ocr_compute_preflight_rejects_retired_device_id_only_request() -> None:
                 operation="preflight",
                 payload={
                     "requirementId": "windowsml-ocr",
-                    "artifactVersion": "0.4.4",
+                    "artifactVersion": RUNTIME_VERSION,
                     "modelPath": None,
                     "contractSha256": "a" * 64,
                     "options": {"deviceId": 0},
@@ -576,7 +577,7 @@ def test_ocr_worker_does_not_emit_header_or_pages_before_dml_evidence(
                 operation="run",
                 payload={
                     "requirementId": "windowsml-ocr",
-                    "artifactVersion": "0.4.4",
+                    "artifactVersion": RUNTIME_VERSION,
                     "modelPath": str(model_path),
                     "sourcePath": str(source),
                     "mediaType": "application/pdf",
@@ -641,7 +642,7 @@ def test_ocr_worker_rejects_unproven_dml_result_before_emitting_header(
                 operation="run",
                 payload={
                     "requirementId": "windowsml-ocr",
-                    "artifactVersion": "0.4.4",
+                    "artifactVersion": RUNTIME_VERSION,
                     "modelPath": str(model_path),
                     "sourcePath": str(source),
                     "mediaType": "image/png",
@@ -718,7 +719,7 @@ def test_ocr_worker_cancellation_after_page_one_prevents_second_recognition(
                 operation="run",
                 payload={
                     "requirementId": "windowsml-ocr",
-                    "artifactVersion": "0.4.4",
+                    "artifactVersion": RUNTIME_VERSION,
                     "modelPath": str(model_path),
                     "sourcePath": str(source),
                     "mediaType": "application/pdf",
@@ -1029,7 +1030,7 @@ def test_ocr_worker_provenance_change_emits_failed_page_without_success(
                 operation="run",
                 payload={
                     "requirementId": "windowsml-ocr",
-                    "artifactVersion": "0.4.4",
+                    "artifactVersion": RUNTIME_VERSION,
                     "modelPath": str(model_path),
                     "sourcePath": str(source),
                     "mediaType": "application/pdf",
@@ -1122,7 +1123,7 @@ def test_ocr_worker_handle_output_round_trips_mixed_pages_and_progress_consisten
             operation="run",
             payload={
                 "requirementId": "windowsml-ocr",
-                "artifactVersion": "0.4.4",
+                "artifactVersion": RUNTIME_VERSION,
                 "modelPath": str(model_path),
                 "sourcePath": str(source),
                 "mediaType": "application/pdf",
@@ -1199,7 +1200,7 @@ def test_ocr_worker_rejects_out_of_order_or_duplicate_page_stream(
                 operation="run",
                 payload={
                     "requirementId": "windowsml-ocr",
-                    "artifactVersion": "0.4.4",
+                    "artifactVersion": RUNTIME_VERSION,
                     "modelPath": str(model_path),
                     "sourcePath": str(source),
                     "mediaType": "application/pdf",
@@ -1291,7 +1292,7 @@ def test_ocr_pdf_renders_one_page_at_a_time(
             operation="run",
             payload={
                 "requirementId": "windowsml-ocr",
-                "artifactVersion": "0.4.4",
+                "artifactVersion": RUNTIME_VERSION,
                 "modelPath": str(model_path),
                 "sourcePath": str(source),
                 "mediaType": "application/pdf",
@@ -1532,7 +1533,7 @@ def test_ocr_worker_passes_requested_page_scope_from_explicit_worker_options(
             operation="run",
             payload={
                 "requirementId": "windowsml-ocr",
-                "artifactVersion": "0.4.4",
+                "artifactVersion": RUNTIME_VERSION,
                 "modelPath": str(model_path),
                 "sourcePath": str(source),
                 "mediaType": media_type,
@@ -1599,7 +1600,7 @@ def test_ocr_worker_records_requested_scope_before_selection_manifest_mismatch(
                 operation="run",
                 payload={
                     "requirementId": "windowsml-ocr",
-                    "artifactVersion": "0.4.4",
+                    "artifactVersion": RUNTIME_VERSION,
                     "modelPath": str(model_path),
                     "sourcePath": str(source),
                     "mediaType": "application/pdf",
@@ -1663,7 +1664,7 @@ def test_ocr_worker_rejects_invalid_page_numbers_before_adapter_construction(
                 operation="run",
                 payload={
                     "requirementId": "windowsml-ocr",
-                    "artifactVersion": "0.4.4",
+                    "artifactVersion": RUNTIME_VERSION,
                     "modelPath": str(model_path),
                     "sourcePath": str(source),
                     "mediaType": "application/pdf",
@@ -1733,7 +1734,7 @@ def test_ocr_run_reports_empty_output_stage(
                 operation="run",
                 payload={
                     "requirementId": "windowsml-ocr",
-                    "artifactVersion": "0.4.4",
+                    "artifactVersion": RUNTIME_VERSION,
                     "modelPath": str(model_path),
                     "sourcePath": str(source),
                     "mediaType": "application/pdf",

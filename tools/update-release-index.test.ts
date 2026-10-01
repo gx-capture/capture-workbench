@@ -1,3 +1,4 @@
+import { RELEASE_VERSION } from './release/release-intent.ts';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
@@ -30,13 +31,13 @@ function releases(entries: ReleaseIndex['releases'] = {}): ReleaseIndex {
 test('promotion records an immutable release and stable pointer', () => {
   const result = updateReleaseIndex(stable(), releases(), {
     operation: 'promote',
-    tag: 'v0.4.4',
+    tag: ("v" + RELEASE_VERSION),
     candidateId: firstCandidate,
     manifestSha256: firstManifest,
     updatedAt: '2026-08-06T00:00:00.000Z',
   });
-  assert.equal(result.stable.releaseTag, 'v0.4.4');
-  assert.deepEqual(result.releases.releases['v0.4.4'], {
+  assert.equal(result.stable.releaseTag, ("v" + RELEASE_VERSION));
+  assert.deepEqual(result.releases.releases[("v" + RELEASE_VERSION)], {
     status: 'released',
     manifestSha256: firstManifest,
     candidateId: firstCandidate,
@@ -52,7 +53,7 @@ test('supersession moves stable to the replacement and preserves defective histo
         manifestSha256: firstManifest,
         candidateId: firstCandidate,
       },
-      'v0.4.4': {
+      ["v" + RELEASE_VERSION]: {
         status: 'released',
         manifestSha256: secondManifest,
         candidateId: secondCandidate,
@@ -61,19 +62,19 @@ test('supersession moves stable to the replacement and preserves defective histo
     {
       operation: 'supersede',
       defectiveTag: 'v0.3.10',
-      replacementTag: 'v0.4.4',
+      replacementTag: ("v" + RELEASE_VERSION),
       defectiveManifestSha256: firstManifest,
       replacementManifestSha256: secondManifest,
       reason: 'runtime metadata defect',
       updatedAt: '2026-08-06T00:00:00.000Z',
     },
   );
-  assert.equal(result.stable.releaseTag, 'v0.4.4');
+  assert.equal(result.stable.releaseTag, ("v" + RELEASE_VERSION));
   assert.deepEqual(result.releases.releases['v0.3.10'], {
     status: 'superseded',
     manifestSha256: firstManifest,
     candidateId: firstCandidate,
-    supersededBy: 'v0.4.4',
+    supersededBy: ("v" + RELEASE_VERSION),
     reason: 'runtime metadata defect',
   });
 });
@@ -84,17 +85,17 @@ test('superseded history cannot be revived by a promotion retry', () => {
       updateReleaseIndex(
         stable(),
         releases({
-          'v0.4.4': {
+          ["v" + RELEASE_VERSION]: {
             status: 'superseded',
             manifestSha256: secondManifest,
             candidateId: secondCandidate,
-            supersededBy: 'v0.4.4',
+            supersededBy: ("v" + RELEASE_VERSION),
             reason: 'known defect',
           },
         }),
         {
           operation: 'promote',
-          tag: 'v0.4.4',
+          tag: ("v" + RELEASE_VERSION),
           candidateId: secondCandidate,
           manifestSha256: secondManifest,
           updatedAt: '2026-08-06T00:00:00.000Z',

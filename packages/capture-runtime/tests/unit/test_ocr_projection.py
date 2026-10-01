@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 import capture_runtime.ocr_projection as ocr_projection_module
+from capture_runtime.constants import RUNTIME_VERSION
 from capture_runtime.contracts import (
     CaptureEngine,
     CaptureFailureV2,
@@ -78,7 +79,7 @@ def test_canonical_projection_requires_pages_but_allows_failed_empty_pages() -> 
         api_version="2.0",
         schema_version="3",
         page_count=0,
-        runtime_version="0.4.4",
+        runtime_version=RUNTIME_VERSION,
         contract_sha256="d" * 64,
         failure=failure,
         created_at=datetime.now(UTC),
@@ -206,7 +207,7 @@ def test_unavailable_provenance_is_only_valid_for_failed_pages_and_documents() -
         api_version="2.0",
         schema_version="3",
         page_count=1,
-        runtime_version="0.4.4",
+        runtime_version=RUNTIME_VERSION,
         contract_sha256="d" * 64,
         failure=failure,
         created_at=datetime.now(UTC),
@@ -232,7 +233,7 @@ def test_unavailable_provenance_is_only_valid_for_failed_pages_and_documents() -
             api_version="2.0",
             schema_version="3",
             page_count=1,
-            runtime_version="0.4.4",
+            runtime_version=RUNTIME_VERSION,
             contract_sha256="d" * 64,
             created_at=datetime.now(UTC),
         )
@@ -255,7 +256,7 @@ def test_completed_projection_requires_recognized_pages_and_matching_page_proven
             api_version="2.0",
             schema_version="3",
             page_count=1,
-            runtime_version="0.4.4",
+            runtime_version=RUNTIME_VERSION,
             contract_sha256="d" * 64,
             created_at=datetime.now(UTC),
         )
@@ -286,7 +287,7 @@ def test_completed_projection_requires_recognized_pages_and_matching_page_proven
             api_version="2.0",
             schema_version="3",
             page_count=1,
-            runtime_version="0.4.4",
+            runtime_version=RUNTIME_VERSION,
             contract_sha256="d" * 64,
             created_at=datetime.now(UTC),
         )

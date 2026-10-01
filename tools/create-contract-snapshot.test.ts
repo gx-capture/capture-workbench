@@ -1,3 +1,4 @@
+import { RELEASE_VERSION } from './release/release-intent.ts';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
@@ -6,7 +7,7 @@ import { createContractSnapshot } from './create-contract-snapshot.ts';
 test('contract snapshot captures the canonical v2 contract bundle and metadata', async () => {
   const snapshot = await createContractSnapshot(process.cwd());
   assert.equal(snapshot.schemaVersion, '1');
-  assert.equal(snapshot.releaseVersion, '0.4.4');
+  assert.equal(snapshot.releaseVersion, RELEASE_VERSION);
   assert.equal(
     (snapshot.runtimeApi as { apiVersion: string }).apiVersion,
     '2.0',

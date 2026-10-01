@@ -1,3 +1,4 @@
+import { RUNTIME_VERSION } from '@gx-capture/capture-runtime-client';
 import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import type { CaptureOcrProjection } from '@gx-capture/capture-runtime-client';
@@ -643,7 +644,7 @@ describe('DesktopWorkspaceStore', () => {
           apiVersion: '2.0',
           schemaVersion: '1',
           service: 'capture-runtime',
-          runtimeVersion: '0.4.4',
+          runtimeVersion: RUNTIME_VERSION,
           contractSetVersion: '2',
           contractSha256: 'a'.repeat(64),
           workerSha256: undefined,
@@ -1913,7 +1914,7 @@ function runtimeStub(overrides: Record<string, unknown> = {}) {
       apiVersion: '2.0',
       schemaVersion: '1',
       service: 'capture-runtime',
-      runtimeVersion: '0.4.4',
+      runtimeVersion: RUNTIME_VERSION,
       contractSetVersion: '2',
       contractSha256: 'a'.repeat(64),
       workerSha256: 'f'.repeat(64),
@@ -2042,7 +2043,7 @@ function ocrProjection(
     },
     pages: [page],
     pageCount: 1,
-    runtimeVersion: '0.4.4',
+    runtimeVersion: RUNTIME_VERSION,
     contractSha256: 'a'.repeat(64),
     provenance,
     ...(status === 'failed'

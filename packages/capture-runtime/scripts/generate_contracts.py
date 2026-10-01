@@ -947,7 +947,8 @@ def _java_ocr_block(schema: dict[str, Any]) -> str:
     lines = [
         "  // BEGIN GENERATED OCR PROJECTION",
         "  // Generated from capture-ocr-projection-v3.schema.json in contract-set.json. Do not edit.",  # noqa: E501
-        f"  private static final String OCR_RUNTIME_VERSION = {_java_quoted(spec['runtime_version'])};",  # noqa: E501
+        f"  public static final String RUNTIME_VERSION = {_java_quoted(spec['runtime_version'])};",  # noqa: E501
+        "  private static final String OCR_RUNTIME_VERSION = RUNTIME_VERSION;",
         f"  private static final Pattern OCR_SOURCE_SHA256_PATTERN = Pattern.compile({_java_quoted(spec['source_sha_pattern'])});",  # noqa: E501
         f"  private static final Pattern OCR_FAILURE_CODE_PATTERN = Pattern.compile({_java_quoted(spec['failure_code_pattern'])});",  # noqa: E501
         "",
@@ -1375,6 +1376,10 @@ def _python_models_source() -> bytes:
         "runtime_version: Literal[RUNTIME_VERSION]  # type: ignore[valid-type]",
         f"runtime_version: Literal[{RUNTIME_VERSION!r}]",
         1,
+    )
+    source = source.replace(
+        "runtime_version: Literal[RUNTIME_VERSION] = RUNTIME_VERSION  # type: ignore[valid-type]",
+        f"runtime_version: Literal[{json.dumps(RUNTIME_VERSION)}] = RUNTIME_VERSION",
     )
     source = source.replace(
         '"""Pydantic wire contracts for the Capture Runtime v2 API."""',

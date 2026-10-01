@@ -1,6 +1,7 @@
 import { TestBed } from '@angular/core/testing';
 import { of, throwError } from 'rxjs';
 import {
+  RUNTIME_VERSION,
   CaptureRuntimeProtocolError,
   type CaptureOcrProjection,
 } from '@gx-capture/capture-runtime-client';
@@ -20,14 +21,14 @@ const readyPayload: RuntimeReady = {
   ready: true,
   service: 'capture-runtime',
   apiVersion: '2.0',
-  runtimeVersion: '0.4.4',
+  runtimeVersion: RUNTIME_VERSION,
   captureDocumentSchemaVersion: '2',
   capabilities: {},
   ocrCompute: {
     apiVersion: '2.0',
     schemaVersion: '1',
     service: 'capture-runtime',
-    runtimeVersion: '0.4.4',
+    runtimeVersion: RUNTIME_VERSION,
     contractSetVersion: '2',
     contractSha256: 'a'.repeat(64),
     mode: 'gpu-dml',
@@ -71,7 +72,7 @@ const ocrProjection: CaptureOcrProjection = {
     },
   }],
   pageCount: 1,
-  runtimeVersion: '0.4.4',
+  runtimeVersion: RUNTIME_VERSION,
   contractSha256: 'a'.repeat(64),
   provenance: {
     status: 'resolved',

@@ -1000,7 +1000,7 @@ class OcrComputePreflightV2(StrictModel):
     api_version: Literal["2.0"] = API_VERSION
     schema_version: Literal["1"] = "1"
     service: Literal["capture-runtime"] = "capture-runtime"
-    runtime_version: Literal["0.4.4"] = RUNTIME_VERSION
+    runtime_version: Literal[RUNTIME_VERSION] = RUNTIME_VERSION  # type: ignore[valid-type]
     contract_set_version: Literal["2"] = "2"
     contract_sha256: Sha256Hex
     # The worker computes this digest from its own executable. It is absent
@@ -1037,7 +1037,7 @@ class RuntimeReady(StrictModel):
     ready: bool
     service: Literal["capture-runtime"] = "capture-runtime"
     api_version: Literal["2.0"] = API_VERSION
-    runtime_version: Literal["0.4.4"] = RUNTIME_VERSION
+    runtime_version: Literal[RUNTIME_VERSION] = RUNTIME_VERSION  # type: ignore[valid-type]
     capture_document_schema_version: Literal["2"] = CAPTURE_DOCUMENT_SCHEMA_VERSION
     capture_document_schema_sha256: Sha256Hex | None = None
     schema_sha256: Sha256Hex | None = None

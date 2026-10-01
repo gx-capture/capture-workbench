@@ -1,3 +1,4 @@
+import { RUNTIME_VERSION } from '@gx-capture/capture-runtime-client';
 import type {
   CaptureDocument,
   RawCapture,
@@ -120,7 +121,7 @@ describe('capture helpers', () => {
     const hostOnly: RuntimeReady = {
       ready: true,
       service: 'capture-runtime',
-      runtimeVersion: '0.4.4',
+      runtimeVersion: RUNTIME_VERSION,
       apiVersion: '2.0',
       captureDocumentSchemaVersion: '2',
       capabilities: {
