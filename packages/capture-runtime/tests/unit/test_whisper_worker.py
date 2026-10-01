@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 import capture_runtime.workers.whisper_main as whisper_main
+from capture_runtime.constants import RUNTIME_VERSION
 from capture_runtime.engine_adapters import FasterWhisperAdapter
 from capture_runtime.worker_contracts import WorkerRequest
 
@@ -36,7 +37,7 @@ def _request(
         operation="run",
         payload={
             "requirementId": "whisper-primary",
-            "artifactVersion": "0.4.4",
+            "artifactVersion": RUNTIME_VERSION,
             "modelPath": str(model_root),
             "sourcePath": str(source),
             "mediaType": "audio/wav",
@@ -51,7 +52,7 @@ def _probe_request(*, options: object) -> WorkerRequest:
         operation="probe",
         payload={
             "requirementId": "whisper-primary",
-            "artifactVersion": "0.4.4",
+            "artifactVersion": RUNTIME_VERSION,
             "modelPath": None,
             "options": options,
         },

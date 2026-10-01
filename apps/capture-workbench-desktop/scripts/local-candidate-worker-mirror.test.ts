@@ -1,5 +1,7 @@
 // eslint-disable-next-line @nx/enforce-module-boundaries -- shared test temp-root guard.
 import '../../../tools/test-temp-root.ts';
+// eslint-disable-next-line @nx/enforce-module-boundaries -- repository tooling reads shared release intent.
+import { RELEASE_VERSION } from '../../../tools/release/release-intent.ts';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
@@ -25,8 +27,8 @@ import {
   type StartLocalCandidateWorkerMirrorOptions,
 } from './local-candidate-worker-mirror.ts';
 
-const ARCHIVE_NAME = 'capture-engine-ocr-0.4.4-windows-x64.zip';
-const FILES_MANIFEST_NAME = 'capture-engine-ocr-0.4.4-windows-x64-files.json';
+const ARCHIVE_NAME = `capture-engine-ocr-${RELEASE_VERSION}-windows-x64.zip`;
+const FILES_MANIFEST_NAME = `capture-engine-ocr-${RELEASE_VERSION}-windows-x64-files.json`;
 
 interface CandidateFixture {
   readonly root: string;
@@ -110,12 +112,12 @@ function createCatalog(
 ): Record<string, unknown> {
   return {
     catalogVersion: '2',
-    runtimeVersion: '0.4.4',
+    runtimeVersion: RELEASE_VERSION,
     requirements: [{
       requirementId: 'windowsml-ocr',
       artifacts: [{
         arch: 'x86_64',
-        artifactVersion: '0.4.4',
+        artifactVersion: RELEASE_VERSION,
         bytes: archive.length,
         entryPoint: 'capture-engine-ocr.exe',
         extractedBytes: 19,
@@ -143,7 +145,7 @@ async function rebindCandidate(
     schemaVersion: '1',
     candidateKind: 'runtime',
     sourceCommit: 'a'.repeat(40),
-    releaseVersion: '0.4.4',
+    releaseVersion: RELEASE_VERSION,
     releaseMode: 'model-enabled',
     producerRunId: 1,
     packageCandidateId: 'b'.repeat(64),

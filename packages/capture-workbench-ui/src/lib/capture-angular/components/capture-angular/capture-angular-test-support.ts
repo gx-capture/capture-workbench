@@ -1,3 +1,4 @@
+import { RUNTIME_VERSION } from '@gx-capture/capture-runtime-client';
 import { signal, type WritableSignal } from '@angular/core';
 import type {
   CaptureClient,
@@ -18,14 +19,14 @@ import { of } from 'rxjs';
 export const READY: RuntimeReady = {
   ready: true,
   service: 'capture-runtime',
-  runtimeVersion: '0.4.4',
+  runtimeVersion: RUNTIME_VERSION,
   apiVersion: '2.0',
   captureDocumentSchemaVersion: '2',
   ocrCompute: {
     apiVersion: '2.0',
     schemaVersion: '1',
     service: 'capture-runtime',
-    runtimeVersion: '0.4.4',
+    runtimeVersion: RUNTIME_VERSION,
     contractSetVersion: '2',
     contractSha256: 'a'.repeat(64),
     mode: 'gpu-dml',

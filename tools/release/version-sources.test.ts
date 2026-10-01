@@ -1,4 +1,5 @@
 import '../test-temp-root.ts';
+import { RELEASE_VERSION } from './release-intent.ts';
 import assert from 'node:assert/strict';
 import {
   copyFile,
@@ -11,18 +12,22 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
+import {
+  planReleaseVersion,
+  synchronizeReleaseVersion,
+} from './sync-versions.ts';
+import { NATIVE_RELEASE_LOCKS } from './native-lock-versions.ts';
 
 import {
   collectReleaseInventory,
   collectReleaseVersionEntries,
   loadReleaseIntent,
-  replaceLocalCrateVersions,
-  replaceReleaseVersion,
   verifyGeneratedVersions,
   workspaceRoot,
 } from './version-sources.ts';
 
 const INVENTORY_FILES = [
+  ...NATIVE_RELEASE_LOCKS.map(([path]) => path),
   'package.json',
   'pnpm-lock.yaml',
   'release/version.json',
@@ -31,6 +36,7 @@ const INVENTORY_FILES = [
   'packages/capture-runtime-client-python/pyproject.toml',
   'packages/capture-runtime/pyproject.toml',
   'packages/capture-sidecar-launcher/Cargo.toml',
+  'packages/capture-sidecar-launcher/tests/fixtures/activation-probe/Cargo.toml',
   'apps/capture-workbench-desktop/scripts/fixtures/deterministic-runtime/Cargo.toml',
   'apps/capture-workbench-desktop/src-tauri/Cargo.toml',
   'apps/capture-workbench-desktop/src-tauri/tauri.conf.json',
@@ -84,7 +90,9 @@ const INVENTORY_FILES = [
   'tools/create-github-release.ts',
 ];
 
-async function withFixture<T>(callback: (root: string) => Promise<T>): Promise<T> {
+async function withFixture<T>(
+  callback: (root: string) => Promise<T>,
+): Promise<T> {
   const temporaryParent = await mkdtemp(
     join(tmpdir(), 'capture-release-inventory-'),
   );
@@ -119,11 +127,29 @@ function requiredEntry(
 test('release intent is the synchronized source for all release-managed versions', () => {
   const intent = verifyGeneratedVersions(workspaceRoot);
   const entries = collectReleaseVersionEntries(workspaceRoot);
-  assert.ok(entries.length >= 30);
+  for (const path of [
+    'packages/capture-workbench-ui/package.json',
+    'packages/capture-runtime-client/package.json',
+    'packages/capture-runtime-client-python/pyproject.toml',
+    'packages/capture-runtime-client-java/pom.xml',
+    'packages/capture-sidecar-launcher/Cargo.toml',
+    'apps/capture-workbench-desktop/src-tauri/Cargo.toml',
+  ])
+    assert.ok(
+      entries.some(
+        (entry) =>
+          entry.label.includes(path) ||
+          (path.endsWith('pom.xml') &&
+            entry.label === 'Java SDK project version'),
+      ),
+      `missing owner ${path}`,
+    );
   assert.ok(entries.every((entry) => entry.value === intent.releaseVersion));
-  assert.ok(entries.some((entry) => entry.label === 'Java runtime client POM'));
+  assert.ok(
+    entries.some((entry) => entry.label === 'Java SDK project version'),
+  );
   assert.deepEqual(loadReleaseIntent(workspaceRoot), {
-    releaseVersion: '0.4.4',
+    releaseVersion: RELEASE_VERSION,
     runtimeApiVersion: '2.0',
     documentSchemaVersion: '2',
   });
@@ -134,7 +160,7 @@ test('typed release inventory reports every D2.1 identity without mutation', () 
   const ids = inventory.entries.map((entry) => entry.id);
   assert.equal(new Set(ids).size, ids.length);
   requiredEntry(inventory, 'workspace.nx', '23.1.2');
-  requiredEntry(inventory, 'release.version', '0.4.4');
+  requiredEntry(inventory, 'release.version', RELEASE_VERSION);
   requiredEntry(inventory, 'runtime.api', '2.0');
   requiredEntry(inventory, 'document.schema', '2');
   requiredEntry(inventory, 'ocr.projection.schema', '3');
@@ -168,8 +194,12 @@ test('typed release inventory reports every D2.1 identity without mutation', () 
 
 const R3_HEALTH_PATH = 'packages/capture-sidecar-launcher/src/health.rs';
 const R3_IDENTITIES = [
-  ['R3_SERVICE', 'runtime.service.sidecar-health', 'capture-runtime', 'other-runtime'],
-  ['R3_RUNTIME_VERSION', 'runtime.version.sidecar-health', '0.4.4', '99.0.0'],
+  [
+    'R3_SERVICE',
+    'runtime.service.sidecar-health',
+    'capture-runtime',
+    'other-runtime',
+  ],
   ['R3_API_VERSION', 'runtime.api.sidecar-health', '2.0', '2.1'],
   ['R3_DOCUMENT_SCHEMA_VERSION', 'document.schema.sidecar-health', '2', '3'],
   ['R3_CONTRACT_SET_VERSION', 'contract-set.version.sidecar-health', '2', '3'],
@@ -180,12 +210,16 @@ test('R3 inventory uses production identities and preserves negative test fixtur
     const path = join(root, R3_HEALTH_PATH);
     const before = await readFile(path, 'utf8');
     assert.match(before, /foreign_manifest\.runtime_version = "99\.0\.0"/u);
-    assert.match(before, /\("runtimeVersion", serde_json::json!\("0\.4\.1"\)\)/u);
+    assert.match(
+      before,
+      /\("runtimeVersion", serde_json::json!\("0\.4\.1"\)\)/u,
+    );
     const inventory = collectReleaseInventory(root);
-    for (const [, id, value] of R3_IDENTITIES) requiredEntry(inventory, id, value);
+    for (const [, id, value] of R3_IDENTITIES)
+      requiredEntry(inventory, id, value);
     const versions = collectReleaseVersionEntries(root);
-    assert.ok(versions.every((entry) => entry.value === '0.4.4'));
-    assert.equal(verifyGeneratedVersions(root).releaseVersion, '0.4.4');
+    assert.ok(versions.every((entry) => entry.value === RELEASE_VERSION));
+    assert.equal(verifyGeneratedVersions(root).releaseVersion, RELEASE_VERSION);
     assert.equal(await readFile(path, 'utf8'), before);
   });
 });
@@ -197,20 +231,23 @@ for (const [name, id, value, wrong] of R3_IDENTITIES) {
         const path = join(root, R3_HEALTH_PATH);
         const before = await readFile(path, 'utf8');
         const declaration = `const ${name}: &str = "${value}";`;
-        const replacement = mutation === 'drift'
-          ? `const ${name}: &str = "${wrong}";`
-          : mutation === 'missing' ? '' : `${declaration}\n  ${declaration}`;
+        const replacement =
+          mutation === 'drift'
+            ? `const ${name}: &str = "${wrong}";`
+            : mutation === 'missing'
+              ? ''
+              : `${declaration}\n  ${declaration}`;
         const changed = before.replace(declaration, replacement);
         assert.notEqual(changed, before);
         await writeFile(path, changed, 'utf8');
-        assert.throws(() => collectReleaseInventory(root), (error: unknown) => {
-          assert.ok(error instanceof Error);
-          assert.ok(error.message.includes(id), error.message);
-          return true;
-        });
-        if (name === 'R3_RUNTIME_VERSION') {
-          assert.throws(() => verifyGeneratedVersions(root), /sidecar|R3|release/iu);
-        }
+        assert.throws(
+          () => collectReleaseInventory(root),
+          (error: unknown) => {
+            assert.ok(error instanceof Error);
+            assert.ok(error.message.includes(id), error.message);
+            return true;
+          },
+        );
         assert.equal(await readFile(path, 'utf8'), changed);
       });
     });
@@ -313,7 +350,10 @@ test('inventory rejects missing source and duplicate hash identities', async () 
     );
     assert.notEqual(missing, before);
     await writeFile(path, missing, 'utf8');
-    assert.throws(() => collectReleaseInventory(root), /runtime|version|missing/u);
+    assert.throws(
+      () => collectReleaseInventory(root),
+      /runtime|version|missing/u,
+    );
     assert.equal(await readFile(path, 'utf8'), missing);
   });
 
@@ -340,7 +380,10 @@ test('inventory rejects an all-equal but incorrect contract hash', async () => {
     ];
     const wrong = `${'0'.repeat(64)}\n`;
     const before = await Promise.all(
-      paths.map(async (path) => [path, await readFile(join(root, path), 'utf8')] as const),
+      paths.map(
+        async (path) =>
+          [path, await readFile(join(root, path), 'utf8')] as const,
+      ),
     );
     for (const path of paths) await writeFile(join(root, path), wrong, 'utf8');
     assert.throws(() => collectReleaseInventory(root), /hash|digest|contract/u);
@@ -370,7 +413,10 @@ test('inventory rejects missing hash and duplicate channel owner references', as
       'packages/capture-runtime-client-python/src/capture_runtime_client/private/assets/contract-set.sha256',
     );
     await rm(path);
-    assert.throws(() => collectReleaseInventory(root), /missing|hash|contract/u);
+    assert.throws(
+      () => collectReleaseInventory(root),
+      /missing|hash|contract/u,
+    );
     assert.equal(await readFile(path).catch(() => undefined), undefined);
   });
 
@@ -381,7 +427,10 @@ test('inventory rejects missing hash and duplicate channel owner references', as
     const duplicate = before.replace(marker, `${marker}\n    ${marker}`);
     assert.notEqual(duplicate, before);
     await writeFile(path, duplicate, 'utf8');
-    assert.throws(() => collectReleaseInventory(root), /duplicate|channel|workflow/u);
+    assert.throws(
+      () => collectReleaseInventory(root),
+      /duplicate|channel|workflow/u,
+    );
     assert.equal(await readFile(path, 'utf8'), duplicate);
   });
 
@@ -395,7 +444,10 @@ test('inventory rejects missing hash and duplicate channel owner references', as
     );
     assert.notEqual(malformedDuplicate, before);
     await writeFile(path, malformedDuplicate, 'utf8');
-    assert.throws(() => collectReleaseInventory(root), /Unknown channel workflow|workflow/u);
+    assert.throws(
+      () => collectReleaseInventory(root),
+      /Unknown channel workflow|workflow/u,
+    );
     assert.equal(await readFile(path, 'utf8'), malformedDuplicate);
   });
 });
@@ -418,13 +470,19 @@ test('inventory rejects a self-consistent release and API drift against Phase2 d
       const path = join(root, relativePath);
       const before = await readFile(path, 'utf8');
       const drifted = before
-        .replaceAll('0.4.4', '99.0.0')
+        .replaceAll(RELEASE_VERSION, '99.0.0')
         .replaceAll('2.0', '2.1')
-        .replace('"documentSchemaVersion": "2"', '"documentSchemaVersion": "3"');
+        .replace(
+          '"documentSchemaVersion": "2"',
+          '"documentSchemaVersion": "3"',
+        );
       assert.notEqual(drifted, before, relativePath);
       await writeFile(path, drifted, 'utf8');
     }
-    assert.throws(() => collectReleaseInventory(root), /Phase2|expected \d+\.\d+\.\d+|release\.intent/u);
+    assert.throws(
+      () => collectReleaseInventory(root),
+      /Phase2|expected \d+\.\d+\.\d+|release\.intent/u,
+    );
   });
 });
 
@@ -432,11 +490,16 @@ test('inventory rejects a missing Nx package field before mutation', async () =>
   await withFixture(async (root) => {
     const path = join(root, 'package.json');
     const before = await readFile(path, 'utf8');
-    const packageJson = JSON.parse(before) as { devDependencies: Record<string, unknown> };
+    const packageJson = JSON.parse(before) as {
+      devDependencies: Record<string, unknown>;
+    };
     delete packageJson.devDependencies.nx;
     const missing = `${JSON.stringify(packageJson, null, 2)}\n`;
     await writeFile(path, missing, 'utf8');
-    assert.throws(() => collectReleaseInventory(root), /workspace\.nx|missing|identity/u);
+    assert.throws(
+      () => collectReleaseInventory(root),
+      /workspace\.nx|missing|identity/u,
+    );
     assert.equal(await readFile(path, 'utf8'), missing);
   });
 });
@@ -452,7 +515,10 @@ test('inventory rejects duplicate nested JSON owners before mutation', async () 
     );
     assert.notEqual(duplicate, before);
     await writeFile(path, duplicate, 'utf8');
-    assert.throws(() => collectReleaseInventory(root), /duplicate JSON key|registry/u);
+    assert.throws(
+      () => collectReleaseInventory(root),
+      /duplicate JSON key|registry/u,
+    );
     assert.equal(await readFile(path, 'utf8'), duplicate);
   });
 });
@@ -467,7 +533,10 @@ test('inventory rejects a channel destination drift before mutation', async () =
     );
     assert.notEqual(drifted, before);
     await writeFile(path, drifted, 'utf8');
-    assert.throws(() => collectReleaseInventory(root), /channel\.npm\.workflow\.registry|npm\.pkg|destination/u);
+    assert.throws(
+      () => collectReleaseInventory(root),
+      /channel\.npm\.workflow\.registry|npm\.pkg|destination/u,
+    );
     assert.equal(await readFile(path, 'utf8'), drifted);
   });
 });
@@ -506,7 +575,8 @@ test('inventory rejects every channel destination and package identity mutation'
       name: 'Maven destination suffix',
       sourcePath: '.github/workflows/_publish-maven.yml',
       find: 'repository_url="https://maven.pkg.github.com/gx-capture/capture-workbench/com/gx/capture/capture-runtime-client/${{ inputs.release_version }}"',
-      replace: 'repository_url="https://maven.pkg.github.com/gx-capture/capture-workbench/com/gx/capture/capture-runtime-client/${{ inputs.release_version }}/other"',
+      replace:
+        'repository_url="https://maven.pkg.github.com/gx-capture/capture-workbench/com/gx/capture/capture-runtime-client/${{ inputs.release_version }}/other"',
       expected: /channel\.maven|Maven/u,
     },
     {
@@ -520,7 +590,8 @@ test('inventory rejects every channel destination and package identity mutation'
       name: 'crates.io destination suffix',
       sourcePath: 'tools/publish-crate-candidate.ts',
       find: "const CRATES_REGISTRY = 'https://crates.io/api/v1/crates'",
-      replace: "const CRATES_REGISTRY = 'https://crates.io/api/v1/crates/other'",
+      replace:
+        "const CRATES_REGISTRY = 'https://crates.io/api/v1/crates/other'",
       expected: /channel\.crates|crates/u,
     },
     {
@@ -534,7 +605,8 @@ test('inventory rejects every channel destination and package identity mutation'
       name: 'GitHub destination repository suffix',
       sourcePath: 'tools/create-github-release.ts',
       find: "process.env.GITHUB_REPOSITORY ?? 'gx-capture/capture-workbench'",
-      replace: "process.env.GITHUB_REPOSITORY ?? 'gx-capture/capture-workbench-wrong'",
+      replace:
+        "process.env.GITHUB_REPOSITORY ?? 'gx-capture/capture-workbench-wrong'",
       expected: /channel\.github|repository/u,
     },
     {
@@ -565,7 +637,10 @@ test('inventory rejects a stale pnpm package and snapshot reference before mutat
     const stale = before.replace('axios: 1.18.1', 'axios: 9.99.99');
     assert.notEqual(stale, before);
     await writeFile(path, stale, 'utf8');
-    assert.throws(() => collectReleaseInventory(root), /pnpm package\/snapshot|axios|graph/u);
+    assert.throws(
+      () => collectReleaseInventory(root),
+      /pnpm package\/snapshot|axios|graph/u,
+    );
     assert.equal(await readFile(path, 'utf8'), stale);
   });
   await withFixture(async (root) => {
@@ -574,7 +649,10 @@ test('inventory rejects a stale pnpm package and snapshot reference before mutat
     const stale = before.replace('open: 10.1.0', 'open: 99.99.99');
     assert.notEqual(stale, before);
     await writeFile(path, stale, 'utf8');
-    assert.throws(() => collectReleaseInventory(root), /pnpm package\/snapshot|open|graph/u);
+    assert.throws(
+      () => collectReleaseInventory(root),
+      /pnpm package\/snapshot|open|graph/u,
+    );
     assert.equal(await readFile(path, 'utf8'), stale);
   });
 });
@@ -592,38 +670,42 @@ test('inventory rejects generated projection structural identity drift before mu
     );
     assert.notEqual(drifted, before);
     await writeFile(path, drifted, 'utf8');
-    assert.throws(() => collectReleaseInventory(root), /projection|generated|identity/u);
+    assert.throws(
+      () => collectReleaseInventory(root),
+      /projection|generated|identity/u,
+    );
     assert.equal(await readFile(path, 'utf8'), drifted);
   });
 });
 
-test('release replacement is exact and does not alter adjacent versions', () => {
-  assert.equal(
-    replaceReleaseVersion('1.2.3 11.2.3 1.2.30 v1.2.3', '1.2.3', '9.9.9'),
-    '9.9.9 11.2.3 1.2.30 v9.9.9',
-  );
+test('native launcher version drift is rejected independently of consumer references', async () => {
+  await withFixture(async (root) => {
+    const path = join(root, 'packages/capture-sidecar-launcher/Cargo.toml');
+    const before = await readFile(path, 'utf8');
+    await writeFile(
+      path,
+      before.replace(/^version = "[^"]+"/mu, 'version = "99.0.0"'),
+    );
+    assert.throws(() => verifyGeneratedVersions(root), /not synchronized/u);
+    assert.throws(() => collectReleaseInventory(root), /sidecar/u);
+  });
 });
 
-test('Cargo.lock replacement moves workspace crates and keeps registry crates', () => {
-  const lock = [
-    'version = 4',
-    '',
-    '[[package]]',
-    'name = "local-crate"',
-    'version = "1.2.3"',
-    '',
-    '[[package]]',
-    'name = "registry-crate"',
-    'version = "1.2.3"',
-    'source = "registry+https://github.com/rust-lang/crates.io-index"',
-    '',
-    '[[package]]',
-    'name = "other-local"',
-    'version = "1.2.30"',
-    '',
-  ].join('\n');
-  assert.equal(
-    replaceLocalCrateVersions(lock, '1.2.3', '9.9.9'),
-    lock.replace('"local-crate"\nversion = "1.2.3"', '"local-crate"\nversion = "9.9.9"'),
-  );
+test('no-op plan retains follow-up when contract bytes drift despite equal version fields', async () => {
+  await withFixture(async (root) => {
+    assert.deepEqual(planReleaseVersion(root).followUp, []);
+    const path = join(
+      root,
+      'packages/capture-runtime/src/capture_runtime/assets/contract-set.sha256',
+    );
+    await writeFile(path, 'f'.repeat(64));
+    const plan = planReleaseVersion(root);
+    assert.deepEqual(plan.changes, []);
+    assert.ok(plan.followUp.length > 0);
+    assert.throws(
+      () => synchronizeReleaseVersion(root, { check: true }),
+      /sha256|hash/u,
+    );
+    assert.equal(await readFile(path, 'utf8'), 'f'.repeat(64));
+  });
 });

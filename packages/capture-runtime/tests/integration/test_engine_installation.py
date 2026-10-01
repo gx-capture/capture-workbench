@@ -17,6 +17,7 @@ import pytest
 import capture_runtime.engine_installation as engine_installation_module
 from capture_runtime.clock import SystemClock
 from capture_runtime.config import ExtractionRuntimeConfig
+from capture_runtime.constants import RUNTIME_VERSION
 from capture_runtime.contracts import OcrAdapterClass, OcrComputeMode, OcrComputePreflightV2
 from capture_runtime.engine_catalog import EngineCatalog, EngineCatalogError
 from capture_runtime.engine_installation import (
@@ -166,7 +167,7 @@ def _catalog(root: Path, *, version: str = "engine-1") -> tuple[EngineCatalog, d
         EngineCatalog.from_dict(
             {
                 "catalogVersion": "2",
-                "runtimeVersion": "0.4.4",
+                "runtimeVersion": RUNTIME_VERSION,
                 "requirements": [
                     {
                         "requirementId": "windowsml-ocr",
@@ -921,7 +922,7 @@ def test_next_install_removes_only_validated_crash_residue(tmp_path: Path) -> No
     )
     requirement_root = root / "windowsml-ocr"
     staging_residue = requirement_root / ".staging" / ("a" * 32)
-    version_residue = requirement_root / "versions" / f".crashed-0.4.4.{'b' * 32}"
+    version_residue = requirement_root / "versions" / f".crashed-{RUNTIME_VERSION}.{'b' * 32}"
     invalid_staging = requirement_root / ".staging" / "not-owned"
     invalid_version = requirement_root / "versions" / ".not-owned"
     for path in (
@@ -1030,7 +1031,7 @@ def test_core_only_catalog_reports_models_unavailable_without_downloading(
     catalog = EngineCatalog.from_dict(
         {
             "catalogVersion": "2",
-            "runtimeVersion": "0.4.4",
+            "runtimeVersion": RUNTIME_VERSION,
             "requirements": [],
         }
     )

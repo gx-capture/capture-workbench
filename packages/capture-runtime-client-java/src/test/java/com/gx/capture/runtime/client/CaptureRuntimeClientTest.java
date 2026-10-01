@@ -39,7 +39,7 @@ class CaptureRuntimeClientTest {
                 "catalogVersion",
                 "2",
                 "runtimeVersion",
-                "0.4.4",
+                CaptureRuntimeTypes.RUNTIME_VERSION,
                 "contractSetVersion",
                 "2",
                 "surfaces",
@@ -70,7 +70,7 @@ class CaptureRuntimeClientTest {
                 "catalogVersion",
                 "2",
                 "runtimeVersion",
-                "0.4.4",
+                CaptureRuntimeTypes.RUNTIME_VERSION,
                 "contractSetVersion",
                 "2",
                 "surfaces",
@@ -622,7 +622,7 @@ class CaptureRuntimeClientTest {
                     source,
                     List.of(failedPage),
                     1,
-                    "0.4.4",
+                    CaptureRuntimeTypes.RUNTIME_VERSION,
                     CaptureRuntimeTypes.CONTRACT_SET_SHA256,
                     pageEngine,
                     List.of(),
@@ -658,7 +658,7 @@ class CaptureRuntimeClientTest {
             source,
             List.of(recognizedPage),
             1,
-            "0.4.4",
+            CaptureRuntimeTypes.RUNTIME_VERSION,
             CaptureRuntimeTypes.CONTRACT_SET_SHA256,
             pageEngine,
             List.of(),
@@ -676,7 +676,7 @@ class CaptureRuntimeClientTest {
                     source,
                     List.of(recognizedPage),
                     1,
-                    "0.4.4",
+                    CaptureRuntimeTypes.RUNTIME_VERSION,
                     CaptureRuntimeTypes.CONTRACT_SET_SHA256,
                     pageEngine,
                     List.of(),
@@ -693,7 +693,7 @@ class CaptureRuntimeClientTest {
                     source,
                     List.of(recognizedPage),
                     1,
-                    "0.4.4",
+                    CaptureRuntimeTypes.RUNTIME_VERSION,
                     CaptureRuntimeTypes.CONTRACT_SET_SHA256,
                     documentEngine,
                     List.of(),
@@ -722,7 +722,7 @@ class CaptureRuntimeClientTest {
                     source,
                     List.of(emptyPage),
                     1,
-                    "0.4.4",
+                    CaptureRuntimeTypes.RUNTIME_VERSION,
                     CaptureRuntimeTypes.CONTRACT_SET_SHA256,
                     pageEngine,
                     List.of(),
@@ -784,7 +784,7 @@ class CaptureRuntimeClientTest {
                             engine,
                             null)),
                     1,
-                    "0.4.4",
+                    CaptureRuntimeTypes.RUNTIME_VERSION,
                     CaptureRuntimeTypes.CONTRACT_SET_SHA256,
                     engine,
                     List.of(),
@@ -833,7 +833,7 @@ class CaptureRuntimeClientTest {
                     null,
                     null,
                     0,
-                    "0.4.4",
+                    CaptureRuntimeTypes.RUNTIME_VERSION,
                     CaptureRuntimeTypes.CONTRACT_SET_SHA256,
                     engine,
                     List.of(),
@@ -888,15 +888,17 @@ class CaptureRuntimeClientTest {
   }
 
   private static byte[] sharedPerspectiveOcrJson() throws Exception {
-    return Files.readString(
+    var fixture = (ObjectNode) MAPPER.readTree(
+        Files.readString(
             Path.of(
                 "..",
                 "capture-runtime",
                 "tests",
                 "fixtures",
-                "ocr-projection-v3-perspective.json"))
-        .replace("__CONTRACT_SET_SHA256__", CaptureRuntimeTypes.CONTRACT_SET_SHA256)
-        .getBytes(StandardCharsets.UTF_8);
+                "ocr-projection-v3-perspective.json")));
+    fixture.put("contractSha256", CaptureRuntimeTypes.CONTRACT_SET_SHA256);
+    fixture.put("runtimeVersion", CaptureRuntimeTypes.RUNTIME_VERSION);
+    return MAPPER.writeValueAsBytes(fixture);
   }
 
   private static void applyCorpusMutation(ObjectNode payload, JsonNode invalid) {
@@ -951,7 +953,7 @@ class CaptureRuntimeClientTest {
             + "\"pages\":[{"
             + page
             + "}],"
-            + "\"pageCount\":1,\"runtimeVersion\":\"0.4.4\",\"contractSha256\":\""
+            + "\"pageCount\":1,\"runtimeVersion\":\"" + CaptureRuntimeTypes.RUNTIME_VERSION + "\",\"contractSha256\":\""
             + CaptureRuntimeTypes.CONTRACT_SET_SHA256
             + "\","
             + provenance
@@ -963,7 +965,7 @@ class CaptureRuntimeClientTest {
 
   private static byte[] unavailableOcrJson() {
     return ("{\"apiVersion\":\"2.0\",\"schemaVersion\":\"3\",\"captureId\":\"cap\",\"status\":\"failed\","
-            + "\"source\":null,\"pages\":[],\"pageCount\":0,\"runtimeVersion\":\"0.4.4\",\"contractSha256\":\""
+            + "\"source\":null,\"pages\":[],\"pageCount\":0,\"runtimeVersion\":\"" + CaptureRuntimeTypes.RUNTIME_VERSION + "\",\"contractSha256\":\""
             + CaptureRuntimeTypes.CONTRACT_SET_SHA256
             + "\",\"provenance\":{\"status\":\"unavailable\",\"profileId\":\"capture-workbench-ocr-pipeline-v1\",\"profileSpecSha256\":\""
             + "c".repeat(64)
@@ -1061,7 +1063,7 @@ class CaptureRuntimeClientTest {
         new ArrayList<InMemoryRuntimeTransport.Route>();
     routes.add(InMemoryRuntimeTransport.route("GET", "/meta/v2/contracts", ignored -> response(200, "application/json", index)));
     routes.add(InMemoryRuntimeTransport.route("GET", Pattern.compile("/meta/v2/contracts/sha256/.*"), ignored -> response(200, "application/json", bundle)));
-    routes.add(InMemoryRuntimeTransport.route("GET", "/v2/health/ready", ignored -> response(200, "application/json", "{\"ready\":true,\"service\":\"capture-runtime\",\"apiVersion\":\"2.0\",\"runtimeVersion\":\"0.4.4\",\"captureDocumentSchemaVersion\":\"2\",\"captureDocumentSchemaSha256\":null,\"schemaSha256\":null,\"contractSetVersion\":\"2\",\"capabilities\":{}}".getBytes(StandardCharsets.UTF_8))));
+    routes.add(InMemoryRuntimeTransport.route("GET", "/v2/health/ready", ignored -> response(200, "application/json", ("{\"ready\":true,\"service\":\"capture-runtime\",\"apiVersion\":\"2.0\",\"runtimeVersion\":\"" + CaptureRuntimeTypes.RUNTIME_VERSION + "\",\"captureDocumentSchemaVersion\":\"2\",\"captureDocumentSchemaSha256\":null,\"schemaSha256\":null,\"contractSetVersion\":\"2\",\"capabilities\":{}}").getBytes(StandardCharsets.UTF_8))));
     routes.add(InMemoryRuntimeTransport.route("GET", "/v2/streaming/health/ready", ignored -> response(200, "application/json", "{\"protocolVersion\":\"2\",\"captureKinds\":[\"pdf\"],\"supportsProgressiveAudio\":true,\"maxChunkBytes\":2,\"checkpointIntervalMs\":1000,\"heartbeatIntervalMs\":1000,\"stallTimeoutMs\":10000}".getBytes(StandardCharsets.UTF_8))));
     return routes;
   }
@@ -1107,7 +1109,7 @@ class CaptureRuntimeClientTest {
   }
 
   private static byte[] index(String digest) throws Exception {
-    return MAPPER.writeValueAsBytes(Map.of("catalogVersion", "2", "runtimeVersion", "0.4.4", "contractSetVersion", "2", "surfaces", List.of(Map.of("id", "v2")), "sha256", digest, "href", "/meta/v2/contracts/sha256/" + digest, "mediaType", "application/json"));
+    return MAPPER.writeValueAsBytes(Map.of("catalogVersion", "2", "runtimeVersion", CaptureRuntimeTypes.RUNTIME_VERSION, "contractSetVersion", "2", "surfaces", List.of(Map.of("id", "v2")), "sha256", digest, "href", "/meta/v2/contracts/sha256/" + digest, "mediaType", "application/json"));
   }
 
   private static byte[] ingestionJson(

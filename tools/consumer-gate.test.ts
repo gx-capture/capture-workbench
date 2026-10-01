@@ -1,4 +1,5 @@
 import './test-temp-root.ts';
+import { RELEASE_VERSION } from './release/release-intent.ts';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
@@ -100,7 +101,7 @@ test('downloaded candidate manifest is verified by exact digest and identity', a
           schemaVersion: '1',
           candidateId,
           sourceCommit: consumerCommit,
-          releaseVersion: '0.4.4',
+          releaseVersion: RELEASE_VERSION,
         },
         null,
         2,
@@ -112,14 +113,14 @@ test('downloaded candidate manifest is verified by exact digest and identity', a
       candidateId,
       candidateManifestSha256: createHash('sha256').update(bytes).digest('hex'),
       sourceCommit: consumerCommit,
-      releaseVersion: '0.4.4',
+      releaseVersion: RELEASE_VERSION,
     });
     await assert.rejects(
       verifyCandidateManifest(root, {
         candidateId,
         candidateManifestSha256: 'e'.repeat(64),
         sourceCommit: consumerCommit,
-        releaseVersion: '0.4.4',
+        releaseVersion: RELEASE_VERSION,
       }),
       /digest/u,
     );

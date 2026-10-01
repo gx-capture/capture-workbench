@@ -16,6 +16,7 @@ import capture_runtime.engine_adapters as engine_adapters
 import capture_runtime.extractors as extractor_module
 from capture_runtime.clock import SystemClock
 from capture_runtime.config import ExtractionRuntimeConfig, OllamaRuntimeConfig, RuntimeSettings
+from capture_runtime.constants import RUNTIME_VERSION
 from capture_runtime.contracts import CaptureSource, OcrAdapterClass, OcrProvenanceV3
 from capture_runtime.engine_adapters import (
     EngineProbe,
@@ -3195,7 +3196,7 @@ def test_worker_backed_audio_forwards_strict_cuda_fallback_policy(tmp_path: Path
         async def resolve_active_engine(self, _requirement_id: str) -> InstalledEngine:
             return InstalledEngine(
                 requirement_id="whisper-primary",
-                artifact_version="0.4.4",
+                artifact_version=RUNTIME_VERSION,
                 executable=tmp_path / "whisper.exe",
                 model_dir=tmp_path / "models",
             )
@@ -3568,7 +3569,7 @@ def test_worker_backed_pdf_dispatches_every_page_to_ocr(tmp_path: Path) -> None:
         async def resolve_active_engine(self, _requirement_id: str) -> InstalledEngine:
             return InstalledEngine(
                 requirement_id="windowsml-ocr",
-                artifact_version="0.4.4",
+                artifact_version=RUNTIME_VERSION,
                 executable=tmp_path / "ocr.exe",
                 model_dir=tmp_path / "models",
             )
@@ -3674,7 +3675,7 @@ def test_worker_backed_pdf_page_scope_dispatches_only_page_one_and_records_scope
         async def resolve_active_engine(self, _requirement_id: str) -> InstalledEngine:
             return InstalledEngine(
                 requirement_id="windowsml-ocr",
-                artifact_version="0.4.4",
+                artifact_version=RUNTIME_VERSION,
                 executable=tmp_path / "ocr.exe",
                 model_dir=tmp_path / "models",
             )
@@ -3792,7 +3793,7 @@ def test_worker_ocr_segments_must_match_canonical_projection(
         async def resolve_active_engine(self, _requirement_id: str) -> InstalledEngine:
             return InstalledEngine(
                 requirement_id="windowsml-ocr",
-                artifact_version="0.4.4",
+                artifact_version=RUNTIME_VERSION,
                 executable=tmp_path / "ocr.exe",
                 model_dir=tmp_path / "models",
             )
@@ -3867,7 +3868,7 @@ def test_worker_ocr_projection_drives_raw_segments_for_perspective_boxes(
         async def resolve_active_engine(self, _requirement_id: str) -> InstalledEngine:
             return InstalledEngine(
                 requirement_id="windowsml-ocr",
-                artifact_version="0.4.4",
+                artifact_version=RUNTIME_VERSION,
                 executable=tmp_path / "ocr.exe",
                 model_dir=tmp_path / "models",
             )
@@ -3995,7 +3996,7 @@ def test_worker_terminal_cardinality_is_rejected_before_raw_segments(
         async def resolve_active_engine(self, _requirement_id: str) -> InstalledEngine:
             return InstalledEngine(
                 requirement_id="windowsml-ocr",
-                artifact_version="0.4.4",
+                artifact_version=RUNTIME_VERSION,
                 executable=tmp_path / "ocr.exe",
                 model_dir=tmp_path / "models",
             )
@@ -4080,7 +4081,7 @@ def test_worker_projection_cancellation_does_not_become_success_or_protocol(
         async def resolve_active_engine(self, _requirement_id: str) -> InstalledEngine:
             return InstalledEngine(
                 requirement_id="windowsml-ocr",
-                artifact_version="0.4.4",
+                artifact_version=RUNTIME_VERSION,
                 executable=tmp_path / "ocr.exe",
                 model_dir=tmp_path / "models",
             )
@@ -4145,7 +4146,7 @@ def test_worker_all_empty_terminal_is_failed_with_readable_no_text_projection(
         async def resolve_active_engine(self, _requirement_id: str) -> InstalledEngine:
             return InstalledEngine(
                 requirement_id="windowsml-ocr",
-                artifact_version="0.4.4",
+                artifact_version=RUNTIME_VERSION,
                 executable=tmp_path / "ocr.exe",
                 model_dir=tmp_path / "models",
             )
@@ -4227,7 +4228,7 @@ def test_worker_provenance_mismatch_discards_untrusted_progress_prefix(
         async def resolve_active_engine(self, _requirement_id: str) -> InstalledEngine:
             return InstalledEngine(
                 requirement_id="windowsml-ocr",
-                artifact_version="0.4.4",
+                artifact_version=RUNTIME_VERSION,
                 executable=tmp_path / "ocr.exe",
                 model_dir=tmp_path / "models",
             )
@@ -4336,7 +4337,7 @@ def test_worker_failure_projection_is_page_complete_and_sanitized(
         async def resolve_active_engine(self, _requirement_id: str) -> InstalledEngine:
             return InstalledEngine(
                 requirement_id="windowsml-ocr",
-                artifact_version="0.4.4",
+                artifact_version=RUNTIME_VERSION,
                 executable=tmp_path / "ocr.exe",
                 model_dir=tmp_path / "models",
             )
@@ -4394,7 +4395,7 @@ def test_worker_failure_preserves_cancellation_priority(tmp_path: Path) -> None:
         async def resolve_active_engine(self, _requirement_id: str) -> InstalledEngine:
             return InstalledEngine(
                 requirement_id="windowsml-ocr",
-                artifact_version="0.4.4",
+                artifact_version=RUNTIME_VERSION,
                 executable=tmp_path / "ocr.exe",
                 model_dir=tmp_path / "models",
             )
@@ -4561,7 +4562,7 @@ def test_worker_ocr_manifest_dimensions_remain_strict(
         async def resolve_active_engine(self, _requirement_id: str) -> InstalledEngine:
             return InstalledEngine(
                 requirement_id="windowsml-ocr",
-                artifact_version="0.4.4",
+                artifact_version=RUNTIME_VERSION,
                 executable=tmp_path / "ocr.exe",
                 model_dir=tmp_path / "models",
             )

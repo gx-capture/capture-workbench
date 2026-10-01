@@ -1,3 +1,4 @@
+import { RUNTIME_VERSION } from '@gx-capture/capture-runtime-client';
 import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { provideNoopAnimations } from '@angular/platform-browser/animations';
@@ -304,7 +305,7 @@ function gpuCompute(): OcrComputePreflight {
     apiVersion: '2.0',
     schemaVersion: '1',
     service: 'capture-runtime',
-    runtimeVersion: '0.4.4',
+    runtimeVersion: RUNTIME_VERSION,
     contractSetVersion: '2',
     contractSha256: 'a'.repeat(64),
     mode: 'gpu-dml',

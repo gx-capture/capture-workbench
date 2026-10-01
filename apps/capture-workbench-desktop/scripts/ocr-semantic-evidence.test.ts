@@ -1,5 +1,7 @@
 // eslint-disable-next-line @nx/enforce-module-boundaries -- shared test temp-root guard.
 import '../../../tools/test-temp-root.ts';
+// eslint-disable-next-line @nx/enforce-module-boundaries -- repository tooling reads shared release intent.
+import { RELEASE_VERSION } from '../../../tools/release/release-intent.ts';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, readdir, stat, writeFile } from 'node:fs/promises';
@@ -52,7 +54,7 @@ test('projects the durable library detail into privacy-safe JPEG semantic eviden
       },
     }],
     provenance: {
-      runtimeVersion: '0.4.4',
+      runtimeVersion: RELEASE_VERSION,
       contractSha256: CONTRACT_SHA,
       engine: 'windowsml-ocr',
       model: 'ppocrv6-traditional-multilingual',
@@ -115,7 +117,7 @@ test('projects the durable awaiting OCR checkpoint without inventing a structure
       },
     }],
     provenance: {
-      runtimeVersion: '0.4.4',
+      runtimeVersion: RELEASE_VERSION,
       contractSha256: CONTRACT_SHA,
       engine: 'windowsml-ocr',
       model: 'ppocrv6-traditional-multilingual',
@@ -341,7 +343,7 @@ function expectedIdentity(includeProof = true) {
     fixtureName: 'ocr_test_image.jpeg',
     sourceKind: 'image' as const,
     sourceSha256: SOURCE_SHA,
-    runtimeVersion: '0.4.4',
+    runtimeVersion: RELEASE_VERSION,
     runtimeSha256: RUNTIME_SHA,
     contractSha256: CONTRACT_SHA,
     workerSha256: WORKER_SHA,
@@ -424,7 +426,7 @@ function completedDetail(): TestDetail {
     },
     provenance: {
       status: 'resolved',
-      runtimeVersion: '0.4.4',
+      runtimeVersion: RELEASE_VERSION,
       contractSha256: CONTRACT_SHA,
       engine: 'windowsml-ocr',
       model: 'ppocrv6-traditional-multilingual',
@@ -454,7 +456,7 @@ function failedPdfDetail(): TestDetail {
   const base = completedDetail().ocrEvidence;
   const unavailable = {
     status: 'unavailable',
-    runtimeVersion: '0.4.4',
+    runtimeVersion: RELEASE_VERSION,
     contractSha256: CONTRACT_SHA,
     engine: null,
     model: null,

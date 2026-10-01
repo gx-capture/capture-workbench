@@ -1,3 +1,5 @@
+// eslint-disable-next-line @nx/enforce-module-boundaries -- repository tooling reads shared release intent.
+import { RELEASE_VERSION } from '../../../tools/release/release-intent.ts';
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
@@ -29,7 +31,7 @@ import {
   type ProgressiveAudioOracleEvidence,
 } from './progressive-audio-evidence.ts';
 
-export const REAL_MODEL_RELEASE_VERSION = '0.4.4';
+export const REAL_MODEL_RELEASE_VERSION = RELEASE_VERSION;
 export const REAL_MODEL_CATALOG_VERSION = '2';
 export const REAL_MODEL_DEPENDENCY_ORDER_SCOPE = 'source-lock-model-requirements-only';
 export const REAL_MODEL_SOURCE_IMPORT_MODE = 'deterministic-feature-gated-picker-bypass';
@@ -399,10 +401,10 @@ function validateSourceLockAndCatalog(
   const lock = asObject(sourceLock, 'Model source lock');
   const catalogObject = asObject(catalog, 'Generated model catalog');
   if (lock.lockVersion !== '2') {
-    throw new Error('Model source lock schema must be v2 for the 0.4.4 gate.');
+    throw new Error(`Model source lock schema must be v2 for the ${RELEASE_VERSION} gate.`);
   }
   if (lock.releaseVersion !== REAL_MODEL_RELEASE_VERSION) {
-    throw new Error('Model source lock release version is not 0.4.4.');
+    throw new Error(`Model source lock release version is not ${RELEASE_VERSION}.`);
   }
   const approval = asObject(lock.approval, 'Model source lock approval');
   if (approval.status !== 'approved' || !Array.isArray(approval.blockers) || approval.blockers.length !== 0) {
@@ -412,7 +414,7 @@ function validateSourceLockAndCatalog(
     throw new Error('Generated model catalog schema must be v2.');
   }
   if (catalogObject.runtimeVersion !== REAL_MODEL_RELEASE_VERSION) {
-    throw new Error('Generated model catalog runtime version is not 0.4.4.');
+    throw new Error(`Generated model catalog runtime version is not ${RELEASE_VERSION}.`);
   }
   const sourceLockHash = sha256(sourceLockBytes);
   const rawRequirements = lock.requirements;

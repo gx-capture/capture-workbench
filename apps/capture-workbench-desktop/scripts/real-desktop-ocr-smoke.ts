@@ -1,3 +1,5 @@
+// eslint-disable-next-line @nx/enforce-module-boundaries -- repository tooling reads shared release intent.
+import { RELEASE_VERSION } from '../../../tools/release/release-intent.ts';
 // Real OCR journey on the packaged Capture Workbench desktop app: the path a
 // user takes with a scanned image or PDF. It launches the app with fresh app
 // data, connects over CDP, and walks the UI:
@@ -559,8 +561,8 @@ export async function resolveLocalInstalledRuntimeIdentity(
   if (sha256Bytes(Buffer.from(JSON.stringify(candidateManifestBase))) !== options.candidateId) {
     throw new Error('Runtime candidate ID is not bound to its manifest.');
   }
-  if (candidateManifest.releaseVersion !== '0.4.4') {
-    throw new Error('Runtime candidate version is not 0.4.4.');
+  if (candidateManifest.releaseVersion !== RELEASE_VERSION) {
+    throw new Error(`Runtime candidate version is not ${RELEASE_VERSION}.`);
   }
   const candidateContractSetSha256 = requireDigest(candidateManifest.contractSetSha256, 'runtime candidate contract set');
   const candidateContractBytes = await readFile(await requireCandidateFile(candidateAuthority, 'contracts/contract-set.json', 'Runtime candidate contract set'));

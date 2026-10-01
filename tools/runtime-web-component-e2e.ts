@@ -1,3 +1,4 @@
+import { RELEASE_VERSION } from './release/release-intent.ts';
 import { randomUUID } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import {
@@ -28,6 +29,7 @@ import {
 import { fileURLToPath } from 'node:url';
 import { chromium, expect } from '@playwright/test';
 import { resolveNode24Corepack } from './node24-corepack.ts';
+import { readPackageManagerPolicy } from './package-manager.ts';
 
 declare global {
   interface Window {
@@ -56,7 +58,7 @@ const ocrWorkerArchive = join(
   'capture-runtime',
   'dist',
   'release',
-  'capture-engine-ocr-0.4.4-windows-x64.zip',
+  ("capture-engine-ocr-" + RELEASE_VERSION + "-windows-x64.zip"),
 );
 const defaultPdfPath = join(
   repoRoot,
@@ -654,8 +656,7 @@ async function main(): Promise<void> {
           name: 'capture-workbench-phase-1-5-consumer',
           version: '0.0.0',
           private: true,
-          packageManager: 'pnpm@12.0.0',
-          engines: { node: '>=24.0.0', pnpm: '12.0.0' },
+          ...readPackageManagerPolicy(repoRoot),
           dependencies: {
             '@angular/compiler': '22.0.7',
             '@angular/core': '22.0.7',

@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from capture_runtime.constants import RUNTIME_VERSION
 from capture_runtime.engine_catalog import canonical_json_bytes
 from capture_runtime.release import build_release_artifacts, write_capture_document_schema
 from tests.direct_model_fixtures import approved_source_lock
@@ -47,7 +48,7 @@ def artifact(
     return {
         "role": "worker",
         "requirementId": requirement_id,
-        "artifactVersion": "0.4.4",
+        "artifactVersion": RUNTIME_VERSION,
         "workerProtocolVersion": "1",
         "platform": "windows",
         "arch": "x86_64",
@@ -57,7 +58,7 @@ def artifact(
         "extractedBytes": extracted_bytes,
         "entryPoint": entry_point,
         "filesManifestSha256": hashlib.sha256(manifest).hexdigest(),
-        "url": f"https://example.invalid/v0.4.4/{file_name}",
+        "url": f"https://example.invalid/v{RUNTIME_VERSION}/{file_name}",
     }
 
 
@@ -115,7 +116,7 @@ def complete_catalog(engine_dir: Path, catalog_path: Path) -> None:
         canonical_json_bytes(
             {
                 "catalogVersion": "2",
-                "runtimeVersion": "0.4.4",
+                "runtimeVersion": RUNTIME_VERSION,
                 "requirements": requirements,
             }
         )

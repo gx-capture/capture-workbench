@@ -1,5 +1,7 @@
 // eslint-disable-next-line @nx/enforce-module-boundaries -- shared test temp-root guard.
 import '../../../tools/test-temp-root.ts';
+// eslint-disable-next-line @nx/enforce-module-boundaries -- repository tooling reads shared release intent.
+import { RELEASE_VERSION } from '../../../tools/release/release-intent.ts';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -104,19 +106,19 @@ async function releaseFixture(mutate: (files: Map<string, Buffer>) => void = () 
     bytes: executable.length,
     schemaFileName: RUNTIME_SCHEMA_NAME,
     schemaSha256: sha256Hex(schema),
-    runtimeVersion: '0.4.4',
+    runtimeVersion: RELEASE_VERSION,
   };
   const catalog = {
     catalogVersion: '2',
-    runtimeVersion: '0.4.4',
+    runtimeVersion: RELEASE_VERSION,
     requirements: [
       {
         requirementId: 'windowsml-ocr',
         artifacts: [
           {
             role: 'worker',
-            fileName: 'capture-engine-ocr-0.4.4-windows-x64.zip',
-            url: 'https://github.com/gx-capture/capture-workbench/releases/download/v0.4.4/capture-engine-ocr-0.4.4-windows-x64.zip',
+            fileName: `capture-engine-ocr-${RELEASE_VERSION}-windows-x64.zip`,
+            url: `https://github.com/gx-capture/capture-workbench/releases/download/v${RELEASE_VERSION}/capture-engine-ocr-${RELEASE_VERSION}-windows-x64.zip`,
             bytes: worker.length,
             sha256: sha256Hex(worker),
           },
@@ -129,7 +131,7 @@ async function releaseFixture(mutate: (files: Map<string, Buffer>) => void = () 
     [RUNTIME_SCHEMA_NAME, schema],
     [RUNTIME_MANIFEST_NAME, Buffer.from(JSON.stringify(manifest))],
     [RUNTIME_CATALOG_NAME, Buffer.from(JSON.stringify(catalog))],
-    ['capture-engine-ocr-0.4.4-windows-x64.zip', worker],
+    [`capture-engine-ocr-${RELEASE_VERSION}-windows-x64.zip`, worker],
   ]);
   for (const name of [RUNTIME_EXECUTABLE_NAME, RUNTIME_CATALOG_NAME]) {
     files.set(`${name}.sha256`, Buffer.from(`${sha256Hex(files.get(name) ?? Buffer.alloc(0))}  ${name}\n`));
@@ -142,9 +144,9 @@ async function releaseFixture(mutate: (files: Map<string, Buffer>) => void = () 
 test('runtime release directory is verified against an independent digest, sidecars, manifest and catalog', async (t) => {
   const good = await releaseFixture();
   t.after(() => rm(good.directory, { recursive: true, force: true }));
-  const release = verifyRuntimeReleaseDirectory(good.directory, good.runtimeSha256, '0.4.4');
+  const release = verifyRuntimeReleaseDirectory(good.directory, good.runtimeSha256, RELEASE_VERSION);
   assert.equal(release.workers[0].requirementId, 'windowsml-ocr');
-  assert.throws(() => verifyRuntimeReleaseDirectory(good.directory, sha('other'), '0.4.4'), /expected release digest/u);
+  assert.throws(() => verifyRuntimeReleaseDirectory(good.directory, sha('other'), RELEASE_VERSION), /expected release digest/u);
   assert.throws(() => verifyRuntimeReleaseDirectory(good.directory, good.runtimeSha256, '99.0.0'), /manifest/u);
 
   const cases: Array<[string, (files: Map<string, Buffer>) => void, RegExp]> = [
@@ -163,7 +165,7 @@ test('runtime release directory is verified against an independent digest, sidec
   for (const [label, mutate, expected] of cases) {
     const fixture = await releaseFixture(mutate);
     t.after(() => rm(fixture.directory, { recursive: true, force: true }));
-    assert.throws(() => verifyRuntimeReleaseDirectory(fixture.directory, good.runtimeSha256, '0.4.4'), expected, label);
+    assert.throws(() => verifyRuntimeReleaseDirectory(fixture.directory, good.runtimeSha256, RELEASE_VERSION), expected, label);
   }
 
   const wrongUrl = await releaseFixture((files) => {
@@ -173,7 +175,7 @@ test('runtime release directory is verified against an independent digest, sidec
     files.set(`${RUNTIME_CATALOG_NAME}.sha256`, Buffer.from(`${sha256Hex(files.get(RUNTIME_CATALOG_NAME) ?? Buffer.alloc(0))}  ${RUNTIME_CATALOG_NAME}\n`));
   });
   t.after(() => rm(wrongUrl.directory, { recursive: true, force: true }));
-  assert.throws(() => verifyRuntimeReleaseDirectory(wrongUrl.directory, good.runtimeSha256, '0.4.4'), /worker artifact/u);
+  assert.throws(() => verifyRuntimeReleaseDirectory(wrongUrl.directory, good.runtimeSha256, RELEASE_VERSION), /worker artifact/u);
 });
 
 test('application environment is allowlisted and only rehearsal adds the loopback worker mirror', () => {
@@ -239,9 +241,9 @@ function provenance(overrides: Record<string, unknown> = {}) {
     variant,
     sourceCommit: 'a'.repeat(40),
     sourceTreeClean: true,
-    releaseVersion: '0.4.4',
+    releaseVersion: RELEASE_VERSION,
     runtime: {
-      runtimeVersion: '0.4.4',
+      runtimeVersion: RELEASE_VERSION,
       executable: file,
       manifest: file,
       schema: file,
@@ -275,7 +277,7 @@ function evidence(overrides: Partial<PracticalOcrEvidence> = {}): PracticalOcrEv
     accuracy: 'CER not evaluated',
     runId: variant.runId,
     sourceCommit: 'a'.repeat(40),
-    releaseVersion: '0.4.4',
+    releaseVersion: RELEASE_VERSION,
     installerSha256: sha('installer'),
     runtimeExecutableSha256: sha('runtime'),
     workerSource: 'github-release',

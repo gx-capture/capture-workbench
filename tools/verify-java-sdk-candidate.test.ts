@@ -1,4 +1,5 @@
 import './test-temp-root.ts';
+import { RELEASE_VERSION } from './release/release-intent.ts';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -8,7 +9,7 @@ import test from 'node:test';
 
 import { verifyJavaSdkCandidate } from './verify-java-sdk-candidate.ts';
 
-const version = '0.4.4';
+const version = RELEASE_VERSION;
 const sourceCommit = 'a'.repeat(40);
 const contractSetSha256 = 'b'.repeat(64);
 

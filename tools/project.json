@@ -3,13 +3,17 @@
   "$schema": "../node_modules/nx/schemas/project-schema.json",
   "projectType": "application",
   "sourceRoot": "tools",
-  "tags": ["scope:capture", "type:tool", "platform:node"],
+  "tags": [
+    "scope:capture",
+    "type:tool",
+    "platform:node"
+  ],
   "targets": {
     "lint": {
       "cache": true,
       "executor": "nx:run-commands",
       "options": {
-        "command": "pnpm exec eslint tools/capture-boundary-doctor.ts tools/capture-boundary-doctor.test.ts tools/three-project-acceptance.ts tools/three-project-acceptance.test.ts tools/three-project-cleanup-verifier.test.ts tools/windows-built-in-process-resolver.ts tools/windows-built-in-process-resolver.test.ts tools/package-manager-version.test.ts tools/cargo-test-retry-failed.ts tools/cargo-test-retry-failed.test.ts"
+        "command": "pnpm exec eslint tools/capture-boundary-doctor.ts tools/capture-boundary-doctor.test.ts tools/three-project-acceptance.ts tools/three-project-acceptance.test.ts tools/three-project-cleanup-verifier.test.ts tools/windows-built-in-process-resolver.ts tools/windows-built-in-process-resolver.test.ts tools/package-manager.ts tools/package-manager-version.test.ts tools/cargo-test-retry-failed.ts tools/cargo-test-retry-failed.test.ts"
       }
     },
     "test": {
@@ -61,8 +65,32 @@
       "cache": true,
       "executor": "nx:run-commands",
       "options": {
-        "command": "node --test tools/release/version-sources.test.ts"
-      }
+        "command": "node --test tools/release/version-sources.test.ts tools/release/sync-versions.test.ts"
+      },
+      "dependsOn": [
+        "release-version-typecheck",
+        "release-version-lint",
+        "release-version-check"
+      ],
+      "inputs": [
+        "default",
+        "{workspaceRoot}/release/**/*",
+        "{workspaceRoot}/packages/**/package.json",
+        "{workspaceRoot}/packages/**/Cargo.toml",
+        "{workspaceRoot}/packages/**/pyproject.toml",
+        "{workspaceRoot}/packages/**/pom.xml",
+        "{workspaceRoot}/packages/**/src/**/*",
+        "{workspaceRoot}/packages/capture-runtime/model-sources/**/*",
+        "{workspaceRoot}/packages/capture-runtime/scripts/**/*",
+        "{workspaceRoot}/apps/capture-workbench-desktop/src-tauri/**/*",
+        "{workspaceRoot}/apps/capture-workbench-desktop/scripts/fixtures/**/*",
+        "{workspaceRoot}/.github/workflows/**/*",
+        "{workspaceRoot}/package.json",
+        "{workspaceRoot}/pnpm-lock.yaml",
+        "{workspaceRoot}/packages/**/Cargo.lock",
+        "{workspaceRoot}/packages/**/uv.lock",
+        "{workspaceRoot}/apps/**/Cargo.lock"
+      ]
     },
     "release-candidate-test": {
       "cache": true,
@@ -116,7 +144,9 @@
     "python-candidate-index-test": {
       "cache": false,
       "executor": "nx:run-commands",
-      "dependsOn": ["python-candidate-index-http-integration"],
+      "dependsOn": [
+        "python-candidate-index-http-integration"
+      ],
       "options": {
         "env": {
           "PYTHON_INDEX_UNIT_ONLY": "1"
@@ -170,6 +200,41 @@
       "executor": "nx:run-commands",
       "options": {
         "command": "node --test tools/update-release-index.test.ts"
+      }
+    },
+    "release-version-plan": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "node tools/release/sync-versions.ts --plan"
+      }
+    },
+    "release-version-sync": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "node tools/release/sync-versions.ts --apply"
+      }
+    },
+    "release-version-check": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "node tools/release/sync-versions.ts --check"
+      }
+    },
+    "release-version-typecheck": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm exec tsc -p tools/release/tsconfig.json --noEmit"
+      }
+    },
+    "release-version-lint": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm exec eslint tools/release/*.ts"
       }
     }
   }

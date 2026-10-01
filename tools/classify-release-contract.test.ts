@@ -1,4 +1,5 @@
 import './test-temp-root.ts';
+import { RELEASE_VERSION } from './release/release-intent.ts';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -41,10 +42,10 @@ test('classification is generated from the candidate snapshot and exact candidat
       mkdir(contracts, { recursive: true }),
     );
     const candidateBytes = Buffer.from(
-      `${JSON.stringify(snapshot('0.4.4', 'same'))}\n`,
+      `${JSON.stringify(snapshot(RELEASE_VERSION, 'same'))}\n`,
     );
     const baselineBytes = Buffer.from(
-      `${JSON.stringify(snapshot('0.4.4', 'same'))}\n`,
+      `${JSON.stringify(snapshot(RELEASE_VERSION, 'same'))}\n`,
     );
     const candidatePath = join(contracts, 'contract-snapshot.json');
     const baselinePath = join(root, 'baseline.json');
@@ -71,7 +72,7 @@ test('classification is generated from the candidate snapshot and exact candidat
     assert.equal(impact.candidateId, candidateId);
     assert.equal(impact.candidateSnapshotSha256, digest(candidateBytes));
     assert.equal(impact.classification, 'no-impact');
-    assert.equal(impact.baselineRelease, '0.4.4');
+    assert.equal(impact.baselineRelease, RELEASE_VERSION);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -87,7 +88,7 @@ test('missing stable baseline fails closed into manual review', async () => {
     );
     await writeFile(
       join(contracts, 'contract-snapshot.json'),
-      `${JSON.stringify(snapshot('0.4.4', 'candidate'))}\n`,
+      `${JSON.stringify(snapshot(RELEASE_VERSION, 'candidate'))}\n`,
     );
     const output = join(root, 'contract-impact.json');
     const result = spawnSync(

@@ -1,3 +1,4 @@
+import { RELEASE_VERSION } from './release/release-intent.ts';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
@@ -26,12 +27,12 @@ async function makeCandidate(root: string): Promise<string> {
   await mkdir(python, { recursive: true });
   const wheel = Buffer.from('wheel-bytes');
   const source = Buffer.from('source-bytes');
-  await writeFile(join(python, 'capture_runtime_client-0.4.4-py3-none-any.whl'), wheel);
-  await writeFile(join(python, 'capture_runtime_client-0.4.4.tar.gz'), source);
+  await writeFile(join(python, ("capture_runtime_client-" + RELEASE_VERSION + "-py3-none-any.whl")), wheel);
+  await writeFile(join(python, ("capture_runtime_client-" + RELEASE_VERSION + ".tar.gz")), source);
   const packageManifest = {
     schemaVersion: '1',
     candidateKind: 'npm-package-set',
-    releaseVersion: '0.4.4',
+    releaseVersion: RELEASE_VERSION,
     packages: [],
   };
   const packageManifestBytes = Buffer.from(`${JSON.stringify(packageManifest, null, 2)}\n`);
@@ -40,13 +41,13 @@ async function makeCandidate(root: string): Promise<string> {
     schemaVersion: '1',
     candidateKind: 'npm-package-set',
     sourceCommit: SOURCE_COMMIT,
-    releaseVersion: '0.4.4',
+    releaseVersion: RELEASE_VERSION,
     producerRunId: 1,
     packageManifestSha256: sha256(packageManifestBytes),
     contractSetSha256: CONTRACT_SHA,
     artifacts: [
-      { path: 'python/capture_runtime_client-0.4.4-py3-none-any.whl', bytes: wheel.length, sha256: sha256(wheel) },
-      { path: 'python/capture_runtime_client-0.4.4.tar.gz', bytes: source.length, sha256: sha256(source) },
+      { path: ("python/capture_runtime_client-" + RELEASE_VERSION + "-py3-none-any.whl"), bytes: wheel.length, sha256: sha256(wheel) },
+      { path: ("python/capture_runtime_client-" + RELEASE_VERSION + ".tar.gz"), bytes: source.length, sha256: sha256(source) },
     ],
     toolchains: { node: 'v24.20.0', python: '3.12' },
   };
@@ -64,7 +65,7 @@ async function makeRuntimeCandidate(root: string, packageCandidateId: string): P
     schemaVersion: '1',
     candidateKind: 'runtime',
     sourceCommit: SOURCE_COMMIT,
-    releaseVersion: '0.4.4',
+    releaseVersion: RELEASE_VERSION,
     releaseMode: 'model-enabled',
     producerRunId: 2,
     packageCandidateId,
@@ -91,19 +92,19 @@ async function makeGeneratedWheelCandidate(root: string): Promise<{ readonly pac
     'import sys',
     'root = Path(sys.argv[1])',
     'files = {',
-    `"capture_runtime_client/__init__.py": '__version__ = "0.4.4"\\n',`,
-    '"capture_runtime_client-0.4.4.dist-info/METADATA": "Metadata-Version: 2.1\\nName: capture-runtime-client\\nVersion: 0.4.4\\nRequires-Python: >=3.12\\n",',
-    '"capture_runtime_client-0.4.4.dist-info/WHEEL": "Wheel-Version: 1.0\\nGenerator: candidate-index-test\\nRoot-Is-Purelib: true\\nTag: py3-none-any\\n",',
-    '"capture_runtime_client-0.4.4.dist-info/RECORD": "capture_runtime_client/__init__.py,,\\ncapture_runtime_client-0.4.4.dist-info/METADATA,,\\ncapture_runtime_client-0.4.4.dist-info/WHEEL,,\\ncapture_runtime_client-0.4.4.dist-info/RECORD,,\\n",',
+    `"capture_runtime_client/__init__.py": '__version__ = "${RELEASE_VERSION}"\\n',`,
+    ("\"capture_runtime_client-" + RELEASE_VERSION + ".dist-info/METADATA\": \"Metadata-Version: 2.1\\nName: capture-runtime-client\\nVersion: " + RELEASE_VERSION + "\\nRequires-Python: >=3.12\\n\","),
+    ("\"capture_runtime_client-" + RELEASE_VERSION + ".dist-info/WHEEL\": \"Wheel-Version: 1.0\\nGenerator: candidate-index-test\\nRoot-Is-Purelib: true\\nTag: py3-none-any\\n\","),
+    ("\"capture_runtime_client-" + RELEASE_VERSION + ".dist-info/RECORD\": \"capture_runtime_client/__init__.py,,\\ncapture_runtime_client-" + RELEASE_VERSION + ".dist-info/METADATA,,\\ncapture_runtime_client-" + RELEASE_VERSION + ".dist-info/WHEEL,,\\ncapture_runtime_client-" + RELEASE_VERSION + ".dist-info/RECORD,,\\n\","),
     '}',
-    'with ZipFile(root / "capture_runtime_client-0.4.4-py3-none-any.whl", "w", ZIP_DEFLATED) as archive:',
+    ("with ZipFile(root / \"capture_runtime_client-" + RELEASE_VERSION + "-py3-none-any.whl\", \"w\", ZIP_DEFLATED) as archive:"),
     '  for name, text in files.items():',
     '    info = ZipInfo(name, (2024, 1, 1, 0, 0, 0)); info.compress_type = ZIP_DEFLATED; info.external_attr = 0o644 << 16; archive.writestr(info, text.encode())',
   ].join('\n');
   await execFileAsync('python', ['-c', script, python]);
-  const wheel = await readFile(join(python, 'capture_runtime_client-0.4.4-py3-none-any.whl'));
+  const wheel = await readFile(join(python, ("capture_runtime_client-" + RELEASE_VERSION + "-py3-none-any.whl")));
   const source = Buffer.from('not-installed-by-poetry\n');
-  await writeFile(join(python, 'capture_runtime_client-0.4.4.tar.gz'), source);
+  await writeFile(join(python, ("capture_runtime_client-" + RELEASE_VERSION + ".tar.gz")), source);
   const packageId = await writeCandidateManifest(packageCandidate, wheel, source, 'npm-package-set');
   await writeCandidateManifest(runtimeCandidate, Buffer.alloc(0), Buffer.alloc(0), 'runtime', packageId);
   return { packageCandidate, runtimeCandidate };
@@ -114,20 +115,20 @@ async function writeCandidateManifest(root: string, wheel: Buffer, source: Buffe
   const sourceCommit = SOURCE_COMMIT;
   const base = kind === 'npm-package-set'
     ? {
-        schemaVersion: '1', candidateKind: kind, sourceCommit, releaseVersion: '0.4.4', producerRunId: 1,
+        schemaVersion: '1', candidateKind: kind, sourceCommit, releaseVersion: RELEASE_VERSION, producerRunId: 1,
         packageManifestSha256: '', contractSetSha256: CONTRACT_SHA,
         artifacts: [
-          { path: 'python/capture_runtime_client-0.4.4-py3-none-any.whl', bytes: wheel.length, sha256: sha256(wheel) },
-          { path: 'python/capture_runtime_client-0.4.4.tar.gz', bytes: source.length, sha256: sha256(source) },
+          { path: ("python/capture_runtime_client-" + RELEASE_VERSION + "-py3-none-any.whl"), bytes: wheel.length, sha256: sha256(wheel) },
+          { path: ("python/capture_runtime_client-" + RELEASE_VERSION + ".tar.gz"), bytes: source.length, sha256: sha256(source) },
         ], toolchains: { node: 'v24.20.0', python: '3.12' },
       }
     : {
-        schemaVersion: '1', candidateKind: kind, sourceCommit, releaseVersion: '0.4.4', releaseMode: 'model-enabled',
+        schemaVersion: '1', candidateKind: kind, sourceCommit, releaseVersion: RELEASE_VERSION, releaseMode: 'model-enabled',
         producerRunId: 2, packageCandidateId, contractSetSha256: CONTRACT_SHA, artifacts: [],
         toolchains: { node: 'v24.20.0', python: '3.12', runtime: 'capture-runtime' },
       };
   if (kind === 'npm-package-set') {
-    const packageManifest = { schemaVersion: '1', candidateKind: kind, releaseVersion: '0.4.4', packages: [] };
+    const packageManifest = { schemaVersion: '1', candidateKind: kind, releaseVersion: RELEASE_VERSION, packages: [] };
     const bytes = Buffer.from(`${JSON.stringify(packageManifest, null, 2)}\n`);
     await writeFile(join(root, 'package-manifest.json'), bytes);
     (base as { packageManifestSha256: string }).packageManifestSha256 = sha256(bytes);
@@ -151,7 +152,7 @@ test('builds and verifies a relative PEP 503 Python candidate index', async () =
       runtimeCandidate,
       output,
       sourceCommit: SOURCE_COMMIT,
-      version: '0.4.4',
+      version: RELEASE_VERSION,
       contractSetSha256: CONTRACT_SHA,
     });
     assert.equal(result.candidateId.length, 64);
@@ -164,7 +165,7 @@ test('builds and verifies a relative PEP 503 Python candidate index', async () =
       packageCandidate,
       runtimeCandidate,
       sourceCommit: SOURCE_COMMIT,
-      version: '0.4.4',
+      version: RELEASE_VERSION,
       packageCandidateId,
       runtimeCandidateId,
       contractSetSha256: CONTRACT_SHA,
@@ -192,7 +193,7 @@ test('rejects changed distribution bytes, direct URLs, duplicate links, and extr
       artifacts: Array<{ path: string; bytes: number; sha256: string }>;
       candidateId: string;
     };
-    const duplicate = { ...candidateManifest.artifacts[0], path: 'python//capture_runtime_client-0.4.4-py3-none-any.whl' };
+    const duplicate = { ...candidateManifest.artifacts[0], path: ("python//capture_runtime_client-" + RELEASE_VERSION + "-py3-none-any.whl") };
     candidateManifest.artifacts.push(duplicate);
     const candidateBase = { ...candidateManifest };
     delete candidateBase.candidateId;
@@ -213,7 +214,7 @@ test('rejects changed distribution bytes, direct URLs, duplicate links, and extr
         runtimeCandidate,
         output,
         sourceCommit: SOURCE_COMMIT,
-        version: '0.4.4',
+        version: RELEASE_VERSION,
         contractSetSha256: CONTRACT_SHA,
       }),
       /alias segments|duplicate path/u,
@@ -225,24 +226,24 @@ test('rejects changed distribution bytes, direct URLs, duplicate links, and extr
       runtimeCandidate,
       output,
       sourceCommit: SOURCE_COMMIT,
-      version: '0.4.4',
+      version: RELEASE_VERSION,
       contractSetSha256: CONTRACT_SHA,
     });
-    await writeFile(join(output, 'simple/capture-runtime-client/capture_runtime_client-0.4.4.tar.gz'), 'tampered');
+    await writeFile(join(output, ("simple/capture-runtime-client/capture_runtime_client-" + RELEASE_VERSION + ".tar.gz")), 'tampered');
     await assert.rejects(
       () => verifyPythonCandidateIndex({
         index: output,
         packageCandidate,
         runtimeCandidate,
         sourceCommit: SOURCE_COMMIT,
-        version: '0.4.4',
+        version: RELEASE_VERSION,
         packageCandidateId,
         runtimeCandidateId,
         contractSetSha256: CONTRACT_SHA,
       }),
       /digest|bytes|size/u,
     );
-    await writeFile(join(output, 'simple/capture-runtime-client/capture_runtime_client-0.4.4.tar.gz'), await readFile(join(packageCandidate, 'python/capture_runtime_client-0.4.4.tar.gz')));
+    await writeFile(join(output, ("simple/capture-runtime-client/capture_runtime_client-" + RELEASE_VERSION + ".tar.gz")), await readFile(join(packageCandidate, ("python/capture_runtime_client-" + RELEASE_VERSION + ".tar.gz"))));
     const canonicalProjectIndex = await readFile(join(output, 'simple/capture-runtime-client/index.html'));
     await writeFile(join(output, 'simple/capture-runtime-client/index.html'), '<a href="file:///tmp/local.whl#sha256=' + '0'.repeat(64) + '">local</a>');
     await assert.rejects(
@@ -251,7 +252,7 @@ test('rejects changed distribution bytes, direct URLs, duplicate links, and extr
         packageCandidate,
         runtimeCandidate,
         sourceCommit: SOURCE_COMMIT,
-        version: '0.4.4',
+        version: RELEASE_VERSION,
         packageCandidateId,
         runtimeCandidateId,
         contractSetSha256: CONTRACT_SHA,
@@ -266,7 +267,7 @@ test('rejects changed distribution bytes, direct URLs, duplicate links, and extr
         packageCandidate,
         runtimeCandidate,
         sourceCommit: SOURCE_COMMIT,
-        version: '0.4.4',
+        version: RELEASE_VERSION,
         packageCandidateId,
         runtimeCandidateId,
         contractSetSha256: CONTRACT_SHA,
@@ -285,8 +286,8 @@ test('runs pip and Poetry HTTP installation smoke in isolated temporary environm
     const fixture = await makeGeneratedWheelCandidate(join(root, 'fixture-one'));
     const repeatFixture = await makeGeneratedWheelCandidate(join(root, 'fixture-two'));
     assert.deepEqual(
-      await readFile(join(fixture.packageCandidate, 'python/capture_runtime_client-0.4.4-py3-none-any.whl')),
-      await readFile(join(repeatFixture.packageCandidate, 'python/capture_runtime_client-0.4.4-py3-none-any.whl')),
+      await readFile(join(fixture.packageCandidate, ("python/capture_runtime_client-" + RELEASE_VERSION + "-py3-none-any.whl"))),
+      await readFile(join(repeatFixture.packageCandidate, ("python/capture_runtime_client-" + RELEASE_VERSION + "-py3-none-any.whl"))),
       'Generated wheel fixture is not deterministic.',
     );
     const index = join(root, 'index');
@@ -297,19 +298,19 @@ test('runs pip and Poetry HTTP installation smoke in isolated temporary environm
       runtimeCandidate: fixture.runtimeCandidate,
       output: index,
       sourceCommit: SOURCE_COMMIT,
-      version: '0.4.4',
+      version: RELEASE_VERSION,
       contractSetSha256: packageManifest.contractSetSha256,
     });
-    const smoke = await runPythonCandidateIndexHttpSmoke({ index, version: '0.4.4' });
-    assert.equal(smoke.poetryInstalledVersion, '0.4.4');
+    const smoke = await runPythonCandidateIndexHttpSmoke({ index, version: RELEASE_VERSION });
+    assert.equal(smoke.poetryInstalledVersion, RELEASE_VERSION);
     assert.deepEqual(smoke.directUrlFiles, []);
     assert.deepEqual(smoke.poetryDirectUrlFiles, []);
-    assert.equal(smoke.poetryWheelSha256, sha256(await readFile(join(index, 'simple/capture-runtime-client/capture_runtime_client-0.4.4-py3-none-any.whl'))));
+    assert.equal(smoke.poetryWheelSha256, sha256(await readFile(join(index, ("simple/capture-runtime-client/capture_runtime_client-" + RELEASE_VERSION + "-py3-none-any.whl")))));
     assert.equal(smoke.poetryLockContainsLoopbackSource, true);
     assert.equal(smoke.tempCleanupVerified, true);
     assert((smoke.requestCounts['/simple/'] ?? 0) > 0);
     assert((smoke.requestCounts['/simple/capture-runtime-client/'] ?? 0) > 0);
-    assert((smoke.requestCounts['/simple/capture-runtime-client/capture_runtime_client-0.4.4-py3-none-any.whl'] ?? 0) > 0);
+    assert((smoke.requestCounts[("/simple/capture-runtime-client/capture_runtime_client-" + RELEASE_VERSION + "-py3-none-any.whl")] ?? 0) > 0);
     assert.equal(runtimeManifest.candidateId.length, 64);
   } finally {
     await rm(root, { recursive: true, force: true });

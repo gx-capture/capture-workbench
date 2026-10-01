@@ -1,3 +1,4 @@
+import { RUNTIME_VERSION } from '@gx-capture/capture-runtime-client';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { CaptureRuntimeComputeStatusComponent } from './capture-runtime-compute-status.component';
 
@@ -16,7 +17,7 @@ describe('CaptureRuntimeComputeStatusComponent', () => {
       apiVersion: '2.0',
       schemaVersion: '1',
       service: 'capture-runtime',
-      runtimeVersion: '0.4.4',
+      runtimeVersion: RUNTIME_VERSION,
       contractSetVersion: '2',
       contractSha256: 'a'.repeat(64),
       mode: 'cpu-fallback',
@@ -41,7 +42,7 @@ describe('CaptureRuntimeComputeStatusComponent', () => {
       apiVersion: '2.0',
       schemaVersion: '1',
       service: 'capture-runtime',
-      runtimeVersion: '0.4.4',
+      runtimeVersion: RUNTIME_VERSION,
       contractSetVersion: '2',
       contractSha256: 'a'.repeat(64),
       mode: 'gpu-dml',

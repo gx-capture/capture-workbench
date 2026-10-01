@@ -1,3 +1,5 @@
+// eslint-disable-next-line @nx/enforce-module-boundaries -- repository tooling reads shared release intent.
+import { RELEASE_VERSION } from '../../../tools/release/release-intent.ts';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
@@ -24,7 +26,7 @@ const unavailableCatalog = {
   })),
 };
 
-function modelEnabledCatalog(runtimeVersion = '0.4.4') {
+function modelEnabledCatalog(runtimeVersion = RELEASE_VERSION) {
   return {
     catalogVersion: '2',
     runtimeVersion,
@@ -75,7 +77,7 @@ test('approved model-enabled lock preserves the generated-catalog path', () => {
     assertRealMediaRequirementsAvailable(
       {
         approval: { blockers: [], status: 'approved' },
-        releaseVersion: '0.4.4',
+        releaseVersion: RELEASE_VERSION,
         requirements: dependencyOrder.map((requirementId) => ({
           requirementId,
         })),

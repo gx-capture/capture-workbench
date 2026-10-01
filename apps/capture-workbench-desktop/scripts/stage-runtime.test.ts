@@ -1,5 +1,7 @@
 // eslint-disable-next-line @nx/enforce-module-boundaries -- shared test temp-root guard.
 import '../../../tools/test-temp-root.ts';
+// eslint-disable-next-line @nx/enforce-module-boundaries -- repository tooling reads shared release intent.
+import { RELEASE_VERSION } from '../../../tools/release/release-intent.ts';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -14,7 +16,7 @@ import {
 function manifestFor(bytes, sha256, schemaSha256) {
   return {
     manifestVersion: '1',
-    runtimeVersion: '0.4.4',
+    runtimeVersion: RELEASE_VERSION,
     apiVersion: '2.0',
     captureDocumentSchemaVersion: '2',
     platform: 'windows',

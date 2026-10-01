@@ -1,4 +1,5 @@
 import './test-temp-root.ts';
+import { RELEASE_VERSION } from './release/release-intent.ts';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -13,7 +14,7 @@ import {
   verifyRuntimeRelease,
 } from './local-release-consumer-smoke.ts';
 
-const version = '0.4.4';
+const version = RELEASE_VERSION;
 
 function digest(bytes: Buffer): string {
   return createHash('sha256').update(bytes).digest('hex');
@@ -66,8 +67,8 @@ async function createFixture(): Promise<string> {
 async function createModelFixture(): Promise<string> {
   const directory = await createFixture();
   const workerAssets = [
-    ['windowsml-ocr', 'capture-engine-ocr-0.4.4-windows-x64.zip'],
-    ['whisper-primary', 'capture-engine-whisper-0.4.4-windows-x64.zip'],
+    ['windowsml-ocr', ("capture-engine-ocr-" + RELEASE_VERSION + "-windows-x64.zip")],
+    ['whisper-primary', ("capture-engine-whisper-" + RELEASE_VERSION + "-windows-x64.zip")],
   ] as const;
   const pendingWrites: Promise<void>[] = [];
   const requirements = workerAssets.map(([requirementId, fileName]) => {

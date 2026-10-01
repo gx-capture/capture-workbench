@@ -3,6 +3,8 @@
 // Chinese setup wizard, install actions against the runtime catalog, and the
 // document queue, without real OCR.
 import { expect, test, type Page } from '@playwright/test';
+// eslint-disable-next-line @nx/enforce-module-boundaries -- repository browser fixture shares release intent.
+import { RELEASE_VERSION } from '../../../tools/release/release-intent.ts';
 
 test('shows one explicit Traditional Chinese setup wizard for missing core requirements', async ({ page }) => {
   await openDesktop(page, [
@@ -60,7 +62,7 @@ test('does not run a deterministic provider in an unconfigured browser', async (
 });
 
 async function openDesktop(page: Page, requirements: readonly Record<string, unknown>[]): Promise<void> {
-  await page.addInitScript((runtimeRequirements) => {
+  await page.addInitScript(({ runtimeRequirements, runtimeVersion }) => {
     interface TauriTestGlobal {
       isTauri: boolean;
       __captureInvokedCommands: string[];
@@ -97,7 +99,7 @@ async function openDesktop(page: Page, requirements: readonly Record<string, unk
             ready: true,
             service: 'capture-runtime',
             apiVersion: '2.0',
-            runtimeVersion: '0.4.4',
+            runtimeVersion,
             captureDocumentSchemaVersion: '2',
             contractSetVersion: '2',
             capabilities: {},
@@ -105,7 +107,7 @@ async function openDesktop(page: Page, requirements: readonly Record<string, unk
               apiVersion: '2.0',
               schemaVersion: '1',
               service: 'capture-runtime',
-              runtimeVersion: '0.4.4',
+              runtimeVersion,
               contractSetVersion: '2',
               contractSha256: 'a'.repeat(64),
               workerSha256: 'b'.repeat(64),
@@ -153,7 +155,7 @@ async function openDesktop(page: Page, requirements: readonly Record<string, unk
     target.__TAURI_EVENT_PLUGIN_INTERNALS__ = {
       unregisterListener: () => undefined,
     };
-  }, requirements);
+  }, { runtimeRequirements: requirements, runtimeVersion: RELEASE_VERSION });
   await page.goto('/');
 }
 

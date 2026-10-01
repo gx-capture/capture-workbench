@@ -1,5 +1,7 @@
 // eslint-disable-next-line @nx/enforce-module-boundaries -- shared test temp-root guard.
 import '../../../tools/test-temp-root.ts';
+// eslint-disable-next-line @nx/enforce-module-boundaries -- repository tooling reads shared release intent.
+import { RELEASE_VERSION } from '../../../tools/release/release-intent.ts';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
@@ -37,13 +39,13 @@ function descriptorForFixture(): LocalCandidateModelDescriptor {
     sha256: sha256(contents),
   }));
   const modelManifest = {
-    artifactVersion: '0.4.4',
+    artifactVersion: RELEASE_VERSION,
     entryPoint: 'model',
     files,
     manifestVersion: '1',
   };
   return {
-    artifactVersion: '0.4.4',
+    artifactVersion: RELEASE_VERSION,
     entryCount: files.length,
     entryPoint: 'model',
     extractedBytes: files.reduce((total, file) => total + file.bytes, 0),
@@ -118,7 +120,7 @@ async function createCandidateFixture(descriptor: LocalCandidateModelDescriptor)
   await mkdir(dirname(catalogPath), { recursive: true });
   const catalogBytes = Buffer.from(JSON.stringify({
     catalogVersion: '2',
-    runtimeVersion: '0.4.4',
+    runtimeVersion: RELEASE_VERSION,
     requirements: [{
       requirementId: 'windowsml-ocr',
       modelFiles: descriptor,
@@ -136,7 +138,7 @@ async function createCandidateFixture(descriptor: LocalCandidateModelDescriptor)
     packageCandidateId: 'b'.repeat(64),
     producerRunId: 1,
     releaseMode: 'core-only',
-    releaseVersion: '0.4.4',
+    releaseVersion: RELEASE_VERSION,
     schemaVersion: '1',
     sourceCommit: 'c'.repeat(40),
     toolchains: { node: '24', python: '3.12', runtime: 'capture-runtime' },
@@ -350,7 +352,7 @@ test('local candidate model binding rejects candidate manifest and catalog byte 
 
     const tamperedCatalog = Buffer.from(JSON.stringify({
       catalogVersion: '2',
-      runtimeVersion: '0.4.4',
+      runtimeVersion: RELEASE_VERSION,
       requirements: [],
     }));
     await writeFile(candidate.catalogPath, tamperedCatalog);

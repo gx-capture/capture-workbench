@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pytest
 
+from capture_runtime.constants import RUNTIME_VERSION
+
 MODULE_PATH = Path(__file__).resolve().parents[2] / "scripts" / "size_regression_check.py"
 SPEC = importlib.util.spec_from_file_location("capture_size_regression_check", MODULE_PATH)
 assert SPEC is not None and SPEC.loader is not None
@@ -35,8 +37,8 @@ def valid_report() -> dict[str, object]:
         "installedBytesBlocker": None,
         "nsisInstaller": {
             "bytes": 101,
-            "fileName": "Capture Workbench_0.4.4_x64-setup.exe",
-            "path": "dist/Capture Workbench_0.4.4_x64-setup.exe",
+            "fileName": f"Capture Workbench_{RUNTIME_VERSION}_x64-setup.exe",
+            "path": f"dist/Capture Workbench_{RUNTIME_VERSION}_x64-setup.exe",
             "sha256": "b" * 64,
         },
         "platform": "windows",

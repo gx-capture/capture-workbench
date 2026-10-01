@@ -5,6 +5,8 @@ import hashlib
 import importlib.util
 from pathlib import Path
 
+from capture_runtime.constants import RUNTIME_VERSION
+
 MODULE_PATH = Path(__file__).resolve().parents[2] / "scripts" / "report_bundle_size.py"
 SPEC = importlib.util.spec_from_file_location("capture_report_bundle_size", MODULE_PATH)
 assert SPEC is not None and SPEC.loader is not None
@@ -73,20 +75,20 @@ def test_installed_size_evidence_requires_exact_installer_and_native_uninstall(
   "evidenceKind": "release-installed-size",
   "installedBytes": 1234,
   "installer": {
-    "fileName": "Capture Workbench_0.4.4_x64-setup.exe",
+    "fileName": "Capture Workbench_{RUNTIME_VERSION}_x64-setup.exe",
     "bytes": 99,
     "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   },
   "platform": "windows",
   "releaseGateSatisfied": false
 }
-""".strip(),
+""".replace("{RUNTIME_VERSION}", RUNTIME_VERSION).strip(),
         encoding="utf-8",
     )
     installed_bytes, blocker = report_bundle_size.installed_bytes_evidence(
         evidence,
         installer={
-            "fileName": "Capture Workbench_0.4.4_x64-setup.exe",
+            "fileName": f"Capture Workbench_{RUNTIME_VERSION}_x64-setup.exe",
             "bytes": 99,
             "sha256": "a" * 64,
         },
@@ -97,7 +99,7 @@ def test_installed_size_evidence_requires_exact_installer_and_native_uninstall(
     installed_bytes, blocker = report_bundle_size.installed_bytes_evidence(
         evidence,
         installer={
-            "fileName": "Capture Workbench_0.4.4_x64-setup.exe",
+            "fileName": f"Capture Workbench_{RUNTIME_VERSION}_x64-setup.exe",
             "bytes": 100,
             "sha256": "a" * 64,
         },
@@ -140,7 +142,7 @@ def test_installed_size_evidence_rejects_a_different_installer_filename(
     installed_bytes, blocker = report_bundle_size.installed_bytes_evidence(
         evidence,
         installer={
-            "fileName": "Capture Workbench_0.4.4_x64-setup.exe",
+            "fileName": f"Capture Workbench_{RUNTIME_VERSION}_x64-setup.exe",
             "bytes": 99,
             "sha256": "a" * 64,
         },
@@ -168,21 +170,21 @@ def test_installed_size_evidence_rejects_boolean_bytes(tmp_path: Path) -> None:
   "evidenceKind": "release-installed-size",
   "installedBytes": true,
   "installer": {
-    "fileName": "Capture Workbench_0.4.4_x64-setup.exe",
+    "fileName": "Capture Workbench_{RUNTIME_VERSION}_x64-setup.exe",
     "bytes": 99,
     "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   },
   "platform": "windows",
   "releaseGateSatisfied": false
 }
-""".strip(),
+""".replace("{RUNTIME_VERSION}", RUNTIME_VERSION).strip(),
         encoding="utf-8",
     )
 
     installed_bytes, blocker = report_bundle_size.installed_bytes_evidence(
         evidence,
         installer={
-            "fileName": "Capture Workbench_0.4.4_x64-setup.exe",
+            "fileName": f"Capture Workbench_{RUNTIME_VERSION}_x64-setup.exe",
             "bytes": 99,
             "sha256": "a" * 64,
         },

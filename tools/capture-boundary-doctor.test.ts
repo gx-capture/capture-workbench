@@ -1,4 +1,5 @@
 import './test-temp-root.ts';
+import { RELEASE_VERSION } from './release/release-intent.ts';
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -20,7 +21,7 @@ const RUNTIME_TOKEN = 'runtime-secret-sentinel';
 const ready = {
   ready: true,
   service: 'capture-runtime',
-  runtimeVersion: '0.4.4',
+  runtimeVersion: RELEASE_VERSION,
   apiVersion: '2.0',
   captureDocumentSchemaVersion: '2',
   capabilities: {

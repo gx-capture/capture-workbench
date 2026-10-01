@@ -1,3 +1,5 @@
+// eslint-disable-next-line @nx/enforce-module-boundaries -- repository tooling reads shared release intent.
+import { RELEASE_VERSION } from '../../../tools/release/release-intent.ts';
 import { randomBytes } from 'node:crypto';
 import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -66,7 +68,7 @@ export function stageDeterministicRuntime(): Observable<unknown> {
             concatMap(({ digest, schemaSha256 }) => {
               const manifest = {
                 manifestVersion: '1',
-                runtimeVersion: '0.4.4',
+                runtimeVersion: RELEASE_VERSION,
                 apiVersion: '2.0',
                 captureDocumentSchemaVersion: '2',
                 platform: 'windows',

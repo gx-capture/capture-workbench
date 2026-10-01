@@ -1,4 +1,5 @@
 import './test-temp-root.ts';
+import { RELEASE_VERSION } from './release/release-intent.ts';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
@@ -37,7 +38,7 @@ async function makeCandidates() {
       candidateKind: 'runtime',
       candidateId,
       sourceCommit: 'a'.repeat(40),
-      releaseVersion: '0.4.4',
+      releaseVersion: RELEASE_VERSION,
       releaseMode: 'core-only',
       artifacts: artifacts.map(([path, value]) => ({
         path,
@@ -51,7 +52,7 @@ async function makeCandidates() {
     JSON.stringify({
       runtimeCandidateId: candidateId,
       sourceCommit: 'a'.repeat(40),
-      releaseVersion: '0.4.4',
+      releaseVersion: RELEASE_VERSION,
       releaseMode: 'core-only',
       artifacts: artifacts.map(([path, value]) => ({
         path,

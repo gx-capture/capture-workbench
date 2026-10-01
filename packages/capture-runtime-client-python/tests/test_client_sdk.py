@@ -16,6 +16,7 @@ from pydantic import ValidationError
 from capture_runtime_client import (
     CAPTURE_CONTRACT_SET_SHA256,
     CAPTURE_DOCUMENT_SCHEMA_SHA256,
+    CAPTURE_RUNTIME_VERSION,
     CaptureAuthenticationError,
     CaptureOcrProjection,
     CaptureProtocolError,
@@ -43,6 +44,7 @@ def _shared_perspective_payload() -> dict[str, object]:
     payload = json.loads(SHARED_PERSPECTIVE_FIXTURE.read_text(encoding="utf-8"))
     assert isinstance(payload, dict)
     payload["contractSha256"] = CAPTURE_CONTRACT_SET_SHA256
+    payload["runtimeVersion"] = CAPTURE_RUNTIME_VERSION
     return payload
 
 
@@ -107,7 +109,7 @@ def _ready(**overrides: object) -> dict[str, object]:
         "ready": True,
         "service": "capture-runtime",
         "apiVersion": "2.0",
-        "runtimeVersion": "0.4.4",
+        "runtimeVersion": CAPTURE_RUNTIME_VERSION,
         "captureDocumentSchemaVersion": "2",
         "capabilities": {
             "captureKinds": ["pdf"],
@@ -128,7 +130,7 @@ def _discovery_routes() -> dict[tuple[str, str], Callable[[httpx.Request], httpx
     href = f"/meta/v2/contracts/sha256/{digest}"
     index = {
         "catalogVersion": "2",
-        "runtimeVersion": "0.4.4",
+        "runtimeVersion": CAPTURE_RUNTIME_VERSION,
         "contractSetVersion": "2",
         "surfaces": [{"id": "v2"}],
         "sha256": digest,
@@ -309,7 +311,7 @@ def _ocr_projection(*, status: str = "completed") -> dict[str, object]:
             "status": "failed",
             "pages": [],
             "pageCount": 0,
-            "runtimeVersion": "0.4.4",
+            "runtimeVersion": CAPTURE_RUNTIME_VERSION,
             "contractSha256": CAPTURE_CONTRACT_SET_SHA256,
             "source": None,
             "provenance": engine,
@@ -329,7 +331,7 @@ def _ocr_projection(*, status: str = "completed") -> dict[str, object]:
         "status": "completed",
         "source": source,
         "pageCount": 1,
-        "runtimeVersion": "0.4.4",
+        "runtimeVersion": CAPTURE_RUNTIME_VERSION,
         "contractSha256": CAPTURE_CONTRACT_SET_SHA256,
         "pages": [
             {
@@ -454,7 +456,7 @@ def test_loopback_transport_and_handshake() -> None:
     digest = hashlib.sha256(bundle_bytes).hexdigest()
     index = {
         "catalogVersion": "2",
-        "runtimeVersion": "0.4.4",
+        "runtimeVersion": CAPTURE_RUNTIME_VERSION,
         "contractSetVersion": "2",
         "surfaces": [{"id": "v2"}],
         "sha256": digest,
@@ -823,7 +825,7 @@ def test_discovery_rejects_unknown_contract_set_hash() -> None:
     digest = hashlib.sha256(bundle).hexdigest()
     index = {
         "catalogVersion": "2",
-        "runtimeVersion": "0.4.4",
+        "runtimeVersion": CAPTURE_RUNTIME_VERSION,
         "contractSetVersion": "2",
         "surfaces": [{"id": "v2"}],
         "sha256": digest,
@@ -850,7 +852,7 @@ def test_discovery_rejects_wrong_content_addressed_href() -> None:
     digest = "a" * 64
     index = {
         "catalogVersion": "2",
-        "runtimeVersion": "0.4.4",
+        "runtimeVersion": CAPTURE_RUNTIME_VERSION,
         "contractSetVersion": "2",
         "surfaces": [{"id": "v2"}],
         "sha256": digest,

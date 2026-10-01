@@ -1,5 +1,6 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { CaptureRuntimeProtocolError } from '@gx-capture/capture-runtime-client';
+import {
+  RUNTIME_VERSION, CaptureRuntimeProtocolError } from '@gx-capture/capture-runtime-client';
 import {
   provideCaptureWorkbenchInputs,
   type RuntimeReady,
@@ -107,7 +108,7 @@ describe('CaptureWorkbenchComponent', () => {
         apiVersion: '2.0',
         schemaVersion: '1',
         service: 'capture-runtime',
-        runtimeVersion: '0.4.4',
+        runtimeVersion: RUNTIME_VERSION,
         contractSetVersion: '2',
         contractSha256: 'a'.repeat(64),
         mode: 'cpu-fallback',
