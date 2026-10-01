@@ -384,31 +384,39 @@ test('Maven updates only the direct project version regardless of indentation', 
   }
 });
 
-test('native lock validation rejects stale local identities without touching external dependencies', (t) => {
-  const root = fixture(t);
-  for (const [path] of NATIVE_RELEASE_LOCKS) {
-    mkdirSync(dirname(join(root, path)), { recursive: true });
-    copyFileSync(join(workspaceRoot, path), join(root, path));
-  }
-  verifyNativeLockVersions(root, RELEASE_VERSION);
-  for (const [path, names] of NATIVE_RELEASE_LOCKS) {
-    const fullPath = join(root, path);
-    const original = readFileSync(fullPath, 'utf8');
-    writeFileSync(
-      fullPath,
-      original.replace(
-        `name = "${names[0]}"\nversion = "${RELEASE_VERSION}"`,
-        `name = "${names[0]}"\nversion = "99.0.0"`,
-      ),
+for (const [lineEnding, newline] of [
+  ['LF', '\n'],
+  ['CRLF', '\r\n'],
+] as const) {
+  test(`native lock validation rejects stale local identities with ${lineEnding} without touching external dependencies`, (t) => {
+    const root = fixture(t);
+    for (const [path] of NATIVE_RELEASE_LOCKS) {
+      mkdirSync(dirname(join(root, path)), { recursive: true });
+      writeFileSync(
+        join(root, path),
+        readFileSync(join(workspaceRoot, path), 'utf8').replace(/\r?\n/gu, newline),
+      );
+    }
+    verifyNativeLockVersions(root, RELEASE_VERSION);
+    for (const [path, names] of NATIVE_RELEASE_LOCKS) {
+      const fullPath = join(root, path);
+      const original = readFileSync(fullPath, 'utf8');
+      const stale = original.replace(
+        `name = "${names[0]}"${newline}version = "${RELEASE_VERSION}"`,
+        `name = "${names[0]}"${newline}version = "99.0.0"`,
+      );
+      assert.notEqual(stale, original, `${path}: fixture must change a local version`);
+      writeFileSync(fullPath, stale);
+      assert.throws(
+        () => verifyNativeLockVersions(root, RELEASE_VERSION),
+        /local release/u,
+      );
+      assert.equal(readFileSync(fullPath, 'utf8'), stale);
+      writeFileSync(fullPath, original);
+    }
+    assert.ok(
+      planReleaseVersion(root).followUp.length > 0,
+      'missing derived artifacts stay pending even with synchronized owners',
     );
-    assert.throws(
-      () => verifyNativeLockVersions(root, RELEASE_VERSION),
-      /local release/u,
-    );
-    writeFileSync(fullPath, original);
-  }
-  assert.ok(
-    planReleaseVersion(root).followUp.length > 0,
-    'missing derived artifacts stay pending even with synchronized owners',
-  );
-});
+  });
+}
