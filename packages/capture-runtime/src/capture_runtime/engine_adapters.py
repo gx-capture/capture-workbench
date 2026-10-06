@@ -28,7 +28,14 @@ from types import ModuleType
 from typing import Any, NoReturn, Protocol
 from uuid import uuid4
 
+from capture_runtime._engine_download_cache import default_cache_root
 from capture_runtime.contracts import OcrProvenanceV3
+from capture_runtime.ocr_alignment import (
+    AlignmentCollector,
+    AlignmentContractError,
+    AlignmentRecord,
+)
+from capture_runtime.ocr_composite_regions import CompositeSplit, plan_composite_splits
 from capture_runtime.ocr_execution_proof import (
     OcrExecutionDeviceProofV1,
     OcrExecutionProofContextV1,
@@ -44,6 +51,18 @@ from capture_runtime.ocr_profile import (
     OcrProfileSpec,
     load_profile_spec,
     validate_model_artifacts,
+)
+from capture_runtime.ocr_reading_order import ReadingPlan, plan_reading_order
+from capture_runtime.ocr_region_lineage import RegionSource, validate_region_sources
+from capture_runtime.ocr_vertical_routing import (
+    PageRoute,
+    VerticalLayoutError,
+    VerticalReaderAssetError,
+    characters,
+    reader_result_reason,
+    route_reason,
+    vertical_reader_directory,
+    vertical_share,
 )
 from capture_runtime.worker_stage_policy import (
     ocr_probe_providers_stage,
@@ -128,6 +147,10 @@ class OcrTextResult:
     # Private and ephemeral.  It is intentionally not projected into any
     # public OCR contract or persisted capture model.
     execution_proof: OcrExecutionDeviceProofV1 | None = None
+    # Internal source/span audit only; worker/projection public schemas are unchanged.
+    layout_evidence: OcrLayoutEvidence | None = None
+    # Internal: which reader produced the page and why. Absent when no reader is installed.
+    page_route: PageRoute | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,6 +178,75 @@ class PaddleNormalizedResult:
 
     text: str
     regions: tuple[OcrRegion, ...]
+    # Original result/region ordinals, retained even when an empty crop is omitted.
+    source_slots: tuple[tuple[int, int], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class OcrLayoutEvidence:
+    reading_plan: ReadingPlan
+    sources: tuple[RegionSource, ...]
+    splits: tuple[CompositeSplit, ...]
+    parent_regions: tuple[OcrRegion, ...]
+    parent_slots: tuple[tuple[int, int], ...]
+
+
+def _compose_aligned_regions(
+    normalized: PaddleNormalizedResult,
+    records: tuple[AlignmentRecord, ...] | None,
+    raster_width: int | None,
+    raster_height: int | None,
+) -> tuple[tuple[OcrRegion, ...], tuple[RegionSource, ...], tuple[CompositeSplit, ...]]:
+    alignments: dict[int, AlignmentRecord] = {}
+    if records is not None:
+        if len({record.record_id for record in records}) != len(records):
+            raise AlignmentContractError("OCR alignment record identity is duplicated.")
+        by_tuple: dict[tuple[Any, ...], list[AlignmentRecord]] = {}
+        for record in records:
+            if (record.raster_width, record.raster_height) != (raster_width, raster_height):
+                raise AlignmentContractError("OCR alignment raster differs from predictor input.")
+            key: tuple[Any, ...] = (
+                record.page_index,
+                record.text.strip(),
+                record.polygon,
+                record.confidence,
+            )
+            by_tuple.setdefault(key, []).append(record)
+        required: dict[tuple[Any, ...], int] = {}
+        for region, slot in zip(normalized.regions, normalized.source_slots, strict=True):
+            key = (slot[0], region.text, region.polygon, region.confidence)
+            required[key] = required.get(key, 0) + 1
+        if any(len(by_tuple.get(key, [])) < count for key, count in required.items()):
+            raise AlignmentContractError("OCR alignment cannot cover every normalized source once.")
+        for index, (region, slot) in enumerate(
+            zip(normalized.regions, normalized.source_slots, strict=True)
+        ):
+            matches = by_tuple.get((slot[0], region.text, region.polygon, region.confidence), [])
+            if not matches:
+                raise AlignmentContractError(
+                    "OCR alignment does not match a normalized source tuple."
+                )
+            # Ambiguous identical observations or trimmed raw text have no unique
+            # supported text-span alignment. Preserve these parents, without guessing.
+            if len(matches) == 1 and matches[0].text == region.text:
+                alignments[index] = matches[0]
+    splits = plan_composite_splits(normalized.regions, alignments)
+    by_parent = {split.source_index: split for split in splits}
+    regions: list[OcrRegion] = []
+    sources: list[RegionSource] = []
+    for index, (parent, slot) in enumerate(
+        zip(normalized.regions, normalized.source_slots, strict=True)
+    ):
+        split = by_parent.get(index)
+        if split is None:
+            regions.append(parent)
+            sources.append(RegionSource(slot, (0, len(parent.text)), len(parent.text)))
+        else:
+            for child in split.children:
+                regions.append(OcrRegion(child.text, child.confidence, child.polygon))
+                sources.append(RegionSource(slot, child.text_span, len(parent.text)))
+    validate_region_sources(normalized.regions, normalized.source_slots, regions, sources)
+    return tuple(regions), tuple(sources), splits
 
 
 class PaddleResultNormalizationError(EngineRuntimeUnavailableError):
@@ -355,6 +447,21 @@ class WhisperTranscriptionResult:
     warning: str | None = None
 
 
+class VerticalReaderLine(Protocol):
+    @property
+    def text(self) -> str: ...
+
+    @property
+    def polygon(self) -> tuple[tuple[float, float], ...]: ...
+
+    @property
+    def confidence(self) -> float: ...
+
+
+class VerticalReader(Protocol):
+    def read_png(self, image_png: bytes) -> tuple[VerticalReaderLine, ...]: ...
+
+
 class OcrAdapter(Protocol):
     def probe(self) -> EngineProbe: ...
 
@@ -545,7 +652,8 @@ def normalize_paddle_results(
     """Strictly normalize one Paddle/PaddleX prediction result sequence."""
 
     regions: list[OcrRegion] = []
-    for result in _paddle_results_sequence(results):
+    source_slots: list[tuple[int, int]] = []
+    for result_index, result in enumerate(_paddle_results_sequence(results)):
         data = _paddle_payload(result)
         texts = _paddle_optional_sequence(data, "rec_texts")
         if texts is None:
@@ -595,9 +703,11 @@ def normalize_paddle_results(
                     polygon=polygon,
                 )
             )
+            source_slots.append((result_index, index))
     return PaddleNormalizedResult(
         text="\n".join(region.text for region in regions),
         regions=tuple(regions),
+        source_slots=tuple(source_slots),
     )
 
 
@@ -1603,6 +1713,7 @@ class WindowsMLOcrAdapter:
         *,
         execution_plan: OcrExecutionPlan | None = None,
         pipeline_factory: Callable[..., Any] | None = None,
+        alignment_collector_factory: Callable[[Any], Any] | None = None,
         provider_resolver: Callable[[], list[str]] | None = None,
         provider_evidence_adapter: OcrExecutionEvidenceAdapter | None = None,
         stage_reporter: Callable[[str], None] | None = None,
@@ -1613,13 +1724,21 @@ class WindowsMLOcrAdapter:
         source_sha256: str | None = None,
         requested_page_scope: tuple[int, ...] | None = None,
         runtime_sha256: str | None = None,
+        vertical_reader_factory: Callable[[], VerticalReader] | None = None,
     ) -> None:
         self.model_dir = model_dir
+        self._vertical_reader_factory = vertical_reader_factory
+        self._vertical_reader: VerticalReader | None = None
         if adapter_map_resolver is not None and adapter_map_lease_factory is not None:
             raise ValueError("OCR adapter map resolver and lease factory are mutually exclusive")
         self.execution_plan = execution_plan
         self.device_id = None if execution_plan is None else execution_plan.dml_device_id
         self._pipeline_factory = pipeline_factory
+        # Injected predictors may omit PaddleX internals. Production canonical
+        # predictors must support collection; attachment errors never fall back.
+        self._alignment_collector_factory = alignment_collector_factory or (
+            AlignmentCollector if pipeline_factory is None else None
+        )
         self._provider_resolver = provider_resolver
         self._adapter_map_resolver = adapter_map_resolver
         self._adapter_map_lease_factory = adapter_map_lease_factory or (
@@ -1882,13 +2001,19 @@ class WindowsMLOcrAdapter:
         self._report_stage("ocr-probe-complete")
         failure_stage = "pipeline-create"
         pipeline: Any | None = None
+        alignment_records: tuple[AlignmentRecord, ...] | None = None
         try:
             self._report_stage("ocr-pipeline-create-start")
             pipeline = self._get_pipeline()
             self._report_stage("ocr-pipeline-create-complete")
             failure_stage = "predict"
             self._report_stage("ocr-predict-start")
-            results = self._predict(pipeline, image_png)
+            if self._alignment_collector_factory is None:
+                results = self._predict(pipeline, image_png)
+            else:
+                with self._alignment_collector_factory(pipeline) as collector:
+                    results = self._predict(pipeline, image_png)
+                alignment_records = collector.records
             self._report_stage("ocr-predict-complete")
             if self._device != "cpu" and not self._execution_evidence_finalized:
                 failure_stage = "provider-evidence"
@@ -1938,34 +2063,72 @@ class WindowsMLOcrAdapter:
                 "a separate CPU-only pipeline retry is disabled: "
                 f"{type(error).__name__}: {error}"
             ) from error
+        result_failure_code = "ocr_provenance_failed"
         try:
             if self._model_digest is None:
                 self._model_digest = _directory_digest(
                     self.model_dir, WINDOWSML_REQUIRED_MODEL_FILES
                 )
             raster_width, raster_height = _png_dimensions(image_png)
+            if alignment_records is not None:
+                result_failure_code = "ocr_composite_split_failed"
+                results = _paddle_results_sequence(results)
+                if len(results) != 1 or any(record.page_index != 0 for record in alignment_records):
+                    raise AlignmentContractError(
+                        "OCR alignment requires the canonical single-PNG, single-result path."
+                    )
             normalized = normalize_paddle_results(
                 results,
                 raster_width=raster_width,
                 raster_height=raster_height,
             )
+            result_failure_code = "ocr_composite_split_failed"
+            layout_regions, sources, splits = _compose_aligned_regions(
+                normalized, alignment_records, raster_width, raster_height
+            )
+            result_failure_code = "ocr_reading_order_failed"
+            reading_plan = plan_reading_order(
+                layout_regions, raw_source_slots=normalized.source_slots if not splits else None
+            )
+            regions = tuple(layout_regions[index] for index in reading_plan.order)
+            ordered_sources = tuple(sources[index] for index in reading_plan.order)
+            validate_region_sources(
+                normalized.regions, normalized.source_slots, regions, ordered_sources
+            )
+            text = reading_plan.text if reading_plan.applied or splits else normalized.text
+            layout_evidence: OcrLayoutEvidence | None = OcrLayoutEvidence(
+                reading_plan,
+                ordered_sources,
+                splits,
+                normalized.regions,
+                normalized.source_slots,
+            )
+            result_failure_code = "ocr_vertical_reader_failed"
+            page_route, vertical_regions = self._read_vertical_page(
+                image_png, normalized.regions, reading_plan
+            )
+            if vertical_regions is not None:
+                regions = vertical_regions
+                text = "\n".join(region.text for region in regions)
+                layout_evidence = None
+            result_failure_code = "ocr_provenance_failed"
             return OcrTextResult(
-                text=normalized.text,
+                text=text,
                 device=self._device,
                 model=self._profile.model,
                 digest=self._model_digest,
                 warning=self._warning,
-                regions=normalized.regions,
+                regions=regions,
                 raster_width=raster_width,
                 raster_height=raster_height,
                 region_confidences=tuple(
-                    region.confidence
-                    for region in normalized.regions
-                    if region.confidence is not None
+                    region.confidence for region in regions if region.confidence is not None
                 ),
                 profile_id=self._profile.profile_id,
                 profile_spec_sha256=self._profile.profile_spec_sha256,
                 execution_proof=self._execution_proof,
+                layout_evidence=layout_evidence,
+                page_route=page_route,
                 provenance=OcrProvenanceV3(
                     status="resolved",
                     engine="windowsml-ocr",
@@ -1989,10 +2152,90 @@ class WindowsMLOcrAdapter:
             cleanup_error = self._abort_provider_evidence(pipeline)
             if cleanup_error is not None:
                 raise OcrInferenceCleanupError(
-                    primary_code="ocr_provenance_failed",
+                    primary_code=result_failure_code,
                     cleanup_error=cleanup_error,
                 ) from error
             raise
+
+    def _read_vertical_page(
+        self,
+        image_png: bytes,
+        first_pass: tuple[OcrRegion, ...],
+        reading_plan: ReadingPlan,
+    ) -> tuple[PageRoute | None, tuple[OcrRegion, ...] | None]:
+        """Read a vertical-dominant page with the whole-page reader, when one is installed.
+
+        Returns the routing record and the reader's regions in its reading order,
+        or no regions when the page stays with the regular pipeline. A reader that
+        cannot be loaded or fails in inference fails the page; a page it cannot
+        lay out, or reads far shorter than the first pass, keeps the first pass.
+        """
+
+        if (
+            self._vertical_reader_factory is None
+            and vertical_reader_directory(self.model_dir) is None
+        ):
+            return None, None
+        measure = vertical_share(first_pass)
+
+        def route(reader: str, reason: str, lines: tuple[OcrRegion, ...] | None) -> PageRoute:
+            return PageRoute(
+                reader=reader,
+                reason=reason,
+                vertical_share=measure.share,
+                tall_boxes=measure.tall_boxes,
+                first_pass_characters=measure.characters,
+                reader_characters=(
+                    None if lines is None else sum(characters(line.text) for line in lines)
+                ),
+                reader_lines=None if lines is None else len(lines),
+                recognizer_device=getattr(self._vertical_reader, "recognizer_device", None),
+                derived_recognizers=getattr(self._vertical_reader, "derived_recognizers", None),
+            )
+
+        reason = route_reason(measure, treated_as_vertical=bool(reading_plan.articles))
+        if reason is not None:
+            return route("regular", reason, None), None
+        if self._vertical_reader is None:
+            self._vertical_reader = self._create_vertical_reader()
+        try:
+            lines = self._vertical_reader.read_png(image_png)
+        except VerticalLayoutError:
+            return route("regular", "reader_layout_failed", None), None
+        regions = tuple(
+            OcrRegion(text, line.confidence, line.polygon)
+            for line in lines
+            if (text := line.text.strip())
+        )
+        reason = reader_result_reason(measure.characters, [region.text for region in regions])
+        if reason is not None:
+            return route("regular", reason, regions), None
+        return route("vertical", "vertical_dominant", regions), regions
+
+    def _create_vertical_reader(self) -> VerticalReader:
+        if self._vertical_reader_factory is not None:
+            return self._vertical_reader_factory()
+        directory = vertical_reader_directory(self.model_dir)
+        if directory is None:
+            raise EngineRuntimeUnavailableError("The vertical reader is not installed.")
+        from capture_runtime.ocr_vertical_reader import (
+            VerticalPageReader,
+            VerticalReaderDeviceError,
+        )
+
+        # The recognizers follow the regular pipeline: its DirectML device when it runs
+        # on one, and no separate CPU retry when that device refuses them.
+        device_id = None if self._device == "cpu" else self.device_id
+        try:
+            return VerticalPageReader(
+                directory, dml_device_id=device_id, cache_root=default_cache_root()
+            )
+        except (VerticalReaderAssetError, VerticalReaderDeviceError) as error:
+            raise EngineRuntimeUnavailableError(str(error)) from error
+        except Exception as error:
+            raise EngineRuntimeUnavailableError(
+                f"The vertical reader could not be loaded: {type(error).__name__}."
+            ) from error
 
     def _providers(self) -> list[str]:
         if self._provider_resolver is not None:

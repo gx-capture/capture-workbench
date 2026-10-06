@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "capture-runtime"
-version = "0.4.4"
+version = "0.5.0"
 description = "Independent local capture sidecar for Capture Workbench."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
@@ -26,6 +26,7 @@ windowsml = [
   "paddlex[ocr-core]==3.7.1",
   "pillow>=11.0.0,<13.0.0",
   "pypdfium2>=5.0.0,<6.0.0",
+  "pyyaml>=6.0.0,<7.0.0",
 ]
 whisper = [
   "ctranslate2==4.8.1",
@@ -71,6 +72,11 @@ tmp_path_retention_policy = "failed"
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+# Third-party sources kept as upstream wrote them; see _vendor/ndlocr_lite/README.md.
+extend-exclude = [
+  "src/capture_runtime/_vendor/ndlocr_lite/ndl_parser.py",
+  "src/capture_runtime/_vendor/ndlocr_lite/reading_order",
+]
 
 [tool.ruff.lint]
 select = ["B", "E", "F", "I", "UP"]
@@ -82,6 +88,13 @@ plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
 module = [
+  "capture_runtime._vendor.ndlocr_lite.ndl_parser",
+  "capture_runtime._vendor.ndlocr_lite.reading_order.*",
+]
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = [
   "PIL.*",
   "ctranslate2.*",
   "faster_whisper.*",
@@ -89,5 +102,6 @@ module = [
   "onnxruntime.*",
   "paddleocr.*",
   "uvicorn.*",
+  "yaml.*",
 ]
 ignore_missing_imports = true

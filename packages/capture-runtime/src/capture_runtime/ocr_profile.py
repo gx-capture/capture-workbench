@@ -16,9 +16,10 @@ from pathlib import Path
 from typing import Any, cast
 
 from capture_runtime.constants import RUNTIME_VERSION
+from capture_runtime.ocr_vertical_routing import vertical_reader_declaration
 
 CANONICAL_PROFILE_PATH = Path(__file__).resolve().parent / "assets" / "ocr-profile.json"
-PROFILE_ALGORITHM = "capture-workbench-ocr-profile-v2"
+PROFILE_ALGORITHM = "capture-workbench-ocr-profile-v3"
 PROFILE_ID_PREFIX = "capture-workbench-ocr"
 MODEL_ARTIFACT_PATHS = (
     "det/inference.onnx",
@@ -207,6 +208,7 @@ def _validate_document(document: object) -> dict[str, Any]:
         "releaseVersion",
         "schemaVersion",
         "artifacts",
+        "verticalReader",
     }
     if set(profile) != expected:
         raise EngineRuntimeUnavailableError(
@@ -215,7 +217,7 @@ def _validate_document(document: object) -> dict[str, Any]:
         )
     if profile["algorithm"] != PROFILE_ALGORITHM:
         raise EngineRuntimeUnavailableError("OCR profile algorithm is not canonical.")
-    if profile["schemaVersion"] != "2":
+    if profile["schemaVersion"] != "3":
         raise EngineRuntimeUnavailableError("OCR profile schema version is unsupported.")
     if profile["releaseVersion"] != RUNTIME_VERSION:
         raise EngineRuntimeUnavailableError("OCR profile release version is unsynchronized.")
@@ -295,6 +297,11 @@ def _validate_document(document: object) -> dict[str, Any]:
             or model.get("source") != expected_source
         ):
             raise EngineRuntimeUnavailableError(f"OCR {key} model identity is invalid.")
+
+    # The whole-page reader of vertical pages: its files, devices and routing rule are
+    # part of the profile identity, because a routed page's text comes from it.
+    if profile["verticalReader"] != vertical_reader_declaration():
+        raise EngineRuntimeUnavailableError("OCR vertical reader declaration drifted.")
 
     paddle = _expect_dict(profile["paddle"], "paddle")
     if paddle != {

@@ -19,7 +19,7 @@ const EXPECTED_CONTRACT_SET_VERSION = '2';
 const EXPECTED_NX_VERSION = '23.1.2';
 const EXPECTED_PROJECTION_SCHEMA_VERSION = '3';
 const EXPECTED_CONTRACT_SET_SHA256 =
-  '03ba27e42e13292162b0f3da12bf3fe065edad12806efdf4bb19e0cc360e42d7';
+  '4c63044191551bf3f7c36d24d08cc6ced25fcc701bf1e06a0fa69626b1e18f1b';
 const EXPECTED_REPOSITORY = 'https://github.com/gx-capture/capture-workbench';
 const EXPECTED_GIT_REPOSITORY =
   'git+https://github.com/gx-capture/capture-workbench.git';
@@ -993,7 +993,7 @@ function addReleaseSourceEntries(
     root,
     profilePath,
     'schemaVersion',
-    '2',
+    '3',
   );
 
   const contractSetPath =

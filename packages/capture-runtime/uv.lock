@@ -169,7 +169,7 @@ wheels = [
 
 [[package]]
 name = "capture-runtime"
-version = "0.4.4"
+version = "0.5.0"
 source = { editable = "." }
 dependencies = [
     { name = "av" },
@@ -193,6 +193,7 @@ windowsml = [
     { name = "paddlex", extra = ["ocr-core"] },
     { name = "pillow" },
     { name = "pypdfium2" },
+    { name = "pyyaml" },
 ]
 
 [package.dev-dependencies]
@@ -222,6 +223,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.12.0,<3.0.0" },
     { name = "pypdfium2", marker = "extra == 'windowsml'", specifier = ">=5.0.0,<6.0.0" },
     { name = "python-multipart", specifier = ">=0.0.22,<1.0.0" },
+    { name = "pyyaml", marker = "extra == 'windowsml'", specifier = ">=6.0.0,<7.0.0" },
     { name = "uvicorn", specifier = ">=0.40.0,<1.0.0" },
 ]
 provides-extras = ["windowsml", "whisper"]

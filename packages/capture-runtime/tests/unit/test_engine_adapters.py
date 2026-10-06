@@ -4,7 +4,7 @@ import asyncio
 import gc
 import hashlib
 import json
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from io import BytesIO
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -509,6 +509,563 @@ def test_windowsml_adapter_hands_paddle_only_profile_derived_kwargs(
     assert received == expected
     assert "targetLanguage" not in received
     assert "ocrLanguage" not in received
+
+
+def test_windowsml_adapter_applies_reading_order_to_text_regions_and_scores(
+    tmp_path: Path,
+) -> None:
+    model_dir = tmp_path / "windowsml"
+    _write_windowsml_models(model_dir)
+    texts = ["文章を読んでください。", "次の欄。", "最初の欄。", "さいしょ", "問1 内容はどれか。"]
+    rectangles = [
+        (0, 0, 300, 20),
+        (190, 70, 210, 230),
+        (230, 70, 250, 230),
+        (247, 85, 256, 122),
+        (0, 280, 300, 300),
+    ]
+    polygons = [[[x0, y0], [x1, y0], [x1, y1], [x0, y1]] for x0, y0, x1, y1 in rectangles]
+    payload = {"rec_texts": texts, "rec_polys": polygons}
+    scores = [0.91, 0.82, 0.73, 0.64, 0.95]
+    payload["rec_scores"] = scores
+
+    class Pipeline:
+        def predict(self, _source: str) -> list[dict[str, object]]:
+            return [{"res": payload}]
+
+    image = BytesIO()
+    Image.new("RGB", (400, 320), "white").save(image, format="PNG")
+    adapter = WindowsMLOcrAdapter(
+        model_dir,
+        execution_plan=_cpu_plan(),
+        pipeline_factory=lambda **_kwargs: Pipeline(),
+        provider_resolver=lambda: ["CPUExecutionProvider"],
+    )
+    result = adapter.extract_png(image.getvalue())
+
+    expected_order = (0, 2, 1, 3, 4)
+    assert result.text == (
+        "文章を読んでください。\n最初の欄。\n次の欄。\n\nさいしょ\n\n問1 内容はどれか。"
+    )
+    assert tuple(region.text for region in result.regions) == tuple(
+        texts[i] for i in expected_order
+    )
+    assert tuple(region.polygon for region in result.regions) == tuple(
+        tuple(tuple(point) for point in polygons[i]) for i in expected_order
+    )
+    assert tuple(region.confidence for region in result.regions) == tuple(
+        scores[i] for i in expected_order
+    )
+    assert result.region_confidences == tuple(scores[i] for i in expected_order)
+    assert result.profile_id == load_profile_spec(model_dir / "pipeline.json").profile_id
+    assert (
+        result.profile_spec_sha256
+        == load_profile_spec(model_dir / "pipeline.json").profile_spec_sha256
+    )
+
+
+def test_windowsml_adapter_horizontal_page_preserves_normalized_identity(tmp_path: Path) -> None:
+    model_dir = tmp_path / "windowsml"
+    _write_windowsml_models(model_dir)
+    # Deliberately not geometric order: all-horizontal identity is the contract.
+    payload = {
+        "rec_texts": [" 下段。 ", "上段。", "右の段。"],
+        "rec_scores": [0.79, 0.91, 0.87],
+        "rec_boxes": [[10, 100, 170, 120], [10, 20, 170, 40], [210, 20, 390, 40]],
+    }
+
+    class Pipeline:
+        def predict(self, _source: str) -> list[dict[str, object]]:
+            return [{"res": payload}]
+
+    image = BytesIO()
+    Image.new("RGB", (400, 200), "white").save(image, format="PNG")
+    result = WindowsMLOcrAdapter(
+        model_dir,
+        execution_plan=_cpu_plan(),
+        pipeline_factory=lambda **_kwargs: Pipeline(),
+        provider_resolver=lambda: ["CPUExecutionProvider"],
+    ).extract_png(image.getvalue())
+    normalized = engine_adapters.normalize_paddle_results(
+        [{"res": payload}], raster_width=400, raster_height=200
+    )
+    assert result.text.encode("utf-8") == normalized.text.encode("utf-8")
+    assert result.regions == normalized.regions
+    assert result.region_confidences == (0.79, 0.91, 0.87)
+
+
+def _composite_adapter_observations():
+    from capture_runtime.ocr_alignment import AlignmentRecord, CtcRun
+
+    rectangles = [(100, 50, 20, 400)] + [
+        (x, y, 20, 180) for y in (50, 270) for x in (140, 180, 220)
+    ]
+    records = []
+    for index, (x, y, w, h) in enumerate(rectangles):
+        text = "甲乙" if index == 0 else f"本文{index}"
+        path = (
+            [(0, 2, 0, ""), (2, 4, 1, "甲"), (4, 16, 0, ""), (16, 18, 2, "乙"), (18, 20, 0, "")]
+            if index == 0
+            else [(0, 20, 1, text)]
+        )
+        runs = []
+        offset = 0
+        for start, end, token_id, token in path:
+            runs.append(
+                CtcRun(start, end, token_id, token, offset, offset + len(token), 0.91, 0.91)
+            )
+            offset += len(token)
+        records.append(
+            AlignmentRecord(
+                detector_slot=index,
+                polygon=((x, y), (x + w, y), (x + w, y + h), (x, y + h)),
+                crop_width=h,
+                crop_height=w,
+                pre_rotation_width=w,
+                pre_rotation_height=h,
+                rotated_90=True,
+                source_to_rect=((1.0, 0.0, -x), (0.0, 1.0, -y), (0.0, 0.0, 1.0)),
+                blank_intervals=((180, 220),) if index == 0 else (),
+                resize_content_width=h * 2,
+                normalized_width=h * 2,
+                batch_width=h * 2,
+                time_steps=20,
+                text=text,
+                confidence=0.91,
+                runs=tuple(runs),
+                record_id=index,
+                raster_width=1000,
+                raster_height=1000,
+            )
+        )
+    payload = {
+        "rec_texts": [r.text for r in records],
+        "rec_scores": [r.confidence for r in records],
+        "rec_polys": [r.polygon for r in records],
+    }
+    return payload, tuple(records)
+
+
+def test_windowsml_adapter_composite_uses_one_prediction_and_retains_parent_span_identity(tmp_path):
+    payload, observations = _composite_adapter_observations()
+    model_dir = tmp_path / "windowsml"
+    _write_windowsml_models(model_dir)
+    events = []
+
+    class Collector:
+        records = observations
+
+        def __init__(self, pipeline):
+            self.pipeline = pipeline
+
+        def __enter__(self):
+            events.append("attach")
+            return self
+
+        def __exit__(self, *args):
+            events.append("restore")
+
+    class Pipeline:
+        def predict(self, _source):
+            events.append("predict")
+            return [{"res": payload}]
+
+    image = BytesIO()
+    Image.new("RGB", (1000, 1000), "white").save(image, format="PNG")
+    result = WindowsMLOcrAdapter(
+        model_dir,
+        execution_plan=_cpu_plan(),
+        pipeline_factory=lambda **_: Pipeline(),
+        provider_resolver=lambda: ["CPUExecutionProvider"],
+        alignment_collector_factory=Collector,
+    ).extract_png(image.getvalue())
+    assert events == ["attach", "predict", "restore"]
+    assert len(result.regions) == 8
+    assert result.text.splitlines() == [r.text for r in result.regions]
+    assert result.region_confidences == tuple(r.confidence for r in result.regions)
+    evidence = result.layout_evidence
+    assert evidence is not None
+    assert len(evidence.splits) == 1
+    parent_children = [
+        (region, source)
+        for region, source in zip(result.regions, evidence.sources, strict=True)
+        if source.raw_slot == (0, 0)
+    ]
+    assert [(r.text, s.text_span) for r, s in parent_children] == [("甲", (0, 1)), ("乙", (1, 2))]
+    for region, source in zip(result.regions, evidence.sources, strict=True):
+        original = observations[source.raw_slot[1]]
+        assert region.text == original.text[slice(*source.text_span)]
+        assert region.confidence == original.confidence
+        if source.raw_slot != (0, 0):
+            assert region.polygon == original.polygon
+
+
+@pytest.mark.parametrize("stage", ["attach", "exit", "mismatch"])
+def test_windowsml_adapter_does_not_turn_alignment_failure_into_unsplit_success(tmp_path, stage):
+    from dataclasses import replace
+
+    payload, observations = _composite_adapter_observations()
+    model_dir = tmp_path / "windowsml"
+    _write_windowsml_models(model_dir)
+    calls = []
+
+    class Collector:
+        records = (
+            (replace(observations[0], text="wrong"), *observations[1:])
+            if stage == "mismatch"
+            else observations
+        )
+
+        def __init__(self, pipeline):
+            pass
+
+        def __enter__(self):
+            if stage == "attach":
+                raise RuntimeError("alignment attach failed")
+            return self
+
+        def __exit__(self, *args):
+            if stage == "exit":
+                raise RuntimeError("alignment exit failed")
+
+    class Pipeline:
+        def predict(self, _source):
+            calls.append("predict")
+            return [{"res": payload}]
+
+    image = BytesIO()
+    Image.new("RGB", (1000, 1000), "white").save(image, format="PNG")
+    adapter = WindowsMLOcrAdapter(
+        model_dir,
+        execution_plan=_cpu_plan(),
+        pipeline_factory=lambda **_: Pipeline(),
+        provider_resolver=lambda: ["CPUExecutionProvider"],
+        alignment_collector_factory=Collector,
+    )
+    with pytest.raises((RuntimeError, ValueError), match="alignment"):
+        adapter.extract_png(image.getvalue())
+    assert len(calls) == (0 if stage == "attach" else 1)
+
+
+def test_composite_matching_cannot_reuse_one_observation_for_duplicate_source_tuples():
+    payload, observations = _composite_adapter_observations()
+    for values in payload.values():
+        values.append(values[0])
+    normalized = engine_adapters.normalize_paddle_results(
+        [{"res": payload}], raster_width=1000, raster_height=1000
+    )
+    with pytest.raises(RuntimeError, match="alignment"):
+        engine_adapters._compose_aligned_regions(normalized, observations, 1000, 1000)
+
+
+def test_composite_matching_ambiguous_equal_observations_preserves_whole_parents():
+    from dataclasses import replace
+
+    payload, observations = _composite_adapter_observations()
+    for values in payload.values():
+        values.append(values[0])
+    records = (*observations, replace(observations[0], record_id=99, detector_slot=7))
+    normalized = engine_adapters.normalize_paddle_results(
+        [{"res": payload}], raster_width=1000, raster_height=1000
+    )
+    regions, sources, splits = engine_adapters._compose_aligned_regions(
+        normalized, records, 1000, 1000
+    )
+    assert not splits
+    assert regions == normalized.regions
+    assert tuple(source.raw_slot for source in sources) == normalized.source_slots
+
+
+@dataclass(frozen=True)
+class _ReaderLine:
+    text: str
+    polygon: tuple[tuple[float, float], ...]
+    confidence: float
+
+
+class _Reader:
+    recognizer_device = "cpu"
+
+    def __init__(self, lines: tuple[_ReaderLine, ...] | Exception) -> None:
+        self.lines = lines
+        self.calls = 0
+
+    def read_png(self, _image_png: bytes) -> tuple[_ReaderLine, ...]:
+        self.calls += 1
+        if isinstance(self.lines, Exception):
+            raise self.lines
+        return self.lines
+
+
+def _rectangle(x0: float, y0: float, x1: float, y1: float) -> tuple[tuple[float, float], ...]:
+    return ((x0, y0), (x1, y0), (x1, y1), (x0, y1))
+
+
+def _vertical_page_adapter(
+    tmp_path: Path, reader: _Reader | None, *, horizontal_lines: int = 0
+) -> tuple[WindowsMLOcrAdapter, bytes, list[str], list[int]]:
+    model_dir = tmp_path / "windowsml"
+    _write_windowsml_models(model_dir)
+    texts = [f"縦書きの本文の第{index}行です。" for index in range(5)]
+    rectangles = [(360 - 40 * index, 20, 380 - 40 * index, 300) for index in range(5)]
+    texts += [f"横書きの設問文の第{index}行です。" for index in range(horizontal_lines)]
+    rectangles += [
+        (20, 320 + 30 * index, 380, 344 + 30 * index) for index in range(horizontal_lines)
+    ]
+    payload = {
+        "rec_texts": texts,
+        "rec_polys": [[list(point) for point in _rectangle(*item)] for item in rectangles],
+        "rec_scores": [0.9] * len(texts),
+    }
+
+    class Pipeline:
+        def predict(self, _source: str) -> list[dict[str, object]]:
+            return [{"res": payload}]
+
+    created: list[int] = []
+
+    def factory() -> _Reader:
+        assert reader is not None
+        created.append(1)
+        return reader
+
+    image = BytesIO()
+    Image.new("RGB", (400, 480), "white").save(image, format="PNG")
+    adapter = WindowsMLOcrAdapter(
+        model_dir,
+        execution_plan=_cpu_plan(),
+        pipeline_factory=lambda **_kwargs: Pipeline(),
+        provider_resolver=lambda: ["CPUExecutionProvider"],
+        vertical_reader_factory=None if reader is None else factory,
+    )
+    return adapter, image.getvalue(), texts, created
+
+
+_READER_LINES = (
+    _ReaderLine("縦書きの本文の第0行です。", _rectangle(358, 18, 382, 302), 0.97),
+    _ReaderLine("  ", _rectangle(340, 18, 350, 30), 0.2),
+    _ReaderLine("縦書きの本文の第1行です。", _rectangle(318, 18, 342, 302), 0.96),
+    _ReaderLine(
+        "別の読み取り器が読んだ残りの三行をまとめた行です。", _rectangle(198, 18, 302, 302), 0.95
+    ),
+)
+
+
+def test_vertical_dominant_page_is_read_by_the_vertical_reader(tmp_path: Path) -> None:
+    reader = _Reader(_READER_LINES)
+    adapter, png, _texts, created = _vertical_page_adapter(tmp_path, reader)
+
+    result = adapter.extract_png(png)
+    again = adapter.extract_png(png)
+
+    kept = [line for line in _READER_LINES if line.text.strip()]
+    assert result.text == "\n".join(line.text for line in kept)
+    assert tuple(region.text for region in result.regions) == tuple(line.text for line in kept)
+    assert tuple(region.polygon for region in result.regions) == tuple(
+        line.polygon for line in kept
+    )
+    assert result.region_confidences == tuple(line.confidence for line in kept)
+    assert result.layout_evidence is None
+    assert result.page_route is not None
+    assert (result.page_route.reader, result.page_route.reason) == ("vertical", "vertical_dominant")
+    assert result.page_route.vertical_share == 1.0
+    assert result.page_route.reader_lines == 3
+    assert result.page_route.recognizer_device == "cpu"
+    assert again.text == result.text
+    assert (len(created), reader.calls) == (1, 2)
+
+
+def test_page_without_an_installed_vertical_reader_is_unchanged(tmp_path: Path) -> None:
+    adapter, png, texts, _created = _vertical_page_adapter(tmp_path, None)
+
+    result = adapter.extract_png(png)
+
+    assert result.page_route is None
+    assert result.text == "\n".join(texts)
+    assert result.layout_evidence is not None
+
+
+def test_mixed_page_stays_with_the_regular_pipeline(tmp_path: Path) -> None:
+    reader = _Reader(_READER_LINES)
+    adapter, png, texts, created = _vertical_page_adapter(tmp_path, reader, horizontal_lines=4)
+    plain, _png, _texts, _created = _vertical_page_adapter(
+        tmp_path / "plain", None, horizontal_lines=4
+    )
+
+    result = adapter.extract_png(png)
+
+    assert result.page_route is not None
+    assert (result.page_route.reader, result.page_route.reason) == ("regular", "mixed_directions")
+    assert 0.5 < result.page_route.vertical_share < 0.8
+    assert (created, reader.calls) == ([], 0)
+    expected = plain.extract_png(png)
+    assert (result.text, result.regions) == (expected.text, expected.regions)
+    assert sorted(region.text for region in result.regions) == sorted(texts)
+
+
+@pytest.mark.parametrize(
+    ("outcome", "reason"),
+    [
+        (
+            (_ReaderLine("短い", _rectangle(358, 18, 382, 60), 0.9),),
+            "reader_returned_far_less_text",
+        ),
+        ((), "reader_returned_no_text"),
+        (engine_adapters.VerticalLayoutError("no order"), "reader_layout_failed"),
+    ],
+)
+def test_first_pass_is_kept_when_the_vertical_reader_has_no_usable_result(
+    tmp_path: Path, outcome: tuple[_ReaderLine, ...] | Exception, reason: str
+) -> None:
+    reader = _Reader(outcome)
+    adapter, png, texts, _created = _vertical_page_adapter(tmp_path, reader)
+
+    result = adapter.extract_png(png)
+
+    assert result.page_route is not None
+    assert (result.page_route.reader, result.page_route.reason) == ("regular", reason)
+    assert result.text == "\n".join(texts)
+    assert result.layout_evidence is not None
+    assert reader.calls == 1
+
+
+def test_vertical_reader_inference_failure_fails_the_page(tmp_path: Path) -> None:
+    adapter, png, _texts, _created = _vertical_page_adapter(
+        tmp_path, _Reader(RuntimeError("session failed"))
+    )
+
+    with pytest.raises(RuntimeError, match="session failed"):
+        adapter.extract_png(png)
+
+
+@pytest.mark.parametrize(
+    ("device", "device_id", "expected"),
+    [("cpu", None, None), ("cpu", 1, None), ("windowsml-dml", 1, 1), ("windowsml-dml", 0, 0)],
+)
+def test_vertical_reader_recognizers_follow_the_regular_pipeline_device(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    device: str,
+    device_id: int | None,
+    expected: int | None,
+) -> None:
+    reader_module = pytest.importorskip(
+        "capture_runtime.ocr_vertical_reader",
+        reason="The vertical reader requires the WindowsML extras.",
+    )
+    adapter, _png, _texts, _created = _vertical_page_adapter(tmp_path, None)
+    (tmp_path / "windowsml" / "vertical").mkdir()
+    seen: list[tuple[Path, int | None, Path | None]] = []
+
+    class Loaded:
+        def __init__(
+            self,
+            directory: Path,
+            *,
+            dml_device_id: int | None = None,
+            cache_root: Path | None = None,
+        ) -> None:
+            seen.append((directory, dml_device_id, cache_root))
+
+    monkeypatch.setattr(reader_module, "VerticalPageReader", Loaded)
+    monkeypatch.setenv("CAPTURE_ENGINE_CACHE_DIR", str(tmp_path / "cache"))
+    adapter._device = device
+    adapter.device_id = device_id
+
+    assert isinstance(adapter._create_vertical_reader(), Loaded)
+    assert seen == [(tmp_path / "windowsml" / "vertical", expected, tmp_path / "cache")]
+
+
+def test_recognizer_refused_by_directml_fails_the_page(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reader_module = pytest.importorskip(
+        "capture_runtime.ocr_vertical_reader",
+        reason="The vertical reader requires the WindowsML extras.",
+    )
+    adapter, png, _texts, _created = _vertical_page_adapter(tmp_path, None)
+    (tmp_path / "windowsml" / "vertical").mkdir()
+
+    def refuse(_directory: Path, **_kwargs: object) -> object:
+        raise reader_module.VerticalReaderDeviceError("not placed on DirectML")
+
+    monkeypatch.setattr(reader_module, "VerticalPageReader", refuse)
+
+    with pytest.raises(EngineRuntimeUnavailableError, match="not placed on DirectML"):
+        adapter.extract_png(png)
+
+
+def test_vertical_reader_that_cannot_be_loaded_fails_the_page_with_a_runtime_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reader_module = pytest.importorskip(
+        "capture_runtime.ocr_vertical_reader",
+        reason="The vertical reader requires the WindowsML extras.",
+    )
+    adapter, png, _texts, _created = _vertical_page_adapter(tmp_path, None)
+    (tmp_path / "windowsml" / "vertical").mkdir()
+
+    def broken(_directory: Path, **_kwargs: object) -> object:
+        raise KeyError("names")
+
+    monkeypatch.setattr(reader_module, "VerticalPageReader", broken)
+
+    with pytest.raises(EngineRuntimeUnavailableError, match="could not be loaded: KeyError"):
+        adapter.extract_png(png)
+
+
+def test_altered_vertical_reader_files_fail_the_page(tmp_path: Path) -> None:
+    pytest.importorskip("numpy", reason="The vertical reader requires the WindowsML extras.")
+    adapter, png, _texts, _created = _vertical_page_adapter(tmp_path, None)
+    (tmp_path / "windowsml" / "vertical").mkdir()
+
+    with pytest.raises(
+        EngineRuntimeUnavailableError, match="Vertical reader file is missing or altered"
+    ):
+        adapter.extract_png(png)
+
+
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+def test_windowsml_adapter_reading_order_failure_does_not_return_original_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cleanup_fails: bool
+) -> None:
+    model_dir = tmp_path / "windowsml"
+    _write_windowsml_models(model_dir)
+
+    class Pipeline:
+        def predict(self, _source: str) -> list[dict[str, object]]:
+            return [
+                {
+                    "res": {
+                        "rec_texts": ["valid"],
+                        "rec_scores": [0.9],
+                        "rec_boxes": [[0, 0, 80, 20]],
+                    }
+                }
+            ]
+
+    def broken_policy(_regions: object, **_kwargs: object) -> object:
+        raise RuntimeError("reading-order invariant failed")
+
+    monkeypatch.setattr(engine_adapters, "plan_reading_order", broken_policy)
+    adapter = WindowsMLOcrAdapter(
+        model_dir,
+        execution_plan=_cpu_plan(),
+        pipeline_factory=lambda **_kwargs: Pipeline(),
+        provider_resolver=lambda: ["CPUExecutionProvider"],
+    )
+    if cleanup_fails:
+        cleanup_error = engine_adapters.OcrExecutionEvidenceError([], cleanup_verified=False)
+        monkeypatch.setattr(adapter, "_abort_provider_evidence", lambda _pipeline: cleanup_error)
+        with pytest.raises(engine_adapters.OcrInferenceCleanupError) as raised:
+            adapter.extract_png(b"fake-image-for-pipeline")
+        assert raised.value.primary_code == "ocr_reading_order_failed"
+        assert isinstance(raised.value.__cause__, RuntimeError)
+        assert str(raised.value.__cause__) == "reading-order invariant failed"
+        assert not raised.value.cleanup_verified
+    else:
+        with pytest.raises(RuntimeError, match="reading-order invariant failed"):
+            adapter.extract_png(b"fake-image-for-pipeline")
 
 
 def test_paddle_adapter_preserves_predictor_polygon_order_and_coordinates(

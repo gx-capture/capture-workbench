@@ -693,7 +693,10 @@ function assertTemporaryRoot(root: string): void {
 
 export async function runPdfOcrE2e(
   options: RunPdfOcrE2eOptions,
-): Promise<void> {
+): Promise<{
+  readonly raw: PdfOcrRawCapture;
+  readonly ocrProjection: OcrProjectionIdentity;
+}> {
   if (
     (options.packageKind === 'local-package' &&
       options.identityMode !== 'local-probe') ||
@@ -941,6 +944,9 @@ export async function runPdfOcrE2e(
     process.stdout.write(
       `Real runtime PDF OCR E2E evidence: ${options.evidencePath}\n`,
     );
+    // Local acceptance callers can check full text and geometry after the shared
+    // transport/identity journey. The returned observations contain no credentials.
+    return { raw, ocrProjection };
   } finally {
     try {
       if (captureId && port !== undefined) {

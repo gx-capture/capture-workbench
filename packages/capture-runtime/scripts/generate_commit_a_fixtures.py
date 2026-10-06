@@ -7,7 +7,7 @@ import zlib
 from pathlib import Path
 from typing import Final
 
-RELEASE_VERSION: Final = "0.4.4"
+RELEASE_VERSION: Final = "0.5.0"
 DET_ONNX_BYTES: Final = 62032837
 DET_ONNX_SHA256: Final = "eb13b44b25bb36f89528b68720af8a61d9cf381176107f465db1757b65d086e1"
 DET_YAML_BYTES: Final = 886
@@ -23,6 +23,79 @@ REC_REVISION: Final = "50c7eacafc52fa7bcf4194e8cd08e46f8558504b"
 PADDLEOCR_DICT_REVISION: Final = "b03f46425e8ff4442b268ce449e3eef758146cd4"
 WHISPER_PRIMARY_REVISION: Final = "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf"
 WHISPER_FALLBACK_REVISION: Final = "536b0662742c02347bc0e980a01041f333bce120"
+NDLOCR_LITE_REPOSITORY: Final = "ndl-lab/ndlocr-lite"
+NDLOCR_LITE_REVISION: Final = "636d1cfeb1331f89f4048f416e49e23a09a714b5"
+# Kept equal to capture_runtime.ocr_vertical_routing.vertical_reader_declaration();
+# this script runs without the runtime package, and a unit test compares the two.
+VERTICAL_READER: Final[dict[str, object]] = {
+    "artifacts": [
+        {
+            "bytes": 42434,
+            "path": "vertical/NDLmoji.yaml",
+            "sha256": "f6ad5a2de444b495155866af811cf1a98309dcae3225db802767ea531a2dc529",
+        },
+        {
+            "bytes": 40256763,
+            "path": "vertical/deim-s-1024x1024.onnx",
+            "sha256": "c156ce0c4e704bc3bf7e4016d0a87b949cffa8b3724f4b4cc696b8284c3c7373",
+        },
+        {
+            "bytes": 299,
+            "path": "vertical/ndl.yaml",
+            "sha256": "0c2a6a184dd322375b76f2ce3842f8ac555d53edad0ab63655c013f4c471c5a0",
+        },
+        {
+            "bytes": 36457393,
+            "path": "vertical/parseq-ndl-24x256-30-tiny-189epoch-tegaki3-r8data-202604.onnx",
+            "sha256": "9e651bae4c1a4d5254da1127e86e82e21ef62d5339b37e62d4a3d3d30831772d",
+        },
+        {
+            "bytes": 37808553,
+            "path": "vertical/parseq-ndl-24x384-50-tiny-300epoch-tegaki3-r8data-202604.onnx",
+            "sha256": "49cea9db4552f19eb05c8ee202fcf74714977749b2f4c9376b127fde41b07a99",
+        },
+        {
+            "bytes": 42588187,
+            "path": "vertical/parseq-ndl-24x768-100-tiny-153epoch-tegaki3-r8data-202604.onnx",
+            "sha256": "06462b0dbd5b0b8508545c8c3d485cf20dbf4ffa652fe145e69c9e7457080602",
+        },
+    ],
+    "derivedRecognizers": {
+        "artifacts": [
+            {
+                "bytes": 35793563,
+                "sha256": "5730246a2b34af0f468a3ff425ac9ce379a4b3d7971574be0c4c7705f0e2da83",
+                "source": "vertical/parseq-ndl-24x256-30-tiny-189epoch-tegaki3-r8data-202604.onnx",
+            },
+            {
+                "bytes": 36841180,
+                "sha256": "1fb8f416d3055fc25cd21623343b3d1dbcf92e57e64feafe1fac53aef81661fc",
+                "source": "vertical/parseq-ndl-24x384-50-tiny-300epoch-tegaki3-r8data-202604.onnx",
+            },
+            {
+                "bytes": 40857625,
+                "sha256": "8ee4578450853d5ea02e55b8aa20f052bca528b59ca7727e61d5f027a4cf7104",
+                "source": "vertical/parseq-ndl-24x768-100-tiny-153epoch-tegaki3-r8data-202604.onnx",
+            },
+        ],
+        "level": "extended",
+        "onnxruntime": "1.24.4",
+        "provider": "CPUExecutionProvider",
+        "storage": "engine-cache",
+    },
+    "detectorDevice": "cpu",
+    "license": "CC-BY-4.0",
+    "modelDir": "vertical",
+    "recognizerDevice": "regular-pipeline-device",
+    "revision": NDLOCR_LITE_REVISION,
+    "routing": {
+        "minimumReaderCharacterShare": 0.5,
+        "minimumTallBoxes": 3,
+        "minimumVerticalCharacterShare": 0.8,
+        "tallBoxAspect": 2.0,
+    },
+    "source": NDLOCR_LITE_REPOSITORY,
+}
 DET_REPOSITORY: Final = "PaddlePaddle/PP-OCRv6_medium_det_onnx"
 REC_REPOSITORY: Final = "PaddlePaddle/PP-OCRv6_medium_rec_onnx"
 OCR_TEXT: Final = "CAPTURE OCR FIXTURE"
@@ -185,7 +258,7 @@ def _license_text() -> bytes:
 
 def _notice_text() -> bytes:
     return (
-        b"Capture Workbench v0.4.4 Commit A notice\n\n"
+        b"Capture Workbench v0.5.0 Commit A notice\n\n"
         b"These files contain no model weights. The fixed OCR\n"
         b"phrase is intentionally limited to `CAPTURE OCR FIXTURE`. PaddleOCR\n"
         b"and model-revision metadata identify user-directed upstream inputs; their\n"
@@ -252,6 +325,7 @@ def _provenance(
             "algorithm": "capture-workbench-commit-a-fixtures-v1",
             "files": files,
             "fixedUpstreamRevisions": {
+                "ndlocrLite": NDLOCR_LITE_REVISION,
                 "paddleocrDictionary": PADDLEOCR_DICT_REVISION,
                 "paddleocrDetection": DET_REVISION,
                 "paddleocrRecognition": REC_REVISION,
@@ -262,6 +336,7 @@ def _provenance(
             "licensePath": "licenses/LICENSE.txt",
             "noticePath": "licenses/NOTICE.txt",
             "sourceRepositories": {
+                "ndlocrLite": NDLOCR_LITE_REPOSITORY,
                 "paddleocrDetection": DET_REPOSITORY,
                 "paddleocrRecognition": REC_REPOSITORY,
             },
@@ -277,7 +352,7 @@ def build_files() -> dict[str, bytes]:
     pdf = render_image_only_pdf(rgb)
     pipeline = _canonical_json(
         {
-            "algorithm": "capture-workbench-ocr-profile-v2",
+            "algorithm": "capture-workbench-ocr-profile-v3",
             "artifacts": [
                 {
                     "bytes": DET_ONNX_BYTES,
@@ -362,7 +437,8 @@ def build_files() -> dict[str, bytes]:
                 },
             },
             "releaseVersion": RELEASE_VERSION,
-            "schemaVersion": "2",
+            "schemaVersion": "3",
+            "verticalReader": VERTICAL_READER,
         }
     )
     license_bytes = _license_text()

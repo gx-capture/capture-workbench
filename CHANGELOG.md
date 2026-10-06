@@ -2,6 +2,51 @@
 
 ## Unreleased
 
+### Runtime
+
+- Vertical Japanese OCR now assembles detected article columns from right to
+  left and places separately detected ruby after its article, while preserving
+  unchanged regions' recognized strings, polygons and scores. Horizontal-only pages
+  without furigana retain their previous output.
+- A second reader for vertical pages. The OCR engine now also installs the
+  NDLOCR-Lite models (National Diet Library, Japan; CC BY 4.0; about 150 MiB more).
+  A page that is vertical throughout is read as a whole by that reader, with its
+  recognizers on the DirectML device of the regular pipeline when there is one, and
+  its lines, reading order and scores are returned in the existing page and box
+  fields. Other pages keep the regular pipeline. A routed page takes several
+  seconds longer; the first one on a machine also prepares the recognizers once in
+  the shared engine cache.
+- The OCR profile declares the vertical reader, so the profile id changes
+  (`capture-workbench-ocr-1c6be4a3cebc2b21`, algorithm
+  `capture-workbench-ocr-profile-v3`).
+- On horizontal Japanese pages, furigana lines are no longer interleaved with the
+  text they annotate: the readings of each block of lines follow that block,
+  separated by blank lines. Regions, polygons and scores are unchanged; only
+  their order and the page text change, and only on pages with furigana.
+- A detector box spanning two body bands can be split when neighboring columns,
+  raster whitespace and the same recognition pass agree on the text boundary.
+  Child regions retain exact source substrings and inherited scores, with checked
+  polygon partitions and private parent/span lineage.
+- Vertical reading order also covers scans of two facing pages that lean
+  differently (each page is read in its own frame instead of keeping detector
+  order), narrow columns of small type beside regular ones, long source lines aligned to the bottom
+  of an article, ruby boxes padded into their owner column, and a corner page
+  header or page number beside a single article.
+- A page whose tall boxes mostly hold digits or Latin text (a sideways scan of a
+  horizontal page), or only low-score marks such as chart axes, is no longer
+  treated as vertical and keeps its previous output.
+- On a page of horizontal questions around a boxed vertical passage, the option
+  numbers above the passage stay with their question instead of being read as the
+  passage label, and a page number in digits under a column is no longer read as
+  body text.
+- Stacked bands of a page are read top to bottom even when their outlines overlap
+  by a few pixels and a page number stands beside them.
+- Known limitation: on dense periodical scans the columns inside a band are ordered,
+  but the order of pages, bands, headings and page numbers is not reliable (narrow
+  gutters, borders, centre titles and detector boxes spanning two bands).
+- This work is unreleased and unversioned: the OCR model, profile and public
+  page/box fields are unchanged.
+
 ### Compatibility policy
 
 Capture Workbench follows an explicit 0.x compatibility policy:

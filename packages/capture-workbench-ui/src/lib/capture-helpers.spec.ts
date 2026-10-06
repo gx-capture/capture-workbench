@@ -158,7 +158,7 @@ describe('capture helpers', () => {
     };
 
     expect(() => assertCaptureRuntimeCompatible(ready)).toThrow(
-      'incompatible with client runtime minor 4',
+      'incompatible with client runtime minor 5',
     );
   });
 
@@ -166,7 +166,7 @@ describe('capture helpers', () => {
     const ready: RuntimeReady = {
       ready: true,
       service: 'capture-runtime',
-      runtimeVersion: '0.4.8',
+      runtimeVersion: '0.5.8',
       apiVersion: '2.0',
       captureDocumentSchemaVersion: '2',
       capabilities: {

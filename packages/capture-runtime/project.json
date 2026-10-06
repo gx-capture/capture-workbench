@@ -9,6 +9,34 @@
     "type:backend"
   ],
   "targets": {
+    "test-ocr-benchmark": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "inputs": ["default"],
+      "options": {
+        "cwd": "packages/capture-runtime",
+        "command": "uv run --python 3.12 pytest tests/unit/test_ocr_benchmark.py"
+      }
+    },
+    "ocr-benchmark": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "metadata": {
+        "description": "Opt-in local vertical OCR evidence runner; never publishes or changes the product profile."
+      },
+      "options": {
+        "cwd": "packages/capture-runtime",
+        "command": "uv run --no-sync --python 3.12 python scripts/ocr_benchmark.py"
+      }
+    },
+    "ocr-benchmark-render": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "options": {
+        "cwd": "packages/capture-runtime",
+        "command": "node scripts/ocr-benchmark-render.mjs"
+      }
+    },
     "serve": {
       "continuous": true,
       "executor": "nx:run-commands",
