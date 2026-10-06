@@ -802,11 +802,16 @@ def _rectangle(x0: float, y0: float, x1: float, y1: float) -> tuple[tuple[float,
 
 
 def _vertical_page_adapter(
-    tmp_path: Path, reader: _Reader | None, *, horizontal_lines: int = 0
+    tmp_path: Path,
+    reader: _Reader | None,
+    *,
+    horizontal_lines: int = 0,
+    column_text: str = "縦書きの本文の第{index}行です。",
+    score: float = 0.9,
 ) -> tuple[WindowsMLOcrAdapter, bytes, list[str], list[int]]:
     model_dir = tmp_path / "windowsml"
     _write_windowsml_models(model_dir)
-    texts = [f"縦書きの本文の第{index}行です。" for index in range(5)]
+    texts = [column_text.format(index=index) for index in range(5)]
     rectangles = [(360 - 40 * index, 20, 380 - 40 * index, 300) for index in range(5)]
     texts += [f"横書きの設問文の第{index}行です。" for index in range(horizontal_lines)]
     rectangles += [
@@ -815,7 +820,7 @@ def _vertical_page_adapter(
     payload = {
         "rec_texts": texts,
         "rec_polys": [[list(point) for point in _rectangle(*item)] for item in rectangles],
-        "rec_scores": [0.9] * len(texts),
+        "rec_scores": [score] * len(texts),
     }
 
     class Pipeline:
@@ -873,6 +878,57 @@ def test_vertical_dominant_page_is_read_by_the_vertical_reader(tmp_path: Path) -
     assert result.page_route.recognizer_device == "cpu"
     assert again.text == result.text
     assert (len(created), reader.calls) == (1, 2)
+
+
+_CHINESE_COLUMN = "本件原告主張被告未依約給付工資第{index}項"
+
+
+def test_vertical_page_without_kana_stays_with_the_regular_pipeline(tmp_path: Path) -> None:
+    # The reader is a Japanese model; a confidently read page with no kana is not Japanese.
+    reader = _Reader(_READER_LINES)
+    adapter, png, texts, created = _vertical_page_adapter(
+        tmp_path, reader, column_text=_CHINESE_COLUMN
+    )
+
+    result = adapter.extract_png(png)
+
+    assert result.page_route is not None
+    assert (result.page_route.reader, result.page_route.reason) == ("regular", "no_kana")
+    assert result.page_route.kana_share == 0.0
+    assert (created, reader.calls) == ([], 0)
+    assert sorted(region.text for region in result.regions) == sorted(texts)
+    assert result.layout_evidence is not None
+
+
+@pytest.mark.parametrize(
+    ("reader_text", "expected"),
+    [
+        ("漢字カタカナ交リノ手書キ講義録ノ一行デアル", ("vertical", "vertical_dominant")),
+        ("本件原告主張被告未依約給付工資及加班費等語", ("regular", "reader_text_without_kana")),
+    ],
+)
+def test_unsure_first_pass_without_kana_is_settled_by_the_reader_text(
+    tmp_path: Path, reader_text: str, expected: tuple[str, str]
+) -> None:
+    # Handwriting the first pass could not read has no kana in its text either.
+    lines = tuple(
+        _ReaderLine(reader_text, _rectangle(358 - 40 * index, 18, 382 - 40 * index, 302), 0.9)
+        for index in range(5)
+    )
+    reader = _Reader(lines)
+    adapter, png, texts, _created = _vertical_page_adapter(
+        tmp_path, reader, column_text=_CHINESE_COLUMN, score=0.6
+    )
+
+    result = adapter.extract_png(png)
+
+    assert result.page_route is not None
+    assert (result.page_route.reader, result.page_route.reason) == expected
+    assert reader.calls == 1
+    if expected[0] == "vertical":
+        assert [region.text for region in result.regions] == [reader_text] * 5
+    else:
+        assert sorted(region.text for region in result.regions) == sorted(texts)
 
 
 def test_page_without_an_installed_vertical_reader_is_unchanged(tmp_path: Path) -> None:

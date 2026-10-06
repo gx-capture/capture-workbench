@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -23,6 +24,15 @@ VERTICAL_SHARE_THRESHOLD = 0.8
 # A box is tall when its height is at least this many times its width.
 TALL_BOX_ASPECT = 2.0
 MIN_TALL_BOXES = 3
+# The reader is a Japanese model. A page counts as Japanese when at least this share
+# of its characters is kana; vertical Chinese has none and is read better by the
+# regular pipeline.
+MIN_KANA_SHARE = 0.05
+# A first pass this sure of its text (character-weighted mean score) that found no
+# kana settles that the page is not Japanese. A less sure one, such as handwriting
+# it could not read, leaves the question to the reader's own text.
+CONFIDENT_FIRST_PASS = 0.85
+_KANA = re.compile(r"[\u3041-\u3096\u30a1-\u30fa]")
 # The second reader's result is kept only if it has at least this share of the
 # first pass's characters; a far shorter result means it missed the page.
 MIN_READER_CHARACTER_SHARE = 0.5
@@ -100,6 +110,9 @@ class VerticalShare:
     share: float
     tall_boxes: int
     characters: int
+    kana_share: float = 0.0
+    # Character-weighted mean score of the first pass; None when it reports no scores.
+    confidence: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,6 +124,7 @@ class PageRoute:
     vertical_share: float
     tall_boxes: int
     first_pass_characters: int
+    kana_share: float = 0.0
     reader_characters: int | None = None
     reader_lines: int | None = None
     # Where the reader's recognizers ran; its line detector always runs on the CPU.
@@ -150,6 +164,8 @@ def vertical_reader_declaration() -> dict[str, object]:
         "recognizerDevice": "regular-pipeline-device",
         "revision": UPSTREAM_COMMIT,
         "routing": {
+            "confidentFirstPass": CONFIDENT_FIRST_PASS,
+            "minimumKanaCharacterShare": MIN_KANA_SHARE,
             "minimumReaderCharacterShare": MIN_READER_CHARACTER_SHARE,
             "minimumTallBoxes": MIN_TALL_BOXES,
             "minimumVerticalCharacterShare": VERTICAL_SHARE_THRESHOLD,
@@ -261,11 +277,23 @@ def characters(text: str) -> int:
     return len("".join(text.split()))
 
 
+def kana_share(texts: Sequence[str]) -> float:
+    """Share of kana among the characters of the given texts, whitespace aside."""
+
+    joined = "".join("".join(text.split()) for text in texts)
+    return len(_KANA.findall(joined)) / len(joined) if joined else 0.0
+
+
 def vertical_share(regions: Sequence[_Region]) -> VerticalShare:
-    total = tall = boxes = 0
+    total = tall = boxes = scored = 0
+    weighted = 0.0
     for region in regions:
         count = characters(region.text)
         total += count
+        score = getattr(region, "confidence", None)
+        if score is not None:
+            weighted += score * count
+            scored += count
         if len(region.polygon) < 3 or count < 2:
             continue
         xs = [point[0] for point in region.polygon]
@@ -273,7 +301,13 @@ def vertical_share(regions: Sequence[_Region]) -> VerticalShare:
         if max(ys) - min(ys) >= TALL_BOX_ASPECT * (max(xs) - min(xs)):
             tall += count
             boxes += 1
-    return VerticalShare(tall / total if total else 0.0, boxes, total)
+    return VerticalShare(
+        tall / total if total else 0.0,
+        boxes,
+        total,
+        kana_share([region.text for region in regions]),
+        weighted / scored if scored else None,
+    )
 
 
 def route_reason(measure: VerticalShare, *, treated_as_vertical: bool) -> str | None:
@@ -285,6 +319,12 @@ def route_reason(measure: VerticalShare, *, treated_as_vertical: bool) -> str | 
         return "few_tall_boxes"
     if measure.share < VERTICAL_SHARE_THRESHOLD:
         return "mixed_directions"
+    if (
+        measure.kana_share < MIN_KANA_SHARE
+        and measure.confidence is not None
+        and measure.confidence >= CONFIDENT_FIRST_PASS
+    ):
+        return "no_kana"
     return None
 
 
@@ -296,4 +336,6 @@ def reader_result_reason(first_pass_characters: int, reader_texts: Sequence[str]
         return "reader_returned_no_text"
     if count < MIN_READER_CHARACTER_SHARE * first_pass_characters:
         return "reader_returned_far_less_text"
+    if kana_share(reader_texts) < MIN_KANA_SHARE:
+        return "reader_text_without_kana"
     return None

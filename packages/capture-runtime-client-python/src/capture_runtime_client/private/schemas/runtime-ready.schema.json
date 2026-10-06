@@ -47,8 +47,8 @@
           "type": "string"
         },
         "runtimeVersion": {
-          "const": "0.5.0",
-          "default": "0.5.0",
+          "const": "0.5.1",
+          "default": "0.5.1",
           "title": "Runtimeversion",
           "type": "string"
         },
@@ -147,8 +147,8 @@
       "type": "string"
     },
     "runtimeVersion": {
-      "const": "0.5.0",
-      "default": "0.5.0",
+      "const": "0.5.1",
+      "default": "0.5.1",
       "title": "Runtimeversion",
       "type": "string"
     },

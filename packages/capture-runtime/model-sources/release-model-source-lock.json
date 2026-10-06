@@ -17,21 +17,21 @@
       "licenseBytes": 1087,
       "licensePath": "licenses/LICENSE.txt",
       "licenseSha256": "20d8153042f147e730a2265e35e3862f8d1ad67b5f6804d44fb81e7dfbc5818b",
-      "licenseUrl": "https://raw.githubusercontent.com/gx-capture/capture-workbench/8f37898ac6b3b51c0d4e1e44aa7ea53e693f6815/packages/capture-runtime/model-sources/commit-a/licenses/LICENSE.txt",
+      "licenseUrl": "https://raw.githubusercontent.com/gx-capture/capture-workbench/cad865ffab27190d4e14181a7679d3c1a50e9943/packages/capture-runtime/model-sources/commit-a/licenses/LICENSE.txt",
       "mediaType": "image/png",
       "noticeBytes": 303,
       "noticePath": "licenses/NOTICE.txt",
-      "noticeSha256": "e5468ad67231cafed8aa646c04cd2f0c04231d18cb9a0f9311cf10fdca6b9d45",
-      "noticeUrl": "https://raw.githubusercontent.com/gx-capture/capture-workbench/8f37898ac6b3b51c0d4e1e44aa7ea53e693f6815/packages/capture-runtime/model-sources/commit-a/licenses/NOTICE.txt",
+      "noticeSha256": "941b03efb773915a9e292997bab9ce70377a89a26e505459a515fc99c68b05ff",
+      "noticeUrl": "https://raw.githubusercontent.com/gx-capture/capture-workbench/cad865ffab27190d4e14181a7679d3c1a50e9943/packages/capture-runtime/model-sources/commit-a/licenses/NOTICE.txt",
       "owner": "gx-capture/capture-workbench",
       "pdfBytes": 2421,
       "pdfSha256": "5eec85d2b2e98e06577cb5310d1b3037ca26f03d06d85a292ae78b68d4c57f30",
-      "pdfUrl": "https://raw.githubusercontent.com/gx-capture/capture-workbench/8f37898ac6b3b51c0d4e1e44aa7ea53e693f6815/packages/capture-runtime/model-sources/commit-a/fixtures/ocr-scanned.pdf",
+      "pdfUrl": "https://raw.githubusercontent.com/gx-capture/capture-workbench/cad865ffab27190d4e14181a7679d3c1a50e9943/packages/capture-runtime/model-sources/commit-a/fixtures/ocr-scanned.pdf",
       "redistributable": true,
-      "revision": "8f37898ac6b3b51c0d4e1e44aa7ea53e693f6815",
+      "revision": "cad865ffab27190d4e14181a7679d3c1a50e9943",
       "sha256": "7d61f4835837c4c387a0d46c4f21f7442fe22aab3f14f330b86f6857f5f3bc82",
       "spdx": "MIT",
-      "url": "https://raw.githubusercontent.com/gx-capture/capture-workbench/8f37898ac6b3b51c0d4e1e44aa7ea53e693f6815/packages/capture-runtime/model-sources/commit-a/fixtures/ocr-reference.png"
+      "url": "https://raw.githubusercontent.com/gx-capture/capture-workbench/cad865ffab27190d4e14181a7679d3c1a50e9943/packages/capture-runtime/model-sources/commit-a/fixtures/ocr-reference.png"
     },
     {
       "bytes": 11005641,
@@ -52,10 +52,10 @@
     }
   ],
   "lockVersion": "2",
-  "releaseVersion": "0.5.0",
+  "releaseVersion": "0.5.1",
   "requirements": [
     {
-      "artifactVersion": "0.5.0",
+      "artifactVersion": "0.5.1",
       "entryPoint": "model",
       "files": [
         {
@@ -173,7 +173,7 @@
           "url": "https://huggingface.co/PaddlePaddle/PP-OCRv6_medium_det_onnx/raw/61323801669c338b7891481ec7bac61ce31b576a/inference.yml"
         },
         {
-          "bytes": 5285,
+          "bytes": 5360,
           "derivation": {
             "algorithm": "capture-workbench-ocr-profile-v3",
             "generator": "packages/capture-runtime/scripts/generate_commit_a_fixtures.py",
@@ -190,7 +190,7 @@
               "model/vertical/parseq-ndl-24x384-50-tiny-300epoch-tegaki3-r8data-202604.onnx",
               "model/vertical/parseq-ndl-24x768-100-tiny-153epoch-tegaki3-r8data-202604.onnx"
             ],
-            "sourceCommit": "8f37898ac6b3b51c0d4e1e44aa7ea53e693f6815",
+            "sourceCommit": "cad865ffab27190d4e14181a7679d3c1a50e9943",
             "toolVersions": {
               "generator": "commit-a-v2",
               "python": "3.12.12"
@@ -202,10 +202,10 @@
           "owner": "gx-capture/capture-workbench",
           "path": "model/pipeline.json",
           "redirectHosts": [],
-          "revision": "8f37898ac6b3b51c0d4e1e44aa7ea53e693f6815",
-          "sha256": "1c6be4a3cebc2b21c33e9c35ee36e07b2bd9fdc86f4c5dde1d224231eb4b77e6",
+          "revision": "cad865ffab27190d4e14181a7679d3c1a50e9943",
+          "sha256": "1dc18ff680549aa9bcd0a1962fbbf7ef5bd7d121ce0d4275249c3bcc0f0ff0fb",
           "spdx": "MIT",
-          "url": "https://raw.githubusercontent.com/gx-capture/capture-workbench/8f37898ac6b3b51c0d4e1e44aa7ea53e693f6815/packages/capture-runtime/model-sources/commit-a/model/pipeline.json"
+          "url": "https://raw.githubusercontent.com/gx-capture/capture-workbench/cad865ffab27190d4e14181a7679d3c1a50e9943/packages/capture-runtime/model-sources/commit-a/model/pipeline.json"
         },
         {
           "bytes": 76554979,
@@ -344,16 +344,16 @@
           "owner": "gx-capture/capture-workbench",
           "path": "provenance/commit-a.json",
           "redirectHosts": [],
-          "revision": "8f37898ac6b3b51c0d4e1e44aa7ea53e693f6815",
-          "sha256": "e23f1ba8b2e6feb107a4119c37775f85d802e893b9a35ccf2170da44a5caed1b",
+          "revision": "cad865ffab27190d4e14181a7679d3c1a50e9943",
+          "sha256": "15adef5f9ab8f8884d06d209fd26b2500826bcc8b0642c7f199e0fe7e44cf2ee",
           "spdx": "MIT",
-          "url": "https://raw.githubusercontent.com/gx-capture/capture-workbench/8f37898ac6b3b51c0d4e1e44aa7ea53e693f6815/packages/capture-runtime/model-sources/commit-a/provenance/commit-a.json"
+          "url": "https://raw.githubusercontent.com/gx-capture/capture-workbench/cad865ffab27190d4e14181a7679d3c1a50e9943/packages/capture-runtime/model-sources/commit-a/provenance/commit-a.json"
         }
       ],
       "requirementId": "windowsml-ocr"
     },
     {
-      "artifactVersion": "0.5.0",
+      "artifactVersion": "0.5.1",
       "entryPoint": "model",
       "files": [
         {

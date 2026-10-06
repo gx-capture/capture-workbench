@@ -169,3 +169,15 @@ Opening implementation is the user's decision.
 - [ ] Verify score semantics, assets, all sessions, cancellation and complete regression.
 - [ ] Pass integrated resource budgets and installed consumer journeys; independently review.
 - [ ] Deliver a release-ready candidate and evidence for a separate publication decision.
+
+## Readers as optional modules - opened 2026-10-06
+
+See the [design notes](../RESEARCH/ocr-reader-modules-design-2026-10-06.md).
+
+- [x] The Japanese reader reads only pages with kana (0.5.1 source).
+- [ ] Publish 0.5.1 by the release runbook, or carry the change into the next
+  release; the user's decision.
+- [ ] Find scanned vertical Traditional Chinese documents and measure the regular
+  pipeline on them before choosing any second model.
+- [ ] Decide readers as separately installed requirements chosen by page content,
+  and the reader interface, only after that measurement.
