@@ -1,35 +1,46 @@
 # Capture Workbench release runbook
 
-Current as of 2026-09-30. This is the operational procedure for publishing a
-Capture Workbench release and moving its consumers. It reflects how 0.4.4 was
+Current as of 2026-10-06. This is the operational procedure for publishing a
+Capture Workbench release and moving its consumers. It reflects how 0.5.0 was
 actually shipped; workflow files remain the source of truth for inputs.
 
 ## Current state
 
-- Capture Runtime and Workbench **0.4.4** are published: npm
+- Capture Runtime and Workbench **0.5.0** are published: npm
   (`@gx-capture/capture-workbench-ui`, `@gx-capture/capture-runtime-client` on
   GitHub Packages), Maven (`com.gx.capture:capture-runtime-client`, GitHub
   Packages), PyPI (`capture-runtime-client`), crates.io
-  (`capture-sidecar-launcher`), and GitHub release `v0.4.4` (runtime exe
-  `0227313c…`, OCR/Whisper engine zips, desktop installer, release manifest).
-  `release-index/stable.json` on the `release-index` branch points at `v0.4.4`.
-- Source commit of the 0.4.4 candidates: `adfb528`. Contract-set SHA-256:
-  `03ba27e42e13292162b0f3da12bf3fe065edad12806efdf4bb19e0cc360e42d7`.
-  Model-source Commit A `de87d3d` (tag `capture-runtime-model-sources-v0.4.4`).
-  Runs: package candidate 36679014775, runtime candidate 36679263490, package
-  promote 36680401772, runtime promote 36680574761, release candidate
-  36687378087, consumer gates 36690225096, release promote 36691500910.
-- Consumers on their `main` branches pin 0.4.4 and passed published-mode
-  practical OCR: Cert Prep (`WodenWang820118/cert-prep`, PR #35) and LAW
-  (`WodenWang820118/gx.law-prep`, PR #93: Java engine → Python AI service →
-  runtime).
-- The online-package PDF OCR E2E passes against published 0.4.4 with the
-  44-page 2024-07 N1 PDF (all pages with text, eight anchors).
-- First-run OCR install on fresh app data: about 40 s with a cold download,
-  about 8 s when the machine-wide engine cache already holds the engine.
+  (`capture-sidecar-launcher`), and GitHub release `v0.5.0` (runtime exe
+  `d3d02225…`, OCR/Whisper engine zips, desktop installer, release manifest).
+  `release-index/stable.json` on the `release-index` branch points at `v0.5.0`.
+- Source commit of the 0.5.0 candidates: `af281e3` (merge of PR #69).
+  Contract-set SHA-256:
+  `4c63044191551bf3f7c36d24d08cc6ced25fcc701bf1e06a0fa69626b1e18f1b`.
+  Model-source Commit A `8f37898` (annotated tag
+  `capture-runtime-model-sources-v0.5.0`). OCR profile
+  `capture-workbench-ocr-1c6be4a3cebc2b21`.
+  Runs: package candidate 37424340590, runtime candidate 37424600408, package
+  promote 37425756166, runtime promote 37425994410, release candidate
+  37431071882, consumer gates 37433360334, release promote 37434317020.
+- 0.5.0 is not compatible with 0.4.x: 0.x clients require the same minor
+  version, and the contract-set hash and OCR profile id changed.
+- Consumers on their `main` branches pin 0.5.0: Cert Prep
+  (`WodenWang820118/cert-prep`, PR #37) and LAW
+  (`WodenWang820118/gx.law-prep`, PR #95). Both consumer gates passed on the
+  release candidate. LAW's durable OCR receipt readback was repeated locally with
+  the CI-built runtime (619 boxes unchanged); the full published-mode practical
+  OCR journeys of the two hosts were not repeated for 0.5.0.
+- The online-package PDF OCR E2E passes against published 0.5.0 with a ten-page
+  development PDF (all pages with text, ten anchors, four of them on pages read
+  by the vertical reader installed from upstream).
+- The OCR engine now also installs the NDLOCR-Lite models (about 157 MB from
+  `raw.githubusercontent.com/ndl-lab/ndlocr-lite` at a pinned commit, no mirror).
+  **Open**: the licence lineage of its line detector's weights; see
+  `.agents/RESEARCH/ndlocr-lite-detector-licence-lineage-2026-10-06.md`.
 - Known limitations: handwriting OCR quality (printed text is the floor);
-  installed OCR worker paths beyond Windows MAX_PATH crash the worker;
-  vertical Japanese text is read in the wrong column order.
+  installed OCR worker paths beyond Windows MAX_PATH crash the worker; page
+  structure of dense vertical periodical scans and pages that mix directions;
+  about a fifth of furigana on textbook pages is not set aside.
 
 ## Workflow map
 
@@ -65,7 +76,7 @@ missing ones.
    first, then LAW).
 5. Dispatch `release-candidate.yml` with the Route A inputs and the
    `release_mode` recorded in the runtime candidate manifest
-   (`model-enabled` for 0.4.4). Record the run ID, `candidateId`, and the
+   (`model-enabled` for 0.5.0). Record the run ID, `candidateId`, and the
    `candidate-manifest.json` hash from artifact
    `capture-candidate-<version>-<run>`.
 6. Pre-run both consumer gates locally against the downloaded release
@@ -158,3 +169,14 @@ candidate with `node tools/install-capture-workbench-dependencies.mts
   never from a checkout with `autocrlf`: text files there are CRLF copies.
 - `capture-tools:promotion-registry-test` fails under Git Bash on Windows (its
   `tar` reads `C:` as a remote host); run it from PowerShell.
+- Consumer migrations in a fresh worktree: Nx can hang or pick the wrong
+  workspace unless `NX_WORKSPACE_ROOT_PATH` is unset and `NX_DAEMON=false`.
+  LAW's pre-commit builds the Java engine (fetch the new SDK into `~/.m2` with a
+  temporary Maven settings file that reads `MAVEN_USERNAME`/`MAVEN_PASSWORD`) and
+  runs `cargo check` (create the sidecar placeholder with
+  `tauri:prepare-sidecar-placeholder` and `resources/.ci-placeholder` as CI
+  does). GitHub Packages npm auth for a local `pnpm install`: a temporary
+  `NPM_CONFIG_USERCONFIG` file, deleted afterwards.
+- Consumer tests that quote the client's runtime minor (`runtime minor 4`) fail
+  on a minor bump; LAW's `test_startup_timeout_waits_for_owner_cleanup` is
+  timing-sensitive and failed once in CI on an unrelated change.
