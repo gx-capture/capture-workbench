@@ -96,3 +96,14 @@ limitation, not a Phase 1 task. This is a scope decision by the user; it does no
 mark Phase 1 passed, does not waive the Cert, resource or gate-review requirements,
 and does not start Phase 2. A redesign of page and band separation is the path if
 periodicals become a requirement.
+
+2026-10-06 — after the direction study the user stated the goal ("any vertical
+Japanese document reads as fluent text", JLPT exam documents first) and chose
+options 1 and 2 of the study to be done first. Consequences: (1) horizontal pages
+are no longer byte-identical when they carry furigana: readings are whole regions
+moved after the block of lines they annotate, nothing else on the page changes and
+pages without furigana stay identical; this amends the Phase 1 rule "horizontal
+pages retain their existing output exactly". (2) Routing vertical-dominant pages to
+NDLOCR-Lite as a whole-page reader was only measured for feasibility; adopting it
+would replace Phases 2 and 3 as specified and add a second engine, and needs the
+user's separate decision. Neither item marks a phase passed.

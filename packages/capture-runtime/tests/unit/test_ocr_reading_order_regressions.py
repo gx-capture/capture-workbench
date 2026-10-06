@@ -174,3 +174,35 @@ def test_stacked_bands_on_facing_pages_are_read_top_to_bottom(case: dict) -> Non
     assert sorted(plan.order) == list(range(len(regions)))
     body = set(case["bodyOrder"])
     assert [index for index in plan.order if index in body] == case["bodyOrder"]
+
+
+# Horizontal listening pages with furigana; expected readings from double-read annotations.
+FURIGANA_CASES = json.loads(
+    FIXTURE.with_name("reading-order-horizontal-ruby.json").read_text(encoding="utf-8")
+)["cases"]
+
+
+@pytest.mark.parametrize("case", FURIGANA_CASES, ids=[case["id"] for case in FURIGANA_CASES])
+def test_annotated_furigana_on_horizontal_pages_is_set_aside(case: dict) -> None:
+    regions = tuple(
+        OcrRegion(
+            text=region["text"],
+            polygon=tuple(tuple(point) for point in region["polygon"]),
+            confidence=region["confidence"],
+        )
+        for region in case["regions"]
+    )
+    plan = plan_reading_order(regions)
+    assert plan.applied and not plan.articles
+    assert sorted(plan.order) == list(range(len(regions)))
+    expected = set(case["ruby"])
+    # Nothing but annotated furigana is set aside, and at most a tenth of it is left in place
+    # (readings the recognizer returned without any kana).
+    assert plan.ruby <= expected
+    assert len(expected - plan.ruby) <= len(expected) // 10
+    base = [index for index in plan.order if index not in plan.ruby]
+    assert base == sorted(base)
+    owners = dict(plan.horizontal_ruby_owners)
+    assert set(owners) == set(plan.ruby)
+    for ruby, owner in owners.items():
+        assert plan.order.index(owner) < plan.order.index(ruby)

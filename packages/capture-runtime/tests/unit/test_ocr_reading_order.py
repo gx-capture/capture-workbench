@@ -166,6 +166,97 @@ def test_horizontal_page_keeps_input_order_and_embedded_text_exactly(columns: in
     assert plan.text == "\n".join(item.text for item in items)
 
 
+def furigana_page() -> tuple[Region, ...]:
+    return (
+        region("header", 600, 0, 120, 20),
+        region("ばん", 40, 60, 40, 22),
+        region("3番", 20, 78, 70, 40),
+        region("としょかん", 60, 130, 110, 18),
+        region("ほん", 300, 128, 40, 20),
+        region("1 図書館で新しい本を借りる", 20, 145, 430, 32),
+        region("てがみ", 250, 190, 80, 18),
+        region("2 友人に長い手紙を書く", 20, 205, 430, 32),
+        region("ばん", 40, 600, 40, 22),
+        region("4番", 20, 618, 70, 40),
+        region("えき", 60, 668, 70, 18),
+        region("1 駅までの近い道", 20, 683, 220, 32),
+        region("- 3 -", 300, 900, 80, 24),
+    )
+
+
+def test_furigana_on_a_horizontal_page_follows_the_block_it_annotates() -> None:
+    items = furigana_page()
+    before = tuple(items)
+    plan = plan_reading_order(items, raw_source_slots=tuple((0, 2 * i) for i in range(len(items))))
+    assert plan.applied
+    assert plan.order == (0, 2, 5, 7, 1, 3, 4, 6, 9, 11, 8, 10, 12)
+    assert plan.ruby == frozenset({1, 3, 4, 6, 8, 10})
+    assert plan.horizontal_ruby_owners == ((1, 2), (3, 5), (4, 5), (6, 7), (8, 9), (10, 11))
+    assert not plan.articles
+    assert plan.raw_source_slots == tuple((0, 2 * i) for i in plan.order)
+    assert plan.text == (
+        "header\n3番\n1 図書館で新しい本を借りる\n2 友人に長い手紙を書く\n\n"
+        "ばん\nとしょかん\nほん\nてがみ\n\n"
+        "4番\n1 駅までの近い道\n\nばん\nえき\n\n- 3 -"
+    )
+    assert items == before
+
+
+@pytest.mark.parametrize(
+    "above",
+    [
+        region("ふはい", 60, 96, 110, 32),  # same height as the line below: an answer line
+        region("としょ", 60, 40, 110, 18),  # too far above the line
+        region("としょ", 600, 110, 110, 18),  # beside the line, not above it
+        region("12", 60, 110, 30, 18),  # not kana
+        region("ABC", 60, 110, 60, 18),  # not kana
+    ],
+)
+def test_lines_that_are_not_furigana_leave_a_horizontal_page_unchanged(above: Region) -> None:
+    items = (
+        region("見出しの行", 20, 0, 300, 32),
+        above,
+        region("1 図書館で新しい本を借りる", 20, 125, 430, 32),
+        region("2 つぎの行", 20, 170, 430, 32),
+    )
+    plan = plan_reading_order(items)
+    assert not plan.applied
+    assert plan.order == (0, 1, 2, 3)
+    assert plan.text == "\n".join(item.text for item in items)
+
+
+def test_kana_above_a_line_without_ideographs_is_not_furigana() -> None:
+    items = (
+        region("ひらがな", 60, 110, 110, 18),
+        region("1 かなだけのぎょう", 20, 125, 430, 32),
+    )
+    assert not plan_reading_order(items).applied
+
+
+def test_one_character_reading_is_furigana() -> None:
+    items = (
+        region("き", 300, 110, 17, 18),
+        region("3 午後は木の下で休む", 20, 125, 430, 32),
+    )
+    plan = plan_reading_order(items)
+    assert plan.order == (1, 0)
+    assert plan.ruby == frozenset({0})
+
+
+def test_furigana_step_does_not_touch_vertical_pages() -> None:
+    items = (
+        region("右本文", 100, 0, 20, 300),
+        region("左本文", 60, 0, 20, 300),
+        region("ふりがな", 117, 50, 9, 40),
+        region("よこのふりがな", 200, 395, 110, 18),
+        region("1 横書きの設問文", 200, 410, 300, 32),
+    )
+    plan = plan_reading_order(items)
+    assert plan.articles
+    assert plan.ruby == frozenset({2})
+    assert not plan.horizontal_ruby_owners
+
+
 def test_cap_and_seeded_source_preservation() -> None:
     items = tuple(region("同文", index * 40, 0, 20, 200) for index in range(MAX_REGIONS + 1))
     plan = plan_reading_order(items)

@@ -13,7 +13,10 @@ nonempty regions without changing text, polygon or score. The user-approved limi
 cross-band composite exception below requires separate research and validation before
 any product implementation; it is not a blanket permission to slice boxes. One plan produces page text, boxes and
 region confidences. Each article emits label/title, body, signature, then its own ruby
-run separated by blank lines. Horizontal pages retain their existing output exactly.
+run separated by blank lines. Horizontal pages keep their detector order with one
+exception (decision of 2026-10-06): furigana lines follow the block of lines they
+annotate as a ruby run separated by blank lines, as whole regions. A horizontal page
+without such lines retains its existing output exactly.
 Private source IDs preserve observation identity and original result/region slots.
 
 ## Sequential gates
@@ -124,4 +127,7 @@ Phase 1 is not marked passed: strict Cert semantics are not met and no gate revi
 was held. Phase 2 and 3 behavior is not implemented; Phase 2 preparation (resource
 reference, trigger-page inventory, open design questions) is recorded in the Phase 2
 preparation note. Status per requirement, source hashes and limitations are in the
-Phase 1 research note.
+Phase 1 research note. After the direction study of 2026-10-06 the user asked for
+furigana handling on horizontal pages (candidate 10, implemented) and a feasibility
+spike for routing vertical-dominant pages to a whole-page reader (measured, not
+implemented); both are in the direction-study note.

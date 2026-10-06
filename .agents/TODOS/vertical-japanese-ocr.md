@@ -94,6 +94,19 @@ of the Phase 1 record.
 - [ ] Independent gate review of Phase 1 against the 2026-10-06 scope. Five bounded
   reviews exist; none is a phase gate.
 
+## Direction study follow-up — user instruction of 2026-10-06
+
+See the [direction study](../RESEARCH/vertical-japanese-ocr-direction-study-2026-10-06.md).
+
+- [x] Furigana on horizontal pages (candidate 10): implemented, unit and regression
+  tests, fresh CPU/DML, local package and LAW readback on eight pages and 450 boxes.
+- [ ] Independent review of candidate 10 and a JLPT paper with furigana that was not
+  used in development (the three papers with gold and the 1995 collection are used).
+- [x] Feasibility spike: NDLOCR-Lite as whole-page reader for vertical-dominant pages.
+  Runs on CPU inside the runtime environment; not on DirectML.
+- [ ] User decision whether to implement the routing; open design items are listed
+  in the direction study. Phases 2 and 3 as specified would be replaced.
+
 ## Phase 2 — locked by Phase 1; preparation done 2026-10-06
 
 See the [Phase 2 preparation](../RESEARCH/vertical-japanese-ocr-phase2-preparation-2026-10-06.md).

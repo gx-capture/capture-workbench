@@ -6,8 +6,12 @@
 
 - Vertical Japanese OCR now assembles detected article columns from right to
   left and places separately detected ruby after its article, while preserving
-  unchanged regions' recognized strings, polygons and scores. Horizontal-only pages retain
-  their previous output. The OCR model and profile are unchanged.
+  unchanged regions' recognized strings, polygons and scores. Horizontal-only pages
+  without furigana retain their previous output. The OCR model and profile are unchanged.
+- On horizontal Japanese pages, furigana lines are no longer interleaved with the
+  text they annotate: the readings of each block of lines follow that block,
+  separated by blank lines. Regions, polygons and scores are unchanged; only
+  their order and the page text change, and only on pages with furigana.
 - A detector box spanning two body bands can be split when neighboring columns,
   raster whitespace and the same recognition pass agree on the text boundary.
   Child regions retain exact source substrings and inherited scores, with checked

@@ -44,6 +44,12 @@ CONTINUATION_GAP_EM = 2.0
 OWNER_COMPETITION_EM = 0.25
 SIGNATURE_BOTTOM_EM = 1.5
 ROW_OVERLAP_EM = 0.75
+# Furigana on horizontal pages, relative to the height of the annotated line.
+HORIZONTAL_RUBY_MAX_HEIGHT = 0.8
+HORIZONTAL_RUBY_OVERLAP = 0.45
+HORIZONTAL_RUBY_GAP = 0.35
+HORIZONTAL_BLOCK_GAP = 1.5
+HORIZONTAL_RUBY_MIN_ASPECT = 0.6  # a reading of one character is about square
 
 Polygon = tuple[tuple[float, float], ...]
 
@@ -104,6 +110,8 @@ class ReadingPlan:
     # validating adapter. Empty means unknown, never synthesized ordinals.
     raw_source_slots: tuple[tuple[int, int], ...] = ()
     front_matter_signatures: tuple[FrontMatterSignaturePlan, ...] = ()
+    # (reading, annotated line) on a horizontal page; such a page has no articles.
+    horizontal_ruby_owners: tuple[tuple[int, int], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -280,6 +288,9 @@ def _analysis_boxes(
     return boxes
 
 
+_KANA = re.compile(r"[\u3041-\u3096\u30a1-\u30fa]")
+_FURIGANA = re.compile(r"[\u3041-\u3096\u30a1-\u30fa\u30fc\u3001\u3002\u30fb,.]+")
+_IDEOGRAPH = re.compile(r"[\u3005\u3400-\u9fff]")
 _CJK = re.compile(r"[々ぁ-ゖァ-ヺ㐀-鿿]")
 
 
@@ -844,6 +855,74 @@ def _front_matter_signature(
     return result, (FrontMatterSignaturePlan(signatures, body_slots, titles),)
 
 
+def _horizontal_ruby(
+    regions: Sequence[RegionLike], boxes: list[_Box]
+) -> tuple[tuple[int, ...], dict[int, int]] | None:
+    """Furigana on a horizontal page: a low kana line resting on the line it annotates.
+
+    Detectors return each reading as its own line above its base line, so the
+    page text alternates readings and text. A reading is recognized by its
+    position and size against one base line that holds an ideograph, not by
+    page-wide statistics. Base lines keep their input order; the readings of
+    each block of consecutive base lines follow that block. Returns the order
+    and each reading's owner, or None when the page has no such line.
+    """
+    readings = [
+        b
+        for b in boxes
+        if b.w >= HORIZONTAL_RUBY_MIN_ASPECT * b.h
+        and _FURIGANA.fullmatch("".join(regions[b.slot].text.split()))
+        and _KANA.search(regions[b.slot].text)
+    ]
+    if not readings:
+        return None
+    bases = [b for b in boxes if b.w >= b.h and _IDEOGRAPH.search(regions[b.slot].text)]
+    owners: dict[int, int] = {}
+    for ruby in readings:
+        candidates = [
+            (abs(base.y0 - ruby.y1), base.slot)
+            for base in bases
+            if base.slot != ruby.slot
+            and ruby.h <= HORIZONTAL_RUBY_MAX_HEIGHT * base.h
+            and ruby.y0 < base.y0
+            and -HORIZONTAL_RUBY_OVERLAP * base.h
+            <= base.y0 - ruby.y1
+            <= HORIZONTAL_RUBY_GAP * base.h
+            and base.x0 - 0.5 * base.h <= ruby.x0
+            and ruby.x1 <= base.x1 + 0.5 * base.h
+        ]
+        if candidates:
+            owners[ruby.slot] = min(candidates)[1]
+    # A reading cannot own another reading.
+    owners = {ruby: base for ruby, base in owners.items() if base not in owners}
+    if not owners:
+        return None
+    order: list[int] = []
+    pending: list[tuple[int, float, int]] = []
+    previous: _Box | None = None
+
+    def flush() -> None:
+        # Readings follow their lines, and run left to right along one line.
+        order.extend(slot for _, _, slot in sorted(pending))
+        pending.clear()
+
+    for box in boxes:
+        if box.slot in owners:
+            continue
+        if previous is not None and not (
+            -previous.h <= box.y0 - previous.y1 <= HORIZONTAL_BLOCK_GAP * max(previous.h, box.h)
+        ):
+            flush()
+        position = len(order)
+        order.append(box.slot)
+        pending.extend(
+            (position, boxes[ruby].x0, ruby) for ruby, base in owners.items() if base == box.slot
+        )
+        previous = box
+    flush()
+    return tuple(order), owners
+
+
 def plan_reading_order(
     regions: Sequence[RegionLike], *, raw_source_slots: Sequence[tuple[int, int]] | None = None
 ) -> ReadingPlan:
@@ -880,6 +959,30 @@ def plan_reading_order(
             raw_source_slots=raw_slots,
         )
 
+    def horizontal(reason: str, skew: float, boxes: list[_Box]) -> ReadingPlan:
+        found = _horizontal_ruby(regions, boxes)
+        if found is None:
+            return unchanged(reason, skew)
+        order, owners = found
+        ruby = frozenset(owners)
+        pieces: list[str] = []
+        for position, slot in enumerate(order):
+            if position:
+                changed = (slot in ruby) != (order[position - 1] in ruby)
+                pieces.append("\n\n" if changed else "\n")
+            pieces.append(regions[slot].text)
+        return ReadingPlan(
+            order,
+            ruby,
+            "".join(pieces),
+            skew,
+            True,
+            diagnostics=(reason, "horizontal_ruby"),
+            source_slots=order,
+            raw_source_slots=tuple(raw_slots[i] for i in order) if raw_slots else (),
+            horizontal_ruby_owners=tuple(sorted(owners.items())),
+        )
+
     if len(regions) > MAX_REGIONS:
         return unchanged("region_cap")
     if not regions:
@@ -895,21 +998,21 @@ def plan_reading_order(
         b for b in boxes if b.h >= LONG_LINE_RATIO * b.w and not _number_label(regions[b.slot].text)
     ]
     if len(long_boxes) < MIN_LONG_VERTICAL_LINES:
-        return unchanged("fewer_than_two_long_vertical_lines", skew)
+        return horizontal("fewer_than_two_long_vertical_lines", skew, boxes)
     # Tall boxes without kana or ideographs are rotated horizontal lines (a
     # sideways scan of digits or Latin text). A vertical page has them in the
     # minority, so most long boxes must carry kana or ideographs. Chart axes
     # and drawings read as low-score ideographs do not count as columns.
     scripted = [b for b in long_boxes if _CJK.search(regions[b.slot].text)]
     if len(scripted) < MIN_LONG_VERTICAL_LINES or 2 * len(scripted) < len(long_boxes):
-        return unchanged("long_lines_without_kana_or_ideographs", skew)
+        return horizontal("long_lines_without_kana_or_ideographs", skew, boxes)
     # A region without a score counts as readable; a score of zero does not.
     scores = [getattr(regions[b.slot], "confidence", None) for b in scripted]
     if (
         sum(score is None or score >= MIN_COLUMN_CONFIDENCE for score in scores)
         < MIN_LONG_VERTICAL_LINES
     ):
-        return unchanged("fewer_than_two_readable_vertical_lines", skew)
+        return horizontal("fewer_than_two_readable_vertical_lines", skew, boxes)
     diagnostics: list[str] = []
     if inconsistent:
         if facing is None:

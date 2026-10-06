@@ -21,6 +21,10 @@ each reviewed by an independent read-only agent. It passes 983 Python unit tests
 tests, lint and typecheck; fresh CPU and DML source workers, the local package
 journey and LAW durable readback pass on six pages and 393 boxes.
 
+Candidate **10** (2026-10-06, after Phase 1 closed, by the user's instruction
+following the direction study) adds furigana handling on horizontal pages; see
+the [last section](#2026-10-06--candidate-10-furigana-on-horizontal-pages).
+
 Scope the user accepted ("not required to be 100% usable"):
 
 - **In scope and stable on every unseen run:** pages that are horizontal with at
@@ -1359,3 +1363,95 @@ matter that Phase 3 evaluates.
   and no version, profile or model changed.
 - Opening Phase 2 implementation is the user's decision. By the spec it needs
   Phase 1 acceptance; the two unmet items are Cert semantics and the gate review.
+
+## 2026-10-06 — candidate 10: furigana on horizontal pages
+
+Requested by the user after the
+[direction study](vertical-japanese-ocr-direction-study-2026-10-06.md), which found
+that on JLPT papers the largest loss is furigana on horizontal pages. Only
+`ocr_reading_order.py` changed (SHA256
+`a420345949c341a588977a89bc80541182e19679ebc90cd31436152d67f92e46`); the vertical
+path is untouched. This amends "horizontal pages retain their existing output
+exactly" ([decision](../DECISIONS/vertical-japanese-ocr.md) of 2026-10-06). It has
+not been independently reviewed.
+
+### Rule
+
+On a page the policy leaves horizontal, a line is a reading when all of these hold
+against one other line (its base):
+
+- it is horizontal (width at least 0.6 of its height, so one-character readings
+  count) and holds only kana, the long-vowel mark and punctuation, with at least
+  one kana;
+- the base is horizontal and holds an ideograph;
+- the reading is at most 0.8 of the base's height, starts above it, and its bottom
+  is between 0.45 of the base height inside the base and 0.35 above it;
+- it lies within the base's width, half a line height of slack on each side.
+
+A reading cannot be the base of another reading. Base lines keep the detector
+order. The readings of a block of consecutive base lines (gap at most 1.5 line
+heights) follow that block, ordered by the position of their base line and then
+left to right, separated from the text by blank lines. Regions are moved whole;
+text, polygons and scores are unchanged. `ReadingPlan.horizontal_ruby_owners`
+records each reading's base line privately. A page with no such line returns the
+previous plan unchanged.
+
+The readings are not attached inline to the words they annotate: the detector
+gives one box per reading and one per base line, and nothing in the result says
+which characters of the line a reading covers.
+
+### Measured
+
+Against the adjudicated double-read annotations of the two N1 papers with
+furigana and the one without, body text only (`eval_horizontal_ruby.py`):
+
+| Pages | Changed | Missed before / after | Extra before / after |
+| --- | ---: | ---: | ---: |
+| 62 horizontal pages without furigana (30,236 characters) | 0 | 1.38% / 1.38% | 0.56% / 0.56% |
+| 59 horizontal pages with furigana (23,392 characters) | 57 | 1.82% / 1.81% | 8.10% / 0.78% |
+
+1,732 of the 1,808 annotated furigana characters are set aside; the rest are
+readings the recognizer returned without kana or merged into another box. No page
+without annotated furigana had anything set aside. These pages are development
+material: the rule's thresholds were chosen on them.
+
+Replay over the retained observations of the supplied documents
+(`replay_supplied_furigana_10.py`, counts only): 956 pages, 929 horizontal, 89
+with the step applied and 746 readings set aside, 87 of those pages and 737
+readings in the 1995 collection, where a random sample read by eye was correct.
+All 27 vertical or mixed pages and the 45 pages of the private Chinese case file
+are unchanged. The 1995 collection was not used to set thresholds but had been
+seen in earlier candidates.
+
+### Verification
+
+| Check | Result |
+| --- | --- |
+| Nx lint, typecheck, unit, integration | Pass: 998 Python unit tests, two recorded expected failures, 22 TypeScript, 216 integration |
+| New tests against the candidate 09 policy | 12 fail, so they discriminate |
+| Fresh CPU and DML source workers, eight pages (the six of candidate 09 plus 2023-12 p40 and 2025-07 p37) | Pass; on both furigana pages all annotated readings (18 and 15) are set aside in two runs; ten controlled faults rejected |
+| Local package journey, real HTTP | 450 boxes identical to the fresh DML worker |
+| LAW readback through SQLite, DPAPI and encrypted blobs | 450 boxes unchanged |
+
+| Evidence | SHA256 |
+| --- | --- |
+| `fresh-worker-dml-10/completed.json` | `eebb85b3a30fd8c583aac3bfeb963530d16dcc5d1cfc917f86c26bf9b4548e17` |
+| `fresh-worker-cpu-10/completed.json` | `a7efabe47d516f7acb5cc0d527ed13bcb7e450c35b00aa03e2f8eee393f19d96` |
+| `fresh-worker-verification-10.json` | `d35e98050a5b7a25536f35f97505cd65e95c56361f8e20225893c89e2b00468e` |
+| `packaged-semantic-10/verification.json` | `0d1d791eb3d7ea792dc6ee7da3e1fd43beaa4ffa52890cd710489a9c18d20258` |
+| `law-receipt-readback-10.json` | `ab212d13c3c71bcaed20c169fbefc4470f89dc0d0f80072cd7eb3bff791bc17d` |
+| locally built runtime / worker artifact | `65a9ad7433e1675cddf88f9dcaff3ca1de51fa277f98a03c7eb54502486c8227` / `64f06ef219a8ae004340c5ff0398f6853eec3dda856c2a774646fa9a236c63cd` |
+
+The regression fixture `reading-order-horizontal-ruby.json` holds six cases (CPU
+and DML of three pages) with placeholder text only.
+
+### Limits
+
+- Consumers that relied on horizontal pages being byte-identical see a different
+  order and page text on pages with furigana. Cert's parser was not run on the
+  new text.
+- A reading over a line without ideographs (kana over Latin or digits) and a
+  reading the recognizer returns without kana stay where they were.
+- Lines on a page that the vertical path handles are not touched by this step, so
+  furigana on the horizontal questions of a mixed page stays interleaved.
+- No independent review and no paper with furigana that is new to this work.
