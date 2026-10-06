@@ -114,9 +114,10 @@ See the [direction study](../RESEARCH/vertical-japanese-ocr-direction-study-2026
   snapshot `8f37898` tagged, version sync, contracts regenerated. Recognizers are
   derived on the machine into the engine cache. Local package journey with the
   reader installed from the catalog: 619 boxes equal the source worker.
-- [ ] **Blocking publication**: user decision on the licence lineage of the detector
-  weights (DINOv3-distilled backbone; see the decision of 2026-10-06), and the user's
-  own confirmation of the lock approval.
+- [x] User decision on the licence lineage of the detector weights: publish as it is
+  (2026-10-06); the lock approval is confirmed with the question known.
+- [ ] Follow up the detector licence question; facts and options are in the
+  [licence note](../RESEARCH/ndlocr-lite-detector-licence-lineage-2026-10-06.md).
 - [x] Independent review of the runtime and of the release source, and acceptance on
   unseen documents (two textbooks, one N1 paper, three public-domain vertical
   books); findings fixed or recorded in the vertical-reader note.

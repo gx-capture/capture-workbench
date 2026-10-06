@@ -559,7 +559,8 @@ agreement that covers derivative works and carries use restrictions; upstream's
 dependency file has no DINOv3 entry. Whether a distilled, fine-tuned detector is
 a derivative work under that agreement is a legal question this work cannot
 answer. The specification says unknown licensing invalidates the lock.
-Publication should wait for the user's decision.
+The user decided on 2026-10-06 to publish as it is and follow the question up
+later; see the [licence note](ndlocr-lite-detector-licence-lineage-2026-10-06.md).
 
 Also for the user: installs now download about 157 MB from one upstream GitHub
 repository at a pinned commit with no mirror; the lock's approval record was

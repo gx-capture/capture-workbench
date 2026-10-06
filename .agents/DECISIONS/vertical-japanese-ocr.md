@@ -184,3 +184,9 @@ only Apache-2.0 for DEIMv2. Whether the detector weights may be redistributed an
 used under CC BY 4.0 alone is unknown. The lock's approval was recorded before
 this was known and has to be confirmed or withdrawn by the user. Upstream's
 dependency-licence file is now delivered as a second notice.
+
+2026-10-06 - user, informed of the open question on the detector weights' licence
+lineage: acceptable; publish 0.5.0 as it is and keep a note of the question for
+later handling. This is the user's confirmation of the model source lock approval
+with that question known; the approval time in the lock is this decision. The
+note is `.agents/RESEARCH/ndlocr-lite-detector-licence-lineage-2026-10-06.md`.
