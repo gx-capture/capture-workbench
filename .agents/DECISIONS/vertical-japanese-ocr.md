@@ -107,3 +107,46 @@ pages retain their existing output exactly". (2) Routing vertical-dominant pages
 NDLOCR-Lite as a whole-page reader was only measured for feasibility; adopting it
 would replace Phases 2 and 3 as specified and add a second engine, and needs the
 user's separate decision. Neither item marks a phase passed.
+
+2026-10-06 — user approved implementing the routing of vertical-dominant pages to
+NDLOCR-Lite as a whole-page reader ("1 可做"). Decisions taken in the implementation:
+
+- The reader's layout and reading-order sources are vendored from upstream commit
+  `636d1cfe` (CC BY 4.0) with three import edits; detector and recognizer wrappers
+  are rewritten in the runtime. No new dependency: the two networkx calls are
+  replaced by a small module shown to return the same paths in the same order.
+- The reader runs on the CPU provider only (its detector returns nothing on
+  DirectML) and is used only for pages the routing rule selects; every page still
+  gets the regular first pass, which supplies the routing signal.
+- A routed page takes the reader's lines, order and recognition scores as whole
+  regions. Composite splitting, the reading-order policy and region lineage do not
+  apply to it. Mixed pages (share under 80%) stay with the regular pipeline.
+- A reader that is installed but altered, or that fails in inference, fails the
+  page. A page the reader cannot lay out, or reads with less than half the first
+  pass's characters, keeps the first pass.
+- The feature is inactive unless the reader's files are present beside the regular
+  models. Delivering them (source lock approval, catalog, profile identity, public
+  provenance of routed pages, attribution in the distribution) is a release-lane
+  change that needs the user's separate approval; nothing in the released engine
+  changes until then.
+- Phases 2 (deskew retry) and 3 (second recognizer on single boxes) as specified
+  are superseded by this route.
+
+2026-10-06 — user approved reducing the cost of a routed page (both measures) and
+asked for the reader to use the GPU where it can. Decisions in candidate 12:
+
+- The three recognizers are delivered as derived files: upstream's models after
+  ONNX Runtime 1.24.4 extended optimization on the CPU provider, loaded without
+  further optimization. The derivation is byte-reproducible and scripted; the
+  runtime pins the derived digests and the script pins upstream's.
+- The detector stays upstream's file and always runs on the CPU provider: on
+  DirectML its output is wrong on both adapters of the development machine, it
+  takes 0.4 s on the CPU, and its derived form moves a few boxes by a pixel.
+- The recognizers run on the DirectML device the regular pipeline selected, one
+  line at a time, and on CPU threads when the regular pipeline runs on the CPU.
+  A recognizer that DirectML does not accept fails the page; there is no separate
+  CPU retry, as for the regular pipeline.
+- The CPU memory arena is off for the reader's sessions.
+- The DirectML execution evidence and proof of the regular pipeline do not cover
+  the reader's sessions. That, and the public provenance of a routed page, stay
+  open for the release lane.

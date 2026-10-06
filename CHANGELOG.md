@@ -8,6 +8,12 @@
   left and places separately detected ruby after its article, while preserving
   unchanged regions' recognized strings, polygons and scores. Horizontal-only pages
   without furigana retain their previous output. The OCR model and profile are unchanged.
+- Groundwork for a second reader of vertical pages: when the OCR engine carries the
+  NDLOCR-Lite models (National Diet Library, Japan; CC BY 4.0), a page that is
+  vertical throughout is read as a whole by that reader (its recognizers on the
+  DirectML device of the regular pipeline when there is one), and its lines,
+  reading order and scores are returned in the existing page and box fields. The
+  released engine does not carry these models yet, so its output is unchanged.
 - On horizontal Japanese pages, furigana lines are no longer interleaved with the
   text they annotate: the readings of each block of lines follow that block,
   separated by blank lines. Regions, polygons and scores are unchanged; only

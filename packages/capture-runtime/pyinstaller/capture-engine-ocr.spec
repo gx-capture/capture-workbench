@@ -27,6 +27,14 @@ datas += [
         "capture_runtime/assets",
     )
 ]
+# Attribution for the vendored NDLOCR-Lite sources (CC BY 4.0) travels with the worker.
+datas += [
+    (
+        str(root / "src" / "capture_runtime" / "_vendor" / "ndlocr_lite" / name),
+        "capture_runtime/_vendor/ndlocr_lite",
+    )
+    for name in ("LICENCE", "README.md")
+]
 for distribution in (
     "imagesize",
     "opencv-contrib-python",

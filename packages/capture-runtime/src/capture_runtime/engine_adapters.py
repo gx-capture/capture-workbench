@@ -53,6 +53,14 @@ from capture_runtime.ocr_profile import (
 )
 from capture_runtime.ocr_reading_order import ReadingPlan, plan_reading_order
 from capture_runtime.ocr_region_lineage import RegionSource, validate_region_sources
+from capture_runtime.ocr_vertical_routing import (
+    PageRoute,
+    VerticalLayoutError,
+    reader_result_reason,
+    route_reason,
+    vertical_reader_directory,
+    vertical_share,
+)
 from capture_runtime.worker_stage_policy import (
     ocr_probe_providers_stage,
     ocr_probe_readiness_stage,
@@ -138,6 +146,8 @@ class OcrTextResult:
     execution_proof: OcrExecutionDeviceProofV1 | None = None
     # Internal source/span audit only; worker/projection public schemas are unchanged.
     layout_evidence: OcrLayoutEvidence | None = None
+    # Internal: which reader produced the page and why. Absent when no reader is installed.
+    page_route: PageRoute | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -432,6 +442,21 @@ class WhisperTranscriptionResult:
     model: str
     digest: str
     warning: str | None = None
+
+
+class VerticalReaderLine(Protocol):
+    @property
+    def text(self) -> str: ...
+
+    @property
+    def polygon(self) -> tuple[tuple[float, float], ...]: ...
+
+    @property
+    def confidence(self) -> float: ...
+
+
+class VerticalReader(Protocol):
+    def read_png(self, image_png: bytes) -> tuple[VerticalReaderLine, ...]: ...
 
 
 class OcrAdapter(Protocol):
@@ -1696,8 +1721,11 @@ class WindowsMLOcrAdapter:
         source_sha256: str | None = None,
         requested_page_scope: tuple[int, ...] | None = None,
         runtime_sha256: str | None = None,
+        vertical_reader_factory: Callable[[], VerticalReader] | None = None,
     ) -> None:
         self.model_dir = model_dir
+        self._vertical_reader_factory = vertical_reader_factory
+        self._vertical_reader: VerticalReader | None = None
         if adapter_map_resolver is not None and adapter_map_lease_factory is not None:
             raise ValueError("OCR adapter map resolver and lease factory are mutually exclusive")
         self.execution_plan = execution_plan
@@ -2064,9 +2092,25 @@ class WindowsMLOcrAdapter:
             validate_region_sources(
                 normalized.regions, normalized.source_slots, regions, ordered_sources
             )
+            text = reading_plan.text if reading_plan.applied or splits else normalized.text
+            layout_evidence: OcrLayoutEvidence | None = OcrLayoutEvidence(
+                reading_plan,
+                ordered_sources,
+                splits,
+                normalized.regions,
+                normalized.source_slots,
+            )
+            result_failure_code = "ocr_vertical_reader_failed"
+            page_route, vertical_regions = self._read_vertical_page(
+                image_png, normalized.regions, reading_plan
+            )
+            if vertical_regions is not None:
+                regions = vertical_regions
+                text = "\n".join(region.text for region in regions)
+                layout_evidence = None
             result_failure_code = "ocr_provenance_failed"
             return OcrTextResult(
-                text=reading_plan.text if reading_plan.applied or splits else normalized.text,
+                text=text,
                 device=self._device,
                 model=self._profile.model,
                 digest=self._model_digest,
@@ -2080,13 +2124,8 @@ class WindowsMLOcrAdapter:
                 profile_id=self._profile.profile_id,
                 profile_spec_sha256=self._profile.profile_spec_sha256,
                 execution_proof=self._execution_proof,
-                layout_evidence=OcrLayoutEvidence(
-                    reading_plan,
-                    ordered_sources,
-                    splits,
-                    normalized.regions,
-                    normalized.source_slots,
-                ),
+                layout_evidence=layout_evidence,
+                page_route=page_route,
                 provenance=OcrProvenanceV3(
                     status="resolved",
                     engine="windowsml-ocr",
@@ -2114,6 +2153,80 @@ class WindowsMLOcrAdapter:
                     cleanup_error=cleanup_error,
                 ) from error
             raise
+
+    def _read_vertical_page(
+        self,
+        image_png: bytes,
+        first_pass: tuple[OcrRegion, ...],
+        reading_plan: ReadingPlan,
+    ) -> tuple[PageRoute | None, tuple[OcrRegion, ...] | None]:
+        """Read a vertical-dominant page with the whole-page reader, when one is installed.
+
+        Returns the routing record and the reader's regions in its reading order,
+        or no regions when the page stays with the regular pipeline. A reader that
+        cannot be loaded or fails in inference fails the page; a page it cannot
+        lay out, or reads far shorter than the first pass, keeps the first pass.
+        """
+
+        if (
+            self._vertical_reader_factory is None
+            and vertical_reader_directory(self.model_dir) is None
+        ):
+            return None, None
+        measure = vertical_share(first_pass)
+
+        def route(reader: str, reason: str, lines: tuple[OcrRegion, ...] | None) -> PageRoute:
+            return PageRoute(
+                reader=reader,
+                reason=reason,
+                vertical_share=measure.share,
+                tall_boxes=measure.tall_boxes,
+                first_pass_characters=measure.characters,
+                reader_characters=(
+                    None if lines is None else sum(len(line.text) for line in lines)
+                ),
+                reader_lines=None if lines is None else len(lines),
+                recognizer_device=getattr(self._vertical_reader, "recognizer_device", None),
+            )
+
+        reason = route_reason(measure, treated_as_vertical=bool(reading_plan.articles))
+        if reason is not None:
+            return route("regular", reason, None), None
+        if self._vertical_reader is None:
+            self._vertical_reader = self._create_vertical_reader()
+        try:
+            lines = self._vertical_reader.read_png(image_png)
+        except VerticalLayoutError:
+            return route("regular", "reader_layout_failed", None), None
+        regions = tuple(
+            OcrRegion(text, line.confidence, line.polygon)
+            for line in lines
+            if (text := line.text.strip())
+        )
+        reason = reader_result_reason(measure.characters, [region.text for region in regions])
+        if reason is not None:
+            return route("regular", reason, regions), None
+        return route("vertical", "vertical_dominant", regions), regions
+
+    def _create_vertical_reader(self) -> VerticalReader:
+        if self._vertical_reader_factory is not None:
+            return self._vertical_reader_factory()
+        directory = vertical_reader_directory(self.model_dir)
+        if directory is None:
+            raise EngineRuntimeUnavailableError("The vertical reader is not installed.")
+        from capture_runtime.ocr_vertical_reader import (
+            VerticalPageReader,
+            VerticalReaderAssetError,
+            VerticalReaderDeviceError,
+        )
+
+        # The recognizers follow the regular pipeline: its DirectML device when it runs
+        # on one, and no separate CPU retry when that device refuses them.
+        device_id = None if self._device == "cpu" else self.device_id
+        try:
+            return VerticalPageReader(directory, dml_device_id=device_id)
+        except (VerticalReaderAssetError, VerticalReaderDeviceError) as error:
+            raise EngineRuntimeUnavailableError(str(error)) from error
 
     def _providers(self) -> list[str]:
         if self._provider_resolver is not None:

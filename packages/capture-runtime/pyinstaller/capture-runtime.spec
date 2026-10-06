@@ -37,6 +37,8 @@ a = Analysis(
     ],
     hookspath=[str(root / "pyinstaller" / "hooks")],
     excludes=[
+        "capture_runtime._vendor",
+        "capture_runtime.ocr_vertical_reader",
         "ctranslate2",
         "cv2",
         "faster_whisper",

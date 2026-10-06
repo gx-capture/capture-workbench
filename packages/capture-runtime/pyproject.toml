@@ -71,6 +71,11 @@ tmp_path_retention_policy = "failed"
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+# Third-party sources kept as upstream wrote them; see _vendor/ndlocr_lite/README.md.
+extend-exclude = [
+  "src/capture_runtime/_vendor/ndlocr_lite/ndl_parser.py",
+  "src/capture_runtime/_vendor/ndlocr_lite/reading_order",
+]
 
 [tool.ruff.lint]
 select = ["B", "E", "F", "I", "UP"]
@@ -82,6 +87,13 @@ plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
 module = [
+  "capture_runtime._vendor.ndlocr_lite.ndl_parser",
+  "capture_runtime._vendor.ndlocr_lite.reading_order.*",
+]
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = [
   "PIL.*",
   "ctranslate2.*",
   "faster_whisper.*",
@@ -89,5 +101,6 @@ module = [
   "onnxruntime.*",
   "paddleocr.*",
   "uvicorn.*",
+  "yaml.*",
 ]
 ignore_missing_imports = true

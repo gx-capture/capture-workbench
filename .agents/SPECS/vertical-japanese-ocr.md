@@ -129,5 +129,14 @@ reference, trigger-page inventory, open design questions) is recorded in the Pha
 preparation note. Status per requirement, source hashes and limitations are in the
 Phase 1 research note. After the direction study of 2026-10-06 the user asked for
 furigana handling on horizontal pages (candidate 10, implemented) and a feasibility
-spike for routing vertical-dominant pages to a whole-page reader (measured, not
-implemented); both are in the direction-study note.
+spike for routing vertical-dominant pages to a whole-page reader; both are in the
+direction-study note. The user then approved implementing the routing (candidate
+11): a page that the reading-order policy treats as vertical and whose recognized
+characters are at least 80% in tall boxes is read as a whole by NDLOCR-Lite (line
+detector on the CPU; recognizers on the regular pipeline's DirectML device when
+there is one, candidate 12), and its lines, order and scores replace the first pass
+for that page. The code
+is in the runtime and inactive until the engine delivers the reader's models, which
+is a release-lane change (source lock, catalog, profile, provenance) not yet made.
+This supersedes Phases 2 and 3 as specified below; they are kept for reference and
+are not planned. Details are in the vertical-reader note.

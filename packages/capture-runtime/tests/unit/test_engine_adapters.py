@@ -4,7 +4,7 @@ import asyncio
 import gc
 import hashlib
 import json
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from io import BytesIO
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -774,6 +774,227 @@ def test_composite_matching_ambiguous_equal_observations_preserves_whole_parents
     assert not splits
     assert regions == normalized.regions
     assert tuple(source.raw_slot for source in sources) == normalized.source_slots
+
+
+@dataclass(frozen=True)
+class _ReaderLine:
+    text: str
+    polygon: tuple[tuple[float, float], ...]
+    confidence: float
+
+
+class _Reader:
+    recognizer_device = "cpu"
+
+    def __init__(self, lines: tuple[_ReaderLine, ...] | Exception) -> None:
+        self.lines = lines
+        self.calls = 0
+
+    def read_png(self, _image_png: bytes) -> tuple[_ReaderLine, ...]:
+        self.calls += 1
+        if isinstance(self.lines, Exception):
+            raise self.lines
+        return self.lines
+
+
+def _rectangle(x0: float, y0: float, x1: float, y1: float) -> tuple[tuple[float, float], ...]:
+    return ((x0, y0), (x1, y0), (x1, y1), (x0, y1))
+
+
+def _vertical_page_adapter(
+    tmp_path: Path, reader: _Reader | None, *, horizontal_lines: int = 0
+) -> tuple[WindowsMLOcrAdapter, bytes, list[str], list[int]]:
+    model_dir = tmp_path / "windowsml"
+    _write_windowsml_models(model_dir)
+    texts = [f"縦書きの本文の第{index}行です。" for index in range(5)]
+    rectangles = [(360 - 40 * index, 20, 380 - 40 * index, 300) for index in range(5)]
+    texts += [f"横書きの設問文の第{index}行です。" for index in range(horizontal_lines)]
+    rectangles += [
+        (20, 320 + 30 * index, 380, 344 + 30 * index) for index in range(horizontal_lines)
+    ]
+    payload = {
+        "rec_texts": texts,
+        "rec_polys": [[list(point) for point in _rectangle(*item)] for item in rectangles],
+        "rec_scores": [0.9] * len(texts),
+    }
+
+    class Pipeline:
+        def predict(self, _source: str) -> list[dict[str, object]]:
+            return [{"res": payload}]
+
+    created: list[int] = []
+
+    def factory() -> _Reader:
+        assert reader is not None
+        created.append(1)
+        return reader
+
+    image = BytesIO()
+    Image.new("RGB", (400, 480), "white").save(image, format="PNG")
+    adapter = WindowsMLOcrAdapter(
+        model_dir,
+        execution_plan=_cpu_plan(),
+        pipeline_factory=lambda **_kwargs: Pipeline(),
+        provider_resolver=lambda: ["CPUExecutionProvider"],
+        vertical_reader_factory=None if reader is None else factory,
+    )
+    return adapter, image.getvalue(), texts, created
+
+
+_READER_LINES = (
+    _ReaderLine("縦書きの本文の第0行です。", _rectangle(358, 18, 382, 302), 0.97),
+    _ReaderLine("  ", _rectangle(340, 18, 350, 30), 0.2),
+    _ReaderLine("縦書きの本文の第1行です。", _rectangle(318, 18, 342, 302), 0.96),
+    _ReaderLine(
+        "別の読み取り器が読んだ残りの三行をまとめた行です。", _rectangle(198, 18, 302, 302), 0.95
+    ),
+)
+
+
+def test_vertical_dominant_page_is_read_by_the_vertical_reader(tmp_path: Path) -> None:
+    reader = _Reader(_READER_LINES)
+    adapter, png, _texts, created = _vertical_page_adapter(tmp_path, reader)
+
+    result = adapter.extract_png(png)
+    again = adapter.extract_png(png)
+
+    kept = [line for line in _READER_LINES if line.text.strip()]
+    assert result.text == "\n".join(line.text for line in kept)
+    assert tuple(region.text for region in result.regions) == tuple(line.text for line in kept)
+    assert tuple(region.polygon for region in result.regions) == tuple(
+        line.polygon for line in kept
+    )
+    assert result.region_confidences == tuple(line.confidence for line in kept)
+    assert result.layout_evidence is None
+    assert result.page_route is not None
+    assert (result.page_route.reader, result.page_route.reason) == ("vertical", "vertical_dominant")
+    assert result.page_route.vertical_share == 1.0
+    assert result.page_route.reader_lines == 3
+    assert result.page_route.recognizer_device == "cpu"
+    assert again.text == result.text
+    assert (len(created), reader.calls) == (1, 2)
+
+
+def test_page_without_an_installed_vertical_reader_is_unchanged(tmp_path: Path) -> None:
+    adapter, png, texts, _created = _vertical_page_adapter(tmp_path, None)
+
+    result = adapter.extract_png(png)
+
+    assert result.page_route is None
+    assert result.text == "\n".join(texts)
+    assert result.layout_evidence is not None
+
+
+def test_mixed_page_stays_with_the_regular_pipeline(tmp_path: Path) -> None:
+    reader = _Reader(_READER_LINES)
+    adapter, png, texts, created = _vertical_page_adapter(tmp_path, reader, horizontal_lines=4)
+    plain, _png, _texts, _created = _vertical_page_adapter(
+        tmp_path / "plain", None, horizontal_lines=4
+    )
+
+    result = adapter.extract_png(png)
+
+    assert result.page_route is not None
+    assert (result.page_route.reader, result.page_route.reason) == ("regular", "mixed_directions")
+    assert 0.5 < result.page_route.vertical_share < 0.8
+    assert (created, reader.calls) == ([], 0)
+    expected = plain.extract_png(png)
+    assert (result.text, result.regions) == (expected.text, expected.regions)
+    assert sorted(region.text for region in result.regions) == sorted(texts)
+
+
+@pytest.mark.parametrize(
+    ("outcome", "reason"),
+    [
+        (
+            (_ReaderLine("短い", _rectangle(358, 18, 382, 60), 0.9),),
+            "reader_returned_far_less_text",
+        ),
+        ((), "reader_returned_no_text"),
+        (engine_adapters.VerticalLayoutError("no order"), "reader_layout_failed"),
+    ],
+)
+def test_first_pass_is_kept_when_the_vertical_reader_has_no_usable_result(
+    tmp_path: Path, outcome: tuple[_ReaderLine, ...] | Exception, reason: str
+) -> None:
+    reader = _Reader(outcome)
+    adapter, png, texts, _created = _vertical_page_adapter(tmp_path, reader)
+
+    result = adapter.extract_png(png)
+
+    assert result.page_route is not None
+    assert (result.page_route.reader, result.page_route.reason) == ("regular", reason)
+    assert result.text == "\n".join(texts)
+    assert result.layout_evidence is not None
+    assert reader.calls == 1
+
+
+def test_vertical_reader_inference_failure_fails_the_page(tmp_path: Path) -> None:
+    adapter, png, _texts, _created = _vertical_page_adapter(
+        tmp_path, _Reader(RuntimeError("session failed"))
+    )
+
+    with pytest.raises(RuntimeError, match="session failed"):
+        adapter.extract_png(png)
+
+
+@pytest.mark.parametrize(
+    ("device", "device_id", "expected"),
+    [("cpu", None, None), ("cpu", 1, None), ("windowsml-dml", 1, 1), ("windowsml-dml", 0, 0)],
+)
+def test_vertical_reader_recognizers_follow_the_regular_pipeline_device(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    device: str,
+    device_id: int | None,
+    expected: int | None,
+) -> None:
+    reader_module = pytest.importorskip(
+        "capture_runtime.ocr_vertical_reader",
+        reason="The vertical reader requires the WindowsML extras.",
+    )
+    adapter, _png, _texts, _created = _vertical_page_adapter(tmp_path, None)
+    (tmp_path / "windowsml" / "vertical").mkdir()
+    seen: list[tuple[Path, int | None]] = []
+
+    class Loaded:
+        def __init__(self, directory: Path, *, dml_device_id: int | None = None) -> None:
+            seen.append((directory, dml_device_id))
+
+    monkeypatch.setattr(reader_module, "VerticalPageReader", Loaded)
+    adapter._device = device
+    adapter.device_id = device_id
+
+    assert isinstance(adapter._create_vertical_reader(), Loaded)
+    assert seen == [(tmp_path / "windowsml" / "vertical", expected)]
+
+
+def test_recognizer_refused_by_directml_fails_the_page(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reader_module = pytest.importorskip(
+        "capture_runtime.ocr_vertical_reader",
+        reason="The vertical reader requires the WindowsML extras.",
+    )
+    adapter, png, _texts, _created = _vertical_page_adapter(tmp_path, None)
+    (tmp_path / "windowsml" / "vertical").mkdir()
+
+    def refuse(_directory: Path, *, dml_device_id: int | None = None) -> object:
+        raise reader_module.VerticalReaderDeviceError("not placed on DirectML")
+
+    monkeypatch.setattr(reader_module, "VerticalPageReader", refuse)
+
+    with pytest.raises(EngineRuntimeUnavailableError, match="not placed on DirectML"):
+        adapter.extract_png(png)
+
+
+def test_altered_vertical_reader_files_fail_the_page(tmp_path: Path) -> None:
+    pytest.importorskip("numpy", reason="The vertical reader requires the WindowsML extras.")
+    adapter, png, _texts, _created = _vertical_page_adapter(tmp_path, None)
+    (tmp_path / "windowsml" / "vertical").mkdir()
+
+    with pytest.raises(EngineRuntimeUnavailableError, match="Vertical reader file is missing"):
+        adapter.extract_png(png)
 
 
 @pytest.mark.parametrize("cleanup_fails", [False, True])
