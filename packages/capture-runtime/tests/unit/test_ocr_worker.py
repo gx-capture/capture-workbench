@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import Callable, Iterator
 from io import BytesIO
 from pathlib import Path
 from threading import Event
+from typing import Any
 
 import pytest
 from PIL import Image
@@ -17,13 +19,15 @@ from capture_runtime.contracts import (
     OcrComputePreflightV2,
     OcrProvenanceV3,
 )
-from capture_runtime.engine_adapters import OcrRegion, OcrTextResult
+from capture_runtime.engine_adapters import OcrRegion, OcrTextResult, WindowsMLOcrAdapter
 from capture_runtime.ocr_preflight import (
     OcrComputePlan,
     OcrGpuAdapter,
     OcrGpuCapabilitySnapshot,
 )
+from capture_runtime.ocr_profile import CANONICAL_PROFILE_PATH, canonical_json_bytes
 from capture_runtime.ocr_projection import OcrEngineRequest, OcrPageInput, OcrPageManifest
+from capture_runtime.ocr_reading_order import plan_reading_order
 from capture_runtime.worker_client import (
     WorkerResultError,
     _assert_ocr_progress_matches_final,
@@ -1063,6 +1067,184 @@ def test_ocr_worker_provenance_change_emits_failed_page_without_success(
         "ocr-page",
     ]
     assert progress[-1]["page"]["status"] == "failed"  # type: ignore[index]
+
+
+@pytest.mark.parametrize(
+    "scored", [True, False], ids=["actual-adapter-scored", "planned-no-scores"]
+)
+def test_ocr_worker_round_trips_reading_plan_without_changing_region_contract(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    scored: bool,
+) -> None:
+    model_path = tmp_path / "model"
+    model_path.mkdir()
+    source = tmp_path / "reading-order.png"
+    Image.new("RGB", (320, 320), "white").save(source)
+    regions = tuple(
+        OcrRegion(
+            text=text,
+            confidence=score if scored else None,
+            polygon=((x, y), (x + width, y), (x + width, y + height), (x, y + height)),
+        )
+        for text, score, x, y, width, height in (
+            ("見出し", 0.91, 0, 0, 300, 20),
+            # Equal text still denotes distinct regions and must keep its
+            # polygon and confidence paired with the same source index.
+            ("本文", 0.72, 190, 70, 20, 160),
+            ("本文", 0.83, 230, 70, 20, 160),
+            ("ふりがな", 0.64, 247, 85, 9, 37),
+            ("問１", 0.95, 0, 280, 300, 20),
+        )
+    )
+    plan = plan_reading_order(regions)
+    expected_text = "見出し\n本文\n本文\n\nふりがな\n\n問１"
+    assert plan.applied
+    assert plan.order == (0, 2, 1, 3, 4)
+    assert plan.ruby == frozenset({3})
+    assert plan.text == expected_text
+    ordered_regions = tuple(regions[index] for index in plan.order)
+    expected_scores = (0.91, 0.83, 0.72, 0.64, 0.95) if scored else ()
+    progress: list[dict[str, object]] = []
+    calls: list[bytes] = []
+
+    class PlannedAdapter:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def extract_png(self, image: bytes) -> OcrTextResult:
+            calls.append(image)
+            return OcrTextResult(
+                text=plan.text,
+                model="test-model",
+                digest="1" * 64,
+                device="windowsml-dml",
+                regions=ordered_regions,
+                region_confidences=expected_scores,
+                raster_width=320,
+                raster_height=320,
+                provenance=_resolved_test_provenance(),
+            )
+
+    compute_plan = _gpu_plan_dict()
+    if scored:
+        profile = json.loads(CANONICAL_PROFILE_PATH.read_text(encoding="utf-8"))
+        for artifact in profile["artifacts"]:
+            path = model_path / artifact["path"]
+            path.parent.mkdir(parents=True, exist_ok=True)
+            data = artifact["path"].encode()
+            path.write_bytes(data)
+            artifact["bytes"] = len(data)
+            artifact["sha256"] = hashlib.sha256(data).hexdigest()
+            if artifact["path"] == "rec/ppocrv6_dict.txt":
+                profile["dictionary"]["sha256"] = artifact["sha256"]
+        (model_path / "pipeline.json").write_bytes(canonical_json_bytes(profile))
+        selection = OcrComputePlan(
+            contract_sha256="a" * 64,
+            worker_sha256="b" * 64,
+            capability_probe=_StaticProbe(OcrGpuCapabilitySnapshot()),
+        ).select()
+        assert selection is not None
+        compute_plan = selection.execution_plan.to_dict()
+
+        class Pipeline:
+            def predict(self, source_path: str) -> list[dict[str, object]]:
+                calls.append(Path(source_path).read_bytes())
+                return [
+                    {
+                        "res": {
+                            "rec_texts": [region.text for region in regions],
+                            "rec_polys": [region.polygon for region in regions],
+                            "rec_scores": [region.confidence for region in regions],
+                        }
+                    }
+                ]
+
+        def create_adapter(path: Path, **kwargs: Any) -> WindowsMLOcrAdapter:
+            return WindowsMLOcrAdapter(
+                path,
+                pipeline_factory=lambda **_kwargs: Pipeline(),
+                provider_resolver=lambda: ["CPUExecutionProvider"],
+                **kwargs,
+            )
+
+        monkeypatch.setattr(ocr_main, "WindowsMLOcrAdapter", create_adapter)
+    else:
+        # No-score pages are legal on the worker wire, while Paddle results
+        # require scores; cover this mode at the observation boundary.
+        monkeypatch.setattr(ocr_main, "WindowsMLOcrAdapter", PlannedAdapter)
+    # The scored case executes the real adapter, normalizer and planner with
+    # synthetic predictor output, followed by the real worker serialization.
+    emitted = ocr_main.handle(
+        WorkerRequest(
+            request_id="ocr-reading-plan-wire-test",
+            operation="run",
+            payload={
+                "requirementId": "windowsml-ocr",
+                "artifactVersion": RUNTIME_VERSION,
+                "modelPath": str(model_path),
+                "sourcePath": str(source),
+                "mediaType": "image/png",
+                "options": {
+                    "computePlan": compute_plan,
+                    "maxImagePixels": 320 * 320,
+                    "renderScale": 1,
+                    "pageManifest": [
+                        {
+                            "page": 1,
+                            "raster": {
+                                "width": 320,
+                                "height": 320,
+                                "scale": 1,
+                                "coordinateSystem": "pixel",
+                            },
+                        }
+                    ],
+                },
+            },
+        ),
+        Event(),
+        progress.append,
+    )
+    wire_result = json.loads(json.dumps(emitted, ensure_ascii=False))
+    wire_page = wire_result["pages"][0]
+    assert set(wire_page) == {
+        "page",
+        "status",
+        "text",
+        "boxes",
+        "regionConfidences",
+        "confidence",
+        "raster",
+        "failure",
+    }
+    assert wire_page["text"] == expected_text
+    assert wire_page["regionConfidences"] == list(expected_scores)
+    assert wire_page["boxes"] == [
+        {
+            "polygon": [{"x": x, "y": y} for x, y in region.polygon],
+            "text": region.text,
+            "confidence": region.confidence,
+        }
+        for region in ordered_regions
+    ]
+    parsed = parse_run_result(wire_result)
+    parsed_progress = parse_ocr_progress(json.loads(json.dumps(progress, ensure_ascii=False)))
+    assert parsed_progress is not None
+    _assert_ocr_progress_matches_final(parsed_progress, parsed)
+    assert len(calls) == 1
+    with Image.open(BytesIO(calls[0])) as image:
+        assert image.size == (320, 320)
+    assert len(parsed.pages) == len(parsed.segments) == 1
+    assert parsed.pages[0].text == parsed.segments[0].text == expected_text
+    assert parsed.pages[0].region_confidences == expected_scores
+    assert len(parsed.pages[0].boxes) == len(regions)
+    for box, region in zip(parsed.pages[0].boxes, ordered_regions, strict=True):
+        assert (box.text, box.polygon, box.confidence) == (
+            region.text,
+            region.polygon,
+            region.confidence,
+        )
 
 
 def test_ocr_worker_handle_output_round_trips_mixed_pages_and_progress_consistency(

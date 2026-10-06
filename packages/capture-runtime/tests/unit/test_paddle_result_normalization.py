@@ -9,10 +9,12 @@ from types import SimpleNamespace
 import pytest
 from PIL import Image
 
+import capture_runtime.engine_adapters as engine_adapters
 from capture_runtime.engine_adapters import (
     EngineRuntimeUnavailableError,
     PaddleResultNormalizationError,
     WindowsMLOcrAdapter,
+    normalize_paddle_results,
 )
 from capture_runtime.ocr_preflight import OcrComputePlan, OcrGpuCapabilitySnapshot
 from capture_runtime.ocr_profile import CANONICAL_PROFILE_PATH, canonical_json_bytes
@@ -91,6 +93,57 @@ def _valid_payload(*, text: object = "合法文字", score: object = 0.91) -> di
             "unknown_diagnostic": {"ignored": True},
         }
     }
+
+
+def test_raw_source_slots_survive_empty_regions_and_empty_results() -> None:
+    polygon = [[10, 10], [70, 10], [68, 30], [8, 30]]
+    normalized = normalize_paddle_results(
+        [
+            {"res": payload}
+            for payload in (
+                {
+                    "rec_texts": ["第一", "", "第三"],
+                    "rec_scores": [0.91, 0.0, 0.92],
+                    "rec_polys": [polygon, polygon, polygon],
+                },
+                {"rec_texts": []},
+                {
+                    "rec_texts": ["第一"],
+                    "rec_scores": [0.91],
+                    "rec_polys": [polygon],
+                },
+            )
+        ],
+        raster_width=120,
+        raster_height=80,
+    )
+    assert [region.text for region in normalized.regions] == ["第一", "第三", "第一"]
+    assert normalized.source_slots == ((0, 0), (0, 2), (2, 0))
+
+
+def test_adapter_passes_original_slots_to_reading_plan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    observed = []
+    original = engine_adapters.plan_reading_order
+
+    def observe(regions, **kwargs):
+        observed.append(kwargs.get("raw_source_slots"))
+        return original(regions, **kwargs)
+
+    monkeypatch.setattr(engine_adapters, "plan_reading_order", observe)
+    result = _extract(
+        tmp_path,
+        {
+            "res": {
+                "rec_texts": ["同一文字", "", "同一文字"],
+                "rec_scores": [0.9, 0.0, 0.9],
+                "rec_boxes": [[0, 0, 80, 20], [0, 25, 80, 45], [0, 50, 80, 70]],
+            }
+        },
+    )
+    assert result.text == "同一文字\n同一文字"
+    assert observed == [((0, 0), (0, 2))]
 
 
 def test_paddle_normalizer_accepts_valid_regions_and_ignores_unknown_keys(

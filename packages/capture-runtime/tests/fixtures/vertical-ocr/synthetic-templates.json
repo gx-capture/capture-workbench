@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "source": "Selected layout/corpus definitions from user-supplied Claude handoff, not cloud experimental output.",
+  "sourceSha256": {
+    "corpus.py": "8f772f53c45623460302439634be71642688bafd140b82aac9f057627730656e",
+    "render.py": "565179126d71f25c0815a4d73022408d18c9d79cfcfdb95820c94ba1e2f43351"
+  },
+  "localFontSubstitution": {
+    "JPSerif": "Yu Gothic Regular (not Mincho)",
+    "JPSans": "MS Gothic"
+  },
+  "viewport": {
+    "width": 794,
+    "height": 1123
+  },
+  "css": "\n@font-face { font-family: 'JPSerif'; src: url('file://__FONT_ROOT__/YuGothR.ttc'); }\n@font-face { font-family: 'JPSans'; src: url('file://__FONT_ROOT__/msgothic.ttc'); }\nhtml, body { margin: 0; padding: 0; background: #fff; color: #000; }\n.page { width: 794px; height: 1123px; position: relative; overflow: hidden;\n        font-family: 'JPSerif'; font-size: 14px; }\n.abs { position: absolute; }\n.h { writing-mode: horizontal-tb; line-height: 1.75; }\n.v { writing-mode: vertical-rl; line-height: 1.85; text-align: justify; }\n.v p { margin: 0; text-indent: 1em; }\n.box { border: 1px solid #000; padding: 22px 26px; box-sizing: border-box; }\n.sig { writing-mode: vertical-rl; text-align: end; }\n.h p { margin: 0; }\nrt { font-size: 50%; }\n.tcy { text-combine-upright: all; }\n.label { font-family: 'JPSans'; font-size: 15px; }\n.center { text-align: center; }\n",
+  "pages": [
+    {
+      "id": "p01_letters_yugothic",
+      "fontFamily": "JPSerif",
+      "fontSize": 14,
+      "blocksHtml": "<div class=\"abs h\" data-block=\"hdr\" data-kind=\"header\" style=\"top:52px;left:64px;width:666px\"><p>問題10　次の文章を読んで、後の問いに対する答えとして最もよいものを、1・2・3・4から一つ選びなさい。</p></div><div class=\"abs v box\" data-block=\"body\" data-kind=\"vertical\" style=\"top:118px;left:64px;width:666px;height:560px\"><p>最近、手紙を書く機会がめっきり減った。用事があればメールやチャットで済ませてしまうし、年賀状さえスマートフォンのアプリで作る人が増えている。便利になったことは確かだが、何か大切なものを置き忘れてきたような気がしてならない。</p><p>先日、引っ越しの準備をしていて、学生時代に祖母からもらった手紙の束を見つけた。<ruby>便箋<rt>びんせん</rt></ruby>には少し右上がりの、<ruby>几帳面<rt>きちょうめん</rt></ruby>な字がびっしりと並んでいる。読み返してみると、内容はたいてい天気や庭の花のことばかりで、特別なことは何も書かれていない。それなのに、一枚読み終えるごとに胸の奥がじんわりと温かくなった。</p><p>手書きの文字には、書いた人の呼吸のようなものが残っている。急いで書いたところは線がかすれ、迷ったところには小さな跡がある。私たちはそうした<ruby>揺<rt>ゆ</rt></ruby>らぎから、言葉そのものよりも多くのことを受け取っているのではないだろうか。もちろん、デジタルの文章にも良さはある。すぐに届き、何度でも直せる。しかし、直せないからこそ、人は一文字ずつ<ruby>慎重<rt>しんちょう</rt></ruby>に選ぶのだ。</p><p class=\"sig\" style=\"text-indent:0\">（森川ゆかり『書くということ』による）</p></div><div class=\"abs h\" data-block=\"q\" data-kind=\"question\" style=\"top:712px;left:64px;width:666px\"><p>60　筆者が祖母の手紙を読んで温かい気持ちになったのはなぜか。</p></div><div class=\"abs h\" data-block=\"c1\" data-kind=\"choice\" style=\"top:746px;left:92px;width:638px\"><p>1　手紙に特別な出来事が詳しく書かれていたから</p></div><div class=\"abs h\" data-block=\"c2\" data-kind=\"choice\" style=\"top:774px;left:92px;width:638px\"><p>2　文字から書いた人の様子が伝わってきたから</p></div><div class=\"abs h\" data-block=\"c3\" data-kind=\"choice\" style=\"top:802px;left:92px;width:638px\"><p>3　昔の生活を懐かしく思い出したから</p></div><div class=\"abs h\" data-block=\"c4\" data-kind=\"choice\" style=\"top:830px;left:92px;width:638px\"><p>4　手紙を大切に保管していたから</p></div><div class=\"abs h center\" data-block=\"pg\" data-kind=\"footer\" style=\"top:1060px;left:0;width:794px\"><p>— 20 —</p></div>"
+    },
+    {
+      "id": "p02_remote_ab",
+      "fontFamily": "JPSerif",
+      "fontSize": 14,
+      "blocksHtml": "<div class=\"abs h\" data-block=\"hdr\" data-kind=\"header\" style=\"top:44px;left:64px;width:666px\"><p>問題10　次の文章を読んで、後の問いに対する答えとして最もよいものを、1・2・3・4から一つ選びなさい。</p></div><div class=\"abs h label\" data-block=\"labA\" data-kind=\"label\" style=\"top:104px;left:706px;width:24px\"><p>A</p></div><div class=\"abs v box\" data-block=\"bodyA\" data-kind=\"vertical\" style=\"top:130px;left:64px;width:666px;height:330px\"><p>在宅勤務が広く普及してから、もう数年が経つ。通勤の負担がなくなり、家族と過ごす時間が増えたと喜ぶ声は多い。一方で、同僚と雑談する機会が失われ、新しい発想が生まれにくくなったという指摘もある。ちょっとした会話の中にこそ、仕事のヒントが隠れているからだ。働き方を選べる時代だからこそ、それぞれの長所と短所を冷静に<ruby>見極<rt>みきわ</rt></ruby>める必要があるだろう。</p><p class=\"sig\" style=\"text-indent:0\">（佐藤一郎「働き方の未来」による）</p></div><div class=\"abs h label\" data-block=\"labB\" data-kind=\"label\" style=\"top:480px;left:706px;width:24px\"><p>B</p></div><div class=\"abs v box\" data-block=\"bodyB\" data-kind=\"vertical\" style=\"top:506px;left:64px;width:666px;height:330px\"><p>オフィスに出社することの意義が改めて問われている。確かに、顔を合わせて話すことで生まれる信頼関係は大きい。しかし、それは必ずしも毎日同じ場所に集まらなければ得られないものではない。むしろ、集中すべき作業は自宅で行い、議論が必要なときだけ集まるという使い分けが、これからの標準になっていくのではないか。重要なのは場所ではなく、目的に合った方法を選ぶことである。</p><p class=\"sig\" style=\"text-indent:0\">（田中花子「オフィス再考」による）</p></div><div class=\"abs h\" data-block=\"q\" data-kind=\"question\" style=\"top:868px;left:64px;width:666px\"><p>61　AとBのどちらの文章にも触れられている点は何か。</p></div><div class=\"abs h\" data-block=\"c1\" data-kind=\"choice\" style=\"top:902px;left:92px;width:638px\"><p>1　在宅勤務によって家族との時間が増えたこと</p></div><div class=\"abs h\" data-block=\"c2\" data-kind=\"choice\" style=\"top:930px;left:92px;width:638px\"><p>2　顔を合わせることで信頼関係が生まれること</p></div><div class=\"abs h\" data-block=\"c3\" data-kind=\"choice\" style=\"top:958px;left:92px;width:638px\"><p>3　働く場所は目的に応じて選ぶべきであること</p></div><div class=\"abs h\" data-block=\"c4\" data-kind=\"choice\" style=\"top:986px;left:92px;width:638px\"><p>4　同僚との会話が仕事に役立つことがあること</p></div>"
+    },
+    {
+      "id": "p03_ai_gothic",
+      "fontFamily": "JPSans",
+      "fontSize": 13.5,
+      "blocksHtml": "<div class=\"abs h\" data-block=\"hdr\" data-kind=\"header\" style=\"top:52px;left:64px;width:666px\"><p>問題10　次の文章を読んで、後の問いに対する答えとして最もよいものを、1・2・3・4から一つ選びなさい。</p></div><div class=\"abs v box\" data-block=\"body\" data-kind=\"vertical\" style=\"top:118px;left:64px;width:666px;height:600px\"><p>人工知能の研究は、ここ十年で驚くほどの進歩を遂げた。かつてはコンピューターが人間の言葉を理解するなど夢物語だと思われていたが、今ではスマートフォンに話しかければ、天気予報を教えてくれたり、メッセージを送ってくれたりする。ただ、こうした技術がどのように答えを導き出しているのか、開発者自身にも完全には説明できないことがある。</p><p><ruby>膨大<rt>ぼうだい</rt></ruby>なデータから規則性を見つけ出す仕組みは、ちょうど経験を積んだ職人の勘に似ている。職人は自分の判断の理由をすべて言葉にできるわけではないが、その判断はたいてい正しい。私たちはそうした勘を信頼してきた。では、機械の勘も同じように信頼してよいのだろうか。その問いに答えるためには、技術そのものだけでなく、それを使う社会の側の準備も問われることになる。</p><p class=\"sig\" style=\"text-indent:0\">（中村健『機械と勘』による）</p></div><div class=\"abs h\" data-block=\"q\" data-kind=\"question\" style=\"top:752px;left:64px;width:666px\"><p>62　筆者は、機械の判断についてどのように考えているか。</p></div><div class=\"abs h\" data-block=\"c1\" data-kind=\"choice\" style=\"top:786px;left:92px;width:638px\"><p>1　職人の勘と同じなので、すぐに信頼してよい。</p></div><div class=\"abs h\" data-block=\"c2\" data-kind=\"choice\" style=\"top:814px;left:92px;width:638px\"><p>2　理由が説明できないので、信頼すべきではない。</p></div><div class=\"abs h\" data-block=\"c3\" data-kind=\"choice\" style=\"top:842px;left:92px;width:638px\"><p>3　信頼できるかどうかは、社会の側の準備にもよる。</p></div><div class=\"abs h\" data-block=\"c4\" data-kind=\"choice\" style=\"top:870px;left:92px;width:638px\"><p>4　開発者が仕組みを説明できれば、信頼できる。</p></div>"
+    },
+    {
+      "id": "p04_inn_full",
+      "fontFamily": "JPSerif",
+      "fontSize": 15,
+      "blocksHtml": "<div class=\"abs h label\" data-block=\"n1\" data-kind=\"header\" style=\"top:40px;left:64px;width:60px\"><p>N 1</p></div><div class=\"abs v\" data-block=\"body\" data-kind=\"vertical\" style=\"top:96px;left:72px;width:650px;height:900px\"><p>山の中腹にある小さな駅で列車を降りると、ひんやりとした空気が<ruby>頬<rt>ほお</rt></ruby>に触れた。ホームには私のほかに誰もいない。改札を抜け、細い坂道をゆっくりと上っていく。道の両側には杉の木が高くそびえ、<ruby>木漏<rt>こも</rt></ruby>れ日がまだらに足元を照らしていた。</p><p>しばらく歩くと、古い木造の旅館が見えてきた。玄関の前では、白い<ruby>割烹着<rt>かっぽうぎ</rt></ruby>を着た<ruby>女将<rt>おかみ</rt></ruby>が打ち水をしている。私に気づくと、彼女はにっこりと笑って頭を下げた。「遠いところをようこそ。お疲れになったでしょう」。その柔らかな声を聞いた瞬間、都会で張り詰めていた心がふっとほどけていくのを感じた。</p><p>部屋に通されると、窓の外には深い谷が広がっていた。遠くで鳥の鳴く声がする。私は荷物を下ろし、畳の上にごろりと横になった。天井の木目をぼんやりと眺めているうちに、いつの間にか眠ってしまったらしい。目を覚ましたとき、窓の外はすっかり夕焼けに染まっていた。</p><p class=\"sig\" style=\"text-indent:0\">（小野寺朝子『山の宿』による）</p></div><div class=\"abs h center\" data-block=\"pg\" data-kind=\"footer\" style=\"top:1052px;left:0;width:794px\"><p>— 21 —</p></div>"
+    },
+    {
+      "id": "p05_horizontal_control",
+      "fontFamily": "JPSerif",
+      "fontSize": 14,
+      "blocksHtml": "<div class=\"abs h label\" data-block=\"n1\" data-kind=\"header\" style=\"top:40px;left:64px;width:60px\"><p>N 1</p></div><div class=\"abs h\" data-block=\"body\" data-kind=\"horizontal\" style=\"top:96px;left:64px;width:666px;line-height:2.4\"><p>問題1　＿＿＿の言葉の読み方として最もよいものを、1・2・3・4から一つ選びなさい。</p><p>1　この地域では、食品の腐敗を防ぐための工夫が昔から行われてきた。</p><p>　1　ふはい　　2　ふうはい　　3　ふばい　　4　ふっぱい</p><p>2　彼は会議で自分の意見を率直に述べた。</p><p>　1　そっちょく　　2　りっちょく　　3　そちょく　　4　りつちょく</p><p>3　新しい制度の導入には、慎重な検討が必要だ。</p><p>　1　しんじゅう　　2　しんちょう　　3　じんちょう　　4　しんじょう</p><p>問題2　（　　）に入れるのに最もよいものを、1・2・3・4から一つ選びなさい。</p><p>4　この計画は、予算が足りないため、（　　）延期されることになった。</p><p>　1　当面　　2　当然　　3　当分　　4　当初</p><p>5　長年の努力が実り、ようやく新製品の開発に（　　）。</p><p>　1　こぎつけた　　2　たどりついた　　3　ゆきついた　　4　のりきった</p></div><div class=\"abs h center\" data-block=\"pg\" data-kind=\"footer\" style=\"top:1052px;left:0;width:794px\"><p>— 2 —</p></div>"
+    },
+    {
+      "id": "p06_population_dense",
+      "fontFamily": "JPSerif",
+      "fontSize": 12.5,
+      "blocksHtml": "<div class=\"abs h\" data-block=\"hdr\" data-kind=\"header\" style=\"top:52px;left:64px;width:666px\"><p>問題10　次の文章を読んで、後の問いに対する答えとして最もよいものを、1・2・3・4から一つ選びなさい。</p></div><div class=\"abs v box\" data-block=\"body\" data-kind=\"vertical\" style=\"top:112px;left:64px;width:666px;height:470px\"><p>日本の人口は二〇〇八年をピークに減少に転じ、現在では毎年およそ五十万人ずつ減り続けている。特に地方では若者の流出が深刻で、商店街のシャッターが閉じたままになっている光景も珍しくない。こうした状況を受けて、各地の<ruby>自治体<rt>じちたい</rt></ruby>はさまざまな対策に乗り出している。</p><p>ある町では、空き家を安く貸し出して都市部からの移住者を呼び込むことに成功した。また別の町では、地元の特産品をインターネットで販売し、売り上げを三倍に伸ばしたという。もっとも、こうした成功例はまだ一部にすぎない。人口の減少そのものを止めることは難しい以上、人が減っても暮らしやすい町をどう作るかという発想の転換が求められているのである。<span class=\"tcy\">21</span>世紀の町づくりには、新しい物差しが必要だ。</p><p class=\"sig\" style=\"text-indent:0\">（石田誠『小さな町の大きな挑戦』による）</p></div><div class=\"abs h\" data-block=\"note\" data-kind=\"note\" style=\"top:592px;left:64px;width:666px;font-size:12px\"><p>（注）自治体：都道府県や市町村など、地域の行政を行う団体</p></div><div class=\"abs h\" data-block=\"q\" data-kind=\"question\" style=\"top:640px;left:64px;width:666px\"><p>63　この文章で筆者が最も言いたいことは何か。</p></div><div class=\"abs h\" data-block=\"c1\" data-kind=\"choice\" style=\"top:674px;left:92px;width:638px\"><p>1　移住者を増やせば、人口の減少は止められる。</p></div><div class=\"abs h\" data-block=\"c2\" data-kind=\"choice\" style=\"top:702px;left:92px;width:638px\"><p>2　インターネットを使えば、地方の経済は回復する。</p></div><div class=\"abs h\" data-block=\"c3\" data-kind=\"choice\" style=\"top:730px;left:92px;width:638px\"><p>3　人口が減ることを前提に、町づくりを考えるべきだ。</p></div><div class=\"abs h\" data-block=\"c4\" data-kind=\"choice\" style=\"top:758px;left:92px;width:638px\"><p>4　成功した町の方法を、ほかの町もまねるべきだ。</p></div>"
+    }
+  ]
+}

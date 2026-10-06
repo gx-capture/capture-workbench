@@ -1,16 +1,17 @@
 # Runtime 複雜混排：整框分組、讀序與正文／註音分離計畫
 
-日期：2026-10-01；依 Grok 第二、三輪建議核實修訂。基準 HEAD：`b2d15741c270b63d2ab7a17d851d50bf01306a20`；runtime 0.4.4、Python 3.12、PaddleOCR 3.7.0／PaddleX 3.7.1。
-本輪只有來源閱讀、保留 JSON 幾何重算及原圖檢視；未實作排序、執行新推論、更新測試 golden、安裝或發布。
+日期：2026-10-01；依 Grok 第二、三輪及 Opus 5.5 Max 建議核實修訂。原 Grok 核對基準 HEAD：`b2d15741c270b63d2ab7a17d851d50bf01306a20`；本次 Opus 核對 HEAD：`648d042b11f663a7c4932f97caf13adccbd22004`；runtime 0.4.4、Python 3.12、PaddleOCR 3.7.0／PaddleX 3.7.1。
+本輪只有來源閱讀、保留 JSON 幾何重播、原圖檢視及獨立裁切函式探針；未實作產品排序、執行新OCR推論、更新測試 golden、安裝或發布。
 **第 1–5 節是第一階段的有效計畫**，取代前版的 Slice 資料模型、先做加權聯合搜尋及先擴充角色 wire 的前提。[來源核對稿](grok-vertical-japanese-official-source-check-2026-10-01.md)的舊優先序只保留為歷史證據。
 **[事實]** 表示已核對；**[計畫]** 表示尚待實作／驗收。有限測試不能保證所有文件語意零退步。
+**Opus核實結論：** [獨立核實稿](opus55-vertical-japanese-verification-2026-10-01.md)確認分析座標校正可列候選、長欄裁切反向機制成立；雲端CER未獨立重現，XY-cut有Bunka跨段帶及並排文章反例。附件不取代本文第1–5節，也不取消真頁／留出／消費端驗收。
 
 ## 1. 已確認範圍
 
 - 複雜混排必須自動處理：多文章、直欄與短欄、署名、框外標號、橫排題幹／選項及可分離的已辨識註音。
 - 正文連續可讀，已辨識註音另列且保留 polygon；不要求逐字 ruby→漢字綁定。既有錯字可保留，不得新增漏字、重複、錯配或錯序。
 - 第一版只對有效非空 **whole region 做 permutation**；不切字串、不切框、不建立 Slice／衍生字框、不改 confidence 權重。
-- 裁切／擴裁切、局部再辨識、額外旋轉、換模型、字典修字、新 layout 模型及加權搜尋不進第一階段；保留既有 `PP-OCRv6_medium_rec`。
+- 裁切／擴裁切、局部再辨識、raster額外旋轉、換模型、字典修字、新 layout 模型及加權搜尋不進第一階段；保留既有 `PP-OCRv6_medium_rec`。純數學校正**分析座標**可列候選，原raster及公開polygon不變，不重跑OCR。
 - 同框正文＋ruby、跨欄合框先單獨盤點。必達頁若因合框無法完成，列能力缺口、阻擋交付，不能隱瞞或縮成簡單頁範圍。
 - 歧義可保留原始資料作失敗保全；必達案例退避仍未通過。取消／契約錯誤維持既有失敗路徑，不回成功原序。
 
@@ -59,6 +60,7 @@ B文舊手工順序`40→37→36→35→34→39→33→32→31→30→38→29→
 ## 4. 最小內部資料模型與接點
 
 **[計畫]** 保留`analyze_reading_layout(page, *, cancelled) -> PageReadingPlan`，接在嚴格normalization後、`OcrTextResult`聚合前；可新增小型`ocr_reading_layout.py`，不建立通用solver框架。[L1]
+純幾何模組也可命名`ocr_reading_order.py`，只用標準函式庫及唯讀region介面，避免反向import adapter或載入推論依賴。名稱不影響既定來源帳本、plan及assembler責任；不因採納附件命名而搬動strict normalizer行為或刪掉原始slot對應。
 
 - `SourceKey=(run_key,page_key,raw_result_slot,raw_region_slot)`；normalizer略過空字串前記來源slot，私有wrapper／對應表隨region傳至排序接點，不加入公開box。
 - `ValidatedSource`只持來源鍵與完整`OcrRegion`；角色、文章、欄及關聯留在內部分析結果。來源text不做NFKC或去重。
@@ -76,6 +78,7 @@ composite從原圖盤點，分正文＋ruby合框、跨欄合框及可分離whol
 
 ### A. 局部欄寬與欄距
 
+先以長框邊估小角度歪斜，在獨立分析座標系計算尺度；加權中位數是待驗候選。精確矩形的±3°探針可逆不代表真實框皆可可靠估角；需記有效框數、角度一致性與局部方向衝突。少於三條長框、低一致性、不同局部歪斜及接近門檻頁另驗；不得因此改原polygon或宣稱未解必達頁成功。
 由同一候選文章中多個正文欄的方向、寬度與鄰欄距估計局部尺度，不以最窄框或全頁平均作正文字級。
 主欄錨點、短欄與小字候選分開記錄，防止ruby污染尺度；欄距容許缺欄及偏差，p14間距並非全部相等。
 單獨高寬比不決定文字語言、角色或欄間方向；候選建立／拒絕理由可記研究診斷，但不提早輸出未驗證文字。
@@ -88,6 +91,7 @@ composite從原圖盤點，分正文＋ruby合框、跨欄合框及可分離whol
 同篇允許欄首縮排及極短末欄；不能先按全頁y排序，把y=970的欄丟到整篇末尾。短註音不能作連接兩文的橋。
 上方題幹、框外A/B、左下署名、下方選項／頁底注建立附屬關係。上下不重疊頁域按y；並排文章、欄範圍重疊及雙頁須先判頁域／方向，不能宣稱全頁y排序可解所有混排。
 混排頁的橫排區域按行次及行內x遞增；原本正確的全橫排頁保持identity permutation。
+XY-cut可提出空白頁域候選，不能直接把直排佔多數的所有子群當成一篇文章。Opus harness在Bunka p2輸出8→39→82而跨過三段帶，並排文章則把兩篇ruby都移到第二篇後；因此段帶、文章、署名及競爭歸屬規則保留。[L23]
 
 ### C. 短正文欄、同欄碎片、署名與ruby
 
@@ -98,6 +102,7 @@ composite從原圖盤點，分正文＋ruby合框、跨欄合框及可分離whol
 - **ruby**：相對正文較窄、靠近側緣、沿正文方向有合理重疊／外溢，且不符合另一正文欄的尺度／欄距。x相交、接觸、小正間距都可進候選，不要求正間距，也不以相交單獨定案。
 - 記有號側距及x交集，例如右側`g=ruby.x_min-body.x_max`，p14為負值仍合法；容差以local scale凍結。反側／雙側不能因側別一項直接刪除。[P1]
 - 多個owner合理或角色規則衝突時列歧義；不能先刪競爭者再宣稱唯一。署名、框外標號、小字頁眉也要排除；文字只作輔助，不按預期題號改字。
+- 「至少含一個假名」只作輔助，不能以此排除被OCR誤認成非假名的ruby，也不能保護所有含假名短正文。owner不能以輸入列舉順序的first-hit定案；最近側距亦僅為候選證據，不代替競爭判定。[L23]
 
 **已核對的續接負例：** Bunka p2 baseline raw8 `[494,102,514,406]` 與39 `[494,431,516,737]` 同x且y-gap只有25 px，原圖卻是上下不同橫向段帶，不能直接8→39而略過上段其他直欄。[L21]
 真正正文的同欄上下碎片正例仍待補。作者姓名／出版欄分框只能驗附屬文字，不能替代正文正例；p14的31→30也不能充數。
@@ -153,9 +158,11 @@ Grok報告四份PDF文字層亂碼或缺失，本輪未逐份重驗；金標一�
 - **讀序／角色**：分開量整篇正文順序、文章錯合／錯拆、短欄誤當ruby、ruby owner、題幹／選項／署名／頁碼位置；分母包括漏分組、未改善、歧義、composite，不只已接受群組。
 - **辨識**：影像有文字但無有效輸出才計漏辨；空辨識、非文字誤檢另列。slot24不先計成漏字，空字串契約不改。
 - **字元誤差**：固定正確順序後分別計正文／ruby CER；重排降低sequence edit distance不等於辨字改善，移出ruby不能充當降低錯字。
+- **同集合比較**：純讀序比較使用相同非空來源ID集合與凍結偏序。另列正文／ruby辨識與角色抽取誤差；GT先刪ruby／noise再排的值只能稱GT輔助診斷，不是同框permutation oracle。NFKC／去空白CER之外，完整文字與空行須另驗。[L23]
 - **控制／穩定性**：全橫排identity；平移、均勻縮放、輸入列舉置換但保留source ID，在不改真實布局時結果等價。另量候選owner漏配率，不能只看有無飽和。
 
 先完成獨立金標再設prototype gate；p14舊手工序列不可直接bless。必達混排頁任一錯改或未解即未通過，不能以平均收益抵銷。
+Opus的5.34／2.93／2.69／12.34%只作雲端作者報告值；未交付raw／GT／逐頁結果且評分集合不等同完整產品輸出，不能直接變成固定gate。六頁合成變體不能替代完整文件留出或證明每篇ruby輸出。少於兩長直欄／1000框等guard仍待量測，略過必達頁不計成功。[L23]
 模型／profile設定維持既有值、不加排序開關，但同一模型設定下輸出順序／換行會變。`releaseVersion`綁runtime version，不能承諾正式升版後完整profile ID不變。[L19]
 盤點鎖住舊左至右輸出的golden，只更新經金標與tuple保全證實的排序／格式差異，不批次重產schema、invalid corpus或無關fixture；舊normalizer橫排行為斷言維持。[L20]
 Cert分別驗raw_text保存、document blocks／reviewed text、line metadata、分類及題組／選項解析；LAW驗text／boxes保存讀回。先列預期差異，不拿候選輸出直接當答案。
@@ -180,7 +187,7 @@ Cert分別驗raw_text保存、document blocks／reviewed text、line metadata、
 契約容許每頁100,000 boxes／8,000,000 text chars；空間索引與有界鄰居目標`O(N log N + kN)`，不建全連接N²矩陣。[L3]
 像素tiles、候選數、操作／記憶體預算依裝置及密集樣本量測後凍結；截斷／飽和留issue，必達頁超預算未通過。不得靜默改CPU重試或新增OOM／逾時。
 整框重排不增減分數樣本或重加權；projection既有公式為`round(sum(region_confidences) / len(region_confidences), 4)`，維持此數值契約，驗收檢查重排浮點求和的邊界，不承諾bitwise相同。[L2]
-只回報已驗證進度，terminal validation前不公布raw text或成功。本輪只改兩份研究筆記；產品實作、金標、fixture更新與各項驗收均尚未執行。
+只回報已驗證進度，terminal validation前不公布raw text或成功。Opus附件以1000框／典型複雜度省略內部取消檢查的主張未採納；仍按有界批次及提交前檢查。產品實作、金標、fixture更新與各項驗收均尚未執行；本輪更新研究筆記並新增核實稿。
 
 ## 9. 來源
 
@@ -207,3 +214,4 @@ Cert分別驗raw_text保存、document blocks／reviewed text、line metadata、
 - [L20：normalizer測試](../../packages/capture-runtime/tests/unit/test_paddle_result_normalization.py)；[worker測試](../../packages/capture-runtime/tests/unit/test_ocr_worker.py)；[projection測試](../../packages/capture-runtime/tests/unit/test_ocr_projection.py)
 - [L21：Bunka p2 baseline raw](../../tmp/research-vertical-japanese/v3-validation/raw/ocr-dml-bunka-archive-p2-baseline.json)；[原圖](../../tmp/research-vertical-japanese/v3-validation/images/bunka-archive-p2.png)
 - [L22：Cert正式JLPT解析入口](../../../cert-prep/apps/cert-prep-backend/src/cert_prep_backend/domains/mock_exams/deterministic_parser.py)；[SourceChunk.raw_or_text](../../../cert-prep/apps/cert-prep-backend/src/cert_prep_backend/domains/mock_exams/models.py)
+- [L23：Opus驗證核實、Root重播／裁切探針、Astra Ultra審查](opus55-vertical-japanese-verification-2026-10-01.md)

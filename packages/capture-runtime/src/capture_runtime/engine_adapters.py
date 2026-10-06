@@ -29,6 +29,12 @@ from typing import Any, NoReturn, Protocol
 from uuid import uuid4
 
 from capture_runtime.contracts import OcrProvenanceV3
+from capture_runtime.ocr_alignment import (
+    AlignmentCollector,
+    AlignmentContractError,
+    AlignmentRecord,
+)
+from capture_runtime.ocr_composite_regions import CompositeSplit, plan_composite_splits
 from capture_runtime.ocr_execution_proof import (
     OcrExecutionDeviceProofV1,
     OcrExecutionProofContextV1,
@@ -45,6 +51,8 @@ from capture_runtime.ocr_profile import (
     load_profile_spec,
     validate_model_artifacts,
 )
+from capture_runtime.ocr_reading_order import ReadingPlan, plan_reading_order
+from capture_runtime.ocr_region_lineage import RegionSource, validate_region_sources
 from capture_runtime.worker_stage_policy import (
     ocr_probe_providers_stage,
     ocr_probe_readiness_stage,
@@ -128,6 +136,8 @@ class OcrTextResult:
     # Private and ephemeral.  It is intentionally not projected into any
     # public OCR contract or persisted capture model.
     execution_proof: OcrExecutionDeviceProofV1 | None = None
+    # Internal source/span audit only; worker/projection public schemas are unchanged.
+    layout_evidence: OcrLayoutEvidence | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,6 +165,75 @@ class PaddleNormalizedResult:
 
     text: str
     regions: tuple[OcrRegion, ...]
+    # Original result/region ordinals, retained even when an empty crop is omitted.
+    source_slots: tuple[tuple[int, int], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class OcrLayoutEvidence:
+    reading_plan: ReadingPlan
+    sources: tuple[RegionSource, ...]
+    splits: tuple[CompositeSplit, ...]
+    parent_regions: tuple[OcrRegion, ...]
+    parent_slots: tuple[tuple[int, int], ...]
+
+
+def _compose_aligned_regions(
+    normalized: PaddleNormalizedResult,
+    records: tuple[AlignmentRecord, ...] | None,
+    raster_width: int | None,
+    raster_height: int | None,
+) -> tuple[tuple[OcrRegion, ...], tuple[RegionSource, ...], tuple[CompositeSplit, ...]]:
+    alignments: dict[int, AlignmentRecord] = {}
+    if records is not None:
+        if len({record.record_id for record in records}) != len(records):
+            raise AlignmentContractError("OCR alignment record identity is duplicated.")
+        by_tuple: dict[tuple[Any, ...], list[AlignmentRecord]] = {}
+        for record in records:
+            if (record.raster_width, record.raster_height) != (raster_width, raster_height):
+                raise AlignmentContractError("OCR alignment raster differs from predictor input.")
+            key: tuple[Any, ...] = (
+                record.page_index,
+                record.text.strip(),
+                record.polygon,
+                record.confidence,
+            )
+            by_tuple.setdefault(key, []).append(record)
+        required: dict[tuple[Any, ...], int] = {}
+        for region, slot in zip(normalized.regions, normalized.source_slots, strict=True):
+            key = (slot[0], region.text, region.polygon, region.confidence)
+            required[key] = required.get(key, 0) + 1
+        if any(len(by_tuple.get(key, [])) < count for key, count in required.items()):
+            raise AlignmentContractError("OCR alignment cannot cover every normalized source once.")
+        for index, (region, slot) in enumerate(
+            zip(normalized.regions, normalized.source_slots, strict=True)
+        ):
+            matches = by_tuple.get((slot[0], region.text, region.polygon, region.confidence), [])
+            if not matches:
+                raise AlignmentContractError(
+                    "OCR alignment does not match a normalized source tuple."
+                )
+            # Ambiguous identical observations or trimmed raw text have no unique
+            # supported text-span alignment. Preserve these parents, without guessing.
+            if len(matches) == 1 and matches[0].text == region.text:
+                alignments[index] = matches[0]
+    splits = plan_composite_splits(normalized.regions, alignments)
+    by_parent = {split.source_index: split for split in splits}
+    regions: list[OcrRegion] = []
+    sources: list[RegionSource] = []
+    for index, (parent, slot) in enumerate(
+        zip(normalized.regions, normalized.source_slots, strict=True)
+    ):
+        split = by_parent.get(index)
+        if split is None:
+            regions.append(parent)
+            sources.append(RegionSource(slot, (0, len(parent.text)), len(parent.text)))
+        else:
+            for child in split.children:
+                regions.append(OcrRegion(child.text, child.confidence, child.polygon))
+                sources.append(RegionSource(slot, child.text_span, len(parent.text)))
+    validate_region_sources(normalized.regions, normalized.source_slots, regions, sources)
+    return tuple(regions), tuple(sources), splits
 
 
 class PaddleResultNormalizationError(EngineRuntimeUnavailableError):
@@ -545,7 +624,8 @@ def normalize_paddle_results(
     """Strictly normalize one Paddle/PaddleX prediction result sequence."""
 
     regions: list[OcrRegion] = []
-    for result in _paddle_results_sequence(results):
+    source_slots: list[tuple[int, int]] = []
+    for result_index, result in enumerate(_paddle_results_sequence(results)):
         data = _paddle_payload(result)
         texts = _paddle_optional_sequence(data, "rec_texts")
         if texts is None:
@@ -595,9 +675,11 @@ def normalize_paddle_results(
                     polygon=polygon,
                 )
             )
+            source_slots.append((result_index, index))
     return PaddleNormalizedResult(
         text="\n".join(region.text for region in regions),
         regions=tuple(regions),
+        source_slots=tuple(source_slots),
     )
 
 
@@ -1603,6 +1685,7 @@ class WindowsMLOcrAdapter:
         *,
         execution_plan: OcrExecutionPlan | None = None,
         pipeline_factory: Callable[..., Any] | None = None,
+        alignment_collector_factory: Callable[[Any], Any] | None = None,
         provider_resolver: Callable[[], list[str]] | None = None,
         provider_evidence_adapter: OcrExecutionEvidenceAdapter | None = None,
         stage_reporter: Callable[[str], None] | None = None,
@@ -1620,6 +1703,11 @@ class WindowsMLOcrAdapter:
         self.execution_plan = execution_plan
         self.device_id = None if execution_plan is None else execution_plan.dml_device_id
         self._pipeline_factory = pipeline_factory
+        # Injected predictors may omit PaddleX internals. Production canonical
+        # predictors must support collection; attachment errors never fall back.
+        self._alignment_collector_factory = alignment_collector_factory or (
+            AlignmentCollector if pipeline_factory is None else None
+        )
         self._provider_resolver = provider_resolver
         self._adapter_map_resolver = adapter_map_resolver
         self._adapter_map_lease_factory = adapter_map_lease_factory or (
@@ -1882,13 +1970,19 @@ class WindowsMLOcrAdapter:
         self._report_stage("ocr-probe-complete")
         failure_stage = "pipeline-create"
         pipeline: Any | None = None
+        alignment_records: tuple[AlignmentRecord, ...] | None = None
         try:
             self._report_stage("ocr-pipeline-create-start")
             pipeline = self._get_pipeline()
             self._report_stage("ocr-pipeline-create-complete")
             failure_stage = "predict"
             self._report_stage("ocr-predict-start")
-            results = self._predict(pipeline, image_png)
+            if self._alignment_collector_factory is None:
+                results = self._predict(pipeline, image_png)
+            else:
+                with self._alignment_collector_factory(pipeline) as collector:
+                    results = self._predict(pipeline, image_png)
+                alignment_records = collector.records
             self._report_stage("ocr-predict-complete")
             if self._device != "cpu" and not self._execution_evidence_finalized:
                 failure_stage = "provider-evidence"
@@ -1938,34 +2032,61 @@ class WindowsMLOcrAdapter:
                 "a separate CPU-only pipeline retry is disabled: "
                 f"{type(error).__name__}: {error}"
             ) from error
+        result_failure_code = "ocr_provenance_failed"
         try:
             if self._model_digest is None:
                 self._model_digest = _directory_digest(
                     self.model_dir, WINDOWSML_REQUIRED_MODEL_FILES
                 )
             raster_width, raster_height = _png_dimensions(image_png)
+            if alignment_records is not None:
+                result_failure_code = "ocr_composite_split_failed"
+                results = _paddle_results_sequence(results)
+                if len(results) != 1 or any(record.page_index != 0 for record in alignment_records):
+                    raise AlignmentContractError(
+                        "OCR alignment requires the canonical single-PNG, single-result path."
+                    )
             normalized = normalize_paddle_results(
                 results,
                 raster_width=raster_width,
                 raster_height=raster_height,
             )
+            result_failure_code = "ocr_composite_split_failed"
+            layout_regions, sources, splits = _compose_aligned_regions(
+                normalized, alignment_records, raster_width, raster_height
+            )
+            result_failure_code = "ocr_reading_order_failed"
+            reading_plan = plan_reading_order(
+                layout_regions, raw_source_slots=normalized.source_slots if not splits else None
+            )
+            regions = tuple(layout_regions[index] for index in reading_plan.order)
+            ordered_sources = tuple(sources[index] for index in reading_plan.order)
+            validate_region_sources(
+                normalized.regions, normalized.source_slots, regions, ordered_sources
+            )
+            result_failure_code = "ocr_provenance_failed"
             return OcrTextResult(
-                text=normalized.text,
+                text=reading_plan.text if reading_plan.applied or splits else normalized.text,
                 device=self._device,
                 model=self._profile.model,
                 digest=self._model_digest,
                 warning=self._warning,
-                regions=normalized.regions,
+                regions=regions,
                 raster_width=raster_width,
                 raster_height=raster_height,
                 region_confidences=tuple(
-                    region.confidence
-                    for region in normalized.regions
-                    if region.confidence is not None
+                    region.confidence for region in regions if region.confidence is not None
                 ),
                 profile_id=self._profile.profile_id,
                 profile_spec_sha256=self._profile.profile_spec_sha256,
                 execution_proof=self._execution_proof,
+                layout_evidence=OcrLayoutEvidence(
+                    reading_plan,
+                    ordered_sources,
+                    splits,
+                    normalized.regions,
+                    normalized.source_slots,
+                ),
                 provenance=OcrProvenanceV3(
                     status="resolved",
                     engine="windowsml-ocr",
@@ -1989,7 +2110,7 @@ class WindowsMLOcrAdapter:
             cleanup_error = self._abort_provider_evidence(pipeline)
             if cleanup_error is not None:
                 raise OcrInferenceCleanupError(
-                    primary_code="ocr_provenance_failed",
+                    primary_code=result_failure_code,
                     cleanup_error=cleanup_error,
                 ) from error
             raise
