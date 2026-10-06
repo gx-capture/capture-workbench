@@ -150,3 +150,28 @@ asked for the reader to use the GPU where it can. Decisions in candidate 12:
 - The DirectML execution evidence and proof of the regular pipeline do not cover
   the reader's sessions. That, and the public provenance of a routed page, stay
   open for the release lane.
+
+2026-10-06 — user approved entering the delivery flow, pushing the branch, and
+chose: derived recognizers are produced on the user's machine (not committed to
+the repository and not redistributed), and the release is 0.5.0. Decisions taken:
+
+- The engine delivers upstream's six NDLOCR-Lite files unchanged, as `source`
+  entries of the model source lock from upstream's raw URLs at commit `636d1cfe`,
+  with upstream's licence and README as licence and notice (SPDX CC-BY-4.0). The
+  user's approval of these pinned sources in this conversation is recorded as the
+  lock's approval time; the approver field keeps the existing identity.
+- Each recognizer is optimized once per machine into the shared engine cache
+  (entries named by SHA-256, accepted only with the pinned digest) and loaded
+  from there. Cache off, unwritable, or other derived bytes: upstream's file is
+  loaded, more slowly, with the same text. `CAPTURE_ENGINE_CACHE_DIR` reaches the
+  OCR worker for this.
+- The OCR profile (algorithm `capture-workbench-ocr-profile-v3`, schema 3)
+  declares the reader: source, revision, licence, delivered files, derived
+  recognizer digests, devices and the routing rule. Provenance stays per job:
+  the profile identity covers the reader; `model`, `modelDigest` and `device`
+  still describe the regular pipeline. No public contract field is added.
+- Model-source snapshot for 0.5.0 is commit `8f37898ac6b3b51c0d4e1e44aa7ea53e693f6815`
+  (tag `capture-runtime-model-sources-v0.5.0`).
+- Publication (merge to `main`, candidate and promotion workflows, consumer
+  migration of Cert Prep and LAW, consumer gates) follows the release runbook and
+  is not started by this work.

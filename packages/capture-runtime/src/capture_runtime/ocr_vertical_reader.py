@@ -37,51 +37,18 @@ from uuid import uuid4
 
 import numpy as np
 
-from capture_runtime.ocr_vertical_routing import VerticalLayoutError
+from capture_runtime.ocr_vertical_routing import (
+    CHARSET,
+    CLASSES,
+    DERIVED_RECOGNIZER_FILES,
+    DETECTOR,
+    RECOGNIZER_30,
+    RECOGNIZER_50,
+    RECOGNIZER_100,
+    VERTICAL_READER_FILES,
+    VerticalLayoutError,
+)
 
-DETECTOR = "deim-s-1024x1024.onnx"
-RECOGNIZER_30 = "parseq-ndl-24x256-30-tiny-189epoch-tegaki3-r8data-202604.onnx"
-RECOGNIZER_50 = "parseq-ndl-24x384-50-tiny-300epoch-tegaki3-r8data-202604.onnx"
-RECOGNIZER_100 = "parseq-ndl-24x768-100-tiny-153epoch-tegaki3-r8data-202604.onnx"
-CLASSES = "ndl.yaml"
-CHARSET = "NDLmoji.yaml"
-UPSTREAM_COMMIT = "636d1cfeb1331f89f4048f416e49e23a09a714b5"
-# The ONNX Runtime release whose extended optimization gives the pinned derived files.
-DERIVATION_ONNXRUNTIME = "1.24.4"
-# name -> (bytes, sha256) of upstream's files at UPSTREAM_COMMIT, as the engine delivers them.
-VERTICAL_READER_FILES: dict[str, tuple[int, str]] = {
-    DETECTOR: (40256763, "c156ce0c4e704bc3bf7e4016d0a87b949cffa8b3724f4b4cc696b8284c3c7373"),
-    RECOGNIZER_30: (
-        36457393,
-        "9e651bae4c1a4d5254da1127e86e82e21ef62d5339b37e62d4a3d3d30831772d",
-    ),
-    RECOGNIZER_50: (
-        37808553,
-        "49cea9db4552f19eb05c8ee202fcf74714977749b2f4c9376b127fde41b07a99",
-    ),
-    RECOGNIZER_100: (
-        42588187,
-        "06462b0dbd5b0b8508545c8c3d485cf20dbf4ffa652fe145e69c9e7457080602",
-    ),
-    CLASSES: (320, "9209f72c8f317d61ee98ab74ecc4cb4934e5fc51168b755ebbac1f9e8de2df48"),
-    CHARSET: (42438, "9804d2e9a9d98f038963f9453aa57c42fc189c0c48998662ff9ff3d67a9d2c1f"),
-}
-# name -> (bytes, sha256) of each recognizer after derivation. Only these bytes are
-# accepted from the cache.
-DERIVED_RECOGNIZER_FILES: dict[str, tuple[int, str]] = {
-    RECOGNIZER_30: (
-        35793563,
-        "5730246a2b34af0f468a3ff425ac9ce379a4b3d7971574be0c4c7705f0e2da83",
-    ),
-    RECOGNIZER_50: (
-        36841180,
-        "1fb8f416d3055fc25cd21623343b3d1dbcf92e57e64feafe1fac53aef81661fc",
-    ),
-    RECOGNIZER_100: (
-        40857625,
-        "8ee4578450853d5ea02e55b8aa20f052bca528b59ca7727e61d5f027a4cf7104",
-    ),
-}
 DETECTION_THRESHOLD = 0.25
 _LOGGER = logging.getLogger(__name__)
 

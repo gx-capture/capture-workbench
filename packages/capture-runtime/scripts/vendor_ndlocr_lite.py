@@ -2,8 +2,8 @@
 
 Usage: vendor_ndlocr_lite.py <checkout of ndl-lab/ndlocr-lite at UPSTREAM_COMMIT>
 
-Every source file is checked against its pinned digest before the listed
-edits are applied, so the vendored tree is reproducible from upstream alone.
+Every source file is checked against the digest of its upstream bytes before
+the listed edits are applied, so the vendored tree is reproducible from upstream alone.
 """
 
 from __future__ import annotations
@@ -18,38 +18,38 @@ PACKAGE = "capture_runtime._vendor.ndlocr_lite"
 TARGET = Path(__file__).resolve().parents[1] / "src" / "capture_runtime" / "_vendor" / "ndlocr_lite"
 EMPTY = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 SOURCES = {
-    "LICENCE": "cacf92caf395179042f1080ea0c9be9769f4234a498ce71f931e0f395d90db5b",
-    "src/ndl_parser.py": "f9659b141b80a7786fe78e2127903e55de0227f0e43f0e05b6dd1d49e64e63d5",
+    "LICENCE": "12538e73c4a1e05fc0c0b75d9d4de657f139d94ebc5f44b03a84cc1f793358f0",
+    "src/ndl_parser.py": "abe329084b3bc11bf57f330ffe057a610f672a3dd6f691e631f3339098a10997",
     "src/reading_order/__init__.py": EMPTY,
     "src/reading_order/order/__init__.py": EMPTY,
     "src/reading_order/order/reorder.py": (
-        "f71bf4d2731e00abfc4333c0ae8667c203692aa36977ff3bfd3e8d6d737db279"
+        "10f70501a54d1b84a0c87668aa80ac91eaf0b9c139393823578170617816ab5e"
     ),
     "src/reading_order/order/smooth_order.py": (
-        "ccea13c73d2e951bdadc24da75a9d4d22becb2deed0b2db424dea9d25c638543"
+        "e65da8b03e989d850c1dfaa391c6b5bd158de5c8a3caddfa4ba59ef86b1feab3"
     ),
     "src/reading_order/order/warichu_block.py": (
-        "07025fd86f981dc7fb644a8193063e89ecce4ae91e7e78b0f4e9f94507955183"
+        "50a31488e86c338078b366c0d506584949fbbbb7970e0cc2cb58069c883a3012"
     ),
     "src/reading_order/utils/__init__.py": EMPTY,
     "src/reading_order/utils/xml.py": (
-        "67bdc0c829f54c33b8f6f889c5c3bcea1796ce65859ee202d86bda76d9ddb9ad"
+        "4f2660326e3d3f20aa8ea94544ade6d6041ec11731fb5feca6c66e8289bb9efa"
     ),
     "src/reading_order/utils/logger.py": (
-        "fe24fa6eb7057cff196d75d3a8f8ef698f69a4f4aa3754831d9d4c5090452e7a"
+        "b4b18f9d7a3a7cc84ee34568622c30d721d418d571129430b5ecd2a7a6d9aee0"
     ),
     "src/reading_order/utils/time.py": (
-        "67f8a2df675f6f5c66d22f78c17be8d0303556918e46d5f4a3b146877f275d34"
+        "38936d312df9298d82196eaefd54c67fd1cfa68fdb51421669bc99bd211d6eeb"
     ),
     "src/reading_order/xy_cut/__init__.py": EMPTY,
     "src/reading_order/xy_cut/block_xy_cut.py": (
-        "69c8bfc47e6869b0487b5e9fb07529c30e80a041533765b95bdeebcf62b0b03a"
+        "5c5790d0a85beff5c1a1246e0369daa9a15a12f50e312f1e9b0e332d74b34f94"
     ),
     "src/reading_order/xy_cut/eval.py": (
-        "af5b0074990ae0ea863dd56dec95e55f04bef64224528649777a3fe7a593d151"
+        "c424b8954ef844b44bb0067487b15d29c841abbec8aaa14a3adf41d2dc09fa60"
     ),
 }
-# (file, upstream text, replacement, occurrences). Line endings become LF; nothing else changes.
+# (file, upstream text, replacement, occurrences). Nothing else changes.
 EDITS = (
     # Unused by the functions the runtime calls; neither package is a runtime dependency.
     ("src/ndl_parser.py", "from lxml import etree as ET\nfrom tqdm import tqdm\n", "", 1),
@@ -69,11 +69,12 @@ def main() -> None:
         raise SystemExit(__doc__)
     upstream = Path(sys.argv[1])
     for relative, digest in SOURCES.items():
-        data = (upstream / relative).read_bytes()
+        # Upstream stores LF; a checkout with autocrlf must not change the identity.
+        data = (upstream / relative).read_bytes().replace(b"\r\n", b"\n")
         if hashlib.sha256(data).hexdigest() != digest:
             raise SystemExit(f"{relative} differs from commit {UPSTREAM_COMMIT}")
         if relative.endswith(".py"):
-            text = data.decode("utf-8").replace("\r\n", "\n")
+            text = data.decode("utf-8")
             for name, old, new, count in EDITS:
                 if name == relative:
                     if text.count(old) != count:

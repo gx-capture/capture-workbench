@@ -15,12 +15,11 @@ from pathlib import Path
 
 import onnxruntime
 
-from capture_runtime.ocr_vertical_reader import (
+from capture_runtime.ocr_vertical_reader import derive_recognizer, verify_vertical_reader_files
+from capture_runtime.ocr_vertical_routing import (
     DERIVATION_ONNXRUNTIME,
     DERIVED_RECOGNIZER_FILES,
     VERTICAL_READER_FILES,
-    derive_recognizer,
-    verify_vertical_reader_files,
 )
 
 

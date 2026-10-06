@@ -135,8 +135,8 @@ direction-study note. The user then approved implementing the routing (candidate
 characters are at least 80% in tall boxes is read as a whole by NDLOCR-Lite (line
 detector on the CPU; recognizers on the regular pipeline's DirectML device when
 there is one, candidate 12), and its lines, order and scores replace the first pass
-for that page. The code
-is in the runtime and inactive until the engine delivers the reader's models, which
-is a release-lane change (source lock, catalog, profile, provenance) not yet made.
+for that page. Release source 0.5.0 delivers the reader's files through the model
+source lock and catalog and declares it in the OCR profile; publication by the
+release runbook has not started.
 This supersedes Phases 2 and 3 as specified below; they are kept for reference and
 are not planned. Details are in the vertical-reader note.

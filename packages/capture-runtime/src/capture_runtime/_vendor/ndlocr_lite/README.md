@@ -19,7 +19,6 @@ and holds the digest of every source file. It makes these changes and no others:
   `from capture_runtime._vendor.ndlocr_lite.reading_order.`.
 - `reading_order/order/smooth_order.py`: `import networkx as nx` becomes an import
   of `_digraph.py`.
-- Line endings are LF.
 
 `_digraph.py`, `__init__.py` in this directory and this file are not part of
 NDLOCR-Lite. `_digraph.py` provides the two networkx calls `smooth_order.py` uses,

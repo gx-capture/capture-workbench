@@ -146,3 +146,15 @@ candidate with `node tools/install-capture-workbench-dependencies.mts
 - Engine downloads are served from the machine-wide cache
   (`%LOCALAPPDATA%\gx-capture\engine-cache`) once any host has installed
   them. Set `CAPTURE_ENGINE_CACHE_DIR=off` to time or debug a cold download.
+- A minor version bump also needs `CAPTURE_RUNTIME_MINOR` in
+  `packages/capture-workbench-ui/src/lib/constants/runtime.ts`; the version sync
+  and its check do not own it, and `capture-angular:test` is what fails.
+- Local `build-release-artifacts` after a version bump: delete the previous
+  version's files from `packages/capture-runtime/dist/engines` and run with
+  `--skip-nx-cache`, or the cache restores them and the catalog step rejects them.
+  The ignored `src-tauri/resources/capture-runtime-manifest.json` is re-staged by
+  `capture-workbench-desktop:stage-core-runtime`.
+- Pin upstream model and configuration digests from git blobs or a real download,
+  never from a checkout with `autocrlf`: text files there are CRLF copies.
+- `capture-tools:promotion-registry-test` fails under Git Bash on Windows (its
+  `tar` reads `C:` as a remote host); run it from PowerShell.

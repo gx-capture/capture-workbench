@@ -109,16 +109,20 @@ See the [direction study](../RESEARCH/vertical-japanese-ocr-direction-study-2026
   tests; identical to upstream on 106 retained rasters; fresh CPU/DML and frozen
   workers verified with the reader installed by hand. See the
   [vertical-reader note](../RESEARCH/vertical-japanese-ocr-vertical-reader-2026-10-06.md).
-- [ ] Release lane, needs the user's approval: add the reader's models and licence
-  to the model source lock and catalog, declare the reader in the OCR profile,
-  decide the public provenance of a routed page, and version the engine.
+- [x] Release source for 0.5.0 (user approval of 2026-10-06): reader files in the
+  model source lock and catalog, profile v3 declaring the reader, model-source
+  snapshot `8f37898` tagged, version sync, contracts regenerated. Recognizers are
+  derived on the machine into the engine cache. Local package journey with the
+  reader installed from the catalog: 619 boxes equal the source worker.
+- [ ] Publish 0.5.0 by the release runbook: merge to `main`, push CI, candidates,
+  Route A, consumer migration (Cert Prep, then LAW; LAW pins `runtimeVersion`
+  0.4.4 and rejects 0.5.0 until migrated), release candidate, gates, promotion.
 - [x] Candidate 12 (user approval of 2026-10-06): derived recognizers loaded without
   optimization, memory arena off, recognizers on the regular pipeline's DirectML
   device. A routed job adds 7 to 9 s and 310 to 416 MiB instead of 14 to 18 s and
   390 to 646 MiB; text, order and boxes equal upstream on 106 pages on the CPU and
   on both DirectML adapters.
-- [ ] Release lane additionally: record the recognizer derivation in the source
-  lock, and decide whether the reader's DirectML sessions need execution evidence.
+- [ ] Decide whether the reader's DirectML sessions need execution evidence.
 - [ ] Acceptance on vertical documents not used in development, of more than one
   kind, and an independent review of candidate 11.
 - [ ] Pages that mix directions (share under 80%): no reader is good at them yet.

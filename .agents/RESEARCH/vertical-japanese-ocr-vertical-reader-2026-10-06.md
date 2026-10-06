@@ -6,9 +6,8 @@
 `tmp/vertical-japanese-ocr-phase0/` (ignored). No recognized page text is stored
 in this note or in the repository.
 
-**Current state is candidate 12, described in the last section; it changes the
-models delivered, the session options and the device of the recognizers. The
-sections before it describe candidate 11 and are kept as measured.**
+**Current state is the 0.5.0 release source, described in the last section. The
+sections before it describe candidates 11 and 12 and are kept as measured.**
 
 **Status: in the runtime, verified with the reader installed by hand, inactive in
 the released engine.** The engine catalog does not deliver the reader's models;
@@ -407,3 +406,111 @@ it frees the CPU cores during reading.
   runtime that loads them must be able to read that release's optimized graphs.
 - The delivered recognizers are no longer upstream's bytes, so attribution has to
   say they were modified (CC BY 4.0).
+
+## Release source 0.5.0 — delivery and derivation on the machine (2026-10-06)
+
+The user approved entering the delivery flow, chose version 0.5.0, and chose that
+derived recognizers are produced on the user's machine instead of being committed
+to the repository (about 113 MiB of binaries, and redistribution of modified
+models) or left out.
+
+### What changed from candidate 12
+
+- **Delivered files are upstream's bytes.** The model source lock lists the six
+  files as `source` entries from `raw.githubusercontent.com/ndl-lab/ndlocr-lite`
+  at commit `636d1cfe`, with upstream's `LICENCE` and `README.md` as licence and
+  notice. The OCR requirement is now 18 files, 282 MiB (150 MiB more).
+- **Derivation on the machine.** On first use each recognizer is optimized by ONNX
+  Runtime (extended level, CPU provider) into the shared engine cache, in the
+  cache's own layout (`<sha256[:2]>/<sha256>`), and accepted only with the pinned
+  size and digest; later runs load it from there. With the cache off, unwritable,
+  or other derived bytes, the upstream file is loaded with full optimization.
+  Nothing in this path fails a page.
+- **Profile v3.** `verticalReader` in the profile declares source, revision,
+  licence, delivered files, derived digests, devices and routing rule; the runtime
+  refuses a profile that differs from its own constants, and a unit test holds the
+  standalone generator to the same declaration. Profile id
+  `capture-workbench-ocr-1c6be4a3cebc2b21`.
+- **Version 0.5.0**: version sync, regenerated contracts (contract-set
+  `4c63044191551bf3f7c36d24d08cc6ced25fcc701bf1e06a0fa69626b1e18f1b`), refreshed
+  Python and Cargo locks, model-source snapshot commit
+  `8f37898ac6b3b51c0d4e1e44aa7ea53e693f6815` tagged
+  `capture-runtime-model-sources-v0.5.0`.
+
+### A mistake found on the way
+
+The digests first pinned for the two configuration files, and for the vendored
+sources in `vendor_ndlocr_lite.py`, were taken from a checkout with `autocrlf`,
+so they were digests of CRLF copies. Upstream stores LF. Comparing with the git
+blobs and with a real download from the raw URL showed it before the lock was
+written; the pins are now upstream's bytes (`ndl.yaml` 299 bytes,
+`NDLmoji.yaml` 42,434 bytes), the vendoring script normalizes a CRLF checkout
+before comparing, and every evidence run below used the corrected files.
+
+### Evidence
+
+`differential_reader.py`, the product reader with upstream's files against
+unmodified upstream, 106 pages and 9,625 lines each:
+
+| Run | Start-up, s | Text and order equal | Boxes equal |
+| --- | ---: | ---: | ---: |
+| CPU, first run (derives into an empty cache) | 10.9 | 106 | 106 |
+| CPU, cached | 3.8 | 106 | 106 |
+| DirectML dedicated adapter, cached | 4.8 | 106 | 106 |
+| DirectML other adapter, cached | 6.2 | 106 | 106 |
+| CPU, cache off | 7.7 | 106 | 106 |
+| DirectML dedicated adapter, cache off | 9.5 | 106 | 106 |
+
+Workers on the 0.5.0 source (`verify_fresh_workers_13.py`, ten pages per provider,
+model directory assembled from the files the lock pins, scratch engine cache):
+six pages that are not routed equal the candidate 12 run without the reader; four
+routed pages equal upstream line for line on CPU and DML and agree between
+providers; the frozen worker equals the source worker; seven controlled faults
+rejected.
+
+**Local package journey with the reader installed from the catalog**
+(`verify_local_package_13.mts`): locally built 0.5.0 runtime, catalog and OCR
+worker, real HTTP, models installed by the engine installer from a staging of the
+18 locked files (licence and notice downloaded from upstream's URLs and matching
+the lock), engine cache off. Ten pages, 619 boxes, identical to the source worker,
+four routed pages among them.
+
+LAW readback was not repeated: LAW's model pins `runtimeVersion` to `0.4.4` and
+rejects a 0.5.0 projection. That is the consumer migration of the release
+runbook, not a defect of this change.
+
+The 41 commands of the CI workflow that run without a desktop installer were run
+locally on the final tree and pass (runtime: 1,050 unit and 216 integration tests, two recorded
+expected failures; the workspace's TypeScript, Python, Java, Rust and Angular
+clients, launcher, desktop crate and release tooling). Three needed attention: the
+Angular library's `CAPTURE_RUNTIME_MINOR` still said 4 and now says 5; an ignored,
+locally staged desktop manifest was stale and was re-staged; and the promotion
+registry tests fail under Git Bash because its `tar` reads `C:` as a host, and pass
+from PowerShell.
+
+| Evidence | SHA256 |
+| --- | --- |
+| `phase1/fresh-worker-dml-13/completed.json` | `ea150a955ca9d26d82e56ba1a04d60945af027d4a2bdff65269af0b1a639886a` |
+| `phase1/fresh-worker-cpu-13/completed.json` | `9b14712db228de004ad034111ace805e1e3d5d7ca7cb8dedad099923602114d0` |
+| `phase1/frozen-worker-dml-13/completed.json` | `a34303d395128658b3e2649a9f7f0505fb3b597a2ab24bc7fb5367d84a119972` |
+| `phase1/fresh-worker-verification-13.json` | `db5fed2c5d451dd62be7a40ae50e6ac9079e8bfa4999ec44db97a481436e6a6f` |
+| `phase1/packaged-semantic-13/verification.json` | `19fe33c5e8acbf57fab945e78c125f71cf90f931191a6ebf84913d0b1dc89959` |
+| `direction-study/differential-reader-cpu-first-run.json` | `8bce78bba7b16d0905ec8d1fc56949e5db02d3053a2db9b98ce051e930df2686` |
+| `direction-study/differential-reader-cpu-cached.json` | `dab42632ebd444978ecd9ca06f96a6f0d7812aac2ba9c927e2bb99a6be89a2c5` |
+| `direction-study/differential-reader-dml1-cached.json` | `e6d946ea67272070aab4b3c7d5cef737570a32d7f972677eb35b97f0ac1ae32b` |
+| `direction-study/differential-reader-cpu-no-cache.json` | `403efc71f49aac59d6d610630b3f2db1eeb726acdbb922bdb7557dee08379e1b` |
+| `model-sources/release-model-source-lock.json` | `8a229116882465cd3f8356707a0ce31dd71ef6be1c7c260962a5d170e3aa271e` |
+| `src/capture_runtime/assets/ocr-profile.json` | `1c6be4a3cebc2b21c33e9c35ee36e07b2bd9fdc86f4c5dde1d224231eb4b77e6` |
+| `src/capture_runtime/ocr_vertical_reader.py` | `f1ef46a6b81fa5eb3755df7715eb59c81bde9bb56849e8e66401905b80687d96` |
+| `src/capture_runtime/ocr_vertical_routing.py` | `7c6e29ca4d9d92e132e2e3646f885f1a8ccafa829164c1ccc3ac518993b6b550` |
+| `dist/release/capture-engine-catalog.json` | `e41ba8aa1079430849c421e9f6dd4848f9e91f86482628e4950df2efd0e78031` |
+
+### Not done
+
+- Publication: nothing is merged to `main`, no workflow was dispatched, no
+  registry or release was touched. The model-source tag is the only new ref
+  besides the branch.
+- Resource measurement was not repeated for the 0.5.0 source; the cached path is
+  the candidate 12 path, and the first routed page on a machine additionally
+  pays the derivation (about 7 s in one process).
+- Consumer migration and gates; unseen-document acceptance; independent review.

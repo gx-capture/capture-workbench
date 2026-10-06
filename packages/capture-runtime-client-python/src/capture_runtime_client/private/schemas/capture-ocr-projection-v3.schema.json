@@ -417,7 +417,7 @@
       "type": "integer"
     },
     "runtimeVersion": {
-      "const": "0.4.4",
+      "const": "0.5.0",
       "title": "Runtimeversion",
       "type": "string"
     },

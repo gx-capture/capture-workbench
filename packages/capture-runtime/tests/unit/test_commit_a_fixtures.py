@@ -47,11 +47,12 @@ def test_commit_a_generator_reproduces_exact_tracked_bytes() -> None:
 def test_commit_a_provenance_binds_bytes_and_fixed_revisions() -> None:
     provenance = json.loads((FIXTURE_ROOT / "provenance/commit-a.json").read_text("utf-8"))
     assert provenance == json.loads((FIXTURE_ROOT / "provenance/commit-a.json").read_text("utf-8"))
-    assert provenance["releaseVersion"] == "0.4.4"
+    assert provenance["releaseVersion"] == "0.5.0"
     assert provenance["stage"] == "commit-a"
     assert provenance["licensePath"] == "licenses/LICENSE.txt"
     assert provenance["noticePath"] == "licenses/NOTICE.txt"
     assert provenance["fixedUpstreamRevisions"] == {
+        "ndlocrLite": "636d1cfeb1331f89f4048f416e49e23a09a714b5",
         "paddleocrDetection": "61323801669c338b7891481ec7bac61ce31b576a",
         "paddleocrDictionary": "b03f46425e8ff4442b268ce449e3eef758146cd4",
         "paddleocrRecognition": "50c7eacafc52fa7bcf4194e8cd08e46f8558504b",
@@ -59,6 +60,7 @@ def test_commit_a_provenance_binds_bytes_and_fixed_revisions() -> None:
         "whisperPrimary": "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf",
     }
     assert provenance["sourceRepositories"] == {
+        "ndlocrLite": "ndl-lab/ndlocr-lite",
         "paddleocrDetection": "PaddlePaddle/PP-OCRv6_medium_det_onnx",
         "paddleocrRecognition": "PaddlePaddle/PP-OCRv6_medium_rec_onnx",
     }
@@ -72,7 +74,7 @@ def test_commit_a_provenance_binds_bytes_and_fixed_revisions() -> None:
     assert pipeline["device"] == "windowsml-dml"
     assert pipeline["cpuFallback"] == "provider-missing-only"
     assert pipeline["failClosedOnDmlError"] is True
-    assert pipeline["algorithm"] == "capture-workbench-ocr-profile-v2"
+    assert pipeline["algorithm"] == "capture-workbench-ocr-profile-v3"
     assert pipeline["models"]["det"] == {
         "modelDir": "det",
         "modelName": "PP-OCRv6_medium_det",
@@ -99,6 +101,14 @@ def test_commit_a_provenance_binds_bytes_and_fixed_revisions() -> None:
     assert ocr["expectedModel"] == "pp-ocrv6-medium-windowsml"
     assert ocr["expectedDevice"] == "windowsml-dml"
     assert "audio" not in json.dumps(provenance).lower()
+
+
+def test_generator_declares_the_vertical_reader_as_the_runtime_does() -> None:
+    from capture_runtime.ocr_vertical_routing import vertical_reader_declaration
+
+    pipeline = json.loads((FIXTURE_ROOT / "model/pipeline.json").read_text("utf-8"))
+    assert generator.VERTICAL_READER == vertical_reader_declaration()
+    assert pipeline["verticalReader"] == vertical_reader_declaration()
 
 
 def test_reference_png_is_valid_deterministic_rgb_image() -> None:

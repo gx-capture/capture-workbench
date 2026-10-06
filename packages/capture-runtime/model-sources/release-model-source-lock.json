@@ -1,6 +1,6 @@
 {
   "approval": {
-    "approvedAt": "2026-08-10T03:00:42.327Z",
+    "approvedAt": "2026-10-06T04:17:45.000Z",
     "approvedBy": "MSI\\guanxin",
     "blockers": [],
     "status": "approved"
@@ -17,21 +17,21 @@
       "licenseBytes": 1087,
       "licensePath": "licenses/LICENSE.txt",
       "licenseSha256": "20d8153042f147e730a2265e35e3862f8d1ad67b5f6804d44fb81e7dfbc5818b",
-      "licenseUrl": "https://raw.githubusercontent.com/gx-capture/capture-workbench/de87d3ddeb28363c0d96cca79b224900de688816/packages/capture-runtime/model-sources/commit-a/licenses/LICENSE.txt",
+      "licenseUrl": "https://raw.githubusercontent.com/gx-capture/capture-workbench/8f37898ac6b3b51c0d4e1e44aa7ea53e693f6815/packages/capture-runtime/model-sources/commit-a/licenses/LICENSE.txt",
       "mediaType": "image/png",
       "noticeBytes": 303,
       "noticePath": "licenses/NOTICE.txt",
-      "noticeSha256": "0a595f0b5c11c7cbfe1fa0ac5c89d25b9537797e500ba2e7ff7e503c1dd8282d",
-      "noticeUrl": "https://raw.githubusercontent.com/gx-capture/capture-workbench/de87d3ddeb28363c0d96cca79b224900de688816/packages/capture-runtime/model-sources/commit-a/licenses/NOTICE.txt",
+      "noticeSha256": "e5468ad67231cafed8aa646c04cd2f0c04231d18cb9a0f9311cf10fdca6b9d45",
+      "noticeUrl": "https://raw.githubusercontent.com/gx-capture/capture-workbench/8f37898ac6b3b51c0d4e1e44aa7ea53e693f6815/packages/capture-runtime/model-sources/commit-a/licenses/NOTICE.txt",
       "owner": "gx-capture/capture-workbench",
       "pdfBytes": 2421,
       "pdfSha256": "5eec85d2b2e98e06577cb5310d1b3037ca26f03d06d85a292ae78b68d4c57f30",
-      "pdfUrl": "https://raw.githubusercontent.com/gx-capture/capture-workbench/de87d3ddeb28363c0d96cca79b224900de688816/packages/capture-runtime/model-sources/commit-a/fixtures/ocr-scanned.pdf",
+      "pdfUrl": "https://raw.githubusercontent.com/gx-capture/capture-workbench/8f37898ac6b3b51c0d4e1e44aa7ea53e693f6815/packages/capture-runtime/model-sources/commit-a/fixtures/ocr-scanned.pdf",
       "redistributable": true,
-      "revision": "de87d3ddeb28363c0d96cca79b224900de688816",
+      "revision": "8f37898ac6b3b51c0d4e1e44aa7ea53e693f6815",
       "sha256": "7d61f4835837c4c387a0d46c4f21f7442fe22aab3f14f330b86f6857f5f3bc82",
       "spdx": "MIT",
-      "url": "https://raw.githubusercontent.com/gx-capture/capture-workbench/de87d3ddeb28363c0d96cca79b224900de688816/packages/capture-runtime/model-sources/commit-a/fixtures/ocr-reference.png"
+      "url": "https://raw.githubusercontent.com/gx-capture/capture-workbench/8f37898ac6b3b51c0d4e1e44aa7ea53e693f6815/packages/capture-runtime/model-sources/commit-a/fixtures/ocr-reference.png"
     },
     {
       "bytes": 11005641,
@@ -52,12 +52,26 @@
     }
   ],
   "lockVersion": "2",
-  "releaseVersion": "0.4.4",
+  "releaseVersion": "0.5.0",
   "requirements": [
     {
-      "artifactVersion": "0.4.4",
+      "artifactVersion": "0.5.0",
       "entryPoint": "model",
       "files": [
+        {
+          "bytes": 18653,
+          "derivation": null,
+          "kind": "license",
+          "licensePath": null,
+          "noticePath": null,
+          "owner": "ndl-lab/ndlocr-lite",
+          "path": "licenses/LICENSE-NDLOCR-Lite.txt",
+          "redirectHosts": [],
+          "revision": "636d1cfeb1331f89f4048f416e49e23a09a714b5",
+          "sha256": "12538e73c4a1e05fc0c0b75d9d4de657f139d94ebc5f44b03a84cc1f793358f0",
+          "spdx": "CC-BY-4.0",
+          "url": "https://raw.githubusercontent.com/ndl-lab/ndlocr-lite/636d1cfeb1331f89f4048f416e49e23a09a714b5/LICENCE"
+        },
         {
           "bytes": 11376,
           "derivation": null,
@@ -101,6 +115,20 @@
           "url": "https://huggingface.co/PaddlePaddle/PP-OCRv6_medium_rec_onnx/raw/50c7eacafc52fa7bcf4194e8cd08e46f8558504b/README.md"
         },
         {
+          "bytes": 11168,
+          "derivation": null,
+          "kind": "notice",
+          "licensePath": null,
+          "noticePath": null,
+          "owner": "ndl-lab/ndlocr-lite",
+          "path": "licenses/NOTICE-vertical.md",
+          "redirectHosts": [],
+          "revision": "636d1cfeb1331f89f4048f416e49e23a09a714b5",
+          "sha256": "49ae23223320936d4cc26ca0ab79f04b1460a3e3a74eb90a481f0b83c51c7f45",
+          "spdx": "CC-BY-4.0",
+          "url": "https://raw.githubusercontent.com/ndl-lab/ndlocr-lite/636d1cfeb1331f89f4048f416e49e23a09a714b5/README.md"
+        },
+        {
           "bytes": 62032837,
           "derivation": null,
           "kind": "source",
@@ -131,18 +159,24 @@
           "url": "https://huggingface.co/PaddlePaddle/PP-OCRv6_medium_det_onnx/raw/61323801669c338b7891481ec7bac61ce31b576a/inference.yml"
         },
         {
-          "bytes": 2780,
+          "bytes": 5285,
           "derivation": {
-            "algorithm": "capture-workbench-ocr-profile-v2",
+            "algorithm": "capture-workbench-ocr-profile-v3",
             "generator": "packages/capture-runtime/scripts/generate_commit_a_fixtures.py",
             "inputs": [
               "model/det/inference.onnx",
               "model/det/inference.yml",
               "model/rec/inference.onnx",
               "model/rec/inference.yml",
-              "model/rec/ppocrv6_dict.txt"
+              "model/rec/ppocrv6_dict.txt",
+              "model/vertical/NDLmoji.yaml",
+              "model/vertical/deim-s-1024x1024.onnx",
+              "model/vertical/ndl.yaml",
+              "model/vertical/parseq-ndl-24x256-30-tiny-189epoch-tegaki3-r8data-202604.onnx",
+              "model/vertical/parseq-ndl-24x384-50-tiny-300epoch-tegaki3-r8data-202604.onnx",
+              "model/vertical/parseq-ndl-24x768-100-tiny-153epoch-tegaki3-r8data-202604.onnx"
             ],
-            "sourceCommit": "de87d3ddeb28363c0d96cca79b224900de688816",
+            "sourceCommit": "8f37898ac6b3b51c0d4e1e44aa7ea53e693f6815",
             "toolVersions": {
               "generator": "commit-a-v2",
               "python": "3.12.12"
@@ -154,10 +188,10 @@
           "owner": "gx-capture/capture-workbench",
           "path": "model/pipeline.json",
           "redirectHosts": [],
-          "revision": "de87d3ddeb28363c0d96cca79b224900de688816",
-          "sha256": "c62e3830bae223e15c96bae7eff1fb941beadf732abc31de9a99b212c7d09cd4",
+          "revision": "8f37898ac6b3b51c0d4e1e44aa7ea53e693f6815",
+          "sha256": "1c6be4a3cebc2b21c33e9c35ee36e07b2bd9fdc86f4c5dde1d224231eb4b77e6",
           "spdx": "MIT",
-          "url": "https://raw.githubusercontent.com/gx-capture/capture-workbench/de87d3ddeb28363c0d96cca79b224900de688816/packages/capture-runtime/model-sources/commit-a/model/pipeline.json"
+          "url": "https://raw.githubusercontent.com/gx-capture/capture-workbench/8f37898ac6b3b51c0d4e1e44aa7ea53e693f6815/packages/capture-runtime/model-sources/commit-a/model/pipeline.json"
         },
         {
           "bytes": 76554979,
@@ -204,7 +238,91 @@
           "url": "https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/b03f46425e8ff4442b268ce449e3eef758146cd4/ppocr/utils/dict/ppocrv6_dict.txt"
         },
         {
-          "bytes": 2335,
+          "bytes": 42434,
+          "derivation": null,
+          "kind": "source",
+          "licensePath": "licenses/LICENSE-NDLOCR-Lite.txt",
+          "noticePath": "licenses/NOTICE-vertical.md",
+          "owner": "ndl-lab/ndlocr-lite",
+          "path": "model/vertical/NDLmoji.yaml",
+          "redirectHosts": [],
+          "revision": "636d1cfeb1331f89f4048f416e49e23a09a714b5",
+          "sha256": "f6ad5a2de444b495155866af811cf1a98309dcae3225db802767ea531a2dc529",
+          "spdx": "CC-BY-4.0",
+          "url": "https://raw.githubusercontent.com/ndl-lab/ndlocr-lite/636d1cfeb1331f89f4048f416e49e23a09a714b5/src/config/NDLmoji.yaml"
+        },
+        {
+          "bytes": 40256763,
+          "derivation": null,
+          "kind": "source",
+          "licensePath": "licenses/LICENSE-NDLOCR-Lite.txt",
+          "noticePath": "licenses/NOTICE-vertical.md",
+          "owner": "ndl-lab/ndlocr-lite",
+          "path": "model/vertical/deim-s-1024x1024.onnx",
+          "redirectHosts": [],
+          "revision": "636d1cfeb1331f89f4048f416e49e23a09a714b5",
+          "sha256": "c156ce0c4e704bc3bf7e4016d0a87b949cffa8b3724f4b4cc696b8284c3c7373",
+          "spdx": "CC-BY-4.0",
+          "url": "https://raw.githubusercontent.com/ndl-lab/ndlocr-lite/636d1cfeb1331f89f4048f416e49e23a09a714b5/src/model/deim-s-1024x1024.onnx"
+        },
+        {
+          "bytes": 299,
+          "derivation": null,
+          "kind": "source",
+          "licensePath": "licenses/LICENSE-NDLOCR-Lite.txt",
+          "noticePath": "licenses/NOTICE-vertical.md",
+          "owner": "ndl-lab/ndlocr-lite",
+          "path": "model/vertical/ndl.yaml",
+          "redirectHosts": [],
+          "revision": "636d1cfeb1331f89f4048f416e49e23a09a714b5",
+          "sha256": "0c2a6a184dd322375b76f2ce3842f8ac555d53edad0ab63655c013f4c471c5a0",
+          "spdx": "CC-BY-4.0",
+          "url": "https://raw.githubusercontent.com/ndl-lab/ndlocr-lite/636d1cfeb1331f89f4048f416e49e23a09a714b5/src/config/ndl.yaml"
+        },
+        {
+          "bytes": 36457393,
+          "derivation": null,
+          "kind": "source",
+          "licensePath": "licenses/LICENSE-NDLOCR-Lite.txt",
+          "noticePath": "licenses/NOTICE-vertical.md",
+          "owner": "ndl-lab/ndlocr-lite",
+          "path": "model/vertical/parseq-ndl-24x256-30-tiny-189epoch-tegaki3-r8data-202604.onnx",
+          "redirectHosts": [],
+          "revision": "636d1cfeb1331f89f4048f416e49e23a09a714b5",
+          "sha256": "9e651bae4c1a4d5254da1127e86e82e21ef62d5339b37e62d4a3d3d30831772d",
+          "spdx": "CC-BY-4.0",
+          "url": "https://raw.githubusercontent.com/ndl-lab/ndlocr-lite/636d1cfeb1331f89f4048f416e49e23a09a714b5/src/model/parseq-ndl-24x256-30-tiny-189epoch-tegaki3-r8data-202604.onnx"
+        },
+        {
+          "bytes": 37808553,
+          "derivation": null,
+          "kind": "source",
+          "licensePath": "licenses/LICENSE-NDLOCR-Lite.txt",
+          "noticePath": "licenses/NOTICE-vertical.md",
+          "owner": "ndl-lab/ndlocr-lite",
+          "path": "model/vertical/parseq-ndl-24x384-50-tiny-300epoch-tegaki3-r8data-202604.onnx",
+          "redirectHosts": [],
+          "revision": "636d1cfeb1331f89f4048f416e49e23a09a714b5",
+          "sha256": "49cea9db4552f19eb05c8ee202fcf74714977749b2f4c9376b127fde41b07a99",
+          "spdx": "CC-BY-4.0",
+          "url": "https://raw.githubusercontent.com/ndl-lab/ndlocr-lite/636d1cfeb1331f89f4048f416e49e23a09a714b5/src/model/parseq-ndl-24x384-50-tiny-300epoch-tegaki3-r8data-202604.onnx"
+        },
+        {
+          "bytes": 42588187,
+          "derivation": null,
+          "kind": "source",
+          "licensePath": "licenses/LICENSE-NDLOCR-Lite.txt",
+          "noticePath": "licenses/NOTICE-vertical.md",
+          "owner": "ndl-lab/ndlocr-lite",
+          "path": "model/vertical/parseq-ndl-24x768-100-tiny-153epoch-tegaki3-r8data-202604.onnx",
+          "redirectHosts": [],
+          "revision": "636d1cfeb1331f89f4048f416e49e23a09a714b5",
+          "sha256": "06462b0dbd5b0b8508545c8c3d485cf20dbf4ffa652fe145e69c9e7457080602",
+          "spdx": "CC-BY-4.0",
+          "url": "https://raw.githubusercontent.com/ndl-lab/ndlocr-lite/636d1cfeb1331f89f4048f416e49e23a09a714b5/src/model/parseq-ndl-24x768-100-tiny-153epoch-tegaki3-r8data-202604.onnx"
+        },
+        {
+          "bytes": 2438,
           "derivation": null,
           "kind": "provenance",
           "licensePath": "licenses/LICENSE-PaddleOCR.txt",
@@ -212,16 +330,16 @@
           "owner": "gx-capture/capture-workbench",
           "path": "provenance/commit-a.json",
           "redirectHosts": [],
-          "revision": "de87d3ddeb28363c0d96cca79b224900de688816",
-          "sha256": "b6f2bece913a2d3af5e7c8eec055db8c4880d93735ceb01823b2f6b21253c4b7",
+          "revision": "8f37898ac6b3b51c0d4e1e44aa7ea53e693f6815",
+          "sha256": "e23f1ba8b2e6feb107a4119c37775f85d802e893b9a35ccf2170da44a5caed1b",
           "spdx": "MIT",
-          "url": "https://raw.githubusercontent.com/gx-capture/capture-workbench/de87d3ddeb28363c0d96cca79b224900de688816/packages/capture-runtime/model-sources/commit-a/provenance/commit-a.json"
+          "url": "https://raw.githubusercontent.com/gx-capture/capture-workbench/8f37898ac6b3b51c0d4e1e44aa7ea53e693f6815/packages/capture-runtime/model-sources/commit-a/provenance/commit-a.json"
         }
       ],
       "requirementId": "windowsml-ocr"
     },
     {
-      "artifactVersion": "0.4.4",
+      "artifactVersion": "0.5.0",
       "entryPoint": "model",
       "files": [
         {
