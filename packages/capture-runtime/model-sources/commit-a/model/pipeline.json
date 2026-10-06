@@ -1,5 +1,5 @@
 {
-  "algorithm": "capture-workbench-ocr-profile-v2",
+  "algorithm": "capture-workbench-ocr-profile-v3",
   "artifacts": [
     {
       "bytes": 62032837,
@@ -96,6 +96,75 @@
       "pdf": "pdfium"
     }
   },
-  "releaseVersion": "0.4.4",
-  "schemaVersion": "2"
+  "releaseVersion": "0.5.0",
+  "schemaVersion": "3",
+  "verticalReader": {
+    "artifacts": [
+      {
+        "bytes": 42434,
+        "path": "vertical/NDLmoji.yaml",
+        "sha256": "f6ad5a2de444b495155866af811cf1a98309dcae3225db802767ea531a2dc529"
+      },
+      {
+        "bytes": 40256763,
+        "path": "vertical/deim-s-1024x1024.onnx",
+        "sha256": "c156ce0c4e704bc3bf7e4016d0a87b949cffa8b3724f4b4cc696b8284c3c7373"
+      },
+      {
+        "bytes": 299,
+        "path": "vertical/ndl.yaml",
+        "sha256": "0c2a6a184dd322375b76f2ce3842f8ac555d53edad0ab63655c013f4c471c5a0"
+      },
+      {
+        "bytes": 36457393,
+        "path": "vertical/parseq-ndl-24x256-30-tiny-189epoch-tegaki3-r8data-202604.onnx",
+        "sha256": "9e651bae4c1a4d5254da1127e86e82e21ef62d5339b37e62d4a3d3d30831772d"
+      },
+      {
+        "bytes": 37808553,
+        "path": "vertical/parseq-ndl-24x384-50-tiny-300epoch-tegaki3-r8data-202604.onnx",
+        "sha256": "49cea9db4552f19eb05c8ee202fcf74714977749b2f4c9376b127fde41b07a99"
+      },
+      {
+        "bytes": 42588187,
+        "path": "vertical/parseq-ndl-24x768-100-tiny-153epoch-tegaki3-r8data-202604.onnx",
+        "sha256": "06462b0dbd5b0b8508545c8c3d485cf20dbf4ffa652fe145e69c9e7457080602"
+      }
+    ],
+    "derivedRecognizers": {
+      "artifacts": [
+        {
+          "bytes": 35793563,
+          "sha256": "5730246a2b34af0f468a3ff425ac9ce379a4b3d7971574be0c4c7705f0e2da83",
+          "source": "vertical/parseq-ndl-24x256-30-tiny-189epoch-tegaki3-r8data-202604.onnx"
+        },
+        {
+          "bytes": 36841180,
+          "sha256": "1fb8f416d3055fc25cd21623343b3d1dbcf92e57e64feafe1fac53aef81661fc",
+          "source": "vertical/parseq-ndl-24x384-50-tiny-300epoch-tegaki3-r8data-202604.onnx"
+        },
+        {
+          "bytes": 40857625,
+          "sha256": "8ee4578450853d5ea02e55b8aa20f052bca528b59ca7727e61d5f027a4cf7104",
+          "source": "vertical/parseq-ndl-24x768-100-tiny-153epoch-tegaki3-r8data-202604.onnx"
+        }
+      ],
+      "level": "extended",
+      "onnxruntime": "1.24.4",
+      "provider": "CPUExecutionProvider",
+      "storage": "engine-cache"
+    },
+    "detectorDevice": "cpu",
+    "license": "CC-BY-4.0",
+    "modelDir": "vertical",
+    "recognizerDevice": "regular-pipeline-device",
+    "revision": "636d1cfeb1331f89f4048f416e49e23a09a714b5",
+    "routing": {
+      "minimumReaderCharacterShare": 0.5,
+      "minimumTallBoxes": 3,
+      "minimumVerticalCharacterShare": 0.8,
+      "tallBoxAspect": 2.0
+    },
+    "source": "ndl-lab/ndlocr-lite"
+  }
 }
