@@ -121,9 +121,11 @@ See the [direction study](../RESEARCH/vertical-japanese-ocr-direction-study-2026
 - [x] Independent review of the runtime and of the release source, and acceptance on
   unseen documents (two textbooks, one N1 paper, three public-domain vertical
   books); findings fixed or recorded in the vertical-reader note.
-- [ ] Publish 0.5.0 by the release runbook: merge to `main`, push CI, candidates,
-  Route A, consumer migration (Cert Prep, then LAW; LAW pins `runtimeVersion`
-  0.4.4 and rejects 0.5.0 until migrated), release candidate, gates, promotion.
+- [x] 0.5.0 published on 2026-10-06 by the release runbook (Route A, consumer
+  migration of Cert Prep and LAW, release candidate, consumer gates, promotion);
+  run IDs and identities are in the runbook's current state.
+- [ ] Repeat the published-mode practical OCR journeys of Cert Prep and LAW with
+  0.5.0 (local and manual).
 - [x] Candidate 12 (user approval of 2026-10-06): derived recognizers loaded without
   optimization, memory arena off, recognizers on the regular pipeline's DirectML
   device. A routed job adds 7 to 9 s and 310 to 416 MiB instead of 14 to 18 s and
