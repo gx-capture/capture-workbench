@@ -9,10 +9,14 @@ pipeline, which reads their horizontal part better.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import hashlib
+import os
+import time
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
+from uuid import uuid4
 
 # Share of recognized characters in tall boxes at or above which a page is routed.
 VERTICAL_SHARE_THRESHOLD = 0.8
@@ -69,6 +73,14 @@ DERIVED_RECOGNIZER_FILES: dict[str, tuple[int, str]] = {
         "8ee4578450853d5ea02e55b8aa20f052bca528b59ca7727e61d5f027a4cf7104",
     ),
 }
+
+
+# A temporary file older than this was left by a worker that died while deriving.
+STALE_TEMPORARY_SECONDS = 3600
+
+
+class VerticalReaderAssetError(RuntimeError):
+    """The model directory holds a vertical reader that is incomplete or altered."""
 
 
 class VerticalLayoutError(RuntimeError):
@@ -147,14 +159,112 @@ def vertical_reader_declaration() -> dict[str, object]:
     }
 
 
-def _characters(text: str) -> int:
+def read_with_identity(path: Path, size: int, digest: str) -> bytes | None:
+    """Return a file's bytes when they have the given size and SHA-256, else None.
+
+    The bytes returned are the bytes that were hashed, so a caller that loads a
+    model from them cannot be handed a file swapped after the check.
+    """
+
+    try:
+        if path.is_symlink() or not path.is_file() or path.stat().st_size != size:
+            return None
+        data = path.read_bytes()
+    except OSError:
+        return None
+    if len(data) != size or hashlib.sha256(data).hexdigest() != digest:
+        return None
+    return data
+
+
+def read_reader_file(
+    directory: Path, name: str, files: Mapping[str, tuple[int, str]] | None = None
+) -> bytes:
+    size, digest = (VERTICAL_READER_FILES if files is None else files)[name]
+    data = read_with_identity(directory / name, size, digest)
+    if data is None:
+        raise VerticalReaderAssetError(f"Vertical reader file is missing or altered: {name}")
+    return data
+
+
+def verify_vertical_reader_files(
+    directory: Path, files: Mapping[str, tuple[int, str]] | None = None
+) -> None:
+    for name in VERTICAL_READER_FILES if files is None else files:
+        read_reader_file(directory, name, files)
+
+
+def cached_recognizer(
+    source: bytes,
+    identity: tuple[int, str],
+    cache_root: Path | None,
+    derive: Callable[[bytes, Path], None],
+    *,
+    derivable: bool = True,
+) -> bytes | None:
+    """Return the derived form of a recognizer from the shared cache, deriving it once.
+
+    The cache names entries by SHA-256, as the engine download cache does, and
+    only bytes with the pinned size and digest are returned. None means there
+    is no usable derived form and the caller loads the upstream bytes. Nothing
+    here fails a page: derivation is only a faster start.
+
+    ``derivable`` is false when this ONNX Runtime is not the release the pinned
+    digests were made with; then nothing is derived. A machine that derives
+    other bytes leaves a marker so that it does not derive on every start.
+    """
+
+    if cache_root is None:
+        return None
+    size, digest = identity
+    shard = cache_root / digest[:2]
+    entry = shard / digest
+    marker = shard / f"{digest}.underivable"
+    temporary = shard / f".{digest}.{uuid4().hex}.tmp"
+    try:
+        # A link in place of the shard directory would take reads and writes elsewhere.
+        if shard.exists() and shard.resolve() != cache_root.resolve() / digest[:2]:
+            return None
+        data = read_with_identity(entry, size, digest)
+        if data is not None:
+            os.utime(entry)  # keeps the entry from idle eviction
+            return data
+        if not derivable or marker.is_file():
+            return None
+        shard.mkdir(parents=True, exist_ok=True)
+        cutoff = time.time() - STALE_TEMPORARY_SECONDS
+        for stale in shard.glob(f".{digest}.*.tmp"):
+            if stale.stat().st_mtime < cutoff:
+                stale.unlink(missing_ok=True)
+        derive(source, temporary)
+        data = read_with_identity(temporary, size, digest)
+        if data is None:
+            marker.write_bytes(b"")
+            return None
+        try:
+            os.replace(temporary, entry)
+        except OSError:
+            pass  # another worker holds or has just written the entry; the bytes are good
+        return data
+    except Exception:  # noqa: BLE001 - any failure to derive means the upstream bytes are used
+        return None
+    finally:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def characters(text: str) -> int:
+    """Characters of a text without whitespace, the unit of every count here."""
+
     return len("".join(text.split()))
 
 
 def vertical_share(regions: Sequence[_Region]) -> VerticalShare:
     total = tall = boxes = 0
     for region in regions:
-        count = _characters(region.text)
+        count = characters(region.text)
         total += count
         if len(region.polygon) < 3 or count < 2:
             continue
@@ -181,9 +291,9 @@ def route_reason(measure: VerticalShare, *, treated_as_vertical: bool) -> str | 
 def reader_result_reason(first_pass_characters: int, reader_texts: Sequence[str]) -> str | None:
     """Return None when the second reader's result is kept, else why it is dropped."""
 
-    characters = sum(_characters(text) for text in reader_texts)
-    if characters == 0:
+    count = sum(characters(text) for text in reader_texts)
+    if count == 0:
         return "reader_returned_no_text"
-    if characters < MIN_READER_CHARACTER_SHARE * first_pass_characters:
+    if count < MIN_READER_CHARACTER_SHARE * first_pass_characters:
         return "reader_returned_far_less_text"
     return None

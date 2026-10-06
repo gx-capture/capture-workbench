@@ -50,6 +50,11 @@ HORIZONTAL_RUBY_OVERLAP = 0.45
 HORIZONTAL_RUBY_GAP = 0.35
 HORIZONTAL_BLOCK_GAP = 1.5
 HORIZONTAL_RUBY_MIN_ASPECT = 0.6  # a reading of one character is about square
+# A reading's characters are smaller than the line they annotate, so each takes less
+# width than that line is tall; full-size kana above a line are text, not a reading.
+HORIZONTAL_RUBY_MAX_GLYPH = 1.0
+# A kana-only line as tall as the line of text just above it continues that text.
+HORIZONTAL_RUBY_SAME_SIZE = 0.15
 
 Polygon = tuple[tuple[float, float], ...]
 
@@ -884,6 +889,8 @@ def _horizontal_ruby(
             for base in bases
             if base.slot != ruby.slot
             and ruby.h <= HORIZONTAL_RUBY_MAX_HEIGHT * base.h
+            and ruby.w
+            <= HORIZONTAL_RUBY_MAX_GLYPH * base.h * len("".join(regions[ruby.slot].text.split()))
             and ruby.y0 < base.y0
             and -HORIZONTAL_RUBY_OVERLAP * base.h
             <= base.y0 - ruby.y1
@@ -893,6 +900,17 @@ def _horizontal_ruby(
         ]
         if candidates:
             owners[ruby.slot] = min(candidates)[1]
+    for ruby in readings:
+        if ruby.slot in owners and any(
+            other.slot != ruby.slot
+            and other.slot not in owners
+            and abs(other.h - ruby.h) <= HORIZONTAL_RUBY_SAME_SIZE * ruby.h
+            and 0 <= ruby.y0 - other.y1 <= ruby.h
+            and min(other.x1, ruby.x1) > max(other.x0, ruby.x0)
+            for other in boxes
+            if other.w >= other.h
+        ):
+            del owners[ruby.slot]
     # A reading cannot own another reading.
     owners = {ruby: base for ruby, base in owners.items() if base not in owners}
     if not owners:

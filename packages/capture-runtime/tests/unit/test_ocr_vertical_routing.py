@@ -167,27 +167,26 @@ def test_line_order_equals_upstream_for_recorded_detections(case: dict) -> None:
     assert lines == case["lines"]
 
 
-def test_reader_refuses_an_incomplete_model_directory(tmp_path: Path) -> None:
-    pytest.importorskip("numpy", reason="The vertical reader requires the WindowsML extras.")
+def test_reader_files_are_accepted_only_with_their_pinned_bytes(tmp_path: Path) -> None:
     import hashlib
 
-    from capture_runtime.ocr_vertical_reader import (
-        VerticalPageReader,
+    from capture_runtime.ocr_vertical_routing import (
         VerticalReaderAssetError,
+        read_reader_file,
         verify_vertical_reader_files,
     )
 
-    with pytest.raises(VerticalReaderAssetError, match="missing or resized"):
-        VerticalPageReader(tmp_path)
     files = {"model.onnx": (5, hashlib.sha256(b"model").hexdigest())}
+    with pytest.raises(VerticalReaderAssetError, match="missing or altered: model.onnx"):
+        verify_vertical_reader_files(tmp_path, files)
+    with pytest.raises(VerticalReaderAssetError, match="deim-s-1024x1024.onnx"):
+        verify_vertical_reader_files(tmp_path)
     (tmp_path / "model.onnx").write_bytes(b"model")
-    verify_vertical_reader_files(tmp_path, files)
-    (tmp_path / "model.onnx").write_bytes(b"mode")
-    with pytest.raises(VerticalReaderAssetError, match="missing or resized"):
-        verify_vertical_reader_files(tmp_path, files)
-    (tmp_path / "model.onnx").write_bytes(b"madel")
-    with pytest.raises(VerticalReaderAssetError, match="digest differs"):
-        verify_vertical_reader_files(tmp_path, files)
+    assert read_reader_file(tmp_path, "model.onnx", files) == b"model"
+    for altered in (b"mode", b"madel"):
+        (tmp_path / "model.onnx").write_bytes(altered)
+        with pytest.raises(VerticalReaderAssetError):
+            read_reader_file(tmp_path, "model.onnx", files)
 
 
 def _identity(data: bytes) -> tuple[int, str]:
@@ -197,87 +196,356 @@ def _identity(data: bytes) -> tuple[int, str]:
 
 
 def test_recognizer_is_derived_once_and_then_served_from_the_cache(tmp_path: Path) -> None:
-    pytest.importorskip("numpy", reason="The vertical reader requires the WindowsML extras.")
-    from capture_runtime.ocr_vertical_reader import cached_recognizer
+    from capture_runtime.ocr_vertical_routing import cached_recognizer
 
-    source = tmp_path / "model" / "recognizer.onnx"
-    source.parent.mkdir()
-    source.write_bytes(b"upstream")
     identity = _identity(b"derived")
-    calls: list[Path] = []
+    calls: list[bytes] = []
 
-    def derive(origin: Path, target: Path) -> None:
-        calls.append(origin)
+    def derive(source: bytes, target: Path) -> None:
+        calls.append(source)
         target.write_bytes(b"derived")
 
     cache = tmp_path / "cache"
-    first = cached_recognizer(source, identity, cache, derive)
-    second = cached_recognizer(source, identity, cache, derive)
+    first = cached_recognizer(b"upstream", identity, cache, derive)
+    second = cached_recognizer(b"upstream", identity, cache, derive)
 
-    assert first == second == cache / identity[1][:2] / identity[1]
-    assert first is not None and first.read_bytes() == b"derived"
-    assert calls == [source]
-    assert [path.name for path in first.parent.iterdir()] == [identity[1]]
+    assert first == second == b"derived"
+    assert calls == [b"upstream"]
+    shard = cache / identity[1][:2]
+    assert [path.name for path in shard.iterdir()] == [identity[1]]
 
 
-@pytest.mark.parametrize("written", [b"other bytes", b"derive!", None])
-def test_derived_bytes_that_are_not_the_pinned_ones_are_not_kept(
-    tmp_path: Path, written: bytes | None
+@pytest.mark.parametrize("written", [b"other bytes", b"derive!"])
+def test_machine_that_derives_other_bytes_does_not_derive_again(
+    tmp_path: Path, written: bytes
 ) -> None:
-    pytest.importorskip("numpy", reason="The vertical reader requires the WindowsML extras.")
-    from capture_runtime.ocr_vertical_reader import cached_recognizer
+    from capture_runtime.ocr_vertical_routing import cached_recognizer
 
-    def derive(_origin: Path, target: Path) -> None:
-        if written is None:
-            raise RuntimeError("optimization failed")
+    identity = _identity(b"derived")
+    calls: list[int] = []
+
+    def derive(_source: bytes, target: Path) -> None:
+        calls.append(1)
         target.write_bytes(written)
 
     cache = tmp_path / "cache"
-    assert (
-        cached_recognizer(tmp_path / "recognizer.onnx", _identity(b"derived"), cache, derive)
-        is None
-    )
+    assert cached_recognizer(b"upstream", identity, cache, derive) is None
+    assert cached_recognizer(b"upstream", identity, cache, derive) is None
+    assert calls == [1]
+    left = [path.name for path in cache.rglob("*") if path.is_file()]
+    assert left == [f"{identity[1]}.underivable"]
+
+
+def test_failed_derivation_is_tried_again_and_leaves_nothing(tmp_path: Path) -> None:
+    from capture_runtime.ocr_vertical_routing import cached_recognizer
+
+    identity = _identity(b"derived")
+    calls: list[int] = []
+
+    def derive(_source: bytes, target: Path) -> None:
+        calls.append(1)
+        if len(calls) == 1:
+            target.write_bytes(b"partial")
+            raise RuntimeError("optimization failed")
+        target.write_bytes(b"derived")
+
+    cache = tmp_path / "cache"
+    assert cached_recognizer(b"upstream", identity, cache, derive) is None
     assert [path for path in cache.rglob("*") if path.is_file()] == []
+    assert cached_recognizer(b"upstream", identity, cache, derive) == b"derived"
 
 
-def test_altered_cache_entry_is_replaced_by_a_fresh_derivation(tmp_path: Path) -> None:
-    pytest.importorskip("numpy", reason="The vertical reader requires the WindowsML extras.")
-    from capture_runtime.ocr_vertical_reader import cached_recognizer
+def test_nothing_is_derived_with_another_onnxruntime_release_or_without_a_cache(
+    tmp_path: Path,
+) -> None:
+    from capture_runtime.ocr_vertical_routing import cached_recognizer
+
+    def derive(_source: bytes, _target: Path) -> None:
+        raise AssertionError("must not derive")
+
+    identity = _identity(b"derived")
+    assert cached_recognizer(b"upstream", identity, None, derive) is None
+    assert cached_recognizer(b"upstream", identity, tmp_path, derive, derivable=False) is None
+    # An entry already in the cache is still served: its bytes are the pinned ones.
+    entry = tmp_path / identity[1][:2] / identity[1]
+    entry.parent.mkdir()
+    entry.write_bytes(b"derived")
+    assert cached_recognizer(b"upstream", identity, tmp_path, derive, derivable=False) == b"derived"
+
+
+def test_altered_cache_entry_is_replaced_and_its_bytes_are_never_returned(tmp_path: Path) -> None:
+    from capture_runtime.ocr_vertical_routing import cached_recognizer
 
     identity = _identity(b"derived")
     entry = tmp_path / "cache" / identity[1][:2] / identity[1]
     entry.parent.mkdir(parents=True)
     entry.write_bytes(b"altered")
 
-    result = cached_recognizer(
-        tmp_path / "recognizer.onnx",
-        identity,
-        tmp_path / "cache",
-        lambda _origin, target: target.write_bytes(b"derived") and None,
-    )
+    def derive(_source: bytes, target: Path) -> None:
+        target.write_bytes(b"derived")
 
-    assert result == entry
+    assert cached_recognizer(b"upstream", identity, tmp_path / "cache", derive) == b"derived"
     assert entry.read_bytes() == b"derived"
 
 
-def test_without_a_cache_the_upstream_recognizer_is_used(tmp_path: Path) -> None:
-    pytest.importorskip("numpy", reason="The vertical reader requires the WindowsML extras.")
-    from capture_runtime.ocr_vertical_reader import cached_recognizer
+def test_stale_temporary_files_of_a_killed_worker_are_removed(tmp_path: Path) -> None:
+    import os
+    import time
 
-    def derive(_origin: Path, _target: Path) -> None:
-        raise AssertionError("nothing is derived when the cache is off")
+    from capture_runtime.ocr_vertical_routing import STALE_TEMPORARY_SECONDS, cached_recognizer
 
-    assert (
-        cached_recognizer(tmp_path / "recognizer.onnx", _identity(b"derived"), None, derive) is None
+    identity = _identity(b"derived")
+    shard = tmp_path / identity[1][:2]
+    shard.mkdir()
+    stale = shard / f".{identity[1]}.dead.tmp"
+    fresh = shard / f".{identity[1]}.live.tmp"
+    stale.write_bytes(b"x")
+    fresh.write_bytes(b"x")
+    old = time.time() - STALE_TEMPORARY_SECONDS - 60
+    os.utime(stale, (old, old))
+
+    def derive(_source: bytes, target: Path) -> None:
+        target.write_bytes(b"derived")
+
+    assert cached_recognizer(b"upstream", identity, tmp_path, derive) == b"derived"
+    assert not stale.exists()
+    assert fresh.exists()  # another worker may still be writing it
+
+
+class _Image:
+    """Stands in for a crop array: only its shape and column slicing are used."""
+
+    def __init__(self, height: int, width: int, label: str) -> None:
+        self.shape = (height, width, 3)
+        self.label = label
+
+    def __getitem__(self, key: object) -> _Image:
+        columns = key[1]  # type: ignore[index]
+        half = "L" if columns.start is None else "R"
+        return _Image(self.shape[0], self.shape[1] // 2, self.label + half)
+
+
+class _Recognizer:
+    def __init__(self, name: str, answers: dict[str, tuple[str, float]]) -> None:
+        self.name = name
+        self.answers = answers
+        self.seen: list[str] = []
+
+    def read(self, image: _Image) -> tuple[str, float]:
+        self.seen.append(image.label)
+        return self.answers.get(image.label, (f"{self.name}:{image.label}", 0.5))
+
+
+def test_cascade_sends_overflowing_lines_to_the_next_longer_recognizer() -> None:
+    pytest.importorskip("capture_runtime.ocr_vertical_reader")
+    from capture_runtime.ocr_vertical_reader import _Crop, _read_cascade
+
+    short = _Recognizer("short", {"a": ("あ" * 24, 0.9), "b": ("い" * 25, 0.9)})
+    middle = _Recognizer("middle", {"b": ("い" * 44, 0.8), "c": ("う" * 45, 0.8)})
+    long = _Recognizer("long", {"c": ("う" * 60, 0.7), "d": ("え" * 97, 0.6)})
+    crops = [
+        _Crop(_Image(200, 20, "c"), 0, 2.0),
+        _Crop(_Image(200, 20, "a"), 1, 3.0),
+        _Crop(_Image(200, 20, "d"), 2, 100.0),
+        _Crop(_Image(200, 20, "b"), 3, 3.0),
+    ]
+
+    read = _read_cascade(crops, short, middle, long, workers=1)  # type: ignore[arg-type]
+
+    assert [crop.index for crop in read] == [0, 1, 2, 3]
+    assert [(crop.text, crop.score) for crop in read] == [
+        ("う" * 60, 0.7),  # 45 characters from the middle recognizer overflow to the long one
+        ("あ" * 24, 0.9),  # 24 characters stay with the short recognizer
+        ("え" * 97, 0.6),
+        ("い" * 44, 0.8),  # 25 characters overflow to the middle recognizer
+    ]
+    assert (short.seen, middle.seen, sorted(long.seen)) == (["a", "b"], ["c", "b"], ["c", "d"])
+
+
+def test_cascade_reads_a_very_long_horizontal_line_in_two_halves() -> None:
+    pytest.importorskip("capture_runtime.ocr_vertical_reader")
+    from capture_runtime.ocr_vertical_reader import _Crop, _read_cascade
+
+    long = _Recognizer(
+        "long",
+        {
+            "wide": ("あ" * 98, 0.5),
+            "wideL": ("左" * 30, 0.9),
+            "wideR": ("右" * 10, 0.5),
+            "tall": ("縦" * 98, 0.4),
+        },
     )
-    blocked = tmp_path / "file-not-directory"
-    blocked.write_bytes(b"")
-    assert (
-        cached_recognizer(
-            tmp_path / "recognizer.onnx",
-            _identity(b"derived"),
-            blocked,
-            lambda _origin, target: target.write_bytes(b"derived") and None,
-        )
-        is None
+    unused = _Recognizer("unused", {})
+    crops = [_Crop(_Image(20, 400, "wide"), 0, 100.0), _Crop(_Image(400, 20, "tall"), 1, 100.0)]
+
+    read = _read_cascade(crops, unused, unused, long, workers=1)  # type: ignore[arg-type]
+
+    assert read[0].text == "左" * 30 + "右" * 10
+    assert read[0].score == pytest.approx((0.9 * 30 + 0.5 * 10) / 40)
+    assert (read[1].text, read[1].score) == ("縦" * 98, 0.4)  # a tall line is not halved
+    assert unused.seen == []
+
+
+class _StubDetector:
+    classes = ["text_block", "line_main"]
+
+    def __init__(self, detections: list[dict[str, object]]) -> None:
+        self._detections = detections
+
+    def detect(self, _image: object) -> list[dict[str, object]]:
+        return self._detections
+
+
+def _reader_with(detections: list[dict[str, object]], recognizer: object) -> object:
+    from capture_runtime.ocr_vertical_reader import VerticalPageReader
+
+    reader = object.__new__(VerticalPageReader)
+    reader._detector = _StubDetector(detections)
+    reader._short = reader._middle = reader._long = recognizer
+    reader._workers = 1
+    return reader
+
+
+def test_reader_returns_ordered_lines_clipped_to_the_raster(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    np = pytest.importorskip("numpy", reason="The vertical reader requires the WindowsML extras.")
+    import xml.etree.ElementTree as ET
+
+    import capture_runtime.ocr_vertical_reader as module
+
+    def layout(width: int, height: int, _classes: object, detections: object) -> ET.Element:
+        assert (width, height, len(detections)) == (100, 200, 1)  # type: ignore[arg-type]
+        root = ET.Element("OCRDATASET")
+        page = ET.SubElement(root, "PAGE")
+        for x, y, w, h, count in ((70, 10, 40, 150, "100.000"), (-5, 190, 30, 30, "3.000")):
+            ET.SubElement(
+                page,
+                "LINE",
+                {
+                    "TYPE": "本文",
+                    "X": str(x),
+                    "Y": str(y),
+                    "WIDTH": str(w),
+                    "HEIGHT": str(h),
+                    "PRED_CHAR_CNT": count,
+                },
+            )
+        return root
+
+    class Echo:
+        def read(self, image: object) -> tuple[str, float]:
+            return f"{image.shape[1]}x{image.shape[0]}", 0.75  # type: ignore[attr-defined]
+
+    monkeypatch.setattr(module, "_ordered_layout", layout)
+    reader = _reader_with([{"box": (0, 0, 1, 1)}], Echo())
+
+    lines = reader.read_array(np.zeros((200, 100, 3), dtype=np.uint8))  # type: ignore[attr-defined]
+
+    assert [line.polygon for line in lines] == [
+        ((70.0, 10.0), (100.0, 10.0), (100.0, 160.0), (70.0, 160.0)),
+        ((0.0, 190.0), (25.0, 190.0), (25.0, 200.0), (0.0, 200.0)),
+    ]
+    assert [(line.text, line.confidence, line.kind) for line in lines] == [
+        ("30x150", 0.75, "本文"),
+        ("25x10", 0.75, "本文"),
+    ]
+
+
+def test_reader_reports_a_layout_failure_as_such(monkeypatch: pytest.MonkeyPatch) -> None:
+    np = pytest.importorskip("numpy", reason="The vertical reader requires the WindowsML extras.")
+    import capture_runtime.ocr_vertical_reader as module
+    from capture_runtime.ocr_vertical_routing import VerticalLayoutError
+
+    def broken(*_arguments: object) -> object:
+        raise ZeroDivisionError("float division by zero")
+
+    monkeypatch.setattr(module, "_ordered_layout", broken)
+    reader = _reader_with([], object())
+
+    with pytest.raises(VerticalLayoutError, match="ZeroDivisionError"):
+        reader.read_array(np.zeros((10, 10, 3), dtype=np.uint8))  # type: ignore[attr-defined]
+
+
+def test_lines_are_built_from_detections_when_the_layout_groups_none() -> None:
+    np = pytest.importorskip("numpy", reason="The vertical reader requires the WindowsML extras.")
+    from capture_runtime.ocr_vertical_reader import _ordered_layout
+
+    # One box of a class the layout does not turn into a line, and one empty box.
+    detections = [
+        {
+            "class_index": 6,
+            "confidence": np.float32(0.9),
+            "box": np.array([10, 20, 40, 220]),
+            "pred_char_count": np.float32(100.0),
+        },
+        {
+            "class_index": 6,
+            "confidence": np.float32(0.9),
+            "box": np.array([50, 20, 50, 220]),
+            "pred_char_count": np.float32(100.0),
+        },
+    ]
+    classes = [
+        "text_block",
+        "line_main",
+        "line_caption",
+        "line_ad",
+        "line_note",
+        "line_note_tochu",
+        "block_fig",
+        "block_ad",
+        "block_pillar",
+        "block_folio",
+        "block_rubi",
+        "block_chart",
+        "block_eqn",
+        "block_cfm",
+        "block_eng",
+        "block_table",
+        "line_title",
+    ]
+    root = _ordered_layout(400, 400, classes, detections)
+    lines = [
+        tuple(int(element.get(name, "")) for name in ("X", "Y", "WIDTH", "HEIGHT"))
+        for element in root.findall(".//LINE")
+    ]
+    assert lines == [(10, 20, 30, 200)]
+
+
+def test_engine_cache_location_reaches_child_processes() -> None:
+    from capture_runtime.config import sanitized_child_environment
+
+    environment = {"CAPTURE_ENGINE_CACHE_DIR": "off", "CAPTURE_WINDOWSML_MODEL_DIR": "elsewhere"}
+    assert sanitized_child_environment(environment) == {"CAPTURE_ENGINE_CACHE_DIR": "off"}
+
+
+@pytest.mark.parametrize("change", ["threshold", "digest", "missing"])
+def test_profile_whose_vertical_reader_differs_from_the_runtime_is_refused(
+    tmp_path: Path, change: str
+) -> None:
+    from capture_runtime.ocr_profile import (
+        CANONICAL_PROFILE_PATH,
+        EngineRuntimeUnavailableError,
+        canonical_json_bytes,
+        load_profile_spec,
     )
+
+    document = json.loads(CANONICAL_PROFILE_PATH.read_text(encoding="utf-8"))
+    if change == "threshold":
+        document["verticalReader"]["routing"]["minimumVerticalCharacterShare"] = 0.5
+    elif change == "digest":
+        document["verticalReader"]["artifacts"][0]["sha256"] = "0" * 64
+    else:
+        del document["verticalReader"]
+    path = tmp_path / "ocr-profile.json"
+    path.write_bytes(canonical_json_bytes(document))
+
+    with pytest.raises(EngineRuntimeUnavailableError, match="vertical reader|fields drifted"):
+        load_profile_spec(path)
+    assert load_profile_spec().document["verticalReader"]["routing"] == {
+        "minimumReaderCharacterShare": 0.5,
+        "minimumTallBoxes": 3,
+        "minimumVerticalCharacterShare": 0.8,
+        "tallBoxAspect": 2.0,
+    }

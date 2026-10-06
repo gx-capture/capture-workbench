@@ -114,6 +114,12 @@ See the [direction study](../RESEARCH/vertical-japanese-ocr-direction-study-2026
   snapshot `8f37898` tagged, version sync, contracts regenerated. Recognizers are
   derived on the machine into the engine cache. Local package journey with the
   reader installed from the catalog: 619 boxes equal the source worker.
+- [ ] **Blocking publication**: user decision on the licence lineage of the detector
+  weights (DINOv3-distilled backbone; see the decision of 2026-10-06), and the user's
+  own confirmation of the lock approval.
+- [x] Independent review of the runtime and of the release source, and acceptance on
+  unseen documents (two textbooks, one N1 paper, three public-domain vertical
+  books); findings fixed or recorded in the vertical-reader note.
 - [ ] Publish 0.5.0 by the release runbook: merge to `main`, push CI, candidates,
   Route A, consumer migration (Cert Prep, then LAW; LAW pins `runtimeVersion`
   0.4.4 and rejects 0.5.0 until migrated), release candidate, gates, promotion.

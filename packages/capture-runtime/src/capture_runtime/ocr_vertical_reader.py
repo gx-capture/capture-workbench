@@ -23,30 +23,28 @@ Imported only by the OCR worker; numpy, OpenCV and ONNX Runtime are required.
 
 from __future__ import annotations
 
-import hashlib
+import importlib
 import io
 import logging
-import os
 import xml.etree.ElementTree as ET
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
-
-import numpy as np
 
 from capture_runtime.ocr_vertical_routing import (
     CHARSET,
     CLASSES,
+    DERIVATION_ONNXRUNTIME,
     DERIVED_RECOGNIZER_FILES,
     DETECTOR,
     RECOGNIZER_30,
     RECOGNIZER_50,
     RECOGNIZER_100,
-    VERTICAL_READER_FILES,
     VerticalLayoutError,
+    cached_recognizer,
+    read_reader_file,
 )
 
 DETECTION_THRESHOLD = 0.25
@@ -57,10 +55,6 @@ class VerticalReaderDeviceError(RuntimeError):
     """A recognizer asked to run on DirectML was not placed on it."""
 
 
-class VerticalReaderAssetError(RuntimeError):
-    """The model directory holds a vertical reader that is incomplete or altered."""
-
-
 @dataclass(frozen=True, slots=True)
 class VerticalLine:
     text: str
@@ -69,35 +63,12 @@ class VerticalLine:
     kind: str
 
 
-def verify_vertical_reader_files(
-    directory: Path, files: Mapping[str, tuple[int, str]] = VERTICAL_READER_FILES
-) -> None:
-    for name, (size, digest) in files.items():
-        path = directory / name
-        if not path.is_file() or path.stat().st_size != size:
-            raise VerticalReaderAssetError(f"Vertical reader file is missing or resized: {name}")
-        hasher = hashlib.sha256()
-        with path.open("rb") as stream:
-            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                hasher.update(chunk)
-        if hasher.hexdigest() != digest:
-            raise VerticalReaderAssetError(f"Vertical reader file digest differs: {name}")
+def _numpy() -> Any:
+    # Imported on use: the module itself stays importable without the WindowsML extras.
+    return importlib.import_module("numpy")
 
 
-def _has_identity(path: Path, size: int, digest: str) -> bool:
-    try:
-        if path.is_symlink() or not path.is_file() or path.stat().st_size != size:
-            return False
-        hasher = hashlib.sha256()
-        with path.open("rb") as stream:
-            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                hasher.update(chunk)
-    except OSError:
-        return False
-    return hasher.hexdigest() == digest
-
-
-def derive_recognizer(source: Path, target: Path) -> None:
+def derive_recognizer(source: bytes, target: Path) -> None:
     """Write ONNX Runtime's extended-level optimization of an upstream recognizer."""
 
     import onnxruntime
@@ -105,48 +76,7 @@ def derive_recognizer(source: Path, target: Path) -> None:
     options = onnxruntime.SessionOptions()
     options.graph_optimization_level = onnxruntime.GraphOptimizationLevel.ORT_ENABLE_EXTENDED
     options.optimized_model_filepath = str(target)
-    onnxruntime.InferenceSession(str(source), options, providers=["CPUExecutionProvider"])
-
-
-def cached_recognizer(
-    source: Path,
-    identity: tuple[int, str],
-    cache_root: Path | None,
-    derive: Callable[[Path, Path], None] = derive_recognizer,
-) -> Path | None:
-    """Return the derived form of a recognizer from the shared cache, deriving it once.
-
-    The cache names entries by SHA-256, as the engine download cache does, so a
-    file is accepted only with the pinned bytes. Returns None when there is no
-    usable derived file; the caller then loads the upstream file. Nothing here
-    fails a page: derivation is only a faster start.
-    """
-
-    if cache_root is None:
-        return None
-    size, digest = identity
-    entry = cache_root / digest[:2] / digest
-    if _has_identity(entry, size, digest):
-        try:
-            os.utime(entry)  # keeps the entry from idle eviction
-        except OSError:
-            pass
-        return entry
-    temporary = entry.with_name(f".{digest}.{uuid4().hex}.tmp")
-    try:
-        entry.parent.mkdir(parents=True, exist_ok=True)
-        derive(source, temporary)
-        if not _has_identity(temporary, size, digest):
-            return None
-        os.replace(temporary, entry)
-        return entry
-    except Exception:  # noqa: BLE001 - any failure to derive means the upstream file is used
-        return None
-    finally:
-        try:
-            temporary.unlink(missing_ok=True)
-        except OSError:
-            pass
+    onnxruntime.InferenceSession(source, options, providers=["CPUExecutionProvider"])
 
 
 def _session_options(*, optimized: bool) -> Any:
@@ -165,17 +95,19 @@ def _session_options(*, optimized: bool) -> Any:
 
 
 def _softmax_peak(logits: Any) -> Any:
+    np = _numpy()
     shifted = logits - logits.max(axis=1, keepdims=True)
     exponent = np.exp(shifted)
     return (exponent / exponent.sum(axis=1, keepdims=True)).max(axis=1)
 
 
 class _Detector:
-    def __init__(self, path: Path, classes: list[str]) -> None:
+    def __init__(self, model: bytes, classes: list[str]) -> None:
         import onnxruntime
 
+        np = _numpy()
         self._session = onnxruntime.InferenceSession(
-            str(path), _session_options(optimized=False), providers=["CPUExecutionProvider"]
+            model, _session_options(optimized=False), providers=["CPUExecutionProvider"]
         )
         self._inputs = [item.name for item in self._session.get_inputs()]
         self._outputs = [item.name for item in self._session.get_outputs()]
@@ -187,6 +119,7 @@ class _Detector:
     def detect(self, image: Any) -> list[dict[str, Any]]:
         from PIL import Image
 
+        np = _numpy()
         side = max(image.shape[0], image.shape[1])
         padded = np.zeros((side, side, 3), dtype=np.uint8)
         padded[: image.shape[0], : image.shape[1], :] = image
@@ -235,7 +168,7 @@ class _Detector:
 class _Recognizer:
     def __init__(
         self,
-        path: Path,
+        model: bytes,
         characters: Sequence[str],
         dml_device_id: int | None = None,
         *,
@@ -252,7 +185,7 @@ class _Recognizer:
             options.enable_mem_pattern = False
             options.execution_mode = onnxruntime.ExecutionMode.ORT_SEQUENTIAL
             providers.insert(0, ("DmlExecutionProvider", {"device_id": dml_device_id}))
-        self._session = onnxruntime.InferenceSession(str(path), options, providers=providers)
+        self._session = onnxruntime.InferenceSession(model, options, providers=providers)
         if dml_device_id is not None and self._session.get_providers()[0] != "DmlExecutionProvider":
             raise VerticalReaderDeviceError(
                 "A vertical reader recognizer was not placed on DirectML."
@@ -263,10 +196,10 @@ class _Recognizer:
         self._characters = characters
 
     def read(self, image: Any) -> tuple[str, float]:
-        import cv2
-
         if image is None or image.size == 0:
             return "", 0.0
+        cv2 = importlib.import_module("cv2")
+        np = _numpy()
         height, width = image.shape[:2]
         if height > width * 0.8:
             image = cv2.rotate(image, cv2.ROTATE_90_COUNTERCLOCKWISE)
@@ -378,21 +311,28 @@ class VerticalPageReader:
         self.recognizer_device = "cpu" if dml_device_id is None else "windowsml-dml"
         self._workers = None if dml_device_id is None else 1
 
-        verify_vertical_reader_files(directory)
-        classes = yaml.safe_load((directory / CLASSES).read_text(encoding="utf-8"))["names"]
-        charset = yaml.safe_load((directory / CHARSET).read_text(encoding="utf-8"))
+        import onnxruntime
+
+        classes = yaml.safe_load(read_reader_file(directory, CLASSES).decode("utf-8"))["names"]
+        charset = yaml.safe_load(read_reader_file(directory, CHARSET).decode("utf-8"))
         characters = tuple(charset["model"]["charset_train"])
-        self._detector = _Detector(directory / DETECTOR, list(classes.values()))
+        # Every model is created from the bytes that were checked, never from a path.
+        self._detector = _Detector(read_reader_file(directory, DETECTOR), list(classes.values()))
         recognizers: list[_Recognizer] = []
         self.derived_recognizers = 0
         for name in (RECOGNIZER_30, RECOGNIZER_50, RECOGNIZER_100):
+            upstream = read_reader_file(directory, name)
             derived = cached_recognizer(
-                directory / name, DERIVED_RECOGNIZER_FILES[name], cache_root
+                upstream,
+                DERIVED_RECOGNIZER_FILES[name],
+                cache_root,
+                derive_recognizer,
+                derivable=onnxruntime.__version__ == DERIVATION_ONNXRUNTIME,
             )
             self.derived_recognizers += derived is not None
             recognizers.append(
                 _Recognizer(
-                    derived or directory / name,
+                    upstream if derived is None else derived,
                     characters,
                     dml_device_id,
                     optimized=derived is not None,
@@ -403,6 +343,7 @@ class VerticalPageReader:
     def read_png(self, image_png: bytes) -> tuple[VerticalLine, ...]:
         from PIL import Image
 
+        np = _numpy()
         with Image.open(io.BytesIO(image_png)) as source:
             image = np.array(source.convert("RGB"))
         return self.read_array(image)
@@ -427,15 +368,19 @@ class VerticalPageReader:
             except ValueError:
                 predicted = 100.0
             crops.append(
-                _Crop(image[top : top + line_height, left : left + line_width, :], index, predicted)
+                _Crop(
+                    image[max(top, 0) : top + line_height, max(left, 0) : left + line_width, :],
+                    index,
+                    predicted,
+                )
             )
         read = _read_cascade(crops, self._short, self._middle, self._long, self._workers)
         lines: list[VerticalLine] = []
         for element, crop in zip(elements, read, strict=True):
-            left = min(max(int(element.get("X", "0")), 0), width)
-            top = min(max(int(element.get("Y", "0")), 0), height)
-            right = min(left + int(element.get("WIDTH", "0")), width)
-            bottom = min(top + int(element.get("HEIGHT", "0")), height)
+            x, y = int(element.get("X", "0")), int(element.get("Y", "0"))
+            left, top = min(max(x, 0), width), min(max(y, 0), height)
+            right = min(max(x + int(element.get("WIDTH", "0")), left), width)
+            bottom = min(max(y + int(element.get("HEIGHT", "0")), top), height)
             lines.append(
                 VerticalLine(
                     text=crop.text,

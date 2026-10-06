@@ -995,12 +995,33 @@ def test_recognizer_refused_by_directml_fails_the_page(
         adapter.extract_png(png)
 
 
+def test_vertical_reader_that_cannot_be_loaded_fails_the_page_with_a_runtime_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reader_module = pytest.importorskip(
+        "capture_runtime.ocr_vertical_reader",
+        reason="The vertical reader requires the WindowsML extras.",
+    )
+    adapter, png, _texts, _created = _vertical_page_adapter(tmp_path, None)
+    (tmp_path / "windowsml" / "vertical").mkdir()
+
+    def broken(_directory: Path, **_kwargs: object) -> object:
+        raise KeyError("names")
+
+    monkeypatch.setattr(reader_module, "VerticalPageReader", broken)
+
+    with pytest.raises(EngineRuntimeUnavailableError, match="could not be loaded: KeyError"):
+        adapter.extract_png(png)
+
+
 def test_altered_vertical_reader_files_fail_the_page(tmp_path: Path) -> None:
     pytest.importorskip("numpy", reason="The vertical reader requires the WindowsML extras.")
     adapter, png, _texts, _created = _vertical_page_adapter(tmp_path, None)
     (tmp_path / "windowsml" / "vertical").mkdir()
 
-    with pytest.raises(EngineRuntimeUnavailableError, match="Vertical reader file is missing"):
+    with pytest.raises(
+        EngineRuntimeUnavailableError, match="Vertical reader file is missing or altered"
+    ):
         adapter.extract_png(png)
 
 

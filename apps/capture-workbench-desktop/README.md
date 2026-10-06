@@ -114,7 +114,7 @@ The cert-prep PDF and audio are copied only into the owned temporary run and
 must not be committed or uploaded. The image remains a lock-pinned project
 fixture. Only the packaged executable can be overridden for local runs with
 `CAPTURE_REAL_MEDIA_MODEL_EXECUTABLE`. The preflight fails closed unless the staged
-generated catalog and source lock are the approved 0.4.4 model-enabled
+generated catalog and source lock are the approved 0.5.0 model-enabled
 contract.
 
 To also check progressive audio, first record a reference with

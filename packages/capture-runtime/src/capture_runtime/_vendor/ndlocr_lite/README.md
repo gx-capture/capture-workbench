@@ -2,7 +2,7 @@
 
 Part of [NDLOCR-Lite](https://github.com/ndl-lab/ndlocr-lite) by the National Diet
 Library, Japan, copied from commit `636d1cfeb1331f89f4048f416e49e23a09a714b5`
-(version 1.2) and licensed under CC BY 4.0; see `LICENCE`.
+(version 1.3.0) and licensed under CC BY 4.0; see `LICENCE`.
 
 The runtime's vertical page reader (`capture_runtime/ocr_vertical_reader.py`) uses
 `ndl_parser.convert_to_xml_string3` to group detected lines into text blocks and
@@ -26,10 +26,12 @@ with paths in the same order.
 
 Upstream files not copied: the command-line program, the detector and recognizer
 wrappers (rewritten in `ocr_vertical_reader.py`), the PDF and GUI code, and the
-models. The models are delivered with the engine, not with this package: the
-detector as upstream publishes it, and the three recognizers after ONNX Runtime's
-extended graph optimization (`scripts/derive_vertical_reader_models.py`), which
-changes their bytes but not the text they return on the pages compared.
+models. The engine delivers upstream's model and configuration files unchanged. On
+each machine the runtime derives an ONNX Runtime-optimized copy of the three
+recognizers into its own cache; those copies are not distributed.
+
+Upstream lists the licences of the libraries and models it builds on in
+`LICENCE_DEPENDENCEIES`; the engine installs that file with the models.
 
 The copied files are excluded from linting and type checking so that they stay as
 upstream wrote them.

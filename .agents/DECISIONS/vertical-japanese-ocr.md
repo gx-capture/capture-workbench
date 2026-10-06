@@ -175,3 +175,12 @@ the repository and not redistributed), and the release is 0.5.0. Decisions taken
 - Publication (merge to `main`, candidate and promotion workflows, consumer
   migration of Cert Prep and LAW, consumer gates) follows the release runbook and
   is not started by this work.
+
+2026-10-06 — independent review before publication (user: review and acceptance
+first). Open for the user, blocking publication: the NDLOCR-Lite line detector was
+trained from a backbone distilled from DINOv3, whose licence is a custom agreement
+covering derivative works; upstream states CC BY 4.0 for its program and lists
+only Apache-2.0 for DEIMv2. Whether the detector weights may be redistributed and
+used under CC BY 4.0 alone is unknown. The lock's approval was recorded before
+this was known and has to be confirmed or withdrawn by the user. Upstream's
+dependency-licence file is now delivered as a second notice.

@@ -7,7 +7,7 @@
 - Vertical Japanese OCR now assembles detected article columns from right to
   left and places separately detected ruby after its article, while preserving
   unchanged regions' recognized strings, polygons and scores. Horizontal-only pages
-  without furigana retain their previous output. The OCR model and profile are unchanged.
+  without furigana retain their previous output.
 - A second reader for vertical pages. The OCR engine now also installs the
   NDLOCR-Lite models (National Diet Library, Japan; CC BY 4.0; about 150 MiB more).
   A page that is vertical throughout is read as a whole by that reader, with its

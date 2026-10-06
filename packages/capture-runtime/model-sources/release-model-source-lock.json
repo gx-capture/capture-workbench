@@ -115,6 +115,20 @@
           "url": "https://huggingface.co/PaddlePaddle/PP-OCRv6_medium_rec_onnx/raw/50c7eacafc52fa7bcf4194e8cd08e46f8558504b/README.md"
         },
         {
+          "bytes": 61810,
+          "derivation": null,
+          "kind": "notice",
+          "licensePath": null,
+          "noticePath": null,
+          "owner": "ndl-lab/ndlocr-lite",
+          "path": "licenses/NOTICE-vertical-dependencies.txt",
+          "redirectHosts": [],
+          "revision": "636d1cfeb1331f89f4048f416e49e23a09a714b5",
+          "sha256": "d1651934d0ba82bc941fa59b99bc311c273b199ff379d8bb2beca81e2f1695e7",
+          "spdx": "CC-BY-4.0",
+          "url": "https://raw.githubusercontent.com/ndl-lab/ndlocr-lite/636d1cfeb1331f89f4048f416e49e23a09a714b5/LICENCE_DEPENDENCEIES"
+        },
+        {
           "bytes": 11168,
           "derivation": null,
           "kind": "notice",

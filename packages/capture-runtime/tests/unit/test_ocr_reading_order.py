@@ -178,7 +178,7 @@ def furigana_page() -> tuple[Region, ...]:
         region("2 友人に長い手紙を書く", 20, 205, 430, 32),
         region("ばん", 40, 600, 40, 22),
         region("4番", 20, 618, 70, 40),
-        region("えき", 60, 668, 70, 18),
+        region("えき", 60, 668, 40, 18),
         region("1 駅までの近い道", 20, 683, 220, 32),
         region("- 3 -", 300, 900, 80, 24),
     )
@@ -223,6 +223,32 @@ def test_lines_that_are_not_furigana_leave_a_horizontal_page_unchanged(above: Re
     assert not plan.applied
     assert plan.order == (0, 1, 2, 3)
     assert plan.text == "\n".join(item.text for item in items)
+
+
+def test_kana_end_of_a_sentence_above_a_heading_is_not_furigana() -> None:
+    # The last line of a paragraph is as tall as the line it continues.
+    items = (
+        region("本製品を使用する前に必ず電源を切って", 20, 100, 420, 20),
+        region("ください。", 20, 128, 100, 20),
+        region("注意事項について", 20, 156, 208, 26),
+        region("以下の点に注意して作業を行います。", 20, 190, 400, 20),
+    )
+    plan = plan_reading_order(items)
+    assert not plan.applied
+    assert plan.order == (0, 1, 2, 3)
+
+
+def test_full_size_kana_above_a_slightly_taller_line_is_not_furigana() -> None:
+    # An answer option in kana, detected a little shorter than the option below it.
+    items = (
+        region("問1 次の語の読みを選びなさい。", 20, 20, 400, 24),
+        region("ア　さくら", 40, 52, 110, 19),
+        region("イ　桜の花が咲く", 40, 74, 200, 24),
+        region("ウ　うめ", 40, 104, 90, 19),
+    )
+    plan = plan_reading_order(items)
+    assert not plan.applied
+    assert plan.order == (0, 1, 2, 3)
 
 
 def test_kana_above_a_line_without_ideographs_is_not_furigana() -> None:

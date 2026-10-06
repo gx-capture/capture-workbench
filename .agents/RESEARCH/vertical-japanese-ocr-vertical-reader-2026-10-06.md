@@ -514,3 +514,100 @@ from PowerShell.
   the candidate 12 path, and the first routed page on a machine additionally
   pays the derivation (about 7 s in one process).
 - Consumer migration and gates; unseen-document acceptance; independent review.
+
+## Independent review and unseen-document acceptance (2026-10-06)
+
+Requested by the user before publication. Two read-only review sessions (runtime
+code; release source and licences), two blind transcription sessions that read
+page images without any OCR output, and runs of the product adapter on documents
+not used before. Evidence is under `tmp/vertical-japanese-ocr-phase0/phase1/`
+(`accept13-*`, `accept14-*`, `fresh-worker-*-14`, `packaged-semantic-14`).
+
+### Review findings and what was done
+
+| Finding | Action |
+| --- | --- |
+| **CI would fail**: `mypy` in an environment without the WindowsML extras could not resolve `numpy` and `cv2` imported by the reader | The reader imports both on use through `importlib`, as `ocr_alignment.py` does. Checked in a clean environment: `mypy` passes; unit and integration tests 1,255 passed, 12 skipped |
+| Reader tests were all skipped in CI | The cache, file-identity and cascade logic no longer needs numpy and runs in CI. Tests that need arrays (layout order, line clipping, layout failure) still skip there, as the alignment tests do |
+| Furigana rule moved ordinary kana-only lines: the end of a sentence above a heading, a kana answer option above a taller option | Two conditions added: a reading's characters take no more width each than the base line is tall, and a kana line as tall as the text line just above it is that text's continuation. Both demonstrated cases are now unchanged and are unit tests. On the gold pages 1,720 of 1,808 furigana characters are set aside (1,732 before), extra body characters 0.83% (0.78%), pages without furigana unchanged |
+| Furigana cases not fixed: a small kana label above a kanji line in a form (a "furigana" label above a name field), a small kana tagline above a large title | Recorded limitation: by geometry and script these are furigana |
+| Cache: a file was hashed by path and then opened by path | Every model is now created from the bytes that were hashed, for upstream files and cache entries alike |
+| Cache: a machine deriving other bytes derived again on every start; another ONNX Runtime release could never match | A marker stops repeated derivation; nothing is derived unless the ONNX Runtime release is the pinned one |
+| Cache: temporary files of a killed worker, a failed replace over an open entry, a link in place of the shard directory | Stale temporaries are removed, a failed replace still returns the verified bytes, a linked shard is not used; each has a test |
+| Reader load errors other than asset and device errors propagated raw | Mapped to the runtime's unavailable error |
+| A line starting left of or above the raster got a wrong right or bottom edge (found by a new test; the detector never returns one) | Fixed |
+| PyYAML used but only a transitive dependency | Declared in the `windowsml` extra |
+| Routing record counted characters two ways; two guards had no negative test | One counting function; tests for a drifted profile declaration and for the child environment |
+| Upstream's dependency-licence file was not delivered; shipped README described delivery wrongly and gave version 1.2 | `LICENCE_DEPENDENCEIES` is pinned in the lock as a second notice (19 OCR files); README corrected, version 1.3.0 |
+| Model-sources tag was lightweight | Replaced by an annotated tag on the same commit |
+
+Verified correct by the reviewers and not changed: all upstream URLs serve the
+locked bytes; lock, profile and runtime constants agree; installer and catalog
+validators accept the new files; `_digraph` equals networkx 3.3 on 3,000 random
+graphs and 1,500 `smooth_order` runs; reader steps equal upstream's; no heavy
+import at module import time; adapter result consistency.
+
+### Open: licence lineage of the detector weights
+
+**Not resolved, and the user's approval of the model sources did not cover it.**
+Upstream publishes the program, with the models in the same repository, under
+CC BY 4.0, and lists DEIMv2 and PARSeq as Apache-2.0 in its dependency file.
+Its training configuration for the line detector
+(`train/deimv2code/part2/configs/ndl_deimv2/deimv2_dinov3_s_coco_r4_800.yml`)
+uses a backbone distilled from DINOv3, and the DINOv3 licence is a custom
+agreement that covers derivative works and carries use restrictions; upstream's
+dependency file has no DINOv3 entry. Whether a distilled, fine-tuned detector is
+a derivative work under that agreement is a legal question this work cannot
+answer. The specification says unknown licensing invalidates the lock.
+Publication should wait for the user's decision.
+
+Also for the user: installs now download about 157 MB from one upstream GitHub
+repository at a pinned commit with no mirror; the lock's approval record was
+written by the agent on the user's instruction in conversation.
+
+### Unseen documents
+
+**Furigana, two textbooks not used before** (Try N3 and Try N1, 27 sampled pages
+through the product adapter): 26 pages have furigana, 373 reading lines moved, no
+page routed. Six pages scored against a blind transcription (3,640 body
+characters, 645 furigana characters):
+
+| | First pass | Product |
+| --- | ---: | ---: |
+| Characters in the body that are not in the reference | 602 (16.5%) | 89 (2.4%) |
+| Reference body characters missing | 177 | 198 |
+| Ordered edit distance of the body | 862 | 375 |
+
+124 furigana characters (19%) were not set aside and 13 characters that are not
+furigana were. Better than doing nothing by a wide margin, and weaker than on the
+development papers (0.8% extra, none wrongly set aside): textbook layouts with
+boxes, tables and contents pages are harder than exam listening pages.
+
+**An N1 paper not used before** (2016-12, 17 pages, no vertical text and no
+furigana): every page stays with the regular pipeline and nothing is moved.
+
+**Vertical books from the National Diet Library digital collection** (public
+domain, Meiji era; 12 two-page spreads from three books): 11 routed, one kept by
+the regular pipeline at a vertical share of 0.77. Six spreads scored against a
+blind transcription, with the same pages through the regular pipeline:
+
+| Material | Characters | Reader missed | Regular missed | Reader edits | Regular edits |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Printed novels, 4 spreads | 1,792 | 103 (5.7%) | 291 (16.2%) | 277 | 1,070 |
+| Handwritten lecture notes, 2 spreads | 1,638 | 277 (16.9%) | 1,037 (63.3%) | 536 | 1,092 |
+
+The reader is clearly better than the regular pipeline on both and is not
+accurate on either. Limits of this acceptance: the reference is a second reader,
+not adjudicated gold (the transcriber rated one handwritten page low confidence);
+Meiji print with old character forms is what the reader was built for and says
+little about modern vertical documents, for which no public scans were found;
+the pages are few.
+
+### Verification after the review changes
+
+Nx on the runtime: 1,063 unit and 216 integration tests, lint, typecheck. Reader
+against upstream on 106 pages: equal on first run, cached, DirectML and with the
+cache off. Workers (`verify_fresh_workers_14.py`): pass on CPU, DML and the frozen
+worker. Local package journey with the reader installed from the catalog
+(19 locked files): 619 boxes equal the source worker. Supplied documents replay:
+956 pages, 87 with furigana moved, 733 readings.

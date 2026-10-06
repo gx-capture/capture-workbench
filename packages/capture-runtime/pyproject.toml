@@ -26,6 +26,7 @@ windowsml = [
   "paddlex[ocr-core]==3.7.1",
   "pillow>=11.0.0,<13.0.0",
   "pypdfium2>=5.0.0,<6.0.0",
+  "pyyaml>=6.0.0,<7.0.0",
 ]
 whisper = [
   "ctranslate2==4.8.1",

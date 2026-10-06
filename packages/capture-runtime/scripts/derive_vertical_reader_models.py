@@ -15,11 +15,12 @@ from pathlib import Path
 
 import onnxruntime
 
-from capture_runtime.ocr_vertical_reader import derive_recognizer, verify_vertical_reader_files
+from capture_runtime.ocr_vertical_reader import derive_recognizer
 from capture_runtime.ocr_vertical_routing import (
     DERIVATION_ONNXRUNTIME,
     DERIVED_RECOGNIZER_FILES,
-    VERTICAL_READER_FILES,
+    read_reader_file,
+    verify_vertical_reader_files,
 )
 
 
@@ -31,12 +32,9 @@ def main() -> None:
             f"ONNX Runtime {DERIVATION_ONNXRUNTIME} is required, found {onnxruntime.__version__}"
         )
     upstream, output = Path(sys.argv[1]), Path(sys.argv[2])
-    verify_vertical_reader_files(
-        upstream, {name: VERTICAL_READER_FILES[name] for name in DERIVED_RECOGNIZER_FILES}
-    )
     output.mkdir(parents=True, exist_ok=True)
     for name in DERIVED_RECOGNIZER_FILES:
-        derive_recognizer(upstream / name, output / name)
+        derive_recognizer(read_reader_file(upstream, name), output / name)
         print(name)
     verify_vertical_reader_files(output, DERIVED_RECOGNIZER_FILES)
 

@@ -57,6 +57,8 @@ from capture_runtime.ocr_region_lineage import RegionSource, validate_region_sou
 from capture_runtime.ocr_vertical_routing import (
     PageRoute,
     VerticalLayoutError,
+    VerticalReaderAssetError,
+    characters,
     reader_result_reason,
     route_reason,
     vertical_reader_directory,
@@ -2184,7 +2186,7 @@ class WindowsMLOcrAdapter:
                 tall_boxes=measure.tall_boxes,
                 first_pass_characters=measure.characters,
                 reader_characters=(
-                    None if lines is None else sum(len(line.text) for line in lines)
+                    None if lines is None else sum(characters(line.text) for line in lines)
                 ),
                 reader_lines=None if lines is None else len(lines),
                 recognizer_device=getattr(self._vertical_reader, "recognizer_device", None),
@@ -2218,7 +2220,6 @@ class WindowsMLOcrAdapter:
             raise EngineRuntimeUnavailableError("The vertical reader is not installed.")
         from capture_runtime.ocr_vertical_reader import (
             VerticalPageReader,
-            VerticalReaderAssetError,
             VerticalReaderDeviceError,
         )
 
@@ -2231,6 +2232,10 @@ class WindowsMLOcrAdapter:
             )
         except (VerticalReaderAssetError, VerticalReaderDeviceError) as error:
             raise EngineRuntimeUnavailableError(str(error)) from error
+        except Exception as error:
+            raise EngineRuntimeUnavailableError(
+                f"The vertical reader could not be loaded: {type(error).__name__}."
+            ) from error
 
     def _providers(self) -> list[str]:
         if self._provider_resolver is not None:
