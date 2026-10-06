@@ -1,8 +1,8 @@
 {
   "schemaVersion": "1",
   "channel": "stable",
-  "releaseTag": "v0.4.4",
-  "manifestSha256": "8c490534495074192c7a2bb6f67cc9dbadf46ff46f5aa75e460c52dd42efa49a",
+  "releaseTag": "v0.5.0",
+  "manifestSha256": "912d910a4b5ff809c75b139d3444eb3140d6bc8d5de12117509e3b56e6035f19",
   "manifestAssetName": "capture-release-manifest-v1.json",
-  "updatedAt": "2026-09-30T08:47:13.187Z"
+  "updatedAt": "2026-10-06T08:14:02.483Z"
 }
