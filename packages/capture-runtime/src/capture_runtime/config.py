@@ -14,6 +14,9 @@ from capture_runtime.constants import CAPTURE_OLLAMA_BASE_MODEL, CAPTURE_OLLAMA_
 _CHILD_PROCESS_ENVIRONMENT_ALLOWLIST = frozenset(
     {
         "APPDATA",
+        # Locates the shared engine cache (or turns it off) for the OCR worker,
+        # which keeps derived vertical-reader models there.
+        "CAPTURE_ENGINE_CACHE_DIR",
         "COMSPEC",
         # CTranslate2 uses CUDA_PATH to locate the host CUDA toolkit's
         # cuBLAS runtime. Keep this single, non-secret locator while

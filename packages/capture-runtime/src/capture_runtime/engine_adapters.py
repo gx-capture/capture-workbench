@@ -28,6 +28,7 @@ from types import ModuleType
 from typing import Any, NoReturn, Protocol
 from uuid import uuid4
 
+from capture_runtime._engine_download_cache import default_cache_root
 from capture_runtime.contracts import OcrProvenanceV3
 from capture_runtime.ocr_alignment import (
     AlignmentCollector,
@@ -2187,6 +2188,7 @@ class WindowsMLOcrAdapter:
                 ),
                 reader_lines=None if lines is None else len(lines),
                 recognizer_device=getattr(self._vertical_reader, "recognizer_device", None),
+                derived_recognizers=getattr(self._vertical_reader, "derived_recognizers", None),
             )
 
         reason = route_reason(measure, treated_as_vertical=bool(reading_plan.articles))
@@ -2224,7 +2226,9 @@ class WindowsMLOcrAdapter:
         # on one, and no separate CPU retry when that device refuses them.
         device_id = None if self._device == "cpu" else self.device_id
         try:
-            return VerticalPageReader(directory, dml_device_id=device_id)
+            return VerticalPageReader(
+                directory, dml_device_id=device_id, cache_root=default_cache_root()
+            )
         except (VerticalReaderAssetError, VerticalReaderDeviceError) as error:
             raise EngineRuntimeUnavailableError(str(error)) from error
 

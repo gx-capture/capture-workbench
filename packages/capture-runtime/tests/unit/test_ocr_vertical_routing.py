@@ -188,3 +188,96 @@ def test_reader_refuses_an_incomplete_model_directory(tmp_path: Path) -> None:
     (tmp_path / "model.onnx").write_bytes(b"madel")
     with pytest.raises(VerticalReaderAssetError, match="digest differs"):
         verify_vertical_reader_files(tmp_path, files)
+
+
+def _identity(data: bytes) -> tuple[int, str]:
+    import hashlib
+
+    return len(data), hashlib.sha256(data).hexdigest()
+
+
+def test_recognizer_is_derived_once_and_then_served_from_the_cache(tmp_path: Path) -> None:
+    pytest.importorskip("numpy", reason="The vertical reader requires the WindowsML extras.")
+    from capture_runtime.ocr_vertical_reader import cached_recognizer
+
+    source = tmp_path / "model" / "recognizer.onnx"
+    source.parent.mkdir()
+    source.write_bytes(b"upstream")
+    identity = _identity(b"derived")
+    calls: list[Path] = []
+
+    def derive(origin: Path, target: Path) -> None:
+        calls.append(origin)
+        target.write_bytes(b"derived")
+
+    cache = tmp_path / "cache"
+    first = cached_recognizer(source, identity, cache, derive)
+    second = cached_recognizer(source, identity, cache, derive)
+
+    assert first == second == cache / identity[1][:2] / identity[1]
+    assert first is not None and first.read_bytes() == b"derived"
+    assert calls == [source]
+    assert [path.name for path in first.parent.iterdir()] == [identity[1]]
+
+
+@pytest.mark.parametrize("written", [b"other bytes", b"derive!", None])
+def test_derived_bytes_that_are_not_the_pinned_ones_are_not_kept(
+    tmp_path: Path, written: bytes | None
+) -> None:
+    pytest.importorskip("numpy", reason="The vertical reader requires the WindowsML extras.")
+    from capture_runtime.ocr_vertical_reader import cached_recognizer
+
+    def derive(_origin: Path, target: Path) -> None:
+        if written is None:
+            raise RuntimeError("optimization failed")
+        target.write_bytes(written)
+
+    cache = tmp_path / "cache"
+    assert (
+        cached_recognizer(tmp_path / "recognizer.onnx", _identity(b"derived"), cache, derive)
+        is None
+    )
+    assert [path for path in cache.rglob("*") if path.is_file()] == []
+
+
+def test_altered_cache_entry_is_replaced_by_a_fresh_derivation(tmp_path: Path) -> None:
+    pytest.importorskip("numpy", reason="The vertical reader requires the WindowsML extras.")
+    from capture_runtime.ocr_vertical_reader import cached_recognizer
+
+    identity = _identity(b"derived")
+    entry = tmp_path / "cache" / identity[1][:2] / identity[1]
+    entry.parent.mkdir(parents=True)
+    entry.write_bytes(b"altered")
+
+    result = cached_recognizer(
+        tmp_path / "recognizer.onnx",
+        identity,
+        tmp_path / "cache",
+        lambda _origin, target: target.write_bytes(b"derived") and None,
+    )
+
+    assert result == entry
+    assert entry.read_bytes() == b"derived"
+
+
+def test_without_a_cache_the_upstream_recognizer_is_used(tmp_path: Path) -> None:
+    pytest.importorskip("numpy", reason="The vertical reader requires the WindowsML extras.")
+    from capture_runtime.ocr_vertical_reader import cached_recognizer
+
+    def derive(_origin: Path, _target: Path) -> None:
+        raise AssertionError("nothing is derived when the cache is off")
+
+    assert (
+        cached_recognizer(tmp_path / "recognizer.onnx", _identity(b"derived"), None, derive) is None
+    )
+    blocked = tmp_path / "file-not-directory"
+    blocked.write_bytes(b"")
+    assert (
+        cached_recognizer(
+            tmp_path / "recognizer.onnx",
+            _identity(b"derived"),
+            blocked,
+            lambda _origin, target: target.write_bytes(b"derived") and None,
+        )
+        is None
+    )

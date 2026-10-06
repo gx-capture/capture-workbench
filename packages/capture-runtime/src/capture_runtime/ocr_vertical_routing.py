@@ -58,6 +58,8 @@ class PageRoute:
     reader_lines: int | None = None
     # Where the reader's recognizers ran; its line detector always runs on the CPU.
     recognizer_device: str | None = None
+    # How many of the three recognizers were loaded in derived form from the cache.
+    derived_recognizers: int | None = None
 
 
 def vertical_reader_directory(model_dir: Path) -> Path | None:

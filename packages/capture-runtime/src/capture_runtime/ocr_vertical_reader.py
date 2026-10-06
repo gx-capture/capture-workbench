@@ -10,11 +10,14 @@ The line detector always runs on the CPU provider: on DirectML its output is
 wrong. The three recognizers run on the DirectML device of the regular pipeline
 when there is one, one line at a time, and otherwise on CPU threads.
 
-The recognizer files are upstream's models after ONNX Runtime's extended graph
-optimization (``scripts/derive_vertical_reader_models.py``), loaded without
-further optimization, which is what makes start-up short. The detector is
-upstream's file: it loads quickly as it is, and its derived form moves a few
-boxes by a pixel.
+The engine delivers upstream's files unchanged. Creating a session from an
+upstream recognizer takes seconds, so each recognizer is optimized once per
+machine by ONNX Runtime (extended level, CPU provider) into the shared engine
+cache and loaded from there without further optimization. A cached file is used
+only when it has the pinned size and digest; when the cache is off, cannot be
+written, or this machine derives other bytes, the upstream file is loaded as
+before, more slowly and with the same text. The detector is never derived: it
+loads quickly as it is, and its derived form moves a few boxes by a pixel.
 Imported only by the OCR worker; numpy, OpenCV and ONNX Runtime are required.
 """
 
@@ -23,12 +26,14 @@ from __future__ import annotations
 import hashlib
 import io
 import logging
+import os
 import xml.etree.ElementTree as ET
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import numpy as np
 
@@ -41,10 +46,11 @@ RECOGNIZER_100 = "parseq-ndl-24x768-100-tiny-153epoch-tegaki3-r8data-202604.onnx
 CLASSES = "ndl.yaml"
 CHARSET = "NDLmoji.yaml"
 UPSTREAM_COMMIT = "636d1cfeb1331f89f4048f416e49e23a09a714b5"
-# The ONNX Runtime release whose extended optimization produced the delivered models.
+# The ONNX Runtime release whose extended optimization gives the pinned derived files.
 DERIVATION_ONNXRUNTIME = "1.24.4"
-# name -> (bytes, sha256) of upstream's recognizers at UPSTREAM_COMMIT.
-UPSTREAM_RECOGNIZER_FILES: dict[str, tuple[int, str]] = {
+# name -> (bytes, sha256) of upstream's files at UPSTREAM_COMMIT, as the engine delivers them.
+VERTICAL_READER_FILES: dict[str, tuple[int, str]] = {
+    DETECTOR: (40256763, "c156ce0c4e704bc3bf7e4016d0a87b949cffa8b3724f4b4cc696b8284c3c7373"),
     RECOGNIZER_30: (
         36457393,
         "9e651bae4c1a4d5254da1127e86e82e21ef62d5339b37e62d4a3d3d30831772d",
@@ -57,11 +63,12 @@ UPSTREAM_RECOGNIZER_FILES: dict[str, tuple[int, str]] = {
         42588187,
         "06462b0dbd5b0b8508545c8c3d485cf20dbf4ffa652fe145e69c9e7457080602",
     ),
+    CLASSES: (320, "9209f72c8f317d61ee98ab74ecc4cb4934e5fc51168b755ebbac1f9e8de2df48"),
+    CHARSET: (42438, "9804d2e9a9d98f038963f9453aa57c42fc189c0c48998662ff9ff3d67a9d2c1f"),
 }
-# name -> (bytes, sha256) of the delivered files: upstream's detector and two
-# configuration files unchanged, and the derived recognizers under upstream's names.
-VERTICAL_READER_FILES: dict[str, tuple[int, str]] = {
-    DETECTOR: (40256763, "c156ce0c4e704bc3bf7e4016d0a87b949cffa8b3724f4b4cc696b8284c3c7373"),
+# name -> (bytes, sha256) of each recognizer after derivation. Only these bytes are
+# accepted from the cache.
+DERIVED_RECOGNIZER_FILES: dict[str, tuple[int, str]] = {
     RECOGNIZER_30: (
         35793563,
         "5730246a2b34af0f468a3ff425ac9ce379a4b3d7971574be0c4c7705f0e2da83",
@@ -74,8 +81,6 @@ VERTICAL_READER_FILES: dict[str, tuple[int, str]] = {
         40857625,
         "8ee4578450853d5ea02e55b8aa20f052bca528b59ca7727e61d5f027a4cf7104",
     ),
-    CLASSES: (320, "9209f72c8f317d61ee98ab74ecc4cb4934e5fc51168b755ebbac1f9e8de2df48"),
-    CHARSET: (42438, "9804d2e9a9d98f038963f9453aa57c42fc189c0c48998662ff9ff3d67a9d2c1f"),
 }
 DETECTION_THRESHOLD = 0.25
 _LOGGER = logging.getLogger(__name__)
@@ -110,6 +115,71 @@ def verify_vertical_reader_files(
                 hasher.update(chunk)
         if hasher.hexdigest() != digest:
             raise VerticalReaderAssetError(f"Vertical reader file digest differs: {name}")
+
+
+def _has_identity(path: Path, size: int, digest: str) -> bool:
+    try:
+        if path.is_symlink() or not path.is_file() or path.stat().st_size != size:
+            return False
+        hasher = hashlib.sha256()
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                hasher.update(chunk)
+    except OSError:
+        return False
+    return hasher.hexdigest() == digest
+
+
+def derive_recognizer(source: Path, target: Path) -> None:
+    """Write ONNX Runtime's extended-level optimization of an upstream recognizer."""
+
+    import onnxruntime
+
+    options = onnxruntime.SessionOptions()
+    options.graph_optimization_level = onnxruntime.GraphOptimizationLevel.ORT_ENABLE_EXTENDED
+    options.optimized_model_filepath = str(target)
+    onnxruntime.InferenceSession(str(source), options, providers=["CPUExecutionProvider"])
+
+
+def cached_recognizer(
+    source: Path,
+    identity: tuple[int, str],
+    cache_root: Path | None,
+    derive: Callable[[Path, Path], None] = derive_recognizer,
+) -> Path | None:
+    """Return the derived form of a recognizer from the shared cache, deriving it once.
+
+    The cache names entries by SHA-256, as the engine download cache does, so a
+    file is accepted only with the pinned bytes. Returns None when there is no
+    usable derived file; the caller then loads the upstream file. Nothing here
+    fails a page: derivation is only a faster start.
+    """
+
+    if cache_root is None:
+        return None
+    size, digest = identity
+    entry = cache_root / digest[:2] / digest
+    if _has_identity(entry, size, digest):
+        try:
+            os.utime(entry)  # keeps the entry from idle eviction
+        except OSError:
+            pass
+        return entry
+    temporary = entry.with_name(f".{digest}.{uuid4().hex}.tmp")
+    try:
+        entry.parent.mkdir(parents=True, exist_ok=True)
+        derive(source, temporary)
+        if not _has_identity(temporary, size, digest):
+            return None
+        os.replace(temporary, entry)
+        return entry
+    except Exception:  # noqa: BLE001 - any failure to derive means the upstream file is used
+        return None
+    finally:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def _session_options(*, optimized: bool) -> Any:
@@ -197,11 +267,16 @@ class _Detector:
 
 class _Recognizer:
     def __init__(
-        self, path: Path, characters: Sequence[str], dml_device_id: int | None = None
+        self,
+        path: Path,
+        characters: Sequence[str],
+        dml_device_id: int | None = None,
+        *,
+        optimized: bool,
     ) -> None:
         import onnxruntime
 
-        options = _session_options(optimized=True)
+        options = _session_options(optimized=optimized)
         options.intra_op_num_threads = 1
         options.inter_op_num_threads = 1
         providers: list[Any] = ["CPUExecutionProvider"]
@@ -324,7 +399,13 @@ def _read_cascade(
 class VerticalPageReader:
     """Loads the four models once and reads PNG pages into ordered lines."""
 
-    def __init__(self, directory: Path, *, dml_device_id: int | None = None) -> None:
+    def __init__(
+        self,
+        directory: Path,
+        *,
+        dml_device_id: int | None = None,
+        cache_root: Path | None = None,
+    ) -> None:
         import yaml
 
         self.recognizer_device = "cpu" if dml_device_id is None else "windowsml-dml"
@@ -334,12 +415,23 @@ class VerticalPageReader:
         classes = yaml.safe_load((directory / CLASSES).read_text(encoding="utf-8"))["names"]
         charset = yaml.safe_load((directory / CHARSET).read_text(encoding="utf-8"))
         characters = tuple(charset["model"]["charset_train"])
-        # Creating the four sessions takes about ten seconds, once per worker process;
-        # ONNX Runtime does not create them concurrently.
         self._detector = _Detector(directory / DETECTOR, list(classes.values()))
-        self._short = _Recognizer(directory / RECOGNIZER_30, characters, dml_device_id)
-        self._middle = _Recognizer(directory / RECOGNIZER_50, characters, dml_device_id)
-        self._long = _Recognizer(directory / RECOGNIZER_100, characters, dml_device_id)
+        recognizers: list[_Recognizer] = []
+        self.derived_recognizers = 0
+        for name in (RECOGNIZER_30, RECOGNIZER_50, RECOGNIZER_100):
+            derived = cached_recognizer(
+                directory / name, DERIVED_RECOGNIZER_FILES[name], cache_root
+            )
+            self.derived_recognizers += derived is not None
+            recognizers.append(
+                _Recognizer(
+                    derived or directory / name,
+                    characters,
+                    dml_device_id,
+                    optimized=derived is not None,
+                )
+            )
+        self._short, self._middle, self._long = recognizers
 
     def read_png(self, image_png: bytes) -> tuple[VerticalLine, ...]:
         from PIL import Image

@@ -955,18 +955,25 @@ def test_vertical_reader_recognizers_follow_the_regular_pipeline_device(
     )
     adapter, _png, _texts, _created = _vertical_page_adapter(tmp_path, None)
     (tmp_path / "windowsml" / "vertical").mkdir()
-    seen: list[tuple[Path, int | None]] = []
+    seen: list[tuple[Path, int | None, Path | None]] = []
 
     class Loaded:
-        def __init__(self, directory: Path, *, dml_device_id: int | None = None) -> None:
-            seen.append((directory, dml_device_id))
+        def __init__(
+            self,
+            directory: Path,
+            *,
+            dml_device_id: int | None = None,
+            cache_root: Path | None = None,
+        ) -> None:
+            seen.append((directory, dml_device_id, cache_root))
 
     monkeypatch.setattr(reader_module, "VerticalPageReader", Loaded)
+    monkeypatch.setenv("CAPTURE_ENGINE_CACHE_DIR", str(tmp_path / "cache"))
     adapter._device = device
     adapter.device_id = device_id
 
     assert isinstance(adapter._create_vertical_reader(), Loaded)
-    assert seen == [(tmp_path / "windowsml" / "vertical", expected)]
+    assert seen == [(tmp_path / "windowsml" / "vertical", expected, tmp_path / "cache")]
 
 
 def test_recognizer_refused_by_directml_fails_the_page(
@@ -979,7 +986,7 @@ def test_recognizer_refused_by_directml_fails_the_page(
     adapter, png, _texts, _created = _vertical_page_adapter(tmp_path, None)
     (tmp_path / "windowsml" / "vertical").mkdir()
 
-    def refuse(_directory: Path, *, dml_device_id: int | None = None) -> object:
+    def refuse(_directory: Path, **_kwargs: object) -> object:
         raise reader_module.VerticalReaderDeviceError("not placed on DirectML")
 
     monkeypatch.setattr(reader_module, "VerticalPageReader", refuse)
