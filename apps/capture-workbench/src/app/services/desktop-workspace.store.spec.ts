@@ -350,13 +350,11 @@ describe('DesktopWorkspaceStore', () => {
     expect(createSource).toHaveBeenCalledWith(String.raw`C:\private\scan.pdf`);
   });
 
-  it('restores the exact ready message after readiness resources resolve', () => {
+  it('clears the status message once the runtime is ready', () => {
     const store = initializeStore(libraryStub(), runtimeStub());
 
     expect(store.state()).toBe('ready');
-    expect(store.message()).toBe(
-      'Capture Runtime 已準備完成，可以開始處理文件。',
-    );
+    expect(store.message()).toBe('');
   });
 
   it('asks for Whisper only when an allowed audio source is selected', () => {
@@ -388,7 +386,7 @@ describe('DesktopWorkspaceStore', () => {
     expect(store.coreMissing().map((item) => item.requirementId)).toEqual([
       'whisper-primary',
     ]);
-    expect(store.message()).toBe('請先安裝缺少的本機處理需求。');
+    expect(store.message()).toBe('處理文件前，需要先下載必要元件。');
     expect(library.createSource).toHaveBeenCalledOnce();
   });
 

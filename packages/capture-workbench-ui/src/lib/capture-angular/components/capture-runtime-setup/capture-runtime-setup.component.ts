@@ -9,35 +9,37 @@ import { CaptureRuntimeComputeStatusComponent } from '../capture-runtime-compute
     <section class="runtime-card" aria-labelledby="capture-runtime-title" data-testid="capture-runtime-setup">
       <div class="runtime-heading">
         <div>
-          <p class="eyebrow">Runtime</p>
           <h2 id="capture-runtime-title">
-            {{ store.config().labels?.runtimeTitle ?? 'Capture runtime setup' }}
+            {{ m().runtimeTitle }}
           </h2>
         </div>
         <span class="status-badge" [attr.data-status]="store.runtime().status">
-          {{ store.runtime().status }}
+          {{ m().runtimeStatus[store.runtime().status] ?? store.runtime().status }}
         </span>
       </div>
 
       @if (store.runtime().status === 'checking') {
-        <p class="muted" aria-live="polite">Checking runtime capabilities</p>
+        <p class="muted" aria-live="polite">{{ m().checking }}</p>
       } @else if (store.runtime().status === 'ready') {
         @if (store.runtime().ready; as ready) {
-          <p class="runtime-ready" aria-live="polite">
-            {{ store.config().labels?.runtimeReady ?? 'Runtime is ready' }}
-            <span>v{{ ready.runtimeVersion }}</span>
-          </p>
-          <gx-capture-runtime-compute-status [preflight]="ready.ocrCompute" />
+          @if (m().runtimeReady; as runtimeReady) {
+            <p class="runtime-ready" aria-live="polite">{{ runtimeReady }}</p>
+          }
+          <gx-capture-runtime-compute-status
+            [preflight]="ready.ocrCompute"
+            [gpuLabel]="m().gpuAcceleration"
+            [cpuNotice]="m().cpuNotice"
+          />
         }
       } @else if (store.runtime().status === 'incompatible' || store.runtime().status === 'error') {
         <p class="error" role="alert">{{ store.runtime().error }}</p>
         <button type="button" class="secondary" (click)="store.refreshRuntime()">
-          {{ store.config().labels?.retryRuntime ?? 'Check again' }}
+          {{ m().retryRuntime }}
         </button>
       }
 
       @if (store.requiredRequirements().length > 0) {
-        <ul class="requirements" aria-label="Runtime requirements">
+        <ul class="requirements" [attr.aria-label]="m().requiredComponents">
           @for (requirement of store.requiredRequirements(); track requirement.requirementId) {
             <li data-testid="capture-runtime-requirement" [attr.data-requirement-id]="requirement.requirementId" [attr.data-status]="requirement.status">
               <div>
@@ -48,13 +50,13 @@ import { CaptureRuntimeComputeStatusComponent } from '../capture-runtime-compute
                 @if (requirement.status === 'manual_action_required' || requirement.status === 'unavailable') {
                   <span class="requirement-guidance" role="status">
                     {{ requirement.status === 'manual_action_required'
-                      ? 'Manual action is required. Follow the runtime guidance, then check again.'
-                      : 'This capability is unavailable on the current system.' }}
+                      ? m().manualAction
+                      : m().unavailableHere }}
                   </span>
                 }
               </div>
               <span class="requirement-status" [attr.data-status]="requirement.status">
-                {{ requirement.status }}
+                {{ m().requirementStatus[requirement.status] ?? requirement.status }}
               </span>
             </li>
           }
@@ -64,7 +66,7 @@ import { CaptureRuntimeComputeStatusComponent } from '../capture-runtime-compute
       @if (store.installation(); as activeInstallation) {
         <div class="installation" aria-live="polite">
           <div>
-            <span>Installing {{ activeInstallation.requirementId }}</span>
+            <span>{{ m().installing }} {{ requirementName(activeInstallation.requirementId) }}</span>
             <strong>{{ store.installationProgress(activeInstallation.progress) }}%</strong>
           </div>
           <progress max="100" [value]="store.installationProgress(activeInstallation.progress)">
@@ -72,22 +74,21 @@ import { CaptureRuntimeComputeStatusComponent } from '../capture-runtime-compute
           </progress>
           @if (activeInstallation.status === 'queued' || activeInstallation.status === 'running') {
             <button type="button" class="secondary" (click)="store.cancelInstallation()">
-              {{ store.config().labels?.cancel ?? 'Cancel' }}
+              {{ m().cancel }}
             </button>
           }
           @if (activeInstallation.error) {
             <p class="error" role="alert">{{ activeInstallation.error.message }}</p>
           } @else if (activeInstallation.status === 'manual_action_required') {
             <p class="requirement-guidance" role="status">
-              Automatic installation is unavailable. Complete the manual action, then check again.
+              {{ m().manualInstall }}
             </p>
           }
         </div>
       } @else if (store.installableRequirements().length > 0 && store.runtime().status === 'needs-setup' && store.runtime().ready?.ready === true) {
         <button type="button" class="primary" data-testid="capture-runtime-install" (click)="store.installMissingRequirements()">
-          {{ store.config().labels?.installRuntime ?? 'Install missing runtime' }}
+          {{ m().installRuntime }}
         </button>
-        <p class="consent-note">Installation starts only after this explicit action.</p>
       }
     </section>
   `,
@@ -95,4 +96,14 @@ import { CaptureRuntimeComputeStatusComponent } from '../capture-runtime-compute
 })
 export class CaptureRuntimeSetupComponent {
   protected readonly store = inject(CaptureWorkbenchStore);
+  protected readonly m = this.store.messages;
+
+  protected requirementName(requirementId: string): string {
+    return (
+      this.store
+        .requiredRequirements()
+        .find((requirement) => requirement.requirementId === requirementId)
+        ?.displayName ?? requirementId
+    );
+  }
 }

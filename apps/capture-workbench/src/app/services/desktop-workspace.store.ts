@@ -34,6 +34,7 @@ import {
   stageLabel as selectStageLabel,
   statusLabel as selectStatusLabel,
 } from './desktop-workspace.selectors';
+import { desktopMessages } from '../i18n/desktop-messages';
 
 type WorkspaceState = 'starting' | 'needs-setup' | 'ready' | 'error';
 
@@ -47,7 +48,7 @@ export class DesktopWorkspaceStore {
   private readonly captureLifecycle = inject(DesktopWorkspaceCaptureService);
   private readonly destroyRef = inject(DestroyRef);
 
-  readonly message = signal('正在連線到 Capture Runtime…');
+  readonly message = signal(desktopMessages().starting);
   readonly selectedId = signal<string | null>(null);
   readonly query = signal('');
   readonly statusFilter = signal('');
@@ -180,9 +181,9 @@ export class DesktopWorkspaceStore {
   private readonly stateMessageEffect = effect(() => {
     const state = this.state();
     if (state === 'ready') {
-      this.message.set('Capture Runtime 已準備完成，可以開始處理文件。');
+      this.message.set('');
     } else if (state === 'needs-setup') {
-      this.message.set('請先安裝缺少的本機處理需求。');
+      this.message.set(desktopMessages().needsSetup);
     }
   });
 
@@ -234,7 +235,7 @@ export class DesktopWorkspaceStore {
       complete: () => {
         this.runtime.reload();
         this.requirementsResource.reload();
-        this.message.set('安裝流程已完成，正在重新檢查 Runtime 需求。');
+        this.message.set(desktopMessages().recheck);
       },
       error: (error: unknown) => {
         this.message.set(errorMessage(error));
@@ -298,7 +299,7 @@ export class DesktopWorkspaceStore {
   /** Deletes a non-active, non-recoverable library document after confirmation. */
   delete(documentId: string): void {
     if (this.captureLifecycle.hasActiveCapture(documentId) || this.busyIds().has(documentId)) {
-      this.message.set('請先取消處理，再刪除文件。');
+      this.message.set(desktopMessages().cancelBeforeDelete);
       return;
     }
     const document = this.documents().find(
@@ -308,10 +309,10 @@ export class DesktopWorkspaceStore {
         ? this.selected()
         : undefined);
     if (document?.captureId) {
-      this.message.set('請先完成 Runtime 清理，再刪除文件。');
+      this.message.set(desktopMessages().waitBeforeDelete);
       return;
     }
-    if (!globalThis.confirm('確定要刪除這份文件嗎？')) return;
+    if (!globalThis.confirm(desktopMessages().confirmDelete)) return;
     this.library.delete(documentId).subscribe({
       next: () => {
         if (this.selectedId() === documentId) {

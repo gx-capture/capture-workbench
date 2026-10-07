@@ -1,5 +1,9 @@
 import { ChangeDetectionStrategy, Component, input } from '@angular/core';
 import type { OcrComputePreflight } from '../../../contracts';
+import {
+  CAPTURE_WORKBENCH_MESSAGES,
+  DEFAULT_CAPTURE_WORKBENCH_LOCALE,
+} from '../../i18n/messages';
 
 @Component({
   selector: 'gx-capture-runtime-compute-status',
@@ -16,7 +20,7 @@ import type { OcrComputePreflight } from '../../../contracts';
           data-mode="cpu-fallback"
           role="status"
         >
-          No usable GPU acceleration is available. CPU OCR may be slower.
+          {{ cpuNotice() ?? defaults.cpuNotice }}
         </p>
       } @else if (compute.mode === 'gpu-dml') {
         <p
@@ -25,7 +29,7 @@ import type { OcrComputePreflight } from '../../../contracts';
           data-mode="gpu-dml"
           role="status"
         >
-          OCR acceleration enabled (DirectML).
+          {{ gpuLabel() ?? defaults.gpuAcceleration }}
         </p>
       }
     }
@@ -34,4 +38,10 @@ import type { OcrComputePreflight } from '../../../contracts';
 })
 export class CaptureRuntimeComputeStatusComponent {
   readonly preflight = input<OcrComputePreflight | null>();
+  /** Shown while OCR runs on the GPU. */
+  readonly gpuLabel = input<string>();
+  /** Shown when OCR falls back to the CPU and the runtime asks for a notice. */
+  readonly cpuNotice = input<string>();
+  protected readonly defaults =
+    CAPTURE_WORKBENCH_MESSAGES[DEFAULT_CAPTURE_WORKBENCH_LOCALE];
 }

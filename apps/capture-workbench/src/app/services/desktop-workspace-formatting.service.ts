@@ -1,5 +1,7 @@
 import { Injectable } from '@angular/core';
 
+import { desktopLocale } from '../i18n/desktop-messages';
+
 /**
  * Formats values that are rendered by the desktop workspace.
  *
@@ -18,7 +20,7 @@ export class DesktopWorkspaceFormattingService {
 
   /** Formats persisted epoch timestamps for the workspace locale. */
   formatDate(milliseconds: number): string {
-    return new Intl.DateTimeFormat('zh-TW', {
+    return new Intl.DateTimeFormat(desktopLocale(), {
       dateStyle: 'medium',
       timeStyle: 'short',
     }).format(milliseconds);

@@ -18,24 +18,21 @@ import { CaptureWorkbenchStore } from '../../services/capture-workbench-store/ca
       <div class="task-heading">
         <div>
           <strong>{{ task().fileName }}</strong>
-          <span
-            >{{ task().sourceKind }} · {{ task().stage ?? task().status }}</span
-          >
+          @if (task().status === 'processing' && m().taskStage[task().stage ?? '']; as stage) {
+            <span>{{ stage }}</span>
+          }
         </div>
         <span class="status-badge" [attr.data-status]="task().status">
-          {{ task().status }}
+          {{ m().taskStatus[task().status] ?? task().status }}
         </span>
       </div>
 
       @if (task().status === 'awaiting_confirmation' && task().raw) {
-        <section class="ocr-review" aria-label="OCR review">
-          <h3>{{ store.config().labels?.reviewTitle ?? 'Review OCR text' }}</h3>
-          <p class="muted">
-            {{
-              store.config().labels?.reviewDescription ??
-                'Check the extracted text before saving it to the host application.'
-            }}
-          </p>
+        <section class="ocr-review" [attr.aria-label]="m().reviewTitle">
+          <h3>{{ m().reviewTitle }}</h3>
+          @if (m().reviewDescription; as reviewDescription) {
+            <p class="muted">{{ reviewDescription }}</p>
+          }
           @for (
             segment of task().raw?.segments ?? [];
             track segment.segmentId
@@ -45,24 +42,24 @@ import { CaptureWorkbenchStore } from '../../services/capture-workbench-store/ca
                 <strong>
                   {{
                     segment.locator.kind === 'page'
-                      ? 'Page ' + segment.locator.page
-                      : 'Segment ' + (segment.order + 1)
+                      ? m().page(segment.locator.page)
+                      : m().segment(segment.order + 1)
                   }}
                 </strong>
                 @if (store.isReviewed(task(), segment.segmentId)) {
-                  <span class="review-edited">Edited</span>
+                  <span class="review-edited">{{ m().edited }}</span>
                 }
               </div>
               <div class="ocr-review-columns">
                 <div>
                   <span class="review-label">{{
-                    store.config().labels?.originalText ?? 'Original OCR'
+                    m().originalText
                   }}</span>
                   <pre>{{ segment.text }}</pre>
                 </div>
                 <div>
                   <span class="review-label">{{
-                    store.config().labels?.reviewedText ?? 'Text to save'
+                    m().reviewedText
                   }}</span>
                   @if (store.config().reviewEditable ?? false) {
                     <textarea
@@ -84,8 +81,7 @@ import { CaptureWorkbenchStore } from '../../services/capture-workbench-store/ca
                         "
                       >
                         {{
-                          store.config().labels?.restoreOriginal ??
-                            'Restore original'
+                          m().restoreOriginal
                         }}
                       </button>
                     }
@@ -107,14 +103,14 @@ import { CaptureWorkbenchStore } from '../../services/capture-workbench-store/ca
               class="primary"
               (click)="store.confirm(task().id)"
             >
-              {{ store.config().labels?.confirmReview ?? 'Confirm OCR' }}
+              {{ m().confirmReview }}
             </button>
             <button
               type="button"
               class="secondary"
               (click)="store.cancel(task().id)"
             >
-              {{ store.config().labels?.discardReview ?? 'Discard' }}
+              {{ m().discardReview }}
             </button>
           </div>
         </section>
@@ -130,15 +126,14 @@ import { CaptureWorkbenchStore } from '../../services/capture-workbench-store/ca
             class="secondary"
             (click)="store.cancel(task().id)"
           >
-            {{ store.config().labels?.cancel ?? 'Cancel' }}
+            {{ m().cancel }}
           </button>
         </div>
       }
 
       @if (task().status === 'reconciliation_required') {
         <p class="reconciliation-warning" role="status">
-          The runtime terminal state is unknown. Check its status or request
-          cancellation; capture will not be retried automatically.
+          {{ m().unknownProgress }}
         </p>
         <div class="task-actions reconciliation-actions">
           <button
@@ -146,7 +141,7 @@ import { CaptureWorkbenchStore } from '../../services/capture-workbench-store/ca
             class="secondary"
             (click)="store.reconcile(task().id)"
           >
-            {{ store.config().labels?.reconcile ?? 'Check status' }}
+            {{ m().reconcile }}
           </button>
           <button
             type="button"
@@ -154,7 +149,7 @@ import { CaptureWorkbenchStore } from '../../services/capture-workbench-store/ca
             (click)="store.cancel(task().id)"
           >
             {{
-              store.config().labels?.cancelAndReconcile ?? 'Cancel and check'
+              m().cancelAndReconcile
             }}
           </button>
         </div>
@@ -166,9 +161,9 @@ import { CaptureWorkbenchStore } from '../../services/capture-workbench-store/ca
           [class.reconciliation-warning]="
             task().status === 'reconciliation_required'
           "
+          [attr.data-error-code]="task().error?.code"
           role="alert"
         >
-          <strong>{{ task().error?.code }}</strong> ·
           {{ task().error?.message }}
         </p>
       }
@@ -183,13 +178,8 @@ import { CaptureWorkbenchStore } from '../../services/capture-workbench-store/ca
             [attr.data-device]="task().result?.extractionEngine?.device"
             [attr.data-digest]="task().result?.extractionEngine?.digest"
           >
-            <dt>OCR</dt>
-            <dd>
-              {{ task().result?.extractionEngine?.engine }} ·
-              {{ task().result?.extractionEngine?.model }} ·
-              {{ task().result?.extractionEngine?.device }} ·
-              {{ task().result?.extractionEngine?.digest }}
-            </dd>
+            <dt>{{ m().model }}</dt>
+            <dd>{{ task().result?.extractionEngine?.model }}</dd>
           </div>
         </dl>
         <div class="task-actions">
@@ -198,25 +188,21 @@ import { CaptureWorkbenchStore } from '../../services/capture-workbench-store/ca
             class="secondary"
             (click)="store.exportResult(task(), 'json')"
           >
-            {{ store.config().labels?.exportJson ?? 'Export JSON' }}
+            {{ m().exportJson }}
           </button>
           <button
             type="button"
             class="secondary"
             (click)="store.exportResult(task(), 'text')"
           >
-            {{ store.config().labels?.exportText ?? 'Export text' }}
+            {{ m().exportText }}
           </button>
         </div>
       }
 
       @if (task().raw) {
         <details class="raw-diagnostics">
-          <summary>Raw extraction diagnostics</summary>
-          <p>
-            This data is diagnostic only. It was not emitted as a completed
-            capture document.
-          </p>
+          <summary>{{ m().rawText }}</summary>
           <pre data-testid="capture-raw">{{ task().raw?.sourceText }}</pre>
           <ol class="raw-segments" data-testid="capture-raw-segments">
             @for (segment of task().raw?.segments ?? []; track segment.segmentId) {
@@ -230,7 +216,7 @@ import { CaptureWorkbenchStore } from '../../services/capture-workbench-store/ca
             class="secondary"
             (click)="store.exportRaw(task())"
           >
-            {{ store.config().labels?.exportRaw ?? 'Export raw diagnostics' }}
+            {{ m().exportRaw }}
           </button>
         </details>
       }
@@ -242,7 +228,7 @@ import { CaptureWorkbenchStore } from '../../services/capture-workbench-store/ca
       ) {
         <div class="task-actions remove-action">
           <button type="button" class="ghost" (click)="store.remove(task().id)">
-            {{ store.config().labels?.remove ?? 'Clear data' }}
+            {{ m().remove }}
           </button>
         </div>
       }
@@ -252,7 +238,9 @@ import { CaptureWorkbenchStore } from '../../services/capture-workbench-store/ca
 })
 export class CaptureTaskItemComponent {
   readonly task = input.required<CaptureTaskView>();
+
   protected readonly store = inject(CaptureWorkbenchStore);
+  protected readonly m = this.store.messages;
   private readonly destroyRef = inject(DestroyRef);
   private readonly reviewControls = new Map<string, FormControl<string>>();
 

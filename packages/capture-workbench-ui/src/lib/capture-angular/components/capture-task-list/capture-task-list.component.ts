@@ -8,10 +8,10 @@ import { CaptureWorkbenchStore } from '../../services/capture-workbench-store/ca
   template: `
     @if (store.tasks().length === 0) {
       <div class="empty-state">
-        {{ store.config().labels?.emptyState ?? 'Add a PDF, image, or audio recording.' }}
+        {{ m().emptyState }}
       </div>
     } @else {
-      <ol class="task-list" aria-label="Capture tasks">
+      <ol class="task-list" [attr.aria-label]="m().captureTasks">
         @for (task of store.tasks(); track task.id) {
           <gx-capture-task-item [task]="task" />
         }
@@ -22,4 +22,5 @@ import { CaptureWorkbenchStore } from '../../services/capture-workbench-store/ca
 })
 export class CaptureTaskListComponent {
   protected readonly store = inject(CaptureWorkbenchStore);
+  protected readonly m = this.store.messages;
 }

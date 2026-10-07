@@ -462,7 +462,7 @@ export async function runPracticalInstalledOcr(args: PracticalRunArguments): Pro
     });
     page = completed.page;
     await completed.card.click();
-    const raw = page.locator('.review-block').filter({ hasText: 'OCR 原始結果' }).locator('pre');
+    const raw = page.locator('.review-block').filter({ hasText: '辨識文字' }).locator('pre');
     await raw.waitFor({ state: 'visible', timeout: 30_000 });
     const rawText = (await raw.textContent()) ?? '';
     const segments = await collectVisibleOcrSegments(page);

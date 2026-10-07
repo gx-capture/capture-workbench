@@ -22,8 +22,8 @@ const forbiddenMarkers = [
 ];
 const requiredDesktopUiMarkers = [
   'ocr-compute-status',
-  'OCR acceleration enabled (DirectML).',
-  'No usable GPU acceleration is available. CPU OCR may be slower.',
+  'GPU 加速',
+  '沒有可用的 GPU，文字辨識會比較慢。',
 ];
 const indexPath = join(bundleRoot, 'index.html');
 
@@ -92,7 +92,12 @@ function verifyProductionBundle() {
             concatMap((file) => defer(() => from(readFile(file, 'utf8')))),
             toArray(),
             concatMap((contents) => {
-              const bundle = contents.join('\n');
+              // The minifier writes non-ASCII text as \uXXXX escapes.
+              const bundle = contents
+                .join('\n')
+                .replace(/\\u([0-9a-fA-F]{4})/gu, (_match, hex: string) =>
+                  String.fromCharCode(Number.parseInt(hex, 16)),
+                );
               const missingMarkers = requiredDesktopUiMarkers.filter(
                 (marker) => !bundle.includes(marker),
               );

@@ -34,11 +34,12 @@ import {
 } from 'rxjs';
 import type { DesktopRuntimeStatus } from '../contracts';
 import { DesktopTauriCommandService } from './desktop-tauri-command.service';
+import { desktopMessages } from '../i18n/desktop-messages';
 
-const STARTING_STATUS: DesktopRuntimeStatus = {
+const startingStatus = (): DesktopRuntimeStatus => ({
   status: 'starting',
-  detail: 'Runtime 正在啟動…',
-};
+  detail: desktopMessages().starting,
+});
 export interface StreamingTerminalResultV2 {
   readonly operation: CaptureOperation;
   readonly raw: RawCapture;
@@ -57,7 +58,7 @@ export class DesktopRuntimeClientService {
   private readonly commands = inject(DesktopTauriCommandService);
 
   readonly readiness = rxResource<DesktopRuntimeStatus, undefined>({
-    defaultValue: STARTING_STATUS,
+    defaultValue: startingStatus(),
     stream: ({ abortSignal }) => this.waitUntilReady$(abortSignal),
   });
   readonly status = this.readiness.value;
@@ -239,7 +240,7 @@ export class DesktopRuntimeClientService {
   }
 
   private waitUntilReady$(signal: AbortSignal): Observable<DesktopRuntimeStatus> {
-    let lastDetail = STARTING_STATUS.detail;
+    let lastDetail = startingStatus().detail;
     return defer(() => this.status$(signal)).pipe(
       tap((status) => lastDetail = status.detail),
       expand((status) => {
@@ -256,7 +257,7 @@ export class DesktopRuntimeClientService {
       switchMap((status) => this.loadCanonicalReady$(status, signal)),
       timeout({
         first: DESKTOP_RUNTIME_READY_TIMEOUT_MS,
-        with: () => throwError(() => new Error(`Capture Runtime 準備逾時：${lastDetail}`)),
+        with: () => throwError(() => new Error(desktopMessages().startTimeout(lastDetail))),
       }),
     );
   }

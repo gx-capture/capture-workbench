@@ -130,12 +130,50 @@ describe('CaptureWorkbenchComponent', () => {
       captureWorkbenchRoot(fixture).querySelector(
         '[data-testid="ocr-compute-notice"]',
       )?.textContent,
-    ).toContain('No usable GPU acceleration is available. CPU OCR may be slower.');
+    ).toContain('沒有可用的 GPU，文字辨識會比較慢。');
     expect(
       captureWorkbenchRoot(fixture).querySelector(
         '[data-testid="ocr-compute-status"]',
       ),
     ).toBeNull();
+  });
+
+  it('shows Traditional Chinese text by default and English for the en locale', async () => {
+    inputSource.client.set(fakeClient());
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const root = captureWorkbenchRoot(fixture);
+    expect(root.querySelector('.file-picker')?.textContent).toContain('選擇檔案');
+    expect(root.querySelector('.status-badge')?.textContent).toContain('已就緒');
+
+    inputSource.config.set({ locale: 'en' });
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(root.querySelector('.file-picker')?.textContent).toContain(
+      'Choose files',
+    );
+    expect(root.querySelector('.status-badge')?.textContent).toContain('Ready');
+    expect(
+      root.querySelector('[data-testid="ocr-compute-status"]')?.textContent,
+    ).toContain('GPU acceleration on');
+  });
+
+  it('lets host labels replace the built-in text of either locale', async () => {
+    inputSource.client.set(fakeClient());
+    inputSource.config.set({ labels: { chooseFiles: '上傳證據' } });
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const root = captureWorkbenchRoot(fixture);
+    expect(root.querySelector('.file-picker')?.textContent).toContain('上傳證據');
+    expect(root.querySelector('.empty-state')?.textContent).toContain(
+      '加入 PDF、圖片或錄音。',
+    );
   });
 
   it('shows GPU status without a CPU fallback notice', async () => {
@@ -148,7 +186,7 @@ describe('CaptureWorkbenchComponent', () => {
       captureWorkbenchRoot(fixture).querySelector(
         '[data-testid="ocr-compute-status"]',
       )?.textContent,
-    ).toContain('OCR acceleration enabled (DirectML).');
+    ).toContain('GPU 加速');
     expect(
       captureWorkbenchRoot(fixture).querySelector(
         '[data-testid="ocr-compute-notice"]',

@@ -1468,7 +1468,7 @@ export async function main(options: {
     page = completed.page;
     await completed.card.click();
 
-    const raw = page.locator('.review-block').filter({ hasText: 'OCR 原始結果' }).locator('pre');
+    const raw = page.locator('.review-block').filter({ hasText: '辨識文字' }).locator('pre');
     const result = page.locator('.review-block.result pre');
     await raw.waitFor({ state: 'visible', timeout: 30_000 });
     if (acceptanceMode !== 'ocr-only') {

@@ -57,6 +57,7 @@ import {
   terminalLibraryStatus,
   terminalStage,
 } from './desktop-workspace.selectors';
+import { desktopMessages } from '../i18n/desktop-messages';
 
 interface ActiveCapture {
   captureId?: string;
@@ -173,7 +174,7 @@ export class DesktopWorkspaceCaptureService {
           host.requestedRequirements.update(
             (current) => new Set([...current, 'whisper-primary']),
           );
-          host.setMessage('選取的音訊需要額外安裝 Whisper。');
+          host.setMessage(desktopMessages().whisperNeeded);
           return EMPTY;
         }
         return this.captureExisting$(document.documentId, host, document.mediaType);
@@ -664,7 +665,7 @@ export class DesktopWorkspaceCaptureService {
       return this.runtime.getRaw(job.captureId).pipe(
         switchMap((raw) => {
           if (!raw) {
-            return throwError(() => new Error('Capture Runtime 未提供已完成工作的原始結果。'));
+            return throwError(() => new Error(desktopMessages().missingRawResult));
           }
           return this.runtime.getResult(job.captureId).pipe(
             switchMap((result) => {

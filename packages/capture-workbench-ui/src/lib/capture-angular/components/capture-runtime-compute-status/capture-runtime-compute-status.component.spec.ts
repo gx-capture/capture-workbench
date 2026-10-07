@@ -32,7 +32,7 @@ describe('CaptureRuntimeComputeStatusComponent', () => {
       '[data-testid="ocr-compute-notice"]',
     ) as HTMLElement;
     expect(notice?.textContent).toContain(
-      'No usable GPU acceleration is available. CPU OCR may be slower.',
+      '沒有可用的 GPU，文字辨識會比較慢。',
     );
     expect(notice?.getAttribute('data-mode')).toBe('cpu-fallback');
   });
@@ -56,7 +56,7 @@ describe('CaptureRuntimeComputeStatusComponent', () => {
     expect(
       fixture.nativeElement.querySelector('[data-testid="ocr-compute-status"]')
         ?.textContent,
-    ).toContain('OCR acceleration enabled (DirectML).');
+    ).toContain('GPU 加速');
     expect(
       fixture.nativeElement.querySelector('[data-testid="ocr-compute-notice"]'),
     ).toBeNull();

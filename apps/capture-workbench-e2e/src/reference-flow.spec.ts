@@ -14,8 +14,8 @@ test('shows one explicit Traditional Chinese setup wizard for missing core requi
   ]);
 
   await expect(page.getByRole('heading', { name: '文件擷取工作台' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: '啟用本機文件處理' })).toBeVisible();
-  await expect(page.getByRole('button', { name: '同意並安裝核心需求' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '首次設定' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '同意並安裝' })).toBeVisible();
   await expect(page.getByText('WindowsML OCR')).toBeVisible();
   await expect(page.getByRole('button', { name: '選擇檔案' })).toBeDisabled();
 });
@@ -34,7 +34,7 @@ test('does not offer an install action when the runtime catalog marks OCR unavai
 test('renders the Material desktop queue and history filter through the authenticated runtime client', async ({ page }) => {
   await openDesktop(page, []);
 
-  await expect(page.getByText('Capture Runtime 已準備完成，可以開始處理文件。')).toBeVisible();
+  await expect(page.getByText('已就緒', { exact: true })).toBeVisible();
   await expect(page.getByText('history.pdf')).toBeVisible();
   await expect(page.getByText('Ollama · qwen3.5:0.8b')).toBeVisible();
   await expect(page.locator('.mat-mdc-form-field')).toHaveCount(2);
