@@ -22,6 +22,7 @@ import type {
 } from '@gx-capture/capture-workbench-ui';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
 import { errorMessage } from './desktop-workspace.selectors';
+import { desktopMessages } from '../i18n/desktop-messages';
 
 @Injectable({ providedIn: 'root' })
 /** Coordinates runtime and model installation workflows for the workspace facade. */
@@ -85,7 +86,10 @@ export class DesktopWorkspaceInstallationService {
   private installRequirement$(requirement: RuntimeRequirement): Observable<RuntimeInstallation> {
     if (requirement.status === 'manual_action_required') {
       return throwError(() => new Error(
-        `${requirement.displayName} 需要手動處理：${requirement.detail ?? '請完成安裝後再試。'}`,
+        desktopMessages().manualRequirement(
+          requirement.displayName,
+          requirement.detail ?? desktopMessages().finishInstallThenRetry,
+        ),
       ));
     }
     return this.runtime.startInstallation({
@@ -107,7 +111,8 @@ export class DesktopWorkspaceInstallationService {
       map((installation) => {
         if (installation.status !== 'completed') {
           throw new Error(errorMessage(
-            installation.error?.message ?? `${requirement.requirementId} 安裝失敗。`,
+            installation.error?.message ??
+              desktopMessages().requirementFailed(requirement.displayName),
           ));
         }
         return installation;

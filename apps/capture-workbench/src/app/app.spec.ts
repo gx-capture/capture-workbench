@@ -8,6 +8,10 @@ import type {
   RuntimeModelOption,
 } from '@gx-capture/capture-workbench-ui';
 import { App } from './app';
+import {
+  DESKTOP_LOCALE_STORAGE_KEY,
+  setDesktopLocale,
+} from './i18n/desktop-messages';
 import { DesktopWorkspaceStore } from './services/desktop-workspace.store';
 
 describe('App', () => {
@@ -227,6 +231,42 @@ describe('App', () => {
     if (!notice || !sourceImport) throw new Error('Expected CPU notice and source import controls.');
     expect(notice.compareDocumentPosition(sourceImport)
       & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('switches to English from the language control and remembers the choice', async () => {
+    await TestBed.configureTestingModule({
+      imports: [App],
+      providers: [
+        provideNoopAnimations(),
+        {
+          provide: DesktopWorkspaceStore,
+          useValue: workspaceStub(),
+        },
+      ],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(App);
+    fixture.detectChanges();
+
+    try {
+      const english = fixture.nativeElement.querySelector(
+        '[data-testid="language-option"][data-locale="en"]',
+      ) as HTMLButtonElement;
+      english.click();
+      fixture.detectChanges();
+
+      expect(fixture.nativeElement.querySelector('h1')?.textContent).toContain(
+        'Capture Workbench',
+      );
+      expect(
+        fixture.nativeElement.querySelector('[data-testid="source-import"]')
+          ?.textContent,
+      ).toContain('Choose files');
+      expect(english.getAttribute('aria-pressed')).toBe('true');
+      expect(localStorage.getItem(DESKTOP_LOCALE_STORAGE_KEY)).toBe('en');
+    } finally {
+      setDesktopLocale('zh-TW');
+      localStorage.removeItem(DESKTOP_LOCALE_STORAGE_KEY);
+    }
   });
 
   it('keeps import disabled and shows the typed preflight error', async () => {

@@ -1,59 +1,74 @@
 <main class="workbench-shell" data-testid="workbench-root" [attr.data-runtime-state]="store.state()">
-  <aside class="library-rail" aria-label="Capture Workbench 導覽">
+  <aside class="library-rail" [attr.aria-label]="m().navigation">
     <div class="brand" aria-label="Capture Workbench">
       <span aria-hidden="true">cw</span>
       <div><strong>Capture</strong><small>WORKBENCH</small></div>
     </div>
 
-    <nav aria-label="工作區導覽">
-      <span class="nav-current"><span>處理佇列</span><b>{{ store.documents().length }}</b></span>
-      <span class="nav-muted">歷史資料庫</span>
+    <nav [attr.aria-label]="m().workspaceNavigation">
+      <span class="nav-current"><span>{{ m().queue }}</span><b>{{ store.documents().length }}</b></span>
+      <span class="nav-muted">{{ m().history }}</span>
     </nav>
 
     <div class="library-filter">
       <mat-form-field appearance="outline" subscriptSizing="dynamic">
-        <mat-label>搜尋文件</mat-label>
-        <input matInput type="search" [value]="store.query()" (input)="store.updateQuery($any($event.target).value)" placeholder="搜尋檔名" />
+        <mat-label>{{ m().searchDocuments }}</mat-label>
+        <input matInput type="search" [value]="store.query()" (input)="store.updateQuery($any($event.target).value)" [placeholder]="m().searchPlaceholder" />
       </mat-form-field>
       <mat-form-field appearance="outline" subscriptSizing="dynamic">
-        <mat-label>處理狀態</mat-label>
+        <mat-label>{{ m().statusFilter }}</mat-label>
         <mat-select [value]="store.statusFilter()" (selectionChange)="store.updateStatusFilter($event.value)">
-          <mat-option value="">全部</mat-option>
-          <mat-option value="queued">等待處理</mat-option>
-          <mat-option value="processing">處理中</mat-option>
-          <mat-option value="persisting">儲存中</mat-option>
-          <mat-option value="recovery_required">需要復原</mat-option>
-          <mat-option value="completed">已完成</mat-option>
-          <mat-option value="failed">處理失敗</mat-option>
-          <mat-option value="canceled">已取消</mat-option>
+          <mat-option value="">{{ m().all }}</mat-option>
+          <mat-option value="queued">{{ m().status['queued'] }}</mat-option>
+          <mat-option value="processing">{{ m().status['processing'] }}</mat-option>
+          <mat-option value="persisting">{{ m().status['persisting'] }}</mat-option>
+          <mat-option value="recovery_required">{{ m().status['recovery_required'] }}</mat-option>
+          <mat-option value="completed">{{ m().status['completed'] }}</mat-option>
+          <mat-option value="failed">{{ m().status['failed'] }}</mat-option>
+          <mat-option value="canceled">{{ m().status['canceled'] }}</mat-option>
         </mat-select>
       </mat-form-field>
     </div>
 
-    <div class="rail-footer" aria-live="polite">
-      <span class="runtime-dot" [attr.data-state]="store.state()"></span>
-      {{ store.state() === 'ready' ? '已就緒' : '尚未就緒' }}
+    <div class="rail-footer">
+      <span class="runtime-state" aria-live="polite">
+        <span class="runtime-dot" [attr.data-state]="store.state()"></span>
+        {{ store.state() === 'ready' ? m().ready : m().notReady }}
+      </span>
+      <span class="language-switch" role="group" [attr.aria-label]="m().language">
+        @for (option of locales; track option) {
+          <button
+            type="button"
+            data-testid="language-option"
+            [attr.data-locale]="option"
+            [attr.aria-pressed]="locale() === option"
+            (click)="setLocale(option)"
+          >
+            {{ languageName(option) }}
+          </button>
+        }
+      </span>
     </div>
   </aside>
 
   <section class="workspace" aria-labelledby="workspace-title">
     <header class="topbar">
       <div>
-        <h1 id="workspace-title">文件擷取工作台</h1>
+        <h1 id="workspace-title">{{ m().title }}</h1>
       </div>
-      <span class="model-chip"><span aria-hidden="true"></span>{{ store.activeModelOption()?.displayName ?? '未選擇模型' }}</span>
+      <span class="model-chip"><span aria-hidden="true"></span>{{ store.activeModelOption()?.displayName ?? m().noModel }}</span>
     </header>
 
     @if (store.state() === 'needs-setup') {
       <mat-card class="setup-card" appearance="outlined" aria-labelledby="setup-title" data-testid="runtime-setup">
         <div>
-          <h2 id="setup-title">首次設定</h2>
+          <h2 id="setup-title">{{ m().setupTitle }}</h2>
           <p class="setup-status" aria-live="polite">{{ store.message() }}</p>
           <ul>
             @for (requirement of store.coreMissing(); track requirement.requirementId) {
               <li data-testid="runtime-requirement" [attr.data-requirement-id]="requirement.requirementId" [attr.data-status]="requirement.status">
                 <span>{{ requirement.displayName }}</span>
-                <small>{{ requirement.status === 'manual_action_required' ? '需要手動修復。' : (requirement.detail ?? '等待安裝。') }}</small>
+                <small>{{ requirement.status === 'manual_action_required' ? m().manualRepair : (requirement.detail ?? m().awaitingInstall) }}</small>
               </li>
             }
           </ul>
@@ -61,7 +76,7 @@
         @if (store.installableCoreRequirements().length > 0) {
           <button mat-flat-button type="button" data-testid="runtime-install" [disabled]="store.installing()" (click)="store.installCoreRequirements()">
             @if (store.installing()) { <mat-spinner diameter="18" /> }
-            {{ store.installing() ? '安裝中…' : '同意並安裝' }}
+            {{ store.installing() ? m().installing : m().agreeAndInstall }}
           </button>
         }
         @if (store.activeInstallation(); as installation) {
@@ -73,7 +88,7 @@
             [attr.data-status]="installation.status"
             aria-live="polite"
           >
-            <strong>{{ installation.status === 'completed' ? '安裝完成' : installation.status === 'failed' ? '安裝失敗' : '正在安裝' }}</strong>
+            <strong>{{ installation.status === 'completed' ? m().installDone : installation.status === 'failed' ? m().installFailed : m().installRunning }}</strong>
             <span>{{ installation.progress * 100 }}%</span>
             @if (installation.error; as error) {
               <small data-testid="runtime-install-error">{{ error.code }}: {{ error.message }}</small>
@@ -83,7 +98,7 @@
         @if (store.modelSelectionRequired()) {
           <div class="model-selection" data-testid="model-selection">
             <fieldset class="model-option-list" data-testid="model-option-select">
-              <legend>模型</legend>
+              <legend>{{ m().model }}</legend>
               @for (option of store.modelOptions(); track option.optionId) {
                 <label
                   class="model-option-choice"
@@ -113,9 +128,9 @@
               [disabled]="store.installing() || !store.selectedModelOptionId()"
               (click)="store.installSelectedModel()"
             >
-              {{ store.installing() ? '下載模型中…' : '同意並下載模型' }}
+              {{ store.installing() ? m().downloadingModel : m().agreeAndDownloadModel }}
             </button>
-            <small>模型需另外下載。</small>
+            <small>{{ m().modelSeparate }}</small>
             @if (store.activeModelInstallation(); as installation) {
               <div
                 class="model-install-progress"
@@ -129,8 +144,8 @@
                   <strong>{{ store.modelInstallationPhase() }}</strong>
                   <span>{{ store.modelInstallationPercent() }}%</span>
                 </div>
-                <progress max="100" [value]="store.modelInstallationPercent()" aria-label="模型下載進度"></progress>
-                <small>正在下載 {{ installation.optionId }}。</small>
+                <progress max="100" [value]="store.modelInstallationPercent()" [attr.aria-label]="m().modelProgress"></progress>
+                <small>{{ m().downloading(installation.optionId) }}</small>
               </div>
             }
           </div>
@@ -138,26 +153,26 @@
       </mat-card>
     } @else if (store.state() === 'error') {
       <mat-card class="error-card" appearance="outlined" role="alert" data-testid="runtime-error">
-        <strong>無法啟動文件處理</strong>
+        <strong>{{ m().cannotStart }}</strong>
         <p data-testid="runtime-error-message">{{ store.message() }}</p>
-        <button mat-stroked-button type="button" (click)="store.initialize()">重新連線</button>
+        <button mat-stroked-button type="button" (click)="store.initialize()">{{ m().reconnect }}</button>
       </mat-card>
     }
 
     @if (store.ocrCompute(); as compute) {
-      <gx-capture-runtime-compute-status [preflight]="compute" />
+      <gx-capture-runtime-compute-status [preflight]="compute" [gpuLabel]="m().gpuAcceleration" [cpuNotice]="m().cpuNotice" />
     }
 
     <mat-card class="intake" appearance="outlined" [class.is-disabled]="!store.canCapture()">
-      <h2>拖放檔案到這裡</h2>
-      <button mat-flat-button type="button" data-testid="source-import" [disabled]="!store.canCapture()" (click)="openFilePicker()">選擇檔案</button>
-      <span class="intake-hint">支援 PDF、圖片、音訊</span>
+      <h2>{{ m().dropHere }}</h2>
+      <button mat-flat-button type="button" data-testid="source-import" [disabled]="!store.canCapture()" (click)="openFilePicker()">{{ m().chooseFiles }}</button>
+      <span class="intake-hint">{{ m().supportedFiles }}</span>
     </mat-card>
 
     <section class="queue-section" aria-labelledby="queue-title">
       <div class="section-heading">
         <div>
-          <h2 id="queue-title">我的文件</h2>
+          <h2 id="queue-title">{{ m().myDocuments }}</h2>
         </div>
         @if (store.state() !== 'needs-setup') {
           <p aria-live="polite">{{ store.message() }}</p>
@@ -165,7 +180,7 @@
       </div>
 
       @if (store.documents().length === 0) {
-        <div class="empty-state">尚未加入文件。</div>
+        <div class="empty-state">{{ m().noDocuments }}</div>
       } @else {
         <ol class="document-list">
           @for (item of store.documents(); track item.documentId) {
@@ -185,7 +200,7 @@
     </section>
   </section>
 
-  <aside class="detail-pane" aria-label="文件詳情" data-testid="document-detail" [attr.data-document-id]="store.selected()?.documentId ?? null">
+  <aside class="detail-pane" [attr.aria-label]="m().documentDetail" data-testid="document-detail" [attr.data-document-id]="store.selected()?.documentId ?? null">
     @if (store.selected(); as item) {
       <div class="detail-heading" [attr.data-document-id]="item.documentId">
         <h2>{{ item.fileName }}</h2>
@@ -194,7 +209,7 @@
       <mat-divider />
 
       <div class="stage-line" [attr.data-stage]="item.stage">
-        <span aria-hidden="true"></span><span>文字辨識</span><span>結構化</span><span>儲存</span>
+        <span aria-hidden="true"></span><span>{{ m().stepRecognition }}</span><span>{{ m().stepStructuring }}</span><span>{{ m().stepSave }}</span>
       </div>
 
       @if (item.errorMessage) {
@@ -204,7 +219,7 @@
         <div class="detail-error" role="alert"><strong>{{ item.recoveryCode ?? 'recovery_required' }}</strong><p>{{ item.recoveryMessage }}</p></div>
       }
       @if (item.raw) {
-        <section class="review-block" data-testid="document-raw"><h3>辨識文字</h3><pre>{{ item.raw.sourceText }}</pre>
+        <section class="review-block" data-testid="document-raw"><h3>{{ m().recognizedText }}</h3><pre>{{ item.raw.sourceText }}</pre>
           <ol data-testid="document-raw-segments">
             @for (segment of item.raw.segments; track segment.segmentId) {
               <li data-testid="document-raw-segment" [attr.data-segment-id]="segment.segmentId" [attr.data-order]="segment.order" [attr.data-locator-kind]="segment.locator.kind" [attr.data-page]="segment.locator.kind === 'page' ? segment.locator.page : null" [attr.data-start-ms]="segment.locator.kind === 'time' ? segment.locator.startMs : null" [attr.data-end-ms]="segment.locator.kind === 'time' ? segment.locator.endMs : null">
@@ -225,7 +240,7 @@
       }
       @if (item.result) {
         <section class="review-block result" data-testid="document-result">
-          <h3>結構化結果</h3>
+          <h3>{{ m().structuredResult }}</h3>
           <pre>{{ item.result.targetText }}</pre>
           <ol class="result-block-list" data-testid="document-result-blocks">
             @for (block of item.result.blocks; track block.blockId) {
@@ -236,30 +251,30 @@
             }
           </ol>
           <dl class="provenance" data-testid="document-provenance">
-            <div data-testid="document-extraction-provenance" [attr.data-engine]="item.result.extractionEngine.engine" [attr.data-model]="item.result.extractionEngine.model" [attr.data-device]="item.result.extractionEngine.device" [attr.data-digest]="item.result.extractionEngine.digest"><dt>文字辨識</dt><dd>{{ item.result.extractionEngine.model }}</dd></div>
-            <div data-testid="document-structuring-provenance" [attr.data-engine]="item.result.structuringEngine.engine" [attr.data-model]="item.result.structuringEngine.model" [attr.data-digest]="item.result.structuringEngine.digest"><dt>結構化</dt><dd>{{ item.result.structuringEngine.model }}</dd></div>
+            <div data-testid="document-extraction-provenance" [attr.data-engine]="item.result.extractionEngine.engine" [attr.data-model]="item.result.extractionEngine.model" [attr.data-device]="item.result.extractionEngine.device" [attr.data-digest]="item.result.extractionEngine.digest"><dt>{{ m().stepRecognition }}</dt><dd>{{ item.result.extractionEngine.model }}</dd></div>
+            <div data-testid="document-structuring-provenance" [attr.data-engine]="item.result.structuringEngine.engine" [attr.data-model]="item.result.structuringEngine.model" [attr.data-digest]="item.result.structuringEngine.digest"><dt>{{ m().stepStructuring }}</dt><dd>{{ item.result.structuringEngine.model }}</dd></div>
           </dl>
         </section>
       }
       <div class="detail-actions">
         @if (store.busyIds().has(item.documentId)) {
-          <button mat-stroked-button type="button" class="danger" (click)="store.cancel(item.documentId)">取消處理</button>
+          <button mat-stroked-button type="button" class="danger" (click)="store.cancel(item.documentId)">{{ m().cancelProcessing }}</button>
         } @else {
-          <button mat-stroked-button type="button" data-testid="document-retry" [attr.data-document-id]="item.documentId" (click)="store.retry(item.documentId)">重新處理</button>
+          <button mat-stroked-button type="button" data-testid="document-retry" [attr.data-document-id]="item.documentId" (click)="store.retry(item.documentId)">{{ m().retry }}</button>
         }
-        <button mat-stroked-button type="button" [disabled]="!item.result" (click)="store.export(item.documentId, 'text')">匯出文字</button>
-        <button mat-stroked-button type="button" [disabled]="!item.result" (click)="store.export(item.documentId, 'json')">匯出 JSON</button>
-        <button mat-button type="button" class="danger" data-testid="document-delete" [attr.data-document-id]="item.documentId" [disabled]="store.busyIds().has(item.documentId) || !!item.captureId" (click)="store.delete(item.documentId)">刪除</button>
+        <button mat-stroked-button type="button" [disabled]="!item.result" (click)="store.export(item.documentId, 'text')">{{ m().exportText }}</button>
+        <button mat-stroked-button type="button" [disabled]="!item.result" (click)="store.export(item.documentId, 'json')">{{ m().exportJson }}</button>
+        <button mat-button type="button" class="danger" data-testid="document-delete" [attr.data-document-id]="item.documentId" [disabled]="store.busyIds().has(item.documentId) || !!item.captureId" (click)="store.delete(item.documentId)">{{ m().delete }}</button>
         @if (store.busyIds().has(item.documentId)) {
-          <small>請先取消處理。</small>
+          <small>{{ m().cancelFirst }}</small>
         } @else if (item.captureId) {
-          <small>處理尚未結束。</small>
+          <small>{{ m().notFinished }}</small>
         }
       </div>
     } @else {
       <div class="detail-empty">
         <span aria-hidden="true">↗</span>
-        <h2>選擇文件查看結果</h2>
+        <h2>{{ m().selectDocument }}</h2>
       </div>
     }
   </aside>
