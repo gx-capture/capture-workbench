@@ -92,7 +92,12 @@ function verifyProductionBundle() {
             concatMap((file) => defer(() => from(readFile(file, 'utf8')))),
             toArray(),
             concatMap((contents) => {
-              const bundle = contents.join('\n');
+              // The minifier writes non-ASCII text as \uXXXX escapes.
+              const bundle = contents
+                .join('\n')
+                .replace(/\\u([0-9a-fA-F]{4})/gu, (_match, hex: string) =>
+                  String.fromCharCode(Number.parseInt(hex, 16)),
+                );
               const missingMarkers = requiredDesktopUiMarkers.filter(
                 (marker) => !bundle.includes(marker),
               );

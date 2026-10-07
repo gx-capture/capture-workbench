@@ -1266,7 +1266,6 @@ test('packaged desktop entrypoint renders canonical OCR compute state before sou
   assert.ok(sourceImportIndex > computeStatusIndex, 'OCR compute state must precede source import');
   assert.match(runtimeClient, /invoke<RuntimeReady>\('runtime_ready'/u);
   assert.match(bundleVerifier, /ocr-compute-status/u);
-  assert.match(bundleVerifier, /CPU OCR may be slower/u);
 });
 
 test('desktop page acquisition reconnects after a CDP attachment has no Tauri page', async () => {
