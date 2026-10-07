@@ -9,24 +9,22 @@ import { CaptureRuntimeComputeStatusComponent } from '../capture-runtime-compute
     <section class="runtime-card" aria-labelledby="capture-runtime-title" data-testid="capture-runtime-setup">
       <div class="runtime-heading">
         <div>
-          <p class="eyebrow">Runtime</p>
           <h2 id="capture-runtime-title">
-            {{ store.config().labels?.runtimeTitle ?? 'Capture runtime setup' }}
+            {{ store.config().labels?.runtimeTitle ?? 'Setup' }}
           </h2>
         </div>
         <span class="status-badge" [attr.data-status]="store.runtime().status">
-          {{ store.runtime().status }}
+          {{ runtimeStatusLabel(store.runtime().status) }}
         </span>
       </div>
 
       @if (store.runtime().status === 'checking') {
-        <p class="muted" aria-live="polite">Checking runtime capabilities</p>
+        <p class="muted" aria-live="polite">Checking…</p>
       } @else if (store.runtime().status === 'ready') {
         @if (store.runtime().ready; as ready) {
-          <p class="runtime-ready" aria-live="polite">
-            {{ store.config().labels?.runtimeReady ?? 'Runtime is ready' }}
-            <span>v{{ ready.runtimeVersion }}</span>
-          </p>
+          @if (store.config().labels?.runtimeReady; as runtimeReady) {
+            <p class="runtime-ready" aria-live="polite">{{ runtimeReady }}</p>
+          }
           <gx-capture-runtime-compute-status [preflight]="ready.ocrCompute" />
         }
       } @else if (store.runtime().status === 'incompatible' || store.runtime().status === 'error') {
@@ -37,7 +35,7 @@ import { CaptureRuntimeComputeStatusComponent } from '../capture-runtime-compute
       }
 
       @if (store.requiredRequirements().length > 0) {
-        <ul class="requirements" aria-label="Runtime requirements">
+        <ul class="requirements" aria-label="Required components">
           @for (requirement of store.requiredRequirements(); track requirement.requirementId) {
             <li data-testid="capture-runtime-requirement" [attr.data-requirement-id]="requirement.requirementId" [attr.data-status]="requirement.status">
               <div>
@@ -48,13 +46,13 @@ import { CaptureRuntimeComputeStatusComponent } from '../capture-runtime-compute
                 @if (requirement.status === 'manual_action_required' || requirement.status === 'unavailable') {
                   <span class="requirement-guidance" role="status">
                     {{ requirement.status === 'manual_action_required'
-                      ? 'Manual action is required. Follow the runtime guidance, then check again.'
-                      : 'This capability is unavailable on the current system.' }}
+                      ? 'Finish this step yourself, then check again.'
+                      : 'Not available on this computer.' }}
                   </span>
                 }
               </div>
               <span class="requirement-status" [attr.data-status]="requirement.status">
-                {{ requirement.status }}
+                {{ requirementStatusLabel(requirement.status) }}
               </span>
             </li>
           }
@@ -64,7 +62,7 @@ import { CaptureRuntimeComputeStatusComponent } from '../capture-runtime-compute
       @if (store.installation(); as activeInstallation) {
         <div class="installation" aria-live="polite">
           <div>
-            <span>Installing {{ activeInstallation.requirementId }}</span>
+            <span>Installing {{ requirementName(activeInstallation.requirementId) }}</span>
             <strong>{{ store.installationProgress(activeInstallation.progress) }}%</strong>
           </div>
           <progress max="100" [value]="store.installationProgress(activeInstallation.progress)">
@@ -79,15 +77,14 @@ import { CaptureRuntimeComputeStatusComponent } from '../capture-runtime-compute
             <p class="error" role="alert">{{ activeInstallation.error.message }}</p>
           } @else if (activeInstallation.status === 'manual_action_required') {
             <p class="requirement-guidance" role="status">
-              Automatic installation is unavailable. Complete the manual action, then check again.
+              This cannot be installed automatically. Finish the step yourself, then check again.
             </p>
           }
         </div>
       } @else if (store.installableRequirements().length > 0 && store.runtime().status === 'needs-setup' && store.runtime().ready?.ready === true) {
         <button type="button" class="primary" data-testid="capture-runtime-install" (click)="store.installMissingRequirements()">
-          {{ store.config().labels?.installRuntime ?? 'Install missing runtime' }}
+          {{ store.config().labels?.installRuntime ?? 'Download and install' }}
         </button>
-        <p class="consent-note">Installation starts only after this explicit action.</p>
       }
     </section>
   `,
@@ -95,4 +92,37 @@ import { CaptureRuntimeComputeStatusComponent } from '../capture-runtime-compute
 })
 export class CaptureRuntimeSetupComponent {
   protected readonly store = inject(CaptureWorkbenchStore);
+
+  protected runtimeStatusLabel(status: string): string {
+    return RUNTIME_STATUS_LABELS[status] ?? status;
+  }
+
+  protected requirementStatusLabel(status: string): string {
+    return REQUIREMENT_STATUS_LABELS[status] ?? status;
+  }
+
+  protected requirementName(requirementId: string): string {
+    return (
+      this.store
+        .requiredRequirements()
+        .find((requirement) => requirement.requirementId === requirementId)
+        ?.displayName ?? requirementId
+    );
+  }
 }
+
+const RUNTIME_STATUS_LABELS: Readonly<Record<string, string>> = {
+  checking: 'Checking',
+  ready: 'Ready',
+  'needs-setup': 'Setup needed',
+  incompatible: 'Update needed',
+  error: 'Unavailable',
+};
+
+const REQUIREMENT_STATUS_LABELS: Readonly<Record<string, string>> = {
+  ready: 'Installed',
+  missing: 'Not installed',
+  installable: 'Not installed',
+  manual_action_required: 'Action needed',
+  unavailable: 'Unavailable',
+};

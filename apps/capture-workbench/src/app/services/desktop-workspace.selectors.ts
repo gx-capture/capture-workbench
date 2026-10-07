@@ -40,10 +40,10 @@ export function modelInstallationPhase(
   if (installation.status === 'queued') return '等待開始';
   if (installation.status === 'failed') return '模型下載失敗';
   if (installation.status === 'cancelled') return '模型下載已取消';
-  if (installation.status === 'completed') return '模型已準備完成';
+  if (installation.status === 'completed') return '模型已就緒';
   if (installation.progress < 0.1) return '啟動模型服務';
   if (installation.progress < 0.75) return '下載與驗證模型';
-  return '建立 Workbench profile';
+  return '設定模型';
 }
 
 /** Selects requirements that block capture or were explicitly requested. */
@@ -187,25 +187,25 @@ export function redactSensitiveMessage(message: string): string {
 /** Maps a runtime stage to its workspace label. */
 export function stageLabel(stage?: string): string {
   return ({
-    uploading: '正在上傳來源',
-    queued: '排隊等待處理',
-    extracting: '正在執行 OCR',
+    uploading: '上傳中',
+    queued: '等待處理',
+    extracting: '文字辨識中',
     awaiting_structuring: '等待結構化',
-    structuring: '正在使用 Ollama 結構化',
-    persisting: '正在保存結果',
+    structuring: '結構化中',
+    persisting: '儲存中',
     recovery_required: '需要復原',
     completed: '已完成',
     failed: '處理失敗',
     cancelled: '已取消',
-  } as Record<string, string>)[stage ?? ''] ?? '排隊等待處理';
+  } as Record<string, string>)[stage ?? ''] ?? '等待處理';
 }
 
 /** Maps a library status to its workspace label. */
 export function statusLabel(status: DesktopLibrarySummary['status']): string {
   return ({
-    queued: '排隊等待處理',
+    queued: '等待處理',
     processing: '處理中',
-    persisting: '正在保存',
+    persisting: '儲存中',
     recovery_required: '需要復原',
     awaiting_confirmation: '等待確認',
     completed: '已完成',

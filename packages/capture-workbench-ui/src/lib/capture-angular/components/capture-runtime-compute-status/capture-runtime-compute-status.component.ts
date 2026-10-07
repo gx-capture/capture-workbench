@@ -16,7 +16,7 @@ import type { OcrComputePreflight } from '../../../contracts';
           data-mode="cpu-fallback"
           role="status"
         >
-          No usable GPU acceleration is available. CPU OCR may be slower.
+          {{ cpuNotice() }}
         </p>
       } @else if (compute.mode === 'gpu-dml') {
         <p
@@ -25,7 +25,7 @@ import type { OcrComputePreflight } from '../../../contracts';
           data-mode="gpu-dml"
           role="status"
         >
-          OCR acceleration enabled (DirectML).
+          {{ gpuLabel() }}
         </p>
       }
     }
@@ -34,4 +34,8 @@ import type { OcrComputePreflight } from '../../../contracts';
 })
 export class CaptureRuntimeComputeStatusComponent {
   readonly preflight = input<OcrComputePreflight | null>();
+  /** Shown while OCR runs on the GPU. */
+  readonly gpuLabel = input('GPU acceleration on');
+  /** Shown when OCR falls back to the CPU and the runtime asks for a notice. */
+  readonly cpuNotice = input('No GPU available. Text recognition will be slower.');
 }

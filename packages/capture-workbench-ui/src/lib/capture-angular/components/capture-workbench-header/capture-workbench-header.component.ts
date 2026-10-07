@@ -6,15 +6,10 @@ import { CaptureWorkbenchStore } from '../../services/capture-workbench-store/ca
   template: `
     <header class="workbench-heading">
       <div>
-        <p class="eyebrow">
-          {{ store.config().labels?.eyebrow ?? 'PDF · Image · Audio' }}
-        </p>
+        @if (store.config().labels?.eyebrow; as eyebrow) {
+          <p class="eyebrow">{{ eyebrow }}</p>
+        }
         <h2>{{ store.config().labels?.title ?? 'Capture workbench' }}</h2>
-        <p class="muted">
-          {{ store.resolvedConfig().structuringMode === 'host'
-            ? 'Raw extraction uses Capture Runtime; structuring uses the host provider.'
-            : 'Extraction and isolated structuring use Capture Runtime.' }}
-        </p>
       </div>
       <label class="file-picker">
         {{ store.config().labels?.chooseFiles ?? 'Choose files' }}

@@ -436,7 +436,7 @@ export function exerciseInstalledUi(page, appPid, fixtureDirectory) {
 
 function prepareFirstRun(page) {
   const intake = page.getByRole('button', { name: '選擇檔案' });
-  const install = page.getByRole('button', { name: '同意並安裝核心需求' });
+  const install = page.getByRole('button', { name: '同意並安裝' });
   return waitUntil(
     () =>
       forkJoin({

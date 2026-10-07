@@ -22,8 +22,8 @@ const forbiddenMarkers = [
 ];
 const requiredDesktopUiMarkers = [
   'ocr-compute-status',
-  'OCR acceleration enabled (DirectML).',
-  'No usable GPU acceleration is available. CPU OCR may be slower.',
+  'GPU 加速',
+  '沒有可用的 GPU，文字辨識會比較慢。',
 ];
 const indexPath = join(bundleRoot, 'index.html');
 

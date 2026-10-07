@@ -18,24 +18,21 @@ import { CaptureWorkbenchStore } from '../../services/capture-workbench-store/ca
       <div class="task-heading">
         <div>
           <strong>{{ task().fileName }}</strong>
-          <span
-            >{{ task().sourceKind }} · {{ task().stage ?? task().status }}</span
-          >
+          @if (task().status === 'processing' && stageLabel(task().stage); as stage) {
+            <span>{{ stage }}</span>
+          }
         </div>
         <span class="status-badge" [attr.data-status]="task().status">
-          {{ task().status }}
+          {{ statusLabel(task().status) }}
         </span>
       </div>
 
       @if (task().status === 'awaiting_confirmation' && task().raw) {
         <section class="ocr-review" aria-label="OCR review">
-          <h3>{{ store.config().labels?.reviewTitle ?? 'Review OCR text' }}</h3>
-          <p class="muted">
-            {{
-              store.config().labels?.reviewDescription ??
-                'Check the extracted text before saving it to the host application.'
-            }}
-          </p>
+          <h3>{{ store.config().labels?.reviewTitle ?? 'Review text' }}</h3>
+          @if (store.config().labels?.reviewDescription; as reviewDescription) {
+            <p class="muted">{{ reviewDescription }}</p>
+          }
           @for (
             segment of task().raw?.segments ?? [];
             track segment.segmentId
@@ -56,7 +53,7 @@ import { CaptureWorkbenchStore } from '../../services/capture-workbench-store/ca
               <div class="ocr-review-columns">
                 <div>
                   <span class="review-label">{{
-                    store.config().labels?.originalText ?? 'Original OCR'
+                    store.config().labels?.originalText ?? 'Original'
                   }}</span>
                   <pre>{{ segment.text }}</pre>
                 </div>
@@ -107,7 +104,7 @@ import { CaptureWorkbenchStore } from '../../services/capture-workbench-store/ca
               class="primary"
               (click)="store.confirm(task().id)"
             >
-              {{ store.config().labels?.confirmReview ?? 'Confirm OCR' }}
+              {{ store.config().labels?.confirmReview ?? 'Save text' }}
             </button>
             <button
               type="button"
@@ -137,8 +134,7 @@ import { CaptureWorkbenchStore } from '../../services/capture-workbench-store/ca
 
       @if (task().status === 'reconciliation_required') {
         <p class="reconciliation-warning" role="status">
-          The runtime terminal state is unknown. Check its status or request
-          cancellation; capture will not be retried automatically.
+          Progress for this file is unknown. Check its status or cancel it.
         </p>
         <div class="task-actions reconciliation-actions">
           <button
@@ -154,7 +150,7 @@ import { CaptureWorkbenchStore } from '../../services/capture-workbench-store/ca
             (click)="store.cancel(task().id)"
           >
             {{
-              store.config().labels?.cancelAndReconcile ?? 'Cancel and check'
+              store.config().labels?.cancelAndReconcile ?? 'Cancel'
             }}
           </button>
         </div>
@@ -166,9 +162,9 @@ import { CaptureWorkbenchStore } from '../../services/capture-workbench-store/ca
           [class.reconciliation-warning]="
             task().status === 'reconciliation_required'
           "
+          [attr.data-error-code]="task().error?.code"
           role="alert"
         >
-          <strong>{{ task().error?.code }}</strong> ·
           {{ task().error?.message }}
         </p>
       }
@@ -183,13 +179,8 @@ import { CaptureWorkbenchStore } from '../../services/capture-workbench-store/ca
             [attr.data-device]="task().result?.extractionEngine?.device"
             [attr.data-digest]="task().result?.extractionEngine?.digest"
           >
-            <dt>OCR</dt>
-            <dd>
-              {{ task().result?.extractionEngine?.engine }} ·
-              {{ task().result?.extractionEngine?.model }} ·
-              {{ task().result?.extractionEngine?.device }} ·
-              {{ task().result?.extractionEngine?.digest }}
-            </dd>
+            <dt>Model</dt>
+            <dd>{{ task().result?.extractionEngine?.model }}</dd>
           </div>
         </dl>
         <div class="task-actions">
@@ -212,11 +203,7 @@ import { CaptureWorkbenchStore } from '../../services/capture-workbench-store/ca
 
       @if (task().raw) {
         <details class="raw-diagnostics">
-          <summary>Raw extraction diagnostics</summary>
-          <p>
-            This data is diagnostic only. It was not emitted as a completed
-            capture document.
-          </p>
+          <summary>Raw text</summary>
           <pre data-testid="capture-raw">{{ task().raw?.sourceText }}</pre>
           <ol class="raw-segments" data-testid="capture-raw-segments">
             @for (segment of task().raw?.segments ?? []; track segment.segmentId) {
@@ -230,7 +217,7 @@ import { CaptureWorkbenchStore } from '../../services/capture-workbench-store/ca
             class="secondary"
             (click)="store.exportRaw(task())"
           >
-            {{ store.config().labels?.exportRaw ?? 'Export raw diagnostics' }}
+            {{ store.config().labels?.exportRaw ?? 'Export raw text' }}
           </button>
         </details>
       }
@@ -242,7 +229,7 @@ import { CaptureWorkbenchStore } from '../../services/capture-workbench-store/ca
       ) {
         <div class="task-actions remove-action">
           <button type="button" class="ghost" (click)="store.remove(task().id)">
-            {{ store.config().labels?.remove ?? 'Clear data' }}
+            {{ store.config().labels?.remove ?? 'Remove' }}
           </button>
         </div>
       }
@@ -252,6 +239,15 @@ import { CaptureWorkbenchStore } from '../../services/capture-workbench-store/ca
 })
 export class CaptureTaskItemComponent {
   readonly task = input.required<CaptureTaskView>();
+
+  protected statusLabel(status: string): string {
+    return TASK_STATUS_LABELS[status] ?? status;
+  }
+
+  protected stageLabel(stage: string | undefined): string | null {
+    return stage ? (TASK_STAGE_LABELS[stage] ?? null) : null;
+  }
+
   protected readonly store = inject(CaptureWorkbenchStore);
   private readonly destroyRef = inject(DestroyRef);
   private readonly reviewControls = new Map<string, FormControl<string>>();
@@ -288,3 +284,20 @@ export class CaptureTaskItemComponent {
     this.store.restoreOriginal(task, segmentId);
   }
 }
+
+const TASK_STATUS_LABELS: Readonly<Record<string, string>> = {
+  queued: 'Waiting',
+  processing: 'Processing',
+  awaiting_confirmation: 'Needs review',
+  reconciliation_required: 'Needs attention',
+  completed: 'Done',
+  failed: 'Failed',
+  canceled: 'Canceled',
+};
+
+// Only the stages that tell the user something the status badge does not.
+const TASK_STAGE_LABELS: Readonly<Record<string, string>> = {
+  uploading: 'Uploading',
+  extracting: 'Reading text',
+  structuring: 'Organizing',
+};

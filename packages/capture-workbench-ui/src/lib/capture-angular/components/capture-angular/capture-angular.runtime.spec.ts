@@ -130,7 +130,7 @@ describe('CaptureWorkbenchComponent', () => {
       captureWorkbenchRoot(fixture).querySelector(
         '[data-testid="ocr-compute-notice"]',
       )?.textContent,
-    ).toContain('No usable GPU acceleration is available. CPU OCR may be slower.');
+    ).toContain('No GPU available. Text recognition will be slower.');
     expect(
       captureWorkbenchRoot(fixture).querySelector(
         '[data-testid="ocr-compute-status"]',
@@ -148,7 +148,7 @@ describe('CaptureWorkbenchComponent', () => {
       captureWorkbenchRoot(fixture).querySelector(
         '[data-testid="ocr-compute-status"]',
       )?.textContent,
-    ).toContain('OCR acceleration enabled (DirectML).');
+    ).toContain('GPU acceleration on');
     expect(
       captureWorkbenchRoot(fixture).querySelector(
         '[data-testid="ocr-compute-notice"]',

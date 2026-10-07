@@ -37,7 +37,7 @@ import { DesktopTauriCommandService } from './desktop-tauri-command.service';
 
 const STARTING_STATUS: DesktopRuntimeStatus = {
   status: 'starting',
-  detail: 'Runtime 正在啟動…',
+  detail: '正在啟動…',
 };
 export interface StreamingTerminalResultV2 {
   readonly operation: CaptureOperation;
@@ -256,7 +256,7 @@ export class DesktopRuntimeClientService {
       switchMap((status) => this.loadCanonicalReady$(status, signal)),
       timeout({
         first: DESKTOP_RUNTIME_READY_TIMEOUT_MS,
-        with: () => throwError(() => new Error(`Capture Runtime 準備逾時：${lastDetail}`)),
+        with: () => throwError(() => new Error(`啟動逾時：${lastDetail}`)),
       }),
     );
   }

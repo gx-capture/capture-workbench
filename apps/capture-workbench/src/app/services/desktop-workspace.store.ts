@@ -47,7 +47,7 @@ export class DesktopWorkspaceStore {
   private readonly captureLifecycle = inject(DesktopWorkspaceCaptureService);
   private readonly destroyRef = inject(DestroyRef);
 
-  readonly message = signal('正在連線到 Capture Runtime…');
+  readonly message = signal('正在啟動…');
   readonly selectedId = signal<string | null>(null);
   readonly query = signal('');
   readonly statusFilter = signal('');
@@ -180,9 +180,9 @@ export class DesktopWorkspaceStore {
   private readonly stateMessageEffect = effect(() => {
     const state = this.state();
     if (state === 'ready') {
-      this.message.set('Capture Runtime 已準備完成，可以開始處理文件。');
+      this.message.set('');
     } else if (state === 'needs-setup') {
-      this.message.set('請先安裝缺少的本機處理需求。');
+      this.message.set('處理文件前，需要先下載必要元件。');
     }
   });
 
@@ -234,7 +234,7 @@ export class DesktopWorkspaceStore {
       complete: () => {
         this.runtime.reload();
         this.requirementsResource.reload();
-        this.message.set('安裝流程已完成，正在重新檢查 Runtime 需求。');
+        this.message.set('安裝完成，正在重新檢查。');
       },
       error: (error: unknown) => {
         this.message.set(errorMessage(error));
@@ -308,7 +308,7 @@ export class DesktopWorkspaceStore {
         ? this.selected()
         : undefined);
     if (document?.captureId) {
-      this.message.set('請先完成 Runtime 清理，再刪除文件。');
+      this.message.set('處理尚未結束，請稍候再刪除。');
       return;
     }
     if (!globalThis.confirm('確定要刪除這份文件嗎？')) return;

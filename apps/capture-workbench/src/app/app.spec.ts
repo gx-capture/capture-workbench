@@ -26,7 +26,7 @@ describe('App', () => {
       fixture.detectChanges();
       return fixture.whenStable().then(() => {
         expect(fixture.nativeElement.querySelector('h1')?.textContent).toContain('文件擷取工作台');
-        expect(fixture.nativeElement.textContent).toContain('PDF、圖片與音訊皆可匯入');
+        expect(fixture.nativeElement.textContent).toContain('支援 PDF、圖片、音訊');
         expect(fixture.nativeElement.querySelector('.mat-mdc-form-field')).not.toBeNull();
         expect(fixture.nativeElement.querySelector('.mat-mdc-button-base')).not.toBeNull();
         expect(fixture.nativeElement.querySelector('[data-testid="source-import"]')).not.toBeNull();
@@ -82,7 +82,7 @@ describe('App', () => {
           device: 'windowsml-dml',
           digest: `sha256:${'a'.repeat(64)}`,
         });
-        expect(provenance?.textContent).toContain(`sha256:${'a'.repeat(64)}`);
+        expect(provenance?.textContent).toContain('ocr-v1');
         expect(provenance?.textContent).not.toMatch(
           /Bearer|secret-token|C:\\private/iu,
         );
@@ -187,7 +187,7 @@ describe('App', () => {
     const sourceImport = fixture.nativeElement.querySelector(
       '[data-testid="source-import"]',
     ) as HTMLElement | null;
-    expect(status?.textContent).toContain('OCR acceleration enabled (DirectML).');
+    expect(status?.textContent).toContain('GPU 加速');
     expect(status?.getAttribute('data-mode')).toBe('gpu-dml');
     expect(status).not.toBeNull();
     expect(sourceImport).not.toBeNull();
@@ -219,7 +219,7 @@ describe('App', () => {
       '[data-testid="source-import"]',
     ) as HTMLElement | null;
     expect(notice?.textContent).toContain(
-      'No usable GPU acceleration is available. CPU OCR may be slower.',
+      '沒有可用的 GPU，文字辨識會比較慢。',
     );
     expect(notice?.getAttribute('data-mode')).toBe('cpu-fallback');
     expect(notice).not.toBeNull();
@@ -260,7 +260,7 @@ describe('App', () => {
 function workspaceStub(selected: unknown = null, modelInstallation: RuntimeModelInstallation | null = null) {
   return {
     state: signal<'ready' | 'needs-setup' | 'error'>('ready'),
-    message: signal('Capture Runtime 已準備完成，可以開始處理文件。'),
+    message: signal(''),
     requirements: signal([]),
     documents: signal([]),
     selectedId: signal<string | null>(null),
