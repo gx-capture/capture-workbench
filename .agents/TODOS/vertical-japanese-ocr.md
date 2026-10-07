@@ -182,9 +182,9 @@ Opening implementation is the user's decision.
 See the [design notes](../RESEARCH/ocr-reader-modules-design-2026-10-06.md).
 
 - [x] The Japanese reader reads only pages with kana (0.5.1 source).
-- [ ] Publish 0.5.1 by the release runbook (user decision of 2026-10-07) and move
-  Cert Prep and LAW to it. Until then published 0.5.0 routes vertical Chinese
-  pages to the Japanese reader.
+- [x] Publish 0.5.1 by the release runbook (user decision of 2026-10-07) and move
+  Cert Prep and LAW to it. Done 2026-10-07; run IDs are in the runbook's current
+  state.
 - [ ] Find scanned vertical Traditional Chinese documents and measure the regular
   pipeline on them before choosing any second model.
 - [ ] Decide readers as separately installed requirements chosen by page content,

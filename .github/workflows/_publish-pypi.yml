@@ -197,11 +197,21 @@ jobs:
           set -euo pipefail
           probe="$RUNNER_TEMP/capture-pypi-probe"
           uv venv "$probe"
-          uv pip install --python "$probe/bin/python" --index-url https://pypi.org/simple \
-            $(case '${{ inputs.python_project }}' in
+          # PyPI's simple index can lag an upload by several minutes.
+          requirement="$(case '${{ inputs.python_project }}' in
               client) echo "capture-runtime-client==${{ inputs.release_version }}" ;;
               *) exit 1 ;;
-            esac)
+            esac)"
+          installed=false
+          for attempt in $(seq 1 20); do
+            if uv pip install --refresh --python "$probe/bin/python" --index-url https://pypi.org/simple "$requirement"; then
+              installed=true
+              break
+            fi
+            echo "PyPI does not serve $requirement yet (attempt $attempt of 20)."
+            sleep 30
+          done
+          [ "$installed" = true ]
           case '${{ inputs.python_project }}' in
             client) "$probe/bin/python" -c 'import capture_runtime_client; assert capture_runtime_client.__package__ == "capture_runtime_client"' ;;
           esac

@@ -206,8 +206,18 @@ jobs:
           set -euo pipefail
           probe="$RUNNER_TEMP/capture-pypi-probe"
           uv venv "$probe"
-          uv pip install --python "$probe/bin/python" --index-url https://pypi.org/simple \
-            "capture-runtime-client==${{ inputs.release_version }}"
+          # PyPI's simple index can lag an upload by several minutes.
+          requirement="capture-runtime-client==${{ inputs.release_version }}"
+          installed=false
+          for attempt in $(seq 1 20); do
+            if uv pip install --refresh --python "$probe/bin/python" --index-url https://pypi.org/simple "$requirement"; then
+              installed=true
+              break
+            fi
+            echo "PyPI does not serve $requirement yet (attempt $attempt of 20)."
+            sleep 30
+          done
+          [ "$installed" = true ]
           "$probe/bin/python" -c 'import capture_runtime_client; assert capture_runtime_client.__package__ == "capture_runtime_client"'
 
       - name: Upload PyPI publication ledger

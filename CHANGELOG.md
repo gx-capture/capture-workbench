@@ -2,13 +2,6 @@
 
 ## Unreleased
 
-### Runtime
-
-- The second reader for vertical pages is a Japanese model and now reads only
-  Japanese pages: a vertical page is sent to it when its text has kana. Vertical
-  Chinese pages stay with the regular pipeline, which reads them better. The OCR
-  profile id changes with the routing rule.
-
 ### Compatibility policy
 
 Capture Workbench follows an explicit 0.x compatibility policy:
@@ -27,6 +20,15 @@ Capture Workbench follows an explicit 0.x compatibility policy:
 
 The consumer consistency check is a permanent CI gate for the declared
 runtime, package lock, Python host, desktop host, and browser host versions.
+
+## 0.5.1 (2026-10-07)
+
+### Runtime
+
+- The second reader for vertical pages is a Japanese model and now reads only
+  Japanese pages: a vertical page is sent to it when its text has kana. Vertical
+  Chinese pages stay with the regular pipeline, which reads them better. The OCR
+  profile id changes with the routing rule.
 
 ## 0.5.0 (2026-10-06)
 
