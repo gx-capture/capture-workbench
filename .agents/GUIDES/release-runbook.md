@@ -1,40 +1,41 @@
 # Capture Workbench release runbook
 
-Current as of 2026-10-06. This is the operational procedure for publishing a
+Current as of 2026-10-07. This is the operational procedure for publishing a
 Capture Workbench release and moving its consumers. It reflects how 0.5.0 was
-actually shipped; workflow files remain the source of truth for inputs.
+actually shipped (0.5.1 followed the same steps); workflow files remain the source of truth for inputs.
 
 ## Current state
 
-- Capture Runtime and Workbench **0.5.0** are published: npm
+- Capture Runtime and Workbench **0.5.1** are published: npm
   (`@gx-capture/capture-workbench-ui`, `@gx-capture/capture-runtime-client` on
   GitHub Packages), Maven (`com.gx.capture:capture-runtime-client`, GitHub
   Packages), PyPI (`capture-runtime-client`), crates.io
-  (`capture-sidecar-launcher`), and GitHub release `v0.5.0` (runtime exe
-  `d3d02225…`, OCR/Whisper engine zips, desktop installer, release manifest).
-  `release-index/stable.json` on the `release-index` branch points at `v0.5.0`.
-- Source commit of the 0.5.0 candidates: `af281e3` (merge of PR #69).
+  (`capture-sidecar-launcher`), and GitHub release `v0.5.1` (runtime exe
+  `8a5c3b2e…`, OCR/Whisper engine zips, desktop installer, release manifest).
+  `release-index/stable.json` on the `release-index` branch points at `v0.5.1`.
+- Source commit of the 0.5.1 candidates: `1fa4924` (merge of PR #71).
   Contract-set SHA-256:
-  `4c63044191551bf3f7c36d24d08cc6ced25fcc701bf1e06a0fa69626b1e18f1b`.
-  Model-source Commit A `8f37898` (annotated tag
-  `capture-runtime-model-sources-v0.5.0`). OCR profile
-  `capture-workbench-ocr-1c6be4a3cebc2b21`.
-  Runs: package candidate 37424340590, runtime candidate 37424600408, package
-  promote 37425756166, runtime promote 37425994410, release candidate
-  37431071882, consumer gates 37433360334, release promote 37434317020.
-- 0.5.0 is not compatible with 0.4.x: 0.x clients require the same minor
-  version, and the contract-set hash and OCR profile id changed.
-- Consumers on their `main` branches pin 0.5.0: Cert Prep
-  (`WodenWang820118/cert-prep`, PR #37) and LAW
-  (`WodenWang820118/gx.law-prep`, PR #95). Both consumer gates passed on the
-  release candidate. LAW's durable OCR receipt readback was repeated locally with
-  the CI-built runtime (619 boxes unchanged). The published-mode practical OCR
-  journeys passed on 2026-10-07: Cert Prep's packaged app with the canonical
-  JPEG, and LAW's engine, AI service and runtime with the canonical JPEG and
-  page 1 of the private PDF.
-- The online-package PDF OCR E2E passes against published 0.5.0 with a ten-page
-  development PDF (all pages with text, ten anchors, four of them on pages read
-  by the vertical reader installed from upstream).
+  `f72e22229bbc726f1feff4c8ea99ab7e68c64dfa893b038bb731a99255b6495c`.
+  Model-source Commit A `cad865f` (annotated tag
+  `capture-runtime-model-sources-v0.5.1`). OCR profile
+  `capture-workbench-ocr-1dc18ff680549aa9`.
+  Runs: package candidate 37559860991, runtime candidate 37560144704, package
+  promote 37561007340, runtime promote 37561498532, release candidate
+  37562803807, consumer gates 37565455444, release promote 37566342753.
+- 0.5.1 sends a vertical page to the NDLOCR-Lite reader only when the page has
+  kana; 0.5.0 sent vertical Chinese there too and read it worse. A 0.5.1 runtime
+  needs 0.5.1 clients: the contract set carries the release version, so its hash
+  changes with every release, and the OCR profile id changed with the rule.
+- Consumers on their `main` branches pin 0.5.1: Cert Prep
+  (`WodenWang820118/cert-prep`, PR #39) and LAW
+  (`WodenWang820118/gx.law-prep`, PR #98). Both consumer gates passed on the
+  release candidate. The published-mode practical OCR journeys passed on
+  2026-10-07 before the consumer merges: Cert Prep's packaged app with the
+  canonical JPEG, and LAW's engine, AI service and runtime with the canonical
+  JPEG and page 1 of the private PDF.
+- The online-package PDF OCR E2E was last run against published 0.5.0 (ten-page
+  development PDF, ten anchors, four on pages read by the vertical reader); it
+  was not repeated for 0.5.1.
 - The OCR engine now also installs the NDLOCR-Lite models (about 157 MB from
   `raw.githubusercontent.com/ndl-lab/ndlocr-lite` at a pinned commit, no mirror).
   **Open**: the licence lineage of its line detector's weights; see
@@ -126,7 +127,9 @@ candidate with `node tools/install-capture-workbench-dependencies.mts
   worker paths beyond Windows MAX_PATH crash the worker) and set `CAPTURE_PORT`
   together with `--port`, or the allowed-host check rejects requests.
 - PyPI's JSON API can lag an upload by minutes; the post-publish readback
-  retries a 404 for about five minutes before failing.
+  retries a 404 for about five minutes before failing. The simple index lags
+  too: the clean-install check after the upload retries for about ten minutes
+  (in 0.5.1 it failed three times within four minutes of the upload).
 - Consumer migrations: bump only exact version tokens (never `10.4.2` or other
   packages' `0.4.2` in lock files), move tests that use the new version as a
   "wrong" value to `99.0.0` first, and let each package manager update its
