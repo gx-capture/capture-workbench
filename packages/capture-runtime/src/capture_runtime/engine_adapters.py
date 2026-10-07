@@ -2185,6 +2185,7 @@ class WindowsMLOcrAdapter:
                 vertical_share=measure.share,
                 tall_boxes=measure.tall_boxes,
                 first_pass_characters=measure.characters,
+                kana_share=measure.kana_share,
                 reader_characters=(
                     None if lines is None else sum(characters(line.text) for line in lines)
                 ),

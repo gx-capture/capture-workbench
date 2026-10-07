@@ -24,6 +24,7 @@ FIXTURE = Path(__file__).parents[1] / "fixtures" / "vertical-ocr" / "vertical-re
 class Region:
     text: str
     polygon: tuple[tuple[float, float], ...]
+    confidence: float | None = None
 
 
 def box(text: str, x: float, y: float, width: float, height: float) -> Region:
@@ -73,12 +74,46 @@ def test_only_vertical_dominant_pages_are_routed(
 
 
 @pytest.mark.parametrize(
+    ("text", "confidence", "expected"),
+    [
+        ("縦書きの本文です", 0.99, None),
+        ("本件原告主張被告未依約給付", 0.99, "no_kana"),  # vertical Chinese, read with confidence
+        ("本件原告主張被告未依約給付", 0.86, "no_kana"),
+        ("本件原告主張被告未依約給付", 0.84, None),  # unsure: the reader's text decides
+        ("本件原告主張被告未依約給付", None, None),  # no scores: the reader's text decides
+        ("本件原告主張被告未依約給付ノ件", 0.99, None),  # kana among kanji
+    ],
+)
+def test_a_confidently_read_page_without_kana_is_not_routed(
+    text: str, confidence: float | None, expected: str | None
+) -> None:
+    regions = [
+        Region(text, ((40 * i, 0), (40 * i + 20, 0), (40 * i + 20, 300), (40 * i, 300)), confidence)
+        for i in range(5)
+    ]
+    measure = vertical_share(regions)
+    assert route_reason(measure, treated_as_vertical=True) == expected
+    assert measure.confidence == (None if confidence is None else pytest.approx(confidence))
+
+
+def test_kana_share_ignores_whitespace_and_counts_both_syllabaries() -> None:
+    from capture_runtime.ocr_vertical_routing import kana_share
+
+    assert kana_share(["あ ア\n", "漢 字"]) == pytest.approx(0.5)
+    assert kana_share(["", "  "]) == 0.0
+    assert kana_share(["ー、。"]) == 0.0  # the long-vowel mark and punctuation are not kana
+
+
+@pytest.mark.parametrize(
     ("first_pass", "texts", "expected"),
     [
         (100, ["あ" * 60, "い" * 60], None),
         (100, ["あ" * 50], None),
         (100, ["あ" * 49], "reader_returned_far_less_text"),
         (100, [], "reader_returned_no_text"),
+        (100, ["漢" * 80], "reader_text_without_kana"),
+        (100, ["漢" * 95 + "あ" * 5], None),
+        (100, ["漢" * 96 + "あ" * 4], "reader_text_without_kana"),
         (100, [" ", "\n"], "reader_returned_no_text"),
     ],
 )
@@ -544,6 +579,8 @@ def test_profile_whose_vertical_reader_differs_from_the_runtime_is_refused(
     with pytest.raises(EngineRuntimeUnavailableError, match="vertical reader|fields drifted"):
         load_profile_spec(path)
     assert load_profile_spec().document["verticalReader"]["routing"] == {
+        "confidentFirstPass": 0.85,
+        "minimumKanaCharacterShare": 0.05,
         "minimumReaderCharacterShare": 0.5,
         "minimumTallBoxes": 3,
         "minimumVerticalCharacterShare": 0.8,

@@ -96,7 +96,7 @@
       "pdf": "pdfium"
     }
   },
-  "releaseVersion": "0.5.0",
+  "releaseVersion": "0.5.1",
   "schemaVersion": "3",
   "verticalReader": {
     "artifacts": [
@@ -160,6 +160,8 @@
     "recognizerDevice": "regular-pipeline-device",
     "revision": "636d1cfeb1331f89f4048f416e49e23a09a714b5",
     "routing": {
+      "confidentFirstPass": 0.85,
+      "minimumKanaCharacterShare": 0.05,
       "minimumReaderCharacterShare": 0.5,
       "minimumTallBoxes": 3,
       "minimumVerticalCharacterShare": 0.8,

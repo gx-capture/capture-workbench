@@ -124,8 +124,15 @@ See the [direction study](../RESEARCH/vertical-japanese-ocr-direction-study-2026
 - [x] 0.5.0 published on 2026-10-06 by the release runbook (Route A, consumer
   migration of Cert Prep and LAW, release candidate, consumer gates, promotion);
   run IDs and identities are in the runbook's current state.
-- [ ] Repeat the published-mode practical OCR journeys of Cert Prep and LAW with
+- [x] Repeat the published-mode practical OCR journeys of Cert Prep and LAW with
   0.5.0 (local and manual).
+  Done 2026-10-07 with runtime `d3d02225…` and the engine installed from the
+  release: Cert Prep packaged app with the canonical JPEG (`windowsml_ocr`,
+  `windowsml-dml`, cleanup verified); LAW engine, AI service and runtime driven
+  through the engine API with the canonical JPEG and page 1 of the private PDF
+  (`ocr_paddle`, anchors found). Cert Prep's PDF leg was not run.
+- [ ] LAW's `acceptance-real.mts` names a spec path that does not exist and the
+  spec expects `direct_pdf_text` as the first-pass method; repair it in LAW.
 - [x] Candidate 12 (user approval of 2026-10-06): derived recognizers loaded without
   optimization, memory arena off, recognizers on the regular pipeline's DirectML
   device. A routed job adds 7 to 9 s and 310 to 416 MiB instead of 14 to 18 s and
@@ -169,3 +176,16 @@ Opening implementation is the user's decision.
 - [ ] Verify score semantics, assets, all sessions, cancellation and complete regression.
 - [ ] Pass integrated resource budgets and installed consumer journeys; independently review.
 - [ ] Deliver a release-ready candidate and evidence for a separate publication decision.
+
+## Readers as optional modules - opened 2026-10-06
+
+See the [design notes](../RESEARCH/ocr-reader-modules-design-2026-10-06.md).
+
+- [x] The Japanese reader reads only pages with kana (0.5.1 source).
+- [ ] Publish 0.5.1 by the release runbook (user decision of 2026-10-07) and move
+  Cert Prep and LAW to it. Until then published 0.5.0 routes vertical Chinese
+  pages to the Japanese reader.
+- [ ] Find scanned vertical Traditional Chinese documents and measure the regular
+  pipeline on them before choosing any second model.
+- [ ] Decide readers as separately installed requirements chosen by page content,
+  and the reader interface, only after that measurement.

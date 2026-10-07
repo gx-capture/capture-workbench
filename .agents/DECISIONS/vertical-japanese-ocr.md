@@ -190,3 +190,13 @@ lineage: acceptable; publish 0.5.0 as it is and keep a note of the question for
 later handling. This is the user's confirmation of the model source lock approval
 with that question known; the approval time in the lock is this decision. The
 note is `.agents/RESEARCH/ndlocr-lite-detector-licence-lineage-2026-10-06.md`.
+
+2026-10-06 - user asked about making readers optional modules behind an
+abstraction, for example another model for vertical Chinese in LAW, and agreed to
+the proposed order: correct the routing now, measure before fixing an interface.
+Decided: the Japanese reader is used only for pages with kana (first pass, or the
+reader's own text when the first pass is unsure); this changes the profile's
+routing declaration and is prepared as 0.5.1. Not decided: readers as separately
+installed requirements chosen by page content. No vertical Chinese document is
+available to the user; that measurement is open. See
+`.agents/RESEARCH/ocr-reader-modules-design-2026-10-06.md`.
