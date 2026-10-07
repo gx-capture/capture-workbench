@@ -4,7 +4,8 @@
 module among several, behind an abstraction, so that LAW could use another model
 for vertical Chinese. This note records what is already separable, what was
 corrected at once, and what has to be measured and decided before an interface
-is fixed. Nothing here is implemented except the correction in the next section.
+is fixed. Nothing here is implemented except the correction in the next section;
+the decisions taken on 2026-10-07 are listed below.
 Evidence is under `tmp/vertical-japanese-ocr-phase0/direction-study/` (ignored).
 
 ## Corrected now: the Japanese reader only reads Japanese pages (0.5.1)
@@ -59,7 +60,7 @@ two thresholds were set on the pages listed here.
   engine: every install downloads about 157 MB, whatever the host reads.
 - One routing rule with one destination.
 
-## Proposed shape, not yet decided
+## Proposed shape
 
 1. **The module boundary is the install unit the system already has.** The engine
    catalog installs requirements separately (OCR, Whisper). A reader becomes its
@@ -75,7 +76,7 @@ two thresholds were set on the pages listed here.
    The reading-order policy is not abstracted until a second language needs
    different ordering.
 
-## Why not fix the interface now
+## Why the interface stays inside the runtime
 
 - There is one implementation. A Chinese vertical model may not be a whole-page
   reader at all: the regular pipeline already reads clean vertical Chinese well,
@@ -83,17 +84,55 @@ two thresholds were set on the pages listed here.
 - The cost of a wrong interface is another incompatible release: profile format,
   catalog and install API change, and both consumers migrate again.
 
+## Measurement of 2026-10-07: vertical Chinese on the regular pipeline
+
+Test splits of `ZihCiLin/traditional-chinese-ocr-synthetic` (CC BY-NC 4.0, used
+for local measurement only; 1,395 single-line crops, half vertical). Scripts and
+results are under `tmp/zh-ocr-synthetic/` (ignored). Eight lines were composed
+into a page to exercise detection and column order. Character error rate:
+
+| Split, composed pages | Horizontal | Vertical | Vertical, NDLOCR-Lite reader |
+| --- | ---: | ---: | ---: |
+| Coherent text (395 lines) | 5.2% | 6.2% | 21.1% |
+| Random rare characters (1,000 lines) | 48.2% | 49.0% | 81.8% |
+
+- Direction costs about one point; column order is right.
+- Two thirds of the vertical errors on single lines come from ten lines, seven
+  of them faint or low-contrast lines that were not detected at all. Most of the
+  rest are variant forms (爲 for 為, simplified or Japanese forms).
+- The random split measures rare characters without context: 10.5% of its
+  characters are not in the recognition dictionary.
+- The layout-only rule of 0.5.0 would send 25 of the 26 coherent vertical pages
+  to the reader; the kana rule keeps all of them with the regular pipeline.
+- Limits: synthetic lines, no real page structure (rules, marginal notes,
+  facing pages, seals).
+
+## Decisions of 2026-10-07 (user)
+
+- 0.5.1 is released with the routing correction only. The changes below are
+  for a later release, after the architecture and UI discussion.
+- NDLOCR-Lite becomes an optional install unit. Neither Cert Prep nor LAW
+  installs it by default.
+- A page that a reader would accept while that reader is not installed keeps
+  the first-pass result and reports the install unit the host can offer.
+- No reader for vertical Chinese is planned. Variant forms are handled in the
+  host: LAW folds one-to-one variants when comparing search text and keeps the
+  stored OCR text unchanged (LAW branch `feat/search-variant-folding`). The
+  runtime does not normalize characters.
+- The strategy is selected by page evidence, not by a language the host names,
+  and its interface stays inside the runtime.
+
 ## Open questions, in order
 
-1. **Is there a problem to solve for vertical Chinese?** Needs real documents:
-   scanned vertical Traditional Chinese of the kind LAW meets (older judgments,
-   gazettes), measured end to end with the regular pipeline, as the direction
-   study did for Japanese. None is available now. Public-domain scans are a
-   possible source and would need gold or a blind second reader.
-2. **If there is, what kind of model fixes it** (whole-page reader, recognizer,
-   detector), with clear licence lineage.
-3. **Then** the install unit and the reader interface above, in one release with
-   the consumer migrations.
+1. **Contract shape of the install unit.** Requirement ids are a closed list in
+   the contract, the three client SDKs and the UI. Adding the reader is an
+   incompatible minor release; making the id extensible in the same release
+   keeps later readers from being another one.
+2. **Profile identity.** The profile id must not depend on which optional
+   readers a machine has, because hosts store it with their OCR results; the
+   reader that read a page belongs in that page's provenance.
+3. **Page structure of real vertical Chinese scans** (older judgments, gazettes)
+   is still unmeasured; no such document is available.
 
 ## Not affected
 

@@ -28,8 +28,10 @@ actually shipped; workflow files remain the source of truth for inputs.
   (`WodenWang820118/cert-prep`, PR #37) and LAW
   (`WodenWang820118/gx.law-prep`, PR #95). Both consumer gates passed on the
   release candidate. LAW's durable OCR receipt readback was repeated locally with
-  the CI-built runtime (619 boxes unchanged); the full published-mode practical
-  OCR journeys of the two hosts were not repeated for 0.5.0.
+  the CI-built runtime (619 boxes unchanged). The published-mode practical OCR
+  journeys passed on 2026-10-07: Cert Prep's packaged app with the canonical
+  JPEG, and LAW's engine, AI service and runtime with the canonical JPEG and
+  page 1 of the private PDF.
 - The online-package PDF OCR E2E passes against published 0.5.0 with a ten-page
   development PDF (all pages with text, ten anchors, four of them on pages read
   by the vertical reader installed from upstream).
