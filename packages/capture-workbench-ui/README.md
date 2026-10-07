@@ -175,6 +175,16 @@ Use `provideCapturePreprocessor()` for a
 crop/normalization seam before upload. The seam must preserve abort semantics
 and return the `File` that should be hashed and captured.
 
+## Language
+
+The built-in text is Traditional Chinese by default. Set `config.locale` to
+`'en'` for English. `config.labels` replaces individual texts in either
+language, and `CAPTURE_WORKBENCH_MESSAGES` exports both catalogs.
+
+```ts
+element.config = { locale: 'en', labels: { chooseFiles: 'Add evidence' } };
+```
+
 ## Web Component
 
 Register the framework-neutral element once during application startup. Angular

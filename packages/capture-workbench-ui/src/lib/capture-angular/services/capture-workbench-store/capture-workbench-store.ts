@@ -31,6 +31,7 @@ import { CaptureHelpersService } from '../../../capture-helpers';
 import { CaptureRuntimeInstallationService } from '../capture-runtime-installation/capture-runtime-installation.service';
 import { CaptureWorkflowService } from '../capture-workflow/capture-workflow.service';
 import { CaptureWorkbenchStoreHelpers } from './capture-workbench-store-helpers';
+import { resolveCaptureWorkbenchMessages } from '../../i18n/messages';
 
 @Injectable()
 export class CaptureWorkbenchStore {
@@ -83,6 +84,14 @@ export class CaptureWorkbenchStore {
   readonly events = this.workflow.events;
   readonly tasks = this.workflow.tasks;
   readonly installation = this.installationService.installation;
+
+  /** Built-in text for the configured locale, with host labels applied. */
+  readonly messages = computed(() =>
+    resolveCaptureWorkbenchMessages(
+      this.config().locale,
+      this.config().labels,
+    ),
+  );
 
   readonly resolvedConfig = computed<ResolvedCaptureWorkbenchConfig>(() => ({
     ...DEFAULT_CAPTURE_WORKBENCH_CONFIG,

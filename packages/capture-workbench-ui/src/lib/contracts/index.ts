@@ -318,6 +318,8 @@ export interface CaptureWorkbenchTheme {
 }
 
 export interface CaptureWorkbenchConfig {
+  /** Language of the built-in text. Defaults to Traditional Chinese. */
+  readonly locale?: 'zh-TW' | 'en';
   readonly enabledSources?: readonly CaptureSourceKind[];
   readonly structuringMode?: CaptureStructuringMode;
   readonly outputMode?: CaptureOutputMode;

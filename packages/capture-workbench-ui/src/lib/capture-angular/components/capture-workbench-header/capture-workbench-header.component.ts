@@ -6,13 +6,13 @@ import { CaptureWorkbenchStore } from '../../services/capture-workbench-store/ca
   template: `
     <header class="workbench-heading">
       <div>
-        @if (store.config().labels?.eyebrow; as eyebrow) {
+        @if (m().eyebrow; as eyebrow) {
           <p class="eyebrow">{{ eyebrow }}</p>
         }
-        <h2>{{ store.config().labels?.title ?? 'Capture workbench' }}</h2>
+        <h2>{{ m().title }}</h2>
       </div>
       <label class="file-picker">
-        {{ store.config().labels?.chooseFiles ?? 'Choose files' }}
+        {{ m().chooseFiles }}
         <input
           type="file"
           [accept]="store.accept()"
@@ -27,6 +27,7 @@ import { CaptureWorkbenchStore } from '../../services/capture-workbench-store/ca
 })
 export class CaptureWorkbenchHeaderComponent {
   protected readonly store = inject(CaptureWorkbenchStore);
+  protected readonly m = this.store.messages;
 
   protected chooseFiles(event: Event): void {
     this.store.chooseFiles(event);

@@ -108,10 +108,10 @@ describe('CaptureWorkbenchComponent', () => {
     expect(client.startInstallation).toHaveBeenCalledTimes(1);
     fixture.detectChanges();
     expect(captureWorkbenchRoot(fixture).textContent).toContain(
-      'Finish this step yourself',
+      '請自行完成這個步驟',
     );
     expect(captureWorkbenchRoot(fixture).textContent).toContain(
-      'Not available on this computer',
+      '這台電腦無法使用',
     );
   });
 
