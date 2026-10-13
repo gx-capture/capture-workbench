@@ -32,6 +32,9 @@ MAX_SINGLE_FILE_BYTES = 2 * 1024 * 1024 * 1024
 MAX_TOTAL_BYTES = 2 * 1024 * 1024 * 1024
 MAX_SOURCE_LOCK_TOTAL_BYTES = 3 * 1024 * 1024 * 1024
 REQUIREMENT_IDS = ("windowsml-ocr", "whisper-primary")
+# Units a host may leave uninstalled. A lock lists them after the required
+# ones, in this order, or leaves them out.
+OPTIONAL_REQUIREMENT_IDS = ("speaker-diarization",)
 CORE_ONLY_RELEASE_MODE = "core-only"
 MODEL_ENABLED_RELEASE_MODE = "model-enabled"
 PENDING_WHISPER_FREEZE_BLOCKER = (
@@ -547,11 +550,16 @@ def validate_source_lock(
         raise ModelSourceLockError(
             "blocked model source lock must contain only the private Whisper two-run freeze blocker"
         )
-    if [item.get("requirementId") for item in requirements if isinstance(item, dict)] != list(
-        REQUIREMENT_IDS
+    requirement_ids = tuple(
+        item.get("requirementId") for item in requirements if isinstance(item, dict)
+    )
+    optional_ids = requirement_ids[len(REQUIREMENT_IDS) :]
+    if requirement_ids[: len(REQUIREMENT_IDS)] != REQUIREMENT_IDS or optional_ids != tuple(
+        item for item in OPTIONAL_REQUIREMENT_IDS if item in optional_ids
     ):
         raise ModelSourceLockError(
-            "requirements must be ordered windowsml-ocr then whisper-primary"
+            "requirements must be ordered windowsml-ocr then whisper-primary, "
+            "then any optional units in their fixed order"
         )
     validated_requirements: list[dict[str, Any]] = []
     total_locked_bytes = 0

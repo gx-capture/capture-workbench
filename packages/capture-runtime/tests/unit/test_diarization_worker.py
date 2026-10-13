@@ -184,3 +184,23 @@ def test_worker_environment_is_offline_and_survives_a_missing_user_name(
     assert os.environ["HF_HUB_OFFLINE"] == "1"
     assert os.environ["PYANNOTE_METRICS_ENABLED"] == "0"
     assert getpass.getuser()
+
+
+def test_code_probe_before_any_model_exists_reports_only_the_worker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(diarization_main.importlib.util, "find_spec", lambda _name: object())
+    request = WorkerRequest(
+        request_id="diarization-code-probe",
+        operation="probe",
+        payload={
+            "requirementId": "speaker-diarization",
+            "artifactVersion": RUNTIME_VERSION,
+            "modelPath": None,
+        },
+    )
+
+    result = diarization_main.handle(request, Event(), None)
+
+    assert (result["ready"], result["codeReady"], result["assetsReady"]) == (True, True, False)
+    assert result["device"] is None

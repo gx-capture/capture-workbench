@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import os
 import sys
 from pathlib import Path
@@ -82,14 +83,33 @@ def _model_dir(payload: dict[str, Any]) -> Path:
 
 def _probe(request: WorkerRequestModel) -> dict[str, Any]:
     payload = request.payload
-    if set(payload) != {"requirementId", "artifactVersion", "modelPath", "options"}:
+    base_fields = {"requirementId", "artifactVersion", "modelPath"}
+    if set(payload) not in (base_fields, base_fields | {"options"}):
         raise ValueError("Diarization worker payload fields are invalid")
-    options = payload["options"]
+    options = payload.get("options", {})
     if not isinstance(options, dict) or set(options) - {"preferGpu"}:
         raise ValueError("Diarization probe options are invalid")
     prefer_gpu = options.get("preferGpu", True)
     if not isinstance(prefer_gpu, bool):
         raise ValueError("Diarization probe preferGpu is invalid")
+    if payload["modelPath"] is None:
+        # The installer checks the unpacked worker before any model exists.
+        if payload["requirementId"] != DIARIZATION_REQUIREMENT_ID:
+            raise ValueError("Diarization requirementId is invalid")
+        ready = all(
+            importlib.util.find_spec(name) is not None for name in ("torch", "pyannote", "av")
+        )
+        return {
+            "ready": ready,
+            "codeReady": ready,
+            "assetsReady": False,
+            "detail": (
+                "Diarization worker code is ready."
+                if ready
+                else "Diarization worker dependencies are unavailable."
+            ),
+            "device": None,
+        }
     adapter = PyannoteDiarizationAdapter(
         _model_dir(payload),
         prefer_gpu=prefer_gpu,

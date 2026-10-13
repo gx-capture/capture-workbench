@@ -48,7 +48,8 @@ def _validated_engine_release_files(
     requirement_ids = {item.requirement_id for item in catalog.requirements}
     if not requirement_ids:
         return ()
-    if requirement_ids != {"windowsml-ocr", "whisper-primary"}:
+    required_ids = {"windowsml-ocr", "whisper-primary"}
+    if not required_ids <= requirement_ids <= required_ids | {"speaker-diarization"}:
         raise ValueError("release engine catalog requirement set is invalid")
     incomplete = [item.requirement_id for item in catalog.requirements if not item.complete]
     if incomplete:

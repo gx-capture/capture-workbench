@@ -67,3 +67,4 @@ apps/capture-workbench-desktop/src-tauri/gen/
 artifacts/
 
 .nx/migrate-runs
+.venv-diarization/
