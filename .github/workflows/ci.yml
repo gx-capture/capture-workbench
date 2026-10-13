@@ -135,6 +135,10 @@ jobs:
         shell: pwsh
         run: pnpm nx run capture-runtime:verify-worker-boundaries
 
+      - name: Build and start the speaker diarization worker
+        shell: pwsh
+        run: pnpm nx run capture-runtime:verify-diarization-worker
+
       - name: Upload workers packaging diagnostics
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

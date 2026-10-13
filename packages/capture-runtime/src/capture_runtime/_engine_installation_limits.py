@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-MAX_ARCHIVE_FILES = 4096
+# The speaker diarization worker carries PyTorch, which ships about 2,100
+# Python source files on disk; that worker has roughly 4,000 entries.
+MAX_ARCHIVE_FILES = 8192
 # A pinned Whisper primary model is larger than the worker/archive guard but
 # remains bounded below the direct-model aggregate limit.
 MAX_SINGLE_EXTRACTED_FILE_BYTES = 2 * 1024 * 1024 * 1024

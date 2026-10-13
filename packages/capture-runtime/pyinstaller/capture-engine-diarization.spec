@@ -46,6 +46,12 @@ a = Analysis(
     hiddenimports=hiddenimports,
     hookspath=[str(root / "pyinstaller" / "hooks")],
     excludes=[
+        # Pulled in by matplotlib and the build environment; the worker never
+        # opens a window, and they add about a thousand files.
+        "IPython",
+        "_tkinter",
+        "mypy",
+        "tkinter",
         "capture_runtime._vendor",
         "capture_runtime.ocr_vertical_reader",
         "ctranslate2",

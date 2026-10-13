@@ -25,7 +25,11 @@ pub(super) fn validate_client_request_id(value: &str) -> Result<(), String> {
 pub(super) fn validate_requirement_id(value: &str) -> Result<(), String> {
     if !matches!(
         value,
-        "windowsml-ocr" | "whisper-primary" | "ollama-runtime" | "capture-ollama-model"
+        "windowsml-ocr"
+            | "whisper-primary"
+            | "speaker-diarization"
+            | "ollama-runtime"
+            | "capture-ollama-model"
     ) {
         return Err("Capture Runtime requirement identifier is invalid.".into());
     }

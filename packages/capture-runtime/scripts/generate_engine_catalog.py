@@ -8,6 +8,7 @@ from urllib.parse import quote
 
 from model_source_lock import (
     CORE_ONLY_RELEASE_MODE,
+    OPTIONAL_REQUIREMENT_IDS,
     PENDING_WHISPER_FREEZE_BLOCKER,
     load_source_lock,
     model_delivery,
@@ -115,6 +116,9 @@ def main() -> None:
     parser.add_argument("--ocr-worker-manifest", type=Path, required=True)
     parser.add_argument("--whisper-worker-archive", type=Path, required=True)
     parser.add_argument("--whisper-worker-manifest", type=Path, required=True)
+    # Read only when the model source lock contains the speaker-diarization unit.
+    parser.add_argument("--diarization-worker-archive", type=Path)
+    parser.add_argument("--diarization-worker-manifest", type=Path)
     parser.add_argument("--model-source-lock", type=Path)
     parser.add_argument(
         "--allow-pending-preflight",
@@ -137,8 +141,7 @@ def main() -> None:
         if (
             approval["status"] != "blocked"
             or approval["blockers"] != [PENDING_WHISPER_FREEZE_BLOCKER]
-            or len(source_lock["requirements"]) != 2
-            or [item["requirementId"] for item in source_lock["requirements"]]
+            or [item["requirementId"] for item in source_lock["requirements"]][:2]
             != ["windowsml-ocr", "whisper-primary"]
             or len(source_lock["fixtures"]) != 2
             or [item["kind"] for item in source_lock["fixtures"]] != ["ocr", "whisper"]
@@ -186,6 +189,32 @@ def main() -> None:
             ),
         ]
     )
+    locked_ids = (
+        set()
+        if source_lock is None
+        else {item["requirementId"] for item in source_lock["requirements"]}
+    )
+    if "speaker-diarization" in locked_ids:
+        assert "speaker-diarization" in OPTIONAL_REQUIREMENT_IDS
+        archive = arguments.diarization_worker_archive
+        manifest = arguments.diarization_worker_manifest
+        if archive is None or manifest is None:
+            raise SystemExit(
+                "The model source lock contains speaker-diarization; "
+                "its worker archive and manifest are required."
+            )
+        if archive.parent.resolve() != arguments.ocr_worker_archive.parent.resolve():
+            raise SystemExit("Worker archives must share one engine directory")
+        requirements.append(
+            requirement(
+                requirement_id="speaker-diarization",
+                worker_archive=archive,
+                worker_manifest=manifest,
+                worker_entry_point="capture-engine-diarization.exe",
+                direct_model_files=model_delivery(source_lock, "speaker-diarization"),
+                release_base_url=arguments.release_base_url,
+            )
+        )
     payload = {
         "catalogVersion": "2",
         "runtimeVersion": RUNTIME_VERSION,
