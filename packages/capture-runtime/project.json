@@ -392,6 +392,24 @@
         "command": "uv run --no-sync --python 3.12 python scripts/build_whisper_worker.py"
       }
     },
+    "build-diarization-worker": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "inputs": [
+        "production"
+      ],
+      "outputs": [
+        "{projectRoot}/dist/engines/capture-engine-diarization-*.zip",
+        "{projectRoot}/dist/engines/capture-engine-diarization-*-files.json"
+      ],
+      "metadata": {
+        "description": "Packages the speaker diarization worker from its own dependency group; it is not part of the release catalog yet."
+      },
+      "options": {
+        "cwd": "packages/capture-runtime",
+        "command": "uv run --python 3.12 --extra diarization python scripts/build_diarization_worker.py"
+      }
+    },
     "validate-model-source-lock": {
       "cache": true,
       "executor": "nx:run-commands",
