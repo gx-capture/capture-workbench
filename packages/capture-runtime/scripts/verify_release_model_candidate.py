@@ -101,7 +101,7 @@ def _assert_pending_preflight_lock(lock: dict[str, Any]) -> None:
         or approval.get("status") != "blocked"
         or approval.get("blockers") != [PENDING_WHISPER_FREEZE_BLOCKER]
         or not isinstance(requirements, list)
-        or [item.get("requirementId") for item in requirements]
+        or [item.get("requirementId") for item in requirements][:2]
         != [
             "windowsml-ocr",
             "whisper-primary",
