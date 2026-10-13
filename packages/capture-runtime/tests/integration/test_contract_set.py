@@ -200,3 +200,22 @@ def test_executable_packaging_embeds_contract_bytes_and_digest() -> None:
     assert 'contract_assets / "contract-set.sha256"' in spec
     assert '"src/capture_runtime/assets/contract-set.json"' in pyproject
     assert '"src/capture_runtime/assets/contract-set.sha256"' in pyproject
+
+
+def test_contract_set_does_not_change_with_the_release_version() -> None:
+    from capture_runtime.constants import RUNTIME_VERSION
+    from capture_runtime.contracts import RuntimeReady
+
+    bundle = load_contract_set().bundle_bytes
+    assert RUNTIME_VERSION.encode() not in bundle
+
+    ready = RuntimeReady.model_validate(
+        RuntimeReady(ready=True).model_dump(mode="json", by_alias=True)
+        | {"runtimeVersion": "12.34.56"}
+    )
+    assert ready.runtime_version == "12.34.56"
+    for invalid in ("latest", "1.2", "1.2.3-rc1", ""):
+        with pytest.raises(ValueError):
+            RuntimeReady.model_validate(
+                ready.model_dump(mode="json", by_alias=True) | {"runtimeVersion": invalid}
+            )

@@ -503,9 +503,12 @@ def _java_ocr_schema_spec(schema: dict[str, Any]) -> dict[str, Any]:
     runtime_version_schema = _schema_type(
         top_properties["runtimeVersion"], "string", "runtimeVersion"
     )
-    _schema_keys(runtime_version_schema, {"const", "title", "type"}, "runtimeVersion")
-    runtime_version = runtime_version_schema.get("const")
-    if not isinstance(runtime_version, str):
+    _schema_keys(
+        runtime_version_schema, {"maxLength", "pattern", "title", "type"}, "runtimeVersion"
+    )
+    runtime_version_pattern = runtime_version_schema.get("pattern")
+    runtime_version_max = runtime_version_schema.get("maxLength")
+    if not isinstance(runtime_version_pattern, str) or not _schema_number(runtime_version_max):
         raise RuntimeError("Canonical OCR runtime version is unsupported")
     contract_sha = _schema_type(top_properties["contractSha256"], "string", "contractSha256")
     _schema_keys(contract_sha, {"pattern", "title", "type"}, "contractSha256")
@@ -676,7 +679,8 @@ def _java_ocr_schema_spec(schema: dict[str, Any]) -> dict[str, Any]:
         "api_version": top_properties["apiVersion"].get("const"),
         "schema_version": top_properties["schemaVersion"].get("const"),
         "capture_id_min": capture_id["minLength"],
-        "runtime_version": runtime_version,
+        "runtime_version_pattern": runtime_version_pattern,
+        "runtime_version_max": runtime_version_max,
         "contract_sha_pattern": contract_sha["pattern"],
         "point_min": point_props["x"]["minimum"],
         "polygon_min": polygon["minItems"],
@@ -895,7 +899,7 @@ def _java_ocr_block(schema: dict[str, Any]) -> str:
     projection_page_count_min = _java_number(spec["page_count_min"], "pageCount.minimum")
     projection_page_count_max = _java_number(spec["page_count_max"], "pageCount.maximum")
     projection_pages_max = _java_number(spec["projection_pages_max"], "pages.maxItems")
-    projection_runtime_max = _java_number(len(spec["runtime_version"]), "runtimeVersion.const")
+    projection_runtime_max = _java_number(spec["runtime_version_max"], "runtimeVersion.maxLength")
     projection_api_validation = (
         f'      apiVersion = ocrText(apiVersion, 1, {projection_api_max}, "apiVersion"); '
         f"if (!{_java_quoted(spec['api_version'])}.equals(apiVersion)) "
@@ -924,8 +928,8 @@ def _java_ocr_block(schema: dict[str, Any]) -> str:
     projection_runtime_validation = (
         f"      runtimeVersion = ocrText(runtimeVersion, 1, {projection_runtime_max}, "
         '"runtimeVersion"); '
-        "if (!OCR_RUNTIME_VERSION.equals(runtimeVersion)) "
-        'throw new IllegalArgumentException("runtimeVersion is incompatible");'
+        "if (!OCR_RUNTIME_VERSION_PATTERN.matcher(runtimeVersion).matches()) "
+        'throw new IllegalArgumentException("runtimeVersion is not a release version");'
     )
     projection_components = _java_components(
         [
@@ -947,8 +951,8 @@ def _java_ocr_block(schema: dict[str, Any]) -> str:
     lines = [
         "  // BEGIN GENERATED OCR PROJECTION",
         "  // Generated from capture-ocr-projection-v3.schema.json in contract-set.json. Do not edit.",  # noqa: E501
-        f"  public static final String RUNTIME_VERSION = {_java_quoted(spec['runtime_version'])};",  # noqa: E501
-        "  private static final String OCR_RUNTIME_VERSION = RUNTIME_VERSION;",
+        f"  public static final String RUNTIME_VERSION = {_java_quoted(RUNTIME_VERSION)};",
+        f"  private static final Pattern OCR_RUNTIME_VERSION_PATTERN = Pattern.compile({_java_quoted(spec['runtime_version_pattern'])});",  # noqa: E501
         f"  private static final Pattern OCR_SOURCE_SHA256_PATTERN = Pattern.compile({_java_quoted(spec['source_sha_pattern'])});",  # noqa: E501
         f"  private static final Pattern OCR_FAILURE_CODE_PATTERN = Pattern.compile({_java_quoted(spec['failure_code_pattern'])});",  # noqa: E501
         "",

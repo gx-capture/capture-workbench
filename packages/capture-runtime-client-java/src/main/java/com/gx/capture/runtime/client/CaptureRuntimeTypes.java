@@ -27,7 +27,7 @@ public final class CaptureRuntimeTypes {
   public static final String CONTRACT_SET_VERSION = "2";
   /** Updated only as part of a coordinated runtime/client release. */
   public static final String CONTRACT_SET_SHA256 =
-      "cbd32204f2278292816ba7d8dcc372c1e4e4cd48a0a836f20fc9152dcdcdbf3c";
+      "461ea852620d01df149a87402bd7f2ad1547d851c58f1386fa5d6ea375cbb7dc";
 
   private static final Pattern SHA256 = Pattern.compile("^[0-9a-f]{64}$");
   private static final Pattern FAILURE_CODE = Pattern.compile("^[a-z][a-z0-9_]{1,63}$");
@@ -758,7 +758,7 @@ public final class CaptureRuntimeTypes {
   // BEGIN GENERATED OCR PROJECTION
   // Generated from capture-ocr-projection-v3.schema.json in contract-set.json. Do not edit.
   public static final String RUNTIME_VERSION = "0.5.1";
-  private static final String OCR_RUNTIME_VERSION = RUNTIME_VERSION;
+  private static final Pattern OCR_RUNTIME_VERSION_PATTERN = Pattern.compile("^[0-9]+\\.[0-9]+\\.[0-9]+$");
   private static final Pattern OCR_SOURCE_SHA256_PATTERN = Pattern.compile("^[0-9a-f]{64}$");
   private static final Pattern OCR_FAILURE_CODE_PATTERN = Pattern.compile("^[a-z][a-z0-9_]{1,63}$");
 
@@ -1007,7 +1007,7 @@ public final class CaptureRuntimeTypes {
       pages = List.copyOf(Objects.requireNonNull(pages, "pages"));
       if (pageCount < 0 || pageCount > 500 || pageCount != pages.size()) throw new IllegalArgumentException("pageCount must equal pages.size() and stay in the canonical range");
       if (pages.size() > 500) throw new IllegalArgumentException("OCR pages exceed the canonical limit");
-      runtimeVersion = ocrText(runtimeVersion, 1, 5, "runtimeVersion"); if (!OCR_RUNTIME_VERSION.equals(runtimeVersion)) throw new IllegalArgumentException("runtimeVersion is incompatible");
+      runtimeVersion = ocrText(runtimeVersion, 1, 32, "runtimeVersion"); if (!OCR_RUNTIME_VERSION_PATTERN.matcher(runtimeVersion).matches()) throw new IllegalArgumentException("runtimeVersion is not a release version");
       contractSha256 = ocrSha256(contractSha256, "contractSha256");
       provenance = Objects.requireNonNull(provenance, "provenance");
       for (var index = 0; index < pages.size(); index++) {
