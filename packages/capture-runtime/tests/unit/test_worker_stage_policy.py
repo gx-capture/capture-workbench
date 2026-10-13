@@ -28,6 +28,8 @@ PRODUCER_FILES = (
     RUNTIME_ROOT / "src/capture_runtime/workers/ocr_main.py",
     RUNTIME_ROOT / "src/capture_runtime/workers/whisper_main.py",
     RUNTIME_ROOT / "src/capture_runtime/engine_adapters.py",
+    RUNTIME_ROOT / "src/capture_runtime/workers/diarization_main.py",
+    RUNTIME_ROOT / "src/capture_runtime/speaker_diarization.py",
 )
 _IMPORT_DETAIL = "secret-token C:\\private\\source"
 

@@ -38,3 +38,32 @@ uv run --python 3.12 pytest -q
 
 The packaged executable includes both contract asset files under
 `capture_runtime/assets` and performs a startup route-inventory drift check.
+
+## Speaker diarization worker
+
+`capture-engine-diarization` is a separately packaged worker that answers "who
+spoke when" for an audio or video file. It speaks the same JSON-lines worker
+protocol as the OCR and Whisper workers, with requirement id
+`speaker-diarization`.
+
+It is not in the engine catalog, the v2 contract, or any release artifact yet:
+the runtime does not start it, and no client can request it. Publishing it
+needs an install unit, a model source and a contract shape for speaker labels.
+
+- Model: a local pyannote `speaker-diarization-community-1` pipeline directory
+  (`config.yaml`, `segmentation/`, `embedding/`, `plda/`). The worker runs
+  offline and never reads a Hugging Face token.
+- `run` returns `turns` (may overlap when people talk at once), `exclusiveTurns`
+  (never overlap), `durationMs`, `provenance` and `warnings`. Times are
+  milliseconds; speakers are anonymous labels such as `SPEAKER_00`.
+- Options: `maxDurationMs`, `preferGpu`, `allowCpuFallback` and `numSpeakers`.
+  A recognized CUDA failure retries the same model once on CPU.
+- `capture_runtime.speaker_alignment.assign_speakers` gives timed transcript
+  spans a speaker from those turns; a tie or an uncovered span stays unassigned.
+
+```powershell
+pnpm nx run capture-runtime:build-diarization-worker
+```
+
+The `diarization` dependency group installs CPU PyTorch. GPU diarization needs
+a CUDA build of PyTorch in the worker environment.
