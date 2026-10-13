@@ -71,7 +71,31 @@ export class CaptureHelpersService {
   }
 
   captureDocumentText(document: CaptureDocument): string {
-    return document.targetText.trim() || document.sourceText;
+    const speakers = document.speakers ?? [];
+    if (speakers.length === 0) {
+      return document.targetText.trim() || document.sourceText;
+    }
+    // A transcript with speakers reads as "name: what they said", using the
+    // name a person gave the speaker when there is one.
+    const names = new Map(
+      speakers.map((speaker) => [
+        speaker.speakerId,
+        speaker.displayName?.trim() || speaker.speakerId,
+      ]),
+    );
+    const speakerOf = new Map(
+      document.rawSegments.map((segment) => [
+        segment.segmentId,
+        segment.speaker ?? undefined,
+      ]),
+    );
+    return document.blocks
+      .map((block) => {
+        const speaker = speakerOf.get(block.sourceSegmentId);
+        const name = speaker ? names.get(speaker) : undefined;
+        return name ? `${name}: ${block.targetText}` : block.targetText;
+      })
+      .join('\n');
   }
 
   serializeCaptureDocument(

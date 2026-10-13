@@ -228,6 +228,7 @@ All events bubble and are composed. Their stable names and detail values are:
 - `capture-failed` — `CaptureFailedEvent`
 - `capture-canceled` — `CaptureTaskView`
 - `capture-task-changed` — `CaptureTaskView`
+- `capture-speakers-named` — `CaptureCompletedEvent`; `document.speakers[].displayName` holds the names
 
 Registration is idempotent across package service instances and repeated calls.
 Re-registering a tag owned by this package succeeds; a tag owned by another
@@ -266,3 +267,19 @@ uses the existing CSS variables `--capture-accent`, `--capture-background`,
 `--capture-danger`. It preserves the package's runtime API-major and
 `CaptureDocument` schema handshake; element and runtime versions must remain
 compatible.
+
+## Speakers in audio captures
+
+Set `identifySpeakers: true` in the configuration to label who speaks in audio
+captures. The runtime needs its optional `speaker-diarization` unit; without it
+the workbench asks the user to install it before capturing.
+
+A finished capture then lists its speakers under anonymous labels such as
+`SPEAKER_00`, each with a player for a short sample of that speaker taken from
+the file the user chose. Typing a name updates the transcript text and exports
+at once and dispatches `capture-speakers-named` with the named document. The
+runtime keeps nothing, so store that document in the host. Segment `speaker`
+values stay the anonymous labels; the names are in `speakers[].displayName`.
+
+While such a capture runs, the task shows two stages with progress, "transcribing"
+and "identifying speakers", and no partial transcript.

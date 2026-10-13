@@ -7,7 +7,7 @@ export const API_VERSION = "2.0" as const;
 export const CAPTURE_API_VERSION = API_VERSION;
 export const CAPTURE_DOCUMENT_SCHEMA_VERSION = "2" as const;
 export const CAPTURE_DOCUMENT_SCHEMA_ID = "https://github.com/gx-capture/capture-workbench/schema/capture-document-v2.schema.json" as const;
-export const CAPTURE_DOCUMENT_SCHEMA_SHA256 = "d70eb44047cf52eaeae13f339ed4dd2241d49ea815a27cb55df2202c44ee20bf" as const;
+export const CAPTURE_DOCUMENT_SCHEMA_SHA256 = "db692db3503620db9c357640976b8504658c1e3a6f7a34c991206338fc203ad9" as const;
 
 /** Wire enum. */
 export type CaptureSourceKind = "pdf" | "image" | "audio";
@@ -168,6 +168,7 @@ export interface CaptureSource {
 export interface CaptureSpeaker {
   readonly speakerId: string;
   readonly sample?: TimeLocator | null;
+  readonly displayName?: string | null;
 }
 
 export interface CaptureStreamingResult {

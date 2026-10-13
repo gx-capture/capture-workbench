@@ -344,7 +344,7 @@ class CaptureRuntimeClientTest {
             "eager");
     assertThat(legacy.pdfPageNumbers()).isNull();
     assertThat(CaptureRuntimeTypes.CONTRACT_SET_SHA256)
-        .isEqualTo("db61d6a8db88f6d0c164b4c5f962e7b65a3fc375b742a79ad54fb0fffbc6693b");
+        .isEqualTo("cbd32204f2278292816ba7d8dcc372c1e4e4cd48a0a836f20fc9152dcdcdbf3c");
 
     assertThatThrownBy(
             () ->
@@ -906,6 +906,8 @@ class CaptureRuntimeClientTest {
     assertThat(raw.speakers()).extracting(CaptureRuntimeTypes.CaptureSpeaker::speakerId).containsExactly("SPEAKER_00", "SPEAKER_01");
     assertThat(raw.speakers().get(0).sample()).isEqualTo(new CaptureRuntimeTypes.TimeLocator(0, 1000));
     assertThat(raw.speakers().get(1).sample()).isNull();
+    assertThat(raw.speakers().get(0).displayName()).isNull();
+    assertThat(raw.speakers().get(1).displayName()).isEqualTo("王小明");
 
     var document =
         WireCodecs.decode(speakerWireSample("captureDocument"), CaptureRuntimeTypes.CaptureDocument.class, MAPPER);

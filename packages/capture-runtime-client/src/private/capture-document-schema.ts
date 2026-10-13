@@ -153,6 +153,20 @@ export const GENERATED_CAPTURE_DOCUMENT_JSON_SCHEMA = {
       "additionalProperties": false,
       "description": "An anonymous speaker and a stretch of the source to listen to and name them.",
       "properties": {
+        "displayName": {
+          "anyOf": [
+            {
+              "maxLength": 100,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Displayname"
+        },
         "sample": {
           "anyOf": [
             {

@@ -62,6 +62,7 @@ class CaptureWorkbenchElementInputBridge
       (failed)="onFailed($event)"
       (canceled)="onCanceled($event)"
       (taskChanged)="onTaskChanged($event)"
+      (speakersNamed)="onSpeakersNamed($event)"
     />
   `,
 })
@@ -153,6 +154,10 @@ export class CaptureWorkbenchElementFacadeComponent {
 
   protected onTaskChanged(event: CaptureTaskView): void {
     this.dispatch(CAPTURE_WORKBENCH_CUSTOM_EVENTS.taskChanged, event);
+  }
+
+  protected onSpeakersNamed(event: CaptureCompletedEvent): void {
+    this.dispatch(CAPTURE_WORKBENCH_CUSTOM_EVENTS.speakersNamed, event);
   }
 
   private dispatch<

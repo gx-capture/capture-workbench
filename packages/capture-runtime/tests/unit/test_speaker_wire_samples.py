@@ -64,7 +64,7 @@ def _raw(*, speakers: bool) -> RawCapture:
                 CaptureSpeaker(
                     speaker_id="SPEAKER_00", sample=TimeLocator(start_ms=0, end_ms=1_000)
                 ),
-                CaptureSpeaker(speaker_id="SPEAKER_01"),
+                CaptureSpeaker(speaker_id="SPEAKER_01", display_name="王小明"),
             ]
             if speakers
             else []

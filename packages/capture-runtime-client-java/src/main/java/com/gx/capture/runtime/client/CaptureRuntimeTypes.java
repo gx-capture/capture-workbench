@@ -27,7 +27,7 @@ public final class CaptureRuntimeTypes {
   public static final String CONTRACT_SET_VERSION = "2";
   /** Updated only as part of a coordinated runtime/client release. */
   public static final String CONTRACT_SET_SHA256 =
-      "db61d6a8db88f6d0c164b4c5f962e7b65a3fc375b742a79ad54fb0fffbc6693b";
+      "cbd32204f2278292816ba7d8dcc372c1e4e4cd48a0a836f20fc9152dcdcdbf3c";
 
   private static final Pattern SHA256 = Pattern.compile("^[0-9a-f]{64}$");
   private static final Pattern FAILURE_CODE = Pattern.compile("^[a-z][a-z0-9_]{1,63}$");
@@ -423,10 +423,15 @@ public final class CaptureRuntimeTypes {
   }
 
   /** An anonymous speaker and the stretch of the source to play so a person can name them. */
-  public record CaptureSpeaker(@JsonProperty(required = true) String speakerId, Locator sample) {
+  public record CaptureSpeaker(@JsonProperty(required = true) String speakerId, Locator sample, String displayName) {
     public CaptureSpeaker {
       speakerId = speakerLabel(speakerId, "speakerId");
       if (sample != null && !(sample instanceof TimeLocator)) throw new IllegalArgumentException("speaker sample must be a time range");
+      displayName = displayName == null ? null : bounded(displayName, 100, "displayName");
+    }
+
+    public CaptureSpeaker(String speakerId, Locator sample) {
+      this(speakerId, sample, null);
     }
   }
 

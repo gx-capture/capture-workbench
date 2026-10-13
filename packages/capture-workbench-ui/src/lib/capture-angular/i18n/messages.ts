@@ -46,6 +46,11 @@ export interface CaptureWorkbenchMessages {
   readonly unknownProgress: string;
   readonly model: string;
   readonly rawText: string;
+  readonly speakersTitle: string;
+  readonly speakersHint: string;
+  readonly speakerNamePlaceholder: string;
+  readonly speakerNoSample: string;
+  readonly speakerSample: (speaker: string) => string;
   readonly gpuAcceleration: string;
   readonly cpuNotice: string;
   readonly captureTasks: string;
@@ -88,6 +93,11 @@ const ZH_TW: CaptureWorkbenchMessages = {
   unknownProgress: '無法確認這個檔案的進度。請檢查狀態或取消。',
   model: '模型',
   rawText: '原始文字',
+  speakersTitle: '說話者',
+  speakersHint: '聽一段聲音後填上名字，逐字稿會改用這個名字。',
+  speakerNamePlaceholder: '這位說話者的名字',
+  speakerNoSample: '沒有可試聽的片段',
+  speakerSample: (speaker) => `試聽 ${speaker}`,
   gpuAcceleration: 'GPU 加速',
   cpuNotice: '沒有可用的 GPU，文字辨識會比較慢。',
   captureTasks: '擷取工作',
@@ -157,6 +167,12 @@ const EN: CaptureWorkbenchMessages = {
     'Progress for this file is unknown. Check its status or cancel it.',
   model: 'Model',
   rawText: 'Raw text',
+  speakersTitle: 'Speakers',
+  speakersHint:
+    'Listen to a sample, then type a name. The transcript will use it.',
+  speakerNamePlaceholder: "This speaker's name",
+  speakerNoSample: 'No sample to play',
+  speakerSample: (speaker) => `Play a sample of ${speaker}`,
   gpuAcceleration: 'GPU acceleration on',
   cpuNotice: 'No GPU available. Text recognition will be slower.',
   captureTasks: 'Capture tasks',
