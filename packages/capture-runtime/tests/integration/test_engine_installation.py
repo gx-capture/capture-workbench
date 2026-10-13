@@ -1278,3 +1278,30 @@ def test_pdf_ocr_e2e_local_worker_url_requires_opt_in_and_catalog_filename(
                 report_progress=lambda _value: None,
             )
         )
+
+
+def test_speaker_identification_is_listed_as_an_optional_unit(tmp_path: Path) -> None:
+    catalog = EngineCatalog.from_dict(
+        {"catalogVersion": "2", "runtimeVersion": RUNTIME_VERSION, "requirements": []}
+    )
+    manager = EngineInstallationManager(
+        tmp_path / "engines",
+        catalog,
+        worker_client=FakeWorkerClient(),  # type: ignore[arg-type]
+        downloader=CopyDownloader({}, fail=True),
+        model_downloader=CopyModelDownloader({}),
+    )
+    installer = SystemRuntimeInstaller(
+        _Lifecycle(_LifecycleConfig(tmp_path / "app-data")),  # type: ignore[arg-type]
+        engine_manager=manager,
+        clock=SystemClock(),
+        enabled_requirement_ids={"windowsml-ocr", "whisper-primary", "speaker-diarization"},
+    )
+
+    requirements = {item.requirement_id: item for item in installer.requirements()}
+
+    assert requirements["speaker-diarization"].optional is True
+    assert requirements["speaker-diarization"].required_for == ["audio"]
+    assert requirements["speaker-diarization"].status.value == "unavailable"
+    assert requirements["whisper-primary"].optional is False
+    assert requirements["windowsml-ocr"].optional is False

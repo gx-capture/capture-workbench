@@ -450,6 +450,9 @@ class RuntimeRequirementV2(StrictModel):
     status: RuntimeRequirementStatus
     required_for: list[str]
     install_strategy: NonEmptyString
+    # An optional unit adds a capability; captures that do not ask for it
+    # work without it, so a host may leave it uninstalled.
+    optional: bool = False
     detail: str | None = None
     artifact: RuntimeArtifactDescriptorV2 | None = None
 

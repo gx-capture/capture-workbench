@@ -19,6 +19,7 @@ import httpx
 from capture_runtime.clock import Clock
 from capture_runtime.config import ExtractionRuntimeConfig, sanitized_child_environment
 from capture_runtime.constants import (
+    DIARIZATION_REQUIREMENT_ID,
     OLLAMA_MODEL_REQUIREMENT_ID,
     OLLAMA_RUNTIME_REQUIREMENT_ID,
     WHISPER_REQUIREMENT_ID,
@@ -103,9 +104,16 @@ class SystemRuntimeInstaller:
             return effective_requirement_ids is None or requirement_id in effective_requirement_ids
 
         requirements: list[RuntimeRequirementV2] = []
-        for requirement_id, kind, display_name, required_for in (
-            (WINDOWSML_REQUIREMENT_ID, "OCR", "WindowsML OCR", ["pdf", "image"]),
-            (WHISPER_REQUIREMENT_ID, "transcription", "Whisper transcription", ["audio"]),
+        for requirement_id, kind, display_name, required_for, optional in (
+            (WINDOWSML_REQUIREMENT_ID, "OCR", "WindowsML OCR", ["pdf", "image"], False),
+            (WHISPER_REQUIREMENT_ID, "transcription", "Whisper transcription", ["audio"], False),
+            (
+                DIARIZATION_REQUIREMENT_ID,
+                "speaker-identification",
+                "Speaker identification",
+                ["audio"],
+                True,
+            ),
         ):
             if not is_enabled(requirement_id):
                 continue
@@ -151,6 +159,7 @@ class SystemRuntimeInstaller:
                     status=status,
                     required_for=required_for,
                     install_strategy="runtime-catalog",
+                    optional=optional,
                     detail=detail,
                     artifact=artifact,
                 )
@@ -217,7 +226,11 @@ class SystemRuntimeInstaller:
         cancel_event: asyncio.Event,
         report_progress: Callable[[float], None],
     ) -> None:
-        if requirement_id in {WINDOWSML_REQUIREMENT_ID, WHISPER_REQUIREMENT_ID}:
+        if requirement_id in {
+            WINDOWSML_REQUIREMENT_ID,
+            WHISPER_REQUIREMENT_ID,
+            DIARIZATION_REQUIREMENT_ID,
+        }:
             if self._engine_manager is None:
                 raise RuntimeError("runtime-owned engine catalog is unavailable")
             await self._engine_manager.install(

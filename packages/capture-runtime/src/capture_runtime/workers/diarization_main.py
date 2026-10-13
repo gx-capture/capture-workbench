@@ -45,11 +45,18 @@ except BaseException:
 _report_stage("python-import-capture-runtime-complete")
 
 
-def _import_diarization_runtime() -> None:
+def _prepare_environment() -> None:
     # The model is a local directory; the worker must never reach a model hub
     # or send pyannote usage metrics.
     os.environ["HF_HUB_OFFLINE"] = "1"
     os.environ["PYANNOTE_METRICS_ENABLED"] = "0"
+    # The runtime starts workers without USERNAME, and PyTorch asks for the
+    # user name while it is imported; on Windows that lookup then fails.
+    os.environ.setdefault("USERNAME", "capture-runtime")
+
+
+def _import_diarization_runtime() -> None:
+    _prepare_environment()
     _report_stage("python-import-av-start")
     importlib.import_module("av")
     _report_stage("python-import-av-complete")
