@@ -28,6 +28,12 @@ from capture_runtime.worker_client import (
 AUDIO = b"RIFF\x00\x00\x00\x00WAVEpayload"
 
 
+def _report(kwargs: dict[str, Any]) -> None:
+    if kwargs.get("on_permille") is not None:
+        kwargs["on_permille"](500)
+        kwargs["on_permille"](1000)
+
+
 class _WorkerClient:
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict[str, Any]]] = []
@@ -42,6 +48,7 @@ class _WorkerClient:
             WorkerWord(1_500, 1_900, " there"),
         )
         with_words = kwargs["options"].get("wordTimestamps") is True
+        _report(kwargs)
         return WorkerRunResult(
             segments=(
                 WorkerSegment(
@@ -62,6 +69,7 @@ class _WorkerClient:
     async def diarize(self, engine: InstalledEngine, **kwargs: Any) -> WorkerDiarizationResult:
         self.calls.append((engine.requirement_id, kwargs["options"]))
         self.sources.append(kwargs["source_path"])
+        _report(kwargs)
         assert kwargs["source_path"].read_bytes() == AUDIO
         turns = (SpeakerTurn(0, 1_000, "SPEAKER_00"), SpeakerTurn(1_000, 2_000, "SPEAKER_01"))
         return WorkerDiarizationResult(
@@ -77,7 +85,12 @@ class _WorkerClient:
 
 
 def _extract(
-    tmp_path: Path, *, installed: set[str], identify_speakers: bool, in_catalog: bool = True
+    tmp_path: Path,
+    *,
+    installed: set[str],
+    identify_speakers: bool,
+    in_catalog: bool = True,
+    speaker_progress: Any = None,
 ) -> tuple[RawCapture, _WorkerClient]:
     worker_client = _WorkerClient()
 
@@ -119,7 +132,13 @@ def _extract(
         bytes=len(AUDIO),
     )
     outcome = asyncio.run(
-        extractor.extract(AUDIO, source, asyncio.Event(), identify_speakers=identify_speakers)
+        extractor.extract(
+            AUDIO,
+            source,
+            asyncio.Event(),
+            identify_speakers=identify_speakers,
+            speaker_progress=speaker_progress,
+        )
     )
     return outcome.raw, worker_client
 
@@ -178,3 +197,21 @@ def test_requesting_speakers_without_the_unit_installed_fails_and_names_it(
             identify_speakers=True,
             in_catalog=in_catalog,
         )
+
+
+def test_progress_covers_transcription_then_speaker_identification(tmp_path: Path) -> None:
+    reported: list[tuple[str, int]] = []
+
+    _extract(
+        tmp_path,
+        installed={"whisper-primary", "speaker-diarization"},
+        identify_speakers=True,
+        speaker_progress=lambda stage, permille: reported.append((stage, permille)),
+    )
+
+    assert reported == [
+        ("transcribing", 225),
+        ("transcribing", 450),
+        ("identifying-speakers", 725),
+        ("identifying-speakers", 1000),
+    ]

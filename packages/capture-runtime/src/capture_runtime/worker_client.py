@@ -354,6 +354,27 @@ def parse_diarization_result(payload: dict[str, Any]) -> WorkerDiarizationResult
     )
 
 
+def _permille_handler(
+    progress: Callable[[int], None] | None,
+) -> Callable[[dict[str, object]], None] | None:
+    """Pass on well-formed 0-1000 progress frames; a malformed one is ignored."""
+
+    if progress is None:
+        return None
+
+    def handle(frame: dict[str, object]) -> None:
+        value = frame.get("permille")
+        if (
+            set(frame) == {"permille"}
+            and isinstance(value, int)
+            and not isinstance(value, bool)
+            and 0 <= value <= 1000
+        ):
+            progress(value)
+
+    return handle
+
+
 def parse_run_result(payload: dict[str, Any]) -> WorkerRunResult:
     fields = set(payload)
     if not {"segments", "provenance", "warnings"}.issubset(fields) or not fields.issubset(
@@ -807,6 +828,7 @@ class WorkerClient:
         cancel_event: asyncio.Event,
         timeout_seconds: float = DEFAULT_RUN_TIMEOUT_SECONDS,
         ocr_progress: Callable[[int, int], None] | None = None,
+        on_permille: Callable[[int], None] | None = None,
     ) -> WorkerRunResult:
         if not source_path.is_file() or not source_path.is_absolute():
             raise ValueError("worker source path must be an existing absolute file")
@@ -845,7 +867,7 @@ class WorkerClient:
                 return
             ocr_progress(len(progress.pages), progress.page_count)
 
-        progress_handler = collect_ocr_progress if is_ocr else None
+        progress_handler = collect_ocr_progress if is_ocr else _permille_handler(on_permille)
         try:
             response = await self.process.request(
                 engine.executable,
@@ -1002,6 +1024,7 @@ class WorkerClient:
         options: dict[str, object],
         cancel_event: asyncio.Event,
         timeout_seconds: float = DEFAULT_RUN_TIMEOUT_SECONDS,
+        on_permille: Callable[[int], None] | None = None,
     ) -> WorkerDiarizationResult:
         if not source_path.is_file() or not source_path.is_absolute():
             raise ValueError("worker source path must be an existing absolute file")
@@ -1017,6 +1040,7 @@ class WorkerClient:
                 "options": options,
             },
             cancel_event=cancel_event,
+            progress_handler=_permille_handler(on_permille),
             timeout_seconds=timeout_seconds,
         )
         assert response.result is not None

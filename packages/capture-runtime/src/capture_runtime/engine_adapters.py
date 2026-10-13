@@ -2530,8 +2530,10 @@ class FasterWhisperAdapter:
         model_factory: Callable[..., Any] | None = None,
         cuda_count: Callable[[], int] | None = None,
         stage_reporter: Callable[[str], None] | None = None,
+        progress_reporter: Callable[[int, int], None] | None = None,
     ) -> None:
         self.models_dir = models_dir
+        self._progress_reporter = progress_reporter
         self.primary_model = primary_model
         self.fallback_model = fallback_model
         # Model directory names are intentionally independent from the
@@ -2749,6 +2751,8 @@ class FasterWhisperAdapter:
             text = str(raw.text).strip()
             start_ms = max(0, round(float(raw.start) * 1000))
             end_ms = min(duration_ms, max(0, round(float(raw.end) * 1000)))
+            if self._progress_reporter is not None:
+                self._progress_reporter(end_ms, duration_ms)
             if text and start_ms < end_ms:
                 words = _whisper_words(raw, duration_ms) if self.word_timestamps else ()
                 if self.word_timestamps and not words:

@@ -112,6 +112,7 @@ class CaptureExtractor(Protocol):
         pdf_page_numbers: tuple[int, ...] | None = None,
         ocr_progress: Callable[[int, int], None] | None = None,
         identify_speakers: bool = False,
+        speaker_progress: Callable[[str, int], None] | None = None,
     ) -> CaptureExtractionOutcome: ...
 
 
@@ -352,6 +353,7 @@ class StandaloneRuntimeCaptureExtractor:
         pdf_page_numbers: tuple[int, ...] | None = None,
         ocr_progress: Callable[[int, int], None] | None = None,
         identify_speakers: bool = False,
+        speaker_progress: Callable[[str, int], None] | None = None,
     ) -> CaptureExtractionOutcome:
         if self.engine_manager is not None:
             return await self._extract_with_workers(
@@ -361,6 +363,7 @@ class StandaloneRuntimeCaptureExtractor:
                 pdf_page_numbers=pdf_page_numbers,
                 ocr_progress=ocr_progress,
                 identify_speakers=identify_speakers,
+                speaker_progress=speaker_progress,
             )
         if identify_speakers:
             raise ExtractionRuntimeUnavailableError(
@@ -386,6 +389,7 @@ class StandaloneRuntimeCaptureExtractor:
         pdf_page_numbers: tuple[int, ...] | None = None,
         ocr_progress: Callable[[int, int], None] | None = None,
         identify_speakers: bool = False,
+        speaker_progress: Callable[[str, int], None] | None = None,
     ) -> CaptureExtractionOutcome:
         sniffed = self.sniff(content)
         self._checkpoint(cancel_event)
@@ -505,12 +509,16 @@ class StandaloneRuntimeCaptureExtractor:
                         **({"wordTimestamps": True} if identify_speakers else {}),
                     },
                     cancel_event,
+                    progress=_stage_progress(speaker_progress, "transcribing", 0, 450),
                 )
                 engine = self._capture_engine(result, expected_engine="whisper-primary")
                 warnings = list(result.warnings)
                 if identify_speakers:
                     diarization = await self._run_diarization(
-                        content, sniffed.media_type, cancel_event
+                        content,
+                        sniffed.media_type,
+                        cancel_event,
+                        _stage_progress(speaker_progress, "identifying-speakers", 450, 1000),
                     )
                     segments, speakers = _speaker_capture_segments(result, diarization)
                     diarization_engine = CaptureEngine(
@@ -614,6 +622,7 @@ class StandaloneRuntimeCaptureExtractor:
         *,
         page_manifest: tuple[OcrPageManifest, ...] | None = None,
         ocr_progress: Callable[[int, int], None] | None = None,
+        progress: Callable[[int], None] | None = None,
     ) -> WorkerRunResult:
         assert self.engine_manager is not None
         worker_options = dict(options)
@@ -677,6 +686,7 @@ class StandaloneRuntimeCaptureExtractor:
                 options=worker_options,
                 cancel_event=cancel_event,
                 ocr_progress=ocr_progress,
+                on_permille=progress,
             )
         finally:
             path.unlink(missing_ok=True)
@@ -706,7 +716,11 @@ class StandaloneRuntimeCaptureExtractor:
             return Path(temporary.name).resolve()
 
     async def _run_diarization(
-        self, content: bytes, media_type: str, cancel_event: asyncio.Event
+        self,
+        content: bytes,
+        media_type: str,
+        cancel_event: asyncio.Event,
+        progress: Callable[[int], None] | None,
     ) -> WorkerDiarizationResult:
         assert self.engine_manager is not None
         try:
@@ -730,6 +744,7 @@ class StandaloneRuntimeCaptureExtractor:
                     "allowCpuFallback": True,
                 },
                 cancel_event=cancel_event,
+                on_permille=progress,
             )
         finally:
             path.unlink(missing_ok=True)
@@ -1343,6 +1358,16 @@ def _oriented_image_dimensions(content: bytes) -> tuple[int, int]:
     return width, height
 
 
+def _stage_progress(
+    report: Callable[[str, int], None] | None, stage: str, start: int, end: int
+) -> Callable[[int], None] | None:
+    """Place one worker's 0-1000 progress inside its share of the whole capture."""
+
+    if report is None:
+        return None
+    return lambda permille: report(stage, start + (end - start) * permille // 1000)
+
+
 def _speaker_capture_segments(
     result: WorkerRunResult, diarization: WorkerDiarizationResult
 ) -> tuple[list[RawCaptureSegment], list[CaptureSpeaker]]:
@@ -1434,6 +1459,7 @@ class DeterministicCaptureExtractor:
         pdf_page_numbers: tuple[int, ...] | None = None,
         ocr_progress: Callable[[int, int], None] | None = None,
         identify_speakers: bool = False,
+        speaker_progress: Callable[[str, int], None] | None = None,
     ) -> CaptureExtractionOutcome:
         sniffed = self.sniff(content)
         if self._delay_seconds:

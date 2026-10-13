@@ -48,7 +48,7 @@ def _report_import_os_failure(module: str, error: OSError) -> None:
 _report_stage("worker-entry-start")
 
 
-def _import_capture_runtime() -> tuple[Any, Any, Any]:
+def _import_capture_runtime() -> tuple[Any, Any, Any, Any]:
     _report_stage("python-import-engine-adapters-start")
     try:
         from capture_runtime.engine_adapters import FasterWhisperAdapter
@@ -85,7 +85,7 @@ def _import_capture_runtime() -> tuple[Any, Any, Any]:
 
     _report_stage("python-import-worker-server-start")
     try:
-        from capture_runtime.workers.server import serve
+        from capture_runtime.workers.server import permille_reporter, serve
     except ModuleNotFoundError:
         _report_stage("python-import-worker-server-module-missing")
         raise
@@ -99,10 +99,10 @@ def _import_capture_runtime() -> tuple[Any, Any, Any]:
         _report_stage("python-import-worker-server-failed")
         raise
     _report_stage("python-import-worker-server-complete")
-    return FasterWhisperAdapter, WorkerRequest, serve
+    return FasterWhisperAdapter, WorkerRequest, serve, permille_reporter
 
 
-FasterWhisperAdapter, WorkerRequest, serve = _import_capture_runtime()
+FasterWhisperAdapter, WorkerRequest, serve, permille_reporter = _import_capture_runtime()
 _report_stage("python-import-capture-runtime-complete")
 
 MAX_SOURCE_BYTES = 50 * 1024 * 1024
@@ -180,7 +180,7 @@ def _probe(request: WorkerRequestModel) -> dict[str, Any]:
     }
 
 
-def _run(request: WorkerRequestModel, cancellation: Event) -> dict[str, Any]:
+def _run(request: WorkerRequestModel, cancellation: Event, progress: Any = None) -> dict[str, Any]:
     payload = _payload(
         request,
         {
@@ -235,6 +235,7 @@ def _run(request: WorkerRequestModel, cancellation: Event) -> dict[str, Any]:
         allow_cpu_fallback=allow_cpu_fallback,
         word_timestamps=word_timestamps,
         stage_reporter=_report_stage,
+        progress_reporter=None if progress is None else permille_reporter(progress),
     )
     _import_whisper_runtime()
     result = adapter.transcribe(source, should_cancel=cancellation.is_set)
@@ -274,12 +275,12 @@ def _run(request: WorkerRequestModel, cancellation: Event) -> dict[str, Any]:
 def handle(
     request: WorkerRequestModel,
     cancellation: Event,
-    _progress: object,
+    progress: Any,
 ) -> dict[str, Any]:
     if request.operation == "probe":
         return _probe(request)
     if request.operation == "run":
-        return _run(request, cancellation)
+        return _run(request, cancellation, progress)
     raise ValueError("unsupported Whisper operation")
 
 

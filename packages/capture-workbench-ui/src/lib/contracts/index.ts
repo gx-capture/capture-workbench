@@ -111,7 +111,9 @@ export type CaptureTaskStage =
   | StreamingCaptureStatus
   | 'queued'
   | 'uploading'
-  | 'preprocessing';
+  | 'preprocessing'
+  | 'transcribing'
+  | 'identifying-speakers';
 
 export interface StartRuntimeInstallationRequest {
   readonly clientRequestId: string;

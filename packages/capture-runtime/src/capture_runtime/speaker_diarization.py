@@ -139,8 +139,10 @@ class PyannoteDiarizationAdapter:
         torch_module: Any | None = None,
         decoder: Callable[..., bytearray] = decode_mono_16k,
         stage_reporter: Callable[[str], None] | None = None,
+        progress_reporter: Callable[[int, int], None] | None = None,
     ) -> None:
         self.model_dir = model_dir
+        self._progress_reporter = progress_reporter
         self.prefer_gpu = prefer_gpu
         self.max_duration_ms = max_duration_ms
         self.allow_cpu_fallback = allow_cpu_fallback
@@ -257,9 +259,24 @@ class PyannoteDiarizationAdapter:
 
             factory = Pipeline
 
-        def stop_when_cancelled(*_args: object, **_kwargs: object) -> None:
+        def stop_when_cancelled(*step: object, **counts: object) -> None:
             if should_cancel():
                 raise InterruptedError("Speaker diarization was cancelled.")
+            completed, total = counts.get("completed"), counts.get("total")
+            if (
+                self._progress_reporter is None
+                or not step
+                or not isinstance(completed, int)
+                or not isinstance(total, int)
+                or total <= 0
+            ):
+                return
+            # Segmentation is the first, shorter pass; embeddings take the rest.
+            done = min(completed, total) * 1000 // total
+            if step[0] == "segmentation":
+                self._progress_reporter(done * 2 // 10, 1000)
+            elif step[0] == "embeddings":
+                self._progress_reporter(200 + done * 8 // 10, 1000)
 
         stop_when_cancelled()
         if device == "cuda":

@@ -46,6 +46,21 @@ def _progress(request_id: str, payload: dict[str, Any]) -> None:
     sys.stdout.buffer.flush()
 
 
+def permille_reporter(progress: WorkerProgressReporter) -> Callable[[int, int], None]:
+    """Report completed/total as a 0-1000 progress frame, at most once per percent."""
+
+    last = -1
+
+    def report(completed: int, total: int) -> None:
+        nonlocal last
+        value = 1000 if total <= 0 else max(0, min(1000, completed * 1000 // total))
+        if value >= last + 10 or (value == 1000 and last != 1000):
+            last = value
+            progress({"permille": value})
+
+    return report
+
+
 def _failure(request_id: str, code: str, message: str, *, retryable: bool) -> None:
     _write(
         WorkerResponse(
@@ -160,4 +175,4 @@ def serve(handler: WorkerHandler, *, prepare: WorkerPreparer | None = None) -> N
     os._exit(code)
 
 
-__all__ = ["serve"]
+__all__ = ["permille_reporter", "serve"]

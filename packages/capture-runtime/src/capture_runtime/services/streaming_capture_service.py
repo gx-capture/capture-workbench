@@ -585,7 +585,9 @@ class StreamingCaptureService:
                 retryable=False,
             )
 
-        def report_ocr_progress(completed_pages: int, total_pages: int) -> None:
+        def report_ocr_progress(
+            completed_pages: int, total_pages: int, stage: str = "extracting"
+        ) -> None:
             if cancellation.is_set() or self._shutting_down:
                 return
             operation = self.repository.get_capture(capture_id)
@@ -600,7 +602,7 @@ class StreamingCaptureService:
                 self.repository.append_event(
                     capture_id,
                     event_type=StreamingEventType.CHECKPOINT,
-                    stage="extracting",
+                    stage=stage,
                     progress=progress,
                 )
             except OSError:
@@ -611,7 +613,11 @@ class StreamingCaptureService:
 
         if request.identify_speakers:
             extraction = await extractor.extract(
-                content, source, cancellation, identify_speakers=True
+                content,
+                source,
+                cancellation,
+                identify_speakers=True,
+                speaker_progress=lambda stage, permille: report_ocr_progress(permille, 1000, stage),
             )
         elif request.pdf_page_numbers is None:
             extraction = await extractor.extract(
