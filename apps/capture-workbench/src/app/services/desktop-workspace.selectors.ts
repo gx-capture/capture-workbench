@@ -22,7 +22,8 @@ export const CORE_REQUIREMENTS = new Set<CaptureRequirementId>([
 export const INSTALLATION_ORDER = new Map<CaptureRequirementId, number>([
   ['windowsml-ocr', 0],
   ['whisper-primary', 1],
-  ['ollama-runtime', 2],
+  ['speaker-diarization', 2],
+  ['ollama-runtime', 3],
 ]);
 
 /** Converts model installation progress to the percentage shown by the UI. */
@@ -195,4 +196,42 @@ export function stageLabel(stage?: string): string {
 /** Maps a library status to its workspace label. */
 export function statusLabel(status: DesktopLibrarySummary['status']): string {
   return desktopMessages().status[status] ?? status;
+}
+
+/** Result text; a transcript with speakers reads "name: what they said". */
+export function captureResultText(result: {
+  readonly targetText: string;
+  readonly speakers?: readonly {
+    readonly speakerId: string;
+    readonly displayName?: string | null;
+  }[];
+  readonly rawSegments?: readonly {
+    readonly segmentId: string;
+    readonly speaker?: string | null;
+  }[];
+  readonly blocks?: readonly {
+    readonly sourceSegmentId: string;
+    readonly targetText: string;
+  }[];
+}): string {
+  const speakers = result.speakers ?? [];
+  if (speakers.length === 0 || !result.blocks || !result.rawSegments) {
+    return result.targetText;
+  }
+  const names = new Map(
+    speakers.map((speaker) => [
+      speaker.speakerId,
+      speaker.displayName?.trim() || speaker.speakerId,
+    ]),
+  );
+  const speakerOf = new Map(
+    result.rawSegments.map((segment) => [segment.segmentId, segment.speaker]),
+  );
+  return result.blocks
+    .map((block) => {
+      const speaker = speakerOf.get(block.sourceSegmentId);
+      const name = speaker ? names.get(speaker) : undefined;
+      return name ? `${name}: ${block.targetText}` : block.targetText;
+    })
+    .join('\n');
 }

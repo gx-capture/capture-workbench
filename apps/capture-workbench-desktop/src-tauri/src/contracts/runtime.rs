@@ -29,6 +29,9 @@ pub struct RuntimeStreamingCaptureInput {
     pub document_id: String,
     pub client_request_id: String,
     pub structuring_mode: String,
+    /// Ask the runtime to label who speaks each segment.
+    #[serde(default)]
+    pub identify_speakers: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]

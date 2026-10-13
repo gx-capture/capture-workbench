@@ -14,6 +14,7 @@ import {
   type RuntimeModelOption,
   type RuntimeRequirement,
 } from '@gx-capture/capture-workbench-ui';
+import type { CaptureDocument } from '@gx-capture/capture-workbench-ui';
 import type {
   DesktopLibraryDetail,
   DesktopLibrarySummary,
@@ -31,6 +32,7 @@ import {
   modelSelectionRequired as selectModelSelectionRequired,
   selectCoreMissing,
   selectInstallableCoreRequirements,
+  captureResultText,
   stageLabel as selectStageLabel,
   statusLabel as selectStatusLabel,
 } from './desktop-workspace.selectors';
@@ -64,6 +66,10 @@ export class DesktopWorkspaceStore {
   readonly ocrCompute = this.runtime.ocrCompute;
   readonly runtimeStarted = this.runtime.started;
   readonly requestedRequirements = signal<ReadonlySet<CaptureRequirementId>>(new Set());
+  /** Tell speakers apart in audio added from now on. */
+  readonly identifySpeakers = signal(false);
+  /** Addresses of source files loaded for playing speaker samples, by document. */
+  readonly sampleSources = signal<ReadonlyMap<string, string>>(new Map());
   readonly streamingPartials = this.captureLifecycle.streamingPartials;
 
   /** Returns the current partial result for a document, when streaming has emitted one. */
@@ -168,6 +174,7 @@ export class DesktopWorkspaceStore {
     refreshDocuments: () => this.refreshDocuments(),
     reloadDocumentState: (documentId) => this.reloadDocumentState(documentId),
     setMessage: (message) => this.message.set(message),
+    identifySpeakers: () => this.identifySpeakers(),
   };
 
   private readonly resourceErrorEffect = effect(() => {
@@ -315,6 +322,7 @@ export class DesktopWorkspaceStore {
     if (!globalThis.confirm(desktopMessages().confirmDelete)) return;
     this.library.delete(documentId).subscribe({
       next: () => {
+        this.releaseSampleSource(documentId);
         if (this.selectedId() === documentId) {
           this.selectedId.set(null);
           this.selectedResource.set(null);
@@ -322,6 +330,74 @@ export class DesktopWorkspaceStore {
         this.refreshDocuments();
       },
       error: (error: unknown) => this.message.set(errorMessage(error)),
+    });
+  }
+
+  /** Loads the source file once so the speakers' samples can be played. */
+  loadSpeakerSamples(documentId: string, mediaType: string): void {
+    if (this.sampleSources().has(documentId)) return;
+    this.library.sourceBytes(documentId).subscribe({
+      next: (bytes) => {
+        const url = URL.createObjectURL(new Blob([bytes], { type: mediaType }));
+        this.sampleSources.update((current) => new Map(current).set(documentId, url));
+      },
+      error: (error: unknown) => this.message.set(errorMessage(error)),
+    });
+  }
+
+  /** Address that plays only one speaker's sample, once the source is loaded. */
+  speakerSampleUrl(
+    documentId: string,
+    sample?: { readonly startMs: number; readonly endMs: number } | null,
+  ): string | null {
+    const source = this.sampleSources().get(documentId);
+    return source && sample
+      ? `${source}#t=${sample.startMs / 1000},${sample.endMs / 1000}`
+      : null;
+  }
+
+  /** Stores the name the user gave a speaker; an empty name removes it. */
+  nameSpeaker(documentId: string, speakerId: string, name: string): void {
+    const detail = this.selected();
+    const result = detail?.documentId === documentId ? detail.result : undefined;
+    const speakers = result?.speakers ?? [];
+    if (!result || !speakers.some((speaker) => speaker.speakerId === speakerId)) return;
+    const displayName = name.trim().slice(0, 100) || null;
+    this.library.updateCapture({
+      documentId,
+      status: detail!.status,
+      stage: detail!.stage,
+      result: {
+        ...result,
+        speakers: speakers.map((speaker) =>
+          speaker.speakerId === speakerId ? { ...speaker, displayName } : speaker),
+      },
+    }).subscribe({
+      next: () => this.reloadDocumentState(documentId),
+      error: (error: unknown) => this.message.set(errorMessage(error)),
+    });
+  }
+
+  /** Result text; a transcript with speakers reads "name: what they said". */
+  resultText(result: CaptureDocument): string {
+    let text = this.resultTexts.get(result);
+    if (text === undefined) {
+      text = captureResultText(result);
+      this.resultTexts.set(result, text);
+    }
+    return text;
+  }
+
+  private readonly resultTexts = new WeakMap<CaptureDocument, string>();
+
+  private releaseSampleSource(documentId: string): void {
+    const url = this.sampleSources().get(documentId);
+    if (!url) return;
+    URL.revokeObjectURL(url);
+    this.sampleSources.update((current) => {
+      const next = new Map(current);
+      next.delete(documentId);
+      return next;
     });
   }
 

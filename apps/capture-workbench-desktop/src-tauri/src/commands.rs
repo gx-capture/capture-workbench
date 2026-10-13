@@ -163,6 +163,17 @@ pub async fn library_export(
 }
 
 #[tauri::command]
+pub async fn library_source_bytes(
+    library: tauri::State<'_, Arc<LibraryStore>>,
+    request: LibraryDocumentRequest,
+) -> Result<tauri::ipc::Response, String> {
+    let library = Arc::clone(library.inner());
+    run_blocking(move || library.source_bytes(request))
+        .await
+        .map(tauri::ipc::Response::new)
+}
+
+#[tauri::command]
 pub async fn library_delete(
     library: tauri::State<'_, Arc<LibraryStore>>,
     request: LibraryDocumentRequest,

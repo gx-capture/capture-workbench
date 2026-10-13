@@ -450,6 +450,7 @@ test('blocking native I/O is isolated behind async Tauri commands', async () => 
     'library_list',
     'library_get',
     'library_export',
+    'library_source_bytes',
     'library_delete',
     'runtime_requirements',
     'runtime_start_installation',
