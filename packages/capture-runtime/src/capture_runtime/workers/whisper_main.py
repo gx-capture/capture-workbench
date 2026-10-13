@@ -213,13 +213,15 @@ def _run(request: WorkerRequestModel, cancellation: Event) -> dict[str, Any]:
     max_duration_ms = options.get("maxDurationMs")
     prefer_gpu = options.get("preferGpu")
     allow_cpu_fallback = options.get("allowCpuFallback", True)
+    word_timestamps = options.get("wordTimestamps", False)
     if (
-        set(options) - {"maxDurationMs", "preferGpu", "allowCpuFallback"}
+        set(options) - {"maxDurationMs", "preferGpu", "allowCpuFallback", "wordTimestamps"}
         or not isinstance(max_duration_ms, int)
         or isinstance(max_duration_ms, bool)
         or max_duration_ms <= 0
         or not isinstance(prefer_gpu, bool)
         or not isinstance(allow_cpu_fallback, bool)
+        or not isinstance(word_timestamps, bool)
     ):
         raise ValueError("Whisper run options are invalid")
     adapter = FasterWhisperAdapter(
@@ -231,10 +233,22 @@ def _run(request: WorkerRequestModel, cancellation: Event) -> dict[str, Any]:
         prefer_gpu=prefer_gpu,
         max_duration_ms=max_duration_ms,
         allow_cpu_fallback=allow_cpu_fallback,
+        word_timestamps=word_timestamps,
         stage_reporter=_report_stage,
     )
     _import_whisper_runtime()
     result = adapter.transcribe(source, should_cancel=cancellation.is_set)
+
+    def words(item: Any) -> dict[str, Any]:
+        if not word_timestamps:
+            return {}
+        return {
+            "words": [
+                {"startMs": word.start_ms, "endMs": word.end_ms, "text": word.text}
+                for word in item.words
+            ]
+        }
+
     return {
         "segments": [
             {
@@ -243,6 +257,7 @@ def _run(request: WorkerRequestModel, cancellation: Event) -> dict[str, Any]:
                 "page": None,
                 "startMs": item.start_ms,
                 "endMs": item.end_ms,
+                **words(item),
             }
             for index, item in enumerate(result.segments)
         ],

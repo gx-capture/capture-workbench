@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import gc
 import importlib.util
-import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,7 +18,7 @@ from capture_runtime.engine_adapters import (
     EngineRuntimeUnavailableError,
     _directory_digest,
 )
-from capture_runtime.speaker_turns import SpeakerTurn
+from capture_runtime.speaker_turns import SPEAKER_LABEL, SpeakerTurn
 from capture_runtime.worker_stage_policy import sanitize_worker_stage
 
 DIARIZATION_REQUIREMENT_ID = "speaker-diarization"
@@ -32,7 +31,6 @@ DIARIZATION_REQUIRED_FILES = (
     "segmentation/pytorch_model.bin",
 )
 SAMPLE_RATE = 16_000
-_SPEAKER_PATTERN = re.compile(r"[A-Za-z0-9_]{1,32}")
 _CUDA_LIBRARIES = ("cublas", "cudnn", "cudart", "nvrtc", "nvcuda")
 _LIBRARY_LOAD_FAILURES = (
     "could not load",
@@ -294,7 +292,7 @@ def _turns(annotation: Any, duration_ms: int) -> tuple[SpeakerTurn, ...]:
     turns: list[SpeakerTurn] = []
     for segment, _track, label in annotation.itertracks(yield_label=True):
         speaker = str(label)
-        if _SPEAKER_PATTERN.fullmatch(speaker) is None:
+        if SPEAKER_LABEL.fullmatch(speaker) is None:
             raise ValueError("Diarization speaker label is invalid.")
         start_ms = max(0, round(float(segment.start) * 1000))
         end_ms = min(duration_ms, round(float(segment.end) * 1000))
