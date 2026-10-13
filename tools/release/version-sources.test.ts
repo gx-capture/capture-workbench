@@ -174,7 +174,7 @@ test('typed release inventory reports every D2.1 identity without mutation', () 
     requiredEntry(
       inventory,
       id,
-      'db61d6a8db88f6d0c164b4c5f962e7b65a3fc375b742a79ad54fb0fffbc6693b',
+      'cbd32204f2278292816ba7d8dcc372c1e4e4cd48a0a836f20fc9152dcdcdbf3c',
     );
   }
   for (const channel of [

@@ -14,6 +14,7 @@ export const DEFAULT_CAPTURE_WORKBENCH_CONFIG: ResolvedCaptureWorkbenchConfig = 
   hostManagedHandshake: false,
   reviewBeforeCommit: false,
   reviewEditable: false,
+  identifySpeakers: false,
   width: '100%',
   height: 'auto',
   density: 'comfortable',

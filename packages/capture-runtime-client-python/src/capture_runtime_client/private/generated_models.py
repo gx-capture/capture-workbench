@@ -37,6 +37,7 @@ WarningText = Annotated[str, StringConstraints(strip_whitespace=True, max_length
 Sha256Hex = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 EngineDigest = Annotated[str, StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$")]
 SpeakerLabel = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_]{1,32}$")]
+SpeakerName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
 
 
 class StrictModel(BaseModel):
@@ -304,6 +305,9 @@ class CaptureSpeaker(StrictModel):
 
     speaker_id: SpeakerLabel
     sample: TimeLocator | None = None
+    # The name a person gave this speaker. The runtime never sets it; the
+    # workbench UI fills it in and the host stores the named document.
+    display_name: SpeakerName | None = None
 
 
 class OcrPageScopeV2(StrictModel):

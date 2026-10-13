@@ -11,6 +11,7 @@ export const CAPTURE_WORKBENCH_CUSTOM_EVENTS = Object.freeze({
   failed: 'capture-failed',
   canceled: 'capture-canceled',
   taskChanged: 'capture-task-changed',
+  speakersNamed: 'capture-speakers-named',
 } as const);
 
 export type CaptureWorkbenchCustomEventName =

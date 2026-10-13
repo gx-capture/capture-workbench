@@ -184,10 +184,10 @@ describe('capture helpers', () => {
   it('exports a deeply immutable canonical document schema', () => {
     expect(CAPTURE_DOCUMENT_CONTRACT.schemaVersion).toBe('2');
     expect(CAPTURE_DOCUMENT_CONTRACT.schemaSha256).toBe(
-      'd70eb44047cf52eaeae13f339ed4dd2241d49ea815a27cb55df2202c44ee20bf',
+      'db692db3503620db9c357640976b8504658c1e3a6f7a34c991206338fc203ad9',
     );
     expect(CAPTURE_DOCUMENT_SCHEMA_HASH).toBe(
-      'd70eb44047cf52eaeae13f339ed4dd2241d49ea815a27cb55df2202c44ee20bf',
+      'db692db3503620db9c357640976b8504658c1e3a6f7a34c991206338fc203ad9',
     );
     expect(Object.isFrozen(CAPTURE_DOCUMENT_SCHEMA)).toBe(true);
     expect(

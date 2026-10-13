@@ -138,6 +138,8 @@ export interface StartStreamingCaptureRequest {
   readonly sourceKind: CaptureSourceKind;
   readonly structuringMode: CaptureStructuringMode;
   readonly targetLanguage?: string;
+  /** Audio only: label who speaks each segment. */
+  readonly identifySpeakers?: boolean;
   readonly signal?: AbortSignal;
 }
 
@@ -344,6 +346,11 @@ export interface CaptureWorkbenchConfig {
   readonly reviewBeforeCommit?: boolean;
   /** Allow editing review text; review remains read-only when false. */
   readonly reviewEditable?: boolean;
+  /**
+   * Label who speaks in audio captures and let the user name the speakers.
+   * Needs the optional `speaker-diarization` unit installed in the runtime.
+   */
+  readonly identifySpeakers?: boolean;
   readonly width?: string;
   readonly height?: string;
   readonly density?: CaptureDensity;

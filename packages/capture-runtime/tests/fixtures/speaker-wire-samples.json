@@ -54,11 +54,13 @@
           "kind": "time",
           "startMs": 0,
           "endMs": 1000
-        }
+        },
+        "displayName": null
       },
       {
         "speakerId": "SPEAKER_01",
-        "sample": null
+        "sample": null,
+        "displayName": "王小明"
       }
     ],
     "warnings": [],
@@ -196,11 +198,13 @@
           "kind": "time",
           "startMs": 0,
           "endMs": 1000
-        }
+        },
+        "displayName": null
       },
       {
         "speakerId": "SPEAKER_01",
-        "sample": null
+        "sample": null,
+        "displayName": "王小明"
       }
     ],
     "structuringEngine": {

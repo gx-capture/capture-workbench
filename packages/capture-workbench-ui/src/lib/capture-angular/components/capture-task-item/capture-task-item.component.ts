@@ -168,6 +168,38 @@ import { CaptureWorkbenchStore } from '../../services/capture-workbench-store/ca
         </p>
       }
 
+      @if (task().result?.speakers?.length) {
+        <section class="speakers" data-testid="capture-speakers" [attr.aria-label]="m().speakersTitle">
+          <h3>{{ m().speakersTitle }}</h3>
+          <p class="muted">{{ m().speakersHint }}</p>
+          @for (speaker of task().result?.speakers ?? []; track speaker.speakerId) {
+            <div class="speaker" data-testid="capture-speaker" [attr.data-speaker-id]="speaker.speakerId">
+              <label>
+                <span class="review-label">{{ speaker.speakerId }}</span>
+                <input
+                  type="text"
+                  maxlength="100"
+                  autocomplete="off"
+                  [value]="speaker.displayName ?? ''"
+                  [placeholder]="m().speakerNamePlaceholder"
+                  (change)="nameSpeaker(speaker.speakerId, $event)"
+                />
+              </label>
+              @if (store.speakerSampleUrl(task(), speaker); as sampleUrl) {
+                <audio
+                  controls
+                  preload="none"
+                  [src]="sampleUrl"
+                  [attr.aria-label]="m().speakerSample(speaker.displayName || speaker.speakerId)"
+                ></audio>
+              } @else {
+                <span class="muted">{{ m().speakerNoSample }}</span>
+              }
+            </div>
+          }
+        </section>
+      }
+
       @if (task().result) {
         <pre class="result-preview" data-testid="capture-result">{{ store.renderedResult(task()) }}</pre>
         <dl class="result-provenance" data-testid="capture-provenance">
@@ -263,6 +295,14 @@ export class CaptureTaskItemComponent {
       });
     this.reviewControls.set(key, control);
     return control;
+  }
+
+  protected nameSpeaker(speakerId: string, event: Event): void {
+    this.store.nameSpeaker(
+      this.task().id,
+      speakerId,
+      (event.target as HTMLInputElement).value,
+    );
   }
 
   protected restoreOriginal(

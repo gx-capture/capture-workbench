@@ -23,6 +23,7 @@ export interface ResolvedCaptureWorkbenchConfig {
   readonly hostManagedHandshake: boolean;
   readonly reviewBeforeCommit: boolean;
   readonly reviewEditable: boolean;
+  readonly identifySpeakers: boolean;
   readonly width: string;
   readonly height: string;
   readonly density: 'compact' | 'comfortable';
@@ -64,4 +65,5 @@ export type CaptureWorkbenchStoreEvent =
   | { readonly type: 'completed'; readonly event: CaptureCompletedEvent }
   | { readonly type: 'failed'; readonly event: CaptureFailedEvent }
   | { readonly type: 'canceled'; readonly task: CaptureTaskView }
+  | { readonly type: 'speakers-named'; readonly event: CaptureCompletedEvent }
   | { readonly type: 'task-changed'; readonly task: CaptureTaskView };

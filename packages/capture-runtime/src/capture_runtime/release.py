@@ -20,7 +20,7 @@ CAPTURE_DOCUMENT_SCHEMA_ID = (
     "https://github.com/gx-capture/capture-workbench/schema/capture-document-v2.schema.json"
 )
 CAPTURE_DOCUMENT_SCHEMA_RELEASE_SHA256 = (
-    "d70eb44047cf52eaeae13f339ed4dd2241d49ea815a27cb55df2202c44ee20bf"
+    "db692db3503620db9c357640976b8504658c1e3a6f7a34c991206338fc203ad9"
 )
 
 
