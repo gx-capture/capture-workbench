@@ -344,7 +344,7 @@ class CaptureRuntimeClientTest {
             "eager");
     assertThat(legacy.pdfPageNumbers()).isNull();
     assertThat(CaptureRuntimeTypes.CONTRACT_SET_SHA256)
-        .isEqualTo("2c58589bd35b33d21a5569f8b71efd7a57b9124cd491c2bdb4fc46de18c7d918");
+        .isEqualTo("3b9ad76c563304f702cce2ddd24bbca1e3c13fd72d2ee25baecaddf13ab972d7");
 
     assertThatThrownBy(
             () ->

@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from capture_runtime.constants import DIARIZATION_REQUIREMENT_ID
 from capture_runtime.engine_adapters import (
     EngineProbe,
     EngineRuntimeUnavailableError,
@@ -21,7 +22,6 @@ from capture_runtime.engine_adapters import (
 from capture_runtime.speaker_turns import SPEAKER_LABEL, SpeakerTurn
 from capture_runtime.worker_stage_policy import sanitize_worker_stage
 
-DIARIZATION_REQUIREMENT_ID = "speaker-diarization"
 DIARIZATION_MODEL = "pyannote-speaker-diarization-community-1"
 DIARIZATION_REQUIRED_FILES = (
     "config.yaml",

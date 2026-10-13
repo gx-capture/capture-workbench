@@ -445,6 +445,7 @@ export interface StartCaptureV2 {
   readonly targetLanguage?: string | null;
   readonly startPolicy: "eager";
   readonly pdfPageNumbers?: readonly (number)[] | null;
+  readonly identifySpeakers?: boolean;
 }
 
 export interface StartRuntimeInstallationV2 {

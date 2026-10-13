@@ -613,6 +613,9 @@ class StartCaptureV2(StrictModel):
     target_language: str | None = None
     start_policy: Literal["eager"] = "eager"
     pdf_page_numbers: list[int] | None = Field(default=None, min_length=1, max_length=500)
+    # Audio only: label who speaks each segment. Needs the speaker-diarization
+    # unit, and the capture reports no partial transcript while it runs.
+    identify_speakers: bool = False
 
     @field_validator("target_language")
     @classmethod
