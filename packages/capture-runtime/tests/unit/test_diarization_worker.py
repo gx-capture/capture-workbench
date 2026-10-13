@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import getpass
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -169,3 +171,16 @@ def test_worker_process_answers_a_probe_over_the_json_lines_protocol(tmp_path: P
     stages = WORKER_STAGE_PATTERN.findall(completed.stderr.decode("utf-8"))
     assert stages[0] == "worker-entry-start"
     assert all(sanitize_worker_stage(stage) == stage for stage in stages)
+
+
+def test_worker_environment_is_offline_and_survives_a_missing_user_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name in ("HF_HUB_OFFLINE", "PYANNOTE_METRICS_ENABLED", "USERNAME"):
+        monkeypatch.delenv(name, raising=False)
+
+    diarization_main._prepare_environment()
+
+    assert os.environ["HF_HUB_OFFLINE"] == "1"
+    assert os.environ["PYANNOTE_METRICS_ENABLED"] == "0"
+    assert getpass.getuser()
