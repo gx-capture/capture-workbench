@@ -431,10 +431,20 @@ load_ocr_profile_identity = _load_ocr_profile_identity
 
 
 @dataclass(frozen=True, slots=True)
+class WhisperWord:
+    start_ms: int
+    end_ms: int
+    # Raw model token text; a leading space marks a word boundary.
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
 class WhisperTextSegment:
     start_ms: int
     end_ms: int
     text: str
+    # Filled only when the adapter was asked for word timestamps.
+    words: tuple[WhisperWord, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -2491,6 +2501,17 @@ def _install_offline_huggingface_stubs() -> None:
     sys.modules["huggingface_hub.utils"] = utils
 
 
+def _whisper_words(raw_segment: Any, duration_ms: int) -> tuple[WhisperWord, ...]:
+    words: list[WhisperWord] = []
+    for word in getattr(raw_segment, "words", None) or ():
+        text = str(word.word)
+        start_ms = min(duration_ms, max(0, round(float(word.start) * 1000)))
+        end_ms = min(duration_ms, max(start_ms, round(float(word.end) * 1000)))
+        if text:
+            words.append(WhisperWord(start_ms, end_ms, text))
+    return tuple(words)
+
+
 class FasterWhisperAdapter:
     """Local-only faster-whisper adapter with explicit, bounded CPU fallback."""
 
@@ -2505,11 +2526,14 @@ class FasterWhisperAdapter:
         prefer_gpu: bool,
         max_duration_ms: int,
         allow_cpu_fallback: bool = True,
+        word_timestamps: bool = False,
         model_factory: Callable[..., Any] | None = None,
         cuda_count: Callable[[], int] | None = None,
         stage_reporter: Callable[[str], None] | None = None,
+        progress_reporter: Callable[[int, int], None] | None = None,
     ) -> None:
         self.models_dir = models_dir
+        self._progress_reporter = progress_reporter
         self.primary_model = primary_model
         self.fallback_model = fallback_model
         # Model directory names are intentionally independent from the
@@ -2520,6 +2544,7 @@ class FasterWhisperAdapter:
         self.fallback_provenance_model = fallback_provenance_model or fallback_model
         self.prefer_gpu = prefer_gpu
         self.allow_cpu_fallback = allow_cpu_fallback
+        self.word_timestamps = word_timestamps
         self.max_duration_ms = max_duration_ms
         self._model_factory = model_factory
         self._cuda_count = cuda_count
@@ -2709,7 +2734,10 @@ class FasterWhisperAdapter:
             self._report_stage(whisper_model_load_stage(device, "reused"))
         self._report_stage(whisper_stage("transcription-call-start"))
         raw_segments, info = runtime.transcribe(
-            str(source_path), beam_size=5, vad_filter=True, word_timestamps=False
+            str(source_path),
+            beam_size=5,
+            vad_filter=True,
+            word_timestamps=self.word_timestamps,
         )
         self._report_stage(whisper_stage("transcription-call-complete"))
         self._report_stage(whisper_stage("transcription-iteration-start"))
@@ -2723,8 +2751,13 @@ class FasterWhisperAdapter:
             text = str(raw.text).strip()
             start_ms = max(0, round(float(raw.start) * 1000))
             end_ms = min(duration_ms, max(0, round(float(raw.end) * 1000)))
+            if self._progress_reporter is not None:
+                self._progress_reporter(end_ms, duration_ms)
             if text and start_ms < end_ms:
-                segments.append(WhisperTextSegment(start_ms, end_ms, text))
+                words = _whisper_words(raw, duration_ms) if self.word_timestamps else ()
+                if self.word_timestamps and not words:
+                    raise ValueError("Whisper returned speech without word timestamps.")
+                segments.append(WhisperTextSegment(start_ms, end_ms, text, words))
         if should_cancel():
             raise InterruptedError("Whisper transcription was cancelled.")
         if not segments and not allow_empty_output:
@@ -2766,6 +2799,7 @@ __all__ = [
     "WhisperAdapter",
     "WhisperTextSegment",
     "WhisperTranscriptionResult",
+    "WhisperWord",
     "WindowsMLOcrAdapter",
     "load_ocr_profile_identity",
     "normalize_paddle_results",

@@ -134,6 +134,24 @@
           "minLength": 1,
           "title": "Text",
           "type": "string"
+        },
+        "speaker": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9_]{1,32}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Speaker"
+        },
+        "speakerOverlap": {
+          "default": false,
+          "title": "Speakeroverlap",
+          "type": "boolean"
         }
       },
       "required": [

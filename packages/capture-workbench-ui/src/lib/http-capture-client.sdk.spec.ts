@@ -31,7 +31,7 @@ describe('HttpCaptureClient SDK delegation', () => {
             apiVersion: '2.0',
             captureDocumentSchemaVersion: '2',
             captureDocumentSchemaSha256:
-              '850afd212d049c25da41d3867ba5477451a6a2c6c7e41f116fe60f26b6a35335',
+              'd70eb44047cf52eaeae13f339ed4dd2241d49ea815a27cb55df2202c44ee20bf',
             contractSetVersion: '2',
             capabilities: {
               captureKinds: ['pdf'],

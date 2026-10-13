@@ -27,7 +27,7 @@ const R3_DOCUMENT_SCHEMA_VERSION: &str = "2";
 const R3_CONTRACT_SET_VERSION: &str = "2";
 pub(crate) const R3_SCHEMA_FILE_NAME: &str = "capture-document-v2.schema.json";
 pub(crate) const CANONICAL_CAPTURE_DOCUMENT_V2_SHA256: &str =
-    "850afd212d049c25da41d3867ba5477451a6a2c6c7e41f116fe60f26b6a35335";
+    "d70eb44047cf52eaeae13f339ed4dd2241d49ea815a27cb55df2202c44ee20bf";
 
 /// A schema identity is created only from the bounded bytes of the explicit
 /// regular file named by the frozen manifest.  The path and bytes are not

@@ -13,6 +13,7 @@ WINDOWSML_BUNDLE_SHA256: Final = "a88c9a3097771d07bd1d940db6acdcbb5336e7c6c85406
 
 WINDOWSML_REQUIREMENT_ID: Final = "windowsml-ocr"
 WHISPER_REQUIREMENT_ID: Final = "whisper-primary"
+DIARIZATION_REQUIREMENT_ID: Final = "speaker-diarization"
 OLLAMA_RUNTIME_REQUIREMENT_ID: Final = "ollama-runtime"
 OLLAMA_MODEL_REQUIREMENT_ID: Final = "capture-ollama-model"
 

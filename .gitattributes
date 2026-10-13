@@ -25,6 +25,7 @@ packages/capture-runtime-client-python/src/capture_runtime_client/private/schema
 packages/capture-runtime-client-python/src/capture_runtime_client/private/schemas/capture-failure-v2.schema.json text eol=lf
 packages/capture-runtime-client-python/src/capture_runtime_client/private/schemas/capture-ocr-projection-v3.schema.json text eol=lf
 packages/capture-runtime-client-python/src/capture_runtime_client/private/schemas/capture-operation-v2.schema.json text eol=lf
+packages/capture-runtime-client-python/src/capture_runtime_client/private/schemas/capture-speaker.schema.json text eol=lf
 packages/capture-runtime-client-python/src/capture_runtime_client/private/schemas/capture-source.schema.json text eol=lf
 packages/capture-runtime-client-python/src/capture_runtime_client/private/schemas/capture-streaming-result.schema.json text eol=lf
 packages/capture-runtime-client-python/src/capture_runtime_client/private/schemas/error-body-v2.schema.json text eol=lf

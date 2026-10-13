@@ -118,6 +118,25 @@
         "extractionEngine": {
           "$ref": "#/$defs/CaptureEngine"
         },
+        "diarizationEngine": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CaptureEngine"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "speakers": {
+          "items": {
+            "$ref": "#/$defs/CaptureSpeaker"
+          },
+          "maxItems": 64,
+          "title": "Speakers",
+          "type": "array"
+        },
         "structuringEngine": {
           "$ref": "#/$defs/CaptureEngine"
         },
@@ -386,6 +405,33 @@
       "title": "CaptureSourceKind",
       "type": "string"
     },
+    "CaptureSpeaker": {
+      "additionalProperties": false,
+      "description": "An anonymous speaker and a stretch of the source to listen to and name them.",
+      "properties": {
+        "speakerId": {
+          "pattern": "^[A-Za-z0-9_]{1,32}$",
+          "title": "Speakerid",
+          "type": "string"
+        },
+        "sample": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TimeLocator"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "speakerId"
+      ],
+      "title": "CaptureSpeaker",
+      "type": "object"
+    },
     "OcrPageScopeV2": {
       "additionalProperties": false,
       "description": "Public evidence describing which PDF pages entered OCR.",
@@ -508,6 +554,25 @@
         "extractionEngine": {
           "$ref": "#/$defs/CaptureEngine"
         },
+        "diarizationEngine": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CaptureEngine"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "speakers": {
+          "items": {
+            "$ref": "#/$defs/CaptureSpeaker"
+          },
+          "maxItems": 64,
+          "title": "Speakers",
+          "type": "array"
+        },
         "warnings": {
           "items": {
             "maxLength": 500,
@@ -580,6 +645,24 @@
           "minLength": 1,
           "title": "Text",
           "type": "string"
+        },
+        "speaker": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9_]{1,32}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Speaker"
+        },
+        "speakerOverlap": {
+          "default": false,
+          "title": "Speakeroverlap",
+          "type": "boolean"
         }
       },
       "required": [

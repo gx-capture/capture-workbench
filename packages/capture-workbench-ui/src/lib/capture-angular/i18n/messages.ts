@@ -119,6 +119,8 @@ const ZH_TW: CaptureWorkbenchMessages = {
   taskStage: {
     uploading: '上傳中',
     extracting: '文字辨識中',
+    transcribing: '語音轉文字中',
+    'identifying-speakers': '辨識說話者中',
     structuring: '整理中',
   },
 };
@@ -186,6 +188,8 @@ const EN: CaptureWorkbenchMessages = {
   taskStage: {
     uploading: 'Uploading',
     extracting: 'Reading text',
+    transcribing: 'Transcribing speech',
+    'identifying-speakers': 'Telling speakers apart',
     structuring: 'Organizing',
   },
 };

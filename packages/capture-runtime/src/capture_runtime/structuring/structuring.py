@@ -352,6 +352,11 @@ def validate_structuring_candidate(
             document.get("extractionEngine"),
             raw_wire.get("extractionEngine"),
         ),
+        "diarizationEngine": (
+            document.get("diarizationEngine"),
+            raw_wire.get("diarizationEngine"),
+        ),
+        "speakers": (document.get("speakers", []), raw_wire.get("speakers", [])),
         "createdAt": (document.get("createdAt"), raw_wire.get("createdAt")),
     }
     for field, (actual, expected) in provenance.items():
@@ -471,6 +476,8 @@ def assemble_structuring_document(
         "sourceText": raw_wire.get("sourceText"),
         "targetText": "\n".join(str(block["targetText"]) for block in block_wires),
         "extractionEngine": raw_wire.get("extractionEngine"),
+        "diarizationEngine": raw_wire.get("diarizationEngine"),
+        "speakers": raw_wire.get("speakers", []),
         "structuringEngine": _wire(engine_identity),
         "warnings": raw_wire.get("warnings", []),
         "createdAt": raw_wire.get("createdAt"),

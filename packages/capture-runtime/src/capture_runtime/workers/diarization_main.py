@@ -38,7 +38,7 @@ try:
         DIARIZATION_REQUIREMENT_ID,
         PyannoteDiarizationAdapter,
     )
-    from capture_runtime.workers.server import serve
+    from capture_runtime.workers.server import permille_reporter, serve
 except BaseException:
     _report_stage("python-import-capture-runtime-failed")
     raise
@@ -102,7 +102,7 @@ def _probe(request: WorkerRequestModel) -> dict[str, Any]:
     }
 
 
-def _run(request: WorkerRequestModel, cancellation: Event) -> dict[str, Any]:
+def _run(request: WorkerRequestModel, cancellation: Event, progress: Any = None) -> dict[str, Any]:
     payload = request.payload
     if set(payload) != {
         "requirementId",
@@ -149,6 +149,7 @@ def _run(request: WorkerRequestModel, cancellation: Event) -> dict[str, Any]:
         allow_cpu_fallback=allow_cpu_fallback,
         num_speakers=num_speakers,
         stage_reporter=_report_stage,
+        progress_reporter=None if progress is None else permille_reporter(progress),
     )
     result = adapter.diarize(source, should_cancel=cancellation.is_set)
 
@@ -175,12 +176,12 @@ def _run(request: WorkerRequestModel, cancellation: Event) -> dict[str, Any]:
 def handle(
     request: WorkerRequestModel,
     cancellation: Event,
-    _progress: object,
+    progress: Any,
 ) -> dict[str, Any]:
     if request.operation == "probe":
         return _probe(request)
     if request.operation == "run":
-        return _run(request, cancellation)
+        return _run(request, cancellation, progress)
     raise ValueError("unsupported diarization operation")
 
 

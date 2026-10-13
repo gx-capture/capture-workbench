@@ -36,6 +36,7 @@ ProjectedText = Annotated[
 WarningText = Annotated[str, StringConstraints(strip_whitespace=True, max_length=500)]
 Sha256Hex = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 EngineDigest = Annotated[str, StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$")]
+SpeakerLabel = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_]{1,32}$")]
 
 
 class StrictModel(BaseModel):
@@ -112,6 +113,7 @@ class OcrComputeNoticeCode(StrEnum):
 CaptureRequirementId = Literal[
     "windowsml-ocr",
     "whisper-primary",
+    "speaker-diarization",
     "ollama-runtime",
     "capture-ollama-model",
 ]
@@ -290,6 +292,18 @@ class RawCaptureSegment(StrictModel):
     order: int = Field(ge=0)
     locator: CaptureLocator
     text: CaptureText
+    # Anonymous label from speaker diarization; None when it did not run or
+    # could not decide between speakers.
+    speaker: SpeakerLabel | None = None
+    # More than one person is audible in this segment.
+    speaker_overlap: bool = False
+
+
+class CaptureSpeaker(StrictModel):
+    """An anonymous speaker and a stretch of the source to listen to and name them."""
+
+    speaker_id: SpeakerLabel
+    sample: TimeLocator | None = None
 
 
 class OcrPageScopeV2(StrictModel):
@@ -322,6 +336,8 @@ class RawCapture(StrictModel):
     segments: list[RawCaptureSegment] = Field(min_length=1, max_length=10_000)
     source_text: ProjectedText
     extraction_engine: CaptureEngine
+    diarization_engine: CaptureEngine | None = None
+    speakers: list[CaptureSpeaker] = Field(default_factory=list, max_length=64)
     warnings: list[WarningText] = Field(default_factory=list, max_length=1_000)
     ocr_page_scope: OcrPageScopeV2 | None = None
     created_at: datetime
@@ -338,6 +354,16 @@ class RawCapture(StrictModel):
         identifiers = [segment.segment_id for segment in self.segments]
         if len(identifiers) != len(set(identifiers)):
             raise ValueError("raw segmentId values must be unique")
+        speaker_ids = [speaker.speaker_id for speaker in self.speakers]
+        if len(speaker_ids) != len(set(speaker_ids)):
+            raise ValueError("speakerId values must be unique")
+        if self.speakers and self.diarization_engine is None:
+            raise ValueError("speakers require a diarization engine")
+        if any(
+            segment.speaker is not None and segment.speaker not in speaker_ids
+            for segment in self.segments
+        ):
+            raise ValueError("every segment speaker must be listed in speakers")
         return self
 
 
@@ -359,6 +385,8 @@ class CaptureDocument(StrictModel):
     source_text: ProjectedText
     target_text: ProjectedText
     extraction_engine: CaptureEngine
+    diarization_engine: CaptureEngine | None = None
+    speakers: list[CaptureSpeaker] = Field(default_factory=list, max_length=64)
     structuring_engine: CaptureEngine
     warnings: list[WarningText] = Field(default_factory=list, max_length=1_000)
     created_at: datetime
@@ -400,6 +428,16 @@ class CaptureDocument(StrictModel):
         expected_target = "\n".join(block.target_text for block in self.blocks)
         if self.target_text != expected_target:
             raise ValueError("targetText must be the exact block target projection")
+        speaker_ids = [speaker.speaker_id for speaker in self.speakers]
+        if len(speaker_ids) != len(set(speaker_ids)):
+            raise ValueError("speakerId values must be unique")
+        if self.speakers and self.diarization_engine is None:
+            raise ValueError("speakers require a diarization engine")
+        if any(
+            segment.speaker is not None and segment.speaker not in speaker_ids
+            for segment in self.raw_segments
+        ):
+            raise ValueError("every segment speaker must be listed in speakers")
         return self
 
 
@@ -580,6 +618,9 @@ class StartCaptureV2(StrictModel):
     target_language: str | None = None
     start_policy: Literal["eager"] = "eager"
     pdf_page_numbers: list[int] | None = Field(default=None, min_length=1, max_length=500)
+    # Audio only: label who speaks each segment. Needs the speaker-diarization
+    # unit, and the capture reports no partial transcript while it runs.
+    identify_speakers: bool = False
 
     @field_validator("target_language")
     @classmethod
@@ -1085,6 +1126,7 @@ __all__ = [
     'StructuringSemanticBlockV2',
     'SubmitStructuringBatchV2',
     'RawCaptureSegment',
+    'CaptureSpeaker',
     'OcrPageScopeV2',
     'RawCapture',
     'CaptureBlock',

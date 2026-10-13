@@ -8,21 +8,20 @@ from __future__ import annotations
 
 import gc
 import importlib.util
-import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from capture_runtime.constants import DIARIZATION_REQUIREMENT_ID
 from capture_runtime.engine_adapters import (
     EngineProbe,
     EngineRuntimeUnavailableError,
     _directory_digest,
 )
-from capture_runtime.speaker_turns import SpeakerTurn
+from capture_runtime.speaker_turns import SPEAKER_LABEL, SpeakerTurn
 from capture_runtime.worker_stage_policy import sanitize_worker_stage
 
-DIARIZATION_REQUIREMENT_ID = "speaker-diarization"
 DIARIZATION_MODEL = "pyannote-speaker-diarization-community-1"
 DIARIZATION_REQUIRED_FILES = (
     "config.yaml",
@@ -32,7 +31,6 @@ DIARIZATION_REQUIRED_FILES = (
     "segmentation/pytorch_model.bin",
 )
 SAMPLE_RATE = 16_000
-_SPEAKER_PATTERN = re.compile(r"[A-Za-z0-9_]{1,32}")
 _CUDA_LIBRARIES = ("cublas", "cudnn", "cudart", "nvrtc", "nvcuda")
 _LIBRARY_LOAD_FAILURES = (
     "could not load",
@@ -141,8 +139,10 @@ class PyannoteDiarizationAdapter:
         torch_module: Any | None = None,
         decoder: Callable[..., bytearray] = decode_mono_16k,
         stage_reporter: Callable[[str], None] | None = None,
+        progress_reporter: Callable[[int, int], None] | None = None,
     ) -> None:
         self.model_dir = model_dir
+        self._progress_reporter = progress_reporter
         self.prefer_gpu = prefer_gpu
         self.max_duration_ms = max_duration_ms
         self.allow_cpu_fallback = allow_cpu_fallback
@@ -259,9 +259,24 @@ class PyannoteDiarizationAdapter:
 
             factory = Pipeline
 
-        def stop_when_cancelled(*_args: object, **_kwargs: object) -> None:
+        def stop_when_cancelled(*step: object, **counts: object) -> None:
             if should_cancel():
                 raise InterruptedError("Speaker diarization was cancelled.")
+            completed, total = counts.get("completed"), counts.get("total")
+            if (
+                self._progress_reporter is None
+                or not step
+                or not isinstance(completed, int)
+                or not isinstance(total, int)
+                or total <= 0
+            ):
+                return
+            # Segmentation is the first, shorter pass; embeddings take the rest.
+            done = min(completed, total) * 1000 // total
+            if step[0] == "segmentation":
+                self._progress_reporter(done * 2 // 10, 1000)
+            elif step[0] == "embeddings":
+                self._progress_reporter(200 + done * 8 // 10, 1000)
 
         stop_when_cancelled()
         if device == "cuda":
@@ -294,7 +309,7 @@ def _turns(annotation: Any, duration_ms: int) -> tuple[SpeakerTurn, ...]:
     turns: list[SpeakerTurn] = []
     for segment, _track, label in annotation.itertracks(yield_label=True):
         speaker = str(label)
-        if _SPEAKER_PATTERN.fullmatch(speaker) is None:
+        if SPEAKER_LABEL.fullmatch(speaker) is None:
             raise ValueError("Diarization speaker label is invalid.")
         start_ms = max(0, round(float(segment.start) * 1000))
         end_ms = min(duration_ms, round(float(segment.end) * 1000))

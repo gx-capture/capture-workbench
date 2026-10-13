@@ -116,6 +116,8 @@ class FakeCaptureStructuringProvider:
             source_text=raw.source_text,
             target_text="\n".join(block.target_text for block in blocks),
             extraction_engine=raw.extraction_engine,
+            diarization_engine=raw.diarization_engine,
+            speakers=raw.speakers,
             structuring_engine=self._engine_identity,
             warnings=raw.warnings,
             created_at=raw.created_at,

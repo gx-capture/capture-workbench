@@ -7,7 +7,7 @@ export const API_VERSION = "2.0" as const;
 export const CAPTURE_API_VERSION = API_VERSION;
 export const CAPTURE_DOCUMENT_SCHEMA_VERSION = "2" as const;
 export const CAPTURE_DOCUMENT_SCHEMA_ID = "https://github.com/gx-capture/capture-workbench/schema/capture-document-v2.schema.json" as const;
-export const CAPTURE_DOCUMENT_SCHEMA_SHA256 = "850afd212d049c25da41d3867ba5477451a6a2c6c7e41f116fe60f26b6a35335" as const;
+export const CAPTURE_DOCUMENT_SCHEMA_SHA256 = "d70eb44047cf52eaeae13f339ed4dd2241d49ea815a27cb55df2202c44ee20bf" as const;
 
 /** Wire enum. */
 export type CaptureSourceKind = "pdf" | "image" | "audio";
@@ -84,11 +84,13 @@ export interface CaptureDocument {
   readonly blocks: readonly (CaptureBlock)[];
   readonly completedAt: string;
   readonly createdAt: string;
+  readonly diarizationEngine?: CaptureEngine | null;
   readonly extractionEngine: CaptureEngine;
   readonly rawSegments: readonly (RawCaptureSegment)[];
   readonly schemaVersion: "2";
   readonly source: CaptureSource;
   readonly sourceText: string;
+  readonly speakers?: readonly (CaptureSpeaker)[];
   readonly structuringEngine: CaptureEngine;
   readonly targetText: string;
   readonly warnings?: readonly (string)[];
@@ -161,6 +163,11 @@ export interface CaptureSource {
   readonly fileName: string;
   readonly mediaType: string;
   readonly bytes: number;
+}
+
+export interface CaptureSpeaker {
+  readonly speakerId: string;
+  readonly sample?: TimeLocator | null;
 }
 
 export interface CaptureStreamingResult {
@@ -316,6 +323,8 @@ export interface RawCapture {
   readonly segments: readonly (RawCaptureSegment)[];
   readonly sourceText: string;
   readonly extractionEngine: CaptureEngine;
+  readonly diarizationEngine?: CaptureEngine | null;
+  readonly speakers?: readonly (CaptureSpeaker)[];
   readonly warnings?: readonly (string)[];
   readonly ocrPageScope?: OcrPageScopeV2 | null;
   readonly createdAt: string;
@@ -326,6 +335,8 @@ export interface RawCaptureSegment {
   readonly order: number;
   readonly locator: PageLocator | TimeLocator;
   readonly text: string;
+  readonly speaker?: string | null;
+  readonly speakerOverlap?: boolean;
 }
 
 export interface ReportStructuringFailureV2 {
@@ -343,7 +354,7 @@ export interface RuntimeArtifactDescriptorV2 {
 
 export interface RuntimeInstallationV2 {
   readonly installationId: string;
-  readonly requirementId: "windowsml-ocr" | "whisper-primary" | "ollama-runtime" | "capture-ollama-model";
+  readonly requirementId: "windowsml-ocr" | "whisper-primary" | "speaker-diarization" | "ollama-runtime" | "capture-ollama-model";
   readonly status: RuntimeInstallationStatus;
   readonly progress: number;
   readonly error?: CaptureFailureV2 | null;
@@ -402,7 +413,7 @@ export interface RuntimeReady {
 }
 
 export interface RuntimeRequirementV2 {
-  readonly requirementId: "windowsml-ocr" | "whisper-primary" | "ollama-runtime" | "capture-ollama-model";
+  readonly requirementId: "windowsml-ocr" | "whisper-primary" | "speaker-diarization" | "ollama-runtime" | "capture-ollama-model";
   readonly kind: string;
   readonly displayName: string;
   readonly status: RuntimeRequirementStatus;
@@ -434,10 +445,11 @@ export interface StartCaptureV2 {
   readonly targetLanguage?: string | null;
   readonly startPolicy: "eager";
   readonly pdfPageNumbers?: readonly (number)[] | null;
+  readonly identifySpeakers?: boolean;
 }
 
 export interface StartRuntimeInstallationV2 {
-  readonly requirementId: "windowsml-ocr" | "whisper-primary" | "ollama-runtime" | "capture-ollama-model";
+  readonly requirementId: "windowsml-ocr" | "whisper-primary" | "speaker-diarization" | "ollama-runtime" | "capture-ollama-model";
   readonly consent: true;
 }
 
@@ -503,7 +515,7 @@ export interface TimeLocator {
   readonly endMs: number;
 }
 
-export type CaptureContractName = "CaptureBlock" | "CaptureDocument" | "CaptureEngine" | "CaptureEventV2" | "CaptureFailureV2" | "CaptureOcrProjectionV3" | "CaptureOperationV2" | "CaptureSource" | "CaptureStreamingResult" | "ErrorBodyV2" | "ErrorEnvelopeV2" | "FinalizeIngestionV2" | "IngestionV2" | "OcrBoxV3" | "OcrComputePreflightV2" | "OcrPageProjectionV3" | "OcrPageScopeV2" | "OcrPointV3" | "OcrProvenanceResolvedV3" | "OcrProvenanceUnavailableV3" | "OcrProvenanceV3" | "OcrRasterV3" | "OpenIngestionV2" | "OpenStructuringSessionV2" | "PageLocator" | "PartialCaptureV2" | "RawCapture" | "RawCaptureSegment" | "ReportStructuringFailureV2" | "RuntimeArtifactDescriptorV2" | "RuntimeInstallationV2" | "RuntimeInstallationsV2" | "RuntimeModelInstallationV2" | "RuntimeModelInstallationsV2" | "RuntimeModelOptionV2" | "RuntimeModelOptionsV2" | "RuntimeReady" | "RuntimeRequirementV2" | "RuntimeRequirementsV2" | "RuntimeStreamingCapabilitiesV2" | "StartCaptureV2" | "StartRuntimeInstallationV2" | "StartRuntimeModelInstallationV2" | "StructuringBatchV2" | "StructuringProviderCapabilityV2" | "StructuringSemanticBlockV2" | "StructuringSessionV2" | "SubmitStructuringBatchV2" | "TimeLocator";
+export type CaptureContractName = "CaptureBlock" | "CaptureDocument" | "CaptureEngine" | "CaptureEventV2" | "CaptureFailureV2" | "CaptureOcrProjectionV3" | "CaptureOperationV2" | "CaptureSource" | "CaptureSpeaker" | "CaptureStreamingResult" | "ErrorBodyV2" | "ErrorEnvelopeV2" | "FinalizeIngestionV2" | "IngestionV2" | "OcrBoxV3" | "OcrComputePreflightV2" | "OcrPageProjectionV3" | "OcrPageScopeV2" | "OcrPointV3" | "OcrProvenanceResolvedV3" | "OcrProvenanceUnavailableV3" | "OcrProvenanceV3" | "OcrRasterV3" | "OpenIngestionV2" | "OpenStructuringSessionV2" | "PageLocator" | "PartialCaptureV2" | "RawCapture" | "RawCaptureSegment" | "ReportStructuringFailureV2" | "RuntimeArtifactDescriptorV2" | "RuntimeInstallationV2" | "RuntimeInstallationsV2" | "RuntimeModelInstallationV2" | "RuntimeModelInstallationsV2" | "RuntimeModelOptionV2" | "RuntimeModelOptionsV2" | "RuntimeReady" | "RuntimeRequirementV2" | "RuntimeRequirementsV2" | "RuntimeStreamingCapabilitiesV2" | "StartCaptureV2" | "StartRuntimeInstallationV2" | "StartRuntimeModelInstallationV2" | "StructuringBatchV2" | "StructuringProviderCapabilityV2" | "StructuringSemanticBlockV2" | "StructuringSessionV2" | "SubmitStructuringBatchV2" | "TimeLocator";
 
 export type CaptureContractInvariant = {
   readonly id: string;
@@ -590,6 +602,7 @@ export const CAPTURE_CONTRACT_EXTRA_POLICIES = {
   "CaptureOcrProjectionV3": "forbid",
   "CaptureOperationV2": "forbid",
   "CaptureSource": "forbid",
+  "CaptureSpeaker": "forbid",
   "CaptureStreamingResult": "forbid",
   "ErrorBodyV2": "forbid",
   "ErrorEnvelopeV2": "forbid",

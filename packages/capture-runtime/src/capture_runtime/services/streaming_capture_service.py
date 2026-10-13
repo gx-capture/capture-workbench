@@ -377,7 +377,24 @@ class StreamingCaptureService:
                 raise ProgressiveCaptureError("finalized streaming source is unavailable")
             source_path = self.repository.source_path(operation.ingestion_id)
             processor = self._processor
-            if operation.kind is CaptureSourceKind.AUDIO and processor is not None:
+            identify_speakers = self.repository.capture_request(capture_id).identify_speakers
+            if identify_speakers and operation.kind is not CaptureSourceKind.AUDIO:
+                raise ProgressiveCaptureError(
+                    "Speaker identification is only valid for audio sources.",
+                    code="invalid_speaker_identification",
+                    retryable=False,
+                )
+            if identify_speakers and self._extractor is not None:
+                # Speakers are decided over the whole recording, so this path
+                # transcribes it in one pass instead of progressive windows.
+                extraction = await self._extract_buffered_source(
+                    capture_id,
+                    operation.source,
+                    operation.kind,
+                    source_path,
+                    cancellation,
+                )
+            elif operation.kind is CaptureSourceKind.AUDIO and processor is not None:
                 extraction = CaptureExtractionOutcome(
                     raw=await processor.process(
                         capture_id=capture_id,
@@ -568,7 +585,9 @@ class StreamingCaptureService:
                 retryable=False,
             )
 
-        def report_ocr_progress(completed_pages: int, total_pages: int) -> None:
+        def report_ocr_progress(
+            completed_pages: int, total_pages: int, stage: str = "extracting"
+        ) -> None:
             if cancellation.is_set() or self._shutting_down:
                 return
             operation = self.repository.get_capture(capture_id)
@@ -583,7 +602,7 @@ class StreamingCaptureService:
                 self.repository.append_event(
                     capture_id,
                     event_type=StreamingEventType.CHECKPOINT,
-                    stage="extracting",
+                    stage=stage,
                     progress=progress,
                 )
             except OSError:
@@ -592,7 +611,15 @@ class StreamingCaptureService:
                 # still records state, and OCR itself must not fail with it.
                 return
 
-        if request.pdf_page_numbers is None:
+        if request.identify_speakers:
+            extraction = await extractor.extract(
+                content,
+                source,
+                cancellation,
+                identify_speakers=True,
+                speaker_progress=lambda stage, permille: report_ocr_progress(permille, 1000, stage),
+            )
+        elif request.pdf_page_numbers is None:
             extraction = await extractor.extract(
                 content, source, cancellation, ocr_progress=report_ocr_progress
             )
