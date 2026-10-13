@@ -49,6 +49,16 @@ public final class CaptureRuntimeTypes {
     return value;
   }
 
+  /** Captured text: may span lines, unlike identifiers and file names. */
+  private static String content(String value, int max, String field) {
+    if (value == null || value.isBlank()) throw new IllegalArgumentException(field + " must not be blank");
+    value = value.strip();
+    if (value.codePointCount(0, value.length()) > max) {
+      throw new IllegalArgumentException(field + " exceeds its maximum length");
+    }
+    return value;
+  }
+
   private static String sha256(String value, String field) {
     value = text(value, field).toLowerCase();
     if (!SHA256.matcher(value).matches()) {
@@ -397,13 +407,42 @@ public final class CaptureRuntimeTypes {
     }
   }
 
-  public record RawCaptureSegment(String segmentId, int order, Locator locator, String text) {
+  /** {@code speaker} is an anonymous diarization label, or null when it did not run or could not decide. */
+  public record RawCaptureSegment(String segmentId, int order, Locator locator, String text, String speaker, boolean speakerOverlap) {
     public RawCaptureSegment {
       segmentId = CaptureRuntimeTypes.text(segmentId, "segmentId");
       nonNegative(order, "order");
       Objects.requireNonNull(locator, "locator");
-      text = bounded(text, 2_000_000, "text");
+      text = content(text, 2_000_000, "text");
+      speaker = speaker == null ? null : speakerLabel(speaker, "speaker");
     }
+
+    public RawCaptureSegment(String segmentId, int order, Locator locator, String text) {
+      this(segmentId, order, locator, text, null, false);
+    }
+  }
+
+  /** An anonymous speaker and the stretch of the source to play so a person can name them. */
+  public record CaptureSpeaker(@JsonProperty(required = true) String speakerId, Locator sample) {
+    public CaptureSpeaker {
+      speakerId = speakerLabel(speakerId, "speakerId");
+      if (sample != null && !(sample instanceof TimeLocator)) throw new IllegalArgumentException("speaker sample must be a time range");
+    }
+  }
+
+  private static String speakerLabel(String value, String field) {
+    if (value == null || !value.matches("^[A-Za-z0-9_]{1,32}$")) throw new IllegalArgumentException(field + " must be a speaker label");
+    return value;
+  }
+
+  private static List<CaptureSpeaker> speakers(List<CaptureSpeaker> speakers, Engine diarizationEngine, List<RawCaptureSegment> segments) {
+    var copy = speakers == null ? List.<CaptureSpeaker>of() : List.copyOf(speakers);
+    if (copy.size() > 64) throw new IllegalArgumentException("speakers must contain at most 64 items");
+    var ids = new HashSet<String>();
+    for (var speaker : copy) if (!ids.add(speaker.speakerId())) throw new IllegalArgumentException("speakerId values must be unique");
+    if (!copy.isEmpty() && diarizationEngine == null) throw new IllegalArgumentException("speakers require a diarization engine");
+    for (var segment : segments) if (segment.speaker() != null && !ids.contains(segment.speaker())) throw new IllegalArgumentException("every segment speaker must be listed in speakers");
+    return copy;
   }
 
   public record OcrPageScope(
@@ -440,7 +479,9 @@ public final class CaptureRuntimeTypes {
       @JsonProperty(required = true) Engine extractionEngine,
       @JsonSetter(nulls = Nulls.FAIL) List<String> warnings,
       @JsonProperty(required = true) String createdAt,
-      OcrPageScope ocrPageScope) {
+      OcrPageScope ocrPageScope,
+      Engine diarizationEngine,
+      List<CaptureSpeaker> speakers) {
     public RawCapture {
       schemaVersion = text(schemaVersion, "schemaVersion");
       if (!"2".equals(schemaVersion)) throw new IllegalArgumentException("schemaVersion must equal 2");
@@ -454,12 +495,27 @@ public final class CaptureRuntimeTypes {
         var segment = Objects.requireNonNull(segments.get(index), "segment");
         if (segment.order() != index || !ids.add(segment.segmentId())) throw new IllegalArgumentException("raw segment order/id values are invalid");
       }
-      sourceText = bounded(sourceText, 8_000_000, "sourceText");
+      sourceText = content(sourceText, 8_000_000, "sourceText");
       if (!sourceText.equals(project(segments))) throw new IllegalArgumentException("sourceText projection differs");
       extractionEngine = Objects.requireNonNull(extractionEngine, "extractionEngine");
       warnings = CaptureRuntimeTypes.warnings(warnings);
       createdAt = timestamp(createdAt, "createdAt");
       ocrPageScope = ocrPageScope == null ? null : Objects.requireNonNull(ocrPageScope, "ocrPageScope");
+      diarizationEngine = diarizationEngine == null ? null : Objects.requireNonNull(diarizationEngine, "diarizationEngine");
+      speakers = CaptureRuntimeTypes.speakers(speakers, diarizationEngine, segments);
+    }
+
+    public RawCapture(
+        String schemaVersion,
+        boolean diagnosticOnly,
+        Source source,
+        List<RawCaptureSegment> segments,
+        String sourceText,
+        Engine extractionEngine,
+        List<String> warnings,
+        String createdAt,
+        OcrPageScope ocrPageScope) {
+      this(schemaVersion, diagnosticOnly, source, segments, sourceText, extractionEngine, warnings, createdAt, ocrPageScope, null, null);
     }
 
     public RawCapture(
@@ -471,7 +527,7 @@ public final class CaptureRuntimeTypes {
         Engine extractionEngine,
         List<String> warnings,
         String createdAt) {
-      this(schemaVersion, diagnosticOnly, source, segments, sourceText, extractionEngine, warnings, createdAt, null);
+      this(schemaVersion, diagnosticOnly, source, segments, sourceText, extractionEngine, warnings, createdAt, null, null, null);
     }
   }
 
@@ -489,8 +545,8 @@ public final class CaptureRuntimeTypes {
       Objects.requireNonNull(type, "type");
       sourceSegmentId = text(sourceSegmentId, "sourceSegmentId");
       Objects.requireNonNull(locator, "locator");
-      sourceText = bounded(sourceText, 2_000_000, "sourceText");
-      targetText = bounded(targetText, 2_000_000, "targetText");
+      sourceText = content(sourceText, 2_000_000, "sourceText");
+      targetText = content(targetText, 2_000_000, "targetText");
     }
   }
 
@@ -505,7 +561,9 @@ public final class CaptureRuntimeTypes {
       Engine structuringEngine,
       @JsonSetter(nulls = Nulls.FAIL) List<String> warnings,
       String createdAt,
-      String completedAt) {
+      String completedAt,
+      Engine diarizationEngine,
+      List<CaptureSpeaker> speakers) {
     public CaptureDocument {
       schemaVersion = text(schemaVersion, "schemaVersion");
       if (!"2".equals(schemaVersion)) throw new IllegalArgumentException("schemaVersion must equal 2");
@@ -525,14 +583,31 @@ public final class CaptureRuntimeTypes {
         if (segment.order() != index || !segmentIds.add(segment.segmentId()) || block.order() != index || !blockIds.add(block.blockId())) throw new IllegalArgumentException("document order/id values are invalid");
         if (!block.sourceSegmentId().equals(segment.segmentId()) || !block.locator().equals(segment.locator()) || !block.sourceText().equals(segment.text())) throw new IllegalArgumentException("block provenance differs from raw segment");
       }
-      sourceText = bounded(sourceText, 8_000_000, "sourceText");
-      targetText = bounded(targetText, 8_000_000, "targetText");
+      sourceText = content(sourceText, 8_000_000, "sourceText");
+      targetText = content(targetText, 8_000_000, "targetText");
       if (!sourceText.equals(project(rawSegments))) throw new IllegalArgumentException("sourceText projection differs");
       if (!targetText.equals(String.join("\n", blocks.stream().map(Block::targetText).toList()))) throw new IllegalArgumentException("targetText projection differs");
       warnings = CaptureRuntimeTypes.warnings(warnings);
       createdAt = timestamp(createdAt, "createdAt");
       completedAt = timestamp(completedAt, "completedAt");
       if (OffsetDateTime.parse(completedAt).isBefore(OffsetDateTime.parse(createdAt))) throw new IllegalArgumentException("completedAt precedes createdAt");
+      diarizationEngine = diarizationEngine == null ? null : Objects.requireNonNull(diarizationEngine, "diarizationEngine");
+      speakers = CaptureRuntimeTypes.speakers(speakers, diarizationEngine, rawSegments);
+    }
+
+    public CaptureDocument(
+        String schemaVersion,
+        Source source,
+        List<RawCaptureSegment> rawSegments,
+        List<Block> blocks,
+        String sourceText,
+        String targetText,
+        Engine extractionEngine,
+        Engine structuringEngine,
+        List<String> warnings,
+        String createdAt,
+        String completedAt) {
+      this(schemaVersion, source, rawSegments, blocks, sourceText, targetText, extractionEngine, structuringEngine, warnings, createdAt, completedAt, null, null);
     }
   }
 
@@ -639,7 +714,8 @@ public final class CaptureRuntimeTypes {
       StructuringMode structuringMode,
       String targetLanguage,
       String startPolicy,
-      List<Integer> pdfPageNumbers) {
+      List<Integer> pdfPageNumbers,
+      boolean identifySpeakers) {
     public StartCapture {
       protocolVersion = protocolVersion == null ? PROTOCOL_VERSION : text(protocolVersion, "protocolVersion");
       if (!PROTOCOL_VERSION.equals(protocolVersion)) throw new IllegalArgumentException("protocolVersion must equal 2");
@@ -658,8 +734,19 @@ public final class CaptureRuntimeTypes {
         String ingestionId,
         StructuringMode structuringMode,
         String targetLanguage,
+        String startPolicy,
+        List<Integer> pdfPageNumbers) {
+      this(protocolVersion, clientRequestId, ingestionId, structuringMode, targetLanguage, startPolicy, pdfPageNumbers, false);
+    }
+
+    public StartCapture(
+        String protocolVersion,
+        String clientRequestId,
+        String ingestionId,
+        StructuringMode structuringMode,
+        String targetLanguage,
         String startPolicy) {
-      this(protocolVersion, clientRequestId, ingestionId, structuringMode, targetLanguage, startPolicy, null);
+      this(protocolVersion, clientRequestId, ingestionId, structuringMode, targetLanguage, startPolicy, null, false);
     }
   }
 
@@ -1032,7 +1119,7 @@ public final class CaptureRuntimeTypes {
     public StructuringSemanticBlock {
       sourceSegmentId = text(sourceSegmentId, "sourceSegmentId");
       type = Objects.requireNonNull(type, "type");
-      targetText = targetText == null ? null : bounded(targetText, 2_000_000, "targetText");
+      targetText = targetText == null ? null : content(targetText, 2_000_000, "targetText");
     }
   }
 
@@ -1088,7 +1175,7 @@ public final class CaptureRuntimeTypes {
       nonNegative(revision, "revision");
       nonNegative(coveredUntilMs, "coveredUntilMs");
       segments = segments == null ? List.of() : List.copyOf(segments);
-      sourceText = sourceText == null ? "" : bounded(sourceText, 8_000_000, "sourceText");
+      sourceText = sourceText == null ? "" : content(sourceText, 8_000_000, "sourceText");
       if (!sourceText.equals(project(segments))) throw new IllegalArgumentException("partial sourceText projection differs");
       updatedAt = timestamp(updatedAt, "updatedAt");
     }
@@ -1154,7 +1241,8 @@ public final class CaptureRuntimeTypes {
       List<String> requiredFor,
       String installStrategy,
       String detail,
-      RuntimeArtifactDescriptor artifact) {
+      RuntimeArtifactDescriptor artifact,
+      boolean optional) {
     public RuntimeRequirement {
       requirementId = text(requirementId, "requirementId");
       kind = text(kind, "kind");
@@ -1162,6 +1250,18 @@ public final class CaptureRuntimeTypes {
       status = text(status, "status");
       requiredFor = requiredFor == null ? List.of() : List.copyOf(requiredFor);
       installStrategy = text(installStrategy, "installStrategy");
+    }
+
+    public RuntimeRequirement(
+        String requirementId,
+        String kind,
+        String displayName,
+        String status,
+        List<String> requiredFor,
+        String installStrategy,
+        String detail,
+        RuntimeArtifactDescriptor artifact) {
+      this(requirementId, kind, displayName, status, requiredFor, installStrategy, detail, artifact, false);
     }
   }
   public record RuntimeRequirements(List<RuntimeRequirement> items) { public RuntimeRequirements { items = items == null ? List.of() : List.copyOf(items); } }

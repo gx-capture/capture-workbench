@@ -1299,3 +1299,41 @@ def test_pull_session_rejects_extra_response_fields() -> None:
     )
     with pytest.raises(CaptureProtocolError):
         CaptureRuntimeClient(transport=transport).get_structuring_batch("cap", 0)
+
+
+def test_decodes_what_the_runtime_sends_for_speakers() -> None:
+    from capture_runtime_client.private.generated_models import (
+        CaptureDocument,
+        RawCapture,
+        RuntimeRequirementsV2,
+    )
+
+    samples = json.loads(
+        (
+            Path(__file__).resolve().parents[3]
+            / "packages/capture-runtime/tests/fixtures/speaker-wire-samples.json"
+        ).read_text(encoding="utf-8")
+    )
+
+    raw = RawCapture.model_validate(samples["rawCapture"])
+    assert [segment.speaker for segment in raw.segments] == ["SPEAKER_00", None]
+    assert raw.segments[1].speaker_overlap is True
+    assert [speaker.speaker_id for speaker in raw.speakers] == ["SPEAKER_00", "SPEAKER_01"]
+    assert raw.speakers[0].sample is not None
+    assert (raw.speakers[0].sample.start_ms, raw.speakers[0].sample.end_ms) == (0, 1000)
+    assert raw.diarization_engine is not None
+
+    assert CaptureDocument.model_validate(samples["captureDocument"]).speakers == raw.speakers
+    plain = RawCapture.model_validate(samples["rawCaptureWithoutSpeakers"])
+    assert plain.speakers == []
+    assert plain.diarization_engine is None
+    requirements = RuntimeRequirementsV2.model_validate(samples["runtimeRequirements"])
+    assert requirements.items[0].optional is True
+
+
+def test_capture_upload_asks_for_speakers_only_when_told() -> None:
+    assert CaptureUpload("meeting.wav", b"audio", "audio").identify_speakers is False
+    assert (
+        CaptureUpload("meeting.wav", b"audio", "audio", identify_speakers=True).identify_speakers
+        is True
+    )

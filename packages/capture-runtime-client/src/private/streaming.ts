@@ -124,6 +124,7 @@ export async function startStreamingCapture(
           structuringMode: upload.structuringMode ?? 'runtime',
           targetLanguage: upload.targetLanguage ?? null,
           startPolicy: 'eager',
+          ...(upload.identifySpeakers ? { identifySpeakers: true } : {}),
         }),
       },
       'CaptureOperation',
