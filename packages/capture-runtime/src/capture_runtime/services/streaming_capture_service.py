@@ -63,6 +63,8 @@ from capture_runtime.structuring import StructuringValidationError, validate_str
 from capture_runtime.structuring_provider import CaptureStructuringProvider
 from capture_runtime.worker_client import OcrWorkerFailure
 
+MAX_EVENT_SEGMENTS = 1_000
+
 
 class StreamingCaptureService:
     def __init__(
@@ -649,13 +651,17 @@ class StreamingCaptureService:
             updated_at=raw.created_at,
         )
         self.repository.write_partial(partial)
-        self.repository.append_event(
-            capture_id,
-            event_type=StreamingEventType.SEGMENT,
-            stage="extracting",
-            partial_revision=partial.revision,
-            segments=list(raw.segments),
-        )
+        # One event holds at most 1,000 segments; a long transcript split by
+        # speaker has more.
+        segments = list(raw.segments)
+        for start in range(0, len(segments), MAX_EVENT_SEGMENTS):
+            self.repository.append_event(
+                capture_id,
+                event_type=StreamingEventType.SEGMENT,
+                stage="extracting",
+                partial_revision=partial.revision,
+                segments=segments[start : start + MAX_EVENT_SEGMENTS],
+            )
         return extraction
 
     def _publish_execution_proof(
