@@ -887,6 +887,38 @@ class CaptureRuntimeClientTest {
         .isInstanceOf(IllegalArgumentException.class);
   }
 
+  @Test
+  void decodesCapturedTextThatSpansLines() {
+    var source = new CaptureRuntimeTypes.Source("a".repeat(64), "scan.pdf", "application/pdf", 10);
+    var engine = new CaptureRuntimeTypes.Engine("windowsml-ocr", "paddle", "sha256:" + "b".repeat(64), "cpu");
+    var json =
+        """
+        {"schemaVersion":"2","diagnosticOnly":true,
+         "source":{"sha256":"%s","fileName":"scan.pdf","mediaType":"application/pdf","bytes":10},
+         "segments":[
+           {"segmentId":"segment-1","order":0,"locator":{"kind":"page","page":1,"boundingBox":null},"text":"first line\\nsecond line"},
+           {"segmentId":"segment-2","order":1,"locator":{"kind":"page","page":2,"boundingBox":null},"text":"next page"}],
+         "sourceText":"first line\\nsecond line\\nnext page",
+         "extractionEngine":{"engine":"windowsml-ocr","model":"paddle","digest":"sha256:%s","device":"cpu"},
+         "warnings":[],"createdAt":"2026-08-14T00:00:00Z","ocrPageScope":null}
+        """
+            .formatted("a".repeat(64), "b".repeat(64));
+
+    var raw =
+        WireCodecs.decode(
+            json.getBytes(StandardCharsets.UTF_8), CaptureRuntimeTypes.RawCapture.class, MAPPER);
+
+    assertThat(raw.segments().get(0).text()).isEqualTo("first line\nsecond line");
+    assertThat(raw.sourceText()).isEqualTo("first line\nsecond line\nnext page");
+    assertThat(raw.source()).isEqualTo(source);
+    assertThat(raw.extractionEngine()).isEqualTo(engine);
+    assertThatThrownBy(
+            () ->
+                new CaptureRuntimeTypes.RawCaptureSegment(
+                    "segment-1", 0, new CaptureRuntimeTypes.PageLocator(1, null), "  \n "))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
   private static byte[] sharedPerspectiveOcrJson() throws Exception {
     var fixture = (ObjectNode) MAPPER.readTree(
         Files.readString(

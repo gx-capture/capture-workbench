@@ -49,6 +49,16 @@ public final class CaptureRuntimeTypes {
     return value;
   }
 
+  /** Captured text: may span lines, unlike identifiers and file names. */
+  private static String content(String value, int max, String field) {
+    if (value == null || value.isBlank()) throw new IllegalArgumentException(field + " must not be blank");
+    value = value.strip();
+    if (value.codePointCount(0, value.length()) > max) {
+      throw new IllegalArgumentException(field + " exceeds its maximum length");
+    }
+    return value;
+  }
+
   private static String sha256(String value, String field) {
     value = text(value, field).toLowerCase();
     if (!SHA256.matcher(value).matches()) {
@@ -402,7 +412,7 @@ public final class CaptureRuntimeTypes {
       segmentId = CaptureRuntimeTypes.text(segmentId, "segmentId");
       nonNegative(order, "order");
       Objects.requireNonNull(locator, "locator");
-      text = bounded(text, 2_000_000, "text");
+      text = content(text, 2_000_000, "text");
     }
   }
 
@@ -454,7 +464,7 @@ public final class CaptureRuntimeTypes {
         var segment = Objects.requireNonNull(segments.get(index), "segment");
         if (segment.order() != index || !ids.add(segment.segmentId())) throw new IllegalArgumentException("raw segment order/id values are invalid");
       }
-      sourceText = bounded(sourceText, 8_000_000, "sourceText");
+      sourceText = content(sourceText, 8_000_000, "sourceText");
       if (!sourceText.equals(project(segments))) throw new IllegalArgumentException("sourceText projection differs");
       extractionEngine = Objects.requireNonNull(extractionEngine, "extractionEngine");
       warnings = CaptureRuntimeTypes.warnings(warnings);
@@ -489,8 +499,8 @@ public final class CaptureRuntimeTypes {
       Objects.requireNonNull(type, "type");
       sourceSegmentId = text(sourceSegmentId, "sourceSegmentId");
       Objects.requireNonNull(locator, "locator");
-      sourceText = bounded(sourceText, 2_000_000, "sourceText");
-      targetText = bounded(targetText, 2_000_000, "targetText");
+      sourceText = content(sourceText, 2_000_000, "sourceText");
+      targetText = content(targetText, 2_000_000, "targetText");
     }
   }
 
@@ -525,8 +535,8 @@ public final class CaptureRuntimeTypes {
         if (segment.order() != index || !segmentIds.add(segment.segmentId()) || block.order() != index || !blockIds.add(block.blockId())) throw new IllegalArgumentException("document order/id values are invalid");
         if (!block.sourceSegmentId().equals(segment.segmentId()) || !block.locator().equals(segment.locator()) || !block.sourceText().equals(segment.text())) throw new IllegalArgumentException("block provenance differs from raw segment");
       }
-      sourceText = bounded(sourceText, 8_000_000, "sourceText");
-      targetText = bounded(targetText, 8_000_000, "targetText");
+      sourceText = content(sourceText, 8_000_000, "sourceText");
+      targetText = content(targetText, 8_000_000, "targetText");
       if (!sourceText.equals(project(rawSegments))) throw new IllegalArgumentException("sourceText projection differs");
       if (!targetText.equals(String.join("\n", blocks.stream().map(Block::targetText).toList()))) throw new IllegalArgumentException("targetText projection differs");
       warnings = CaptureRuntimeTypes.warnings(warnings);
@@ -1032,7 +1042,7 @@ public final class CaptureRuntimeTypes {
     public StructuringSemanticBlock {
       sourceSegmentId = text(sourceSegmentId, "sourceSegmentId");
       type = Objects.requireNonNull(type, "type");
-      targetText = targetText == null ? null : bounded(targetText, 2_000_000, "targetText");
+      targetText = targetText == null ? null : content(targetText, 2_000_000, "targetText");
     }
   }
 
@@ -1088,7 +1098,7 @@ public final class CaptureRuntimeTypes {
       nonNegative(revision, "revision");
       nonNegative(coveredUntilMs, "coveredUntilMs");
       segments = segments == null ? List.of() : List.copyOf(segments);
-      sourceText = sourceText == null ? "" : bounded(sourceText, 8_000_000, "sourceText");
+      sourceText = sourceText == null ? "" : content(sourceText, 8_000_000, "sourceText");
       if (!sourceText.equals(project(segments))) throw new IllegalArgumentException("partial sourceText projection differs");
       updatedAt = timestamp(updatedAt, "updatedAt");
     }
