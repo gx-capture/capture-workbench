@@ -149,6 +149,33 @@ export const GENERATED_CAPTURE_DOCUMENT_JSON_SCHEMA = {
       "title": "CaptureSource",
       "type": "object"
     },
+    "CaptureSpeaker": {
+      "additionalProperties": false,
+      "description": "An anonymous speaker and a stretch of the source to listen to and name them.",
+      "properties": {
+        "sample": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TimeLocator"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "speakerId": {
+          "pattern": "^[A-Za-z0-9_]{1,32}$",
+          "title": "Speakerid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "speakerId"
+      ],
+      "title": "CaptureSpeaker",
+      "type": "object"
+    },
     "PageLocator": {
       "additionalProperties": false,
       "properties": {
@@ -229,6 +256,24 @@ export const GENERATED_CAPTURE_DOCUMENT_JSON_SCHEMA = {
           "title": "Segmentid",
           "type": "string"
         },
+        "speaker": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9_]{1,32}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Speaker"
+        },
+        "speakerOverlap": {
+          "default": false,
+          "title": "Speakeroverlap",
+          "type": "boolean"
+        },
         "text": {
           "maxLength": 2000000,
           "minLength": 1,
@@ -296,6 +341,17 @@ export const GENERATED_CAPTURE_DOCUMENT_JSON_SCHEMA = {
       "title": "Createdat",
       "type": "string"
     },
+    "diarizationEngine": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CaptureEngine"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
     "extractionEngine": {
       "$ref": "#/$defs/CaptureEngine"
     },
@@ -322,6 +378,14 @@ export const GENERATED_CAPTURE_DOCUMENT_JSON_SCHEMA = {
       "minLength": 1,
       "title": "Sourcetext",
       "type": "string"
+    },
+    "speakers": {
+      "items": {
+        "$ref": "#/$defs/CaptureSpeaker"
+      },
+      "maxItems": 64,
+      "title": "Speakers",
+      "type": "array"
     },
     "structuringEngine": {
       "$ref": "#/$defs/CaptureEngine"

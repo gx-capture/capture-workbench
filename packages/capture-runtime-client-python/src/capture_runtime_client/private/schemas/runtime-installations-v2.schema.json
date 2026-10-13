@@ -63,6 +63,7 @@
           "enum": [
             "windowsml-ocr",
             "whisper-primary",
+            "speaker-diarization",
             "ollama-runtime",
             "capture-ollama-model"
           ],
