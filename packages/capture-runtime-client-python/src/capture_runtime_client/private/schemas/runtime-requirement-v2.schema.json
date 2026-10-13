@@ -84,6 +84,11 @@
       "title": "Installstrategy",
       "type": "string"
     },
+    "optional": {
+      "default": false,
+      "title": "Optional",
+      "type": "boolean"
+    },
     "detail": {
       "anyOf": [
         {

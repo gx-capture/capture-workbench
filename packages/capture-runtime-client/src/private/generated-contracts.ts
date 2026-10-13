@@ -419,6 +419,7 @@ export interface RuntimeRequirementV2 {
   readonly status: RuntimeRequirementStatus;
   readonly requiredFor: readonly (string)[];
   readonly installStrategy: string;
+  readonly optional?: boolean;
   readonly detail?: string | null;
   readonly artifact?: RuntimeArtifactDescriptorV2 | null;
 }
