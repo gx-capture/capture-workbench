@@ -122,6 +122,11 @@ export interface CaptureUpload {
   readonly sourceKind: CaptureSourceKind;
   readonly targetLanguage?: string;
   readonly structuringMode?: 'runtime' | 'host';
+  /**
+   * Audio only: label who speaks each segment. Needs the optional
+   * `speaker-diarization` unit; the capture then reports no partial transcript.
+   */
+  readonly identifySpeakers?: boolean;
   readonly clientRequestId: string;
   readonly signal?: AbortSignal;
 }

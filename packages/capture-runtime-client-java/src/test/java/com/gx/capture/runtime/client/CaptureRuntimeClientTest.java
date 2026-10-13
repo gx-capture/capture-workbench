@@ -887,6 +887,54 @@ class CaptureRuntimeClientTest {
         .isInstanceOf(IllegalArgumentException.class);
   }
 
+  private static byte[] speakerWireSample(String name) throws Exception {
+    var samples =
+        MAPPER.readTree(
+            Files.readString(
+                Path.of("..", "capture-runtime", "tests", "fixtures", "speaker-wire-samples.json")));
+    return MAPPER.writeValueAsBytes(samples.get(name));
+  }
+
+  @Test
+  void decodesWhatTheRuntimeSendsForACaptureWithSpeakers() throws Exception {
+    var raw =
+        WireCodecs.decode(speakerWireSample("rawCapture"), CaptureRuntimeTypes.RawCapture.class, MAPPER);
+    assertThat(raw.segments().get(0).speaker()).isEqualTo("SPEAKER_00");
+    assertThat(raw.segments().get(1).speaker()).isNull();
+    assertThat(raw.segments().get(1).speakerOverlap()).isTrue();
+    assertThat(raw.diarizationEngine().engine()).isEqualTo("speaker-diarization");
+    assertThat(raw.speakers()).extracting(CaptureRuntimeTypes.CaptureSpeaker::speakerId).containsExactly("SPEAKER_00", "SPEAKER_01");
+    assertThat(raw.speakers().get(0).sample()).isEqualTo(new CaptureRuntimeTypes.TimeLocator(0, 1000));
+    assertThat(raw.speakers().get(1).sample()).isNull();
+
+    var document =
+        WireCodecs.decode(speakerWireSample("captureDocument"), CaptureRuntimeTypes.CaptureDocument.class, MAPPER);
+    assertThat(document.speakers()).isEqualTo(raw.speakers());
+    assertThat(document.rawSegments().get(0).speaker()).isEqualTo("SPEAKER_00");
+  }
+
+  @Test
+  void decodesWhatTheRuntimeSendsWithoutSpeakersAndForAnOptionalUnit() throws Exception {
+    var raw =
+        WireCodecs.decode(speakerWireSample("rawCaptureWithoutSpeakers"), CaptureRuntimeTypes.RawCapture.class, MAPPER);
+    assertThat(raw.speakers()).isEmpty();
+    assertThat(raw.diarizationEngine()).isNull();
+    assertThat(raw.segments().get(0).speaker()).isNull();
+
+    var requirements =
+        WireCodecs.decode(speakerWireSample("runtimeRequirements"), CaptureRuntimeTypes.RuntimeRequirements.class, MAPPER);
+    assertThat(requirements.items().get(0).requirementId()).isEqualTo("speaker-diarization");
+    assertThat(requirements.items().get(0).optional()).isTrue();
+  }
+
+  @Test
+  void asksForSpeakersOnlyWhenTheUploadSaysSo() {
+    var upload = new CaptureRuntimeClient.CaptureUpload("meeting.wav", new byte[] {1}, CaptureRuntimeTypes.SourceKind.AUDIO, "request-1");
+    assertThat(upload.identifySpeakers()).isFalse();
+    assertThat(upload.identifyingSpeakers().identifySpeakers()).isTrue();
+    assertThat(upload.identifyingSpeakers().fileName()).isEqualTo("meeting.wav");
+  }
+
   private static byte[] sharedPerspectiveOcrJson() throws Exception {
     var fixture = (ObjectNode) MAPPER.readTree(
         Files.readString(
