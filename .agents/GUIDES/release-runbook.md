@@ -45,6 +45,17 @@ actually shipped (0.5.1 followed the same steps); workflow files remain the sour
   structure of dense vertical periodical scans and pages that mix directions;
   about a fifth of furigana on textbook pages is not set aside.
 
+## Prepared: 0.6.1 (patch)
+
+- 0.6.0 is published (GitHub release `v0.6.0`, 2026-10-14) and LAW pins it.
+- 0.6.1 carries one fix: each OCR model profiles under its own ONNX Runtime
+  prefix, so GPU OCR no longer fails about half the time with
+  `ocr_worker_failed` (PR #90).
+- Compatible with 0.6.x clients. Contract-set SHA-256 unchanged
+  (`fc8a994e…`). Model-source Commit A `10524f9` (annotated tag
+  `capture-runtime-model-sources-v0.6.1`). OCR profile
+  `capture-workbench-ocr-be5a35092b5cc3be`.
+
 ## Prepared, not published: 0.6.0
 
 - Release source is on `integration/next-release` (version files at 0.6.0); it
