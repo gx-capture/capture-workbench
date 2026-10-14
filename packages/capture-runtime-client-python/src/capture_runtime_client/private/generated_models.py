@@ -23,7 +23,7 @@ from pydantic.alias_generators import to_camel
 
 API_VERSION: Final = '2.0'
 CAPTURE_DOCUMENT_SCHEMA_VERSION: Final = '2'
-RUNTIME_VERSION: Final = '0.5.1'
+RUNTIME_VERSION: Final = '0.6.0'
 
 
 NonEmptyString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
@@ -36,6 +36,14 @@ ProjectedText = Annotated[
 WarningText = Annotated[str, StringConstraints(strip_whitespace=True, max_length=500)]
 Sha256Hex = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 EngineDigest = Annotated[str, StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$")]
+# The contract fixes the shape of a release version, not its value, so a new
+# release does not change the contract hash. Compatibility is decided by the
+# contract hash and the major/minor version, not by this field being equal.
+RuntimeVersionText = Annotated[
+    str, StringConstraints(pattern=r"^[0-9]+\.[0-9]+\.[0-9]+$", max_length=32)
+]
+SpeakerLabel = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_]{1,32}$")]
+SpeakerName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
 
 
 class StrictModel(BaseModel):
@@ -47,6 +55,16 @@ class StrictModel(BaseModel):
         populate_by_name=True,
         str_strip_whitespace=True,
     )
+
+
+def _runtime_version_is_always_sent(schema: dict[str, Any]) -> None:
+    """Mark runtimeVersion required: the runtime always sends it, though the
+    model fills it in when built in code, which a schema would read as optional.
+    """
+
+    required = schema.setdefault("required", [])
+    if "runtimeVersion" not in required:
+        required.append("runtimeVersion")
 
 
 def _require_aware(value: datetime) -> datetime:
@@ -112,6 +130,8 @@ class OcrComputeNoticeCode(StrEnum):
 CaptureRequirementId = Literal[
     "windowsml-ocr",
     "whisper-primary",
+    "speaker-diarization",
+    "vertical-japanese-reader",
     "ollama-runtime",
     "capture-ollama-model",
 ]
@@ -290,6 +310,21 @@ class RawCaptureSegment(StrictModel):
     order: int = Field(ge=0)
     locator: CaptureLocator
     text: CaptureText
+    # Anonymous label from speaker diarization; None when it did not run or
+    # could not decide between speakers.
+    speaker: SpeakerLabel | None = None
+    # More than one person is audible in this segment.
+    speaker_overlap: bool = False
+
+
+class CaptureSpeaker(StrictModel):
+    """An anonymous speaker and a stretch of the source to listen to and name them."""
+
+    speaker_id: SpeakerLabel
+    sample: TimeLocator | None = None
+    # The name a person gave this speaker. The runtime never sets it; the
+    # workbench UI fills it in and the host stores the named document.
+    display_name: SpeakerName | None = None
 
 
 class OcrPageScopeV2(StrictModel):
@@ -322,6 +357,11 @@ class RawCapture(StrictModel):
     segments: list[RawCaptureSegment] = Field(min_length=1, max_length=10_000)
     source_text: ProjectedText
     extraction_engine: CaptureEngine
+    diarization_engine: CaptureEngine | None = None
+    speakers: list[CaptureSpeaker] = Field(default_factory=list, max_length=64)
+    # Optional units that are not installed and would have read part of this
+    # source better; the host may offer to install them and capture again.
+    suggested_units: list[CaptureRequirementId] = Field(default_factory=list, max_length=8)
     warnings: list[WarningText] = Field(default_factory=list, max_length=1_000)
     ocr_page_scope: OcrPageScopeV2 | None = None
     created_at: datetime
@@ -338,6 +378,16 @@ class RawCapture(StrictModel):
         identifiers = [segment.segment_id for segment in self.segments]
         if len(identifiers) != len(set(identifiers)):
             raise ValueError("raw segmentId values must be unique")
+        speaker_ids = [speaker.speaker_id for speaker in self.speakers]
+        if len(speaker_ids) != len(set(speaker_ids)):
+            raise ValueError("speakerId values must be unique")
+        if self.speakers and self.diarization_engine is None:
+            raise ValueError("speakers require a diarization engine")
+        if any(
+            segment.speaker is not None and segment.speaker not in speaker_ids
+            for segment in self.segments
+        ):
+            raise ValueError("every segment speaker must be listed in speakers")
         return self
 
 
@@ -359,6 +409,9 @@ class CaptureDocument(StrictModel):
     source_text: ProjectedText
     target_text: ProjectedText
     extraction_engine: CaptureEngine
+    diarization_engine: CaptureEngine | None = None
+    speakers: list[CaptureSpeaker] = Field(default_factory=list, max_length=64)
+    suggested_units: list[CaptureRequirementId] = Field(default_factory=list, max_length=8)
     structuring_engine: CaptureEngine
     warnings: list[WarningText] = Field(default_factory=list, max_length=1_000)
     created_at: datetime
@@ -400,6 +453,16 @@ class CaptureDocument(StrictModel):
         expected_target = "\n".join(block.target_text for block in self.blocks)
         if self.target_text != expected_target:
             raise ValueError("targetText must be the exact block target projection")
+        speaker_ids = [speaker.speaker_id for speaker in self.speakers]
+        if len(speaker_ids) != len(set(speaker_ids)):
+            raise ValueError("speakerId values must be unique")
+        if self.speakers and self.diarization_engine is None:
+            raise ValueError("speakers require a diarization engine")
+        if any(
+            segment.speaker is not None and segment.speaker not in speaker_ids
+            for segment in self.raw_segments
+        ):
+            raise ValueError("every segment speaker must be listed in speakers")
         return self
 
 
@@ -417,6 +480,9 @@ class RuntimeRequirementV2(StrictModel):
     status: RuntimeRequirementStatus
     required_for: list[str]
     install_strategy: NonEmptyString
+    # An optional unit adds a capability; captures that do not ask for it
+    # work without it, so a host may leave it uninstalled.
+    optional: bool = False
     detail: str | None = None
     artifact: RuntimeArtifactDescriptorV2 | None = None
 
@@ -580,6 +646,9 @@ class StartCaptureV2(StrictModel):
     target_language: str | None = None
     start_policy: Literal["eager"] = "eager"
     pdf_page_numbers: list[int] | None = Field(default=None, min_length=1, max_length=500)
+    # Audio only: label who speaks each segment. Needs the speaker-diarization
+    # unit, and the capture reports no partial transcript while it runs.
+    identify_speakers: bool = False
 
     @field_validator("target_language")
     @classmethod
@@ -840,7 +909,7 @@ class CaptureOcrProjectionV3(StrictModel):
     # semantics aligned while still allowing ``pages=[]``.
     pages: list[OcrPageProjectionV3] = Field(..., max_length=500)
     page_count: int = Field(ge=0, le=500)
-    runtime_version: Literal['0.5.1']
+    runtime_version: RuntimeVersionText
     contract_sha256: Sha256Hex
     provenance: OcrProvenanceV3
     warnings: list[WarningText] = Field(default_factory=list, max_length=1_000)
@@ -1002,10 +1071,12 @@ class RuntimeStreamingCapabilitiesV2(StrictModel):
 class OcrComputePreflightV2(StrictModel):
     """Runtime-owned pre-OCR compute selection and user-notice contract."""
 
+    model_config = ConfigDict(json_schema_extra=_runtime_version_is_always_sent)
+
     api_version: Literal["2.0"] = API_VERSION
     schema_version: Literal["1"] = "1"
     service: Literal["capture-runtime"] = "capture-runtime"
-    runtime_version: Literal["0.5.1"] = RUNTIME_VERSION
+    runtime_version: RuntimeVersionText = Field(default_factory=lambda: RUNTIME_VERSION)
     contract_set_version: Literal["2"] = "2"
     contract_sha256: Sha256Hex
     # The worker computes this digest from its own executable. It is absent
@@ -1039,10 +1110,12 @@ class OcrComputePreflightV2(StrictModel):
 class RuntimeReady(StrictModel):
     """General v2 readiness payload shared by runtime clients."""
 
+    model_config = ConfigDict(json_schema_extra=_runtime_version_is_always_sent)
+
     ready: bool
     service: Literal["capture-runtime"] = "capture-runtime"
     api_version: Literal["2.0"] = API_VERSION
-    runtime_version: Literal["0.5.1"] = RUNTIME_VERSION
+    runtime_version: RuntimeVersionText = Field(default_factory=lambda: RUNTIME_VERSION)
     capture_document_schema_version: Literal["2"] = CAPTURE_DOCUMENT_SCHEMA_VERSION
     capture_document_schema_sha256: Sha256Hex | None = None
     schema_sha256: Sha256Hex | None = None
@@ -1085,6 +1158,7 @@ __all__ = [
     'StructuringSemanticBlockV2',
     'SubmitStructuringBatchV2',
     'RawCaptureSegment',
+    'CaptureSpeaker',
     'OcrPageScopeV2',
     'RawCapture',
     'CaptureBlock',

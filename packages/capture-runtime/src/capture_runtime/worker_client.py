@@ -12,6 +12,7 @@ from pathlib import Path
 from time import monotonic
 from typing import Any, Literal, cast
 
+from capture_runtime.constants import VERTICAL_READER_REQUIREMENT_ID
 from capture_runtime.contracts import (
     CaptureFailureV2,
     OcrComputePreflightV2,
@@ -20,6 +21,7 @@ from capture_runtime.contracts import (
 from capture_runtime.ocr_execution_proof import OcrExecutionDeviceProofV1
 from capture_runtime.ocr_preflight import OcrComputeSelection, OcrExecutionPlan
 from capture_runtime.ocr_projection import OcrBoxInput
+from capture_runtime.speaker_turns import SPEAKER_LABEL, SpeakerTurn
 from capture_runtime.worker_contracts import WorkerProtocolError
 from capture_runtime.worker_process import (
     DEFAULT_PROBE_TIMEOUT_SECONDS,
@@ -31,6 +33,7 @@ from capture_runtime.worker_process import (
 )
 
 SHA256_PROVENANCE = re.compile(r"^sha256:[a-f0-9]{64}$")
+SUGGESTABLE_UNITS = frozenset({VERTICAL_READER_REQUIREMENT_ID})
 
 
 class WorkerResultError(ValueError):
@@ -66,12 +69,32 @@ class WorkerProbeResult:
 
 
 @dataclass(frozen=True, slots=True)
+class WorkerWord:
+    start_ms: int
+    end_ms: int
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
 class WorkerSegment:
     order: int
     text: str
     page: int | None = None
     start_ms: int | None = None
     end_ms: int | None = None
+    words: tuple[WorkerWord, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class WorkerDiarizationResult:
+    turns: tuple[SpeakerTurn, ...]
+    exclusive_turns: tuple[SpeakerTurn, ...]
+    duration_ms: int
+    engine: str
+    model: str
+    digest: str
+    device: str
+    warnings: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,6 +172,8 @@ class WorkerRunResult:
     ocr_provenance: OcrProvenanceV3 | None = None
     # Internal worker-only receipt; this is not part of any HTTP/SSE contract.
     execution_proof: OcrExecutionDeviceProofV1 | None = None
+    # Optional units that are not installed and would have read part of the source.
+    suggested_units: tuple[str, ...] = ()
 
 
 def _string(value: object, label: str, *, maximum: int = 500) -> str:
@@ -246,10 +271,133 @@ def parse_ocr_compute_selection(payload: dict[str, Any]) -> OcrComputeSelection:
         raise WorkerResultError("OCR compute selection result is invalid") from error
 
 
+def _parse_suggested_units(value: object) -> tuple[str, ...]:
+    """Optional units the worker says would have improved this result."""
+
+    if value is None:
+        return ()
+    if (
+        not isinstance(value, list)
+        or not value
+        or len(set(value)) != len(value)
+        or any(item not in SUGGESTABLE_UNITS for item in value)
+    ):
+        raise WorkerResultError("worker suggested units are invalid")
+    return tuple(value)
+
+
+def _milliseconds(value: object) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise WorkerResultError("worker time must be a non-negative integer")
+    return value
+
+
+def _parse_words(value: object, *, time_locator: bool) -> tuple[WorkerWord, ...]:
+    if value is None:
+        return ()
+    if not time_locator or not isinstance(value, list) or len(value) > 100_000:
+        raise WorkerResultError("worker segment words are invalid")
+    words: list[WorkerWord] = []
+    for raw_word in value:
+        if not isinstance(raw_word, dict) or set(raw_word) != {"startMs", "endMs", "text"}:
+            raise WorkerResultError("worker segment word has unexpected fields")
+        start_ms = _milliseconds(raw_word["startMs"])
+        end_ms = _milliseconds(raw_word["endMs"])
+        text = raw_word["text"]
+        if end_ms < start_ms or not isinstance(text, str) or not text or len(text) > 500:
+            raise WorkerResultError("worker segment word is invalid")
+        words.append(WorkerWord(start_ms, end_ms, text))
+    return tuple(words)
+
+
+def _parse_turns(value: object, duration_ms: int) -> tuple[SpeakerTurn, ...]:
+    if not isinstance(value, list) or len(value) > 100_000:
+        raise WorkerResultError("diarization turns must be a bounded list")
+    turns: list[SpeakerTurn] = []
+    for raw_turn in value:
+        if not isinstance(raw_turn, dict) or set(raw_turn) != {"startMs", "endMs", "speaker"}:
+            raise WorkerResultError("diarization turn has unexpected fields")
+        start_ms = _milliseconds(raw_turn["startMs"])
+        end_ms = _milliseconds(raw_turn["endMs"])
+        speaker = raw_turn["speaker"]
+        if (
+            not start_ms < end_ms <= duration_ms
+            or not isinstance(speaker, str)
+            or SPEAKER_LABEL.fullmatch(speaker) is None
+        ):
+            raise WorkerResultError("diarization turn is invalid")
+        turns.append(SpeakerTurn(start_ms, end_ms, speaker))
+    return tuple(turns)
+
+
+def parse_diarization_result(payload: dict[str, Any]) -> WorkerDiarizationResult:
+    """Validate a speaker diarization worker result before the runtime uses it."""
+
+    if set(payload) != {"turns", "exclusiveTurns", "durationMs", "provenance", "warnings"}:
+        raise WorkerResultError("diarization result has unexpected fields")
+    duration_ms = _milliseconds(payload["durationMs"])
+    exclusive_turns = _parse_turns(payload["exclusiveTurns"], duration_ms)
+    if any(
+        right.start_ms < left.end_ms
+        for left, right in zip(exclusive_turns, exclusive_turns[1:], strict=False)
+    ):
+        raise WorkerResultError("exclusive diarization turns must not overlap")
+    provenance = payload["provenance"]
+    if not isinstance(provenance, dict) or set(provenance) != {
+        "engine",
+        "model",
+        "digest",
+        "device",
+    }:
+        raise WorkerResultError("worker provenance has unexpected fields")
+    digest = provenance["digest"]
+    if not isinstance(digest, str) or SHA256_PROVENANCE.fullmatch(digest) is None:
+        raise WorkerResultError("worker provenance digest is invalid")
+    if provenance["engine"] != "speaker-diarization" or provenance["device"] not in {
+        "cpu",
+        "cuda",
+    }:
+        raise WorkerResultError("diarization provenance is invalid")
+    warnings = payload["warnings"]
+    if not isinstance(warnings, list) or len(warnings) > 100:
+        raise WorkerResultError("worker warnings must be a bounded list")
+    return WorkerDiarizationResult(
+        turns=_parse_turns(payload["turns"], duration_ms),
+        exclusive_turns=exclusive_turns,
+        duration_ms=duration_ms,
+        engine=provenance["engine"],
+        model=_string(provenance["model"], "worker provenance model"),
+        digest=digest,
+        device=provenance["device"],
+        warnings=tuple(_string(item, "worker warning") for item in warnings),
+    )
+
+
+def _permille_handler(
+    progress: Callable[[int], None] | None,
+) -> Callable[[dict[str, object]], None] | None:
+    """Pass on well-formed 0-1000 progress frames; a malformed one is ignored."""
+
+    if progress is None:
+        return None
+
+    def handle(frame: dict[str, object]) -> None:
+        value = frame.get("permille")
+        if (
+            set(frame) == {"permille"}
+            and isinstance(value, int)
+            and not isinstance(value, bool)
+            and 0 <= value <= 1000
+        ):
+            progress(value)
+
+    return handle
+
+
 def parse_run_result(payload: dict[str, Any]) -> WorkerRunResult:
     fields = set(payload)
     if not {"segments", "provenance", "warnings"}.issubset(fields) or not fields.issubset(
-        {"segments", "provenance", "warnings", "pages", "executionProof"}
+        {"segments", "provenance", "warnings", "pages", "executionProof", "suggestedUnits"}
     ):
         raise WorkerResultError("worker run result has unexpected fields")
     raw_segments = payload["segments"]
@@ -257,7 +405,7 @@ def parse_run_result(payload: dict[str, Any]) -> WorkerRunResult:
         raise WorkerResultError("worker segments must be a bounded list")
     segments: list[WorkerSegment] = []
     for expected_order, raw_segment in enumerate(raw_segments):
-        if not isinstance(raw_segment, dict) or set(raw_segment) != {
+        if not isinstance(raw_segment, dict) or set(raw_segment) - {"words"} != {
             "order",
             "text",
             "page",
@@ -287,6 +435,7 @@ def parse_run_result(payload: dict[str, Any]) -> WorkerRunResult:
                 page=page if page_locator else None,
                 start_ms=start_ms if time_locator else None,
                 end_ms=end_ms if time_locator else None,
+                words=_parse_words(raw_segment.get("words"), time_locator=time_locator),
             )
         )
     provenance = payload["provenance"]
@@ -336,6 +485,7 @@ def parse_run_result(payload: dict[str, Any]) -> WorkerRunResult:
         pages=pages,
         ocr_provenance=ocr_provenance,
         execution_proof=execution_proof,
+        suggested_units=_parse_suggested_units(payload.get("suggestedUnits")),
     )
 
 
@@ -698,6 +848,8 @@ class WorkerClient:
         cancel_event: asyncio.Event,
         timeout_seconds: float = DEFAULT_RUN_TIMEOUT_SECONDS,
         ocr_progress: Callable[[int, int], None] | None = None,
+        on_permille: Callable[[int], None] | None = None,
+        vertical_reader_dir: Path | None = None,
     ) -> WorkerRunResult:
         if not source_path.is_file() or not source_path.is_absolute():
             raise ValueError("worker source path must be an existing absolute file")
@@ -711,6 +863,8 @@ class WorkerClient:
             "options": options,
         }
         is_ocr = engine.requirement_id == "windowsml-ocr"
+        if is_ocr and vertical_reader_dir is not None:
+            payload["verticalReaderPath"] = str(vertical_reader_dir)
         progress_frames: list[dict[str, object]] = []
 
         def collect_ocr_progress(frame: dict[str, object]) -> None:
@@ -736,7 +890,7 @@ class WorkerClient:
                 return
             ocr_progress(len(progress.pages), progress.page_count)
 
-        progress_handler = collect_ocr_progress if is_ocr else None
+        progress_handler = collect_ocr_progress if is_ocr else _permille_handler(on_permille)
         try:
             response = await self.process.request(
                 engine.executable,
@@ -883,6 +1037,37 @@ class WorkerClient:
                     worker_sha256=engine.worker_sha256,
                 ) from error
             raise
+
+    async def diarize(
+        self,
+        engine: InstalledEngine,
+        *,
+        source_path: Path,
+        media_type: str,
+        options: dict[str, object],
+        cancel_event: asyncio.Event,
+        timeout_seconds: float = DEFAULT_RUN_TIMEOUT_SECONDS,
+        on_permille: Callable[[int], None] | None = None,
+    ) -> WorkerDiarizationResult:
+        if not source_path.is_file() or not source_path.is_absolute():
+            raise ValueError("worker source path must be an existing absolute file")
+        response = await self.process.request(
+            engine.executable,
+            "run",
+            {
+                "requirementId": engine.requirement_id,
+                "artifactVersion": engine.artifact_version,
+                "modelPath": str(engine.model_dir),
+                "sourcePath": str(source_path),
+                "mediaType": media_type,
+                "options": options,
+            },
+            cancel_event=cancel_event,
+            progress_handler=_permille_handler(on_permille),
+            timeout_seconds=timeout_seconds,
+        )
+        assert response.result is not None
+        return parse_diarization_result(response.result)
 
     async def shutdown(self) -> None:
         await self.process.shutdown()

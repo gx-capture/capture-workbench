@@ -66,6 +66,15 @@ export interface DesktopMessages {
   readonly canceled: string;
   readonly desktopOnly: string;
   readonly whisperNeeded: string;
+  readonly speakerUnitNeeded: string;
+  readonly verticalReaderMissed: string;
+  readonly offerInstall: string;
+  readonly identifySpeakers: string;
+  readonly speakers: string;
+  readonly speakersHint: string;
+  readonly speakerName: string;
+  readonly loadSamples: string;
+  readonly noSample: string;
   readonly missingRawResult: string;
   readonly manualRequirement: (name: string, detail: string) => string;
   readonly finishInstallThenRetry: string;
@@ -145,6 +154,15 @@ const ZH_TW: DesktopMessages = {
   canceled: '處理已取消。',
   desktopOnly: 'Capture Workbench 僅能在 Windows 桌面 App 中使用。',
   whisperNeeded: '選取的音訊需要額外安裝 Whisper。',
+  speakerUnitNeeded: '辨識說話者需要額外安裝一個元件。',
+  verticalReaderMissed: '這份文件有直書日文的頁面。安裝直書日文閱讀器後重新處理，這些頁面會讀得更準。',
+  offerInstall: '安裝',
+  identifySpeakers: '辨識音訊中的說話者',
+  speakers: '說話者',
+  speakersHint: '聽一段聲音後填上名字，匯出的文字會改用這個名字。',
+  speakerName: '這位說話者的名字',
+  loadSamples: '載入試聽片段',
+  noSample: '沒有可試聽的片段',
   missingRawResult: 'Capture Runtime 未提供已完成工作的原始結果。',
   manualRequirement: (name, detail) => `${name} 需要手動處理：${detail}`,
   finishInstallThenRetry: '請完成安裝後再試。',
@@ -166,6 +184,8 @@ const ZH_TW: DesktopMessages = {
     uploading: '上傳中',
     queued: '等待處理',
     extracting: '文字辨識中',
+    transcribing: '語音轉文字中',
+    'identifying-speakers': '辨識說話者中',
     awaiting_structuring: '等待結構化',
     structuring: '結構化中',
     persisting: '儲存中',
@@ -244,6 +264,15 @@ const EN: DesktopMessages = {
   canceled: 'Processing was canceled.',
   desktopOnly: 'Capture Workbench runs only in the Windows desktop app.',
   whisperNeeded: 'Audio needs Whisper installed first.',
+  speakerUnitNeeded: 'Telling speakers apart needs one more component installed.',
+  verticalReaderMissed: 'This document has pages of vertical Japanese. Install the vertical Japanese reader and process it again to read them more accurately.',
+  offerInstall: 'Install',
+  identifySpeakers: 'Tell speakers apart in audio',
+  speakers: 'Speakers',
+  speakersHint: 'Listen to a sample, then type a name. Exported text will use it.',
+  speakerName: "This speaker's name",
+  loadSamples: 'Load samples',
+  noSample: 'No sample to play',
   missingRawResult: 'The finished job returned no raw result.',
   manualRequirement: (name, detail) => `${name} needs a manual step: ${detail}`,
   finishInstallThenRetry: 'Finish the installation, then try again.',
@@ -265,6 +294,8 @@ const EN: DesktopMessages = {
     uploading: 'Uploading',
     queued: 'Waiting',
     extracting: 'Recognizing text',
+    transcribing: 'Transcribing speech',
+    'identifying-speakers': 'Telling speakers apart',
     awaiting_structuring: 'Waiting to structure',
     structuring: 'Structuring',
     persisting: 'Saving',

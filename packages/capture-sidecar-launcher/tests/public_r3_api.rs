@@ -14,7 +14,7 @@ use capture_sidecar_launcher::{
 use sha2::{Digest, Sha256};
 
 const SCHEMA_FILE_NAME: &str = "capture-document-v2.schema.json";
-const SCHEMA_SHA256: &str = "850afd212d049c25da41d3867ba5477451a6a2c6c7e41f116fe60f26b6a35335";
+const SCHEMA_SHA256: &str = "5131125b6851bccb8da96150e12c2c50170ad45c2f4a31768404a5406ad8598f";
 
 struct RecordingSink {
     binding: Mutex<Option<Vec<u8>>>,

@@ -43,8 +43,28 @@ def test_approved_production_lock_is_canonical_model_enabled() -> None:
     assert [item["requirementId"] for item in lock["requirements"]] == [
         "windowsml-ocr",
         "whisper-primary",
+        "speaker-diarization",
+        "vertical-japanese-reader",
     ]
     assert model_source_lock.release_mode(lock) == model_source_lock.MODEL_ENABLED_RELEASE_MODE
+
+
+def test_production_lock_pins_every_file_the_speaker_worker_needs() -> None:
+    from capture_runtime.speaker_diarization import DIARIZATION_REQUIRED_FILES
+
+    source = (
+        Path(__file__).resolve().parents[2] / "model-sources" / "release-model-source-lock.json"
+    )
+    lock = model_source_lock.load_source_lock(source, require_approved=False)
+    files = {
+        item["path"]: item
+        for item in model_source_lock.model_delivery(lock, "speaker-diarization")["files"]
+    }
+
+    assert {f"model/{name}" for name in DIARIZATION_REQUIRED_FILES} <= set(files)
+    assert {item["kind"] for item in files.values()} == {"license", "notice", "source"}
+    assert all(item["revision"] in item["url"] for item in files.values())
+    assert all(item["spdx"] == "CC-BY-4.0" for item in files.values())
 
 
 @pytest.mark.parametrize(

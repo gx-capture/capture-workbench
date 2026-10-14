@@ -167,6 +167,10 @@
       <h2>{{ m().dropHere }}</h2>
       <button mat-flat-button type="button" data-testid="source-import" [disabled]="!store.canCapture()" (click)="openFilePicker()">{{ m().chooseFiles }}</button>
       <span class="intake-hint">{{ m().supportedFiles }}</span>
+      <label class="intake-hint">
+        <input type="checkbox" data-testid="identify-speakers" [checked]="store.identifySpeakers()" (change)="store.identifySpeakers.set($any($event.target).checked)" />
+        {{ m().identifySpeakers }}
+      </label>
     </mat-card>
 
     <section class="queue-section" aria-labelledby="queue-title">
@@ -240,8 +244,38 @@
       }
       @if (item.result) {
         <section class="review-block result" data-testid="document-result">
+          @for (unit of store.missedUnits(item.result); track unit) {
+            @if (unit === 'vertical-japanese-reader') {
+              <p data-testid="document-missed-unit" [attr.data-requirement-id]="unit">
+                {{ m().verticalReaderMissed }}
+                <button mat-stroked-button type="button" (click)="store.requestUnit(unit)">{{ m().offerInstall }}</button>
+              </p>
+            }
+          }
+          @if (item.result.speakers?.length) {
+            <div data-testid="document-speakers">
+              <h3>{{ m().speakers }}</h3>
+              <p>{{ m().speakersHint }}</p>
+              @if (!store.sampleSources().has(item.documentId)) {
+                <button mat-stroked-button type="button" data-testid="load-speaker-samples" (click)="store.loadSpeakerSamples(item.documentId, item.mediaType)">{{ m().loadSamples }}</button>
+              }
+              @for (speaker of item.result.speakers; track speaker.speakerId) {
+                <div data-testid="document-speaker" [attr.data-speaker-id]="speaker.speakerId">
+                  <label>
+                    <span>{{ speaker.speakerId }}</span>
+                    <input type="text" maxlength="100" autocomplete="off" [value]="speaker.displayName ?? ''" [placeholder]="m().speakerName" (change)="store.nameSpeaker(item.documentId, speaker.speakerId, $any($event.target).value)" />
+                  </label>
+                  @if (store.speakerSampleUrl(item.documentId, speaker.sample); as sampleUrl) {
+                    <audio controls preload="none" [src]="sampleUrl"></audio>
+                  } @else if (!speaker.sample) {
+                    <small>{{ m().noSample }}</small>
+                  }
+                </div>
+              }
+            </div>
+          }
           <h3>{{ m().structuredResult }}</h3>
-          <pre>{{ item.result.targetText }}</pre>
+          <pre>{{ store.resultText(item.result) }}</pre>
           <ol class="result-block-list" data-testid="document-result-blocks">
             @for (block of item.result.blocks; track block.blockId) {
               <li data-testid="document-result-block" [attr.data-block-id]="block.blockId" [attr.data-order]="block.order" [attr.data-source-segment-id]="block.sourceSegmentId" [attr.data-locator-kind]="block.locator.kind" [attr.data-page]="block.locator.kind === 'page' ? block.locator.page : null" [attr.data-start-ms]="block.locator.kind === 'time' ? block.locator.startMs : null" [attr.data-end-ms]="block.locator.kind === 'time' ? block.locator.endMs : null">

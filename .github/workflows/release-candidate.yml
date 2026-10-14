@@ -576,8 +576,9 @@ jobs:
           node tools/verify-release-candidate.ts --candidate "$candidate" --version "$env:RELEASE_VERSION" --source-commit "$sourceCommit" --release-mode "$env:RELEASE_MODE" --runtime-candidate-id '${{ inputs.runtime_candidate_id }}' --contract-set-sha256 '${{ inputs.contract_set_sha256 }}'
           $catalog = Get-Content "$candidate/runtime/capture-engine-catalog.json" -Raw | ConvertFrom-Json
           if ($catalog.runtimeVersion -ne $env:RELEASE_VERSION) { throw 'Candidate model catalog runtime version drifted.' }
-          if ($catalog.requirements.Count -ne 2) { throw 'Model-enabled candidate must contain exactly OCR and Whisper requirements.' }
-          if ((@($catalog.requirements | ForEach-Object requirementId) -join ',') -ne 'windowsml-ocr,whisper-primary') { throw 'Model-enabled candidate requirements are not source-lock ordered.' }
+          $lockedIds = @((Get-Content 'packages/capture-runtime/model-sources/release-model-source-lock.json' -Raw | ConvertFrom-Json).requirements | ForEach-Object requirementId)
+          $catalogIds = @($catalog.requirements | ForEach-Object requirementId)
+          if ($lockedIds.Count -lt 2 -or ($catalogIds -join ',') -ne ($lockedIds -join ',')) { throw "Model-enabled candidate requirements ($($catalogIds -join ',')) are not the model source lock's ($($lockedIds -join ','))." }
           uv run --no-project --python 3.12 python packages/capture-runtime/scripts/model_source_lock.py validate
           node tools/local-release-consumer-smoke.ts --runtime-dir "$candidate/runtime" --version "$env:RELEASE_VERSION"
           $ambient = Get-ChildItem Env: | Where-Object { $_.Name -match '^(?:CAPTURE_(?:USER_MODEL_DIR|EXTRACTION_PROVIDER|STRUCTURING_PROVIDER|OLLAMA_[A-Z0-9_]+|WINDOWSML_[A-Z0-9_]+|WHISPER_[A-Z0-9_]+)|OLLAMA_(?:MODELS|HOST))$' }

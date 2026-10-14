@@ -123,6 +123,13 @@ export class DesktopLibraryService {
       .pipe(map(sanitizeSummary));
   }
 
+  /** Reads the stored source file, for playing a speaker's sample. */
+  sourceBytes(documentId: string): Observable<ArrayBuffer> {
+    return this.commands.invoke<ArrayBuffer>('library_source_bytes', {
+      request: { documentId },
+    });
+  }
+
   export(documentId: string, format: 'json' | 'text'): Observable<DesktopLibraryExport> {
     return this.commands.invoke<DesktopLibraryExport>('library_export', {
       request: { documentId, format },

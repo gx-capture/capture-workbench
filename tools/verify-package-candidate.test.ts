@@ -16,7 +16,7 @@ const sourceCommit = 'a'.repeat(40);
 const producerRunId = 12345;
 const contractSetBytes = Buffer.from('{"catalogVersion":"2"}\n', 'utf8');
 const CANONICAL_CONTRACT_SET_SHA256 =
-  'f72e22229bbc726f1feff4c8ea99ab7e68c64dfa893b038bb731a99255b6495c';
+  'fc8a994e5a2a822376821da277e949eb203df9223977da4db4cdc7ab29724523';
 const STALE_CONTRACT_SET_SHA256 =
   '858e258be437465821d92ec4aa33e494aca5600b672af06856a26e883af827a0';
 const packages = [

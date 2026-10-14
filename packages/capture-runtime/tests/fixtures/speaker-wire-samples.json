@@ -1,0 +1,242 @@
+{
+  "rawCapture": {
+    "schemaVersion": "2",
+    "diagnosticOnly": true,
+    "source": {
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "fileName": "meeting.wav",
+      "mediaType": "audio/wav",
+      "bytes": 32000
+    },
+    "segments": [
+      {
+        "segmentId": "segment-1",
+        "order": 0,
+        "locator": {
+          "kind": "time",
+          "startMs": 0,
+          "endMs": 1000
+        },
+        "text": "Good morning",
+        "speaker": "SPEAKER_00",
+        "speakerOverlap": false
+      },
+      {
+        "segmentId": "segment-2",
+        "order": 1,
+        "locator": {
+          "kind": "time",
+          "startMs": 1000,
+          "endMs": 2000
+        },
+        "text": "Hello there",
+        "speaker": null,
+        "speakerOverlap": true
+      }
+    ],
+    "sourceText": "Good morning\nHello there",
+    "extractionEngine": {
+      "engine": "whisper-primary",
+      "model": "large-v3-turbo",
+      "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "device": "cuda"
+    },
+    "diarizationEngine": {
+      "engine": "speaker-diarization",
+      "model": "pyannote-speaker-diarization-community-1",
+      "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "device": "cpu"
+    },
+    "speakers": [
+      {
+        "speakerId": "SPEAKER_00",
+        "sample": {
+          "kind": "time",
+          "startMs": 0,
+          "endMs": 1000
+        },
+        "displayName": null
+      },
+      {
+        "speakerId": "SPEAKER_01",
+        "sample": null,
+        "displayName": "王小明"
+      }
+    ],
+    "suggestedUnits": [],
+    "warnings": [],
+    "ocrPageScope": null,
+    "createdAt": "2026-10-13T08:00:00Z"
+  },
+  "rawCaptureWithoutSpeakers": {
+    "schemaVersion": "2",
+    "diagnosticOnly": true,
+    "source": {
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "fileName": "meeting.wav",
+      "mediaType": "audio/wav",
+      "bytes": 32000
+    },
+    "segments": [
+      {
+        "segmentId": "segment-1",
+        "order": 0,
+        "locator": {
+          "kind": "time",
+          "startMs": 0,
+          "endMs": 1000
+        },
+        "text": "Good morning",
+        "speaker": null,
+        "speakerOverlap": false
+      },
+      {
+        "segmentId": "segment-2",
+        "order": 1,
+        "locator": {
+          "kind": "time",
+          "startMs": 1000,
+          "endMs": 2000
+        },
+        "text": "Hello there",
+        "speaker": null,
+        "speakerOverlap": false
+      }
+    ],
+    "sourceText": "Good morning\nHello there",
+    "extractionEngine": {
+      "engine": "whisper-primary",
+      "model": "large-v3-turbo",
+      "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "device": "cuda"
+    },
+    "diarizationEngine": null,
+    "speakers": [],
+    "suggestedUnits": [
+      "vertical-japanese-reader"
+    ],
+    "warnings": [],
+    "ocrPageScope": null,
+    "createdAt": "2026-10-13T08:00:00Z"
+  },
+  "captureDocument": {
+    "schemaVersion": "2",
+    "source": {
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "fileName": "meeting.wav",
+      "mediaType": "audio/wav",
+      "bytes": 32000
+    },
+    "rawSegments": [
+      {
+        "segmentId": "segment-1",
+        "order": 0,
+        "locator": {
+          "kind": "time",
+          "startMs": 0,
+          "endMs": 1000
+        },
+        "text": "Good morning",
+        "speaker": "SPEAKER_00",
+        "speakerOverlap": false
+      },
+      {
+        "segmentId": "segment-2",
+        "order": 1,
+        "locator": {
+          "kind": "time",
+          "startMs": 1000,
+          "endMs": 2000
+        },
+        "text": "Hello there",
+        "speaker": null,
+        "speakerOverlap": true
+      }
+    ],
+    "blocks": [
+      {
+        "blockId": "block-1",
+        "order": 0,
+        "type": "transcript",
+        "sourceSegmentId": "segment-1",
+        "locator": {
+          "kind": "time",
+          "startMs": 0,
+          "endMs": 1000
+        },
+        "sourceText": "Good morning",
+        "targetText": "Good morning"
+      },
+      {
+        "blockId": "block-2",
+        "order": 1,
+        "type": "transcript",
+        "sourceSegmentId": "segment-2",
+        "locator": {
+          "kind": "time",
+          "startMs": 1000,
+          "endMs": 2000
+        },
+        "sourceText": "Hello there",
+        "targetText": "Hello there"
+      }
+    ],
+    "sourceText": "Good morning\nHello there",
+    "targetText": "Good morning\nHello there",
+    "extractionEngine": {
+      "engine": "whisper-primary",
+      "model": "large-v3-turbo",
+      "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "device": "cuda"
+    },
+    "diarizationEngine": {
+      "engine": "speaker-diarization",
+      "model": "pyannote-speaker-diarization-community-1",
+      "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "device": "cpu"
+    },
+    "speakers": [
+      {
+        "speakerId": "SPEAKER_00",
+        "sample": {
+          "kind": "time",
+          "startMs": 0,
+          "endMs": 1000
+        },
+        "displayName": null
+      },
+      {
+        "speakerId": "SPEAKER_01",
+        "sample": null,
+        "displayName": "王小明"
+      }
+    ],
+    "suggestedUnits": [],
+    "structuringEngine": {
+      "engine": "host",
+      "model": "deterministic",
+      "digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "device": "cpu"
+    },
+    "warnings": [],
+    "createdAt": "2026-10-13T08:00:00Z",
+    "completedAt": "2026-10-13T08:00:00Z"
+  },
+  "runtimeRequirements": {
+    "items": [
+      {
+        "requirementId": "speaker-diarization",
+        "kind": "speaker-identification",
+        "displayName": "Speaker identification",
+        "status": "unavailable",
+        "requiredFor": [
+          "audio"
+        ],
+        "installStrategy": "runtime-catalog",
+        "optional": true,
+        "detail": "No downloadable model is published for this runtime release.",
+        "artifact": null
+      }
+    ]
+  }
+}

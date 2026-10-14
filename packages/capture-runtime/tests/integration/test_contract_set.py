@@ -64,7 +64,7 @@ def test_runtime_owned_schema_source_has_one_release_contract_identity() -> None
     )
     assert contract_set.bundle["contractSetVersion"] == CONTRACT_SET_VERSION
     assert document["schemaSha256"] == (
-        "850afd212d049c25da41d3867ba5477451a6a2c6c7e41f116fe60f26b6a35335"
+        "5131125b6851bccb8da96150e12c2c50170ad45c2f4a31768404a5406ad8598f"
     )
 
 
@@ -200,3 +200,22 @@ def test_executable_packaging_embeds_contract_bytes_and_digest() -> None:
     assert 'contract_assets / "contract-set.sha256"' in spec
     assert '"src/capture_runtime/assets/contract-set.json"' in pyproject
     assert '"src/capture_runtime/assets/contract-set.sha256"' in pyproject
+
+
+def test_contract_set_does_not_change_with_the_release_version() -> None:
+    from capture_runtime.constants import RUNTIME_VERSION
+    from capture_runtime.contracts import RuntimeReady
+
+    bundle = load_contract_set().bundle_bytes
+    assert RUNTIME_VERSION.encode() not in bundle
+
+    ready = RuntimeReady.model_validate(
+        RuntimeReady(ready=True).model_dump(mode="json", by_alias=True)
+        | {"runtimeVersion": "12.34.56"}
+    )
+    assert ready.runtime_version == "12.34.56"
+    for invalid in ("latest", "1.2", "1.2.3-rc1", ""):
+        with pytest.raises(ValueError):
+            RuntimeReady.model_validate(
+                ready.model_dump(mode="json", by_alias=True) | {"runtimeVersion": invalid}
+            )

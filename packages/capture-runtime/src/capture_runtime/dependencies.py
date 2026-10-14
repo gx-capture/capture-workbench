@@ -8,8 +8,10 @@ from pathlib import Path
 from capture_runtime.clock import Clock, SystemClock
 from capture_runtime.config import RuntimeSettings
 from capture_runtime.constants import (
+    DIARIZATION_REQUIREMENT_ID,
     OLLAMA_MODEL_REQUIREMENT_ID,
     OLLAMA_RUNTIME_REQUIREMENT_ID,
+    VERTICAL_READER_REQUIREMENT_ID,
     WHISPER_REQUIREMENT_ID,
     WINDOWSML_REQUIREMENT_ID,
 )
@@ -158,7 +160,12 @@ def build_runtime_dependencies(
         else set()
     )
     enabled_requirement_ids = (
-        {WINDOWSML_REQUIREMENT_ID, WHISPER_REQUIREMENT_ID}
+        {
+            WINDOWSML_REQUIREMENT_ID,
+            WHISPER_REQUIREMENT_ID,
+            DIARIZATION_REQUIREMENT_ID,
+            VERTICAL_READER_REQUIREMENT_ID,
+        }
         if settings.structuring_provider in {"host", "external-ollama"}
         else None
     )

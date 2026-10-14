@@ -27,7 +27,7 @@ public final class CaptureRuntimeTypes {
   public static final String CONTRACT_SET_VERSION = "2";
   /** Updated only as part of a coordinated runtime/client release. */
   public static final String CONTRACT_SET_SHA256 =
-      "f72e22229bbc726f1feff4c8ea99ab7e68c64dfa893b038bb731a99255b6495c";
+      "fc8a994e5a2a822376821da277e949eb203df9223977da4db4cdc7ab29724523";
 
   private static final Pattern SHA256 = Pattern.compile("^[0-9a-f]{64}$");
   private static final Pattern FAILURE_CODE = Pattern.compile("^[a-z][a-z0-9_]{1,63}$");
@@ -407,13 +407,47 @@ public final class CaptureRuntimeTypes {
     }
   }
 
-  public record RawCaptureSegment(String segmentId, int order, Locator locator, String text) {
+  /** {@code speaker} is an anonymous diarization label, or null when it did not run or could not decide. */
+  public record RawCaptureSegment(String segmentId, int order, Locator locator, String text, String speaker, boolean speakerOverlap) {
     public RawCaptureSegment {
       segmentId = CaptureRuntimeTypes.text(segmentId, "segmentId");
       nonNegative(order, "order");
       Objects.requireNonNull(locator, "locator");
       text = content(text, 2_000_000, "text");
+      speaker = speaker == null ? null : speakerLabel(speaker, "speaker");
     }
+
+    public RawCaptureSegment(String segmentId, int order, Locator locator, String text) {
+      this(segmentId, order, locator, text, null, false);
+    }
+  }
+
+  /** An anonymous speaker and the stretch of the source to play so a person can name them. */
+  public record CaptureSpeaker(@JsonProperty(required = true) String speakerId, Locator sample, String displayName) {
+    public CaptureSpeaker {
+      speakerId = speakerLabel(speakerId, "speakerId");
+      if (sample != null && !(sample instanceof TimeLocator)) throw new IllegalArgumentException("speaker sample must be a time range");
+      displayName = displayName == null ? null : bounded(displayName, 100, "displayName");
+    }
+
+    public CaptureSpeaker(String speakerId, Locator sample) {
+      this(speakerId, sample, null);
+    }
+  }
+
+  private static String speakerLabel(String value, String field) {
+    if (value == null || !value.matches("^[A-Za-z0-9_]{1,32}$")) throw new IllegalArgumentException(field + " must be a speaker label");
+    return value;
+  }
+
+  private static List<CaptureSpeaker> speakers(List<CaptureSpeaker> speakers, Engine diarizationEngine, List<RawCaptureSegment> segments) {
+    var copy = speakers == null ? List.<CaptureSpeaker>of() : List.copyOf(speakers);
+    if (copy.size() > 64) throw new IllegalArgumentException("speakers must contain at most 64 items");
+    var ids = new HashSet<String>();
+    for (var speaker : copy) if (!ids.add(speaker.speakerId())) throw new IllegalArgumentException("speakerId values must be unique");
+    if (!copy.isEmpty() && diarizationEngine == null) throw new IllegalArgumentException("speakers require a diarization engine");
+    for (var segment : segments) if (segment.speaker() != null && !ids.contains(segment.speaker())) throw new IllegalArgumentException("every segment speaker must be listed in speakers");
+    return copy;
   }
 
   public record OcrPageScope(
@@ -450,7 +484,10 @@ public final class CaptureRuntimeTypes {
       @JsonProperty(required = true) Engine extractionEngine,
       @JsonSetter(nulls = Nulls.FAIL) List<String> warnings,
       @JsonProperty(required = true) String createdAt,
-      OcrPageScope ocrPageScope) {
+      OcrPageScope ocrPageScope,
+      Engine diarizationEngine,
+      List<CaptureSpeaker> speakers,
+      List<String> suggestedUnits) {
     public RawCapture {
       schemaVersion = text(schemaVersion, "schemaVersion");
       if (!"2".equals(schemaVersion)) throw new IllegalArgumentException("schemaVersion must equal 2");
@@ -470,6 +507,37 @@ public final class CaptureRuntimeTypes {
       warnings = CaptureRuntimeTypes.warnings(warnings);
       createdAt = timestamp(createdAt, "createdAt");
       ocrPageScope = ocrPageScope == null ? null : Objects.requireNonNull(ocrPageScope, "ocrPageScope");
+      diarizationEngine = diarizationEngine == null ? null : Objects.requireNonNull(diarizationEngine, "diarizationEngine");
+      speakers = CaptureRuntimeTypes.speakers(speakers, diarizationEngine, segments);
+      suggestedUnits = suggestedUnits == null ? List.of() : List.copyOf(suggestedUnits);
+    }
+
+    public RawCapture(
+        String schemaVersion,
+        boolean diagnosticOnly,
+        Source source,
+        List<RawCaptureSegment> segments,
+        String sourceText,
+        Engine extractionEngine,
+        List<String> warnings,
+        String createdAt,
+        OcrPageScope ocrPageScope,
+        Engine diarizationEngine,
+        List<CaptureSpeaker> speakers) {
+      this(schemaVersion, diagnosticOnly, source, segments, sourceText, extractionEngine, warnings, createdAt, ocrPageScope, diarizationEngine, speakers, null);
+    }
+
+    public RawCapture(
+        String schemaVersion,
+        boolean diagnosticOnly,
+        Source source,
+        List<RawCaptureSegment> segments,
+        String sourceText,
+        Engine extractionEngine,
+        List<String> warnings,
+        String createdAt,
+        OcrPageScope ocrPageScope) {
+      this(schemaVersion, diagnosticOnly, source, segments, sourceText, extractionEngine, warnings, createdAt, ocrPageScope, null, null, null);
     }
 
     public RawCapture(
@@ -481,7 +549,7 @@ public final class CaptureRuntimeTypes {
         Engine extractionEngine,
         List<String> warnings,
         String createdAt) {
-      this(schemaVersion, diagnosticOnly, source, segments, sourceText, extractionEngine, warnings, createdAt, null);
+      this(schemaVersion, diagnosticOnly, source, segments, sourceText, extractionEngine, warnings, createdAt, null, null, null, null);
     }
   }
 
@@ -515,7 +583,10 @@ public final class CaptureRuntimeTypes {
       Engine structuringEngine,
       @JsonSetter(nulls = Nulls.FAIL) List<String> warnings,
       String createdAt,
-      String completedAt) {
+      String completedAt,
+      Engine diarizationEngine,
+      List<CaptureSpeaker> speakers,
+      List<String> suggestedUnits) {
     public CaptureDocument {
       schemaVersion = text(schemaVersion, "schemaVersion");
       if (!"2".equals(schemaVersion)) throw new IllegalArgumentException("schemaVersion must equal 2");
@@ -543,6 +614,24 @@ public final class CaptureRuntimeTypes {
       createdAt = timestamp(createdAt, "createdAt");
       completedAt = timestamp(completedAt, "completedAt");
       if (OffsetDateTime.parse(completedAt).isBefore(OffsetDateTime.parse(createdAt))) throw new IllegalArgumentException("completedAt precedes createdAt");
+      diarizationEngine = diarizationEngine == null ? null : Objects.requireNonNull(diarizationEngine, "diarizationEngine");
+      speakers = CaptureRuntimeTypes.speakers(speakers, diarizationEngine, rawSegments);
+      suggestedUnits = suggestedUnits == null ? List.of() : List.copyOf(suggestedUnits);
+    }
+
+    public CaptureDocument(
+        String schemaVersion,
+        Source source,
+        List<RawCaptureSegment> rawSegments,
+        List<Block> blocks,
+        String sourceText,
+        String targetText,
+        Engine extractionEngine,
+        Engine structuringEngine,
+        List<String> warnings,
+        String createdAt,
+        String completedAt) {
+      this(schemaVersion, source, rawSegments, blocks, sourceText, targetText, extractionEngine, structuringEngine, warnings, createdAt, completedAt, null, null, null);
     }
   }
 
@@ -649,7 +738,8 @@ public final class CaptureRuntimeTypes {
       StructuringMode structuringMode,
       String targetLanguage,
       String startPolicy,
-      List<Integer> pdfPageNumbers) {
+      List<Integer> pdfPageNumbers,
+      boolean identifySpeakers) {
     public StartCapture {
       protocolVersion = protocolVersion == null ? PROTOCOL_VERSION : text(protocolVersion, "protocolVersion");
       if (!PROTOCOL_VERSION.equals(protocolVersion)) throw new IllegalArgumentException("protocolVersion must equal 2");
@@ -668,15 +758,26 @@ public final class CaptureRuntimeTypes {
         String ingestionId,
         StructuringMode structuringMode,
         String targetLanguage,
+        String startPolicy,
+        List<Integer> pdfPageNumbers) {
+      this(protocolVersion, clientRequestId, ingestionId, structuringMode, targetLanguage, startPolicy, pdfPageNumbers, false);
+    }
+
+    public StartCapture(
+        String protocolVersion,
+        String clientRequestId,
+        String ingestionId,
+        StructuringMode structuringMode,
+        String targetLanguage,
         String startPolicy) {
-      this(protocolVersion, clientRequestId, ingestionId, structuringMode, targetLanguage, startPolicy, null);
+      this(protocolVersion, clientRequestId, ingestionId, structuringMode, targetLanguage, startPolicy, null, false);
     }
   }
 
   // BEGIN GENERATED OCR PROJECTION
   // Generated from capture-ocr-projection-v3.schema.json in contract-set.json. Do not edit.
-  public static final String RUNTIME_VERSION = "0.5.1";
-  private static final String OCR_RUNTIME_VERSION = RUNTIME_VERSION;
+  public static final String RUNTIME_VERSION = "0.6.0";
+  private static final Pattern OCR_RUNTIME_VERSION_PATTERN = Pattern.compile("^[0-9]+\\.[0-9]+\\.[0-9]+$");
   private static final Pattern OCR_SOURCE_SHA256_PATTERN = Pattern.compile("^[0-9a-f]{64}$");
   private static final Pattern OCR_FAILURE_CODE_PATTERN = Pattern.compile("^[a-z][a-z0-9_]{1,63}$");
 
@@ -925,7 +1026,7 @@ public final class CaptureRuntimeTypes {
       pages = List.copyOf(Objects.requireNonNull(pages, "pages"));
       if (pageCount < 0 || pageCount > 500 || pageCount != pages.size()) throw new IllegalArgumentException("pageCount must equal pages.size() and stay in the canonical range");
       if (pages.size() > 500) throw new IllegalArgumentException("OCR pages exceed the canonical limit");
-      runtimeVersion = ocrText(runtimeVersion, 1, 5, "runtimeVersion"); if (!OCR_RUNTIME_VERSION.equals(runtimeVersion)) throw new IllegalArgumentException("runtimeVersion is incompatible");
+      runtimeVersion = ocrText(runtimeVersion, 1, 32, "runtimeVersion"); if (!OCR_RUNTIME_VERSION_PATTERN.matcher(runtimeVersion).matches()) throw new IllegalArgumentException("runtimeVersion is not a release version");
       contractSha256 = ocrSha256(contractSha256, "contractSha256");
       provenance = Objects.requireNonNull(provenance, "provenance");
       for (var index = 0; index < pages.size(); index++) {
@@ -1164,7 +1265,8 @@ public final class CaptureRuntimeTypes {
       List<String> requiredFor,
       String installStrategy,
       String detail,
-      RuntimeArtifactDescriptor artifact) {
+      RuntimeArtifactDescriptor artifact,
+      boolean optional) {
     public RuntimeRequirement {
       requirementId = text(requirementId, "requirementId");
       kind = text(kind, "kind");
@@ -1172,6 +1274,18 @@ public final class CaptureRuntimeTypes {
       status = text(status, "status");
       requiredFor = requiredFor == null ? List.of() : List.copyOf(requiredFor);
       installStrategy = text(installStrategy, "installStrategy");
+    }
+
+    public RuntimeRequirement(
+        String requirementId,
+        String kind,
+        String displayName,
+        String status,
+        List<String> requiredFor,
+        String installStrategy,
+        String detail,
+        RuntimeArtifactDescriptor artifact) {
+      this(requirementId, kind, displayName, status, requiredFor, installStrategy, detail, artifact, false);
     }
   }
   public record RuntimeRequirements(List<RuntimeRequirement> items) { public RuntimeRequirements { items = items == null ? List.of() : List.copyOf(items); } }

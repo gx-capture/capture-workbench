@@ -21,6 +21,40 @@ Capture Workbench follows an explicit 0.x compatibility policy:
 The consumer consistency check is a permanent CI gate for the declared
 runtime, package lock, Python host, desktop host, and browser host versions.
 
+## 0.6.0
+
+This release is incompatible with 0.5.x: a 0.6.0 runtime needs 0.6.0 clients.
+Cert Prep and LAW migrate once.
+
+### Contract
+
+- The contract set no longer carries the release version, so a later patch
+  release keeps the same contract hash and does not force a client update.
+- Capture results can carry speakers: each segment may name a speaker label,
+  and the result lists the speakers with the time of a listening sample. Names
+  are not part of the contract; the host stores what a person calls a speaker.
+- `StartCaptureV2.identifySpeakers` asks for speaker labels. Such a capture
+  reports progress but sends no partial transcript.
+- Requirements may be optional (`RuntimeRequirementV2.optional`), and a result
+  may suggest an optional unit that would have helped (`suggestedUnits`).
+
+### Runtime
+
+- New optional install unit `speaker-diarization`: who spoke when, on the CPU,
+  with the Community-1 model (CC-BY-4.0) from the Capture model source.
+- The second reader for vertical Japanese pages is now the optional unit
+  `vertical-japanese-reader` (157 MB of models, no worker of its own). Without
+  it every page is read by the regular OCR pipeline, and a page the reader
+  would have taken reports the unit so the host can offer it. The OCR profile
+  id does not depend on whether the unit is installed.
+- A result with more than 1,000 segments is sent in several events.
+
+### Clients and UI
+
+- The Web Component offers optional units, shows progress while speakers are
+  identified, plays each speaker's sample and emits `capture-speakers-named`.
+- The Java client decodes captured text that contains line breaks.
+
 ## 0.5.1 (2026-10-07)
 
 ### Runtime

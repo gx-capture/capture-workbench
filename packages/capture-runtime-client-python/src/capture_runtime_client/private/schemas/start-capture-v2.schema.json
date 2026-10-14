@@ -64,6 +64,11 @@
       ],
       "default": null,
       "title": "Pdfpagenumbers"
+    },
+    "identifySpeakers": {
+      "default": false,
+      "title": "Identifyspeakers",
+      "type": "boolean"
     }
   },
   "required": [

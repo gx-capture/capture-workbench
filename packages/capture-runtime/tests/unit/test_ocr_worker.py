@@ -1957,3 +1957,89 @@ def test_ocr_image_scale_adapts_to_the_pixel_limit(
         assert width * height <= 50_000_000
         assert width > 5_000
         assert height > 3_000
+
+
+@pytest.mark.parametrize(("wanted", "installed"), [(True, False), (False, True), (False, False)])
+def test_ocr_worker_passes_the_reader_unit_on_and_reports_when_it_is_missed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, wanted: bool, installed: bool
+) -> None:
+    model_path = tmp_path / "model"
+    model_path.mkdir()
+    reader_path = tmp_path / "reader"
+    reader_path.mkdir()
+    source = tmp_path / "source.png"
+    Image.new("RGB", (1, 1), "white").save(source, format="PNG")
+    received: list[Path | None] = []
+
+    class Adapter:
+        def __init__(self, *_args: object, **kwargs: object) -> None:
+            received.append(kwargs.get("vertical_reader_dir"))  # type: ignore[arg-type]
+            self.vertical_reader_wanted = wanted
+
+        def extract_png(self, _image: bytes) -> OcrTextResult:
+            return OcrTextResult(
+                text="public fixture text",
+                model="test-model",
+                digest="1" * 64,
+                device="windowsml-dml",
+                warning=None,
+                raster_width=1,
+                raster_height=1,
+                provenance=_resolved_test_provenance(),
+            )
+
+    monkeypatch.setattr(ocr_main, "WindowsMLOcrAdapter", Adapter)
+    payload: dict[str, object] = {
+        "requirementId": "windowsml-ocr",
+        "artifactVersion": RUNTIME_VERSION,
+        "modelPath": str(model_path),
+        "sourcePath": str(source),
+        "mediaType": "image/png",
+        "options": {
+            "computePlan": _gpu_plan_dict(),
+            "pageManifest": [
+                {
+                    "page": 1,
+                    "raster": {"width": 1, "height": 1, "scale": 1, "coordinateSystem": "pixel"},
+                }
+            ],
+            "maxImagePixels": 1,
+            "renderScale": 1,
+        },
+    }
+    if installed:
+        payload["verticalReaderPath"] = str(reader_path)
+
+    result = ocr_main.handle(
+        WorkerRequest(request_id="ocr-reader-unit-test", operation="run", payload=payload),
+        Event(),
+    )
+
+    assert received == [reader_path if installed else None]
+    assert result.get("suggestedUnits") == (["vertical-japanese-reader"] if wanted else None)
+
+
+@pytest.mark.parametrize("value", [None, 7, "relative/reader", "C:/does/not/exist/reader"])
+def test_ocr_worker_rejects_an_invalid_reader_unit_path(tmp_path: Path, value: object) -> None:
+    model_path = tmp_path / "model"
+    model_path.mkdir()
+    source = tmp_path / "source.png"
+    Image.new("RGB", (1, 1), "white").save(source, format="PNG")
+
+    with pytest.raises(ValueError, match="OCR"):
+        ocr_main.handle(
+            WorkerRequest(
+                request_id="ocr-reader-unit-invalid",
+                operation="run",
+                payload={
+                    "requirementId": "windowsml-ocr",
+                    "artifactVersion": RUNTIME_VERSION,
+                    "modelPath": str(model_path),
+                    "sourcePath": str(source),
+                    "mediaType": "image/png",
+                    "options": {},
+                    "verticalReaderPath": value,
+                },
+            ),
+            Event(),
+        )

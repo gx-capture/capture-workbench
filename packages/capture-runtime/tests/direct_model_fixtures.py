@@ -7,13 +7,22 @@ from typing import Any
 
 
 def approved_source_lock() -> tuple[dict[str, Any], dict[tuple[str, str], bytes]]:
-    """Return a test-approved copy of the checked-in v2 model source lock."""
+    """Return a test-approved copy of the checked-in v2 model source lock.
+
+    The two required units are kept, and the vertical reader with them: the OCR
+    profile is derived from the reader's files. Tests of the speaker unit add their own.
+    """
 
     lock_path = (
         Path(__file__).resolve().parents[1] / "model-sources" / "release-model-source-lock.json"
     )
     payload: dict[str, Any] = json.loads(lock_path.read_text(encoding="utf-8"))
     payload = deepcopy(payload)
+    payload["requirements"] = [
+        requirement
+        for requirement in payload["requirements"]
+        if requirement["requirementId"] != "speaker-diarization"
+    ]
     payload["approval"] = {
         "approvedAt": "2026-07-30T00:00:00Z",
         "approvedBy": "release-owner",

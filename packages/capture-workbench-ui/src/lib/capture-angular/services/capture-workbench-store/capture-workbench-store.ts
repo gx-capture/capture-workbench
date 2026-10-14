@@ -255,8 +255,15 @@ export class CaptureWorkbenchStore {
     return this.helpers.runtimeProgressPercent(progress);
   }
 
+  private readonly sampleUrls = new Map<string, string>();
+
   constructor() {
-    this.destroyRef.onDestroy(() => this.lifecycleController.abort());
+    this.destroyRef.onDestroy(() => {
+      this.lifecycleController.abort();
+      for (const taskId of [...this.sampleUrls.keys()]) {
+        this.releaseSampleUrl(taskId);
+      }
+    });
   }
 
   refreshRuntime(): void {
@@ -272,6 +279,29 @@ export class CaptureWorkbenchStore {
     this.installationService.install({
       client: this.activeClient(),
       requirements: () => this.installableRequirements(),
+      pollIntervalMs: () => this.resolvedConfig().pollIntervalMs,
+      reload: () => this.reloadRuntimeAndWait(),
+    });
+  }
+
+  /** The optional units a finished capture missed and the runtime can install now. */
+  installableSuggestions(task: CaptureTaskView): readonly RuntimeRequirement[] {
+    const suggested = task.result?.suggestedUnits ?? task.raw?.suggestedUnits ?? [];
+    return this.runtime().requirements.filter(
+      (requirement) =>
+        suggested.includes(requirement.requirementId) &&
+        requirement.status === 'installable',
+    );
+  }
+
+  /** Install one optional unit after the user asked for it. */
+  installUnit(requirementId: string): void {
+    this.installationService.install({
+      client: this.activeClient(),
+      requirements: () =>
+        this.runtime().requirements.filter(
+          (requirement) => requirement.requirementId === requirementId,
+        ),
       pollIntervalMs: () => this.resolvedConfig().pollIntervalMs,
       reload: () => this.reloadRuntimeAndWait(),
     });
@@ -323,7 +353,39 @@ export class CaptureWorkbenchStore {
   }
 
   remove(taskId: string): void {
+    this.releaseSampleUrl(taskId);
     this.workflow.remove(taskId);
+  }
+
+  nameSpeaker(taskId: string, speakerId: string, name: string): void {
+    this.workflow.nameSpeaker(taskId, speakerId, name);
+  }
+
+  /**
+   * Address that plays only this speaker's sample from the file the user
+   * chose, or null when there is no sample or the file is no longer held.
+   */
+  speakerSampleUrl(
+    task: CaptureTaskView,
+    speaker: { readonly sample?: { startMs: number; endMs: number } | null },
+  ): string | null {
+    const sample = speaker.sample;
+    if (!sample) return null;
+    let url = this.sampleUrls.get(task.id);
+    if (!url) {
+      const file = this.workflow.sourceFile(task.id);
+      if (!file) return null;
+      url = URL.createObjectURL(file);
+      this.sampleUrls.set(task.id, url);
+    }
+    return `${url}#t=${sample.startMs / 1000},${sample.endMs / 1000}`;
+  }
+
+  private releaseSampleUrl(taskId: string): void {
+    const url = this.sampleUrls.get(taskId);
+    if (!url) return;
+    URL.revokeObjectURL(url);
+    this.sampleUrls.delete(taskId);
   }
 
   private reloadRuntimeAndWait(): Observable<void> {
@@ -376,6 +438,13 @@ export class CaptureWorkbenchStore {
     }
     if (requirement.requirementId === 'whisper-primary')
       return enabled.includes('audio');
+    // An optional unit is needed only by a host that asked for what it adds.
+    if (requirement.requirementId === 'speaker-diarization') {
+      return this.resolvedConfig().identifySpeakers && enabled.includes('audio');
+    }
+    // Any other optional unit is offered when a result says it was missed;
+    // it never stands between the user and a capture.
+    if (requirement.optional) return false;
     return this.resolvedConfig().structuringMode === 'runtime';
   }
 

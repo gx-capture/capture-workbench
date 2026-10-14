@@ -12,7 +12,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 LOCK_VERSION = "2"
-COMMIT_A_SHA = "cad865ffab27190d4e14181a7679d3c1a50e9943"
+COMMIT_A_SHA = "99bfd21c5b93bb0597357bacb03d35d97b20f80f"
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 # Release CI invokes this script with --no-project before installing the runtime.
 # Read the repository's declared owner without importing the runtime package.
@@ -32,6 +32,9 @@ MAX_SINGLE_FILE_BYTES = 2 * 1024 * 1024 * 1024
 MAX_TOTAL_BYTES = 2 * 1024 * 1024 * 1024
 MAX_SOURCE_LOCK_TOTAL_BYTES = 3 * 1024 * 1024 * 1024
 REQUIREMENT_IDS = ("windowsml-ocr", "whisper-primary")
+# Units a host may leave uninstalled. A lock lists them after the required
+# ones, in this order, or leaves them out.
+OPTIONAL_REQUIREMENT_IDS = ("speaker-diarization", "vertical-japanese-reader")
 CORE_ONLY_RELEASE_MODE = "core-only"
 MODEL_ENABLED_RELEASE_MODE = "model-enabled"
 PENDING_WHISPER_FREEZE_BLOCKER = (
@@ -278,7 +281,9 @@ def _validate_file(
     return item
 
 
-def _validate_requirement(raw_requirement: object, index: int) -> dict[str, Any]:
+def _validate_requirement(
+    raw_requirement: object, index: int, *, other_unit_paths: frozenset[str] = frozenset()
+) -> dict[str, Any]:
     requirement = _exact(
         raw_requirement,
         {"artifactVersion", "entryPoint", "files", "requirementId"},
@@ -297,11 +302,13 @@ def _validate_requirement(raw_requirement: object, index: int) -> dict[str, Any]
     total = 0
     licenses: set[str] = set()
     notices: set[str] = set()
+    # A derived file may be built from files that another unit delivers: the OCR
+    # profile declares the vertical reader, whose models are an optional unit.
     known_paths = {
         _safe_path(item["path"], f"{requirement_id}.files.path")
         for item in files
         if isinstance(item, dict) and "path" in item
-    }
+    } | other_unit_paths
     validated: list[dict[str, Any]] = []
     for file_index, raw_file in enumerate(files):
         item = _validate_file(
@@ -547,16 +554,31 @@ def validate_source_lock(
         raise ModelSourceLockError(
             "blocked model source lock must contain only the private Whisper two-run freeze blocker"
         )
-    if [item.get("requirementId") for item in requirements if isinstance(item, dict)] != list(
-        REQUIREMENT_IDS
+    requirement_ids = tuple(
+        item.get("requirementId") for item in requirements if isinstance(item, dict)
+    )
+    optional_ids = requirement_ids[len(REQUIREMENT_IDS) :]
+    if requirement_ids[: len(REQUIREMENT_IDS)] != REQUIREMENT_IDS or optional_ids != tuple(
+        item for item in OPTIONAL_REQUIREMENT_IDS if item in optional_ids
     ):
         raise ModelSourceLockError(
-            "requirements must be ordered windowsml-ocr then whisper-primary"
+            "requirements must be ordered windowsml-ocr then whisper-primary, "
+            "then any optional units in their fixed order"
         )
     validated_requirements: list[dict[str, Any]] = []
     total_locked_bytes = 0
     for index, requirement in enumerate(requirements):
-        validated = _validate_requirement(requirement, index)
+        validated = _validate_requirement(
+            requirement,
+            index,
+            other_unit_paths=frozenset(
+                item["path"]
+                for other in requirements
+                if other is not requirement and isinstance(other, dict)
+                for item in other.get("files", [])
+                if isinstance(item, dict) and isinstance(item.get("path"), str)
+            ),
+        )
         validated_requirements.append(validated)
         total_locked_bytes += sum(item["bytes"] for item in validated["files"])
     if total_locked_bytes > MAX_SOURCE_LOCK_TOTAL_BYTES:

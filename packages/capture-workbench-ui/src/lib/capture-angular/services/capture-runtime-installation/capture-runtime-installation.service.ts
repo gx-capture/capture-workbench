@@ -24,8 +24,10 @@ import { CaptureWorkbenchStoreHelpers } from '../capture-workbench-store/capture
 const INSTALLATION_ORDER = new Map([
   ['windowsml-ocr', 0],
   ['whisper-primary', 1],
-  ['ollama-runtime', 2],
-  ['capture-ollama-model', 3],
+  ['speaker-diarization', 2],
+  ['vertical-japanese-reader', 3],
+  ['ollama-runtime', 4],
+  ['capture-ollama-model', 5],
 ]);
 
 @Injectable()

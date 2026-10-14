@@ -360,7 +360,9 @@ class EngineModelDeliveryDescriptor:
     files: tuple[EngineModelFileDescriptor, ...]
 
     @classmethod
-    def from_dict(cls, value: object) -> EngineModelDeliveryDescriptor:
+    def from_dict(
+        cls, value: object, *, other_unit_paths: frozenset[str] = frozenset()
+    ) -> EngineModelDeliveryDescriptor:
         payload = _mapping(value, "direct model delivery")
         _exact_keys(
             payload,
@@ -411,7 +413,9 @@ class EngineModelDeliveryDescriptor:
             raise EngineCatalogError(
                 "direct model files must reference pinned license and NOTICE files"
             )
-        known_paths = set(paths)
+        # A derived file may be built from files that another unit delivers: the OCR
+        # profile declares the vertical reader, whose models are an optional unit.
+        known_paths = set(paths) | other_unit_paths
         if any(
             item.kind == "derived"
             and item.derivation is not None
@@ -456,6 +460,11 @@ class EngineModelDeliveryDescriptor:
         }
 
 
+# Units that are models only: they run inside another unit's worker, so the
+# catalog gives them direct model files and no worker archive.
+MODEL_ONLY_REQUIREMENT_IDS = frozenset({"vertical-japanese-reader"})
+
+
 @dataclass(frozen=True, slots=True)
 class EngineRequirementDescriptor:
     requirement_id: str
@@ -464,7 +473,9 @@ class EngineRequirementDescriptor:
     unavailable_reason: str | None = None
 
     @classmethod
-    def from_dict(cls, value: object) -> EngineRequirementDescriptor:
+    def from_dict(
+        cls, value: object, *, other_unit_paths: frozenset[str] = frozenset()
+    ) -> EngineRequirementDescriptor:
         payload = _mapping(value, "engine requirement")
         _exact_keys(
             payload,
@@ -488,7 +499,9 @@ class EngineRequirementDescriptor:
         model_files = (
             None
             if payload["modelFiles"] is None
-            else EngineModelDeliveryDescriptor.from_dict(payload["modelFiles"])
+            else EngineModelDeliveryDescriptor.from_dict(
+                payload["modelFiles"], other_unit_paths=other_unit_paths
+            )
         )
         if artifacts and model_files is not None:
             if artifacts[0].artifact_version != model_files.artifact_version:
@@ -505,7 +518,10 @@ class EngineRequirementDescriptor:
             not isinstance(unavailable_reason, str) or not unavailable_reason.strip()
         ):
             raise EngineCatalogError("unavailableReason must be non-empty when present")
-        complete = bool(artifacts) and model_files is not None
+        model_only = requirement_id in MODEL_ONLY_REQUIREMENT_IDS
+        if model_only and artifacts:
+            raise EngineCatalogError("a model unit cannot carry a worker archive")
+        complete = model_files is not None and (bool(artifacts) or model_only)
         if complete == bool(unavailable_reason):
             raise EngineCatalogError(
                 "engine requirement must be complete or have an unavailableReason"
@@ -515,15 +531,21 @@ class EngineRequirementDescriptor:
         return cls(requirement_id, artifacts, model_files, unavailable_reason)
 
     @property
+    def model_only(self) -> bool:
+        return self.requirement_id in MODEL_ONLY_REQUIREMENT_IDS
+
+    @property
     def complete(self) -> bool:
-        return len(self.artifacts) == 1 and self.model_files is not None
+        return self.model_files is not None and (len(self.artifacts) == 1 or self.model_only)
 
     @property
     def artifact_version(self) -> str | None:
-        return self.artifacts[0].artifact_version if self.complete else None
+        if not self.complete or self.model_files is None:
+            return None
+        return self.model_files.artifact_version
 
     def worker_artifact(self) -> EngineArtifactDescriptor:
-        if not self.complete:
+        if not self.complete or not self.artifacts:
             raise EngineCatalogError(f"{self.requirement_id} does not have a worker artifact")
         return self.artifacts[0]
 
@@ -539,6 +561,21 @@ class EngineRequirementDescriptor:
             "modelFiles": None if self.model_files is None else self.model_files.to_dict(),
             "unavailableReason": self.unavailable_reason,
         }
+
+
+def _model_paths_of_other_units(raw_requirements: list[Any], current: object) -> frozenset[str]:
+    """Model file paths that the other units of a catalog deliver."""
+
+    paths: set[str] = set()
+    for other in raw_requirements:
+        if other is current or not isinstance(other, dict):
+            continue
+        delivery = other.get("modelFiles")
+        files = delivery.get("files") if isinstance(delivery, dict) else None
+        for item in files if isinstance(files, list) else []:
+            if isinstance(item, dict) and isinstance(item.get("path"), str):
+                paths.add(item["path"])
+    return frozenset(paths)
 
 
 @dataclass(frozen=True, slots=True)
@@ -563,7 +600,10 @@ class EngineCatalog:
         if not isinstance(raw_requirements, list):
             raise EngineCatalogError("engine catalog requirements must be a list")
         requirements = tuple(
-            EngineRequirementDescriptor.from_dict(item) for item in raw_requirements
+            EngineRequirementDescriptor.from_dict(
+                item, other_unit_paths=_model_paths_of_other_units(raw_requirements, item)
+            )
+            for item in raw_requirements
         )
         identifiers = [item.requirement_id.casefold() for item in requirements]
         if len(identifiers) != len(set(identifiers)):

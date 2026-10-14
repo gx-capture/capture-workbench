@@ -155,6 +155,7 @@ export class DesktopRuntimeClientService {
     readonly documentId: string;
     readonly clientRequestId: string;
     readonly structuringMode: 'runtime' | 'host';
+    readonly identifySpeakers?: boolean;
   }, signal?: AbortSignal): Observable<CaptureOperation> {
     return this.commands.invoke('runtime_start_streaming_capture', { input }, signal);
   }

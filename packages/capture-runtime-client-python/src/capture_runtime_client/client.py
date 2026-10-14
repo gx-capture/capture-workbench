@@ -71,6 +71,9 @@ class CaptureUpload:
     structuring_mode: StructuringMode | str = StructuringMode.RUNTIME
     target_language: str | None = None
     pdf_page_numbers: Sequence[int] | None = None
+    # Audio only: label who speaks each segment. Needs the optional
+    # speaker-diarization unit; the capture then reports no partial transcript.
+    identify_speakers: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -229,6 +232,7 @@ class CaptureRuntimeClient:
         media_type: str = "application/octet-stream",
         target_language: str | None = None,
         pdf_page_numbers: Sequence[int] | None = None,
+        identify_speakers: bool = False,
     ) -> CaptureOperation:
         """Read a local file and start a capture for it (see :meth:`start_capture`)."""
         return self.start_capture(
@@ -239,6 +243,7 @@ class CaptureRuntimeClient:
                 media_type,
                 target_language=target_language,
                 pdf_page_numbers=pdf_page_numbers,
+                identify_speakers=identify_speakers,
             ),
             client_request_id=client_request_id,
         )
@@ -473,6 +478,8 @@ class CaptureRuntimeClient:
             }
             if upload.pdf_page_numbers is not None:
                 start_payload["pdfPageNumbers"] = list(upload.pdf_page_numbers)
+            if upload.identify_speakers:
+                start_payload["identifySpeakers"] = True
             return decode_model(
                 self._request(
                     "POST",

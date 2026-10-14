@@ -53,6 +53,7 @@ from capture_runtime.engine_adapters import (
     _install_offline_aistudio_stubs,
     _install_offline_huggingface_stubs,
 )
+from capture_runtime.constants import VERTICAL_READER_REQUIREMENT_ID
 from capture_runtime.contracts import CaptureSource
 from capture_runtime.image_normalization import bounded_scaled_dimensions
 from capture_runtime.ocr_preflight import (
@@ -465,17 +466,21 @@ def _run(
     cancellation: Event,
     progress: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
-    payload = _payload(
-        request,
-        {
-            "requirementId",
-            "artifactVersion",
-            "modelPath",
-            "sourcePath",
-            "mediaType",
-            "options",
-        },
-    )
+    # verticalReaderPath is present only when the optional reader unit is installed.
+    vertical_reader_value = request.payload.get("verticalReaderPath")
+    if "verticalReaderPath" in request.payload and vertical_reader_value is None:
+        raise ValueError("OCR verticalReaderPath is invalid")
+    vertical_reader_dir = _model_path(vertical_reader_value, required=False)
+    payload = request.payload
+    if set(payload) - {"verticalReaderPath"} != {
+        "requirementId",
+        "artifactVersion",
+        "modelPath",
+        "sourcePath",
+        "mediaType",
+        "options",
+    }:
+        raise ValueError("OCR worker payload fields are invalid")
     if payload["requirementId"] != "windowsml-ocr":
         raise ValueError("OCR requirementId is invalid")
     model_path = _model_path(payload["modelPath"], required=True)
@@ -589,6 +594,7 @@ def _run(
         source_sha256=source_sha256,
         requested_page_scope=requested_page_scope,
         runtime_sha256=runtime_sha256,
+        vertical_reader_dir=vertical_reader_dir,
     )
     ocr_request = OcrRequest(
         capture_id=source_sha256,
@@ -622,6 +628,8 @@ def _run(
     }
     if worker_engine.execution_proof is not None:
         final_payload["executionProof"] = worker_engine.execution_proof.to_dict()
+    if getattr(adapter, "vertical_reader_wanted", False):
+        final_payload["suggestedUnits"] = [VERTICAL_READER_REQUIREMENT_ID]
     return final_payload
 
 

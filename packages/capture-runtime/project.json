@@ -403,11 +403,31 @@
         "{projectRoot}/dist/engines/capture-engine-diarization-*-files.json"
       ],
       "metadata": {
-        "description": "Packages the speaker diarization worker from its own dependency group; it is not part of the release catalog yet."
+        "description": "Packages the speaker diarization worker in its own environment (.venv-diarization), so PyTorch never enters the OCR, Whisper or core builds."
       },
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --python 3.12 --extra diarization python scripts/build_diarization_worker.py"
+        "env": {
+          "UV_PROJECT_ENVIRONMENT": ".venv-diarization"
+        },
+        "command": "uv run --python 3.12 --extra diarization --group dev python scripts/build_diarization_worker.py"
+      }
+    },
+    "verify-diarization-worker": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "dependsOn": [
+        "build-diarization-worker"
+      ],
+      "inputs": [
+        "production"
+      ],
+      "metadata": {
+        "description": "Starts the packaged speaker diarization worker and checks that it answers the installer's code probe."
+      },
+      "options": {
+        "cwd": "packages/capture-runtime",
+        "command": "uv run --python 3.12 python scripts/probe_packaged_worker.py dist/workers/capture-engine-diarization/capture-engine-diarization.exe speaker-diarization"
       }
     },
     "validate-model-source-lock": {
@@ -470,7 +490,7 @@
       ],
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "node ../../tools/release/run-with-release-version.ts uv run --no-sync --python 3.12 python scripts/generate_engine_catalog.py --output dist/catalog/capture-engine-catalog.json --ocr-worker-archive dist/engines/capture-engine-ocr-{releaseVersion}-windows-x64.zip --ocr-worker-manifest dist/engines/capture-engine-ocr-{releaseVersion}-windows-x64-files.json --whisper-worker-archive dist/engines/capture-engine-whisper-{releaseVersion}-windows-x64.zip --whisper-worker-manifest dist/engines/capture-engine-whisper-{releaseVersion}-windows-x64-files.json"
+        "command": "node ../../tools/release/run-with-release-version.ts uv run --no-sync --python 3.12 python scripts/generate_engine_catalog.py --output dist/catalog/capture-engine-catalog.json --ocr-worker-archive dist/engines/capture-engine-ocr-{releaseVersion}-windows-x64.zip --ocr-worker-manifest dist/engines/capture-engine-ocr-{releaseVersion}-windows-x64-files.json --whisper-worker-archive dist/engines/capture-engine-whisper-{releaseVersion}-windows-x64.zip --whisper-worker-manifest dist/engines/capture-engine-whisper-{releaseVersion}-windows-x64-files.json --diarization-worker-archive dist/engines/capture-engine-diarization-{releaseVersion}-windows-x64.zip --diarization-worker-manifest dist/engines/capture-engine-diarization-{releaseVersion}-windows-x64-files.json"
       }
     },
     "generate-release-engine-catalog": {
@@ -479,6 +499,7 @@
       "dependsOn": [
         "build-ocr-worker",
         "build-whisper-worker",
+        "build-diarization-worker",
         "validate-model-source-lock"
       ],
       "inputs": [
@@ -492,7 +513,7 @@
       },
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "node ../../tools/release/run-with-release-version.ts uv run --no-sync --python 3.12 python scripts/generate_engine_catalog.py --model-source-lock model-sources/release-model-source-lock.json --output dist/catalog/capture-engine-catalog.json --ocr-worker-archive dist/engines/capture-engine-ocr-{releaseVersion}-windows-x64.zip --ocr-worker-manifest dist/engines/capture-engine-ocr-{releaseVersion}-windows-x64-files.json --whisper-worker-archive dist/engines/capture-engine-whisper-{releaseVersion}-windows-x64.zip --whisper-worker-manifest dist/engines/capture-engine-whisper-{releaseVersion}-windows-x64-files.json"
+        "command": "node ../../tools/release/run-with-release-version.ts uv run --no-sync --python 3.12 python scripts/generate_engine_catalog.py --model-source-lock model-sources/release-model-source-lock.json --output dist/catalog/capture-engine-catalog.json --ocr-worker-archive dist/engines/capture-engine-ocr-{releaseVersion}-windows-x64.zip --ocr-worker-manifest dist/engines/capture-engine-ocr-{releaseVersion}-windows-x64-files.json --whisper-worker-archive dist/engines/capture-engine-whisper-{releaseVersion}-windows-x64.zip --whisper-worker-manifest dist/engines/capture-engine-whisper-{releaseVersion}-windows-x64-files.json --diarization-worker-archive dist/engines/capture-engine-diarization-{releaseVersion}-windows-x64.zip --diarization-worker-manifest dist/engines/capture-engine-diarization-{releaseVersion}-windows-x64-files.json"
       }
     },
     "verify-release-model-candidate": {
@@ -533,7 +554,7 @@
       },
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "node ../../tools/release/run-with-release-version.ts uv run --no-sync --python 3.12 python scripts/generate_engine_catalog.py --allow-pending-preflight --model-source-lock model-sources/release-model-source-lock.json --output dist/catalog/preflight-capture-engine-catalog.json --ocr-worker-archive dist/engines/capture-engine-ocr-{releaseVersion}-windows-x64.zip --ocr-worker-manifest dist/engines/capture-engine-ocr-{releaseVersion}-windows-x64-files.json --whisper-worker-archive dist/engines/capture-engine-whisper-{releaseVersion}-windows-x64.zip --whisper-worker-manifest dist/engines/capture-engine-whisper-{releaseVersion}-windows-x64-files.json"
+        "command": "node ../../tools/release/run-with-release-version.ts uv run --no-sync --python 3.12 python scripts/generate_engine_catalog.py --allow-pending-preflight --model-source-lock model-sources/release-model-source-lock.json --output dist/catalog/preflight-capture-engine-catalog.json --ocr-worker-archive dist/engines/capture-engine-ocr-{releaseVersion}-windows-x64.zip --ocr-worker-manifest dist/engines/capture-engine-ocr-{releaseVersion}-windows-x64-files.json --whisper-worker-archive dist/engines/capture-engine-whisper-{releaseVersion}-windows-x64.zip --whisper-worker-manifest dist/engines/capture-engine-whisper-{releaseVersion}-windows-x64-files.json --diarization-worker-archive dist/engines/capture-engine-diarization-{releaseVersion}-windows-x64.zip --diarization-worker-manifest dist/engines/capture-engine-diarization-{releaseVersion}-windows-x64-files.json"
       }
     },
     "verify-whisper-preflight": {

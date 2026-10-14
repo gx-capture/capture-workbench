@@ -105,7 +105,7 @@ export {
 
 /** Approved current runtime contract-set identity; update only with a release. */
 export const CAPTURE_CONTRACT_SET_SHA256 =
-  'f72e22229bbc726f1feff4c8ea99ab7e68c64dfa893b038bb731a99255b6495c';
+  'fc8a994e5a2a822376821da277e949eb203df9223977da4db4cdc7ab29724523';
 
 export interface RuntimeDiscovery {
   readonly ready: RuntimeReady;
@@ -122,6 +122,11 @@ export interface CaptureUpload {
   readonly sourceKind: CaptureSourceKind;
   readonly targetLanguage?: string;
   readonly structuringMode?: 'runtime' | 'host';
+  /**
+   * Audio only: label who speaks each segment. Needs the optional
+   * `speaker-diarization` unit; the capture then reports no partial transcript.
+   */
+  readonly identifySpeakers?: boolean;
   readonly clientRequestId: string;
   readonly signal?: AbortSignal;
 }

@@ -403,18 +403,20 @@ impl LibraryStore {
             LibraryExportFormat::Text => {
                 let result = read_json_optional(&directory.join(RESULT_FILE_NAME))?
                     .ok_or_else(|| "Capture library result is not available.".to_string())?;
-                let content = result
-                    .get("targetText")
-                    .or_else(|| result.get("sourceText"))
-                    .and_then(Value::as_str)
+                let content = export_text(&result)
                     .ok_or_else(|| "Capture result has no exportable text.".to_string())?;
                 Ok(LibraryExportPayload {
                     file_name: format!("{}.txt", stem(&document.file_name)),
                     media_type: "text/plain;charset=utf-8".into(),
-                    content: content.into(),
+                    content,
                 })
             }
         }
+    }
+
+    /// The stored source file, for playing a speaker's sample in the window.
+    pub(crate) fn source_bytes(&self, request: LibraryDocumentRequest) -> Result<Vec<u8>, String> {
+        Ok(self.load_source(request)?.bytes)
     }
 
     pub(crate) fn delete(&self, request: LibraryDocumentRequest) -> Result<(), String> {
@@ -490,4 +492,107 @@ fn now_ms() -> Result<u64, String> {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis() as u64)
         .map_err(|_| "Capture library clock is invalid.".into())
+}
+
+fn text_of<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
+    value.get(key).and_then(Value::as_str)
+}
+
+/// Text of a result. A transcript with speakers reads "name: what they said",
+/// using the name a person gave the speaker when there is one.
+fn export_text(result: &Value) -> Option<String> {
+    let plain = || {
+        result
+            .get("targetText")
+            .or_else(|| result.get("sourceText"))
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    };
+    let speakers = match result.get("speakers").and_then(Value::as_array) {
+        Some(speakers) if !speakers.is_empty() => speakers,
+        _ => return plain(),
+    };
+    let (Some(blocks), Some(segments)) = (
+        result.get("blocks").and_then(Value::as_array),
+        result.get("rawSegments").and_then(Value::as_array),
+    ) else {
+        return plain();
+    };
+    let names: std::collections::HashMap<&str, &str> = speakers
+        .iter()
+        .filter_map(|speaker| {
+            let id = text_of(speaker, "speakerId")?;
+            let name = text_of(speaker, "displayName")
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .unwrap_or(id);
+            Some((id, name))
+        })
+        .collect();
+    let speaker_of: std::collections::HashMap<&str, &str> = segments
+        .iter()
+        .filter_map(|segment| Some((text_of(segment, "segmentId")?, text_of(segment, "speaker")?)))
+        .collect();
+    let lines: Vec<String> = blocks
+        .iter()
+        .filter_map(|block| {
+            let text = text_of(block, "targetText")?;
+            let name = text_of(block, "sourceSegmentId")
+                .and_then(|segment| speaker_of.get(segment))
+                .and_then(|speaker| names.get(speaker));
+            Some(match name {
+                Some(name) => format!("{name}: {text}"),
+                None => text.to_owned(),
+            })
+        })
+        .collect();
+    Some(lines.join("\n"))
+}
+
+#[cfg(test)]
+mod export_text_tests {
+    use super::export_text;
+    use serde_json::json;
+
+    fn spoken(speakers: serde_json::Value) -> serde_json::Value {
+        json!({
+            "targetText": "Good morning\nHello there\nmm",
+            "speakers": speakers,
+            "rawSegments": [
+                {"segmentId": "segment-1", "speaker": "SPEAKER_00"},
+                {"segmentId": "segment-2", "speaker": "SPEAKER_01"},
+                {"segmentId": "segment-3", "speaker": null}
+            ],
+            "blocks": [
+                {"sourceSegmentId": "segment-1", "targetText": "Good morning"},
+                {"sourceSegmentId": "segment-2", "targetText": "Hello there"},
+                {"sourceSegmentId": "segment-3", "targetText": "mm"}
+            ]
+        })
+    }
+
+    #[test]
+    fn transcript_lines_carry_the_given_name_or_the_anonymous_label() {
+        let result = spoken(json!([
+            {"speakerId": "SPEAKER_00", "displayName": " Ms. Lin "},
+            {"speakerId": "SPEAKER_01", "displayName": null}
+        ]));
+        assert_eq!(
+            export_text(&result).as_deref(),
+            Some("Ms. Lin: Good morning\nSPEAKER_01: Hello there\nmm")
+        );
+    }
+
+    #[test]
+    fn a_result_without_speakers_exports_its_plain_text() {
+        assert_eq!(
+            export_text(&spoken(json!([]))).as_deref(),
+            Some("Good morning\nHello there\nmm")
+        );
+        assert_eq!(
+            export_text(&json!({"sourceText": "page one"})).as_deref(),
+            Some("page one")
+        );
+        assert_eq!(export_text(&json!({})), None);
+    }
 }

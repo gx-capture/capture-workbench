@@ -344,7 +344,7 @@ class CaptureRuntimeClientTest {
             "eager");
     assertThat(legacy.pdfPageNumbers()).isNull();
     assertThat(CaptureRuntimeTypes.CONTRACT_SET_SHA256)
-        .isEqualTo("f72e22229bbc726f1feff4c8ea99ab7e68c64dfa893b038bb731a99255b6495c");
+        .isEqualTo("fc8a994e5a2a822376821da277e949eb203df9223977da4db4cdc7ab29724523");
 
     assertThatThrownBy(
             () ->
@@ -887,6 +887,57 @@ class CaptureRuntimeClientTest {
         .isInstanceOf(IllegalArgumentException.class);
   }
 
+  private static byte[] speakerWireSample(String name) throws Exception {
+    var samples =
+        MAPPER.readTree(
+            Files.readString(
+                Path.of("..", "capture-runtime", "tests", "fixtures", "speaker-wire-samples.json")));
+    return MAPPER.writeValueAsBytes(samples.get(name));
+  }
+
+  @Test
+  void decodesWhatTheRuntimeSendsForACaptureWithSpeakers() throws Exception {
+    var raw =
+        WireCodecs.decode(speakerWireSample("rawCapture"), CaptureRuntimeTypes.RawCapture.class, MAPPER);
+    assertThat(raw.segments().get(0).speaker()).isEqualTo("SPEAKER_00");
+    assertThat(raw.segments().get(1).speaker()).isNull();
+    assertThat(raw.segments().get(1).speakerOverlap()).isTrue();
+    assertThat(raw.diarizationEngine().engine()).isEqualTo("speaker-diarization");
+    assertThat(raw.speakers()).extracting(CaptureRuntimeTypes.CaptureSpeaker::speakerId).containsExactly("SPEAKER_00", "SPEAKER_01");
+    assertThat(raw.speakers().get(0).sample()).isEqualTo(new CaptureRuntimeTypes.TimeLocator(0, 1000));
+    assertThat(raw.speakers().get(1).sample()).isNull();
+    assertThat(raw.speakers().get(0).displayName()).isNull();
+    assertThat(raw.speakers().get(1).displayName()).isEqualTo("王小明");
+
+    var document =
+        WireCodecs.decode(speakerWireSample("captureDocument"), CaptureRuntimeTypes.CaptureDocument.class, MAPPER);
+    assertThat(document.speakers()).isEqualTo(raw.speakers());
+    assertThat(document.rawSegments().get(0).speaker()).isEqualTo("SPEAKER_00");
+  }
+
+  @Test
+  void decodesWhatTheRuntimeSendsWithoutSpeakersAndForAnOptionalUnit() throws Exception {
+    var raw =
+        WireCodecs.decode(speakerWireSample("rawCaptureWithoutSpeakers"), CaptureRuntimeTypes.RawCapture.class, MAPPER);
+    assertThat(raw.speakers()).isEmpty();
+    assertThat(raw.diarizationEngine()).isNull();
+    assertThat(raw.segments().get(0).speaker()).isNull();
+    assertThat(raw.suggestedUnits()).containsExactly("vertical-japanese-reader");
+
+    var requirements =
+        WireCodecs.decode(speakerWireSample("runtimeRequirements"), CaptureRuntimeTypes.RuntimeRequirements.class, MAPPER);
+    assertThat(requirements.items().get(0).requirementId()).isEqualTo("speaker-diarization");
+    assertThat(requirements.items().get(0).optional()).isTrue();
+  }
+
+  @Test
+  void asksForSpeakersOnlyWhenTheUploadSaysSo() {
+    var upload = new CaptureRuntimeClient.CaptureUpload("meeting.wav", new byte[] {1}, CaptureRuntimeTypes.SourceKind.AUDIO, "request-1");
+    assertThat(upload.identifySpeakers()).isFalse();
+    assertThat(upload.identifyingSpeakers().identifySpeakers()).isTrue();
+    assertThat(upload.identifyingSpeakers().fileName()).isEqualTo("meeting.wav");
+  }
+
   @Test
   void decodesCapturedTextThatSpansLines() {
     var source = new CaptureRuntimeTypes.Source("a".repeat(64), "scan.pdf", "application/pdf", 10);
@@ -896,11 +947,12 @@ class CaptureRuntimeClientTest {
         {"schemaVersion":"2","diagnosticOnly":true,
          "source":{"sha256":"%s","fileName":"scan.pdf","mediaType":"application/pdf","bytes":10},
          "segments":[
-           {"segmentId":"segment-1","order":0,"locator":{"kind":"page","page":1,"boundingBox":null},"text":"first line\\nsecond line"},
-           {"segmentId":"segment-2","order":1,"locator":{"kind":"page","page":2,"boundingBox":null},"text":"next page"}],
+           {"segmentId":"segment-1","order":0,"locator":{"kind":"page","page":1,"boundingBox":null},"text":"first line\\nsecond line","speaker":null,"speakerOverlap":false},
+           {"segmentId":"segment-2","order":1,"locator":{"kind":"page","page":2,"boundingBox":null},"text":"next page","speaker":null,"speakerOverlap":false}],
          "sourceText":"first line\\nsecond line\\nnext page",
          "extractionEngine":{"engine":"windowsml-ocr","model":"paddle","digest":"sha256:%s","device":"cpu"},
-         "warnings":[],"createdAt":"2026-08-14T00:00:00Z","ocrPageScope":null}
+         "warnings":[],"createdAt":"2026-08-14T00:00:00Z","ocrPageScope":null,
+         "speakers":[],"diarizationEngine":null,"suggestedUnits":[]}
         """
             .formatted("a".repeat(64), "b".repeat(64));
 

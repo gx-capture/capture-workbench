@@ -44,7 +44,7 @@ CAPTURE_RUNTIME_VERSION = _generated.RUNTIME_VERSION
 CAPTURE_DOCUMENT_SCHEMA_ID = (
     "https://github.com/gx-capture/capture-workbench/schema/capture-document-v2.schema.json"
 )
-CAPTURE_DOCUMENT_SCHEMA_SHA256 = "850afd212d049c25da41d3867ba5477451a6a2c6c7e41f116fe60f26b6a35335"
+CAPTURE_DOCUMENT_SCHEMA_SHA256 = "5131125b6851bccb8da96150e12c2c50170ad45c2f4a31768404a5406ad8598f"
 _CONTRACT_SET_ASSETS = files("capture_runtime_client.private.assets")
 CAPTURE_CONTRACT_SET_SHA256 = (
     _CONTRACT_SET_ASSETS.joinpath("contract-set.sha256").read_text(encoding="ascii").strip()

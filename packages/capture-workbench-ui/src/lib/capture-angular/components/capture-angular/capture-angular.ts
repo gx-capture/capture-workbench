@@ -43,6 +43,8 @@ export class CaptureWorkbenchComponent {
   readonly failed = output<CaptureFailedEvent>();
   readonly canceled = output<CaptureTaskView>();
   readonly taskChanged = output<CaptureTaskView>();
+  /** The user named or renamed a speaker; `document` carries the names. */
+  readonly speakersNamed = output<CaptureCompletedEvent>();
 
   readonly store = inject(CaptureWorkbenchStore);
   readonly tasks = this.store.tasks;
@@ -67,6 +69,9 @@ export class CaptureWorkbenchComponent {
           break;
         case 'task-changed':
           this.taskChanged.emit(event.task);
+          break;
+        case 'speakers-named':
+          this.speakersNamed.emit(event.event);
           break;
       }
     });

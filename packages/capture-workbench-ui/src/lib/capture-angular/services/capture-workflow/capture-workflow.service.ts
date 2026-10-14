@@ -22,6 +22,7 @@ import {
 import {
   type CaptureClient,
   type CaptureCompletedEvent,
+  type CaptureDocument,
   type CaptureEvent,
   type CaptureFailedEvent,
   type CaptureFailure,
@@ -51,6 +52,9 @@ export class CaptureWorkflowService {
   private readonly destroyRef = inject(DestroyRef);
   private readonly lifecycleController = new AbortController();
   private readonly internalTasks = new Map<string, InternalCaptureTask>();
+  // Other files are released when their capture ends; these stay until the
+  // task is removed, so the user can still listen and name the speakers.
+  private readonly speakerSources = new Map<string, File>();
   private readonly captureIds = new Map<string, string>();
   private readonly taskSubscriptions = new Map<string, Subscription>();
   private readonly reviewSubjects = new Map<string, Subject<CaptureReview>>();
@@ -80,6 +84,7 @@ export class CaptureWorkflowService {
     | { readonly type: 'completed'; readonly event: CaptureCompletedEvent }
     | { readonly type: 'failed'; readonly event: CaptureFailedEvent }
     | { readonly type: 'canceled'; readonly task: CaptureTaskView }
+    | { readonly type: 'speakers-named'; readonly event: CaptureCompletedEvent }
     | { readonly type: 'task-changed'; readonly task: CaptureTaskView }
   >();
 
@@ -259,11 +264,50 @@ export class CaptureWorkflowService {
     this.removeTask(taskId);
   }
 
+  /** Give a speaker of a finished capture a name; an empty name removes it. */
+  nameSpeaker(taskId: string, speakerId: string, name: string): void {
+    const document = this.taskState().find(
+      (candidate) => candidate.id === taskId,
+    )?.result;
+    const speakers = document?.speakers ?? [];
+    if (
+      !document ||
+      !speakers.some((speaker) => speaker.speakerId === speakerId)
+    ) {
+      return;
+    }
+    const displayName = name.trim().slice(0, 100) || null;
+    const named: CaptureDocument = {
+      ...document,
+      speakers: speakers.map((speaker) =>
+        speaker.speakerId === speakerId ? { ...speaker, displayName } : speaker,
+      ),
+    };
+    this.updateTask(taskId, { result: named });
+    this.events.next({
+      type: 'speakers-named',
+      event: { taskId, document: named },
+    });
+  }
+
+  /** The recording behind a result with speakers, for playing their samples. */
+  sourceFile(taskId: string): File | undefined {
+    return this.speakerSources.get(taskId);
+  }
+
+  private keepSpeakerSource(taskId: string): void {
+    const file = this.internalTasks.get(taskId)?.file;
+    const speakers = this.taskState().find((task) => task.id === taskId)
+      ?.result?.speakers;
+    if (file && speakers?.length) this.speakerSources.set(taskId, file);
+  }
+
   private removeTask(taskId: string): void {
     this.taskState.update((tasks) =>
       tasks.filter((candidate) => candidate.id !== taskId),
     );
     this.internalTasks.delete(taskId);
+    this.speakerSources.delete(taskId);
     this.captureIds.delete(taskId);
   }
 
@@ -294,6 +338,7 @@ export class CaptureWorkflowService {
           }),
           finalize(() => {
             this.runningTasks -= 1;
+            this.keepSpeakerSource(next.id);
             this.internalTasks.delete(next.id);
             this.taskSubscriptions.delete(next.id);
             this.drainQueue();
@@ -432,6 +477,8 @@ export class CaptureWorkflowService {
           sourceKind: task.sourceKind,
           structuringMode: config.structuringMode,
           targetLanguage: config.targetLanguage,
+          identifySpeakers:
+            config.identifySpeakers && task.sourceKind === 'audio',
           signal,
         };
         return this.helpers.retryUncertainResponse(

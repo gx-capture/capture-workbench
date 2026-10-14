@@ -77,6 +77,8 @@ def complete_catalog(engine_dir: Path, catalog_path: Path) -> None:
             "capture-engine-whisper.zip",
             "capture-engine-whisper.exe",
         ),
+        # Models only: the OCR profile is derived from this unit's files.
+        ("vertical-japanese-reader", None, None),
     ):
         locked = next(
             item for item in source_lock["requirements"] if item["requirementId"] == requirement_id
@@ -90,7 +92,9 @@ def complete_catalog(engine_dir: Path, catalog_path: Path) -> None:
         requirements.append(
             {
                 "requirementId": requirement_id,
-                "artifacts": [
+                "artifacts": []
+                if worker_name is None or entry_point is None
+                else [
                     artifact(
                         engine_dir,
                         requirement_id=requirement_id,

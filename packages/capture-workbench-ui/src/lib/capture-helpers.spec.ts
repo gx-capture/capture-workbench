@@ -9,6 +9,7 @@ import {
   CaptureCompatibilityError,
   validateStructuringCandidate,
 } from './capture-helpers';
+import { CAPTURE_RUNTIME_MINOR } from './constants';
 import {
   CAPTURE_DOCUMENT_CONTRACT,
   CAPTURE_DOCUMENT_SCHEMA,
@@ -158,7 +159,7 @@ describe('capture helpers', () => {
     };
 
     expect(() => assertCaptureRuntimeCompatible(ready)).toThrow(
-      'incompatible with client runtime minor 5',
+      `incompatible with client runtime minor ${CAPTURE_RUNTIME_MINOR}`,
     );
   });
 
@@ -166,7 +167,7 @@ describe('capture helpers', () => {
     const ready: RuntimeReady = {
       ready: true,
       service: 'capture-runtime',
-      runtimeVersion: '0.5.8',
+      runtimeVersion: `0.${CAPTURE_RUNTIME_MINOR}.8`,
       apiVersion: '2.0',
       captureDocumentSchemaVersion: '2',
       capabilities: {
@@ -184,10 +185,10 @@ describe('capture helpers', () => {
   it('exports a deeply immutable canonical document schema', () => {
     expect(CAPTURE_DOCUMENT_CONTRACT.schemaVersion).toBe('2');
     expect(CAPTURE_DOCUMENT_CONTRACT.schemaSha256).toBe(
-      '850afd212d049c25da41d3867ba5477451a6a2c6c7e41f116fe60f26b6a35335',
+      '5131125b6851bccb8da96150e12c2c50170ad45c2f4a31768404a5406ad8598f',
     );
     expect(CAPTURE_DOCUMENT_SCHEMA_HASH).toBe(
-      '850afd212d049c25da41d3867ba5477451a6a2c6c7e41f116fe60f26b6a35335',
+      '5131125b6851bccb8da96150e12c2c50170ad45c2f4a31768404a5406ad8598f',
     );
     expect(Object.isFrozen(CAPTURE_DOCUMENT_SCHEMA)).toBe(true);
     expect(

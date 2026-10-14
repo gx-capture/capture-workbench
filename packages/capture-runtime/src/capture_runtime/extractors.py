@@ -14,12 +14,18 @@ from typing import TYPE_CHECKING, Literal, Protocol
 
 from capture_runtime.clock import Clock
 from capture_runtime.config import ExtractionRuntimeConfig
-from capture_runtime.constants import WHISPER_REQUIREMENT_ID, WINDOWSML_REQUIREMENT_ID
+from capture_runtime.constants import (
+    DIARIZATION_REQUIREMENT_ID,
+    VERTICAL_READER_REQUIREMENT_ID,
+    WHISPER_REQUIREMENT_ID,
+    WINDOWSML_REQUIREMENT_ID,
+)
 from capture_runtime.contracts import (
     CaptureEngine,
     CaptureOcrProjectionV3,
     CaptureSource,
     CaptureSourceKind,
+    CaptureSpeaker,
     OcrPageScopeV2,
     OcrPageStatus,
     OcrProvenanceV3,
@@ -30,6 +36,7 @@ from capture_runtime.contracts import (
     project_source_text,
 )
 from capture_runtime.engine_adapters import PaddleResultNormalizationError
+from capture_runtime.engine_catalog import EngineCatalogError
 from capture_runtime.engine_installation import EngineInstallationManager
 from capture_runtime.image_normalization import bounded_scaled_dimensions
 from capture_runtime.ocr_execution_proof import (
@@ -48,8 +55,13 @@ from capture_runtime.ocr_projection import (
     OcrRequest,
     OcrTerminalOutcome,
 )
+from capture_runtime.ocr_vertical_routing import (
+    MODEL_SUBDIRECTORY as VERTICAL_READER_SUBDIRECTORY,
+)
+from capture_runtime.speaker_alignment import TimedWord, speaker_samples, speaker_segments
 from capture_runtime.worker_client import (
     OcrWorkerFailure,
+    WorkerDiarizationResult,
     WorkerOcrProgress,
     WorkerRunResult,
 )
@@ -103,6 +115,8 @@ class CaptureExtractor(Protocol):
         *,
         pdf_page_numbers: tuple[int, ...] | None = None,
         ocr_progress: Callable[[int, int], None] | None = None,
+        identify_speakers: bool = False,
+        speaker_progress: Callable[[str, int], None] | None = None,
     ) -> CaptureExtractionOutcome: ...
 
 
@@ -342,6 +356,8 @@ class StandaloneRuntimeCaptureExtractor:
         *,
         pdf_page_numbers: tuple[int, ...] | None = None,
         ocr_progress: Callable[[int, int], None] | None = None,
+        identify_speakers: bool = False,
+        speaker_progress: Callable[[str, int], None] | None = None,
     ) -> CaptureExtractionOutcome:
         if self.engine_manager is not None:
             return await self._extract_with_workers(
@@ -350,6 +366,12 @@ class StandaloneRuntimeCaptureExtractor:
                 cancel_event,
                 pdf_page_numbers=pdf_page_numbers,
                 ocr_progress=ocr_progress,
+                identify_speakers=identify_speakers,
+                speaker_progress=speaker_progress,
+            )
+        if identify_speakers:
+            raise ExtractionRuntimeUnavailableError(
+                "Speaker identification needs the installed worker runtime."
             )
         try:
             return await asyncio.to_thread(
@@ -370,6 +392,8 @@ class StandaloneRuntimeCaptureExtractor:
         *,
         pdf_page_numbers: tuple[int, ...] | None = None,
         ocr_progress: Callable[[int, int], None] | None = None,
+        identify_speakers: bool = False,
+        speaker_progress: Callable[[str, int], None] | None = None,
     ) -> CaptureExtractionOutcome:
         sniffed = self.sniff(content)
         self._checkpoint(cancel_event)
@@ -377,6 +401,9 @@ class StandaloneRuntimeCaptureExtractor:
         expected_ocr_pages: tuple[OcrPageManifest, ...] | None = None
         ocr_page_scope: OcrPageScopeV2 | None = None
         execution_proof: OcrExecutionDeviceProofV1 | None = None
+        diarization_engine: CaptureEngine | None = None
+        speakers: list[CaptureSpeaker] = []
+        suggested_units: set[str] = set()
         try:
             if sniffed.kind is CaptureSourceKind.PDF:
                 expected_ocr_pages = self._preflight_pdf_manifest(
@@ -398,6 +425,7 @@ class StandaloneRuntimeCaptureExtractor:
                 execution_proof = result.execution_proof
                 try:
                     engine = self._capture_engine(result, expected_engine="windowsml-ocr")
+                    suggested_units.update(result.suggested_units)
                     ocr_provenance = self._capture_ocr_provenance(result)
                 except ValueError as error:
                     raise OcrWorkerFailure(
@@ -449,6 +477,7 @@ class StandaloneRuntimeCaptureExtractor:
                 execution_proof = result.execution_proof
                 try:
                     engine = self._capture_engine(result, expected_engine="windowsml-ocr")
+                    suggested_units.update(result.suggested_units)
                     ocr_provenance = self._capture_ocr_provenance(result)
                 except ValueError as error:
                     raise OcrWorkerFailure(
@@ -484,12 +513,30 @@ class StandaloneRuntimeCaptureExtractor:
                         "maxDurationMs": self.config.max_audio_duration_ms,
                         "preferGpu": self.config.whisper_prefer_gpu,
                         "allowCpuFallback": self.config.whisper_allow_cpu_fallback,
+                        **({"wordTimestamps": True} if identify_speakers else {}),
                     },
                     cancel_event,
+                    progress=_stage_progress(speaker_progress, "transcribing", 0, 450),
                 )
-                segments = self._time_segments(result)
                 engine = self._capture_engine(result, expected_engine="whisper-primary")
                 warnings = list(result.warnings)
+                if identify_speakers:
+                    diarization = await self._run_diarization(
+                        content,
+                        sniffed.media_type,
+                        cancel_event,
+                        _stage_progress(speaker_progress, "identifying-speakers", 450, 1000),
+                    )
+                    segments, speakers = _speaker_capture_segments(result, diarization)
+                    diarization_engine = CaptureEngine(
+                        engine=diarization.engine,
+                        model=diarization.model,
+                        digest=diarization.digest,
+                        device=diarization.device,
+                    )
+                    warnings.extend(diarization.warnings)
+                else:
+                    segments = self._time_segments(result)
         except WorkerCancelledError as error:
             raise asyncio.CancelledError from error
         except OcrWorkerFailure as error:
@@ -509,6 +556,9 @@ class StandaloneRuntimeCaptureExtractor:
             segments=segments,
             source_text=project_source_text(segments),
             extraction_engine=engine,
+            diarization_engine=diarization_engine,
+            speakers=speakers,
+            suggested_units=sorted(suggested_units),
             warnings=_unique_warnings(warnings),
             ocr_page_scope=ocr_page_scope,
             created_at=self._clock.now(),
@@ -580,6 +630,7 @@ class StandaloneRuntimeCaptureExtractor:
         *,
         page_manifest: tuple[OcrPageManifest, ...] | None = None,
         ocr_progress: Callable[[int, int], None] | None = None,
+        progress: Callable[[int], None] | None = None,
     ) -> WorkerRunResult:
         assert self.engine_manager is not None
         worker_options = dict(options)
@@ -629,6 +680,32 @@ class StandaloneRuntimeCaptureExtractor:
                         "OCR execution runtime identity drifted."
                     )
                 worker_options["runtimeSha256"] = acceptance_runtime_sha256
+        vertical_reader_dir = None
+        if requirement_id == WINDOWSML_REQUIREMENT_ID:
+            vertical_reader_dir = await self._vertical_reader_dir()
+        path = self._worker_source(content, media_type)
+        try:
+            if page_manifest is not None:
+                worker_options = {
+                    **worker_options,
+                    "pageManifest": self.ocr_pipeline.serialize_manifest(page_manifest),
+                }
+            return await self.engine_manager.worker_client.run(
+                engine,
+                source_path=path,
+                media_type=media_type,
+                options=worker_options,
+                cancel_event=cancel_event,
+                ocr_progress=ocr_progress,
+                on_permille=progress,
+                vertical_reader_dir=vertical_reader_dir,
+            )
+        finally:
+            path.unlink(missing_ok=True)
+
+    def _worker_source(self, content: bytes, media_type: str) -> Path:
+        """Write the source where a worker can read it; the caller deletes it."""
+
         self.config.temp_dir.mkdir(parents=True, exist_ok=True)
         suffix = {
             "application/pdf": ".pdf",
@@ -648,20 +725,50 @@ class StandaloneRuntimeCaptureExtractor:
             delete=False,
         ) as temporary:
             temporary.write(content)
-            path = Path(temporary.name).resolve()
+            return Path(temporary.name).resolve()
+
+    async def _vertical_reader_dir(self) -> Path | None:
+        """Where the optional vertical reader unit is installed, if it is."""
+
+        resolver = getattr(self.engine_manager, "active_model_unit", None)
+        if not callable(resolver):
+            return None
+        unit = await asyncio.to_thread(resolver, VERTICAL_READER_REQUIREMENT_ID)
+        if unit is None:
+            return None
+        directory = Path(unit) / VERTICAL_READER_SUBDIRECTORY
+        return directory if directory.is_dir() else None
+
+    async def _run_diarization(
+        self,
+        content: bytes,
+        media_type: str,
+        cancel_event: asyncio.Event,
+        progress: Callable[[int], None] | None,
+    ) -> WorkerDiarizationResult:
+        assert self.engine_manager is not None
         try:
-            if page_manifest is not None:
-                worker_options = {
-                    **worker_options,
-                    "pageManifest": self.ocr_pipeline.serialize_manifest(page_manifest),
-                }
-            return await self.engine_manager.worker_client.run(
+            async with asyncio.timeout(self.config.engine_resolution_timeout_seconds):
+                engine = await self.engine_manager.resolve_active_engine(DIARIZATION_REQUIREMENT_ID)
+        except (TimeoutError, EngineCatalogError):
+            engine = None
+        if engine is None:
+            raise ExtractionRuntimeUnavailableError(
+                f"Runtime requirement {DIARIZATION_REQUIREMENT_ID} is not installed and ready."
+            )
+        path = self._worker_source(content, media_type)
+        try:
+            return await self.engine_manager.worker_client.diarize(
                 engine,
                 source_path=path,
                 media_type=media_type,
-                options=worker_options,
+                options={
+                    "maxDurationMs": self.config.max_audio_duration_ms,
+                    "preferGpu": self.config.whisper_prefer_gpu,
+                    "allowCpuFallback": True,
+                },
                 cancel_event=cancel_event,
-                ocr_progress=ocr_progress,
+                on_permille=progress,
             )
         finally:
             path.unlink(missing_ok=True)
@@ -1275,6 +1382,66 @@ def _oriented_image_dimensions(content: bytes) -> tuple[int, int]:
     return width, height
 
 
+def _stage_progress(
+    report: Callable[[str, int], None] | None, stage: str, start: int, end: int
+) -> Callable[[int], None] | None:
+    """Place one worker's 0-1000 progress inside its share of the whole capture."""
+
+    if report is None:
+        return None
+    return lambda permille: report(stage, start + (end - start) * permille // 1000)
+
+
+def _speaker_capture_segments(
+    result: WorkerRunResult, diarization: WorkerDiarizationResult
+) -> tuple[list[RawCaptureSegment], list[CaptureSpeaker]]:
+    """Split the transcript where the speaker changes and list who spoke."""
+
+    words = sorted(
+        (
+            TimedWord(word.start_ms, word.end_ms, word.text, segment.order)
+            for segment in result.segments
+            for word in segment.words
+        ),
+        key=lambda word: word.start_ms,
+    )
+    spoken = [
+        item
+        for item in speaker_segments(words, diarization.exclusive_turns, diarization.turns)
+        if item.text
+    ]
+    segments = [
+        RawCaptureSegment(
+            segment_id=f"segment-{index + 1}",
+            order=index,
+            locator=TimeLocator(start_ms=item.start_ms, end_ms=max(item.end_ms, item.start_ms + 1)),
+            text=item.text,
+            speaker=item.speaker,
+            speaker_overlap=item.overlap,
+        )
+        for index, item in enumerate(spoken)
+    ]
+    samples = {sample.speaker: sample for sample in speaker_samples(spoken)}
+    speaker_ids = sorted(
+        {turn.speaker for turn in diarization.turns}
+        | {item.speaker for item in spoken if item.speaker is not None}
+    )
+    speakers = [
+        CaptureSpeaker(
+            speaker_id=speaker_id,
+            sample=(
+                TimeLocator(
+                    start_ms=samples[speaker_id].start_ms, end_ms=samples[speaker_id].end_ms
+                )
+                if speaker_id in samples
+                else None
+            ),
+        )
+        for speaker_id in speaker_ids
+    ]
+    return segments, speakers
+
+
 def _unique_warnings(warnings: list[str]) -> list[str]:
     return list(dict.fromkeys(warning[:500] for warning in warnings if warning.strip()))
 
@@ -1315,6 +1482,8 @@ class DeterministicCaptureExtractor:
         *,
         pdf_page_numbers: tuple[int, ...] | None = None,
         ocr_progress: Callable[[int, int], None] | None = None,
+        identify_speakers: bool = False,
+        speaker_progress: Callable[[str, int], None] | None = None,
     ) -> CaptureExtractionOutcome:
         sniffed = self.sniff(content)
         if self._delay_seconds:
