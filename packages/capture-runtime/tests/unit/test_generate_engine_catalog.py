@@ -87,10 +87,15 @@ def test_direct_source_lock_generates_catalog_without_model_release_assets(
     catalog = EngineCatalog.from_dict(json.loads(catalog_path.read_text(encoding="utf-8")))
     assert catalog.catalog_version == "2"
     assert all(requirement.complete for requirement in catalog.requirements)
-    assert all(
-        [artifact.role for artifact in requirement.artifacts] == ["worker"]
+    # The vertical reader is models only; every other unit has one worker.
+    assert {
+        requirement.requirement_id: [artifact.role for artifact in requirement.artifacts]
         for requirement in catalog.requirements
-    )
+    } == {
+        "windowsml-ocr": ["worker"],
+        "whisper-primary": ["worker"],
+        "vertical-japanese-reader": [],
+    }
     assert all(requirement.model_delivery().files for requirement in catalog.requirements)
 
     executable = tmp_path / "capture-runtime.exe"
@@ -261,6 +266,7 @@ def test_pending_source_lock_generates_only_preflight_catalog_with_explicit_flag
     assert [item.requirement_id for item in catalog.requirements] == [
         "windowsml-ocr",
         "whisper-primary",
+        "vertical-japanese-reader",
     ]
     assert all(item.complete for item in catalog.requirements)
 

@@ -9,7 +9,8 @@ from typing import Any
 def approved_source_lock() -> tuple[dict[str, Any], dict[tuple[str, str], bytes]]:
     """Return a test-approved copy of the checked-in v2 model source lock.
 
-    Only the two required units are kept; tests of an optional unit add their own.
+    The two required units are kept, and the vertical reader with them: the OCR
+    profile is derived from the reader's files. Tests of the speaker unit add their own.
     """
 
     lock_path = (
@@ -17,7 +18,11 @@ def approved_source_lock() -> tuple[dict[str, Any], dict[tuple[str, str], bytes]
     )
     payload: dict[str, Any] = json.loads(lock_path.read_text(encoding="utf-8"))
     payload = deepcopy(payload)
-    payload["requirements"] = payload["requirements"][:2]
+    payload["requirements"] = [
+        requirement
+        for requirement in payload["requirements"]
+        if requirement["requirementId"] != "speaker-diarization"
+    ]
     payload["approval"] = {
         "approvedAt": "2026-07-30T00:00:00Z",
         "approvedBy": "release-owner",

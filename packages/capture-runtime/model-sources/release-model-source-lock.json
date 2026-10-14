@@ -1,6 +1,6 @@
 {
   "approval": {
-    "approvedAt": "2026-10-13T13:43:37.000Z",
+    "approvedAt": "2026-10-14T02:06:27.000Z",
     "approvedBy": "MSI\\guanxin",
     "blockers": [],
     "status": "approved"
@@ -59,20 +59,6 @@
       "entryPoint": "model",
       "files": [
         {
-          "bytes": 18653,
-          "derivation": null,
-          "kind": "license",
-          "licensePath": null,
-          "noticePath": null,
-          "owner": "ndl-lab/ndlocr-lite",
-          "path": "licenses/LICENSE-NDLOCR-Lite.txt",
-          "redirectHosts": [],
-          "revision": "636d1cfeb1331f89f4048f416e49e23a09a714b5",
-          "sha256": "12538e73c4a1e05fc0c0b75d9d4de657f139d94ebc5f44b03a84cc1f793358f0",
-          "spdx": "CC-BY-4.0",
-          "url": "https://raw.githubusercontent.com/ndl-lab/ndlocr-lite/636d1cfeb1331f89f4048f416e49e23a09a714b5/LICENCE"
-        },
-        {
           "bytes": 11376,
           "derivation": null,
           "kind": "license",
@@ -113,34 +99,6 @@
           "sha256": "ebce8d28436623ecab4952e24935aed86b3f8ecaf8f8736b92d5544f60fae1e9",
           "spdx": "Apache-2.0",
           "url": "https://huggingface.co/PaddlePaddle/PP-OCRv6_medium_rec_onnx/raw/50c7eacafc52fa7bcf4194e8cd08e46f8558504b/README.md"
-        },
-        {
-          "bytes": 61810,
-          "derivation": null,
-          "kind": "notice",
-          "licensePath": null,
-          "noticePath": null,
-          "owner": "ndl-lab/ndlocr-lite",
-          "path": "licenses/NOTICE-vertical-dependencies.txt",
-          "redirectHosts": [],
-          "revision": "636d1cfeb1331f89f4048f416e49e23a09a714b5",
-          "sha256": "d1651934d0ba82bc941fa59b99bc311c273b199ff379d8bb2beca81e2f1695e7",
-          "spdx": "CC-BY-4.0",
-          "url": "https://raw.githubusercontent.com/ndl-lab/ndlocr-lite/636d1cfeb1331f89f4048f416e49e23a09a714b5/LICENCE_DEPENDENCEIES"
-        },
-        {
-          "bytes": 11168,
-          "derivation": null,
-          "kind": "notice",
-          "licensePath": null,
-          "noticePath": null,
-          "owner": "ndl-lab/ndlocr-lite",
-          "path": "licenses/NOTICE-vertical.md",
-          "redirectHosts": [],
-          "revision": "636d1cfeb1331f89f4048f416e49e23a09a714b5",
-          "sha256": "49ae23223320936d4cc26ca0ab79f04b1460a3e3a74eb90a481f0b83c51c7f45",
-          "spdx": "CC-BY-4.0",
-          "url": "https://raw.githubusercontent.com/ndl-lab/ndlocr-lite/636d1cfeb1331f89f4048f416e49e23a09a714b5/README.md"
         },
         {
           "bytes": 62032837,
@@ -250,90 +208,6 @@
           "sha256": "b5f2bfe2bdd9448429e3e82b51c789775d9b42f2403d082b00662eb77e401c5d",
           "spdx": "Apache-2.0",
           "url": "https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/b03f46425e8ff4442b268ce449e3eef758146cd4/ppocr/utils/dict/ppocrv6_dict.txt"
-        },
-        {
-          "bytes": 42434,
-          "derivation": null,
-          "kind": "source",
-          "licensePath": "licenses/LICENSE-NDLOCR-Lite.txt",
-          "noticePath": "licenses/NOTICE-vertical.md",
-          "owner": "ndl-lab/ndlocr-lite",
-          "path": "model/vertical/NDLmoji.yaml",
-          "redirectHosts": [],
-          "revision": "636d1cfeb1331f89f4048f416e49e23a09a714b5",
-          "sha256": "f6ad5a2de444b495155866af811cf1a98309dcae3225db802767ea531a2dc529",
-          "spdx": "CC-BY-4.0",
-          "url": "https://raw.githubusercontent.com/ndl-lab/ndlocr-lite/636d1cfeb1331f89f4048f416e49e23a09a714b5/src/config/NDLmoji.yaml"
-        },
-        {
-          "bytes": 40256763,
-          "derivation": null,
-          "kind": "source",
-          "licensePath": "licenses/LICENSE-NDLOCR-Lite.txt",
-          "noticePath": "licenses/NOTICE-vertical.md",
-          "owner": "ndl-lab/ndlocr-lite",
-          "path": "model/vertical/deim-s-1024x1024.onnx",
-          "redirectHosts": [],
-          "revision": "636d1cfeb1331f89f4048f416e49e23a09a714b5",
-          "sha256": "c156ce0c4e704bc3bf7e4016d0a87b949cffa8b3724f4b4cc696b8284c3c7373",
-          "spdx": "CC-BY-4.0",
-          "url": "https://raw.githubusercontent.com/ndl-lab/ndlocr-lite/636d1cfeb1331f89f4048f416e49e23a09a714b5/src/model/deim-s-1024x1024.onnx"
-        },
-        {
-          "bytes": 299,
-          "derivation": null,
-          "kind": "source",
-          "licensePath": "licenses/LICENSE-NDLOCR-Lite.txt",
-          "noticePath": "licenses/NOTICE-vertical.md",
-          "owner": "ndl-lab/ndlocr-lite",
-          "path": "model/vertical/ndl.yaml",
-          "redirectHosts": [],
-          "revision": "636d1cfeb1331f89f4048f416e49e23a09a714b5",
-          "sha256": "0c2a6a184dd322375b76f2ce3842f8ac555d53edad0ab63655c013f4c471c5a0",
-          "spdx": "CC-BY-4.0",
-          "url": "https://raw.githubusercontent.com/ndl-lab/ndlocr-lite/636d1cfeb1331f89f4048f416e49e23a09a714b5/src/config/ndl.yaml"
-        },
-        {
-          "bytes": 36457393,
-          "derivation": null,
-          "kind": "source",
-          "licensePath": "licenses/LICENSE-NDLOCR-Lite.txt",
-          "noticePath": "licenses/NOTICE-vertical.md",
-          "owner": "ndl-lab/ndlocr-lite",
-          "path": "model/vertical/parseq-ndl-24x256-30-tiny-189epoch-tegaki3-r8data-202604.onnx",
-          "redirectHosts": [],
-          "revision": "636d1cfeb1331f89f4048f416e49e23a09a714b5",
-          "sha256": "9e651bae4c1a4d5254da1127e86e82e21ef62d5339b37e62d4a3d3d30831772d",
-          "spdx": "CC-BY-4.0",
-          "url": "https://raw.githubusercontent.com/ndl-lab/ndlocr-lite/636d1cfeb1331f89f4048f416e49e23a09a714b5/src/model/parseq-ndl-24x256-30-tiny-189epoch-tegaki3-r8data-202604.onnx"
-        },
-        {
-          "bytes": 37808553,
-          "derivation": null,
-          "kind": "source",
-          "licensePath": "licenses/LICENSE-NDLOCR-Lite.txt",
-          "noticePath": "licenses/NOTICE-vertical.md",
-          "owner": "ndl-lab/ndlocr-lite",
-          "path": "model/vertical/parseq-ndl-24x384-50-tiny-300epoch-tegaki3-r8data-202604.onnx",
-          "redirectHosts": [],
-          "revision": "636d1cfeb1331f89f4048f416e49e23a09a714b5",
-          "sha256": "49cea9db4552f19eb05c8ee202fcf74714977749b2f4c9376b127fde41b07a99",
-          "spdx": "CC-BY-4.0",
-          "url": "https://raw.githubusercontent.com/ndl-lab/ndlocr-lite/636d1cfeb1331f89f4048f416e49e23a09a714b5/src/model/parseq-ndl-24x384-50-tiny-300epoch-tegaki3-r8data-202604.onnx"
-        },
-        {
-          "bytes": 42588187,
-          "derivation": null,
-          "kind": "source",
-          "licensePath": "licenses/LICENSE-NDLOCR-Lite.txt",
-          "noticePath": "licenses/NOTICE-vertical.md",
-          "owner": "ndl-lab/ndlocr-lite",
-          "path": "model/vertical/parseq-ndl-24x768-100-tiny-153epoch-tegaki3-r8data-202604.onnx",
-          "redirectHosts": [],
-          "revision": "636d1cfeb1331f89f4048f416e49e23a09a714b5",
-          "sha256": "06462b0dbd5b0b8508545c8c3d485cf20dbf4ffa652fe145e69c9e7457080602",
-          "spdx": "CC-BY-4.0",
-          "url": "https://raw.githubusercontent.com/ndl-lab/ndlocr-lite/636d1cfeb1331f89f4048f416e49e23a09a714b5/src/model/parseq-ndl-24x768-100-tiny-153epoch-tegaki3-r8data-202604.onnx"
         },
         {
           "bytes": 2438,
@@ -635,6 +509,139 @@
         }
       ],
       "requirementId": "speaker-diarization"
+    },
+    {
+      "artifactVersion": "0.5.1",
+      "entryPoint": "model",
+      "files": [
+        {
+          "bytes": 18653,
+          "derivation": null,
+          "kind": "license",
+          "licensePath": null,
+          "noticePath": null,
+          "owner": "ndl-lab/ndlocr-lite",
+          "path": "licenses/LICENSE-NDLOCR-Lite.txt",
+          "redirectHosts": [],
+          "revision": "636d1cfeb1331f89f4048f416e49e23a09a714b5",
+          "sha256": "12538e73c4a1e05fc0c0b75d9d4de657f139d94ebc5f44b03a84cc1f793358f0",
+          "spdx": "CC-BY-4.0",
+          "url": "https://raw.githubusercontent.com/ndl-lab/ndlocr-lite/636d1cfeb1331f89f4048f416e49e23a09a714b5/LICENCE"
+        },
+        {
+          "bytes": 61810,
+          "derivation": null,
+          "kind": "notice",
+          "licensePath": null,
+          "noticePath": null,
+          "owner": "ndl-lab/ndlocr-lite",
+          "path": "licenses/NOTICE-vertical-dependencies.txt",
+          "redirectHosts": [],
+          "revision": "636d1cfeb1331f89f4048f416e49e23a09a714b5",
+          "sha256": "d1651934d0ba82bc941fa59b99bc311c273b199ff379d8bb2beca81e2f1695e7",
+          "spdx": "CC-BY-4.0",
+          "url": "https://raw.githubusercontent.com/ndl-lab/ndlocr-lite/636d1cfeb1331f89f4048f416e49e23a09a714b5/LICENCE_DEPENDENCEIES"
+        },
+        {
+          "bytes": 11168,
+          "derivation": null,
+          "kind": "notice",
+          "licensePath": null,
+          "noticePath": null,
+          "owner": "ndl-lab/ndlocr-lite",
+          "path": "licenses/NOTICE-vertical.md",
+          "redirectHosts": [],
+          "revision": "636d1cfeb1331f89f4048f416e49e23a09a714b5",
+          "sha256": "49ae23223320936d4cc26ca0ab79f04b1460a3e3a74eb90a481f0b83c51c7f45",
+          "spdx": "CC-BY-4.0",
+          "url": "https://raw.githubusercontent.com/ndl-lab/ndlocr-lite/636d1cfeb1331f89f4048f416e49e23a09a714b5/README.md"
+        },
+        {
+          "bytes": 42434,
+          "derivation": null,
+          "kind": "source",
+          "licensePath": "licenses/LICENSE-NDLOCR-Lite.txt",
+          "noticePath": "licenses/NOTICE-vertical.md",
+          "owner": "ndl-lab/ndlocr-lite",
+          "path": "model/vertical/NDLmoji.yaml",
+          "redirectHosts": [],
+          "revision": "636d1cfeb1331f89f4048f416e49e23a09a714b5",
+          "sha256": "f6ad5a2de444b495155866af811cf1a98309dcae3225db802767ea531a2dc529",
+          "spdx": "CC-BY-4.0",
+          "url": "https://raw.githubusercontent.com/ndl-lab/ndlocr-lite/636d1cfeb1331f89f4048f416e49e23a09a714b5/src/config/NDLmoji.yaml"
+        },
+        {
+          "bytes": 40256763,
+          "derivation": null,
+          "kind": "source",
+          "licensePath": "licenses/LICENSE-NDLOCR-Lite.txt",
+          "noticePath": "licenses/NOTICE-vertical.md",
+          "owner": "ndl-lab/ndlocr-lite",
+          "path": "model/vertical/deim-s-1024x1024.onnx",
+          "redirectHosts": [],
+          "revision": "636d1cfeb1331f89f4048f416e49e23a09a714b5",
+          "sha256": "c156ce0c4e704bc3bf7e4016d0a87b949cffa8b3724f4b4cc696b8284c3c7373",
+          "spdx": "CC-BY-4.0",
+          "url": "https://raw.githubusercontent.com/ndl-lab/ndlocr-lite/636d1cfeb1331f89f4048f416e49e23a09a714b5/src/model/deim-s-1024x1024.onnx"
+        },
+        {
+          "bytes": 299,
+          "derivation": null,
+          "kind": "source",
+          "licensePath": "licenses/LICENSE-NDLOCR-Lite.txt",
+          "noticePath": "licenses/NOTICE-vertical.md",
+          "owner": "ndl-lab/ndlocr-lite",
+          "path": "model/vertical/ndl.yaml",
+          "redirectHosts": [],
+          "revision": "636d1cfeb1331f89f4048f416e49e23a09a714b5",
+          "sha256": "0c2a6a184dd322375b76f2ce3842f8ac555d53edad0ab63655c013f4c471c5a0",
+          "spdx": "CC-BY-4.0",
+          "url": "https://raw.githubusercontent.com/ndl-lab/ndlocr-lite/636d1cfeb1331f89f4048f416e49e23a09a714b5/src/config/ndl.yaml"
+        },
+        {
+          "bytes": 36457393,
+          "derivation": null,
+          "kind": "source",
+          "licensePath": "licenses/LICENSE-NDLOCR-Lite.txt",
+          "noticePath": "licenses/NOTICE-vertical.md",
+          "owner": "ndl-lab/ndlocr-lite",
+          "path": "model/vertical/parseq-ndl-24x256-30-tiny-189epoch-tegaki3-r8data-202604.onnx",
+          "redirectHosts": [],
+          "revision": "636d1cfeb1331f89f4048f416e49e23a09a714b5",
+          "sha256": "9e651bae4c1a4d5254da1127e86e82e21ef62d5339b37e62d4a3d3d30831772d",
+          "spdx": "CC-BY-4.0",
+          "url": "https://raw.githubusercontent.com/ndl-lab/ndlocr-lite/636d1cfeb1331f89f4048f416e49e23a09a714b5/src/model/parseq-ndl-24x256-30-tiny-189epoch-tegaki3-r8data-202604.onnx"
+        },
+        {
+          "bytes": 37808553,
+          "derivation": null,
+          "kind": "source",
+          "licensePath": "licenses/LICENSE-NDLOCR-Lite.txt",
+          "noticePath": "licenses/NOTICE-vertical.md",
+          "owner": "ndl-lab/ndlocr-lite",
+          "path": "model/vertical/parseq-ndl-24x384-50-tiny-300epoch-tegaki3-r8data-202604.onnx",
+          "redirectHosts": [],
+          "revision": "636d1cfeb1331f89f4048f416e49e23a09a714b5",
+          "sha256": "49cea9db4552f19eb05c8ee202fcf74714977749b2f4c9376b127fde41b07a99",
+          "spdx": "CC-BY-4.0",
+          "url": "https://raw.githubusercontent.com/ndl-lab/ndlocr-lite/636d1cfeb1331f89f4048f416e49e23a09a714b5/src/model/parseq-ndl-24x384-50-tiny-300epoch-tegaki3-r8data-202604.onnx"
+        },
+        {
+          "bytes": 42588187,
+          "derivation": null,
+          "kind": "source",
+          "licensePath": "licenses/LICENSE-NDLOCR-Lite.txt",
+          "noticePath": "licenses/NOTICE-vertical.md",
+          "owner": "ndl-lab/ndlocr-lite",
+          "path": "model/vertical/parseq-ndl-24x768-100-tiny-153epoch-tegaki3-r8data-202604.onnx",
+          "redirectHosts": [],
+          "revision": "636d1cfeb1331f89f4048f416e49e23a09a714b5",
+          "sha256": "06462b0dbd5b0b8508545c8c3d485cf20dbf4ffa652fe145e69c9e7457080602",
+          "spdx": "CC-BY-4.0",
+          "url": "https://raw.githubusercontent.com/ndl-lab/ndlocr-lite/636d1cfeb1331f89f4048f416e49e23a09a714b5/src/model/parseq-ndl-24x768-100-tiny-153epoch-tegaki3-r8data-202604.onnx"
+        }
+      ],
+      "requirementId": "vertical-japanese-reader"
     }
   ]
 }

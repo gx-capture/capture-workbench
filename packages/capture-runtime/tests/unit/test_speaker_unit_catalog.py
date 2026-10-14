@@ -12,7 +12,11 @@ from typing import Any
 import pytest
 
 from capture_runtime.constants import RUNTIME_VERSION
-from capture_runtime.engine_catalog import EngineCatalog, canonical_json_bytes
+from capture_runtime.engine_catalog import (
+    EngineCatalog,
+    EngineCatalogError,
+    canonical_json_bytes,
+)
 from capture_runtime.release import build_release_artifacts, write_capture_document_schema
 from tests.direct_model_fixtures import approved_source_lock
 
@@ -64,9 +68,12 @@ def _speaker_requirement(requirement_id: str = "speaker-diarization") -> dict[st
     }
 
 
-def _lock_with(*extra: dict[str, Any]) -> dict[str, Any]:
+def _lock_with(*speaker_units: dict[str, Any]) -> dict[str, Any]:
+    """The required units, then the given ones, then the vertical reader."""
+
     lock, _content = approved_source_lock()
-    lock["requirements"] = [*lock["requirements"], *extra]
+    required, reader = lock["requirements"][:2], lock["requirements"][2:]
+    lock["requirements"] = [*required, *speaker_units, *reader]
     return lock
 
 
@@ -79,6 +86,7 @@ def test_lock_accepts_the_optional_speaker_unit_after_the_required_ones() -> Non
         "windowsml-ocr",
         "whisper-primary",
         "speaker-diarization",
+        "vertical-japanese-reader",
     ]
     assert module.model_delivery(lock, "speaker-diarization")["entryCount"] == 4
 
@@ -86,12 +94,21 @@ def test_lock_accepts_the_optional_speaker_unit_after_the_required_ones() -> Non
 @pytest.mark.parametrize(
     "requirements",
     [
-        lambda base: [base[0], _speaker_requirement(), base[1]],
-        lambda base: [base[0], _speaker_requirement()],
+        lambda base: [base[0], _speaker_requirement(), *base[1:]],
+        lambda base: [base[0], _speaker_requirement(), *base[2:]],
         lambda base: [*base, _speaker_requirement("another-unit")],
-        lambda base: [*base, _speaker_requirement(), _speaker_requirement()],
+        lambda base: [*base[:2], _speaker_requirement(), _speaker_requirement(), *base[2:]],
+        lambda base: [*base, _speaker_requirement()],
+        lambda base: [*base, base[2]],
     ],
-    ids=["before-whisper", "replacing-whisper", "unknown-unit", "listed-twice"],
+    ids=[
+        "before-whisper",
+        "replacing-whisper",
+        "unknown-unit",
+        "listed-twice",
+        "after-the-reader",
+        "reader-twice",
+    ],
 )
 def test_lock_rejects_misplaced_or_unknown_units(requirements: Any) -> None:
     module = _lock_module()
@@ -206,6 +223,7 @@ def test_catalog_leaves_the_unit_out_when_the_lock_does_not_have_it(tmp_path: Pa
     assert [item["requirementId"] for item in catalog["requirements"]] == [
         "windowsml-ocr",
         "whisper-primary",
+        "vertical-japanese-reader",
     ]
 
 
@@ -213,16 +231,24 @@ def test_a_models_only_unit_enters_the_catalog_and_the_release_without_an_archiv
     tmp_path: Path,
 ) -> None:
     completed, catalog_path, engine_dir = _generate(
-        tmp_path,
-        _lock_with(_speaker_requirement("vertical-japanese-reader")),
-        with_speaker_worker=False,
+        tmp_path, _lock_with(), with_speaker_worker=False
     )
 
     assert completed.returncode == 0, completed.stderr
     catalog = EngineCatalog.from_dict(json.loads(catalog_path.read_text(encoding="utf-8")))
     unit = catalog.requirement("vertical-japanese-reader")
     assert (unit.complete, unit.model_only, unit.artifacts) == (True, True, ())
-    assert unit.model_delivery().entry_count == 4
+    assert unit.model_delivery().entry_count == 9
+    # The OCR profile is derived from the reader's files, which this unit delivers.
+    profile = next(
+        item
+        for item in catalog.requirement("windowsml-ocr").model_delivery().files
+        if item.kind == "derived"
+    )
+    assert profile.derivation is not None
+    assert {item.path for item in unit.model_delivery().files} >= {
+        path for path in profile.derivation["inputs"] if path.startswith("model/vertical/")
+    }
 
     executable = tmp_path / "capture-runtime.exe"
     executable.write_bytes(b"runtime")
@@ -242,10 +268,29 @@ def test_a_models_only_unit_enters_the_catalog_and_the_release_without_an_archiv
 
 def test_lock_orders_both_optional_units_after_the_required_ones() -> None:
     module = _lock_module()
-    speaker = _speaker_requirement()
-    reader = _speaker_requirement("vertical-japanese-reader")
+    module.validate_source_lock(_lock_with(_speaker_requirement()))
+    module.validate_source_lock(_lock_with())
 
-    module.validate_source_lock(_lock_with(speaker, reader))
-    module.validate_source_lock(_lock_with(reader))
+
+def test_the_ocr_profile_needs_the_reader_unit_in_the_same_lock_and_catalog() -> None:
+    module = _lock_module()
+    lock = _lock_with()
+    lock["requirements"] = lock["requirements"][:2]
+
     with pytest.raises(module.ModelSourceLockError):
-        module.validate_source_lock(_lock_with(reader, speaker))
+        module.validate_source_lock(lock)
+
+    catalog = {
+        "catalogVersion": "2",
+        "runtimeVersion": RUNTIME_VERSION,
+        "requirements": [
+            {
+                "requirementId": "windowsml-ocr",
+                "artifacts": [],
+                "modelFiles": module.model_delivery(_lock_with(), "windowsml-ocr"),
+                "unavailableReason": None,
+            }
+        ],
+    }
+    with pytest.raises(EngineCatalogError, match="derivation inputs"):
+        EngineCatalog.from_dict(catalog)
