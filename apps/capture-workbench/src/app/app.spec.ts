@@ -297,6 +297,55 @@ describe('App', () => {
   });
 });
 
+it('lists the speakers of a transcript, plays a sample and stores a name', async () => {
+  const store = workspaceStub({
+    documentId: 'c'.repeat(32),
+    fileName: 'meeting.wav',
+    mediaType: 'audio/wav',
+    byteLength: 16,
+    createdAtMs: 1,
+    updatedAtMs: 1,
+    status: 'completed',
+    stage: 'completed',
+    result: {
+      targetText: 'Good morning',
+      speakers: [
+        { speakerId: 'SPEAKER_00', sample: { kind: 'time', startMs: 0, endMs: 900 } },
+        { speakerId: 'SPEAKER_01', sample: null, displayName: 'Ms. Lin' },
+      ],
+      extractionEngine: { engine: 'whisper-primary', model: 'm', device: 'cpu', digest: `sha256:${'a'.repeat(64)}` },
+      structuringEngine: { engine: 'ollama', model: 'm', digest: `sha256:${'b'.repeat(64)}` },
+    },
+  });
+  await TestBed.configureTestingModule({
+    imports: [App],
+    providers: [provideNoopAnimations(), { provide: DesktopWorkspaceStore, useValue: store }],
+  }).compileComponents();
+  const fixture = TestBed.createComponent(App);
+  fixture.detectChanges();
+  await fixture.whenStable();
+  const root = fixture.nativeElement as HTMLElement;
+
+  const rows = root.querySelectorAll('[data-testid="document-speaker"]');
+  expect(rows).toHaveLength(2);
+  expect(rows[0].querySelector('audio')?.getAttribute('src')).toBe('blob:recording#t=0,0.9');
+  expect(rows[1].querySelector('audio')).toBeNull();
+  expect((rows[1].querySelector('input') as HTMLInputElement).value).toBe('Ms. Lin');
+
+  const input = rows[0].querySelector('input') as HTMLInputElement;
+  input.value = 'Mr. Chen';
+  input.dispatchEvent(new Event('change'));
+  expect(store.nameSpeaker).toHaveBeenCalledWith('c'.repeat(32), 'SPEAKER_00', 'Mr. Chen');
+
+  (root.querySelector('[data-testid="load-speaker-samples"]') as HTMLButtonElement).click();
+  expect(store.loadSpeakerSamples).toHaveBeenCalledWith('c'.repeat(32), 'audio/wav');
+
+  const option = root.querySelector('[data-testid="identify-speakers"]') as HTMLInputElement;
+  option.checked = true;
+  option.dispatchEvent(new Event('change'));
+  expect(store.identifySpeakers()).toBe(true);
+});
+
 function workspaceStub(selected: unknown = null, modelInstallation: RuntimeModelInstallation | null = null) {
   return {
     state: signal<'ready' | 'needs-setup' | 'error'>('ready'),
@@ -318,6 +367,13 @@ function workspaceStub(selected: unknown = null, modelInstallation: RuntimeModel
     modelOptions: signal<readonly RuntimeModelOption[]>([]),
     selectedModelOptionId: signal<string | null>(null),
     busyIds: signal(new Set<string>()),
+    identifySpeakers: signal(false),
+    sampleSources: signal(new Map<string, string>()),
+    loadSpeakerSamples: vi.fn(),
+    speakerSampleUrl: (_documentId: string, sample?: unknown) =>
+      sample ? 'blob:recording#t=0,0.9' : null,
+    nameSpeaker: vi.fn(),
+    resultText: (result: { targetText: string }) => result.targetText,
     canCapture: signal(true),
     coreMissing: signal([]),
     installableCoreRequirements: signal([]),

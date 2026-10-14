@@ -87,6 +87,8 @@ export interface DesktopWorkspaceCaptureHost {
   readonly refreshDocuments: () => void;
   readonly reloadDocumentState: (documentId: string) => void;
   readonly setMessage: (message: string) => void;
+  /** The user asked for speakers to be told apart in audio. */
+  readonly identifySpeakers: () => boolean;
 }
 
 @Injectable({ providedIn: 'root' })
@@ -177,6 +179,17 @@ export class DesktopWorkspaceCaptureService {
           host.setMessage(desktopMessages().whisperNeeded);
           return EMPTY;
         }
+        if (
+          isAudioMediaType(document.mediaType)
+          && host.identifySpeakers()
+          && !this.speakersReady(host.requirements())
+        ) {
+          host.requestedRequirements.update(
+            (current) => new Set([...current, 'speaker-diarization']),
+          );
+          host.setMessage(desktopMessages().speakerUnitNeeded);
+          return EMPTY;
+        }
         return this.captureExisting$(document.documentId, host, document.mediaType);
       }),
       catchError((error) => {
@@ -260,6 +273,8 @@ export class DesktopWorkspaceCaptureService {
       documentId,
       clientRequestId: crypto.randomUUID(),
       structuringMode: 'runtime',
+      identifySpeakers:
+        host.identifySpeakers() && this.speakersReady(host.requirements()),
     }).pipe(
       switchMap((operation) => {
         active.captureId = operation.captureId;
@@ -873,6 +888,13 @@ export class DesktopWorkspaceCaptureService {
       errorCode: 'capture_failed',
       errorMessage: errorMessage(error),
     });
+  }
+
+  private speakersReady(requirements: readonly RuntimeRequirement[]): boolean {
+    return requirements.some(
+      (requirement) =>
+        requirement.requirementId === 'speaker-diarization' && requirement.status === 'ready',
+    );
   }
 
   private audioReady(requirements: readonly RuntimeRequirement[]): boolean {

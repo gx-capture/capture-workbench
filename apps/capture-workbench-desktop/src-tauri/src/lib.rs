@@ -31,6 +31,7 @@ macro_rules! desktop_invoke_handler {
             commands::library_list,
             commands::library_get,
             commands::library_export,
+            commands::library_source_bytes,
             commands::library_delete,
             commands::runtime_requirements,
             commands::runtime_start_installation,

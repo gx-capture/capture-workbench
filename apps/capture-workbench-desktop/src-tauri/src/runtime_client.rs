@@ -251,6 +251,7 @@ pub(crate) fn start_streaming_capture(
                     "ingestionId": ingestion_id,
                     "structuringMode": input.structuring_mode,
                     "startPolicy": "eager",
+                    "identifySpeakers": input.identify_speakers,
                 }))
                 .map_err(|_| "Progressive capture request cannot be encoded.".to_string())?,
                 content_type: "application/json".into(),
