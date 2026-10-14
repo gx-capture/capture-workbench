@@ -1427,6 +1427,97 @@ def test_default_paddle_factory_does_not_patch_onnxruntime_globals(
     assert observed == [(InferenceSession, SessionOptions, {"engine": "onnxruntime"})]
 
 
+def _profiling_engine_config(prefix: str) -> dict[str, object]:
+    return {
+        "providers": ["DmlExecutionProvider", "CPUExecutionProvider"],
+        "session_options": {"enable_profiling": True, "profile_file_prefix": prefix},
+    }
+
+
+def test_each_ocr_model_session_gets_its_own_profile_prefix() -> None:
+    pipeline_config = {
+        "pipeline_name": "OCR",
+        "SubModules": {
+            "TextDetection": {"model_name": "det", "engine_config": {"intra_op_num_threads": 2}},
+            "TextRecognition": {"model_name": "rec"},
+        },
+    }
+
+    config = engine_adapters._per_session_profile_config(
+        {"engine_config": _profiling_engine_config("C:/work/ocr-profile")},
+        load_config=lambda name: pipeline_config,
+    )
+
+    assert config is not None
+    assert config["pipeline_name"] == "OCR"
+    assert config["SubModules"]["TextDetection"]["engine_config"] == {
+        "intra_op_num_threads": 2,
+        "session_options": {
+            "enable_profiling": True,
+            "profile_file_prefix": "C:/work/ocr-profile_det",
+        },
+    }
+    assert config["SubModules"]["TextRecognition"]["engine_config"] == {
+        "session_options": {
+            "enable_profiling": True,
+            "profile_file_prefix": "C:/work/ocr-profile_rec",
+        },
+    }
+    # A model that is not part of the pipeline is not added to it.
+    assert "TextLineOrientation" not in config["SubModules"]
+    # The loaded PaddleX config is not changed in place.
+    assert "engine_config" not in pipeline_config["SubModules"]["TextRecognition"]
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {},
+        {"engine_config": {"providers": ["CPUExecutionProvider"]}},
+        {"engine_config": {"session_options": {"enable_profiling": False}}},
+        {"engine_config": {"session_options": {"enable_profiling": True}}},
+    ],
+    ids=["no-engine-config", "no-session-options", "profiling-off", "no-prefix"],
+)
+def test_ocr_models_share_the_pipeline_config_without_profiling(
+    kwargs: dict[str, object],
+) -> None:
+    def load_config(name: str) -> dict[str, object]:
+        raise AssertionError("the PaddleX config is only needed when profiling")
+
+    assert engine_adapters._per_session_profile_config(kwargs, load_config=load_config) is None
+
+
+def test_default_paddle_factory_passes_per_model_profile_prefixes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: list[dict[str, object]] = []
+
+    class FakePaddleOCR:
+        def __init__(self, **kwargs: object) -> None:
+            observed.append(kwargs)
+
+    paddleocr_module = ModuleType("paddleocr")
+    paddleocr_module.PaddleOCR = FakePaddleOCR  # type: ignore[attr-defined]
+    paddlex_inference = ModuleType("paddlex.inference")
+    paddlex_inference.load_pipeline_config = lambda name: {  # type: ignore[attr-defined]
+        "SubModules": {"TextDetection": {}, "TextRecognition": {}}
+    }
+    monkeypatch.setitem(engine_adapters.sys.modules, "paddleocr", paddleocr_module)
+    monkeypatch.setitem(engine_adapters.sys.modules, "paddlex.inference", paddlex_inference)
+    engine_config = _profiling_engine_config("C:/work/ocr-profile")
+
+    engine_adapters._default_paddle_pipeline(engine="onnxruntime", engine_config=engine_config)
+
+    assert len(observed) == 1
+    assert observed[0]["engine_config"] == engine_config
+    sub_modules = observed[0]["paddlex_config"]["SubModules"]  # type: ignore[index]
+    assert [
+        sub_modules[name]["engine_config"]["session_options"]["profile_file_prefix"]
+        for name in ("TextDetection", "TextRecognition")
+    ] == ["C:/work/ocr-profile_det", "C:/work/ocr-profile_rec"]
+
+
 @pytest.mark.parametrize(
     "providers",
     [
@@ -2210,8 +2301,8 @@ def test_ort_profile_finalize_disambiguates_same_second_timestamp_profiles(
             pass
 
         def end_profiling(self) -> str:
-            # ORT can reuse this second-resolution path for both PaddleX
-            # sessions.  Each call still produces a fresh profile file.
+            # Sessions that share one prefix can return the same
+            # second-resolution path.  Here each call writes a whole file.
             profile_path.write_text(profile_payload, encoding="utf-8")
             return str(profile_path)
 

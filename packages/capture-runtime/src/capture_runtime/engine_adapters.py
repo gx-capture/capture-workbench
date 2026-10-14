@@ -7,6 +7,7 @@ asset instead of substituting deterministic content.
 
 from __future__ import annotations
 
+import copy
 import ctypes
 import hashlib
 import importlib.util
@@ -1328,9 +1329,10 @@ class _PaddleOcrExecutionEvidenceAdapter:
     def _is_ort_timestamp_profile(self, profile_path: Path) -> bool:
         """Recognize ORT's second-resolution profile filename, not arbitrary paths.
 
-        PaddleX passes one profile prefix to every OCR session.  ORT appends a
-        timestamp to that prefix, so two sessions ending within one second can
-        return the same path.  Restricting this normalization to ORT's known
+        ORT appends a second-resolution timestamp to the profile prefix, so
+        sessions sharing one prefix can return the same path.  The default
+        factory gives each OCR model its own prefix; a session left on the
+        shared prefix is still handled here.  Restricting this normalization to ORT's known
         filename shape preserves the generic duplicate-path fail-closed rule.
         """
 
@@ -1696,7 +1698,67 @@ def _default_paddle_pipeline(**kwargs: Any) -> Any:
     _install_offline_huggingface_stubs()
     from paddleocr import PaddleOCR
 
+    paddlex_config = _per_session_profile_config(kwargs)
+    if paddlex_config is not None:
+        kwargs = {**kwargs, "paddlex_config": paddlex_config}
     return PaddleOCR(**kwargs)
+
+
+# Each OCR model's ONNX Runtime session profiles under its own prefix.
+_SESSION_PROFILE_SUFFIXES = {
+    "TextDetection": "det",
+    "TextRecognition": "rec",
+    "TextLineOrientation": "textline",
+}
+
+
+def _per_session_profile_config(
+    kwargs: Mapping[str, Any],
+    load_config: Callable[[str], Mapping[str, Any]] | None = None,
+) -> dict[str, Any] | None:
+    """Give every OCR model session its own ORT profile prefix.
+
+    ORT opens a session's profile file when the session is created, naming it
+    ``<prefix>_<timestamp to the second>.json``. PaddleX passes one prefix to
+    every model, so two sessions created within the same second open the same
+    file, and the shorter profile written at the end leaves the tail of the
+    longer one behind it: invalid JSON, and a failed OCR run. A per-model
+    ``engine_config`` replaces the pipeline's ``session_options``, so each
+    model gets ``<prefix>_<model>``; ownership by ``<prefix>_`` is unchanged.
+    Returns None when the kwargs do not enable profiling.
+    """
+
+    engine_config = kwargs.get("engine_config")
+    if not isinstance(engine_config, Mapping):
+        return None
+    session_options = engine_config.get("session_options")
+    if not isinstance(session_options, Mapping) or not session_options.get("enable_profiling"):
+        return None
+    prefix = session_options.get("profile_file_prefix")
+    if not isinstance(prefix, str) or not prefix:
+        return None
+    if load_config is None:
+        from paddlex.inference import load_pipeline_config
+
+        load_config = load_pipeline_config
+    config = copy.deepcopy(dict(load_config("OCR")))
+    sub_modules = config.get("SubModules")
+    if not isinstance(sub_modules, dict):
+        raise EngineRuntimeUnavailableError("PaddleX OCR pipeline config has no SubModules.")
+    for name, suffix in _SESSION_PROFILE_SUFFIXES.items():
+        sub_module = sub_modules.get(name)
+        if sub_module is None:
+            continue
+        if not isinstance(sub_module, dict):
+            raise EngineRuntimeUnavailableError("PaddleX OCR pipeline config is invalid.")
+        model_engine_config = sub_module.get("engine_config") or {}
+        if not isinstance(model_engine_config, dict):
+            raise EngineRuntimeUnavailableError("PaddleX OCR pipeline config is invalid.")
+        sub_module["engine_config"] = {
+            **model_engine_config,
+            "session_options": {**session_options, "profile_file_prefix": f"{prefix}_{suffix}"},
+        }
+    return config
 
 
 def _native_selected_adapter_map(
