@@ -45,6 +45,26 @@ actually shipped (0.5.1 followed the same steps); workflow files remain the sour
   structure of dense vertical periodical scans and pages that mix directions;
   about a fifth of furigana on textbook pages is not set aside.
 
+## Prepared, not published: 0.6.0
+
+- Release source is on `integration/next-release` (version files at 0.6.0); it
+  is not on `main` and no candidate workflow has run for it.
+- Incompatible with 0.5.x. Contract-set SHA-256
+  `fc8a994e5a2a822376821da277e949eb203df9223977da4db4cdc7ab29724523`; the set no
+  longer carries the release version, so the version bump did not change it.
+- Model-source Commit A `99bfd21` (annotated tag
+  `capture-runtime-model-sources-v0.6.0`). OCR profile
+  `capture-workbench-ocr-09c2568f8a130abe`: the profile still carries the
+  release version, so its id changes with every release.
+- The lock has four units: `windowsml-ocr`, `whisper-primary`, and the optional
+  `speaker-diarization` (worker archive about 272 MB, models from
+  `gx-capture/capture-model-sources`) and `vertical-japanese-reader` (models
+  only, no worker archive).
+- Checked locally: the release engine catalog generates from the real worker
+  archives. Not yet exercised anywhere: the candidate and promote workflows with
+  four units, installing the optional units from a published release, and the
+  consumer gates. Cert Prep and LAW still pin 0.5.1.
+
 ## Workflow map
 
 | Stage             | Workflow                                          | Produces                                                            |
@@ -142,6 +162,14 @@ candidate with `node tools/install-capture-workbench-dependencies.mts
   old, `pnpm install` rejects the old lock entries before it can re-resolve;
   move only the two `@gx-capture` lock entries (integrity and tarball from
   GitHub Packages) and verify with `pnpm install --frozen-lockfile`.
+- A version bump needs a new model-source snapshot before the lock can follow:
+  set the version in `scripts/generate_commit_a_fixtures.py`, regenerate, commit
+  only `model-sources/commit-a/` (Commit A), push it with the annotated tag
+  `capture-runtime-model-sources-v<version>`, then put its SHA in
+  `COMMIT_A_SHA` and the lock, recompute the digests of the first-party files
+  from the committed bytes, and copy `commit-a/model/pipeline.json` to
+  `src/capture_runtime/assets/ocr-profile.json`. The lock's approval record
+  changes only with the owner's consent.
 - Version management has two stages: ordinary source/tests reference a scoped
   owner, then code updates the explicit owner/native metadata list. Preview with
   `pnpm nx run capture-tools:release-version-plan --args="--version <version>"` and apply

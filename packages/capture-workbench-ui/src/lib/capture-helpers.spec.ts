@@ -9,6 +9,7 @@ import {
   CaptureCompatibilityError,
   validateStructuringCandidate,
 } from './capture-helpers';
+import { CAPTURE_RUNTIME_MINOR } from './constants';
 import {
   CAPTURE_DOCUMENT_CONTRACT,
   CAPTURE_DOCUMENT_SCHEMA,
@@ -158,7 +159,7 @@ describe('capture helpers', () => {
     };
 
     expect(() => assertCaptureRuntimeCompatible(ready)).toThrow(
-      'incompatible with client runtime minor 5',
+      `incompatible with client runtime minor ${CAPTURE_RUNTIME_MINOR}`,
     );
   });
 
@@ -166,7 +167,7 @@ describe('capture helpers', () => {
     const ready: RuntimeReady = {
       ready: true,
       service: 'capture-runtime',
-      runtimeVersion: '0.5.8',
+      runtimeVersion: `0.${CAPTURE_RUNTIME_MINOR}.8`,
       apiVersion: '2.0',
       captureDocumentSchemaVersion: '2',
       capabilities: {
