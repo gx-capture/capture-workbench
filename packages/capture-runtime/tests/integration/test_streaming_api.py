@@ -22,6 +22,7 @@ from capture_runtime.contracts import (
     CaptureEngine,
     CaptureFailureV2,
     CaptureSourceKind,
+    CaptureSpeaker,
     OcrPageScopeV2,
     OpenIngestionV2,
     PageLocator,
@@ -29,6 +30,7 @@ from capture_runtime.contracts import (
     RawCaptureSegment,
     StartCaptureV2,
     StreamingCaptureStatus,
+    StreamingEventType,
     StructuringMode,
     TimeLocator,
 )
@@ -1944,3 +1946,92 @@ def test_page_progress_persistence_failure_does_not_fail_ocr(
     _wait_for_capture_status(service, capture_id, StreamingCaptureStatus.AWAITING_STRUCTURING)
     assert failed_writes == [pytest.approx(0.45)]
     assert service.repository.read_raw(capture_id).source_text == "progress write failure page"
+
+
+def test_a_transcript_longer_than_one_event_is_published_in_several(client: TestClient) -> None:
+    repository = client.app.state.streaming_repository
+    service = client.app.state.streaming_capture_service
+    content = b"long-recording"
+    digest = hashlib.sha256(content).hexdigest()
+    ingestion = repository.create_ingestion(
+        OpenIngestionV2(
+            client_request_id=f"long-ingestion-{uuid4()}",
+            file_name="sample.mp3",
+            media_type="audio/mpeg",
+            total_bytes=len(content),
+            source_sha256=digest,
+        )
+    )
+    repository.append_chunk(
+        ingestion.ingestion_id,
+        chunk_index=0,
+        byte_offset=0,
+        data=content,
+        sha256=digest,
+        max_chunk_bytes=4 * 1024 * 1024,
+        declared_total_bytes=len(content),
+    )
+    repository.finalize_ingestion(ingestion.ingestion_id, total_bytes=len(content), sha256=digest)
+    operation = repository.create_capture(
+        StartCaptureV2(
+            client_request_id=f"long-capture-{uuid4()}",
+            ingestion_id=ingestion.ingestion_id,
+            structuring_mode=StructuringMode.HOST,
+            identify_speakers=True,
+        )
+    )
+    assert operation.source is not None
+    segments = [
+        RawCaptureSegment(
+            segment_id=f"segment-{index + 1}",
+            order=index,
+            locator=TimeLocator(start_ms=index * 10, end_ms=index * 10 + 10),
+            text=f"line {index}",
+            speaker="SPEAKER_00",
+        )
+        for index in range(2_300)
+    ]
+    engine = CaptureEngine(
+        engine="whisper-primary", model="test-model", digest=f"sha256:{'a' * 64}", device="cpu"
+    )
+    raw = RawCapture(
+        source=operation.source,
+        segments=segments,
+        source_text="\n".join(segment.text for segment in segments),
+        extraction_engine=engine,
+        diarization_engine=CaptureEngine(
+            engine="speaker-diarization", model="m", digest=f"sha256:{'b' * 64}", device="cpu"
+        ),
+        speakers=[CaptureSpeaker(speaker_id="SPEAKER_00")],
+        created_at=datetime(2026, 8, 13, tzinfo=UTC),
+    )
+    requested: list[bool] = []
+
+    class Extractor:
+        def sniff(self, _content: bytes) -> SimpleNamespace:
+            return SimpleNamespace(kind=CaptureSourceKind.AUDIO, media_type="audio/mpeg")
+
+        async def extract(self, *_args: object, **options: object) -> SimpleNamespace:
+            requested.append(options.get("identify_speakers") is True)
+            return SimpleNamespace(raw=raw, ocr_projection=None, _execution_proof=None)
+
+    service._extractor = Extractor()
+
+    asyncio.run(
+        service._extract_buffered_source(
+            operation.capture_id,
+            operation.source,
+            CaptureSourceKind.AUDIO,
+            repository.source_path(operation.ingestion_id),
+            asyncio.Event(),
+        )
+    )
+
+    assert requested == [True]
+    counts = [
+        len(event.segments)
+        for event in repository.read_events(operation.capture_id, after_sequence=0)
+        if event.event_type is StreamingEventType.SEGMENT
+    ]
+    assert counts == [1_000, 1_000, 300]
+    assert len(repository.read_partial(operation.capture_id).segments) == 2_300
