@@ -1,6 +1,6 @@
 {
   "approval": {
-    "approvedAt": "2026-10-06T06:12:40.000Z",
+    "approvedAt": "2026-10-13T13:43:37.000Z",
     "approvedBy": "MSI\\guanxin",
     "blockers": [],
     "status": "approved"
@@ -530,6 +530,111 @@
         }
       ],
       "requirementId": "whisper-primary"
+    },
+    {
+      "artifactVersion": "0.5.1",
+      "entryPoint": "model",
+      "files": [
+        {
+          "bytes": 18657,
+          "derivation": null,
+          "kind": "license",
+          "licensePath": null,
+          "noticePath": null,
+          "owner": "gx-capture/capture-model-sources",
+          "path": "licenses/LICENSE-CC-BY-4.0.txt",
+          "redirectHosts": [],
+          "revision": "ec345e309e228cf3dc69de689c58f12e87393d11",
+          "sha256": "9ba9550ad48438d0836ddab3da480b3b69ffa0aac7b7878b5a0039e7ab429411",
+          "spdx": "CC-BY-4.0",
+          "url": "https://raw.githubusercontent.com/gx-capture/capture-model-sources/ec345e309e228cf3dc69de689c58f12e87393d11/speaker-diarization-community-1/licenses/LICENSE-CC-BY-4.0.txt"
+        },
+        {
+          "bytes": 1888,
+          "derivation": null,
+          "kind": "notice",
+          "licensePath": null,
+          "noticePath": null,
+          "owner": "gx-capture/capture-model-sources",
+          "path": "licenses/NOTICE-speaker-diarization.md",
+          "redirectHosts": [],
+          "revision": "ec345e309e228cf3dc69de689c58f12e87393d11",
+          "sha256": "f636736201577924f8e92cbaea32a6e3aa3accb3243526b998b358629d861607",
+          "spdx": "CC-BY-4.0",
+          "url": "https://raw.githubusercontent.com/gx-capture/capture-model-sources/ec345e309e228cf3dc69de689c58f12e87393d11/speaker-diarization-community-1/licenses/NOTICE.md"
+        },
+        {
+          "bytes": 444,
+          "derivation": null,
+          "kind": "source",
+          "licensePath": "licenses/LICENSE-CC-BY-4.0.txt",
+          "noticePath": "licenses/NOTICE-speaker-diarization.md",
+          "owner": "gx-capture/capture-model-sources",
+          "path": "model/config.yaml",
+          "redirectHosts": [],
+          "revision": "ec345e309e228cf3dc69de689c58f12e87393d11",
+          "sha256": "5ce2bfa9a938dc132cec1172592d65173cbb8f444ea1e4133f10f9391de155be",
+          "spdx": "CC-BY-4.0",
+          "url": "https://raw.githubusercontent.com/gx-capture/capture-model-sources/ec345e309e228cf3dc69de689c58f12e87393d11/speaker-diarization-community-1/config.yaml"
+        },
+        {
+          "bytes": 26646242,
+          "derivation": null,
+          "kind": "source",
+          "licensePath": "licenses/LICENSE-CC-BY-4.0.txt",
+          "noticePath": "licenses/NOTICE-speaker-diarization.md",
+          "owner": "gx-capture/capture-model-sources",
+          "path": "model/embedding/pytorch_model.bin",
+          "redirectHosts": [],
+          "revision": "ec345e309e228cf3dc69de689c58f12e87393d11",
+          "sha256": "6f10ff60898a1d185fa22e1d11e0bfa8a92efec811f11bca48cb8cafebefd929",
+          "spdx": "CC-BY-4.0",
+          "url": "https://raw.githubusercontent.com/gx-capture/capture-model-sources/ec345e309e228cf3dc69de689c58f12e87393d11/speaker-diarization-community-1/embedding/pytorch_model.bin"
+        },
+        {
+          "bytes": 133852,
+          "derivation": null,
+          "kind": "source",
+          "licensePath": "licenses/LICENSE-CC-BY-4.0.txt",
+          "noticePath": "licenses/NOTICE-speaker-diarization.md",
+          "owner": "gx-capture/capture-model-sources",
+          "path": "model/plda/plda.npz",
+          "redirectHosts": [],
+          "revision": "ec345e309e228cf3dc69de689c58f12e87393d11",
+          "sha256": "9b77bcd840692710dd3496f62ecfeed8d8e5f002fd991b785079b244eab7d255",
+          "spdx": "CC-BY-4.0",
+          "url": "https://raw.githubusercontent.com/gx-capture/capture-model-sources/ec345e309e228cf3dc69de689c58f12e87393d11/speaker-diarization-community-1/plda/plda.npz"
+        },
+        {
+          "bytes": 134376,
+          "derivation": null,
+          "kind": "source",
+          "licensePath": "licenses/LICENSE-CC-BY-4.0.txt",
+          "noticePath": "licenses/NOTICE-speaker-diarization.md",
+          "owner": "gx-capture/capture-model-sources",
+          "path": "model/plda/xvec_transform.npz",
+          "redirectHosts": [],
+          "revision": "ec345e309e228cf3dc69de689c58f12e87393d11",
+          "sha256": "325f1ce8e48f7e55e9c8aa47e05d2766b7c48c4b25b8de8dd751e7a4cc5fbe8f",
+          "spdx": "CC-BY-4.0",
+          "url": "https://raw.githubusercontent.com/gx-capture/capture-model-sources/ec345e309e228cf3dc69de689c58f12e87393d11/speaker-diarization-community-1/plda/xvec_transform.npz"
+        },
+        {
+          "bytes": 5906507,
+          "derivation": null,
+          "kind": "source",
+          "licensePath": "licenses/LICENSE-CC-BY-4.0.txt",
+          "noticePath": "licenses/NOTICE-speaker-diarization.md",
+          "owner": "gx-capture/capture-model-sources",
+          "path": "model/segmentation/pytorch_model.bin",
+          "redirectHosts": [],
+          "revision": "ec345e309e228cf3dc69de689c58f12e87393d11",
+          "sha256": "7ad24338d844fb95985486eb1a464e32d229f6d7a03c9abe60f978bacf3f816e",
+          "spdx": "CC-BY-4.0",
+          "url": "https://raw.githubusercontent.com/gx-capture/capture-model-sources/ec345e309e228cf3dc69de689c58f12e87393d11/speaker-diarization-community-1/segmentation/pytorch_model.bin"
+        }
+      ],
+      "requirementId": "speaker-diarization"
     }
   ]
 }

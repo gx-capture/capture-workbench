@@ -417,8 +417,18 @@ function validateSourceLockAndCatalog(
     throw new Error(`Generated model catalog runtime version is not ${RELEASE_VERSION}.`);
   }
   const sourceLockHash = sha256(sourceLockBytes);
-  const rawRequirements = lock.requirements;
-  const rawCatalogRequirements = catalogObject.requirements;
+  // This journey covers OCR and Whisper; an optional unit in the lock or the
+  // catalog is not its subject.
+  const requiredOnly = (items: unknown): unknown =>
+    Array.isArray(items)
+      ? items.filter(
+          (item) =>
+            (item as { requirementId?: unknown } | null)?.requirementId !==
+            'speaker-diarization',
+        )
+      : items;
+  const rawRequirements = requiredOnly(lock.requirements);
+  const rawCatalogRequirements = requiredOnly(catalogObject.requirements);
   if (!Array.isArray(rawRequirements) || rawRequirements.length !== 2) {
     throw new Error('Model source lock must contain exactly OCR and Whisper requirements.');
   }
