@@ -13,14 +13,14 @@
       "kind": "notice",
       "mediaType": "text/plain",
       "path": "licenses/NOTICE.txt",
-      "sha256": "941b03efb773915a9e292997bab9ce70377a89a26e505459a515fc99c68b05ff"
+      "sha256": "8b21177ffda5bc5acddad98b38e9f8d2c1cb68307bf4be57e7d585a7b6e8ff28"
     },
     {
       "bytes": 5360,
       "kind": "derived",
       "mediaType": "application/json",
       "path": "model/pipeline.json",
-      "sha256": "1dc18ff680549aa9bcd0a1962fbbf7ef5bd7d121ce0d4275249c3bcc0f0ff0fb"
+      "sha256": "09c2568f8a130abeea088aca4121cb52cd8054f4062cf69269a86a735d98964a"
     },
     {
       "bytes": 2157,
@@ -58,7 +58,7 @@
   "generator": "packages/capture-runtime/scripts/generate_commit_a_fixtures.py",
   "licensePath": "licenses/LICENSE.txt",
   "noticePath": "licenses/NOTICE.txt",
-  "releaseVersion": "0.5.1",
+  "releaseVersion": "0.6.0",
   "sourceRepositories": {
     "ndlocrLite": "ndl-lab/ndlocr-lite",
     "paddleocrDetection": "PaddlePaddle/PP-OCRv6_medium_det_onnx",
