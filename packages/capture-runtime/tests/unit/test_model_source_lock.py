@@ -44,6 +44,7 @@ def test_approved_production_lock_is_canonical_model_enabled() -> None:
         "windowsml-ocr",
         "whisper-primary",
         "speaker-diarization",
+        "vertical-japanese-reader",
     ]
     assert model_source_lock.release_mode(lock) == model_source_lock.MODEL_ENABLED_RELEASE_MODE
 
