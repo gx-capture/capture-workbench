@@ -106,6 +106,7 @@ module = [
   "huggingface_hub.*",
   "onnxruntime.*",
   "paddleocr.*",
+  "paddlex.*",
   "pyannote.*",
   "torch.*",
   "uvicorn.*",

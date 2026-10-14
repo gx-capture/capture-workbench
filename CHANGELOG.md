@@ -21,6 +21,14 @@ Capture Workbench follows an explicit 0.x compatibility policy:
 The consumer consistency check is a permanent CI gate for the declared
 runtime, package lock, Python host, desktop host, and browser host versions.
 
+### Fixes
+
+- GPU OCR no longer fails about half the time with `ocr_worker_failed`
+  (`worker_crashed`). The text detection and recognition models shared one
+  ONNX Runtime profile prefix; when both loaded within the same second they
+  wrote one profile file, which the DirectML execution proof then rejected as
+  invalid. Each model now profiles under its own prefix.
+
 ## 0.6.0
 
 This release is incompatible with 0.5.x: a 0.6.0 runtime needs 0.6.0 clients.
