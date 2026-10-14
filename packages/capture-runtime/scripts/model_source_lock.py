@@ -34,7 +34,7 @@ MAX_SOURCE_LOCK_TOTAL_BYTES = 3 * 1024 * 1024 * 1024
 REQUIREMENT_IDS = ("windowsml-ocr", "whisper-primary")
 # Units a host may leave uninstalled. A lock lists them after the required
 # ones, in this order, or leaves them out.
-OPTIONAL_REQUIREMENT_IDS = ("speaker-diarization",)
+OPTIONAL_REQUIREMENT_IDS = ("speaker-diarization", "vertical-japanese-reader")
 CORE_ONLY_RELEASE_MODE = "core-only"
 MODEL_ENABLED_RELEASE_MODE = "model-enabled"
 PENDING_WHISPER_FREEZE_BLOCKER = (
@@ -281,7 +281,9 @@ def _validate_file(
     return item
 
 
-def _validate_requirement(raw_requirement: object, index: int) -> dict[str, Any]:
+def _validate_requirement(
+    raw_requirement: object, index: int, *, other_unit_paths: frozenset[str] = frozenset()
+) -> dict[str, Any]:
     requirement = _exact(
         raw_requirement,
         {"artifactVersion", "entryPoint", "files", "requirementId"},
@@ -300,11 +302,13 @@ def _validate_requirement(raw_requirement: object, index: int) -> dict[str, Any]
     total = 0
     licenses: set[str] = set()
     notices: set[str] = set()
+    # A derived file may be built from files that another unit delivers: the OCR
+    # profile declares the vertical reader, whose models are an optional unit.
     known_paths = {
         _safe_path(item["path"], f"{requirement_id}.files.path")
         for item in files
         if isinstance(item, dict) and "path" in item
-    }
+    } | other_unit_paths
     validated: list[dict[str, Any]] = []
     for file_index, raw_file in enumerate(files):
         item = _validate_file(
@@ -564,7 +568,17 @@ def validate_source_lock(
     validated_requirements: list[dict[str, Any]] = []
     total_locked_bytes = 0
     for index, requirement in enumerate(requirements):
-        validated = _validate_requirement(requirement, index)
+        validated = _validate_requirement(
+            requirement,
+            index,
+            other_unit_paths=frozenset(
+                item["path"]
+                for other in requirements
+                if other is not requirement and isinstance(other, dict)
+                for item in other.get("files", [])
+                if isinstance(item, dict) and isinstance(item.get("path"), str)
+            ),
+        )
         validated_requirements.append(validated)
         total_locked_bytes += sum(item["bytes"] for item in validated["files"])
     if total_locked_bytes > MAX_SOURCE_LOCK_TOTAL_BYTES:
