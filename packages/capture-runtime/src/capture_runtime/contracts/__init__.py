@@ -31,6 +31,12 @@ ProjectedText = Annotated[
 WarningText = Annotated[str, StringConstraints(strip_whitespace=True, max_length=500)]
 Sha256Hex = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 EngineDigest = Annotated[str, StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$")]
+# The contract fixes the shape of a release version, not its value, so a new
+# release does not change the contract hash. Compatibility is decided by the
+# contract hash and the major/minor version, not by this field being equal.
+RuntimeVersionText = Annotated[
+    str, StringConstraints(pattern=r"^[0-9]+\.[0-9]+\.[0-9]+$", max_length=32)
+]
 SpeakerLabel = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_]{1,32}$")]
 SpeakerName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
 
@@ -44,6 +50,16 @@ class StrictModel(BaseModel):
         populate_by_name=True,
         str_strip_whitespace=True,
     )
+
+
+def _runtime_version_is_always_sent(schema: dict[str, Any]) -> None:
+    """Mark runtimeVersion required: the runtime always sends it, though the
+    model fills it in when built in code, which a schema would read as optional.
+    """
+
+    required = schema.setdefault("required", [])
+    if "runtimeVersion" not in required:
+        required.append("runtimeVersion")
 
 
 def _require_aware(value: datetime) -> datetime:
@@ -883,7 +899,7 @@ class CaptureOcrProjectionV3(StrictModel):
     # semantics aligned while still allowing ``pages=[]``.
     pages: list[OcrPageProjectionV3] = Field(..., max_length=500)
     page_count: int = Field(ge=0, le=500)
-    runtime_version: Literal[RUNTIME_VERSION]  # type: ignore[valid-type]
+    runtime_version: RuntimeVersionText
     contract_sha256: Sha256Hex
     provenance: OcrProvenanceV3
     warnings: list[WarningText] = Field(default_factory=list, max_length=1_000)
@@ -1045,10 +1061,12 @@ class RuntimeStreamingCapabilitiesV2(StrictModel):
 class OcrComputePreflightV2(StrictModel):
     """Runtime-owned pre-OCR compute selection and user-notice contract."""
 
+    model_config = ConfigDict(json_schema_extra=_runtime_version_is_always_sent)
+
     api_version: Literal["2.0"] = API_VERSION
     schema_version: Literal["1"] = "1"
     service: Literal["capture-runtime"] = "capture-runtime"
-    runtime_version: Literal[RUNTIME_VERSION] = RUNTIME_VERSION  # type: ignore[valid-type]
+    runtime_version: RuntimeVersionText = Field(default_factory=lambda: RUNTIME_VERSION)
     contract_set_version: Literal["2"] = "2"
     contract_sha256: Sha256Hex
     # The worker computes this digest from its own executable. It is absent
@@ -1082,10 +1100,12 @@ class OcrComputePreflightV2(StrictModel):
 class RuntimeReady(StrictModel):
     """General v2 readiness payload shared by runtime clients."""
 
+    model_config = ConfigDict(json_schema_extra=_runtime_version_is_always_sent)
+
     ready: bool
     service: Literal["capture-runtime"] = "capture-runtime"
     api_version: Literal["2.0"] = API_VERSION
-    runtime_version: Literal[RUNTIME_VERSION] = RUNTIME_VERSION  # type: ignore[valid-type]
+    runtime_version: RuntimeVersionText = Field(default_factory=lambda: RUNTIME_VERSION)
     capture_document_schema_version: Literal["2"] = CAPTURE_DOCUMENT_SCHEMA_VERSION
     capture_document_schema_sha256: Sha256Hex | None = None
     schema_sha256: Sha256Hex | None = None

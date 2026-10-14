@@ -55,8 +55,8 @@
       "type": "string"
     },
     "runtimeVersion": {
-      "const": "0.5.1",
-      "default": "0.5.1",
+      "maxLength": 32,
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
       "title": "Runtimeversion",
       "type": "string"
     },
@@ -121,7 +121,8 @@
     "contractSha256",
     "mode",
     "adapterClass",
-    "userNoticeRequired"
+    "userNoticeRequired",
+    "runtimeVersion"
   ],
   "title": "OcrComputePreflightV2",
   "type": "object"

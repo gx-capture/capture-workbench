@@ -134,7 +134,7 @@ export interface CaptureOcrProjectionV3 {
   readonly source?: CaptureSource | null;
   readonly pages: readonly (OcrPageProjectionV3)[];
   readonly pageCount: number;
-  readonly runtimeVersion: "0.5.1";
+  readonly runtimeVersion: string;
   readonly contractSha256: string;
   readonly provenance: OcrProvenanceV3;
   readonly warnings?: readonly (string)[];
@@ -220,7 +220,7 @@ export interface OcrComputePreflightV2 {
   readonly apiVersion: "2.0";
   readonly schemaVersion: "1";
   readonly service: "capture-runtime";
-  readonly runtimeVersion: "0.5.1";
+  readonly runtimeVersion: string;
   readonly contractSetVersion: "2";
   readonly contractSha256: string;
   readonly workerSha256?: string | null;
@@ -403,7 +403,7 @@ export interface RuntimeReady {
   readonly ready: boolean;
   readonly service: "capture-runtime";
   readonly apiVersion: "2.0";
-  readonly runtimeVersion: "0.5.1";
+  readonly runtimeVersion: string;
   readonly captureDocumentSchemaVersion: "2";
   readonly captureDocumentSchemaSha256?: string | null;
   readonly schemaSha256?: string | null;
