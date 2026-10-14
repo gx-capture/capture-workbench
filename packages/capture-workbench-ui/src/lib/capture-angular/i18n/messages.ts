@@ -46,6 +46,8 @@ export interface CaptureWorkbenchMessages {
   readonly unknownProgress: string;
   readonly model: string;
   readonly rawText: string;
+  readonly suggestedUnit: Readonly<Record<string, string | undefined>>;
+  readonly installSuggestedUnit: string;
   readonly speakersTitle: string;
   readonly speakersHint: string;
   readonly speakerNamePlaceholder: string;
@@ -93,6 +95,11 @@ const ZH_TW: CaptureWorkbenchMessages = {
   unknownProgress: '無法確認這個檔案的進度。請檢查狀態或取消。',
   model: '模型',
   rawText: '原始文字',
+  suggestedUnit: {
+    'vertical-japanese-reader':
+      '這份文件有直書日文的頁面。安裝直書日文閱讀器後重新擷取，這些頁面會讀得更準。',
+  },
+  installSuggestedUnit: '安裝',
   speakersTitle: '說話者',
   speakersHint: '聽一段聲音後填上名字，逐字稿會改用這個名字。',
   speakerNamePlaceholder: '這位說話者的名字',
@@ -167,6 +174,11 @@ const EN: CaptureWorkbenchMessages = {
     'Progress for this file is unknown. Check its status or cancel it.',
   model: 'Model',
   rawText: 'Raw text',
+  suggestedUnit: {
+    'vertical-japanese-reader':
+      'This document has pages of vertical Japanese. Install the vertical Japanese reader and capture again to read them more accurately.',
+  },
+  installSuggestedUnit: 'Install',
   speakersTitle: 'Speakers',
   speakersHint:
     'Listen to a sample, then type a name. The transcript will use it.',

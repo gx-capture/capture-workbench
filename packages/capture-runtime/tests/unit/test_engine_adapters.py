@@ -5304,3 +5304,77 @@ def _lifecycle(tmp_path: Path) -> IsolatedOllamaLifecycle:
         executable_resolver=lambda: None,
         clock=SystemClock(),
     )
+
+
+@pytest.mark.parametrize("installed", [True, False])
+def test_worker_backed_ocr_uses_the_reader_unit_and_reports_when_it_is_missed(
+    tmp_path: Path, installed: bool
+) -> None:
+    received: list[object] = []
+    unit_dir = tmp_path / "reader-unit" / "model"
+    (unit_dir / "vertical").mkdir(parents=True)
+
+    class RecordingWorkerClient:
+        async def run(self, _engine: InstalledEngine, **kwargs: object) -> WorkerRunResult:
+            received.append(kwargs.get("vertical_reader_dir"))
+            return WorkerRunResult(
+                segments=(WorkerSegment(0, "Rendered page one", page=1),),
+                engine="windowsml-ocr",
+                model="pp-ocrv6-medium-windowsml",
+                digest=f"sha256:{'1' * 64}",
+                device="windowsml-dml",
+                warnings=(),
+                pages=(
+                    WorkerOcrPage(
+                        page=1,
+                        status="recognized",
+                        text="Rendered page one",
+                        boxes=((2, 3, 40, 20),),
+                        confidence=0.97,
+                        region_confidences=(0.83,),
+                        raster_width=120,
+                        raster_height=80,
+                        raster_scale=1,
+                    ),
+                ),
+                suggested_units=() if installed else ("vertical-japanese-reader",),
+            )
+
+    class EngineManager:
+        async def ocr_compute_selection(self, *, contract_sha256: str) -> object:
+            del contract_sha256
+            return _worker_ocr_plan_selection()
+
+        async def resolve_active_engine(self, _requirement_id: str) -> InstalledEngine:
+            return InstalledEngine(
+                requirement_id="windowsml-ocr",
+                artifact_version=RUNTIME_VERSION,
+                executable=tmp_path / "ocr.exe",
+                model_dir=tmp_path / "models",
+            )
+
+        def active_model_unit(self, requirement_id: str) -> Path | None:
+            assert requirement_id == "vertical-japanese-reader"
+            return unit_dir if installed else None
+
+    manager = EngineManager()
+    manager.worker_client = RecordingWorkerClient()  # type: ignore[attr-defined]
+    extractor = StandaloneRuntimeCaptureExtractor(
+        SystemClock(),
+        _config(tmp_path),
+        engine_manager=manager,  # type: ignore[arg-type]
+    )
+    page_png = BytesIO()
+    Image.new("RGB", (120, 80), "white").save(page_png, format="PNG")
+    extractor._pdf_page_count = lambda _content: 1  # type: ignore[method-assign]
+    extractor._render_pdf_page = lambda _content, _index: page_png.getvalue()  # type: ignore[method-assign]
+    content = b"%PDF-1.7 one scanned page"
+
+    raw = asyncio.run(
+        extractor.extract(
+            content, _source(content, "source.pdf", "application/pdf"), asyncio.Event()
+        )
+    ).raw
+
+    assert received == [unit_dir / "vertical" if installed else None]
+    assert raw.suggested_units == ([] if installed else ["vertical-japanese-reader"])

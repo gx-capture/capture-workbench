@@ -373,6 +373,8 @@ function workspaceStub(selected: unknown = null, modelInstallation: RuntimeModel
     speakerSampleUrl: (_documentId: string, sample?: unknown) =>
       sample ? 'blob:recording#t=0,0.9' : null,
     nameSpeaker: vi.fn(),
+    missedUnits: () => [],
+    requestUnit: vi.fn(),
     resultText: (result: { targetText: string }) => result.targetText,
     canCapture: signal(true),
     coreMissing: signal([]),

@@ -205,3 +205,32 @@ def test_malformed_segment_words_are_rejected(words: Any) -> None:
 
     with pytest.raises(WorkerResultError):
         parse_run_result(payload)
+
+
+def _ocr_payload(**extra: Any) -> dict[str, Any]:
+    return {
+        "segments": [{"order": 0, "text": "x", "page": None, "startMs": 0, "endMs": 10}],
+        "provenance": {
+            "engine": "whisper-primary",
+            "model": "small",
+            "digest": DIGEST,
+            "device": "cpu",
+        },
+        "warnings": [],
+    } | extra
+
+
+def test_worker_result_may_name_an_optional_unit_that_was_missed() -> None:
+    assert parse_run_result(_ocr_payload()).suggested_units == ()
+    assert parse_run_result(
+        _ocr_payload(suggestedUnits=["vertical-japanese-reader"])
+    ).suggested_units == ("vertical-japanese-reader",)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [[], "vertical-japanese-reader", ["whisper-primary"], ["vertical-japanese-reader"] * 2, [7]],
+)
+def test_worker_result_rejects_malformed_or_unknown_unit_suggestions(value: Any) -> None:
+    with pytest.raises(WorkerResultError):
+        parse_run_result(_ocr_payload(suggestedUnits=value))

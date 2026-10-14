@@ -118,6 +118,7 @@ class FakeCaptureStructuringProvider:
             extraction_engine=raw.extraction_engine,
             diarization_engine=raw.diarization_engine,
             speakers=raw.speakers,
+            suggested_units=raw.suggested_units,
             structuring_engine=self._engine_identity,
             warnings=raw.warnings,
             created_at=raw.created_at,

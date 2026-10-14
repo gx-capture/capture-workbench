@@ -1450,3 +1450,35 @@ def test_catalog_keeps_workers_and_models_only_units_apart(tmp_path: Path) -> No
     assert unit.artifact_version == worker_unit["modelFiles"]["artifactVersion"]
     with pytest.raises(EngineCatalogError):
         unit.worker_artifact()
+
+
+def test_installed_models_only_unit_is_listed_as_a_ready_optional_unit(tmp_path: Path) -> None:
+    _catalog_value, sources = _model_unit_catalog(tmp_path)
+    manager = _model_unit_manager(tmp_path, CopyModelDownloader(sources))
+    installer = SystemRuntimeInstaller(
+        _Lifecycle(_LifecycleConfig(tmp_path / "app-data")),  # type: ignore[arg-type]
+        engine_manager=manager,
+        clock=SystemClock(),
+        enabled_requirement_ids={"windowsml-ocr", "vertical-japanese-reader"},
+    )
+
+    def unit() -> object:
+        return next(
+            item
+            for item in installer.requirements()
+            if item.requirement_id == "vertical-japanese-reader"
+        )
+
+    before = unit()
+    assert (before.status.value, before.optional, before.artifact) == ("installable", True, None)  # type: ignore[attr-defined]
+    assert before.required_for == ["pdf", "image"]  # type: ignore[attr-defined]
+
+    asyncio.run(
+        installer.install(
+            "vertical-japanese-reader",
+            cancel_event=asyncio.Event(),
+            report_progress=lambda _value: None,
+        )
+    )
+
+    assert unit().status.value == "ready"  # type: ignore[attr-defined]

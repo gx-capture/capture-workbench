@@ -404,6 +404,22 @@ export const GENERATED_CAPTURE_DOCUMENT_JSON_SCHEMA = {
     "structuringEngine": {
       "$ref": "#/$defs/CaptureEngine"
     },
+    "suggestedUnits": {
+      "items": {
+        "enum": [
+          "windowsml-ocr",
+          "whisper-primary",
+          "speaker-diarization",
+          "vertical-japanese-reader",
+          "ollama-runtime",
+          "capture-ollama-model"
+        ],
+        "type": "string"
+      },
+      "maxItems": 8,
+      "title": "Suggestedunits",
+      "type": "array"
+    },
     "targetText": {
       "maxLength": 8000000,
       "minLength": 1,

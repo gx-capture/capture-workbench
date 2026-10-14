@@ -12,6 +12,7 @@ from pathlib import Path
 from time import monotonic
 from typing import Any, Literal, cast
 
+from capture_runtime.constants import VERTICAL_READER_REQUIREMENT_ID
 from capture_runtime.contracts import (
     CaptureFailureV2,
     OcrComputePreflightV2,
@@ -32,6 +33,7 @@ from capture_runtime.worker_process import (
 )
 
 SHA256_PROVENANCE = re.compile(r"^sha256:[a-f0-9]{64}$")
+SUGGESTABLE_UNITS = frozenset({VERTICAL_READER_REQUIREMENT_ID})
 
 
 class WorkerResultError(ValueError):
@@ -170,6 +172,8 @@ class WorkerRunResult:
     ocr_provenance: OcrProvenanceV3 | None = None
     # Internal worker-only receipt; this is not part of any HTTP/SSE contract.
     execution_proof: OcrExecutionDeviceProofV1 | None = None
+    # Optional units that are not installed and would have read part of the source.
+    suggested_units: tuple[str, ...] = ()
 
 
 def _string(value: object, label: str, *, maximum: int = 500) -> str:
@@ -265,6 +269,21 @@ def parse_ocr_compute_selection(payload: dict[str, Any]) -> OcrComputeSelection:
         return OcrComputeSelection.from_dict(payload)
     except Exception as error:
         raise WorkerResultError("OCR compute selection result is invalid") from error
+
+
+def _parse_suggested_units(value: object) -> tuple[str, ...]:
+    """Optional units the worker says would have improved this result."""
+
+    if value is None:
+        return ()
+    if (
+        not isinstance(value, list)
+        or not value
+        or len(set(value)) != len(value)
+        or any(item not in SUGGESTABLE_UNITS for item in value)
+    ):
+        raise WorkerResultError("worker suggested units are invalid")
+    return tuple(value)
 
 
 def _milliseconds(value: object) -> int:
@@ -378,7 +397,7 @@ def _permille_handler(
 def parse_run_result(payload: dict[str, Any]) -> WorkerRunResult:
     fields = set(payload)
     if not {"segments", "provenance", "warnings"}.issubset(fields) or not fields.issubset(
-        {"segments", "provenance", "warnings", "pages", "executionProof"}
+        {"segments", "provenance", "warnings", "pages", "executionProof", "suggestedUnits"}
     ):
         raise WorkerResultError("worker run result has unexpected fields")
     raw_segments = payload["segments"]
@@ -466,6 +485,7 @@ def parse_run_result(payload: dict[str, Any]) -> WorkerRunResult:
         pages=pages,
         ocr_provenance=ocr_provenance,
         execution_proof=execution_proof,
+        suggested_units=_parse_suggested_units(payload.get("suggestedUnits")),
     )
 
 
@@ -829,6 +849,7 @@ class WorkerClient:
         timeout_seconds: float = DEFAULT_RUN_TIMEOUT_SECONDS,
         ocr_progress: Callable[[int, int], None] | None = None,
         on_permille: Callable[[int], None] | None = None,
+        vertical_reader_dir: Path | None = None,
     ) -> WorkerRunResult:
         if not source_path.is_file() or not source_path.is_absolute():
             raise ValueError("worker source path must be an existing absolute file")
@@ -842,6 +863,8 @@ class WorkerClient:
             "options": options,
         }
         is_ocr = engine.requirement_id == "windowsml-ocr"
+        if is_ocr and vertical_reader_dir is not None:
+            payload["verticalReaderPath"] = str(vertical_reader_dir)
         progress_frames: list[dict[str, object]] = []
 
         def collect_ocr_progress(frame: dict[str, object]) -> None:

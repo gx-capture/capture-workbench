@@ -16,6 +16,7 @@ from capture_runtime.clock import Clock
 from capture_runtime.config import ExtractionRuntimeConfig
 from capture_runtime.constants import (
     DIARIZATION_REQUIREMENT_ID,
+    VERTICAL_READER_REQUIREMENT_ID,
     WHISPER_REQUIREMENT_ID,
     WINDOWSML_REQUIREMENT_ID,
 )
@@ -53,6 +54,9 @@ from capture_runtime.ocr_projection import (
     OcrPipeline,
     OcrRequest,
     OcrTerminalOutcome,
+)
+from capture_runtime.ocr_vertical_routing import (
+    MODEL_SUBDIRECTORY as VERTICAL_READER_SUBDIRECTORY,
 )
 from capture_runtime.speaker_alignment import TimedWord, speaker_samples, speaker_segments
 from capture_runtime.worker_client import (
@@ -399,6 +403,7 @@ class StandaloneRuntimeCaptureExtractor:
         execution_proof: OcrExecutionDeviceProofV1 | None = None
         diarization_engine: CaptureEngine | None = None
         speakers: list[CaptureSpeaker] = []
+        suggested_units: set[str] = set()
         try:
             if sniffed.kind is CaptureSourceKind.PDF:
                 expected_ocr_pages = self._preflight_pdf_manifest(
@@ -420,6 +425,7 @@ class StandaloneRuntimeCaptureExtractor:
                 execution_proof = result.execution_proof
                 try:
                     engine = self._capture_engine(result, expected_engine="windowsml-ocr")
+                    suggested_units.update(result.suggested_units)
                     ocr_provenance = self._capture_ocr_provenance(result)
                 except ValueError as error:
                     raise OcrWorkerFailure(
@@ -471,6 +477,7 @@ class StandaloneRuntimeCaptureExtractor:
                 execution_proof = result.execution_proof
                 try:
                     engine = self._capture_engine(result, expected_engine="windowsml-ocr")
+                    suggested_units.update(result.suggested_units)
                     ocr_provenance = self._capture_ocr_provenance(result)
                 except ValueError as error:
                     raise OcrWorkerFailure(
@@ -551,6 +558,7 @@ class StandaloneRuntimeCaptureExtractor:
             extraction_engine=engine,
             diarization_engine=diarization_engine,
             speakers=speakers,
+            suggested_units=sorted(suggested_units),
             warnings=_unique_warnings(warnings),
             ocr_page_scope=ocr_page_scope,
             created_at=self._clock.now(),
@@ -672,6 +680,9 @@ class StandaloneRuntimeCaptureExtractor:
                         "OCR execution runtime identity drifted."
                     )
                 worker_options["runtimeSha256"] = acceptance_runtime_sha256
+        vertical_reader_dir = None
+        if requirement_id == WINDOWSML_REQUIREMENT_ID:
+            vertical_reader_dir = await self._vertical_reader_dir()
         path = self._worker_source(content, media_type)
         try:
             if page_manifest is not None:
@@ -687,6 +698,7 @@ class StandaloneRuntimeCaptureExtractor:
                 cancel_event=cancel_event,
                 ocr_progress=ocr_progress,
                 on_permille=progress,
+                vertical_reader_dir=vertical_reader_dir,
             )
         finally:
             path.unlink(missing_ok=True)
@@ -714,6 +726,18 @@ class StandaloneRuntimeCaptureExtractor:
         ) as temporary:
             temporary.write(content)
             return Path(temporary.name).resolve()
+
+    async def _vertical_reader_dir(self) -> Path | None:
+        """Where the optional vertical reader unit is installed, if it is."""
+
+        resolver = getattr(self.engine_manager, "active_model_unit", None)
+        if not callable(resolver):
+            return None
+        unit = await asyncio.to_thread(resolver, VERTICAL_READER_REQUIREMENT_ID)
+        if unit is None:
+            return None
+        directory = Path(unit) / VERTICAL_READER_SUBDIRECTORY
+        return directory if directory.is_dir() else None
 
     async def _run_diarization(
         self,

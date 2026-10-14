@@ -22,6 +22,7 @@ from capture_runtime.constants import (
     DIARIZATION_REQUIREMENT_ID,
     OLLAMA_MODEL_REQUIREMENT_ID,
     OLLAMA_RUNTIME_REQUIREMENT_ID,
+    VERTICAL_READER_REQUIREMENT_ID,
     WHISPER_REQUIREMENT_ID,
     WINDOWSML_REQUIREMENT_ID,
 )
@@ -114,6 +115,13 @@ class SystemRuntimeInstaller:
                 ["audio"],
                 True,
             ),
+            (
+                VERTICAL_READER_REQUIREMENT_ID,
+                "vertical-reader",
+                "Vertical Japanese reader",
+                ["pdf", "image"],
+                True,
+            ),
         ):
             if not is_enabled(requirement_id):
                 continue
@@ -121,8 +129,12 @@ class SystemRuntimeInstaller:
                 if self._engine_manager is None:
                     raise EngineCatalogError("engine manager is unavailable")
                 descriptor = self._engine_manager.requirement(requirement_id)
-                active = self._engine_manager.active_engine(requirement_id)
-                worker = descriptor.worker_artifact() if descriptor.complete else None
+                active = self._engine_manager.is_installed(requirement_id) or None
+                worker = (
+                    descriptor.worker_artifact()
+                    if descriptor.complete and not descriptor.model_only
+                    else None
+                )
                 artifact = (
                     RuntimeArtifactDescriptorV2(
                         artifact_url=worker.url,
@@ -230,6 +242,7 @@ class SystemRuntimeInstaller:
             WINDOWSML_REQUIREMENT_ID,
             WHISPER_REQUIREMENT_ID,
             DIARIZATION_REQUIREMENT_ID,
+            VERTICAL_READER_REQUIREMENT_ID,
         }:
             if self._engine_manager is None:
                 raise RuntimeError("runtime-owned engine catalog is unavailable")
