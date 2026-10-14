@@ -52,6 +52,16 @@ class StrictModel(BaseModel):
     )
 
 
+def _runtime_version_is_always_sent(schema: dict[str, Any]) -> None:
+    """Mark runtimeVersion required: the runtime always sends it, though the
+    model fills it in when built in code, which a schema would read as optional.
+    """
+
+    required = schema.setdefault("required", [])
+    if "runtimeVersion" not in required:
+        required.append("runtimeVersion")
+
+
 def _require_aware(value: datetime) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError("timestamp must include a timezone")
@@ -1051,6 +1061,8 @@ class RuntimeStreamingCapabilitiesV2(StrictModel):
 class OcrComputePreflightV2(StrictModel):
     """Runtime-owned pre-OCR compute selection and user-notice contract."""
 
+    model_config = ConfigDict(json_schema_extra=_runtime_version_is_always_sent)
+
     api_version: Literal["2.0"] = API_VERSION
     schema_version: Literal["1"] = "1"
     service: Literal["capture-runtime"] = "capture-runtime"
@@ -1087,6 +1099,8 @@ class OcrComputePreflightV2(StrictModel):
 
 class RuntimeReady(StrictModel):
     """General v2 readiness payload shared by runtime clients."""
+
+    model_config = ConfigDict(json_schema_extra=_runtime_version_is_always_sent)
 
     ready: bool
     service: Literal["capture-runtime"] = "capture-runtime"

@@ -220,7 +220,7 @@ export interface OcrComputePreflightV2 {
   readonly apiVersion: "2.0";
   readonly schemaVersion: "1";
   readonly service: "capture-runtime";
-  readonly runtimeVersion?: string;
+  readonly runtimeVersion: string;
   readonly contractSetVersion: "2";
   readonly contractSha256: string;
   readonly workerSha256?: string | null;
@@ -403,7 +403,7 @@ export interface RuntimeReady {
   readonly ready: boolean;
   readonly service: "capture-runtime";
   readonly apiVersion: "2.0";
-  readonly runtimeVersion?: string;
+  readonly runtimeVersion: string;
   readonly captureDocumentSchemaVersion: "2";
   readonly captureDocumentSchemaSha256?: string | null;
   readonly schemaSha256?: string | null;

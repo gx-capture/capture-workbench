@@ -121,7 +121,8 @@
     "contractSha256",
     "mode",
     "adapterClass",
-    "userNoticeRequired"
+    "userNoticeRequired",
+    "runtimeVersion"
   ],
   "title": "OcrComputePreflightV2",
   "type": "object"

@@ -27,7 +27,7 @@ public final class CaptureRuntimeTypes {
   public static final String CONTRACT_SET_VERSION = "2";
   /** Updated only as part of a coordinated runtime/client release. */
   public static final String CONTRACT_SET_SHA256 =
-      "461ea852620d01df149a87402bd7f2ad1547d851c58f1386fa5d6ea375cbb7dc";
+      "53de4dba310aeb2bda23d4f466b8e1b8be33c291d8fa784f0c8798f0ebc08745";
 
   private static final Pattern SHA256 = Pattern.compile("^[0-9a-f]{64}$");
   private static final Pattern FAILURE_CODE = Pattern.compile("^[a-z][a-z0-9_]{1,63}$");

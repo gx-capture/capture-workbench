@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [tool.capture_runtime_client]
-contract_set_sha256 = "461ea852620d01df149a87402bd7f2ad1547d851c58f1386fa5d6ea375cbb7dc"
+contract_set_sha256 = "53de4dba310aeb2bda23d4f466b8e1b8be33c291d8fa784f0c8798f0ebc08745"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/capture_runtime_client"]
