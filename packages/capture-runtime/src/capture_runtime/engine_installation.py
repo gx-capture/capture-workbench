@@ -97,6 +97,14 @@ from ._engine_installation_residue import (
 from ._engine_installation_residue import (
     resolved_child as _resolved_child_impl,
 )
+from ._engine_model_units import (
+    ModelUnitSnapshot,
+    active_model_unit_dir,
+    install_model_unit,
+    model_unit_snapshot,
+    model_unit_state,
+    requirement_model_dir,
+)
 
 DEFAULT_ACTIVE_ENGINE_RESOLUTION_TIMEOUT_SECONDS = (
     _installation_limits.DEFAULT_ACTIVE_ENGINE_RESOLUTION_TIMEOUT_SECONDS
@@ -267,6 +275,7 @@ class EngineInstallationManager:
         self._pdf_ocr_e2e_local_worker_url = _pdf_ocr_e2e_local_worker_url()
         self._locks: dict[str, asyncio.Lock] = {}
         self._verified_active_engines: dict[str, _VerifiedActiveEngine] = {}
+        self._verified_model_units: dict[str, tuple[ModelUnitSnapshot, str]] = {}
         self._verified_active_engines_lock = Lock()
         self._ocr_compute_preflight_cache: dict[
             tuple[InstalledEngine, str], OcrComputePreflightV2
@@ -280,9 +289,37 @@ class EngineInstallationManager:
     def requirement(self, requirement_id: str) -> EngineRequirementDescriptor:
         return self.catalog.requirement(requirement_id)
 
+    def active_model_unit(self, requirement_id: str) -> Path | None:
+        """The installed directory of a models-only unit, or None when it is not installed."""
+
+        try:
+            requirement = self.requirement(requirement_id)
+        except EngineCatalogError:
+            return None
+        if not requirement.complete or not requirement.model_only:
+            return None
+        root = self._requirement_root(requirement_id)
+        snapshot = model_unit_snapshot(root, requirement)
+        with self._verified_active_engines_lock:
+            cached = self._verified_model_units.get(requirement_id)
+        if cached is not None and snapshot and cached == (snapshot, model_unit_state(root)):
+            return requirement_model_dir(root, requirement)
+        directory = active_model_unit_dir(root, requirement)
+        if directory is None:
+            return None
+        with self._verified_active_engines_lock:
+            self._verified_model_units[requirement_id] = (snapshot, model_unit_state(root))
+        return directory
+
+    def is_installed(self, requirement_id: str) -> bool:
+        requirement = self.requirement(requirement_id)
+        if requirement.model_only:
+            return self.active_model_unit(requirement_id) is not None
+        return self.active_engine(requirement_id) is not None
+
     def active_engine(self, requirement_id: str) -> InstalledEngine | None:
         requirement = self.requirement(requirement_id)
-        if not requirement.complete:
+        if not requirement.complete or requirement.model_only:
             return None
         state_path = self._requirement_root(requirement_id) / "active.json"
         try:
@@ -509,6 +546,18 @@ class EngineInstallationManager:
         assert requirement.artifact_version is not None
         requirement_root = self._requirement_root(requirement.requirement_id)
         self._remove_stale_install_residue(requirement_root)
+        if requirement.model_only:
+            if self.active_model_unit(requirement.requirement_id) is None:
+                await install_model_unit(
+                    requirement_root,
+                    requirement,
+                    self.model_downloader,
+                    cancel_event=cancel_event,
+                    report_progress=report_progress,
+                )
+            else:
+                report_progress(1)
+            return
         if self.active_engine(requirement.requirement_id) is not None:
             report_progress(1)
             return
