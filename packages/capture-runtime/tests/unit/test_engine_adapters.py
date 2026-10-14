@@ -939,6 +939,58 @@ def test_page_without_an_installed_vertical_reader_is_unchanged(tmp_path: Path) 
     assert result.page_route is None
     assert result.text == "\n".join(texts)
     assert result.layout_evidence is not None
+    # The page would have gone to the reader, so the host can offer the unit.
+    assert adapter.vertical_reader_wanted is True
+
+
+def test_missing_vertical_reader_is_not_offered_for_a_page_it_would_not_read(
+    tmp_path: Path,
+) -> None:
+    adapter, png, _texts, _created = _vertical_page_adapter(tmp_path, None, horizontal_lines=4)
+
+    adapter.extract_png(png)
+
+    assert adapter.vertical_reader_wanted is False
+
+
+def test_vertical_reader_is_loaded_from_its_own_install_directory(tmp_path: Path) -> None:
+    _adapter, png, texts, _created = _vertical_page_adapter(tmp_path, None)
+    model_dir = tmp_path / "windowsml"
+
+    def adapter(reader_dir: Path) -> WindowsMLOcrAdapter:
+        payload = {
+            "rec_texts": texts,
+            "rec_polys": [
+                [list(point) for point in _rectangle(360 - 40 * index, 20, 380 - 40 * index, 300)]
+                for index in range(5)
+            ],
+            "rec_scores": [0.9] * 5,
+        }
+
+        class Pipeline:
+            def predict(self, _source: str) -> list[dict[str, object]]:
+                return [{"res": payload}]
+
+        return WindowsMLOcrAdapter(
+            model_dir,
+            execution_plan=_cpu_plan(),
+            pipeline_factory=lambda **_kwargs: Pipeline(),
+            provider_resolver=lambda: ["CPUExecutionProvider"],
+            vertical_reader_dir=reader_dir,
+        )
+
+    absent = adapter(tmp_path / "not-installed")
+    assert absent.extract_png(png).text == "\n".join(texts)
+    assert absent.vertical_reader_wanted is True
+
+    # An installed directory is used: this one holds no model files, so the
+    # reader cannot load and the page fails instead of silently staying regular.
+    empty = tmp_path / "reader-unit"
+    empty.mkdir()
+    present = adapter(empty)
+    with pytest.raises(engine_adapters.EngineRuntimeUnavailableError):
+        present.extract_png(png)
+    assert present.vertical_reader_wanted is False
 
 
 def test_mixed_page_stays_with_the_regular_pipeline(tmp_path: Path) -> None:

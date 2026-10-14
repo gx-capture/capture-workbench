@@ -1735,8 +1735,15 @@ class WindowsMLOcrAdapter:
         requested_page_scope: tuple[int, ...] | None = None,
         runtime_sha256: str | None = None,
         vertical_reader_factory: Callable[[], VerticalReader] | None = None,
+        vertical_reader_dir: Path | None = None,
     ) -> None:
         self.model_dir = model_dir
+        # Where the optional vertical reader unit is installed; without it the
+        # reader is looked for inside the OCR model directory, as before it
+        # became optional.
+        self._vertical_reader_dir = vertical_reader_dir
+        # A page would have gone to the vertical reader, but it is not installed.
+        self.vertical_reader_wanted = False
         self._vertical_reader_factory = vertical_reader_factory
         self._vertical_reader: VerticalReader | None = None
         if adapter_map_resolver is not None and adapter_map_lease_factory is not None:
@@ -2181,12 +2188,13 @@ class WindowsMLOcrAdapter:
         lay out, or reads far shorter than the first pass, keeps the first pass.
         """
 
-        if (
-            self._vertical_reader_factory is None
-            and vertical_reader_directory(self.model_dir) is None
-        ):
-            return None, None
         measure = vertical_share(first_pass)
+        if self._vertical_reader_factory is None and self._reader_directory() is None:
+            # Not installed: the page keeps its first pass. Remember that the
+            # reader would have run, so the host can offer the optional unit.
+            if route_reason(measure, treated_as_vertical=bool(reading_plan.articles)) is None:
+                self.vertical_reader_wanted = True
+            return None, None
 
         def route(reader: str, reason: str, lines: tuple[OcrRegion, ...] | None) -> PageRoute:
             return PageRoute(
@@ -2223,10 +2231,15 @@ class WindowsMLOcrAdapter:
             return route("regular", reason, regions), None
         return route("vertical", "vertical_dominant", regions), regions
 
+    def _reader_directory(self) -> Path | None:
+        if self._vertical_reader_dir is not None:
+            return self._vertical_reader_dir if self._vertical_reader_dir.is_dir() else None
+        return vertical_reader_directory(self.model_dir)
+
     def _create_vertical_reader(self) -> VerticalReader:
         if self._vertical_reader_factory is not None:
             return self._vertical_reader_factory()
-        directory = vertical_reader_directory(self.model_dir)
+        directory = self._reader_directory()
         if directory is None:
             raise EngineRuntimeUnavailableError("The vertical reader is not installed.")
         from capture_runtime.ocr_vertical_reader import (
