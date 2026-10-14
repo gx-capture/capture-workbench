@@ -46,7 +46,12 @@ const ENGINE_CATALOG_CHECKSUM_NAME = `${ENGINE_CATALOG_NAME}.sha256`;
 const WORKER_PROTOCOL_VERSION = '1';
 const MODEL_REQUIREMENT_IDS = ['windowsml-ocr', 'whisper-primary'] as const;
 // Units a release may or may not carry; when present they are checked like the others.
-const OPTIONAL_MODEL_REQUIREMENT_IDS: readonly unknown[] = ['speaker-diarization'];
+const OPTIONAL_MODEL_REQUIREMENT_IDS: readonly unknown[] = [
+  'speaker-diarization',
+  'vertical-japanese-reader',
+];
+// Units that are models only: the catalog lists no worker archive for them.
+const MODEL_ONLY_REQUIREMENT_IDS: readonly unknown[] = ['vertical-japanese-reader'];
 
 export type RuntimeReleaseManifest = {
   readonly manifestVersion: string;
@@ -168,6 +173,19 @@ function catalogWorkers(
   for (const item of requirements) {
     if (!isRecord(item))
       throw new Error('Engine catalog requirement is invalid.');
+    if (MODEL_ONLY_REQUIREMENT_IDS.includes(item.requirementId)) {
+      if (
+        !Array.isArray(item.artifacts) ||
+        item.artifacts.length !== 0 ||
+        !isRecord(item.modelFiles) ||
+        item.unavailableReason !== null
+      ) {
+        throw new Error(
+          `Engine catalog requirement is invalid: ${String(item.requirementId)}.`,
+        );
+      }
+      continue;
+    }
     exactKeys(
       item,
       ['requirementId', 'artifacts', 'modelFiles', 'unavailableReason'],

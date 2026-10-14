@@ -207,3 +207,45 @@ def test_catalog_leaves_the_unit_out_when_the_lock_does_not_have_it(tmp_path: Pa
         "windowsml-ocr",
         "whisper-primary",
     ]
+
+
+def test_a_models_only_unit_enters_the_catalog_and_the_release_without_an_archive(
+    tmp_path: Path,
+) -> None:
+    completed, catalog_path, engine_dir = _generate(
+        tmp_path,
+        _lock_with(_speaker_requirement("vertical-japanese-reader")),
+        with_speaker_worker=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    catalog = EngineCatalog.from_dict(json.loads(catalog_path.read_text(encoding="utf-8")))
+    unit = catalog.requirement("vertical-japanese-reader")
+    assert (unit.complete, unit.model_only, unit.artifacts) == (True, True, ())
+    assert unit.model_delivery().entry_count == 4
+
+    executable = tmp_path / "capture-runtime.exe"
+    executable.write_bytes(b"runtime")
+    release = tmp_path / "release"
+    build_release_artifacts(
+        executable=executable,
+        schema=write_capture_document_schema(tmp_path / "capture-document-v2.schema.json"),
+        output_dir=release,
+        engine_dir=engine_dir,
+        engine_catalog=catalog_path,
+    )
+    assert sorted(path.name for path in release.glob("capture-engine-*.zip")) == [
+        f"capture-engine-ocr-{RUNTIME_VERSION}-windows-x64.zip",
+        f"capture-engine-whisper-{RUNTIME_VERSION}-windows-x64.zip",
+    ]
+
+
+def test_lock_orders_both_optional_units_after_the_required_ones() -> None:
+    module = _lock_module()
+    speaker = _speaker_requirement()
+    reader = _speaker_requirement("vertical-japanese-reader")
+
+    module.validate_source_lock(_lock_with(speaker, reader))
+    module.validate_source_lock(_lock_with(reader))
+    with pytest.raises(module.ModelSourceLockError):
+        module.validate_source_lock(_lock_with(reader, speaker))

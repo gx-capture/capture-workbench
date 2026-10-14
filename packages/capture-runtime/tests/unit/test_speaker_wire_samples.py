@@ -69,6 +69,7 @@ def _raw(*, speakers: bool) -> RawCapture:
             if speakers
             else []
         ),
+        suggested_units=[] if speakers else ["vertical-japanese-reader"],
         created_at=CREATED,
     )
 
@@ -96,6 +97,7 @@ def wire_samples() -> dict[str, Any]:
         extraction_engine=raw.extraction_engine,
         diarization_engine=raw.diarization_engine,
         speakers=raw.speakers,
+        suggested_units=raw.suggested_units,
         structuring_engine=_engine("host", "deterministic", "d", "cpu"),
         created_at=CREATED,
         completed_at=CREATED,

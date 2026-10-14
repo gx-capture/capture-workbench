@@ -45,7 +45,7 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 
 const SCHEMA_FILE_NAME: &str = "capture-document-v2.schema.json";
-const SCHEMA_SHA256: &str = "db692db3503620db9c357640976b8504658c1e3a6f7a34c991206338fc203ad9";
+const SCHEMA_SHA256: &str = "5131125b6851bccb8da96150e12c2c50170ad45c2f4a31768404a5406ad8598f";
 const FIXTURE_TOKEN: &str = "public-r3-fixture-token-012345678901234567890123456789";
 
 struct Sink {

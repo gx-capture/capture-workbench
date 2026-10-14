@@ -423,8 +423,9 @@ function validateSourceLockAndCatalog(
     Array.isArray(items)
       ? items.filter(
           (item) =>
-            (item as { requirementId?: unknown } | null)?.requirementId !==
-            'speaker-diarization',
+            !['speaker-diarization', 'vertical-japanese-reader'].includes(
+              String((item as { requirementId?: unknown } | null)?.requirementId),
+            ),
         )
       : items;
   const rawRequirements = requiredOnly(lock.requirements);

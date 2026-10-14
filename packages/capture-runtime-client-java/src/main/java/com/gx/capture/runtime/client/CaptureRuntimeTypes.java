@@ -27,7 +27,7 @@ public final class CaptureRuntimeTypes {
   public static final String CONTRACT_SET_VERSION = "2";
   /** Updated only as part of a coordinated runtime/client release. */
   public static final String CONTRACT_SET_SHA256 =
-      "53de4dba310aeb2bda23d4f466b8e1b8be33c291d8fa784f0c8798f0ebc08745";
+      "fc8a994e5a2a822376821da277e949eb203df9223977da4db4cdc7ab29724523";
 
   private static final Pattern SHA256 = Pattern.compile("^[0-9a-f]{64}$");
   private static final Pattern FAILURE_CODE = Pattern.compile("^[a-z][a-z0-9_]{1,63}$");
@@ -486,7 +486,8 @@ public final class CaptureRuntimeTypes {
       @JsonProperty(required = true) String createdAt,
       OcrPageScope ocrPageScope,
       Engine diarizationEngine,
-      List<CaptureSpeaker> speakers) {
+      List<CaptureSpeaker> speakers,
+      List<String> suggestedUnits) {
     public RawCapture {
       schemaVersion = text(schemaVersion, "schemaVersion");
       if (!"2".equals(schemaVersion)) throw new IllegalArgumentException("schemaVersion must equal 2");
@@ -508,6 +509,22 @@ public final class CaptureRuntimeTypes {
       ocrPageScope = ocrPageScope == null ? null : Objects.requireNonNull(ocrPageScope, "ocrPageScope");
       diarizationEngine = diarizationEngine == null ? null : Objects.requireNonNull(diarizationEngine, "diarizationEngine");
       speakers = CaptureRuntimeTypes.speakers(speakers, diarizationEngine, segments);
+      suggestedUnits = suggestedUnits == null ? List.of() : List.copyOf(suggestedUnits);
+    }
+
+    public RawCapture(
+        String schemaVersion,
+        boolean diagnosticOnly,
+        Source source,
+        List<RawCaptureSegment> segments,
+        String sourceText,
+        Engine extractionEngine,
+        List<String> warnings,
+        String createdAt,
+        OcrPageScope ocrPageScope,
+        Engine diarizationEngine,
+        List<CaptureSpeaker> speakers) {
+      this(schemaVersion, diagnosticOnly, source, segments, sourceText, extractionEngine, warnings, createdAt, ocrPageScope, diarizationEngine, speakers, null);
     }
 
     public RawCapture(
@@ -520,7 +537,7 @@ public final class CaptureRuntimeTypes {
         List<String> warnings,
         String createdAt,
         OcrPageScope ocrPageScope) {
-      this(schemaVersion, diagnosticOnly, source, segments, sourceText, extractionEngine, warnings, createdAt, ocrPageScope, null, null);
+      this(schemaVersion, diagnosticOnly, source, segments, sourceText, extractionEngine, warnings, createdAt, ocrPageScope, null, null, null);
     }
 
     public RawCapture(
@@ -532,7 +549,7 @@ public final class CaptureRuntimeTypes {
         Engine extractionEngine,
         List<String> warnings,
         String createdAt) {
-      this(schemaVersion, diagnosticOnly, source, segments, sourceText, extractionEngine, warnings, createdAt, null, null, null);
+      this(schemaVersion, diagnosticOnly, source, segments, sourceText, extractionEngine, warnings, createdAt, null, null, null, null);
     }
   }
 
@@ -568,7 +585,8 @@ public final class CaptureRuntimeTypes {
       String createdAt,
       String completedAt,
       Engine diarizationEngine,
-      List<CaptureSpeaker> speakers) {
+      List<CaptureSpeaker> speakers,
+      List<String> suggestedUnits) {
     public CaptureDocument {
       schemaVersion = text(schemaVersion, "schemaVersion");
       if (!"2".equals(schemaVersion)) throw new IllegalArgumentException("schemaVersion must equal 2");
@@ -598,6 +616,7 @@ public final class CaptureRuntimeTypes {
       if (OffsetDateTime.parse(completedAt).isBefore(OffsetDateTime.parse(createdAt))) throw new IllegalArgumentException("completedAt precedes createdAt");
       diarizationEngine = diarizationEngine == null ? null : Objects.requireNonNull(diarizationEngine, "diarizationEngine");
       speakers = CaptureRuntimeTypes.speakers(speakers, diarizationEngine, rawSegments);
+      suggestedUnits = suggestedUnits == null ? List.of() : List.copyOf(suggestedUnits);
     }
 
     public CaptureDocument(
@@ -612,7 +631,7 @@ public final class CaptureRuntimeTypes {
         List<String> warnings,
         String createdAt,
         String completedAt) {
-      this(schemaVersion, source, rawSegments, blocks, sourceText, targetText, extractionEngine, structuringEngine, warnings, createdAt, completedAt, null, null);
+      this(schemaVersion, source, rawSegments, blocks, sourceText, targetText, extractionEngine, structuringEngine, warnings, createdAt, completedAt, null, null, null);
     }
   }
 

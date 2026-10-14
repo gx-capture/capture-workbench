@@ -20,7 +20,7 @@ CAPTURE_DOCUMENT_SCHEMA_ID = (
     "https://github.com/gx-capture/capture-workbench/schema/capture-document-v2.schema.json"
 )
 CAPTURE_DOCUMENT_SCHEMA_RELEASE_SHA256 = (
-    "db692db3503620db9c357640976b8504658c1e3a6f7a34c991206338fc203ad9"
+    "5131125b6851bccb8da96150e12c2c50170ad45c2f4a31768404a5406ad8598f"
 )
 
 
@@ -49,7 +49,8 @@ def _validated_engine_release_files(
     if not requirement_ids:
         return ()
     required_ids = {"windowsml-ocr", "whisper-primary"}
-    if not required_ids <= requirement_ids <= required_ids | {"speaker-diarization"}:
+    optional_ids = {"speaker-diarization", "vertical-japanese-reader"}
+    if not required_ids <= requirement_ids <= required_ids | optional_ids:
         raise ValueError("release engine catalog requirement set is invalid")
     incomplete = [item.requirement_id for item in catalog.requirements if not item.complete]
     if incomplete:

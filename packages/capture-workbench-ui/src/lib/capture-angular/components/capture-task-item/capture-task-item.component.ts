@@ -168,6 +168,17 @@ import { CaptureWorkbenchStore } from '../../services/capture-workbench-store/ca
         </p>
       }
 
+      @for (unit of store.installableSuggestions(task()); track unit.requirementId) {
+        @if (m().suggestedUnit[unit.requirementId]; as hint) {
+          <p class="muted" data-testid="capture-suggested-unit" [attr.data-requirement-id]="unit.requirementId">
+            {{ hint }}
+            <button type="button" class="secondary" [disabled]="!!store.installation()" (click)="store.installUnit(unit.requirementId)">
+              {{ m().installSuggestedUnit }}
+            </button>
+          </p>
+        }
+      }
+
       @if (task().result?.speakers?.length) {
         <section class="speakers" data-testid="capture-speakers" [attr.aria-label]="m().speakersTitle">
           <h3>{{ m().speakersTitle }}</h3>

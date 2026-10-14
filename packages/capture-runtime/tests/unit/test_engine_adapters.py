@@ -939,6 +939,58 @@ def test_page_without_an_installed_vertical_reader_is_unchanged(tmp_path: Path) 
     assert result.page_route is None
     assert result.text == "\n".join(texts)
     assert result.layout_evidence is not None
+    # The page would have gone to the reader, so the host can offer the unit.
+    assert adapter.vertical_reader_wanted is True
+
+
+def test_missing_vertical_reader_is_not_offered_for_a_page_it_would_not_read(
+    tmp_path: Path,
+) -> None:
+    adapter, png, _texts, _created = _vertical_page_adapter(tmp_path, None, horizontal_lines=4)
+
+    adapter.extract_png(png)
+
+    assert adapter.vertical_reader_wanted is False
+
+
+def test_vertical_reader_is_loaded_from_its_own_install_directory(tmp_path: Path) -> None:
+    _adapter, png, texts, _created = _vertical_page_adapter(tmp_path, None)
+    model_dir = tmp_path / "windowsml"
+
+    def adapter(reader_dir: Path) -> WindowsMLOcrAdapter:
+        payload = {
+            "rec_texts": texts,
+            "rec_polys": [
+                [list(point) for point in _rectangle(360 - 40 * index, 20, 380 - 40 * index, 300)]
+                for index in range(5)
+            ],
+            "rec_scores": [0.9] * 5,
+        }
+
+        class Pipeline:
+            def predict(self, _source: str) -> list[dict[str, object]]:
+                return [{"res": payload}]
+
+        return WindowsMLOcrAdapter(
+            model_dir,
+            execution_plan=_cpu_plan(),
+            pipeline_factory=lambda **_kwargs: Pipeline(),
+            provider_resolver=lambda: ["CPUExecutionProvider"],
+            vertical_reader_dir=reader_dir,
+        )
+
+    absent = adapter(tmp_path / "not-installed")
+    assert absent.extract_png(png).text == "\n".join(texts)
+    assert absent.vertical_reader_wanted is True
+
+    # An installed directory is used: this one holds no model files, so the
+    # reader cannot load and the page fails instead of silently staying regular.
+    empty = tmp_path / "reader-unit"
+    empty.mkdir()
+    present = adapter(empty)
+    with pytest.raises(engine_adapters.EngineRuntimeUnavailableError):
+        present.extract_png(png)
+    assert present.vertical_reader_wanted is False
 
 
 def test_mixed_page_stays_with_the_regular_pipeline(tmp_path: Path) -> None:
@@ -5252,3 +5304,77 @@ def _lifecycle(tmp_path: Path) -> IsolatedOllamaLifecycle:
         executable_resolver=lambda: None,
         clock=SystemClock(),
     )
+
+
+@pytest.mark.parametrize("installed", [True, False])
+def test_worker_backed_ocr_uses_the_reader_unit_and_reports_when_it_is_missed(
+    tmp_path: Path, installed: bool
+) -> None:
+    received: list[object] = []
+    unit_dir = tmp_path / "reader-unit" / "model"
+    (unit_dir / "vertical").mkdir(parents=True)
+
+    class RecordingWorkerClient:
+        async def run(self, _engine: InstalledEngine, **kwargs: object) -> WorkerRunResult:
+            received.append(kwargs.get("vertical_reader_dir"))
+            return WorkerRunResult(
+                segments=(WorkerSegment(0, "Rendered page one", page=1),),
+                engine="windowsml-ocr",
+                model="pp-ocrv6-medium-windowsml",
+                digest=f"sha256:{'1' * 64}",
+                device="windowsml-dml",
+                warnings=(),
+                pages=(
+                    WorkerOcrPage(
+                        page=1,
+                        status="recognized",
+                        text="Rendered page one",
+                        boxes=((2, 3, 40, 20),),
+                        confidence=0.97,
+                        region_confidences=(0.83,),
+                        raster_width=120,
+                        raster_height=80,
+                        raster_scale=1,
+                    ),
+                ),
+                suggested_units=() if installed else ("vertical-japanese-reader",),
+            )
+
+    class EngineManager:
+        async def ocr_compute_selection(self, *, contract_sha256: str) -> object:
+            del contract_sha256
+            return _worker_ocr_plan_selection()
+
+        async def resolve_active_engine(self, _requirement_id: str) -> InstalledEngine:
+            return InstalledEngine(
+                requirement_id="windowsml-ocr",
+                artifact_version=RUNTIME_VERSION,
+                executable=tmp_path / "ocr.exe",
+                model_dir=tmp_path / "models",
+            )
+
+        def active_model_unit(self, requirement_id: str) -> Path | None:
+            assert requirement_id == "vertical-japanese-reader"
+            return unit_dir if installed else None
+
+    manager = EngineManager()
+    manager.worker_client = RecordingWorkerClient()  # type: ignore[attr-defined]
+    extractor = StandaloneRuntimeCaptureExtractor(
+        SystemClock(),
+        _config(tmp_path),
+        engine_manager=manager,  # type: ignore[arg-type]
+    )
+    page_png = BytesIO()
+    Image.new("RGB", (120, 80), "white").save(page_png, format="PNG")
+    extractor._pdf_page_count = lambda _content: 1  # type: ignore[method-assign]
+    extractor._render_pdf_page = lambda _content, _index: page_png.getvalue()  # type: ignore[method-assign]
+    content = b"%PDF-1.7 one scanned page"
+
+    raw = asyncio.run(
+        extractor.extract(
+            content, _source(content, "source.pdf", "application/pdf"), asyncio.Event()
+        )
+    ).raw
+
+    assert received == [unit_dir / "vertical" if installed else None]
+    assert raw.suggested_units == ([] if installed else ["vertical-japanese-reader"])

@@ -23,7 +23,8 @@ export const INSTALLATION_ORDER = new Map<CaptureRequirementId, number>([
   ['windowsml-ocr', 0],
   ['whisper-primary', 1],
   ['speaker-diarization', 2],
-  ['ollama-runtime', 3],
+  ['vertical-japanese-reader', 3],
+  ['ollama-runtime', 4],
 ]);
 
 /** Converts model installation progress to the percentage shown by the UI. */

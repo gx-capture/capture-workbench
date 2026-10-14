@@ -67,6 +67,8 @@ export interface DesktopMessages {
   readonly desktopOnly: string;
   readonly whisperNeeded: string;
   readonly speakerUnitNeeded: string;
+  readonly verticalReaderMissed: string;
+  readonly offerInstall: string;
   readonly identifySpeakers: string;
   readonly speakers: string;
   readonly speakersHint: string;
@@ -153,6 +155,8 @@ const ZH_TW: DesktopMessages = {
   desktopOnly: 'Capture Workbench 僅能在 Windows 桌面 App 中使用。',
   whisperNeeded: '選取的音訊需要額外安裝 Whisper。',
   speakerUnitNeeded: '辨識說話者需要額外安裝一個元件。',
+  verticalReaderMissed: '這份文件有直書日文的頁面。安裝直書日文閱讀器後重新處理，這些頁面會讀得更準。',
+  offerInstall: '安裝',
   identifySpeakers: '辨識音訊中的說話者',
   speakers: '說話者',
   speakersHint: '聽一段聲音後填上名字，匯出的文字會改用這個名字。',
@@ -261,6 +265,8 @@ const EN: DesktopMessages = {
   desktopOnly: 'Capture Workbench runs only in the Windows desktop app.',
   whisperNeeded: 'Audio needs Whisper installed first.',
   speakerUnitNeeded: 'Telling speakers apart needs one more component installed.',
+  verticalReaderMissed: 'This document has pages of vertical Japanese. Install the vertical Japanese reader and process it again to read them more accurately.',
+  offerInstall: 'Install',
   identifySpeakers: 'Tell speakers apart in audio',
   speakers: 'Speakers',
   speakersHint: 'Listen to a sample, then type a name. Exported text will use it.',

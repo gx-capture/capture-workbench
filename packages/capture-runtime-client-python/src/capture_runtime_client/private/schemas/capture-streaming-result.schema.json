@@ -137,6 +137,22 @@
           "title": "Speakers",
           "type": "array"
         },
+        "suggestedUnits": {
+          "items": {
+            "enum": [
+              "windowsml-ocr",
+              "whisper-primary",
+              "speaker-diarization",
+              "vertical-japanese-reader",
+              "ollama-runtime",
+              "capture-ollama-model"
+            ],
+            "type": "string"
+          },
+          "maxItems": 8,
+          "title": "Suggestedunits",
+          "type": "array"
+        },
         "structuringEngine": {
           "$ref": "#/$defs/CaptureEngine"
         },
@@ -585,6 +601,22 @@
           },
           "maxItems": 64,
           "title": "Speakers",
+          "type": "array"
+        },
+        "suggestedUnits": {
+          "items": {
+            "enum": [
+              "windowsml-ocr",
+              "whisper-primary",
+              "speaker-diarization",
+              "vertical-japanese-reader",
+              "ollama-runtime",
+              "capture-ollama-model"
+            ],
+            "type": "string"
+          },
+          "maxItems": 8,
+          "title": "Suggestedunits",
           "type": "array"
         },
         "warnings": {

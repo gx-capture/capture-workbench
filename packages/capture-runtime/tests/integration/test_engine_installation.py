@@ -1305,3 +1305,180 @@ def test_speaker_identification_is_listed_as_an_optional_unit(tmp_path: Path) ->
     assert requirements["speaker-diarization"].status.value == "unavailable"
     assert requirements["whisper-primary"].optional is False
     assert requirements["windowsml-ocr"].optional is False
+
+
+def _model_unit_catalog(tmp_path: Path) -> tuple[EngineCatalog, dict[str, Path]]:
+    """A catalog whose only entry is a models-only unit, with files to download."""
+
+    catalog, sources = _catalog(tmp_path)
+    delivery = catalog.to_dict()["requirements"][0]["modelFiles"]
+    return (
+        EngineCatalog.from_dict(
+            {
+                "catalogVersion": "2",
+                "runtimeVersion": RUNTIME_VERSION,
+                "requirements": [
+                    {
+                        "requirementId": "vertical-japanese-reader",
+                        "artifacts": [],
+                        "modelFiles": delivery,
+                        "unavailableReason": None,
+                    }
+                ],
+            }
+        ),
+        sources,
+    )
+
+
+def _model_unit_manager(
+    tmp_path: Path, downloader: ModelFileDownloader
+) -> EngineInstallationManager:
+    catalog, _sources = _model_unit_catalog(tmp_path)
+    return EngineInstallationManager(
+        tmp_path / "engines",
+        catalog,
+        worker_client=FakeWorkerClient(),  # type: ignore[arg-type]
+        downloader=CopyDownloader({}, fail=True),
+        model_downloader=downloader,
+    )
+
+
+def test_a_models_only_unit_installs_without_a_worker_and_is_found_afterwards(
+    tmp_path: Path,
+) -> None:
+    _catalog_value, sources = _model_unit_catalog(tmp_path)
+    downloader = CopyModelDownloader(sources)
+    manager = _model_unit_manager(tmp_path, downloader)
+    progress: list[float] = []
+    assert manager.active_model_unit("vertical-japanese-reader") is None
+    assert manager.is_installed("vertical-japanese-reader") is False
+
+    asyncio.run(
+        manager.install(
+            "vertical-japanese-reader",
+            cancel_event=asyncio.Event(),
+            report_progress=progress.append,
+        )
+    )
+
+    directory = manager.active_model_unit("vertical-japanese-reader")
+    assert directory is not None
+    assert (directory / "config.json").is_file()
+    assert manager.is_installed("vertical-japanese-reader") is True
+    assert manager.active_engine("vertical-japanese-reader") is None
+    assert progress[-1] == 1
+    assert progress == sorted(progress)
+
+    downloads = downloader.calls
+    asyncio.run(
+        manager.install(
+            "vertical-japanese-reader",
+            cancel_event=asyncio.Event(),
+            report_progress=lambda _value: None,
+        )
+    )
+    assert downloader.calls == downloads
+
+
+def test_a_models_only_unit_with_an_altered_file_is_not_installed(tmp_path: Path) -> None:
+    _catalog_value, sources = _model_unit_catalog(tmp_path)
+    manager = _model_unit_manager(tmp_path, CopyModelDownloader(sources))
+    asyncio.run(
+        manager.install(
+            "vertical-japanese-reader",
+            cancel_event=asyncio.Event(),
+            report_progress=lambda _value: None,
+        )
+    )
+    directory = manager.active_model_unit("vertical-japanese-reader")
+    assert directory is not None
+
+    (directory / "model.bin").write_bytes(b"altered after installation")
+
+    assert manager.active_model_unit("vertical-japanese-reader") is None
+    assert manager.is_installed("vertical-japanese-reader") is False
+
+
+def test_a_cancelled_models_only_install_leaves_nothing_behind(tmp_path: Path) -> None:
+    _catalog_value, sources = _model_unit_catalog(tmp_path)
+    manager = _model_unit_manager(tmp_path, CancellingModelDownloader(sources))
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(
+            manager.install(
+                "vertical-japanese-reader",
+                cancel_event=asyncio.Event(),
+                report_progress=lambda _value: None,
+            )
+        )
+
+    assert manager.active_model_unit("vertical-japanese-reader") is None
+    versions = tmp_path / "engines" / "vertical-japanese-reader" / "versions"
+    assert not versions.exists() or list(versions.iterdir()) == []
+
+
+def test_catalog_keeps_workers_and_models_only_units_apart(tmp_path: Path) -> None:
+    catalog, _sources = _catalog(tmp_path)
+    worker_unit = catalog.to_dict()["requirements"][0]
+
+    def parse(requirement: dict[str, object]) -> EngineCatalog:
+        return EngineCatalog.from_dict(
+            {
+                "catalogVersion": "2",
+                "runtimeVersion": RUNTIME_VERSION,
+                "requirements": [requirement],
+            }
+        )
+
+    with pytest.raises(EngineCatalogError, match="worker archive"):
+        parse(
+            worker_unit
+            | {
+                "requirementId": "vertical-japanese-reader",
+                "artifacts": [
+                    worker_unit["artifacts"][0] | {"requirementId": "vertical-japanese-reader"}
+                ],
+            }
+        )
+    with pytest.raises(EngineCatalogError):
+        parse(worker_unit | {"artifacts": []})
+    unit = parse(
+        worker_unit | {"requirementId": "vertical-japanese-reader", "artifacts": []}
+    ).requirement("vertical-japanese-reader")
+    assert (unit.complete, unit.model_only) == (True, True)
+    assert unit.artifact_version == worker_unit["modelFiles"]["artifactVersion"]
+    with pytest.raises(EngineCatalogError):
+        unit.worker_artifact()
+
+
+def test_installed_models_only_unit_is_listed_as_a_ready_optional_unit(tmp_path: Path) -> None:
+    _catalog_value, sources = _model_unit_catalog(tmp_path)
+    manager = _model_unit_manager(tmp_path, CopyModelDownloader(sources))
+    installer = SystemRuntimeInstaller(
+        _Lifecycle(_LifecycleConfig(tmp_path / "app-data")),  # type: ignore[arg-type]
+        engine_manager=manager,
+        clock=SystemClock(),
+        enabled_requirement_ids={"windowsml-ocr", "vertical-japanese-reader"},
+    )
+
+    def unit() -> object:
+        return next(
+            item
+            for item in installer.requirements()
+            if item.requirement_id == "vertical-japanese-reader"
+        )
+
+    before = unit()
+    assert (before.status.value, before.optional, before.artifact) == ("installable", True, None)  # type: ignore[attr-defined]
+    assert before.required_for == ["pdf", "image"]  # type: ignore[attr-defined]
+
+    asyncio.run(
+        installer.install(
+            "vertical-japanese-reader",
+            cancel_event=asyncio.Event(),
+            report_progress=lambda _value: None,
+        )
+    )
+
+    assert unit().status.value == "ready"  # type: ignore[attr-defined]

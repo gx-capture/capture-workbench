@@ -63,6 +63,7 @@
         "displayName": "王小明"
       }
     ],
+    "suggestedUnits": [],
     "warnings": [],
     "ocrPageScope": null,
     "createdAt": "2026-10-13T08:00:00Z"
@@ -111,6 +112,9 @@
     },
     "diarizationEngine": null,
     "speakers": [],
+    "suggestedUnits": [
+      "vertical-japanese-reader"
+    ],
     "warnings": [],
     "ocrPageScope": null,
     "createdAt": "2026-10-13T08:00:00Z"
@@ -207,6 +211,7 @@
         "displayName": "王小明"
       }
     ],
+    "suggestedUnits": [],
     "structuringEngine": {
       "engine": "host",
       "model": "deterministic",

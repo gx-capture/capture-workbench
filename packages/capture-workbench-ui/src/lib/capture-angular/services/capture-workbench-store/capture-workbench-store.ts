@@ -284,6 +284,29 @@ export class CaptureWorkbenchStore {
     });
   }
 
+  /** The optional units a finished capture missed and the runtime can install now. */
+  installableSuggestions(task: CaptureTaskView): readonly RuntimeRequirement[] {
+    const suggested = task.result?.suggestedUnits ?? task.raw?.suggestedUnits ?? [];
+    return this.runtime().requirements.filter(
+      (requirement) =>
+        suggested.includes(requirement.requirementId) &&
+        requirement.status === 'installable',
+    );
+  }
+
+  /** Install one optional unit after the user asked for it. */
+  installUnit(requirementId: string): void {
+    this.installationService.install({
+      client: this.activeClient(),
+      requirements: () =>
+        this.runtime().requirements.filter(
+          (requirement) => requirement.requirementId === requirementId,
+        ),
+      pollIntervalMs: () => this.resolvedConfig().pollIntervalMs,
+      reload: () => this.reloadRuntimeAndWait(),
+    });
+  }
+
   cancelInstallation(): void {
     this.installationService.cancel(this.activeClient());
   }
@@ -419,6 +442,9 @@ export class CaptureWorkbenchStore {
     if (requirement.requirementId === 'speaker-diarization') {
       return this.resolvedConfig().identifySpeakers && enabled.includes('audio');
     }
+    // Any other optional unit is offered when a result says it was missed;
+    // it never stands between the user and a capture.
+    if (requirement.optional) return false;
     return this.resolvedConfig().structuringMode === 'runtime';
   }
 

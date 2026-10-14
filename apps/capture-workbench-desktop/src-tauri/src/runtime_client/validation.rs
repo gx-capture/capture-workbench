@@ -28,6 +28,7 @@ pub(super) fn validate_requirement_id(value: &str) -> Result<(), String> {
         "windowsml-ocr"
             | "whisper-primary"
             | "speaker-diarization"
+            | "vertical-japanese-reader"
             | "ollama-runtime"
             | "capture-ollama-model"
     ) {

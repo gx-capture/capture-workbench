@@ -198,6 +198,37 @@ test('runtime release verifier accepts a release that also carries the optional 
   }
 });
 
+test('runtime release verifier accepts a models-only unit that has no worker archive', async () => {
+  const directory = await createModelFixture();
+  try {
+    const path = join(directory, 'capture-engine-catalog.json');
+    const catalog = JSON.parse(await readFile(path, 'utf8'));
+    catalog.requirements.push({
+      requirementId: 'vertical-japanese-reader',
+      artifacts: [],
+      modelFiles: catalog.requirements[0].modelFiles,
+      unavailableReason: null,
+    });
+    const bytes = canonicalJson(catalog);
+    await writeFile(path, bytes);
+    await writeFile(`${path}.sha256`, `${digest(bytes)}  capture-engine-catalog.json\n`);
+
+    const manifest = await verifyRuntimeRelease(directory, version);
+    assert.equal(manifest.runtimeVersion, version);
+
+    catalog.requirements[2].artifacts = catalog.requirements[0].artifacts;
+    const invalid = canonicalJson(catalog);
+    await writeFile(path, invalid);
+    await writeFile(`${path}.sha256`, `${digest(invalid)}  capture-engine-catalog.json\n`);
+    await assert.rejects(
+      verifyRuntimeRelease(directory, version),
+      /Engine catalog requirement is invalid: vertical-japanese-reader/,
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('runtime release verifier rejects a unit it does not know', async () => {
   const directory = await createModelFixture([
     ['another-unit', `capture-engine-another-${RELEASE_VERSION}-windows-x64.zip`],

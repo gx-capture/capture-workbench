@@ -131,6 +131,7 @@ CaptureRequirementId = Literal[
     "windowsml-ocr",
     "whisper-primary",
     "speaker-diarization",
+    "vertical-japanese-reader",
     "ollama-runtime",
     "capture-ollama-model",
 ]
@@ -358,6 +359,9 @@ class RawCapture(StrictModel):
     extraction_engine: CaptureEngine
     diarization_engine: CaptureEngine | None = None
     speakers: list[CaptureSpeaker] = Field(default_factory=list, max_length=64)
+    # Optional units that are not installed and would have read part of this
+    # source better; the host may offer to install them and capture again.
+    suggested_units: list[CaptureRequirementId] = Field(default_factory=list, max_length=8)
     warnings: list[WarningText] = Field(default_factory=list, max_length=1_000)
     ocr_page_scope: OcrPageScopeV2 | None = None
     created_at: datetime
@@ -407,6 +411,7 @@ class CaptureDocument(StrictModel):
     extraction_engine: CaptureEngine
     diarization_engine: CaptureEngine | None = None
     speakers: list[CaptureSpeaker] = Field(default_factory=list, max_length=64)
+    suggested_units: list[CaptureRequirementId] = Field(default_factory=list, max_length=8)
     structuring_engine: CaptureEngine
     warnings: list[WarningText] = Field(default_factory=list, max_length=1_000)
     created_at: datetime

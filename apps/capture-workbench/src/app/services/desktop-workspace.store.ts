@@ -333,6 +333,21 @@ export class DesktopWorkspaceStore {
     });
   }
 
+  /** Offer an optional unit that a finished capture said it missed. */
+  requestUnit(requirementId: CaptureRequirementId): void {
+    this.requestedRequirements.update((current) => new Set([...current, requirementId]));
+  }
+
+  /** Units a result missed that are not installed yet. */
+  missedUnits(result: CaptureDocument): readonly CaptureRequirementId[] {
+    const ready = new Set(
+      this.requirements()
+        .filter((requirement) => requirement.status === 'ready')
+        .map((requirement) => requirement.requirementId),
+    );
+    return (result.suggestedUnits ?? []).filter((unit) => !ready.has(unit));
+  }
+
   /** Loads the source file once so the speakers' samples can be played. */
   loadSpeakerSamples(documentId: string, mediaType: string): void {
     if (this.sampleSources().has(documentId)) return;

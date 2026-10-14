@@ -215,6 +215,16 @@ def main() -> None:
                 release_base_url=arguments.release_base_url,
             )
         )
+    if "vertical-japanese-reader" in locked_ids:
+        # Models only: the reader runs inside the OCR worker, so it has no archive.
+        requirements.append(
+            {
+                "requirementId": "vertical-japanese-reader",
+                "artifacts": [],
+                "modelFiles": model_delivery(source_lock, "vertical-japanese-reader"),
+                "unavailableReason": None,
+            }
+        )
     payload = {
         "catalogVersion": "2",
         "runtimeVersion": RUNTIME_VERSION,
