@@ -21,6 +21,36 @@ Capture Workbench follows an explicit 0.x compatibility policy:
 The consumer consistency check is a permanent CI gate for the declared
 runtime, package lock, Python host, desktop host, and browser host versions.
 
+### Recording transcription
+
+Found by transcribing a 40-minute phone interview (M4A, AAC) through LAW and
+directly through the runtime:
+
+- The progressive audio decoder kept the alignment padding of every resampled
+  frame, so for Opus, MP3 and AAC sources about a fifth of the PCM sent to
+  Whisper was junk and segment times drifted. It now keeps the samples only:
+  a four-minute stretch sent as Opus went from one segment to 93.
+- A capture no longer fails when its first five minutes produce no text.
+  Recordings often open with minutes of waiting; the speech after is now
+  heard. `progressive_no_text_at_sample` means the whole recording had no
+  text and, as the contract already declared, is not retryable.
+- Consecutive progressive windows both transcribe their 30-second overlap,
+  often in different words or scripts. Each moment is now kept from one
+  window, which removed the doubled sentences (877 segments became 683 on
+  the interview).
+- A Whisper or speaker-diarization run may take 15 minutes plus the
+  recording's length; with the fixed 15 minutes, a 40-minute interview with
+  speakers failed.
+- The runtime, the Web Component and Capture Workbench accept any audio or
+  video recording FFmpeg decodes (AAC, AMR, WMA, AIFF, CAF, MOV, MKV, WebM,
+  AVI, FLV, MPEG-PS and MPEG-TS besides WAV, MP3, FLAC, Ogg and MP4); the
+  audio track of a video is transcribed.
+- Capture Workbench shows a recording's transcript as timed lines with the
+  speakers' names beside a player, and plays the recording from a line.
+
+The window merging and the checkpoint rule run in the Whisper engine, so
+they reach users with a rebuilt `capture-engine-whisper` artifact.
+
 ## 0.6.1
 
 A patch release. Clients still require the exact runtime version, so a 0.6.1

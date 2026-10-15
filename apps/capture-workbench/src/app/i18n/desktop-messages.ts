@@ -75,6 +75,12 @@ export interface DesktopMessages {
   readonly speakerName: string;
   readonly loadSamples: string;
   readonly noSample: string;
+  readonly transcript: string;
+  readonly transcriptHint: string;
+  readonly loadRecording: string;
+  readonly playFrom: (time: string) => string;
+  readonly liveTranscript: string;
+  readonly heardUntil: (time: string) => string;
   readonly missingRawResult: string;
   readonly manualRequirement: (name: string, detail: string) => string;
   readonly finishInstallThenRetry: string;
@@ -163,6 +169,12 @@ const ZH_TW: DesktopMessages = {
   speakerName: '這位說話者的名字',
   loadSamples: '載入試聽片段',
   noSample: '沒有可試聽的片段',
+  transcript: '逐字稿',
+  transcriptHint: '點時間即可從那一刻播放錄音，核對聽到的內容。',
+  loadRecording: '載入錄音',
+  playFrom: (time) => `從 ${time} 播放`,
+  liveTranscript: '即時逐字稿',
+  heardUntil: (time) => `已聽到 ${time}`,
   missingRawResult: 'Capture Runtime 未提供已完成工作的原始結果。',
   manualRequirement: (name, detail) => `${name} 需要手動處理：${detail}`,
   finishInstallThenRetry: '請完成安裝後再試。',
@@ -273,6 +285,12 @@ const EN: DesktopMessages = {
   speakerName: "This speaker's name",
   loadSamples: 'Load samples',
   noSample: 'No sample to play',
+  transcript: 'Transcript',
+  transcriptHint: 'Select a time to play the recording from that moment and check what was heard.',
+  loadRecording: 'Load recording',
+  playFrom: (time) => `Play from ${time}`,
+  liveTranscript: 'Live transcript',
+  heardUntil: (time) => `Heard up to ${time}`,
   missingRawResult: 'The finished job returned no raw result.',
   manualRequirement: (name, detail) => `${name} needs a manual step: ${detail}`,
   finishInstallThenRetry: 'Finish the installation, then try again.',

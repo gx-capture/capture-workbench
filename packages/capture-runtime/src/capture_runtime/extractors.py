@@ -65,7 +65,7 @@ from capture_runtime.worker_client import (
     WorkerOcrProgress,
     WorkerRunResult,
 )
-from capture_runtime.worker_process import WorkerCancelledError
+from capture_runtime.worker_process import DEFAULT_RUN_TIMEOUT_SECONDS, WorkerCancelledError
 
 if TYPE_CHECKING:
     from PIL import Image
@@ -302,7 +302,45 @@ class _OcrWorkerFailureEngineAdapter:
         )
 
 
+SNIFF_BYTES = 200
+"""How much of a source's start `sniff_source` needs (MPEG-TS repeats its sync byte at 188)."""
+
+_MP4_BOX_TYPES = frozenset({b"ftyp", b"moov", b"mdat", b"wide", b"free", b"skip", b"pnot"})
+
+# The suffix a worker's copy of a source gets; decoders sniff the content, so
+# the suffix only has to be plausible.
+_SOURCE_SUFFIXES = {
+    "application/pdf": ".pdf",
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/webp": ".webp",
+    "audio/wav": ".wav",
+    "audio/mpeg": ".mp3",
+    "audio/aac": ".aac",
+    "audio/flac": ".flac",
+    "audio/ogg": ".ogg",
+    "audio/mp4": ".m4a",
+    "audio/amr": ".amr",
+    "audio/aiff": ".aiff",
+    "audio/x-caf": ".caf",
+    "video/quicktime": ".mov",
+    "video/x-matroska": ".mkv",
+    "video/x-ms-asf": ".asf",
+    "video/x-msvideo": ".avi",
+    "video/x-flv": ".flv",
+    "video/mpeg": ".mpg",
+    "video/mp2t": ".ts",
+}
+
+
 def sniff_source(content: bytes) -> SniffedSource:
+    """The kind of a source and its media type, from the signature of its first bytes.
+
+    Audio is whatever FFmpeg decodes: recordings arrive as phone memos (M4A,
+    3GP, AMR), dictaphone files (WMA, MP3), and meetings or hearings recorded
+    as video (MP4, MOV, MKV, WebM, AVI, MPEG-TS), whose audio track is
+    transcribed.
+    """
     if content.startswith(b"%PDF-"):
         return SniffedSource(CaptureSourceKind.PDF, "application/pdf")
     if content.startswith(b"\x89PNG\r\n\x1a\n"):
@@ -311,17 +349,47 @@ def sniff_source(content: bytes) -> SniffedSource:
         return SniffedSource(CaptureSourceKind.IMAGE, "image/jpeg")
     if len(content) >= 12 and content[:4] == b"RIFF" and content[8:12] == b"WEBP":
         return SniffedSource(CaptureSourceKind.IMAGE, "image/webp")
-    if len(content) >= 12 and content[:4] == b"RIFF" and content[8:12] == b"WAVE":
-        return SniffedSource(CaptureSourceKind.AUDIO, "audio/wav")
-    if content.startswith(b"ID3") or content[:2] in {b"\xff\xfb", b"\xff\xf3", b"\xff\xf2"}:
-        return SniffedSource(CaptureSourceKind.AUDIO, "audio/mpeg")
+    media_type = _audio_media_type(content)
+    if media_type is not None:
+        return SniffedSource(CaptureSourceKind.AUDIO, media_type)
+    raise UnsupportedMediaError(
+        "Only PDF, PNG, JPEG, WebP, and audio or video recordings are supported"
+    )
+
+
+def _audio_media_type(content: bytes) -> str | None:
+    if len(content) >= 12 and content[:4] == b"RIFF":
+        return {b"WAVE": "audio/wav", b"AVI ": "video/x-msvideo"}.get(content[8:12])
+    if content.startswith(b"ID3"):
+        return "audio/mpeg"
+    if len(content) >= 2 and content[0] == 0xFF and content[1] & 0xE0 == 0xE0:
+        # Both open with an 11-bit sync word; ADTS marks its layer bits zero.
+        return "audio/aac" if content[1] & 0x06 == 0 else "audio/mpeg"
     if content.startswith(b"fLaC"):
-        return SniffedSource(CaptureSourceKind.AUDIO, "audio/flac")
+        return "audio/flac"
     if content.startswith(b"OggS"):
-        return SniffedSource(CaptureSourceKind.AUDIO, "audio/ogg")
+        return "audio/ogg"
     if len(content) >= 12 and content[4:8] == b"ftyp":
-        return SniffedSource(CaptureSourceKind.AUDIO, "audio/mp4")
-    raise UnsupportedMediaError("Only PDF, PNG, JPEG, WebP, and common audio are supported")
+        return "audio/mp4"
+    if len(content) >= 8 and content[4:8] in _MP4_BOX_TYPES:
+        return "video/quicktime"
+    if content.startswith(b"\x1a\x45\xdf\xa3"):
+        return "video/x-matroska"
+    if content.startswith(b"\x30\x26\xb2\x75\x8e\x66\xcf\x11"):
+        return "video/x-ms-asf"
+    if content.startswith(b"#!AMR"):
+        return "audio/amr"
+    if len(content) >= 12 and content[:4] == b"FORM" and content[8:12] in {b"AIFF", b"AIFC"}:
+        return "audio/aiff"
+    if content.startswith(b"caff"):
+        return "audio/x-caf"
+    if content.startswith(b"FLV"):
+        return "video/x-flv"
+    if content.startswith(b"\x00\x00\x01\xba"):
+        return "video/mpeg"
+    if len(content) > 188 and content[0] == 0x47 and content[188] == 0x47:
+        return "video/mp2t"
+    return None
 
 
 class StandaloneRuntimeCaptureExtractor:
@@ -517,6 +585,9 @@ class StandaloneRuntimeCaptureExtractor:
                     },
                     cancel_event,
                     progress=_stage_progress(speaker_progress, "transcribing", 0, 450),
+                    timeout_seconds=_audio_run_timeout_seconds(
+                        content, self.config.max_audio_duration_ms
+                    ),
                 )
                 engine = self._capture_engine(result, expected_engine="whisper-primary")
                 warnings = list(result.warnings)
@@ -526,6 +597,9 @@ class StandaloneRuntimeCaptureExtractor:
                         sniffed.media_type,
                         cancel_event,
                         _stage_progress(speaker_progress, "identifying-speakers", 450, 1000),
+                        timeout_seconds=_audio_run_timeout_seconds(
+                            content, self.config.max_audio_duration_ms
+                        ),
                     )
                     segments, speakers = _speaker_capture_segments(result, diarization)
                     diarization_engine = CaptureEngine(
@@ -631,6 +705,7 @@ class StandaloneRuntimeCaptureExtractor:
         page_manifest: tuple[OcrPageManifest, ...] | None = None,
         ocr_progress: Callable[[int, int], None] | None = None,
         progress: Callable[[int], None] | None = None,
+        timeout_seconds: float = DEFAULT_RUN_TIMEOUT_SECONDS,
     ) -> WorkerRunResult:
         assert self.engine_manager is not None
         worker_options = dict(options)
@@ -696,6 +771,7 @@ class StandaloneRuntimeCaptureExtractor:
                 media_type=media_type,
                 options=worker_options,
                 cancel_event=cancel_event,
+                timeout_seconds=timeout_seconds,
                 ocr_progress=ocr_progress,
                 on_permille=progress,
                 vertical_reader_dir=vertical_reader_dir,
@@ -707,17 +783,7 @@ class StandaloneRuntimeCaptureExtractor:
         """Write the source where a worker can read it; the caller deletes it."""
 
         self.config.temp_dir.mkdir(parents=True, exist_ok=True)
-        suffix = {
-            "application/pdf": ".pdf",
-            "image/png": ".png",
-            "image/jpeg": ".jpg",
-            "image/webp": ".webp",
-            "audio/wav": ".wav",
-            "audio/mpeg": ".mp3",
-            "audio/flac": ".flac",
-            "audio/ogg": ".ogg",
-            "audio/mp4": ".m4a",
-        }.get(media_type, ".source")
+        suffix = _SOURCE_SUFFIXES.get(media_type, ".source")
         with tempfile.NamedTemporaryFile(
             prefix="capture-worker-source-",
             suffix=suffix,
@@ -745,6 +811,8 @@ class StandaloneRuntimeCaptureExtractor:
         media_type: str,
         cancel_event: asyncio.Event,
         progress: Callable[[int], None] | None,
+        *,
+        timeout_seconds: float = DEFAULT_RUN_TIMEOUT_SECONDS,
     ) -> WorkerDiarizationResult:
         assert self.engine_manager is not None
         try:
@@ -768,6 +836,7 @@ class StandaloneRuntimeCaptureExtractor:
                     "allowCpuFallback": True,
                 },
                 cancel_event=cancel_event,
+                timeout_seconds=timeout_seconds,
                 on_permille=progress,
             )
         finally:
@@ -1253,13 +1322,7 @@ class StandaloneRuntimeCaptureExtractor:
     def _extract_audio(
         self, content: bytes, media_type: str, cancel_event: asyncio.Event
     ) -> tuple[list[RawCaptureSegment], CaptureEngine, list[str]]:
-        suffix = {
-            "audio/wav": ".wav",
-            "audio/mpeg": ".mp3",
-            "audio/flac": ".flac",
-            "audio/ogg": ".ogg",
-            "audio/mp4": ".m4a",
-        }.get(media_type, ".audio")
+        suffix = _SOURCE_SUFFIXES.get(media_type, ".audio")
         self.config.temp_dir.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(
             prefix="capture-workbench-whisper-",
@@ -1380,6 +1443,32 @@ def _oriented_image_dimensions(content: bytes) -> tuple[int, int]:
     if width <= 0 or height <= 0:
         raise ValueError("Image dimensions must be positive.")
     return width, height
+
+
+def _audio_run_timeout_seconds(content: bytes, max_duration_ms: int) -> float:
+    """How long one Whisper or speaker-diarization run on this audio may take.
+
+    Both take time in proportion to the recording, and diarization runs on the
+    CPU at about a third of real time: with the standard limit alone a
+    40-minute interview failed. The limit grows by the recording's own length,
+    or by the longest allowed when the container does not say.
+    """
+    duration_seconds = _audio_duration_seconds(content)
+    if duration_seconds is None:
+        duration_seconds = max_duration_ms / 1000
+    return DEFAULT_RUN_TIMEOUT_SECONDS + duration_seconds
+
+
+def _audio_duration_seconds(content: bytes) -> float | None:
+    try:
+        import av
+
+        with av.open(BytesIO(content), mode="r") as container:
+            if container.duration is None:
+                return None
+            return container.duration / 1_000_000
+    except Exception:
+        return None
 
 
 def _stage_progress(
@@ -1588,5 +1677,6 @@ __all__ = [
     "SniffedSource",
     "StandaloneRuntimeCaptureExtractor",
     "UnsupportedMediaError",
+    "SNIFF_BYTES",
     "sniff_source",
 ]

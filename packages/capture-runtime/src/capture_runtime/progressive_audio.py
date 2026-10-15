@@ -129,6 +129,9 @@ class ProgressiveAudioSession:
         self._next_checkpoint_ms = checkpoint_ms
         self._partial_revision = 0
         self._segments: list[RawCaptureSegment] = []
+        # Text heard in the last half overlap of the latest window, sealed
+        # or dropped once the next window arrives (see _release_held_tail).
+        self._held_tail: list[tuple[int, int, str]] = []
         self._engine: CaptureEngine | None = None
         self._warnings: list[str] = []
         self._pending_events: list[ProgressiveSessionEvent] = []
@@ -231,11 +234,14 @@ class ProgressiveAudioSession:
             self._consume(window)
         if self._terminal:
             return self.drain_events()
+        self._seal_held_tail()
         if not self._segments:
+            # Only now, with the whole recording heard, does no text mean no
+            # speech; transcribing it again would hear none either.
             self._fail(
                 code="progressive_no_text_at_sample",
-                message="No non-empty text was produced by the final progressive sample.",
-                retryable=True,
+                message="No speech was heard in the audio.",
+                retryable=False,
                 stage="checkpoint",
             )
             return self.drain_events()
@@ -273,17 +279,42 @@ class ProgressiveAudioSession:
         for warning in result.warnings:
             if warning not in self._warnings:
                 self._warnings.append(warning)
-        self._merge_segments(window, result.segments)
+        boundary_ms = self._release_held_tail(window)
+        self._merge_segments(window, result.segments, from_ms=boundary_ms)
         self._covered_until_ms = max(self._covered_until_ms, window.end_ms)
         self._last_progress_at = self.clock.now()
         self._emit_due_checkpoints()
+
+    def _release_held_tail(self, window: DecodedAudioWindow) -> int:
+        """Split the overlap with the previous window at its middle.
+
+        Consecutive windows both hear the overlap, and Whisper writes the same
+        speech differently in each (other words, Simplified or Traditional
+        script), so text matching cannot tell the copies apart. Each moment is
+        kept from one window: the earlier window up to the middle of the
+        overlap, this one from there. Returns where this window's text starts.
+        """
+        overlap_ms = self._covered_until_ms - window.start_ms
+        boundary_ms = window.start_ms + max(0, overlap_ms) // 2
+        held, self._held_tail = self._held_tail, []
+        self._seal([segment for segment in held if _midpoint(segment) < boundary_ms])
+        return boundary_ms
+
+    def _seal_held_tail(self) -> None:
+        held, self._held_tail = self._held_tail, []
+        self._seal(held)
 
     def _merge_segments(
         self,
         window: DecodedAudioWindow,
         segments: Iterable[WhisperWindowSegment],
+        *,
+        from_ms: int,
     ) -> None:
-        newly_sealed: list[RawCaptureSegment] = []
+        # Text in the last half overlap is held until the next window shows
+        # whether it, rather than this one, keeps that stretch.
+        tail_from_ms = window.end_ms - self.overlap_ms // 2
+        heard: list[tuple[int, int, str]] = []
         for segment in segments:
             if not segment.text.strip():
                 continue
@@ -291,7 +322,19 @@ class ProgressiveAudioSession:
             end_ms = min(window.end_ms, window.start_ms + segment.end_ms)
             if end_ms <= start_ms:
                 continue
-            normalized = _normalize_text(segment.text)
+            timed = (start_ms, end_ms, segment.text)
+            if _midpoint(timed) < from_ms:
+                continue
+            if _midpoint(timed) >= tail_from_ms:
+                self._held_tail.append(timed)
+            else:
+                heard.append(timed)
+        self._seal(heard)
+
+    def _seal(self, heard: list[tuple[int, int, str]]) -> None:
+        newly_sealed: list[RawCaptureSegment] = []
+        for start_ms, end_ms, text in heard:
+            normalized = _normalize_text(text)
             duplicate = next(
                 (
                     current
@@ -313,7 +356,7 @@ class ProgressiveAudioSession:
                 segment_id=f"segment-{len(self._segments) + 1}",
                 order=len(self._segments),
                 locator=TimeLocator(start_ms=start_ms, end_ms=end_ms),
-                text=segment.text.strip(),
+                text=text.strip(),
             )
             self._segments.append(sealed)
             newly_sealed.append(sealed)
@@ -344,15 +387,9 @@ class ProgressiveAudioSession:
             segment.order = order
 
     def _emit_due_checkpoints(self) -> None:
+        # A checkpoint reports progress even before any text: recordings often
+        # open with minutes of waiting, and the speech after must still be heard.
         while self._covered_until_ms >= self._next_checkpoint_ms:
-            if not self._segments:
-                self._fail(
-                    code="progressive_no_text_at_sample",
-                    message="No non-empty text was produced at the 5 minute audio sample.",
-                    retryable=True,
-                    stage="checkpoint",
-                )
-                return
             self._emit_checkpoint(self._next_checkpoint_ms)
             self._next_checkpoint_ms += self.checkpoint_ms
 
@@ -390,6 +427,10 @@ class ProgressiveAudioSession:
 
 def _elapsed_ms(start: datetime, end: datetime) -> int:
     return max(0, round((end - start).total_seconds() * 1000))
+
+
+def _midpoint(timed: tuple[int, int, str]) -> int:
+    return (timed[0] + timed[1]) // 2
 
 
 def _normalize_text(value: str) -> str:

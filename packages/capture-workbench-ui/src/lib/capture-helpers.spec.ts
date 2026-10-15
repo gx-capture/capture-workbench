@@ -7,6 +7,7 @@ import type {
 import {
   assertCaptureRuntimeCompatible,
   CaptureCompatibilityError,
+  CaptureHelpersService,
   validateStructuringCandidate,
 } from './capture-helpers';
 import { CAPTURE_RUNTIME_MINOR } from './constants';
@@ -300,5 +301,32 @@ describe('capture helpers', () => {
     };
 
     expect(validateStructuringCandidate(boxedCandidate, boxedRaw)).toEqual([]);
+  });
+});
+
+describe('capture file kinds', () => {
+  const helpers = new CaptureHelpersService();
+
+  it('takes audio and video recordings as audio to transcribe', () => {
+    for (const name of [
+      'interview.m4a',
+      'memo.AMR',
+      'dictation.wma',
+      'hearing.mp4',
+      'meeting.mov',
+      'call.webm',
+      'camera.mkv',
+    ]) {
+      expect(helpers.classifyCaptureFile({ name })).toBe('audio');
+    }
+    expect(helpers.classifyCaptureFile({ name: 'lease.pdf' })).toBe('pdf');
+    expect(helpers.classifyCaptureFile({ name: 'notes.txt' })).toBeNull();
+  });
+
+  it('offers recordings in the file picker only when audio is enabled', () => {
+    expect(helpers.captureAccept(['audio']).split(',')).toEqual(
+      expect.arrayContaining(['.m4a', '.wma', '.mp4', '.webm', 'audio/*', 'video/*']),
+    );
+    expect(helpers.captureAccept(['pdf', 'image'])).not.toContain('audio');
   });
 });

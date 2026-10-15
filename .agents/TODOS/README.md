@@ -19,6 +19,12 @@ evidence rules. Release state and procedure: [release-runbook.md](../GUIDES/rele
   vertical-aware recognizer; either changes the OCR profile identity, so it
   ships as a release decision — [pdf-ocr-only-extraction.md](pdf-ocr-only-extraction.md)
 
+## Recording transcription
+
+- Release the progressive audio fixes with a rebuilt Whisper engine, then a
+  real Workbench journey with a recording; large recordings and playback of
+  WMA/AMR — [recording-transcription.md](recording-transcription.md)
+
 ## Maintenance
 
 - Release version literals: a version bump touches about 136 files, most of

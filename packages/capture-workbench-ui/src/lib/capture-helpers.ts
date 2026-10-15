@@ -13,15 +13,25 @@ import {
 } from './contracts';
 import { CAPTURE_RUNTIME_MAJOR, CAPTURE_RUNTIME_MINOR } from './constants';
 
+/**
+ * Recordings the runtime transcribes: audio, and video whose audio track is
+ * transcribed (meetings and hearings are often recorded as video).
+ */
+export const RECORDING_EXTENSIONS: readonly string[] = [
+  'mp3', 'wav', 'm4a', 'm4b', 'aac', 'flac', 'ogg', 'oga', 'opus', 'wma', 'amr',
+  'aif', 'aiff', 'caf', 'mka', '3gp', '3g2', 'mp4', 'm4v', 'mov', 'mkv', 'webm',
+  'avi', 'wmv', 'asf', 'flv', 'mpg', 'mpeg', 'ts', 'mts', 'm2ts',
+];
+
 const EXTENSION_KINDS: Readonly<Record<string, CaptureSourceKind>> = {
   pdf: 'pdf',
   png: 'image',
   jpg: 'image',
   jpeg: 'image',
   webp: 'image',
-  mp3: 'audio',
-  wav: 'audio',
-  m4a: 'audio',
+  ...Object.fromEntries(
+    RECORDING_EXTENSIONS.map((extension) => [extension, 'audio' as const]),
+  ),
 };
 const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/;
 const ENGINE_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
@@ -59,12 +69,9 @@ export class CaptureHelpersService {
     }
     if (enabled.includes('audio')) {
       values.push(
-        '.mp3',
-        '.wav',
-        '.m4a',
-        'audio/mpeg',
-        'audio/wav',
-        'audio/mp4',
+        ...RECORDING_EXTENSIONS.map((extension) => `.${extension}`),
+        'audio/*',
+        'video/*',
       );
     }
     return values.join(',');
