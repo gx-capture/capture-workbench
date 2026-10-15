@@ -45,6 +45,22 @@ actually shipped (0.5.1 followed the same steps); workflow files remain the sour
   structure of dense vertical periodical scans and pages that mix directions;
   about a fifth of furigana on textbook pages is not set aside.
 
+## Prepared: 0.6.2 (patch)
+
+- 0.6.1 is published (GitHub release `v0.6.1`, 2026-10-14).
+- 0.6.2 fixes recording transcription (PR #93): the progressive decoder kept
+  frame padding, a silent first five minutes failed a capture, overlapping
+  windows doubled sentences, and speaker runs had a fixed 15-minute limit. It
+  also accepts any recording FFmpeg decodes, and Capture Workbench shows a
+  transcript beside its recording.
+- The window merging and the checkpoint rule run in the Whisper worker, so the
+  `capture-engine-whisper` artifact must be rebuilt, which the runtime
+  candidate does.
+- Compatible with 0.6.x clients. Contract-set SHA-256 unchanged
+  (`fc8a994e…`). Model-source Commit A `abe8b55` (annotated tag
+  `capture-runtime-model-sources-v0.6.2`). OCR profile
+  `capture-workbench-ocr-5b63d123f524e4b1`.
+
 ## Published through Route A: 0.6.1 (patch)
 
 - Published on 2026-10-14 through Route A only, like 0.6.0: npm, Maven,
