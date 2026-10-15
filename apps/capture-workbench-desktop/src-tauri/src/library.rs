@@ -60,7 +60,9 @@ pub(crate) use filesystem::{
 pub(crate) use store::LibraryIndex;
 pub(crate) use store::{LibraryStore, RuntimeSourceFile};
 pub(crate) use transaction::{commit_library_transaction, recover_library_transaction};
-pub(crate) use validation::{validate_document_id, validate_source_input, validate_status};
+pub(crate) use validation::{
+    validate_document_id, validate_source_input, validate_status, RECORDING_MEDIA_TYPES,
+};
 
 #[cfg(test)]
 pub(crate) use transaction::{
@@ -1067,6 +1069,9 @@ mod tests {
             ("audio/wav", "fixture.wav"),
             ("audio/mpeg", "fixture.mp3"),
             ("audio/mp4", "fixture.m4a"),
+            ("audio/ogg", "voice.ogg"),
+            ("video/x-matroska", "hearing.mkv"),
+            ("video/x-ms-asf", "dictation.wma"),
         ] {
             assert!(validate_source_input(&LibrarySourceInput {
                 file_name: file_name.into(),
@@ -1094,7 +1099,7 @@ mod tests {
             bytes: vec![1; MAX_SOURCE_BYTES + 1],
         })
         .is_err());
-        for (media_type, file_name) in [("image/webp", "image.webp"), ("audio/ogg", "voice.ogg")] {
+        for (media_type, file_name) in [("image/webp", "image.webp"), ("text/plain", "notes.txt")] {
             assert!(validate_source_input(&LibrarySourceInput {
                 file_name: file_name.into(),
                 media_type: media_type.into(),
@@ -1102,6 +1107,44 @@ mod tests {
             })
             .is_err());
         }
+    }
+
+    #[test]
+    fn recordings_are_recognized_by_signature_whatever_their_recording_extension() {
+        use super::validation::verified_media_type;
+
+        let mut transport_stream = vec![0u8; 200];
+        transport_stream[0] = 0x47;
+        transport_stream[188] = 0x47;
+        for (file_name, bytes, media_type) in [
+            ("interview.m4a", b"\0\0\0\x18ftyp3gp4".to_vec(), "audio/mp4"),
+            ("interview.3gp", b"\0\0\0\x18ftyp3gp4".to_vec(), "audio/mp4"),
+            (
+                "call.webm",
+                vec![0x1a, 0x45, 0xdf, 0xa3, 0x01],
+                "video/x-matroska",
+            ),
+            (
+                "dictation.wma",
+                vec![0x30, 0x26, 0xb2, 0x75, 0x8e, 0x66, 0xcf, 0x11],
+                "video/x-ms-asf",
+            ),
+            ("memo.amr", b"#!AMR\n".to_vec(), "audio/amr"),
+            ("memo.aac", vec![0xff, 0xf1, 0x50, 0x80], "audio/aac"),
+            ("memo.mp3", vec![0xff, 0xfb, 0x90, 0x00], "audio/mpeg"),
+            ("voice.opus", b"OggS\0".to_vec(), "audio/ogg"),
+            ("broadcast.ts", transport_stream, "video/mp2t"),
+        ] {
+            assert_eq!(
+                verified_media_type(file_name, &bytes),
+                Ok(media_type),
+                "{file_name}"
+            );
+        }
+
+        assert!(verified_media_type("lease.mp4", b"%PDF-1.7").is_err());
+        assert!(verified_media_type("memo.txt", b"OggS\0").is_err());
+        assert!(verified_media_type("notes.m4a", b"plain text").is_err());
     }
 
     #[test]

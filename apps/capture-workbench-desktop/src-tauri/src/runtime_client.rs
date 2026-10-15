@@ -10,7 +10,7 @@ use crate::{
         RuntimeModelInstallationStartInput, RuntimeStreamingCaptureInput,
         RuntimeStreamingEventsInput,
     },
-    library::{LibraryStore, RuntimeSourceFile},
+    library::{LibraryStore, RuntimeSourceFile, RECORDING_MEDIA_TYPES},
     state::DesktopState,
 };
 
@@ -120,7 +120,7 @@ pub(crate) fn create_capture(
     let source_kind = match source.media_type.as_str() {
         "application/pdf" => "pdf",
         "image/png" | "image/jpeg" => "image",
-        "audio/wav" | "audio/mpeg" | "audio/mp4" => "audio",
+        media_type if RECORDING_MEDIA_TYPES.contains(&media_type) => "audio",
         _ => return Err("Capture source media type is unsupported.".into()),
     };
     if let Some(page_numbers) = input.pdf_page_numbers.as_deref() {
@@ -197,8 +197,9 @@ pub(crate) fn start_streaming_capture(
     validate_client_request_id(&input.client_request_id)?;
     validate_structuring_mode(&input.structuring_mode)?;
     let source = library.runtime_source_file(&input.document_id)?;
-    if !source.media_type.starts_with("audio/") {
-        return Err("Progressive capture is available only for audio sources.".into());
+    // Audio, or video whose audio track is transcribed.
+    if !RECORDING_MEDIA_TYPES.contains(&source.media_type.as_str()) {
+        return Err("Progressive capture is available only for recordings.".into());
     }
     let config = state.backend_config()?;
     let ingestion = request_with_headers(
