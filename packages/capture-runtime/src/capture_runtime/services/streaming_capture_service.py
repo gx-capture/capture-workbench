@@ -32,6 +32,7 @@ from capture_runtime.contracts import (
     StructuringMode,
 )
 from capture_runtime.extractors import (
+    SNIFF_BYTES,
     CaptureExtractionOutcome,
     CaptureExtractor,
     ExtractionRuntimeUnavailableError,
@@ -561,7 +562,7 @@ class StreamingCaptureService:
             raise asyncio.CancelledError
         try:
             content = await asyncio.to_thread(source_path.read_bytes)
-            sniffed = extractor.sniff(content[:64])
+            sniffed = extractor.sniff(content[:SNIFF_BYTES])
         except UnsupportedMediaError as error:
             raise ProgressiveCaptureError(
                 "Uploaded source content is not a supported capture kind.",
