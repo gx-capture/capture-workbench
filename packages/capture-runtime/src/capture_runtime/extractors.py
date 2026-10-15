@@ -65,7 +65,7 @@ from capture_runtime.worker_client import (
     WorkerOcrProgress,
     WorkerRunResult,
 )
-from capture_runtime.worker_process import WorkerCancelledError
+from capture_runtime.worker_process import DEFAULT_RUN_TIMEOUT_SECONDS, WorkerCancelledError
 
 if TYPE_CHECKING:
     from PIL import Image
@@ -517,6 +517,9 @@ class StandaloneRuntimeCaptureExtractor:
                     },
                     cancel_event,
                     progress=_stage_progress(speaker_progress, "transcribing", 0, 450),
+                    timeout_seconds=_audio_run_timeout_seconds(
+                        content, self.config.max_audio_duration_ms
+                    ),
                 )
                 engine = self._capture_engine(result, expected_engine="whisper-primary")
                 warnings = list(result.warnings)
@@ -526,6 +529,9 @@ class StandaloneRuntimeCaptureExtractor:
                         sniffed.media_type,
                         cancel_event,
                         _stage_progress(speaker_progress, "identifying-speakers", 450, 1000),
+                        timeout_seconds=_audio_run_timeout_seconds(
+                            content, self.config.max_audio_duration_ms
+                        ),
                     )
                     segments, speakers = _speaker_capture_segments(result, diarization)
                     diarization_engine = CaptureEngine(
@@ -631,6 +637,7 @@ class StandaloneRuntimeCaptureExtractor:
         page_manifest: tuple[OcrPageManifest, ...] | None = None,
         ocr_progress: Callable[[int, int], None] | None = None,
         progress: Callable[[int], None] | None = None,
+        timeout_seconds: float = DEFAULT_RUN_TIMEOUT_SECONDS,
     ) -> WorkerRunResult:
         assert self.engine_manager is not None
         worker_options = dict(options)
@@ -696,6 +703,7 @@ class StandaloneRuntimeCaptureExtractor:
                 media_type=media_type,
                 options=worker_options,
                 cancel_event=cancel_event,
+                timeout_seconds=timeout_seconds,
                 ocr_progress=ocr_progress,
                 on_permille=progress,
                 vertical_reader_dir=vertical_reader_dir,
@@ -745,6 +753,8 @@ class StandaloneRuntimeCaptureExtractor:
         media_type: str,
         cancel_event: asyncio.Event,
         progress: Callable[[int], None] | None,
+        *,
+        timeout_seconds: float = DEFAULT_RUN_TIMEOUT_SECONDS,
     ) -> WorkerDiarizationResult:
         assert self.engine_manager is not None
         try:
@@ -768,6 +778,7 @@ class StandaloneRuntimeCaptureExtractor:
                     "allowCpuFallback": True,
                 },
                 cancel_event=cancel_event,
+                timeout_seconds=timeout_seconds,
                 on_permille=progress,
             )
         finally:
@@ -1380,6 +1391,32 @@ def _oriented_image_dimensions(content: bytes) -> tuple[int, int]:
     if width <= 0 or height <= 0:
         raise ValueError("Image dimensions must be positive.")
     return width, height
+
+
+def _audio_run_timeout_seconds(content: bytes, max_duration_ms: int) -> float:
+    """How long one Whisper or speaker-diarization run on this audio may take.
+
+    Both take time in proportion to the recording, and diarization runs on the
+    CPU at about a third of real time: with the standard limit alone a
+    40-minute interview failed. The limit grows by the recording's own length,
+    or by the longest allowed when the container does not say.
+    """
+    duration_seconds = _audio_duration_seconds(content)
+    if duration_seconds is None:
+        duration_seconds = max_duration_ms / 1000
+    return DEFAULT_RUN_TIMEOUT_SECONDS + duration_seconds
+
+
+def _audio_duration_seconds(content: bytes) -> float | None:
+    try:
+        import av
+
+        with av.open(BytesIO(content), mode="r") as container:
+            if container.duration is None:
+                return None
+            return container.duration / 1_000_000
+    except Exception:
+        return None
 
 
 def _stage_progress(
