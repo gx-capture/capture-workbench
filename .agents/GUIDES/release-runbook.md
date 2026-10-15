@@ -45,21 +45,43 @@ actually shipped (0.5.1 followed the same steps); workflow files remain the sour
   structure of dense vertical periodical scans and pages that mix directions;
   about a fifth of furigana on textbook pages is not set aside.
 
-## Prepared: 0.6.1 (patch)
+## Published through Route A: 0.6.1 (patch)
 
-- 0.6.0 is published (GitHub release `v0.6.0`, 2026-10-14) and LAW pins it.
-- 0.6.1 carries one fix: each OCR model profiles under its own ONNX Runtime
-  prefix, so GPU OCR no longer fails about half the time with
-  `ocr_worker_failed` (PR #90).
-- Compatible with 0.6.x clients. Contract-set SHA-256 unchanged
-  (`fc8a994e…`). Model-source Commit A `10524f9` (annotated tag
-  `capture-runtime-model-sources-v0.6.1`). OCR profile
-  `capture-workbench-ocr-be5a35092b5cc3be`.
+- Published on 2026-10-14 through Route A only, like 0.6.0: npm, Maven,
+  PyPI, crates.io and GitHub release `v0.6.1` (runtime exe `6b9f33f4…`, OCR,
+  Whisper and diarization engine zips). `release-index/stable.json` still
+  points at `v0.5.1`, and no desktop installer is published for 0.6.x.
+- One fix: each OCR model profiles under its own ONNX Runtime prefix, so GPU
+  OCR no longer fails about half the time with `ocr_worker_failed` (PR #90).
+- Clients still require the exact runtime version, so consumers move to 0.6.1
+  clients; the contract-set SHA-256 is unchanged (`fc8a994e…`). Model-source
+  Commit A `10524f9` (annotated tag `capture-runtime-model-sources-v0.6.1`).
+  OCR profile `capture-workbench-ocr-be5a35092b5cc3be`. Source commit
+  `90b386f` (merge of PR #91).
+- Runs: package candidate 38558758781, runtime candidate 38559118888 (both
+  `model-enabled`), package promote 38561146766, runtime promote 38561502678
+  (`github-release`) then 38562351390 (`registries`, which publishes PyPI and
+  the crate; use `registries` the first time). Release candidate 38567018276
+  passed; consumer gates and the full publish were not run.
+- Consumers moved: Cert Prep `main` (PR #42) and LAW
+  `feat/legal-ontology-hybrid` (PR #116). Before merging, each ran OCR (a PDF
+  page and a JPEG) and ASR (a short Chinese recording) 10 times in a row
+  against the published runtime, and all runs passed. Cert Prep went through
+  its backend Capture adapter and LAW through its AI service OCR endpoint;
+  LAW has no ASR path yet, so its ASR runs went straight to the runtime.
+- Why the full route stopped: a release candidate's contract impact is
+  measured against the stable pointer (0.5.1), so 0.6.x is `breaking` and the
+  LAW gate is required. The gate runs on LAW `main`, which still pins 0.5.1;
+  LAW's 0.6.x adoption lives on `feat/legal-ontology-hybrid`. Move the stable
+  pointer once LAW `main` carries 0.6.x.
+- Observed: an audio capture's event stream reports `completed` about half a
+  second before `GET /v2/captures/{id}` does, and `get_raw` answers
+  `raw_unavailable` in between. Poll the operation before reading results.
 
-## Prepared, not published: 0.6.0
+## Published through Route A: 0.6.0
 
-- Release source is on `integration/next-release` (version files at 0.6.0); it
-  is not on `main` and no candidate workflow has run for it.
+- Published on 2026-10-14 through Route A only (no consumer gates, desktop
+  installer or stable pointer). The notes below describe how it was prepared.
 - Incompatible with 0.5.x. Contract-set SHA-256
   `fc8a994e5a2a822376821da277e949eb203df9223977da4db4cdc7ab29724523`; the set no
   longer carries the release version, so the version bump did not change it.

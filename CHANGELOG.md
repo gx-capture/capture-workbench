@@ -23,8 +23,9 @@ runtime, package lock, Python host, desktop host, and browser host versions.
 
 ## 0.6.1
 
-A patch release: 0.6.0 clients work with a 0.6.1 runtime. The contract set
-hash is unchanged; the OCR profile id becomes
+A patch release. Clients still require the exact runtime version, so a 0.6.1
+runtime needs 0.6.1 clients, but the contract set hash is unchanged: moving a
+consumer is a version bump. The OCR profile id becomes
 `capture-workbench-ocr-be5a35092b5cc3be`, since the profile carries the
 release version.
 
