@@ -45,6 +45,63 @@ def test_pyav_incremental_decoder_keeps_windows_bounded_and_overlapped(tmp_path:
     assert all(len(window.payload) <= 2_400 for window in windows)
 
 
+def _opus_tone(path: Path, *, seconds: int = 3) -> bytes:
+    import math
+
+    import av
+
+    # Opus decodes at 48 kHz in 20 ms frames; resampled to 16 kHz each frame is
+    # 320 samples, whose plane buffer is longer than its 640 bytes of audio.
+    with av.open(str(path), "w", format="ogg") as output:
+        stream = output.add_stream("libopus", rate=48_000)
+        stream.layout = "mono"
+        samples = 48_000 * seconds
+        pcm = b"".join(
+            int(8_000 * math.sin(2 * math.pi * 440 * index / 48_000)).to_bytes(
+                2, "little", signed=True
+            )
+            for index in range(samples)
+        )
+        frame = av.AudioFrame(format="s16", layout="mono", samples=samples)
+        frame.planes[0].update(pcm)
+        frame.sample_rate = 48_000
+        frame.pts = 0
+        for packet in stream.encode(frame):
+            output.mux(packet)
+        for packet in stream.encode(None):
+            output.mux(packet)
+    return path.read_bytes()
+
+
+def _reference_pcm(path: Path) -> bytes:
+    import av
+
+    pcm = bytearray()
+    with av.open(str(path)) as container:
+        resampler = av.AudioResampler(format="s16", layout="mono", rate=16_000)
+        for frame in container.decode(container.streams.audio[0]):
+            for decoded in resampler.resample(frame):
+                pcm.extend(bytes(decoded.planes[0])[: decoded.samples * 2])
+    return bytes(pcm)
+
+
+def test_pyav_incremental_decoder_keeps_only_the_audio_of_each_frame(tmp_path: Path) -> None:
+    source = _opus_tone(tmp_path / "tone.ogg")
+    decoder = PyAVIncrementalDecoder(
+        tmp_path / "spool.ogg",
+        window_ms=10_000,
+        overlap_ms=1_000,
+        max_spool_bytes=len(source),
+    )
+
+    windows = [*decoder.push(source), *decoder.finish()]
+
+    [window] = windows
+    reference = _reference_pcm(tmp_path / "tone.ogg")
+    assert window.payload == reference[: len(window.payload)]
+    assert abs(len(window.payload) - len(reference)) <= 64
+
+
 def test_pyav_incremental_decoder_rejects_spool_overflow(tmp_path: Path) -> None:
     decoder = PyAVIncrementalDecoder(
         tmp_path / "spool.wav",

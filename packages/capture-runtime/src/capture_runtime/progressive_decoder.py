@@ -107,7 +107,9 @@ class PyAVIncrementalDecoder:
                     timeline_ms = frame_end_ms
                     if frame_end_ms <= self._decoded_until_ms:
                         continue
-                    self._pcm.extend(bytes(decoded.planes[0]))
+                    # A plane buffer is padded for alignment past the frame's
+                    # samples (Opus, MP3 and AAC frames); only the samples are audio.
+                    self._pcm.extend(bytes(decoded.planes[0])[: sample_count * 2])
                     self._decoded_until_ms = frame_end_ms
                     while self._decoded_until_ms - self._window_start_ms >= self.window_ms:
                         windows.append(self._take_window(self._window_start_ms + self.window_ms))
