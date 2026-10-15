@@ -45,6 +45,21 @@ actually shipped (0.5.1 followed the same steps); workflow files remain the sour
   structure of dense vertical periodical scans and pages that mix directions;
   about a fifth of furigana on textbook pages is not set aside.
 
+## Prepared: 0.6.3 (patch)
+
+- 0.6.2 is published (GitHub release `v0.6.2`, 2026-10-15).
+- 0.6.3 fixes the two transcription defects the 0.6.2 consumer checks found
+  (PR #96): Whisper's voice activity filter kept a click as speech, so a
+  silent window yielded "You" and, with speakers, a word was timed at 0:00.
+  Verified before release in a packaged Whisper engine installed through the
+  runtime's install path (see PR #96).
+- The filter runs in the Whisper worker, so the `capture-engine-whisper`
+  artifact must be rebuilt, which the runtime candidate does.
+- Compatible with 0.6.x clients. Contract-set SHA-256 unchanged
+  (`fc8a994e…`). Model-source Commit A `d16effb` (annotated tag
+  `capture-runtime-model-sources-v0.6.3`). OCR profile
+  `capture-workbench-ocr-1f5dcb0f58337c71`.
+
 ## Published through Route A: 0.6.2 (patch)
 
 - Published on 2026-10-15 through Route A only, like 0.6.1: npm, Maven,
