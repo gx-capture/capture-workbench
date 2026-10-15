@@ -45,21 +45,44 @@ actually shipped (0.5.1 followed the same steps); workflow files remain the sour
   structure of dense vertical periodical scans and pages that mix directions;
   about a fifth of furigana on textbook pages is not set aside.
 
-## Prepared: 0.6.2 (patch)
+## Published through Route A: 0.6.2 (patch)
 
-- 0.6.1 is published (GitHub release `v0.6.1`, 2026-10-14).
-- 0.6.2 fixes recording transcription (PR #93): the progressive decoder kept
-  frame padding, a silent first five minutes failed a capture, overlapping
-  windows doubled sentences, and speaker runs had a fixed 15-minute limit. It
-  also accepts any recording FFmpeg decodes, and Capture Workbench shows a
-  transcript beside its recording.
-- The window merging and the checkpoint rule run in the Whisper worker, so the
-  `capture-engine-whisper` artifact must be rebuilt, which the runtime
-  candidate does.
+- Published on 2026-10-15 through Route A only, like 0.6.1: npm, Maven,
+  PyPI, crates.io and GitHub release `v0.6.2` (runtime exe `82ea45a2…`, OCR,
+  rebuilt Whisper and diarization engine zips). `release-index/stable.json`
+  still points at `v0.5.1`, and no desktop installer is published for 0.6.x.
+- Fixes recording transcription (PR #93):
+  - The progressive decoder kept frame padding.
+  - A silent first five minutes failed a capture.
+  - Overlapping windows doubled sentences.
+  - Speaker runs had a fixed 15-minute limit.
+  - It also accepts any recording FFmpeg decodes, and Capture Workbench
+    shows a transcript beside its recording.
+  - The window merging and the checkpoint rule run in the Whisper worker,
+    so the runtime candidate rebuilt `capture-engine-whisper`.
 - Compatible with 0.6.x clients. Contract-set SHA-256 unchanged
   (`fc8a994e…`). Model-source Commit A `abe8b55` (annotated tag
   `capture-runtime-model-sources-v0.6.2`). OCR profile
-  `capture-workbench-ocr-5b63d123f524e4b1`.
+  `capture-workbench-ocr-5b63d123f524e4b1`. Source commit `251cdb9` (merge
+  of PR #94).
+- Runs: package candidate 38684265560, runtime candidate 38684516941
+  (`model-enabled`), package promote 38686114774, runtime promote
+  38686311532 (`registries`: crate, PyPI, tag and GitHub release). Consumer
+  gates and the full publish were not run, for the reason given under 0.6.1.
+- Consumers moved: Cert Prep PR #43 and LAW PR #117 (LAW's recording
+  transcription, on `feat/legal-ontology-hybrid`). Each was checked against
+  the published runtime (CUDA), and all runs passed:
+  - Cert Prep, through its backend Capture adapter: a PDF page, a JPEG and a
+    short Chinese recording, 10 times each; then a 40-minute phone interview
+    (M4A) 3 times, with 677 to 687 segments in 104 to 110 seconds.
+  - LAW, through its engine and AI service: the PDF and JPEG 10 times each;
+    the interview 3 times (82 lines, 115 to 124 seconds) and once with
+    speakers (996 seconds; on 0.6.0 the whole interview with speakers failed
+    at the 15-minute limit).
+- Still open from those checks:
+  - A silent opening yields a hallucinated "You" at 0:00.
+  - With speakers, one word comes back at 0:00 without a speaker, though it
+    was spoken near 4:43.
 
 ## Published through Route A: 0.6.1 (patch)
 
