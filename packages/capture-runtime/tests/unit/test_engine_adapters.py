@@ -2982,6 +2982,36 @@ def test_faster_whisper_uses_local_paths_gpu_fallback_and_bounded_segments(
         adapter.transcribe(source, should_cancel=lambda: True)
 
 
+def test_faster_whisper_vad_ignores_sounds_shorter_than_speech(tmp_path: Path) -> None:
+    models = tmp_path / "whisper"
+    _write_whisper_model(models, "large-v3-turbo")
+    _write_whisper_model(models, "small")
+    options: list[dict[str, object]] = []
+
+    class Model:
+        def transcribe(self, _path: str, **kwargs: object):
+            options.append(kwargs)
+            return [SimpleNamespace(start=0.0, end=1.0, text="Alpha")], SimpleNamespace(
+                duration=1.0
+            )
+
+    source = tmp_path / "sample.wav"
+    source.write_bytes(b"RIFF\x00\x00\x00\x00WAVE")
+    adapter = FasterWhisperAdapter(
+        models,
+        primary_model="large-v3-turbo",
+        fallback_model="small",
+        prefer_gpu=False,
+        max_duration_ms=60_000,
+        model_factory=lambda *_args, **_kwargs: Model(),
+    )
+    adapter.transcribe(source, should_cancel=lambda: False)
+
+    # A click kept as speech made Whisper hallucinate and mistime words.
+    assert options[0]["vad_filter"] is True
+    assert options[0]["vad_parameters"] == {"min_speech_duration_ms": 250}
+
+
 def test_faster_whisper_progressive_windows_allow_empty_text_with_provenance(
     tmp_path: Path,
 ) -> None:

@@ -21,6 +21,20 @@ Capture Workbench follows an explicit 0.x compatibility policy:
 The consumer consistency check is a permanent CI gate for the declared
 runtime, package lock, Python host, desktop host, and browser host versions.
 
+### Recording transcription
+
+- Whisper's voice activity filter now ignores sounds shorter than 250 ms,
+  Silero's own default; faster-whisper kept every sound it heard. A click at
+  the start of a phone recording had become a speech chunk:
+  - Whisper heard "You" in an otherwise silent window.
+  - With speakers, a word spoken at 4:43, whose aligned span reached back into
+    the click, was timed at 0:00 without a speaker.
+
+  On the 40-minute interview from 0.6.2, both are gone.
+
+The filter runs in the Whisper engine, so the fix reaches users with a rebuilt
+`capture-engine-whisper` artifact.
+
 ## 0.6.2
 
 A patch release for recording transcription. Clients still require the exact
