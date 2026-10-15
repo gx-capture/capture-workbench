@@ -14,7 +14,7 @@ import {
   type RuntimeModelOption,
   type RuntimeRequirement,
 } from '@gx-capture/capture-workbench-ui';
-import type { CaptureDocument } from '@gx-capture/capture-workbench-ui';
+import type { CaptureDocument, RawCapture } from '@gx-capture/capture-workbench-ui';
 import type {
   DesktopLibraryDetail,
   DesktopLibrarySummary,
@@ -27,6 +27,7 @@ import { DesktopWorkspaceInstallationService } from './desktop-workspace-install
 import {
   activeModelOption as selectActiveModelOption,
   errorMessage,
+  isAudioMediaType,
   modelInstallationPercent,
   modelInstallationPhase,
   modelSelectionRequired as selectModelSelectionRequired,
@@ -35,6 +36,7 @@ import {
   captureResultText,
   stageLabel as selectStageLabel,
   statusLabel as selectStatusLabel,
+  transcriptLines,
 } from './desktop-workspace.selectors';
 import { desktopMessages } from '../i18n/desktop-messages';
 
@@ -358,6 +360,21 @@ export class DesktopWorkspaceStore {
       },
       error: (error: unknown) => this.message.set(errorMessage(error)),
     });
+  }
+
+  /** Whether a document is a recording (audio, or video whose audio was transcribed). */
+  isRecording(mediaType: string): boolean {
+    return isAudioMediaType(mediaType);
+  }
+
+  /** Address of a recording loaded for playback, or null before it is loaded. */
+  recordingUrl(documentId: string): string | null {
+    return this.sampleSources().get(documentId) ?? null;
+  }
+
+  /** A recording's transcript lines, with the names given to its speakers. */
+  transcriptLines(item: { readonly raw?: RawCapture; readonly result?: CaptureDocument }) {
+    return item.raw ? transcriptLines(item.raw, item.result?.speakers ?? []) : [];
   }
 
   /** Address that plays only one speaker's sample, once the source is loaded. */

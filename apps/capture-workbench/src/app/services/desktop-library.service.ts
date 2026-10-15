@@ -17,6 +17,16 @@ import { DesktopTauriCommandService } from './desktop-tauri-command.service';
 
 export const MAX_DESKTOP_SOURCE_BYTES = 50 * 1024 * 1024;
 
+/**
+ * Recordings the runtime transcribes: audio, and video whose audio track is
+ * transcribed. The native library checks each file's signature.
+ */
+export const RECORDING_EXTENSIONS: readonly string[] = [
+  'mp3', 'wav', 'm4a', 'm4b', 'aac', 'flac', 'ogg', 'oga', 'opus', 'wma', 'amr',
+  'aif', 'aiff', 'caf', 'mka', '3gp', '3g2', 'mp4', 'm4v', 'mov', 'mkv', 'webm',
+  'avi', 'wmv', 'asf', 'flv', 'mpg', 'mpeg', 'ts', 'mts', 'm2ts',
+];
+
 @Injectable({ providedIn: 'root' })
 export class DesktopLibraryService {
   private readonly commands = inject(DesktopTauriCommandService);
@@ -30,16 +40,7 @@ export class DesktopLibraryService {
           filters: [
             {
               name: 'Capture sources',
-              extensions: [
-                'pdf',
-                'png',
-                'jpg',
-                'jpeg',
-                'wav',
-                'mp3',
-                'm4a',
-                'mp4',
-              ],
+              extensions: ['pdf', 'png', 'jpg', 'jpeg', ...RECORDING_EXTENSIONS],
             },
           ],
         }),

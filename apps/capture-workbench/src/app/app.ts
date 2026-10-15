@@ -1,7 +1,9 @@
 import {
   ChangeDetectionStrategy,
   Component,
+  ElementRef,
   inject,
+  viewChild,
 } from '@angular/core';
 import { MatButton } from '@angular/material/button';
 import { MatCard } from '@angular/material/card';
@@ -19,6 +21,7 @@ import {
   setDesktopLocale,
   type DesktopLocale,
 } from './i18n/desktop-messages';
+import { formatRecordingTime } from './services/desktop-workspace.selectors';
 import { DesktopWorkspaceStore } from './services/desktop-workspace.store';
 
 @Component({
@@ -44,6 +47,10 @@ export class App {
   protected readonly m = desktopMessages;
   protected readonly locale = desktopLocale;
   protected readonly locales = DESKTOP_LOCALES;
+  protected readonly formatTime = formatRecordingTime;
+  private readonly recordingPlayer =
+    viewChild<ElementRef<HTMLMediaElement>>('recordingPlayer');
+  private pendingPlayFromMs: number | null = null;
 
   constructor() {
     this.store.initialize();
@@ -59,6 +66,33 @@ export class App {
 
   protected openFilePicker(): void {
     this.store.chooseSources();
+  }
+
+  /** Plays the recording from a transcript line, loading it first if needed. */
+  protected playFrom(
+    item: { readonly documentId: string; readonly mediaType: string },
+    startMs: number,
+  ): void {
+    const player = this.recordingPlayer()?.nativeElement;
+    if (player && this.store.recordingUrl(item.documentId)) {
+      this.seek(player, startMs);
+      return;
+    }
+    this.pendingPlayFromMs = startMs;
+    this.store.loadSpeakerSamples(item.documentId, item.mediaType);
+  }
+
+  protected playPending(player: HTMLMediaElement): void {
+    if (this.pendingPlayFromMs === null) return;
+    const startMs = this.pendingPlayFromMs;
+    this.pendingPlayFromMs = null;
+    this.seek(player, startMs);
+  }
+
+  private seek(player: HTMLMediaElement, startMs: number): void {
+    player.currentTime = startMs / 1000;
+    // Autoplay rules can refuse; the player is then left at the moment.
+    void player.play()?.catch(() => undefined);
   }
 
   protected partialFor(documentId: string) {

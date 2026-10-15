@@ -1,9 +1,10 @@
 import { RUNTIME_VERSION } from '@gx-capture/capture-runtime-client';
-import { signal } from '@angular/core';
+import { signal, type WritableSignal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { provideNoopAnimations } from '@angular/platform-browser/animations';
 import type {
   OcrComputePreflight,
+  RawCapture,
   RuntimeModelInstallation,
   RuntimeModelOption,
 } from '@gx-capture/capture-workbench-ui';
@@ -12,6 +13,7 @@ import {
   DESKTOP_LOCALE_STORAGE_KEY,
   setDesktopLocale,
 } from './i18n/desktop-messages';
+import { transcriptLines } from './services/desktop-workspace.selectors';
 import { DesktopWorkspaceStore } from './services/desktop-workspace.store';
 
 describe('App', () => {
@@ -370,6 +372,15 @@ function workspaceStub(selected: unknown = null, modelInstallation: RuntimeModel
     identifySpeakers: signal(false),
     sampleSources: signal(new Map<string, string>()),
     loadSpeakerSamples: vi.fn(),
+    isRecording: (mediaType: string) =>
+      mediaType.startsWith('audio/') || mediaType.startsWith('video/'),
+    recordingUrl: signal<string | null>(null) as unknown as (
+      documentId: string,
+    ) => string | null,
+    transcriptLines: (item: {
+      raw?: RawCapture;
+      result?: { speakers?: { speakerId: string; displayName?: string | null }[] };
+    }) => (item.raw ? transcriptLines(item.raw, item.result?.speakers ?? []) : []),
     speakerSampleUrl: (_documentId: string, sample?: unknown) =>
       sample ? 'blob:recording#t=0,0.9' : null,
     nameSpeaker: vi.fn(),
@@ -424,3 +435,113 @@ function cpuFallback(): OcrComputePreflight {
     noticeCode: 'ocr_cpu_fallback',
   };
 }
+
+it('lists a recording as timed lines and plays it from a line', async () => {
+  const store = workspaceStub({
+    documentId: 'd'.repeat(32),
+    fileName: 'hearing.mp4',
+    mediaType: 'video/x-matroska',
+    byteLength: 10,
+    createdAtMs: 1,
+    updatedAtMs: 1,
+    status: 'completed',
+    stage: 'completed',
+    raw: {
+      schemaVersion: '2',
+      diagnosticOnly: true,
+      source: {
+        sha256: 'a'.repeat(64),
+        fileName: 'hearing.mp4',
+        mediaType: 'video/x-matroska',
+        bytes: 10,
+      },
+      segments: [
+        {
+          segmentId: 's1',
+          order: 0,
+          locator: { kind: 'time', startMs: 284_050, endMs: 285_400 },
+          text: '謝謝',
+          speaker: 'SPEAKER_00',
+        },
+        {
+          segmentId: 's2',
+          order: 1,
+          locator: { kind: 'time', startMs: 3_725_000, endMs: 3_731_000 },
+          text: '請陳述您的姓名',
+          speaker: 'SPEAKER_01',
+        },
+      ],
+      sourceText: '謝謝\n請陳述您的姓名',
+      extractionEngine: {
+        engine: 'whisper-primary',
+        model: 'large-v3-turbo',
+        device: 'cuda',
+        digest: `sha256:${'a'.repeat(64)}`,
+      },
+      createdAt: '2026-10-15T00:00:00Z',
+    },
+    result: {
+      targetText: '謝謝\n請陳述您的姓名',
+      speakers: [{ speakerId: 'SPEAKER_01', sample: null, displayName: '法官' }],
+      extractionEngine: {
+        engine: 'whisper-primary',
+        model: 'm',
+        device: 'cuda',
+        digest: `sha256:${'a'.repeat(64)}`,
+      },
+      structuringEngine: {
+        engine: 'ollama',
+        model: 'm',
+        digest: `sha256:${'b'.repeat(64)}`,
+      },
+      blocks: [],
+    },
+  });
+  await TestBed.configureTestingModule({
+    imports: [App],
+    providers: [
+      provideNoopAnimations(),
+      { provide: DesktopWorkspaceStore, useValue: store },
+    ],
+  }).compileComponents();
+  const fixture = TestBed.createComponent(App);
+  fixture.detectChanges();
+  await fixture.whenStable();
+  const root = fixture.nativeElement as HTMLElement;
+
+  const lines = root.querySelectorAll('[data-testid="transcript-line"]');
+  expect(lines).toHaveLength(2);
+  expect(lines[0].textContent).toContain('4:44');
+  expect(lines[0].textContent).toContain('SPEAKER_00');
+  expect(lines[1].textContent).toContain('1:02:05');
+  expect(lines[1].textContent).toContain('法官');
+  expect(root.querySelector('[data-testid="recording-player"]')).toBeNull();
+
+  // The recording is loaded on the first request to play it.
+  (lines[1].querySelector('button') as HTMLButtonElement).click();
+  expect(store.loadSpeakerSamples).toHaveBeenCalledWith(
+    'd'.repeat(32),
+    'video/x-matroska',
+  );
+
+  (store.recordingUrl as unknown as WritableSignal<string | null>).set('blob:hearing');
+  fixture.detectChanges();
+  const player = root.querySelector(
+    'video[data-testid="recording-player"]',
+  ) as HTMLVideoElement;
+  expect(player.getAttribute('src')).toBe('blob:hearing');
+  let currentTime = 0;
+  Object.defineProperty(player, 'currentTime', {
+    get: () => currentTime,
+    set: (value: number) => {
+      currentTime = value;
+    },
+  });
+  Object.defineProperty(player, 'play', { value: vi.fn(() => Promise.resolve()) });
+
+  player.dispatchEvent(new Event('loadedmetadata'));
+  expect(currentTime).toBe(3725);
+
+  (lines[0].querySelector('button') as HTMLButtonElement).click();
+  expect(currentTime).toBe(284.05);
+});

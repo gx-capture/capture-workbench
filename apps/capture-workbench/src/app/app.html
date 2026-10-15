@@ -222,6 +222,32 @@
       @if (item.recoveryMessage) {
         <div class="detail-error" role="alert"><strong>{{ item.recoveryCode ?? 'recovery_required' }}</strong><p>{{ item.recoveryMessage }}</p></div>
       }
+      @if (store.isRecording(item.mediaType) && item.raw) {
+        <section class="review-block transcript" data-testid="document-transcript">
+          <h3>{{ m().transcript }}</h3>
+          <p>{{ m().transcriptHint }}</p>
+          @if (store.recordingUrl(item.documentId); as recordingUrl) {
+            @if (item.mediaType.startsWith('video/')) {
+              <video #recordingPlayer controls preload="metadata" data-testid="recording-player" [src]="recordingUrl" (loadedmetadata)="playPending(recordingPlayer)"></video>
+            } @else {
+              <audio #recordingPlayer controls preload="metadata" data-testid="recording-player" [src]="recordingUrl" (loadedmetadata)="playPending(recordingPlayer)"></audio>
+            }
+          } @else {
+            <button mat-stroked-button type="button" data-testid="load-recording" (click)="store.loadSpeakerSamples(item.documentId, item.mediaType)">{{ m().loadRecording }}</button>
+          }
+          <ol class="transcript-lines" data-testid="transcript-lines">
+            @for (line of store.transcriptLines(item); track line.segmentId) {
+              <li data-testid="transcript-line" [attr.data-start-ms]="line.startMs">
+                <button type="button" class="transcript-time" [attr.aria-label]="m().playFrom(line.timeLabel)" (click)="playFrom(item, line.startMs)">{{ line.timeLabel }}</button>
+                @if (line.speaker) {
+                  <strong>{{ line.speaker }}</strong>
+                }
+                <span>{{ line.text }}</span>
+              </li>
+            }
+          </ol>
+        </section>
+      }
       @if (item.raw) {
         <section class="review-block" data-testid="document-raw"><h3>{{ m().recognizedText }}</h3><pre>{{ item.raw.sourceText }}</pre>
           <ol data-testid="document-raw-segments">
@@ -236,8 +262,8 @@
       @if (partialFor(item.documentId); as partial) {
         <section class="review-block streaming-partial" data-testid="streaming-partial" [attr.data-covered-until-ms]="partial.coveredUntilMs" [attr.data-partial-revision]="partial.revision" aria-live="polite">
           <div class="streaming-partial-heading">
-            <h3>Live transcript</h3>
-            <small>Covered {{ partial.coveredUntilMs }} ms</small>
+            <h3>{{ m().liveTranscript }}</h3>
+            <small>{{ m().heardUntil(formatTime(partial.coveredUntilMs)) }}</small>
           </div>
           <pre>{{ partial.sourceText }}</pre>
         </section>
