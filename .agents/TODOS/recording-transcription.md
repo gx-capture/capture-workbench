@@ -2,7 +2,7 @@
 
 Capture Workbench verifies recording transcription as an experimental
 product. Found through LAW with a real 40-minute phone interview (M4A, AAC),
-then fixed here; see the Unreleased section of `CHANGELOG.md`.
+then fixed here; see `CHANGELOG.md` (0.6.2 and Unreleased).
 
 - [x] Keep only each resampled frame's samples in the progressive decoder.
   Done: `progressive_decoder.py`; `test_progressive_decoder.py`.
@@ -19,8 +19,9 @@ then fixed here; see the Unreleased section of `CHANGELOG.md`.
   Done: `sniff_source`; `test_source_sniffing.py`; desktop library validation.
 - [x] Show a transcript as timed lines beside a player in the Workbench.
   Done: `app.html`, `transcriptLines`; `app.spec.ts`.
-- [ ] Release the runtime with a rebuilt Whisper engine: the window merging
+- [x] Release the runtime with a rebuilt Whisper engine: the window merging
       and the checkpoint rule run in the engine, not the runtime.
+  Done: 0.6.2; see the release runbook.
 - [ ] Real Workbench desktop journey with a user-consented recording,
       repeated several times, on the released runtime: transcript lines at
       the right times, playback from a line, speakers named. Never commit the
@@ -28,8 +29,11 @@ then fixed here; see the Unreleased section of `CHANGELOG.md`.
 - [ ] Recordings over the 50 MiB source limit (an hour of phone audio, most
       video). The speaker path also reads the whole source into memory.
 - [ ] Playback of formats WebView2 cannot play (WMA, AMR, AVI).
-- [ ] Whisper hallucinates on long silence ("You", "Thank you.", a video
-      outro); decide whether the runtime should drop such text.
+- [x] Whisper hallucinated on silence: a click kept by the voice activity
+      filter became "You", and with speakers mistimed the next word to 0:00.
+  Done: `WHISPER_VAD_MIN_SPEECH_MS`; `test_engine_adapters.py`. On the
+  interview no hallucinated text remains; reopen if other recordings show
+  some.
 - [ ] Re-measure whether a one-pass transcription without speaker
       diarization is still needed now that progressive windows decode and
       merge correctly.

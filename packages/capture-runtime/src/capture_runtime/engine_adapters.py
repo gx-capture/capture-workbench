@@ -94,6 +94,11 @@ WHISPER_REQUIRED_FILES = (
     "model.bin",
     "tokenizer.json",
 )
+# faster-whisper keeps every sound its VAD hears (minimum 0 ms; Silero's own
+# default is 250 ms). A click at the start of a phone recording then became a
+# speech chunk: Whisper heard "You" in it, and a word spoken minutes later
+# whose aligned span reached back into it was timed at 0:00.
+WHISPER_VAD_MIN_SPEECH_MS = 250
 LOAD_LIBRARY_SEARCH_SYSTEM32 = 0x00000800
 
 
@@ -2812,6 +2817,7 @@ class FasterWhisperAdapter:
             str(source_path),
             beam_size=5,
             vad_filter=True,
+            vad_parameters={"min_speech_duration_ms": WHISPER_VAD_MIN_SPEECH_MS},
             word_timestamps=self.word_timestamps,
         )
         self._report_stage(whisper_stage("transcription-call-complete"))
