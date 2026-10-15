@@ -21,6 +21,14 @@ Capture Workbench follows an explicit 0.x compatibility policy:
 The consumer consistency check is a permanent CI gate for the declared
 runtime, package lock, Python host, desktop host, and browser host versions.
 
+## 0.6.3
+
+A patch release for recording transcription. Clients still require the exact
+runtime version, so a 0.6.3 runtime needs 0.6.3 clients; the contract set hash
+is unchanged, so moving a consumer is a version bump. The OCR profile id
+becomes `capture-workbench-ocr-1f5dcb0f58337c71`, since the profile carries
+the release version.
+
 ### Recording transcription
 
 - Whisper's voice activity filter now ignores sounds shorter than 250 ms,
