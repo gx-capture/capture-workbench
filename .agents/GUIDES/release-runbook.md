@@ -81,6 +81,14 @@ actually shipped (0.5.1 followed the same steps); workflow files remain the sour
     (992 seconds).
   - No hallucination-like text ("You", "Thank you", subscribe or subtitle
     outros) in any saved output.
+- Release candidate 38842806012 passed (candidate `792c521c…`, manifest
+  `9feca0b1…`, contract impact `breaking` against 0.5.1), including the
+  model-enabled runtime and Windows install verification. Both consumer
+  gates passed a local full pre-run (2026-10-16): Cert Prep on `main`
+  (`8ff4ef0`, 8 checks) and LAW on `feat/legal-ontology-hybrid` (`f4db1a7`,
+  9 checks). `consumer-gates.yml` and `release-promote.yml` were not
+  dispatched: the dispatched LAW gate runs on LAW `main`, which still pins
+  0.5.1, so it waits for LAW `main` to carry 0.6.x.
 
 ## Published through Route A: 0.6.2 (patch)
 
