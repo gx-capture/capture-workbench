@@ -86,9 +86,12 @@ actually shipped (0.5.1 followed the same steps); workflow files remain the sour
   model-enabled runtime and Windows install verification. Both consumer
   gates passed a local full pre-run (2026-10-16): Cert Prep on `main`
   (`8ff4ef0`, 8 checks) and LAW on `feat/legal-ontology-hybrid` (`f4db1a7`,
-  9 checks). `consumer-gates.yml` and `release-promote.yml` were not
-  dispatched: the dispatched LAW gate runs on LAW `main`, which still pins
-  0.5.1, so it waits for LAW `main` to carry 0.6.x.
+  9 checks). LAW then merged `feat/legal-ontology-hybrid` into `main`
+  (PR #118, `c3a7bdf`, tree identical to `f4db1a7`), so LAW `main` carries
+  0.6.3. Consumer gates run 38846795348 passed (ledger verdict `passed`):
+  Cert Prep run 38846826555 on `8ff4ef0` and LAW run 38847285881 on
+  `c3a7bdf`. `release-promote.yml` (desktop installer and the stable
+  pointer) waits for the release owner's go-ahead.
 
 ## Published through Route A: 0.6.2 (patch)
 
