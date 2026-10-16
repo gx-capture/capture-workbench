@@ -45,7 +45,7 @@ actually shipped (0.5.1 followed the same steps); workflow files remain the sour
   structure of dense vertical periodical scans and pages that mix directions;
   about a fifth of furigana on textbook pages is not set aside.
 
-## Published through Route A: 0.6.3 (patch)
+## Published: 0.6.3 (patch, Route A then full route)
 
 - Published on 2026-10-16 through Route A only, like 0.6.2: npm, Maven,
   PyPI, crates.io and GitHub release `v0.6.3` (runtime exe `3b96746c…`, OCR,
@@ -81,6 +81,23 @@ actually shipped (0.5.1 followed the same steps); workflow files remain the sour
     (992 seconds).
   - No hallucination-like text ("You", "Thank you", subscribe or subtitle
     outros) in any saved output.
+- Release candidate 38842806012 passed (candidate `792c521c…`, manifest
+  `9feca0b1…`, contract impact `breaking` against 0.5.1), including the
+  model-enabled runtime and Windows install verification. Both consumer
+  gates passed a local full pre-run (2026-10-16): Cert Prep on `main`
+  (`8ff4ef0`, 8 checks) and LAW on `feat/legal-ontology-hybrid` (`f4db1a7`,
+  9 checks). LAW then merged `feat/legal-ontology-hybrid` into `main`
+  (PR #118, `c3a7bdf`, tree identical to `f4db1a7`), so LAW `main` carries
+  0.6.3. Consumer gates run 38846795348 passed (ledger verdict `passed`):
+  Cert Prep run 38846826555 on `8ff4ef0` and LAW run 38847285881 on
+  `c3a7bdf`.
+- Full publish: release-promote run 38849532005 (`publication_scope=all`)
+  passed every job: registries re-verified, tag, GitHub release with the
+  desktop installer `Capture.Workbench_0.6.3_x64-setup.exe` (26 assets),
+  stable pointer and promotion ledger. The pointer lives on the protected
+  `release-index` branch, not `main`: `836ced2` points stable at `v0.6.3`
+  with manifest `7154f54d…`, which matches the published
+  `capture-release-manifest-v1.json`.
 
 ## Published through Route A: 0.6.2 (patch)
 
