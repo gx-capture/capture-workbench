@@ -45,20 +45,42 @@ actually shipped (0.5.1 followed the same steps); workflow files remain the sour
   structure of dense vertical periodical scans and pages that mix directions;
   about a fifth of furigana on textbook pages is not set aside.
 
-## Prepared: 0.6.3 (patch)
+## Published through Route A: 0.6.3 (patch)
 
-- 0.6.2 is published (GitHub release `v0.6.2`, 2026-10-15).
-- 0.6.3 fixes the two transcription defects the 0.6.2 consumer checks found
+- Published on 2026-10-16 through Route A only, like 0.6.2: npm, Maven,
+  PyPI, crates.io and GitHub release `v0.6.3` (runtime exe `3b96746c…`, OCR,
+  rebuilt Whisper and diarization engine zips). `release-index/stable.json`
+  still points at `v0.5.1`, and no desktop installer is published for 0.6.x.
+- Fixes the two transcription defects the 0.6.2 consumer checks found
   (PR #96): Whisper's voice activity filter kept a click as speech, so a
   silent window yielded "You" and, with speakers, a word was timed at 0:00.
-  Verified before release in a packaged Whisper engine installed through the
-  runtime's install path (see PR #96).
-- The filter runs in the Whisper worker, so the `capture-engine-whisper`
-  artifact must be rebuilt, which the runtime candidate does.
+  The filter now ignores sounds shorter than 250 ms. Verified before release
+  in a packaged Whisper engine installed through the runtime's install path.
 - Compatible with 0.6.x clients. Contract-set SHA-256 unchanged
   (`fc8a994e…`). Model-source Commit A `d16effb` (annotated tag
   `capture-runtime-model-sources-v0.6.3`). OCR profile
-  `capture-workbench-ocr-1f5dcb0f58337c71`.
+  `capture-workbench-ocr-1f5dcb0f58337c71`. Source commit `2a117cc` (merge
+  of PR #97).
+- Runs: package candidate 38711240238, runtime candidate 38711539283
+  (`model-enabled`), package promote 38830211377, runtime promote
+  38830349779 (`registries`: crate, PyPI, tag and GitHub release). Consumer
+  gates and the full publish were not run, for the reason given under 0.6.1.
+- The runtime candidate artifact is about 620 MB; `gh run download` failed
+  on dropped connections. A resumable download of the artifact's signed URL
+  (fresh URL per resume) worked.
+- Consumers moved: Cert Prep PR #43 and LAW PR #117. Each was checked against
+  the published runtime (CUDA), and all runs passed:
+  - Capture directly: the 40-minute phone interview 3 times (675 to 682
+    segments, about 2 minutes each) and once with speakers (1033 seconds); no
+    text before the first speech at 3:07, and the first word with speakers at
+    4:42.93 with a speaker.
+  - Cert Prep, through its backend Capture adapter: a PDF page, a JPEG and a
+    short Chinese recording, 10 times each; then the interview 3 times.
+  - LAW, through its engine and AI service: the PDF and JPEG 10 times each;
+    the interview 3 times (83-84 lines from 3:07) and once with speakers
+    (992 seconds).
+  - No hallucination-like text ("You", "Thank you", subscribe or subtitle
+    outros) in any saved output.
 
 ## Published through Route A: 0.6.2 (patch)
 
