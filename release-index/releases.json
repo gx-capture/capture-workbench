@@ -30,6 +30,11 @@
       "status": "released",
       "manifestSha256": "2178c2d6e81a571a8674b6116ffb737f70f7e3e8f5635e9713466e8fc101ff10",
       "candidateId": "d4bef8cee79d39edddeb9cbda40f2e32769c0ced318aaed42e484d93e20a5350"
+    },
+    "v0.6.3": {
+      "status": "released",
+      "manifestSha256": "7154f54df502e3079fa7f3b0792f396928a5a1210c145305a248e62d29fcf272",
+      "candidateId": "792c521c0eb974eef953aaf026fa1a75c593fbfa9c2033dc55404cec39ede633"
     }
   }
 }
