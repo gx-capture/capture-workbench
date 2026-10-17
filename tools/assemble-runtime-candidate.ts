@@ -313,7 +313,7 @@ async function main(): Promise<void> {
     artifacts,
     toolchains: {
       node: process.version,
-      python: '3.12',
+      python: '3.13',
       runtime: 'capture-runtime',
     },
   } as const;

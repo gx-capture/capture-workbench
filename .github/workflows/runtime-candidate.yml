@@ -80,10 +80,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Candidate commit must be reachable from main.' }
           node tools/verify-main-ci.ts --repository "$env:GITHUB_REPOSITORY" --commit "$head" --workflow-path ".github/workflows/ci.yml" --branch "main"
 
-      - name: Install uv and Python 3.12
+      - name: Install uv and Python 3.13
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
-          python-version: '3.12'
+          python-version: '3.13'
           enable-cache: true
 
       - name: Install workspace dependencies

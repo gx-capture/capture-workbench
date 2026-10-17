@@ -46,7 +46,7 @@ def settings_factory(tmp_path: Path) -> Callable[..., RuntimeSettings]:
 
 
 @pytest.fixture
-def client(settings_factory: Callable[..., RuntimeSettings]) -> Generator[TestClient, None, None]:
+def client(settings_factory: Callable[..., RuntimeSettings]) -> Generator[TestClient]:
     settings = settings_factory()
     with TestClient(
         create_app(settings),
