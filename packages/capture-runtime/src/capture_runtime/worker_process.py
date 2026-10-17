@@ -290,7 +290,9 @@ class WorkerProcess:
                         "worker response exceeds the framing limit"
                     ) from error
                 if not line:
-                    await self._stop(process, initial_grace=0)
+                    # stdout closes as the worker exits; terminating the job at once
+                    # can overwrite the worker's own exit code with the job's.
+                    await self._stop(process, initial_grace=WORKER_TERMINATE_GRACE_SECONDS)
                     stderr = await self._collect_stderr(stderr_task)
                     return_code = process.returncode
                     code_suffix = (
