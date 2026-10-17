@@ -52,7 +52,7 @@ test('package candidate workflow is independent from the desktop product lane', 
     candidateWorkflow,
     /astral-sh\/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b/u,
   );
-  assert.match(candidateWorkflow, /python-version: '3\.12'/u);
+  assert.match(candidateWorkflow, /python-version: '3\.13'/u);
   assert(
     candidateWorkflow.indexOf('astral-sh/setup-uv@') <
       candidateWorkflow.indexOf('capture-runtime-client-python:build'),

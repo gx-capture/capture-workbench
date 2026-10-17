@@ -50,7 +50,7 @@ jobs:
       - name: Install uv and Python
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
-          python-version: '3.12'
+          python-version: '3.13'
 
       - name: Install Java for the Maven SDK candidate
         uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1

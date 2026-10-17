@@ -231,7 +231,7 @@ async function main(): Promise<void> {
     packageManifestSha256,
     contractSetSha256,
     artifacts,
-    toolchains: { node: process.version, python: '3.12' },
+    toolchains: { node: process.version, python: '3.13' },
   } as const;
   const candidateId = createHash('sha256')
     .update(JSON.stringify(baseManifest))

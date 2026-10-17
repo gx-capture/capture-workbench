@@ -236,7 +236,7 @@ function extractPdfEvidence(path: string): PdfEvidence {
   ].join('\n');
   const result = spawnSync(
     'uv',
-    ['run', '--no-sync', '--python', '3.12', 'python', '-c', extractor, path],
+    ['run', '--no-sync', '--python', '3.13', 'python', '-c', extractor, path],
     {
       cwd: runtimeProjectRoot,
       env: { ...process.env, PYTHONIOENCODING: 'utf-8' },

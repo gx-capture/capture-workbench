@@ -43,10 +43,10 @@ jobs:
           java-version: '25'
           cache: maven
 
-      - name: Install uv and Python 3.12
+      - name: Install uv and Python 3.13
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
-          python-version: '3.12'
+          python-version: '3.13'
           enable-cache: true
 
       - name: Prepare Rust target
@@ -110,10 +110,10 @@ jobs:
           node-version: 24
           cache: pnpm
 
-      - name: Install uv and Python 3.12
+      - name: Install uv and Python 3.13
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
-          python-version: '3.12'
+          python-version: '3.13'
           enable-cache: true
 
       - name: Install workspace dependencies
@@ -176,10 +176,10 @@ jobs:
           node-version: 24
           cache: pnpm
 
-      - name: Install uv and Python 3.12
+      - name: Install uv and Python 3.13
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
-          python-version: '3.12'
+          python-version: '3.13'
           enable-cache: true
 
       - name: Prepare Rust target
