@@ -4,6 +4,7 @@ import asyncio
 import gc
 import hashlib
 import json
+import tempfile
 from dataclasses import dataclass, replace
 from io import BytesIO
 from pathlib import Path
@@ -3387,6 +3388,16 @@ def _source(content: bytes, name: str, media_type: str) -> CaptureSource:
         media_type=media_type,
         bytes=len(content),
     )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_system_temp_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Adapters place ORT profiles in the system temp dir; tests that make
+    profile deletion fail must not leave them there."""
+
+    system_temp = tmp_path / "system-temp"
+    system_temp.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(system_temp))
 
 
 @pytest.fixture(autouse=True)

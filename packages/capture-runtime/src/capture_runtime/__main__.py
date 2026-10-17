@@ -9,6 +9,7 @@ from pathlib import Path
 
 import uvicorn
 
+from capture_runtime._frozen_extraction_residue import start_stale_extraction_sweep
 from capture_runtime.app import create_app
 from capture_runtime.config import RuntimeSettings
 
@@ -40,6 +41,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     if not 1 <= port <= 65535:
         raise SystemExit("--port must be between 1 and 65535")
     settings = replace(settings, host=host, port=port)
+    start_stale_extraction_sweep()
     uvicorn.run(
         create_app(settings),
         host=settings.host,
