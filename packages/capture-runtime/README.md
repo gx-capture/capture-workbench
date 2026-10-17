@@ -32,8 +32,8 @@ drift. There is no second Java OCR semantic digest.
 ## Local verification
 
 ```powershell
-uv run --python 3.12 python scripts/generate_contracts.py --check
-uv run --python 3.12 pytest -q
+uv run --python 3.13 python scripts/generate_contracts.py --check
+uv run --python 3.13 pytest -q
 ```
 
 The packaged executable includes both contract asset files under

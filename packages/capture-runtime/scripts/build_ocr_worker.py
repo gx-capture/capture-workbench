@@ -11,8 +11,8 @@ from capture_runtime.constants import RUNTIME_VERSION
 
 
 def main() -> None:
-    if sys.version_info[:2] != (3, 12):
-        raise SystemExit("OCR worker requires Python 3.12")
+    if sys.version_info[:2] != (3, 13):
+        raise SystemExit("OCR worker requires Python 3.13")
     if platform.system() != "Windows" or platform.machine().lower() not in {"amd64", "x86_64"}:
         raise SystemExit("OCR worker v2 is Windows x64 only")
     root = Path(__file__).resolve().parents[1]

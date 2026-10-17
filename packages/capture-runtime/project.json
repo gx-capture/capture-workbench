@@ -15,7 +15,7 @@
       "inputs": ["default"],
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --python 3.12 pytest tests/unit/test_ocr_benchmark.py"
+        "command": "uv run --python 3.13 pytest tests/unit/test_ocr_benchmark.py"
       }
     },
     "ocr-benchmark": {
@@ -26,7 +26,7 @@
       },
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --no-sync --python 3.12 python scripts/ocr_benchmark.py"
+        "command": "uv run --no-sync --python 3.13 python scripts/ocr_benchmark.py"
       }
     },
     "ocr-benchmark-render": {
@@ -42,7 +42,7 @@
       "executor": "nx:run-commands",
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --python 3.12 capture-runtime serve"
+        "command": "uv run --python 3.13 capture-runtime serve"
       }
     },
     "lint": {
@@ -53,7 +53,7 @@
       ],
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --python 3.12 ruff check src scripts tests && uv run --python 3.12 ruff format --check src scripts tests"
+        "command": "uv run --python 3.13 ruff check src scripts tests && uv run --python 3.13 ruff format --check src scripts tests"
       }
     },
     "typecheck": {
@@ -64,7 +64,7 @@
       ],
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --python 3.12 mypy src && pnpm exec tsc -p tests/tsconfig.json"
+        "command": "uv run --python 3.13 mypy src && pnpm exec tsc -p tests/tsconfig.json"
       }
     },
     "test-unit": {
@@ -81,7 +81,7 @@
       ],
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --python 3.12 pytest tests/unit && node --test tests/unit/*.test.ts"
+        "command": "uv run --python 3.13 pytest tests/unit && node --test tests/unit/*.test.ts"
       }
     },
     "test-integration": {
@@ -95,7 +95,7 @@
       ],
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --python 3.12 pytest tests/integration"
+        "command": "uv run --python 3.13 pytest tests/integration"
       }
     },
     "test": {
@@ -171,7 +171,7 @@
       ],
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --python 3.12 python scripts/generate_schema.py --output dist/schema/capture-document-v2.schema.json"
+        "command": "uv run --python 3.13 python scripts/generate_schema.py --output dist/schema/capture-document-v2.schema.json"
       }
     },
     "generate-production-schema": {
@@ -188,7 +188,7 @@
       },
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --no-sync --python 3.12 python scripts/generate_schema.py --output dist/schema/capture-document-v2.schema.json"
+        "command": "uv run --no-sync --python 3.13 python scripts/generate_schema.py --output dist/schema/capture-document-v2.schema.json"
       }
     },
     "generate-contracts": {
@@ -214,7 +214,7 @@
       ],
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --python 3.12 python scripts/generate_contracts.py"
+        "command": "uv run --python 3.13 python scripts/generate_contracts.py"
       }
     },
     "check-contracts": {
@@ -238,7 +238,7 @@
       ],
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --python 3.12 python scripts/generate_contracts.py --check"
+        "command": "uv run --python 3.13 python scripts/generate_contracts.py --check"
       }
     },
     "generate-worker-stage-policy": {
@@ -254,7 +254,7 @@
       ],
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --python 3.12 python scripts/generate_worker_stage_policy.py"
+        "command": "uv run --python 3.13 python scripts/generate_worker_stage_policy.py"
       }
     },
     "check-worker-stage-policy": {
@@ -268,7 +268,7 @@
       ],
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --python 3.12 python scripts/generate_worker_stage_policy.py --check"
+        "command": "uv run --python 3.13 python scripts/generate_worker_stage_policy.py --check"
       }
     },
     "build-executable": {
@@ -282,7 +282,7 @@
       ],
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --python 3.12 python scripts/build_executable.py --layout onefile --catalog src/capture_runtime/assets/engine-catalog.json"
+        "command": "uv run --python 3.13 python scripts/build_executable.py --layout onefile --catalog src/capture_runtime/assets/engine-catalog.json"
       }
     },
     "build-core-executable": {
@@ -297,7 +297,7 @@
       ],
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --python 3.12 python scripts/build_executable.py --layout onefile --catalog src/capture_runtime/assets/engine-catalog.json"
+        "command": "uv run --python 3.13 python scripts/build_executable.py --layout onefile --catalog src/capture_runtime/assets/engine-catalog.json"
       }
     },
     "build-core-onedir": {
@@ -311,7 +311,7 @@
       ],
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --python 3.12 python scripts/build_executable.py --layout onedir --catalog src/capture_runtime/assets/engine-catalog.json"
+        "command": "uv run --python 3.13 python scripts/build_executable.py --layout onedir --catalog src/capture_runtime/assets/engine-catalog.json"
       }
     },
     "prepare-production-environment": {
@@ -322,7 +322,7 @@
       },
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv sync --python 3.12 --extra windowsml --extra whisper --reinstall-package onnxruntime-directml"
+        "command": "uv sync --python 3.13 --extra windowsml --extra whisper --reinstall-package onnxruntime-directml"
       }
     },
     "verify-production-environment": {
@@ -336,7 +336,7 @@
       },
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --no-sync --python 3.12 python scripts/verify_production_environment.py"
+        "command": "uv run --no-sync --python 3.13 python scripts/verify_production_environment.py"
       }
     },
     "build-production-executable": {
@@ -353,7 +353,7 @@
       ],
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --no-sync --python 3.12 python scripts/build_executable.py --layout onefile --catalog dist/catalog/capture-engine-catalog.json"
+        "command": "uv run --no-sync --python 3.13 python scripts/build_executable.py --layout onefile --catalog dist/catalog/capture-engine-catalog.json"
       }
     },
     "build-ocr-worker": {
@@ -371,7 +371,7 @@
       ],
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --no-sync --python 3.12 python scripts/build_ocr_worker.py"
+        "command": "uv run --no-sync --python 3.13 python scripts/build_ocr_worker.py"
       }
     },
     "build-whisper-worker": {
@@ -389,7 +389,7 @@
       ],
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --no-sync --python 3.12 python scripts/build_whisper_worker.py"
+        "command": "uv run --no-sync --python 3.13 python scripts/build_whisper_worker.py"
       }
     },
     "build-diarization-worker": {
@@ -410,7 +410,7 @@
         "env": {
           "UV_PROJECT_ENVIRONMENT": ".venv-diarization"
         },
-        "command": "uv run --python 3.12 --extra diarization --group dev python scripts/build_diarization_worker.py"
+        "command": "uv run --python 3.13 --extra diarization --group dev python scripts/build_diarization_worker.py"
       }
     },
     "verify-diarization-worker": {
@@ -427,7 +427,7 @@
       },
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --python 3.12 python scripts/probe_packaged_worker.py dist/workers/capture-engine-diarization/capture-engine-diarization.exe speaker-diarization"
+        "command": "uv run --python 3.13 python scripts/probe_packaged_worker.py dist/workers/capture-engine-diarization/capture-engine-diarization.exe speaker-diarization"
       }
     },
     "validate-model-source-lock": {
@@ -441,7 +441,7 @@
       },
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --python 3.12 python scripts/model_source_lock.py validate"
+        "command": "uv run --python 3.13 python scripts/model_source_lock.py validate"
       }
     },
     "validate-commit-a-fixtures": {
@@ -455,7 +455,7 @@
       },
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --python 3.12 python scripts/generate_commit_a_fixtures.py --check"
+        "command": "uv run --python 3.13 python scripts/generate_commit_a_fixtures.py --check"
       }
     },
     "classify-release-model-mode": {
@@ -472,7 +472,7 @@
       },
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --python 3.12 python scripts/model_source_lock.py classify --output dist/metadata/release-model-mode.json"
+        "command": "uv run --python 3.13 python scripts/model_source_lock.py classify --output dist/metadata/release-model-mode.json"
       }
     },
     "generate-engine-catalog": {
@@ -490,7 +490,7 @@
       ],
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "node ../../tools/release/run-with-release-version.ts uv run --no-sync --python 3.12 python scripts/generate_engine_catalog.py --output dist/catalog/capture-engine-catalog.json --ocr-worker-archive dist/engines/capture-engine-ocr-{releaseVersion}-windows-x64.zip --ocr-worker-manifest dist/engines/capture-engine-ocr-{releaseVersion}-windows-x64-files.json --whisper-worker-archive dist/engines/capture-engine-whisper-{releaseVersion}-windows-x64.zip --whisper-worker-manifest dist/engines/capture-engine-whisper-{releaseVersion}-windows-x64-files.json --diarization-worker-archive dist/engines/capture-engine-diarization-{releaseVersion}-windows-x64.zip --diarization-worker-manifest dist/engines/capture-engine-diarization-{releaseVersion}-windows-x64-files.json"
+        "command": "node ../../tools/release/run-with-release-version.ts uv run --no-sync --python 3.13 python scripts/generate_engine_catalog.py --output dist/catalog/capture-engine-catalog.json --ocr-worker-archive dist/engines/capture-engine-ocr-{releaseVersion}-windows-x64.zip --ocr-worker-manifest dist/engines/capture-engine-ocr-{releaseVersion}-windows-x64-files.json --whisper-worker-archive dist/engines/capture-engine-whisper-{releaseVersion}-windows-x64.zip --whisper-worker-manifest dist/engines/capture-engine-whisper-{releaseVersion}-windows-x64-files.json --diarization-worker-archive dist/engines/capture-engine-diarization-{releaseVersion}-windows-x64.zip --diarization-worker-manifest dist/engines/capture-engine-diarization-{releaseVersion}-windows-x64-files.json"
       }
     },
     "generate-release-engine-catalog": {
@@ -513,7 +513,7 @@
       },
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "node ../../tools/release/run-with-release-version.ts uv run --no-sync --python 3.12 python scripts/generate_engine_catalog.py --model-source-lock model-sources/release-model-source-lock.json --output dist/catalog/capture-engine-catalog.json --ocr-worker-archive dist/engines/capture-engine-ocr-{releaseVersion}-windows-x64.zip --ocr-worker-manifest dist/engines/capture-engine-ocr-{releaseVersion}-windows-x64-files.json --whisper-worker-archive dist/engines/capture-engine-whisper-{releaseVersion}-windows-x64.zip --whisper-worker-manifest dist/engines/capture-engine-whisper-{releaseVersion}-windows-x64-files.json --diarization-worker-archive dist/engines/capture-engine-diarization-{releaseVersion}-windows-x64.zip --diarization-worker-manifest dist/engines/capture-engine-diarization-{releaseVersion}-windows-x64-files.json"
+        "command": "node ../../tools/release/run-with-release-version.ts uv run --no-sync --python 3.13 python scripts/generate_engine_catalog.py --model-source-lock model-sources/release-model-source-lock.json --output dist/catalog/capture-engine-catalog.json --ocr-worker-archive dist/engines/capture-engine-ocr-{releaseVersion}-windows-x64.zip --ocr-worker-manifest dist/engines/capture-engine-ocr-{releaseVersion}-windows-x64-files.json --whisper-worker-archive dist/engines/capture-engine-whisper-{releaseVersion}-windows-x64.zip --whisper-worker-manifest dist/engines/capture-engine-whisper-{releaseVersion}-windows-x64-files.json --diarization-worker-archive dist/engines/capture-engine-diarization-{releaseVersion}-windows-x64.zip --diarization-worker-manifest dist/engines/capture-engine-diarization-{releaseVersion}-windows-x64-files.json"
       }
     },
     "verify-release-model-candidate": {
@@ -533,7 +533,7 @@
       },
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --no-sync --python 3.12 python scripts/verify_release_model_candidate.py"
+        "command": "uv run --no-sync --python 3.13 python scripts/verify_release_model_candidate.py"
       }
     },
     "generate-whisper-preflight-catalog": {
@@ -554,7 +554,7 @@
       },
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "node ../../tools/release/run-with-release-version.ts uv run --no-sync --python 3.12 python scripts/generate_engine_catalog.py --allow-pending-preflight --model-source-lock model-sources/release-model-source-lock.json --output dist/catalog/preflight-capture-engine-catalog.json --ocr-worker-archive dist/engines/capture-engine-ocr-{releaseVersion}-windows-x64.zip --ocr-worker-manifest dist/engines/capture-engine-ocr-{releaseVersion}-windows-x64-files.json --whisper-worker-archive dist/engines/capture-engine-whisper-{releaseVersion}-windows-x64.zip --whisper-worker-manifest dist/engines/capture-engine-whisper-{releaseVersion}-windows-x64-files.json --diarization-worker-archive dist/engines/capture-engine-diarization-{releaseVersion}-windows-x64.zip --diarization-worker-manifest dist/engines/capture-engine-diarization-{releaseVersion}-windows-x64-files.json"
+        "command": "node ../../tools/release/run-with-release-version.ts uv run --no-sync --python 3.13 python scripts/generate_engine_catalog.py --allow-pending-preflight --model-source-lock model-sources/release-model-source-lock.json --output dist/catalog/preflight-capture-engine-catalog.json --ocr-worker-archive dist/engines/capture-engine-ocr-{releaseVersion}-windows-x64.zip --ocr-worker-manifest dist/engines/capture-engine-ocr-{releaseVersion}-windows-x64-files.json --whisper-worker-archive dist/engines/capture-engine-whisper-{releaseVersion}-windows-x64.zip --whisper-worker-manifest dist/engines/capture-engine-whisper-{releaseVersion}-windows-x64-files.json --diarization-worker-archive dist/engines/capture-engine-diarization-{releaseVersion}-windows-x64.zip --diarization-worker-manifest dist/engines/capture-engine-diarization-{releaseVersion}-windows-x64-files.json"
       }
     },
     "verify-whisper-preflight": {
@@ -571,7 +571,7 @@
       },
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --no-sync --python 3.12 python scripts/verify_release_model_candidate.py --preflight-whisper --catalog dist/catalog/preflight-capture-engine-catalog.json --output dist/candidate/whisper-preflight-evidence.json"
+        "command": "uv run --no-sync --python 3.13 python scripts/verify_release_model_candidate.py --preflight-whisper --catalog dist/catalog/preflight-capture-engine-catalog.json --output dist/candidate/whisper-preflight-evidence.json"
       }
     },
     "verify-core-boundary": {
@@ -586,7 +586,7 @@
       ],
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --python 3.12 python scripts/verify_boundaries.py --core dist/executable/capture-runtime.exe --core-inventory dist/core-inventory.txt --core-recursive-inventory dist/core-inventory-recursive.txt"
+        "command": "uv run --python 3.13 python scripts/verify_boundaries.py --core dist/executable/capture-runtime.exe --core-inventory dist/core-inventory.txt --core-recursive-inventory dist/core-inventory-recursive.txt"
       }
     },
     "verify-production-core-boundary": {
@@ -604,7 +604,7 @@
       },
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --no-sync --python 3.12 python scripts/verify_boundaries.py --core dist/executable/capture-runtime.exe --core-inventory dist/production-core-inventory.txt --core-recursive-inventory dist/production-core-inventory-recursive.txt"
+        "command": "uv run --no-sync --python 3.13 python scripts/verify_boundaries.py --core dist/executable/capture-runtime.exe --core-inventory dist/production-core-inventory.txt --core-recursive-inventory dist/production-core-inventory-recursive.txt"
       }
     },
     "verify-worker-boundaries": {
@@ -620,7 +620,7 @@
       ],
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "node ../../tools/release/run-with-release-version.ts uv run --no-sync --python 3.12 python scripts/verify_boundaries.py --ocr-worker dist/engines/capture-engine-ocr-{releaseVersion}-windows-x64.zip --ocr-inventory dist/ocr-worker-inventory.txt --whisper-worker dist/engines/capture-engine-whisper-{releaseVersion}-windows-x64.zip --whisper-inventory dist/whisper-worker-inventory.txt"
+        "command": "node ../../tools/release/run-with-release-version.ts uv run --no-sync --python 3.13 python scripts/verify_boundaries.py --ocr-worker dist/engines/capture-engine-ocr-{releaseVersion}-windows-x64.zip --ocr-inventory dist/ocr-worker-inventory.txt --whisper-worker dist/engines/capture-engine-whisper-{releaseVersion}-windows-x64.zip --whisper-inventory dist/whisper-worker-inventory.txt"
       }
     },
     "bundle-size-report": {
@@ -631,7 +631,7 @@
       ],
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "node ../../tools/release/run-with-release-version.ts uv run --python 3.12 python scripts/report_bundle_size.py --executable dist/release/capture-runtime-x86_64-pc-windows-msvc.exe --installer \"../../apps/capture-workbench-desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/Capture Workbench_{releaseVersion}_x64-setup.exe\" --installed-size-evidence ../../tmp/capture-workbench-desktop/installed-smoke/installed-size.json --pyinstaller-work .build/pyinstaller/core-onefile --output dist/size/runtime-size-report.json"
+        "command": "node ../../tools/release/run-with-release-version.ts uv run --python 3.13 python scripts/report_bundle_size.py --executable dist/release/capture-runtime-x86_64-pc-windows-msvc.exe --installer \"../../apps/capture-workbench-desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/Capture Workbench_{releaseVersion}_x64-setup.exe\" --installed-size-evidence ../../tmp/capture-workbench-desktop/installed-smoke/installed-size.json --pyinstaller-work .build/pyinstaller/core-onefile --output dist/size/runtime-size-report.json"
       }
     },
     "size-regression-check": {
@@ -642,7 +642,7 @@
       ],
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --python 3.12 python scripts/size_regression_check.py --report dist/size/runtime-size-report.json --budgets size-budgets/windows-x64.json"
+        "command": "uv run --python 3.13 python scripts/size_regression_check.py --report dist/size/runtime-size-report.json --budgets size-budgets/windows-x64.json"
       }
     },
     "size-regression-check-model-enabled": {
@@ -653,7 +653,7 @@
       ],
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --python 3.12 python scripts/size_regression_check.py --report dist/size/runtime-size-report.json --budgets size-budgets/windows-x64-model-enabled.json"
+        "command": "uv run --python 3.13 python scripts/size_regression_check.py --report dist/size/runtime-size-report.json --budgets size-budgets/windows-x64-model-enabled.json"
       }
     },
     "build-release-artifacts": {
@@ -673,7 +673,7 @@
       ],
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --no-sync --python 3.12 python scripts/build_release_artifacts.py"
+        "command": "uv run --no-sync --python 3.13 python scripts/build_release_artifacts.py"
       }
     },
     "build-core-release-artifacts": {
@@ -694,7 +694,7 @@
       },
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --python 3.12 python scripts/build_core_release_artifacts.py"
+        "command": "uv run --python 3.13 python scripts/build_core_release_artifacts.py"
       }
     },
     "local-release-consumer-smoke": {
@@ -709,7 +709,7 @@
       "executor": "nx:run-commands",
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --python 3.12 python -c \"import sys; assert sys.version_info[:2] == (3, 12)\""
+        "command": "uv run --python 3.13 python -c \"import sys; assert sys.version_info[:2] == (3, 13)\""
       }
     }
   }

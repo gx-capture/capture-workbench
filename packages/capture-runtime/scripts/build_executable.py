@@ -13,8 +13,8 @@ def main() -> None:
     parser.add_argument("--layout", choices=("onefile", "onedir"), default="onefile")
     parser.add_argument("--catalog", type=Path, required=True)
     arguments = parser.parse_args()
-    if sys.version_info[:2] != (3, 12):
-        raise SystemExit("capture-runtime executable requires Python 3.12")
+    if sys.version_info[:2] != (3, 13):
+        raise SystemExit("capture-runtime executable requires Python 3.13")
     if platform.system() != "Windows" or platform.machine().lower() not in {"amd64", "x86_64"}:
         raise SystemExit("capture-runtime v2 executable is Windows x64 only")
     root = Path(__file__).resolve().parents[1]

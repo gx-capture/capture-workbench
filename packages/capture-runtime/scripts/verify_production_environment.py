@@ -11,8 +11,8 @@ def _normalized_distribution_name(name: str) -> str:
 
 
 def main() -> None:
-    if sys.version_info[:2] != (3, 12):
-        raise SystemExit("capture-runtime production dependencies require Python 3.12")
+    if sys.version_info[:2] != (3, 13):
+        raise SystemExit("capture-runtime production dependencies require Python 3.13")
     if platform.system() != "Windows" or platform.machine().lower() not in {"amd64", "x86_64"}:
         raise SystemExit("capture-runtime production dependencies are Windows x64 only")
 

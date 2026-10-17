@@ -23,7 +23,7 @@ compatibility and makes installation behavior explicit.
 ### Publish only a Python wheel
 
 Rejected as the first user-facing artifact because production extraction needs
-Python 3.12, optional OCR/Whisper engines, and model assets. The Windows x64
+Python 3.13, optional OCR/Whisper engines, and model assets. The Windows x64
 executable plus manifest is the usable release artifact; the wheel remains a
 developer/integration artifact.
 

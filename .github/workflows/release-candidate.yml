@@ -98,10 +98,10 @@ jobs:
           registry-url: https://npm.pkg.github.com
           scope: '@gx-capture'
 
-      - name: Install uv and Python 3.12
+      - name: Install uv and Python 3.13
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
-          python-version: '3.12'
+          python-version: '3.13'
           enable-cache: true
 
       - name: Install workspace dependencies
@@ -554,10 +554,10 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 24
-      - name: Install uv and Python 3.12
+      - name: Install uv and Python 3.13
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
-          python-version: '3.12'
+          python-version: '3.13'
       - name: Download the exact candidate
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -579,7 +579,7 @@ jobs:
           $lockedIds = @((Get-Content 'packages/capture-runtime/model-sources/release-model-source-lock.json' -Raw | ConvertFrom-Json).requirements | ForEach-Object requirementId)
           $catalogIds = @($catalog.requirements | ForEach-Object requirementId)
           if ($lockedIds.Count -lt 2 -or ($catalogIds -join ',') -ne ($lockedIds -join ',')) { throw "Model-enabled candidate requirements ($($catalogIds -join ',')) are not the model source lock's ($($lockedIds -join ','))." }
-          uv run --no-project --python 3.12 python packages/capture-runtime/scripts/model_source_lock.py validate
+          uv run --no-project --python 3.13 python packages/capture-runtime/scripts/model_source_lock.py validate
           node tools/local-release-consumer-smoke.ts --runtime-dir "$candidate/runtime" --version "$env:RELEASE_VERSION"
           $ambient = Get-ChildItem Env: | Where-Object { $_.Name -match '^(?:CAPTURE_(?:USER_MODEL_DIR|EXTRACTION_PROVIDER|STRUCTURING_PROVIDER|OLLAMA_[A-Z0-9_]+|WINDOWSML_[A-Z0-9_]+|WHISPER_[A-Z0-9_]+)|OLLAMA_(?:MODELS|HOST))$' }
           if ($ambient) { throw "Ambient model/provider variables must not influence verification: $($ambient.Name -join ', ')." }
