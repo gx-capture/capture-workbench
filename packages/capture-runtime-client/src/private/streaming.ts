@@ -20,6 +20,7 @@ import {
 } from './codec-plumbing.js';
 
 const CHUNK_BYTES = 1024 * 1024;
+const MAX_PDF_PAGE_SELECTION = 500;
 
 type RuntimeJson = <T>(
   request: RuntimeTransportRequest,
@@ -39,6 +40,7 @@ export async function startStreamingCapture(
   context: Pick<StreamingRequestContext, 'json' | 'getStreamingCapabilities'>,
   upload: CaptureUpload,
 ): Promise<CaptureOperation> {
+  const pdfPageNumbers = pdfPageSelection(upload.pdfPageNumbers);
   const bytes = await bodyBytes(upload.body);
   const digest = await sha256(bytes);
   const capabilities = await context.getStreamingCapabilities(upload.signal);
@@ -124,6 +126,7 @@ export async function startStreamingCapture(
           structuringMode: upload.structuringMode ?? 'runtime',
           targetLanguage: upload.targetLanguage ?? null,
           startPolicy: 'eager',
+          ...(pdfPageNumbers === undefined ? {} : { pdfPageNumbers }),
           ...(upload.identifySpeakers ? { identifySpeakers: true } : {}),
         }),
       },
@@ -138,6 +141,35 @@ export async function startStreamingCapture(
       .catch(() => undefined);
     throw error;
   }
+}
+
+/**
+ * Check a PDF page selection before any bytes are sent: one-based source pages
+ * in ascending order without duplicates, at most 500 of them.
+ */
+function pdfPageSelection(
+  pages: readonly number[] | undefined,
+): readonly number[] | undefined {
+  if (pages === undefined) return undefined;
+  if (
+    !Array.isArray(pages) ||
+    pages.length < 1 ||
+    pages.length > MAX_PDF_PAGE_SELECTION
+  ) {
+    throw new CaptureRuntimeProtocolError(
+      `pdfPageNumbers must contain 1 to ${MAX_PDF_PAGE_SELECTION} pages.`,
+    );
+  }
+  let previous = 0;
+  for (const page of pages) {
+    if (!Number.isSafeInteger(page) || page <= previous) {
+      throw new CaptureRuntimeProtocolError(
+        'pdfPageNumbers must list source pages in ascending order without duplicates.',
+      );
+    }
+    previous = page;
+  }
+  return [...pages];
 }
 
 /** Stream ordered SSE events and resume with the latest accepted sequence. */

@@ -30,6 +30,7 @@ from capture_runtime.contracts import (
     OcrRasterV3,
 )
 from capture_runtime.ocr_profile import load_profile_spec
+from capture_runtime.pdf_page_selection import is_ascending_page_numbers
 
 
 def _default_profile_identity() -> tuple[str, str]:
@@ -403,7 +404,11 @@ class OcrPipeline:
             provenance: OcrProvenanceV3,
         ) -> OcrPageInput:
             nonlocal observed_provenance, header_emitted
-            if expected.page != len(observed_pages) + 1:
+            position = len(observed_pages)
+            if (
+                position >= len(expected_manifest)
+                or expected.page != expected_manifest[position].page
+            ):
                 raise OcrProjectionError("OCR page results must be complete and ordered")
             if not provenance.is_resolved or provenance.engine != "windowsml-ocr":
                 raise OcrProjectionError("OCR engine provenance is incompatible")
@@ -768,11 +773,15 @@ class OcrPipeline:
             raise OcrProjectionError("OCR manifest is invalid") from error
         if not values:
             raise OcrProjectionError("OCR manifest must be complete and ordered")
-        for expected_page, item in enumerate(values, 1):
+        # Manifest pages are source page numbers: every page of the source, or
+        # the selected pages, in ascending order.
+        previous_page = 0
+        for item in values:
             if not isinstance(item, OcrPageManifest):
                 raise OcrProjectionError("OCR manifest items are invalid")
-            if type(item.page) is not int or item.page != expected_page:
+            if type(item.page) is not int or item.page <= previous_page:
                 raise OcrProjectionError("OCR manifest must be complete and ordered")
+            previous_page = item.page
             if (
                 type(item.raster_width) is not int
                 or item.raster_width <= 0
@@ -978,7 +987,7 @@ class _OcrProjectionBuilder:
         ]
         if any(item.provenance != canonical_provenance for item in normalized_pages):
             raise OcrProjectionError("page OCR provenance must match document provenance")
-        if [page.page for page in normalized_pages] != list(range(1, len(normalized_pages) + 1)):
+        if not is_ascending_page_numbers([page.page for page in normalized_pages]):
             raise OcrProjectionError("OCR page results must be complete and ordered")
         projection_pages = [self._page(item, canonical_provenance) for item in normalized_pages]
         page_failure = next(

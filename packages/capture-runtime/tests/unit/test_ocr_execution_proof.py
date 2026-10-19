@@ -175,6 +175,38 @@ def test_execution_proof_roundtrips_unobservable_session_device_readback() -> No
     assert [item.dml_device_id for item in restored.session_device_proofs] == [None, None]
 
 
+def test_execution_proof_scope_is_any_ascending_selection_of_source_pages() -> None:
+    original = _proof()
+    selection = _selection()
+    selected = OcrExecutionDeviceProofV1.build(
+        plan=selection.execution_plan,
+        selection_proof=original.selection_proof,
+        construction=original.construction,
+        evidence=OcrExecutionEvidence(
+            dml_node_count=original.dml_node_count,
+            cpu_node_count=sum(item.cpu_node_count for item in original.session_device_proofs),
+            source="ort-profile",
+            session_device_proofs=original.session_device_proofs,
+        ),
+        context=OcrExecutionProofContextV1(
+            source_sha256=original.source_sha256,
+            requested_page_scope=(3, 7, 8, 20),
+            runtime_sha256=original.runtime_sha256,
+            worker_sha256=original.worker_sha256,
+            model_sha256=original.model_sha256,
+            profile_id=original.profile_id,
+            profile_spec_sha256=original.profile_spec_sha256,
+            contract_set_sha256=original.contract_set_sha256,
+        ),
+    )
+    restored = OcrExecutionDeviceProofV1.from_dict(selected.to_dict())
+    assert restored.requested_page_scope == (3, 7, 8, 20)
+
+    for scope in ((), (7, 3), (3, 3), (0, 1)):
+        with pytest.raises(ValueError, match="ascending source pages"):
+            replace(original, requested_page_scope=scope)
+
+
 def test_execution_proof_parser_rejects_malformed_private_session() -> None:
     value = _proof().to_dict()
     value["sessionDeviceProofs"] = [{}]

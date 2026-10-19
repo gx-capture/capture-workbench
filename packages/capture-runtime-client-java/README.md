@@ -19,9 +19,11 @@ there is no public schema loader or generated-model package. Runtime version and
 contract hash identity are negotiated from discovery, never copied from a local
 schema or manifest file.
 
-`CaptureRuntimeClient.CaptureUpload` accepts an optional ordered
-`pdfPageNumbers` prefix; omitting it preserves all-page capture. PDF raw
-responses expose the runtime's additive `ocrPageScope` evidence, while
+`CaptureRuntimeClient.CaptureUpload` accepts optional `pdfPageNumbers`: the
+one-based source pages to read, ascending and without duplicates, at most 500
+(for example `List.of(3, 7, 8, 20)`); omitting it preserves all-page capture.
+OCR pages, page locators and the raw `ocrPageScope` evidence keep those source
+page numbers, so page 7 of the PDF is page 7 in every result.
 `CaptureOcrProjection` provides the strict page-level OCR projection.
 
 Law Prep's AI connector and structuring provider use the narrow typed

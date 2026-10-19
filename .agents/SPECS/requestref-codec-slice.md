@@ -47,7 +47,7 @@ randomness or derivation.
   `sourceSha256`, `pdfPageNumbers`, `structuringMode`, `targetLanguage`, and
   `startPolicy`.
 - `CaptureSourceKind`, `StructuringMode`, and the existing positive integer,
-  SHA-256, target-language, page-prefix, and file-name semantics are reused at
+  SHA-256, target-language, page-selection, and file-name semantics are reused at
   this private boundary. OCR start metadata accepts `pdf` or `image` and the
   producer's four media types (`application/pdf`, `image/jpeg`, `image/png`,
   `image/webp`); `structuringMode` accepts exactly the existing `runtime` and
@@ -83,7 +83,9 @@ path, reference, or digest is interpolated into an error.
 The codec accepts only producer metadata. `requestRef`, `requestDigest`, LAW
 `pageScope`, snake_case aliases, nested metadata, and every other unknown key
 are rejected by exact root-key validation. `pdfPageNumbers` is an explicit
-ordered prefix `[1, ..., N]` for PDF and explicit `null` for image input.
+ascending, duplicate-free list of source pages for PDF (for example
+`[3, 7, 8, 20]`; one canonical order keeps one request digest per selection)
+and explicit `null` for image input.
 
 ## Acceptance criteria
 
@@ -99,8 +101,8 @@ ordered prefix `[1, ..., N]` for PDF and explicit `null` for image input.
 - Canonical order, compact spacing, UTF-8 CJK text, explicit nulls, and the
   producer digest are stable; noncanonical spacing/order/escaping, a trailing
   newline, or a BOM is rejected.
-- PDF page selections accept the ordered prefix through 500 pages and reject
-  501 pages.
+- PDF page selections accept any ascending source pages through 500 pages and
+  reject 501 pages, unsorted or repeated pages, and page 0.
 - JSON integer tokens at exactly `-(2**53 - 1)` and
   `2**53 - 1` are accepted when field validation allows them;
   out-of-range tokens are rejected before typed-field or closed-key

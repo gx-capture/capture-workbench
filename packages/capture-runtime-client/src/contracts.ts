@@ -105,7 +105,7 @@ export {
 
 /** Approved current runtime contract-set identity; update only with a release. */
 export const CAPTURE_CONTRACT_SET_SHA256 =
-  'fc8a994e5a2a822376821da277e949eb203df9223977da4db4cdc7ab29724523';
+  '02a67c8bc3ba579944d29751579fa76159ac1134b201559702d72dcbafa50c66';
 
 export interface RuntimeDiscovery {
   readonly ready: RuntimeReady;
@@ -122,6 +122,12 @@ export interface CaptureUpload {
   readonly sourceKind: CaptureSourceKind;
   readonly targetLanguage?: string;
   readonly structuringMode?: 'runtime' | 'host';
+  /**
+   * PDF only: the source pages to read, one-based, ascending and without
+   * duplicates, at most 500 (for example `[3, 7, 8, 20]`). OCR pages and page
+   * locators keep these numbers. Omit it to read every page.
+   */
+  readonly pdfPageNumbers?: readonly number[];
   /**
    * Audio only: label who speaks each segment. Needs the optional
    * `speaker-diarization` unit; the capture then reports no partial transcript.

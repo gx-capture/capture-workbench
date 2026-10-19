@@ -35,6 +35,7 @@ from capture_runtime.extractors import (
     ExtractionRuntimeUnavailableError,
     OcrExtractionFailure,
     OcrSourcePreflightError,
+    PdfPageSelectionError,
     StandaloneRuntimeCaptureExtractor,
 )
 from capture_runtime.ocr_preflight import (
@@ -3457,6 +3458,126 @@ def _geometry_pdf(*, rotation: int, crop: tuple[float, float, float, float]) -> 
         f"startxref\n{xref_offset}\n%%EOF\n".encode()
     )
     return bytes(content)
+
+
+def _sized_pages_pdf(widths: list[int]) -> bytes:
+    """A real PDF whose page k is ``widths[k - 1]`` points wide, to tell pages apart."""
+
+    import pypdfium2 as pdfium
+
+    document = pdfium.PdfDocument.new()
+    try:
+        for width in widths:
+            document.new_page(width, 50).close()
+        output = BytesIO()
+        document.save(output)
+        return output.getvalue()
+    finally:
+        document.close()
+
+
+class _RasterWidthOcrAdapter(FakeOcrAdapter):
+    """Reads back the width of the page it was given, so the test sees which page it was."""
+
+    def extract_png(self, image_png: bytes) -> OcrTextResult:
+        self.images.append(image_png)
+        with Image.open(BytesIO(image_png)) as image:
+            width = image.width
+        return OcrTextResult(
+            text=f"raster {width}",
+            device="windowsml-dml",
+            model="pp-ocrv6-medium-windowsml",
+            digest=f"sha256:{'1' * 64}",
+            raster_width=1,
+            raster_height=1,
+        )
+
+
+def test_pdf_ocr_renders_only_selected_source_pages_and_keeps_their_numbers(
+    tmp_path: Path,
+) -> None:
+    # Seven pages, page k is 100 + 10k points wide; the limit of 3 bounds the
+    # selected pages, not the source.
+    content = _sized_pages_pdf([100 + 10 * page for page in range(1, 8)])
+    adapter = _RasterWidthOcrAdapter()
+    extractor = StandaloneRuntimeCaptureExtractor(
+        SystemClock(),
+        replace(_config(tmp_path), max_pdf_pages=3, ocr_render_scale=1),
+        ocr_adapter=adapter,
+    )
+
+    extraction = asyncio.run(
+        extractor.extract(
+            content,
+            _source(content, "source.pdf", "application/pdf"),
+            asyncio.Event(),
+            pdf_page_numbers=(2, 5, 7),
+        )
+    )
+
+    projection = extraction.ocr_projection
+    assert projection is not None
+    assert [page.page for page in projection.pages] == [2, 5, 7]
+    assert [page.text for page in projection.pages] == ["raster 120", "raster 150", "raster 170"]
+    assert [page.raster.width for page in projection.pages] == [120, 150, 170]
+    assert [segment.locator.page for segment in extraction.raw.segments] == [2, 5, 7]
+    assert extraction.raw.ocr_page_scope is not None
+    assert extraction.raw.ocr_page_scope.model_dump(by_alias=True) == {
+        "sourcePageCount": 7,
+        "requestedPageNumbers": [2, 5, 7],
+        "processedPageNumbers": [2, 5, 7],
+    }
+    assert len(adapter.images) == 3
+
+
+@pytest.mark.parametrize(
+    ("page_numbers", "message"),
+    [
+        ((2, 8), "includes page 8, but the PDF has 7 pages"),
+        ((1, 2, 3, 4), "has 4 pages; limit is 3"),
+        ((5, 2), "ascending order without duplicates"),
+    ],
+)
+def test_pdf_ocr_rejects_a_selection_the_source_cannot_satisfy_before_rendering(
+    tmp_path: Path, page_numbers: tuple[int, ...], message: str
+) -> None:
+    content = _sized_pages_pdf([100 + 10 * page for page in range(1, 8)])
+    adapter = _RasterWidthOcrAdapter()
+    extractor = StandaloneRuntimeCaptureExtractor(
+        SystemClock(),
+        replace(_config(tmp_path), max_pdf_pages=3, ocr_render_scale=1),
+        ocr_adapter=adapter,
+    )
+
+    with pytest.raises(PdfPageSelectionError, match=message):
+        asyncio.run(
+            extractor.extract(
+                content,
+                _source(content, "source.pdf", "application/pdf"),
+                asyncio.Event(),
+                pdf_page_numbers=page_numbers,
+            )
+        )
+
+    assert adapter.images == []
+
+
+def test_pdf_ocr_without_a_selection_still_limits_the_source_pages(tmp_path: Path) -> None:
+    content = _sized_pages_pdf([100 + 10 * page for page in range(1, 8)])
+    extractor = StandaloneRuntimeCaptureExtractor(
+        SystemClock(),
+        replace(_config(tmp_path), max_pdf_pages=3, ocr_render_scale=1),
+        ocr_adapter=_RasterWidthOcrAdapter(),
+    )
+
+    with pytest.raises(OcrSourcePreflightError):
+        asyncio.run(
+            extractor.extract(
+                content,
+                _source(content, "source.pdf", "application/pdf"),
+                asyncio.Event(),
+            )
+        )
 
 
 def test_pdf_preflight_uses_metadata_without_png_render(

@@ -1073,3 +1073,167 @@ def test_extraction_outcome_owns_projection_without_raw_capture_side_channel() -
     assert not hasattr(ocr_projection_module, "OcrProjectionExtractor")
     assert not hasattr(RawCapture, "attach_ocr_projection")
     assert not hasattr(raw, "ocr_projection")
+
+
+def _selection_manifest(pages: tuple[int, ...]) -> tuple[OcrPageManifest, ...]:
+    return tuple(
+        OcrPageManifest(page=page, raster_width=640, raster_height=480, raster_scale=1)
+        for page in pages
+    )
+
+
+def test_canonical_request_keeps_source_page_numbers_of_a_non_contiguous_selection() -> None:
+    selection = (3, 7, 8, 20)
+    manifest = _selection_manifest(selection)
+    progress: list[dict[str, object]] = []
+
+    class SourcePageEngine:
+        def recognize(self, request: OcrEngineRequest) -> OcrEngineRun:
+            pages = tuple(
+                request.observe(
+                    expected,
+                    OcrPageInput(
+                        page=expected.page,
+                        text=f"source page {expected.page}",
+                        raster_width=expected.raster_width,
+                        raster_height=expected.raster_height,
+                        raster_scale=expected.raster_scale,
+                        provenance=_engine(),
+                    ),
+                    _engine(),
+                )
+                for expected in request.manifest
+            )
+            return OcrEngineRun(pages=pages, provenance=_engine())
+
+    outcome = OcrPipeline().extract(
+        _streaming_request(manifest, progress, lambda: False, page_scope=selection),
+        SourcePageEngine(),
+    )
+
+    assert isinstance(outcome, CaptureOcrProjectionV3)
+    assert outcome.page_count == 4
+    assert [page.page for page in outcome.pages] == list(selection)
+    assert [page.text for page in outcome.pages] == [f"source page {page}" for page in selection]
+    header = progress[0]
+    assert header["type"] == "ocr-header"
+    assert [item["page"] for item in header["pages"]] == list(selection)  # type: ignore[index]
+    assert [event["page"]["page"] for event in progress[1:]] == list(selection)  # type: ignore[index]
+
+
+def test_worker_failure_of_a_selection_keeps_trusted_pages_by_source_number() -> None:
+    manifest = _selection_manifest((3, 7))
+
+    class FailingEngine:
+        def recognize(self, _request: OcrEngineRequest) -> OcrEngineRun:
+            raise OcrEngineFailure(
+                kind="protocol",
+                completed_pages=(
+                    OcrPageInput(
+                        page=3,
+                        text="trusted source page 3",
+                        raster_width=640,
+                        raster_height=480,
+                        raster_scale=1,
+                        provenance=_engine(),
+                    ),
+                ),
+            )
+
+    outcome = OcrPipeline().extract(
+        OcrRequest(
+            capture_id="capture-selection-protocol",
+            source=_source(),
+            page_scope=(3, 7),
+            manifest=manifest,
+            created_at=datetime.now(UTC),
+            warnings=(),
+            is_cancelled=lambda: False,
+        ),
+        FailingEngine(),
+    )
+
+    assert isinstance(outcome, OcrTerminalOutcome)
+    assert [(page.page, page.status) for page in outcome.projection.pages] == [
+        (3, OcrPageStatus.RECOGNIZED),
+        (7, OcrPageStatus.FAILED),
+    ]
+
+
+@pytest.mark.parametrize("pages", [(7, 3), (3, 3)])
+def test_pipeline_rejects_a_manifest_that_is_not_ascending_source_pages(
+    pages: tuple[int, ...],
+) -> None:
+    with pytest.raises(OcrProjectionError, match="complete and ordered"):
+        OcrPipeline().extract(
+            capture_id="capture-unordered-selection",
+            source=_source(),
+            manifest=_selection_manifest(pages),
+            engine=_InMemoryOcrEngine(()),
+            created_at=datetime.now(UTC),
+        )
+
+
+def test_engine_page_out_of_selection_order_is_a_typed_protocol_failure() -> None:
+    manifest = _selection_manifest((3, 7))
+    progress: list[dict[str, object]] = []
+
+    class OutOfOrderEngine:
+        def recognize(self, request: OcrEngineRequest) -> OcrEngineRun:
+            page = request.observe(
+                manifest[1],
+                OcrPageInput(
+                    page=7,
+                    text="page 7 first",
+                    raster_width=640,
+                    raster_height=480,
+                    raster_scale=1,
+                    provenance=_engine(),
+                ),
+                _engine(),
+            )
+            return OcrEngineRun(pages=(page,), provenance=_engine())
+
+    outcome = OcrPipeline().extract(
+        _streaming_request(manifest, progress, lambda: False, page_scope=(3, 7)),
+        OutOfOrderEngine(),
+    )
+
+    assert isinstance(outcome, OcrTerminalOutcome)
+    assert outcome.failure.code == "ocr_worker_protocol"
+    assert progress == []
+
+
+@pytest.mark.parametrize("pages", [[7, 3], [3, 3], [0, 3]])
+def test_projection_contract_requires_ascending_source_page_numbers(pages: list[int]) -> None:
+    def page(number: int) -> dict[str, object]:
+        return {
+            "page": number,
+            "status": "empty",
+            "raster": {"width": 1, "height": 1, "scale": 1, "coordinateSystem": "pixel"},
+            "provenance": _engine().model_dump(mode="json", by_alias=True),
+        }
+
+    payload = {
+        "apiVersion": "2.0",
+        "schemaVersion": "3",
+        "captureId": "capture-contract",
+        "status": "failed",
+        "source": None,
+        "pages": [page(3), page(7)],
+        "pageCount": 2,
+        "runtimeVersion": RUNTIME_VERSION,
+        "contractSha256": "d" * 64,
+        "provenance": _engine().model_dump(mode="json", by_alias=True),
+        "failure": {
+            "code": "ocr_no_text",
+            "message": "No text.",
+            "stage": "extraction",
+            "retryable": False,
+        },
+        "createdAt": "2026-10-19T00:00:00+00:00",
+    }
+    assert [item.page for item in CaptureOcrProjectionV3.model_validate(payload).pages] == [3, 7]
+
+    with pytest.raises(ValidationError):
+        CaptureOcrProjectionV3.model_validate({**payload, "pages": [page(n) for n in pages]})

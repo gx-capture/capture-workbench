@@ -448,6 +448,7 @@ export interface StartCaptureV2 {
   readonly structuringMode: StructuringMode;
   readonly targetLanguage?: string | null;
   readonly startPolicy: "eager";
+  /** PDF only: the source pages to read, one-based, ascending and without duplicates, for example [3, 7, 8, 20]. OCR results keep these page numbers. Omit it to read every page. */
   readonly pdfPageNumbers?: readonly (number)[] | null;
   readonly identifySpeakers?: boolean;
 }
@@ -587,6 +588,16 @@ export const CAPTURE_CONTRACT_INVARIANTS = [
     id: "ocr-compute-preflight-identity",
     models: "OcrComputePreflightV2",
     description: "pre-OCR compute decisions carry API, schema, runtime, contract-set, and exact contract digest identity.",
+  },
+  {
+    id: "pdf-page-selection-ascending",
+    models: "StartCaptureV2, OcrPageScopeV2",
+    description: "pdfPageNumbers and requestedPageNumbers list one-based source pages in ascending order without duplicates; processedPageNumbers equals requestedPageNumbers and every page exists in the source.",
+  },
+  {
+    id: "ocr-pages-keep-source-page-numbers",
+    models: "CaptureOcrProjectionV3, RawCapture",
+    description: "OCR pages and page locators carry source page numbers in ascending order: every page of the source, or exactly the selected pdfPageNumbers.",
   },
   {
     id: "timestamps-timezone-aware",

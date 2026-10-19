@@ -319,7 +319,7 @@ class CaptureRuntimeClientTest {
   }
 
   @Test
-  void exposesTheCanonicalOptionalPdfPagePrefixAndPreservesLegacyStartConstruction()
+  void exposesTheOptionalPdfPageSelectionAndPreservesLegacyStartConstruction()
       throws Exception {
     var selected =
         new CaptureRuntimeTypes.StartCapture(
@@ -329,10 +329,20 @@ class CaptureRuntimeClientTest {
             CaptureRuntimeTypes.StructuringMode.RUNTIME,
             null,
             "eager",
-            List.of(1, 2));
-    assertThat(selected.pdfPageNumbers()).containsExactly(1, 2);
+            List.of(3, 7, 8, 20));
+    assertThat(selected.pdfPageNumbers()).containsExactly(3, 7, 8, 20);
     assertThat(MAPPER.readTree(MAPPER.writeValueAsBytes(selected)).path("pdfPageNumbers")).isEqualTo(
-        MAPPER.readTree("[1,2]"));
+        MAPPER.readTree("[3,7,8,20]"));
+    var prefix =
+        new CaptureRuntimeTypes.StartCapture(
+            "2",
+            "request-1",
+            "ingestion-1",
+            CaptureRuntimeTypes.StructuringMode.RUNTIME,
+            null,
+            "eager",
+            List.of(1, 2));
+    assertThat(prefix.pdfPageNumbers()).containsExactly(1, 2);
 
     var legacy =
         new CaptureRuntimeTypes.StartCapture(
@@ -344,7 +354,7 @@ class CaptureRuntimeClientTest {
             "eager");
     assertThat(legacy.pdfPageNumbers()).isNull();
     assertThat(CaptureRuntimeTypes.CONTRACT_SET_SHA256)
-        .isEqualTo("fc8a994e5a2a822376821da277e949eb203df9223977da4db4cdc7ab29724523");
+        .isEqualTo("02a67c8bc3ba579944d29751579fa76159ac1134b201559702d72dcbafa50c66");
 
     assertThatThrownBy(
             () ->
@@ -355,13 +365,87 @@ class CaptureRuntimeClientTest {
                     CaptureRuntimeTypes.StructuringMode.RUNTIME,
                     null,
                     "eager",
-                    List.of(2)))
+                    List.of(7, 3)))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("ordered prefix");
+        .hasMessageContaining("ascending order without duplicates");
   }
 
   @Test
-  void forwardsTheOptionalPdfPagePrefixThroughTheStreamingStartOperation() throws Exception {
+  void sharesThePageSelectionGoldenCaseWithTypeScriptAndPythonValidators() throws Exception {
+    var fixture = sharedPageSelectionFixture();
+    var projection = (ObjectNode) fixture.path("projection");
+
+    var decoded =
+        WireCodecs.decode(
+            MAPPER.writeValueAsBytes(projection),
+            CaptureRuntimeTypes.CaptureOcrProjection.class,
+            MAPPER);
+    var scope =
+        MAPPER.treeToValue(fixture.path("ocrPageScope"), CaptureRuntimeTypes.OcrPageScope.class);
+    var upload =
+        new CaptureRuntimeClient.CaptureUpload(
+            "selected-pages.pdf",
+            "abc".getBytes(StandardCharsets.UTF_8),
+            "application/pdf",
+            CaptureRuntimeTypes.SourceKind.PDF,
+            null,
+            CaptureRuntimeTypes.StructuringMode.HOST,
+            "request-selected-pages",
+            integers(fixture.path("pdfPageNumbers")));
+
+    assertThat(decoded.pageCount()).isEqualTo(4);
+    assertThat(decoded.pages())
+        .extracting(CaptureRuntimeTypes.OcrPageProjection::page)
+        .containsExactly(3L, 7L, 8L, 20L);
+    assertThat(scope.sourcePageCount()).isEqualTo(46);
+    assertThat(scope.requestedPageNumbers()).containsExactly(3, 7, 8, 20);
+    assertThat(upload.pdfPageNumbers()).containsExactly(3, 7, 8, 20);
+    for (var invalid : fixture.path("invalidPdfPageNumbers")) {
+      assertThatThrownBy(
+              () ->
+                  new CaptureRuntimeClient.CaptureUpload(
+                      "selected-pages.pdf",
+                      "abc".getBytes(StandardCharsets.UTF_8),
+                      "application/pdf",
+                      CaptureRuntimeTypes.SourceKind.PDF,
+                      null,
+                      CaptureRuntimeTypes.StructuringMode.HOST,
+                      "request-selected-pages",
+                      integers(invalid)))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+    for (var order : fixture.path("invalidProjectionPageOrders")) {
+      var reordered = projection.deepCopy();
+      for (var index = 0; index < order.size(); index++) {
+        ((ObjectNode) reordered.withArray("pages").get(index)).put("page", order.get(index).asInt());
+      }
+      assertThatThrownBy(
+              () ->
+                  WireCodecs.decode(
+                      MAPPER.writeValueAsBytes(reordered),
+                      CaptureRuntimeTypes.CaptureOcrProjection.class,
+                      MAPPER))
+          .isInstanceOf(CaptureProtocolError.class);
+    }
+  }
+
+  @Test
+  void pageScopeOfASelectionMayComeFromASourcePastTheSelectionLimit() {
+    var scope = new CaptureRuntimeTypes.OcrPageScope(1200, List.of(2, 1199), List.of(2, 1199));
+    assertThat(scope.sourcePageCount()).isEqualTo(1200);
+
+    assertThatThrownBy(
+            () -> new CaptureRuntimeTypes.OcrPageScope(19, List.of(3, 20), List.of(3, 20)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("must exist in the source");
+    assertThatThrownBy(
+            () -> new CaptureRuntimeTypes.OcrPageScope(46, List.of(7, 3), List.of(7, 3)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("ascending order without duplicates");
+  }
+
+  @Test
+  void forwardsTheOptionalPdfPageSelectionThroughTheStreamingStartOperation() throws Exception {
     var bundle = bundle();
     var index = index(sha256(bundle));
     var observedStart = new java.util.concurrent.atomic.AtomicReference<JsonNode>();
@@ -416,12 +500,12 @@ class CaptureRuntimeClientTest {
                     null,
                     CaptureRuntimeTypes.StructuringMode.RUNTIME,
                     "request-1",
-                    List.of(1)));
+                    List.of(3, 7, 8, 20)));
 
     assertThat(operation.captureId()).isEqualTo("capture-1");
     assertThat(observedStart)
         .hasValueSatisfying(
-            body -> assertThat(body.path("pdfPageNumbers").toString()).isEqualTo("[1]"));
+            body -> assertThat(body.path("pdfPageNumbers").toString()).isEqualTo("[3,7,8,20]"));
   }
 
   @Test
@@ -775,7 +859,16 @@ class CaptureRuntimeClientTest {
                     null,
                     List.of(
                         new CaptureRuntimeTypes.OcrPageProjection(
-                            2,
+                            7,
+                            CaptureRuntimeTypes.OcrPageStatus.EMPTY,
+                            raster,
+                            "",
+                            List.of(),
+                            null,
+                            engine,
+                            null),
+                        new CaptureRuntimeTypes.OcrPageProjection(
+                            3,
                             CaptureRuntimeTypes.OcrPageStatus.EMPTY,
                             raster,
                             "",
@@ -783,7 +876,7 @@ class CaptureRuntimeClientTest {
                             null,
                             engine,
                             null)),
-                    1,
+                    2,
                     CaptureRuntimeTypes.RUNTIME_VERSION,
                     CaptureRuntimeTypes.CONTRACT_SET_SHA256,
                     engine,
@@ -791,7 +884,7 @@ class CaptureRuntimeClientTest {
                     new CaptureRuntimeTypes.Failure("ocr_failed", "Projection failed", "ocr", false),
                     "2026-08-14T00:00:00Z"))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("ordered");
+        .hasMessageContaining("ascending source page order");
     assertThatThrownBy(() -> new CaptureRuntimeTypes.OcrRaster(100, 80, 9, "pixel"))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> new CaptureRuntimeTypes.OcrPoint(-1, 0))
@@ -969,6 +1062,24 @@ class CaptureRuntimeClientTest {
                 new CaptureRuntimeTypes.RawCaptureSegment(
                     "segment-1", 0, new CaptureRuntimeTypes.PageLocator(1, null), "  \n "))
         .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  private static JsonNode sharedPageSelectionFixture() throws Exception {
+    var fixture =
+        MAPPER.readTree(
+            Files.readString(
+                Path.of(
+                    "..", "capture-runtime", "tests", "fixtures", "ocr-page-selection-v3.json")));
+    ((ObjectNode) fixture.path("projection"))
+        .put("contractSha256", CaptureRuntimeTypes.CONTRACT_SET_SHA256)
+        .put("runtimeVersion", CaptureRuntimeTypes.RUNTIME_VERSION);
+    return fixture;
+  }
+
+  private static List<Integer> integers(JsonNode values) {
+    var result = new ArrayList<Integer>();
+    for (var value : values) result.add(value.asInt());
+    return result;
   }
 
   private static byte[] sharedPerspectiveOcrJson() throws Exception {

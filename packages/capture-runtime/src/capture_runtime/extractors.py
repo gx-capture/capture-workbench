@@ -58,6 +58,7 @@ from capture_runtime.ocr_projection import (
 from capture_runtime.ocr_vertical_routing import (
     MODEL_SUBDIRECTORY as VERTICAL_READER_SUBDIRECTORY,
 )
+from capture_runtime.pdf_page_selection import is_ascending_page_numbers, is_pdf_page_selection
 from capture_runtime.speaker_alignment import TimedWord, speaker_samples, speaker_segments
 from capture_runtime.worker_client import (
     OcrWorkerFailure,
@@ -86,6 +87,13 @@ class OcrSourcePreflightError(RuntimeError):
 
     def __init__(self) -> None:
         super().__init__("OCR source preflight failed.")
+
+
+class PdfPageSelectionError(ValueError):
+    """The requested PDF pages are not all in the source, or are too many to read.
+
+    The message names only page numbers and counts, so it is safe to report.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -254,7 +262,7 @@ class _WorkerOcrEngineAdapter:
 
     def _validate_terminal_result(self, manifest: tuple[OcrPageManifest, ...]) -> None:
         expected_numbers = tuple(item.page for item in manifest)
-        if expected_numbers != tuple(range(1, len(manifest) + 1)):
+        if not expected_numbers or not is_ascending_page_numbers(expected_numbers):
             raise ValueError("OCR manifest page numbers are not canonical")
 
         actual_numbers = tuple(item.page for item in self._result.pages)
@@ -850,17 +858,7 @@ class StandaloneRuntimeCaptureExtractor:
         page_numbers: tuple[int, ...] | None = None,
     ) -> tuple[OcrPageManifest, ...]:
         page_count = self._pdf_page_count(content)
-        if page_count > self.config.max_pdf_pages:
-            raise ValueError(f"PDF has {page_count} pages; limit is {self.config.max_pdf_pages}.")
-        selected_page_numbers = (
-            tuple(range(1, page_count + 1)) if page_numbers is None else page_numbers
-        )
-        if (
-            not selected_page_numbers
-            or selected_page_numbers != tuple(range(1, len(selected_page_numbers) + 1))
-            or selected_page_numbers[-1] > page_count
-        ):
-            raise ValueError("OCR PDF page selection must be an ordered prefix in the source.")
+        selected_page_numbers = self._selected_pdf_pages(page_count, page_numbers)
         raster_dimensions = self._pdf_page_raster_dimensions(
             content,
             cancel_event,
@@ -903,6 +901,37 @@ class StandaloneRuntimeCaptureExtractor:
             )
         return tuple(pages)
 
+    def _selected_pdf_pages(
+        self,
+        page_count: int,
+        page_numbers: tuple[int, ...] | None,
+    ) -> tuple[int, ...]:
+        """The source pages OCR reads: every page, or the requested selection.
+
+        The page limit bounds the pages that are read. Without a selection that
+        is every page of the source; with one, the source may be longer.
+        """
+
+        limit = self.config.max_pdf_pages
+        if page_numbers is None:
+            if page_count > limit:
+                raise ValueError(f"PDF has {page_count} pages; limit is {limit}.")
+            return tuple(range(1, page_count + 1))
+        if not is_pdf_page_selection(page_numbers):
+            raise PdfPageSelectionError(
+                "PDF page selection must list source pages in ascending order without duplicates."
+            )
+        if len(page_numbers) > limit:
+            raise PdfPageSelectionError(
+                f"PDF page selection has {len(page_numbers)} pages; limit is {limit}."
+            )
+        if page_numbers[-1] > page_count:
+            raise PdfPageSelectionError(
+                f"PDF page selection includes page {page_numbers[-1]}, "
+                f"but the PDF has {page_count} pages."
+            )
+        return tuple(page_numbers)
+
     def _preflight_pdf_manifest(
         self,
         content: bytes,
@@ -916,7 +945,7 @@ class StandaloneRuntimeCaptureExtractor:
                 cancel_event,
                 page_numbers=page_numbers,
             )
-        except (InterruptedError, OcrSourcePreflightError):
+        except (InterruptedError, OcrSourcePreflightError, PdfPageSelectionError):
             raise
         except Exception as error:
             raise OcrSourcePreflightError from error
@@ -1606,25 +1635,34 @@ class DeterministicCaptureExtractor:
                 device="fake",
             )
         else:
-            parts = [part.strip() for part in text.split("\f") if part.strip()]
+            source_pages = [part.strip() for part in text.split("\f")]
+            page_numbers = tuple(range(1, len(source_pages) + 1))
             if pdf_page_numbers is not None:
-                if (
-                    not pdf_page_numbers
-                    or pdf_page_numbers != tuple(range(1, len(pdf_page_numbers) + 1))
-                    or pdf_page_numbers[-1] > len(parts)
-                ):
-                    raise ValueError(
-                        "OCR PDF page selection must be an ordered prefix in the source."
+                if not is_pdf_page_selection(pdf_page_numbers):
+                    raise PdfPageSelectionError(
+                        "PDF page selection must list source pages in ascending order "
+                        "without duplicates."
                     )
-                parts = [parts[page_number - 1] for page_number in pdf_page_numbers]
+                if pdf_page_numbers[-1] > len(source_pages):
+                    raise PdfPageSelectionError(
+                        f"PDF page selection includes page {pdf_page_numbers[-1]}, "
+                        f"but the PDF has {len(source_pages)} pages."
+                    )
+                page_numbers = tuple(pdf_page_numbers)
+            # Each page keeps its source page number, selected or not.
+            page_texts = [
+                (page_number, source_pages[page_number - 1])
+                for page_number in page_numbers
+                if source_pages[page_number - 1]
+            ]
             segments = [
                 RawCaptureSegment(
                     segment_id=f"segment-{index + 1}",
                     order=index,
-                    locator=PageLocator(page=index + 1),
+                    locator=PageLocator(page=page_number),
                     text=part,
                 )
-                for index, part in enumerate(parts)
+                for index, (page_number, part) in enumerate(page_texts)
             ]
             engine = CaptureEngine(
                 engine="windowsml-ocr",
@@ -1674,6 +1712,7 @@ __all__ = [
     "ExtractionRuntimeUnavailableError",
     "OcrExtractionFailure",
     "OcrSourcePreflightError",
+    "PdfPageSelectionError",
     "SniffedSource",
     "StandaloneRuntimeCaptureExtractor",
     "UnsupportedMediaError",

@@ -424,8 +424,10 @@ def test_field_bounds_and_closed_values_fail_closed(change: dict[str, object], c
     [
         ({"pdfPageNumbers": None}, "pdf_page_numbers"),
         ({"pdfPageNumbers": []}, "pdf_page_numbers"),
-        ({"pdfPageNumbers": [2]}, "pdf_page_numbers"),
-        ({"pdfPageNumbers": [1, 3]}, "pdf_page_numbers"),
+        ({"pdfPageNumbers": [0]}, "pdf_page_numbers"),
+        ({"pdfPageNumbers": [3, 3]}, "pdf_page_numbers"),
+        ({"pdfPageNumbers": [7, 3]}, "pdf_page_numbers"),
+        ({"pdfPageNumbers": [True]}, "pdf_page_numbers"),
         ({"pdfPageNumbers": list(range(1, 502))}, "pdf_page_numbers"),
         (
             {"sourceKind": "image", "mediaType": "image/png", "pdfPageNumbers": [1]},
@@ -433,16 +435,25 @@ def test_field_bounds_and_closed_values_fail_closed(change: dict[str, object], c
         ),
     ],
 )
-def test_pdf_page_selection_is_an_ordered_prefix_and_null_for_images(
+def test_pdf_page_selection_is_ascending_source_pages_and_null_for_images(
     change: dict[str, object], code: str
 ) -> None:
     _raises(code, _metadata(**change))
+
+
+@pytest.mark.parametrize("pages", [[1], [2], [1, 3], [3, 7, 8, 20]])
+def test_pdf_page_selection_accepts_any_ascending_source_pages(pages: list[int]) -> None:
+    decoded = _decode(_metadata(pdfPageNumbers=pages))
+
+    assert decoded.metadata.pdf_page_numbers == tuple(pages)
 
 
 def test_pdf_page_selection_accepts_the_500_page_limit() -> None:
     decoded = _decode(_metadata(pdfPageNumbers=list(range(1, 501))))
 
     assert decoded.metadata.pdf_page_numbers == tuple(range(1, 501))
+    sparse = _decode(_metadata(pdfPageNumbers=list(range(2, 1001, 2))))
+    assert sparse.metadata.pdf_page_numbers == tuple(range(2, 1001, 2))
 
 
 @pytest.mark.parametrize("mode", [StructuringMode.RUNTIME.value, StructuringMode.HOST.value])

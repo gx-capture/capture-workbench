@@ -21,6 +21,34 @@ Capture Workbench follows an explicit 0.x compatibility policy:
 The consumer consistency check is a permanent CI gate for the declared
 runtime, package lock, Python host, desktop host, and browser host versions.
 
+### PDF page selection
+
+- A capture's `pdfPageNumbers` may name any pages of a PDF, such as
+  `[3, 7, 8, 20]`, not only a prefix from page 1. The pages are one-based
+  source page numbers in ascending order without duplicates, at most 500. A
+  prefix such as `[1]`, and leaving the field out to read every page, work as
+  before.
+- Results keep the source page numbers: the OCR projection's pages, the raw
+  segments' page locators and `ocrPageScope` say 3, 7, 8 and 20, so a host maps
+  them back without bookkeeping.
+- The page limit (`CAPTURE_MAX_PDF_PAGES`, 200 by default) counts the pages
+  that are read. Without a selection that is every page of the PDF, as before;
+  with one, the PDF may be longer than the limit, and
+  `ocrPageScope.sourcePageCount` is no longer capped at 500.
+- A selection that names a page past the end of the PDF, or more pages than
+  the limit, fails the capture with `invalid_pdf_page_selection` (not
+  retryable) before any page is read; it used to fail as
+  `ocr_source_preflight_failed`. `POST /v2/captures` still rejects an unsorted,
+  repeated, zero or over-long selection with `validation_error`.
+- The Python, Java and TypeScript clients check a selection the same way before
+  uploading, and the TypeScript `CaptureUpload` gains `pdfPageNumbers`.
+
+The OCR engine renders the selected pages, so the change reaches users with a
+rebuilt `capture-engine-ocr` artifact. The contract set changes (SHA-256
+`02a67c8bc3ba579944d29751579fa76159ac1134b201559702d72dcbafa50c66`): its
+schemas describe the selection and require positive page numbers, so clients
+need the release that carries it.
+
 ## 0.6.3
 
 A patch release for recording transcription. Clients still require the exact

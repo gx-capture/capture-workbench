@@ -27,7 +27,7 @@ public final class CaptureRuntimeTypes {
   public static final String CONTRACT_SET_VERSION = "2";
   /** Updated only as part of a coordinated runtime/client release. */
   public static final String CONTRACT_SET_SHA256 =
-      "fc8a994e5a2a822376821da277e949eb203df9223977da4db4cdc7ab29724523";
+      "02a67c8bc3ba579944d29751579fa76159ac1134b201559702d72dcbafa50c66";
 
   private static final Pattern SHA256 = Pattern.compile("^[0-9a-f]{64}$");
   private static final Pattern FAILURE_CODE = Pattern.compile("^[a-z][a-z0-9_]{1,63}$");
@@ -107,21 +107,27 @@ public final class CaptureRuntimeTypes {
     return List.copyOf(values.stream().map(value -> bounded(value, 500, "warning")).toList());
   }
 
-  /** Normalize a bounded ordered page prefix at the public Java boundary. */
+  /**
+   * Normalize a bounded PDF page selection at the public Java boundary: one-based source pages in
+   * ascending order without duplicates, for example {@code [3, 7, 8, 20]} or the prefix {@code [1]}.
+   */
   static List<Integer> pageNumbers(List<Integer> values, String field) {
     if (values == null) return null;
     if (values.isEmpty() || values.size() > 500) {
       throw new IllegalArgumentException(field + " must contain 1 to 500 pages");
     }
-    for (var index = 0; index < values.size(); index++) {
-      if (values.get(index) == null || values.get(index) != index + 1) {
-        throw new IllegalArgumentException(field + " must be an ordered prefix from page one");
+    var previous = 0;
+    for (var page : values) {
+      if (page == null || page <= previous) {
+        throw new IllegalArgumentException(
+            field + " must list source pages in ascending order without duplicates");
       }
+      previous = page;
     }
     return List.copyOf(values);
   }
 
-  /** Normalize the optional PDF page prefix at the public Java boundary. */
+  /** Normalize the optional PDF page selection; OCR results keep these page numbers. */
   static List<Integer> pdfPageNumbers(List<Integer> values) {
     return pageNumbers(values, "pdfPageNumbers");
   }
@@ -455,8 +461,10 @@ public final class CaptureRuntimeTypes {
       @JsonProperty(required = true) List<Integer> requestedPageNumbers,
       @JsonProperty(required = true) List<Integer> processedPageNumbers) {
     public OcrPageScope {
-      if (sourcePageCount < 1 || sourcePageCount > 500) {
-        throw new IllegalArgumentException("sourcePageCount must be between 1 and 500");
+      // A selection may read a few pages of a longer source, so only the
+      // selected pages are bounded.
+      if (sourcePageCount < 1) {
+        throw new IllegalArgumentException("sourcePageCount must be positive");
       }
       requestedPageNumbers =
           Objects.requireNonNull(
@@ -466,7 +474,7 @@ public final class CaptureRuntimeTypes {
           Objects.requireNonNull(
               pageNumbers(processedPageNumbers, "processedPageNumbers"),
               "processedPageNumbers");
-      if (requestedPageNumbers.size() > sourcePageCount) {
+      if (requestedPageNumbers.getLast() > sourcePageCount) {
         throw new IllegalArgumentException("requested PDF pages must exist in the source");
       }
       if (!processedPageNumbers.equals(requestedPageNumbers)) {
@@ -1029,9 +1037,11 @@ public final class CaptureRuntimeTypes {
       runtimeVersion = ocrText(runtimeVersion, 1, 32, "runtimeVersion"); if (!OCR_RUNTIME_VERSION_PATTERN.matcher(runtimeVersion).matches()) throw new IllegalArgumentException("runtimeVersion is not a release version");
       contractSha256 = ocrSha256(contractSha256, "contractSha256");
       provenance = Objects.requireNonNull(provenance, "provenance");
+      long previousPage = 0;
       for (var index = 0; index < pages.size(); index++) {
         var page = pages.get(index);
-        if (page.page() != index + 1) throw new IllegalArgumentException("OCR pages must be complete and ordered from page one");
+        if (page.page() <= previousPage) throw new IllegalArgumentException("OCR pages must be in ascending source page order");
+        previousPage = page.page();
         if (!provenance.equals(page.provenance())) throw new IllegalArgumentException("page OCR provenance must match document provenance");
       }
       warnings = ocrWarnings(warnings);

@@ -82,25 +82,40 @@ def test_v2_contracts_use_camel_case_and_preserve_sealed_segment_projection() ->
     assert event.model_dump(by_alias=True)["segments"][0]["locator"]["startMs"] == 0
 
 
-def test_pdf_page_scope_is_an_ordered_prefix_and_survives_wire_aliases() -> None:
+def test_pdf_page_scope_keeps_source_page_numbers_and_survives_wire_aliases() -> None:
     request = StartCaptureV2(
         client_request_id="capture-request-1",
         ingestion_id="ingestion-1",
         structuring_mode=StructuringMode.RUNTIME,
-        pdf_page_numbers=[1],
+        pdf_page_numbers=[3, 7, 8, 20],
     )
     scope = OcrPageScopeV2(
         source_page_count=46,
-        requested_page_numbers=[1],
-        processed_page_numbers=[1],
+        requested_page_numbers=[3, 7, 8, 20],
+        processed_page_numbers=[3, 7, 8, 20],
     )
 
-    assert request.model_dump(by_alias=True)["pdfPageNumbers"] == [1]
+    assert request.model_dump(by_alias=True)["pdfPageNumbers"] == [3, 7, 8, 20]
     assert scope.model_dump(by_alias=True) == {
         "sourcePageCount": 46,
-        "requestedPageNumbers": [1],
-        "processedPageNumbers": [1],
+        "requestedPageNumbers": [3, 7, 8, 20],
+        "processedPageNumbers": [3, 7, 8, 20],
     }
+    # The prefix callers already send keeps working.
+    prefix = StartCaptureV2(
+        client_request_id="capture-request-2",
+        ingestion_id="ingestion-1",
+        structuring_mode=StructuringMode.RUNTIME,
+        pdf_page_numbers=[1],
+    )
+    assert prefix.pdf_page_numbers == [1]
+    # A selection reads only some pages of a source longer than the page limit.
+    long_source = OcrPageScopeV2(
+        source_page_count=1_200,
+        requested_page_numbers=[2, 1_199],
+        processed_page_numbers=[2, 1_199],
+    )
+    assert long_source.source_page_count == 1_200
 
     legacy_request = StartCaptureV2(
         client_request_id="legacy-capture-request-1",
@@ -110,19 +125,54 @@ def test_pdf_page_scope_is_an_ordered_prefix_and_survives_wire_aliases() -> None
     assert legacy_request.pdf_page_numbers is None
     assert "pdfPageNumbers" not in legacy_request.model_dump(by_alias=True, exclude_none=True)
 
-    with pytest.raises(ValueError, match="ordered prefix"):
-        StartCaptureV2(
-            client_request_id="capture-request-1",
-            ingestion_id="ingestion-1",
-            structuring_mode=StructuringMode.RUNTIME,
-            pdf_page_numbers=[2],
-        )
     with pytest.raises(ValueError, match="processed PDF pages"):
         OcrPageScopeV2(
             source_page_count=46,
             requested_page_numbers=[1],
             processed_page_numbers=[1, 2],
         )
+    with pytest.raises(ValueError, match="must exist in the source"):
+        OcrPageScopeV2(
+            source_page_count=19,
+            requested_page_numbers=[3, 20],
+            processed_page_numbers=[3, 20],
+        )
+    with pytest.raises(ValueError, match="ascending without duplicates"):
+        OcrPageScopeV2(
+            source_page_count=46,
+            requested_page_numbers=[7, 3],
+            processed_page_numbers=[7, 3],
+        )
+
+
+@pytest.mark.parametrize(
+    "pages",
+    [[], [0], [-1], [3, 3], [7, 3], list(range(1, 502))],
+)
+def test_pdf_page_selection_rejects_pages_that_are_not_ascending_source_pages(
+    pages: list[int],
+) -> None:
+    with pytest.raises(ValueError):
+        StartCaptureV2(
+            client_request_id="capture-request-1",
+            ingestion_id="ingestion-1",
+            structuring_mode=StructuringMode.RUNTIME,
+            pdf_page_numbers=pages,
+        )
+
+
+def test_pdf_page_selection_accepts_500_pages_spread_over_a_longer_source() -> None:
+    pages = list(range(2, 1_001, 2))
+    request = StartCaptureV2.model_validate(
+        {
+            "clientRequestId": "capture-request-1",
+            "ingestionId": "ingestion-1",
+            "structuringMode": "runtime",
+            "pdfPageNumbers": pages,
+        }
+    )
+
+    assert request.pdf_page_numbers == pages
 
 
 def test_partial_capture_rejects_non_projection_text() -> None:

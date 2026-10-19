@@ -1095,9 +1095,11 @@ def _java_ocr_block(schema: dict[str, Any]) -> str:
         projection_runtime_validation,
         '      contractSha256 = ocrSha256(contractSha256, "contractSha256");',
         '      provenance = Objects.requireNonNull(provenance, "provenance");',
+        "      long previousPage = 0;",
         "      for (var index = 0; index < pages.size(); index++) {",
         "        var page = pages.get(index);",
-        '        if (page.page() != index + 1) throw new IllegalArgumentException("OCR pages must be complete and ordered from page one");',  # noqa: E501
+        '        if (page.page() <= previousPage) throw new IllegalArgumentException("OCR pages must be in ascending source page order");',  # noqa: E501
+        "        previousPage = page.page();",
         '        if (!provenance.equals(page.provenance())) throw new IllegalArgumentException("page OCR provenance must match document provenance");',  # noqa: E501
         "      }",
         "      warnings = ocrWarnings(warnings);",
@@ -1535,6 +1537,23 @@ def _invariants() -> list[dict[str, str]]:
             "description": (
                 "pre-OCR compute decisions carry API, schema, runtime, contract-set, "
                 "and exact contract digest identity."
+            ),
+        },
+        {
+            "id": "pdf-page-selection-ascending",
+            "models": "StartCaptureV2, OcrPageScopeV2",
+            "description": (
+                "pdfPageNumbers and requestedPageNumbers list one-based source pages "
+                "in ascending order without duplicates; processedPageNumbers equals "
+                "requestedPageNumbers and every page exists in the source."
+            ),
+        },
+        {
+            "id": "ocr-pages-keep-source-page-numbers",
+            "models": "CaptureOcrProjectionV3, RawCapture",
+            "description": (
+                "OCR pages and page locators carry source page numbers in ascending "
+                "order: every page of the source, or exactly the selected pdfPageNumbers."
             ),
         },
         {
