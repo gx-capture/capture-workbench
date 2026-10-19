@@ -16,8 +16,12 @@ PaddleOCR 3.7 WindowsML worker. Embedded PDF text is never read or returned.
 
 ## Interfaces
 
-- `StartCaptureV2` accepts an optional `pdfPageNumbers` ordered prefix. When it
-  is omitted, the existing all-page behavior remains unchanged. The normal
+- `StartCaptureV2` accepts optional `pdfPageNumbers`: one-based source pages in
+  ascending order without duplicates, at most 500, each within the PDF. OCR
+  pages, page locators and `ocrPageScope` keep those source page numbers. The
+  page limit counts the selected pages; a page past the end of the PDF or more
+  pages than the limit fails the capture with `invalid_pdf_page_selection`.
+  When it is omitted, the existing all-page behavior remains unchanged. The normal
   desktop app omits this field; only the feature-gated packaged Phase 1
   acceptance harness advertises `[1]` through the private native status seam.
   A missing or malformed status value is treated as omitted, so an ordinary
@@ -25,8 +29,8 @@ PaddleOCR 3.7 WindowsML worker. Embedded PDF text is never read or returned.
 - `RawCapture` carries additive `ocrPageScope` evidence with the source page
   count and the requested/processed page numbers.
 - The internal OCR worker PDF request receives `maxPages`, `renderScale`, and
-  an optional `pageNumbers` prefix; it renders only selected pages in source
-  order.
+  optional `pageNumbers` (the same selection); it renders only selected pages
+  in source order and labels each with its source page number.
 - PDF capture requires the `windowsml-ocr` runtime requirement to be ready.
 - Successful PDF extraction reports the existing `windowsml-ocr` engine and
   PaddleOCR model/device provenance.
