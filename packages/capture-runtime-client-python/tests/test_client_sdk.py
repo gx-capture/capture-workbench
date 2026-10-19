@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import tomllib
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from contextlib import contextmanager
 from copy import deepcopy
 from importlib.resources import files
@@ -38,6 +38,19 @@ SHARED_REFERENCED_INVALID_CORPUS_FIXTURE = (
     Path(__file__).resolve().parents[3]
     / "packages/capture-runtime/tests/fixtures/ocr-projection-v3-referenced-invalid-corpus.json"
 )
+SHARED_PAGE_SELECTION_FIXTURE = (
+    Path(__file__).resolve().parents[3]
+    / "packages/capture-runtime/tests/fixtures/ocr-page-selection-v3.json"
+)
+
+
+def _shared_page_selection() -> dict[str, object]:
+    fixture = json.loads(SHARED_PAGE_SELECTION_FIXTURE.read_text(encoding="utf-8"))
+    assert isinstance(fixture, dict)
+    projection = fixture["projection"]
+    projection["contractSha256"] = CAPTURE_CONTRACT_SET_SHA256
+    projection["runtimeVersion"] = CAPTURE_RUNTIME_VERSION
+    return fixture
 
 
 def _shared_perspective_payload() -> dict[str, object]:
@@ -171,23 +184,29 @@ def _transport(
     return InMemoryRuntimeTransport({**_discovery_routes(), **routes})
 
 
-def test_capture_upload_accepts_and_freezes_an_ordered_pdf_page_prefix() -> None:
+@pytest.mark.parametrize("page_numbers", [[1, 2], [2], [3, 7, 8, 20], range(2, 1001, 2)])
+def test_capture_upload_accepts_and_freezes_ascending_source_pages(
+    page_numbers: Sequence[int],
+) -> None:
     upload = CaptureUpload(
         "scan.pdf",
         b"pdf-bytes",
         "pdf",
         media_type="application/pdf",
-        pdf_page_numbers=[1, 2],
+        pdf_page_numbers=page_numbers,
     )
 
-    assert upload.pdf_page_numbers == (1, 2)
+    assert upload.pdf_page_numbers == tuple(page_numbers)
 
 
-@pytest.mark.parametrize("page_numbers", [(), (2,), (1, 3)])
-def test_capture_upload_rejects_non_prefix_pdf_page_numbers(
-    page_numbers: tuple[int, ...],
+@pytest.mark.parametrize(
+    "page_numbers",
+    [(), (0,), (3, 3), (7, 3), (True,), (1.0,), "12", tuple(range(1, 502))],
+)
+def test_capture_upload_rejects_pages_that_are_not_ascending_source_pages(
+    page_numbers: Sequence[int],
 ) -> None:
-    with pytest.raises(ValueError, match="ordered prefix|1 to 500"):
+    with pytest.raises(ValueError, match="ascending order without duplicates|1 to 500"):
         CaptureUpload(
             "scan.pdf",
             b"pdf-bytes",
@@ -197,7 +216,7 @@ def test_capture_upload_rejects_non_prefix_pdf_page_numbers(
         )
 
 
-def test_start_capture_sends_ordered_pdf_page_prefix() -> None:
+def test_start_capture_sends_a_non_contiguous_pdf_page_selection() -> None:
     content = b"pdf-bytes"
     digest = hashlib.sha256(content).hexdigest()
 
@@ -232,7 +251,7 @@ def test_start_capture_sends_ordered_pdf_page_prefix() -> None:
 
     def start(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content)
-        assert payload["pdfPageNumbers"] == [1]
+        assert payload["pdfPageNumbers"] == [3, 7, 8, 20]
         assert payload["structuringMode"] == "runtime"
         return httpx.Response(
             202,
@@ -279,7 +298,7 @@ def test_start_capture_sends_ordered_pdf_page_prefix() -> None:
             content,
             "pdf",
             media_type="application/pdf",
-            pdf_page_numbers=(1,),
+            pdf_page_numbers=(3, 7, 8, 20),
         ),
         client_request_id="request-page-1",
     )
@@ -810,6 +829,45 @@ def test_shared_referenced_invalid_corpus_has_python_parity_with_typescript_and_
         _apply_referenced_invalid_mutation(base, invalid)
         with pytest.raises(ValidationError):
             CaptureOcrProjection.model_validate(base)
+
+
+def test_shared_page_selection_keeps_source_page_numbers_like_typescript_and_java() -> None:
+    fixture = _shared_page_selection()
+    transport = _transport(
+        {
+            ("GET", "/v2/captures/cap/ocr"): lambda request: httpx.Response(
+                200, json=fixture["projection"], request=request
+            )
+        }
+    )
+
+    result = CaptureRuntimeClient(transport=transport).get_ocr("cap")
+    upload = CaptureUpload(
+        "selected-pages.pdf",
+        b"pdf-bytes",
+        "pdf",
+        media_type="application/pdf",
+        pdf_page_numbers=fixture["pdfPageNumbers"],  # type: ignore[arg-type]
+    )
+
+    assert result.page_count == 4
+    assert [page.page for page in result.pages] == [3, 7, 8, 20]
+    assert upload.pdf_page_numbers == (3, 7, 8, 20)
+    for pages in fixture["invalidPdfPageNumbers"]:  # type: ignore[attr-defined]
+        with pytest.raises(ValueError, match="ascending order without duplicates|1 to 500"):
+            CaptureUpload(
+                "selected-pages.pdf",
+                b"pdf-bytes",
+                "pdf",
+                media_type="application/pdf",
+                pdf_page_numbers=pages,
+            )
+    for order in fixture["invalidProjectionPageOrders"]:  # type: ignore[attr-defined]
+        projection = deepcopy(fixture["projection"])
+        for page, number in zip(projection["pages"], order, strict=True):  # type: ignore[index]
+            page["page"] = number
+        with pytest.raises(ValidationError, match="ascending source page order"):
+            CaptureOcrProjection.model_validate(projection)
 
 
 def test_loopback_validation_rejects_remote_or_credentials() -> None:

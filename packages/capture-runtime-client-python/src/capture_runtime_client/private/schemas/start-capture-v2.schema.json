@@ -52,6 +52,7 @@
       "anyOf": [
         {
           "items": {
+            "minimum": 1,
             "type": "integer"
           },
           "maxItems": 500,
@@ -63,6 +64,7 @@
         }
       ],
       "default": null,
+      "description": "PDF only: the source pages to read, one-based, ascending and without duplicates, for example [3, 7, 8, 20]. OCR results keep these page numbers. Omit it to read every page.",
       "title": "Pdfpagenumbers"
     },
     "identifySpeakers": {

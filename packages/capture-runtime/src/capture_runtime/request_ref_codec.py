@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Final, Literal, NoReturn, cast
 
 from capture_runtime.contracts import CaptureSourceKind, StructuringMode
+from capture_runtime.pdf_page_selection import is_ascending_page_numbers
 
 MAX_METADATA_BYTES: Final = 64 * 1024
 MAX_FILE_NAME_LENGTH: Final = 255
@@ -363,12 +364,11 @@ def _pdf_page_numbers(value: object) -> tuple[int, ...] | None:
     if type(value) is not list or not 1 <= len(value) <= MAX_PDF_PAGE_NUMBERS:
         _fail("pdf_page_numbers")
     values = cast(list[object], value)
-    if any(type(page) is not int or page < 1 for page in values):
+    # Source pages in ascending order without duplicates; one canonical order
+    # keeps one request digest for one selection.
+    if not is_ascending_page_numbers(values):
         _fail("pdf_page_numbers")
-    pages = tuple(cast(int, page) for page in values)
-    if pages != tuple(range(1, len(pages) + 1)):
-        _fail("pdf_page_numbers")
-    return pages
+    return tuple(cast(int, page) for page in values)
 
 
 def _canonical_mapping(metadata: StartCaptureByRequestRefMetadata) -> dict[str, object]:

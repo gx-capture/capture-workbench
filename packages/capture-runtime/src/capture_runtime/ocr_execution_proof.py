@@ -24,6 +24,7 @@ from capture_runtime.ocr_preflight import (
     OcrSelectedDeviceIdentityV1,
     OcrSelectionDeviceProofV1,
 )
+from capture_runtime.pdf_page_selection import is_pdf_page_selection
 from capture_runtime.worker_process import WorkerFailureDiagnostics
 
 if TYPE_CHECKING:
@@ -180,13 +181,8 @@ class OcrExecutionProofContextV1:
             _require_sha(getattr(self, field), field)
         _require_identity_label(self.profile_id)
         scope = self.requested_page_scope
-        if scope is not None:
-            if not isinstance(scope, tuple) or not scope or len(scope) > 500:
-                raise ValueError("requested page scope is invalid")
-            if scope != tuple(range(1, len(scope) + 1)):
-                raise ValueError("requested page scope must be an ordered prefix")
-            if any(isinstance(page, bool) or not isinstance(page, int) for page in scope):
-                raise ValueError("requested page scope is invalid")
+        if scope is not None and (not isinstance(scope, tuple) or not is_pdf_page_selection(scope)):
+            raise ValueError("requested page scope must be ascending source pages")
 
 
 @dataclass(frozen=True, slots=True)
@@ -253,13 +249,8 @@ class OcrExecutionDeviceProofV1:
         if sum(item.dml_node_count for item in self.session_device_proofs) != self.dml_node_count:
             raise ValueError("execution proof aggregate node count is invalid")
         scope = self.requested_page_scope
-        if scope is not None:
-            if not isinstance(scope, tuple) or not scope or len(scope) > 500:
-                raise ValueError("requested page scope is invalid")
-            if scope != tuple(range(1, len(scope) + 1)):
-                raise ValueError("requested page scope must be an ordered prefix")
-            if any(isinstance(page, bool) or not isinstance(page, int) for page in scope):
-                raise ValueError("requested page scope is invalid")
+        if scope is not None and (not isinstance(scope, tuple) or not is_pdf_page_selection(scope)):
+            raise ValueError("requested page scope must be ascending source pages")
 
     @property
     def plan_sha256(self) -> str:

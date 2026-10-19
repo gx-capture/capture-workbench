@@ -702,23 +702,35 @@ def _safe_id(value: str) -> str:
     return value
 
 
+_PDF_PAGE_SELECTION_ERROR = (
+    "pdf_page_numbers must list source pages in ascending order without duplicates"
+)
+
+
 def _normalize_pdf_page_numbers(
     value: Sequence[int] | None,
 ) -> tuple[int, ...] | None:
+    """Freeze an optional PDF page selection: one-based source pages, ascending.
+
+    ``(3, 7, 8, 20)`` reads those four pages; OCR pages and page locators keep
+    the same numbers. A prefix such as ``(1,)`` is the same rule.
+    """
+
     if value is None:
         return None
     if isinstance(value, (str, bytes, bytearray)):
-        raise ValueError("pdf_page_numbers must be an ordered prefix from page one")
+        raise ValueError(_PDF_PAGE_SELECTION_ERROR)
     try:
         normalized = tuple(value)
     except TypeError as error:
-        raise ValueError("pdf_page_numbers must be an ordered prefix from page one") from error
+        raise ValueError(_PDF_PAGE_SELECTION_ERROR) from error
     if not 1 <= len(normalized) <= 500:
         raise ValueError("pdf_page_numbers must contain 1 to 500 pages")
-    if any(type(page_number) is not int or page_number < 1 for page_number in normalized):
-        raise ValueError("pdf_page_numbers must be an ordered prefix from page one")
-    if normalized != tuple(range(1, len(normalized) + 1)):
-        raise ValueError("pdf_page_numbers must be an ordered prefix from page one")
+    previous = 0
+    for page_number in normalized:
+        if type(page_number) is not int or page_number <= previous:
+            raise ValueError(_PDF_PAGE_SELECTION_ERROR)
+        previous = page_number
     return normalized
 
 

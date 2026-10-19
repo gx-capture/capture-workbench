@@ -503,7 +503,7 @@ def _parse_ocr_page(value: object, *, expected_page: int) -> WorkerOcrPage:
     }:
         raise WorkerResultError("worker OCR page has unexpected fields")
     if raw_page["page"] != expected_page:
-        raise WorkerResultError("worker OCR page order must be contiguous")
+        raise WorkerResultError("worker OCR page order must be ascending")
     status = raw_page["status"]
     if status not in {"recognized", "empty", "failed"}:
         raise WorkerResultError("worker OCR page status is invalid")
@@ -676,14 +676,31 @@ def _parse_ocr_page(value: object, *, expected_page: int) -> WorkerOcrPage:
     )
 
 
+def _next_page_number(raw_page: object, previous_page: int) -> int:
+    """The page number a worker page may carry: any source page after the last.
+
+    Pages carry source page numbers, so a selection such as ``[3, 7]`` arrives
+    as pages 3 and 7. A number that does not ascend is rejected by the parser.
+    """
+
+    page = raw_page.get("page") if isinstance(raw_page, dict) else None
+    if type(page) is int and page > previous_page:
+        return page
+    return previous_page + 1
+
+
 def _parse_ocr_pages(value: object) -> tuple[WorkerOcrPage, ...]:
     if value is None:
         return ()
     if not isinstance(value, list) or len(value) > 500:
         raise WorkerResultError("worker OCR pages must be a bounded list")
-    return tuple(
-        _parse_ocr_page(value, expected_page=index) for index, value in enumerate(value, 1)
-    )
+    pages: list[WorkerOcrPage] = []
+    previous_page = 0
+    for raw_page in value:
+        page = _parse_ocr_page(raw_page, expected_page=_next_page_number(raw_page, previous_page))
+        pages.append(page)
+        previous_page = page.page
+    return tuple(pages)
 
 
 def parse_ocr_progress(payloads: list[dict[str, object]]) -> WorkerOcrProgress | None:
@@ -711,17 +728,20 @@ def parse_ocr_progress(payloads: list[dict[str, object]]) -> WorkerOcrProgress |
     ):
         raise WorkerResultError("OCR progress page manifest is invalid")
     manifest: list[WorkerOcrPage] = []
-    for expected_page, raw_item in enumerate(raw_manifest, 1):
+    previous_page = 0
+    for raw_item in raw_manifest:
         if not isinstance(raw_item, dict) or set(raw_item) != {"page", "raster"}:
             raise WorkerResultError("OCR progress page manifest entry is invalid")
         raw_page = raw_item["page"]
         raw_raster = raw_item["raster"]
         if (
-            raw_page != expected_page
+            type(raw_page) is not int
+            or raw_page <= previous_page
             or not isinstance(raw_raster, dict)
             or set(raw_raster) != {"width", "height", "scale", "coordinateSystem"}
         ):
             raise WorkerResultError("OCR progress page manifest entry is invalid")
+        expected_page = previous_page = raw_page
         page_payload = {
             "page": expected_page,
             "status": "empty",
@@ -733,6 +753,7 @@ def parse_ocr_progress(payloads: list[dict[str, object]]) -> WorkerOcrProgress |
             "failure": None,
         }
         manifest.append(_parse_ocr_page(page_payload, expected_page=expected_page))
+    manifest_pages = {item.page for item in manifest}
     pages: list[WorkerOcrPage] = []
     seen: set[int] = set()
     for payload in payloads[1:]:
@@ -742,7 +763,7 @@ def parse_ocr_progress(payloads: list[dict[str, object]]) -> WorkerOcrProgress |
         if not isinstance(raw_page, dict):
             raise WorkerResultError("OCR progress page frame is invalid")
         page = raw_page.get("page")
-        if not isinstance(page, int) or isinstance(page, bool) or not 1 <= page <= page_count:
+        if type(page) is not int or page not in manifest_pages:
             raise WorkerResultError("OCR progress page number is invalid")
         if page in seen:
             raise WorkerResultError("OCR progress contains a duplicate page")
@@ -1154,8 +1175,8 @@ def _progress_prefix(
 
 def _consecutive_progress_prefix(progress: WorkerOcrProgress) -> WorkerOcrProgress:
     count = 0
-    for expected_page, page in enumerate(progress.pages, 1):
-        if page.page != expected_page:
+    for expected, page in zip(progress.page_manifest, progress.pages, strict=False):
+        if page.page != expected.page:
             break
         count += 1
     return _progress_prefix(progress, count)
@@ -1188,7 +1209,7 @@ def _assert_ocr_progress_matches_final(
 
     comparable_pages = min(progress.page_count, len(progress.pages), len(result.pages))
     for index in range(comparable_pages):
-        expected_page = index + 1
+        expected_page = progress.page_manifest[index].page
         progress_page = progress.pages[index]
         final_page = result.pages[index]
         if progress_page.page != expected_page or final_page.page != expected_page:

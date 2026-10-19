@@ -7,6 +7,7 @@ from __future__ import annotations
 import math
 from datetime import datetime
 from enum import StrEnum
+from itertools import pairwise
 from typing import Annotated, Any, Final, Literal, Self
 
 from pydantic import (
@@ -44,6 +45,15 @@ RuntimeVersionText = Annotated[
 ]
 SpeakerLabel = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_]{1,32}$")]
 SpeakerName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
+# A one-based page number of the source PDF. OCR pages, page locators and page
+# selections all use it, so a selected page keeps its number in every result.
+PdfPageNumber = Annotated[int, Field(ge=1)]
+
+
+def _ascending_page_numbers(values: list[int]) -> bool:
+    """Each page number is greater than the one before: sorted, without duplicates."""
+
+    return all(earlier < later for earlier, later in pairwise(values))
 
 
 class StrictModel(BaseModel):
@@ -328,17 +338,20 @@ class CaptureSpeaker(StrictModel):
 
 
 class OcrPageScopeV2(StrictModel):
-    """Public evidence describing which PDF pages entered OCR."""
+    """Public evidence describing which PDF pages entered OCR.
 
-    source_page_count: int = Field(ge=1, le=500)
-    requested_page_numbers: list[int] = Field(min_length=1, max_length=500)
-    processed_page_numbers: list[int] = Field(min_length=1, max_length=500)
+    Page numbers are the source PDF's, in ascending order. A selection may
+    leave pages out, so the source can have more pages than were read.
+    """
+
+    source_page_count: int = Field(ge=1)
+    requested_page_numbers: list[PdfPageNumber] = Field(min_length=1, max_length=500)
+    processed_page_numbers: list[PdfPageNumber] = Field(min_length=1, max_length=500)
 
     @model_validator(mode="after")
     def validate_page_scope(self) -> Self:
-        expected = list(range(1, len(self.requested_page_numbers) + 1))
-        if self.requested_page_numbers != expected:
-            raise ValueError("requested PDF pages must be an ordered prefix from page one")
+        if not _ascending_page_numbers(self.requested_page_numbers):
+            raise ValueError("requested PDF pages must be ascending without duplicates")
         if self.requested_page_numbers[-1] > self.source_page_count:
             raise ValueError("requested PDF pages must exist in the source")
         if self.processed_page_numbers != self.requested_page_numbers:
@@ -645,7 +658,16 @@ class StartCaptureV2(StrictModel):
     structuring_mode: StructuringMode
     target_language: str | None = None
     start_policy: Literal["eager"] = "eager"
-    pdf_page_numbers: list[int] | None = Field(default=None, min_length=1, max_length=500)
+    pdf_page_numbers: list[PdfPageNumber] | None = Field(
+        default=None,
+        min_length=1,
+        max_length=500,
+        description=(
+            "PDF only: the source pages to read, one-based, ascending and without "
+            "duplicates, for example [3, 7, 8, 20]. OCR results keep these page "
+            "numbers. Omit it to read every page."
+        ),
+    )
     # Audio only: label who speaks each segment. Needs the speaker-diarization
     # unit, and the capture reports no partial transcript while it runs.
     identify_speakers: bool = False
@@ -660,10 +682,8 @@ class StartCaptureV2(StrictModel):
     @field_validator("pdf_page_numbers")
     @classmethod
     def validate_pdf_page_numbers(cls, value: list[int] | None) -> list[int] | None:
-        if value is None:
-            return None
-        if value != list(range(1, len(value) + 1)):
-            raise ValueError("pdfPageNumbers must be an ordered prefix from page one")
+        if value is not None and not _ascending_page_numbers(value):
+            raise ValueError("pdfPageNumbers must be ascending without duplicates")
         return value
 
 
@@ -898,6 +918,12 @@ class OcrPageProjectionV3(StrictModel):
 
 
 class CaptureOcrProjectionV3(StrictModel):
+    """The page-addressable OCR result of a capture.
+
+    Each page carries its source page number, in ascending order: every page of
+    the source, or exactly the pages the capture's pdfPageNumbers selected.
+    """
+
     api_version: Literal["2.0"]
     schema_version: Literal["3"]
     capture_id: NonEmptyString
@@ -922,8 +948,8 @@ class CaptureOcrProjectionV3(StrictModel):
     def validate_projection(self) -> Self:
         if self.page_count != len(self.pages):
             raise ValueError("pageCount must equal the number of OCR pages")
-        if [page.page for page in self.pages] != list(range(1, len(self.pages) + 1)):
-            raise ValueError("OCR pages must be complete and ordered from page one")
+        if not _ascending_page_numbers([page.page for page in self.pages]):
+            raise ValueError("OCR pages must be in ascending source page order")
         if self.status is OcrProjectionStatus.COMPLETED:
             if not self.pages or self.failure is not None or self.source is None:
                 raise ValueError(

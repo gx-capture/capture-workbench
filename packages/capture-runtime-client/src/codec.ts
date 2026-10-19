@@ -255,16 +255,20 @@ function validateCaptureOcrProjection(record: Record<string, unknown>): void {
     );
   }
   const pageProjections: Record<string, unknown>[] = [];
-  pages.forEach((value, index) => {
+  // Pages carry source page numbers: every page of the source, or the
+  // selected pdfPageNumbers, in ascending order.
+  let previousPage = 0;
+  for (const value of pages) {
     const page = asRecord(value, 'OCR page projection');
-    if (page['page'] !== index + 1) {
+    validateOcrPage(page, provenance);
+    if ((page['page'] as number) <= previousPage) {
       throw new CaptureRuntimeProtocolError(
-        'Capture Runtime OCR pages must be complete and ordered from page one.',
+        'Capture Runtime OCR pages must be in ascending source page order.',
       );
     }
-    validateOcrPage(page, provenance);
+    previousPage = page['page'] as number;
     pageProjections.push(page);
-  });
+  }
 
   if (record['status'] === 'completed') {
     if (

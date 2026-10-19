@@ -1,0 +1,254 @@
+{
+  "description": "Shared golden case for a non-contiguous PDF page selection: pages 3, 7, 8 and 20 of a 46-page source. Every SDK accepts it with the source page numbers intact and rejects the invalid cases. Tests replace contractSha256 and runtimeVersion.",
+  "pdfPageNumbers": [
+    3,
+    7,
+    8,
+    20
+  ],
+  "ocrPageScope": {
+    "sourcePageCount": 46,
+    "requestedPageNumbers": [
+      3,
+      7,
+      8,
+      20
+    ],
+    "processedPageNumbers": [
+      3,
+      7,
+      8,
+      20
+    ]
+  },
+  "projection": {
+    "apiVersion": "2.0",
+    "schemaVersion": "3",
+    "captureId": "selected-pages-capture",
+    "status": "completed",
+    "source": {
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "fileName": "selected-pages.pdf",
+      "mediaType": "application/pdf",
+      "bytes": 4096
+    },
+    "pages": [
+      {
+        "page": 3,
+        "status": "recognized",
+        "raster": {
+          "width": 120,
+          "height": 80,
+          "scale": 1.0,
+          "coordinateSystem": "pixel"
+        },
+        "text": "Source page 3",
+        "boxes": [
+          {
+            "polygon": [
+              {
+                "x": 10.0,
+                "y": 10.0
+              },
+              {
+                "x": 110.0,
+                "y": 10.0
+              },
+              {
+                "x": 110.0,
+                "y": 30.0
+              },
+              {
+                "x": 10.0,
+                "y": 30.0
+              }
+            ],
+            "text": "Source page 3",
+            "confidence": 0.9
+          }
+        ],
+        "confidence": 0.9,
+        "provenance": {
+          "status": "resolved",
+          "engine": "windowsml-ocr",
+          "model": "pp-ocrv6-medium-windowsml",
+          "modelDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "device": "windowsml-dml",
+          "profileId": "capture-workbench-ocr-pipeline-v1",
+          "profileSpecSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        },
+        "failure": null
+      },
+      {
+        "page": 7,
+        "status": "recognized",
+        "raster": {
+          "width": 120,
+          "height": 80,
+          "scale": 1.0,
+          "coordinateSystem": "pixel"
+        },
+        "text": "Source page 7",
+        "boxes": [
+          {
+            "polygon": [
+              {
+                "x": 10.0,
+                "y": 10.0
+              },
+              {
+                "x": 110.0,
+                "y": 10.0
+              },
+              {
+                "x": 110.0,
+                "y": 30.0
+              },
+              {
+                "x": 10.0,
+                "y": 30.0
+              }
+            ],
+            "text": "Source page 7",
+            "confidence": 0.9
+          }
+        ],
+        "confidence": 0.9,
+        "provenance": {
+          "status": "resolved",
+          "engine": "windowsml-ocr",
+          "model": "pp-ocrv6-medium-windowsml",
+          "modelDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "device": "windowsml-dml",
+          "profileId": "capture-workbench-ocr-pipeline-v1",
+          "profileSpecSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        },
+        "failure": null
+      },
+      {
+        "page": 8,
+        "status": "empty",
+        "raster": {
+          "width": 120,
+          "height": 80,
+          "scale": 1.0,
+          "coordinateSystem": "pixel"
+        },
+        "text": "",
+        "boxes": [],
+        "confidence": null,
+        "provenance": {
+          "status": "resolved",
+          "engine": "windowsml-ocr",
+          "model": "pp-ocrv6-medium-windowsml",
+          "modelDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "device": "windowsml-dml",
+          "profileId": "capture-workbench-ocr-pipeline-v1",
+          "profileSpecSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        },
+        "failure": null
+      },
+      {
+        "page": 20,
+        "status": "recognized",
+        "raster": {
+          "width": 120,
+          "height": 80,
+          "scale": 1.0,
+          "coordinateSystem": "pixel"
+        },
+        "text": "Source page 20",
+        "boxes": [
+          {
+            "polygon": [
+              {
+                "x": 10.0,
+                "y": 10.0
+              },
+              {
+                "x": 110.0,
+                "y": 10.0
+              },
+              {
+                "x": 110.0,
+                "y": 30.0
+              },
+              {
+                "x": 10.0,
+                "y": 30.0
+              }
+            ],
+            "text": "Source page 20",
+            "confidence": 0.9
+          }
+        ],
+        "confidence": 0.9,
+        "provenance": {
+          "status": "resolved",
+          "engine": "windowsml-ocr",
+          "model": "pp-ocrv6-medium-windowsml",
+          "modelDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "device": "windowsml-dml",
+          "profileId": "capture-workbench-ocr-pipeline-v1",
+          "profileSpecSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        },
+        "failure": null
+      }
+    ],
+    "pageCount": 4,
+    "runtimeVersion": "0.0.0",
+    "contractSha256": "__CONTRACT_SET_SHA256__",
+    "provenance": {
+      "status": "resolved",
+      "engine": "windowsml-ocr",
+      "model": "pp-ocrv6-medium-windowsml",
+      "modelDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "device": "windowsml-dml",
+      "profileId": "capture-workbench-ocr-pipeline-v1",
+      "profileSpecSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    "warnings": [],
+    "failure": null,
+    "createdAt": "2026-10-19T00:00:00Z"
+  },
+  "invalidPdfPageNumbers": [
+    [],
+    [
+      0
+    ],
+    [
+      3,
+      3
+    ],
+    [
+      7,
+      3
+    ],
+    [
+      3,
+      7,
+      7,
+      20
+    ]
+  ],
+  "invalidProjectionPageOrders": [
+    [
+      7,
+      3,
+      8,
+      20
+    ],
+    [
+      3,
+      3,
+      8,
+      20
+    ],
+    [
+      3,
+      7,
+      20,
+      8
+    ]
+  ]
+}

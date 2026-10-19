@@ -349,6 +349,85 @@ def test_ocr_progress_keeps_typed_failed_page_after_resolved_header() -> None:
     assert progress.pages[0].failure.code == "ocr_page_failed"
 
 
+def _source_page(page: int) -> dict[str, object]:
+    return {
+        **_recognized_worker_page(boxes=[], region_confidences=[]),
+        "page": page,
+        "text": f"source page {page}",
+    }
+
+
+def _source_page_header(pages: list[int]) -> dict[str, object]:
+    return {
+        "type": "ocr-header",
+        "pageCount": len(pages),
+        "provenance": _resolved_test_provenance().model_dump(mode="json", by_alias=True),
+        "pages": [
+            {
+                "page": page,
+                "raster": {"width": 120, "height": 80, "scale": 1, "coordinateSystem": "pixel"},
+            }
+            for page in pages
+        ],
+    }
+
+
+def test_worker_result_and_progress_parsers_keep_source_page_numbers() -> None:
+    selection = [3, 7, 8, 20]
+    result = parse_run_result(
+        {
+            **_worker_page_result(_source_page(3)),
+            "segments": [
+                {
+                    "order": index,
+                    "text": f"source page {page}",
+                    "page": page,
+                    "startMs": None,
+                    "endMs": None,
+                }
+                for index, page in enumerate(selection)
+            ],
+            "pages": [_source_page(page) for page in selection],
+        }
+    )
+    progress = parse_ocr_progress(
+        [
+            _source_page_header(selection),
+            *({"type": "ocr-page", "page": _source_page(page)} for page in selection[:2]),
+        ]
+    )
+
+    assert [page.page for page in result.pages] == selection
+    assert [segment.page for segment in result.segments] == selection
+    assert progress is not None
+    assert progress.page_count == 4
+    assert [page.page for page in progress.page_manifest] == selection
+    assert [page.page for page in progress.pages] == [3, 7]
+
+
+@pytest.mark.parametrize("pages", [[7, 3], [3, 3], [0, 3]])
+def test_worker_result_parser_rejects_pages_that_do_not_ascend(pages: list[int]) -> None:
+    with pytest.raises(WorkerResultError, match="page order must be ascending"):
+        parse_run_result(
+            {
+                **_worker_page_result(_source_page(3), include_segment=False),
+                "pages": [_source_page(page) for page in pages],
+            }
+        )
+
+
+def test_ocr_progress_rejects_a_manifest_that_does_not_ascend() -> None:
+    with pytest.raises(WorkerResultError, match="manifest entry is invalid"):
+        parse_ocr_progress([_source_page_header([7, 3])])
+
+
+def test_ocr_progress_rejects_a_page_outside_the_selection() -> None:
+    with pytest.raises(WorkerResultError, match="progress page number is invalid"):
+        parse_ocr_progress(
+            [_source_page_header([3, 7]), {"type": "ocr-page", "page": _source_page(2)}]
+        )
+
+
 def test_worker_result_parser_preserves_canonical_polygon_wire_shape() -> None:
     polygon = [
         {"x": 11.25, "y": 20.5},
@@ -1578,6 +1657,96 @@ def test_ocr_pdf_page_stream_rasterizes_only_requested_pages(
     assert images == [(1, b"page-one-png")]
 
 
+def _counting_pdf_document(page_count: int, accessed_pages: list[int]) -> object:
+    class TestImage:
+        def convert(self, _mode: str) -> TestImage:
+            return self
+
+        def save(self, output: BytesIO, format: str) -> None:
+            assert format == "PNG"
+            output.write(f"page-{accessed_pages[-1] + 1}-png".encode())
+
+    class TestBitmap:
+        def to_pil(self) -> TestImage:
+            return TestImage()
+
+        def close(self) -> None:
+            pass
+
+    class TestPage:
+        def render(self, *, scale: float) -> TestBitmap:
+            return TestBitmap()
+
+    class TestDocument:
+        def __len__(self) -> int:
+            return page_count
+
+        def __getitem__(self, index: int) -> TestPage:
+            accessed_pages.append(index)
+            return TestPage()
+
+        def close(self) -> None:
+            pass
+
+    return TestDocument()
+
+
+def test_ocr_pdf_page_stream_rasterizes_a_selection_from_a_source_past_the_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    accessed_pages: list[int] = []
+    monkeypatch.setattr(
+        ocr_main.pdfium,
+        "PdfDocument",
+        lambda _source: _counting_pdf_document(46, accessed_pages),
+    )
+
+    images = list(
+        ocr_main._pdf_page_images(
+            tmp_path / "source.pdf",
+            4,
+            2,
+            Event(),
+            page_numbers=(3, 7, 8, 20),
+        )
+    )
+
+    assert accessed_pages == [2, 6, 7, 19]
+    assert images == [(page, f"page-{page}-png".encode()) for page in (3, 7, 8, 20)]
+
+
+@pytest.mark.parametrize(
+    "page_numbers",
+    [
+        (3, 47),  # past the end of the source
+        (1, 2, 3, 4, 5),  # more pages than the limit of 4
+        (7, 3),  # not ascending
+    ],
+)
+def test_ocr_pdf_page_stream_rejects_a_selection_it_cannot_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, page_numbers: tuple[int, ...]
+) -> None:
+    accessed_pages: list[int] = []
+    monkeypatch.setattr(
+        ocr_main.pdfium,
+        "PdfDocument",
+        lambda _source: _counting_pdf_document(46, accessed_pages),
+    )
+
+    with pytest.raises(ValueError, match="OCR PDF page selection must name ascending pages"):
+        list(
+            ocr_main._pdf_page_images(
+                tmp_path / "source.pdf",
+                4,
+                2,
+                Event(),
+                page_numbers=page_numbers,
+            )
+        )
+
+    assert accessed_pages == []
+
+
 def test_ocr_pdf_page_stream_without_selection_rasterizes_every_page(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1629,6 +1798,7 @@ def test_ocr_pdf_page_stream_without_selection_rasterizes_every_page(
         ("application/pdf", None, 2, None),
         ("application/pdf", [1], 2, (1,)),
         ("application/pdf", [1, 2], 2, (1, 2)),
+        ("application/pdf", [2, 4], 5, (2, 4)),
     ],
 )
 def test_ocr_worker_passes_requested_page_scope_from_explicit_worker_options(
@@ -1660,7 +1830,7 @@ def test_ocr_worker_passes_requested_page_scope_from_explicit_worker_options(
     else:
         Image.new("RGB", (1, 1), "white").save(source, format="PNG")
 
-    manifest_count = len(page_numbers) if page_numbers is not None else page_count
+    manifest_pages = page_numbers if page_numbers is not None else range(1, page_count + 1)
     manifest = [
         {
             "page": page,
@@ -1671,7 +1841,7 @@ def test_ocr_worker_passes_requested_page_scope_from_explicit_worker_options(
                 "coordinateSystem": "pixel",
             },
         }
-        for page in range(1, manifest_count + 1)
+        for page in manifest_pages
     ]
     options: dict[str, object] = {
         "computePlan": _gpu_plan_dict(),
@@ -1725,8 +1895,132 @@ def test_ocr_worker_passes_requested_page_scope_from_explicit_worker_options(
         Event(),
     )
 
-    assert result["pages"]
+    assert [page["page"] for page in result["pages"]] == list(manifest_pages)
     assert captured_scopes == [expected_scope]
+
+
+def test_ocr_worker_keeps_source_page_numbers_of_a_non_contiguous_selection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pages 3, 7, 8 and 20 of a 46-page source come back as pages 3, 7, 8 and 20."""
+
+    model_path = tmp_path / "model"
+    model_path.mkdir()
+    source = tmp_path / "source.pdf"
+    source.write_bytes(b"public test fixture")
+    selection = [3, 7, 8, 20]
+    rendered: list[tuple[int, ...] | None] = []
+
+    def page_images(
+        _source: Path,
+        max_pages: int,
+        _scale: float,
+        _cancellation: Event,
+        *,
+        page_numbers: tuple[int, ...] | None = None,
+    ) -> Iterator[tuple[int, bytes]]:
+        # The limit bounds the selected pages, not the 46 pages of the source.
+        assert max_pages == 4
+        rendered.append(page_numbers)
+        return iter((page, f"page-{page}".encode()) for page in page_numbers or ())
+
+    monkeypatch.setattr(ocr_main, "_pdf_page_images", page_images)
+
+    class PageTextAdapter:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def extract_png(self, image: bytes) -> OcrTextResult:
+            return OcrTextResult(
+                text=f"text of {image.decode()}",
+                model="test-model",
+                digest="1" * 64,
+                device="windowsml-dml",
+                warning=None,
+                raster_width=1,
+                raster_height=1,
+                provenance=_resolved_test_provenance(),
+            )
+
+    monkeypatch.setattr(ocr_main, "WindowsMLOcrAdapter", PageTextAdapter)
+
+    result = ocr_main.handle(
+        WorkerRequest(
+            request_id="ocr-non-contiguous-selection-test",
+            operation="run",
+            payload={
+                "requirementId": "windowsml-ocr",
+                "artifactVersion": RUNTIME_VERSION,
+                "modelPath": str(model_path),
+                "sourcePath": str(source),
+                "mediaType": "application/pdf",
+                "options": {
+                    "computePlan": _gpu_plan_dict(),
+                    "maxPages": 4,
+                    "renderScale": 1,
+                    "pageNumbers": selection,
+                    "pageManifest": [
+                        {
+                            "page": page,
+                            "raster": {
+                                "width": 1,
+                                "height": 1,
+                                "scale": 1,
+                                "coordinateSystem": "pixel",
+                            },
+                        }
+                        for page in selection
+                    ],
+                },
+            },
+        ),
+        Event(),
+    )
+
+    assert rendered == [tuple(selection)]
+    assert [page["page"] for page in result["pages"]] == selection
+    assert [(segment["page"], segment["text"]) for segment in result["segments"]] == [
+        (page, f"text of page-{page}") for page in selection
+    ]
+
+
+def test_ocr_worker_rejects_a_manifest_that_is_not_ascending(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_path = tmp_path / "model"
+    model_path.mkdir()
+    source = tmp_path / "source.pdf"
+    source.write_bytes(b"public test fixture")
+    monkeypatch.setattr(ocr_main, "WindowsMLOcrAdapter", None)
+    raster = {"width": 1, "height": 1, "scale": 1, "coordinateSystem": "pixel"}
+
+    with pytest.raises(ValueError, match="OCR page manifest is not ordered"):
+        ocr_main.handle(
+            WorkerRequest(
+                request_id="ocr-unordered-manifest-test",
+                operation="run",
+                payload={
+                    "requirementId": "windowsml-ocr",
+                    "artifactVersion": RUNTIME_VERSION,
+                    "modelPath": str(model_path),
+                    "sourcePath": str(source),
+                    "mediaType": "application/pdf",
+                    "options": {
+                        "computePlan": _gpu_plan_dict(),
+                        "maxPages": 4,
+                        "renderScale": 1,
+                        "pageNumbers": [3, 7],
+                        "pageManifest": [
+                            {"page": 7, "raster": raster},
+                            {"page": 3, "raster": raster},
+                        ],
+                    },
+                },
+            ),
+            Event(),
+        )
 
 
 def test_ocr_worker_records_requested_scope_before_selection_manifest_mismatch(
@@ -1820,7 +2114,7 @@ def test_ocr_worker_records_requested_scope_before_selection_manifest_mismatch(
     assert captured_scopes == [(1,)]
 
 
-@pytest.mark.parametrize("page_numbers", [[2], [1, 3]])
+@pytest.mark.parametrize("page_numbers", [[], [0], [1, 1], [3, 1], [True], "1"])
 def test_ocr_worker_rejects_invalid_page_numbers_before_adapter_construction(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import hashlib
 import json
 import threading
@@ -327,6 +328,21 @@ def _start_pdf_capture(
     page_numbers: list[int] | None = None,
     structuring_mode: str = "host",
 ) -> str:
+    started = client.post(
+        "/v2/captures",
+        json={
+            "clientRequestId": f"{prefix}-capture",
+            "ingestionId": _finalized_pdf_ingestion(client, source, prefix),
+            "structuringMode": structuring_mode,
+            **({"pdfPageNumbers": page_numbers} if page_numbers is not None else {}),
+        },
+        headers={"X-Idempotency-Key": f"{prefix}-capture"},
+    )
+    assert started.status_code == 202, started.text
+    return started.json()["captureId"]
+
+
+def _finalized_pdf_ingestion(client: TestClient, source: bytes, prefix: str) -> str:
     digest = hashlib.sha256(source).hexdigest()
     opened = client.post(
         "/v2/ingestions",
@@ -357,18 +373,7 @@ def _start_pdf_capture(
         json={"totalBytes": len(source), "sha256": digest},
     )
     assert finalized.status_code == 200, finalized.text
-    started = client.post(
-        "/v2/captures",
-        json={
-            "clientRequestId": f"{prefix}-capture",
-            "ingestionId": ingestion_id,
-            "structuringMode": structuring_mode,
-            **({"pdfPageNumbers": page_numbers} if page_numbers is not None else {}),
-        },
-        headers={"X-Idempotency-Key": f"{prefix}-capture"},
-    )
-    assert started.status_code == 202, started.text
-    return started.json()["captureId"]
+    return ingestion_id
 
 
 def _wait_for_capture_status(service, capture_id: str, expected: StreamingCaptureStatus) -> None:
@@ -674,6 +679,240 @@ def test_pdf_page_scope_omission_uses_legacy_all_page_extractor_path(
         "requestedPageNumbers": [1, 2, 3],
         "processedPageNumbers": [1, 2, 3],
     }
+
+
+_OCR_PROVENANCE = {
+    "status": "resolved",
+    "engine": "windowsml-ocr",
+    "model": "pp-ocrv6-medium-windowsml",
+    "modelDigest": "sha256:" + "a" * 64,
+    "device": "windowsml-dml",
+    "profileId": "capture-workbench-ocr-pipeline-v1",
+    "profileSpecSha256": "b" * 64,
+}
+
+
+def _source_page_worker_extractor(
+    client: TestClient,
+    tmp_path,
+    monkeypatch,
+    *,
+    source_page_count: int,
+    max_pdf_pages: int,
+    requests: list[dict[str, object]],
+) -> StandaloneRuntimeCaptureExtractor:
+    """An extractor whose fake OCR worker reads each manifest page by its number."""
+
+    class SourcePageProcess:
+        async def request(self, _executable, _operation, payload, *, progress_handler, **kwargs):
+            options = payload["options"]
+            requests.append(options)
+            manifest = options["pageManifest"]
+            progress_handler(
+                {
+                    "type": "ocr-header",
+                    "pageCount": len(manifest),
+                    "pages": manifest,
+                    "provenance": _OCR_PROVENANCE,
+                }
+            )
+            pages = [
+                {
+                    **item,
+                    "status": "recognized",
+                    "text": f"text of source page {item['page']}",
+                    "boxes": [],
+                    "regionConfidences": [],
+                    "confidence": None,
+                    "failure": None,
+                }
+                for item in manifest
+            ]
+            for page in pages:
+                progress_handler({"type": "ocr-page", "page": page})
+            return WorkerResponse(
+                request_id="source-page-ocr",
+                ok=True,
+                error=None,
+                result={
+                    "pages": pages,
+                    "provenance": _OCR_PROVENANCE,
+                    "warnings": [],
+                    "segments": [
+                        {
+                            "order": index,
+                            "text": page["text"],
+                            "page": page["page"],
+                            "startMs": None,
+                            "endMs": None,
+                        }
+                        for index, page in enumerate(pages)
+                    ],
+                },
+            )
+
+    async def resolve_engine(requirement_id):
+        return InstalledEngine(
+            requirement_id=requirement_id,
+            artifact_version="test",
+            executable=tmp_path / "worker",
+            model_dir=tmp_path,
+        )
+
+    async def compute_selection(**kwargs):
+        return SimpleNamespace(
+            execution_plan=SimpleNamespace(to_dict=lambda: {"mode": "cpu-fallback"})
+        )
+
+    extractor = StandaloneRuntimeCaptureExtractor(
+        SystemClock(),
+        dataclasses.replace(client.app.state.settings.extraction, max_pdf_pages=max_pdf_pages),
+        engine_manager=SimpleNamespace(
+            worker_client=WorkerClient(process=SourcePageProcess()),
+            resolve_active_engine=resolve_engine,
+            ocr_compute_selection=compute_selection,
+        ),
+    )
+    monkeypatch.setattr(extractor, "_pdf_page_count", lambda _content: source_page_count)
+    return extractor
+
+
+def test_non_contiguous_pdf_page_selection_keeps_source_page_numbers_end_to_end(
+    client: TestClient, tmp_path, monkeypatch
+) -> None:
+    """Pages 3, 7, 8 and 20 of a 46-page PDF, past a page limit of 4, keep their numbers."""
+
+    requests: list[dict[str, object]] = []
+    service = client.app.state.streaming_capture_service
+    service._extractor = _source_page_worker_extractor(
+        client,
+        tmp_path,
+        monkeypatch,
+        source_page_count=46,
+        max_pdf_pages=4,
+        requests=requests,
+    )
+    selection = [3, 7, 8, 20]
+
+    capture_id = _start_pdf_capture(
+        client,
+        b"%PDF-1.7 selected source pages",
+        "selected-source-pages",
+        page_numbers=selection,
+    )
+    _wait_for_capture_status(service, capture_id, StreamingCaptureStatus.AWAITING_STRUCTURING)
+
+    assert len(requests) == 1
+    assert requests[0]["pageNumbers"] == selection
+    assert requests[0]["maxPages"] == 4
+    assert [item["page"] for item in requests[0]["pageManifest"]] == selection
+    raw = client.get(f"/v2/captures/{capture_id}/raw")
+    assert raw.status_code == 200, raw.text
+    assert raw.json()["ocrPageScope"] == {
+        "sourcePageCount": 46,
+        "requestedPageNumbers": selection,
+        "processedPageNumbers": selection,
+    }
+    assert [
+        (segment["segmentId"], segment["locator"]["page"], segment["text"])
+        for segment in raw.json()["segments"]
+    ] == [(f"page-{page}", page, f"text of source page {page}") for page in selection]
+    ocr = client.get(f"/v2/captures/{capture_id}/ocr")
+    assert ocr.status_code == 200, ocr.text
+    assert ocr.json()["status"] == "completed"
+    assert ocr.json()["pageCount"] == 4
+    assert [page["page"] for page in ocr.json()["pages"]] == selection
+    assert [page["text"] for page in ocr.json()["pages"]] == [
+        f"text of source page {page}" for page in selection
+    ]
+    checkpoints = [
+        event.progress
+        for event in service.events(capture_id, after_sequence=0)
+        if event.event_type.value == "checkpoint"
+    ]
+    # Progress counts the selected pages: 1 of 4 is a quarter of extraction.
+    assert checkpoints[:4] == pytest.approx([0.225, 0.45, 0.675, 0.9])
+
+
+def test_all_page_capture_still_rejects_a_source_past_the_page_limit(
+    client: TestClient, tmp_path, monkeypatch
+) -> None:
+    requests: list[dict[str, object]] = []
+    service = client.app.state.streaming_capture_service
+    service._extractor = _source_page_worker_extractor(
+        client,
+        tmp_path,
+        monkeypatch,
+        source_page_count=46,
+        max_pdf_pages=4,
+        requests=requests,
+    )
+
+    capture_id = _start_pdf_capture(client, b"%PDF-1.7 long source", "long-all-pages")
+    _wait_for_capture_status(service, capture_id, StreamingCaptureStatus.FAILED)
+
+    assert requests == []
+    assert service.get_capture(capture_id).error.code == "ocr_source_preflight_failed"
+
+
+@pytest.mark.parametrize(
+    ("selection", "message"),
+    [
+        ([3, 47], "includes page 47, but the PDF has 46 pages"),
+        ([1, 2, 3, 4, 5], "has 5 pages; limit is 4"),
+    ],
+)
+def test_pdf_page_selection_the_source_cannot_satisfy_fails_typed_without_ocr(
+    client: TestClient, tmp_path, monkeypatch, selection: list[int], message: str
+) -> None:
+    requests: list[dict[str, object]] = []
+    service = client.app.state.streaming_capture_service
+    service._extractor = _source_page_worker_extractor(
+        client,
+        tmp_path,
+        monkeypatch,
+        source_page_count=46,
+        max_pdf_pages=4,
+        requests=requests,
+    )
+
+    capture_id = _start_pdf_capture(
+        client, b"%PDF-1.7 unsatisfiable selection", "unsatisfiable", page_numbers=selection
+    )
+    _wait_for_capture_status(service, capture_id, StreamingCaptureStatus.FAILED)
+
+    assert requests == []
+    failure = client.get(f"/v2/captures/{capture_id}").json()["error"]
+    assert failure["code"] == "invalid_pdf_page_selection"
+    assert failure["retryable"] is False
+    assert message in failure["message"]
+    ocr = client.get(f"/v2/captures/{capture_id}/ocr")
+    assert ocr.status_code == 200, ocr.text
+    assert ocr.json()["pages"] == []
+    assert ocr.json()["failure"]["code"] == "invalid_pdf_page_selection"
+
+
+@pytest.mark.parametrize("selection", [[], [0], [3, 3], [7, 3], list(range(1, 502))])
+def test_start_route_rejects_a_pdf_page_selection_that_is_not_ascending_source_pages(
+    client: TestClient, selection: list[int]
+) -> None:
+    ingestion_id = _finalized_pdf_ingestion(
+        client, b"%PDF-1.7 invalid selection", f"invalid-selection-{len(selection)}"
+    )
+
+    response = client.post(
+        "/v2/captures",
+        json={
+            "clientRequestId": "invalid-selection-capture",
+            "ingestionId": ingestion_id,
+            "structuringMode": "host",
+            "pdfPageNumbers": selection,
+        },
+        headers={"X-Idempotency-Key": "invalid-selection-capture"},
+    )
+
+    assert response.status_code == 422, response.text
+    assert response.json()["error"]["code"] == "validation_error"
 
 
 def test_ocr_route_requires_bearer_authentication(client: TestClient) -> None:

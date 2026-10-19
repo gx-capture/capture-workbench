@@ -372,6 +372,7 @@
     }
   },
   "additionalProperties": false,
+  "description": "The page-addressable OCR result of a capture.\n\nEach page carries its source page number, in ascending order: every page of\nthe source, or exactly the pages the capture's pdfPageNumbers selected.",
   "properties": {
     "apiVersion": {
       "const": "2.0",

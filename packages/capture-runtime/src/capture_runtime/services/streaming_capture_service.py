@@ -38,6 +38,7 @@ from capture_runtime.extractors import (
     ExtractionRuntimeUnavailableError,
     OcrExtractionFailure,
     OcrSourcePreflightError,
+    PdfPageSelectionError,
     UnsupportedMediaError,
 )
 from capture_runtime.ocr_execution_proof import (
@@ -478,6 +479,15 @@ class StreamingCaptureService:
                 capture_id,
                 "ocr_source_preflight_failed",
                 "OCR source preflight failed.",
+                stage="extraction",
+                retryable=False,
+            )
+        except PdfPageSelectionError as error:
+            # The source and the page limit decide this, so a retry fails the same way.
+            self._fail(
+                capture_id,
+                "invalid_pdf_page_selection",
+                str(error)[:500] or "PDF page selection is invalid.",
                 stage="extraction",
                 retryable=False,
             )

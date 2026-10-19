@@ -155,6 +155,28 @@ function sharedPerspectiveOcrFixture(): Record<string, unknown> {
   return fixture;
 }
 
+type SharedPageSelectionFixture = {
+  readonly pdfPageNumbers: readonly number[];
+  readonly projection: Record<string, unknown>;
+  readonly invalidPdfPageNumbers: readonly (readonly number[])[];
+  readonly invalidProjectionPageOrders: readonly (readonly number[])[];
+};
+
+function sharedPageSelectionFixture(): SharedPageSelectionFixture {
+  const fixture = JSON.parse(
+    readFileSync(
+      resolve(
+        process.cwd(),
+        'packages/capture-runtime/tests/fixtures/ocr-page-selection-v3.json',
+      ),
+      'utf8',
+    ),
+  ) as SharedPageSelectionFixture;
+  fixture.projection['contractSha256'] = CAPTURE_CONTRACT_SET_SHA256;
+  fixture.projection['runtimeVersion'] = RUNTIME_VERSION;
+  return fixture;
+}
+
 type ReferencedInvalidCorpusCase = {
   readonly name: string;
   readonly base: 'completed' | 'failed';
@@ -905,6 +927,124 @@ describe('CaptureRuntimeClient', () => {
     expect((await client.cancelModelInstallation('model-1')).status).toBe(
       'cancelled',
     );
+  });
+
+  it('keeps source page numbers of the shared page selection like Python and Java', async () => {
+    const fixture = sharedPageSelectionFixture();
+    const decoded = (await decodeJson(
+      new Response(JSON.stringify(fixture.projection)),
+      undefined,
+      'CaptureOcrProjection',
+    )) as { pageCount: number; pages: { page: number }[] };
+    expect(decoded.pageCount).toBe(4);
+    expect(decoded.pages.map((item) => item.page)).toEqual(fixture.pdfPageNumbers);
+
+    for (const order of fixture.invalidProjectionPageOrders) {
+      const projection = structuredClone(fixture.projection) as {
+        pages: { page: number }[];
+      };
+      projection.pages.forEach((page, index) => {
+        page.page = order[index] as number;
+      });
+      await expect(
+        decodeJson(
+          new Response(JSON.stringify(projection)),
+          undefined,
+          'CaptureOcrProjection',
+        ),
+      ).rejects.toBeInstanceOf(CaptureRuntimeProtocolError);
+    }
+  });
+
+  it('sends a PDF page selection with the capture start and checks it first', async () => {
+    const body = new TextEncoder().encode('abc');
+    const digest = createHash('sha256').update(body).digest('hex');
+    const ingestion = (received: number, nextChunkIndex: number, status = 'open') => ({
+      protocolVersion: '2',
+      kind: 'pdf',
+      ingestionId: 'ingestion-1',
+      status,
+      fileName: 'scan.pdf',
+      mediaType: 'application/pdf',
+      totalBytes: body.byteLength,
+      receivedBytes: received,
+      contiguousBytes: received,
+      nextChunkIndex,
+      nextOffset: received,
+      sourceSha256: digest,
+      finalizedSha256: status === 'ready' ? digest : null,
+      expiresAt: '2026-01-01T00:00:00Z',
+    });
+    const starts: Record<string, unknown>[] = [];
+    let opened = 0;
+    const transport = new InMemoryRuntimeTransport(
+      withDiscovery([
+        {
+          method: 'POST',
+          path: '/v2/ingestions',
+          handle: () => {
+            opened += 1;
+            return Response.json(ingestion(0, 0), { status: 201 });
+          },
+        },
+        {
+          method: 'PUT',
+          path: '/v2/ingestions/ingestion-1/chunks/0',
+          handle: () => Response.json(ingestion(body.byteLength, 1)),
+        },
+        {
+          method: 'POST',
+          path: '/v2/ingestions/ingestion-1/finalize',
+          handle: () => Response.json(ingestion(body.byteLength, 1, 'ready')),
+        },
+        {
+          method: 'POST',
+          path: '/v2/captures',
+          handle: (request) => {
+            starts.push(JSON.parse(String(request.body)) as Record<string, unknown>);
+            return Response.json(
+              {
+                protocolVersion: '2',
+                captureId: 'capture-1',
+                ingestionId: 'ingestion-1',
+                kind: 'pdf',
+                status: 'extracting',
+                partialRevision: 0,
+                lastEventSequence: 0,
+                createdAt: '2026-01-01T00:00:00Z',
+                updatedAt: '2026-01-01T00:00:00Z',
+              },
+              { status: 202 },
+            );
+          },
+        },
+      ]),
+    );
+    const client = new CaptureRuntimeClient({ baseUrl: 43123, transport });
+    const upload = {
+      fileName: 'scan.pdf',
+      body,
+      mediaType: 'application/pdf',
+      sourceKind: 'pdf' as const,
+      clientRequestId: 'request-selected-pages',
+    };
+
+    await client.startStreamingCapture({ ...upload, pdfPageNumbers: [3, 7, 8, 20] });
+    await client.startStreamingCapture(upload);
+
+    expect(starts[0]?.['pdfPageNumbers']).toEqual([3, 7, 8, 20]);
+    expect(starts[1]).not.toHaveProperty('pdfPageNumbers');
+    expect(opened).toBe(2);
+    for (const pdfPageNumbers of [
+      ...sharedPageSelectionFixture().invalidPdfPageNumbers,
+      [1.5],
+      Array.from({ length: 501 }, (_, index) => index + 1),
+    ]) {
+      await expect(
+        client.startStreamingCapture({ ...upload, pdfPageNumbers }),
+      ).rejects.toBeInstanceOf(CaptureRuntimeProtocolError);
+    }
+    expect(opened).toBe(2);
   });
 
   it('rejects a tampered contract bundle before parsing operations', async () => {

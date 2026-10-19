@@ -70,6 +70,7 @@ from capture_runtime.ocr_projection import (
     OcrRequest,
     OcrTerminalOutcome,
 )
+from capture_runtime.pdf_page_selection import is_pdf_page_selection
 from capture_runtime.worker_contracts import WorkerRequest
 from capture_runtime.workers.server import serve
 
@@ -97,6 +98,9 @@ class _WorkerOcrEngineAdapter:
         pages: list[OcrPageInput] = []
         warnings: list[str] = []
         provenance = None
+        # Pages carry source page numbers; a selection such as [3, 7] renders
+        # pages 3 and 7, and the pipeline checks that they arrive in order.
+        manifest_by_page = {item.page: item for item in request.manifest}
         images = iter(self._images)
         while True:
             if request.is_cancelled():
@@ -107,11 +111,11 @@ class _WorkerOcrEngineAdapter:
                 break
             if request.is_cancelled():
                 raise InterruptedError
-            if page > len(request.manifest):
+            expected = manifest_by_page.get(page)
+            if expected is None:
                 mismatch = ValueError("OCR worker returned a page outside the manifest")
                 self.last_error = mismatch
                 raise mismatch
-            expected = request.manifest[page - 1]
             try:
                 result = self._adapter.extract_png(image)
                 if request.is_cancelled():
@@ -379,17 +383,20 @@ def _pdf_page_images(
         page_count = len(document)
         if page_count < 1:
             raise ValueError("uploaded PDF has no pages")
-        if page_count > max_pages:
-            raise ValueError(f"PDF has {page_count} pages; limit is {max_pages}")
-        selected_page_numbers = (
-            tuple(range(1, page_count + 1)) if page_numbers is None else page_numbers
-        )
-        if (
-            not selected_page_numbers
-            or selected_page_numbers != tuple(range(1, len(selected_page_numbers) + 1))
-            or selected_page_numbers[-1] > page_count
+        # The page limit bounds the pages rendered: every page without a
+        # selection, only the selected ones with it.
+        if page_numbers is None:
+            if page_count > max_pages:
+                raise ValueError(f"PDF has {page_count} pages; limit is {max_pages}")
+            selected_page_numbers = tuple(range(1, page_count + 1))
+        elif (
+            not is_pdf_page_selection(page_numbers)
+            or len(page_numbers) > max_pages
+            or page_numbers[-1] > page_count
         ):
-            raise ValueError("OCR PDF page selection must be an ordered prefix in the source")
+            raise ValueError("OCR PDF page selection must name ascending pages in the source")
+        else:
+            selected_page_numbers = page_numbers
         for page_number in selected_page_numbers:
             if cancellation.is_set():
                 raise InterruptedError
@@ -420,11 +427,14 @@ def _page_manifest(value: object) -> tuple[OcrPageManifest, ...]:
     if not isinstance(value, list) or not 1 <= len(value) <= 500:
         raise ValueError("OCR page manifest is invalid")
     manifest: list[OcrPageManifest] = []
-    for expected_page, item in enumerate(value, 1):
+    previous_page = 0
+    for item in value:
         if not isinstance(item, dict) or set(item) != {"page", "raster"}:
             raise ValueError("OCR page manifest is invalid")
-        if item["page"] != expected_page:
+        page = item["page"]
+        if type(page) is not int or page <= previous_page:
             raise ValueError("OCR page manifest is not ordered")
+        previous_page = page
         raster = item["raster"]
         if not isinstance(raster, dict) or set(raster) != {
             "width",
@@ -452,7 +462,7 @@ def _page_manifest(value: object) -> tuple[OcrPageManifest, ...]:
             raise ValueError("OCR page manifest raster is invalid")
         manifest.append(
             OcrPageManifest(
-                page=expected_page,
+                page=page,
                 raster_width=width,
                 raster_height=height,
                 raster_scale=float(scale),
@@ -514,14 +524,8 @@ def _run(
         plan_base_options = base_options | {"computePlan"}
         if "pageNumbers" in options:
             raw_page_numbers = options["pageNumbers"]
-            if (
-                not isinstance(raw_page_numbers, list)
-                or not 1 <= len(raw_page_numbers) <= 500
-                or any(
-                    type(page_number) is not int or page_number < 1
-                    for page_number in raw_page_numbers
-                )
-                or raw_page_numbers != list(range(1, len(raw_page_numbers) + 1))
+            if not isinstance(raw_page_numbers, list) or not is_pdf_page_selection(
+                raw_page_numbers
             ):
                 raise ValueError("OCR PDF page selection is invalid")
             page_numbers = tuple(raw_page_numbers)

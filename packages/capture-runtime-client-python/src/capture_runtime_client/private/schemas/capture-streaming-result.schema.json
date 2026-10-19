@@ -464,16 +464,16 @@
     },
     "OcrPageScopeV2": {
       "additionalProperties": false,
-      "description": "Public evidence describing which PDF pages entered OCR.",
+      "description": "Public evidence describing which PDF pages entered OCR.\n\nPage numbers are the source PDF's, in ascending order. A selection may\nleave pages out, so the source can have more pages than were read.",
       "properties": {
         "sourcePageCount": {
-          "maximum": 500,
           "minimum": 1,
           "title": "Sourcepagecount",
           "type": "integer"
         },
         "requestedPageNumbers": {
           "items": {
+            "minimum": 1,
             "type": "integer"
           },
           "maxItems": 500,
@@ -483,6 +483,7 @@
         },
         "processedPageNumbers": {
           "items": {
+            "minimum": 1,
             "type": "integer"
           },
           "maxItems": 500,
