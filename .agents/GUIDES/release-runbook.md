@@ -213,6 +213,8 @@ missing ones.
 
 1. Merge the release source to `main` and wait for **push** CI on that commit
    (`ci.yml`). Release candidates verify it with `tools/verify-main-ci.ts`.
+   `ci.yml` skips commits that change only Markdown or `.agents/`, so name the
+   latest `main` commit that changed code.
 2. Dispatch `package-candidate.yml` and `runtime-candidate.yml` for the exact
    commit. Record each run ID, `candidateId`, and the SHA-256 of its
    `candidate-manifest.json` (download the small package artifact; the runtime

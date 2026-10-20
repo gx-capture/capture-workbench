@@ -3,17 +3,59 @@ name: CI
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
+# CI runs only when code or build, test, or release configuration changes.
+# Markdown and agent notes never trigger it. Tests read the workflow files,
+# .github/consumer-gates.json, release/, release-index/, and test-fixtures/,
+# so those count as code. A pattern starting with ! must stay after the
+# patterns it narrows.
 on:
   pull_request:
+    paths: &code-paths
+      - 'apps/**'
+      - 'packages/**'
+      - 'tools/**'
+      - 'test-fixtures/**'
+      - 'release/**'
+      - 'release-index/**'
+      - '.github/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'nx.json'
+      - 'tsconfig*.json'
+      - 'eslint.config.*'
+      - '.prettierrc*'
+      - '.prettierignore'
+      - '.editorconfig'
+      - '.gitattributes'
+      - '.gitignore'
+      - '.nvmrc'
+      - '.npmrc*'
+      - '**/Cargo.toml'
+      - '**/Cargo.lock'
+      - '**/pyproject.toml'
+      - '**/uv.lock'
+      - '!**/*.md'
+      - '!**/.agents/**'
   push:
     branches: [main, develop]
+    paths: *code-paths
 
 permissions:
   contents: read
 
+# A newer push to a pull request cancels its older run. Branch pushes get one
+# group per commit: a ref-wide group would let a newer push replace a pending
+# older run, and every main commit a release candidate names needs its own
+# successful push run.
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('{0}-{1}', github.ref, github.sha) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 # PR and main run the same complete verification. The four jobs are
 # independent and run in parallel; a release candidate requires the whole
-# run to succeed on main (tools/verify-main-ci.ts).
+# run to succeed on main (tools/verify-main-ci.ts). A docs-only commit on main
+# gets no run, so dispatch candidates at the latest commit that changed code.
 jobs:
   # Published packages: TypeScript, Python, and Java clients, the sidecar
   # launcher crate, and the Angular Web Component package.
