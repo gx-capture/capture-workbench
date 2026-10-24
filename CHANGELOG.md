@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Speaker diarization
+
+- Replace the optional speaker model with NVIDIA Nemotron-3-Diarization under
+  OpenMDW-1.1, using native Transformers offline inference. Preserve GPU preference,
+  bounded CPU fallback, overlapping/exclusive speaker turns and worker isolation.
+  Remove the internal speaker-count option. Model-source lock needs re-approval.
+
 ### Compatibility policy
 
 Capture Workbench follows an explicit 0.x compatibility policy:

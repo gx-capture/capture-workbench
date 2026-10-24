@@ -7,10 +7,6 @@ from types import SimpleNamespace
 from typing import Any
 
 from capture_runtime.engine_adapters import FasterWhisperAdapter
-from capture_runtime.speaker_diarization import (
-    DIARIZATION_REQUIRED_FILES,
-    PyannoteDiarizationAdapter,
-)
 from capture_runtime.worker_client import InstalledEngine, WorkerClient
 from capture_runtime.worker_contracts import WorkerResponse
 from capture_runtime.workers.server import permille_reporter
@@ -24,54 +20,6 @@ def test_progress_frames_are_sent_at_most_once_per_percent_and_end_at_one_thousa
         report(completed, 1000)
 
     assert [frame["permille"] for frame in frames] == [10, 500, 995, 1000]
-
-
-def test_diarization_reports_segmentation_then_embeddings_as_one_scale(tmp_path: Path) -> None:
-    for relative in DIARIZATION_REQUIRED_FILES:
-        (tmp_path / relative).parent.mkdir(parents=True, exist_ok=True)
-        (tmp_path / relative).write_bytes(b"fixture")
-    reported: list[int] = []
-    empty = SimpleNamespace(itertracks=lambda yield_label: iter(()))
-
-    class Pipeline:
-        @classmethod
-        def from_pretrained(cls, _model: str) -> Pipeline:
-            return cls()
-
-        def to(self, _device: str) -> None:
-            return None
-
-        def __call__(self, _audio: Any, *, hook: Any) -> Any:
-            hook("segmentation", None, total=4, completed=2)
-            hook("segmentation", None, total=4, completed=4)
-            hook("speaker_counting", None)
-            hook("embeddings", None, total=10, completed=5)
-            hook("embeddings", None, total=10, completed=10)
-            return SimpleNamespace(speaker_diarization=empty, exclusive_speaker_diarization=empty)
-
-    waveform = SimpleNamespace(unsqueeze=lambda axis: "waveform")
-    waveform.to = lambda dtype: waveform
-    waveform.div = lambda scale: waveform
-    torch = SimpleNamespace(
-        cuda=SimpleNamespace(is_available=lambda: False, empty_cache=lambda: None),
-        device=lambda name: name,
-        int16="int16",
-        float32="float32",
-        frombuffer=lambda pcm, dtype: waveform,
-    )
-    adapter = PyannoteDiarizationAdapter(
-        tmp_path,
-        prefer_gpu=False,
-        max_duration_ms=60_000,
-        pipeline_factory=Pipeline,
-        torch_module=torch,
-        decoder=lambda path, **_: bytearray(32_000),
-        progress_reporter=lambda completed, total: reported.append(completed * 1000 // total),
-    )
-
-    adapter.diarize(tmp_path / "source.wav", should_cancel=lambda: False)
-
-    assert reported == [100, 200, 600, 1000]
 
 
 def test_whisper_reports_how_far_into_the_recording_it_is(tmp_path: Path) -> None:
@@ -117,7 +65,7 @@ def test_worker_client_passes_on_valid_progress_and_ignores_malformed_frames(
         "durationMs": 1_000,
         "provenance": {
             "engine": "speaker-diarization",
-            "model": "pyannote-speaker-diarization-community-1",
+            "model": "nvidia-nemotron-3-diarization",
             "digest": "sha256:" + "a" * 64,
             "device": "cpu",
         },

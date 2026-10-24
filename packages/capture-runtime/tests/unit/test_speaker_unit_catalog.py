@@ -44,14 +44,14 @@ def _speaker_requirement(requirement_id: str = "speaker-diarization") -> dict[st
             "bytes": len(content),
             "derivation": None,
             "kind": kind,
-            "licensePath": "licenses/LICENSE-CC-BY-4.0.txt" if licensed else None,
+            "licensePath": "licenses/LICENSE-OpenMDW-1.1.txt" if licensed else None,
             "noticePath": "licenses/NOTICE-speaker-diarization.md" if licensed else None,
             "owner": "example/model-sources",
             "path": path,
             "redirectHosts": [],
             "revision": REVISION,
             "sha256": hashlib.sha256(content).hexdigest(),
-            "spdx": "CC-BY-4.0",
+            "spdx": "OpenMDW-1.1",
             "url": f"https://downloads.example.test/{REVISION}/{path}",
         }
 
@@ -59,10 +59,11 @@ def _speaker_requirement(requirement_id: str = "speaker-diarization") -> dict[st
         "artifactVersion": RUNTIME_VERSION,
         "entryPoint": "model",
         "files": [
-            entry("licenses/LICENSE-CC-BY-4.0.txt", "license"),
+            entry("licenses/LICENSE-OpenMDW-1.1.txt", "license"),
             entry("licenses/NOTICE-speaker-diarization.md", "notice"),
-            entry("model/config.yaml", "source"),
-            entry("model/segmentation/pytorch_model.bin", "source"),
+            entry("model/config.json", "source"),
+            entry("model/model.safetensors", "source"),
+            entry("model/processor_config.json", "source"),
         ],
         "requirementId": requirement_id,
     }
@@ -88,7 +89,7 @@ def test_lock_accepts_the_optional_speaker_unit_after_the_required_ones() -> Non
         "speaker-diarization",
         "vertical-japanese-reader",
     ]
-    assert module.model_delivery(lock, "speaker-diarization")["entryCount"] == 4
+    assert module.model_delivery(lock, "speaker-diarization")["entryCount"] == 5
 
 
 @pytest.mark.parametrize(
@@ -182,9 +183,13 @@ def test_catalog_and_release_include_the_speaker_unit_when_the_lock_has_it(
     unit = catalog.requirement("speaker-diarization")
     assert unit.complete
     assert unit.worker_artifact().entry_point == "capture-engine-diarization.exe"
-    assert [item.path for item in unit.model_delivery().files][-1] == (
-        "model/segmentation/pytorch_model.bin"
-    )
+    assert {
+        item.path for item in unit.model_delivery().files if item.path.startswith("model/")
+    } == {
+        "model/config.json",
+        "model/model.safetensors",
+        "model/processor_config.json",
+    }
 
     executable = tmp_path / "capture-runtime.exe"
     executable.write_bytes(b"runtime")

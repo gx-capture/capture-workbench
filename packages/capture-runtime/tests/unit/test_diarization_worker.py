@@ -62,19 +62,18 @@ def test_run_returns_both_timelines_with_provenance(
                 exclusive_turns=(SpeakerTurn(0, 700, "SPEAKER_00"),),
                 duration_ms=1_500,
                 device="cpu",
-                model="pyannote-speaker-diarization-community-1",
+                model="nvidia-nemotron-3-diarization",
                 digest="sha256:" + "0" * 64,
                 warning="Diarization GPU fallback: cuda_out_of_memory",
             )
 
-    monkeypatch.setattr(diarization_main, "PyannoteDiarizationAdapter", Adapter)
+    monkeypatch.setattr(diarization_main, "NemotronDiarizationAdapter", Adapter)
     request = _request(
         tmp_path,
         options={
             "maxDurationMs": 60_000,
             "preferGpu": True,
             "allowCpuFallback": False,
-            "numSpeakers": 2,
         },
     )
 
@@ -89,7 +88,7 @@ def test_run_returns_both_timelines_with_provenance(
         "durationMs": 1_500,
         "provenance": {
             "engine": "speaker-diarization",
-            "model": "pyannote-speaker-diarization-community-1",
+            "model": "nvidia-nemotron-3-diarization",
             "digest": "sha256:" + "0" * 64,
             "device": "cpu",
         },
@@ -97,7 +96,6 @@ def test_run_returns_both_timelines_with_provenance(
     }
     assert created[0]["prefer_gpu"] is True
     assert created[0]["allow_cpu_fallback"] is False
-    assert created[0]["num_speakers"] == 2
     assert created[0]["max_duration_ms"] == 60_000
 
 
@@ -110,8 +108,6 @@ def test_run_returns_both_timelines_with_provenance(
         {"options": {"preferGpu": False}},
         {"options": {"maxDurationMs": 0, "preferGpu": False}},
         {"options": {"maxDurationMs": 1, "preferGpu": 1}},
-        {"options": {"maxDurationMs": 1, "preferGpu": False, "numSpeakers": 0}},
-        {"options": {"maxDurationMs": 1, "preferGpu": False, "numSpeakers": True}},
         {"options": {"maxDurationMs": 1, "preferGpu": False, "unexpected": 1}},
         {"unexpected": True},
     ],
@@ -122,7 +118,7 @@ def test_run_rejects_invalid_requests_before_loading_a_model(
     def refuse(*_args: Any, **_kwargs: Any) -> None:
         raise AssertionError("adapter must not be created")
 
-    monkeypatch.setattr(diarization_main, "PyannoteDiarizationAdapter", refuse)
+    monkeypatch.setattr(diarization_main, "NemotronDiarizationAdapter", refuse)
 
     with pytest.raises(ValueError, match="Diarization"):
         diarization_main.handle(_request(tmp_path, **overrides), Event(), None)
@@ -132,7 +128,7 @@ def test_probe_reports_model_readiness_and_the_device_it_would_use(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
-        diarization_main.PyannoteDiarizationAdapter, "cuda_available", lambda self: True
+        diarization_main.NemotronDiarizationAdapter, "cuda_available", lambda self: True
     )
     monkeypatch.setattr(
         "capture_runtime.speaker_diarization.importlib.util.find_spec", lambda _name: object()
@@ -140,7 +136,7 @@ def test_probe_reports_model_readiness_and_the_device_it_would_use(
     request = _request(tmp_path, "probe", options={"preferGpu": True})
 
     ready = diarization_main.handle(request, Event(), None)
-    (tmp_path / "model" / "config.yaml").unlink()
+    (tmp_path / "model" / "config.json").unlink()
     missing = diarization_main.handle(request, Event(), None)
 
     assert (ready["ready"], ready["device"]) == (True, "cuda")
@@ -176,14 +172,33 @@ def test_worker_process_answers_a_probe_over_the_json_lines_protocol(tmp_path: P
 def test_worker_environment_is_offline_and_survives_a_missing_user_name(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    for name in ("HF_HUB_OFFLINE", "PYANNOTE_METRICS_ENABLED", "USERNAME"):
+    for name in ("HF_HUB_OFFLINE", "HF_HUB_DISABLE_TELEMETRY", "USERNAME"):
         monkeypatch.delenv(name, raising=False)
 
     diarization_main._prepare_environment()
 
     assert os.environ["HF_HUB_OFFLINE"] == "1"
-    assert os.environ["PYANNOTE_METRICS_ENABLED"] == "0"
+    assert os.environ["HF_HUB_DISABLE_TELEMETRY"] == "1"
     assert getpass.getuser()
+
+
+def test_worker_imports_native_runtime_with_sanitized_stages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    imported: list[str] = []
+    stages: list[str] = []
+    monkeypatch.setattr(diarization_main, "_prepare_environment", lambda: None)
+    monkeypatch.setattr(diarization_main.importlib, "import_module", imported.append)
+    monkeypatch.setattr(diarization_main, "_report_stage", stages.append)
+
+    diarization_main._import_diarization_runtime()
+
+    assert imported == ["av", "torch", "transformers", "librosa"]
+    assert stages[-2:] == [
+        "python-import-transformers-start",
+        "python-import-transformers-complete",
+    ]
+    assert all(sanitize_worker_stage(stage) == stage for stage in stages)
 
 
 def test_code_probe_before_any_model_exists_reports_only_the_worker(

@@ -46,17 +46,19 @@ spoke when" for an audio or video file. It speaks the same JSON-lines worker
 protocol as the OCR and Whisper workers, with requirement id
 `speaker-diarization`.
 
-It is not in the engine catalog, the v2 contract, or any release artifact yet:
-the runtime does not start it, and no client can request it. Publishing it
-needs an install unit, a model source and a contract shape for speaker labels.
+The optional install unit runs in its own process and supplies anonymous speaker
+labels when a capture requests speaker identification.
 
-- Model: a local pyannote `speaker-diarization-community-1` pipeline directory
-  (`config.yaml`, `segmentation/`, `embedding/`, `plda/`). The worker runs
-  offline and never reads a Hugging Face token.
+- Model: NVIDIA `Nemotron-3-Diarization` under OpenMDW-1.1, using the native
+  Transformers 5.20.2 implementation. The digest-verified local directory contains
+  `config.json`, `processor_config.json` and `model.safetensors`. The worker loads
+  with `local_files_only=True` and never reads a Hugging Face token.
+  Regular turns retain overlapping activity above 0.5; exclusive turns select
+  only the highest-scoring active speaker per 10 ms frame.
 - `run` returns `turns` (may overlap when people talk at once), `exclusiveTurns`
   (never overlap), `durationMs`, `provenance` and `warnings`. Times are
   milliseconds; speakers are anonymous labels such as `SPEAKER_00`.
-- Options: `maxDurationMs`, `preferGpu`, `allowCpuFallback` and `numSpeakers`.
+- Options: `maxDurationMs`, `preferGpu`, `allowCpuFallback`.
   A recognized CUDA failure retries the same model once on CPU.
 - `capture_runtime.speaker_alignment.assign_speakers` gives timed transcript
   spans a speaker from those turns; a tie or an uncovered span stays unassigned.

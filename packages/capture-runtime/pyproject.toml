@@ -34,9 +34,9 @@ whisper = [
   "huggingface-hub>=1.18.0,<2.0.0",
 ]
 diarization = [
-  "pyannote.audio==4.0.7",
+  "transformers==5.20.2",
+  "librosa==1.0.0",
   "torch==2.11.0",
-  "torchaudio==2.11.0",
 ]
 
 [project.scripts]
@@ -107,7 +107,8 @@ module = [
   "onnxruntime.*",
   "paddleocr.*",
   "paddlex.*",
-  "pyannote.*",
+  "transformers.*",
+  "librosa.*",
   "torch.*",
   "uvicorn.*",
   "yaml.*",

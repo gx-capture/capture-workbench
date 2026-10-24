@@ -1,5 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+from importlib.metadata import PackageNotFoundError
 from pathlib import Path
 from PyInstaller.utils.hooks import (
     collect_data_files,
@@ -9,34 +10,42 @@ from PyInstaller.utils.hooks import (
 )
 
 root = Path(SPEC).resolve().parents[1]
-# pyannote resolves pipeline, model and clustering classes by name at run time.
+# Transformers and librosa resolve model classes and audio helpers lazily.
 hiddenimports = (
-    collect_submodules("pyannote")
-    + collect_submodules("asteroid_filterbanks")
-    + collect_submodules("lightning")
-    + collect_submodules("lightning_fabric")
-    + collect_submodules("pytorch_lightning")
+    collect_submodules("transformers.models.nemotron3_diarization")
+    + collect_submodules("transformers.models.nemotron_asr_streaming")
+    + collect_submodules("transformers.models.auto")
+    + collect_submodules("librosa")
+    + ["_soundfile_data"]
 )
-datas = (
-    collect_data_files("pyannote")
-    + collect_data_files("lightning")
-    + collect_data_files("lightning_fabric")
-    + collect_data_files("pytorch_lightning")
-    + collect_data_files("torchaudio")
-)
-# These packages read their own installed metadata or entry points on import.
+# lazy_loader reads __init__.pyi stubs; librosa utilities also read bundled registries.
+datas = collect_data_files("librosa", includes=["**/*"])
+# Includes the mandatory checks in transformers/dependency_versions_check.py.
 for distribution in (
-    "lightning",
-    "opentelemetry-api",
-    "opentelemetry-sdk",
-    "pyannote.audio",
-    "pytorch-lightning",
+    "transformers",
+    "huggingface-hub",
+    "safetensors",
+    "tokenizers",
     "torch",
-    "torchaudio",
-    "torchmetrics",
+    "numpy",
+    "librosa",
+    "tqdm",
+    "regex",
+    "packaging",
+    "filelock",
+    "pyyaml",
 ):
     datas += copy_metadata(distribution)
-binaries = collect_dynamic_libs("av")
+# Transformers checks Accelerate only when that optional dependency is installed.
+try:
+    datas += copy_metadata("accelerate")
+except PackageNotFoundError:
+    pass
+binaries = (
+    collect_dynamic_libs("av")
+    + collect_dynamic_libs("_soundfile_data")
+    + collect_dynamic_libs("soxr")
+)
 
 a = Analysis(
     [str(root / "src" / "capture_runtime" / "workers" / "diarization_main.py")],

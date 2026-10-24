@@ -64,7 +64,7 @@ def test_production_lock_pins_every_file_the_speaker_worker_needs() -> None:
     assert {f"model/{name}" for name in DIARIZATION_REQUIRED_FILES} <= set(files)
     assert {item["kind"] for item in files.values()} == {"license", "notice", "source"}
     assert all(item["revision"] in item["url"] for item in files.values())
-    assert all(item["spdx"] == "CC-BY-4.0" for item in files.values())
+    assert all(item["spdx"] == "OpenMDW-1.1" for item in files.values())
 
 
 @pytest.mark.parametrize(

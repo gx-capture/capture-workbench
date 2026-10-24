@@ -43,7 +43,7 @@
     },
     "diarizationEngine": {
       "engine": "speaker-diarization",
-      "model": "pyannote-speaker-diarization-community-1",
+      "model": "nvidia-nemotron-3-diarization",
       "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
       "device": "cpu"
     },
@@ -191,7 +191,7 @@
     },
     "diarizationEngine": {
       "engine": "speaker-diarization",
-      "model": "pyannote-speaker-diarization-community-1",
+      "model": "nvidia-nemotron-3-diarization",
       "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
       "device": "cpu"
     },

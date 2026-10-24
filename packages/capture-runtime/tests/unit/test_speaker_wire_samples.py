@@ -55,7 +55,7 @@ def _raw(*, speakers: bool) -> RawCapture:
         source_text=project_source_text(segments),
         extraction_engine=_engine("whisper-primary", "large-v3-turbo", "b", "cuda"),
         diarization_engine=(
-            _engine("speaker-diarization", "pyannote-speaker-diarization-community-1", "c", "cpu")
+            _engine("speaker-diarization", "nvidia-nemotron-3-diarization", "c", "cpu")
             if speakers
             else None
         ),

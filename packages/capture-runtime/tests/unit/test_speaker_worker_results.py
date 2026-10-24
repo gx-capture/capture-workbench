@@ -115,7 +115,7 @@ def _diarization_payload(**overrides: Any) -> dict[str, Any]:
         "durationMs": 1_500,
         "provenance": {
             "engine": "speaker-diarization",
-            "model": "pyannote-speaker-diarization-community-1",
+            "model": "nvidia-nemotron-3-diarization",
             "digest": DIGEST,
             "device": "cpu",
         },

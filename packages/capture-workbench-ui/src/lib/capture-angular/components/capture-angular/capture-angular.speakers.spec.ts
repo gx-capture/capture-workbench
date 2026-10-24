@@ -61,7 +61,7 @@ const SPOKEN: CaptureDocument = {
   targetText: 'Good morning\nHello there\nmm',
   diarizationEngine: {
     engine: 'speaker-diarization',
-    model: 'pyannote-speaker-diarization-community-1',
+    model: 'nvidia-nemotron-3-diarization',
     digest: `sha256:${'d'.repeat(64)}`,
     device: 'cpu',
   },

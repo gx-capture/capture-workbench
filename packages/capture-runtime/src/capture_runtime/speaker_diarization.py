@@ -1,6 +1,6 @@
-"""Local pyannote speaker diarization adapter with one bounded CPU retry.
+"""Local Nemotron speaker diarization adapter with one bounded CPU retry.
 
-PyAV, PyTorch and pyannote are imported inside functions: the worker
+PyAV, PyTorch and Transformers are imported inside functions: the worker
 reports each import boundary itself, and the core runtime never loads them.
 """
 
@@ -22,15 +22,14 @@ from capture_runtime.engine_adapters import (
 from capture_runtime.speaker_turns import SPEAKER_LABEL, SpeakerTurn
 from capture_runtime.worker_stage_policy import sanitize_worker_stage
 
-DIARIZATION_MODEL = "pyannote-speaker-diarization-community-1"
+DIARIZATION_MODEL = "nvidia-nemotron-3-diarization"
 DIARIZATION_REQUIRED_FILES = (
-    "config.yaml",
-    "embedding/pytorch_model.bin",
-    "plda/plda.npz",
-    "plda/xvec_transform.npz",
-    "segmentation/pytorch_model.bin",
+    "config.json",
+    "processor_config.json",
+    "model.safetensors",
 )
 SAMPLE_RATE = 16_000
+SPEAKER_ACTIVITY_THRESHOLD = 0.5
 _CUDA_LIBRARIES = ("cublas", "cudnn", "cudart", "nvrtc", "nvcuda")
 _LIBRARY_LOAD_FAILURES = (
     "could not load",
@@ -124,8 +123,8 @@ def decode_mono_16k(
     return pcm
 
 
-class PyannoteDiarizationAdapter:
-    """Run a local pyannote pipeline directory; never contacts a model hub."""
+class NemotronDiarizationAdapter:
+    """Run a local Transformers model directory; never contacts a model hub."""
 
     def __init__(
         self,
@@ -134,8 +133,8 @@ class PyannoteDiarizationAdapter:
         prefer_gpu: bool,
         max_duration_ms: int,
         allow_cpu_fallback: bool = True,
-        num_speakers: int | None = None,
-        pipeline_factory: Any | None = None,
+        processor_factory: Any | None = None,
+        model_factory: Any | None = None,
         torch_module: Any | None = None,
         decoder: Callable[..., bytearray] = decode_mono_16k,
         stage_reporter: Callable[[str], None] | None = None,
@@ -146,8 +145,8 @@ class PyannoteDiarizationAdapter:
         self.prefer_gpu = prefer_gpu
         self.max_duration_ms = max_duration_ms
         self.allow_cpu_fallback = allow_cpu_fallback
-        self.num_speakers = num_speakers
-        self._pipeline_factory = pipeline_factory
+        self._processor_factory = processor_factory
+        self._model_factory = model_factory
         self._torch = torch_module
         self._decoder = decoder
         self._stage_reporter = stage_reporter
@@ -158,8 +157,11 @@ class PyannoteDiarizationAdapter:
             self._stage_reporter(safe_stage)
 
     def probe(self) -> EngineProbe:
-        code_ready = self._pipeline_factory is not None or all(
-            importlib.util.find_spec(name) is not None for name in ("torch", "pyannote", "av")
+        code_ready = (
+            self._processor_factory is not None and self._model_factory is not None
+        ) or all(
+            importlib.util.find_spec(name) is not None
+            for name in ("torch", "transformers", "librosa", "av")
         )
         missing = [
             relative
@@ -203,7 +205,7 @@ class PyannoteDiarizationAdapter:
         duration_ms = round(len(pcm) // 2 * 1000 / SAMPLE_RATE)
         self._report_stage("diarization-audio-decode-complete")
         torch = self._torch_module()
-        audio = torch.frombuffer(pcm, dtype=torch.int16).to(torch.float32).div(32768.0)
+        audio = torch.frombuffer(pcm, dtype=torch.int16).to(torch.float32).div(32768.0).numpy()
         device = "cuda" if self.prefer_gpu and self.cuda_available() else "cpu"
         if self.prefer_gpu and device == "cpu" and not self.allow_cpu_fallback:
             raise EngineRuntimeUnavailableError("Diarization CUDA device is unavailable.")
@@ -253,30 +255,17 @@ class PyannoteDiarizationAdapter:
         *,
         should_cancel: Callable[[], bool],
     ) -> tuple[tuple[SpeakerTurn, ...], tuple[SpeakerTurn, ...]]:
-        factory: Any = self._pipeline_factory
-        if factory is None:
-            from pyannote.audio import Pipeline
+        processor_factory = self._processor_factory
+        model_factory = self._model_factory
+        if processor_factory is None or model_factory is None:
+            from transformers import AutoModelForAudioFrameClassification, AutoProcessor
 
-            factory = Pipeline
+            processor_factory = AutoProcessor
+            model_factory = AutoModelForAudioFrameClassification
 
-        def stop_when_cancelled(*step: object, **counts: object) -> None:
+        def stop_when_cancelled() -> None:
             if should_cancel():
                 raise InterruptedError("Speaker diarization was cancelled.")
-            completed, total = counts.get("completed"), counts.get("total")
-            if (
-                self._progress_reporter is None
-                or not step
-                or not isinstance(completed, int)
-                or not isinstance(total, int)
-                or total <= 0
-            ):
-                return
-            # Segmentation is the first, shorter pass; embeddings take the rest.
-            done = min(completed, total) * 1000 // total
-            if step[0] == "segmentation":
-                self._progress_reporter(done * 2 // 10, 1000)
-            elif step[0] == "embeddings":
-                self._progress_reporter(200 + done * 8 // 10, 1000)
 
         stop_when_cancelled()
         if device == "cuda":
@@ -284,45 +273,110 @@ class PyannoteDiarizationAdapter:
         else:
             self._report_stage("diarization-device-cpu")
         self._report_stage("diarization-model-load-start")
-        pipeline: Any = factory.from_pretrained(str(self.model_dir))
-        if pipeline is None:
-            raise EngineRuntimeUnavailableError("Diarization model could not be loaded.")
-        pipeline.to(torch.device(device))
-        self._report_stage("diarization-model-load-complete")
-        options: dict[str, Any] = {"hook": stop_when_cancelled}
-        if self.num_speakers is not None:
-            options["num_speakers"] = self.num_speakers
-        self._report_stage("diarization-inference-start")
-        output: Any = pipeline(
-            {"waveform": audio.unsqueeze(0), "sample_rate": SAMPLE_RATE},
-            **options,
-        )
-        stop_when_cancelled()
-        self._report_stage("diarization-inference-complete")
-        return (
-            _turns(output.speaker_diarization, duration_ms),
-            _turns(output.exclusive_speaker_diarization, duration_ms),
-        )
+        model = inputs = logits = None
+        try:
+            processor = processor_factory.from_pretrained(
+                str(self.model_dir), local_files_only=True
+            )
+            # Load on CPU first; only the explicit transfer selects the device.
+            model = model_factory.from_pretrained(str(self.model_dir), local_files_only=True)
+            stop_when_cancelled()
+            model.to(torch.device(device))
+            self._report_stage("diarization-model-load-complete")
+            inputs = processor(audio, sampling_rate=SAMPLE_RATE).to(torch.device(device))
+            stop_when_cancelled()
+            self._report_stage("diarization-inference-start")
+            if self._progress_reporter is not None:
+                self._progress_reporter(0, 1000)
+            chunk_count = _offline_chunk_count(model, inputs)
+            completed = 0
+
+            def after_chunk(*_: object) -> None:
+                # The offline forward runs the classifier once per chunk.
+                nonlocal completed
+                completed += 1
+                stop_when_cancelled()
+                if self._progress_reporter is not None and chunk_count:
+                    self._progress_reporter(min(completed * 1000 // chunk_count, 999), 1000)
+
+            hook = model.classifier.register_forward_hook(after_chunk) if chunk_count else None
+            try:
+                # Omit streaming arguments: forward chunks the whole recording using
+                # the checkpoint's 30.4 s buffer and internal speaker cache.
+                with torch.inference_mode():
+                    logits = model(**inputs).logits
+            finally:
+                if hook is not None:
+                    hook.remove()
+            stop_when_cancelled()
+            probabilities = logits.sigmoid()[0].tolist()
+            result = _speaker_turns(
+                probabilities, processor.feature_extractor.hop_length, duration_ms
+            )
+            stop_when_cancelled()
+            self._report_stage("diarization-inference-complete")
+            if self._progress_reporter is not None:
+                self._progress_reporter(1000, 1000)
+            return result
+        finally:
+            # Exceptions retain their traceback until the fallback handler exits.
+            # Drop large tensors here so that handler cannot retain the GPU model.
+            model = inputs = logits = None
 
 
-def _turns(annotation: Any, duration_ms: int) -> tuple[SpeakerTurn, ...]:
+def _offline_chunk_count(model: Any, inputs: Any) -> int | None:
+    """Chunks the offline forward runs, or None when its classifier cannot be observed."""
+    classifier = getattr(model, "classifier", None)
+    features = inputs.get("input_features")
+    if not hasattr(classifier, "register_forward_hook") or not hasattr(features, "shape"):
+        return None
+    config = model.config
+    embeds = -(-int(features.shape[1]) // int(config.audio_config.subsampling_factor))
+    return max(1, -(-embeds // int(config.chunk_length)))
+
+
+def _activity_turns(
+    active: list[list[bool]], hop_length: int, duration_ms: int
+) -> tuple[SpeakerTurn, ...]:
+    """Merge each first-arrival speaker channel's consecutive active frames."""
     turns: list[SpeakerTurn] = []
-    for segment, _track, label in annotation.itertracks(yield_label=True):
-        speaker = str(label)
-        if SPEAKER_LABEL.fullmatch(speaker) is None:
+    for speaker, frames in enumerate(zip(*active, strict=True)):
+        label = f"SPEAKER_{speaker:02d}"
+        if SPEAKER_LABEL.fullmatch(label) is None:
             raise ValueError("Diarization speaker label is invalid.")
-        start_ms = max(0, round(float(segment.start) * 1000))
-        end_ms = min(duration_ms, round(float(segment.end) * 1000))
-        if start_ms < end_ms:
-            turns.append(SpeakerTurn(start_ms, end_ms, speaker))
-    return tuple(sorted(turns, key=lambda turn: (turn.start_ms, turn.end_ms, turn.speaker)))
+        start = None
+        for index, on in enumerate((*frames, False)):
+            if on and start is None:
+                start = index
+            elif not on and start is not None:
+                start_ms = round(start * hop_length * 1000 / SAMPLE_RATE)
+                end_ms = min(round(index * hop_length * 1000 / SAMPLE_RATE), duration_ms)
+                if start_ms < end_ms:
+                    turns.append(SpeakerTurn(start_ms, end_ms, label))
+                start = None
+    return tuple(sorted(turns, key=lambda turn: (turn.start_ms, turn.speaker)))
+
+
+def _speaker_turns(
+    probabilities: list[list[float]], hop_length: int, duration_ms: int
+) -> tuple[tuple[SpeakerTurn, ...], tuple[SpeakerTurn, ...]]:
+    """Keep overlaps in regular turns and only the likeliest active speaker in exclusive turns."""
+    regular = [[score > SPEAKER_ACTIVITY_THRESHOLD for score in row] for row in probabilities]
+    exclusive = []
+    for row, active in zip(probabilities, regular, strict=True):
+        best = max(range(len(row)), key=row.__getitem__)
+        exclusive.append([index == best and active[index] for index in range(len(row))])
+    return (
+        _activity_turns(regular, hop_length, duration_ms),
+        _activity_turns(exclusive, hop_length, duration_ms),
+    )
 
 
 __all__ = [
     "DIARIZATION_MODEL",
     "DIARIZATION_REQUIRED_FILES",
     "DIARIZATION_REQUIREMENT_ID",
-    "PyannoteDiarizationAdapter",
+    "NemotronDiarizationAdapter",
     "SpeakerDiarizationResult",
     "SpeakerTurn",
     "cuda_failure_reason",
