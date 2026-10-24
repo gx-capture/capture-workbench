@@ -236,7 +236,7 @@ class EngineModelFileDescriptor:
         size = _positive_int(
             payload["bytes"],
             "direct model file bytes",
-            maximum=2 * 1024**3,
+            maximum=4 * 1024**3,
         )
         if size > 512 * 1024**2 and not (
             kind in {"source", "derived"} and path.startswith("model/")
@@ -397,7 +397,7 @@ class EngineModelDeliveryDescriptor:
         extracted_bytes = _positive_int(
             payload["extractedBytes"],
             "direct model extractedBytes",
-            maximum=2 * 1024**3,
+            maximum=8 * 1024**3,
         )
         if sum(item.bytes for item in files) != extracted_bytes:
             raise EngineCatalogError("direct model extractedBytes does not match files")

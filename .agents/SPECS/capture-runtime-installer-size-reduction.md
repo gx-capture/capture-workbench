@@ -65,7 +65,8 @@ orchestration, and installation logic.
 The core must not contain/import at runtime:
 
 - PaddleOCR, PaddleX, OpenCV, ONNX Runtime, `pypdfium2`, or Pillow;
-- faster-whisper, CTranslate2, PyAV, or Hugging Face Hub;
+- PyTorch, Transformers, PyAV, or Hugging Face Hub (faster-whisper and CTranslate2 until
+  the TEA-ASR change);
 - worker/model archives;
 - binaries for non-Windows or non-x64 platforms.
 
@@ -229,8 +230,8 @@ never follows an existing path.
 4. Probe worker + model + providers.
 5. Atomically activate.
 
-`whisper-primary` follows the same sequence with a separately packaged
-faster-whisper worker and fixed-revision model artifact. No Hugging Face API is
+`speech-recognition` (formerly `whisper-primary`) follows the same sequence with a
+separately packaged Transformers speech worker and fixed-revision model artifact. No Hugging Face API is
 called by runtime. The installed model is entirely described by the catalog.
 
 Ollama stays app-managed/on-demand with its existing isolated profile and

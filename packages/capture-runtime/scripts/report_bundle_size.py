@@ -94,7 +94,7 @@ def _walk_strings(value: object) -> Iterable[str]:
 
 
 def pyinstaller_inventory(work_dir: Path | None) -> dict[str, Any]:
-    categories = {"core": 0, "pdf": 0, "ocr": 0, "whisper": 0, "other": 0}
+    categories = {"core": 0, "pdf": 0, "ocr": 0, "speech-recognition": 0, "other": 0}
     if work_dir is None or not work_dir.is_dir():
         return {
             "files": [],
@@ -139,14 +139,14 @@ def pyinstaller_inventory(work_dir: Path | None) -> dict[str, Any]:
                 elif any(
                     token in lowered
                     for token in (
-                        "faster_whisper",
-                        "ctranslate2",
+                        "transformers",
+                        "torch",
                         "huggingface",
                         "/av/",
                         "av.libs",
                     )
                 ):
-                    categories["whisper"] += size
+                    categories["speech-recognition"] += size
                 elif any(
                     token in lowered
                     for token in (

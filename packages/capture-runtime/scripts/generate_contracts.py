@@ -1601,7 +1601,7 @@ def _manifest(models: dict[str, dict[str, Any]]) -> dict[str, Any]:
             {
                 "name": "CaptureRequirementId",
                 "type": (
-                    "'windowsml-ocr' | 'whisper-primary' | 'ollama-runtime' "
+                    "'windowsml-ocr' | 'speech-recognition' | 'ollama-runtime' "
                     "| 'capture-ollama-model'"
                 ),
             },

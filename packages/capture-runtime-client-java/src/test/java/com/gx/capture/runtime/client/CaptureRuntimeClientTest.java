@@ -22,6 +22,20 @@ class CaptureRuntimeClientTest {
   private static final ObjectMapper MAPPER = WireCodecs.mapper();
 
   @Test
+  void engineTimingProvenanceIsOptionalAndRoundTrips() throws Exception {
+    var legacy = new CaptureRuntimeTypes.Engine("speech-recognition", "tea", "sha256:" + "a".repeat(64), "cuda");
+    assertThat(MAPPER.readValue(MAPPER.writeValueAsBytes(legacy), CaptureRuntimeTypes.Engine.class)).isEqualTo(legacy);
+    var timed = new CaptureRuntimeTypes.Engine("speaker-diarization", "nemotron", legacy.digest(), "cpu", 1500L, Map.of("modelLoad", 0L, "inference", 1200L));
+    assertThat(MAPPER.readValue(MAPPER.writeValueAsBytes(timed), CaptureRuntimeTypes.Engine.class)).isEqualTo(timed);
+    var wire = MAPPER.valueToTree(timed);
+    assertThat(wire.path("elapsedMs").longValue()).isEqualTo(1500L);
+    assertThat(wire.path("stageMs").path("inference").longValue()).isEqualTo(1200L);
+    assertThatThrownBy(() -> new CaptureRuntimeTypes.Engine("speech-recognition", "tea", legacy.digest(), "cpu", -1L, null)).isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> new CaptureRuntimeTypes.Engine("speech-recognition", "tea", legacy.digest(), "cpu", null, Map.of("inference", -1L))).isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> new CaptureRuntimeTypes.Engine("speech-recognition", "tea", legacy.digest(), "cpu", null, Map.of(" ", 1L))).isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
   void generatedWireModelsArePrivateAndPublicSeamIsV2Typed() {
     assertThat(Modifier.isPublic(CaptureRuntimeTypes.class.getModifiers())).isTrue();
     assertThat(Modifier.isPublic(WireCodecs.class.getModifiers())).isFalse();
@@ -354,7 +368,7 @@ class CaptureRuntimeClientTest {
             "eager");
     assertThat(legacy.pdfPageNumbers()).isNull();
     assertThat(CaptureRuntimeTypes.CONTRACT_SET_SHA256)
-        .isEqualTo("02a67c8bc3ba579944d29751579fa76159ac1134b201559702d72dcbafa50c66");
+        .isEqualTo("60c622670b00e144b174c210e96773e07e7d94ec7c721b33ac65ff6c722c1d93");
 
     assertThatThrownBy(
             () ->

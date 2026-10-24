@@ -1,4 +1,4 @@
-"""Bounded binary session protocol for progressive Whisper windows."""
+"""Bounded binary session protocol for progressive speech recognition windows."""
 
 from __future__ import annotations
 
@@ -63,7 +63,7 @@ class SessionFrameDecoder:
         if len(self._buffer) + len(data) > self.max_buffer_bytes:
             raise WhisperSessionProtocolError(
                 "session_backpressure",
-                "Whisper session frame buffer is full.",
+                "Speech recognition session frame buffer is full.",
                 retryable=True,
             )
         self._buffer.extend(data)
@@ -73,7 +73,7 @@ class SessionFrameDecoder:
             if payload_size > MAX_SESSION_FRAME_PAYLOAD:
                 raise WhisperSessionProtocolError(
                     "session_frame_too_large",
-                    "Whisper session frame exceeds the bounded payload limit.",
+                    "Speech recognition session frame exceeds the bounded payload limit.",
                 )
             frame_size = _HEADER.size + payload_size
             if len(self._buffer) < frame_size:
@@ -82,7 +82,7 @@ class SessionFrameDecoder:
                 frame_type = SessionFrameType(chr(raw_type))
             except ValueError as error:
                 raise WhisperSessionProtocolError(
-                    "session_frame_invalid", "Whisper session frame type is invalid."
+                    "session_frame_invalid", "Speech recognition session frame type is invalid."
                 ) from error
             payload = bytes(self._buffer[_HEADER.size : frame_size])
             del self._buffer[:frame_size]
@@ -123,14 +123,14 @@ class WhisperSessionProtocol:
 
     def handle(self, frame: SessionFrame) -> list[bytes]:
         if self._terminal:
-            return [self._error("session_closed", "Whisper session is already closed.")]
+            return [self._error("session_closed", "Speech recognition session is already closed.")]
         try:
             if frame.frame_type is SessionFrameType.START:
                 self._start(frame.payload)
                 return []
             if not self._started:
                 raise WhisperSessionProtocolError(
-                    "session_not_started", "Whisper session must start before input."
+                    "session_not_started", "Speech recognition session must start before input."
                 )
             if frame.frame_type is SessionFrameType.CREDIT:
                 self._credit(frame.payload)
@@ -143,7 +143,7 @@ class WhisperSessionProtocol:
                 return [
                     self._error(
                         "session_cancelled",
-                        "Whisper session was cancelled.",
+                        "Speech recognition session was cancelled.",
                         retryable=True,
                     )
                 ]
@@ -162,7 +162,7 @@ class WhisperSessionProtocol:
             return [
                 self._error(
                     "session_failed",
-                    f"Whisper session failed at {type(error).__name__}{detail}.",
+                    f"Speech recognition session failed at {type(error).__name__}{detail}.",
                     retryable=True,
                 )
             ]
@@ -170,7 +170,7 @@ class WhisperSessionProtocol:
     def _start(self, payload: bytes) -> None:
         if self._started:
             raise WhisperSessionProtocolError(
-                "session_conflict", "Whisper session already started."
+                "session_conflict", "Speech recognition session already started."
             )
         metadata = _json_object(payload)
         expected = {
@@ -183,21 +183,21 @@ class WhisperSessionProtocol:
         }
         if set(metadata) != expected or metadata["protocolVersion"] != SESSION_PROTOCOL_VERSION:
             raise WhisperSessionProtocolError(
-                "session_start_invalid", "Whisper session start is invalid."
+                "session_start_invalid", "Speech recognition session start is invalid."
             )
         if not isinstance(metadata["sessionId"], str) or not metadata["sessionId"]:
             raise WhisperSessionProtocolError(
-                "session_start_invalid", "Whisper session id is invalid."
+                "session_start_invalid", "Speech recognition session id is invalid."
             )
         for field in ("sampleRate", "channels", "windowMs", "overlapMs"):
             value = metadata[field]
             if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
                 raise WhisperSessionProtocolError(
-                    "session_start_invalid", "Whisper session timing is invalid."
+                    "session_start_invalid", "Speech recognition session timing is invalid."
                 )
         if metadata["overlapMs"] >= metadata["windowMs"]:
             raise WhisperSessionProtocolError(
-                "session_start_invalid", "Whisper session overlap is invalid."
+                "session_start_invalid", "Speech recognition session overlap is invalid."
             )
         self.backend.start(metadata)
         self._started = True

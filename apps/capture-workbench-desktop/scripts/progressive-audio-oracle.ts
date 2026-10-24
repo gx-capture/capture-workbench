@@ -169,9 +169,9 @@ async function startWorkerMirror(port: number): Promise<Server> {
     'capture-runtime',
     'dist',
     'release',
-    `capture-engine-whisper-${RELEASE_VERSION}-windows-x64.zip`,
+    `capture-engine-speech-recognition-${RELEASE_VERSION}-windows-x64.zip`,
   );
-  const archiveName = `capture-engine-whisper-${RELEASE_VERSION}-windows-x64.zip`;
+  const archiveName = `capture-engine-speech-recognition-${RELEASE_VERSION}-windows-x64.zip`;
   const archiveMetadata = await stat(archivePath).catch(() => undefined);
   if (!archiveMetadata?.isFile()) throw new Error('Progressive audio oracle worker archive is missing.');
   const server = createServer((request, response) => {
@@ -202,7 +202,7 @@ async function installWhisper(
       'content-type': 'application/json',
       'X-Idempotency-Key': randomUUID(),
     },
-    body: JSON.stringify({ requirementId: 'whisper-primary', consent: true }),
+    body: JSON.stringify({ requirementId: 'speech-recognition', consent: true }),
   });
   const installationId = requiredString(started.installationId);
   const deadline = Date.now() + 30 * 60_000;

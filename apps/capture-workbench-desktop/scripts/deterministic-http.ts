@@ -89,12 +89,12 @@ export function verifyRequirements(context) {
       const requirementIds = requirements.body.items.map((item) => item.requirementId);
       assert.deepEqual(requirementIds, [
         'windowsml-ocr',
-        'whisper-primary',
+        'speech-recognition',
         'ollama-runtime',
         'capture-ollama-model',
       ]);
       const installationKey = randomUUID();
-      const installationPayload = JSON.stringify({ requirementId: 'whisper-primary', consent: true });
+      const installationPayload = JSON.stringify({ requirementId: 'speech-recognition', consent: true });
       return requestJson({
         ...context,
         method: 'POST',
@@ -104,7 +104,7 @@ export function verifyRequirements(context) {
       }).pipe(
         concatMap((installation) => {
           assert.equal(installation.status, 202);
-          assert.equal(installation.body.requirementId, 'whisper-primary');
+          assert.equal(installation.body.requirementId, 'speech-recognition');
           assert.equal(typeof installation.body.installationId, 'string');
           assertJobTimestamps(installation.body);
           return requestJson({

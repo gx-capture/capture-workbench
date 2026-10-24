@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 
+from capture_runtime import speaker_diarization as diarization
 from capture_runtime.engine_adapters import EngineRuntimeUnavailableError
 from capture_runtime.speaker_diarization import (
     DIARIZATION_REQUIRED_FILES,
@@ -22,6 +23,34 @@ from capture_runtime.speaker_turns import SpeakerTurn
 
 class OutOfMemoryError(RuntimeError):
     pass
+
+
+@pytest.mark.parametrize("device", ["cpu", "cuda"])
+def test_processing_times_use_milliseconds_on_the_result_device(tmp_path, monkeypatch, device):
+    adapter, _, _ = _adapter(tmp_path, cuda=True, prefer_gpu=device == "cuda")
+    clock = iter(range(0, 1000, 5))
+    monkeypatch.setattr(diarization.time, "perf_counter", lambda: next(clock))
+    result = adapter.diarize(tmp_path / "source.wav", should_cancel=lambda: False)
+    assert result.device == device
+    assert result.stage_ms == {"modelLoad": 5000, "inference": 5000, "postprocessing": 5000}
+    assert result.elapsed_ms == 35000
+
+
+@pytest.mark.parametrize("failure_stage", ["transfer", "inputs", "inference"])
+def test_cpu_fallback_time_includes_the_failed_gpu_attempt(tmp_path, monkeypatch, failure_stage):
+    adapter, _, _ = _adapter(
+        tmp_path,
+        cuda=True,
+        prefer_gpu=True,
+        failures={"cuda": RuntimeError("CUDA out of memory")},
+        failure_stage=failure_stage,
+    )
+    clock = iter(range(0, 1000, 5))
+    monkeypatch.setattr(diarization.time, "perf_counter", lambda: next(clock))
+    result = adapter.diarize(tmp_path / "source.wav", should_cancel=lambda: False)
+    assert result.device == "cpu"
+    assert result.stage_ms == {"modelLoad": 5000, "inference": 5000, "postprocessing": 5000}
+    assert result.elapsed_ms == (40000 if failure_stage == "transfer" else 50000)
 
 
 def _model_dir(root: Path) -> Path:

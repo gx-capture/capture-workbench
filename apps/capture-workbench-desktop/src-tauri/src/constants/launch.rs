@@ -1,8 +1,8 @@
 pub(crate) const CHILD_ENVIRONMENT_ALLOWLIST: &[&str] = &[
     "APPDATA",
     "COMSPEC",
-    // CTranslate2 uses CUDA_PATH to locate the host CUDA toolkit's
-    // cuBLAS runtime for the isolated Whisper worker.
+    // Lets the isolated GPU workers see a host CUDA toolkit; their PyTorch
+    // wheels also bundle the CUDA runtime they need.
     "CUDA_PATH",
     "LOCALAPPDATA",
     "NUMBER_OF_PROCESSORS",

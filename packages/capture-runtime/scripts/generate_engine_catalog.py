@@ -114,8 +114,8 @@ def main() -> None:
     )
     parser.add_argument("--ocr-worker-archive", type=Path, required=True)
     parser.add_argument("--ocr-worker-manifest", type=Path, required=True)
-    parser.add_argument("--whisper-worker-archive", type=Path, required=True)
-    parser.add_argument("--whisper-worker-manifest", type=Path, required=True)
+    parser.add_argument("--speech-recognition-worker-archive", type=Path, required=True)
+    parser.add_argument("--speech-recognition-worker-manifest", type=Path, required=True)
     # Read only when the model source lock contains the speaker-diarization unit.
     parser.add_argument("--diarization-worker-archive", type=Path)
     parser.add_argument("--diarization-worker-manifest", type=Path)
@@ -142,7 +142,7 @@ def main() -> None:
             approval["status"] != "blocked"
             or approval["blockers"] != [PENDING_WHISPER_FREEZE_BLOCKER]
             or [item["requirementId"] for item in source_lock["requirements"]][:2]
-            != ["windowsml-ocr", "whisper-primary"]
+            != ["windowsml-ocr", "speech-recognition"]
             or len(source_lock["fixtures"]) != 2
             or [item["kind"] for item in source_lock["fixtures"]] != ["ocr", "whisper"]
         ):
@@ -159,7 +159,7 @@ def main() -> None:
         ):
             raise SystemExit("Pending preflight requires an unfrozen private Whisper fixture.")
     if (
-        arguments.whisper_worker_archive.parent.resolve()
+        arguments.speech_recognition_worker_archive.parent.resolve()
         != arguments.ocr_worker_archive.parent.resolve()
     ):
         raise SystemExit("OCR and Whisper worker archives must share one engine directory")
@@ -178,12 +178,14 @@ def main() -> None:
                 release_base_url=arguments.release_base_url,
             ),
             requirement(
-                requirement_id="whisper-primary",
-                worker_archive=arguments.whisper_worker_archive,
-                worker_manifest=arguments.whisper_worker_manifest,
-                worker_entry_point="capture-engine-whisper.exe",
+                requirement_id="speech-recognition",
+                worker_archive=arguments.speech_recognition_worker_archive,
+                worker_manifest=arguments.speech_recognition_worker_manifest,
+                worker_entry_point="capture-engine-speech-recognition.exe",
                 direct_model_files=(
-                    None if source_lock is None else model_delivery(source_lock, "whisper-primary")
+                    None
+                    if source_lock is None
+                    else model_delivery(source_lock, "speech-recognition")
                 ),
                 release_base_url=arguments.release_base_url,
             ),

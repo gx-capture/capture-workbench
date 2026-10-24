@@ -85,7 +85,7 @@ def test_lock_accepts_the_optional_speaker_unit_after_the_required_ones() -> Non
 
     assert [item["requirementId"] for item in lock["requirements"]] == [
         "windowsml-ocr",
-        "whisper-primary",
+        "speech-recognition",
         "speaker-diarization",
         "vertical-japanese-reader",
     ]
@@ -150,7 +150,7 @@ def _generate(tmp_path: Path, lock: dict[str, Any], *, with_speaker_worker: bool
     engine_dir = tmp_path / "engines"
     engine_dir.mkdir()
     arguments = [sys.executable, str(SCRIPT_PATH)]
-    for engine in ("ocr", "whisper", *(("diarization",) if with_speaker_worker else ())):
+    for engine in ("ocr", "speech-recognition", *(("diarization",) if with_speaker_worker else ())):
         archive, manifest = _archive(engine_dir, engine)
         arguments += [f"--{engine}-worker-archive", str(archive)]
         arguments += [f"--{engine}-worker-manifest", str(manifest)]
@@ -227,7 +227,7 @@ def test_catalog_leaves_the_unit_out_when_the_lock_does_not_have_it(tmp_path: Pa
     catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
     assert [item["requirementId"] for item in catalog["requirements"]] == [
         "windowsml-ocr",
-        "whisper-primary",
+        "speech-recognition",
         "vertical-japanese-reader",
     ]
 
@@ -267,7 +267,7 @@ def test_a_models_only_unit_enters_the_catalog_and_the_release_without_an_archiv
     )
     assert sorted(path.name for path in release.glob("capture-engine-*.zip")) == [
         f"capture-engine-ocr-{RUNTIME_VERSION}-windows-x64.zip",
-        f"capture-engine-whisper-{RUNTIME_VERSION}-windows-x64.zip",
+        f"capture-engine-speech-recognition-{RUNTIME_VERSION}-windows-x64.zip",
     ]
 
 

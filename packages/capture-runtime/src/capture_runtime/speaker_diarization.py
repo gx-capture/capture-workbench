@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import gc
 import importlib.util
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -65,6 +66,8 @@ class SpeakerDiarizationResult:
     model: str
     digest: str
     warning: str | None = None
+    elapsed_ms: int | None = None
+    stage_ms: dict[str, int] | None = None
 
 
 def cuda_failure_reason(error: BaseException) -> str | None:
@@ -193,6 +196,7 @@ class NemotronDiarizationAdapter:
     def diarize(
         self, source_path: Path, *, should_cancel: Callable[[], bool]
     ) -> SpeakerDiarizationResult:
+        started = time.perf_counter()
         self._report_stage("diarization-assets-probe-start")
         probe = self.probe()
         if not probe.ready:
@@ -212,7 +216,7 @@ class NemotronDiarizationAdapter:
         warning = None
         while True:
             try:
-                regular, exclusive = self._attempt(
+                regular, exclusive, stage_ms = self._attempt(
                     torch, audio, device, duration_ms, should_cancel=should_cancel
                 )
                 break
@@ -237,6 +241,8 @@ class NemotronDiarizationAdapter:
             model=DIARIZATION_MODEL,
             digest=_directory_digest(self.model_dir, DIARIZATION_REQUIRED_FILES),
             warning=warning,
+            elapsed_ms=round((time.perf_counter() - started) * 1000),
+            stage_ms=stage_ms,
         )
 
     def _torch_module(self) -> Any:
@@ -254,7 +260,7 @@ class NemotronDiarizationAdapter:
         duration_ms: int,
         *,
         should_cancel: Callable[[], bool],
-    ) -> tuple[tuple[SpeakerTurn, ...], tuple[SpeakerTurn, ...]]:
+    ) -> tuple[tuple[SpeakerTurn, ...], tuple[SpeakerTurn, ...], dict[str, int]]:
         processor_factory = self._processor_factory
         model_factory = self._model_factory
         if processor_factory is None or model_factory is None:
@@ -274,7 +280,9 @@ class NemotronDiarizationAdapter:
             self._report_stage("diarization-device-cpu")
         self._report_stage("diarization-model-load-start")
         model = inputs = logits = None
+        stage_ms: dict[str, int] = {}
         try:
+            started = time.perf_counter()
             processor = processor_factory.from_pretrained(
                 str(self.model_dir), local_files_only=True
             )
@@ -282,7 +290,9 @@ class NemotronDiarizationAdapter:
             model = model_factory.from_pretrained(str(self.model_dir), local_files_only=True)
             stop_when_cancelled()
             model.to(torch.device(device))
+            stage_ms["modelLoad"] = round((time.perf_counter() - started) * 1000)
             self._report_stage("diarization-model-load-complete")
+            started = time.perf_counter()
             inputs = processor(audio, sampling_rate=SAMPLE_RATE).to(torch.device(device))
             stop_when_cancelled()
             self._report_stage("diarization-inference-start")
@@ -310,14 +320,17 @@ class NemotronDiarizationAdapter:
                     hook.remove()
             stop_when_cancelled()
             probabilities = logits.sigmoid()[0].tolist()
+            stage_ms["inference"] = round((time.perf_counter() - started) * 1000)
+            started = time.perf_counter()
             result = _speaker_turns(
                 probabilities, processor.feature_extractor.hop_length, duration_ms
             )
+            stage_ms["postprocessing"] = round((time.perf_counter() - started) * 1000)
             stop_when_cancelled()
             self._report_stage("diarization-inference-complete")
             if self._progress_reporter is not None:
                 self._progress_reporter(1000, 1000)
-            return result
+            return *result, stage_ms
         finally:
             # Exceptions retain their traceback until the fallback handler exits.
             # Drop large tensors here so that handler cannot retain the GPU model.

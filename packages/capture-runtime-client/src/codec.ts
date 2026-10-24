@@ -626,7 +626,7 @@ function validateStructuringSession(record: Record<string, unknown>): void {
     engine as Record<string, unknown>,
     ['engine', 'model', 'digest'],
     'StructuringSession provider',
-    ['device'],
+    ['device', 'elapsedMs', 'stageMs'],
   );
   const device = (engine as Record<string, unknown>)['device'];
   if (
@@ -636,6 +636,20 @@ function validateStructuringSession(record: Record<string, unknown>): void {
   ) {
     throw new CaptureRuntimeProtocolError(
       'Capture Runtime returned invalid StructuringSession provider device.',
+    );
+  }
+  const elapsedMs = (engine as Record<string, unknown>)['elapsedMs'];
+  const stageMs = (engine as Record<string, unknown>)['stageMs'];
+  const milliseconds = (value: unknown): boolean =>
+    typeof value === 'number' && Number.isInteger(value) && value >= 0;
+  if (
+    (elapsedMs !== undefined && elapsedMs !== null && !milliseconds(elapsedMs)) ||
+    (stageMs !== undefined && stageMs !== null &&
+      (typeof stageMs !== 'object' || Array.isArray(stageMs) ||
+        Object.entries(stageMs).some(([name, value]) => !name.trim() || !milliseconds(value))))
+  ) {
+    throw new CaptureRuntimeProtocolError(
+      'Capture Runtime returned invalid StructuringSession provider processing times.',
     );
   }
 }

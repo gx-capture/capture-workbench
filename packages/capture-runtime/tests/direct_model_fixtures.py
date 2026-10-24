@@ -31,7 +31,7 @@ def approved_source_lock() -> tuple[dict[str, Any], dict[tuple[str, str], bytes]
     }
     whisper_fixture = payload["fixtures"][1]
     whisper_fixture["expectedDevice"] = "cuda"
-    whisper_fixture["expectedModel"] = "large-v3-turbo"
+    whisper_fixture["expectedModel"] = "tea-asr-1.1"
     whisper_fixture["preferGpu"] = True
     whisper_fixture["expectedNormalizedOutputSha256"] = "a" * 64
     return payload, {}

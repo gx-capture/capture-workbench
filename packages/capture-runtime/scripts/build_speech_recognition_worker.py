@@ -12,12 +12,12 @@ from capture_runtime.constants import RUNTIME_VERSION
 
 def main() -> None:
     if sys.version_info[:2] != (3, 13):
-        raise SystemExit("Whisper worker requires Python 3.13")
+        raise SystemExit("Speech recognition worker requires Python 3.13")
     if platform.system() != "Windows" or platform.machine().lower() not in {"amd64", "x86_64"}:
-        raise SystemExit("Whisper worker v2 is Windows x64 only")
+        raise SystemExit("Speech recognition worker v2 is Windows x64 only")
     root = Path(__file__).resolve().parents[1]
     dist = root / "dist" / "workers"
-    work = root / ".build" / "pyinstaller" / "whisper-worker"
+    work = root / ".build" / "pyinstaller" / "speech-recognition-worker"
     subprocess.run(
         [
             sys.executable,
@@ -29,16 +29,16 @@ def main() -> None:
             str(dist),
             "--workpath",
             str(work),
-            str(root / "pyinstaller" / "capture-engine-whisper.spec"),
+            str(root / "pyinstaller" / "capture-engine-speech-recognition.spec"),
         ],
         cwd=root,
         stdin=subprocess.DEVNULL,
         shell=False,
         check=True,
     )
-    stem = f"capture-engine-whisper-{RUNTIME_VERSION}-windows-x64"
+    stem = f"capture-engine-speech-recognition-{RUNTIME_VERSION}-windows-x64"
     build_worker_archive(
-        dist / "capture-engine-whisper",
+        dist / "capture-engine-speech-recognition",
         root / "dist" / "engines" / f"{stem}.zip",
         root / "dist" / "engines" / f"{stem}-files.json",
     )

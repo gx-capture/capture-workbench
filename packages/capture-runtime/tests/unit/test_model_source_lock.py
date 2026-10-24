@@ -36,13 +36,13 @@ def test_approved_production_lock_is_canonical_model_enabled() -> None:
     assert lock["approval"]["status"] == "approved"
     assert lock["approval"]["blockers"] == []
     whisper = lock["fixtures"][1]
-    assert whisper["expectedEngine"] == "whisper-primary"
-    assert whisper["expectedModel"] == "large-v3-turbo"
+    assert whisper["expectedEngine"] == "speech-recognition"
+    assert whisper["expectedModel"] == "tea-asr-1.1"
     assert whisper["expectedDevice"] == "cuda"
     assert len(whisper["expectedNormalizedOutputSha256"]) == 64
     assert [item["requirementId"] for item in lock["requirements"]] == [
         "windowsml-ocr",
-        "whisper-primary",
+        "speech-recognition",
         "speaker-diarization",
         "vertical-japanese-reader",
     ]
@@ -192,7 +192,7 @@ def test_approved_lock_generates_checksum_pinned_manifest_equivalent(
     source = tmp_path / "lock.json"
     source.write_bytes(model_source_lock.canonical_json_bytes(payload))
     lock = model_source_lock.load_source_lock(source)
-    delivery = model_source_lock.model_delivery(lock, "whisper-primary")
+    delivery = model_source_lock.model_delivery(lock, "speech-recognition")
     assert delivery["entryCount"] == len(delivery["files"])
     assert delivery["extractedBytes"] == sum(item["bytes"] for item in delivery["files"])
     assert len(delivery["manifestSha256"]) == 64
@@ -258,11 +258,11 @@ def test_approved_lock_generates_checksum_pinned_manifest_equivalent(
         (
             lambda payload: payload["requirements"][0]["files"][0].update(
                 {
-                    "bytes": 2 * 1024 * 1024 * 1024 + 1,
+                    "bytes": 4 * 1024**3 + 1,
                     "path": "model/det/inference.onnx",
                 }
             ),
-            "exceeds 2 GiB single-file limit",
+            "exceeds 4 GiB single-file limit",
         ),
         (
             lambda payload: payload["requirements"][0]["files"][1].update(
@@ -345,20 +345,26 @@ def test_source_lock_requires_canonical_json(tmp_path: Path) -> None:
         model_source_lock.load_source_lock(source)
 
 
-def test_source_lock_rejects_requirement_aggregate_above_two_gib() -> None:
+def test_source_lock_rejects_requirement_aggregate_above_eight_gib() -> None:
     payload, _content = approved_source_lock()
     candidate = deepcopy(payload)
     model = next(
         item
         for item in candidate["requirements"][1]["files"]
-        if item["path"] == "model/primary/model.bin"
+        if item["path"] == "model/primary/model.safetensors"
     )
-    model["bytes"] = 2 * 1024 * 1024 * 1024
-    with pytest.raises(model_source_lock.ModelSourceLockError, match="aggregate 2 GiB"):
+    model["bytes"] = model_source_lock.MAX_SINGLE_FILE_BYTES
+    fallback = next(
+        item
+        for item in candidate["requirements"][1]["files"]
+        if item["path"] == "model/fallback/model.safetensors"
+    )
+    fallback["bytes"] = model_source_lock.MAX_SINGLE_FILE_BYTES
+    with pytest.raises(model_source_lock.ModelSourceLockError, match="aggregate 8 GiB"):
         model_source_lock.validate_source_lock(candidate)
 
 
-def test_source_lock_rejects_release_aggregate_above_three_gib() -> None:
+def test_source_lock_rejects_release_aggregate_above_ten_gib() -> None:
     payload, _content = approved_source_lock()
     candidate = deepcopy(payload)
     model = next(
@@ -366,6 +372,6 @@ def test_source_lock_rejects_release_aggregate_above_three_gib() -> None:
         for item in candidate["requirements"][0]["files"]
         if item["path"] == "model/det/inference.onnx"
     )
-    model["bytes"] = 1_100_000_000
-    with pytest.raises(model_source_lock.ModelSourceLockError, match="aggregate 3 GiB"):
+    model["bytes"] = 4 * 1024**3
+    with pytest.raises(model_source_lock.ModelSourceLockError, match="aggregate 10 GiB"):
         model_source_lock.validate_source_lock(candidate)

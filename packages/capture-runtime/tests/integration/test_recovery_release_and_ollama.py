@@ -57,7 +57,7 @@ def test_startup_recovery_marks_interrupted_installation_failed(
         response = first.post(
             "/v2/runtime/installations",
             headers=idempotency_headers(),
-            json={"requirementId": "whisper-primary", "consent": True},
+            json={"requirementId": "speech-recognition", "consent": True},
         )
         installation_id = response.json()["installationId"]
         poll_installation(first, installation_id, lambda job: job["status"] == "running")

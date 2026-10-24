@@ -44,7 +44,7 @@ export const RUNTIME_SIZE_REPORT_NAMES = Object.freeze([
 const ENGINE_CATALOG_NAME = 'capture-engine-catalog.json';
 const ENGINE_CATALOG_CHECKSUM_NAME = `${ENGINE_CATALOG_NAME}.sha256`;
 const WORKER_PROTOCOL_VERSION = '1';
-const MODEL_REQUIREMENT_IDS = ['windowsml-ocr', 'whisper-primary'] as const;
+const MODEL_REQUIREMENT_IDS = ['windowsml-ocr', 'speech-recognition'] as const;
 // Units a release may or may not carry; when present they are checked like the others.
 const OPTIONAL_MODEL_REQUIREMENT_IDS: readonly unknown[] = [
   'speaker-diarization',

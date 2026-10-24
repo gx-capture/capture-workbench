@@ -121,7 +121,7 @@ function validEvidence() {
     sourceLockSha256: digest,
     catalogSha256: digest,
     selectedModelOptionId: 'qwen3.5-0.8b-v1',
-    modelDependencyOrder: ['windowsml-ocr', 'whisper-primary'],
+    modelDependencyOrder: ['windowsml-ocr', 'speech-recognition'],
     modelDependencyOrderScope: REAL_MODEL_DEPENDENCY_ORDER_SCOPE,
     media: [
       {
@@ -149,7 +149,7 @@ function validEvidence() {
       {
         sourceKind: 'audio',
         sourceSha256: digest,
-        extractionEngine: 'whisper-primary',
+        extractionEngine: 'speech-recognition',
         model: 'lock-selected-whisper',
         device: 'windowsml-dml',
         engineDigest: `sha256:${digest}`,
@@ -246,8 +246,8 @@ test('progressive audio sample evidence is digest-only and bound to the five-min
       { order: 1, startMs: 1_000, endMs: 2_000, text: 'sample\n two' },
     ],
     extraction: {
-      engine: 'whisper-primary',
-      model: 'large-v3-turbo',
+      engine: 'speech-recognition',
+      model: 'tea-asr-1.1',
       device: 'cuda',
       digest: `sha256:${digest}`,
     },
@@ -268,8 +268,8 @@ test('progressive audio sample evidence rejects incomplete or unsafe samples', (
     partialRevision: 1,
     segments: [{ order: 0, startMs: 0, endMs: 1_000, text: 'sample' }],
     extraction: {
-      engine: 'whisper-primary',
-      model: 'large-v3-turbo',
+      engine: 'speech-recognition',
+      model: 'tea-asr-1.1',
       device: 'cuda',
       digest: `sha256:${digest}`,
     },
@@ -281,8 +281,8 @@ test('progressive audio sample evidence rejects incomplete or unsafe samples', (
     partialRevision: 1,
     segments: [{ order: 0, startMs: 0, endMs: 1_000, text: 'C:\\private\\audio' }],
     extraction: {
-      engine: 'whisper-primary',
-      model: 'large-v3-turbo',
+      engine: 'speech-recognition',
+      model: 'tea-asr-1.1',
       device: 'cuda',
       digest: `sha256:${digest}`,
     },
@@ -302,8 +302,8 @@ test('progressive audio oracle compares an independent worker result without per
       { order: 1, startMs: 1_000, endMs: 2_000, text: 'oracle two' },
     ],
     extraction: {
-      engine: 'whisper-primary',
-      model: 'large-v3-turbo',
+      engine: 'speech-recognition',
+      model: 'tea-asr-1.1',
       device: 'cuda',
       digest: `sha256:${digest}`,
     },
@@ -591,10 +591,10 @@ test('terminal document failure is immediate, allowlisted, and content-free', ()
       'failed',
       'failed',
       'extraction_failed',
-      'Source extraction worker failed at stages whisper-model-load-cuda-failed-runtimeerror>whisper-gpu-fallback>whisper-model-load-cpu-failed-runtimeerror.',
+      'Source extraction worker failed at stages speech-model-load-cuda-failed-runtimeerror>speech-gpu-fallback>speech-model-load-cpu-failed-runtimeerror.',
       'audio',
     ),
-    'Desktop capture terminated. status=failed; stage=failed; errorCode=extraction_failed; mediaKind=audio; workerStage=whisper-model-load-cuda-failed-runtimeerror>whisper-gpu-fallback>whisper-model-load-cpu-failed-runtimeerror.',
+    'Desktop capture terminated. status=failed; stage=failed; errorCode=extraction_failed; mediaKind=audio; workerStage=speech-model-load-cuda-failed-runtimeerror>speech-gpu-fallback>speech-model-load-cpu-failed-runtimeerror.',
   );
   assert.equal(
     safeTerminalDocumentFailure(
@@ -635,7 +635,7 @@ test('terminal document failure is immediate, allowlisted, and content-free', ()
 
 test('terminal Whisper installation failure is bounded and content-free', () => {
   const failure = safeTerminalInstallationFailure(
-    'whisper-primary',
+    'speech-recognition',
     'failed',
     'probing',
     'worker_failed',
@@ -644,7 +644,7 @@ test('terminal Whisper installation failure is bounded and content-free', () => 
   );
   assert.equal(
     failure,
-    'Desktop runtime installation terminated. requirement=whisper-primary; status=failed; stage=probing; errorCode=worker_failed; progressBand=late; workerStage=worker-process-response-error-bootloader; failureReason=runtime-install-unexpected.',
+    'Desktop runtime installation terminated. requirement=speech-recognition; status=failed; stage=probing; errorCode=worker_failed; progressBand=late; workerStage=worker-process-response-error-bootloader; failureReason=runtime-install-unexpected.',
   );
   const message = safeSmokeFailureMessage(new Error(failure), 0, []);
   assert.match(message, /failure=terminal-installation/u);
@@ -652,14 +652,14 @@ test('terminal Whisper installation failure is bounded and content-free', () => 
   assert.equal(safeTerminalInstallationFailure('windowsml-ocr', 'failed', 'probing', 'x', 0.9), undefined);
   assert.equal(
     safeTerminalInstallationFailure(
-      'whisper-primary',
+      'speech-recognition',
       'failed',
       null,
       'installation_failed',
       0.7,
       'direct model download exhausted bounded retries',
     ),
-    'Desktop runtime installation terminated. requirement=whisper-primary; status=failed; stage=unknown; errorCode=installation_failed; progressBand=download; failureReason=direct-model-retries-exhausted.',
+    'Desktop runtime installation terminated. requirement=speech-recognition; status=failed; stage=unknown; errorCode=installation_failed; progressBand=download; failureReason=direct-model-retries-exhausted.',
   );
 });
 

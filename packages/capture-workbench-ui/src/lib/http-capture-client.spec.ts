@@ -515,7 +515,7 @@ function discoveryResponse(path: string): Response | undefined {
       runtimeVersion: RUNTIME_VERSION,
       captureDocumentSchemaVersion: '2',
       captureDocumentSchemaSha256:
-        '5131125b6851bccb8da96150e12c2c50170ad45c2f4a31768404a5406ad8598f',
+        '5452631ce9d8eea48851a819530d94920a39f41350d5575df0f8f97f82171774',
       capabilities: {
         captureKinds: ['pdf'],
         structuringModes: ['host'],

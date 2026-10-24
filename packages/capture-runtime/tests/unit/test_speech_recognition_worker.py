@@ -2,21 +2,14 @@ from __future__ import annotations
 
 from pathlib import Path
 from threading import Event
-from types import SimpleNamespace
 
 import pytest
 
-import capture_runtime.workers.whisper_main as whisper_main
+import capture_runtime.workers.speech_recognition_main as whisper_main
 from capture_runtime.constants import RUNTIME_VERSION
-from capture_runtime.engine_adapters import FasterWhisperAdapter
+from capture_runtime.speech_recognition import TeaAsrAdapter
 from capture_runtime.worker_contracts import WorkerRequest
-
-
-def _model_tree(root: Path, name: str) -> None:
-    model = root / name
-    model.mkdir(parents=True)
-    for filename in ("config.json", "model.bin", "tokenizer.json", "vocabulary.json"):
-        (model / filename).write_bytes(f"{name}:{filename}".encode())
+from tests.speech_model_fakes import FakeModels, model_tree
 
 
 def _request(
@@ -33,10 +26,10 @@ def _request(
     if allow_cpu_fallback is not None:
         options["allowCpuFallback"] = allow_cpu_fallback
     return WorkerRequest(
-        request_id="whisper-worker-test",
+        request_id="speech-recognition-worker-test",
         operation="run",
         payload={
-            "requirementId": "whisper-primary",
+            "requirementId": "speech-recognition",
             "artifactVersion": RUNTIME_VERSION,
             "modelPath": str(model_root),
             "sourcePath": str(source),
@@ -48,10 +41,10 @@ def _request(
 
 def _probe_request(*, options: object) -> WorkerRequest:
     return WorkerRequest(
-        request_id="whisper-worker-probe-test",
+        request_id="speech-recognition-worker-probe-test",
         operation="probe",
         payload={
-            "requirementId": "whisper-primary",
+            "requirementId": "speech-recognition",
             "artifactVersion": RUNTIME_VERSION,
             "modelPath": None,
             "options": options,
@@ -73,7 +66,7 @@ def test_worker_code_probe_accepts_prefer_gpu_install_option(
 
 @pytest.mark.parametrize("options", [{"unexpected": True}, {"preferGpu": 1}, None])
 def test_worker_code_probe_rejects_invalid_options(options: object) -> None:
-    with pytest.raises(ValueError, match="Whisper probe"):
+    with pytest.raises(ValueError, match="Speech recognition probe"):
         whisper_main._probe(_probe_request(options=options))
 
 
@@ -86,40 +79,38 @@ def _run_with_factory(
     calls: list[tuple[str, str]] = []
     constructors: list[dict[str, object]] = []
 
-    class Model:
-        def transcribe(self, _path: str, **_kwargs: object):
-            return [SimpleNamespace(start=0.0, end=1.0, text="worker words")], SimpleNamespace(
-                duration=1.0
-            )
+    fake = FakeModels(monkeypatch)
+    if fail_cuda:
+        fake.failures[("asr", "inference")] = RuntimeError("CUDA out of memory")
 
-    def factory(path: str, *, device: str, compute_type: str) -> Model:
-        del compute_type
-        calls.append((Path(path).name, device))
-        if fail_cuda and device == "cuda":
-            raise RuntimeError("CUDA out of memory")
-        return Model()
-
-    class TestAdapter(FasterWhisperAdapter):
+    class TestAdapter(TeaAsrAdapter):
         def __init__(self, model_path: Path, **kwargs: object) -> None:
             constructors.append(kwargs)
             super().__init__(
                 model_path,
-                model_factory=factory,
-                cuda_count=lambda: 1,
+                torch_module=fake._torch(),
+                transformers_module=fake._transformers(),
+                decoder=lambda *_a, **_k: [0.0] * 16_000,
                 **kwargs,
             )
 
-    monkeypatch.setattr(whisper_main, "FasterWhisperAdapter", TestAdapter)
-    monkeypatch.setattr(whisper_main, "_import_whisper_runtime", lambda: None)
-    return whisper_main._run(request, Event()), calls, constructors
+    monkeypatch.setattr(whisper_main, "TeaAsrAdapter", TestAdapter)
+    monkeypatch.setattr(whisper_main, "_import_speech_runtime", lambda: None)
+    result = whisper_main._run(request, Event())
+    calls = [
+        (Path(event[2]).name, "cuda" if i == 0 else "cpu")
+        for i, event in enumerate(fake.loads("asr"))
+    ]
+    return result, calls, constructors
 
 
 def test_worker_reports_actual_gpu_model_name_for_primary_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    clock = iter(range(0, 1000, 5))
+    monkeypatch.setattr("capture_runtime.speech_recognition.time.perf_counter", lambda: next(clock))
     model_root = tmp_path / "models"
-    _model_tree(model_root, "primary")
-    _model_tree(model_root, "fallback")
+    model_tree(model_root)
     source = tmp_path / "fixture.wav"
     source.write_bytes(b"RIFF" + b"\x00" * 8 + b"WAVE")
 
@@ -132,13 +123,20 @@ def test_worker_reports_actual_gpu_model_name_for_primary_directory(
     assert calls == [("primary", "cuda")]
     assert constructors[0]["primary_model"] == "primary"
     assert constructors[0]["fallback_model"] == "fallback"
-    assert constructors[0]["primary_provenance_model"] == "large-v3-turbo"
-    assert constructors[0]["fallback_provenance_model"] == "small"
+    assert constructors[0]["primary_provenance_model"] == "tea-asr-1.1"
+    assert constructors[0]["fallback_provenance_model"] == "tea-asr-1.1-mini"
     assert result["provenance"] == {
-        "engine": "whisper-primary",
-        "model": "large-v3-turbo",
+        "engine": "speech-recognition",
+        "model": "tea-asr-1.1",
         "device": "cuda",
         "digest": result["provenance"]["digest"],
+        "elapsedMs": 45000,
+        "stageMs": {
+            "modelLoad": 5000,
+            "transcription": 5000,
+            "alignerLoad": 5000,
+            "alignment": 5000,
+        },
     }
 
 
@@ -146,8 +144,7 @@ def test_worker_reports_actual_cpu_model_name_after_gpu_fallback(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     model_root = tmp_path / "models"
-    _model_tree(model_root, "primary")
-    _model_tree(model_root, "fallback")
+    model_tree(model_root)
     source = tmp_path / "fixture.wav"
     source.write_bytes(b"RIFF" + b"\x00" * 8 + b"WAVE")
 
@@ -158,17 +155,16 @@ def test_worker_reports_actual_cpu_model_name_after_gpu_fallback(
     )
 
     assert calls == [("primary", "cuda"), ("fallback", "cpu")]
-    assert result["provenance"]["model"] == "small"
+    assert result["provenance"]["model"] == "tea-asr-1.1-mini"
     assert result["provenance"]["device"] == "cpu"
-    assert result["warnings"] == ["Whisper GPU fallback: RuntimeError"]
+    assert result["warnings"] == ["Speech recognition GPU fallback: RuntimeError"]
 
 
 def test_worker_strict_cuda_failure_does_not_run_cpu_fallback(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     model_root = tmp_path / "models"
-    _model_tree(model_root, "primary")
-    _model_tree(model_root, "fallback")
+    model_tree(model_root)
     source = tmp_path / "fixture.wav"
     source.write_bytes(b"RIFF" + b"\x00" * 8 + b"WAVE")
 

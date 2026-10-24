@@ -20,7 +20,7 @@ const evidencePath = join(outputDirectory, 'real-media-smoke.json');
 const maxInstallationWaitMs = 90 * 60_000;
 const maxCaptureWaitMs = 20 * 60_000;
 const ownedRuntimeObserverTimeoutMs = 45_000;
-export const dependencyOrder = ['windowsml-ocr', 'whisper-primary'] as const;
+export const dependencyOrder = ['windowsml-ocr', 'speech-recognition'] as const;
 
 const canonicalSourceLockPath = join(
   workspaceRoot,
@@ -90,7 +90,7 @@ interface MediaEvidence {
   readonly evidenceKind: 'real-core-first-media-diagnostic';
   readonly releaseGateSatisfied: false;
   readonly consumerE2e: false;
-  readonly dependencyOrder: readonly ['windowsml-ocr', 'whisper-primary'];
+  readonly dependencyOrder: readonly ['windowsml-ocr', 'speech-recognition'];
   readonly pdf: {
     readonly extractionEngine: string;
     readonly model: string;
@@ -320,8 +320,8 @@ export function expectedProvenanceFromSourceLock(
   const whisperDevice = whisper?.['expectedDevice'];
   const whisperPreferGpu = whisper?.['preferGpu'];
   if (
-    whisper?.['expectedEngine'] !== 'whisper-primary' ||
-    !['primary', 'fallback'].includes(String(whisperRole)) ||
+    whisper?.['expectedEngine'] !== 'speech-recognition' ||
+    !['tea-asr-1.1', 'tea-asr-1.1-mini'].includes(String(whisperRole)) ||
     !['cuda', 'cpu'].includes(String(whisperDevice)) ||
     typeof whisperPreferGpu !== 'boolean'
   ) {
@@ -356,7 +356,7 @@ export function assertRealMediaEvidence(
   assert.equal(report?.image?.device, 'windowsml-dml');
   assert.ok((report?.image?.segmentCount ?? 0) > 0);
   assert.ok((report?.image?.pageLocators ?? 0) > 0);
-  assert.equal(report?.audio?.extractionEngine, 'whisper-primary');
+  assert.equal(report?.audio?.extractionEngine, 'speech-recognition');
   assert.ok((report?.audio?.segmentCount ?? 0) > 0);
   assert.ok((report?.audio?.timeLocators ?? 0) > 0);
   assert.doesNotMatch(JSON.stringify(report), /[A-Za-z]:[\\/]/u);
@@ -546,7 +546,7 @@ async function captureAndVerify(
     assert.equal(raw.extractionEngine.device, 'windowsml-dml');
     assert.ok(raw.segments.some((segment) => segment.locator.kind === 'page'));
   } else {
-    assert.equal(raw.extractionEngine.engine, 'whisper-primary');
+    assert.equal(raw.extractionEngine.engine, 'speech-recognition');
     assert.equal(raw.extractionEngine.model, expectedProvenance.whisperModel);
     if (expectedProvenance.whisperPreferGpu) {
       assert.ok(['cuda', 'cpu'].includes(raw.extractionEngine.device));
@@ -691,8 +691,8 @@ export function runtimeEnvironment(
     CAPTURE_EXTRACTION_PROVIDER: 'runtime',
     CAPTURE_RETENTION_HOURS: '24',
     CAPTURE_MAX_UPLOAD_BYTES: String(50 * 1024 * 1024),
-    CAPTURE_WHISPER_PRIMARY_MODEL: 'large-v3-turbo',
-    CAPTURE_WHISPER_FALLBACK_MODEL: 'small',
+    CAPTURE_WHISPER_PRIMARY_MODEL: 'tea-asr-1.1',
+    CAPTURE_WHISPER_FALLBACK_MODEL: 'tea-asr-1.1-mini',
     CAPTURE_WHISPER_PREFER_GPU: String(expectedProvenance.whisperPreferGpu),
   };
 }

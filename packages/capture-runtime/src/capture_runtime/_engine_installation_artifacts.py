@@ -26,7 +26,9 @@ from ._engine_installation_limits import (
     MAX_COMPRESSION_RATIO,
     MAX_FILES_MANIFEST_BYTES,
     MAX_SINGLE_EXTRACTED_FILE_BYTES,
+    MAX_SINGLE_MODEL_FILE_BYTES,
     MAX_TOTAL_EXTRACTED_BYTES,
+    MAX_TOTAL_MODEL_BYTES,
     WINDOWS_FORBIDDEN_PATH_CHARACTERS,
     WINDOWS_RESERVED_DEVICE_BASENAMES,
 )
@@ -37,6 +39,8 @@ class ArtifactValidationLimits:
     max_archive_files: int = MAX_ARCHIVE_FILES
     max_single_extracted_file_bytes: int = MAX_SINGLE_EXTRACTED_FILE_BYTES
     max_total_extracted_bytes: int = MAX_TOTAL_EXTRACTED_BYTES
+    max_single_model_file_bytes: int = MAX_SINGLE_MODEL_FILE_BYTES
+    max_total_model_bytes: int = MAX_TOTAL_MODEL_BYTES
     max_compression_ratio: int = MAX_COMPRESSION_RATIO
     files_manifest_name: str = FILES_MANIFEST_NAME
     max_files_manifest_bytes: int = MAX_FILES_MANIFEST_BYTES
@@ -343,12 +347,12 @@ def verify_direct_model_files(
             or sha256_file(path, chunk_bytes=limits.download_chunk_bytes) != item.sha256
         ):
             raise EngineInstallationError("installed direct model file checksum changed")
-        if item.bytes > limits.max_single_extracted_file_bytes:
+        if item.bytes > limits.max_single_model_file_bytes:
             raise EngineInstallationError(
-                "installed direct file exceeds the 2 GiB single-file limit"
+                "installed direct file exceeds the 4 GiB single-file limit"
             )
         total += item.bytes
-        if total > limits.max_total_extracted_bytes:
+        if total > limits.max_total_model_bytes:
             raise EngineInstallationError("installed direct models exceed aggregate limit")
     if total != descriptor.extracted_bytes:
         raise EngineInstallationError("installed direct model bytes do not match catalog")

@@ -3,13 +3,12 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
-from capture_runtime.engine_adapters import FasterWhisperAdapter
 from capture_runtime.worker_client import InstalledEngine, WorkerClient
 from capture_runtime.worker_contracts import WorkerResponse
 from capture_runtime.workers.server import permille_reporter
+from tests.speech_model_fakes import FakeModels, adapter
 
 
 def test_progress_frames_are_sent_at_most_once_per_percent_and_end_at_one_thousand() -> None:
@@ -22,35 +21,17 @@ def test_progress_frames_are_sent_at_most_once_per_percent_and_end_at_one_thousa
     assert [frame["permille"] for frame in frames] == [10, 500, 995, 1000]
 
 
-def test_whisper_reports_how_far_into_the_recording_it_is(tmp_path: Path) -> None:
-    for name in ("primary", "fallback"):
-        (tmp_path / name).mkdir()
-        for filename in ("config.json", "model.bin", "tokenizer.json", "vocabulary.json"):
-            (tmp_path / name / filename).write_bytes(b"fixture")
+def test_speech_reports_recognition_and_alignment_progress(tmp_path: Path, monkeypatch) -> None:
     reported: list[tuple[int, int]] = []
-
-    class Model:
-        def transcribe(self, _path: str, **_kwargs: Any) -> Any:
-            segments = [
-                SimpleNamespace(start=0.0, end=4.0, text="first"),
-                SimpleNamespace(start=4.0, end=10.0, text="second"),
-            ]
-            return segments, SimpleNamespace(duration=10.0)
-
-    adapter = FasterWhisperAdapter(
+    fake = FakeModels(monkeypatch, cuda=False)
+    recognizer = adapter(
         tmp_path,
-        primary_model="primary",
-        fallback_model="fallback",
+        fake,
         prefer_gpu=False,
-        max_duration_ms=60_000,
-        model_factory=lambda *_a, **_k: Model(),
-        cuda_count=lambda: 0,
         progress_reporter=lambda done, total: reported.append((done, total)),
     )
-
-    adapter.transcribe(tmp_path / "source.wav", should_cancel=lambda: False)
-
-    assert reported == [(4_000, 10_000), (10_000, 10_000)]
+    recognizer.transcribe(tmp_path / "source.wav", should_cancel=lambda: False)
+    assert reported == [(500, 1000), (1000, 1000)]
 
 
 def test_worker_client_passes_on_valid_progress_and_ignores_malformed_frames(

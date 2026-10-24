@@ -12,7 +12,9 @@
     "test-ocr-benchmark": {
       "cache": true,
       "executor": "nx:run-commands",
-      "inputs": ["default"],
+      "inputs": [
+        "default"
+      ],
       "options": {
         "cwd": "packages/capture-runtime",
         "command": "uv run --python 3.13 pytest tests/unit/test_ocr_benchmark.py"
@@ -322,7 +324,7 @@
       },
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv sync --python 3.13 --extra windowsml --extra whisper --reinstall-package onnxruntime-directml"
+        "command": "uv sync --python 3.13 --extra windowsml --extra speech-recognition --reinstall-package onnxruntime-directml"
       }
     },
     "verify-production-environment": {
@@ -374,22 +376,25 @@
         "command": "uv run --no-sync --python 3.13 python scripts/build_ocr_worker.py"
       }
     },
-    "build-whisper-worker": {
+    "build-speech-recognition-worker": {
       "cache": true,
       "executor": "nx:run-commands",
-      "dependsOn": [
-        "verify-production-environment"
-      ],
       "inputs": [
         "production"
       ],
       "outputs": [
-        "{projectRoot}/dist/engines/capture-engine-whisper-*.zip",
-        "{projectRoot}/dist/engines/capture-engine-whisper-*-files.json"
+        "{projectRoot}/dist/engines/capture-engine-speech-recognition-*.zip",
+        "{projectRoot}/dist/engines/capture-engine-speech-recognition-*-files.json"
       ],
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --no-sync --python 3.13 python scripts/build_whisper_worker.py"
+        "command": "uv run --python 3.13 --extra speech-recognition --group dev python scripts/build_speech_recognition_worker.py",
+        "env": {
+          "UV_PROJECT_ENVIRONMENT": ".venv-speech-recognition"
+        }
+      },
+      "metadata": {
+        "description": "Packages TEA-ASR and its Qwen aligner in a separate speech recognition worker environment."
       }
     },
     "build-diarization-worker": {
@@ -403,7 +408,7 @@
         "{projectRoot}/dist/engines/capture-engine-diarization-*-files.json"
       ],
       "metadata": {
-        "description": "Packages the speaker diarization worker in its own environment (.venv-diarization), so PyTorch never enters the OCR, Whisper or core builds."
+        "description": "Packages the speaker diarization worker in its own environment (.venv-diarization), keeping its dependencies separate from OCR and core builds."
       },
       "options": {
         "cwd": "packages/capture-runtime",
@@ -480,7 +485,7 @@
       "executor": "nx:run-commands",
       "dependsOn": [
         "build-ocr-worker",
-        "build-whisper-worker"
+        "build-speech-recognition-worker"
       ],
       "inputs": [
         "production"
@@ -490,7 +495,7 @@
       ],
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "node ../../tools/release/run-with-release-version.ts uv run --no-sync --python 3.13 python scripts/generate_engine_catalog.py --output dist/catalog/capture-engine-catalog.json --ocr-worker-archive dist/engines/capture-engine-ocr-{releaseVersion}-windows-x64.zip --ocr-worker-manifest dist/engines/capture-engine-ocr-{releaseVersion}-windows-x64-files.json --whisper-worker-archive dist/engines/capture-engine-whisper-{releaseVersion}-windows-x64.zip --whisper-worker-manifest dist/engines/capture-engine-whisper-{releaseVersion}-windows-x64-files.json --diarization-worker-archive dist/engines/capture-engine-diarization-{releaseVersion}-windows-x64.zip --diarization-worker-manifest dist/engines/capture-engine-diarization-{releaseVersion}-windows-x64-files.json"
+        "command": "node ../../tools/release/run-with-release-version.ts uv run --no-sync --python 3.13 python scripts/generate_engine_catalog.py --output dist/catalog/capture-engine-catalog.json --ocr-worker-archive dist/engines/capture-engine-ocr-{releaseVersion}-windows-x64.zip --ocr-worker-manifest dist/engines/capture-engine-ocr-{releaseVersion}-windows-x64-files.json --speech-recognition-worker-archive dist/engines/capture-engine-speech-recognition-{releaseVersion}-windows-x64.zip --speech-recognition-worker-manifest dist/engines/capture-engine-speech-recognition-{releaseVersion}-windows-x64-files.json --diarization-worker-archive dist/engines/capture-engine-diarization-{releaseVersion}-windows-x64.zip --diarization-worker-manifest dist/engines/capture-engine-diarization-{releaseVersion}-windows-x64-files.json"
       }
     },
     "generate-release-engine-catalog": {
@@ -498,7 +503,7 @@
       "executor": "nx:run-commands",
       "dependsOn": [
         "build-ocr-worker",
-        "build-whisper-worker",
+        "build-speech-recognition-worker",
         "build-diarization-worker",
         "validate-model-source-lock"
       ],
@@ -513,7 +518,7 @@
       },
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "node ../../tools/release/run-with-release-version.ts uv run --no-sync --python 3.13 python scripts/generate_engine_catalog.py --model-source-lock model-sources/release-model-source-lock.json --output dist/catalog/capture-engine-catalog.json --ocr-worker-archive dist/engines/capture-engine-ocr-{releaseVersion}-windows-x64.zip --ocr-worker-manifest dist/engines/capture-engine-ocr-{releaseVersion}-windows-x64-files.json --whisper-worker-archive dist/engines/capture-engine-whisper-{releaseVersion}-windows-x64.zip --whisper-worker-manifest dist/engines/capture-engine-whisper-{releaseVersion}-windows-x64-files.json --diarization-worker-archive dist/engines/capture-engine-diarization-{releaseVersion}-windows-x64.zip --diarization-worker-manifest dist/engines/capture-engine-diarization-{releaseVersion}-windows-x64-files.json"
+        "command": "node ../../tools/release/run-with-release-version.ts uv run --no-sync --python 3.13 python scripts/generate_engine_catalog.py --model-source-lock model-sources/release-model-source-lock.json --output dist/catalog/capture-engine-catalog.json --ocr-worker-archive dist/engines/capture-engine-ocr-{releaseVersion}-windows-x64.zip --ocr-worker-manifest dist/engines/capture-engine-ocr-{releaseVersion}-windows-x64-files.json --speech-recognition-worker-archive dist/engines/capture-engine-speech-recognition-{releaseVersion}-windows-x64.zip --speech-recognition-worker-manifest dist/engines/capture-engine-speech-recognition-{releaseVersion}-windows-x64-files.json --diarization-worker-archive dist/engines/capture-engine-diarization-{releaseVersion}-windows-x64.zip --diarization-worker-manifest dist/engines/capture-engine-diarization-{releaseVersion}-windows-x64-files.json"
       }
     },
     "verify-release-model-candidate": {
@@ -529,19 +534,19 @@
         "{projectRoot}/dist/candidate/model-probe-evidence.json"
       ],
       "metadata": {
-        "description": "Opt-in local release gate that performs checksum-pinned direct model downloads and real OCR/Whisper worker runs."
+        "description": "Opt-in local release gate that performs checksum-pinned direct model downloads and real OCR/speech recognition worker runs."
       },
       "options": {
         "cwd": "packages/capture-runtime",
         "command": "uv run --no-sync --python 3.13 python scripts/verify_release_model_candidate.py"
       }
     },
-    "generate-whisper-preflight-catalog": {
+    "generate-speech-recognition-preflight-catalog": {
       "cache": false,
       "executor": "nx:run-commands",
       "dependsOn": [
         "build-ocr-worker",
-        "build-whisper-worker"
+        "build-speech-recognition-worker"
       ],
       "inputs": [
         "production"
@@ -550,28 +555,28 @@
         "{projectRoot}/dist/catalog/preflight-capture-engine-catalog.json"
       ],
       "metadata": {
-        "description": "Generates a complete source-lock-bound catalog only for the blocked private Whisper preflight lock."
+        "description": "Generates a complete source-lock-bound catalog only for the blocked private speech recognition preflight lock."
       },
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "node ../../tools/release/run-with-release-version.ts uv run --no-sync --python 3.13 python scripts/generate_engine_catalog.py --allow-pending-preflight --model-source-lock model-sources/release-model-source-lock.json --output dist/catalog/preflight-capture-engine-catalog.json --ocr-worker-archive dist/engines/capture-engine-ocr-{releaseVersion}-windows-x64.zip --ocr-worker-manifest dist/engines/capture-engine-ocr-{releaseVersion}-windows-x64-files.json --whisper-worker-archive dist/engines/capture-engine-whisper-{releaseVersion}-windows-x64.zip --whisper-worker-manifest dist/engines/capture-engine-whisper-{releaseVersion}-windows-x64-files.json --diarization-worker-archive dist/engines/capture-engine-diarization-{releaseVersion}-windows-x64.zip --diarization-worker-manifest dist/engines/capture-engine-diarization-{releaseVersion}-windows-x64-files.json"
+        "command": "node ../../tools/release/run-with-release-version.ts uv run --no-sync --python 3.13 python scripts/generate_engine_catalog.py --allow-pending-preflight --model-source-lock model-sources/release-model-source-lock.json --output dist/catalog/preflight-capture-engine-catalog.json --ocr-worker-archive dist/engines/capture-engine-ocr-{releaseVersion}-windows-x64.zip --ocr-worker-manifest dist/engines/capture-engine-ocr-{releaseVersion}-windows-x64-files.json --speech-recognition-worker-archive dist/engines/capture-engine-speech-recognition-{releaseVersion}-windows-x64.zip --speech-recognition-worker-manifest dist/engines/capture-engine-speech-recognition-{releaseVersion}-windows-x64-files.json --diarization-worker-archive dist/engines/capture-engine-diarization-{releaseVersion}-windows-x64.zip --diarization-worker-manifest dist/engines/capture-engine-diarization-{releaseVersion}-windows-x64-files.json"
       }
     },
-    "verify-whisper-preflight": {
+    "verify-speech-recognition-preflight": {
       "cache": false,
       "executor": "nx:run-commands",
       "dependsOn": [
-        "generate-whisper-preflight-catalog"
+        "generate-speech-recognition-preflight-catalog"
       ],
       "outputs": [
-        "{projectRoot}/dist/candidate/whisper-preflight-evidence.json"
+        "{projectRoot}/dist/candidate/speech-recognition-preflight-evidence.json"
       ],
       "metadata": {
-        "description": "Runs one privacy-safe private Whisper preflight; output never includes audio paths or text."
+        "description": "Runs one privacy-safe private speech recognition preflight; output never includes audio paths or text."
       },
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --no-sync --python 3.13 python scripts/verify_release_model_candidate.py --preflight-whisper --catalog dist/catalog/preflight-capture-engine-catalog.json --output dist/candidate/whisper-preflight-evidence.json"
+        "command": "uv run --no-sync --python 3.13 python scripts/verify_release_model_candidate.py --preflight-speech-recognition --catalog dist/catalog/preflight-capture-engine-catalog.json --output dist/candidate/speech-recognition-preflight-evidence.json"
       }
     },
     "verify-core-boundary": {
@@ -612,15 +617,15 @@
       "executor": "nx:run-commands",
       "dependsOn": [
         "build-ocr-worker",
-        "build-whisper-worker"
+        "build-speech-recognition-worker"
       ],
       "outputs": [
         "{projectRoot}/dist/ocr-worker-inventory.txt",
-        "{projectRoot}/dist/whisper-worker-inventory.txt"
+        "{projectRoot}/dist/speech-recognition-worker-inventory.txt"
       ],
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "node ../../tools/release/run-with-release-version.ts uv run --no-sync --python 3.13 python scripts/verify_boundaries.py --ocr-worker dist/engines/capture-engine-ocr-{releaseVersion}-windows-x64.zip --ocr-inventory dist/ocr-worker-inventory.txt --whisper-worker dist/engines/capture-engine-whisper-{releaseVersion}-windows-x64.zip --whisper-inventory dist/whisper-worker-inventory.txt"
+        "command": "node ../../tools/release/run-with-release-version.ts uv run --no-sync --python 3.13 python scripts/verify_boundaries.py --ocr-worker dist/engines/capture-engine-ocr-{releaseVersion}-windows-x64.zip --ocr-inventory dist/ocr-worker-inventory.txt --speech-recognition-worker dist/engines/capture-engine-speech-recognition-{releaseVersion}-windows-x64.zip --speech-recognition-inventory dist/speech-recognition-worker-inventory.txt"
       }
     },
     "bundle-size-report": {
@@ -710,6 +715,20 @@
       "options": {
         "cwd": "packages/capture-runtime",
         "command": "uv run --python 3.13 python -c \"import sys; assert sys.version_info[:2] == (3, 13)\""
+      }
+    },
+    "verify-speech-recognition-worker": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "dependsOn": [
+        "build-speech-recognition-worker"
+      ],
+      "inputs": [
+        "production"
+      ],
+      "options": {
+        "cwd": "packages/capture-runtime",
+        "command": "uv run --python 3.13 python scripts/probe_packaged_worker.py dist/workers/capture-engine-speech-recognition/capture-engine-speech-recognition.exe speech-recognition"
       }
     }
   }

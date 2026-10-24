@@ -265,220 +265,49 @@ class RecordingWorkerProcess:
         )
 
 
-class FreshWhisperRetryProcess:
-    def __init__(
-        self,
-        failure: str = "worker_failed at stage whisper-model-load-cpu-failed-runtimeerror",
-    ) -> None:
-        self.failure = failure
-        self.options: list[dict[str, object]] = []
-        self.timeouts: list[float] = []
-
-    async def request(
-        self,
-        _executable: Path,
-        _operation: str,
-        payload: dict[str, object],
-        *,
-        cancel_event: asyncio.Event | None = None,
-        timeout_seconds: float,
-    ) -> WorkerResponse:
-        del cancel_event
-        options = payload["options"]
-        assert isinstance(options, dict)
-        self.options.append(options)
-        self.timeouts.append(timeout_seconds)
-        if len(self.options) == 1:
-            raise WorkerExecutionError(self.failure)
-        return WorkerResponse(
-            request_id="run",
-            ok=True,
-            result={
-                "segments": [
-                    {
-                        "order": 0,
-                        "text": "words",
-                        "page": None,
-                        "startMs": 0,
-                        "endMs": 1000,
-                    }
-                ],
-                "provenance": {
-                    "engine": "whisper-primary",
-                    "model": "small",
-                    "digest": f"sha256:{'1' * 64}",
-                    "device": "cpu",
-                },
-                "warnings": [],
-            },
-            error=None,
-        )
-
-
-def test_worker_client_restarts_whisper_worker_for_cpu_fallback(
+@pytest.mark.parametrize("prefer_gpu,allow_fallback", [(True, True), (False, True), (True, False)])
+@pytest.mark.parametrize(
+    "stage",
+    ["speech-model-load-cpu-failed-runtimeerror", "speech-model-load-cuda-failed-runtimeerror"],
+)
+def test_worker_client_never_repeats_the_speech_workers_bounded_retry(
     tmp_path: Path,
+    prefer_gpu: bool,
+    allow_fallback: bool,
+    stage: str,
 ) -> None:
-    process = FreshWhisperRetryProcess()
-    client = WorkerClient(process=process)  # type: ignore[arg-type]
-    model_dir = tmp_path / "model"
-    model_dir.mkdir()
+    calls = []
+
+    class FailedSpeechProcess:
+        async def request(self, _executable, _operation, payload, **options):
+            calls.append((payload["options"], options["timeout_seconds"]))
+            raise WorkerExecutionError(f"worker_failed at stage {stage}")
+
     source = tmp_path / "audio.mp3"
     source.write_bytes(b"audio")
-
-    async def run() -> None:
-        result = await client.run(
-            InstalledEngine(
-                requirement_id="whisper-primary",
-                artifact_version="engine-1",
-                executable=tmp_path / "whisper.exe",
-                model_dir=model_dir,
-            ),
-            source_path=source,
-            media_type="audio/mpeg",
-            options={"maxDurationMs": 60_000, "preferGpu": True},
-            cancel_event=asyncio.Event(),
-        )
-        assert result.device == "cpu"
-        assert result.model == "small"
-
-    asyncio.run(run())
-    assert process.options == [
-        {"maxDurationMs": 60_000, "preferGpu": True},
-        {"maxDurationMs": 60_000, "preferGpu": False},
-    ]
-
-
-def test_worker_client_does_not_retry_whisper_when_gpu_is_already_disabled(
-    tmp_path: Path,
-) -> None:
-    process = FreshWhisperRetryProcess()
-    client = WorkerClient(process=process)  # type: ignore[arg-type]
     model_dir = tmp_path / "model"
     model_dir.mkdir()
-    source = tmp_path / "audio.mp3"
-    source.write_bytes(b"audio")
+    options = {"maxDurationMs": 60_000, "preferGpu": prefer_gpu, "allowCpuFallback": allow_fallback}
+    client = WorkerClient(process=FailedSpeechProcess())  # type: ignore[arg-type]
 
     async def run() -> None:
         with pytest.raises(WorkerExecutionError):
             await client.run(
                 InstalledEngine(
-                    requirement_id="whisper-primary",
+                    requirement_id="speech-recognition",
                     artifact_version="engine-1",
-                    executable=tmp_path / "whisper.exe",
+                    executable=tmp_path / "speech.exe",
                     model_dir=model_dir,
                 ),
                 source_path=source,
                 media_type="audio/mpeg",
-                options={"maxDurationMs": 60_000, "preferGpu": False},
+                options=options,
                 cancel_event=asyncio.Event(),
+                timeout_seconds=10,
             )
 
     asyncio.run(run())
-    assert process.options == [{"maxDurationMs": 60_000, "preferGpu": False}]
-
-
-def test_worker_client_does_not_retry_strict_cuda_with_cpu_fallback(
-    tmp_path: Path,
-) -> None:
-    process = FreshWhisperRetryProcess()
-    client = WorkerClient(process=process)  # type: ignore[arg-type]
-    model_dir = tmp_path / "model"
-    model_dir.mkdir()
-    source = tmp_path / "audio.mp3"
-    source.write_bytes(b"audio")
-
-    async def run() -> None:
-        with pytest.raises(WorkerExecutionError):
-            await client.run(
-                InstalledEngine(
-                    requirement_id="whisper-primary",
-                    artifact_version="engine-1",
-                    executable=tmp_path / "whisper.exe",
-                    model_dir=model_dir,
-                ),
-                source_path=source,
-                media_type="audio/mpeg",
-                options={
-                    "maxDurationMs": 60_000,
-                    "preferGpu": True,
-                    "allowCpuFallback": False,
-                },
-                cancel_event=asyncio.Event(),
-            )
-
-    asyncio.run(run())
-    assert process.options == [
-        {
-            "maxDurationMs": 60_000,
-            "preferGpu": True,
-            "allowCpuFallback": False,
-        }
-    ]
-
-
-def test_worker_client_does_not_retry_after_cpu_model_load_started(
-    tmp_path: Path,
-) -> None:
-    process = FreshWhisperRetryProcess(
-        "worker request timed out at stages whisper-model-load-cpu-start>"
-        "whisper-model-load-cpu-complete>whisper-transcription-call-start"
-    )
-    client = WorkerClient(process=process)  # type: ignore[arg-type]
-    model_dir = tmp_path / "model"
-    model_dir.mkdir()
-    source = tmp_path / "audio.mp3"
-    source.write_bytes(b"audio")
-
-    async def run() -> None:
-        with pytest.raises(WorkerExecutionError):
-            await client.run(
-                InstalledEngine(
-                    requirement_id="whisper-primary",
-                    artifact_version="engine-1",
-                    executable=tmp_path / "whisper.exe",
-                    model_dir=model_dir,
-                ),
-                source_path=source,
-                media_type="audio/mpeg",
-                options={"maxDurationMs": 60_000, "preferGpu": True},
-                cancel_event=asyncio.Event(),
-            )
-
-    asyncio.run(run())
-    assert process.options == [{"maxDurationMs": 60_000, "preferGpu": True}]
-
-
-def test_worker_client_cpu_retry_shares_original_timeout_budget(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    process = FreshWhisperRetryProcess()
-    client = WorkerClient(process=process)  # type: ignore[arg-type]
-    model_dir = tmp_path / "model"
-    model_dir.mkdir()
-    source = tmp_path / "audio.mp3"
-    source.write_bytes(b"audio")
-    clock = iter((100.0, 106.0))
-    monkeypatch.setattr("capture_runtime.worker_client.monotonic", lambda: next(clock))
-
-    async def run() -> None:
-        result = await client.run(
-            InstalledEngine(
-                requirement_id="whisper-primary",
-                artifact_version="engine-1",
-                executable=tmp_path / "whisper.exe",
-                model_dir=model_dir,
-            ),
-            source_path=source,
-            media_type="audio/mpeg",
-            options={"maxDurationMs": 60_000, "preferGpu": True},
-            cancel_event=asyncio.Event(),
-            timeout_seconds=10,
-        )
-        assert result.device == "cpu"
-
-    asyncio.run(run())
-    assert process.timeouts == [10, 4]
+    assert calls == [(options, 10)]
 
 
 def test_worker_client_keeps_ocr_probe_options_empty_without_changing_whisper(
@@ -502,7 +331,7 @@ def test_worker_client_keeps_ocr_probe_options_empty_without_changing_whisper(
         )
         await client.probe(
             InstalledEngine(
-                requirement_id="whisper-primary",
+                requirement_id="speech-recognition",
                 artifact_version="engine-1",
                 executable=tmp_path / "whisper.exe",
                 model_dir=model_dir,
@@ -1302,7 +1131,7 @@ def test_worker_timeout_reports_only_allowlisted_last_stage() -> None:
     async def run() -> None:
         with pytest.raises(
             WorkerExecutionError,
-            match=r"^worker request timed out at stage whisper-model-load-cuda-start$",
+            match=r"^worker request timed out at stage speech-model-load-cuda-start$",
         ):
             await owner.request(
                 WORKER,
@@ -1373,20 +1202,20 @@ def test_worker_stage_diagnostics_preserve_bounded_sequence_without_stderr() -> 
     stderr = "\n".join(
         [
             "C:\\Users\\secret-user\\private-source.mp3 SECRET_STDERR",
-            "capture-worker-stage:whisper-assets-probe-start",
-            "capture-worker-stage:whisper-device-probe-complete",
-            "capture-worker-stage:whisper-model-load-cuda-failed-runtimeerror",
-            "capture-worker-stage:whisper-gpu-fallback",
-            "capture-worker-stage:whisper-model-load-cpu-failed-runtimeerror",
+            "capture-worker-stage:speech-assets-probe-start",
+            "capture-worker-stage:speech-device-probe-complete",
+            "capture-worker-stage:speech-model-load-cuda-failed-runtimeerror",
+            "capture-worker-stage:speech-gpu-fallback",
+            "capture-worker-stage:speech-model-load-cpu-failed-runtimeerror",
         ]
     )
 
     detail = _stage_suffix(stderr)
 
     assert detail == (
-        " at stages whisper-assets-probe-start>whisper-device-probe-complete>"
-        "whisper-model-load-cuda-failed-runtimeerror>whisper-gpu-fallback>"
-        "whisper-model-load-cpu-failed-runtimeerror"
+        " at stages speech-assets-probe-start>speech-device-probe-complete>"
+        "speech-model-load-cuda-failed-runtimeerror>speech-gpu-fallback>"
+        "speech-model-load-cpu-failed-runtimeerror"
     )
     assert "private-source.mp3" not in detail
     assert "SECRET_STDERR" not in detail

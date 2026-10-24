@@ -277,7 +277,7 @@ def _seed_host_capture(client: TestClient) -> tuple[str, dict[str, object]]:
         text="host words",
     )
     extraction_engine = CaptureEngine(
-        engine="whisper-primary",
+        engine="speech-recognition",
         model="test-model",
         digest=f"sha256:{'a' * 64}",
         device="cpu",
@@ -2231,7 +2231,7 @@ def test_a_transcript_longer_than_one_event_is_published_in_several(client: Test
         for index in range(2_300)
     ]
     engine = CaptureEngine(
-        engine="whisper-primary", model="test-model", digest=f"sha256:{'a' * 64}", device="cpu"
+        engine="speech-recognition", model="test-model", digest=f"sha256:{'a' * 64}", device="cpu"
     )
     raw = RawCapture(
         source=operation.source,

@@ -8,7 +8,7 @@ import pytest
 from capture_runtime.engine_adapters import WhisperTextSegment, WhisperTranscriptionResult
 from capture_runtime.progressive_audio import DecodedAudioWindow, ProgressiveBackpressureError
 from capture_runtime.progressive_decoder import PyAVIncrementalDecoder
-from capture_runtime.progressive_whisper import FasterWhisperWindowTranscriber
+from capture_runtime.progressive_whisper import SpeechRecognitionWindowTranscriber
 
 
 def _wav(path: Path, *, seconds: int = 2) -> bytes:
@@ -123,7 +123,7 @@ class FakeWhisper:
             segments=(WhisperTextSegment(0, 100, "window text"),),
             duration_ms=100,
             device="cpu",
-            model="small",
+            model="tea-asr-1.1-mini",
             digest=f"sha256:{'c' * 64}",
         )
 
@@ -132,11 +132,11 @@ def test_progressive_whisper_adapter_cleans_window_and_preserves_provenance(
     tmp_path: Path,
 ) -> None:
     adapter = FakeWhisper()
-    transcriber = FasterWhisperWindowTranscriber(adapter, temp_dir=tmp_path)
+    transcriber = SpeechRecognitionWindowTranscriber(adapter, temp_dir=tmp_path)
 
     result = transcriber.transcribe(DecodedAudioWindow(0, 100, b"\x00\x00" * 100))
 
-    assert result.extraction_engine.engine == "whisper-primary"
-    assert result.extraction_engine.model == "small"
+    assert result.extraction_engine.engine == "speech-recognition"
+    assert result.extraction_engine.model == "tea-asr-1.1-mini"
     assert result.extraction_engine.device == "cpu"
     assert not list(tmp_path.glob("capture-progressive-window-*.wav"))

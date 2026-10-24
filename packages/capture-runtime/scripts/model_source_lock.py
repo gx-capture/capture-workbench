@@ -25,13 +25,11 @@ FIRST_PARTY_ROOT = (
     f"{COMMIT_A_SHA}/packages/capture-runtime/model-sources/commit-a"
 )
 MAX_ENTRIES = 4096
-# Keep the direct-model lane bounded while admitting the pinned Whisper
-# primary model (~1.62 GiB) and the complete fallback/OCR set.  These limits
-# are shared by the source lock and the runtime installer/catalog validators.
-MAX_SINGLE_FILE_BYTES = 2 * 1024 * 1024 * 1024
-MAX_TOTAL_BYTES = 2 * 1024 * 1024 * 1024
-MAX_SOURCE_LOCK_TOTAL_BYTES = 3 * 1024 * 1024 * 1024
-REQUIREMENT_IDS = ("windowsml-ocr", "whisper-primary")
+# Admit pinned TEA primary (~4 GB), mini and aligner while bounding all downloads.
+MAX_SINGLE_FILE_BYTES = 4 * 1024**3
+MAX_TOTAL_BYTES = 8 * 1024**3
+MAX_SOURCE_LOCK_TOTAL_BYTES = 10 * 1024**3
+REQUIREMENT_IDS = ("windowsml-ocr", "speech-recognition")
 # Units a host may leave uninstalled. A lock lists them after the required
 # ones, in this order, or leaves them out.
 OPTIONAL_REQUIREMENT_IDS = ("speaker-diarization", "vertical-japanese-reader")
@@ -255,7 +253,7 @@ def _validate_file(
     if not isinstance(size, int) or isinstance(size, bool) or size < 1:
         raise ModelSourceLockError(f"{requirement_id}.{path}.bytes must be positive")
     if size > MAX_SINGLE_FILE_BYTES:
-        raise ModelSourceLockError(f"{requirement_id}.{path} exceeds 2 GiB single-file limit")
+        raise ModelSourceLockError(f"{requirement_id}.{path} exceeds 4 GiB single-file limit")
     _sha256(item["sha256"], f"{requirement_id}.{path}.sha256")
     _text(item["owner"], f"{requirement_id}.{path}.owner")
     _text(item["spdx"], f"{requirement_id}.{path}.spdx")
@@ -328,7 +326,7 @@ def _validate_requirement(
             notices.add(path)
         total += item["bytes"]
         if total > MAX_TOTAL_BYTES:
-            raise ModelSourceLockError(f"{requirement_id} exceeds aggregate 2 GiB model limit")
+            raise ModelSourceLockError(f"{requirement_id} exceeds aggregate 8 GiB model limit")
         validated.append(item)
     if not licenses or not notices:
         raise ModelSourceLockError(f"{requirement_id} must pin license and NOTICE files")
@@ -476,7 +474,7 @@ def _validate_private_whisper_fixture(value: object, *, require_approved: bool) 
         fixture["bytes"] != PRIVATE_WHISPER_FIXTURE_BYTES
         or fixture["sha256"] != PRIVATE_WHISPER_FIXTURE_SHA256
         or fixture["mediaType"] != "audio/mpeg"
-        or fixture["expectedEngine"] != "whisper-primary"
+        or fixture["expectedEngine"] != "speech-recognition"
         or fixture["monotonicSegments"] is not True
     ):
         raise ModelSourceLockError("private Whisper fixture bytes/provenance are invalid")
@@ -492,8 +490,8 @@ def _validate_private_whisper_fixture(value: object, *, require_approved: bool) 
         if expected_model is not None or expected_device is not None:
             raise ModelSourceLockError("private Whisper model/device pair must be frozen together")
     elif (expected_model, expected_device) not in {
-        ("large-v3-turbo", "cuda"),
-        ("small", "cpu"),
+        ("tea-asr-1.1", "cuda"),
+        ("tea-asr-1.1-mini", "cpu"),
     }:
         raise ModelSourceLockError("private Whisper model/device pair is unsupported")
     count = _exact(fixture["expectedSegmentCount"], {"maximum", "minimum"}, "Whisper segment count")
@@ -562,7 +560,7 @@ def validate_source_lock(
         item for item in OPTIONAL_REQUIREMENT_IDS if item in optional_ids
     ):
         raise ModelSourceLockError(
-            "requirements must be ordered windowsml-ocr then whisper-primary, "
+            "requirements must be ordered windowsml-ocr then speech-recognition, "
             "then any optional units in their fixed order"
         )
     validated_requirements: list[dict[str, Any]] = []
@@ -582,7 +580,7 @@ def validate_source_lock(
         validated_requirements.append(validated)
         total_locked_bytes += sum(item["bytes"] for item in validated["files"])
     if total_locked_bytes > MAX_SOURCE_LOCK_TOTAL_BYTES:
-        raise ModelSourceLockError("model source lock exceeds aggregate 3 GiB model limit")
+        raise ModelSourceLockError("model source lock exceeds aggregate 10 GiB model limit")
     fixtures = lock["fixtures"]
     if not isinstance(fixtures, list) or len(fixtures) != 2:
         raise ModelSourceLockError(

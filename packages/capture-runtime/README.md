@@ -1,5 +1,18 @@
 # Capture Runtime v2
 
+Speech recognition and speaker diarization engine provenance records the result device, total processing time in `elapsedMs` (including any failed CUDA attempt and CPU retry), and the successful attempt's stage times in `stageMs`.
+
+Speech recognition uses the separate `capture-engine-speech-recognition` worker
+under requirement `speech-recognition`: TEA-ASR-1.1 on CUDA, TEA-ASR-1.1-mini on
+CPU, and Qwen3 forced alignment after releasing the recognizer. Models and
+processors load only from digest-verified local directories. Recognition uses
+30-second quiet-point chunks and bounded retries for generation loops; results
+warn when a chunk still reaches its token limit. One classified CUDA failure can
+retry the mini model on CPU. The `speech-recognition` extra uses Transformers
+5.20.2 and the Windows cu128 build of PyTorch 2.11.0. See the
+[decision record](../../.agents/DECISIONS/speech-recognition-tea-asr.md) for required
+re-approval, private-output remeasurement and package-size checks.
+
 Capture Runtime is the authenticated, local Windows runtime for Capture
 Workbench. The hard-cut release exposes only the v2 protocol; no compatibility
 routes or legacy wire models are shipped.
@@ -43,7 +56,7 @@ The packaged executable includes both contract asset files under
 
 `capture-engine-diarization` is a separately packaged worker that answers "who
 spoke when" for an audio or video file. It speaks the same JSON-lines worker
-protocol as the OCR and Whisper workers, with requirement id
+protocol as the OCR and TEA-ASR workers, with requirement id
 `speaker-diarization`.
 
 The optional install unit runs in its own process and supplies anonymous speaker

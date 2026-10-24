@@ -18,15 +18,15 @@ from capture_runtime.worker_stage_policy import (
     ocr_provider_evidence_stage,
     ocr_stage_failure,
     sanitize_worker_stage,
+    speech_import_stage,
+    speech_model_load_stage,
     stage_builder_names,
-    whisper_import_stage,
-    whisper_model_load_stage,
 )
 
 RUNTIME_ROOT = Path(__file__).parents[2]
 PRODUCER_FILES = (
     RUNTIME_ROOT / "src/capture_runtime/workers/ocr_main.py",
-    RUNTIME_ROOT / "src/capture_runtime/workers/whisper_main.py",
+    RUNTIME_ROOT / "src/capture_runtime/workers/speech_recognition_main.py",
     RUNTIME_ROOT / "src/capture_runtime/engine_adapters.py",
     RUNTIME_ROOT / "src/capture_runtime/workers/diarization_main.py",
     RUNTIME_ROOT / "src/capture_runtime/speaker_diarization.py",
@@ -103,11 +103,11 @@ def test_stage_builders_preserve_current_ocr_and_whisper_families() -> None:
         stage = ocr_stage_failure("normalize", error)
         assert stage.startswith("ocr-normalize-failed-")
         assert sanitize_worker_stage(stage) == stage
-    assert whisper_import_stage("faster_whisper", "complete") == (
-        "python-import-faster-whisper-complete"
+    assert speech_import_stage("transformers", "complete") == (
+        "python-import-transformers-complete"
     )
-    assert whisper_model_load_stage("cpu", "failed", RuntimeError()) == (
-        "whisper-model-load-cpu-failed-runtimeerror"
+    assert speech_model_load_stage("cpu", "failed", RuntimeError()) == (
+        "speech-model-load-cpu-failed-runtimeerror"
     )
 
 
@@ -279,11 +279,11 @@ def test_progressive_stage_drain_uses_the_shared_policy_without_leaking_markers(
         def __init__(self) -> None:
             self._chunks = [
                 b"capture-worker-stage:secret-token-abc123\n",
-                b"capture-worker-stage:whisper-output-empty\n",
+                b"capture-worker-stage:speech-output-empty\n",
                 b"",
             ]
 
         async def read(self, _size: int) -> bytes:
             return self._chunks.pop(0)
 
-    assert asyncio.run(_drain_stderr(Stderr())) == "whisper-output-empty"
+    assert asyncio.run(_drain_stderr(Stderr())) == "speech-output-empty"

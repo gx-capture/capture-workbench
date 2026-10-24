@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Engine provenance
+
+- Add optional `elapsedMs` and `stageMs` engine provenance fields for speech recognition and speaker diarization, alongside the device that produced the result; total time includes failed CUDA attempts and CPU fallback.
+
+### Breaking changes
+
+- Rename the public runtime requirement from `whisper-primary` to `speech-recognition`; replace Whisper with TEA-ASR-1.1 (CUDA), TEA-ASR-1.1-mini (CPU) and Qwen3 forced alignment. Clients and installed engine catalogs must migrate together.
+
 ### Speaker diarization
 
 - Replace the optional speaker model with NVIDIA Nemotron-3-Diarization under

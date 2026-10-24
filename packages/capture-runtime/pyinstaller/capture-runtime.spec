@@ -39,9 +39,9 @@ a = Analysis(
     excludes=[
         "capture_runtime._vendor",
         "capture_runtime.ocr_vertical_reader",
-        "ctranslate2",
+        "torch",
         "cv2",
-        "faster_whisper",
+        "transformers",
         "httptools",
         "huggingface_hub",
         "onnxruntime",

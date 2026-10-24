@@ -33,7 +33,7 @@ const defaultOwnedProcessExecutableNames = [
   'capture-runtime-x86_64-pc-windows-msvc.exe',
   'capture-runtime.exe',
   'capture-engine-ocr.exe',
-  'capture-engine-whisper.exe',
+  'capture-engine-speech-recognition.exe',
   'ollama.exe',
   'runtime.exe',
   'cmd.exe',

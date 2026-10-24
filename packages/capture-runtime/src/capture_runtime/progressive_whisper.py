@@ -1,4 +1,4 @@
-"""Window transcriber adapter that preserves existing Whisper provenance rules."""
+"""Window transcriber adapter that preserves speech recognition provenance rules."""
 
 from __future__ import annotations
 
@@ -18,8 +18,8 @@ from capture_runtime.progressive_audio import (
 )
 
 
-class FasterWhisperWindowTranscriber:
-    """Adapt bounded PCM windows to the existing GPU-first Whisper adapter."""
+class SpeechRecognitionWindowTranscriber:
+    """Adapt bounded PCM windows to the GPU-first TEA-ASR adapter."""
 
     def __init__(
         self,
@@ -112,7 +112,7 @@ class ProgressiveWhisperWorkerBackend:
 
 def _engine_from_result(result: WhisperTranscriptionResult) -> CaptureEngine:
     return CaptureEngine(
-        engine="whisper-primary",
+        engine="speech-recognition",
         model=result.model,
         digest=result.digest,
         device=result.device,
@@ -121,6 +121,6 @@ def _engine_from_result(result: WhisperTranscriptionResult) -> CaptureEngine:
 
 __all__ = [
     "DirectWindowDecoder",
-    "FasterWhisperWindowTranscriber",
+    "SpeechRecognitionWindowTranscriber",
     "ProgressiveWhisperWorkerBackend",
 ]

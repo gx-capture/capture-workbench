@@ -40,10 +40,10 @@ def _facade_max_direct_model_redirects() -> int:
     return MAX_DIRECT_MODEL_REDIRECTS
 
 
-def _facade_max_single_extracted_file_bytes() -> int:
-    from .engine_installation import MAX_SINGLE_EXTRACTED_FILE_BYTES
+def _facade_max_single_model_file_bytes() -> int:
+    from ._engine_installation_limits import MAX_SINGLE_MODEL_FILE_BYTES
 
-    return MAX_SINGLE_EXTRACTED_FILE_BYTES
+    return MAX_SINGLE_MODEL_FILE_BYTES
 
 
 def smoke_worker_mirror_url(environ: dict[str, str] | None = None) -> str | None:
@@ -456,8 +456,8 @@ class HttpModelFileDownloader:
         cancel_event: asyncio.Event,
         progress: Callable[[int], None],
     ) -> None:
-        if descriptor.bytes > _facade_max_single_extracted_file_bytes():
-            raise EngineInstallationError("direct model file exceeds the 2 GiB single-file limit")
+        if descriptor.bytes > _facade_max_single_model_file_bytes():
+            raise EngineInstallationError("direct model file exceeds the 4 GiB single-file limit")
         last_error: BaseException | None = None
         for attempt, delay in enumerate(self._retry_delays):
             last_error = None

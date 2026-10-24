@@ -255,7 +255,7 @@ os._exit(7)
                 max_image_pixels=1_000_000,
                 ocr_render_scale=2.0,
                 max_audio_duration_ms=60_000,
-                whisper_primary_model="small",
+                whisper_primary_model="tea-asr-1.1-mini",
                 whisper_fallback_model="tiny",
                 whisper_prefer_gpu=False,
             ),

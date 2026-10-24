@@ -132,7 +132,7 @@ jobs:
           pnpm nx run capture-angular:build
           pnpm nx run capture-angular:clean-consumer-smoke
 
-  # Capture Runtime (Python) and the optional OCR and Whisper worker builds.
+  # Capture Runtime (Python) and the optional OCR and speech recognition worker builds.
   runtime:
     runs-on: windows-latest
     timeout-minutes: 60
@@ -189,11 +189,11 @@ jobs:
           path: |
             packages/capture-runtime/dist/engines/*-files.json
             packages/capture-runtime/dist/ocr-worker-inventory.txt
-            packages/capture-runtime/dist/whisper-worker-inventory.txt
+            packages/capture-runtime/dist/speech-recognition-worker-inventory.txt
             packages/capture-runtime/.build/pyinstaller/ocr-worker/capture-engine-ocr/xref-capture-engine-ocr.html
             packages/capture-runtime/.build/pyinstaller/ocr-worker/capture-engine-ocr/warn-capture-engine-ocr.txt
-            packages/capture-runtime/.build/pyinstaller/whisper-worker/capture-engine-whisper/xref-capture-engine-whisper.html
-            packages/capture-runtime/.build/pyinstaller/whisper-worker/capture-engine-whisper/warn-capture-engine-whisper.txt
+            packages/capture-runtime/.build/pyinstaller/speech-recognition-worker/capture-engine-speech-recognition/xref-capture-engine-speech-recognition.html
+            packages/capture-runtime/.build/pyinstaller/speech-recognition-worker/capture-engine-speech-recognition/warn-capture-engine-speech-recognition.txt
           if-no-files-found: warn
           retention-days: 7
 

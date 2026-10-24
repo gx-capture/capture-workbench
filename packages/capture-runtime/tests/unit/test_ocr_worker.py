@@ -1491,7 +1491,7 @@ def test_ocr_worker_rejects_out_of_order_or_duplicate_page_stream(
 def test_model_worker_pyinstaller_specs_do_not_collect_public_contract_package_data() -> None:
     pyinstaller_root = Path(__file__).resolve().parents[2] / "pyinstaller"
 
-    for name in ("capture-engine-ocr.spec", "capture-engine-whisper.spec"):
+    for name in ("capture-engine-ocr.spec", "capture-engine-speech-recognition.spec"):
         spec = (pyinstaller_root / name).read_text(encoding="utf-8")
         retired_package = "capture_" + "contracts"
         assert f'collect_data_files("{retired_package}")' not in spec

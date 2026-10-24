@@ -60,8 +60,8 @@ def test_progressive_state_reorders_segments_from_overlapping_worker_events() ->
         clock=FixedClock(),
     )
     engine = CaptureEngine(
-        engine="whisper-primary",
-        model="small",
+        engine="speech-recognition",
+        model="tea-asr-1.1-mini",
         digest=f"sha256:{'b' * 64}",
         device="cpu",
     )
@@ -116,8 +116,8 @@ class FakeProgressiveProcessor:
     def __init__(self, clock: Clock) -> None:
         self.clock = clock
         self.engine = CaptureEngine(
-            engine="whisper-primary",
-            model="small",
+            engine="speech-recognition",
+            model="tea-asr-1.1-mini",
             digest=f"sha256:{'a' * 64}",
             device="cpu",
         )

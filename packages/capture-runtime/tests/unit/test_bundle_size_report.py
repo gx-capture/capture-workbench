@@ -47,7 +47,7 @@ def test_pyinstaller_fallback_emits_canonical_v2_categories(tmp_path: Path) -> N
             "ocr": 0,
             "other": 0,
             "pdf": 0,
-            "whisper": 0,
+            "speech-recognition": 0,
         },
         "files": [],
         "topFiles": [],

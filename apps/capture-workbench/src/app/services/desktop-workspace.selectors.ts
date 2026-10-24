@@ -22,7 +22,7 @@ export const CORE_REQUIREMENTS = new Set<CaptureRequirementId>([
 
 export const INSTALLATION_ORDER = new Map<CaptureRequirementId, number>([
   ['windowsml-ocr', 0],
-  ['whisper-primary', 1],
+  ['speech-recognition', 1],
   ['speaker-diarization', 2],
   ['vertical-japanese-reader', 3],
   ['ollama-runtime', 4],

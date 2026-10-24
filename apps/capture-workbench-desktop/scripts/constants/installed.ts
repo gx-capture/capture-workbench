@@ -8,7 +8,7 @@ export const REGISTRY_VIEWS = ['64', '32'];
 
 export const EXPECTED_REQUIREMENT_IDS = [
   'windowsml-ocr',
-  'whisper-primary',
+  'speech-recognition',
   'ollama-runtime',
   'capture-ollama-model',
 ];

@@ -49,10 +49,10 @@ def test_direct_source_lock_generates_catalog_without_model_release_assets(
         f"capture-engine-ocr-{RUNTIME_VERSION}-windows-x64.zip",
         "capture-engine-ocr.exe",
     )
-    whisper_worker, whisper_worker_manifest = archive_pair(
+    speech_recognition_worker, speech_recognition_worker_manifest = archive_pair(
         engine_dir,
-        f"capture-engine-whisper-{RUNTIME_VERSION}-windows-x64.zip",
-        "capture-engine-whisper.exe",
+        f"capture-engine-speech-recognition-{RUNTIME_VERSION}-windows-x64.zip",
+        "capture-engine-speech-recognition.exe",
     )
     source_lock, _content = approved_source_lock()
     source_lock_path = tmp_path / "model-source-lock.json"
@@ -73,10 +73,10 @@ def test_direct_source_lock_generates_catalog_without_model_release_assets(
             str(ocr_worker),
             "--ocr-worker-manifest",
             str(ocr_worker_manifest),
-            "--whisper-worker-archive",
-            str(whisper_worker),
-            "--whisper-worker-manifest",
-            str(whisper_worker_manifest),
+            "--speech-recognition-worker-archive",
+            str(speech_recognition_worker),
+            "--speech-recognition-worker-manifest",
+            str(speech_recognition_worker_manifest),
         ],
         env=environment,
         stdin=subprocess.DEVNULL,
@@ -93,7 +93,7 @@ def test_direct_source_lock_generates_catalog_without_model_release_assets(
         for requirement in catalog.requirements
     } == {
         "windowsml-ocr": ["worker"],
-        "whisper-primary": ["worker"],
+        "speech-recognition": ["worker"],
         "vertical-japanese-reader": [],
     }
     assert all(requirement.model_delivery().files for requirement in catalog.requirements)
@@ -111,9 +111,9 @@ def test_direct_source_lock_generates_catalog_without_model_release_assets(
     )
     for artifact in (
         ocr_worker,
-        whisper_worker,
+        speech_recognition_worker,
         ocr_worker_manifest,
-        whisper_worker_manifest,
+        speech_recognition_worker_manifest,
     ):
         assert (release / artifact.name).is_file()
         assert (release / f"{artifact.name}.sha256").is_file()
@@ -130,10 +130,10 @@ def test_catalog_generation_rejects_first_party_git_blob_drift(
         f"capture-engine-ocr-{RUNTIME_VERSION}-windows-x64.zip",
         "capture-engine-ocr.exe",
     )
-    whisper_worker, whisper_worker_manifest = archive_pair(
+    speech_recognition_worker, speech_recognition_worker_manifest = archive_pair(
         engine_dir,
-        f"capture-engine-whisper-{RUNTIME_VERSION}-windows-x64.zip",
-        "capture-engine-whisper.exe",
+        f"capture-engine-speech-recognition-{RUNTIME_VERSION}-windows-x64.zip",
+        "capture-engine-speech-recognition.exe",
     )
     source_lock, _content = approved_source_lock()
     provenance = next(
@@ -157,10 +157,10 @@ def test_catalog_generation_rejects_first_party_git_blob_drift(
             str(ocr_worker),
             "--ocr-worker-manifest",
             str(ocr_worker_manifest),
-            "--whisper-worker-archive",
-            str(whisper_worker),
-            "--whisper-worker-manifest",
-            str(whisper_worker_manifest),
+            "--speech-recognition-worker-archive",
+            str(speech_recognition_worker),
+            "--speech-recognition-worker-manifest",
+            str(speech_recognition_worker_manifest),
         ],
         env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[2] / "src")},
         stdin=subprocess.DEVNULL,
@@ -184,10 +184,10 @@ def test_pending_source_lock_release_generation_fails_closed(
         f"capture-engine-ocr-{RUNTIME_VERSION}-windows-x64.zip",
         "capture-engine-ocr.exe",
     )
-    whisper_worker, whisper_worker_manifest = archive_pair(
+    speech_recognition_worker, speech_recognition_worker_manifest = archive_pair(
         engine_dir,
-        f"capture-engine-whisper-{RUNTIME_VERSION}-windows-x64.zip",
-        "capture-engine-whisper.exe",
+        f"capture-engine-speech-recognition-{RUNTIME_VERSION}-windows-x64.zip",
+        "capture-engine-speech-recognition.exe",
     )
     source_lock_path = tmp_path / "pending-model-source-lock.json"
     source_lock_path.write_bytes(canonical_json_bytes(pending_source_lock()))
@@ -204,10 +204,10 @@ def test_pending_source_lock_release_generation_fails_closed(
             str(ocr_worker),
             "--ocr-worker-manifest",
             str(ocr_worker_manifest),
-            "--whisper-worker-archive",
-            str(whisper_worker),
-            "--whisper-worker-manifest",
-            str(whisper_worker_manifest),
+            "--speech-recognition-worker-archive",
+            str(speech_recognition_worker),
+            "--speech-recognition-worker-manifest",
+            str(speech_recognition_worker_manifest),
         ],
         env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[2] / "src")},
         stdin=subprocess.DEVNULL,
@@ -228,10 +228,10 @@ def test_pending_source_lock_generates_only_preflight_catalog_with_explicit_flag
         f"capture-engine-ocr-{RUNTIME_VERSION}-windows-x64.zip",
         "capture-engine-ocr.exe",
     )
-    whisper_worker, whisper_worker_manifest = archive_pair(
+    speech_recognition_worker, speech_recognition_worker_manifest = archive_pair(
         engine_dir,
-        f"capture-engine-whisper-{RUNTIME_VERSION}-windows-x64.zip",
-        "capture-engine-whisper.exe",
+        f"capture-engine-speech-recognition-{RUNTIME_VERSION}-windows-x64.zip",
+        "capture-engine-speech-recognition.exe",
     )
     source_lock_path = tmp_path / "pending-model-source-lock.json"
     source_lock_path.write_bytes(canonical_json_bytes(pending_source_lock()))
@@ -249,10 +249,10 @@ def test_pending_source_lock_generates_only_preflight_catalog_with_explicit_flag
             str(ocr_worker),
             "--ocr-worker-manifest",
             str(ocr_worker_manifest),
-            "--whisper-worker-archive",
-            str(whisper_worker),
-            "--whisper-worker-manifest",
-            str(whisper_worker_manifest),
+            "--speech-recognition-worker-archive",
+            str(speech_recognition_worker),
+            "--speech-recognition-worker-manifest",
+            str(speech_recognition_worker_manifest),
         ],
         env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[2] / "src")},
         stdin=subprocess.DEVNULL,
@@ -265,7 +265,7 @@ def test_pending_source_lock_generates_only_preflight_catalog_with_explicit_flag
     catalog = EngineCatalog.from_dict(json.loads(catalog_path.read_text(encoding="utf-8")))
     assert [item.requirement_id for item in catalog.requirements] == [
         "windowsml-ocr",
-        "whisper-primary",
+        "speech-recognition",
         "vertical-japanese-reader",
     ]
     assert all(item.complete for item in catalog.requirements)
@@ -281,10 +281,10 @@ def test_pending_preflight_rejects_unrelated_blockers_and_approved_lock(
         f"capture-engine-ocr-{RUNTIME_VERSION}-windows-x64.zip",
         "capture-engine-ocr.exe",
     )
-    whisper_worker, whisper_worker_manifest = archive_pair(
+    speech_recognition_worker, speech_recognition_worker_manifest = archive_pair(
         engine_dir,
-        f"capture-engine-whisper-{RUNTIME_VERSION}-windows-x64.zip",
-        "capture-engine-whisper.exe",
+        f"capture-engine-speech-recognition-{RUNTIME_VERSION}-windows-x64.zip",
+        "capture-engine-speech-recognition.exe",
     )
     pending_payload = pending_source_lock()
     pending_payload["approval"]["blockers"].append("Unrelated approval blocker.")
@@ -306,10 +306,10 @@ def test_pending_preflight_rejects_unrelated_blockers_and_approved_lock(
                 str(ocr_worker),
                 "--ocr-worker-manifest",
                 str(ocr_worker_manifest),
-                "--whisper-worker-archive",
-                str(whisper_worker),
-                "--whisper-worker-manifest",
-                str(whisper_worker_manifest),
+                "--speech-recognition-worker-archive",
+                str(speech_recognition_worker),
+                "--speech-recognition-worker-manifest",
+                str(speech_recognition_worker_manifest),
             ],
             env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[2] / "src")},
             stdin=subprocess.DEVNULL,

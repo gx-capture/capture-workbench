@@ -62,7 +62,7 @@
         "requirementId": {
           "enum": [
             "windowsml-ocr",
-            "whisper-primary",
+            "speech-recognition",
             "speaker-diarization",
             "vertical-japanese-reader",
             "ollama-runtime",

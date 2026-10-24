@@ -134,7 +134,7 @@ class OcrComputeNoticeCode(StrEnum):
 
 CaptureRequirementId = Literal[
     "windowsml-ocr",
-    "whisper-primary",
+    "speech-recognition",
     "speaker-diarization",
     "vertical-japanese-reader",
     "ollama-runtime",
@@ -177,6 +177,8 @@ class CaptureEngine(StrictModel):
     model: NonEmptyString
     digest: EngineDigest
     device: NonEmptyString | None = None
+    elapsed_ms: int | None = Field(default=None, ge=0)
+    stage_ms: dict[NonEmptyString, Annotated[int, Field(ge=0)]] | None = None
 
 
 class StructuringSessionStatus(StrEnum):

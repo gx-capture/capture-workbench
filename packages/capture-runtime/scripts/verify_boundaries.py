@@ -8,9 +8,9 @@ from pathlib import Path
 
 CORE_FORBIDDEN = (
     "PIL",
-    "ctranslate2",
+    "torch",
     "cv2",
-    "faster_whisper",
+    "transformers",
     "huggingface_hub",
     "onnxruntime",
     "paddleocr",
@@ -29,8 +29,8 @@ CORE_REQUIRED = (
     "capture_runtime/assets/contract-set.json",
     "capture_runtime/assets/contract-set.sha256",
 )
-OCR_FORBIDDEN = ("faster_whisper", "ctranslate2", "huggingface_hub")
-WHISPER_FORBIDDEN = ("paddleocr", "paddlex", "pypdfium2", "cv2", "PIL")
+OCR_FORBIDDEN = ("transformers", "torch", "huggingface_hub")
+SPEECH_FORBIDDEN = ("paddleocr", "paddlex", "pypdfium2", "cv2")
 OTHER_PLATFORM = ("/linux", "/darwin", "aarch64", "arm64")
 
 
@@ -116,11 +116,11 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--core", type=Path)
     parser.add_argument("--ocr-worker", type=Path)
-    parser.add_argument("--whisper-worker", type=Path)
+    parser.add_argument("--speech-recognition-worker", type=Path)
     parser.add_argument("--core-inventory", type=Path)
     parser.add_argument("--core-recursive-inventory", type=Path)
     parser.add_argument("--ocr-inventory", type=Path)
-    parser.add_argument("--whisper-inventory", type=Path)
+    parser.add_argument("--speech-recognition-inventory", type=Path)
     arguments = parser.parse_args()
     if arguments.core:
         recursive_inventory = executable_inventory(arguments.core)
@@ -136,11 +136,11 @@ def main() -> None:
         inventory = zip_inventory(arguments.ocr_worker)
         reject(inventory, OCR_FORBIDDEN, "OCR worker")
         write_inventory(arguments.ocr_inventory, inventory)
-    if arguments.whisper_worker:
-        inventory = zip_inventory(arguments.whisper_worker)
-        reject(inventory, WHISPER_FORBIDDEN, "Whisper worker")
-        write_inventory(arguments.whisper_inventory, inventory)
-    if not any((arguments.core, arguments.ocr_worker, arguments.whisper_worker)):
+    if arguments.speech_recognition_worker:
+        inventory = zip_inventory(arguments.speech_recognition_worker)
+        reject(inventory, SPEECH_FORBIDDEN, "Speech recognition worker")
+        write_inventory(arguments.speech_recognition_inventory, inventory)
+    if not any((arguments.core, arguments.ocr_worker, arguments.speech_recognition_worker)):
         raise SystemExit("at least one artifact must be supplied")
 
 

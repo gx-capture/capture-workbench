@@ -130,8 +130,8 @@ def _installer(
         max_image_pixels=100_000,
         ocr_render_scale=2,
         max_audio_duration_ms=60_000,
-        whisper_primary_model="large-v3-turbo",
-        whisper_fallback_model="small",
+        whisper_primary_model="tea-asr-1.1",
+        whisper_fallback_model="tea-asr-1.1-mini",
         whisper_prefer_gpu=False,
     )
     installer = SystemRuntimeInstaller(

@@ -26,7 +26,7 @@ pub(super) fn validate_requirement_id(value: &str) -> Result<(), String> {
     if !matches!(
         value,
         "windowsml-ocr"
-            | "whisper-primary"
+            | "speech-recognition"
             | "speaker-diarization"
             | "vertical-japanese-reader"
             | "ollama-runtime"

@@ -200,7 +200,7 @@ impl FixtureState {
             json!({
                 "items": [
                     requirement("windowsml-ocr", "ocr", "WindowsML OCR", &["pdf", "image"]),
-                    requirement("whisper-primary", "stt", "Whisper", &["audio"]),
+                    requirement("speech-recognition", "stt", "Speech recognition", &["audio"]),
                     requirement("ollama-runtime", "llm-runtime", "Ollama", &["structuring"]),
                     requirement(
                         "capture-ollama-model",
@@ -915,7 +915,7 @@ fn build_raw_capture(source: &Value, source_kind: &str, content: &[u8]) -> Value
         })
         .collect::<Vec<_>>();
     let (engine, model) = if source_kind == "audio" {
-        ("whisper-primary", "deterministic-whisper-v1")
+        ("speech-recognition", "deterministic-speech-recognition-v1")
     } else {
         ("windowsml-ocr", "deterministic-windowsml-v1")
     };
@@ -1120,7 +1120,7 @@ fn valid_error_code(value: &str) -> bool {
 fn valid_requirement_id(value: &str) -> bool {
     matches!(
         value,
-        "windowsml-ocr" | "whisper-primary" | "ollama-runtime" | "capture-ollama-model"
+        "windowsml-ocr" | "speech-recognition" | "ollama-runtime" | "capture-ollama-model"
     )
 }
 

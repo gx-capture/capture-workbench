@@ -185,6 +185,8 @@ def _run(request: WorkerRequestModel, cancellation: Event, progress: Any = None)
             "model": result.model,
             "digest": result.digest,
             "device": result.device,
+            "elapsedMs": result.elapsed_ms,
+            "stageMs": result.stage_ms,
         },
         "warnings": [result.warning] if result.warning else [],
     }

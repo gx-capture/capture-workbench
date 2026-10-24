@@ -10,6 +10,11 @@ actually shipped (0.5.1 followed the same steps); workflow files remain the sour
   revision `f667ed73aee57d40cc39428eb768b4fd87a0a29e`, with Transformers 5.20.2.
   Re-approve the changed release model-source lock before publishing; regenerate
   `uv.lock` and verify the rebuilt packaged diarization worker offline.
+- Unreleased speech recognition: TEA-ASR-1.1 (CUDA) / TEA-ASR-1.1-mini (CPU) with
+  Qwen3-ForcedAligner under the renamed requirement `speech-recognition` (was
+  `whisper-primary`; see `.agents/DECISIONS/speech-recognition-tea-asr.md`). Before
+  publishing: re-approve the lock, re-measure the `whisper-private-reference` output
+  hash, and measure the `capture-engine-speech-recognition` worker sizes.
 
 - Capture Runtime and Workbench **0.5.1** are published: npm
   (`@gx-capture/capture-workbench-ui`, `@gx-capture/capture-runtime-client` on
@@ -187,7 +192,8 @@ actually shipped (0.5.1 followed the same steps); workflow files remain the sour
   `capture-runtime-model-sources-v0.6.0`). OCR profile
   `capture-workbench-ocr-09c2568f8a130abe`: the profile still carries the
   release version, so its id changes with every release.
-- The lock has four units: `windowsml-ocr`, `whisper-primary`, and the optional
+- The lock has four units: `windowsml-ocr`, `speech-recognition` (until 0.6.3:
+  `whisper-primary`), and the optional
   `speaker-diarization` (worker archive about 272 MB, models from
   `gx-capture/capture-model-sources`) and `vertical-japanese-reader` (models
   only, no worker archive).

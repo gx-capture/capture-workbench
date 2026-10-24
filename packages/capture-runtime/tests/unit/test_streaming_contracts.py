@@ -58,7 +58,7 @@ def test_v2_contracts_use_camel_case_and_preserve_sealed_segment_projection() ->
         segments=[segment],
         source_text="first sentence",
         extraction_engine=CaptureEngine(
-            engine="whisper-primary",
+            engine="speech-recognition",
             model="test-model",
             digest="sha256:" + "1" * 64,
             device="cuda",

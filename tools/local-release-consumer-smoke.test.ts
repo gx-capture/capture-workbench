@@ -70,7 +70,7 @@ async function createModelFixture(
   const directory = await createFixture();
   const workerAssets = [
     ['windowsml-ocr', ("capture-engine-ocr-" + RELEASE_VERSION + "-windows-x64.zip")],
-    ['whisper-primary', ("capture-engine-whisper-" + RELEASE_VERSION + "-windows-x64.zip")],
+    ['speech-recognition', ("capture-engine-speech-recognition-" + RELEASE_VERSION + "-windows-x64.zip")],
     ...extraUnits,
   ] as const;
   const pendingWrites: Promise<void>[] = [];
@@ -246,7 +246,7 @@ test('runtime release verifier rejects a unit it does not know', async () => {
 test('runtime release verifier rejects model archives or unknown model-enabled assets', async () => {
   const directory = await createModelFixture();
   try {
-    await writeFile(join(directory, 'capture-model-whisper-primary.zip'), 'forbidden');
+    await writeFile(join(directory, 'capture-model-speech-recognition.zip'), 'forbidden');
     await assert.rejects(
       verifyRuntimeRelease(directory, version),
       /outside the canonical asset set/u,

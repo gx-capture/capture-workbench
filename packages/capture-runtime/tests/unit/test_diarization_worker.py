@@ -65,6 +65,8 @@ def test_run_returns_both_timelines_with_provenance(
                 model="nvidia-nemotron-3-diarization",
                 digest="sha256:" + "0" * 64,
                 warning="Diarization GPU fallback: cuda_out_of_memory",
+                elapsed_ms=1200,
+                stage_ms={"modelLoad": 100, "inference": 600, "postprocessing": 20},
             )
 
     monkeypatch.setattr(diarization_main, "NemotronDiarizationAdapter", Adapter)
@@ -91,6 +93,8 @@ def test_run_returns_both_timelines_with_provenance(
             "model": "nvidia-nemotron-3-diarization",
             "digest": "sha256:" + "0" * 64,
             "device": "cpu",
+            "elapsedMs": 1200,
+            "stageMs": {"modelLoad": 100, "inference": 600, "postprocessing": 20},
         },
         "warnings": ["Diarization GPU fallback: cuda_out_of_memory"],
     }
@@ -102,7 +106,7 @@ def test_run_returns_both_timelines_with_provenance(
 @pytest.mark.parametrize(
     "overrides",
     [
-        {"requirementId": "whisper-primary"},
+        {"requirementId": "speech-recognition"},
         {"modelPath": "relative/model"},
         {"sourcePath": "relative/source.wav"},
         {"options": {"preferGpu": False}},

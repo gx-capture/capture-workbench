@@ -73,9 +73,9 @@ def complete_catalog(engine_dir: Path, catalog_path: Path) -> None:
             "capture-engine-ocr.exe",
         ),
         (
-            "whisper-primary",
-            "capture-engine-whisper.zip",
-            "capture-engine-whisper.exe",
+            "speech-recognition",
+            "capture-engine-speech-recognition.zip",
+            "capture-engine-speech-recognition.exe",
         ),
         # Models only: the OCR profile is derived from this unit's files.
         ("vertical-japanese-reader", None, None),

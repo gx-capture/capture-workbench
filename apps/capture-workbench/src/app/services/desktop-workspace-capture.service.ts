@@ -174,7 +174,7 @@ export class DesktopWorkspaceCaptureService {
       switchMap((document) => {
         if (isAudioMediaType(document.mediaType) && !this.audioReady(host.requirements())) {
           host.requestedRequirements.update(
-            (current) => new Set([...current, 'whisper-primary']),
+            (current) => new Set([...current, 'speech-recognition']),
           );
           host.setMessage(desktopMessages().whisperNeeded);
           return EMPTY;
@@ -899,7 +899,7 @@ export class DesktopWorkspaceCaptureService {
 
   private audioReady(requirements: readonly RuntimeRequirement[]): boolean {
     return requirements.some(
-      (requirement) => requirement.requirementId === 'whisper-primary' && requirement.status === 'ready',
+      (requirement) => requirement.requirementId === 'speech-recognition' && requirement.status === 'ready',
     );
   }
 

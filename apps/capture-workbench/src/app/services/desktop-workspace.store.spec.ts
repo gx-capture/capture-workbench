@@ -179,8 +179,8 @@ describe('DesktopWorkspaceStore', () => {
       runtimeStub({
         getRequirements: vi.fn(() => of([
           {
-            requirementId: 'whisper-primary',
-            displayName: 'Whisper',
+            requirementId: 'speech-recognition',
+            displayName: 'Speech recognition',
             status: 'installable',
             kind: 'model',
             requiredFor: ['audio'],
@@ -198,14 +198,14 @@ describe('DesktopWorkspaceStore', () => {
         startInstallation,
       }),
     );
-    store.requestedRequirements.set(new Set(['whisper-primary']));
+    store.requestedRequirements.set(new Set(['speech-recognition']));
 
     store.installCoreRequirements();
     TestBed.tick();
 
     expect(startInstallation.mock.calls.map(([request]) => request.requirementId)).toEqual([
       'windowsml-ocr',
-      'whisper-primary',
+      'speech-recognition',
     ]);
   });
 
@@ -369,8 +369,8 @@ describe('DesktopWorkspaceStore', () => {
     });
     const client = runtimeStub({
       getRequirements: vi.fn(() => of([{
-        requirementId: 'whisper-primary',
-        displayName: 'Whisper',
+        requirementId: 'speech-recognition',
+        displayName: 'Speech recognition',
         status: 'missing',
         kind: 'model',
         requiredFor: ['audio'],
@@ -384,7 +384,7 @@ describe('DesktopWorkspaceStore', () => {
 
     expect(store.state()).toBe('needs-setup');
     expect(store.coreMissing().map((item) => item.requirementId)).toEqual([
-      'whisper-primary',
+      'speech-recognition',
     ]);
     expect(store.message()).toBe('處理文件前，需要先下載必要元件。');
     expect(library.createSource).toHaveBeenCalledOnce();

@@ -96,6 +96,19 @@ export const GENERATED_CAPTURE_DOCUMENT_JSON_SCHEMA = {
           "title": "Digest",
           "type": "string"
         },
+        "elapsedMs": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Elapsedms"
+        },
         "engine": {
           "minLength": 1,
           "title": "Engine",
@@ -105,6 +118,25 @@ export const GENERATED_CAPTURE_DOCUMENT_JSON_SCHEMA = {
           "minLength": 1,
           "title": "Model",
           "type": "string"
+        },
+        "stageMs": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "propertyNames": {
+                "minLength": 1
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Stagems"
         }
       },
       "required": [
@@ -408,7 +440,7 @@ export const GENERATED_CAPTURE_DOCUMENT_JSON_SCHEMA = {
       "items": {
         "enum": [
           "windowsml-ocr",
-          "whisper-primary",
+          "speech-recognition",
           "speaker-diarization",
           "vertical-japanese-reader",
           "ollama-runtime",

@@ -28,15 +28,17 @@ windowsml = [
   "pypdfium2>=5.0.0,<6.0.0",
   "pyyaml>=6.0.0,<7.0.0",
 ]
-whisper = [
-  "ctranslate2==4.8.1",
-  "faster-whisper==1.2.1",
-  "huggingface-hub>=1.18.0,<2.0.0",
+speech-recognition = [
+  "transformers==5.20.2",
+  "librosa==1.0.0",
+  "torch==2.11.0",
+  "numpy>=2.0.0,<3.0.0",
 ]
 diarization = [
   "transformers==5.20.2",
   "librosa==1.0.0",
   "torch==2.11.0",
+  "numpy>=2.0.0,<3.0.0",
 ]
 
 [project.scripts]
@@ -62,10 +64,13 @@ packages = ["src/capture_runtime"]
 "src/capture_runtime/assets/contract-set.sha256" = "capture_runtime/assets/contract-set.sha256"
 "src/capture_runtime/assets/ocr-profile.json" = "capture_runtime/assets/ocr-profile.json"
 
-[tool.uv]
-exclude-dependencies = [
-  { package = { name = "faster-whisper", version = "1.2.1" }, dependencies = ["onnxruntime"] },
-]
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu128", marker = "sys_platform == 'win32'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
@@ -101,14 +106,13 @@ ignore_errors = true
 [[tool.mypy.overrides]]
 module = [
   "PIL.*",
-  "ctranslate2.*",
-  "faster_whisper.*",
   "huggingface_hub.*",
   "onnxruntime.*",
   "paddleocr.*",
   "paddlex.*",
   "transformers.*",
   "librosa.*",
+  "numpy.*",
   "torch.*",
   "uvicorn.*",
   "yaml.*",

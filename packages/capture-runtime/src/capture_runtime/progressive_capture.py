@@ -17,7 +17,7 @@ from typing import Any
 
 from capture_runtime.clock import Clock
 from capture_runtime.config import ExtractionRuntimeConfig, sanitized_child_environment
-from capture_runtime.constants import WHISPER_REQUIREMENT_ID
+from capture_runtime.constants import SPEECH_RECOGNITION_REQUIREMENT_ID
 from capture_runtime.contracts import (
     CaptureEngine,
     CaptureFailureV2,
@@ -333,10 +333,10 @@ class ProgressiveCaptureProcessor:
             spool_path.unlink(missing_ok=True)
 
     async def _resolve_engine(self) -> InstalledEngine:
-        engine = await self.engine_manager.resolve_active_engine(WHISPER_REQUIREMENT_ID)
+        engine = await self.engine_manager.resolve_active_engine(SPEECH_RECOGNITION_REQUIREMENT_ID)
         if engine is None:
             raise ExtractionRuntimeUnavailableError(
-                "Runtime requirement whisper-primary is not installed and ready."
+                "Runtime requirement speech-recognition is not installed and ready."
             )
         return engine
 

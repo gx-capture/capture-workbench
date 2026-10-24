@@ -53,13 +53,13 @@ describe('CaptureWorkbenchComponent', () => {
               detail: 'Open Ollama and pull the capture model.',
             },
             {
-              requirementId: 'whisper-primary',
+              requirementId: 'speech-recognition',
               kind: 'stt',
-              displayName: 'Whisper',
+              displayName: 'Speech recognition',
               status: 'unavailable',
               requiredFor: ['audio'],
               installStrategy: 'none',
-              detail: 'Whisper is unavailable.',
+              detail: 'Speech recognition is unavailable.',
             },
           ]),
       ),
@@ -91,7 +91,7 @@ describe('CaptureWorkbenchComponent', () => {
         ) as NodeListOf<HTMLElement>,
         (element) => element.dataset['requirementId'],
       ),
-    ).toEqual(['ollama-runtime', 'capture-ollama-model', 'whisper-primary']);
+    ).toEqual(['ollama-runtime', 'capture-ollama-model', 'speech-recognition']);
     const installButton = captureWorkbenchRoot(fixture).querySelector(
       '.runtime-card .primary',
     ) as HTMLButtonElement | null;
@@ -122,7 +122,7 @@ describe('CaptureWorkbenchComponent', () => {
       getReady: vi.fn(() => of({ ...READY, ready: false })),
       getRequirements: vi.fn(() =>
         of(
-          (['windowsml-ocr', 'whisper-primary'] as const).map(
+          (['windowsml-ocr', 'speech-recognition'] as const).map(
             (requirementId): RuntimeRequirement => ({
               requirementId,
               kind: 'model',
@@ -155,9 +155,9 @@ describe('CaptureWorkbenchComponent', () => {
   it('installs OCR before Whisper even when the runtime lists dependencies in reverse order', async () => {
     const requirements: readonly RuntimeRequirement[] = [
       {
-        requirementId: 'whisper-primary',
+        requirementId: 'speech-recognition',
         kind: 'stt',
-        displayName: 'Whisper',
+        displayName: 'Speech recognition',
         status: 'installable',
         requiredFor: ['audio'],
         installStrategy: 'runtime-catalog',
@@ -197,7 +197,7 @@ describe('CaptureWorkbenchComponent', () => {
 
     expect(
       startInstallation.mock.calls.map(([request]) => request.requirementId),
-    ).toEqual(['windowsml-ocr', 'whisper-primary']);
+    ).toEqual(['windowsml-ocr', 'speech-recognition']);
   });
 
   it('retries an uncertain installation once and installs a newly unlocked model', async () => {

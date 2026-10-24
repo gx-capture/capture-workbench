@@ -190,7 +190,7 @@ export const WORKER_STAGE_CRITICAL_STAGES = new Set<string>([
 ]);
 
 const workerStageNamePattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
-const whisperModelFailurePattern = /^whisper-model-load-(cpu|cuda)-failed-.+$/u;
+const speechModelFailurePattern = /^speech-model-load-(cpu|cuda)-failed-.+$/u;
 
 export function sanitizeWorkerStage(stage: unknown): string | null {{
   if (typeof stage !== 'string' || stage.length > MAX_WORKER_DIAGNOSTIC_STAGE_LENGTH) return null;
@@ -202,8 +202,8 @@ export function sanitizeWorkerStage(stage: unknown): string | null {{
   for (const [prefix, sentinel] of WORKER_STAGE_UNKNOWN_PREFIXES) {{
     if (stage.startsWith(prefix)) return sentinel;
   }}
-  const modelFailure = whisperModelFailurePattern.exec(stage);
-  return modelFailure === null ? null : `whisper-model-load-${{modelFailure[1]}}-failed-unknown`;
+  const modelFailure = speechModelFailurePattern.exec(stage);
+  return modelFailure === null ? null : `speech-model-load-${{modelFailure[1]}}-failed-unknown`;
 }}
 
 export function isAllowedWorkerStage(stage: unknown): stage is string {{
