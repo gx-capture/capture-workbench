@@ -50,8 +50,8 @@ OCR_FIXTURE_SHA256 = "7d61f4835837c4c387a0d46c4f21f7442fe22aab3f14f330b86f6857f5
 OCR_FIXTURE_BYTES = 2157
 OCR_PDF_SHA256 = "5eec85d2b2e98e06577cb5310d1b3037ca26f03d06d85a292ae78b68d4c57f30"
 OCR_PDF_BYTES = 2421
-PRIVATE_WHISPER_FIXTURE_BYTES = 11_005_641
-PRIVATE_WHISPER_FIXTURE_SHA256 = "7f844ad97129470ee0981effcf31f5d69d5556e18c452e9ff27d418bc32d1a5d"
+PRIVATE_WHISPER_FIXTURE_BYTES = 39_199_307
+PRIVATE_WHISPER_FIXTURE_SHA256 = "9801672552693524aa6e325e0afe4f3cec7920f4625de4bd8c5a35a40be3b7f7"
 
 
 class ModelSourceLockError(ValueError):
@@ -473,7 +473,7 @@ def _validate_private_whisper_fixture(value: object, *, require_approved: bool) 
     if (
         fixture["bytes"] != PRIVATE_WHISPER_FIXTURE_BYTES
         or fixture["sha256"] != PRIVATE_WHISPER_FIXTURE_SHA256
-        or fixture["mediaType"] != "audio/mpeg"
+        or fixture["mediaType"] != "audio/mp4"
         or fixture["expectedEngine"] != "speech-recognition"
         or fixture["monotonicSegments"] is not True
     ):

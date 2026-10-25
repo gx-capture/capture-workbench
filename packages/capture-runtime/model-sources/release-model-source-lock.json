@@ -1,6 +1,6 @@
 {
   "approval": {
-    "approvedAt": "2026-10-25T00:52:45.000Z",
+    "approvedAt": "2026-10-25T08:54:55.000Z",
     "approvedBy": "MSI\\guanxin",
     "blockers": [],
     "status": "approved"
@@ -34,21 +34,21 @@
       "url": "https://raw.githubusercontent.com/gx-capture/capture-workbench/61c7ecd4d65ed61b7cb91c2acc1ae3ee9e7ad857/packages/capture-runtime/model-sources/commit-a/fixtures/ocr-reference.png"
     },
     {
-      "bytes": 11005641,
+      "bytes": 39199307,
       "expectedDevice": "cuda",
       "expectedEngine": "speech-recognition",
       "expectedModel": "tea-asr-1.1",
-      "expectedNormalizedOutputSha256": "77cc1a23ba36156e417229fbe53a8e023f2e5c1c56643ed6b1169749fbe32a07",
+      "expectedNormalizedOutputSha256": "73cd4c6c6090edbd7530272337bc2144171ad45f710657bb5ec8adfcaee5eaf4",
       "expectedSegmentCount": {
         "maximum": 10000,
         "minimum": 1
       },
       "id": "whisper-private-reference",
       "kind": "whisper",
-      "mediaType": "audio/mpeg",
+      "mediaType": "audio/mp4",
       "monotonicSegments": true,
       "preferGpu": true,
-      "sha256": "7f844ad97129470ee0981effcf31f5d69d5556e18c452e9ff27d418bc32d1a5d"
+      "sha256": "9801672552693524aa6e325e0afe4f3cec7920f4625de4bd8c5a35a40be3b7f7"
     }
   ],
   "lockVersion": "2",

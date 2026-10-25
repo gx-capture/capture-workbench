@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Release verification
+
+- The private speech fixture that verifies a model-enabled release is now a
+  40-minute Taiwanese Mandarin interview (M4A), with its expected TEA-ASR-1.1
+  output frozen from two identical CUDA runs. It replaces an MP3 whose expected
+  output still came from Whisper.
+
 ### Compatibility policy
 
 Capture Workbench follows an explicit 0.x compatibility policy:
