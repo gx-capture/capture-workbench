@@ -68,3 +68,4 @@ artifacts/
 
 .nx/migrate-runs
 .venv-diarization/
+.venv-speech-recognition/

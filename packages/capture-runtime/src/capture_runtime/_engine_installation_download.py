@@ -188,17 +188,28 @@ class HttpArtifactDownloader:
     ) -> None:
         try:
             async with self._client_factory() as client:
-                # Release hosts throttle each connection, so large artifacts are
-                # fetched as concurrent byte ranges when the server supports them.
-                if (
-                    self._parallel_segments > 1
-                    and descriptor.bytes >= self._parallel_min_bytes
-                    and await _supports_byte_ranges(client, descriptor)
-                ):
-                    await self._download_ranges(
+                if descriptor.parts:
+                    await self._download_parts(
                         client,
                         descriptor,
                         destination,
+                        cancel_event=cancel_event,
+                        progress=progress,
+                    )
+                    copied, digest = await asyncio.to_thread(_file_size_and_sha256, destination)
+                # Release hosts throttle each connection, so large artifacts are
+                # fetched as concurrent byte ranges when the server supports them.
+                elif descriptor.url is not None and await self._uses_ranges(
+                    client, descriptor.url, descriptor.bytes
+                ):
+                    with destination.open("xb") as writer:
+                        writer.truncate(descriptor.bytes)
+                    await self._download_ranges(
+                        client,
+                        descriptor.url,
+                        destination,
+                        offset=0,
+                        size=descriptor.bytes,
                         cancel_event=cancel_event,
                         progress=progress,
                     )
@@ -219,7 +230,14 @@ class HttpArtifactDownloader:
             destination.unlink(missing_ok=True)
             raise
 
-    async def _download_ranges(
+    async def _uses_ranges(self, client: httpx.AsyncClient, url: str, size: int) -> bool:
+        return (
+            self._parallel_segments > 1
+            and size >= self._parallel_min_bytes
+            and await _supports_byte_ranges(client, url, size)
+        )
+
+    async def _download_parts(
         self,
         client: httpx.AsyncClient,
         descriptor: EngineArtifactDescriptor,
@@ -228,24 +246,71 @@ class HttpArtifactDownloader:
         cancel_event: asyncio.Event,
         progress: Callable[[int], None],
     ) -> None:
-        size = descriptor.bytes
+        """Write each published part into its place in the whole archive and verify it."""
+
+        with destination.open("xb") as writer:
+            writer.truncate(descriptor.bytes)
+        offset = 0
+        for part in descriptor.parts:
+
+            def part_progress(received: int, base: int = offset) -> None:
+                progress(base + received)
+
+            if await self._uses_ranges(client, part.url, part.bytes):
+                await self._download_ranges(
+                    client,
+                    part.url,
+                    destination,
+                    offset=offset,
+                    size=part.bytes,
+                    cancel_event=cancel_event,
+                    progress=part_progress,
+                )
+            else:
+                await _download_region(
+                    client,
+                    part.url,
+                    destination,
+                    offset=offset,
+                    size=part.bytes,
+                    cancel_event=cancel_event,
+                    progress=part_progress,
+                )
+            digest = await asyncio.to_thread(_region_sha256, destination, offset, part.bytes)
+            if digest != part.sha256:
+                raise EngineInstallationError(
+                    "engine artifact part checksum does not match catalog"
+                )
+            offset += part.bytes
+
+    async def _download_ranges(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+        destination: Path,
+        *,
+        offset: int,
+        size: int,
+        cancel_event: asyncio.Event,
+        progress: Callable[[int], None],
+    ) -> None:
+        """Fill `size` bytes of the preallocated destination, from `offset`, with `url`."""
+
         step = -(-size // self._parallel_segments)
         ranges = [(start, min(start + step, size) - 1) for start in range(0, size, step)]
-        with destination.open("xb") as writer:
-            writer.truncate(size)
         received = [0] * len(ranges)
 
         async def segment(index: int, start: int, end: int) -> None:
             expected = end - start + 1
             headers = {"Range": f"bytes={start}-{end}"}
-            async with client.stream("GET", descriptor.url, headers=headers) as response:
+            async with client.stream("GET", url, headers=headers) as response:
                 if (
                     response.status_code != 206
                     or response.headers.get("content-range") != f"bytes {start}-{end}/{size}"
                 ):
                     raise EngineInstallationError("engine artifact range response is invalid")
                 with destination.open("r+b") as writer:
-                    writer.seek(start)
+                    writer.seek(offset + start)
                     async for chunk in response.aiter_bytes(_facade_download_chunk_bytes()):
                         if cancel_event.is_set():
                             raise asyncio.CancelledError
@@ -284,6 +349,7 @@ class HttpArtifactDownloader:
     ) -> tuple[int, str]:
         copied = 0
         digest = hashlib.sha256()
+        assert descriptor.url is not None
         async with client.stream("GET", descriptor.url) as response:
             response.raise_for_status()
             declared = response.headers.get("content-length")
@@ -313,19 +379,62 @@ class HttpArtifactDownloader:
         return copied, digest.hexdigest()
 
 
-async def _supports_byte_ranges(
-    client: httpx.AsyncClient, descriptor: EngineArtifactDescriptor
-) -> bool:
+async def _supports_byte_ranges(client: httpx.AsyncClient, url: str, size: int) -> bool:
     """Probe one byte; any failure falls back to a single sequential stream."""
 
     try:
-        async with client.stream("GET", descriptor.url, headers={"Range": "bytes=0-0"}) as response:
+        async with client.stream("GET", url, headers={"Range": "bytes=0-0"}) as response:
             if response.status_code != 206:
                 return False
             content_range: str | None = response.headers.get("content-range")
-            return content_range == f"bytes 0-0/{descriptor.bytes}"
+            return content_range == f"bytes 0-0/{size}"
     except httpx.HTTPError:
         return False
+
+
+async def _download_region(
+    client: httpx.AsyncClient,
+    url: str,
+    destination: Path,
+    *,
+    offset: int,
+    size: int,
+    cancel_event: asyncio.Event,
+    progress: Callable[[int], None],
+) -> None:
+    """Stream `url` into `size` bytes of the preallocated destination from `offset`."""
+
+    copied = 0
+    async with client.stream("GET", url) as response:
+        response.raise_for_status()
+        declared = response.headers.get("content-length")
+        if declared is not None and declared != str(size):
+            raise EngineInstallationError("engine artifact part Content-Length does not match")
+        with destination.open("r+b") as writer:
+            writer.seek(offset)
+            async for chunk in response.aiter_bytes(_facade_download_chunk_bytes()):
+                if cancel_event.is_set():
+                    raise asyncio.CancelledError
+                copied += len(chunk)
+                if copied > size:
+                    raise EngineInstallationError("engine artifact part exceeded its byte count")
+                writer.write(chunk)
+                progress(copied)
+            writer.flush()
+            os.fsync(writer.fileno())
+    if copied != size:
+        raise EngineInstallationError("engine artifact part is incomplete")
+
+
+def _region_sha256(path: Path, offset: int, size: int) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as reader:
+        reader.seek(offset)
+        remaining = size
+        while remaining and (chunk := reader.read(min(_facade_download_chunk_bytes(), remaining))):
+            digest.update(chunk)
+            remaining -= len(chunk)
+    return digest.hexdigest()
 
 
 def _file_size_and_sha256(path: Path) -> tuple[int, str]:

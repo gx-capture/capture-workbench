@@ -27,7 +27,16 @@ the reference clip):
   it also keeps dense Chinese-English code-switching from being translated. Recordings in other
   languages need another model.
 
-PyTorch comes from the CUDA 12.8 index on Windows for both the speech and diarization extras.
+Only speech recognition uses CUDA PyTorch (the CUDA 12.8 index on Windows); it is about 12.5x
+faster than CPU for transcription. Diarization uses CPU PyTorch: about a minute per 40-minute
+recording on CPU against about 10 s on GPU, for a far smaller worker. The two extras are declared
+conflicting in uv, and each worker builds in its own environment.
+
+A worker archive above 1.9 GB is published as ordered parts `<archive>.001`, `.002`, ... because
+GitHub release assets must stay under 2 GB (the CUDA speech worker archive is about 2.95 GB). The
+catalog keeps the whole archive's size and digest and lists each part with its own digest and URL;
+the installer downloads every part into its place in the archive, checks each part and the whole
+archive, then extracts as before. Worker extraction is bounded at 8 GiB.
 
 ## Renames
 
@@ -48,7 +57,7 @@ boundary and preflight flags `--speech-recognition-*`; stages `speech-*`. Intern
   8 GiB per unit, 10 GiB across the lock).
 - The `whisper-private-reference` fixture keeps its audio but its expected normalized output
   hash still records the Whisper measurement; two identical production TEA runs must replace it.
-- Size budgets were not changed; the speech worker archive, installed tree and bundle report
-  must be measured before `verify-worker-boundaries` and the size regression checks.
+- Size budgets must be re-baselined from the measured speech worker parts, installed tree and
+  bundle report before `verify-worker-boundaries` and the size regression checks.
 - Consumers that install `whisper-primary` (for example law-prep's AI service) change the id
   when they move to the release that contains this decision.

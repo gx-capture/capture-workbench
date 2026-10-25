@@ -5,6 +5,8 @@ import json
 import zipfile
 from pathlib import Path
 
+from capture_runtime.artifact_parts import split_archive
+
 ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
 
 
@@ -64,6 +66,8 @@ def build_worker_archive(source: Path, archive: Path, manifest_output: Path) -> 
         info.compress_type = zipfile.ZIP_DEFLATED
         info.external_attr = 0o100644 << 16
         destination.writestr(info, manifest_bytes)
+    # One release asset must stay under 2 GB; larger archives ship as parts.
+    split_archive(archive)
 
 
 __all__ = ["build_worker_archive", "canonical_json_bytes", "sha256_file"]

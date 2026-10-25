@@ -324,7 +324,7 @@
       },
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv sync --python 3.13 --extra windowsml --extra speech-recognition --reinstall-package onnxruntime-directml"
+        "command": "uv sync --python 3.13 --extra windowsml --reinstall-package onnxruntime-directml"
       }
     },
     "verify-production-environment": {

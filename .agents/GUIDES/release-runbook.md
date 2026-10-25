@@ -14,7 +14,9 @@ actually shipped (0.5.1 followed the same steps); workflow files remain the sour
   Qwen3-ForcedAligner under the renamed requirement `speech-recognition` (was
   `whisper-primary`; see `.agents/DECISIONS/speech-recognition-tea-asr.md`). Before
   publishing: re-approve the lock, re-measure the `whisper-private-reference` output
-  hash, and measure the `capture-engine-speech-recognition` worker sizes.
+  hash, and measure the `capture-engine-speech-recognition` worker sizes. Its archive (about
+  2.95 GB, CUDA PyTorch) is published as parts `.001`, `.002` under 2 GB each; diarization is
+  back on CPU PyTorch.
 
 - Capture Runtime and Workbench **0.5.1** are published: npm
   (`@gx-capture/capture-workbench-ui`, `@gx-capture/capture-runtime-client` on

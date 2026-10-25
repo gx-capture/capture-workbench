@@ -9,7 +9,9 @@ processors load only from digest-verified local directories. Recognition uses
 30-second quiet-point chunks and bounded retries for generation loops; results
 warn when a chunk still reaches its token limit. One classified CUDA failure can
 retry the mini model on CPU. The `speech-recognition` extra uses Transformers
-5.20.2 and the Windows cu128 build of PyTorch 2.11.0. See the
+5.20.2 and the Windows cu128 build of PyTorch 2.11.0; speaker diarization uses CPU PyTorch.
+A worker archive above 1.9 GB is published as ordered parts (`<archive>.001`, ...), each
+under GitHub's 2 GB asset limit, and the installer joins and verifies them. See the
 [decision record](../../.agents/DECISIONS/speech-recognition-tea-asr.md) for required
 re-approval, private-output remeasurement and package-size checks.
 

@@ -66,6 +66,7 @@ async function createFixture(): Promise<string> {
 
 async function createModelFixture(
   extraUnits: readonly (readonly [string, string])[] = [],
+  { splitSpeech = false }: { splitSpeech?: boolean } = {},
 ): Promise<string> {
   const directory = await createFixture();
   const workerAssets = [
@@ -76,6 +77,11 @@ async function createModelFixture(
   const pendingWrites: Promise<void>[] = [];
   const requirements = workerAssets.map(([requirementId, fileName]) => {
     const archive = Buffer.from(`${requirementId} worker fixture`);
+    // A split archive is published as `<fileName>.001`, `.002` in its place.
+    const pieces =
+      splitSpeech && requirementId === 'speech-recognition'
+        ? [archive.subarray(0, 10), archive.subarray(10)]
+        : [];
     const filesManifestName = `${fileName.slice(0, -4)}-files.json`;
     const filesManifest = Buffer.from(`{"entryPoint":"capture-engine-${requirementId}"}\n`);
     const artifact = {
@@ -91,12 +97,26 @@ async function createModelFixture(
       extractedBytes: archive.byteLength,
       entryPoint: `capture-engine-${requirementId}`,
       filesManifestSha256: digest(filesManifest),
-      url: `https://example.test/v${version}/${fileName}`,
+      ...(pieces.length
+        ? {
+            parts: pieces.map((piece, index) => ({
+              fileName: `${fileName}.00${index + 1}`,
+              bytes: piece.byteLength,
+              sha256: digest(piece),
+              url: `https://example.test/v${version}/${fileName}.00${index + 1}`,
+            })),
+          }
+        : { url: `https://example.test/v${version}/${fileName}` }),
     };
-    pendingWrites.push(writeFile(join(directory, fileName), archive));
-    pendingWrites.push(
-      writeFile(join(directory, `${fileName}.sha256`), `${artifact.sha256}  ${fileName}\n`),
-    );
+    const files = pieces.length
+      ? pieces.map((piece, index) => [`${fileName}.00${index + 1}`, piece] as const)
+      : [[fileName, archive] as const];
+    for (const [name, bytes] of files) {
+      pendingWrites.push(writeFile(join(directory, name), bytes));
+      pendingWrites.push(
+        writeFile(join(directory, `${name}.sha256`), `${digest(bytes)}  ${name}\n`),
+      );
+    }
     pendingWrites.push(writeFile(join(directory, filesManifestName), filesManifest));
     pendingWrites.push(
       writeFile(
@@ -310,4 +330,30 @@ test('runtime manifest validation rejects non-Windows releases', () => {
       ),
     /unsupported platform/u,
   );
+});
+
+test('runtime release verifier accepts a worker archive published as checked parts', async () => {
+  const directory = await createModelFixture([], { splitSpeech: true });
+  try {
+    const manifest = await verifyRuntimeRelease(directory, version);
+    assert.equal(manifest.runtimeVersion, version);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('runtime release verifier rejects a corrupted worker archive part', async () => {
+  const directory = await createModelFixture([], { splitSpeech: true });
+  try {
+    const name = `capture-engine-speech-recognition-${version}-windows-x64.zip.002`;
+    const corrupted = Buffer.from('corrupted part');
+    await writeFile(join(directory, name), corrupted);
+    await writeFile(join(directory, `${name}.sha256`), `${digest(corrupted)}  ${name}\n`);
+    await assert.rejects(
+      verifyRuntimeRelease(directory, version),
+      /digest does not match catalog/u,
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });

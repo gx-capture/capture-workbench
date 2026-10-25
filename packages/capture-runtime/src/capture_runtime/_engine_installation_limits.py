@@ -7,7 +7,8 @@ from __future__ import annotations
 MAX_ARCHIVE_FILES = 8192
 # Worker archive extraction remains bounded independently of direct model files.
 MAX_SINGLE_EXTRACTED_FILE_BYTES = 2 * 1024 * 1024 * 1024
-MAX_TOTAL_EXTRACTED_BYTES = 2 * 1024 * 1024 * 1024
+# The speech recognition worker carries CUDA PyTorch, about 4.5 GB extracted.
+MAX_TOTAL_EXTRACTED_BYTES = 8 * 1024 * 1024 * 1024
 MAX_SINGLE_MODEL_FILE_BYTES = 4 * 1024**3
 MAX_TOTAL_MODEL_BYTES = 8 * 1024**3
 MAX_COMPRESSION_RATIO = 200

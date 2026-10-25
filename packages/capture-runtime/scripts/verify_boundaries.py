@@ -6,6 +6,8 @@ import sys
 import zipfile
 from pathlib import Path
 
+from capture_runtime.artifact_parts import JoinedParts, archive_parts
+
 CORE_FORBIDDEN = (
     "PIL",
     "torch",
@@ -58,7 +60,8 @@ def executable_inventory(path: Path, *, recursive: bool = True) -> str:
 
 
 def zip_inventory(path: Path) -> str:
-    with zipfile.ZipFile(path) as source:
+    parts = archive_parts(path.parent, path.name)
+    with JoinedParts(parts) as joined, zipfile.ZipFile(joined) as source:
         return "\n".join(info.filename for info in source.infolist())
 
 
