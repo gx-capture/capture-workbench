@@ -17,7 +17,10 @@ REPORT_FIELDS = {
 }
 ARTIFACT_FIELDS = {"bytes", "fileName", "path", "sha256"}
 PYINSTALLER_FIELDS = {"blocker", "categories", "files", "topFiles"}
-PYINSTALLER_CATEGORY_FIELDS = {"core", "ocr", "other", "pdf", "whisper"}
+PYINSTALLER_CATEGORY_FIELDS = {"core", "ocr", "other", "pdf", "speech-recognition"}
+# Runtime candidates built before 0.7 name the speech category after Whisper; the
+# release candidate re-measures them with this, the tooling ref's checker.
+LEGACY_PYINSTALLER_CATEGORY_FIELDS = {"core", "ocr", "other", "pdf", "whisper"}
 PYINSTALLER_FILE_FIELDS = {"bytes", "path"}
 MAX_SAFE_JSON_INTEGER = 2**53 - 1
 
@@ -72,7 +75,7 @@ def _canonical_pyinstaller(value: object) -> bool:
         and isinstance(value["topFiles"], list)
         and all(_canonical_pyinstaller_file(item) for item in value["topFiles"])
         and isinstance(categories, dict)
-        and set(categories) == PYINSTALLER_CATEGORY_FIELDS
+        and set(categories) in (PYINSTALLER_CATEGORY_FIELDS, LEGACY_PYINSTALLER_CATEGORY_FIELDS)
         and all(_json_integer(item) for item in categories.values())
         and (value["blocker"] is None or isinstance(value["blocker"], str))
     )
