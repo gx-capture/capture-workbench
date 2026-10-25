@@ -147,6 +147,18 @@ def _clear_fallback_error(error: BaseException) -> None:
         current.__traceback__ = current.__cause__ = current.__context__ = None
 
 
+def _out_of_memory(error: BaseException, torch: Any) -> bool:
+    kinds = tuple(
+        kind
+        for kind in (
+            getattr(torch, "OutOfMemoryError", None),
+            getattr(torch.cuda, "OutOfMemoryError", None),
+        )
+        if isinstance(kind, type)
+    )
+    return bool(kinds) and isinstance(error, kinds)
+
+
 def _release(torch: Any, device: str) -> None:
     gc.collect()
     if device == "cuda":
@@ -307,6 +319,35 @@ class TeaAsrAdapter:
         self._decoder, self._stage_reporter = decoder, stage_reporter
         self._progress_reporter = progress_reporter
         self._digest_cache: dict[str, str] = {}
+        # Loaded models by role, kept for the worker's next window: a streaming
+        # capture transcribes 120 s windows, and 0.7.1 reloaded both models for
+        # each (about 10 s a window).
+        self._models: dict[str, tuple[tuple[str, str, str], Any, Any]] = {}
+
+    def _resident(
+        self,
+        role: str,
+        key: tuple[str, str, str],
+        load: Callable[[], tuple[Any, Any]],
+        device: str,
+        torch: Any,
+    ) -> tuple[Any, Any]:
+        """Load a model once per worker; drop the other one if both do not fit on the GPU."""
+
+        cached = self._models.get(role)
+        if cached is not None and cached[0] == key:
+            return cached[1], cached[2]
+        self._models.pop(role, None)
+        try:
+            processor, model = load()
+        except Exception as error:
+            if device != "cuda" or not self._models or not _out_of_memory(error, torch):
+                raise
+            self._models.clear()
+            _release(torch, device)
+            processor, model = load()
+        self._models[role] = (key, processor, model)
+        return processor, model
 
     def _report_stage(self, stage: str) -> None:
         safe = sanitize_worker_stage(stage)
@@ -439,6 +480,7 @@ class TeaAsrAdapter:
                     raise
                 warning = f"Speech recognition GPU fallback: {type(error).__name__}"
                 _clear_fallback_error(error)
+                self._models.clear()
                 try:
                     _release(torch, device)
                 except BaseException:
@@ -483,14 +525,21 @@ class TeaAsrAdapter:
             check_cancel()
             self._report_stage(speech_model_load_stage(device, "start"))
             started = time.perf_counter()
-            try:
-                processor, model = _load_asr(
+
+            def load_recognizer() -> tuple[Any, Any]:
+                loaded_processor, loaded = _load_asr(
                     self.models_dir / selected,
                     self.models_dir / f"{selected}-architecture",
                     transformers,
                     dtype,
                 )
-                model.to(torch.device(device))
+                loaded.to(torch.device(device))
+                return loaded_processor, loaded
+
+            try:
+                processor, model = self._resident(
+                    "recognizer", (selected, device, str(dtype)), load_recognizer, device, torch
+                )
             except Exception as error:
                 self._report_stage(speech_model_load_stage(device, "failed", error))
                 raise
@@ -533,7 +582,8 @@ class TeaAsrAdapter:
                 self._progress(round((start + len(chunk)) / SAMPLE_RATE * 500), duration_ms)
             stage_ms["transcription"] = round((time.perf_counter() - started) * 1000)
             self._report_stage(speech_stage("transcription-call-complete"))
-            # Release the recognizer, its inputs and token tensor before alignment.
+            # Release this window's inputs and token tensor before alignment. The
+            # recognizer stays loaded unless the aligner needs its GPU memory.
             try:
                 cleanup()
             except Exception as error:
@@ -541,11 +591,20 @@ class TeaAsrAdapter:
             check_cancel()
             started = time.perf_counter()
             aligner_dir = str(self.models_dir / "aligner")
-            aligner = transformers.AutoProcessor.from_pretrained(aligner_dir, **LOCAL_OPTIONS)
-            model = transformers.Qwen3ASRForTokenClassification.from_pretrained(
-                aligner_dir, dtype=dtype, **LOCAL_OPTIONS
+
+            def load_aligner() -> tuple[Any, Any]:
+                loaded_processor = transformers.AutoProcessor.from_pretrained(
+                    aligner_dir, **LOCAL_OPTIONS
+                )
+                loaded = transformers.Qwen3ASRForTokenClassification.from_pretrained(
+                    aligner_dir, dtype=dtype, **LOCAL_OPTIONS
+                )
+                loaded.to(torch.device(device))
+                return loaded_processor, loaded
+
+            aligner, model = self._resident(
+                "aligner", ("aligner", device, str(dtype)), load_aligner, device, torch
             )
-            model.to(torch.device(device))
             stage_ms["alignerLoad"] = round((time.perf_counter() - started) * 1000)
             started = time.perf_counter()
             segments: list[WhisperTextSegment] = []

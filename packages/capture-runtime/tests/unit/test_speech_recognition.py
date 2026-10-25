@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from capture_runtime import speech_recognition as speech
-from tests.speech_model_fakes import FakeModels, adapter
+from tests.speech_model_fakes import FakeModels, OutOfMemoryError, adapter
 
 
 @pytest.mark.parametrize("device", ["cpu", "cuda"])
@@ -68,9 +68,7 @@ def test_transcription_time_includes_all_chunks_and_split_retries(tmp_path, monk
     assert result.elapsed_ms == calls * 125
 
 
-def test_loader_preserves_tea_tokenizer_and_local_architecture_and_releases_gpu(
-    tmp_path, monkeypatch
-):
+def test_loader_preserves_tea_tokenizer_and_local_architecture(tmp_path, monkeypatch):
     fake = FakeModels(monkeypatch)
     fake.transcript = "你好！台灣。"
     fake.alignment = [
@@ -80,13 +78,6 @@ def test_loader_preserves_tea_tokenizer_and_local_architecture_and_releases_gpu(
     stages = []
     recognizer = adapter(tmp_path, fake, word_timestamps=True, stage_reporter=stages.append)
 
-    def check_release():
-        if fake.loads("aligner"):
-            gc.collect()
-            assert all(ref() is None for ref in fake.gpu_models)
-            assert ("empty_cache",) in fake.events
-
-    fake.on_load = check_release
     result = recognizer.transcribe(tmp_path / "source.wav", should_cancel=lambda: False)
     assert [x.text for x in result.segments] == ["你好！", "台灣。"]
     assert "".join(w.text for s in result.segments for w in s.words) == fake.transcript
@@ -101,6 +92,42 @@ def test_loader_preserves_tea_tokenizer_and_local_architecture_and_releases_gpu(
             assert options["trust_remote_code"] is False
             assert "token" not in options
     assert all(speech.sanitize_worker_stage(stage) == stage for stage in stages)
+
+
+def test_models_stay_loaded_for_the_next_window(tmp_path, monkeypatch):
+    # A streaming capture transcribes 120 s windows; 0.7.1 reloaded both models for each.
+    fake = FakeModels(monkeypatch)
+    recognizer = adapter(tmp_path, fake)
+
+    for _ in range(3):
+        result = recognizer.transcribe(tmp_path / "source.wav", should_cancel=lambda: False)
+
+    assert (result.model, result.device) == ("tea-asr-1.1", "cuda")
+    assert len(fake.loads("asr")) == 1
+    assert len(fake.loads("aligner")) == 1
+    assert result.stage_ms is not None and set(result.stage_ms) >= {"modelLoad", "alignerLoad"}
+
+
+def test_the_recognizer_makes_room_when_the_aligner_does_not_fit_beside_it(tmp_path, monkeypatch):
+    fake = FakeModels(monkeypatch)
+    recognizer = adapter(tmp_path, fake)
+    attempts = []
+
+    def aligner_fits_alone():
+        if fake.loads("aligner") and not attempts:
+            attempts.append("first")
+            fake.failures[("aligner", "transfer")] = OutOfMemoryError("CUDA out of memory")
+        elif len(fake.loads("aligner")) > 1:
+            gc.collect()
+            assert all(ref() is None or ref().engine != "asr" for ref in fake.gpu_models)
+            fake.failures.pop(("aligner", "transfer"), None)
+
+    fake.on_load = aligner_fits_alone
+    result = recognizer.transcribe(tmp_path / "source.wav", should_cancel=lambda: False)
+
+    assert (result.model, result.device) == ("tea-asr-1.1", "cuda")
+    assert len(fake.loads("aligner")) == 2
+    assert ("empty_cache",) in fake.events
 
 
 @pytest.mark.parametrize("engine", ["asr", "aligner"])
