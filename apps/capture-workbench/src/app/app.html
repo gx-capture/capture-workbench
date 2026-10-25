@@ -81,14 +81,14 @@
         }
         @if (store.activeInstallation(); as installation) {
           <div
-            class="runtime-install-progress"
+            class="install-progress"
             data-testid="runtime-install-progress"
             [attr.data-installation-id]="installation.installationId"
             [attr.data-requirement-id]="installation.requirementId"
             [attr.data-status]="installation.status"
             aria-live="polite"
           >
-            <div class="model-install-progress-heading">
+            <div class="install-progress-heading">
               <strong>{{ installation.status === 'completed' ? m().installDone : installation.status === 'failed' ? m().installFailed : m().installRunning }}</strong>
               <span>{{ store.installationPercent() }}%</span>
             </div>
@@ -136,14 +136,14 @@
             <small>{{ m().modelSeparate }}</small>
             @if (store.activeModelInstallation(); as installation) {
               <div
-                class="model-install-progress"
+                class="install-progress"
                 data-testid="model-install-progress"
                 [attr.data-installation-id]="installation.installationId"
                 [attr.data-option-id]="installation.optionId"
                 [attr.data-status]="installation.status"
                 aria-live="polite"
               >
-                <div class="model-install-progress-heading">
+                <div class="install-progress-heading">
                   <strong>{{ store.modelInstallationPhase() }}</strong>
                   <span>{{ store.modelInstallationPercent() }}%</span>
                 </div>
