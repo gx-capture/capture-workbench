@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-# The speaker diarization worker carries PyTorch, which ships about 2,100
-# Python source files on disk; that worker has roughly 4,000 entries.
+# The speech recognition and speaker diarization workers carry PyTorch and
+# Transformers; each has about 5,500 entries.
 MAX_ARCHIVE_FILES = 8192
 # Worker archive extraction remains bounded independently of direct model files.
 MAX_SINGLE_EXTRACTED_FILE_BYTES = 2 * 1024 * 1024 * 1024
@@ -13,7 +13,9 @@ MAX_SINGLE_MODEL_FILE_BYTES = 4 * 1024**3
 MAX_TOTAL_MODEL_BYTES = 8 * 1024**3
 MAX_COMPRESSION_RATIO = 200
 FILES_MANIFEST_NAME = "files-manifest.json"
-MAX_FILES_MANIFEST_BYTES = 1024 * 1024
+# A manifest entry takes about 190 bytes, so this admits MAX_ARCHIVE_FILES
+# entries with long paths.
+MAX_FILES_MANIFEST_BYTES = 4 * 1024 * 1024
 DOWNLOAD_CHUNK_BYTES = 1024 * 1024
 # Artifacts at least this large download as concurrent byte ranges when the
 # host supports them; release CDNs throttle each connection.

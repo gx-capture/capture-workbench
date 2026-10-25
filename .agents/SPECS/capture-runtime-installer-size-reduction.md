@@ -378,7 +378,7 @@ authorized self-hosted Windows x64 DirectML runner are available.
   unlink-after-unlock races.
 - Archive components reject Windows-illegal characters, control characters,
   trailing dots/spaces, and case-insensitive reserved device basenames,
-  including names with extensions. `files-manifest.json` is capped at 1 MiB
+  including names with extensions. `files-manifest.json` is capped at 4 MiB
   from its `ZipInfo.file_size` before it can be read.
 - OCR install probes use the configured WindowsML DirectML device ID, defaulting
   to zero. Whisper probe payload and the public `/v2` API/schema are unchanged.
