@@ -24,6 +24,7 @@ from capture_runtime.worker_process import (
 
 WORKER = Path(__file__).parents[1] / "fixtures" / "deterministic_worker.py"
 SERVER_WORKER = Path(__file__).parents[1] / "fixtures" / "server_worker.py"
+PERSISTENT_WORKER = Path(__file__).parents[1] / "fixtures" / "persistent_server_worker.py"
 OCR_PROVENANCE = {
     "status": "resolved",
     "engine": "windowsml-ocr",
@@ -1657,3 +1658,207 @@ def test_worker_shutdown_stops_all_owned_processes() -> None:
         assert owner.active_process_count == 0
 
     asyncio.run(run())
+
+
+def test_a_warm_worker_serves_the_next_run_with_what_it_loaded() -> None:
+    owner = WorkerProcess()
+
+    async def run() -> None:
+        progress: list[dict[str, object]] = []
+        first = await owner.request_warm(
+            PERSISTENT_WORKER,
+            "run",
+            {"mode": "progress"},
+            idle_seconds=30,
+            progress_handler=progress.append,
+            timeout_seconds=10,
+        )
+        assert owner.active_process_count == 1
+        second = await owner.request_warm(
+            PERSISTENT_WORKER, "run", {}, idle_seconds=30, timeout_seconds=10
+        )
+        assert first.result is not None and second.result is not None
+        assert second.result == {"pid": first.result["pid"], "mainThread": True, "prepared": 1}
+        assert progress == [{"type": "progress-fixture", "completed": 1}]
+        await owner.release_warm()
+        assert owner.active_process_count == 0
+
+    asyncio.run(run())
+
+
+def test_a_failed_or_cancelled_warm_run_ends_its_worker() -> None:
+    owner = WorkerProcess()
+
+    async def run() -> None:
+        first = await owner.request_warm(
+            PERSISTENT_WORKER, "run", {}, idle_seconds=30, timeout_seconds=10
+        )
+        with pytest.raises(WorkerExecutionError, match="worker_failed"):
+            await owner.request_warm(
+                PERSISTENT_WORKER, "run", {"mode": "fail"}, idle_seconds=30, timeout_seconds=10
+            )
+        assert owner.active_process_count == 0
+        fresh = await owner.request_warm(
+            PERSISTENT_WORKER, "run", {}, idle_seconds=30, timeout_seconds=10
+        )
+        assert first.result is not None and fresh.result is not None
+        assert fresh.result["pid"] != first.result["pid"]
+
+        cancellation = asyncio.Event()
+        waiting = asyncio.Event()
+        task = asyncio.create_task(
+            owner.request_warm(
+                PERSISTENT_WORKER,
+                "run",
+                {"mode": "cancel"},
+                idle_seconds=30,
+                cancel_event=cancellation,
+                progress_handler=lambda _payload: waiting.set(),
+                timeout_seconds=10,
+            )
+        )
+        await asyncio.wait_for(waiting.wait(), timeout=10)
+        cancellation.set()
+        with pytest.raises(WorkerCancelledError):
+            await task
+        assert owner.active_process_count == 0
+
+    asyncio.run(run())
+
+
+def test_a_warm_worker_is_retired_after_its_request_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from capture_runtime import worker_process
+
+    monkeypatch.setattr(worker_process, "WARM_WORKER_MAX_REQUESTS", 2)
+    owner = WorkerProcess()
+
+    async def run() -> None:
+        pids = []
+        for _ in range(3):
+            response = await owner.request_warm(
+                PERSISTENT_WORKER, "run", {}, idle_seconds=30, timeout_seconds=10
+            )
+            assert response.result is not None
+            pids.append(response.result["pid"])
+        assert pids[0] == pids[1] != pids[2]
+        await owner.shutdown()
+
+    asyncio.run(run())
+
+
+def test_an_idle_warm_worker_exits_after_its_idle_time() -> None:
+    owner = WorkerProcess()
+
+    async def run() -> None:
+        await owner.request_warm(PERSISTENT_WORKER, "run", {}, idle_seconds=0.2, timeout_seconds=10)
+        assert owner.active_process_count == 1
+        for _ in range(50):
+            if owner.active_process_count == 0:
+                break
+            await asyncio.sleep(0.1)
+        assert owner.active_process_count == 0
+
+    asyncio.run(run())
+
+
+def test_a_persistent_worker_answers_one_run_requests_and_exits() -> None:
+    owner = WorkerProcess()
+
+    async def run() -> None:
+        preflight = await owner.request(PERSISTENT_WORKER, "preflight", {}, timeout_seconds=10)
+        assert preflight.result is not None and "pid" in preflight.result
+        response = await owner.request(
+            PERSISTENT_WORKER, "run", {"mode": "stdin-free"}, timeout_seconds=10
+        )
+        assert response.result is not None and response.result["stdinFree"] is True
+        assert owner.active_process_count == 0
+
+    asyncio.run(run())
+
+
+def test_a_warm_run_leaves_stdin_free_for_native_libraries() -> None:
+    owner = WorkerProcess()
+
+    async def run() -> None:
+        for _ in range(2):
+            response = await owner.request_warm(
+                PERSISTENT_WORKER,
+                "run",
+                {"mode": "stdin-free"},
+                idle_seconds=30,
+                timeout_seconds=10,
+            )
+            assert response.result is not None and response.result["stdinFree"] is True
+        await owner.shutdown()
+        assert owner.active_process_count == 0
+
+    asyncio.run(run())
+
+
+def _manifest(width: int, height: int) -> list[dict[str, object]]:
+    return [{"page": 1, "raster": {"width": width, "height": height, "scale": 1}}]
+
+
+@pytest.mark.parametrize(
+    ("requirement_id", "idle_seconds", "options", "expected"),
+    [
+        ("windowsml-ocr", 300.0, {"pageManifest": _manifest(1654, 2339)}, "request_warm"),
+        ("windowsml-ocr", 300.0, {"pageManifest": _manifest(4032, 3024)}, "request"),
+        ("windowsml-ocr", 300.0, {}, "request"),
+        ("windowsml-ocr", 0.0, {"pageManifest": _manifest(10, 10)}, "request"),
+        (
+            "windowsml-ocr",
+            300.0,
+            {"pageManifest": _manifest(10, 10), "runtimeSha256": "a" * 64},
+            "request",
+        ),
+        ("speech-recognition", 300.0, {"pageManifest": _manifest(10, 10)}, "request"),
+    ],
+)
+def test_worker_client_keeps_only_a_small_ocr_run_warm_and_never_for_a_proof(
+    tmp_path: Path,
+    requirement_id: str,
+    idle_seconds: float,
+    options: dict[str, object],
+    expected: str,
+) -> None:
+    class Called(Exception):
+        pass
+
+    released: list[bool] = []
+
+    class Process:
+        async def request(self, *_args: object, **_kwargs: object) -> WorkerResponse:
+            raise Called("request")
+
+        async def request_warm(self, *_args: object, **_kwargs: object) -> WorkerResponse:
+            raise Called("request_warm")
+
+        async def release_warm(self) -> None:
+            released.append(True)
+
+    source = tmp_path / "page.png"
+    source.write_bytes(b"page")
+    client = WorkerClient(Process(), ocr_idle_seconds=idle_seconds)  # type: ignore[arg-type]
+    engine = InstalledEngine(
+        requirement_id=requirement_id,
+        artifact_version="0.7.2",
+        executable=tmp_path / "worker.exe",
+        model_dir=tmp_path,
+    )
+    with pytest.raises(Called, match=f"^{expected}$"):
+        asyncio.run(
+            client.run(
+                engine,
+                source_path=source,
+                media_type="image/png",
+                options=options,
+                cancel_event=asyncio.Event(),
+            )
+        )
+    # A fresh OCR worker first gets the GPU memory a warm one holds.
+    assert released == (
+        [True] if requirement_id == "windowsml-ocr" and expected == "request" else []
+    )

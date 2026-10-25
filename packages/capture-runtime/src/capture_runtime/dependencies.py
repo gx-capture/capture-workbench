@@ -104,7 +104,10 @@ def build_runtime_dependencies(
         clock=runtime_clock,
     )
     worker_process = WorkerProcess()
-    worker_client = WorkerClient(worker_process)
+    worker_client = WorkerClient(
+        worker_process,
+        ocr_idle_seconds=settings.extraction.ocr_worker_idle_seconds,
+    )
     engine_manager = EngineInstallationManager(
         settings.app_data_dir / "engines",
         load_engine_catalog(),

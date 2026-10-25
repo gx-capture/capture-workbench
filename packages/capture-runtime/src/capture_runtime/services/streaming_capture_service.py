@@ -371,6 +371,13 @@ class StreamingCaptureService:
         if release is not None:
             await release()
 
+    async def _release_warm_ocr_worker(self) -> None:
+        # A warm OCR worker holds its DirectML sessions in GPU memory, which
+        # speech recognition needs.
+        release = getattr(self._extractor, "release_warm_workers", None)
+        if release is not None:
+            await release()
+
     def _schedule(self, capture_id: str) -> None:
         if (
             (self._processor is None and self._extractor is None)
@@ -403,6 +410,8 @@ class StreamingCaptureService:
                     code="invalid_speaker_identification",
                     retryable=False,
                 )
+            if operation.kind is CaptureSourceKind.AUDIO:
+                await self._release_warm_ocr_worker()
             if identify_speakers and self._extractor is not None:
                 # Speakers are decided over the whole recording, so this path
                 # transcribes it in one pass instead of progressive windows.

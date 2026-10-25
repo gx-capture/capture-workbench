@@ -2821,6 +2821,83 @@ class _StaticOcrEvidenceAdapter:
         return self.evidence
 
 
+def _warm_ocr_adapters(tmp_path: Path):
+    model_dir = tmp_path / "windowsml"
+    _write_windowsml_models(model_dir)
+    plan = _gpu_plan_kwargs()["execution_plan"]
+    assert isinstance(plan, OcrExecutionPlan)
+    built: list[object] = []
+    adapter_map = [(plan.adapter_map_sha256, plan.identity.luid, True)]
+    map_checks: list[object] = []
+
+    class Result:
+        json = {"res": {"rec_texts": ["Warm"], "rec_scores": [0.9], "rec_boxes": [[0, 0, 9, 9]]}}
+
+    class Pipeline:
+        def predict(self, _source: str) -> list[Result]:
+            return [Result()]
+
+    def factory(**_kwargs: object) -> Pipeline:
+        built.append(Pipeline())
+        return built[-1]
+
+    def resolver() -> tuple[str, str, bool]:
+        map_checks.append(adapter_map[0])
+        return adapter_map[0]  # type: ignore[return-value]
+
+    def make(reusable=None, evidence=None, **options):  # type: ignore[no-untyped-def]
+        return WindowsMLOcrAdapter(
+            model_dir,
+            execution_plan=plan,
+            adapter_map_resolver=resolver,
+            pipeline_factory=factory,
+            provider_resolver=lambda: ["DmlExecutionProvider", "CPUExecutionProvider"],
+            provider_evidence_adapter=evidence
+            or _StaticOcrEvidenceAdapter(OcrExecutionEvidence(dml_node_count=2, cpu_node_count=1)),
+            reusable_session=reusable,
+            **options,
+        )
+
+    return make, built, adapter_map, map_checks
+
+
+def test_a_warm_ocr_worker_reuses_the_evidenced_pipeline_and_still_checks_the_adapter(
+    tmp_path: Path,
+) -> None:
+    make, built, adapter_map, map_checks = _warm_ocr_adapters(tmp_path)
+    first = make()
+    assert first.extract_png(b"page").text == "Warm"
+    reusable = first.reusable_session()
+    assert reusable is not None and reusable.evidence is not None
+
+    evidence = _StaticOcrEvidenceAdapter(OcrExecutionEvidence(dml_node_count=2, cpu_node_count=1))
+    checks = len(map_checks)
+    second = make(reusable, evidence)
+    result = second.extract_png(b"page")
+
+    assert (result.text, result.device) == ("Warm", "windowsml-dml")
+    assert len(built) == 1
+    assert (evidence.prepare_calls, evidence.finalize_calls) == (0, 0)
+    assert len(map_checks) == checks + 1
+    assert second.provenance().device == "windowsml-dml"
+
+    adapter_map[0] = ("0" * 64, adapter_map[0][1], True)
+    with pytest.raises(EngineRuntimeUnavailableError, match="identity drifted"):
+        make(second.reusable_session()).extract_png(b"page")
+    assert len(built) == 1
+
+
+def test_an_ocr_run_with_an_execution_proof_never_reuses_a_pipeline(tmp_path: Path) -> None:
+    make, built, _adapter_map, _map_checks = _warm_ocr_adapters(tmp_path)
+    first = make()
+    first.extract_png(b"page")
+    proof_run = make(first.reusable_session(), runtime_sha256="c" * 64, source_sha256="d" * 64)
+
+    assert proof_run._reusable is None
+    assert proof_run.reusable_session() is None
+    assert len(built) == 1
+
+
 def test_windowsml_adapter_is_unavailable_without_dml_or_cpu(tmp_path: Path) -> None:
     model_dir = tmp_path / "windowsml"
     _write_windowsml_models(model_dir)

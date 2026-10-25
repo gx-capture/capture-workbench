@@ -413,6 +413,44 @@ def test_progressive_runtime_materializes_partial_raw_result_and_terminal_events
     asyncio.run(scenario())
 
 
+def test_an_audio_capture_first_releases_a_warm_ocr_worker(tmp_path: Path) -> None:
+    # A warm OCR worker holds DirectML sessions in GPU memory that speech needs.
+    async def scenario() -> None:
+        clock = FixedClock()
+        repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+        repository.initialize()
+        ingestion_id, _ = _open(repository)
+        released: list[bool] = []
+
+        class Extractor:
+            async def release_warm_workers(self) -> None:
+                released.append(True)
+
+        service = StreamingCaptureService(
+            repository,
+            clock=clock,
+            processor=FakeProgressiveProcessor(clock),  # type: ignore[arg-type]
+            extractor=Extractor(),  # type: ignore[arg-type]
+            structurer=FakeCaptureStructuringProvider(clock),
+        )
+        operation = service.start_capture(
+            StartCaptureV2(
+                client_request_id="audio-after-ocr",
+                ingestion_id=ingestion_id,
+                structuring_mode=StructuringMode.RUNTIME,
+            )
+        )
+        for _ in range(100):
+            if service.get_capture(operation.capture_id).status.value == "completed":
+                break
+            await asyncio.sleep(0.01)
+        assert service.get_capture(operation.capture_id).status.value == "completed"
+        assert released == [True]
+        await service.shutdown()
+
+    asyncio.run(scenario())
+
+
 def test_progressive_runtime_does_not_publish_the_session_end_as_the_capture_end(
     tmp_path: Path,
 ) -> None:

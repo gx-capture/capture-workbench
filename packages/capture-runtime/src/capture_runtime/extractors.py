@@ -421,6 +421,14 @@ class StandaloneRuntimeCaptureExtractor:
         self._contract_sha256 = contract_sha256
         self.ocr_pipeline = OcrPipeline()
 
+    async def release_warm_workers(self) -> None:
+        """Close idle warm engine workers, freeing their GPU memory for another engine."""
+
+        worker_client = getattr(self.engine_manager, "worker_client", None)
+        release = getattr(getattr(worker_client, "process", None), "release_warm", None)
+        if release is not None:
+            await release()
+
     def sniff(self, content: bytes) -> SniffedSource:
         return sniff_source(content)
 

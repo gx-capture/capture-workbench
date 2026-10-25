@@ -1745,6 +1745,26 @@ def _native_selected_adapter_map(
     return map_digest, selected.luid
 
 
+@dataclass(frozen=True, slots=True)
+class ReusableOcrSession:
+    """A pipeline whose execution was evidenced on its first run, for the worker's next run.
+
+    Its ONNX Runtime sessions keep fallback disabled, and profiling ended when
+    their DML evidence was read; a later run reuses that evidence with the same
+    sessions. The plan's adapter map is still checked before each run.
+    """
+
+    model_dir: Path
+    execution_plan: OcrExecutionPlan | None
+    vertical_reader_dir: Path | None
+    pipeline: Any
+    device: str
+    warning: str | None
+    evidence: OcrExecutionEvidence | None
+    model_digest: str | None
+    vertical_reader: VerticalReader | None
+
+
 class WindowsMLOcrAdapter:
     """PaddleOCR 3.7 DML-first session with no separate CPU-only retry."""
 
@@ -1767,6 +1787,7 @@ class WindowsMLOcrAdapter:
         runtime_sha256: str | None = None,
         vertical_reader_factory: Callable[[], VerticalReader] | None = None,
         vertical_reader_dir: Path | None = None,
+        reusable_session: ReusableOcrSession | None = None,
     ) -> None:
         self.model_dir = model_dir
         # Where the optional vertical reader unit is installed; without it the
@@ -1839,6 +1860,44 @@ class WindowsMLOcrAdapter:
         self._last_map_current = False
         self._cleanup_pending = False
         self._lock = Lock()
+        # An execution proof binds this run's own sessions, so a proof run never reuses one.
+        self._reusable = (
+            reusable_session
+            if reusable_session is not None
+            and execution_proof_context is None
+            and reusable_session.model_dir == model_dir
+            and reusable_session.execution_plan == execution_plan
+            and reusable_session.vertical_reader_dir == vertical_reader_dir
+            else None
+        )
+        if self._reusable is not None:
+            self._model_digest = self._reusable.model_digest
+            self._vertical_reader = self._reusable.vertical_reader
+
+    def reusable_session(self) -> ReusableOcrSession | None:
+        """This run's pipeline for the worker's next run, once its execution is evidenced."""
+
+        if (
+            self._pipeline is None
+            or self._cleanup_pending
+            or self._execution_proof_context is not None
+            or (
+                self._device != "cpu"
+                and (not self._execution_evidence_finalized or self._execution_evidence is None)
+            )
+        ):
+            return None
+        return ReusableOcrSession(
+            model_dir=self.model_dir,
+            execution_plan=self.execution_plan,
+            vertical_reader_dir=self._vertical_reader_dir,
+            pipeline=self._pipeline,
+            device=self._device,
+            warning=self._warning,
+            evidence=self._execution_evidence,
+            model_digest=self._model_digest,
+            vertical_reader=self._vertical_reader,
+        )
 
     def provenance(self) -> OcrProvenanceV3:
         """Return identity only after the selected provider is evidenced.
@@ -2361,6 +2420,8 @@ class WindowsMLOcrAdapter:
     def _get_pipeline(self) -> Any:
         if self._pipeline is not None:
             return self._pipeline
+        if self._reusable is not None:
+            return self._reuse_pipeline(self._reusable)
         if self.execution_plan is None:
             raise EngineRuntimeUnavailableError(
                 "OCR pipeline construction requires a retained compute plan"
@@ -2461,6 +2522,34 @@ class WindowsMLOcrAdapter:
         finally:
             if lease is not None:
                 lease.close()
+
+    def _reuse_pipeline(self, reusable: ReusableOcrSession) -> Any:
+        """Take the evidenced pipeline after checking the plan's adapter is still current."""
+
+        if reusable.device != "cpu":
+            lease = None
+            try:
+                if self._adapter_map_lease_factory is not None:
+                    try:
+                        lease = self._adapter_map_lease_factory()
+                    except Exception as error:
+                        raise EngineRuntimeUnavailableError(
+                            "retained OCR GPU plan could not create a native adapter map lease"
+                        ) from error
+                self._report_stage("ocr-native-map-before")
+                if lease is not None:
+                    self._validate_native_plan_map(lease)
+                else:
+                    self._validate_plan_map()
+            finally:
+                if lease is not None:
+                    lease.close()
+        self._device = reusable.device
+        self._warning = reusable.warning
+        self._execution_evidence = reusable.evidence
+        self._execution_evidence_finalized = reusable.evidence is not None
+        self._pipeline = reusable.pipeline
+        return reusable.pipeline
 
     @staticmethod
     def _predict(pipeline: Any, image_png: bytes) -> Any:
