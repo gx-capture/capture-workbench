@@ -38,7 +38,7 @@ from capture_runtime.contracts import (
 from capture_runtime.engine_adapters import PaddleResultNormalizationError
 from capture_runtime.engine_catalog import EngineCatalogError
 from capture_runtime.engine_installation import EngineInstallationManager
-from capture_runtime.image_normalization import bounded_scaled_dimensions
+from capture_runtime.image_normalization import bounded_scaled_dimensions, ocr_image_scale
 from capture_runtime.ocr_execution_proof import (
     OcrExecutionDeviceProofV1,
     acceptance_ocr_execution_runtime_sha256_from_environment,
@@ -542,7 +542,7 @@ class StandaloneRuntimeCaptureExtractor:
                         sniffed.media_type,
                         {
                             "maxImagePixels": self.config.max_image_pixels,
-                            "renderScale": self.config.ocr_render_scale,
+                            "renderScale": _image_ocr_scale(content, self.config.ocr_render_scale),
                         },
                         cancel_event,
                         page_manifest=expected_ocr_pages,
@@ -1448,7 +1448,9 @@ def _normalize_image_content(content: bytes, *, scale: float, max_pixels: int) -
                     raise ValueError("Animated or multi-frame images are unsupported.")
                 image.seek(0)
                 image.load()
-                return _normalize_image_png(image, scale=scale, max_pixels=max_pixels)
+                return _normalize_image_png(
+                    image, scale=ocr_image_scale(width, height, scale), max_pixels=max_pixels
+                )
     except (
         OSError,
         UnidentifiedImageError,
@@ -1467,6 +1469,16 @@ def _raster_dimensions(image_png: bytes) -> tuple[int | None, int | None]:
             return (width, height) if width > 0 and height > 0 else (None, None)
     except Exception:
         return None, None
+
+
+def _image_ocr_scale(content: bytes, scale: float) -> float:
+    """The enlargement of an already validated image, as _normalize_image_content applies it."""
+
+    from PIL import Image
+
+    with Image.open(BytesIO(content)) as image:
+        width, height = image.size
+    return ocr_image_scale(width, height, scale)
 
 
 def _oriented_image_dimensions(content: bytes) -> tuple[int, int]:

@@ -3976,6 +3976,74 @@ def test_manifest_build_failure_is_typed_before_page_count_is_known(
         )
 
 
+def test_ocr_enlarges_only_an_image_whose_enlarged_long_side_fits_the_cap() -> None:
+    from capture_runtime.image_normalization import OCR_MAX_ENLARGED_LONG_SIDE, ocr_image_scale
+
+    assert ocr_image_scale(800, 600, 2) == 2
+    assert ocr_image_scale(OCR_MAX_ENLARGED_LONG_SIDE // 2, 10, 2) == 2
+    assert ocr_image_scale(10, OCR_MAX_ENLARGED_LONG_SIDE // 2 + 1, 2) == 1
+    assert ocr_image_scale(1654, 2339, 2) == 1
+    assert ocr_image_scale(800, 600, 1) == 1
+
+
+@pytest.mark.parametrize(
+    ("size", "render_scale", "raster"),
+    [((100, 50), 2.0, (200, 100)), ((2500, 30), 1.0, (2500, 30))],
+)
+def test_worker_backed_image_is_enlarged_as_its_manifest_says(
+    tmp_path: Path,
+    size: tuple[int, int],
+    render_scale: float,
+    raster: tuple[int, int],
+) -> None:
+    class Recorded(Exception):
+        pass
+
+    class RecordingWorkerClient:
+        def __init__(self) -> None:
+            self.options: dict[str, object] | None = None
+
+        async def run(self, _engine: InstalledEngine, **kwargs: object) -> WorkerRunResult:
+            self.options = kwargs["options"]  # type: ignore[assignment]
+            raise Recorded
+
+    worker_client = RecordingWorkerClient()
+
+    class EngineManager:
+        async def ocr_compute_selection(self, *, contract_sha256: str) -> object:
+            del contract_sha256
+            return _worker_ocr_plan_selection()
+
+        async def resolve_active_engine(self, _requirement_id: str) -> InstalledEngine:
+            return InstalledEngine(
+                requirement_id="windowsml-ocr",
+                artifact_version=RUNTIME_VERSION,
+                executable=tmp_path / "ocr.exe",
+                model_dir=tmp_path / "models",
+            )
+
+    manager = EngineManager()
+    manager.worker_client = worker_client  # type: ignore[attr-defined]
+    extractor = StandaloneRuntimeCaptureExtractor(
+        SystemClock(),
+        _config(tmp_path),
+        engine_manager=manager,  # type: ignore[arg-type]
+    )
+    image = BytesIO()
+    Image.new("RGB", size, "white").save(image, format="PNG")
+    content = image.getvalue()
+
+    with pytest.raises(Recorded):
+        asyncio.run(
+            extractor.extract(content, _source(content, "page.png", "image/png"), asyncio.Event())
+        )
+
+    assert worker_client.options is not None
+    assert worker_client.options["renderScale"] == render_scale
+    manifest = worker_client.options["pageManifest"]
+    assert [(page["raster"]["width"], page["raster"]["height"]) for page in manifest] == [raster]
+
+
 def test_worker_backed_pdf_dispatches_every_page_to_ocr(tmp_path: Path) -> None:
     class RecordingWorkerClient:
         def __init__(self) -> None:
