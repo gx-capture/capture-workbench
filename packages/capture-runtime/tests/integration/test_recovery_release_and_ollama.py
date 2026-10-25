@@ -180,6 +180,7 @@ def test_capture_child_environment_strips_provider_overrides_and_secrets(
         "PATH": r"C:\Windows\System32",
         "TEMP": str(tmp_path),
         "CUDA_PATH": str(cuda_path),
+        "USERNAME": "capture-user",
         "CAPTURE_STRUCTURING_PROVIDER": "fake",
         "CAPTURE_EXTRACTION_PROVIDER": "fake",
         "CAPTURE_OLLAMA_MODEL": "attacker/model",
@@ -195,6 +196,8 @@ def test_capture_child_environment_strips_provider_overrides_and_secrets(
         "PATH": r"C:\Windows\System32",
         "TEMP": str(tmp_path),
         "CUDA_PATH": str(cuda_path),
+        # Speech recognition and diarization fail to load a model without it.
+        "USERNAME": "capture-user",
     }
     environment = _ollama_config(tmp_path).process_environment(poisoned)
     assert environment["OLLAMA_HOST"] == "127.0.0.1:11555"

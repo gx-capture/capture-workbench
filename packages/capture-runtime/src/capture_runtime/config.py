@@ -35,6 +35,9 @@ _CHILD_PROCESS_ENVIRONMENT_ALLOWLIST = frozenset(
         "SYSTEMROOT",
         "TEMP",
         "TMP",
+        # Python's getpass.getuser() reads it. PyTorch names its compile cache
+        # with it when Transformers loads a model, and raises without it.
+        "USERNAME",
         "USERPROFILE",
         "WINDIR",
     }
