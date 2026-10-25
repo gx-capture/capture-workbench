@@ -51,7 +51,9 @@ const OPTIONAL_MODEL_REQUIREMENT_IDS: readonly unknown[] = [
   'vertical-japanese-reader',
 ];
 // Units that are models only: the catalog lists no worker archive for them.
-const MODEL_ONLY_REQUIREMENT_IDS: readonly unknown[] = ['vertical-japanese-reader'];
+const MODEL_ONLY_REQUIREMENT_IDS: readonly unknown[] = [
+  'vertical-japanese-reader',
+];
 
 export type RuntimeReleaseManifest = {
   readonly manifestVersion: string;
@@ -150,7 +152,10 @@ function catalogWorkerParts(
   bytes: number,
 ): CatalogWorkerPart[] {
   if (!('parts' in artifact)) {
-    if (typeof artifact.url !== 'string' || !artifact.url.startsWith('https://')) {
+    if (
+      typeof artifact.url !== 'string' ||
+      !artifact.url.startsWith('https://')
+    ) {
       throw new Error('Engine catalog worker artifact is invalid.');
     }
     return [];
@@ -160,8 +165,13 @@ function catalogWorkerParts(
     throw new Error('Engine catalog worker parts are invalid.');
   }
   const parts = raw.map((item: unknown, index): CatalogWorkerPart => {
-    if (!isRecord(item)) throw new Error('Engine catalog worker part is invalid.');
-    exactKeys(item, ['fileName', 'bytes', 'sha256', 'url'], 'Engine catalog worker part');
+    if (!isRecord(item))
+      throw new Error('Engine catalog worker part is invalid.');
+    exactKeys(
+      item,
+      ['fileName', 'bytes', 'sha256', 'url'],
+      'Engine catalog worker part',
+    );
     const expectedName = `${fileName}.${String(index + 1).padStart(3, '0')}`;
     if (
       item.fileName !== expectedName ||
@@ -178,7 +188,9 @@ function catalogWorkerParts(
     return { fileName: expectedName, bytes: item.bytes, sha256: item.sha256 };
   });
   if (parts.reduce((total, part) => total + part.bytes, 0) !== bytes) {
-    throw new Error('Engine catalog worker parts do not add up to the archive.');
+    throw new Error(
+      'Engine catalog worker parts do not add up to the archive.',
+    );
   }
   return parts;
 }
@@ -305,7 +317,11 @@ function catalogWorkers(
       throw new Error('Engine catalog worker artifact is invalid.');
     }
     assertSafeAssetName(artifact.fileName, 'Engine catalog worker archive');
-    const parts = catalogWorkerParts(artifact, artifact.fileName, artifactBytes);
+    const parts = catalogWorkerParts(
+      artifact,
+      artifact.fileName,
+      artifactBytes,
+    );
     if (
       !artifact.fileName.endsWith('.zip') ||
       artifact.fileName.toLowerCase().includes('model')
@@ -435,7 +451,8 @@ function assertExactAssetNames(
 async function sha256Files(paths: readonly string[]): Promise<string> {
   const hash = createHash('sha256');
   for (const path of paths) {
-    for await (const chunk of createReadStream(path)) hash.update(chunk as Buffer);
+    for await (const chunk of createReadStream(path))
+      hash.update(chunk as Buffer);
   }
   return hash.digest('hex');
 }
@@ -564,7 +581,9 @@ async function inspectRuntimeRelease(
           worker.parts.map((part) => join(directory, part.fileName)),
         );
         if (joined !== worker.sha256) {
-          throw new Error(`Release asset parts do not join into ${worker.fileName}.`);
+          throw new Error(
+            `Release asset parts do not join into ${worker.fileName}.`,
+          );
         }
       } else {
         await verifyChecksum(directory, worker.fileName, worker.sha256);
@@ -756,6 +775,34 @@ async function stopProcess(
   }
 }
 
+class RequirementsError extends Error {}
+
+/**
+ * The packaged runtime lists its requirements from the embedded engine catalog.
+ * In 0.7.0 one worker the contract could not describe failed the whole list.
+ */
+async function verifyRuntimeRequirements(
+  port: number,
+  token: string,
+): Promise<void> {
+  const response = await fetch(
+    `http://127.0.0.1:${port}/v2/runtime/requirements`,
+    {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(10_000),
+    },
+  );
+  if (!response.ok) {
+    throw new RequirementsError(
+      `Downloaded runtime answered ${response.status} for its requirements.`,
+    );
+  }
+  const body = (await response.json()) as { items?: unknown };
+  if (!Array.isArray(body.items) || body.items.length === 0) {
+    throw new RequirementsError('Downloaded runtime listed no requirements.');
+  }
+}
+
 async function runRuntimeReadiness(
   directory: string,
   manifest: RuntimeReleaseManifest,
@@ -814,9 +861,11 @@ async function runRuntimeReadiness(
               'Downloaded runtime returned an unexpected service identity.',
             );
           }
+          await verifyRuntimeRequirements(port, token);
           return;
         }
       } catch (error) {
+        if (error instanceof RequirementsError) throw error;
         if (
           error instanceof Error &&
           error.message.includes('unexpected service')

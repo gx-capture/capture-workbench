@@ -17,8 +17,13 @@ import pytest
 import capture_runtime.engine_installation as engine_installation_module
 from capture_runtime.clock import SystemClock
 from capture_runtime.config import ExtractionRuntimeConfig
-from capture_runtime.constants import RUNTIME_VERSION
-from capture_runtime.contracts import OcrAdapterClass, OcrComputeMode, OcrComputePreflightV2
+from capture_runtime.constants import MAX_RUNTIME_ARTIFACT_BYTES, RUNTIME_VERSION
+from capture_runtime.contracts import (
+    OcrAdapterClass,
+    OcrComputeMode,
+    OcrComputePreflightV2,
+    RuntimeRequirementsV2,
+)
 from capture_runtime.engine_catalog import EngineCatalog, EngineCatalogError
 from capture_runtime.engine_installation import (
     ArtifactDownloader,
@@ -1068,6 +1073,50 @@ def test_core_only_catalog_reports_models_unavailable_without_downloading(
         )
     assert worker_downloader.calls == 0
     assert model_downloader.calls == 0
+
+
+@pytest.mark.parametrize("shape", ["parts", "oversized"])
+def test_requirements_list_a_worker_the_contract_cannot_describe_without_an_artifact(
+    tmp_path: Path, shape: str
+) -> None:
+    # 0.7.0 answered 500 for every requirement: the speech worker ships as parts of 2.95 GB.
+    payload = _catalog(tmp_path)[0].to_dict()
+    worker = payload["requirements"][0]["artifacts"][0]
+    if shape == "parts":
+        del worker["url"]
+        worker["bytes"] = 2_954_313_000
+        worker["parts"] = [
+            {
+                "fileName": f"{worker['fileName']}.{index:03d}",
+                "bytes": size,
+                "sha256": str(index) * 64,
+                "url": f"https://downloads.example.test/{worker['fileName']}.{index:03d}",
+            }
+            for index, size in ((1, 1_900_000_000), (2, 1_054_313_000))
+        ]
+    else:
+        worker["bytes"] = MAX_RUNTIME_ARTIFACT_BYTES + 1
+    manager = EngineInstallationManager(
+        tmp_path / "engines",
+        EngineCatalog.from_dict(payload),
+        worker_client=FakeWorkerClient(),  # type: ignore[arg-type]
+        downloader=CopyDownloader({}, fail=True),
+        model_downloader=CopyModelDownloader({}),
+    )
+    installer = SystemRuntimeInstaller(
+        _Lifecycle(_LifecycleConfig(tmp_path / "app-data")),  # type: ignore[arg-type]
+        engine_manager=manager,
+        clock=SystemClock(),
+        enabled_requirement_ids={"windowsml-ocr", "speech-recognition"},
+    )
+
+    items = installer.requirements()
+
+    requirements = {item.requirement_id: item for item in items}
+    assert requirements["windowsml-ocr"].status.value == "installable"
+    assert requirements["windowsml-ocr"].artifact is None
+    assert requirements["speech-recognition"].status.value == "unavailable"
+    RuntimeRequirementsV2(items=items)
 
 
 def test_system_installer_passes_nonzero_directml_device_to_model_probe(tmp_path: Path) -> None:

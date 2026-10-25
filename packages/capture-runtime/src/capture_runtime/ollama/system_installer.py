@@ -20,6 +20,7 @@ from capture_runtime.clock import Clock
 from capture_runtime.config import ExtractionRuntimeConfig, sanitized_child_environment
 from capture_runtime.constants import (
     DIARIZATION_REQUIREMENT_ID,
+    MAX_RUNTIME_ARTIFACT_BYTES,
     OLLAMA_MODEL_REQUIREMENT_ID,
     OLLAMA_RUNTIME_REQUIREMENT_ID,
     SPEECH_RECOGNITION_REQUIREMENT_ID,
@@ -32,7 +33,7 @@ from capture_runtime.contracts import (
     RuntimeRequirementStatus,
     RuntimeRequirementV2,
 )
-from capture_runtime.engine_catalog import EngineCatalogError
+from capture_runtime.engine_catalog import EngineArtifactDescriptor, EngineCatalogError
 from capture_runtime.engine_installation import EngineInstallationManager, sha256_file
 from capture_runtime.model_catalog import (
     MODEL_OPTIONS,
@@ -49,6 +50,23 @@ from capture_runtime.ollama.lifecycle_impl import (
     IsolatedOllamaLifecycle,
     ManualActionRequiredError,
 )
+
+
+def _artifact_descriptor(worker: EngineArtifactDescriptor) -> RuntimeArtifactDescriptorV2 | None:
+    """Describe a worker in the public contract, which names one download of at most 512 MiB.
+
+    A larger worker, such as the speech recognition worker published as parts, installs the
+    same way from the engine catalog; its requirement then carries no artifact, like a
+    models-only unit.
+    """
+    if worker.url is None or worker.bytes > MAX_RUNTIME_ARTIFACT_BYTES:
+        return None
+    return RuntimeArtifactDescriptorV2(
+        artifact_url=worker.url,
+        artifact_file_name=worker.file_name,
+        bytes=worker.bytes,
+        sha256=worker.sha256,
+    )
 
 
 class SystemRuntimeInstaller:
@@ -141,16 +159,7 @@ class SystemRuntimeInstaller:
                     if descriptor.complete and not descriptor.model_only
                     else None
                 )
-                artifact = (
-                    RuntimeArtifactDescriptorV2(
-                        artifact_url=worker.url,
-                        artifact_file_name=worker.file_name,
-                        bytes=worker.bytes,
-                        sha256=worker.sha256,
-                    )
-                    if worker is not None
-                    else None
-                )
+                artifact = _artifact_descriptor(worker) if worker is not None else None
                 status = (
                     RuntimeRequirementStatus.READY
                     if active is not None
