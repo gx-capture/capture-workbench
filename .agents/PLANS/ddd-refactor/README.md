@@ -111,6 +111,30 @@ flowchart TB
   APP -. "與合約型別互轉" .-> C["contracts"]
 ```
 
+## 4.1 語意分層：每一層代表什麼
+
+分層不只是依賴方向。import-linter、Sheriff 與 Nx 標籤只檢查「誰可以引用誰」；每一層放什麼、叫什麼名字，依業務的意義決定，並另有檢查（第 5 節最後三列）。公開合約（`contracts`）是對外的格式，不是領域模型：各上下文有自己的領域物件，在 `application` 與 `api` 與合約型別互轉。
+
+| 層               | 放什麼                                                                                                                                                       | 例子（擷取）                                                                                                                                      |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `domain`         | 依**聚合**分子套件。聚合根守住不變條件與狀態轉換；值物件取代 `dict`、裸字串與 pydantic 傳遞；領域事件描述業務上發生的事。名稱用 [glossary](glossary.md) 的詞 | `capture.domain.operation.CaptureOperation`：狀態只能依轉換表前進，結束後不再接受事件。值物件 `PageLocator`、`TimeRange`；事件 `CaptureCompleted` |
+| `application`    | 每個**用例**一個以業務動作命名的函式或類別；不用 `service`、`manager`、`helpers` 這類不說明業務的名字                                                        | `OpenIngestion`、`AppendChunk`、`StartCapture`、`CancelCapture`、`CommitHostStructuring`                                                          |
+| `infrastructure` | 技術格式與領域物件互轉：JSON／JSONL 檔 ↔ 聚合、worker 的 JSON-lines 與二進位訊框 ↔ 領域、ONNX／Paddle／PyTorch 的輸出 ↔ 領域                              | `JsonlCaptureOperationRepository`、`OcrWorkerClient`                                                                                              |
+| `api`            | 合約型別 ↔ 用例的輸入與結果；領域錯誤轉成 `problem_registry` 的問題代碼                                                                                     | `routes/streaming.py` 的端點只呼叫用例                                                                                                            |
+
+各上下文的聚合（W6 逐一定案並寫進 `docs/domain/<上下文>.md`）：
+
+| 上下文     | 聚合（`domain` 的子套件）                                                  |
+| ---------- | -------------------------------------------------------------------------- |
+| 擷取       | `ingestion`、`operation`（狀態機與事件）                                   |
+| 文件 OCR   | `compute_plan`（運算計畫政策）、`page`（區塊、閱讀順序、出處）、`evidence` |
+| 語音轉寫   | `window`（分窗與重疊）、`transcript`（片段、迴圈停止政策）                 |
+| 說話者分離 | `turn`                                                                     |
+| 結構化     | `session`                                                                  |
+| 引擎供應   | `requirement`、`installation`（狀態機）、`catalog`                         |
+
+**概念集**：用語另寫成機器可讀的 `packages/capture-runtime/vocabulary/capture-vocabulary-v1.json`，每個概念有固定 id、中文標籤與程式名稱；合約裡的每個列舉值（擷取狀態、事件種類、區塊種類、需求 id、worker 階段、問題代碼）以 `{ enumId, value }` 對應到一個概念。比照 LAW A13–A15 與 A29：JSON 是唯一來源，只在開發時檢查；概念集不進 contract set，雜湊不變。
+
 ## 5. 自動檢查
 
 | 範圍      | 工具                                                                                                         | 規則                                                                                                                                                                                                                                                                                                                                          |
@@ -121,23 +145,26 @@ flowchart TB
 | 打包      | 既有 `verify_boundaries.py`、worker probe、大小預算                                                          | 不變；重構後仍是 core exe 不含 torch 等重量級函式庫的最後防線                                                                                                                                                                                                                                                                                 |
 | Rust      | 模組可見性（`pub(crate)`）                                                                                   | launcher 的 `process.rs`（約 9,900 行非測試程式）拆分時加上；排在最後                                                                                                                                                                                                                                                                         |
 | 已知例外  | import-linter `ignore_imports`、ESLint bulk suppressions                                                     | 規則上線時把現有違規逐條列入，每個 PR 只能減少                                                                                                                                                                                                                                                                                                |
+| 用語      | 測試（`tests/unit/test_ubiquitous_language.py`）                                                             | `domain` 的公開類別與列舉名稱都在 glossary 的程式名稱欄；合約的每個列舉值都對應到概念集裡的一個概念                                                                                                                                                                                                                                           |
+| 用例      | 測試（`tests/unit/test_use_cases.py`）                                                                       | `docs/domain/<上下文>.md` 的用例表與 `application` 公開的用例一一對應                                                                                                                                                                                                                                                                         |
+| 領域物件  | 測試（`tests/unit/test_domain_objects.py`）                                                                  | `domain` 不以 pydantic 模型或 `dict` 在聚合之間傳遞（W6 起逐上下文加入）                                                                                                                                                                                                                                                                      |
 
 ## 6. 遷移步驟
 
 每一步都是可以單獨合併、跑完全部檢查的 PR。凡是動到 worker 會打包的程式，另外要通過第 7 節的打包版檢查。
 
-| 步驟 | 內容                                                                                                                                                                                                   | 驗證                                                |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------- |
-| W0   | 本文件、[decisions.md](decisions.md)、[glossary.md](glossary.md)、`docs/domain/` 骨架；`capture-large-file-refactor.md` 第 3 條標為被取代                                                              | 產品負責人核可                                      |
-| W1   | import-linter、Sheriff 與 Nx 標籤規則上線，規則依現有模組寫，現有違規列為已知例外                                                                                                                      | 故意加一個違規時 CI 失敗；既有測試全過              |
-| W2   | 拆 `engine_adapters`：OCR 型別與 adapter 歸 OCR，`Whisper*` 型別歸語音，`EngineProbe` 與目錄雜湊歸 worker 核心，離線 stub 歸 OCR worker；13 處私有名稱的跨模組 import 改成公開介面                     | contract set 雜湊不變；第 7 節打包版檢查            |
-| W3   | 拆 `extractors`：分派歸擷取的 `application`，PDF、影像、音訊的準備歸各引擎的 `infrastructure`；確定性 extractor 與其他測試替身移到 `capture_runtime.testing`                                           | 確定性模式（桌面 e2e 用）行為不變；第 7 節          |
-| W4   | `worker_client` 的三種結果解析移到各引擎上下文，`worker_kernel` 只留行程、協定與暖 worker                                                                                                              | 協定測試不變；第 7 節                               |
-| W5   | 依上下文機械式搬移，每個上下文一個 PR：引擎供應 → 說話者分離 → 語音轉寫 → 文件 OCR → 結構化 → 擷取；移除 `services/__init__`、`storage/__init__` 門面；測試、scripts、tools、spec 的路徑同一個 PR 更新 | 逐檔比對只差 import；contract set 雜湊不變；第 7 節 |
-| W6   | 拆 `StreamingCaptureService`（729 行的類別）：匯入、排程、事件、查詢、主機結構化提交                                                                                                                   | 特性測試先寫；串流 API 行為不變                     |
-| W7   | UI 套件與桌面殼層依功能分資料夾，Sheriff 規則全面生效                                                                                                                                                  | 單元測試、Playwright e2e、`production-bundle-check` |
-| W8   | Rust launcher 拆 `process.rs`，模組改 `pub(crate)`                                                                                                                                                     | cargo test、`cargo-package-dry-run`；桌面打包版啟動 |
-| W9   | 每個上下文的 `docs/domain/<上下文>.md` 補齊（隨 W2–W7 同一個 PR 更新）                                                                                                                                 | 文件審閱                                            |
+| 步驟 | 內容                                                                                                                                                                                                                | 驗證                                                                                        |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| W0   | 本文件、[decisions.md](decisions.md)、[glossary.md](glossary.md)、`docs/domain/` 骨架；`capture-large-file-refactor.md` 第 3 條標為被取代                                                                           | 產品負責人核可                                                                              |
+| W1   | import-linter、Sheriff 與 Nx 標籤規則上線，規則依現有模組寫，現有違規列為已知例外                                                                                                                                   | 故意加一個違規時 CI 失敗；既有測試全過                                                      |
+| W2   | 拆 `engine_adapters`：OCR 型別與 adapter 歸 OCR，`Whisper*` 型別歸語音，`EngineProbe` 與目錄雜湊歸 worker 核心，離線 stub 歸 OCR worker；13 處私有名稱的跨模組 import 改成公開介面                                  | contract set 雜湊不變；第 7 節打包版檢查                                                    |
+| W3   | 拆 `extractors`：分派歸擷取的 `application`，PDF、影像、音訊的準備歸各引擎的 `infrastructure`；確定性 extractor 與其他測試替身移到 `capture_runtime.testing`                                                        | 確定性模式（桌面 e2e 用）行為不變；第 7 節                                                  |
+| W4   | `worker_client` 的三種結果解析移到各引擎上下文，`worker_kernel` 只留行程、協定與暖 worker                                                                                                                           | 協定測試不變；第 7 節                                                                       |
+| W5   | 依上下文機械式搬移，每個上下文一個 PR：引擎供應 → 說話者分離 → 語音轉寫 → 文件 OCR → 結構化 → 擷取；移除 `services/__init__`、`storage/__init__` 門面；測試、scripts、tools、spec 的路徑同一個 PR 更新              | 逐檔比對只差 import；contract set 雜湊不變；第 7 節                                         |
+| W6   | 語意模型（每個上下文一個 PR，順序同 W5）：`domain` 依聚合分子套件，狀態機與政策移進聚合與值物件，`application` 改成以業務動作命名的用例（拆 729 行的 `StreamingCaptureService` 就在這一步）；概念集與用語、用例檢查 | 每條不變條件與用例的單元測試；第 5 節的用語、用例、領域物件檢查；串流 API 行為不變；第 7 節 |
+| W7   | UI 套件與桌面殼層依功能分資料夾，名稱用 glossary 的詞，Sheriff 規則全面生效                                                                                                                                         | 單元測試、Playwright e2e、`production-bundle-check`                                         |
+| W8   | Rust launcher 拆 `process.rs`，模組改 `pub(crate)`                                                                                                                                                                  | cargo test、`cargo-package-dry-run`；桌面打包版啟動                                         |
+| W9   | 每個上下文的 `docs/domain/<上下文>.md` 補齊（隨 W2–W7 同一個 PR 更新）                                                                                                                                              | 文件審閱                                                                                    |
 
 ## 7. 每個 PR 的驗證
 
@@ -154,11 +181,11 @@ flowchart TB
 | W1    | 1 天            | 已知例外很多（9 對互相依賴的群組）：依上下文分組列出，W2–W5 逐步刪除                                                                                                                                 |
 | W2–W4 | 4–5 天          | 把頂層 import 搬錯位置會讓 core exe 帶進重量級函式庫：`verify-core-boundary` 與大小預算把關                                                                                                          |
 | W5    | 5–7 天，6 個 PR | 84 個測試檔與 24 個 script 直接 import runtime 模組；約 15 處以字串 monkeypatch；`tools/release/version-sources.ts`、`project.json` 的 13 個輸出路徑、`pyproject.toml` 的 force-include 都以路徑引用 |
-| W6    | 2 天            | 串流擷取的任務與取消狀態在同一個類別裡，拆開時要保持鎖與排程順序                                                                                                                                     |
+| W6    | 6–8 天，6 個 PR | 串流擷取的任務與取消狀態在同一個類別裡，拆成用例時要保持鎖與排程順序；聚合與合約型別互轉不能改變對外的 JSON                                                                                          |
 | W7    | 3 天            | Angular 套件是公開的 npm 套件：`index.ts` 的匯出不能變                                                                                                                                               |
 | W8    | 3–5 天          | 行程與 Job object 的清理不能退步；launcher 是公開的 crate                                                                                                                                            |
 
-合計約 4–5 週、20–25 個 PR。建議在 Cert Prep 與 LAW 換到 0.7.2 之後才開始 W2，以免重構與版本遷移混在一起。
+合計約 5–6 週、25–30 個 PR。建議在 Cert Prep 與 LAW 換到 0.7.2 之後才開始 W2，以免重構與版本遷移混在一起。
 
 ## 9. 給人讀的文件
 
@@ -166,15 +193,15 @@ flowchart TB
 
 ## 10. 實作安排
 
-產品負責人於 2026-10-26 核可：規則先在兩個 repo 並行上線，搬移先做 Cert Prep；Capture 等 Cert Prep 與 LAW 換到 0.7.2 之後才開始搬移；機械式搬移派給其他 worker，由 Claude 驗證。
+產品負責人於 2026-10-26 核可：規則先在兩個 repo 並行上線，搬移先做 Cert Prep；Capture 等 Cert Prep 與 LAW 換到 0.7.2 之後才開始搬移；機械式搬移派給其他 worker，由 Claude 驗證。DDD 除了依賴方向的限制，也要語意分層（第 4.1 節）。
 
-| 順序 | Cert Prep                             | Capture Workbench                  | 誰做                                 |
-| ---- | ------------------------------------- | ---------------------------------- | ------------------------------------ |
-| 1    | C1 規則與已知例外                     | W1 規則與已知例外                  | Claude                               |
-| 2    | C2 平台（錯誤型別、資料庫）           | —                                  | Claude                               |
-| 3    | C3 依上下文搬移（7 個 PR）            | —                                  | worker 搬移，Claude 審查、驗證、合併 |
-| 4    | C4 資料表歸屬、C5 擷取規則移出 router | W2–W4 拆大檔（engine_adapters 等） | Claude                               |
-| 5    | C6 前端依上下文分資料夾               | W5 依上下文搬移（6 個 PR）         | worker 搬移，Claude 審查、驗證、合併 |
-| 6    | C7 Rust                               | W6–W8                              | Claude；W7、W8 的搬移部分可派工      |
+| 順序 | Cert Prep                                                     | Capture Workbench                  | 誰做                                 |
+| ---- | ------------------------------------------------------------- | ---------------------------------- | ------------------------------------ |
+| 1    | C1 規則與已知例外                                             | W1 規則與已知例外                  | Claude                               |
+| 2    | C2 平台（錯誤型別、資料庫）                                   | —                                  | Claude                               |
+| 3    | C3 依上下文搬移（7 個 PR）                                    | —                                  | worker 搬移，Claude 審查、驗證、合併 |
+| 4    | C4 語意模型（7 個 PR）、C5 資料表歸屬、C6 擷取規則移出 router | W2–W4 拆大檔（engine_adapters 等） | Claude                               |
+| 5    | C7 前端依上下文分資料夾                                       | W5 依上下文搬移（6 個 PR）         | worker 搬移，Claude 審查、驗證、合併 |
+| 6    | C8 Rust                                                       | W6 語意模型、W7–W9                 | Claude；W8、W9 的搬移部分可派工      |
 
-派工的規則：每個 worker 在自己的 git worktree 工作、不自動核准任何指令、不 commit 也不 push；同時最多兩個；建置、測試與安裝都由 Claude 執行，並檢查 worktree 以外沒有任何變動。worker 交回的是搬移與 import 的修改，第 7 節的驗證全部由 Claude 跑過才開 PR。
+派工的規則：每個 worker 在自己的 git worktree 工作、不自動核准任何指令、不 commit 也不 push；同時最多兩個；建置、測試與安裝都由 Claude 執行，並檢查 worktree 以外沒有任何變動。worker 交回的是搬移與 import 的修改，第 7 節的驗證全部由 Claude 跑過才開 PR。語意模型（C4、W6）由 Claude 做，因為它要判斷業務意義，不是機械式的修改。
