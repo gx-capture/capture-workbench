@@ -400,6 +400,87 @@ def test_code_probe_failure_is_wrapped_without_worker_details(tmp_path: Path) ->
     assert "should-not-escape" not in str(failure.value)
 
 
+class ModelProbeFailureWorkerClient(FakeWorkerClient):
+    async def probe(
+        self,
+        engine: InstalledEngine,
+        *,
+        include_model: bool,
+        options: dict[str, object] | None = None,
+        timeout_seconds: float = 30,
+    ) -> WorkerProbeResult:
+        if include_model:
+            raise WorkerExecutionError("probe_failed: Worker probe failed.")
+        return await super().probe(
+            engine,
+            include_model=include_model,
+            options=options,
+            timeout_seconds=timeout_seconds,
+        )
+
+
+def test_post_install_probe_failure_keeps_the_worker_reason(tmp_path: Path) -> None:
+    catalog, sources = _catalog(tmp_path)
+    manager = EngineInstallationManager(
+        tmp_path / "engines",
+        catalog,
+        worker_client=ModelProbeFailureWorkerClient(),  # type: ignore[arg-type]
+        downloader=CopyDownloader(sources),
+        model_downloader=CopyModelDownloader(sources),
+    )
+
+    with pytest.raises(
+        EngineInstallationError,
+        match="^engine post-install probe failed: probe_failed: Worker probe failed.$",
+    ):
+        asyncio.run(
+            manager.install(
+                "windowsml-ocr",
+                cancel_event=asyncio.Event(),
+                report_progress=lambda _value: None,
+            )
+        )
+    assert manager.active_engine("windowsml-ocr") is None
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="MAX_PATH is a Windows limit")
+def test_worker_beyond_max_path_fails_before_the_model_download(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 0.7.0 downloaded about 10 GB for speech recognition, then its model probe
+    # failed: the worker's native libraries cannot load from beyond MAX_PATH.
+    catalog, sources = _catalog(tmp_path)
+    worker = FakeWorkerClient()
+    model_downloader = CopyModelDownloader(sources)
+    root = tmp_path / "engines"
+    manager = EngineInstallationManager(
+        root,
+        catalog,
+        worker_client=worker,  # type: ignore[arg-type]
+        downloader=CopyDownloader(sources),
+        model_downloader=model_downloader,
+    )
+    installed = root / "windowsml-ocr" / "versions" / "engine-1" / "worker"
+    installed /= "capture-engine-test.exe"
+    monkeypatch.setattr(
+        engine_installation_module, "MAX_WORKER_FILE_PATH_CHARACTERS", len(str(installed)) - 1
+    )
+
+    with pytest.raises(
+        EngineInstallationError, match=f"reach {len(str(installed))} characters, beyond Windows"
+    ):
+        asyncio.run(
+            manager.install(
+                "windowsml-ocr",
+                cancel_event=asyncio.Event(),
+                report_progress=lambda _value: None,
+            )
+        )
+    assert model_downloader.calls == 0
+    assert worker.probes == []
+    assert manager.active_engine("windowsml-ocr") is None
+
+
 def test_engine_installation_is_atomic_offline_ready_and_idempotent(
     tmp_path: Path,
 ) -> None:

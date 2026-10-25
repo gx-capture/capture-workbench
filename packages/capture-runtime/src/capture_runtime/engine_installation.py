@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -117,6 +118,7 @@ MAX_DIRECT_MODEL_REDIRECTS = _installation_limits.MAX_DIRECT_MODEL_REDIRECTS
 MAX_FILES_MANIFEST_BYTES = _installation_limits.MAX_FILES_MANIFEST_BYTES
 MAX_SINGLE_EXTRACTED_FILE_BYTES = _installation_limits.MAX_SINGLE_EXTRACTED_FILE_BYTES
 MAX_TOTAL_EXTRACTED_BYTES = _installation_limits.MAX_TOTAL_EXTRACTED_BYTES
+MAX_WORKER_FILE_PATH_CHARACTERS = _installation_limits.MAX_WORKER_FILE_PATH_CHARACTERS
 WINDOWS_FORBIDDEN_PATH_CHARACTERS = _installation_limits.WINDOWS_FORBIDDEN_PATH_CHARACTERS
 WINDOWS_RESERVED_DEVICE_BASENAMES = _installation_limits.WINDOWS_RESERVED_DEVICE_BASENAMES
 
@@ -186,6 +188,23 @@ def verify_extracted_artifact(root: Path, descriptor: EngineArtifactDescriptor) 
         descriptor,
         limits=_artifact_validation_limits(),
     )
+
+
+def _check_worker_path_lengths(root: Path) -> None:
+    """Reject a worker whose files would sit beyond MAX_PATH where it is installed.
+
+    Its native libraries would not load: the model probe would fail only after
+    the model files, gigabytes for speech recognition, were downloaded.
+    """
+
+    if sys.platform != "win32":
+        return
+    longest = max((len(str(path)) for path in root.rglob("*") if path.is_file()), default=0)
+    if longest > MAX_WORKER_FILE_PATH_CHARACTERS:
+        raise EngineInstallationError(
+            f"engine worker file paths reach {longest} characters, beyond Windows MAX_PATH "
+            f"({MAX_WORKER_FILE_PATH_CHARACTERS}); use a shorter CAPTURE_APP_DATA_DIR"
+        )
 
 
 def verify_direct_model_files(
@@ -628,6 +647,8 @@ class EngineInstallationManager:
                 worker_descriptor,
                 cancel_event=cancel_event,
             )
+            # Fail before the model download rather than at the model probe.
+            _check_worker_path_lengths(new_version / "worker")
             probe_executable = self._resolved_child(
                 new_version / "worker", worker_descriptor.entry_point
             )
@@ -699,11 +720,16 @@ class EngineInstallationManager:
                 model_dir=self._resolved_child(model_root, model_descriptor.entry_point),
                 worker_sha256=sha256_file(engine_executable),
             )
-            probe = await self.worker_client.probe(
-                engine,
-                include_model=True,
-                options=probe_options,
-            )
+            try:
+                probe = await self.worker_client.probe(
+                    engine,
+                    include_model=True,
+                    options=probe_options,
+                )
+            except WorkerExecutionError as error:
+                raise EngineInstallationError(
+                    f"engine post-install probe failed: {error}"
+                ) from error
             if not probe.ready:
                 raise EngineInstallationError(f"engine post-install probe failed: {probe.detail}")
             if cancel_event.is_set():
