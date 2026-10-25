@@ -1,6 +1,6 @@
 # Capture Workbench 領域驅動重構計畫（DDD）
 
-狀態：**草案，待產品負責人核可**（2026-10-26）。結構比照 LAW 已定案的 DDD 重構計畫（`gx.law-prep/.agents/PLANS/ddd-refactor/`，決策 A30、A31）。待定的決策見 [decisions.md](decisions.md)，術語見 [glossary.md](glossary.md)，每個上下文的說明見 [docs/domain/](../../../docs/domain/README.md)。
+狀態：**已核可**（2026-10-26）：產品負責人核可方向與產品決策，見 [decisions.md](decisions.md)；實作安排見第 10 節。結構比照 LAW 已定案的 DDD 重構計畫（`gx.law-prep/.agents/PLANS/ddd-refactor/`，決策 A30、A31）。待定的決策見 [decisions.md](decisions.md)，術語見 [glossary.md](glossary.md)，每個上下文的說明見 [docs/domain/](../../../docs/domain/README.md)。
 
 這份文件給產品負責人和之後加入的人讀。程式名稱用英文，說明用繁體中文。數字取自 2026-10-26 對 main 的唯讀盤點。
 
@@ -163,3 +163,18 @@ flowchart TB
 ## 9. 給人讀的文件
 
 每個上下文一份 `docs/domain/<上下文>.md`，固定段落：負責與不負責、用語、聚合與不變條件（類別圖）、主要流程（狀態圖或循序圖）、與其他上下文的關係、規則與資料來源。圖用 Mermaid 寫在 Markdown 裡；改程式時在同一個 PR 更新圖。
+
+## 10. 實作安排
+
+產品負責人於 2026-10-26 核可：規則先在兩個 repo 並行上線，搬移先做 Cert Prep；Capture 等 Cert Prep 與 LAW 換到 0.7.2 之後才開始搬移；機械式搬移派給其他 worker，由 Claude 驗證。
+
+| 順序 | Cert Prep                             | Capture Workbench                  | 誰做                                 |
+| ---- | ------------------------------------- | ---------------------------------- | ------------------------------------ |
+| 1    | C1 規則與已知例外                     | W1 規則與已知例外                  | Claude                               |
+| 2    | C2 平台（錯誤型別、資料庫）           | —                                  | Claude                               |
+| 3    | C3 依上下文搬移（7 個 PR）            | —                                  | worker 搬移，Claude 審查、驗證、合併 |
+| 4    | C4 資料表歸屬、C5 擷取規則移出 router | W2–W4 拆大檔（engine_adapters 等） | Claude                               |
+| 5    | C6 前端依上下文分資料夾               | W5 依上下文搬移（6 個 PR）         | worker 搬移，Claude 審查、驗證、合併 |
+| 6    | C7 Rust                               | W6–W8                              | Claude；W7、W8 的搬移部分可派工      |
+
+派工的規則：每個 worker 在自己的 git worktree 工作、不自動核准任何指令、不 commit 也不 push；同時最多兩個；建置、測試與安裝都由 Claude 執行，並檢查 worktree 以外沒有任何變動。worker 交回的是搬移與 import 的修改，第 7 節的驗證全部由 Claude 跑過才開 PR。

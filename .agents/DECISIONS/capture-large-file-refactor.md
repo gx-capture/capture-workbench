@@ -14,6 +14,10 @@ Accepted for implementation from HEAD
    runtime wire/schema/digest, persistence formats, and SDK APIs.
 3. Keep existing repository conventions. Do not impose a workspace-wide
    `core/features/modules` or four-layer DDD layout.
+   **Superseded on 2026-10-26** by the DDD refactor plan
+   (`.agents/PLANS/ddd-refactor/`, decision P1): code moves into bounded
+   contexts with domain/application/infrastructure/api layers, built only
+   where they hold code. The rejection of thin wrapper layers below stands.
 4. Use injectable Angular collaborators, signals/`rxResource` for view state,
    and RxJS for asynchronous workflow/event pipelines. Do not add product-code
    async-boundary exceptions.
