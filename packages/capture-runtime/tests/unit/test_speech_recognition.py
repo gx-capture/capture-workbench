@@ -267,6 +267,50 @@ def test_empty_progressive_window_keeps_provenance_and_digest_covers_aligner(tmp
         recognizer.transcribe(tmp_path / "source.wav", should_cancel=lambda: False)
 
 
+def test_models_are_hashed_once_per_worker_beside_the_model_load(tmp_path, monkeypatch):
+    fake = FakeModels(monkeypatch)
+    hashed = []
+
+    def digest(root, paths):
+        hashed.append(list(paths))
+        return "sha256:" + "d" * 64
+
+    monkeypatch.setattr(speech, "_directory_digest", digest)
+    recognizer = adapter(tmp_path, fake)
+    results = [
+        recognizer.transcribe(tmp_path / "source.wav", should_cancel=lambda: False)
+        for _ in range(2)
+    ]
+
+    assert [result.digest for result in results] == ["sha256:" + "d" * 64] * 2
+    assert len(hashed) == 1
+    assert {Path(path).parts[0] for path in hashed[0]} == {
+        "primary",
+        "primary-architecture",
+        "aligner",
+    }
+
+
+def test_a_failed_model_hash_fails_the_capture_and_is_retried(tmp_path, monkeypatch):
+    fake = FakeModels(monkeypatch)
+    calls = []
+
+    def digest(root, paths):
+        calls.append(root)
+        if len(calls) == 1:
+            raise FileNotFoundError("primary/model.safetensors")
+        return "sha256:" + "e" * 64
+
+    monkeypatch.setattr(speech, "_directory_digest", digest)
+    recognizer = adapter(tmp_path, fake)
+    with pytest.raises(FileNotFoundError):
+        recognizer.transcribe(tmp_path / "source.wav", should_cancel=lambda: False)
+
+    result = recognizer.transcribe(tmp_path / "source.wav", should_cancel=lambda: False)
+    assert result.digest == "sha256:" + "e" * 64
+    assert len(calls) == 2
+
+
 @pytest.mark.parametrize("bf16,expected", [(True, "bfloat16"), (False, "float16")])
 def test_dtype_selection(monkeypatch, bf16, expected):
     fake = FakeModels(monkeypatch, bf16=bf16)

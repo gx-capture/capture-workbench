@@ -9,6 +9,7 @@ from __future__ import annotations
 import gc
 import importlib.util
 import itertools
+import threading
 import time
 from collections.abc import Callable
 from contextlib import contextmanager
@@ -157,6 +158,28 @@ def _out_of_memory(error: BaseException, torch: Any) -> bool:
         if isinstance(kind, type)
     )
     return bool(kinds) and isinstance(error, kinds)
+
+
+class _Background:
+    """A call on a daemon thread, so a cancelled capture's worker can still exit."""
+
+    def __init__(self, call: Callable[[], Any]) -> None:
+        self._result: Any = None
+        self._error: BaseException | None = None
+        self._thread = threading.Thread(target=self._run, args=(call,), daemon=True)
+        self._thread.start()
+
+    def _run(self, call: Callable[[], Any]) -> None:
+        try:
+            self._result = call()
+        except BaseException as error:
+            self._error = error
+
+    def result(self) -> Any:
+        self._thread.join()
+        if self._error is not None:
+            raise self._error
+        return self._result
 
 
 def _release(torch: Any, device: str) -> None:
@@ -318,7 +341,9 @@ class TeaAsrAdapter:
         self._torch, self._transformers = torch_module, transformers_module
         self._decoder, self._stage_reporter = decoder, stage_reporter
         self._progress_reporter = progress_reporter
-        self._digest_cache: dict[str, str] = {}
+        # Model digests by model folder. Hashing about 6 GB took 5-7 s after the
+        # first capture's alignment, so it runs beside the model load instead.
+        self._digests: dict[str, _Background] = {}
         # Loaded models by role, kept for the worker's next window: a streaming
         # capture transcribes 120 s windows, and 0.7.1 reloaded both models for
         # each (about 10 s a window).
@@ -348,6 +373,15 @@ class TeaAsrAdapter:
             processor, model = load()
         self._models[role] = (key, processor, model)
         return processor, model
+
+    def _model_digest(self, selected: str) -> str:
+        paths = sorted(
+            str(path.relative_to(self.models_dir).as_posix())
+            for folder in (selected, f"{selected}-architecture", "aligner")
+            for path in (self.models_dir / folder).rglob("*")
+            if path.is_file()
+        )
+        return _directory_digest(self.models_dir, paths)
 
     def _report_stage(self, stage: str) -> None:
         safe = sanitize_worker_stage(stage)
@@ -523,6 +557,11 @@ class TeaAsrAdapter:
             dtype = getattr(torch, _asr_dtype("auto", device, torch))
             duration_ms = round(len(audio) / SAMPLE_RATE * 1000)
             check_cancel()
+            digest_job = self._digests.get(selected)
+            if digest_job is None:
+                digest_job = self._digests[selected] = _Background(
+                    lambda: self._model_digest(selected)
+                )
             self._report_stage(speech_model_load_stage(device, "start"))
             started = time.perf_counter()
 
@@ -661,16 +700,11 @@ class TeaAsrAdapter:
                     f"Speech recognition generation limit reached in {len(unfinished)} chunk(s)."
                 )
                 warning = f"{warning}; {detail}" if warning else detail
-            digest = self._digest_cache.get(selected)
-            if digest is None:
-                paths = sorted(
-                    str(path.relative_to(self.models_dir).as_posix())
-                    for folder in (selected, f"{selected}-architecture", "aligner")
-                    for path in (self.models_dir / folder).rglob("*")
-                    if path.is_file()
-                )
-                digest = _directory_digest(self.models_dir, paths)
-                self._digest_cache[selected] = digest
+            try:
+                digest = digest_job.result()
+            except BaseException:
+                self._digests.pop(selected, None)
+                raise
             return WhisperTranscriptionResult(
                 tuple(segments), duration_ms, device, identity, digest, warning, stage_ms=stage_ms
             )
