@@ -24,7 +24,7 @@ from pydantic.alias_generators import to_camel
 
 API_VERSION: Final = '2.0'
 CAPTURE_DOCUMENT_SCHEMA_VERSION: Final = '2'
-RUNTIME_VERSION: Final = '0.7.1'
+RUNTIME_VERSION: Final = '0.7.2'
 
 
 NonEmptyString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]

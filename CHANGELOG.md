@@ -2,13 +2,6 @@
 
 ## Unreleased
 
-### Release verification
-
-- The private speech fixture that verifies a model-enabled release is now a
-  40-minute Taiwanese Mandarin interview (M4A), with its expected TEA-ASR-1.1
-  output frozen from two identical CUDA runs. It replaces an MP3 whose expected
-  output still came from Whisper.
-
 ### Compatibility policy
 
 Capture Workbench follows an explicit 0.x compatibility policy:
@@ -27,6 +20,17 @@ Capture Workbench follows an explicit 0.x compatibility policy:
 
 The consumer consistency check is a permanent CI gate for the declared
 runtime, package lock, Python host, desktop host, and browser host versions.
+
+## 0.7.2
+
+A patch release that makes speech recognition and OCR faster and shows their
+progress. Clients still require the exact runtime version, so a 0.7.2 runtime
+needs 0.7.2 clients; the contract set hash (`60c62267…`) and the capture
+document schema are unchanged, so moving a consumer from 0.7.1 is a version
+bump. The OCR profile id becomes `capture-workbench-ocr-cdfec152f8131864`,
+since the profile carries the release version. Engine workers carry the
+release version too, so hosts download them again; unchanged model files are
+restored from the download cache.
 
 ### Speed
 
@@ -98,6 +102,13 @@ OCR:
   runs.
 - A component installation shows a rounded percentage and a progress bar; it
   showed the raw fraction times 100 (for example 33.33333333333333%).
+
+### Release verification
+
+- The private speech fixture that verifies a model-enabled release is now a
+  40-minute Taiwanese Mandarin interview (M4A), with its expected TEA-ASR-1.1
+  output frozen from two identical CUDA runs. It replaces an MP3 whose expected
+  output still came from Whisper.
 
 ## 0.7.1
 

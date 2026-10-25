@@ -45,8 +45,44 @@ actually shipped (0.5.1 followed the same steps); workflow files remain the sour
   structure of dense vertical periodical scans and pages that mix directions;
   about a fifth of furigana on textbook pages is not set aside.
 
-## Prepared: 0.7.1 (patch)
+## Prepared: 0.7.2 (patch)
 
+- Speed, progress and a desktop GPU switch (see the changelog). Measured on an
+  RTX 4060 Laptop (8 GB) with locally built 0.7.2 workers installed through the
+  runtime API from a local catalog:
+  - speech: a 30 s clip 24 s first, then 6 s (0.7.1: 21-29 s each); a 40-minute
+    streaming capture 339 s (0.7.1: 819 s); the private fixture's normalized
+    output hash is unchanged (`73cd4c6c…`), 538 s -> 325 s one-shot;
+  - OCR: 7 inputs x 3 in 211.8 s one-shot vs 140.8 s with the warm worker, same
+    text; a 1654 x 2339 PNG 23-25 s -> 8 s (no 2x enlargement above 1024 px).
+- New host settings: `CAPTURE_SPEECH_WORKER_IDLE_SECONDS` (300) and
+  `CAPTURE_OCR_WORKER_IDLE_SECONDS` (120); 0 restores a worker per capture.
+  The desktop app writes `compute-settings.json` and passes
+  `CAPTURE_WHISPER_PREFER_GPU`.
+- Compatible with 0.7.x clients. Contract-set SHA-256 unchanged (`60c62267…`);
+  capture document schema unchanged (`5452631c…`). Model-source Commit A
+  `954f19f` (annotated tag `capture-runtime-model-sources-v0.7.2`). The lock
+  pins the same models as 0.7.1; its approval record is the owner's of
+  2026-10-25 for the M4A private fixture (PR #108). OCR profile
+  `capture-workbench-ocr-cdfec152f8131864`.
+- Known limitations: a 12 MP photo peaks at about 7.9 GB of DirectML memory on
+  a fresh OCR worker, so it can fail on a busy 8 GB GPU (capping the detector's
+  input would change the OCR profile); the 0.7.1 OCR worker failed 2 of about
+  60 one-shot runs (`ocr_worker_failed`), cause unproven.
+
+## Published through Route A: 0.7.1 (patch)
+
+- Published on 2026-10-25 through Route A only: npm, Maven, PyPI, crates.io and
+  GitHub release `v0.7.1` (runtime exe `40e7eb74…`). Source commit `ce47d89`
+  (merge of PR #107). Runs: package candidate 40168256301, runtime candidate
+  40168394199 (`model-enabled`), package promote 40173058964, runtime promote
+  40173207862 (`registries`).
+- Consumers on 0.7.1: Cert Prep (PR #47) and LAW (PR #209); LAW's ASR E2E passed
+  three plain and one speakers recording.
+- Full route not finished: release candidate 40183828977 passed (after PR #109
+  fixed the size checker); consumer gates 40185196544 ran Cert Prep's gate, but
+  LAW's gate could not start because gx.law-prep had used its GitHub Actions
+  budget (it resets on 2026-11-01). The full route moves to 0.7.2.
 - 0.7.0 could not be used from a host. LAW found `GET /v2/runtime/requirements`
   answering 500. Driving the published runtime through the API with the
   published Python client then found three more defects; all four are fixed

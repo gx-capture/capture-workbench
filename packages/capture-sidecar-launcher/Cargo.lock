@@ -19,7 +19,7 @@ dependencies = [
 
 [[package]]
 name = "capture-sidecar-launcher"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "rand",
  "serde",
