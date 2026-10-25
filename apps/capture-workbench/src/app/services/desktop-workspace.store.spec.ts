@@ -357,6 +357,53 @@ describe('DesktopWorkspaceStore', () => {
     expect(store.message()).toBe('');
   });
 
+  it('offers the GPU setting only when a CUDA driver is present', () => {
+    expect(initializeStore(libraryStub(), runtimeStub()).speechGpu()).toBeNull();
+    TestBed.resetTestingModule();
+
+    const store = initializeStore(libraryStub(), runtimeStub({
+      getComputeStatus: vi.fn(() => of({ cudaAvailable: true, preferGpu: true })),
+    }));
+    expect(store.speechGpu()).toEqual({ cudaAvailable: true, preferGpu: true });
+  });
+
+  it('saves the GPU setting and waits for the relaunched runtime', () => {
+    const saved = { cudaAvailable: true, preferGpu: false };
+    const getComputeStatus = vi.fn(() => of({ cudaAvailable: true, preferGpu: true }));
+    const setPreferGpu = vi.fn(() => {
+      getComputeStatus.mockReturnValue(of(saved));
+      return of(saved);
+    });
+    const client = runtimeStub({ getComputeStatus, setPreferGpu });
+    const store = initializeStore(libraryStub(), client);
+    client.reload.mockClear();
+
+    store.setPreferGpu(true);
+    expect(setPreferGpu).not.toHaveBeenCalled();
+
+    store.setPreferGpu(false);
+    TestBed.tick();
+
+    expect(setPreferGpu).toHaveBeenCalledWith(false);
+    expect(client.reload).toHaveBeenCalledTimes(1);
+    expect(store.speechGpu()).toEqual(saved);
+    expect(store.savingCompute()).toBe(false);
+  });
+
+  it('does not relaunch the runtime while a capture is in progress', () => {
+    const setPreferGpu = vi.fn(() => of({ cudaAvailable: true, preferGpu: false }));
+    const store = initializeStore(libraryStub(), runtimeStub({
+      getComputeStatus: vi.fn(() => of({ cudaAvailable: true, preferGpu: true })),
+      setPreferGpu,
+    }));
+    store.busyIds.set(new Set([summary.documentId]));
+
+    store.setPreferGpu(false);
+
+    expect(store.canChangeCompute()).toBe(false);
+    expect(setPreferGpu).not.toHaveBeenCalled();
+  });
+
   it('asks for Whisper only when an allowed audio source is selected', () => {
     const library = libraryStub({
       createSource: vi.fn(() =>
@@ -1924,6 +1971,8 @@ function runtimeStub(overrides: Record<string, unknown> = {}) {
     }),
     pdfPageNumbers: signal<readonly number[] | undefined>(undefined),
     reload: vi.fn(),
+    getComputeStatus: vi.fn(() => of({ cudaAvailable: false, preferGpu: true })),
+    setPreferGpu: vi.fn(),
     getRequirements: vi.fn(() => of([])),
     getModelOptions: vi.fn(() => of([])),
     startInstallation: vi.fn(),

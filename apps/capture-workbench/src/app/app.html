@@ -171,6 +171,12 @@
         <input type="checkbox" data-testid="identify-speakers" [checked]="store.identifySpeakers()" (change)="store.identifySpeakers.set($any($event.target).checked)" />
         {{ m().identifySpeakers }}
       </label>
+      @if (store.speechGpu(); as gpu) {
+        <label class="intake-hint">
+          <input type="checkbox" data-testid="prefer-gpu" [checked]="gpu.preferGpu" [disabled]="!store.canChangeCompute()" (change)="store.setPreferGpu($any($event.target).checked)" />
+          {{ m().useGpuForSpeech }}
+        </label>
+      }
     </mat-card>
 
     <section class="queue-section" aria-labelledby="queue-title">

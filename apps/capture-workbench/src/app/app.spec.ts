@@ -370,6 +370,9 @@ function workspaceStub(selected: unknown = null, modelInstallation: RuntimeModel
     selectedModelOptionId: signal<string | null>(null),
     busyIds: signal(new Set<string>()),
     identifySpeakers: signal(false),
+    speechGpu: signal<{ cudaAvailable: boolean; preferGpu: boolean } | null>(null),
+    canChangeCompute: signal(true),
+    setPreferGpu: vi.fn(),
     sampleSources: signal(new Map<string, string>()),
     loadSpeakerSamples: vi.fn(),
     isRecording: (mediaType: string) =>
@@ -435,6 +438,31 @@ function cpuFallback(): OcrComputePreflight {
     noticeCode: 'ocr_cpu_fallback',
   };
 }
+
+it('offers the GPU setting for speech recognition only when a CUDA driver is present', async () => {
+  const store = workspaceStub();
+  await TestBed.configureTestingModule({
+    imports: [App],
+    providers: [provideNoopAnimations(), { provide: DesktopWorkspaceStore, useValue: store }],
+  }).compileComponents();
+  const fixture = TestBed.createComponent(App);
+  fixture.detectChanges();
+  const root = fixture.nativeElement as HTMLElement;
+  expect(root.querySelector('[data-testid="prefer-gpu"]')).toBeNull();
+
+  store.speechGpu.set({ cudaAvailable: true, preferGpu: true });
+  fixture.detectChanges();
+  const option = root.querySelector('[data-testid="prefer-gpu"]') as HTMLInputElement;
+  expect(option.checked).toBe(true);
+  expect(option.parentElement?.textContent).toContain('用 GPU 加速語音辨識');
+  option.checked = false;
+  option.dispatchEvent(new Event('change'));
+  expect(store.setPreferGpu).toHaveBeenCalledWith(false);
+
+  store.canChangeCompute.set(false);
+  fixture.detectChanges();
+  expect(option.disabled).toBe(true);
+});
 
 it('lists a recording as timed lines and plays it from a line', async () => {
   const store = workspaceStub({

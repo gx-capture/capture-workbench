@@ -70,6 +70,7 @@ export interface DesktopMessages {
   readonly verticalReaderMissed: string;
   readonly offerInstall: string;
   readonly identifySpeakers: string;
+  readonly useGpuForSpeech: string;
   readonly speakers: string;
   readonly speakersHint: string;
   readonly speakerName: string;
@@ -164,6 +165,7 @@ const ZH_TW: DesktopMessages = {
   verticalReaderMissed: '這份文件有直書日文的頁面。安裝直書日文閱讀器後重新處理，這些頁面會讀得更準。',
   offerInstall: '安裝',
   identifySpeakers: '辨識音訊中的說話者',
+  useGpuForSpeech: '用 GPU 加速語音辨識',
   speakers: '說話者',
   speakersHint: '聽一段聲音後填上名字，匯出的文字會改用這個名字。',
   speakerName: '這位說話者的名字',
@@ -280,6 +282,7 @@ const EN: DesktopMessages = {
   verticalReaderMissed: 'This document has pages of vertical Japanese. Install the vertical Japanese reader and process it again to read them more accurately.',
   offerInstall: 'Install',
   identifySpeakers: 'Tell speakers apart in audio',
+  useGpuForSpeech: 'Use the GPU for speech recognition',
   speakers: 'Speakers',
   speakersHint: 'Listen to a sample, then type a name. Exported text will use it.',
   speakerName: "This speaker's name",
