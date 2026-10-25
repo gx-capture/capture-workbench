@@ -77,7 +77,7 @@ class _WorkerClient:
             exclusive_turns=turns,
             duration_ms=2_000,
             engine="speaker-diarization",
-            model="pyannote-speaker-diarization-community-1",
+            model="nvidia-nemotron-3-diarization",
             digest=f"sha256:{'3' * 64}",
             device="cpu",
             warnings=("Diarization GPU fallback: cuda_out_of_memory",),

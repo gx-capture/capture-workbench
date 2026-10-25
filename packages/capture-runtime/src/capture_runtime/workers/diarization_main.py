@@ -1,4 +1,4 @@
-"""Separately packaged pyannote speaker diarization worker."""
+"""Separately packaged Nemotron speaker diarization worker."""
 
 # Imports are deliberately staged below so the packaged worker can report the
 # exact failing import boundary before loading heavyweight model dependencies.
@@ -21,7 +21,6 @@ if TYPE_CHECKING:
 
 STAGE_PREFIX = "capture-worker-stage:"
 MAX_SOURCE_BYTES = 50 * 1024 * 1024
-MAX_SPEAKERS = 32
 
 
 def _report_stage(stage: str) -> None:
@@ -37,7 +36,7 @@ _report_stage("python-import-capture-runtime-start")
 try:
     from capture_runtime.speaker_diarization import (
         DIARIZATION_REQUIREMENT_ID,
-        PyannoteDiarizationAdapter,
+        NemotronDiarizationAdapter,
     )
     from capture_runtime.workers.server import permille_reporter, serve
 except BaseException:
@@ -47,10 +46,9 @@ _report_stage("python-import-capture-runtime-complete")
 
 
 def _prepare_environment() -> None:
-    # The model is a local directory; the worker must never reach a model hub
-    # or send pyannote usage metrics.
+    # The model is a local directory; the worker must never reach a model hub.
     os.environ["HF_HUB_OFFLINE"] = "1"
-    os.environ["PYANNOTE_METRICS_ENABLED"] = "0"
+    os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
     # The runtime starts workers without USERNAME, and PyTorch asks for the
     # user name while it is imported; on Windows that lookup then fails.
     os.environ.setdefault("USERNAME", "capture-runtime")
@@ -64,9 +62,10 @@ def _import_diarization_runtime() -> None:
     _report_stage("python-import-torch-start")
     importlib.import_module("torch")
     _report_stage("python-import-torch-complete")
-    _report_stage("python-import-pyannote-start")
-    importlib.import_module("pyannote.audio")
-    _report_stage("python-import-pyannote-complete")
+    _report_stage("python-import-transformers-start")
+    importlib.import_module("transformers")
+    importlib.import_module("librosa")
+    _report_stage("python-import-transformers-complete")
 
 
 def _model_dir(payload: dict[str, Any]) -> Path:
@@ -97,7 +96,8 @@ def _probe(request: WorkerRequestModel) -> dict[str, Any]:
         if payload["requirementId"] != DIARIZATION_REQUIREMENT_ID:
             raise ValueError("Diarization requirementId is invalid")
         ready = all(
-            importlib.util.find_spec(name) is not None for name in ("torch", "pyannote", "av")
+            importlib.util.find_spec(name) is not None
+            for name in ("torch", "transformers", "librosa", "av")
         )
         return {
             "ready": ready,
@@ -110,7 +110,7 @@ def _probe(request: WorkerRequestModel) -> dict[str, Any]:
             ),
             "device": None,
         }
-    adapter = PyannoteDiarizationAdapter(
+    adapter = NemotronDiarizationAdapter(
         _model_dir(payload),
         prefer_gpu=prefer_gpu,
         max_duration_ms=1,
@@ -151,30 +151,20 @@ def _run(request: WorkerRequestModel, cancellation: Event, progress: Any = None)
     max_duration_ms = options.get("maxDurationMs")
     prefer_gpu = options.get("preferGpu")
     allow_cpu_fallback = options.get("allowCpuFallback", True)
-    num_speakers = options.get("numSpeakers")
     if (
-        set(options) - {"maxDurationMs", "preferGpu", "allowCpuFallback", "numSpeakers"}
+        set(options) - {"maxDurationMs", "preferGpu", "allowCpuFallback"}
         or not isinstance(max_duration_ms, int)
         or isinstance(max_duration_ms, bool)
         or max_duration_ms <= 0
         or not isinstance(prefer_gpu, bool)
         or not isinstance(allow_cpu_fallback, bool)
-        or (
-            num_speakers is not None
-            and (
-                not isinstance(num_speakers, int)
-                or isinstance(num_speakers, bool)
-                or not 1 <= num_speakers <= MAX_SPEAKERS
-            )
-        )
     ):
         raise ValueError("Diarization run options are invalid")
-    adapter = PyannoteDiarizationAdapter(
+    adapter = NemotronDiarizationAdapter(
         model_dir,
         prefer_gpu=prefer_gpu,
         max_duration_ms=max_duration_ms,
         allow_cpu_fallback=allow_cpu_fallback,
-        num_speakers=num_speakers,
         stage_reporter=_report_stage,
         progress_reporter=None if progress is None else permille_reporter(progress),
     )

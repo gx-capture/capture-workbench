@@ -6,6 +6,11 @@ actually shipped (0.5.1 followed the same steps); workflow files remain the sour
 
 ## Current state
 
+- Unreleased speaker worker: NVIDIA Nemotron-3-Diarization (OpenMDW-1.1),
+  revision `f667ed73aee57d40cc39428eb768b4fd87a0a29e`, with Transformers 5.20.2.
+  Re-approve the changed release model-source lock before publishing; regenerate
+  `uv.lock` and verify the rebuilt packaged diarization worker offline.
+
 - Capture Runtime and Workbench **0.5.1** are published: npm
   (`@gx-capture/capture-workbench-ui`, `@gx-capture/capture-runtime-client` on
   GitHub Packages), Maven (`com.gx.capture:capture-runtime-client`, GitHub
