@@ -69,7 +69,10 @@ actually shipped (0.5.1 followed the same steps); workflow files remain the sour
   profile `capture-workbench-ocr-e012547f1f9da4da`.
 - Hosts: keep `CAPTURE_APP_DATA_DIR` to about 130 characters. The speech
   worker's longest DLL path is 78 characters below its install folder.
-- **Open**: as for 0.7.0, the `whisper-private-reference` expected output hash.
+- The `whisper-private-reference` expected output hash was still Whisper's in
+  0.7.1. After the release it was frozen on the owner's 40-minute M4A interview,
+  which replaced the missing MP3 (see the speech recognition decision); the
+  change ships with the next release.
 
 ## Published through Route A: 0.7.0 (minor, breaking)
 

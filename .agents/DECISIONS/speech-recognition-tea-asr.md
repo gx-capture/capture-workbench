@@ -55,8 +55,10 @@ boundary and preflight flags `--speech-recognition-*`; stages `speech-*`. Intern
 - The release model-source lock pins 34 files (about 7.5 GB) and needs the user's
   re-approval before release. Install-time bounds were raised to admit it (4 GiB per file,
   8 GiB per unit, 10 GiB across the lock).
-- The `whisper-private-reference` fixture keeps its audio but its expected normalized output
-  hash still records the Whisper measurement; two identical production TEA runs must replace it.
+- The `whisper-private-reference` fixture is the owner's 40-minute Taiwanese Mandarin interview
+  (M4A, 39,199,307 bytes), which replaced the earlier MP3 when that file could not be found. Two
+  identical runs of the published 0.7.1 worker on CUDA froze its expected normalized output
+  (`tea-asr-1.1`, 106 segments) on 2026-10-25. The file stays private and is never committed.
 - Size budgets cover only the runtime executable and the NSIS installer, which hold no worker,
   so they are unchanged. Worker archives are bounded by the catalog: under 2 GB per part and
   8 GiB per archive and extracted tree.
