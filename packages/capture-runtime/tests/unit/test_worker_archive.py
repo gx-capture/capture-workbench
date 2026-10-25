@@ -81,6 +81,29 @@ def test_worker_archive_uses_installer_ordinal_path_order(tmp_path: Path) -> Non
     assert (destination / "capture-engine-test.exe").read_bytes() == b"worker"
 
 
+def test_worker_archive_rejects_what_the_installer_would_reject(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "worker"
+    source.mkdir()
+    for index in range(3):
+        (source / f"file-{index}.bin").write_bytes(b"x")
+
+    monkeypatch.setattr(worker_archive, "MAX_ARCHIVE_FILES", 3)
+    with pytest.raises(ValueError, match="more files than the installer accepts"):
+        worker_archive.build_worker_archive(
+            source, tmp_path / "files.zip", tmp_path / "files-manifest.json"
+        )
+
+    monkeypatch.setattr(worker_archive, "MAX_ARCHIVE_FILES", 8192)
+    monkeypatch.setattr(worker_archive, "MAX_FILES_MANIFEST_BYTES", 256)
+    with pytest.raises(ValueError, match="manifest is larger than the installer accepts"):
+        worker_archive.build_worker_archive(
+            source, tmp_path / "manifest.zip", tmp_path / "files-manifest.json"
+        )
+    assert not (tmp_path / "manifest.zip").exists()
+
+
 def test_worker_archive_rejects_case_collisions(tmp_path: Path) -> None:
     source = tmp_path / "worker"
     source.mkdir()

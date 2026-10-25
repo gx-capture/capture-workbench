@@ -6,6 +6,7 @@ import zipfile
 from pathlib import Path
 
 from capture_runtime.artifact_parts import split_archive
+from capture_runtime.engine_installation import MAX_ARCHIVE_FILES, MAX_FILES_MANIFEST_BYTES
 
 ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
 
@@ -33,6 +34,8 @@ def build_worker_archive(source: Path, archive: Path, manifest_output: Path) -> 
     )
     if not files:
         raise ValueError(f"worker directory is empty: {source}")
+    if len(files) + 1 > MAX_ARCHIVE_FILES:
+        raise ValueError(f"worker has more files than the installer accepts: {len(files)}")
     folded_paths: set[str] = set()
     for relative, _item in files:
         folded = relative.casefold()
@@ -51,6 +54,10 @@ def build_worker_archive(source: Path, archive: Path, manifest_output: Path) -> 
         ],
     }
     manifest_bytes = canonical_json_bytes(manifest)
+    if len(manifest_bytes) > MAX_FILES_MANIFEST_BYTES:
+        raise ValueError(
+            f"worker files manifest is larger than the installer accepts: {len(manifest_bytes)}"
+        )
     manifest_output.parent.mkdir(parents=True, exist_ok=True)
     manifest_output.write_bytes(manifest_bytes)
     archive.parent.mkdir(parents=True, exist_ok=True)
